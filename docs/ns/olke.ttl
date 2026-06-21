@@ -1,7 +1,7 @@
 @prefix olke: <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
-@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix ieh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix ie:   <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -28,7 +28,7 @@
 #    Collective — shared by a group with consistent interpretation
 #    Institutional — embedded in policy / binding on future actors
 #
-#  OLKE annotates cg:ContextDescriptor with stage + transitions,
+#  OLKE annotates iep:ContextDescriptor with stage + transitions,
 #  so an organization can track which descriptors are moving
 #  from tacit to articulate, which have been superseded, etc.
 #
@@ -39,15 +39,15 @@
 <https://markjspivey-xwisee.github.io/interego/ns/olke>
     a owl:Ontology ;
     dct:title "OLKE — Organizational Learning & Knowledge Evolution" ;
-    dct:description "Stages and transitions by which knowledge evolves within an organization: tacit -> articulate -> collective -> institutional. Annotates cg:ContextDescriptor with the current stage + allows tracking of stage transitions." ;
+    dct:description "Stages and transitions by which knowledge evolves within an organization: tacit -> articulate -> collective -> institutional. Annotates iep:ContextDescriptor with the current stage + allows tracking of stage transitions." ;
     vann:preferredNamespacePrefix "olke" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/olke#" ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> .
 
 olke:KnowledgeStage a owl:Class ;
     rdfs:label "Knowledge Stage" ;
-    rdfs:comment "Abstract parent of the four canonical OLKE stages. A stage is a classification on cg:ContextDescriptor (carried via olke:stage); knowledge stages are epistemic lenses over descriptors." ;
-    rdfs:subClassOf cg:SemioticFacet .
+    rdfs:comment "Abstract parent of the four canonical OLKE stages. A stage is a classification on iep:ContextDescriptor (carried via olke:stage); knowledge stages are epistemic lenses over descriptors." ;
+    rdfs:subClassOf iep:SemioticFacet .
 
 olke:Tacit a olke:KnowledgeStage ;
     rdfs:label "Tacit" ;
@@ -55,24 +55,24 @@ olke:Tacit a olke:KnowledgeStage ;
 
 olke:Articulate a olke:KnowledgeStage ;
     rdfs:label "Articulate" ;
-    rdfs:comment "Knowledge encoded in language or code — a cg:ContextDescriptor exists, is discoverable, and carries a coherent statement of the knowledge." .
+    rdfs:comment "Knowledge encoded in language or code — a iep:ContextDescriptor exists, is discoverable, and carries a coherent statement of the knowledge." .
 
 olke:Collective a olke:KnowledgeStage ;
     rdfs:label "Collective" ;
-    rdfs:comment "Knowledge shared by a group with consistent interpretation — multiple agents' descriptors have achieved cg:Equal coherence on the subject." .
+    rdfs:comment "Knowledge shared by a group with consistent interpretation — multiple agents' descriptors have achieved iep:Equal coherence on the subject." .
 
 olke:Institutional a olke:KnowledgeStage ;
     rdfs:label "Institutional" ;
-    rdfs:comment "Knowledge embedded in policy — bound by ODRL rules, hydra:Operation preconditions, or cgh:PolicyDecision precedents." .
+    rdfs:comment "Knowledge embedded in policy — bound by ODRL rules, hydra:Operation preconditions, or ieh:PolicyDecision precedents." .
 
 olke:Transition a owl:Class ;
     rdfs:label "Knowledge Transition" ;
-    rdfs:comment "A recorded transition of a cg:ContextDescriptor from one olke:KnowledgeStage to another. Realized as a cg:ContextDescriptor with cg:supersedes pointing at the prior stage's descriptor, and PROV attribution to the promoting agent." ;
-    rdfs:subClassOf cg:ProvenanceFacet .
+    rdfs:comment "A recorded transition of a iep:ContextDescriptor from one olke:KnowledgeStage to another. Realized as a iep:ContextDescriptor with iep:supersedes pointing at the prior stage's descriptor, and PROV attribution to the promoting agent." ;
+    rdfs:subClassOf iep:ProvenanceFacet .
 
 olke:stage a owl:ObjectProperty ;
     rdfs:label "stage" ;
-    rdfs:domain cg:ContextDescriptor ;
+    rdfs:domain iep:ContextDescriptor ;
     rdfs:range olke:KnowledgeStage .
 
 olke:fromStage a owl:ObjectProperty ;
@@ -93,9 +93,9 @@ olke:transitionAt a owl:DatatypeProperty ;
 olke:promotedBy a owl:ObjectProperty ;
     rdfs:label "promoted by" ;
     rdfs:domain olke:Transition ;
-    rdfs:range cg:AuthorizedAgent .
+    rdfs:range iep:AuthorizedAgent .
 
 # ── Alignments ────────────────────────────────────────────────
 
-olke:Transition rdfs:seeAlso cg:PersistenceRecord ;
+olke:Transition rdfs:seeAlso iep:PersistenceRecord ;
     rdfs:comment "A stage transition is a kind of persistence event — the descriptor's representation persists across the transition while its organizational binding changes." .

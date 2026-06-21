@@ -10,7 +10,7 @@
  * tiny, explicit format contract.
  *
  * Substrate framing: a SKILL.md is structurally a discoverable named
- * capability — i.e. a `cg:Affordance`. This module is purely the
+ * capability — i.e. a `iep:Affordance`. This module is purely the
  * frontmatter / body decomposition. The translation to a typed
  * descriptor lives in `agentskills-bridge.ts`.
  *

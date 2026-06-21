@@ -40,8 +40,8 @@ async function main(): Promise<void> {
   const dr = await fetch(descriptorUrl, { headers: { accept: 'text/turtle' } });
   const turtle = await dr.text();
   ok('descriptor fetched', dr.ok, `HTTP ${dr.status} · ${turtle.length} bytes`);
-  ok('descriptor carries typed cg: facets', /cg:hasFacet \[ a cg:AgentFacet/.test(turtle) && /a cg:TemporalFacet/.test(turtle), '');
-  ok('back-compat cg:Projection marker retained', /cg:hasFacetType cg:Projection/.test(turtle), '');
+  ok('descriptor carries typed iep: facets', /iep:hasFacet \[ a iep:AgentFacet/.test(turtle) && /a iep:TemporalFacet/.test(turtle), '');
+  ok('back-compat iep:Projection marker retained', /iep:hasFacetType iep:Projection/.test(turtle), '');
 
   // 3) Route the ie: grammar over the REAL published bytes.
   const route = (t: InterrogativeType) => {

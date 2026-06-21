@@ -152,7 +152,7 @@ const revised = teamB.steps.find(s => s.supersedesId);
 console.log(`\n  STEP 4 — THE TEAM RE-PLANS. THE SUBSTRATE SHOWS THE REVISION.`);
 console.log('    ' + wrap(`Given the widened constraint, the team supersedes its restart plan with a live pool-drain. composeTrajectories() folds Scout + Drafter into one team trajectory via the L1 union operator.`, 72, '    '));
 console.log(`    → "${revised.objectName}"`);
-console.log(`      carries cg:supersedes → the restart plan. The revision is`);
+console.log(`      carries iep:supersedes → the restart plan. The revision is`);
 console.log(`      first-class and auditable; the restart is retained as the`);
 console.log(`      Counterfactual road not taken.`);
 
@@ -190,7 +190,7 @@ console.log(`
     she SAW the plan       ← modal status: Hypothetical, before Asserted
     she knew HOW to act    ← the disposition read: work-regime stance
     she ACTED on it        ← the safe-to-fail probe: a change to a constraint
-    the team RE-PLANNED    ← the cg:supersedes chain
+    the team RE-PLANNED    ← the iep:supersedes chain
     she KNEW it worked     ← the causal read: interventional / counterfactual
 
   None of these is a feature bolted onto a log. Each is the substrate

@@ -12,7 +12,7 @@
 // This demo extends the idea: the embedded Turtle uses RDF 1.2
 // triple-term annotations (`{| ... |}`) to attach facet metadata
 // to each triple, and the pipeline lifts the whole thing into a
-// full `cg:ContextDescriptor` with all seven facets — not just
+// full `iep:ContextDescriptor` with all seven facets — not just
 // flat RDF. Nanotation's portability + Interego's typed context.
 //
 // Result: a blog post becomes federated, attributable, trust-tagged,
@@ -38,7 +38,7 @@ A few observations worth sharing:
 
 |## Nanotation Start ##|
 
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix cts:  <https://markjspivey-xwisee.github.io/interego/ns/cts#> .
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
 @prefix ex:   <urn:observation:> .
@@ -47,13 +47,13 @@ ex:convergence-rate-obs-1
     a cts:Pattern ;
     cts:observation "45 rounds with 9 subjects and threshold 3 reaches reliable convergence"@en ;
     cts:confidence "0.92"^^xsd:double ;
-    cts:observedBy <urn:agent:mark> {| cg:modalStatus cg:Asserted ; cg:epistemicConfidence "0.92"^^xsd:double |} .
+    cts:observedBy <urn:agent:mark> {| iep:modalStatus iep:Asserted ; iep:epistemicConfidence "0.92"^^xsd:double |} .
 
 ex:threshold-sensitivity-obs-2
     a cts:Pattern ;
     cts:observation "Lowering threshold from 3 to 2 accelerates convergence but increases false-positive alignments"@en ;
     cts:confidence "0.75"^^xsd:double ;
-    cts:observedBy <urn:agent:mark> {| cg:modalStatus cg:Hypothetical ; cg:epistemicConfidence "0.75"^^xsd:double |} .
+    cts:observedBy <urn:agent:mark> {| iep:modalStatus iep:Hypothetical ; iep:epistemicConfidence "0.75"^^xsd:double |} .
 
 |## Nanotation End ##|
 
@@ -66,7 +66,7 @@ ex:call-for-replication
     a cts:Pattern ;
     cts:observation "Call for replication on convergence-rate-obs-1"@en ;
     cts:relatesTo ex:convergence-rate-obs-1 ;
-    cts:observedBy <urn:agent:mark> {| cg:modalStatus cg:Asserted |} .
+    cts:observedBy <urn:agent:mark> {| iep:modalStatus iep:Asserted |} .
 
 |## Nanotation End ##|
 `;
@@ -111,7 +111,7 @@ console.log('   ... (truncated) ...');
 console.log('─'.repeat(60));
 console.log();
 
-// ── Step 4: Build a cg:ContextDescriptor for the whole piece. ──
+// ── Step 4: Build a iep:ContextDescriptor for the whole piece. ──
 //
 // Nanotation gives us the GRAPH (the triples). Interego wraps it
 // with the seven facets: who authored, when, what modal state, what
@@ -119,7 +119,7 @@ console.log();
 // post" to "a first-class federated typed-context descriptor".
 
 const postGraphIri = 'urn:graph:blog:mark/vocabulary-emergence-notes-2026-04-24';
-const postDescriptorIri = 'urn:cg:blog:mark/vocabulary-emergence-notes-2026-04-24';
+const postDescriptorIri = 'urn:iep:blog:mark/vocabulary-emergence-notes-2026-04-24';
 const author = 'urn:agent:mark';
 const ownerWebId = 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/markj/profile#me';
 const podUrl = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
@@ -148,7 +148,7 @@ const descriptor = ContextDescriptor.create(postDescriptorIri)
   .build();
 
 const ttl = toTurtle(descriptor);
-console.log('Step 4 — cg:ContextDescriptor wrapping the blog post\'s graph:');
+console.log('Step 4 — iep:ContextDescriptor wrapping the blog post\'s graph:');
 console.log('─'.repeat(60));
 console.log(ttl.split('\n').slice(0, 20).join('\n'));
 console.log('   ... (truncated) ...');
@@ -184,7 +184,7 @@ console.log('   modal status + confidence — so downstream agents know which');
 console.log('   claims the author is committing to (Asserted) vs floating');
 console.log('   (Hypothetical).');
 console.log('');
-console.log('   The pipeline lifts the whole thing into a typed cg:ContextDescriptor');
+console.log('   The pipeline lifts the whole thing into a typed iep:ContextDescriptor');
 console.log('   with seven facets. The post becomes federated, queryable,');
 console.log('   attributable memory — discoverable by any agent on the user\'s pod.');
 console.log('');

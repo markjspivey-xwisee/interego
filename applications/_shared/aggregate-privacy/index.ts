@@ -99,7 +99,7 @@ import { ristretto255 } from '@noble/curves/ed25519.js';
  */
 export function participationDescriptorIri(cohortIri: string, participantDid: string): IRI {
   const h = sha256(`participation|${cohortIri}|${participantDid}`).slice(0, 16);
-  return `urn:cg:cohort-participation:${h}` as IRI;
+  return `urn:iep:cohort-participation:${h}` as IRI;
 }
 
 /**
@@ -107,7 +107,7 @@ export function participationDescriptorIri(cohortIri: string, participantDid: st
  */
 export function participationGraphIri(cohortIri: string, participantDid: string): IRI {
   const h = sha256(`participation|${cohortIri}|${participantDid}`).slice(0, 16);
-  return `urn:graph:cg:cohort-participation:${h}` as IRI;
+  return `urn:graph:iep:cohort-participation:${h}` as IRI;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ export async function gatherParticipations(
     for (const entry of entries) {
       // Cohort participation graphs have a stable IRI prefix and the
       // describes-set carries it.
-      const cohortGraph = entry.describes.find(d => d.startsWith('urn:graph:cg:cohort-participation:'));
+      const cohortGraph = entry.describes.find(d => d.startsWith('urn:graph:iep:cohort-participation:'));
       if (!cohortGraph) continue;
       // Only count Asserted participations; Counterfactual = revoked.
       const modalStatus = entry.modalStatus ?? 'Asserted';
@@ -240,8 +240,8 @@ export async function gatherParticipations(
       // The participation descriptor's IRI is the cohortGraph IRI with
       // the graph prefix swapped for the descriptor prefix.
       const descriptorIri = cohortGraph.replace(
-        'urn:graph:cg:cohort-participation:',
-        'urn:cg:cohort-participation:',
+        'urn:graph:iep:cohort-participation:',
+        'urn:iep:cohort-participation:',
       ) as IRI;
       // Verify the descriptor IRI matches what we would have derived
       // for this cohort from SOME participant DID. We can't derive the
@@ -1933,14 +1933,14 @@ export function verifyBudgetAuditLog(signed: SignedBudgetAuditLog): { valid: boo
 // persistent, fetchable artifact on the operator's pod so any
 // authorized auditor can read + re-verify WITHOUT trusting the
 // aggregator's word that the bundle exists at all. These helpers
-// publish each bundle type as a normal cg:ContextDescriptor (no new
+// publish each bundle type as a normal iep:ContextDescriptor (no new
 // ontology terms) with the bundle JSON embedded in the graph
 // content as a single `agg:bundleJson` literal — the verifier
 // pulls the graph, parses the JSON, and runs the existing
 // `verifyAttested*` function against it.
 
-const AGG_BUNDLE_GRAPH_PREFIX = 'urn:graph:cg:aggregate-bundle:';
-const AGG_BUNDLE_DESC_PREFIX = 'urn:cg:aggregate-bundle:';
+const AGG_BUNDLE_GRAPH_PREFIX = 'urn:graph:iep:aggregate-bundle:';
+const AGG_BUNDLE_DESC_PREFIX = 'urn:iep:aggregate-bundle:';
 
 function bundleIris(seedHex: string): { iri: IRI; graphIri: IRI } {
   return {

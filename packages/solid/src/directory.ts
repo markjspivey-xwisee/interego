@@ -24,10 +24,10 @@ export function podDirectoryToTurtle(directory: PodDirectoryData): string {
   const anyNicks = directory.entries.some(
     e => e.owner && e.ownerNicks && e.ownerNicks.length > 0,
   );
-  const prefixes = turtlePrefixes(anyNicks ? ['cg', 'rdfs', 'foaf'] : ['cg', 'rdfs']);
+  const prefixes = turtlePrefixes(anyNicks ? ['iep', 'rdfs', 'foaf'] : ['iep', 'rdfs']);
   const lines: string[] = [prefixes, ''];
 
-  lines.push(`<${directory.id}> a cg:PodDirectory .`);
+  lines.push(`<${directory.id}> a iep:PodDirectory .`);
 
   // Emit pod entries first, then any name hints at the bottom — keeps
   // the entry blocks tight and groups hint triples by subject (one block
@@ -38,10 +38,10 @@ export function podDirectoryToTurtle(directory: PodDirectoryData): string {
     const e = directory.entries[i]!;
     const bnode = `_:pod${i}`;
     lines.push('');
-    lines.push(`<${directory.id}> cg:hasPod ${bnode} .`);
-    lines.push(`${bnode} cg:podUrl <${e.podUrl}> .`);
+    lines.push(`<${directory.id}> iep:hasPod ${bnode} .`);
+    lines.push(`${bnode} iep:podUrl <${e.podUrl}> .`);
     if (e.owner) {
-      lines.push(`${bnode} cg:owner <${e.owner}> .`);
+      lines.push(`${bnode} iep:owner <${e.owner}> .`);
     }
     if (e.label) {
       lines.push(`${bnode} rdfs:label "${escapeTurtleLiteral(e.label)}" .`);
@@ -75,28 +75,28 @@ export function podDirectoryToTurtle(directory: PodDirectoryData): string {
  */
 export function parsePodDirectory(turtle: string): PodDirectoryData {
   // Extract directory IRI
-  const idMatch = turtle.match(/<([^>]+)>\s+a\s+cg:PodDirectory/);
+  const idMatch = turtle.match(/<([^>]+)>\s+a\s+iep:PodDirectory/);
   const id = (idMatch?.[1] ?? 'urn:directory:unknown') as IRI;
 
   // Extract hasPod entries — each has a podUrl, optional owner, optional label
   const entries: PodDirectoryEntry[] = [];
 
   // Find all bnode references from hasPod
-  const hasPodRe = /<[^>]+>\s+cg:hasPod\s+(_:\w+)\s*\./g;
+  const hasPodRe = /<[^>]+>\s+iep:hasPod\s+(_:\w+)\s*\./g;
   let match: RegExpExecArray | null;
 
   while ((match = hasPodRe.exec(turtle)) !== null) {
     const bnode = match[1]!;
 
     // Find podUrl for this bnode
-    const podUrlRe = new RegExp(`${escapeRegex(bnode)}\\s+cg:podUrl\\s+<([^>]+)>`, 'm');
+    const podUrlRe = new RegExp(`${escapeRegex(bnode)}\\s+iep:podUrl\\s+<([^>]+)>`, 'm');
     const podUrlMatch = turtle.match(podUrlRe);
     if (!podUrlMatch?.[1]) continue;
 
     const podUrl = podUrlMatch[1] as IRI;
 
     // Find optional owner
-    const ownerRe = new RegExp(`${escapeRegex(bnode)}\\s+cg:owner\\s+<([^>]+)>`, 'm');
+    const ownerRe = new RegExp(`${escapeRegex(bnode)}\\s+iep:owner\\s+<([^>]+)>`, 'm');
     const ownerMatch = turtle.match(ownerRe);
     const owner = ownerMatch?.[1] ? (ownerMatch[1] as IRI) : undefined;
 

@@ -65,7 +65,7 @@ function escapeLit(s: string): string {
 export interface OperatorCtx {
   /** Pod URL of the org (descriptors live here). */
   readonly orgPodUrl: string;
-  /** DID of the org-authority signing key (cg:assertingAgent on policy descriptors). */
+  /** DID of the org-authority signing key (iep:assertingAgent on policy descriptors). */
   readonly authorityDid: IRI;
 }
 

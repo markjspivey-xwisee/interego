@@ -173,14 +173,14 @@ describe('Tier 3c — SCORM Cloud (proprietary LRS, xAPI 1.0.3)', () => {
       id: randomUUID(),
       actor: { objectType: 'Agent', account: { homePage: 'https://acme.example', name: `tier3c-ext-${Date.now()}` } },
       verb: { id: 'http://adlnet.gov/expapi/verbs/observed', display: { 'en-US': 'observed' } },
-      object: { objectType: 'Activity', id: `urn:cg:synthesis:scorm-cloud-test-${Date.now()}` },
+      object: { objectType: 'Activity', id: `urn:iep:synthesis:scorm-cloud-test-${Date.now()}` },
       result: {
         response: narratives[0],
         extensions: {
-          'urn:cg:source-descriptor':   'urn:cg:synthesis:scorm-cloud-test',
-          'urn:cg:modal-status':        'Hypothetical',
-          'urn:cg:coherent-narratives': narratives,
-          'urn:cg:projection-lossy':    true,
+          'urn:iep:source-descriptor':   'urn:iep:synthesis:scorm-cloud-test',
+          'urn:iep:modal-status':        'Hypothetical',
+          'urn:iep:coherent-narratives': narratives,
+          'urn:iep:projection-lossy':    true,
         },
       },
       timestamp: new Date().toISOString(),
@@ -203,9 +203,9 @@ describe('Tier 3c — SCORM Cloud (proprietary LRS, xAPI 1.0.3)', () => {
     const fetched = await get.json() as { result: { extensions: Record<string, unknown> } };
 
     // Extension passthrough is core xAPI behavior; SCORM Cloud preserves
-    expect(fetched.result.extensions['urn:cg:projection-lossy']).toBe(true);
-    expect(fetched.result.extensions['urn:cg:modal-status']).toBe('Hypothetical');
-    expect(fetched.result.extensions['urn:cg:coherent-narratives']).toEqual(narratives);
+    expect(fetched.result.extensions['urn:iep:projection-lossy']).toBe(true);
+    expect(fetched.result.extensions['urn:iep:modal-status']).toBe('Hypothetical');
+    expect(fetched.result.extensions['urn:iep:coherent-narratives']).toEqual(narratives);
   });
 
   it('voiding (xAPI 1.0.3 §4.1.6.7): voided statement gets 404 on plain GET', { timeout: 30000 }, async (ctx) => {
@@ -215,7 +215,7 @@ describe('Tier 3c — SCORM Cloud (proprietary LRS, xAPI 1.0.3)', () => {
       id: randomUUID(),
       actor: { objectType: 'Agent', account: { homePage: 'https://acme.example', name: `tier3c-void-${Date.now()}` } },
       verb: { id: 'http://adlnet.gov/expapi/verbs/completed', display: { 'en-US': 'completed' } },
-      object: { objectType: 'Activity', id: `urn:cg:voidable-${Date.now()}` },
+      object: { objectType: 'Activity', id: `urn:iep:voidable-${Date.now()}` },
       timestamp: new Date().toISOString(),
     };
 
@@ -267,7 +267,7 @@ describe('Tier 3c — SCORM Cloud (proprietary LRS, xAPI 1.0.3)', () => {
       id: randomUUID(),
       actor: { objectType: 'Agent', account: { homePage: 'https://acme.example', name: `tier3c-cross-${Date.now()}` } },
       verb: { id: 'http://adlnet.gov/expapi/verbs/completed', display: { 'en-US': 'completed' } },
-      object: { objectType: 'Activity', id: `urn:cg:cross-lrs-${Date.now()}` },
+      object: { objectType: 'Activity', id: `urn:iep:cross-lrs-${Date.now()}` },
       result: { completion: true, success: true, score: { scaled: 0.85 } },
       timestamp: new Date().toISOString(),
     };

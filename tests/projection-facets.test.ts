@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import type { IRI } from '@interego/core';
 import { createPGSL, ingest, projectHolon, routeInterrogatives, type InterrogativeType } from '@interego/pgsl';
 
-const CG = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+const CG = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const prov = { wasAttributedTo: 'did:ethr:0xabc' as IRI, generatedAtTime: '2026-06-18T00:00:00.000Z' };
 const base = 'https://pod.example/foxxi-lattice/';
 
@@ -44,7 +44,7 @@ describe('projectHolon typedFacets → interrogative router', () => {
 
     const wk = answer(ttl, 'WhatKind');
     expect(wk.status).toBe('full');
-    expect((wk.values as any).interpretationFrame).toBe('urn:cg:contenttype:foxxi%3AVerification');
+    expect((wk.values as any).interpretationFrame).toBe('urn:iep:contenttype:foxxi%3AVerification');
 
     expect(answer(ttl, 'Why').status).toBe('partial');
     expect(answer(ttl, 'How').status).toBe('partial');
@@ -60,14 +60,14 @@ describe('projectHolon typedFacets → interrogative router', () => {
     const off = projectHolon(node, pgsl, { descriptorBase: base });
     const on = projectHolon(node, pgsl, { descriptorBase: base, typedFacets: true, contentType: 'foxxi:Verification' });
 
-    expect(off.descriptorTurtle).toContain('cg:hasFacetType cg:Projection');
-    expect(off.descriptorTurtle).not.toContain('cg:hasFacet ');
+    expect(off.descriptorTurtle).toContain('iep:hasFacetType iep:Projection');
+    expect(off.descriptorTurtle).not.toContain('iep:hasFacet ');
     expect(off.manifestEntry.facetTypes).toEqual(['Projection']);
     // The slug is content-addressed from node.uri, independent of body bytes.
     expect(on.descriptorUrl).toBe(off.descriptorUrl);
     // Enriched descriptor still carries the back-compat Projection marker.
-    expect(on.descriptorTurtle).toContain('cg:hasFacetType cg:Projection');
-    expect(on.descriptorTurtle).toContain('a cg:AgentFacet');
+    expect(on.descriptorTurtle).toContain('iep:hasFacetType iep:Projection');
+    expect(on.descriptorTurtle).toContain('a iep:AgentFacet');
   });
 
   it('default OFF → router returns absent (proves the enrichment is what lights it up)', () => {

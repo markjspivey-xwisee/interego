@@ -1,9 +1,9 @@
 // Agent-teaches-agent: no code changes on the student side.
 //
-// Teacher publishes a descriptor with a cg:affordance declaring a
+// Teacher publishes a descriptor with a iep:affordance declaring a
 // novel capability (cap:canSolveLinearEq) + a running HTTP endpoint
 // that implements it. Student walks the pod's manifest, finds the
-// affordance via its cg:action, resolves it to a callable tool, and
+// affordance via its iep:action, resolves it to a callable tool, and
 // invokes it with real input. Student publishes the result with
 // prov:wasDerivedFrom citing the teacher's descriptor — credit is
 // structural, not social.
@@ -51,13 +51,13 @@ await new Promise(r => server.listen(PORT, r));
 console.log(`1. Teacher's endpoint listening on :${PORT}/solve?a=&b=&c=\n`);
 
 // ── Teacher publishes a descriptor with the novel affordance ─
-const teacherId = `urn:cg:teacher:${Date.now()}`;
+const teacherId = `urn:iep:teacher:${Date.now()}`;
 const teacherGraph = `urn:graph:teacher:capability:${Date.now()}`;
 const teacherUrl = `${POD}context-graphs/teacher-${Date.now()}.ttl`;
 const now1 = new Date().toISOString();
 
-const teacherTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/cgh#> .
+const teacherTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/cgh#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -67,36 +67,36 @@ const teacherTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/n
 @prefix cap: <urn:capability:> .
 
 <${teacherId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now1}"^^xsd:dateTime ;
-    cg:describes <${teacherGraph}> ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now1}"^^xsd:dateTime ] ;
-    cg:hasFacet [ a cg:ProvenanceFacet ; prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${TEACHER_LENS}> ; prov:endedAtTime "${now1}"^^xsd:dateTime ] ; prov:wasAttributedTo <${TEACHER_LENS}> ; prov:generatedAtTime "${now1}"^^xsd:dateTime ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${TEACHER_LENS}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${TEACHER_LENS}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "1.0"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${TEACHER_LENS}> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now1}"^^xsd:dateTime ;
+    iep:describes <${teacherGraph}> ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now1}"^^xsd:dateTime ] ;
+    iep:hasFacet [ a iep:ProvenanceFacet ; prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${TEACHER_LENS}> ; prov:endedAtTime "${now1}"^^xsd:dateTime ] ; prov:wasAttributedTo <${TEACHER_LENS}> ; prov:generatedAtTime "${now1}"^^xsd:dateTime ] ;
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${TEACHER_LENS}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${TEACHER_LENS}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "1.0"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${TEACHER_LENS}> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 
-<${teacherId}> cg:affordance [
-    a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ;
-    cg:action cap:canSolveLinearEq ;
+<${teacherId}> iep:affordance [
+    a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
+    iep:action cap:canSolveLinearEq ;
     hydra:method "GET" ;
     hydra:target <http://127.0.0.1:${PORT}/solve> ;
-    hydra:returns cgh:JsonResponse ;
+    hydra:returns ieh:JsonResponse ;
     dcat:mediaType "application/json" ;
-    cgh:inputHint "Query params: a, b, c → solves ax + b = c for x ; returns {x}"
+    ieh:inputHint "Query params: a, b, c → solves ax + b = c for x ; returns {x}"
 ] .
 `;
 
 await putText(teacherUrl, teacherTtl);
 const teacherEntry = `
 
-<${teacherUrl}> a cg:ManifestEntry ;
-    cg:describes <${teacherGraph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+<${teacherUrl}> a iep:ManifestEntry ;
+    iep:describes <${teacherGraph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
 const cur1 = await fetchText(MANIFEST_URL);
 await putText(MANIFEST_URL, (cur1 ?? '') + teacherEntry);
@@ -107,11 +107,11 @@ console.log(`   declares cap:canSolveLinearEq with target http://127.0.0.1:${POR
 console.log('3. Student walks the manifest, looking for capabilities...');
 const manifest = await fetchText(MANIFEST_URL);
 
-// Find every cg:affordance, filter by action
+// Find every iep:affordance, filter by action
 const entries = [];
 for (const raw of manifest.split('\n')) {
   const line = raw.trim();
-  const m = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
+  const m = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
   if (m) entries.push({ url: m[1] });
 }
 
@@ -120,7 +120,7 @@ let discovered = null;
 for (const e of entries.slice(-10)) {
   const t = await fetchText(e.url);
   if (!t) continue;
-  const m = t.match(/cg:affordance\s+\[([\s\S]*?canSolveLinearEq[\s\S]*?)\]/);
+  const m = t.match(/iep:affordance\s+\[([\s\S]*?canSolveLinearEq[\s\S]*?)\]/);
   if (m) {
     const target = m[1].match(/hydra:target\s+<([^>]+)>/)?.[1];
     discovered = { sourceDescriptor: e.url, action: 'cap:canSolveLinearEq', target };
@@ -145,12 +145,12 @@ console.log(`   response: ${JSON.stringify(response)}`);
 console.log(`   student concludes: x = ${response.x}\n`);
 
 // ── Student publishes result descriptor citing the teacher ──
-const studentId = `urn:cg:student:${Date.now()}`;
+const studentId = `urn:iep:student:${Date.now()}`;
 const studentGraph = `urn:graph:student:learned:${Date.now()}`;
 const studentUrl = `${POD}context-graphs/student-${Date.now()}.ttl`;
 const now2 = new Date().toISOString();
 
-const studentTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const studentTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -158,35 +158,35 @@ const studentTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/n
 @prefix learn: <urn:learning:> .
 
 <${studentId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now2}"^^xsd:dateTime ;
-    cg:describes <${studentGraph}> ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now2}"^^xsd:dateTime ;
+    iep:describes <${studentGraph}> ;
     learn:invokedCapability "cap:canSolveLinearEq" ;
     learn:input "2x + 3 = 11" ;
     learn:output "${response.x}"^^xsd:double ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now2}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now2}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${STUDENT_LENS}> ; prov:endedAtTime "${now2}"^^xsd:dateTime ] ;
         prov:wasDerivedFrom <${discovered.sourceDescriptor}> ;
         prov:wasAttributedTo <${STUDENT_LENS}> ;
         prov:generatedAtTime "${now2}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${STUDENT_LENS}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${STUDENT_LENS}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "1.0"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${STUDENT_LENS}> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${STUDENT_LENS}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${STUDENT_LENS}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "1.0"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${STUDENT_LENS}> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 
 await putText(studentUrl, studentTtl);
 const studentEntry = `
 
-<${studentUrl}> a cg:ManifestEntry ;
-    cg:describes <${studentGraph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+<${studentUrl}> a iep:ManifestEntry ;
+    iep:describes <${studentGraph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
 const cur2 = await fetchText(MANIFEST_URL);
 await putText(MANIFEST_URL, (cur2 ?? '') + studentEntry);

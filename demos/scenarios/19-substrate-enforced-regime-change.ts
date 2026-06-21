@@ -7,7 +7,7 @@
  * comply — institutional downward causation. Demo 19 demonstrates
  * the same shape with the SUBSTRATE doing the enforcement: when an
  * agent calls ac.promote_tool with `enforce_constitutional_constraints`,
- * the publisher consults active cgh:PromotionConstraint descriptors
+ * the publisher consults active ieh:PromotionConstraint descriptors
  * on the pod and refuses promotions that don't satisfy them. The
  * downward causation is no longer agent-mediated; it's mechanical.
  *
@@ -17,8 +17,8 @@
  *     - propose tier-3 amendment "tools may be promoted only if
  *       attestations include the safety axis"
  *     - ratify under override-rules (quorum 1 / threshold 1.0 / no cool)
- *     - publish a cgh:PromotionConstraint descriptor on the pod
- *       linking back to the amendment via cgh:ratifiedBy
+ *     - publish a ieh:PromotionConstraint descriptor on the pod
+ *       linking back to the amendment via ieh:ratifiedBy
  *
  *   Phase 2 — Agent attempts a non-compliant promotion:
  *     - author a tool
@@ -61,10 +61,10 @@ import {
 const SCENARIO = '19-substrate-enforced-regime-change';
 const REPO_ROOT = join(import.meta.dirname ?? '', '..', '..');
 
-const AMENDMENT_R1_TEXT = 'Tools may be promoted to Asserted only if their accumulated attestations include the safety axis at least once. Substrate-enforced via cgh:PromotionConstraint.';
-const AMENDMENT_R1_ID = `urn:cg:amendment:demo19:safety-axis-required:${Date.now()}`;
-const POLICY_ID = 'urn:cg:policy:agent-tool-promotion:v0';
-const CONSTRAINT_IRI = `urn:cgh:promotion-constraint:demo19:safety-required:${Date.now()}`;
+const AMENDMENT_R1_TEXT = 'Tools may be promoted to Asserted only if their accumulated attestations include the safety axis at least once. Substrate-enforced via ieh:PromotionConstraint.';
+const AMENDMENT_R1_ID = `urn:iep:amendment:demo19:safety-axis-required:${Date.now()}`;
+const POLICY_ID = 'urn:iep:policy:agent-tool-promotion:v0';
+const CONSTRAINT_IRI = `urn:ieh:promotion-constraint:demo19:safety-required:${Date.now()}`;
 
 async function spawnInteregoBridge(podUrl: string, port: number, didPrefix: string): Promise<BridgeHandle> {
   const cwd = join(REPO_ROOT, 'demos', 'interego-bridge');
@@ -148,13 +148,13 @@ async function main(): Promise<void> {
     if (!ratify.ratified) fail(`amendment did not ratify: ${ratify.status}`);
     ok(`Amendment R1 ratified (status=${ratify.status})`);
 
-    // Publish the cgh:PromotionConstraint that ac.promote_tool will consult.
-    const constraintTtl = `@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+    // Publish the ieh:PromotionConstraint that ac.promote_tool will consult.
+    const constraintTtl = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-<${CONSTRAINT_IRI}> a cgh:PromotionConstraint ;
+<${CONSTRAINT_IRI}> a ieh:PromotionConstraint ;
   dct:title "Safety-axis required for tool promotion" ;
-  cgh:requiresAttestationAxis "safety" ;
-  cgh:ratifiedBy <${AMENDMENT_R1_ID}> .`;
+  ieh:requiresAttestationAxis "safety" ;
+  ieh:ratifiedBy <${AMENDMENT_R1_ID}> .`;
     await bridgeCall(interegoBridge.url, 'protocol.publish_descriptor', {
       graph_iri: CONSTRAINT_IRI,
       graph_content: constraintTtl,
@@ -172,13 +172,13 @@ async function main(): Promise<void> {
     if (constraintEntry) {
       info(`  constraint descriptor URL: ${constraintEntry.descriptor_url}`);
       info(`  constraint modal_status: ${constraintEntry.modal_status}`);
-      // Fetch the linked graph and confirm cgh:PromotionConstraint is present
+      // Fetch the linked graph and confirm ieh:PromotionConstraint is present
       const graphUrl = constraintEntry.descriptor_url.replace(/\.ttl$/, '-graph.trig');
       try {
         const r = await fetch(graphUrl, { headers: { Accept: 'application/trig, text/turtle' } });
         const trig = r.ok ? await r.text() : '';
-        info(`  graph file fetch ${r.status}; contains cgh:PromotionConstraint: ${trig.includes('cgh:PromotionConstraint')}`);
-        if (!trig.includes('cgh:PromotionConstraint')) {
+        info(`  graph file fetch ${r.status}; contains ieh:PromotionConstraint: ${trig.includes('ieh:PromotionConstraint')}`);
+        if (!trig.includes('ieh:PromotionConstraint')) {
           info(`  graph TRIG (first 600 chars):\n${trig.slice(0, 600)}`);
         }
       } catch (err) {
@@ -194,7 +194,7 @@ You are a tool author. You have one MCP server: ac-bridge.
 (A) ac.author_tool with:
       tool_name:               "demo19-non-compliant"
       source_code:             "function noop() { return 0; }"
-      affordance_action:       "urn:cg:action:demo19:noop"
+      affordance_action:       "urn:iep:action:demo19:noop"
       affordance_description:  "Demo 19 non-compliant attempt"
 
 (B) ac.attest_tool TWICE with:
@@ -333,10 +333,10 @@ Output ONLY a JSON object on a single line:
       `agents read the constitution and chose to comply. Demo 19`,
       `demonstrates the same shape with the SUBSTRATE doing the`,
       `enforcement: \`ac.promote_tool\` consults active`,
-      `\`cgh:PromotionConstraint\` descriptors on the pod when called`,
+      `\`ieh:PromotionConstraint\` descriptors on the pod when called`,
       `with \`enforce_constitutional_constraints=true\` and refuses`,
       `non-compliant promotions. The error message references the`,
-      `constraint IRI and (transitively, via \`cgh:ratifiedBy\`) the`,
+      `constraint IRI and (transitively, via \`ieh:ratifiedBy\`) the`,
       `amendment that produced the constraint, so an auditor can walk`,
       `from any refused promotion back to the vote that produced the`,
       `rule. Closes the "honest scoping" gap noted in Demo 17.`,

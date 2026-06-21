@@ -25,7 +25,7 @@ import { PGSL_NS } from './rdf.js';
 
 // ── Namespaces ────────────────────────────────────────────────
 
-const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/cg#' as const;
+const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#' as const;
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const XSD_NS = 'http://www.w3.org/2001/XMLSchema#';
 const DCT_NS = 'http://purl.org/dc/terms/';
@@ -367,7 +367,7 @@ export function executeSparqlProtocol(
     const triples: string[] = [];
 
     // Emit prefixes
-    triples.push(`@prefix cg: <${CG_NS}> .`);
+    triples.push(`@prefix iep: <${CG_NS}> .`);
     triples.push(`@prefix pgsl: <${PGSL_NS}> .`);
     triples.push(`@prefix xsd: <${XSD_NS}> .`);
     triples.push('');
@@ -453,7 +453,7 @@ export function executeSparqlProtocol(
  *   - pgsl:value on an atom URI -> skip (atoms are immutable)
  *   - pgsl:item on a fragment URI -> interpret as "add item to fragment"
  *     -> create new chain via ingest
- *   - cg:describes / cg:hasFacet -> descriptor mutation (log only,
+ *   - iep:describes / iep:hasFacet -> descriptor mutation (log only,
  *     descriptors live on pods)
  *   - NEW triple with unknown subject -> mint subject as atom,
  *     mint object as atom, create chain (subject, predicate-local, object)
@@ -623,7 +623,7 @@ export function systemToTurtle(state: SystemState): string {
   lines.push(`@prefix xsd: <${XSD_NS}> .`);
   lines.push(`@prefix prov: <http://www.w3.org/ns/prov#> .`);
   lines.push(`@prefix pgsl: <${PGSL_NS}> .`);
-  lines.push(`@prefix cg: <${CG_NS}> .`);
+  lines.push(`@prefix iep: <${CG_NS}> .`);
   lines.push(`@prefix dcat: <${DCAT_NS}> .`);
   lines.push(`@prefix dcterms: <${DCT_NS}> .`);
   lines.push('');
@@ -731,7 +731,7 @@ export function systemToJsonLd(state: SystemState): object {
 
   return {
     '@context': {
-      cg: CG_NS,
+      iep: CG_NS,
       pgsl: PGSL_NS,
       rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
       rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
@@ -746,7 +746,7 @@ export function systemToJsonLd(state: SystemState): object {
 
 /** Compact a predicate IRI using known prefixes */
 function compactPredicate(iri: string): string {
-  if (iri.startsWith(CG_NS)) return `cg:${iri.slice(CG_NS.length)}`;
+  if (iri.startsWith(CG_NS)) return `iep:${iri.slice(CG_NS.length)}`;
   if (iri.startsWith(PGSL_NS)) return `pgsl:${iri.slice(PGSL_NS.length)}`;
   if (iri.startsWith(DCT_NS)) return `dcterms:${iri.slice(DCT_NS.length)}`;
   if (iri.startsWith(DCAT_NS)) return `dcat:${iri.slice(DCAT_NS.length)}`;

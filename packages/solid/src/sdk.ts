@@ -130,7 +130,7 @@ export class ContextGraphsSDK {
     options: PublishOptions = {},
   ): Promise<PublishResult> {
     const now = new Date().toISOString();
-    const descId = `urn:cg:sdk:${Date.now()}` as IRI;
+    const descId = `urn:iep:sdk:${Date.now()}` as IRI;
 
     const builder = ContextDescriptor.create(descId)
 .describes(graphIri as IRI)

@@ -6,7 +6,7 @@
  * src/solid/publish().
  *
  * Honesty discipline encoded in the publishers:
- *   - Probes always Hypothetical (cg:modalStatus = Hypothetical) — the
+ *   - Probes always Hypothetical (iep:modalStatus = Hypothetical) — the
  *     operator-side adp:Probe is an experiment, not a claim about
  *     cause-effect. The publisher REFUSES to publish a probe with
  *     modalStatus !== Hypothetical.
@@ -63,7 +63,7 @@ export async function defineCapability(args: DefineCapabilityArgs, config: Publi
   if (args.rubricCriteria.length === 0) throw new Error('capability must declare at least one rubric criterion');
 
   const capId = sha16(args.name + args.cynefinDomain + nowIso());
-  const capIri = `urn:cg:capability:${capId}` as IRI;
+  const capIri = `urn:iep:capability:${capId}` as IRI;
   const graphIri = `urn:graph:adp:capability:${capId}` as IRI;
 
   const desc = ContextDescriptor.create(capIri)
@@ -75,20 +75,20 @@ export async function defineCapability(args: DefineCapabilityArgs, config: Publi
     .build();
 
   const rubricTriples = args.rubricCriteria.map((rc, i) => {
-    const rcIri = `urn:cg:rubric:${capId}:${i}`;
+    const rcIri = `urn:iep:rubric:${capId}:${i}`;
     const desc = rc.description ? ` ; rdfs:comment "${escapeLit(rc.description)}"` : '';
     return `<${rcIri}> a adp:RubricCriterion ; rdfs:label "${escapeLit(rc.name)}"${desc} .`;
   }).join('\n');
 
   const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
 <${capIri}> a adp:Capability ;
     rdfs:label "${escapeLit(args.name)}" ;
     ${args.description ? `rdfs:comment "${escapeLit(args.description)}" ;` : ''}
     adp:cynefinDomain adp:${args.cynefinDomain} ;
-    ${args.rubricCriteria.map((_, i) => `adp:rubricCriterion <urn:cg:rubric:${capId}:${i}>`).join(' ;\n    ')} .
+    ${args.rubricCriteria.map((_, i) => `adp:rubricCriterion <urn:iep:rubric:${capId}:${i}>`).join(' ;\n    ')} .
 
 ${rubricTriples}
 `;
@@ -121,7 +121,7 @@ export async function recordProbe(args: RecordProbeArgs, config: PublishConfig):
   }
 
   const probeId = sha16(args.variant + args.hypothesis + nowIso());
-  const probeIri = `urn:cg:probe:${probeId}` as IRI;
+  const probeIri = `urn:iep:probe:${probeId}` as IRI;
   const graphIri = `urn:graph:adp:probe:${probeId}` as IRI;
   const validUntil = args.timeBoundUntil ?? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -134,7 +134,7 @@ export async function recordProbe(args: RecordProbeArgs, config: PublishConfig):
     .build();
 
   const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 <${probeIri}> a adp:Probe ;
     adp:variant "${escapeLit(args.variant)}" ;
@@ -143,7 +143,7 @@ export async function recordProbe(args: RecordProbeArgs, config: PublishConfig):
     adp:dampeningTrigger """${escapeMulti(args.dampeningTrigger)}""" ;
     adp:timeBound "${validUntil}" ;
     adp:capability <${args.capabilityIri}> ;
-    cg:modalStatus cg:Hypothetical .
+    iep:modalStatus iep:Hypothetical .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -170,7 +170,7 @@ export async function recordNarrativeFragment(args: RecordNarrativeFragmentArgs,
   if (!args.response.trim() || !args.emergentSignifier.trim()) throw new Error('narrative fragment requires response + emergent signifier');
 
   const fragId = sha16(args.probeIri + args.response + nowIso() + Math.random());
-  const fragIri = `urn:cg:fragment:${fragId}` as IRI;
+  const fragIri = `urn:iep:fragment:${fragId}` as IRI;
   const graphIri = `urn:graph:adp:fragment:${fragId}` as IRI;
 
   const desc = ContextDescriptor.create(fragIri)
@@ -184,14 +184,14 @@ export async function recordNarrativeFragment(args: RecordNarrativeFragmentArgs,
   const sigTriples = args.contextSignifiers.map(s => `adp:contextSignifier "${escapeLit(s)}"`).join(' ;\n    ');
 
   const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 <${fragIri}> a adp:NarrativeFragment ;
     adp:probe <${args.probeIri}> ;
     ${sigTriples} ;
     adp:response """${escapeMulti(args.response)}""" ;
     adp:emergentSignifier "${escapeLit(args.emergentSignifier)}" ;
-    cg:modalStatus cg:Hypothetical .
+    iep:modalStatus iep:Hypothetical .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -221,7 +221,7 @@ export async function emergeSynthesis(args: EmergeSynthesisArgs, config: Publish
   }
 
   const synthId = sha16(args.probeIri + args.emergentPattern + nowIso());
-  const synthIri = `urn:cg:synthesis:${synthId}` as IRI;
+  const synthIri = `urn:iep:synthesis:${synthId}` as IRI;
   const graphIri = `urn:graph:adp:synthesis:${synthId}` as IRI;
 
   const desc = ContextDescriptor.create(synthIri)
@@ -236,14 +236,14 @@ export async function emergeSynthesis(args: EmergeSynthesisArgs, config: Publish
   const narrTriples = args.coherentNarratives.map(n => `adp:coherentNarrative """${escapeMulti(n)}"""`).join(' ;\n    ');
 
   const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 <${synthIri}> a adp:Synthesis ;
     adp:probe <${args.probeIri}> ;
     ${fragsTriples} ;
     adp:emergentPattern """${escapeMulti(args.emergentPattern)}""" ;
     ${narrTriples} ;
-    cg:modalStatus cg:Hypothetical .
+    iep:modalStatus iep:Hypothetical .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -276,7 +276,7 @@ export async function recordEvolutionStep(args: RecordEvolutionStepArgs, config:
   }
 
   const evoId = sha16(args.synthesisIri + nowIso());
-  const evoIri = `urn:cg:evolution:${evoId}` as IRI;
+  const evoIri = `urn:iep:evolution:${evoId}` as IRI;
   const graphIri = `urn:graph:adp:evolution:${evoId}` as IRI;
   const nextRevisitAt = args.nextRevisitAt ?? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -292,7 +292,7 @@ export async function recordEvolutionStep(args: RecordEvolutionStepArgs, config:
   const dampTriples = args.dampenProbeIris.map(p => `adp:dampenProbe <${p}>`).join(' ;\n    ');
 
   const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 <${evoIri}> a adp:EvolutionStep ;
     adp:basedOnSynthesis <${args.synthesisIri}> ;
@@ -300,7 +300,7 @@ export async function recordEvolutionStep(args: RecordEvolutionStepArgs, config:
     ${dampTriples ? `${dampTriples} ;` : ''}
     adp:nextRevisitAt "${nextRevisitAt}" ;
     adp:explicitDecisionNotMade """${escapeMulti(args.explicitDecisionNotMade)}""" ;
-    cg:modalStatus cg:Asserted .
+    iep:modalStatus iep:Asserted .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -332,7 +332,7 @@ export async function refineConstraint(args: RefineConstraintArgs, config: Publi
   }
 
   const cId = sha16(args.boundary + nowIso());
-  const cIri = `urn:cg:constraint:${cId}` as IRI;
+  const cIri = `urn:iep:constraint:${cId}` as IRI;
   const graphIri = `urn:graph:adp:constraint:${cId}` as IRI;
 
   const desc = ContextDescriptor.create(cIri)
@@ -344,10 +344,10 @@ export async function refineConstraint(args: RefineConstraintArgs, config: Publi
     .build();
 
   const emergedTriples = args.emergedFromSynthesisIris.map(s => `adp:emergedFrom <${s}>`).join(' ;\n    ');
-  const supersedesTriple = args.supersedes ? `cg:supersedes <${args.supersedes}> ;` : '';
+  const supersedesTriple = args.supersedes ? `iep:supersedes <${args.supersedes}> ;` : '';
 
   const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 <${cIri}> a adp:Constraint ;
     adp:appliesTo <${args.capabilityIri}> ;
@@ -355,7 +355,7 @@ export async function refineConstraint(args: RefineConstraintArgs, config: Publi
     adp:exitsConstraint """${escapeMulti(args.exitsConstraint)}""" ;
     ${emergedTriples} ;
     ${supersedesTriple}
-    cg:modalStatus cg:Asserted .
+    iep:modalStatus iep:Asserted .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -385,7 +385,7 @@ export async function recognizeCapabilityEvolution(args: RecognizeCapabilityEvol
   }
 
   const ceId = sha16(args.capabilityIri + args.evolutionType + nowIso());
-  const ceIri = `urn:cg:capability-evolution:${ceId}` as IRI;
+  const ceIri = `urn:iep:capability-evolution:${ceId}` as IRI;
   const graphIri = `urn:graph:adp:capability-evolution:${ceId}` as IRI;
 
   const desc = ContextDescriptor.create(ceIri)
@@ -399,7 +399,7 @@ export async function recognizeCapabilityEvolution(args: RecognizeCapabilityEvol
   const emergedTriples = args.emergedFromIris.map(i => `adp:emergedFrom <${i}>`).join(' ;\n    ');
 
   const graphContent = `@prefix adp:      <${ADP_NS}> .
-@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix passport: <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
 @prefix olke:     <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
 
@@ -409,7 +409,7 @@ export async function recognizeCapabilityEvolution(args: RecognizeCapabilityEvol
     ${emergedTriples} ;
     adp:olkeStage olke:${args.olkeStage} ;
     adp:explicitDecisionNotMade """${escapeMulti(args.explicitDecisionNotMade)}""" ;
-    cg:modalStatus cg:Asserted .
+    iep:modalStatus iep:Asserted .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);

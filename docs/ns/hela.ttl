@@ -1,7 +1,7 @@
 @prefix hela: <https://markjspivey-xwisee.github.io/interego/ns/hela#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
-@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix ieh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
@@ -33,18 +33,18 @@
 #    - Sheafification yields the "right" answer when multiple
 #      statements about the same learner disagree
 #
-#  HELA aligns with Interego's cg:ProvenanceFacet — every xAPI
+#  HELA aligns with Interego's iep:ProvenanceFacet — every xAPI
 #  statement is a prov:Activity with attribution, and every
-#  learner's trace is a sub-presheaf. cg:TemporalFacet carries
-#  the validity window; cg:TrustFacet carries the attestor.
+#  learner's trace is a sub-presheaf. iep:TemporalFacet carries
+#  the validity window; iep:TrustFacet carries the attestor.
 
 <https://markjspivey-xwisee.github.io/interego/ns/hela>
     a owl:Ontology ;
     dct:title "HELA — Topos-theoretic xAPI stack" ;
-    dct:description "Models xAPI learning-record data as a presheaf category ℰ = Set^(𝒞_xAPI^op). Provides the categorical structure that lets learning records compose, refine, and sheafify. Aligns with cg:ProvenanceFacet + cg:TemporalFacet + cg:TrustFacet." ;
+    dct:description "Models xAPI learning-record data as a presheaf category ℰ = Set^(𝒞_xAPI^op). Provides the categorical structure that lets learning records compose, refine, and sheafify. Aligns with iep:ProvenanceFacet + iep:TemporalFacet + iep:TrustFacet." ;
     vann:preferredNamespacePrefix "hela" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/hela#" ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> .
 
 hela:Statement a owl:Class ;
     rdfs:subClassOf prov:Activity ;
@@ -63,17 +63,17 @@ hela:Verb a owl:Class ;
 hela:LearningObject a owl:Class ;
     rdfs:label "HELA Learning Object" ;
     rdfs:comment "The object of an xAPI statement — what the actor experienced / did. As a sub-presheaf of hela:Trace." ;
-    rdfs:subClassOf cg:ContextDescriptor .
+    rdfs:subClassOf iep:ContextDescriptor .
 
 hela:Trace a owl:Class ;
     rdfs:label "HELA Trace" ;
-    rdfs:comment "A learner's full sequence of statements over time — a presheaf ℰ : 𝒞_xAPI^op → Set. Realized as a cg:ContextDescriptor whose facets carry the PROV + Temporal structure." ;
-    rdfs:subClassOf cg:ContextDescriptor .
+    rdfs:comment "A learner's full sequence of statements over time — a presheaf ℰ : 𝒞_xAPI^op → Set. Realized as a iep:ContextDescriptor whose facets carry the PROV + Temporal structure." ;
+    rdfs:subClassOf iep:ContextDescriptor .
 
 hela:SubobjectClassifier a owl:Class ;
     rdfs:label "Subobject Classifier" ;
-    rdfs:comment "The Ω of the topos ℰ — classifies which subsets of statements constitute 'valid' or 'complete' views for a given learner / certificate. Constructed at runtime from a pgsl:Fragment (the trace structure) and a cg:SemioticFacet (the validity criterion). See src/pgsl/classifier.ts." ;
-    cg:constructedFrom ( pgsl:Fragment cg:SemioticFacet ) .
+    rdfs:comment "The Ω of the topos ℰ — classifies which subsets of statements constitute 'valid' or 'complete' views for a given learner / certificate. Constructed at runtime from a pgsl:Fragment (the trace structure) and a iep:SemioticFacet (the validity criterion). See src/pgsl/classifier.ts." ;
+    iep:constructedFrom ( pgsl:Fragment iep:SemioticFacet ) .
 
 hela:presheafOf a owl:ObjectProperty ;
     rdfs:label "presheaf of" ;
@@ -82,8 +82,8 @@ hela:presheafOf a owl:ObjectProperty ;
 
 # ── Alignments ────────────────────────────────────────────────
 
-hela:Statement rdfs:seeAlso cg:ProvenanceFacet ;
-    rdfs:comment "Every HELA statement's attribution + timing is captured by cg:ProvenanceFacet when wrapped as a cg:ContextDescriptor." .
+hela:Statement rdfs:seeAlso iep:ProvenanceFacet ;
+    rdfs:comment "Every HELA statement's attribution + timing is captured by iep:ProvenanceFacet when wrapped as a iep:ContextDescriptor." .
 
-hela:Actor skos:closeMatch cg:AuthorizedAgent ;
-    rdfs:comment "Both represent an actor with delegated or original authority — cg:AuthorizedAgent is the pod-registry form, hela:Actor is the learning-context form." .
+hela:Actor skos:closeMatch iep:AuthorizedAgent ;
+    rdfs:comment "Both represent an actor with delegated or original authority — iep:AuthorizedAgent is the pod-registry form, hela:Actor is the learning-context form." .

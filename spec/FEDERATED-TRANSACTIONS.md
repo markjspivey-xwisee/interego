@@ -24,35 +24,35 @@ explicit compensation if a later step fails.
 
 ## The protocol
 
-A `cg:Transaction` is itself a `cg:ContextDescriptor` carrying:
+A `iep:Transaction` is itself a `iep:ContextDescriptor` carrying:
 
 ```turtle
-<urn:txn:42> a cg:Transaction ;
-    cg:txnState cg:TxnPending ;
-    cg:hasStep <urn:txn:42/step-1>, <urn:txn:42/step-2>, <urn:txn:42/step-3> ;
-    cg:txnIsolation cg:ReadCommitted ;
-    cg:txnCoordinator <urn:agent:alice> .
+<urn:txn:42> a iep:Transaction ;
+    iep:txnState iep:TxnPending ;
+    iep:hasStep <urn:txn:42/step-1>, <urn:txn:42/step-2>, <urn:txn:42/step-3> ;
+    iep:txnIsolation iep:ReadCommitted ;
+    iep:txnCoordinator <urn:agent:alice> .
 
-<urn:txn:42/step-1> a cg:TransactionStep ;
-    cg:targetPod <https://pod-a.example/> ;
-    cg:forwardAction <urn:action:publish-descriptor-A> ;
-    cg:compensatingAction <urn:action:retract-descriptor-A> ;
-    cg:stepOrder 1 ;
-    cg:stepState cg:StepCommitted .
+<urn:txn:42/step-1> a iep:TransactionStep ;
+    iep:targetPod <https://pod-a.example/> ;
+    iep:forwardAction <urn:action:publish-descriptor-A> ;
+    iep:compensatingAction <urn:action:retract-descriptor-A> ;
+    iep:stepOrder 1 ;
+    iep:stepState iep:StepCommitted .
 ```
 
 Each step has:
 - **forward action:** the operation that achieves the desired effect on the target pod
 - **compensating action:** the operation that undoes it, idempotent under retry
 
-Transactions execute steps in `cg:stepOrder`. If any step fails:
-1. Mark step as `cg:StepFailed`.
+Transactions execute steps in `iep:stepOrder`. If any step fails:
+1. Mark step as `iep:StepFailed`.
 2. Walk completed steps in reverse, executing each `compensatingAction`.
-3. Mark transaction as `cg:TxnAborted`.
+3. Mark transaction as `iep:TxnAborted`.
 
 If all steps succeed:
-1. Mark transaction as `cg:TxnCommitted`.
-2. Optionally publish a `cg:TransactionLog` summary descriptor.
+1. Mark transaction as `iep:TxnCommitted`.
+2. Optionally publish a `iep:TransactionLog` summary descriptor.
 
 ## Resumable execution: publish-before-execute convention
 
@@ -64,8 +64,8 @@ section specifies a convention that makes sagas first-class descriptors
 on the coordinator's own pod, so crash recovery is just another tick of
 the agent's normal discovery loop.
 
-The convention reuses existing primitives only: `cg:modalStatus`,
-`cg:supersedes`, the `Provenance` facet, the saga forward/compensation
+The convention reuses existing primitives only: `iep:modalStatus`,
+`iep:supersedes`, the `Provenance` facet, the saga forward/compensation
 pair already defined above, and the standard discovery filter. There
 is no new ontology and no new protocol — only the requirement that
 every runtime publish at the same points so the recovery story is
@@ -74,15 +74,15 @@ uniform across coordinators.
 ### The pattern
 
 Before calling `executeTransaction(saga)`, the coordinator SHOULD
-publish the saga itself as a `cg:Transaction` descriptor to its own
+publish the saga itself as a `iep:Transaction` descriptor to its own
 pod, with:
 
-- `cg:modalStatus` set to `"Hypothetical"` — the saga is in flight
+- `iep:modalStatus` set to `"Hypothetical"` — the saga is in flight
   and its outcomes are not yet asserted.
 - A `Provenance` facet whose `wasGeneratedBy` cites the coordinator
   DID and whose `generatedAtTime` records the begin instant.
-- The full step list — including each step's `cg:targetPod`,
-  `cg:forwardAction`, `cg:compensatingAction`, and `cg:stepOrder` —
+- The full step list — including each step's `iep:targetPod`,
+  `iep:forwardAction`, `iep:compensatingAction`, and `iep:stepOrder` —
   embedded as the graph payload, so any reader can reconstruct the
   saga without out-of-band knowledge.
 
@@ -94,10 +94,10 @@ coordinator MAY crash without losing recovery information.
 When `executeTransaction` returns a `Committed` `TxnResult`, the
 coordinator SHOULD publish a follow-up descriptor that:
 
-- Sets `cg:supersedes` to the in-flight descriptor's IRI.
-- Sets `cg:modalStatus` to `"Asserted"` — the saga's outcomes are
+- Sets `iep:supersedes` to the in-flight descriptor's IRI.
+- Sets `iep:modalStatus` to `"Asserted"` — the saga's outcomes are
   now claimed truth.
-- Records each step's terminal `cg:stepState` (`cg:StepCommitted` for
+- Records each step's terminal `iep:stepState` (`iep:StepCommitted` for
   all, by construction) and the `durationMs` returned by
   `executeTransaction`.
 
@@ -108,14 +108,14 @@ as superseded and the new one as the authoritative record.
 
 On the next tick after restart, the coordinator's discovery loop runs
 its standard scan (e.g. `discover_context` or `discover_all`) with a
-filter for descriptors that are both `cg:modalStatus = "Hypothetical"`
-and not `cg:supersedes`'d by any later descriptor. Any matches are
+filter for descriptors that are both `iep:modalStatus = "Hypothetical"`
+and not `iep:supersedes`'d by any later descriptor. Any matches are
 in-flight sagas owned by this coordinator that did not reach a
 terminal state. For each such saga the coordinator MUST:
 
 1. Read the saga descriptor's payload to reconstruct the step list,
    target pods, and the forward / compensation pair for every step.
-2. For each step in `cg:stepOrder`, probe the target pod for the
+2. For each step in `iep:stepOrder`, probe the target pod for the
    observable side effect that the forward action would produce (a
    published descriptor at a known IRI, a registry entry, an
    attestation). This determines `done` / `not-done` per step
@@ -130,8 +130,8 @@ terminal state. For each such saga the coordinator MUST:
      always abort in-flight." Walk done steps in reverse order
      executing each `compensatingAction`.
 4. On final resolution, publish the superseding descriptor:
-   - `cg:modalStatus = "Asserted"` if the resume completed.
-   - `cg:modalStatus = "Counterfactual"` if compensation completed —
+   - `iep:modalStatus = "Asserted"` if the resume completed.
+   - `iep:modalStatus = "Counterfactual"` if compensation completed —
      the saga's intended effects were rolled back and the descriptor
      records what was attempted, not what holds.
 
@@ -141,9 +141,9 @@ turns out to have committed is safe.
 
 ### Why this composition works without new primitives
 
-- `cg:modalStatus` already distinguishes in-flight (`"Hypothetical"`)
+- `iep:modalStatus` already distinguishes in-flight (`"Hypothetical"`)
   from committed (`"Asserted"`) and rolled-back (`"Counterfactual"`).
-- `cg:supersedes` already gives "this descriptor replaces the prior"
+- `iep:supersedes` already gives "this descriptor replaces the prior"
   semantics, so the terminal descriptor cleanly retires the
   in-flight one.
 - The `Provenance` facet already records actor and time, so the
@@ -152,7 +152,7 @@ turns out to have committed is safe.
   protocol" and implemented in `src/transactions/index.ts`.
 - The discovery filter for "Hypothetical and not superseded" is
   already supported by the standard `matchesFilter` on
-  `cg:modalStatus` plus a `cg:supersedes` absence check.
+  `iep:modalStatus` plus a `iep:supersedes` absence check.
 
 Result: zero new protocol surface. This section is a written
 convention so that every coordinator publishes at the same points
@@ -167,22 +167,22 @@ pod A, notify pod B, update a registry entry on pod C."
 `<urn:txn:credential-issue-42>` to its own pod:
 
 ```turtle
-<urn:txn:credential-issue-42> a cg:Transaction, cg:ContextDescriptor ;
-    cg:modalStatus "Hypothetical" ;
-    cg:txnState cg:TxnPending ;
-    cg:txnCoordinator <did:web:alice.example> ;
-    cg:txnIsolation cg:ReadCommitted ;
-    cg:hasStep <urn:txn:credential-issue-42/step-1>,
+<urn:txn:credential-issue-42> a iep:Transaction, iep:ContextDescriptor ;
+    iep:modalStatus "Hypothetical" ;
+    iep:txnState iep:TxnPending ;
+    iep:txnCoordinator <did:web:alice.example> ;
+    iep:txnIsolation iep:ReadCommitted ;
+    iep:hasStep <urn:txn:credential-issue-42/step-1>,
                <urn:txn:credential-issue-42/step-2>,
                <urn:txn:credential-issue-42/step-3> ;
     prov:wasGeneratedBy <did:web:alice.example> ;
     prov:generatedAtTime "2026-05-30T14:02:11Z"^^xsd:dateTime .
 
-<urn:txn:credential-issue-42/step-1> a cg:TransactionStep ;
-    cg:targetPod <https://pod-a.example/> ;
-    cg:forwardAction <urn:action:publish-credential> ;
-    cg:compensatingAction <urn:action:retract-credential> ;
-    cg:stepOrder 1 ; cg:stepState cg:StepPending .
+<urn:txn:credential-issue-42/step-1> a iep:TransactionStep ;
+    iep:targetPod <https://pod-a.example/> ;
+    iep:forwardAction <urn:action:publish-credential> ;
+    iep:compensatingAction <urn:action:retract-credential> ;
+    iep:stepOrder 1 ; iep:stepState iep:StepPending .
 # … step-2 (notify pod B), step-3 (registry update on pod C) analogous
 ```
 
@@ -192,7 +192,7 @@ notification). The coordinator process is killed before step 3.
 
 **Phase 2 — readers see in-flight.** A federated reader scanning
 Alice's pod sees `<urn:txn:credential-issue-42>` with
-`cg:modalStatus "Hypothetical"` and no superseding descriptor —
+`iep:modalStatus "Hypothetical"` and no superseding descriptor —
 they treat the saga's effects as not yet asserted.
 
 **Phase 3 — restart.** Coordinator process restarts. Its discovery
@@ -202,16 +202,16 @@ present), pod C (registry entry is absent). Contiguous-prefix
 check passes: it resumes from step 3, which succeeds. It publishes:
 
 ```turtle
-<urn:txn:credential-issue-42/result> a cg:Transaction, cg:ContextDescriptor ;
-    cg:modalStatus "Asserted" ;
-    cg:supersedes <urn:txn:credential-issue-42> ;
-    cg:txnState cg:TxnCommitted ;
-    cg:hasStep <urn:txn:credential-issue-42/step-1>,
+<urn:txn:credential-issue-42/result> a iep:Transaction, iep:ContextDescriptor ;
+    iep:modalStatus "Asserted" ;
+    iep:supersedes <urn:txn:credential-issue-42> ;
+    iep:txnState iep:TxnCommitted ;
+    iep:hasStep <urn:txn:credential-issue-42/step-1>,
                <urn:txn:credential-issue-42/step-2>,
                <urn:txn:credential-issue-42/step-3> ;
     prov:wasGeneratedBy <did:web:alice.example> ;
     prov:generatedAtTime "2026-05-30T14:08:47Z"^^xsd:dateTime .
-# each step now carries cg:stepState cg:StepCommitted
+# each step now carries iep:stepState iep:StepCommitted
 ```
 
 **Phase 4 — readers see the result.** The same federated reader's
@@ -219,7 +219,7 @@ next scan sees the in-flight descriptor as superseded and the new
 descriptor as `"Asserted"`. If instead the operator's policy had
 been "abort on restart," Phase 3 would have compensated step 2
 then step 1, and the superseding descriptor would carry
-`cg:modalStatus "Counterfactual"` with `cg:txnState cg:TxnAborted`.
+`iep:modalStatus "Counterfactual"` with `iep:txnState iep:TxnAborted`.
 
 ### Cross-references
 
@@ -234,22 +234,22 @@ then step 1, and the superseding descriptor would carry
 
 ## Isolation levels
 
-- **`cg:ReadUncommitted`** — readers may see in-progress writes. Cheapest. Acceptable when atomic visibility doesn't matter (e.g., logging).
-- **`cg:ReadCommitted`** — readers see only committed data. Each pod marks pending writes invisible until the transaction's `cg:txnState` becomes `cg:TxnCommitted`. Default.
-- **`cg:RepeatableRead`** — within a transaction, repeated reads of the same descriptor return the same value. Implementation: snapshot descriptor versions at transaction start.
-- **`cg:Serializable`** — no concurrent transactions can see each other's effects. Highest cost; requires either single-coordinator scheduling or distributed conflict detection.
+- **`iep:ReadUncommitted`** — readers may see in-progress writes. Cheapest. Acceptable when atomic visibility doesn't matter (e.g., logging).
+- **`iep:ReadCommitted`** — readers see only committed data. Each pod marks pending writes invisible until the transaction's `iep:txnState` becomes `iep:TxnCommitted`. Default.
+- **`iep:RepeatableRead`** — within a transaction, repeated reads of the same descriptor return the same value. Implementation: snapshot descriptor versions at transaction start.
+- **`iep:Serializable`** — no concurrent transactions can see each other's effects. Highest cost; requires either single-coordinator scheduling or distributed conflict detection.
 
 ## Failure modes
 
 - **Coordinator crashes mid-transaction:** the transaction descriptor on the coordinator's pod records committed steps. On recovery, replay or compensate.
 - **Participant pod unreachable:** retry with backoff. After threshold, abort + compensate.
-- **Compensating action also fails:** raise a `cg:TxnPartialAbort`. Manual reconciliation required. The transaction descriptor records exactly which steps committed and which compensations failed, so the situation is auditable.
+- **Compensating action also fails:** raise a `iep:TxnPartialAbort`. Manual reconciliation required. The transaction descriptor records exactly which steps committed and which compensations failed, so the situation is auditable.
 - **Network partition splits coordinator from participants mid-commit:** the coordinator's view becomes the authority. Participants that committed after losing contact may need to reconcile when the partition heals.
 
 ## Composition with other primitives
 
-- **ABAC:** transactions can carry their own `cg:AccessControlPolicy`; only authorized agents can begin or compensate.
-- **cg:supersedes:** a committed transaction's effects on a descriptor are recorded as a supersession with the transaction IRI as the cause.
+- **ABAC:** transactions can carry their own `iep:AccessControlPolicy`; only authorized agents can begin or compensate.
+- **iep:supersedes:** a committed transaction's effects on a descriptor are recorded as a supersession with the transaction IRI as the cause.
 - **AMTA attestations:** an attestor can certify that a particular transaction completed correctly; useful for high-stakes workflows.
 - **Capability passport:** a successful transaction is a `passport:LifeEvent` for the coordinator.
 

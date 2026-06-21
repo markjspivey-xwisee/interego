@@ -5,13 +5,13 @@
  * to Interego" in-memory store gets refactored into. From the outside
  * it's `put(key, value) / get(key) / list() / delete(key)` — exactly
  * what the existing in-memory Maps offered. From the inside every
- * write becomes a real cg:ContextDescriptor on the tenant pod:
+ * write becomes a real iep:ContextDescriptor on the tenant pod:
  *
  *    put(key, value)
  *       ↓
  *    mint pgsl:Atom for the payload
  *       ↓
- *    build cg:ContextDescriptor (typed conformsTo `${typeIri}`, all
+ *    build iep:ContextDescriptor (typed conformsTo `${typeIri}`, all
  *    seven facets)
  *       ↓
  *    publish(descriptor, graph, pod)  — TriG named graph carries the
@@ -20,7 +20,7 @@
  * Updates to the same key re-publish at the same slug (descriptor file
  * is overwritten with HTTP If-Match CAS; manifest stays consistent).
  * "Deletes" publish a tombstone descriptor with foxxi:isDeleted + a
- * cg:supersedes link to the previous version — the substrate keeps a
+ * iep:supersedes link to the previous version — the substrate keeps a
  * complete history. Reads land on a hot mirror that rehydrates from
  * the pod on a TTL.
  *
@@ -165,7 +165,7 @@ function buildGraph(args: {
   lines.push(`@prefix dct:   <http://purl.org/dc/terms/> .`);
   lines.push(`@prefix prov:  <http://www.w3.org/ns/prov#> .`);
   lines.push(`@prefix pgsl:  <https://markjspivey-xwisee.github.io/interego/ns/pgsl/v1#> .`);
-  lines.push(`@prefix cg:    <https://markjspivey-xwisee.github.io/interego/ns/cg#> .`);
+  lines.push(`@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .`);
   lines.push(`@prefix foxxi: <${FOXXI}> .`);
   lines.push(`@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .`);
   lines.push(``);
@@ -174,7 +174,7 @@ function buildGraph(args: {
   lines.push(`  prov:wasAttributedTo <${args.authoritativeSource}> ;`);
   lines.push(`  pgsl:hasAtom <${args.payloadAtom}> ;`);
   lines.push(`  dct:identifier "sha256:${hash}" ;`);
-  if (args.supersedes) lines.push(`  cg:supersedes <${args.supersedes}> ;`);
+  if (args.supersedes) lines.push(`  iep:supersedes <${args.supersedes}> ;`);
   if (args.isDeleted) lines.push(`  <${FOXXI_IS_DELETED}> "true"^^xsd:boolean ;`);
   lines.push(`  <${FOXXI_BUNDLE_JSON}> "${b64}"^^xsd:base64Binary .`);
   return lines.join('\n');
@@ -193,9 +193,9 @@ function isTombstoned(turtle: string): boolean {
 
 /**
  * Pod-backed key-value store. Each key becomes a typed
- * cg:ContextDescriptor on the pod; updates re-publish at the same
+ * iep:ContextDescriptor on the pod; updates re-publish at the same
  * slug (HTTP If-Match CAS keeps the manifest consistent); deletes
- * publish a tombstone with `foxxi:isDeleted` and a `cg:supersedes`
+ * publish a tombstone with `foxxi:isDeleted` and a `iep:supersedes`
  * pointer to the previous descriptor version.
  *
  * Reads land on a hot in-process mirror; the mirror rehydrates from

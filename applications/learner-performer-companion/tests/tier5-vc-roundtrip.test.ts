@@ -54,7 +54,7 @@ const NEW_EMPLOYER_KEY  = '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb
 // ── Build an OB 3.0-shaped credential descriptor ─────────────────────
 
 function buildOB3CredentialDescriptor(holder: IRI, issuer: IRI) {
-  return ContextDescriptor.create('urn:cg:credential:open-badge-3:cs101-mod3' as IRI)
+  return ContextDescriptor.create('urn:iep:credential:open-badge-3:cs101-mod3' as IRI)
     .describes('urn:graph:lpc:credential' as IRI)
     .temporal({ validFrom: '2025-09-15T11:00:00Z' })
     .asserted(0.99)

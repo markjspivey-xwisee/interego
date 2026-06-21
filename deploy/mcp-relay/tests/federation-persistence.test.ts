@@ -158,7 +158,7 @@ async function run() {
       body: JSON.stringify({
         '@context': { relay: 'https://interego-emergent.example/ns/mcp-relay#' },
         '@id': `urn:interego:mcp-relay:federation:${sha.slice(0, 16)}`,
-        '@type': 'urn:cg:relay:FederationEntry',
+        '@type': 'urn:iep:relay:FederationEntry',
         url: 'https://leaked-self.example/pod/',
         via: 'self',
         addedAt: new Date().toISOString(),

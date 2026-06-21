@@ -10,7 +10,7 @@
  *
  * Foundation-first: the holon is the canonical, content-addressed, encrypted form;
  * the RDF record + projected descriptor are projections over it (the descriptor
- * carries cg:pgslUri back to the holon). Holons are built via the Foxxi-vertical
+ * carries iep:pgslUri back to the holon). Holons are built via the Foxxi-vertical
  * ingestion profiles (xapi for performances, lers for credentials) — xAPI/LERS are
  * Foxxi concerns, not substrate primitives, so the vertical registers them here.
  *

@@ -101,16 +101,16 @@ function projectMultiNarrativeToStatement(narratives: readonly string[]) {
     verb: { id: 'http://adlnet.gov/expapi/verbs/observed', display: { 'en-US': 'observed' } },
     object: {
       objectType: 'Activity',
-      id: 'urn:cg:synthesis:tone-week-1',
+      id: 'urn:iep:synthesis:tone-week-1',
       definition: { name: { 'en-US': 'Sensemaking synthesis: tone probe week 1' } },
     },
     result: {
       response: narratives[0],
       extensions: {
-        'urn:cg:source-descriptor':   'urn:cg:synthesis:tone-week-1',
-        'urn:cg:modal-status':        'Hypothetical',
-        'urn:cg:coherent-narratives': narratives,
-        'urn:cg:projection-lossy':    true,
+        'urn:iep:source-descriptor':   'urn:iep:synthesis:tone-week-1',
+        'urn:iep:modal-status':        'Hypothetical',
+        'urn:iep:coherent-narratives': narratives,
+        'urn:iep:projection-lossy':    true,
       },
     },
     timestamp: new Date().toISOString(),
@@ -233,10 +233,10 @@ describe('Tier 3 — real LRS (Lrsql) wire-level integration', () => {
     const fetched = await get.json() as { result: { extensions: Record<string, unknown> } };
 
     // The lossy markers we set on projection must survive LRS storage
-    expect(fetched.result.extensions['urn:cg:projection-lossy']).toBe(true);
-    expect(fetched.result.extensions['urn:cg:modal-status']).toBe('Hypothetical');
-    expect(fetched.result.extensions['urn:cg:source-descriptor']).toBe('urn:cg:synthesis:tone-week-1');
-    expect(fetched.result.extensions['urn:cg:coherent-narratives']).toEqual(narratives);
+    expect(fetched.result.extensions['urn:iep:projection-lossy']).toBe(true);
+    expect(fetched.result.extensions['urn:iep:modal-status']).toBe('Hypothetical');
+    expect(fetched.result.extensions['urn:iep:source-descriptor']).toBe('urn:iep:synthesis:tone-week-1');
+    expect(fetched.result.extensions['urn:iep:coherent-narratives']).toEqual(narratives);
   });
 
   it('LRS rejects malformed Statement (missing required actor field) — confirms validation is real', { timeout: 15000 }, async (ctx) => {

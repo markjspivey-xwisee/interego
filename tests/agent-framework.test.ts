@@ -524,7 +524,7 @@ describe('PROV Action Tracing', () => {
       const turtle = traceToTurtle(trace);
       expect(turtle).toContain('@prefix prov:');
       expect(turtle).toContain('@prefix xsd:');
-      expect(turtle).toContain('@prefix cg:');
+      expect(turtle).toContain('@prefix iep:');
     });
 
     it('contains prov:Activity, prov:wasAssociatedWith, prov:used', () => {

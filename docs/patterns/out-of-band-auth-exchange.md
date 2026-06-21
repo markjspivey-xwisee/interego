@@ -97,7 +97,7 @@ survive popup blockers) and navigate it once the URL resolves.
 
 ## Layering
 
-L2 pattern, **no new `cg:` term**. The mint/exchange endpoints are
+L2 pattern, **no new `iep:` term**. The mint/exchange endpoints are
 ordinary HTTP resources; the code store is bridge-local state. The
 `fromExchange` marker lives in the affordance/link-serialization shape
 (vertical infrastructure), not in the L1 ontology. A vertical that does

@@ -22,7 +22,7 @@
  *
  * DESCRIPTOR CHAIN
  *   D_A, D_B, D_C are SIBLINGS over the same described graph IRI.
- *   They do NOT cg:supersedes each other (distinct agents, no retraction).
+ *   They do NOT iep:supersedes each other (distinct agents, no retraction).
  *   Verifier discovers all three, then runs the composition algebra:
  *     · union(union(D_A, D_B), D_C)
  *     · restriction(..., ['Semiotic','Trust'])
@@ -64,7 +64,7 @@ const ARENA_DATE = process.env.DISPUTED_FACT_DATE ?? '2026-06-01';
 const ARENA_POD = `${CSS}/demos/emergent-disputed-fact-arena-${ARENA_DATE}/`;
 
 // Vertical namespace — scenario-specific predicates only.
-// Per ontology hygiene: no owned-prefix (cg:/cgh:/pgsl:/…) inventions.
+// Per ontology hygiene: no owned-prefix (iep:/ieh:/pgsl:/…) inventions.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/disputed-fact-arena — composition-algebra lens#';
 const NF = (slug) => `${SCENARIO_NS}${slug}`;
 const NODE_FINDING_IRI = NF('NodeFinding');
@@ -213,13 +213,13 @@ async function publishNodeFinding(agent, claim) {
   );
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix scenario: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${descIri}> a cg:ContextDescriptor, scenario:NodeFinding ;
+<${descIri}> a iep:ContextDescriptor, scenario:NodeFinding ;
   dcterms:conformsTo <${NODE_FINDING_IRI}> ;
   scenario:subject <${DISPUTED_GRAPH_IRI}> ;
   scenario:agent <${agent.did}> ;
@@ -233,7 +233,7 @@ async function publishNodeFinding(agent, claim) {
   prov:generatedAtTime "${new Date().toISOString()}"^^xsd:dateTime .
 `.trim();
 
-  // Build a real cg:ContextDescriptor with Semiotic + Trust + Provenance
+  // Build a real iep:ContextDescriptor with Semiotic + Trust + Provenance
   // facets so the composition operators have real facets to merge.
   const descriptor = ContextDescriptor.create(descIri)
     .describes(DISPUTED_GRAPH_IRI)
@@ -462,13 +462,13 @@ const verifierWallet = Wallet.createRandom();
 const verifierDid = `did:key:${verifierWallet.address.toLowerCase()}#verifier`;
 const verdictIri = `urn:demo:disputed-fact-arena:${ARENA_DATE}:verdict`;
 const verdictGraph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix scenario: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${verdictIri}> a cg:ContextDescriptor, scenario:Verdict ;
+<${verdictIri}> a iep:ContextDescriptor, scenario:Verdict ;
   dcterms:conformsTo <${VERDICT_IRI}> ;
   scenario:subject <${DISPUTED_GRAPH_IRI}> ;
   scenario:references ${published.map(p => `<${p.pub.descriptorUrl}>`).join(', ')} ;

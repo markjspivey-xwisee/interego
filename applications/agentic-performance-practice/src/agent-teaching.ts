@@ -6,15 +6,15 @@
  * composes them rather than parallelling them:
  *
  *   · agent-collective (`ac:`) — agents author tools as first-class
- *     signed descriptors (`code:Commit` + `cg:Affordance`), and teach
+ *     signed descriptors (`code:Commit` + `iep:Affordance`), and teach
  *     each other by bundling a tool with its practice context into an
  *     `ac:TeachingPackage`. A package's trust accrues through
- *     `amta:Attestation`s until `cg:modalStatus` flips to Asserted.
+ *     `amta:Attestation`s until `iep:modalStatus` flips to Asserted.
  *   · agent-development-practice (`adp:`) — the complexity-informed
  *     practice the package carries: narrative fragments, syntheses,
  *     constraints, capability-evolution events; probe-sense-respond.
- *   · the substrate — `cg:Affordance` (tools), `amta:Attestation`
- *     (trust), `cg:modalStatus` / `cg:supersedes`, the capability
+ *   · the substrate — `iep:Affordance` (tools), `amta:Attestation`
+ *     (trust), `iep:modalStatus` / `iep:supersedes`, the capability
  *     passport and the registry.
  *
  * What is taught, agent to agent, is an `ac:TeachingPackage`. This
@@ -58,13 +58,13 @@ export type OlkeStage = 'Tacit' | 'Articulate' | 'Collective' | 'Institutional';
 export interface TeachingPackageRef {
   /** The `ac:TeachingPackage` IRI. */
   iri: string;
-  /** The `ac:AgentTool` artifact at its core — a `cg:Affordance`-bearing tool. */
+  /** The `ac:AgentTool` artifact at its core — a `iep:Affordance`-bearing tool. */
   artifactIri: string;
   /** The competency the package transfers. */
   competency: string;
   /** OLKE maturity stage of the practice it carries. */
   olkeStage: OlkeStage;
-  /** `cg:modalStatus` — Hypothetical until attested transfers promote it. */
+  /** `iep:modalStatus` — Hypothetical until attested transfers promote it. */
   modalStatus: 'Hypothetical' | 'Asserted';
 }
 
@@ -165,7 +165,7 @@ export interface TransferVerdict {
   transferred: boolean;
   before: TrajectorySummary;
   after: TrajectorySummary;
-  /** `cg:modalStatus` for the transfer claim — Asserted when the
+  /** `iep:modalStatus` for the transfer claim — Asserted when the
    *  learner's trajectories carry enough evidence to read. */
   modalStatus: 'Hypothetical' | 'Asserted';
   evidence: string;
@@ -221,7 +221,7 @@ export function verifyCapabilityTransfer(input: {
  * attestation, of a *new kind* (observed behaviour in the learner's
  * trajectories, not an execution count), that flows into the SAME
  * attestation discipline `ac:` already uses to promote a teaching
- * package's `cg:modalStatus` to Asserted.
+ * package's `iep:modalStatus` to Asserted.
  */
 export interface TransferAttestation {
   /** `amta:attestsTo` — the teaching package this attests to. */

@@ -32,9 +32,9 @@ All assets and processes in scope for the Information Security Policy ([`01-info
 
 - The operator MUST maintain a risk register on the operator's pod as compliance descriptors.
 - Each identified risk is a descriptor with:
-  - `cg:modalStatus Hypothetical` (potential risk) until materialized
-  - `cg:modalStatus Asserted` (active risk requiring treatment)
-  - `cg:modalStatus Counterfactual` (mitigated; supersedes the prior assertion)
+  - `iep:modalStatus Hypothetical` (potential risk) until materialized
+  - `iep:modalStatus Asserted` (active risk requiring treatment)
+  - `iep:modalStatus Counterfactual` (mitigated; supersedes the prior assertion)
 - Risks carry: description, category, likelihood (low/medium/high), impact (low/medium/high), treatment plan, owner, target date.
 
 ### 4.2 Risk treatment
@@ -90,14 +90,14 @@ These will be tracked as descriptors as the policy is operationalized.
 
 1. Identify risk via observation, threat model, audit finding, or external advisory
 2. Classify category, likelihood, impact
-3. Publish descriptor with `cg:modalStatus Hypothetical` (or Asserted if confirmed active)
+3. Publish descriptor with `iep:modalStatus Hypothetical` (or Asserted if confirmed active)
 4. Assign owner + target treatment date
 5. Notify Advisor if high-impact
 
 ### 5.2 Closing a risk
 
 1. Verify mitigation effective (test, audit)
-2. Publish superseding descriptor with `cg:modalStatus Counterfactual` (mitigated)
+2. Publish superseding descriptor with `iep:modalStatus Counterfactual` (mitigated)
 3. Record evidence of mitigation
 
 ### 5.3 Annual risk review

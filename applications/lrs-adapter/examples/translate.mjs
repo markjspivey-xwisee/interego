@@ -1,4 +1,4 @@
-// LRS Adapter — round-trip xAPI Statement ↔ cg:ContextDescriptor translation.
+// LRS Adapter — round-trip xAPI Statement ↔ iep:ContextDescriptor translation.
 //
 // VERTICAL APPLICATION OF INTEREGO — NOT part of the protocol; not a
 // reference implementation of the protocol. Boundary translator only.
@@ -7,9 +7,9 @@
 // What this script demonstrates:
 //
 //   1. INGEST: a real-shape xAPI Statement (TLA-style with completion +
-//      score + duration) is translated into a cg:ContextDescriptor with
+//      score + duration) is translated into a iep:ContextDescriptor with
 //      seven-facet shape + lrs:StatementIngestion audit record.
-//   2. PROJECT (lossless): a born-in-Interego descriptor with cg:modalStatus
+//   2. PROJECT (lossless): a born-in-Interego descriptor with iep:modalStatus
 //      Asserted is projected to xAPI, with full passthrough fields where
 //      they exist.
 //   3. PROJECT (lossy + skipped): two harder cases — a Hypothetical
@@ -31,7 +31,7 @@ console.log(`
 // ── Source LRS endpoint descriptor (provenance anchor) ──────────────
 
 const lrsEndpoint = {
-  iri: 'urn:cg:lrs:acme-watershed',
+  iri: 'urn:iep:lrs:acme-watershed',
   endpointUrl: 'https://acme.lrs.example/xapi/',
   xapiVersion: '2.0.0',
   authMethod: 'oauth2',
@@ -45,10 +45,10 @@ const jsonBlock = (label, obj) =>
   console.log(`\n  ${label}\n${JSON.stringify(obj, null, 2).split('\n').map(l => '    ' + l).join('\n')}`);
 
 // ────────────────────────────────────────────────────────────────────
-//  1. INGEST — xAPI Statement → cg:ContextDescriptor
+//  1. INGEST — xAPI Statement → iep:ContextDescriptor
 // ────────────────────────────────────────────────────────────────────
 
-sep('1. INGEST — xAPI Statement → cg:ContextDescriptor');
+sep('1. INGEST — xAPI Statement → iep:ContextDescriptor');
 
 const sourceStatement = {
   id: randomUUID(),
@@ -91,30 +91,30 @@ const sourceStatement = {
 
 jsonBlock('Source xAPI Statement (from acme-watershed LRS):', sourceStatement);
 
-// Ingest — produce a cg:ContextDescriptor with seven-facet shape +
+// Ingest — produce a iep:ContextDescriptor with seven-facet shape +
 // lrs:StatementIngestion audit record
 
-const descriptorIri = `urn:cg:lrs-statement:${sourceStatement.id}`;
-const ingestionIri  = `urn:cg:lrs-ingestion:${sourceStatement.id}`;
+const descriptorIri = `urn:iep:lrs-statement:${sourceStatement.id}`;
+const ingestionIri  = `urn:iep:lrs-ingestion:${sourceStatement.id}`;
 
-turtleBlock('Ingested cg:ContextDescriptor (Turtle):', `
-<${descriptorIri}> a cg:ContextDescriptor ;
-    cg:temporal     [ a cg:TemporalFacet ;
-                      cg:validFrom  "${sourceStatement.timestamp}"^^xsd:dateTime ;
-                      cg:recordedAt "${sourceStatement.stored}"^^xsd:dateTime ] ;
-    cg:provenance   [ a cg:ProvenanceFacet ;
+turtleBlock('Ingested iep:ContextDescriptor (Turtle):', `
+<${descriptorIri}> a iep:ContextDescriptor ;
+    iep:temporal     [ a iep:TemporalFacet ;
+                      iep:validFrom  "${sourceStatement.timestamp}"^^xsd:dateTime ;
+                      iep:recordedAt "${sourceStatement.stored}"^^xsd:dateTime ] ;
+    iep:provenance   [ a iep:ProvenanceFacet ;
                       prov:wasGeneratedBy <${sourceStatement.object.id}> ;
                       prov:wasAttributedTo <urn:agent:${sourceStatement.actor.account.name}> ] ;
-    cg:agent        [ a cg:AgentFacet ;
-                      cg:assertingAgent <urn:agent:${sourceStatement.actor.account.name}> ] ;
-    cg:semiotic     [ a cg:SemioticFacet ;
-                      cg:content """${sourceStatement.verb.display['en-US']}: ${sourceStatement.object.definition.name['en-US']}\\nResponse: ${sourceStatement.result.response}""" ;
-                      cg:modalStatus cg:Asserted ] ;     # Statements are committed claims by definition
-    cg:trust        [ a cg:TrustFacet ;
-                      cg:issuer <${sourceStatement.authority.account.homePage}> ;
-                      cg:trustLevel cg:ThirdPartyAttested ] ;     # LRS is a third-party authority
-    cg:federation   [ a cg:FederationFacet ;
-                      cg:origin <${lrsEndpoint.endpointUrl}> ] ;
+    iep:agent        [ a iep:AgentFacet ;
+                      iep:assertingAgent <urn:agent:${sourceStatement.actor.account.name}> ] ;
+    iep:semiotic     [ a iep:SemioticFacet ;
+                      iep:content """${sourceStatement.verb.display['en-US']}: ${sourceStatement.object.definition.name['en-US']}\\nResponse: ${sourceStatement.result.response}""" ;
+                      iep:modalStatus iep:Asserted ] ;     # Statements are committed claims by definition
+    iep:trust        [ a iep:TrustFacet ;
+                      iep:issuer <${sourceStatement.authority.account.homePage}> ;
+                      iep:trustLevel iep:ThirdPartyAttested ] ;     # LRS is a third-party authority
+    iep:federation   [ a iep:FederationFacet ;
+                      iep:origin <${lrsEndpoint.endpointUrl}> ] ;
     # passthrough — preserve original xAPI fields for round-trip fidelity
     lrs:xapiVerb    <${sourceStatement.verb.id}> ;
     lrs:xapiResult  """${JSON.stringify(sourceStatement.result)}""" ;
@@ -125,34 +125,34 @@ turtleBlock('Ingested cg:ContextDescriptor (Turtle):', `
     lrs:sourceStatementId    "${sourceStatement.id}" ;
     lrs:ingestedDescriptor   <${descriptorIri}> ;
     lrs:projectionLossy      false ;     # ingest direction is generally faithful
-    cg:temporal [ a cg:TemporalFacet ; cg:validFrom "${new Date().toISOString()}"^^xsd:dateTime ] .`);
+    iep:temporal [ a iep:TemporalFacet ; iep:validFrom "${new Date().toISOString()}"^^xsd:dateTime ] .`);
 
 console.log(`
   Ingest direction is generally faithful — every xAPI field has somewhere
   to live in the seven-facet shape, plus passthrough properties preserve
   the original verb / result / context blocks for round-trip fidelity.
-  Modal status defaults to cg:Asserted because Statements are committed
+  Modal status defaults to iep:Asserted because Statements are committed
   claims by definition.`);
 
 // ────────────────────────────────────────────────────────────────────
-//  2. PROJECT — cg:ContextDescriptor (born-in-Interego, Asserted) → xAPI
+//  2. PROJECT — iep:ContextDescriptor (born-in-Interego, Asserted) → xAPI
 // ────────────────────────────────────────────────────────────────────
 
 sep('2. PROJECT (lossless-ish) — Asserted descriptor → xAPI Statement');
 
 const internalDescriptor = {
-  iri: 'urn:cg:descriptor:performance-feedback:q1-2026',
-  modalStatus: 'cg:Asserted',
+  iri: 'urn:iep:descriptor:performance-feedback:q1-2026',
+  modalStatus: 'iep:Asserted',
   agent: 'urn:agent:mark.spivey',
   verb: 'http://adlnet.gov/expapi/verbs/received',
-  object: 'urn:cg:performance-review:q1-2026',
+  object: 'urn:iep:performance-review:q1-2026',
   objectName: 'Q1 2026 Performance Review',
   content: 'Manager noted strong performance in customer-service-tone capability area; cited 3 specific second-contact resolutions.',
   issuer: 'https://hr.acme.example',
   timestamp: '2026-04-20T16:00:00Z',
 };
 
-const projectionIri = `urn:cg:lrs-projection:${randomUUID()}`;
+const projectionIri = `urn:iep:lrs-projection:${randomUUID()}`;
 const projectedStatementId = randomUUID();
 
 const projectedStatement = {
@@ -167,8 +167,8 @@ const projectedStatement = {
   result: {
     response: internalDescriptor.content,
     extensions: {
-      'urn:cg:source-descriptor': internalDescriptor.iri,
-      'urn:cg:modal-status': internalDescriptor.modalStatus,
+      'urn:iep:source-descriptor': internalDescriptor.iri,
+      'urn:iep:modal-status': internalDescriptor.modalStatus,
     },
   },
   timestamp: internalDescriptor.timestamp,
@@ -200,19 +200,19 @@ console.log(`
 sep('3a. PROJECT (skipped) — Hypothetical descriptor → NO Statement issued');
 
 const hypotheticalDescriptor = {
-  iri: 'urn:cg:fragment:tone-probe:bob-variant:42',
-  modalStatus: 'cg:Hypothetical',
+  iri: 'urn:iep:fragment:tone-probe:bob-variant:42',
+  modalStatus: 'iep:Hypothetical',
   content: 'Observation: explicit-acknowledgment scaffold may have produced user-relief in this scenario.',
 };
 
-const skipIri = `urn:cg:lrs-skip:${randomUUID()}`;
+const skipIri = `urn:iep:lrs-skip:${randomUUID()}`;
 
 turtleBlock('No Statement projected. Skip audit record:', `
 <${skipIri}> a lrs:StatementProjection ;
     lrs:projectedDescriptor <${hypotheticalDescriptor.iri}> ;
     lrs:projectedToEndpoint <${lrsEndpoint.iri}> ;
     lrs:projectionLossy     true ;
-    lrs:xapiSkipReason """Source descriptor has cg:modalStatus cg:Hypothetical. xAPI Statements are committed claims by spec — projecting a Hypothetical descriptor as a Statement would over-claim. Skipped on purpose; this audit row exists so the LRS-anchored team can see what was withheld.""" .`);
+    lrs:xapiSkipReason """Source descriptor has iep:modalStatus iep:Hypothetical. xAPI Statements are committed claims by spec — projecting a Hypothetical descriptor as a Statement would over-claim. Skipped on purpose; this audit row exists so the LRS-anchored team can see what was withheld.""" .`);
 
 console.log(`
   Hypothetical / Counterfactual descriptors are SKIPPED. The audit row
@@ -226,19 +226,19 @@ console.log(`
 sep('3b. PROJECT (lossy) — multi-narrative synthesis → single Statement + extensions');
 
 const synthesisDescriptor = {
-  iri: 'urn:cg:synthesis:tone-probe-week-1',
-  modalStatus: 'cg:Hypothetical',  // would normally be skipped, but say org wants it for dashboards anyway
+  iri: 'urn:iep:synthesis:tone-probe-week-1',
+  modalStatus: 'iep:Hypothetical',  // would normally be skipped, but say org wants it for dashboards anyway
   emergentPattern: 'Explicit-acknowledgment pattern produced user-relief in 2 of 2 second-contact scenarios.',
   coherentNarratives: [
     'Reading 1: explicit-acknowledgment scaffold creates space for the user to feel heard.',
     "Reading 2: it's not the words — it's the SIGNAL that the agent paid attention to context.",
     'Reading 3: noise; sample of 10 too small to distinguish from random variation.',
   ],
-  supersedes: 'urn:cg:synthesis:tone-probe-week-0-draft',
+  supersedes: 'urn:iep:synthesis:tone-probe-week-0-draft',
   timestamp: '2026-04-22T10:00:00Z',
 };
 
-const lossyProjectionIri = `urn:cg:lrs-projection:${randomUUID()}`;
+const lossyProjectionIri = `urn:iep:lrs-projection:${randomUUID()}`;
 const lossyStatementId = randomUUID();
 
 // Suppose the org has explicitly opted to project Hypothetical syntheses
@@ -257,11 +257,11 @@ const lossyStatement = {
   result: {
     response: synthesisDescriptor.emergentPattern + ' [Reading 1] ' + synthesisDescriptor.coherentNarratives[0],
     extensions: {
-      'urn:cg:source-descriptor':    synthesisDescriptor.iri,
-      'urn:cg:modal-status':         synthesisDescriptor.modalStatus,
-      'urn:cg:coherent-narratives':  synthesisDescriptor.coherentNarratives,
-      'urn:cg:supersedes-chain':     [synthesisDescriptor.supersedes],
-      'urn:cg:projection-lossy':     true,
+      'urn:iep:source-descriptor':    synthesisDescriptor.iri,
+      'urn:iep:modal-status':         synthesisDescriptor.modalStatus,
+      'urn:iep:coherent-narratives':  synthesisDescriptor.coherentNarratives,
+      'urn:iep:supersedes-chain':     [synthesisDescriptor.supersedes],
+      'urn:iep:projection-lossy':     true,
     },
   },
   timestamp: synthesisDescriptor.timestamp,
@@ -277,9 +277,9 @@ turtleBlock('Audit record (loud about what was lost):', `
     lrs:projectedToEndpoint   <${lrsEndpoint.iri}> ;
     lrs:projectedStatementId  "${lossyStatementId}" ;
     lrs:projectionLossy       true ;
-    lrs:lossNote """Source descriptor had cg:modalStatus cg:Hypothetical — projected anyway at org's explicit request for dashboard purposes. Modal status preserved as result.extensions but xAPI consumers will read this as a committed claim unless they look at the extensions.""" ;
-    lrs:lossNote """Source descriptor had 3 coherent narratives. First narrative emitted in result.response; remaining 2 preserved in result.extensions[urn:cg:coherent-narratives]. Standard LRS dashboards will only show Reading 1.""" ;
-    lrs:lossNote """Source descriptor had cg:supersedes chain. Preserved in result.extensions[urn:cg:supersedes-chain] but xAPI's voiding mechanism is not equivalent.""" .`);
+    lrs:lossNote """Source descriptor had iep:modalStatus iep:Hypothetical — projected anyway at org's explicit request for dashboard purposes. Modal status preserved as result.extensions but xAPI consumers will read this as a committed claim unless they look at the extensions.""" ;
+    lrs:lossNote """Source descriptor had 3 coherent narratives. First narrative emitted in result.response; remaining 2 preserved in result.extensions[urn:iep:coherent-narratives]. Standard LRS dashboards will only show Reading 1.""" ;
+    lrs:lossNote """Source descriptor had iep:supersedes chain. Preserved in result.extensions[urn:iep:supersedes-chain] but xAPI's voiding mechanism is not equivalent.""" .`);
 
 console.log(`
   This is the worst case the adapter handles: a complexity-informed

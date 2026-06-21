@@ -144,7 +144,7 @@ export interface EnrolledCourse {
   dueAt: string;
   status: 'pending' | 'completed' | 'overdue';
   completedAt?: string;
-  /** cg:modalStatus of the enrollment record. 'Asserted' = backed by a
+  /** iep:modalStatus of the enrollment record. 'Asserted' = backed by a
    *  real lifecycle event; 'Hypothetical' = inferred purely from policy
    *  audience-group membership (predicted, not yet observed). Absent in
    *  offline-sample mode (treat as 'Asserted'). */

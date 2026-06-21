@@ -3,7 +3,7 @@
  *
  * Boundary translator between Interego pods and external xAPI LRSes.
  * Capabilities declared here once; bridge derives MCP tool schemas
- * from this; protocol publishes as cg:Affordance for generic
+ * from this; protocol publishes as iep:Affordance for generic
  * discovery.
  */
 
@@ -14,10 +14,10 @@ import type {
 
 const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
   {
-    action: 'urn:cg:action:lrs:ingest-statement' as IRI,
+    action: 'urn:iep:action:lrs:ingest-statement' as IRI,
     toolName: 'lrs.ingest_statement',
     title: 'Ingest one xAPI Statement from an LRS',
-    description: 'Fetch a single xAPI Statement from an LRS by ID, project as cg:ContextDescriptor in the user\'s pod with lrs:StatementIngestion audit. Auto-negotiates xAPI version (2.0.0 preferred; falls back to 1.0.3 for legacy LRSes like SCORM Cloud).',
+    description: 'Fetch a single xAPI Statement from an LRS by ID, project as iep:ContextDescriptor in the user\'s pod with lrs:StatementIngestion audit. Auto-negotiates xAPI version (2.0.0 preferred; falls back to 1.0.3 for legacy LRSes like SCORM Cloud).',
     method: 'POST',
     targetTemplate: '{base}/lrs/ingest_statement',
     annotations: { title: 'Ingest one xAPI Statement', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -31,9 +31,9 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
     outputs: {
-      description: 'IngestStatementResult — IRIs + URLs of the published cg:ContextDescriptor (Asserted lrs:StatementIngestion projection of the xAPI Statement) and the separate ingestion audit-row descriptor, plus the xAPI version that was negotiated with the LRS.',
+      description: 'IngestStatementResult — IRIs + URLs of the published iep:ContextDescriptor (Asserted lrs:StatementIngestion projection of the xAPI Statement) and the separate ingestion audit-row descriptor, plus the xAPI version that was negotiated with the LRS.',
       properties: {
-        statementDescriptorIri: { type: 'string', description: 'IRI of the descriptor projecting the xAPI Statement (urn:cg:lrs-statement:<id>).' },
+        statementDescriptorIri: { type: 'string', description: 'IRI of the descriptor projecting the xAPI Statement (urn:iep:lrs-statement:<id>).' },
         ingestionAuditIri: { type: 'string', description: 'IRI of the separate lrs:StatementIngestion audit descriptor recording the ingestion event itself.' },
         descriptorUrl: { type: 'string', description: 'URL of the published statement-descriptor .ttl.' },
         auditUrl: { type: 'string', description: 'URL of the published audit-row .ttl.' },
@@ -43,10 +43,10 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:lrs:ingest-statement-batch' as IRI,
+    action: 'urn:iep:action:lrs:ingest-statement-batch' as IRI,
     toolName: 'lrs.ingest_statement_batch',
     title: 'Ingest a batch of xAPI Statements from an LRS',
-    description: 'Fetch a batch of xAPI Statements from an LRS by filter (verb / activity / agent / since / until / limit) and publish each as cg:ContextDescriptor in the user\'s pod.',
+    description: 'Fetch a batch of xAPI Statements from an LRS by filter (verb / activity / agent / since / until / limit) and publish each as iep:ContextDescriptor in the user\'s pod.',
     method: 'POST',
     targetTemplate: '{base}/lrs/ingest_statement_batch',
     annotations: { title: 'Ingest a batch of xAPI Statements', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -86,7 +86,7 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:lrs:project-descriptor' as IRI,
+    action: 'urn:iep:action:lrs:project-descriptor' as IRI,
     toolName: 'lrs.project_descriptor',
     title: 'Project a descriptor to an LRS as an xAPI Statement',
     description: 'Read an Asserted descriptor from the pod and project to xAPI Statement, POST to the LRS. Counterfactual ALWAYS skipped; Hypothetical skipped without opt-in; multi-narrative descriptors lossy with audit-loud lossNote rows.',
@@ -126,7 +126,7 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:lrs:lrs-about' as IRI,
+    action: 'urn:iep:action:lrs:lrs-about' as IRI,
     toolName: 'lrs.lrs_about',
     title: 'Probe an LRS\'s supported xAPI versions',
     description: 'Probe the LRS\'s /xapi/about endpoint to discover supported xAPI versions. Useful diagnostic for understanding which Statement projection target is appropriate.',

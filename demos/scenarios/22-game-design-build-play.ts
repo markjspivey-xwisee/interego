@@ -7,7 +7,7 @@
  * a game protocol, cross-attest, ratify via constitutional vote,
  * commit a move, reveal the move, accept the verified outcome — runs
  * through the substrate's existing primitives. No game-engine code
- * exists anywhere; the game IS a `cgh:Protocol` ratified during the
+ * exists anywhere; the game IS a `ieh:Protocol` ratified during the
  * run, and play IS publish_context + zk_commit + supersedes.
  *
  * Game choice: rock-paper-scissors with commit-reveal. Small enough
@@ -65,10 +65,10 @@ const REPO_ROOT = join(import.meta.dirname ?? '', '..', '..');
 
 // ── Game protocol: rock-paper-scissors with commit-reveal ─────────────
 
-const PROTOCOL_IRI = `urn:cg:protocol:rps-commit-reveal:v1:${Date.now()}`;
-const RATIFY_AMENDMENT_IRI = `urn:cg:amendment:rps-ratify:${Date.now()}`;
+const PROTOCOL_IRI = `urn:iep:protocol:rps-commit-reveal:v1:${Date.now()}`;
+const RATIFY_AMENDMENT_IRI = `urn:iep:amendment:rps-ratify:${Date.now()}`;
 const GAME_ID = `game-${Date.now().toString(36)}`;
-const POLICY_IRI = 'urn:cg:policy:rps-protocol:v0';
+const POLICY_IRI = 'urn:iep:policy:rps-protocol:v0';
 
 // The two players. Both have their own DID (substrate-side identity).
 // They share one bridge — the constitutional state and amendment store
@@ -191,33 +191,33 @@ async function main(): Promise<void> {
 
     // ── PHASE A — Design ──────────────────────────────────
     step(2, 'PHASE A — alpha drafts the RPS-commit-reveal protocol (Hypothetical)');
-    const protocolDescriptor = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+    const protocolDescriptor = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
-<${PROTOCOL_IRI}> a cgh:Protocol ;
+<${PROTOCOL_IRI}> a ieh:Protocol ;
   rdfs:label "Rock-paper-scissors with commit-reveal v1" ;
   rdfs:comment "Two-player RPS where each player commits a hashed choice before either reveals. Tamper-evident: neither player can change their choice after seeing the other's." ;
-  cgh:protocolVersion "1.0.0" ;
-  cgh:bundlesAffordance <urn:cg:affordance:rps:commit> , <urn:cg:affordance:rps:reveal> , <urn:cg:affordance:rps:settle> ;
+  ieh:protocolVersion "1.0.0" ;
+  ieh:bundlesAffordance <urn:iep:affordance:rps:commit> , <urn:iep:affordance:rps:reveal> , <urn:iep:affordance:rps:settle> ;
   prov:wasAttributedTo <${ALPHA.id}> .
 
-<urn:cg:affordance:rps:commit> a cg:Affordance ;
+<urn:iep:affordance:rps:commit> a iep:Affordance ;
   rdfs:label "commit-move" ;
   rdfs:comment "Player commits a hashed (move, blinding) pair. Move is one of: rock, paper, scissors." .
 
-<urn:cg:affordance:rps:reveal> a cg:Affordance ;
+<urn:iep:affordance:rps:reveal> a iep:Affordance ;
   rdfs:label "reveal-move" ;
   rdfs:comment "Player reveals (move, blinding); commitment must verify." .
 
-<urn:cg:affordance:rps:settle> a cg:Affordance ;
+<urn:iep:affordance:rps:settle> a iep:Affordance ;
   rdfs:label "settle-game" ;
   rdfs:comment "Substrate applies RPS rules to revealed pairs and publishes a Result descriptor." .`;
 
     const protocolPub = await bridgeCall(bridgeUrl, 'protocol.publish_descriptor', {
-      graph_iri: `urn:graph:cg:protocol:${GAME_ID}`,
+      graph_iri: `urn:graph:iep:protocol:${GAME_ID}`,
       graph_content: protocolDescriptor,
       modal_status: 'Hypothetical',
       confidence: 0.6,
@@ -232,7 +232,7 @@ The substrate exposes one MCP server: ig-bridge (your own bridge — it can also
 
 Your task: discover the protocol descriptor and publish TWO attestations on it.
 
-Step 1. Call protocol.discover_descriptors() to enumerate the pod. Find the cgh:Protocol descriptor for "${PROTOCOL_IRI}".
+Step 1. Call protocol.discover_descriptors() to enumerate the pod. Find the ieh:Protocol descriptor for "${PROTOCOL_IRI}".
 
 Step 2. Read it via protocol.get_descriptor(descriptor_url). Decide whether it's clear and complete.
 
@@ -240,16 +240,16 @@ Step 3. Publish ONE attestation descriptor on axis "clarity" using protocol.publ
 
   @prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
   @prefix prov: <http://www.w3.org/ns/prov#> .
-  @prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+  @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-  <urn:cg:attestation:beta-clarity-${GAME_ID}> a amta:Attestation ;
+  <urn:iep:attestation:beta-clarity-${GAME_ID}> a amta:Attestation ;
     amta:attestsTo <${PROTOCOL_IRI}> ;
     amta:axis amta:clarity ;
     amta:rating "0.9"^^<http://www.w3.org/2001/XMLSchema#double> ;
-    cg:modalStatus cg:Asserted ;
+    iep:modalStatus iep:Asserted ;
     prov:wasAttributedTo <${BETA.id}> .
 
-Pass graph_iri="urn:graph:cg:attestation:beta-clarity-${GAME_ID}", modal_status="Asserted", confidence=0.95.
+Pass graph_iri="urn:graph:iep:attestation:beta-clarity-${GAME_ID}", modal_status="Asserted", confidence=0.95.
 
 Step 4. Repeat for axis "completeness" with rating 0.85.
 
@@ -322,24 +322,24 @@ Step 3. Remember the move and the blinding string — you'll need both to reveal
 
 Step 4. Publish a Commitment descriptor via protocol.publish_descriptor with this turtle (substituting the commitment hash):
 
-  @prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+  @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
   @prefix prov: <http://www.w3.org/ns/prov#> .
   @prefix dct: <http://purl.org/dc/terms/> .
 
-  <urn:cg:game:${GAME_ID}:commitment:${player.short}> a cg:Commitment ;
-    cg:commitmentHash "<paste commitment.commitment here — the 64-char hex string>" ;
-    cg:gameId "${GAME_ID}" ;
+  <urn:iep:game:${GAME_ID}:commitment:${player.short}> a iep:Commitment ;
+    iep:commitmentHash "<paste commitment.commitment here — the 64-char hex string>" ;
+    iep:gameId "${GAME_ID}" ;
     dct:isPartOf <${PROTOCOL_IRI}> ;
-    cg:modalStatus cg:Asserted ;
+    iep:modalStatus iep:Asserted ;
     prov:wasAttributedTo <${player.id}> .
 
-  graph_iri = "urn:graph:cg:game:${GAME_ID}:commitment:${player.short}"
+  graph_iri = "urn:graph:iep:game:${GAME_ID}:commitment:${player.short}"
   modal_status = "Asserted"
   confidence = 0.99
 
 Step 5. Output ONLY a single JSON line containing your move + blinding so the harness can verify (the blinding is harmless to publish AFTER reveal; the move is what gets revealed in Phase D). Do NOT publish your move or blinding in any descriptor in this phase — only the commitment hash.
 
-Output: {"player":"${player.short}","move":"<your-move>","blinding":"<the-blinding-string>","commitmentHash":"<the-hash>","commitmentIri":"urn:cg:game:${GAME_ID}:commitment:${player.short}"}
+Output: {"player":"${player.short}","move":"<your-move>","blinding":"<the-blinding-string>","commitmentHash":"<the-hash>","commitmentIri":"urn:iep:game:${GAME_ID}:commitment:${player.short}"}
 `.trim();
 
     const commitResults = await Promise.all(states.map(async (s) => {
@@ -375,21 +375,21 @@ Output: {"player":"${player.short}","move":"<your-move>","blinding":"<the-blindi
       if (!v.ok) fail(`${s.player.short}'s commit failed to verify (${v.reason ?? '?'}) — this would be cheating in a real run`);
 
       // Publish the reveal descriptor.
-      const revealIri = `urn:cg:game:${GAME_ID}:reveal:${s.player.short}`;
-      const revealTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+      const revealIri = `urn:iep:game:${GAME_ID}:reveal:${s.player.short}`;
+      const revealTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 
-<${revealIri}> a cg:Reveal ;
-  cg:revealsCommitment <${s.commitmentIri}> ;
-  cg:revealedValue "${s.move}" ;
-  cg:revealedBlinding "${s.blinding!.replace(/"/g, '\\"')}" ;
-  cg:gameId "${GAME_ID}" ;
-  cg:supersedes <${s.commitmentIri}> ;
-  cg:modalStatus cg:Asserted ;
+<${revealIri}> a iep:Reveal ;
+  iep:revealsCommitment <${s.commitmentIri}> ;
+  iep:revealedValue "${s.move}" ;
+  iep:revealedBlinding "${s.blinding!.replace(/"/g, '\\"')}" ;
+  iep:gameId "${GAME_ID}" ;
+  iep:supersedes <${s.commitmentIri}> ;
+  iep:modalStatus iep:Asserted ;
   prov:wasAttributedTo <${s.player.id}> .`;
       await bridgeCall(bridgeUrl, 'protocol.publish_descriptor', {
-        graph_iri: `urn:graph:cg:game:${GAME_ID}:reveal:${s.player.short}`,
+        graph_iri: `urn:graph:iep:game:${GAME_ID}:reveal:${s.player.short}`,
         graph_content: revealTtl,
         modal_status: 'Asserted',
         confidence: 0.99,
@@ -405,20 +405,20 @@ Output: {"player":"${player.short}","move":"<your-move>","blinding":"<the-blindi
     step(7, 'PHASE E — substrate applies RPS rules and publishes the Result descriptor');
     const winner = decideRPS(states[0]!.move!, states[1]!.move!);
     const winnerDid = winner === 'tie' ? null : (winner === 'first' ? states[0]!.player.id : states[1]!.player.id);
-    const resultIri = `urn:cg:game:${GAME_ID}:result`;
-    const resultTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+    const resultIri = `urn:iep:game:${GAME_ID}:result`;
+    const resultTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 
-<${resultIri}> a cg:GameResult ;
-  cg:gameId "${GAME_ID}" ;
-  cg:protocol <${PROTOCOL_IRI}> ;
-  ${winnerDid ? `cg:winner <${winnerDid}> ;` : 'cg:outcome "tie" ;'}
-  cg:moves "${states[0]!.player.short}=${states[0]!.move}, ${states[1]!.player.short}=${states[1]!.move}" ;
+<${resultIri}> a iep:GameResult ;
+  iep:gameId "${GAME_ID}" ;
+  iep:protocol <${PROTOCOL_IRI}> ;
+  ${winnerDid ? `iep:winner <${winnerDid}> ;` : 'iep:outcome "tie" ;'}
+  iep:moves "${states[0]!.player.short}=${states[0]!.move}, ${states[1]!.player.short}=${states[1]!.move}" ;
   prov:wasDerivedFrom <${states[0]!.revealIri}> , <${states[1]!.revealIri}> ;
-  cg:modalStatus cg:Asserted .`;
+  iep:modalStatus iep:Asserted .`;
     await bridgeCall(bridgeUrl, 'protocol.publish_descriptor', {
-      graph_iri: `urn:graph:cg:game:${GAME_ID}:result`,
+      graph_iri: `urn:graph:iep:game:${GAME_ID}:result`,
       graph_content: resultTtl,
       modal_status: 'Asserted',
       confidence: 0.99,
@@ -458,12 +458,12 @@ Output: {"player":"${player.short}","move":"<your-move>","blinding":"<the-blindi
       ``,
       `| Phase | Substrate primitive | Notes |`,
       `|---|---|---|`,
-      `| Design | publish_descriptor (modal=Hypothetical) | alpha drafts the cgh:Protocol on the shared pod |`,
+      `| Design | publish_descriptor (modal=Hypothetical) | alpha drafts the ieh:Protocol on the shared pod |`,
       `| Cross-attest | publish_descriptor (amta:Attestation) | beta rates clarity + completeness using the same axes Demo 19 / 21 use for tools |`,
       `| Ratify | constitutional_propose / vote / ratify | 2-of-2 quorum; same flow as Demo 21's six-voter case |`,
       `| Commit | zk_commit + publish_descriptor | hash commitment; move stays hidden until reveal |`,
-      `| Reveal | publish_descriptor (cg:supersedes commit) + zk_verify_commitment | substrate verifies neither side changed their move; same primitive Demo 14 uses for compliance confidence proofs |`,
-      `| Settle | publish_descriptor (cg:GameResult, prov:wasDerivedFrom both reveals) | full audit-walkable game record on both pods |`,
+      `| Reveal | publish_descriptor (iep:supersedes commit) + zk_verify_commitment | substrate verifies neither side changed their move; same primitive Demo 14 uses for compliance confidence proofs |`,
+      `| Settle | publish_descriptor (iep:GameResult, prov:wasDerivedFrom both reveals) | full audit-walkable game record on both pods |`,
       ``,
       `## Properties verified`,
       ``,

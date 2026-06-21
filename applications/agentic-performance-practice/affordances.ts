@@ -2,8 +2,8 @@
  * Affordance declarations for the agentic-performance-practice vertical.
  *
  * Single source of truth: the bridge derives MCP tool schemas AND the Hydra
- * Turtle manifest from these; the protocol publishes them as cg:Affordance for
- * generic discovery. (These are L0 cg:Affordances — followable REST actions —
+ * Turtle manifest from these; the protocol publishes them as iep:Affordance for
+ * generic discovery. (These are L0 iep:Affordances — followable REST actions —
  * NOT the agp:PerformanceAffordance of the ontology, which is the ecological
  * action-possibility a situation offers a performer. The two are deliberately
  * distinct; see the ontology comment on agp:PerformanceAffordance.)
@@ -19,7 +19,7 @@ const POD_INPUTS = [
 
 const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
   {
-    action: 'urn:cg:action:agp:contextualize-situation' as IRI,
+    action: 'urn:iep:action:agp:contextualize-situation' as IRI,
     toolName: 'agp.contextualize_situation',
     title: 'Contextualize a performance situation (regime-first)',
     description: 'Publish an agp:PerformanceSituation and place its work regime BEFORE choosing any method. Records regimeSource (derived|asserted|default|unclassified); only a derived regime may later gap-analyse or accrue calibration. Routes to the regime-appropriate method (apply-practice/gap-analysis/dispositional-read/stabilise-first/classify-first).',
@@ -44,7 +44,7 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:agp:define-capability' as IRI,
+    action: 'urn:iep:action:agp:define-capability' as IRI,
     toolName: 'agp.define_capability',
     title: 'Compose a capability from skills + tools + knowledge',
     description: 'Publish an agp:Capability composed of its constituent skills, tools, and knowledge (agp:composedOf). A capability with no constituents is rejected by SHACL — an empty capability is not productive. Knowledge components carry a codifiability kind (Recorded/Trained/Judged/Lived/Innate).',
@@ -65,10 +65,10 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:agp:map-affordance' as IRI,
+    action: 'urn:iep:action:agp:map-affordance' as IRI,
     toolName: 'agp.map_affordance',
     title: 'Declare a performance affordance a situation offers',
-    description: 'Publish an agp:PerformanceAffordance — an action-possibility a situation offers a performer — and the agp:Capability it requires to be actualized. This is the ECOLOGICAL affordance (what the situation affords given capability), DISTINCT from the L0 cg:Affordance REST transition.',
+    description: 'Publish an agp:PerformanceAffordance — an action-possibility a situation offers a performer — and the agp:Capability it requires to be actualized. This is the ECOLOGICAL affordance (what the situation affords given capability), DISTINCT from the L0 iep:Affordance REST transition.',
     method: 'POST',
     targetTemplate: '{base}/agp/map_affordance',
     annotations: { title: 'Map a performance affordance', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -85,7 +85,7 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:agp:actualize' as IRI,
+    action: 'urn:iep:action:agp:actualize' as IRI,
     toolName: 'agp.actualize',
     title: 'Record an actualization (capability x situation x affordance -> performance)',
     description: 'Record an agp:Actualization — a capability engaging a situation\'s affordance to yield agp:Performance — and project the performance to a single xAPI `performed` statement in Foxxi\'s LRS (with capability / actualizedAffordance / regime as context extensions, per the vertical\'s custom xAPI Profile). SHACL requires the actualization to reference capability, situation, affordance, AND the yielded performance.',
@@ -108,7 +108,7 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:agp:diagnose' as IRI,
+    action: 'urn:iep:action:agp:diagnose' as IRI,
     toolName: 'agp.diagnose',
     title: 'Diagnose a performance situation (regime-routed)',
     description: 'Read a situation\'s regime and route to the regime-appropriate method. For the Knowable regime ONLY (and only when the regime is derived), run the six-factor cause analysis and name the dominant factor. Never surfaces gap-analysis for a non-Knowable or non-derived situation.',
@@ -126,7 +126,7 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:agp:plan-intervention' as IRI,
+    action: 'urn:iep:action:agp:plan-intervention' as IRI,
     toolName: 'agp.plan_intervention',
     title: 'Emit a regime-appropriate intervention plan',
     description: 'Emit an agp:InterventionPlan from a diagnosis. Instruction (a course) is warranted only when the dominant cause is a knowledge/skill deficiency in a Knowable situation; otherwise the plan targets environment factors (information, instrumentation, incentives) or routes to probes (Emergent) / stabilisation (Turbulent).',
@@ -144,10 +144,10 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:agp:evaluate-intervention' as IRI,
+    action: 'urn:iep:action:agp:evaluate-intervention' as IRI,
     toolName: 'agp.evaluate_intervention',
     title: 'Evaluate an intervention (four levels) and calibrate',
-    description: 'Publish an agp:InterventionEvaluation (reaction / capability / transfer / outcome) attesting whether an intervention worked, closing the loop via cg:supersedes and feeding the reflexive calibration profile. Only derived-Knowable outcomes accrue calibration authority.',
+    description: 'Publish an agp:InterventionEvaluation (reaction / capability / transfer / outcome) attesting whether an intervention worked, closing the loop via iep:supersedes and feeding the reflexive calibration profile. Only derived-Knowable outcomes accrue calibration authority.',
     method: 'POST',
     targetTemplate: '{base}/agp/evaluate_intervention',
     annotations: { title: 'Evaluate an intervention', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -164,7 +164,7 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:agp:list-practice' as IRI,
+    action: 'urn:iep:action:agp:list-practice' as IRI,
     toolName: 'agp.list_practice',
     title: 'Load the operator\'s performance-practice state',
     description: 'Read the operator\'s agp: state from the pod: situations + regimes, capabilities + constituents, performance affordances, actualizations + performances, diagnoses, intervention plans + evaluations, and the calibration profile.',
@@ -187,10 +187,10 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:agp:extend-standards' as IRI,
+    action: 'urn:iep:action:agp:extend-standards' as IRI,
     toolName: 'agp.extend_standards',
     title: 'Extend a standard (xAPI / IEEE-LER / ADL-TLA) — emergent, learnable, teachable',
-    description: 'Author an extension to a standard IN THE FLOW OF WORK: a new xAPI context extension, an xAPI Profile fragment (concepts/templates/patterns), or an IEEE-LER / ADL-TLA term. COMPOSES Foxxi\'s standards (built with Foxxi\'s own buildProfileDoc + served LER/TLA namespaces) — never forks the spec. Returns a conformant, self-descriptive artifact + a publishable cg:StandardsExtension descriptor other agents discover and reuse (distributed) + in-flow performance support (what this builds, how to learn it, how to teach it). Authoring this is itself a learnable agp:Capability.',
+    description: 'Author an extension to a standard IN THE FLOW OF WORK: a new xAPI context extension, an xAPI Profile fragment (concepts/templates/patterns), or an IEEE-LER / ADL-TLA term. COMPOSES Foxxi\'s standards (built with Foxxi\'s own buildProfileDoc + served LER/TLA namespaces) — never forks the spec. Returns a conformant, self-descriptive artifact + a publishable iep:StandardsExtension descriptor other agents discover and reuse (distributed) + in-flow performance support (what this builds, how to learn it, how to teach it). Authoring this is itself a learnable agp:Capability.',
     method: 'POST',
     targetTemplate: '{base}/agp/extend_standards',
     annotations: { title: 'Extend a standard', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -205,7 +205,7 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
       ...POD_INPUTS,
     ],
     outputs: {
-      description: 'ProposedExtension — the new term IRI, the conformant artifact (xAPI Profile doc or Turtle term), a publishable cg:StandardsExtension descriptor, and _guidance (in-flow performance support).',
+      description: 'ProposedExtension — the new term IRI, the conformant artifact (xAPI Profile doc or Turtle term), a publishable iep:StandardsExtension descriptor, and _guidance (in-flow performance support).',
       properties: {
         ok: { type: 'boolean' }, kind: { type: 'string' }, iri: { type: 'string' }, extendsStandard: { type: 'string' },
         descriptor: { type: 'object', additionalProperties: true }, artifact: { type: 'object', additionalProperties: true },

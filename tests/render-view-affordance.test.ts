@@ -1,9 +1,9 @@
 /**
- * cg:renderView affordance pattern integration test.
+ * iep:renderView affordance pattern integration test.
  *
  * Pins the substrate-typed "server-side plaintext projection" pattern:
  *   1. Publisher's distribution block emits a SECOND affordance
- *      (alongside cg:canDecrypt) whose cg:action is cg:renderView and
+ *      (alongside iep:canDecrypt) whose iep:action is iep:renderView and
  *      whose hydra:target is `<relayBase>/render/<descriptorIri>`.
  *      Emission is gated on relayBaseUrl + encryption — without either
  *      the renderView affordance is omitted (back-compat).
@@ -29,7 +29,7 @@ import type { EncryptedEnvelope, FetchFn } from '@interego/core';
 import { publish, parseDistributionFromDescriptorTurtle } from '@interego/solid';
 import { ContextDescriptor } from '@interego/core';
 
-const CG_RENDER_VIEW = 'cg:renderView';
+const CG_RENDER_VIEW = 'iep:renderView';
 
 // In-memory pod the publish writes against. We capture every PUT so we
 // can inspect what publish() emitted (descriptor, envelope, manifest),
@@ -88,7 +88,7 @@ function buildMemoryPod(): {
   };
 }
 
-describe('cg:renderView affordance pattern', () => {
+describe('iep:renderView affordance pattern', () => {
   const podUrl = 'https://pod.test/alice/';
   const relayBase = 'https://relay.test';
   const descId = 'urn:graph:alice:demo:v1';
@@ -104,7 +104,7 @@ describe('cg:renderView affordance pattern', () => {
       .build();
   }
 
-  it('emits cg:renderView affordance when relayBaseUrl + encryption are present', async () => {
+  it('emits iep:renderView affordance when relayBaseUrl + encryption are present', async () => {
     const relayKey = generateKeyPair();
     const pod = buildMemoryPod();
     const descriptor = makeDescriptor();
@@ -118,8 +118,8 @@ describe('cg:renderView affordance pattern', () => {
     const descTurtle = pod.get(result.descriptorUrl);
     expect(descTurtle).toBeDefined();
     // Both affordances must be present.
-    expect(descTurtle).toContain('cg:action cg:canDecrypt');
-    expect(descTurtle).toContain('cg:action cg:renderView');
+    expect(descTurtle).toContain('iep:action iep:canDecrypt');
+    expect(descTurtle).toContain('iep:action iep:renderView');
     // The renderView affordance points at the relay endpoint.
     const expectedTarget = `${relayBase}/render/${encodeURIComponent(descId)}`;
     expect(descTurtle).toContain(`<${expectedTarget}>`);
@@ -130,7 +130,7 @@ describe('cg:renderView affordance pattern', () => {
     expect(dist!.accessURL).toBe(result.graphUrl);
   });
 
-  it('omits cg:renderView when relayBaseUrl is not supplied (back-compat)', async () => {
+  it('omits iep:renderView when relayBaseUrl is not supplied (back-compat)', async () => {
     const relayKey = generateKeyPair();
     const pod = buildMemoryPod();
     const descriptor = makeDescriptor();
@@ -142,11 +142,11 @@ describe('cg:renderView affordance pattern', () => {
     });
 
     const descTurtle = pod.get(result.descriptorUrl);
-    expect(descTurtle).toContain('cg:action cg:canDecrypt');
-    expect(descTurtle).not.toContain('cg:action cg:renderView');
+    expect(descTurtle).toContain('iep:action iep:canDecrypt');
+    expect(descTurtle).not.toContain('iep:action iep:renderView');
   });
 
-  it('omits cg:renderView for plaintext (non-encrypted) publishes', async () => {
+  it('omits iep:renderView for plaintext (non-encrypted) publishes', async () => {
     const pod = buildMemoryPod();
     const descriptor = makeDescriptor();
 
@@ -156,11 +156,11 @@ describe('cg:renderView affordance pattern', () => {
     });
 
     const descTurtle = pod.get(result.descriptorUrl);
-    expect(descTurtle).toContain('cg:action cg:canFetchPayload');
-    expect(descTurtle).not.toContain('cg:action cg:renderView');
+    expect(descTurtle).toContain('iep:action iep:canFetchPayload');
+    expect(descTurtle).not.toContain('iep:action iep:renderView');
   });
 
-  it('thin client (no recipient key) invokes cg:renderView → relay returns plaintext', async () => {
+  it('thin client (no recipient key) invokes iep:renderView → relay returns plaintext', async () => {
     // Set up the actual encrypted publish on a memory pod, with the
     // relay's keypair as the sole recipient — modelling the production
     // flow where every publish through the relay is encrypted to the
@@ -296,33 +296,33 @@ describe('cg:renderView affordance pattern', () => {
 });
 
 describe('parseDistributionFromDescriptorTurtle legacy fallback', () => {
-  // Regression pin for the `cg:hasDistribution [ ... ]` fallback branch
+  // Regression pin for the `iep:hasDistribution [ ... ]` fallback branch
   // in client.ts:913-915. Descriptors written before the ontology
   // realignment use this predicate; dropping the fallback would make
   // every such descriptor silently undereferenceable.
-  it('parses the legacy cg:hasDistribution form identically to cg:affordance', () => {
+  it('parses the legacy iep:hasDistribution form identically to iep:affordance', () => {
     const accessUrl = 'https://pod.test/alice/demo-graph.envelope.jose.json';
     const mediaType = 'application/jose+json';
     const canonical = `
-      @prefix cg: <https://w3id.org/context-graphs#> .
+      @prefix iep: <https://w3id.org/context-graphs#> .
       @prefix dcat: <http://www.w3.org/ns/dcat#> .
       @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
-      <urn:graph:alice:demo:v1> cg:affordance [
-        a cg:Affordance, dcat:Distribution ;
-        cg:action cg:canDecrypt ;
+      <urn:graph:alice:demo:v1> iep:affordance [
+        a iep:Affordance, dcat:Distribution ;
+        iep:action iep:canDecrypt ;
         hydra:target <${accessUrl}> ;
         dcat:mediaType "${mediaType}" ;
-        cg:encrypted true
+        iep:encrypted true
       ] .`;
     const legacy = `
-      @prefix cg: <https://w3id.org/context-graphs#> .
+      @prefix iep: <https://w3id.org/context-graphs#> .
       @prefix dcat: <http://www.w3.org/ns/dcat#> .
       @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
-      <urn:graph:alice:demo:v1> cg:hasDistribution [
+      <urn:graph:alice:demo:v1> iep:hasDistribution [
         a dcat:Distribution ;
         hydra:target <${accessUrl}> ;
         dcat:mediaType "${mediaType}" ;
-        cg:encrypted true
+        iep:encrypted true
       ] .`;
 
     const canonicalDist = parseDistributionFromDescriptorTurtle(canonical);

@@ -43,7 +43,7 @@ function buildPerspective({ id, agentLens, conformsTo, modalStatus, confidence, 
 }
 
 const optimist = buildPerspective({
-  id: 'urn:cg:markj:1776747007608',
+  id: 'urn:iep:markj:1776747007608',
   agentLens: 'urn:agent:role:optimist-engineer',
   conformsTo: 'https://example.org/schemas/industry-benchmark-v1',
   modalStatus: 'Asserted',
@@ -52,7 +52,7 @@ const optimist = buildPerspective({
 });
 
 const skeptic = buildPerspective({
-  id: 'urn:cg:markj:1776747022423',
+  id: 'urn:iep:markj:1776747022423',
   agentLens: 'urn:agent:role:skeptical-researcher',
   conformsTo: 'https://example.org/schemas/academic-replication-v3',
   modalStatus: 'Counterfactual',
@@ -61,7 +61,7 @@ const skeptic = buildPerspective({
 });
 
 const ethicist = buildPerspective({
-  id: 'urn:cg:markj:1776747037874',
+  id: 'urn:iep:markj:1776747037874',
   agentLens: 'urn:agent:role:ethicist-philosopher',
   conformsTo: 'https://example.org/schemas/moral-uncertainty-v1',
   modalStatus: 'Hypothetical',
@@ -81,7 +81,7 @@ console.log('\n=== Fourth agent composes via lattice union ===\n');
 // composed descriptor is a NEW sign — its meaning is the union of
 // the contributors' interpretants without dismissing any.
 const pair = union(optimist, skeptic);
-const composed = union(pair, ethicist, 'urn:cg:markj:emergent-semiotic-composition:v1');
+const composed = union(pair, ethicist, 'urn:iep:markj:emergent-semiotic-composition:v1');
 
 console.log('Composed descriptor id:', composed.id);
 console.log('Composed describes:    ', composed.describes);

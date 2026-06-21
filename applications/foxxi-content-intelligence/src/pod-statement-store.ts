@@ -1,7 +1,7 @@
 /**
  * Pod-backed xAPI StatementStore — the projection pattern, applied
  * inside-out: from the OUTSIDE the bridge looks like a 100% xAPI 2.0 LRS;
- * from the INSIDE every statement IS a real cg:ContextDescriptor with
+ * from the INSIDE every statement IS a real iep:ContextDescriptor with
  * the seven facets, published to the tenant pod, content-addressed via
  * a pgsl:Atom, dereferenceable on the wire.
  *
@@ -74,7 +74,7 @@ function sha256Hex(s: string): string {
   return createHash('sha256').update(s, 'utf8').digest('hex');
 }
 
-// ── Build a cg:ContextDescriptor that IS the xAPI Statement ─────────
+// ── Build a iep:ContextDescriptor that IS the xAPI Statement ─────────
 function buildStatementDescriptor(args: {
   rec: StoredStatement;
   podUrl: string;
@@ -114,7 +114,7 @@ function buildStatementDescriptor(args: {
   };
   // xAPI Statements are committed claims by spec → Asserted.
   // Voiding moves a statement out of ordinary queries — we express that
-  // by re-publishing the SAME descriptor IRI with a `cg:supersedes`
+  // by re-publishing the SAME descriptor IRI with a `iep:supersedes`
   // pointer and the voided flag in the graph. Here, modal status stays
   // Asserted (the void itself is a separate, also-Asserted event).
   const semiotic: SemioticFacetData = {
@@ -240,7 +240,7 @@ export class PodStatementStore implements StatementStore {
   }
 
   backendDescription(): string {
-    return `pod-backed (cg:ContextDescriptor projections in ${this.podUrl}${this.containerPath}; conformsTo foxxi:LearningStatement, tincan:Statement; substrate IS the source of truth)`;
+    return `pod-backed (iep:ContextDescriptor projections in ${this.podUrl}${this.containerPath}; conformsTo foxxi:LearningStatement, tincan:Statement; substrate IS the source of truth)`;
   }
 
   /** Publish a new statement (or overwrite an existing same-id statement). */

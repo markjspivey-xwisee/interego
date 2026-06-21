@@ -2,7 +2,7 @@
  * agentic-performance-practice bridge — named-MCP-tool + HTTP surface over the
  * agp: vertical, PLUS dereferenceable serving of the agp: ontology.
  *
- * Generic agents discover via the cg:Affordance manifest at GET /affordances;
+ * Generic agents discover via the iep:Affordance manifest at GET /affordances;
  * this bridge is the named-MCP ergonomic. It additionally serves the ontology
  * as linked data at GET /ns/agp (content-negotiated Turtle / JSON-LD), per-term
  * at GET /ns/agp/term/:name, and the SHACL shapes at GET /ns/agp/shapes — the
@@ -72,14 +72,14 @@ const handlers: Record<string, (a: Record<string, unknown>) => Promise<unknown>>
 // In-flow performance support: the discoverable capability catalog (what each
 // affordance teaches + how to learn it) + per-tool guidance, served at /guidance.
 const GUIDANCE: GuidedAffordanceEntry[] = [
-  { action: 'urn:cg:action:agp:extend-standards', toolName: 'agp.extend_standards', guidance: EXTEND_STANDARDS_GUIDANCE },
-  { action: 'urn:cg:action:agp:contextualize-situation', toolName: 'agp.contextualize_situation', guidance: {
+  { action: 'urn:iep:action:agp:extend-standards', toolName: 'agp.extend_standards', guidance: EXTEND_STANDARDS_GUIDANCE },
+  { action: 'urn:iep:action:agp:contextualize-situation', toolName: 'agp.contextualize_situation', guidance: {
     summary: 'Place a performance situation in its work regime BEFORE choosing a method.',
     whenToUse: 'Always first. The regime (Evident/Knowable/Emergent/Turbulent) routes everything; gap-analysis is Knowable-only.',
     teaches: `${AGP_NS}PerformanceSituation`,
-    nextAffordances: [{ action: 'urn:cg:action:agp:diagnose', rel: 'then', why: 'Diagnose the contextualized situation.' }],
+    nextAffordances: [{ action: 'urn:iep:action:agp:diagnose', rel: 'then', why: 'Diagnose the contextualized situation.' }],
   } },
-  { action: 'urn:cg:action:agp:actualize', toolName: 'agp.actualize', guidance: {
+  { action: 'urn:iep:action:agp:actualize', toolName: 'agp.actualize', guidance: {
     summary: 'Record a capability engaging a situation\'s affordance to yield performance.',
     whenToUse: 'When latent capability + an offered affordance actually became performance — the measurable event.',
     teaches: `${AGP_NS}Actualization`,

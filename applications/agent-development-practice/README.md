@@ -21,12 +21,12 @@ Complexity-informed practice rejects both. It says: when behavior is emergent an
 
 | Complexity primitive | Already in Interego |
 |---|---|
-| Hypothetical observations vs Asserted commitments | `cg:modalStatus` (Hypothetical / Asserted / Counterfactual) |
-| Multiple coherent narratives over the same situation | `cg:union` over many `amta:Attestation`s — perspectival, not consensus |
+| Hypothetical observations vs Asserted commitments | `iep:modalStatus` (Hypothetical / Asserted / Counterfactual) |
+| Multiple coherent narratives over the same situation | `iep:union` over many `amta:Attestation`s — perspectival, not consensus |
 | Constraint-based governance (boundaries, not rules) | [`abac:Policy`](../../docs/ns/abac.ttl) treated as constraint definitions |
-| Amplification / dampening of emerging patterns | `cg:supersedes` chains as evolution, not "fix" |
+| Amplification / dampening of emerging patterns | `iep:supersedes` chains as evolution, not "fix" |
 | Safe-to-fail parallel probes | [`registry:`](../../docs/ns/registry.ttl) of multiple agent variants running concurrently |
-| Narrative knowledge capture | `cg:SemioticFacet` content + `cg:modalStatus Hypothetical` |
+| Narrative knowledge capture | `iep:SemioticFacet` content + `iep:modalStatus Hypothetical` |
 | Knowledge maturity progression | [`olke.ttl`](../../docs/ns/olke.ttl) — Tacit → Articulate → Collective → Institutional |
 | Capability biography | [`passport.ttl`](../../docs/ns/passport.ttl) |
 | Cross-org credential portability | [`registry.ttl`](../../docs/ns/registry.ttl) |
@@ -54,7 +54,7 @@ Agents operate across all four Cynefin domains plus the dangerous fifth (Confuse
 
 Rather than declaring "agent X must achieve score 0.90 on rubric Y to be promoted to tier 2," declare:
 
-- The **affordance** the agent should be able to invoke (`cg:Affordance`)
+- The **affordance** the agent should be able to invoke (`iep:Affordance`)
 - **Rubric criteria** as guides, not thresholds (`adp:RubricCriterion`) — what we care about, not pass/fail bars
 - **Constraints** the agent must operate within (`adp:Constraint`, subclass `abac:Policy`) — what NOT to do, what defines unacceptable behavior
 - The **Cynefin domain** of the situation space (`adp:cynefinDomain`) — Complex situations are governed differently from Clear ones
@@ -79,8 +79,8 @@ Probes run concurrently. Many fail; a few amplify. The point is generative diver
 Each agent action emits a signed observation. Critically — these are **narrative fragments**, not just point-in-time scores:
 
 ```turtle
-<urn:cg:fragment:bob:2026-04-26:14:32> a adp:NarrativeFragment ;
-    adp:probe <urn:cg:probe:tone-acknowledgment:v1> ;
+<urn:iep:fragment:bob:2026-04-26:14:32> a adp:NarrativeFragment ;
+    adp:probe <urn:iep:probe:tone-acknowledgment:v1> ;
     adp:situation [
         adp:contextSignifier "user-frustration-escalating" ;
         adp:contextSignifier "second-contact-same-issue" ;
@@ -90,19 +90,19 @@ Each agent action emits a signed observation. Critically — these are **narrati
     frustration and the prior unresolved contact, before offering the same solution.
     User responded with relief; conversation continued constructively.""" ;
     adp:emergentSignifier "frustration-acknowledged-before-solution" ;
-    cg:modalStatus cg:Hypothetical .
+    iep:modalStatus iep:Hypothetical .
 ```
 
 Signifiers (`adp:Signifier`) are the SenseMaker-style indicators — short tags that emerge from the narrative, used later to find patterns across many fragments. Critically, the modal status is **Hypothetical** because we are recording an observation, not asserting causation. We do not yet claim "leading with acknowledgment caused the constructive outcome."
 
 ### 4. Sensemaking synthesis (composition without claiming causation)
 
-When enough fragments accumulate, a **synthesis** emerges. An `adp:Synthesis` composes many fragments via `cg:union` and identifies recurring signifier patterns. The synthesis does NOT assert root cause; it identifies coherent narratives:
+When enough fragments accumulate, a **synthesis** emerges. An `adp:Synthesis` composes many fragments via `iep:union` and identifies recurring signifier patterns. The synthesis does NOT assert root cause; it identifies coherent narratives:
 
 ```turtle
-<urn:cg:synthesis:tone-probe-week-1> a adp:Synthesis ;
-    cg:modalStatus cg:Hypothetical ;
-    adp:fragmentsConsidered <urn:cg:fragment:...>, <urn:cg:fragment:...>, ... ;
+<urn:iep:synthesis:tone-probe-week-1> a adp:Synthesis ;
+    iep:modalStatus iep:Hypothetical ;
+    adp:fragmentsConsidered <urn:iep:fragment:...>, <urn:iep:fragment:...>, ... ;
     adp:emergentPattern """Across 30 frustration-signaled scenarios in the bob-variant probe,
     the explicit-acknowledgment pattern produced narratives signifying
     'user-relief-followed' more often than the alice-variant baseline.""" ;
@@ -123,11 +123,11 @@ Multiple coherent narratives are explicitly preserved. The job of the synthesis 
 Based on the synthesis, the operator decides which probes to amplify and which to dampen — but **does not declare the question closed**. The decision is itself an evolutionary step that will be re-examined.
 
 ```turtle
-<urn:cg:evolution:tone-week-1-decision> a adp:EvolutionStep ;
-    cg:modalStatus cg:Asserted ;
-    adp:basedOnSynthesis <urn:cg:synthesis:tone-probe-week-1> ;
-    adp:amplifyProbe <urn:cg:probe:tone-acknowledgment:v1> ;
-    adp:dampenProbe <urn:cg:probe:tone-clinical:baseline> ;
+<urn:iep:evolution:tone-week-1-decision> a adp:EvolutionStep ;
+    iep:modalStatus iep:Asserted ;
+    adp:basedOnSynthesis <urn:iep:synthesis:tone-probe-week-1> ;
+    adp:amplifyProbe <urn:iep:probe:tone-acknowledgment:v1> ;
+    adp:dampenProbe <urn:iep:probe:tone-clinical:baseline> ;
     adp:nextRevisitAt "2026-05-10T00:00:00Z"^^xsd:dateTime ;
     adp:explicitDecisionNotMade """We are amplifying the bob-variant pattern
     without claiming we know why it works. We are not declaring this approach
@@ -142,16 +142,16 @@ The `adp:explicitDecisionNotMade` field is intentionally counter-cultural: it fo
 Patterns that hold across many synthesis cycles can become refined **constraints** rather than rules. A constraint says "the agent must not X" or "the agent must operate within Y boundary." Constraints are governance via boundaries, not via prescription:
 
 ```turtle
-<urn:cg:constraint:tone-acknowledgment:v1> a adp:Constraint ;
-    cg:modalStatus cg:Asserted ;
-    adp:appliesTo <urn:cg:capability:customer-support> ;
+<urn:iep:constraint:tone-acknowledgment:v1> a adp:Constraint ;
+    iep:modalStatus iep:Asserted ;
+    adp:appliesTo <urn:iep:capability:customer-support> ;
     adp:boundary """When the user signals escalating frustration AND the issue is a
     second-contact, the agent must not respond without first acknowledging the user's
     frustration and the prior unresolved contact.""" ;
     adp:exitsConstraint """If the user explicitly waives acknowledgment ('just give
     me the answer'), the constraint is relaxed.""" ;
-    adp:emergedFrom <urn:cg:synthesis:tone-probe-week-1>, <urn:cg:synthesis:tone-probe-week-2>, <urn:cg:synthesis:tone-probe-week-3> ;
-    cg:supersedes <urn:cg:constraint:tone-acknowledgment:draft> .
+    adp:emergedFrom <urn:iep:synthesis:tone-probe-week-1>, <urn:iep:synthesis:tone-probe-week-2>, <urn:iep:synthesis:tone-probe-week-3> ;
+    iep:supersedes <urn:iep:constraint:tone-acknowledgment:draft> .
 ```
 
 A constraint is **observable** (you can verify whether the agent is operating within it) and **enforceable** (it can be used in `abac:Policy`). It does not specify *how* the agent achieves the boundary — that stays open to the agent's evolving practice.
@@ -161,16 +161,16 @@ A constraint is **observable** (you can verify whether the agent is operating wi
 When a capability has stabilized through multiple synthesis cycles + constraint refinements, the operator records a **capability evolution** event:
 
 ```turtle
-<urn:cg:capability-evolution:tone-acknowledgment:v1> a adp:CapabilityEvolution ;
-    cg:modalStatus cg:Asserted ;
-    adp:capability <urn:cg:capability:customer-support> ;
+<urn:iep:capability-evolution:tone-acknowledgment:v1> a adp:CapabilityEvolution ;
+    iep:modalStatus iep:Asserted ;
+    adp:capability <urn:iep:capability:customer-support> ;
     adp:evolutionType adp:EmergentRecognition ;
-    adp:emergedFrom <urn:cg:synthesis:tone-probe-week-3>, <urn:cg:constraint:tone-acknowledgment:v1> ;
+    adp:emergedFrom <urn:iep:synthesis:tone-probe-week-3>, <urn:iep:constraint:tone-acknowledgment:v1> ;
     adp:olkeStage olke:Articulate ;
     adp:explicitDecisionNotMade """We recognize this practice as having emerged
     in this agent's behavior. We do not claim mastery; we do not claim it generalizes
     to other agents; we will continue to probe.""" ;
-    cg:supersedes <urn:cg:capability-evolution:tone-acknowledgment:draft> .
+    iep:supersedes <urn:iep:capability-evolution:tone-acknowledgment:draft> .
 ```
 
 This is a `passport:LifeEvent` subclass — it goes into the agent's career file and travels with the agent across deployments. But it carries `adp:explicitDecisionNotMade` precisely to prevent it from being read as a "promotion" or a "certification" — it's a recognition of an emergent pattern, with the humility that future evidence may revise it.
@@ -187,14 +187,14 @@ All terms in [`ontology/adp.ttl`](ontology/adp.ttl). Summary:
 
 | Class | Subclass of | Purpose |
 |---|---|---|
-| `adp:Capability` | `cg:ContextDescriptor` | An open-ended capability space (not a target) |
-| `adp:RubricCriterion` | `cg:SemioticFacet` | Guide for what we care about — NOT a pass/fail threshold |
+| `adp:Capability` | `iep:ContextDescriptor` | An open-ended capability space (not a target) |
+| `adp:RubricCriterion` | `iep:SemioticFacet` | Guide for what we care about — NOT a pass/fail threshold |
 | `adp:Constraint` | `abac:Policy` | Boundary the agent must operate within. Observable + enforceable; does not prescribe method. |
-| `adp:Probe` | `cg:ContextDescriptor` | Safe-to-fail experiment; carries hypothesis (Hypothetical), variant, triggers, time-bound |
-| `adp:NarrativeFragment` | `cg:ContextDescriptor` | Qualitative observation — situation + response + signifiers; modal Hypothetical |
-| `adp:Signifier` | `cg:SemioticFacet` | SenseMaker-style indicator that emerges from a narrative |
-| `adp:Synthesis` | `cg:ContextDescriptor` | Composed view of many fragments; preserves multiple coherent narratives |
-| `adp:EvolutionStep` | `cg:ContextDescriptor` | Amplify / dampen decision; carries `explicitDecisionNotMade` |
+| `adp:Probe` | `iep:ContextDescriptor` | Safe-to-fail experiment; carries hypothesis (Hypothetical), variant, triggers, time-bound |
+| `adp:NarrativeFragment` | `iep:ContextDescriptor` | Qualitative observation — situation + response + signifiers; modal Hypothetical |
+| `adp:Signifier` | `iep:SemioticFacet` | SenseMaker-style indicator that emerges from a narrative |
+| `adp:Synthesis` | `iep:ContextDescriptor` | Composed view of many fragments; preserves multiple coherent narratives |
+| `adp:EvolutionStep` | `iep:ContextDescriptor` | Amplify / dampen decision; carries `explicitDecisionNotMade` |
 | `adp:CapabilityEvolution` | `passport:LifeEvent` | Recognition of emergent capability (not promotion) |
 | `adp:CynefinDomain` | enum | Clear / Complicated / Complex / Chaotic / Confused |
 | `adp:EvolutionType` | enum | EmergentRecognition / ConstraintRefinement / VariantAmplified / VariantDampened |
@@ -203,7 +203,7 @@ Properties: `adp:cynefinDomain`, `adp:probe`, `adp:variant`, `adp:amplificationT
 
 ## Relationship to xAPI / LRS
 
-xAPI is **not used inside this vertical**. xAPI's Statement format is rigid (immutable point-in-time records with fixed actor/verb/object/result/context/timestamp shape) — it doesn't express modal status, `cg:supersedes` chains, or coherent-narrative composition naturally. Forcing Interego descriptors through xAPI shape would lose what makes the substrate good for complexity-informed practice.
+xAPI is **not used inside this vertical**. xAPI's Statement format is rigid (immutable point-in-time records with fixed actor/verb/object/result/context/timestamp shape) — it doesn't express modal status, `iep:supersedes` chains, or coherent-narrative composition naturally. Forcing Interego descriptors through xAPI shape would lose what makes the substrate good for complexity-informed practice.
 
 Instead: an `applications/lrs-adapter/` vertical (separate; not yet built) will translate between Interego descriptors and xAPI Statements at the boundary, for organizations that need to interop with traditional LRS infrastructure (Watershed, Veracity, SCORM Cloud, etc.). That adapter is the right place for xAPI shape — at the edge of the system, where legacy interop matters.
 
@@ -224,11 +224,11 @@ Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) ve
 | Real `ContextDescriptor` builder produces conforming shape for every adp: class | Vertical content (`adp:coherentNarrative`, `adp:contextSignifier`, etc.) lives in the described graph, not in the descriptor metadata — graph-side content not yet validated end-to-end |
 | Real `validate()` returns conforms=true for all 9+ descriptors in the cycle | No live signature verification chain after publish (Tier 1 deferred) |
 | Real `toTurtle()` round-trip preserves descriptor IRIs | No external Nostr public-relay test (Tier 4) |
-| Modal discipline holds: probes + fragments + syntheses all `cg:Hypothetical`; operator evolution decisions `cg:Asserted` | |
+| Modal discipline holds: probes + fragments + syntheses all `iep:Hypothetical`; operator evolution decisions `iep:Asserted` | |
 | **Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) PUTs a real probe descriptor to the deployed Azure CSS, GETs it back, and confirms `Hypothetical` modal status survives the HTTP roundtrip | |
 | **Tier 5** (cross-vertical applicability) — [`learner-performer-companion/tests/tier5-vc-roundtrip.test.ts`](../learner-performer-companion/tests/tier5-vc-roundtrip.test.ts) verifies real ECDSA `signDescriptor` + `verifyDescriptorSignature` over descriptor turtle, with tamper-detection + forgery-detection. Same primitives apply to `adp:CapabilityEvolution` events — the `passport:LifeEvent` biographical record carries cryptographically committed humility-forward clauses. | |
 
-**Real finding from testing**: the L1 `cg:SemioticFacet` has no `content` field — content lives in the *described graph*, not in the descriptor metadata. The print-only example walks descriptor metadata; production usage requires emitting the graph turtle alongside.
+**Real finding from testing**: the L1 `iep:SemioticFacet` has no `content` field — content lives in the *described graph*, not in the descriptor metadata. The print-only example walks descriptor metadata; production usage requires emitting the graph turtle alongside.
 
 ## What this is NOT
 

@@ -18,20 +18,20 @@ const SHAPE_IRI = SHAPE_URL; // use the URL as the schema IRI
 // Turtle without decrypting any payload. This is the right semantic
 // boundary: schemas constrain descriptors, payloads remain opaque.
 const SHAPE_TTL = `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 
 <${SHAPE_IRI}#Shape> a sh:NodeShape ;
-  sh:targetClass cg:ContextDescriptor ;
+  sh:targetClass iep:ContextDescriptor ;
   sh:property [
-    sh:path cg:modalStatus ;
-    sh:in ( cg:Asserted ) ;
+    sh:path iep:modalStatus ;
+    sh:in ( iep:Asserted ) ;
     sh:minCount 1 ;
     sh:message "Claims conforming to high-confidence-asserted-v1 MUST be Asserted."
   ] ;
   sh:property [
-    sh:path cg:epistemicConfidence ;
+    sh:path iep:epistemicConfidence ;
     sh:minInclusive 0.8 ;
     sh:minCount 1 ;
     sh:message "Confidence must be >= 0.8 to claim conformance to this shape."
@@ -67,7 +67,7 @@ function buildDescriptor({ id, graphIri, issuer, modal, confidence, conformsTo, 
     modal === 'Asserted' ? '"true"^^xsd:boolean' :
     modal === 'Counterfactual' ? '"false"^^xsd:boolean' :
     null;
-  return `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+  return `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
@@ -75,17 +75,17 @@ function buildDescriptor({ id, graphIri, issuer, modal, confidence, conformsTo, 
 @prefix as: <https://www.w3.org/ns/activitystreams#> .
 
 <${id}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
     dct:conformsTo <${conformsTo}> ;
-    cg:describes <${graphIri}> ;
-    cg:hasFacet [
-        a cg:TemporalFacet ;
-        cg:validFrom "${now}"^^xsd:dateTime
+    iep:describes <${graphIri}> ;
+    iep:hasFacet [
+        a iep:TemporalFacet ;
+        iep:validFrom "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [
             a prov:Activity ;
             prov:wasAssociatedWith <${agentLens}> ;
@@ -94,30 +94,30 @@ function buildDescriptor({ id, graphIri, issuer, modal, confidence, conformsTo, 
 ${wasDerivedFrom ? `        prov:wasDerivedFrom <${wasDerivedFrom}> ;\n` : ''}        prov:wasAttributedTo <${issuer}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [
-        a cg:AgentFacet ;
-        cg:assertingAgent [
+    iep:hasFacet [
+        a iep:AgentFacet ;
+        iep:assertingAgent [
             a prov:SoftwareAgent, as:Application ;
-            cg:agentIdentity <${agentLens}>
+            iep:agentIdentity <${agentLens}>
         ] ;
-        cg:agentRole cg:Author ;
-        cg:onBehalfOf <${issuer}>
+        iep:agentRole iep:Author ;
+        iep:onBehalfOf <${issuer}>
     ] ;
-    cg:hasFacet [
-        a cg:SemioticFacet ;
-${groundTruth ? `        cg:groundTruth ${groundTruth} ;\n` : ''}        cg:modalStatus cg:${modal} ;
-        cg:epistemicConfidence "${confidence}"^^xsd:double
+    iep:hasFacet [
+        a iep:SemioticFacet ;
+${groundTruth ? `        iep:groundTruth ${groundTruth} ;\n` : ''}        iep:modalStatus iep:${modal} ;
+        iep:epistemicConfidence "${confidence}"^^xsd:double
     ] ;
-    cg:hasFacet [
-        a cg:TrustFacet ;
-        cg:issuer <${issuer}> ;
-        cg:trustLevel cg:SelfAsserted
+    iep:hasFacet [
+        a iep:TrustFacet ;
+        iep:issuer <${issuer}> ;
+        iep:trustLevel iep:SelfAsserted
     ] ;
-    cg:hasFacet [
-        a cg:FederationFacet ;
-        cg:origin <${POD}> ;
-        cg:storageEndpoint <${POD}> ;
-        cg:syncProtocol cg:SolidNotifications
+    iep:hasFacet [
+        a iep:FederationFacet ;
+        iep:origin <${POD}> ;
+        iep:storageEndpoint <${POD}> ;
+        iep:syncProtocol iep:SolidNotifications
     ] .
 `;
 }
@@ -142,7 +142,7 @@ const SHARED_GRAPH = 'urn:graph:shared:cross-issuer-test:semantic-probe';
 const ts = Date.now();
 const descs = [
   {
-    id: `urn:cg:multi:${ts}-alpha`,
+    id: `urn:iep:multi:${ts}-alpha`,
     graphIri: SHARED_GRAPH,
     issuer: 'urn:agent:independent:alpha',
     modal: 'Asserted',
@@ -151,25 +151,25 @@ const descs = [
     agentLens: 'urn:agent:independent:alpha',
   },
   {
-    id: `urn:cg:multi:${ts}-beta`,
+    id: `urn:iep:multi:${ts}-beta`,
     graphIri: SHARED_GRAPH,
     issuer: 'urn:agent:independent:beta',
     modal: 'Asserted',
     confidence: 0.85,
     conformsTo: SHAPE_IRI,
-    wasDerivedFrom: `urn:cg:multi:${ts}-alpha`,
+    wasDerivedFrom: `urn:iep:multi:${ts}-alpha`,
     agentLens: 'urn:agent:independent:beta',
   },
   {
     // Gamma — violates the shape intentionally: confidence < 0.8.
     // The auditor should flag this as a schema violation.
-    id: `urn:cg:multi:${ts}-gamma-shape-violator`,
+    id: `urn:iep:multi:${ts}-gamma-shape-violator`,
     graphIri: SHARED_GRAPH,
     issuer: 'urn:agent:independent:gamma',
     modal: 'Asserted',
     confidence: 0.4,
     conformsTo: SHAPE_IRI,
-    wasDerivedFrom: `urn:cg:multi:${ts}-alpha`,
+    wasDerivedFrom: `urn:iep:multi:${ts}-alpha`,
     agentLens: 'urn:agent:independent:gamma',
   },
 ];
@@ -197,17 +197,17 @@ for (let i = 0; i < descs.length; i++) {
   const url = descriptorUrls[i];
   appended += `
 
-<${url}> a cg:ManifestEntry ;
-    cg:describes <${d.graphIri}> ;
-    cg:hasFacetType cg:Temporal ;
-    cg:hasFacetType cg:Provenance ;
-    cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ;
-    cg:hasFacetType cg:Trust ;
-    cg:hasFacetType cg:Federation ;
+<${url}> a iep:ManifestEntry ;
+    iep:describes <${d.graphIri}> ;
+    iep:hasFacetType iep:Temporal ;
+    iep:hasFacetType iep:Provenance ;
+    iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ;
+    iep:hasFacetType iep:Trust ;
+    iep:hasFacetType iep:Federation ;
     dct:conformsTo <${d.conformsTo}> ;
-    cg:modalStatus cg:${d.modal} ;
-    cg:trustLevel cg:SelfAsserted .
+    iep:modalStatus iep:${d.modal} ;
+    iep:trustLevel iep:SelfAsserted .
 `;
 }
 

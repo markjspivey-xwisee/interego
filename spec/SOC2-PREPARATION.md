@@ -85,9 +85,9 @@ The project has unusual leverage on SOC 2 because much of what auditors normally
 | Encryption at rest | CC6.7 | Customer content E2EE via NaCl envelope encryption; storage provider sees ciphertext only. |
 | Encryption in transit | CC6.7 | TLS on all Azure endpoints; pod-to-pod via HTTPS; envelope encryption inside the transport. |
 | Change management | CC8.1 | Every code change → git commit → signed tag (recommended) → CI build → deploy log; deploy events publishable as `compliance: true` descriptors with `dct:conformsTo soc2:CC8.1`. |
-| Risk assessment | CC3.1 | Risk register kept as descriptors with `cg:modalStatus Hypothetical` for identified risks, transitioning to `Counterfactual` when mitigated. |
+| Risk assessment | CC3.1 | Risk register kept as descriptors with `iep:modalStatus Hypothetical` for identified risks, transitioning to `Counterfactual` when mitigated. |
 | System monitoring | CC7.1 | Application emits operational events as descriptors; relay `/audit/events` aggregates them; lineage chains visible via `prov:wasDerivedFrom`. |
-| Incident response | CC7.3, CC7.4 | Incidents recorded as `compliance: true` descriptors with `dct:conformsTo soc2:CC7.3`; post-mortem chain via `cg:supersedes`. |
+| Incident response | CC7.3, CC7.4 | Incidents recorded as `compliance: true` descriptors with `dct:conformsTo soc2:CC7.3`; post-mortem chain via `iep:supersedes`. |
 | Backup and recovery | A1.2, A1.3 | Azure Files snapshot policy (manual today; automated target); restore evidence as audit-trail descriptor. |
 | Vendor management | CC9.2 | Subprocessor list maintained as descriptor on the operator's pod; SOC 2 report fetch dates recorded. |
 | Logging and audit trail | CC4.1, CC4.2 | The `/audit/*` relay endpoints + signed compliance descriptors *are* the audit trail. ECDSA-signed, IPFS-anchored. |
@@ -141,7 +141,7 @@ Initial list — kept as a living document. Each entry must end up in the vendor
 **Action items for vendor management:**
 1. Request SOC 2 Type 2 reports from each in-scope vendor; record fetch date.
 2. Document data flow per vendor in [`policies/06-vendor-management.md`](policies/06-vendor-management.md).
-3. Set annual review reminder (descriptor with `cg:validUntilEvent` for 12 months out).
+3. Set annual review reminder (descriptor with `iep:validUntilEvent` for 12 months out).
 
 ---
 
@@ -181,7 +181,7 @@ The Interego architecture changes the evidence collection model. Most evidence i
 - **Every deploy** → publish_context with compliance:true, dct:conformsTo soc2:CC8.1, content describing what was deployed, by whom, from which commit. See [`spec/policies/03-change-management.md`](policies/03-change-management.md) §Procedures.
 - **Every access change** (Azure RBAC role assignment, GitHub team change, NPM access change) → publish_context with compliance:true, dct:conformsTo soc2:CC6.2.
 - **Every key rotation** (compliance wallet, signing keys) → publish_context with compliance:true, dct:conformsTo soc2:CC6.7. The `rotateComplianceWallet` helper already produces the rotation event; wire it to publish.
-- **Every incident** (any user-impacting event, security event, data integrity event) → publish_context with compliance:true, dct:conformsTo soc2:CC7.3 + CC7.4. Post-mortem chained via `cg:supersedes`.
+- **Every incident** (any user-impacting event, security event, data integrity event) → publish_context with compliance:true, dct:conformsTo soc2:CC7.3 + CC7.4. Post-mortem chained via `iep:supersedes`.
 - **Every quarterly review** (access, risk, vendor) → publish_context with compliance:true, dct:conformsTo soc2:CC1.1 + CC2.2.
 
 ### Manual (collected by operator)
@@ -194,7 +194,7 @@ The Interego architecture changes the evidence collection model. Most evidence i
 ### Stored where
 
 - Signed descriptors → operator's compliance pod (`urn:graph:markj:soc2-evidence:v1`)
-- Manual evidence → encrypted bucket, referenced from descriptor metadata via `cg:affordance`
+- Manual evidence → encrypted bucket, referenced from descriptor metadata via `iep:affordance`
 - Auditor handoff → read-only access to `/audit/compliance/soc2?pod=<podUrl>`; the per-control report aggregates evidence per CC
 
 ---

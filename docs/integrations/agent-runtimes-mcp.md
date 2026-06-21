@@ -160,7 +160,7 @@ LLM:                              Substrate:
 ```
 "call discover_context(...)"  →   discover(podUrl, { typeFilter, temporal, ... })
                                   → enumerates the pod's `.ttl` index
-                                  → resolves cg:supersedes chains
+                                  → resolves iep:supersedes chains
                                   → returns Asserted heads, with provenance
 ```
 
@@ -205,7 +205,7 @@ ergonomic** — is the point.
   tightly coupled integration is what Path 2 buys.
 * **Pod hygiene is the operator's job.** Interego will not delete the
   agent's old memories on its behalf. Use the modal-status /
-  cg:supersedes pattern to retire facts; never overwrite. The substrate
+  iep:supersedes pattern to retire facts; never overwrite. The substrate
   enforces this on the descriptor side; the agent must surface the
   pattern to the user.
 * **Sensitive content screening runs server-side.** The MCP server
@@ -225,7 +225,7 @@ ergonomic** — is the point.
 * [path-5-hermes-memory-provider.md](path-5-hermes-memory-provider.md)
   — the same, against Hermes Agent's memory-provider interface
 * [path-3-skills-as-affordances.md](path-3-skills-as-affordances.md)
-  — agentskills.io SKILL.md ↔ `cg:Affordance` translator; emergent
+  — agentskills.io SKILL.md ↔ `iep:Affordance` translator; emergent
   attestation, promotion, federation
 * [path-4-compliance-overlay.md](path-4-compliance-overlay.md) — every
   agent action becomes a signed, framework-cited compliance descriptor

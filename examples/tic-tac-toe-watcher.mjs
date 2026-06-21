@@ -27,7 +27,7 @@
  *
  *       1. discover() the tournament pod and find tictactoe:NewGameChallenge
  *          descriptors that have not yet been accepted (no later
- *          descriptor cg:supersedes them).
+ *          descriptor iep:supersedes them).
  *       2. For each pending challenge, verify the challenger's
  *          signature, pick the requested collective player (by name or
  *          DID; least-recently-played wins ties), publish a signed
@@ -239,13 +239,13 @@ async function publishCollectiveRoster(collective) {
   const signer = collective.players.get('Aggressor');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix tictactoe: <${TICTAC_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, tictactoe:CollectiveRoster ;
+<${iri}> a iep:ContextDescriptor, tictactoe:CollectiveRoster ;
   dcterms:conformsTo <${RULES_IRI}> ;
   dcterms:title "Tic-tac-toe collective roster (${TOURNAMENT_DATE})" ;
   dcterms:description "The four player DIDs the collective watcher will accept challenges against. Mint a tictactoe:NewGameChallenge naming one of these DIDs (or one of these names via tictactoe:opponentName) and publish it to this pod; the watcher will accept it within one poll interval and play the game out move by move." ;
@@ -293,13 +293,13 @@ async function publishAcceptance(player, challenge) {
   const acceptanceJson = signedPayload.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix tictactoe: <${TICTAC_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, tictactoe:ChallengeAccepted ;
+<${iri}> a iep:ContextDescriptor, tictactoe:ChallengeAccepted ;
   dcterms:conformsTo <${RULES_IRI}> ;
   tictactoe:gameId <${challenge.gameId}> ;
   tictactoe:accepter <${player.did}> ;
@@ -368,13 +368,13 @@ async function publishMove({ game, player, mark, cell, signedPayload, signature,
   const moveJson = JSON.stringify(movePayload).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix tictactoe: <${TICTAC_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, tictactoe:Move ;
+<${iri}> a iep:ContextDescriptor, tictactoe:Move ;
   dcterms:conformsTo <${RULES_IRI}> ;
   tictactoe:gameId <${game.gameId}> ;
   tictactoe:moveNumber ${n} ;
@@ -443,7 +443,7 @@ async function publishMove({ game, player, mark, cell, signedPayload, signature,
 //     acceptances.
 //
 // A challenge is "pending" if no acceptance descriptor has
-// cg:supersedes pointing at it. A game is "in progress" if it has an
+// iep:supersedes pointing at it. A game is "in progress" if it has an
 // acceptance but no terminal move yet.
 
 async function readChallengeDetails(descriptorUrl, conformsTo) {
@@ -634,7 +634,7 @@ YOUR DISPOSITION
 
 HOW THE SUBSTRATE WORKS
   Every game state lives on the live Interego CSS pod as a chain of
-  cg:ContextDescriptor move-descriptors linked via cg:supersedes. The
+  iep:ContextDescriptor move-descriptors linked via iep:supersedes. The
   watcher loop fetched the latest descriptor for you before invoking
   this session. You call discover_board to see the current 3x3 grid,
   then call make_move once with a legal cell; make_move signs the move

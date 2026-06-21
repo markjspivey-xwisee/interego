@@ -1,5 +1,5 @@
 /**
- * agentskills.io ↔ cg:Affordance bridge tests.
+ * agentskills.io ↔ iep:Affordance bridge tests.
  *
  * Covers: SKILL.md frontmatter parser (valid + invalid inputs),
  * round-trip emission, skill→descriptor translation, descriptor→skill
@@ -190,7 +190,7 @@ describe('skillBundleToDescriptor — substrate translation', () => {
   it('produces a typed Hypothetical descriptor by default', () => {
     const bundle: SkillBundle = { skillMd: MIN_SKILL_MD, files: new Map() };
     const out = skillBundleToDescriptor(bundle, { authoringAgentDid: AUTHOR });
-    expect(out.skillIri).toMatch(/^urn:cg:skill:pdf-processing:[0-9a-f]{16}$/);
+    expect(out.skillIri).toMatch(/^urn:iep:skill:pdf-processing:[0-9a-f]{16}$/);
     expect(out.descriptor.facets.some(f => f.type === 'Semiotic' && f.modalStatus === 'Hypothetical')).toBe(true);
     expect(out.descriptor.facets.some(f => f.type === 'Provenance')).toBe(true);
   });
@@ -209,11 +209,11 @@ describe('skillBundleToDescriptor — substrate translation', () => {
     expect((semiotic as { modalStatus?: string }).modalStatus).toBe('Counterfactual');
   });
 
-  it('emits a parseable graph with cg:Affordance + pgsl:Atom', () => {
+  it('emits a parseable graph with iep:Affordance + pgsl:Atom', () => {
     const bundle: SkillBundle = { skillMd: MIN_SKILL_MD, files: new Map() };
     const out = skillBundleToDescriptor(bundle, { authoringAgentDid: AUTHOR });
     const doc = parseTrig(out.graphContent);
-    const affordances = findSubjectsOfType(doc, 'https://markjspivey-xwisee.github.io/interego/ns/cg#Affordance' as IRI);
+    const affordances = findSubjectsOfType(doc, 'https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance' as IRI);
     expect(affordances).toHaveLength(1);
     expect(readStringValue(affordances[0]!, 'http://www.w3.org/2000/01/rdf-schema#label' as IRI)).toBe('pdf-processing');
     const atoms = findSubjectsOfType(doc, 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#Atom' as IRI);
@@ -300,10 +300,10 @@ describe('substrate composition — what falls out for free', () => {
   it('content-hash on every atom enables tamper detection', () => {
     const bundle: SkillBundle = { skillMd: MIN_SKILL_MD, files: new Map() };
     const out = skillBundleToDescriptor(bundle, { authoringAgentDid: AUTHOR });
-    // The graph content includes a cg:contentHash; tampering with the
+    // The graph content includes a iep:contentHash; tampering with the
     // SKILL.md value but keeping the hash will be detectable when a
     // verifier rehashes the value.
-    expect(out.graphContent).toMatch(/cg#contentHash[^"]*"[a-f0-9]{64}"/);
+    expect(out.graphContent).toMatch(/iep#contentHash[^"]*"[a-f0-9]{64}"/);
   });
 
   it('PROV facet records signed authorship — no skill-specific code', () => {

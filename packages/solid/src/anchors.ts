@@ -93,62 +93,62 @@ function anchorToTurtle(receipt: AnchorReceipt): string {
 
   switch (receipt.type) {
     case 'ipfs':
-      lines.push(`<${receipt.descriptorUrl}> cg:ipfsAnchor [`);
-      lines.push(`    a cg:IpfsAnchor ;`);
-      lines.push(`    cg:cid "${receipt.cid}" ;`);
-      lines.push(`    cg:gatewayUrl <${receipt.gatewayUrl}> ;`);
-      lines.push(`    cg:contentHash "${receipt.contentHash}" ;`);
-      lines.push(`    cg:pinnedBy <${receipt.pinnedBy}> ;`);
-      lines.push(`    cg:pinnedAt "${receipt.pinnedAt}"^^xsd:dateTime ;`);
-      lines.push(`    cg:provider "${receipt.provider}"`);
+      lines.push(`<${receipt.descriptorUrl}> iep:ipfsAnchor [`);
+      lines.push(`    a iep:IpfsAnchor ;`);
+      lines.push(`    iep:cid "${receipt.cid}" ;`);
+      lines.push(`    iep:gatewayUrl <${receipt.gatewayUrl}> ;`);
+      lines.push(`    iep:contentHash "${receipt.contentHash}" ;`);
+      lines.push(`    iep:pinnedBy <${receipt.pinnedBy}> ;`);
+      lines.push(`    iep:pinnedAt "${receipt.pinnedAt}"^^xsd:dateTime ;`);
+      lines.push(`    iep:provider "${receipt.provider}"`);
       lines.push(`] .`);
       break;
 
     case 'signature':
-      lines.push(`<${receipt.descriptorUrl}> cg:signatureAnchor [`);
-      lines.push(`    a cg:SignatureAnchor ;`);
-      lines.push(`    cg:signerAddress "${receipt.signerAddress}" ;`);
-      lines.push(`    cg:contentHash "${receipt.contentHash}" ;`);
-      lines.push(`    cg:signature "${receipt.signature}" ;`);
-      lines.push(`    cg:signedAt "${receipt.signedAt}"^^xsd:dateTime ;`);
-      lines.push(`    cg:chainId "${receipt.chainId}"^^xsd:integer`);
+      lines.push(`<${receipt.descriptorUrl}> iep:signatureAnchor [`);
+      lines.push(`    a iep:SignatureAnchor ;`);
+      lines.push(`    iep:signerAddress "${receipt.signerAddress}" ;`);
+      lines.push(`    iep:contentHash "${receipt.contentHash}" ;`);
+      lines.push(`    iep:signature "${receipt.signature}" ;`);
+      lines.push(`    iep:signedAt "${receipt.signedAt}"^^xsd:dateTime ;`);
+      lines.push(`    iep:chainId "${receipt.chainId}"^^xsd:integer`);
       lines.push(`] .`);
       break;
 
     case 'encryption':
-      lines.push(`<${receipt.descriptorUrl}> cg:encryptionAnchor [`);
-      lines.push(`    a cg:EncryptionAnchor ;`);
-      lines.push(`    cg:algorithm "${receipt.algorithm}" ;`);
-      lines.push(`    cg:recipientCount "${receipt.recipientCount}"^^xsd:integer ;`);
+      lines.push(`<${receipt.descriptorUrl}> iep:encryptionAnchor [`);
+      lines.push(`    a iep:EncryptionAnchor ;`);
+      lines.push(`    iep:algorithm "${receipt.algorithm}" ;`);
+      lines.push(`    iep:recipientCount "${receipt.recipientCount}"^^xsd:integer ;`);
       for (const fp of receipt.recipientFingerprints) {
-        lines.push(`    cg:recipientFingerprint "${fp}" ;`);
+        lines.push(`    iep:recipientFingerprint "${fp}" ;`);
       }
-      lines.push(`    cg:encryptedAt "${receipt.encryptedAt}"^^xsd:dateTime`);
+      lines.push(`    iep:encryptedAt "${receipt.encryptedAt}"^^xsd:dateTime`);
       lines.push(`] .`);
       break;
 
     case 'pgsl':
-      lines.push(`<${receipt.descriptorUrl}> cg:pgslAnchor [`);
-      lines.push(`    a cg:PgslAnchor ;`);
-      lines.push(`    cg:latticeRoot "${receipt.latticeRoot}" ;`);
-      lines.push(`    cg:atomCount "${receipt.atomCount}"^^xsd:integer ;`);
-      lines.push(`    cg:fragmentCount "${receipt.fragmentCount}"^^xsd:integer ;`);
-      lines.push(`    cg:topFragment <${receipt.topFragmentUri}> ;`);
-      lines.push(`    cg:ingestedAt "${receipt.ingestedAt}"^^xsd:dateTime`);
+      lines.push(`<${receipt.descriptorUrl}> iep:pgslAnchor [`);
+      lines.push(`    a iep:PgslAnchor ;`);
+      lines.push(`    iep:latticeRoot "${receipt.latticeRoot}" ;`);
+      lines.push(`    iep:atomCount "${receipt.atomCount}"^^xsd:integer ;`);
+      lines.push(`    iep:fragmentCount "${receipt.fragmentCount}"^^xsd:integer ;`);
+      lines.push(`    iep:topFragment <${receipt.topFragmentUri}> ;`);
+      lines.push(`    iep:ingestedAt "${receipt.ingestedAt}"^^xsd:dateTime`);
       lines.push(`] .`);
       break;
 
     case 'activity':
-      lines.push(`<${receipt.target}> cg:activityAnchor [`);
-      lines.push(`    a cg:ActivityAnchor ;`);
-      lines.push(`    cg:tool "${receipt.tool}" ;`);
-      lines.push(`    cg:agent <${receipt.agent}> ;`);
-      lines.push(`    cg:outcome "${receipt.outcome}" ;`);
-      lines.push(`    cg:timestamp "${receipt.timestamp}"^^xsd:dateTime`);
+      lines.push(`<${receipt.target}> iep:activityAnchor [`);
+      lines.push(`    a iep:ActivityAnchor ;`);
+      lines.push(`    iep:tool "${receipt.tool}" ;`);
+      lines.push(`    iep:agent <${receipt.agent}> ;`);
+      lines.push(`    iep:outcome "${receipt.outcome}" ;`);
+      lines.push(`    iep:timestamp "${receipt.timestamp}"^^xsd:dateTime`);
       if (receipt.metadata) {
         for (const [key, value] of Object.entries(receipt.metadata)) {
           if (typeof value === 'string') {
-            lines.push(`    ; cg:${key} "${value}"`);
+            lines.push(`    ; iep:${key} "${value}"`);
           }
         }
       }
@@ -202,7 +202,7 @@ export async function writeAnchor(
     const existingContent = await existing.text();
     body = `${existingContent.trimEnd()}\n\n${turtle}\n`;
   } else {
-    body = `${turtlePrefixes(['cg', 'xsd', 'prov'])}\n\n${turtle}\n`;
+    body = `${turtlePrefixes(['iep', 'xsd', 'prov'])}\n\n${turtle}\n`;
   }
 
   await fetchFn(anchorUrl, {

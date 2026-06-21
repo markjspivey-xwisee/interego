@@ -1,9 +1,9 @@
 /**
- * Kernel `act` × `cg:canDecrypt` integration test.
+ * Kernel `act` × `iep:canDecrypt` integration test.
  *
  * Verifies the server-side decrypt path for authorized recipients:
  *
- *   1. The `cg:canDecrypt` affordance (hydra:method=GET, hydra:target=<envelope>)
+ *   1. The `iep:canDecrypt` affordance (hydra:method=GET, hydra:target=<envelope>)
  *      is recognised by `act()` as having decrypt semantics.
  *   2. When `act` is given `recipientKeyPair` AND the keypair is in the
  *      envelope's recipient set, the body of the act() result is the
@@ -11,11 +11,11 @@
  *   3. When the keypair is NOT a recipient, the body is the raw envelope —
  *      so the existing "encrypted-no-key" UX is preserved.
  *   4. The descriptor-resolved invocation form
- *      `act({ descriptorUrl, actionIri: cg:canDecrypt })` also unwraps —
+ *      `act({ descriptorUrl, actionIri: iep:canDecrypt })` also unwraps —
  *      this is the path MCP `invoke_affordance` / Path A traffic takes.
  *
  * The kernel `act()` previously did a raw HTTP GET and returned the
- * ciphertext body verbatim — `cg:canDecrypt` was advertised on the
+ * ciphertext body verbatim — `iep:canDecrypt` was advertised on the
  * affordance graph but had no operational meaning. These tests pin the
  * fixed semantics.
  */
@@ -29,10 +29,10 @@ import {
 import type { FetchFn } from '@interego/core';
 
 const CG_CAN_DECRYPT_FULL =
-  'https://markjspivey-xwisee.github.io/interego/ns/cg#canDecrypt';
+  'https://markjspivey-xwisee.github.io/interego/ns/iep#canDecrypt';
 
 // Build a minimal fetch mock that serves (a) a descriptor with a
-// `cg:canDecrypt` affordance pointing at (b) an envelope URL whose body
+// `iep:canDecrypt` affordance pointing at (b) an envelope URL whose body
 // is the JOSE+JSON envelope produced by `createEncryptedEnvelope`.
 function buildMockFetch(opts: {
   descriptorUrl: string;
@@ -40,18 +40,18 @@ function buildMockFetch(opts: {
   envelopeBody: string;
 }): FetchFn {
   const descriptorTurtle = [
-    '@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .',
-    '@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/cgh#> .',
+    '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .',
+    '@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/cgh#> .',
     '@prefix hydra: <http://www.w3.org/ns/hydra/core#> .',
     '@prefix dcat: <http://www.w3.org/ns/dcat#> .',
-    `<${opts.descriptorUrl}> cg:affordance [`,
-    '  a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ;',
-    '  cg:action cg:canDecrypt ;',
+    `<${opts.descriptorUrl}> iep:affordance [`,
+    '  a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;',
+    '  iep:action iep:canDecrypt ;',
     '  hydra:method "GET" ;',
     `  hydra:target <${opts.envelopeUrl}> ;`,
     `  dcat:accessURL <${opts.envelopeUrl}> ;`,
     '  dcat:mediaType "application/jose+json" ;',
-    '  cg:encrypted true',
+    '  iep:encrypted true',
     '] .',
   ].join('\n');
 
@@ -84,7 +84,7 @@ function buildMockFetch(opts: {
   }) as unknown as FetchFn;
 }
 
-describe('kernel.act + cg:canDecrypt server-side decrypt', () => {
+describe('kernel.act + iep:canDecrypt server-side decrypt', () => {
   const descriptorUrl = 'https://pod.test/alice/ctx/secret.ttl';
   const envelopeUrl = 'https://pod.test/alice/ctx/secret-graph.envelope.jose.json';
   const plaintext = '<a> <b> <c> .';
@@ -154,7 +154,7 @@ describe('kernel.act + cg:canDecrypt server-side decrypt', () => {
     expect(result.body).toBe(envelopeBody);
   });
 
-  it('descriptor-resolved form: act({descriptorUrl, actionIri: cg:canDecrypt}) returns plaintext', async () => {
+  it('descriptor-resolved form: act({descriptorUrl, actionIri: iep:canDecrypt}) returns plaintext', async () => {
     const author = generateKeyPair();
     const envelope = createEncryptedEnvelope(plaintext, [author.publicKey], author);
     const envelopeBody = JSON.stringify(envelope);

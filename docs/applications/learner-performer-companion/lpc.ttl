@@ -1,5 +1,5 @@
 @prefix lpc:      <https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#> .
-@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix passport: <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
 @prefix olke:     <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
 @prefix rdf:      <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -40,14 +40,14 @@
     vann:preferredNamespacePrefix "lpc" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#" ;
     rdfs:comment "Human-protagonist vertical application. Non-normative. The Interego protocol does not depend on this; it is one specific use case / implementation." ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/passport> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/olke> .
 
 # ── Top-level container ────────────────────────────────────────────────
 
 lpc:LearnerWallet a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Learner Wallet" ;
     rdfs:comment "Top-level container linking the user's credentials, learning history, training content, and performance records. Lives in the user's own pod; portable across employers." .
 
@@ -56,7 +56,7 @@ lpc:LearnerWallet a owl:Class ;
 lpc:Credential a owl:Class ;
     rdfs:subClassOf passport:Achievement ;
     rdfs:label "Credential" ;
-    rdfs:comment "A verifiable credential / Open Badge 3.0 / IMS CLR 2.0 assertion / IEEE LERS recognition record. Carries the underlying VC proof block plus verification status. Issuer attribution lives in cg:TrustFacet.issuer." .
+    rdfs:comment "A verifiable credential / Open Badge 3.0 / IMS CLR 2.0 assertion / IEEE LERS recognition record. Carries the underlying VC proof block plus verification status. Issuer attribution lives in iep:TrustFacet.issuer." .
 
 lpc:CredentialFormat a owl:Class ;
     rdfs:label "Credential Format" ;
@@ -114,20 +114,20 @@ lpc:verificationStatus a owl:ObjectProperty ;
 # ── Learning experience surface ───────────────────────────────────────
 
 lpc:LearningExperience a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Learning Experience" ;
     rdfs:comment "User-side record derived from an xAPI Statement. Created by ingesting Statements via applications/lrs-adapter/. Cross-links to the training content engaged with and any credential earned." .
 
 lpc:basedOnStatement a owl:ObjectProperty ;
     rdfs:label "based on statement" ;
-    rdfs:comment "IRI of the source xAPI Statement (typically a urn:cg:lrs-statement:* form produced by lrs-adapter ingest)." ;
+    rdfs:comment "IRI of the source xAPI Statement (typically a urn:iep:lrs-statement:* form produced by lrs-adapter ingest)." ;
     rdfs:domain lpc:LearningExperience ;
-    rdfs:range  cg:ContextDescriptor .
+    rdfs:range  iep:ContextDescriptor .
 
 lpc:relatesToContent a owl:ObjectProperty ;
     rdfs:label "relates to training content" ;
     rdfs:comment "Cross-link from a learning experience to the lpc:TrainingContent / lpc:LearningObjective that was engaged with." ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 lpc:relatesToCredential a owl:ObjectProperty ;
     rdfs:label "relates to credential" ;
@@ -137,7 +137,7 @@ lpc:relatesToCredential a owl:ObjectProperty ;
 # ── Training content surface ──────────────────────────────────────────
 
 lpc:TrainingContent a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Training Content" ;
     rdfs:comment "Authoritative training material (course / module / lesson) ingested as a knowledge graph for grounded RAG. Source of citations the assistant returns." .
 
@@ -163,10 +163,10 @@ lpc:contentStandard a owl:DatatypeProperty ;
 lpc:authoritativeSource a owl:ObjectProperty ;
     rdfs:label "authoritative source" ;
     rdfs:comment "Issuer / publisher of the training content. Treated as authoritative for citation purposes." ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 lpc:LearningObjective a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Learning Objective" ;
     rdfs:comment "A specific objective / lesson / passage inside training content. Carries the grounding fragment (PGSL atom) the assistant cites." .
 
@@ -179,14 +179,14 @@ lpc:learningObjective a owl:ObjectProperty ;
 lpc:groundingFragment a owl:ObjectProperty ;
     rdfs:label "grounding fragment" ;
     rdfs:comment "Content-addressed PGSL atom containing the verbatim passage. Citation = quoting this atom with its IRI." ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 # ── Performance record surface ────────────────────────────────────────
 
 lpc:PerformanceRecord a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Performance Record" ;
-    rdfs:comment "A review / rating / feedback record. Provenance attributes it to the issuer (manager, peer, self). Lives in the user's pod with full cg:TrustFacet." .
+    rdfs:comment "A review / rating / feedback record. Provenance attributes it to the issuer (manager, peer, self). Lives in the user's pod with full iep:TrustFacet." .
 
 lpc:ReviewType a owl:Class ;
     rdfs:label "Review Type" .
@@ -204,19 +204,19 @@ lpc:reviewType a owl:ObjectProperty ;
 lpc:flagsCapability a owl:ObjectProperty ;
     rdfs:label "flags capability" ;
     rdfs:comment "Capability area the performance record commented on (positive or negative). Used by the assistant to cross-link review feedback to relevant training content." ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 # ── Development plan surface ──────────────────────────────────────────
 
 lpc:DevelopmentPlan a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Development Plan" ;
-    rdfs:comment "User-side plan composing performance records + training-content KG + credential wallet. ALWAYS cg:modalStatus Hypothetical — the assistant suggests, the user (and possibly their manager) decide. Tracks olke: knowledge maturity progression of the planned skill areas." .
+    rdfs:comment "User-side plan composing performance records + training-content KG + credential wallet. ALWAYS iep:modalStatus Hypothetical — the assistant suggests, the user (and possibly their manager) decide. Tracks olke: knowledge maturity progression of the planned skill areas." .
 
 # ── Cited response surface ────────────────────────────────────────────
 
 lpc:CitedResponse a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Cited Response" ;
     rdfs:comment "An assistant chat response that cites grounding fragments (training content, credentials, performance records). Stored as a descriptor so the citation chain is auditable. The user can click through any citation to the source descriptor." .
 
@@ -224,13 +224,13 @@ lpc:citesFragment a owl:ObjectProperty ;
     rdfs:label "cites fragment" ;
     rdfs:comment "PGSL atom or descriptor that grounds part of this response. Multiple per response is normal." ;
     rdfs:domain lpc:CitedResponse ;
-    rdfs:range  cg:ContextDescriptor .
+    rdfs:range  iep:ContextDescriptor .
 
 lpc:citesDescriptor a owl:ObjectProperty ;
     rdfs:label "cites descriptor" ;
     rdfs:comment "Cited a whole descriptor (credential, performance record, learning experience) rather than a fragment." ;
     rdfs:domain lpc:CitedResponse ;
-    rdfs:range  cg:ContextDescriptor .
+    rdfs:range  iep:ContextDescriptor .
 
 lpc:answeredQuestion a owl:DatatypeProperty ;
     rdfs:label "answered question" ;
@@ -240,4 +240,4 @@ lpc:answeredQuestion a owl:DatatypeProperty ;
 lpc:assistantAttribution a owl:ObjectProperty ;
     rdfs:label "assistant attribution" ;
     rdfs:comment "DID of the Interego-grounded assistant that produced this response. Distinct from the user's DID — the response is the assistant's claim about the user's data, not the user's own claim." ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .

@@ -80,7 +80,7 @@ async function main(): Promise<void> {
   const podUrl = uniquePodUrl(`demo-${SCENARIO}`);
   let bridge: BridgeHandle | undefined;
   let bridgeProc: ChildProcess | undefined;
-  const subjectGraph = `urn:cg:demo:second-contact-escalation:${Date.now()}`;
+  const subjectGraph = `urn:iep:demo:second-contact-escalation:${Date.now()}`;
 
   try {
     step(1, 'Spinning up interego-bridge (port 6050)');
@@ -102,7 +102,7 @@ specific perspective. Your perspective: ${p.focus}.
 Call protocol.publish_descriptor EXACTLY ONCE with:
   graph_iri:     "${subjectGraph}"
   graph_content: |
-    @prefix demo: <urn:cg:demo:> .
+    @prefix demo: <urn:iep:demo:> .
     @prefix dct: <http://purl.org/dc/terms/> .
     <${subjectGraph}> dct:title "Second-contact escalation: ${p.author} perspective" ;
       demo:perspective "${p.author}" ;

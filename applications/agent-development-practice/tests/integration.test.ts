@@ -7,14 +7,14 @@
  *   - toTurtle() serialization succeeds and emits the descriptor IRI
  *   - Modal discipline holds: probes + fragments + syntheses are Hypothetical;
  *     operator evolution decisions are Asserted
- *   - cg:supersedes lineage is preserved on round-trip
+ *   - iep:supersedes lineage is preserved on round-trip
  *
  * "Real" vs "simulated" boundary: this test uses the actual builder, the
  * actual Turtle serializer, the actual programmatic validator. It does NOT
  * publish to a network pod (Tier 2). What it verifies is that the
  * descriptors emitted in examples/probe-cycle.mjs are SHAPE-CORRECT.
  *
- * Scope finding (worth recording): the L1 cg:SemioticFacet has no `content`
+ * Scope finding (worth recording): the L1 iep:SemioticFacet has no `content`
  * field. Vertical content (the narrative text, the signifiers, the
  * coherentNarrative entries) lives as adp:-namespaced triples in the
  * described graph, NOT in the descriptor metadata. The integration test
@@ -40,7 +40,7 @@ const BOB_DID   = 'did:web:bob.example'   as IRI;
 const RAVI_DID  = 'did:web:ravi.example'  as IRI;
 const MARK_DID  = 'did:web:mark.example'  as IRI;
 
-const CAPABILITY_IRI = 'urn:cg:capability:customer-support:tone' as IRI;
+const CAPABILITY_IRI = 'urn:iep:capability:customer-support:tone' as IRI;
 
 // ── Builders for each adp: class ─────────────────────────────────────
 
@@ -54,7 +54,7 @@ function buildCapabilitySpace() {
 }
 
 function buildProbe(operator: IRI, variant: string) {
-  return ContextDescriptor.create(`urn:cg:probe:tone:${variant}` as IRI)
+  return ContextDescriptor.create(`urn:iep:probe:tone:${variant}` as IRI)
     .describes('urn:graph:adp:probe' as IRI)
     .temporal({ validFrom: '2026-04-22T10:00:00Z', validUntil: '2026-05-10T00:00:00Z' })
     .hypothetical(0.5)
@@ -65,7 +65,7 @@ function buildProbe(operator: IRI, variant: string) {
 
 function buildFragment(probeIri: IRI) {
   const slug = probeIri.split(':').pop() ?? 'unknown';
-  return ContextDescriptor.create(`urn:cg:fragment:${slug}:${Date.now()}` as IRI)
+  return ContextDescriptor.create(`urn:iep:fragment:${slug}:${Date.now()}` as IRI)
     .describes('urn:graph:adp:narrative' as IRI)
     .temporal({ validFrom: '2026-04-22T14:00:00Z' })
     .hypothetical(0.6)
@@ -75,7 +75,7 @@ function buildFragment(probeIri: IRI) {
 }
 
 function buildSynthesis() {
-  return ContextDescriptor.create('urn:cg:synthesis:tone-week-1' as IRI)
+  return ContextDescriptor.create('urn:iep:synthesis:tone-week-1' as IRI)
     .describes('urn:graph:adp:synthesis' as IRI)
     .temporal({ validFrom: '2026-04-26T10:00:00Z' })
     .hypothetical(0.55)
@@ -85,7 +85,7 @@ function buildSynthesis() {
 }
 
 function buildEvolutionStep() {
-  return ContextDescriptor.create('urn:cg:evolution:tone-week-1-decision' as IRI)
+  return ContextDescriptor.create('urn:iep:evolution:tone-week-1-decision' as IRI)
     .describes('urn:graph:adp:evolution' as IRI)
     .temporal({ validFrom: '2026-04-26T16:00:00Z' })
     .asserted(0.85)
@@ -95,7 +95,7 @@ function buildEvolutionStep() {
 }
 
 function buildCapabilityEvolution() {
-  return ContextDescriptor.create('urn:cg:capability-evolution:tone:v1' as IRI)
+  return ContextDescriptor.create('urn:iep:capability-evolution:tone:v1' as IRI)
     .describes('urn:graph:adp:capability-evolution' as IRI)
     .temporal({ validFrom: '2026-05-15T10:00:00Z' })
     .asserted(0.75)
@@ -133,7 +133,7 @@ describe('agent-development-practice — descriptor shape', () => {
   });
 
   it('narrative fragments are Hypothetical (observations, not causation claims)', () => {
-    const fragment = buildFragment('urn:cg:probe:tone:explicit-acknowledgment' as IRI);
+    const fragment = buildFragment('urn:iep:probe:tone:explicit-acknowledgment' as IRI);
     const semiotic = fragment.facets.find(f => f.type === 'Semiotic') as { modalStatus?: string };
     expect(semiotic?.modalStatus).toBe('Hypothetical');
     expect(validate(fragment).conforms).toBe(true);
@@ -166,8 +166,8 @@ describe('agent-development-practice — descriptor shape', () => {
       buildProbe(ALICE_DID, 'clinical-baseline'),
       buildProbe(BOB_DID,   'explicit-acknowledgment'),
       buildProbe(RAVI_DID,  'empathic-mirroring'),
-      buildFragment('urn:cg:probe:tone:explicit-acknowledgment' as IRI),
-      buildFragment('urn:cg:probe:tone:explicit-acknowledgment' as IRI),
+      buildFragment('urn:iep:probe:tone:explicit-acknowledgment' as IRI),
+      buildFragment('urn:iep:probe:tone:explicit-acknowledgment' as IRI),
       buildSynthesis(),
       buildEvolutionStep(),
       buildCapabilityEvolution(),

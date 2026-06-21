@@ -15,7 +15,7 @@
  *     as a `hydra:Operation`-typed `affordances[]` entry. Clients
  *     follow the link instead of hardcoding URL templates.
  *  3. **SHACL-aware**         — every response advertises the SHACL
- *     shape its payload conforms to via `cg:conformsToShape`, so
+ *     shape its payload conforms to via `iep:conformsToShape`, so
  *     validators can verify the wire shape without out-of-band schema.
  *
  * The helpers are intentionally policy-only: they do not mutate the
@@ -23,13 +23,13 @@
  * ignore the new fields continue to work unchanged; clients that look
  * for them get a native hypermedia surface.
  *
- * The kernel-response class hierarchy this module emits — `cg:KernelResult`
- * and its eight verb-specific subclasses (`cg:MintResult`,
- * `cg:DereferenceResult`, `cg:ComposeResult`, `cg:ActResult`,
- * `cg:RestrictResult`, `cg:ExtendResult`, `cg:PromoteResult`,
- * `cg:DecomposeResult`), plus `cg:ToolResult` for compatibility shims and
- * `cg:RelayEntryPoint` for the Hydra entry-point envelope — is declared in
- * `docs/ns/cg.ttl`. All other typing resolves into existing `cg:`, `hydra:`,
+ * The kernel-response class hierarchy this module emits — `iep:KernelResult`
+ * and its eight verb-specific subclasses (`iep:MintResult`,
+ * `iep:DereferenceResult`, `iep:ComposeResult`, `iep:ActResult`,
+ * `iep:RestrictResult`, `iep:ExtendResult`, `iep:PromoteResult`,
+ * `iep:DecomposeResult`), plus `iep:ToolResult` for compatibility shims and
+ * `iep:RelayEntryPoint` for the Hydra entry-point envelope — is declared in
+ * `docs/ns/cg.ttl`. All other typing resolves into existing `iep:`, `hydra:`,
  * `sh:`, and `dcat:` IRIs.
  */
 
@@ -42,12 +42,12 @@ import type { Affordance } from './types.js';
 /**
  * The JSON-LD `@context` every kernel-verb response carries. Defines
  * the prefixes a JSON-LD 1.1 client needs to expand the response into
- * RDF — including the substrate's `cg:`, `cgh:`, `hydra:`, `sh:`, and
+ * RDF — including the substrate's `iep:`, `ieh:`, `hydra:`, `sh:`, and
  * a few standard companions (`prov:`, `dcat:`, `dct:`, `xsd:`).
  */
 export const KERNEL_JSONLD_CONTEXT = Object.freeze({
-  cg:    CG,
-  cgh:   'https://markjspivey-xwisee.github.io/interego/ns/cgh#',
+  iep:    CG,
+  ieh:   'https://markjspivey-xwisee.github.io/interego/ns/cgh#',
   hydra: HYDRA,
   sh:    SH,
   prov:  'http://www.w3.org/ns/prov#',
@@ -83,7 +83,7 @@ export const KERNEL_JSONLD_CONTEXT = Object.freeze({
  * conforms to.
  *
  * Result types that don't have a dedicated shape resolve to the
- * generic `cg:KernelResultShape` (a permissive base shape with
+ * generic `iep:KernelResultShape` (a permissive base shape with
  * `@context` + `@id` + `@type` requirements).
  */
 export const KERNEL_RESULT_SHAPES = Object.freeze({
@@ -104,7 +104,7 @@ export const KERNEL_RESULT_SHAPES = Object.freeze({
 
 /**
  * Result-type discriminator used by the decorator to compute the
- * `@type` / `cg:conformsToShape` / suggested affordances. Each kernel
+ * `@type` / `iep:conformsToShape` / suggested affordances. Each kernel
  * verb hands its own kind so we don't have to sniff the payload.
  */
 export type KernelResultKind =
@@ -120,7 +120,7 @@ export type KernelResultKind =
 
 /**
  * A fully Hydra-typed affordance, ready to be serialized as JSON-LD.
- * The on-wire structure mirrors `cg:Affordance` + `hydra:Operation`:
+ * The on-wire structure mirrors `iep:Affordance` + `hydra:Operation`:
  * `@id` is the affordance subject IRI, `@type` lists the multi-class
  * typing, and the remaining fields are the operational metadata
  * (`hydra:method`, `hydra:target`, ...).
@@ -139,8 +139,8 @@ export interface HypermediaAffordance {
 
 /**
  * Decorate a raw affordance with full Hydra typing. The on-wire
- * representation becomes a multi-typed JSON-LD node — `cg:Affordance`,
- * `cgh:Affordance` (the harness namespace mirror used by verticals),
+ * representation becomes a multi-typed JSON-LD node — `iep:Affordance`,
+ * `ieh:Affordance` (the harness namespace mirror used by verticals),
  * `hydra:Operation` — so any Hydra-aware client picks it up natively.
  */
 export function hydraAffordance(aff: Affordance): HypermediaAffordance {
@@ -164,7 +164,7 @@ export function hydraAffordance(aff: Affordance): HypermediaAffordance {
 /**
  * The JSON-LD envelope every kernel response is wrapped in. Adds
  * `@context`, an `@id` (when the result has a canonical IRI), an
- * `@type` list, a `cg:conformsToShape` shape IRI, and an
+ * `@type` list, a `iep:conformsToShape` shape IRI, and an
  * `affordances` array of fully Hydra-typed next-step operations.
  *
  * The original verb payload is spread at the top level so existing
@@ -183,7 +183,7 @@ export interface HypermediaEnvelope {
  * Decorate a kernel-verb result with the substrate's hypermedia
  * envelope. The result's own fields are preserved verbatim at the top
  * level; the decoration adds `@context`, `@id`, `@type`,
- * `cg:conformsToShape`, and `affordances` (the hydra:Operation list
+ * `iep:conformsToShape`, and `affordances` (the hydra:Operation list
  * of next-step navigations).
  *
  * `nextSteps` lists the affordances that should be advertised for
@@ -295,7 +295,7 @@ export function decorateShim<T extends Record<string, unknown>>(
 ): T & HypermediaEnvelope {
   const types = [
     `${CG}ToolResult`,
-    `urn:cg:tool-result:${options.tool}`,
+    `urn:iep:tool-result:${options.tool}`,
     ...(options.types ?? []),
   ];
   return decorate(payload as Record<string, unknown>, {
@@ -340,7 +340,7 @@ export function hydraEntryPoint(options: {
       'https://markjspivey-xwisee.github.io/interego/ns/cgh#Affordance',
       `${HYDRA}Operation`,
     ],
-    action: `urn:cg:action:${op.name}`,
+    action: `urn:iep:action:${op.name}`,
     title: op.name,
     target: op.target.startsWith('http') ? op.target : `${base}${op.target}`,
     method: op.method ?? 'GET',

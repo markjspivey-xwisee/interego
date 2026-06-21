@@ -141,7 +141,7 @@ Context Descriptors annotate Named Graphs with 9 typed facets. Every piece of kn
 ```typescript
 import { ContextDescriptor, validate, toTurtle } from '@interego/core';
 
-const desc = ContextDescriptor.create('urn:cg:my-context')
+const desc = ContextDescriptor.create('urn:iep:my-context')
 .describes('urn:graph:observations-2026-Q1')
 .temporal({
     validFrom: '2026-01-01T00:00:00Z',
@@ -276,7 +276,7 @@ Write context-annotated knowledge to a Solid pod. The publish flow has three mod
 ```typescript
 import { publish, ContextDescriptor, toTurtle } from '@interego/core';
 
-const desc = ContextDescriptor.create('urn:cg:obs-1')
+const desc = ContextDescriptor.create('urn:iep:obs-1')
 .describes('urn:graph:chen-training')
 .temporal({ validFrom: '2026-03-15T00:00:00Z' })
 .asserted(0.92)
@@ -332,7 +332,7 @@ console.log(result.encrypted); // true
 console.log(result.graphUrl);  // .../<slug>-graph.envelope.jose.json
 ```
 
-The graph is wrapped in an `X25519 + XSalsa20-Poly1305` envelope before PUT; each recipient's public key wraps the content key. The descriptor Turtle gains a `cg:affordance [ a dcat:Distribution, hydra:Operation, ... ]` block pointing at the envelope URL — clients follow this link; no filename convention required.
+The graph is wrapped in an `X25519 + XSalsa20-Poly1305` envelope before PUT; each recipient's public key wraps the content key. The descriptor Turtle gains a `iep:affordance [ a dcat:Distribution, hydra:Operation, ... ]` block pointing at the envelope URL — clients follow this link; no filename convention required.
 
 The MCP `publish_context` tool handles all of this automatically — it auto-registers your agent on the pod if missing, reads the registry for every call, and defaults to encrypted-mode whenever any agent has a registered encryption key.
 

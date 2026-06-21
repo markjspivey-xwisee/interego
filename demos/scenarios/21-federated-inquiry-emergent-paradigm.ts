@@ -56,7 +56,7 @@
  *      - A hypothesis rejected in step 2 (modal status: Counterfactual)
  *        is revisited.
  *      - A late-phase agent finds new evidence and publishes a new
- *        descriptor with cg:supersedes pointing at the Counterfactual
+ *        descriptor with iep:supersedes pointing at the Counterfactual
  *        + modal status Asserted.
  *      - The previously-rejected branch becomes live again. The full
  *        history is recoverable from the pod alone.
@@ -189,9 +189,9 @@ const ENTRANTS = [
 
 const RESURRECTOR = { id: 'did:web:iota-resurrector.example', short: 'iota' };
 
-const POLICY_IRI = 'urn:cg:policy:inquiry-protocol:v0';
-const META_AMENDMENT_IRI = `urn:cg:amendment:inquiry-strange-loop:${Date.now()}`;
-const SIGNATURE_CONSTRAINT_IRI = `urn:cgh:promotion-constraint:inquiry-signature-required:${Date.now()}`;
+const POLICY_IRI = 'urn:iep:policy:inquiry-protocol:v0';
+const META_AMENDMENT_IRI = `urn:iep:amendment:inquiry-strange-loop:${Date.now()}`;
+const SIGNATURE_CONSTRAINT_IRI = `urn:ieh:promotion-constraint:inquiry-signature-required:${Date.now()}`;
 
 async function spawnInteregoBridge(podUrl: string, port: number, didPrefix: string, walletKey?: string): Promise<BridgeHandle> {
   const cwd = join(REPO_ROOT, 'demos', 'interego-bridge');
@@ -540,7 +540,7 @@ Do NOT abbreviate IRIs. Rate honestly — vary by hypothesis quality on YOUR axi
       amends: POLICY_IRI,
       tier: 3,
       proposer_did: RESEARCHERS[0]!.id,
-      diff_summary: 'TWO-CLAUSE amendment: (a) future attestations on this protocol class MUST carry verifiable signatures (substrate-enforced via cgh:PromotionConstraint requiring signature axis); (b) META: future amendments to this protocol class require ≥4-of-6 quorum (raised from default ≥3-of-6).',
+      diff_summary: 'TWO-CLAUSE amendment: (a) future attestations on this protocol class MUST carry verifiable signatures (substrate-enforced via ieh:PromotionConstraint requiring signature axis); (b) META: future amendments to this protocol class require ≥4-of-6 quorum (raised from default ≥3-of-6).',
       added_rules: [
         'inquiry-attestation-signature-required',
         'inquiry-amendment-quorum-raised-to-4',
@@ -585,13 +585,13 @@ Output ONLY: {"voter":"${r.id}","modal_status":"${modal}"}
     ok(`Amendment ratified (${ratify.status}). Future amendments now governed by raised quorum.`);
 
     // Publish the substrate-enforceable signature constraint
-    const sigConstraintTtl = `@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+    const sigConstraintTtl = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-<${SIGNATURE_CONSTRAINT_IRI}> a cgh:PromotionConstraint ;
+<${SIGNATURE_CONSTRAINT_IRI}> a ieh:PromotionConstraint ;
   dct:title "Inquiry-protocol attestations require verifiable signatures" ;
-  cgh:requiresAttestationAxis "signature" ;
-  cgh:appliesToToolType <${POLICY_IRI}> ;
-  cgh:ratifiedBy <${META_AMENDMENT_IRI}> .`;
+  ieh:requiresAttestationAxis "signature" ;
+  ieh:appliesToToolType <${POLICY_IRI}> ;
+  ieh:ratifiedBy <${META_AMENDMENT_IRI}> .`;
     await bridgeCall(bridge.url, 'protocol.publish_descriptor', {
       graph_iri: SIGNATURE_CONSTRAINT_IRI,
       graph_content: sigConstraintTtl,
@@ -647,7 +647,7 @@ Output ONLY: {"voter":"${r.id}","modal_status":"${modal}"}
       let reason = '';
       try {
         // Substrate-enforced promotion check via the AC bridge.
-        // The AC bridge consults the active cgh:PromotionConstraint
+        // The AC bridge consults the active ieh:PromotionConstraint
         // descriptors on the SAME pod that interego-bridge published
         // them to, so the constraint published in Phase E is visible
         // here and gets enforced.
@@ -821,7 +821,7 @@ Output ONLY: {"resurrector":"${RESURRECTOR.id}","resurrected_iri":"${resurrected
       ``,
       `\`\`\``,
       `Asserted hypothesis (post-cascade)`,
-      `  ↓ cg:supersedes`,
+      `  ↓ iep:supersedes`,
       `Hypothetical original (Phase A proposal)`,
       `  ↓ amta:Attestation × peers`,
       `Cross-attestations (Phase B, axis-aligned)`,
@@ -832,8 +832,8 @@ Output ONLY: {"resurrector":"${RESURRECTOR.id}","resurrected_iri":"${resurrected
       `Or for a current rule:`,
       ``,
       `\`\`\``,
-      `cgh:PromotionConstraint (signature-required)`,
-      `  ↓ cgh:ratifiedBy`,
+      `ieh:PromotionConstraint (signature-required)`,
+      `  ↓ ieh:ratifiedBy`,
       `Amendment ${META_AMENDMENT_IRI.slice(-30)} (incl. meta-clause)`,
       `  ↓ Amendment.votes × 6`,
       `Founding cohort's individual votes`,

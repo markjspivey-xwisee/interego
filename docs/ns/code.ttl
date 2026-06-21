@@ -1,5 +1,5 @@
 @prefix code: <https://markjspivey-xwisee.github.io/interego/ns/code#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -18,7 +18,7 @@
 #
 #  An L3 domain ontology for source-code artifacts — repositories,
 #  commits, branches, pull requests, reviews, defects, tests, builds.
-#  Every class is grounded in L1 (cg:/pgsl:) or a W3C vocabulary
+#  Every class is grounded in L1 (iep:/pgsl:) or a W3C vocabulary
 #  (prov:, dcat:, foaf:) per spec/DERIVATION.md.
 #
 #  The design exploits first-principle alignments that the domain
@@ -26,22 +26,22 @@
 #
 #    - A commit chain is a syntagm — each code:Commit is a
 #      pgsl:Fragment (granular unit) in an ordered sequence.
-#    - A branch is a paradigm — code:Branch is a cg:ParadigmSet
+#    - A branch is a paradigm — code:Branch is a iep:ParadigmSet
 #      over commit sequences (alternative trajectories the
 #      repository could take).
 #    - A pull request is a typed context — code:PullRequest is a
-#      cg:ContextDescriptor that carries the full seven-facet
+#      iep:ContextDescriptor that carries the full seven-facet
 #      machinery (temporal: opened/merged time, provenance: who
 #      authored, semiotic: status/modal, trust: required approvals,
 #      etc.).
 #    - A review is a modal assertion — code:Review is constructed
-#      from cg:SemioticFacet (the verdict) + cg:ProvenanceFacet
+#      from iep:SemioticFacet (the verdict) + iep:ProvenanceFacet
 #      (who + when).
-#    - A defect is a semiotic claim — code:Defect is a cg:SemioticFacet
+#    - A defect is a semiotic claim — code:Defect is a iep:SemioticFacet
 #      whose interpretant is "this artifact is buggy" with a
 #      severity + confidence.
 #    - A build result is an attestation — code:BuildResult combines
-#      cg:TrustFacet (who vouches for the outcome) + cg:ProvenanceFacet
+#      iep:TrustFacet (who vouches for the outcome) + iep:ProvenanceFacet
 #      (when the activity ran).
 #
 #  None of these domain concepts require new Layer-1 primitives;
@@ -53,10 +53,10 @@
 <https://markjspivey-xwisee.github.io/interego/ns/code>
     a owl:Ontology ;
     dct:title "code: — Source code domain ontology" ;
-    dct:description "L3 domain ontology for source-code artifacts. Every class is grounded in L1 (cg:/pgsl:) or a W3C vocabulary. Demonstrates that a non-trivial software domain can be expressed compositionally on top of the Interego protocol without new primitives." ;
+    dct:description "L3 domain ontology for source-code artifacts. Every class is grounded in L1 (iep:/pgsl:) or a W3C vocabulary. Demonstrates that a non-trivial software domain can be expressed compositionally on top of the Interego protocol without new primitives." ;
     vann:preferredNamespacePrefix "code" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/code#" ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/pgsl> .
 
 # ── Classes ────────────────────────────────────────────────────
@@ -74,22 +74,22 @@ code:Commit a owl:Class ;
 code:Branch a owl:Class ;
     rdfs:label "Branch" ;
     rdfs:comment "A named line of commits. A branch IS a paradigmatic selection over the space of possible commit sequences for a repository — the other branches are the paradigm alternatives." ;
-    rdfs:subClassOf cg:ParadigmSet .
+    rdfs:subClassOf iep:ParadigmSet .
 
 code:PullRequest a owl:Class ;
     rdfs:label "Pull Request" ;
-    rdfs:comment "A change proposal. Extends cg:ContextDescriptor directly because a PR is inherently a typed context that carries temporal (opened/merged), provenance (author), agent (reviewers), semiotic (open/closed/merged modal), trust (required approvals), and federation (which repo + pod) facets." ;
-    rdfs:subClassOf cg:ContextDescriptor .
+    rdfs:comment "A change proposal. Extends iep:ContextDescriptor directly because a PR is inherently a typed context that carries temporal (opened/merged), provenance (author), agent (reviewers), semiotic (open/closed/merged modal), trust (required approvals), and federation (which repo + pod) facets." ;
+    rdfs:subClassOf iep:ContextDescriptor .
 
 code:Review a owl:Class ;
     rdfs:label "Review" ;
     rdfs:comment "A review of a pull request. Constructed from a semiotic facet (the verdict + modal state + confidence) and a provenance facet (who reviewed, when). Composes with other reviews via the meet (most-conservative) on the modal lattice." ;
-    cg:constructedFrom ( cg:SemioticFacet cg:ProvenanceFacet ) .
+    iep:constructedFrom ( iep:SemioticFacet iep:ProvenanceFacet ) .
 
 code:Defect a owl:Class ;
     rdfs:label "Defect" ;
     rdfs:comment "A reported bug or flaw. Constructed from a semiotic facet whose interpretant is 'this artifact is buggy' with severity + epistemic confidence. Modal state tracks whether the defect is Asserted (confirmed), Hypothetical (suspected), or Counterfactual (refuted)." ;
-    cg:constructedFrom ( cg:SemioticFacet ) .
+    iep:constructedFrom ( iep:SemioticFacet ) .
 
 code:TestRun a owl:Class ;
     rdfs:label "Test Run" ;
@@ -99,12 +99,12 @@ code:TestRun a owl:Class ;
 code:BuildResult a owl:Class ;
     rdfs:label "Build Result" ;
     rdfs:comment "Outcome of a build (pass/fail, artifact produced, logs). An attestation: who vouches for this outcome (trust facet) + when the build activity ran (provenance facet)." ;
-    cg:constructedFrom ( cg:TrustFacet cg:ProvenanceFacet ) .
+    iep:constructedFrom ( iep:TrustFacet iep:ProvenanceFacet ) .
 
 code:ReviewVerdict a owl:Class ;
     rdfs:label "Review Verdict" ;
     rdfs:comment "The modal-typed conclusion of a code review: Approved (Asserted the PR is mergeable), ChangesRequested (Counterfactual — in current form NOT mergeable), or Commented (Hypothetical — observations without gate)." ;
-    rdfs:subClassOf cg:SemioticFacet .
+    rdfs:subClassOf iep:SemioticFacet .
 
 code:Severity a owl:Class ;
     rdfs:label "Severity Level" ;
@@ -238,8 +238,8 @@ code:buildOutcome a owl:DatatypeProperty ;
 code:Commit rdfs:seeAlso pgsl:Fragment ;
     rdfs:comment "A commit IS a pgsl:Fragment. Parent-child commit relations are pgsl:pullback operations; merge commits are pgsl:join operations. The commit DAG is a PGSL lattice over a single branch's namespace." .
 
-code:Branch rdfs:seeAlso cg:ParadigmSet ;
+code:Branch rdfs:seeAlso iep:ParadigmSet ;
     rdfs:comment "Branches of a repository are the paradigmatic alternatives — each branch is one selection from the paradigm of possible commit sequences. Merging is intersection + union over paradigms." .
 
-code:Review rdfs:seeAlso cg:SemioticFacet ;
-    rdfs:comment "A code review's verdict uses the same modal lattice as cg:modalStatus. Approved = Asserted, ChangesRequested = Counterfactual, Commented = Hypothetical. Composing multiple reviews = meet of their modal states." .
+code:Review rdfs:seeAlso iep:SemioticFacet ;
+    rdfs:comment "A code review's verdict uses the same modal lattice as iep:modalStatus. Approved = Asserted, ChangesRequested = Counterfactual, Commented = Hypothetical. Composing multiple reviews = meet of their modal states." .

@@ -10,8 +10,8 @@
  *   wks:Reinforcement        (cross-observer aggregation)
  *   sat:Disposition          (typed candidate explanation)
  *   sat:weakSignal / shiftedBy / dampedBy (interpretant links)
- *   cgh:isAdjacentPossibleTo (reachability without prediction)
- *   cgh:RealignmentMeasure   (rate of re-cohesion after a sign event)
+ *   ieh:isAdjacentPossibleTo (reachability without prediction)
+ *   ieh:RealignmentMeasure   (rate of re-cohesion after a sign event)
  *
  * Concrete flow:
  *
@@ -33,19 +33,19 @@
  *     shared memory) reads the reinforced signals and produces:
  *       (a) a sat:Disposition descriptor with weakSignal / shiftedBy /
  *           dampedBy links to the candidate intervention types;
- *       (b) a cgh:isAdjacentPossibleTo descriptor linking the current
+ *       (b) a ieh:isAdjacentPossibleTo descriptor linking the current
  *           situation to a plausible next state (production-regression
  *           risk). The descriptor is Hypothetical — the transition is
  *           not predicted, only held open as reachable.
  *
  *   Phase 4 — Realignment measurement. Harness counts the publish +
  *     supersedes events that occurred during the demo window;
- *     publishes a cgh:RealignmentMeasure descriptor with the computed
+ *     publishes a ieh:RealignmentMeasure descriptor with the computed
  *     rate, window duration, and event count.
  *
  * Verification asserts every named ontology shape appears on the pod
  * (wks:WeakSignal, wks:Reinforcement, sat:Disposition,
- * cgh:isAdjacentPossibleTo, cgh:RealignmentMeasure) and that the
+ * ieh:isAdjacentPossibleTo, ieh:RealignmentMeasure) and that the
  * substrate's structural reinforcement count matches the harness's
  * independent count.
  *
@@ -178,7 +178,7 @@ async function main(): Promise<void> {
       const narrativeIri = `urn:pgsl:atom:wks:${obs.short}-${Date.now()}`;
       const turtle = `@prefix wks: <https://markjspivey-xwisee.github.io/interego/ns/wks#> .
 @prefix sat: <https://markjspivey-xwisee.github.io/interego/ns/sat#> .
-@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
 
@@ -266,7 +266,7 @@ After it returns, output ONLY a JSON object on a single line:
     ok(`Reinforcement descriptor published: count=${distinctObservers.size}`);
 
     // ── Phase 3 ───────────────────────────────────────────
-    step(4, 'PHASE 3 — Sensemaker agent produces sat:Disposition + cgh:isAdjacentPossibleTo');
+    step(4, 'PHASE 3 — Sensemaker agent produces sat:Disposition + ieh:isAdjacentPossibleTo');
     const dispositionIri = `urn:demo:disposition:reverting-to-older-training-distribution`;
     const adjacentPossibleIri = `urn:demo:adjacent-possible:${Date.now()}`;
     const senseDescIri = `urn:demo:sensemaking:disposition-${Date.now()}`;
@@ -288,9 +288,9 @@ Your job is to produce two Hypothetical typed descriptors:
     its weak signals, what would shift it, and what would damp it
     (without resolving the underlying conditions).
 
-(B) A cgh:isAdjacentPossibleTo descriptor that names a plausible
+(B) A ieh:isAdjacentPossibleTo descriptor that names a plausible
     next-state the system could reach if the disposition actualizes,
-    along with a short cgh:reachabilityRationale. This is NOT a
+    along with a short ieh:reachabilityRationale. This is NOT a
     prediction — it's reachability under known constraints.
 
 For (A), call protocol.publish_descriptor with:
@@ -315,12 +315,12 @@ For (A), call protocol.publish_descriptor with:
 For (B), call protocol.publish_descriptor with:
   graph_iri:     "${adjacentPossibleIri}"
   graph_content: |
-    @prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+    @prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
     @prefix dct: <http://purl.org/dc/terms/> .
-    <${adjacentPossibleIri}> a cgh:AdjacentPossibleClaim ;
+    <${adjacentPossibleIri}> a ieh:AdjacentPossibleClaim ;
       dct:title "Adjacent-possible: production-regression risk" ;
-      cgh:isAdjacentPossibleTo <urn:demo:next-state:production-regression-observed> ;
-      cgh:reachabilityRationale "If the dispositional drift continues unaddressed, generated code in production paths is reachable to introduce defects (style or behavioural) that wouldn't have surfaced under the prior training distribution. Reachability holds under current constraints; transition is not predicted." .
+      ieh:isAdjacentPossibleTo <urn:demo:next-state:production-regression-observed> ;
+      ieh:reachabilityRationale "If the dispositional drift continues unaddressed, generated code in production paths is reachable to introduce defects (style or behavioural) that wouldn't have surfaced under the prior training distribution. Reachability holds under current constraints; transition is not predicted." .
   modal_status:  "Hypothetical"
   confidence:    0.5
 
@@ -344,22 +344,22 @@ Output ONLY a JSON object on a single line:
     step(5, 'PHASE 4 — Compute realignment rate from substrate metabolism');
     // Count all descriptors discovered on the pod during this run +
     // the elapsed time. The rate is events/window. This is a structural
-    // proxy for the formal definition in cgh:realignmentRate's
+    // proxy for the formal definition in ieh:realignmentRate's
     // ontology comment.
     const allEntries = await bridgeCall(bridge.url, 'protocol.discover_descriptors', {}) as { descriptor_url: string; describes: string[] }[];
     const elapsedSec = (Date.now() - start) / 1000;
     const rate = allEntries.length / elapsedSec;
     const rateMeasureIri = `urn:demo:realignment:${PHENOMENON_IRI.split(':').pop()}-${Date.now()}`;
-    const rateTtl = `@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+    const rateTtl = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${rateMeasureIri}> a cgh:RealignmentMeasure ;
+<${rateMeasureIri}> a ieh:RealignmentMeasure ;
   dct:title "Realignment rate over Demo 18 window" ;
-  cgh:measuresFederationSlice <${PHENOMENON_IRI}> ;
-  cgh:realignmentRate "${rate.toFixed(4)}"^^xsd:decimal ;
-  cgh:rateWindow "PT${Math.round(elapsedSec)}S"^^xsd:duration ;
-  cgh:eventCount "${allEntries.length}"^^xsd:nonNegativeInteger .`;
+  ieh:measuresFederationSlice <${PHENOMENON_IRI}> ;
+  ieh:realignmentRate "${rate.toFixed(4)}"^^xsd:decimal ;
+  ieh:rateWindow "PT${Math.round(elapsedSec)}S"^^xsd:duration ;
+  ieh:eventCount "${allEntries.length}"^^xsd:nonNegativeInteger .`;
     await bridgeCall(bridge.url, 'protocol.publish_descriptor', {
       graph_iri: rateMeasureIri,
       graph_content: rateTtl,
@@ -379,8 +379,8 @@ Output ONLY a JSON object on a single line:
       'wks:WeakSignal': 0,
       'wks:Reinforcement': 0,
       'sat:Disposition': 0,
-      'cgh:isAdjacentPossibleTo': 0,
-      'cgh:RealignmentMeasure': 0,
+      'ieh:isAdjacentPossibleTo': 0,
+      'ieh:RealignmentMeasure': 0,
     };
     for (const e of finalEntries) {
       const graphUrl = e.descriptor_url.replace(/\.ttl$/, '-graph.trig');
@@ -455,11 +455,11 @@ Output ONLY a JSON object on a single line:
       ``,
       `**Reinforcement is structural, not negotiated.** Two observers publishing wks:WeakSignal descriptors that point at the same wks:about subject reinforce each other automatically — the substrate's structural-sharing relation (Foundations §5 invariant 4: hyperedge composition as colimit) makes the reinforcement count a SPARQL question, not a consensus protocol.`,
       ``,
-      `**Adjacent-possible is reachability, not prediction.** The cgh:isAdjacentPossibleTo edge is published Hypothetical with a cgh:reachabilityRationale; it holds the space of next-move possibilities open without committing to a transition. Foundations §6 (Peircean Thirdness made operational) — the link IS the typed mediation.`,
+      `**Adjacent-possible is reachability, not prediction.** The ieh:isAdjacentPossibleTo edge is published Hypothetical with a ieh:reachabilityRationale; it holds the space of next-move possibilities open without committing to a transition. Foundations §6 (Peircean Thirdness made operational) — the link IS the typed mediation.`,
       ``,
       `**Dispositions are candidate explanations.** sat:Disposition with sat:weakSignal / sat:shiftedBy / sat:dampedBy is the substrate's vocabulary for "what is this system disposed to do next, what would surface it, what would alter it" — Snowden's framing made queryable. The substrate refuses to claim the disposition is true; it makes the claim legible.`,
       ``,
-      `**Realignment rate is the metabolism's derivative.** cgh:realignmentRate counts events per window — a temporal derivative of the substrate's activity, not a state of alignment. Honest answer to the Itelman critique's "alignment is a rate, not a state": this rate IS computable from the trace, and it's published as a supersedes-chainable measure that older observers can compare against newer ones.`,
+      `**Realignment rate is the metabolism's derivative.** ieh:realignmentRate counts events per window — a temporal derivative of the substrate's activity, not a state of alignment. Honest answer to the Itelman critique's "alignment is a rate, not a state": this rate IS computable from the trace, and it's published as a supersedes-chainable measure that older observers can compare against newer ones.`,
       ``,
       `Together: the substrate makes the dynamics of meaning legible — reinforcement, reachability, disposition, rate — without claiming any of them are settled. Foundations §9's complexity-aware extensions (added previously as ontology terms) become operational here.`,
     ].join('\n'));

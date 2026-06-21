@@ -46,7 +46,7 @@ const readOnlyProfile: AgentProfile = {
 };
 
 function buildAssertedDescriptor(confidence = 0.9): ReturnType<typeof ContextDescriptor.prototype.build> {
-  return ContextDescriptor.create('urn:cg:test:asserted' as IRI)
+  return ContextDescriptor.create('urn:iep:test:asserted' as IRI)
     .describes('urn:graph:test:data' as IRI)
     .temporal({ validFrom: '2026-01-01T00:00:00Z' })
     .asserted(confidence)
@@ -57,7 +57,7 @@ function buildAssertedDescriptor(confidence = 0.9): ReturnType<typeof ContextDes
 }
 
 function buildHypotheticalDescriptor(confidence = 0.5): ReturnType<typeof ContextDescriptor.prototype.build> {
-  return ContextDescriptor.create('urn:cg:test:hypothetical' as IRI)
+  return ContextDescriptor.create('urn:iep:test:hypothetical' as IRI)
     .describes('urn:graph:test:hypothesis' as IRI)
     .temporal({ validFrom: '2026-01-01T00:00:00Z' })
     .semiotic({ modalStatus: 'Hypothetical', epistemicConfidence: confidence })
@@ -67,7 +67,7 @@ function buildHypotheticalDescriptor(confidence = 0.5): ReturnType<typeof Contex
 }
 
 function buildRetractedDescriptor(): ReturnType<typeof ContextDescriptor.prototype.build> {
-  return ContextDescriptor.create('urn:cg:test:retracted' as IRI)
+  return ContextDescriptor.create('urn:iep:test:retracted' as IRI)
     .describes('urn:graph:test:old' as IRI)
     .temporal({ validFrom: '2026-01-01T00:00:00Z' })
     .semiotic({ modalStatus: 'Retracted', epistemicConfidence: 0, groundTruth: false })
@@ -229,7 +229,7 @@ describe('Active Inference (Friston)', () => {
     state = result1.state;
 
     // Now a conflicting descriptor (same graph, different confidence)
-    const desc2 = ContextDescriptor.create('urn:cg:test:conflict' as IRI)
+    const desc2 = ContextDescriptor.create('urn:iep:test:conflict' as IRI)
       .describes('urn:graph:test:data' as IRI) // same graph
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .asserted(0.3) // very different confidence
@@ -433,7 +433,7 @@ describe('Stigmergic Field', () => {
   });
 
   it('aggregates dominant vocabularies from Projection facets', () => {
-    const projected = ContextDescriptor.create('urn:cg:test:projected' as IRI)
+    const projected = ContextDescriptor.create('urn:iep:test:projected' as IRI)
       .describes('urn:graph:test:projected' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .asserted(0.9)
@@ -447,7 +447,7 @@ describe('Stigmergic Field', () => {
           targetVocabulary: 'http://schema.org/' as IRI,
         }],
         vocabularyMappings: [{
-          source: 'urn:cg:p' as IRI,
+          source: 'urn:iep:p' as IRI,
           target: 'http://www.w3.org/ns/prov#wasDerivedFrom' as IRI,
           mappingType: 'property',
           relationship: 'related',

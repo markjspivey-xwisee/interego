@@ -3,7 +3,7 @@
 // The `code:` ontology (docs/ns/code.ttl) is an L3 domain vocabulary
 // for source-code artifacts — repositories, commits, branches, pull
 // requests, reviews, defects, tests, builds. Every class grounds in
-// L1 (cg:/pgsl:) or a W3C vocabulary per spec/DERIVATION.md, so no
+// L1 (iep:/pgsl:) or a W3C vocabulary per spec/DERIVATION.md, so no
 // new L1 primitives were needed to add this domain.
 //
 // This demo shows the full lifecycle:
@@ -14,19 +14,19 @@
 //      lattice (ModalAlgebra.meet) to derive the effective PR state.
 //   3. DEFECT PROPAGATION: a reported defect downgrades the modal
 //      state of the commit that introduced it.
-//   4. BRANCH PARADIGMS: show that branches are cg:ParadigmSet
+//   4. BRANCH PARADIGMS: show that branches are iep:ParadigmSet
 //      alternatives over commit-sequence syntagms.
 //   5. CROSS-DOMAIN COMPOSITION: the PR composes with a generic
-//      cg:TrustFacet to produce a final merge verdict — the domain
+//      iep:TrustFacet to produce a final merge verdict — the domain
 //      ontology plays nicely with L1 facets.
 //
 // Success criterion: the whole code domain is expressed using
-// existing cg:/pgsl: primitives; no new protocol machinery needed.
+// existing iep:/pgsl: primitives; no new protocol machinery needed.
 
 import { ModalAlgebra } from '../dist/index.js';
 
 const CODE_NS  = 'https://markjspivey-xwisee.github.io/interego/ns/code#';
-const CG_NS    = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+const CG_NS    = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const PGSL_NS  = 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#';
 
 // ── 1. CREATION ─────────────────────────────────────────────
@@ -97,7 +97,7 @@ const reviews = [
 
 function toTurtle(pr, reviews) {
   return `@prefix code: <${CODE_NS}> .
-@prefix cg:   <${CG_NS}> .
+@prefix iep:   <${CG_NS}> .
 @prefix pgsl: <${PGSL_NS}> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
@@ -107,24 +107,24 @@ function toTurtle(pr, reviews) {
     code:targetsBranch <${pr.targetsBranch}> ;
     code:linesAdded "${pr.linesAdded}"^^xsd:nonNegativeInteger ;
     code:linesRemoved "${pr.linesRemoved}"^^xsd:nonNegativeInteger ;
-    cg:hasFacet [
-        a cg:SemioticFacet ;
-        cg:modalStatus cg:${pr.facets.semiotic.modalStatus} ;
-        cg:epistemicConfidence "${pr.facets.semiotic.confidence}"^^xsd:double
+    iep:hasFacet [
+        a iep:SemioticFacet ;
+        iep:modalStatus iep:${pr.facets.semiotic.modalStatus} ;
+        iep:epistemicConfidence "${pr.facets.semiotic.confidence}"^^xsd:double
     ] ;
-    cg:hasFacet [
-        a cg:TemporalFacet ;
-        cg:validFrom "${pr.facets.temporal.validFrom}"^^xsd:dateTime
+    iep:hasFacet [
+        a iep:TemporalFacet ;
+        iep:validFrom "${pr.facets.temporal.validFrom}"^^xsd:dateTime
     ] .
 
 ${reviews.map(r => `<${r.iri}> a code:Review ;
     prov:wasAttributedTo <${r.reviewer}> ;
     prov:generatedAtTime "${r.at}"^^xsd:dateTime ;
     code:verdict ${r.verdict} ;
-    cg:hasFacet [
-        a cg:SemioticFacet ;
-        cg:modalStatus cg:${r.modalStatus} ;
-        cg:epistemicConfidence "${r.confidence}"^^xsd:double
+    iep:hasFacet [
+        a iep:SemioticFacet ;
+        iep:modalStatus iep:${r.modalStatus} ;
+        iep:epistemicConfidence "${r.confidence}"^^xsd:double
     ] .`).join('\n\n')}
 `;
 }
@@ -184,7 +184,7 @@ console.log('    The lattice carries the policy.\n');
 
 console.log('Step 4 — Branches as paradigm alternatives.\n');
 
-// code:Branch rdfs:subClassOf cg:ParadigmSet. Branches of a repo are
+// code:Branch rdfs:subClassOf iep:ParadigmSet. Branches of a repo are
 // the paradigm of possible commit sequences — each is one selection
 // from that paradigm.
 const paradigm = {
@@ -206,12 +206,12 @@ console.log('  No bespoke branch-merge logic; the lattice operations suffice.\n'
 
 // ── 5. CROSS-DOMAIN COMPOSITION ─────────────────────────────
 
-console.log('Step 5 — code: composes with L1 cg: without adapter code.\n');
+console.log('Step 5 — code: composes with L1 iep: without adapter code.\n');
 
 // A merge gate composed from (effective review modal) ∧ (trust
 // threshold on the PR author) ∧ (build outcome). This is three
 // different domains (code-review, trust, build) composing through
-// the same modal lattice because they all live on cg:SemioticFacet.
+// the same modal lattice because they all live on iep:SemioticFacet.
 const trustOnAuthor = { modalStatus: 'Asserted' };     // good standing
 const build         = { modalStatus: 'Asserted' };     // all tests green
 const mergeGate = [effective, trustOnAuthor.modalStatus, build.modalStatus]
@@ -240,7 +240,7 @@ console.log('');
 console.log('   Utilized the domain via L1 composition machinery:');
 console.log('     - Review verdicts composed via ModalAlgebra.meet → PR modal');
 console.log('     - Defects propagated trust downgrades via ModalAlgebra.not + meet');
-console.log('     - Branches behaved as cg:ParadigmSet alternatives');
+console.log('     - Branches behaved as iep:ParadigmSet alternatives');
 console.log('     - Cross-domain (review × trust × build) composition used the');
 console.log('       same lattice with zero adapter code');
 console.log('');

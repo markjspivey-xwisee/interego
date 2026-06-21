@@ -4,7 +4,7 @@
  * Verifies the substrate-wide policy that every kernel-verb / shim
  * response carries:
  *   1. JSON-LD discipline — @context / @id / @type at the top level
- *   2. SHACL shape reference — cg:conformsToShape: <shape-iri>
+ *   2. SHACL shape reference — iep:conformsToShape: <shape-iri>
  *   3. Hydra hypermedia — affordances[] with hydra:Operation typing
  *
  * The verb behaviours themselves are tested elsewhere; these tests
@@ -34,7 +34,7 @@ import type {
 } from '@interego/core';
 
 const HYDRA = 'http://www.w3.org/ns/hydra/core#';
-const CG = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+const CG = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const CGH = 'https://markjspivey-xwisee.github.io/interego/ns/cgh#';
 
 describe('kernel hypermedia envelope', () => {
@@ -43,7 +43,7 @@ describe('kernel hypermedia envelope', () => {
     const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
       kind: 'mint',
       id: r.holon.iri,
-      nextSteps: [{ action: 'urn:cg:action:dereference', target: r.holon.iri, method: 'GET' }],
+      nextSteps: [{ action: 'urn:iep:action:dereference', target: r.holon.iri, method: 'GET' }],
     });
 
     expect(decorated['@context']).toBe(KERNEL_JSONLD_CONTEXT);
@@ -75,12 +75,12 @@ describe('kernel hypermedia envelope', () => {
     const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
       kind: 'compose',
       id: r.composed.id,
-      nextSteps: [{ action: 'urn:cg:action:publish', target: 'urn:cg:tool:publish_context', method: 'POST' }],
+      nextSteps: [{ action: 'urn:iep:action:publish', target: 'urn:iep:tool:publish_context', method: 'POST' }],
     });
     expect(decorated['@type']).toContain(`${CG}ComposeResult`);
     expect(decorated['@type']).toContain(`${CG}ComposedDescriptor`);
     expect(decorated.conformsToShape).toBe(KERNEL_RESULT_SHAPES.composed);
-    expect(decorated.affordances[0]?.action).toBe('urn:cg:action:publish');
+    expect(decorated.affordances[0]?.action).toBe('urn:iep:action:publish');
     expect(decorated.affordances[0]?.method).toBe('POST');
   });
 
@@ -90,16 +90,16 @@ describe('kernel hypermedia envelope', () => {
       kind: 'promote',
       id: r.apex,
       nextSteps: [
-        { action: 'urn:cg:action:dereference', target: r.apex, method: 'GET' },
-        { action: 'urn:cg:action:decompose',   target: 'urn:cg:tool:decompose', method: 'POST' },
+        { action: 'urn:iep:action:dereference', target: r.apex, method: 'GET' },
+        { action: 'urn:iep:action:decompose',   target: 'urn:iep:tool:decompose', method: 'POST' },
       ],
     });
     expect(decorated['@type']).toContain(`${CG}PromoteResult`);
     expect(decorated.conformsToShape).toBe(KERNEL_RESULT_SHAPES.promote);
     expect(decorated.affordances.map(a => a.action))
-      .toContain('urn:cg:action:dereference');
+      .toContain('urn:iep:action:dereference');
     expect(decorated.affordances.map(a => a.action))
-      .toContain('urn:cg:action:decompose');
+      .toContain('urn:iep:action:decompose');
   });
 
   it('decompose of a level-2 fragment yields pullback fields + dereference affordances', () => {
@@ -113,9 +113,9 @@ describe('kernel hypermedia envelope', () => {
         kind: 'decompose',
         id: r.apex,
         nextSteps: [
-          { action: 'urn:cg:action:dereference', target: r.left,    method: 'GET' },
-          { action: 'urn:cg:action:dereference', target: r.right,   method: 'GET' },
-          { action: 'urn:cg:action:dereference', target: r.overlap, method: 'GET' },
+          { action: 'urn:iep:action:dereference', target: r.left,    method: 'GET' },
+          { action: 'urn:iep:action:dereference', target: r.right,   method: 'GET' },
+          { action: 'urn:iep:action:dereference', target: r.overlap, method: 'GET' },
         ],
       });
       expect(decorated['@type']).toContain(`${CG}DecomposeResult`);
@@ -134,7 +134,7 @@ describe('kernel hypermedia envelope', () => {
     const decoratedR = decorateKernelResult(restricted as unknown as Record<string, unknown>, {
       kind: 'restrict',
       id: restricted.restricted.id,
-      nextSteps: [{ action: 'urn:cg:action:extend', target: 'urn:cg:tool:extend', method: 'POST' }],
+      nextSteps: [{ action: 'urn:iep:action:extend', target: 'urn:iep:tool:extend', method: 'POST' }],
     });
     expect(decoratedR['@type']).toContain(`${CG}RestrictResult`);
     expect(decoratedR.conformsToShape).toBe(KERNEL_RESULT_SHAPES.descriptor);
@@ -151,7 +151,7 @@ describe('kernel hypermedia envelope', () => {
 describe('hydraAffordance', () => {
   it('upgrades a bare Affordance to multi-typed JSON-LD', () => {
     const h = hydraAffordance({
-      action: 'urn:cg:action:publish',
+      action: 'urn:iep:action:publish',
       target: 'https://relay.example/tool/publish_context',
       method: 'POST',
       mediaType: 'application/json',
@@ -175,13 +175,13 @@ describe('decorateShim', () => {
       tool: 'publish_context',
       id: payload.descriptorUrl,
       nextSteps: [
-        { action: 'urn:cg:action:supersede', target: payload.descriptorUrl, method: 'POST' },
+        { action: 'urn:iep:action:supersede', target: payload.descriptorUrl, method: 'POST' },
       ],
     });
     expect(decorated.published).toBe(true);
     expect(decorated['@id']).toBe(payload.descriptorUrl);
-    expect(decorated['@type']).toContain('urn:cg:tool-result:publish_context');
-    expect(decorated.affordances[0]?.action).toBe('urn:cg:action:supersede');
+    expect(decorated['@type']).toContain('urn:iep:tool-result:publish_context');
+    expect(decorated.affordances[0]?.action).toBe('urn:iep:action:supersede');
   });
 });
 

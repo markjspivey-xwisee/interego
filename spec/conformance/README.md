@@ -39,7 +39,7 @@ conformance/
 
 Conformance fixtures MUST use synthetic, generic namespaces — never a real domain vocabulary. The test suite is the protocol; it MUST NOT accidentally encode domain semantics into Layer 1.
 
-- `cg:` — core protocol namespace, as defined.
+- `iep:` — core protocol namespace, as defined.
 - `ex:` — fixture-only illustrative namespace. Not a real vocabulary.
 - `test:` — reserved for fixture identifiers and test metadata.
 
@@ -57,21 +57,21 @@ The target suite covers these categories. Each category is a set of (fixture →
    - `TrustFacet`: closed vocabulary for `trustLevel`.
    - `AgentFacet` and `ProvenanceFacet`: agent-identity cross-check (the agent named in AgentFacet is the same as the one `wasAssociatedWith` in ProvenanceFacet).
 
-3. **Hypermedia affordance block.** Descriptors MUST expose a `cg:affordance` RDF block that is simultaneously `cg:Affordance`, `cgh:Affordance`, `hydra:Operation`, and `dcat:Distribution`, with the properties required by each of those vocabularies satisfied. Fixtures cover both plaintext distributions and encrypted-envelope distributions.
+3. **Hypermedia affordance block.** Descriptors MUST expose a `iep:affordance` RDF block that is simultaneously `iep:Affordance`, `ieh:Affordance`, `hydra:Operation`, and `dcat:Distribution`, with the properties required by each of those vocabularies satisfied. Fixtures cover both plaintext distributions and encrypted-envelope distributions.
 
 4. **Cleartext / ciphertext boundary.** Descriptor-layer triples MUST be queryable via SPARQL without decrypting the payload. Fixtures: descriptor-only query returns full metadata; payload-layer query against an encrypted envelope fails closed.
 
 5. **Delegation chain verification.** `register_agent` → `verify_agent` → `revoke_agent` → `verify_agent` round-trips. Expected: verify returns `valid: true` after register, `valid: false` with an explicit reason after revoke. Revoked credentials MUST no longer appear in recipient sets of new envelopes (but MUST remain usable to decrypt envelopes encrypted to them prior to revocation).
 
-6. **Revocation condition evaluation.** A graph declares `cg:revokedIf` (or the equivalent on a seventh facet once standardized). A trigger graph satisfies the successor query. Evaluation result: the original claim's effective `cg:groundTruth` transitions to `false`.
+6. **Revocation condition evaluation.** A graph declares `iep:revokedIf` (or the equivalent on a seventh facet once standardized). A trigger graph satisfies the successor query. Evaluation result: the original claim's effective `iep:groundTruth` transitions to `false`.
    - MUST fail closed: if the successor query cannot be evaluated (scope unreachable, engine unavailable), the claim's `groundTruth` MUST NOT be silently downgraded.
    - MUST reject self-reference: a successor query whose SPARQL text references the enclosing descriptor's own graph IRI is malformed.
 
-7. **Modal status fork integrity.** Given a root activity and two sibling graphs derived from it — one Asserted, one Counterfactual — both MUST be addressable, queryable by `cg:modalStatus`, and distinguishable at the descriptor layer without decryption.
+7. **Modal status fork integrity.** Given a root activity and two sibling graphs derived from it — one Asserted, one Counterfactual — both MUST be addressable, queryable by `iep:modalStatus`, and distinguishable at the descriptor layer without decryption.
 
 8. **Temporal expiry behavior.** A graph whose `validUntil` has passed MUST be filterable out of "currently-valid" queries. Implementations MAY still expose it via an explicit "include-expired" flag.
 
-9. **Agent role vocabulary closure.** `cg:agentRole` takes one of the closed set `Author | Transformer | Forwarder | Validator | Observer`. Implementations MUST reject values outside this set.
+9. **Agent role vocabulary closure.** `iep:agentRole` takes one of the closed set `Author | Transformer | Forwarder | Validator | Observer`. Implementations MUST reject values outside this set.
 
 10. **Federation resolvability.** WebFinger (RFC 7033) resolution of an `acct:user@host` handle returns a storage endpoint. DID (`did:web` at minimum) resolution returns a DID document. An implementation that cannot resolve either via the appropriate standard MUST NOT claim conformance.
 
@@ -95,7 +95,7 @@ The suite is versioned alongside the protocol. A protocol version bump MUST be a
 
 Any Layer 1 change proposal MUST include the fixtures that demonstrate the change. The review checklist:
 
-1. Does the fixture use only `cg:`, `ex:`, or `test:` namespaces? (No domain leakage.)
+1. Does the fixture use only `iep:`, `ex:`, or `test:` namespaces? (No domain leakage.)
 2. Does the fixture exercise a single protocol claim, not a bundle?
 3. Does the expected outcome specify behavior precisely enough that two independent implementations would produce the same result?
 4. Does the new fixture break any existing fixture? (If yes, declare whether this is a protocol version bump.)

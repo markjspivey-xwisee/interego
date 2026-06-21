@@ -55,7 +55,7 @@ describe('E2E Encryption', () => {
 
   it('encrypts and decrypts content with symmetric key', () => {
     const key = generateContentKey();
-    const plaintext = '@prefix cg: <urn:cg:> . cg:secret cg:value "classified" .';
+    const plaintext = '@prefix iep: <urn:iep:> . iep:secret iep:value "classified" .';
 
     const encrypted = encryptContent(plaintext, key);
     expect(encrypted.ciphertext).not.toBe(plaintext);
@@ -104,7 +104,7 @@ describe('E2E Encryption', () => {
     const owner = generateKeyPair();
     const agent1 = generateKeyPair();
     const agent2 = generateKeyPair();
-    const turtle = '@prefix cg: <urn:cg:> . cg:data cg:value "encrypted for two agents" .';
+    const turtle = '@prefix iep: <urn:iep:> . iep:data iep:value "encrypted for two agents" .';
 
     const envelope = createEncryptedEnvelope(
       turtle,
@@ -560,7 +560,7 @@ describe('Selective Disclosure', () => {
     ];
 
     const disclosure = createSelectiveDisclosure(
-      'urn:cg:test:123',
+      'urn:iep:test:123',
       facets,
       ['Semiotic'], // only reveal Semiotic
       [{ type: 'confidence-threshold', threshold: 0.8 }],
@@ -578,7 +578,7 @@ describe('Selective Disclosure', () => {
     ];
 
     const disclosure = createSelectiveDisclosure(
-      'urn:cg:test:low',
+      'urn:iep:test:low',
       facets,
       [],
       [{ type: 'confidence-threshold', threshold: 0.8 }],

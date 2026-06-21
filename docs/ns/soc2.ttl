@@ -1,5 +1,5 @@
 @prefix soc2:  <https://markjspivey-xwisee.github.io/interego/ns/soc2#> .
-@prefix cg:    <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
@@ -33,39 +33,39 @@
     dct:description "L3 mapping of Interego context primitives to AICPA SOC 2 TSC. Covers five categories with selected controls; extensible." ;
     vann:preferredNamespacePrefix "soc2" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/soc2#" ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> .
 
 # ── Categories ─────────────────────────────────────────────
 
 soc2:Security a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "Security (Common Criteria)" ;
     rdfs:comment "TSC Common Criteria (CC). Always required in a SOC 2 report. Covers logical/physical access, system operations, change management, risk mitigation." .
 
 soc2:Availability a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "Availability" ;
     rdfs:comment "Systems available for operation + use as committed or agreed." .
 
 soc2:ProcessingIntegrity a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "Processing Integrity" ;
     rdfs:comment "System processing is complete, accurate, timely, authorized." .
 
 soc2:Confidentiality a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "Confidentiality" ;
     rdfs:comment "Information designated as confidential is protected as committed or agreed." .
 
 soc2:Privacy a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "Privacy" ;
     rdfs:comment "Personal information is collected, used, retained, disclosed, disposed per the entity's privacy notice + criteria." .
 
 # ── Control evidence record ────────────────────────────────
 
 soc2:ControlEvidence a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Control evidence record" ;
     rdfs:comment "An action descriptor that constitutes evidence for one or more SOC 2 controls. Carries soc2:satisfiesControl links to specific control IRIs. Auditors query for evidence per control across the audit period." .
 
@@ -299,11 +299,11 @@ soc2:finding a owl:DatatypeProperty ;
 
 # ── Alignments ─────────────────────────────────────────────
 
-soc2:CC6.1 rdfs:seeAlso cg:AccessControlFacet ;
+soc2:CC6.1 rdfs:seeAlso iep:AccessControlFacet ;
     rdfs:comment "Logical access controls (CC6.1) are satisfied by Interego's AccessControlFacet + ABAC policies + DID-based authentication. Evidence: every access decision is itself a descriptor on the pod." .
 
-soc2:CC7.2 rdfs:seeAlso cg:ProvenanceFacet ;
+soc2:CC7.2 rdfs:seeAlso iep:ProvenanceFacet ;
     rdfs:comment "Anomaly monitoring (CC7.2) walks the federation's provenance graph; deviation from established attestation patterns flags for review." .
 
-soc2:C1.2 rdfs:seeAlso cg:ContextDescriptor ;
-    rdfs:comment "Confidential information disposal (C1.2) is satisfied by cg:supersedes + key rotation; the OLD encrypted descriptor remains but the content key is irrecoverable." .
+soc2:C1.2 rdfs:seeAlso iep:ContextDescriptor ;
+    rdfs:comment "Confidential information disposal (C1.2) is satisfied by iep:supersedes + key rotation; the OLD encrypted descriptor remains but the content key is irrecoverable." .

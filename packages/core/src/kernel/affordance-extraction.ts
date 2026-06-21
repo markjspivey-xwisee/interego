@@ -1,6 +1,6 @@
 /**
  * @module kernel/affordance-extraction
- * @description Substrate-level utility — pulls `cg:Affordance` blocks
+ * @description Substrate-level utility — pulls `iep:Affordance` blocks
  * from any Turtle/TriG/RDF representation and returns them as
  * structured `Affordance` objects.
  *
@@ -14,7 +14,7 @@
  *     affordances of its referenced descriptor.
  *
  * The extractor accepts every `rdf:type` the substrate uses for an
- * affordance block (`cg:Affordance`, `cgh:Affordance`, `hydra:Operation`)
+ * affordance block (`iep:Affordance`, `ieh:Affordance`, `hydra:Operation`)
  * and returns deduplicated results keyed on `(action, target, method)`.
  *
  * No new ontology terms are introduced — this is code-level surface
@@ -46,7 +46,7 @@ const DCAT_MEDIA_TYPE = `${DCAT}mediaType` as IRI;
 const VALID_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
- * Extract every `cg:Affordance` (and equivalent typed) block from a
+ * Extract every `iep:Affordance` (and equivalent typed) block from a
  * Turtle/TriG/RDF document body.
  *
  * Robust to partially-malformed documents: if a full-document parse

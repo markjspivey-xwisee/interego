@@ -12,7 +12,7 @@ The bridge is **independent** of the generic Interego personal-bridge — it run
 
 This bridge serves **both** paths to the same underlying publishers (single source of truth: [`../affordances.ts`](../affordances.ts)):
 
-- **Generic protocol-level discovery** at `GET /affordances` — returns the `cg:Affordance / hydra:Operation / dcat:Distribution` Turtle manifest. Any generic Interego agent walks this and invokes via standard HTTP.
+- **Generic protocol-level discovery** at `GET /affordances` — returns the `iep:Affordance / hydra:Operation / dcat:Distribution` Turtle manifest. Any generic Interego agent walks this and invokes via standard HTTP.
 - **Named MCP tools** at `POST /mcp` — tool schemas derived from the same affordance declarations.
 
 Generic agents don't need this bridge at all — they can use the protocol-level path against any Interego deployment that publishes LPC affordances. The bridge is convenience, not requirement.

@@ -4,9 +4,9 @@
 // content, query-able by any future agent.
 //
 // The shape constrains what a valid audit claim MUST carry:
-//   - cg:epistemicConfidence (the auditor's own certainty)
+//   - iep:epistemicConfidence (the auditor's own certainty)
 //   - dct:conformsTo this very shape (self-reference)
-//   - cg:modalStatus = Asserted  (audit outputs are asserted claims)
+//   - iep:modalStatus = Asserted  (audit outputs are asserted claims)
 //   - prov:wasDerivedFrom at least one descriptor it audited
 //
 // That last constraint is what makes this interesting: an audit
@@ -18,21 +18,21 @@ const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainera
 const SHAPE_URL = `${POD}schemas/audit-result-v1.ttl`;
 
 const SHAPE_TTL = `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <${SHAPE_URL}#Shape> a sh:NodeShape ;
-  sh:targetClass cg:ContextDescriptor ;
+  sh:targetClass iep:ContextDescriptor ;
   sh:property [
-    sh:path cg:modalStatus ;
-    sh:in ( cg:Asserted ) ;
+    sh:path iep:modalStatus ;
+    sh:in ( iep:Asserted ) ;
     sh:minCount 1 ;
     sh:message "An audit-result claim MUST be Asserted (findings are stated, not speculated)."
   ] ;
   sh:property [
-    sh:path cg:epistemicConfidence ;
+    sh:path iep:epistemicConfidence ;
     sh:minInclusive 0.0 ;
     sh:maxInclusive 1.0 ;
     sh:minCount 1 ;

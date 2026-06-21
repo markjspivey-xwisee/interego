@@ -163,7 +163,7 @@ export type Node = Atom | Fragment;
  * in different containing fragments — this IS the Peircean interpretant.
  *
  * Serialized as RDF 1.2 triple annotations:
- *   <parent> cg:hasItem <child> {| ex:position 1 ; ex:contextualDepth 2 |} .
+ *   <parent> iep:hasItem <child> {| ex:position 1 ; ex:contextualDepth 2 |} .
  */
 export interface ContainmentAnnotation {
   /** The containing fragment URI */

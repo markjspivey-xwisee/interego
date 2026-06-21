@@ -3,9 +3,9 @@
  * @description Substrate primitive — generic affordance follower.
  *
  * Architectural intent (CLAUDE.md "Path A"): a vertical's capabilities
- * travel as `cg:Affordance` blocks on its Context Descriptors. Each
+ * travel as `iep:Affordance` blocks on its Context Descriptors. Each
  * block carries:
- *   - `cg:action  <urn:cg:action:foxxi:discover-assigned-courses>` — the
+ *   - `iep:action  <urn:iep:action:foxxi:discover-assigned-courses>` — the
  *     canonical action IRI a caller selects by
  *   - `hydra:target <https://…/foxxi/discover_assigned_courses>` — the
  *     HTTP endpoint to invoke
@@ -66,7 +66,7 @@ export class DescriptorNotFoundError extends Error {
 }
 
 /**
- * Thrown when the descriptor exists but has no `cg:Affordance` matching
+ * Thrown when the descriptor exists but has no `iep:Affordance` matching
  * the requested `actionIri`. The error message lists the affordance
  * action IRIs actually present, so the caller can pick the right one or
  * report back to the user.
@@ -79,9 +79,9 @@ export class AffordanceNotFoundError extends Error {
   ) {
     const list = availableActions.length > 0
       ? availableActions.map(a => `  - ${a}`).join('\n')
-      : '  (none — descriptor declares no cg:Affordance blocks)';
+      : '  (none — descriptor declares no iep:Affordance blocks)';
     super(
-      `No cg:Affordance with cg:action <${actionIri}> in descriptor ${descriptorUrl}.\n`
+      `No iep:Affordance with iep:action <${actionIri}> in descriptor ${descriptorUrl}.\n`
       + `Available actions:\n${list}`,
     );
     this.name = 'AffordanceNotFoundError';
@@ -108,7 +108,7 @@ export interface FollowAffordanceOptions {
 
 /** The affordance metadata resolved from the descriptor. */
 export interface ResolvedAffordance {
-  /** The `cg:action` IRI (echo of the caller's selector). */
+  /** The `iep:action` IRI (echo of the caller's selector). */
   readonly action: string;
   /** The `hydra:target` URL the payload was POSTed to. */
   readonly target: string;
@@ -153,10 +153,10 @@ const DCAT_MEDIA_TYPE = `${DCAT}mediaType` as IRI;
  *
  * 1. Fetches the descriptor at `descriptorUrl` (Turtle/TriG).
  * 2. Parses it with `parseTrig` and collects every subject typed as
- *    `cg:Affordance`, `cgh:Affordance`, or `hydra:Operation` —
+ *    `iep:Affordance`, `ieh:Affordance`, or `hydra:Operation` —
  *    descriptors often type a block as more than one of these and
  *    `findSubjectsOfType` is single-typed, so we union the candidates.
- * 3. Matches by `cg:action == actionIri`.
+ * 3. Matches by `iep:action == actionIri`.
  * 4. Reads `hydra:target` (required) and `hydra:method` (default POST).
  *    Verifies against `expectedMethod` if supplied.
  * 5. POSTs `payload` as `application/json` to the target. Forwards
@@ -214,7 +214,7 @@ export async function followAffordance(
     fullParseFailed = true;
   }
 
-  // ── 3. Find the one whose cg:action == actionIri ─────────
+  // ── 3. Find the one whose iep:action == actionIri ─────────
   const available: string[] = [];
   let match: typeof candidates[number] | undefined;
   for (const c of candidates) {
@@ -259,7 +259,7 @@ export async function followAffordance(
   if (!match) {
     if (fullParseFailed && available.length === 0) {
       throw new Error(
-        `Descriptor ${descriptorUrl} could not be fully parsed AND no affordance slice anchored on <${actionIri}> was extractable. Verify the descriptor URL points at valid Turtle/TriG and the action IRI matches a cg:Affordance subject in the document.`,
+        `Descriptor ${descriptorUrl} could not be fully parsed AND no affordance slice anchored on <${actionIri}> was extractable. Verify the descriptor URL points at valid Turtle/TriG and the action IRI matches a iep:Affordance subject in the document.`,
       );
     }
     throw new AffordanceNotFoundError(descriptorUrl, actionIri, available);
@@ -359,7 +359,7 @@ function readContentType(response: FetchResponse): string | null {
 function extractAffordanceSlice(descriptorBody: string, actionIri: string): string | null {
   const anchor = `<${actionIri}>`;
   // The IRI may appear multiple times in the document (e.g. as an object
-  // inside a hydra:Collection's `cg:affordance` list AND as the subject
+  // inside a hydra:Collection's `iep:affordance` list AND as the subject
   // of the affordance block itself). We want the occurrence where it
   // appears AS A SUBJECT — characterized by being at the start of a line
   // (possibly after whitespace) AND immediately followed by a predicate.

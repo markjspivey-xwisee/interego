@@ -159,7 +159,7 @@ describe('generateFrameworkReport', () => {
 });
 
 describe('walkLineage', () => {
-  const ROOT = 'urn:cg:root' as IRI;
+  const ROOT = 'urn:iep:root' as IRI;
 
   it('returns just self when no ancestors known', () => {
     const r = walkLineage(ROOT, new Map());
@@ -169,8 +169,8 @@ describe('walkLineage', () => {
   });
 
   it('walks derivedFrom chain', () => {
-    const A = 'urn:cg:a' as IRI;
-    const B = 'urn:cg:b' as IRI;
+    const A = 'urn:iep:a' as IRI;
+    const B = 'urn:iep:b' as IRI;
     const idx = new Map([
       [ROOT, { publishedAt: '2026-04-25', derivedFrom: [A], supersedes: [] }],
       [A, { publishedAt: '2026-04-20', derivedFrom: [B], supersedes: [] }],
@@ -183,7 +183,7 @@ describe('walkLineage', () => {
   });
 
   it('walks supersedes chain', () => {
-    const PRIOR = 'urn:cg:prior' as IRI;
+    const PRIOR = 'urn:iep:prior' as IRI;
     const idx = new Map([
       [ROOT, { publishedAt: '2026-04-25', derivedFrom: [], supersedes: [PRIOR] }],
       [PRIOR, { publishedAt: '2026-04-20', derivedFrom: [], supersedes: [] }],
@@ -193,7 +193,7 @@ describe('walkLineage', () => {
   });
 
   it('handles cycles without infinite loop', () => {
-    const A = 'urn:cg:a' as IRI;
+    const A = 'urn:iep:a' as IRI;
     // ROOT → A → ROOT (cyclic)
     const idx = new Map([
       [ROOT, { publishedAt: '2026-04-25', derivedFrom: [A], supersedes: [] }],

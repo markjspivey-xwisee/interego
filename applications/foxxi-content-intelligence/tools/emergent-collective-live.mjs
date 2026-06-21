@@ -228,7 +228,7 @@ async function runAutonomousCollective({ emit, cancelled }) {
     };
 
     // The bridge's new linked-data responses carry a `published[]` array
-    // — one entry per real cg:ContextDescriptor (signed, content-addressed
+    // — one entry per real iep:ContextDescriptor (signed, content-addressed
     // via a pgsl:Atom, dereferenceable on the pod). For each one, we fetch
     // the descriptor's Turtle representation and emit it as its OWN
     // artifact (kind: 'descriptor'). The artifact's payload carries the
@@ -253,9 +253,9 @@ async function runAutonomousCollective({ emit, cancelled }) {
           payload: {
             'descriptor-iri': p?.['@id'],
             'foxxi-type': foxxiType,
-            'cg:types': typeTags,
+            'iep:types': typeTags,
             'pgsl:atom': p?.['pgsl:hasAtom'],
-            'cg:describes': p?.['cg:describes'],
+            'iep:describes': p?.['iep:describes'],
             'pod:descriptorUrl': url,
             'pod:graphUrl': p?.['foxxi:graphUrl'],
             'turtle': turtle ?? '(could not fetch descriptor; pod may have ACL)',
@@ -324,7 +324,7 @@ async function runAutonomousCollective({ emit, cancelled }) {
                 plan: planRes.json?.plan ?? null,
                 status: planRes.status,
               } });
-          // Emit the real cg:ContextDescriptor artifact(s) the bridge just
+          // Emit the real iep:ContextDescriptor artifact(s) the bridge just
           // minted on the pod for this situation — fetched as Turtle.
           await emitPublishedDescriptors(planRes.json);
           return { content: [{ type: 'text', text: JSON.stringify({ rootCauses: d?.rootCauses ?? [], dominantRegime: d?.regime ?? 'Knowable', planRecommendation: planRes.json?.plan?.recommendation ?? null }, null, 2) }] };
@@ -358,7 +358,7 @@ async function runAutonomousCollective({ emit, cancelled }) {
             `${causeFactor}→${intervention} · verdict ${verdict}`,
             { request: requestBody,
               response: { recorded: out.json?.recorded ?? (out.status === 200), totalSamples: out.json?.totalSamples ?? null, status: out.status } });
-          // Emit the real cg:ContextDescriptor for this outcome — the
+          // Emit the real iep:ContextDescriptor for this outcome — the
           // pod-resident, dereferenceable, content-addressed work product
           // the bridge just minted.
           await emitPublishedDescriptors(out.json);
@@ -460,9 +460,9 @@ Begin.`;
           payload: {
             'descriptor-iri': p?.['@id'],
             'foxxi-type': foxxiType,
-            'cg:types': typeTags,
+            'iep:types': typeTags,
             'pgsl:atom': p?.['pgsl:hasAtom'],
-            'cg:describes': p?.['cg:describes'],
+            'iep:describes': p?.['iep:describes'],
             'pod:descriptorUrl': url,
             'pod:graphUrl': p?.['foxxi:graphUrl'],
             'turtle': turtle ?? '(could not fetch descriptor; pod may have ACL)',
@@ -542,7 +542,7 @@ Begin.`;
           agentDid: nova.did, agentName: nova.name, createdAt: new Date().toISOString(),
           steps: steps.map((x, i) => ({ modalStatus: 'Asserted', granularity: 'tool-call', verb: x.v, objectId: `o${i}`, objectName: x.o, recordedAt: new Date().toISOString() })),
         }];
-        const teachingPackage = { iri: 'urn:cg:teaching:reference-for-field-guidance-live', artifactIri: 'urn:cg:tool:field-reference', competency, olkeStage: 'Articulate', modalStatus: 'Hypothetical' };
+        const teachingPackage = { iri: 'urn:iep:teaching:reference-for-field-guidance-live', artifactIri: 'urn:iep:tool:field-reference', competency, olkeStage: 'Articulate', modalStatus: 'Hypothetical' };
         const targetBehaviour = { description: behaviourDescription, signalMarkers, antiSignalMarkers };
         const teachSig = await signPayload(atlas.wallet, { teachingPackage, targetBehaviour });
         teachRequest = {
@@ -574,9 +574,9 @@ Begin.`;
             payload: {
               'descriptor-iri': p?.['@id'],
               'foxxi-type': foxxiType,
-              'cg:types': typeTags,
+              'iep:types': typeTags,
               'pgsl:atom': p?.['pgsl:hasAtom'],
-              'cg:describes': p?.['cg:describes'],
+              'iep:describes': p?.['iep:describes'],
               'pod:descriptorUrl': url,
               'pod:graphUrl': p?.['foxxi:graphUrl'],
               'turtle': turtle ?? '(could not fetch descriptor; pod may have ACL)',
@@ -1050,10 +1050,10 @@ function selectArtifact(id) {
       p['pod:graphUrl'] ? \`graph → <a href="\${p['pod:graphUrl']}" target="_blank" rel="noreferrer">\${p['pod:graphUrl']}</a>\` : null,
     ].filter(Boolean).join('  ·  ');
     const summaryLines = [
-      \`# cg:ContextDescriptor\`,
+      \`# iep:ContextDescriptor\`,
       \`# Foxxi type: \${p['foxxi-type'] ?? 'unknown'}\`,
       \`# Descriptor IRI: \${p['descriptor-iri'] ?? '—'}\`,
-      \`# Describes (named graph): \${p['cg:describes'] ?? '—'}\`,
+      \`# Describes (named graph): \${p['iep:describes'] ?? '—'}\`,
       \`# Content-addressed payload (PGSL atom): \${p['pgsl:atom'] ?? '—'}\`,
       '',
       \`# ── Turtle (fetched from pod with Accept: text/turtle) ─\`,

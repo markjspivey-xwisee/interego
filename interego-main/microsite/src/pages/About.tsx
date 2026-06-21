@@ -18,7 +18,7 @@ export function About({ onNavigate }: { onNavigate: (r: Route) => void }) {
 
       <h2 style={h2}>The core principles</h2>
       <ul style={{ ...para, paddingLeft: 22, maxWidth: 820 }}>
-        <li><b>Typed context.</b> Every claim is a cg:ContextDescriptor with seven facets. Validation is shape-driven; absence of a facet means no claim on that dimension.</li>
+        <li><b>Typed context.</b> Every claim is a iep:ContextDescriptor with seven facets. Validation is shape-driven; absence of a facet means no claim on that dimension.</li>
         <li><b>Wallet-rooted identity.</b> No passwords anywhere. ECDSA secp256k1 → did:key. SIWE / WebAuthn / DID signatures over server nonces.</li>
         <li><b>Pods are the source of truth.</b> Storage is zero-trust; bridges are stateless. Container restart never loses data.</li>
         <li><b>Federation is cryptographic.</b> Recipients via wrapped envelope keys; no membership service; no central authority.</li>

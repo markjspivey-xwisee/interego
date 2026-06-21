@@ -48,19 +48,19 @@ orchestrator never tells a player where to play.
 
 What ends up on the pod:
 
-- One **rules descriptor** with a public `cg:Affordance` declaring
+- One **rules descriptor** with a public `iep:Affordance` declaring
   the `NewGameChallenge` operation (this is what makes the
   tournament joinable later).
 - One **NewGameChallenge descriptor** per match (`gameId` IRI,
   `xPlayer` DID, `oPlayer` DID, `moveNumber` 0, `boardAfter` 3x3
   JSON grid).
 - One **move descriptor** per turn, chained back via
-  `cg:supersedes` to the previous move. Every move declares
+  `iep:supersedes` to the previous move. Every move declares
   `dcterms:conformsTo <urn:demo:tic-tac-toe:2026-05-31:rules>`.
 - One aggregated **standings descriptor** at the end, linking to
-  every match's terminal move via `cg:hasMember`.
+  every match's terminal move via `iep:hasMember`.
 
-All descriptors use only existing `cg:` / `cgh:` / `hydra:` / `dcat:`
+All descriptors use only existing `iep:` / `ieh:` / `hydra:` / `dcat:`
 / `prov:` / `dcterms:` terms; game-specific predicates (`mark`,
 `cell`, `board`, `winner`, ...) live under the vertical prefix
 `https://interego-tournament.example/ns/tictactoe#`, which sits
@@ -164,7 +164,7 @@ npx tsx examples/tic-tac-toe-challenger.mjs --opponent aggressor
 or a DID. The challenger:
 
 1. Calls `discover(TOURNAMENT_POD)` to find the rules descriptor and
-   the `cg:Affordance` for `NewGameChallenge`.
+   the `iep:Affordance` for `NewGameChallenge`.
 2. Generates (or loads) its own wallet, mints a challenge descriptor
    referencing the chosen opponent's DID, and POSTs it to the
    affordance's `hydra:target`.
@@ -217,11 +217,11 @@ itself is just a signed-HTTP loop and has no model cost.
 - **Every move is signed.** Wallets are real ECDSA keys; signatures
   are verifiable via `verifyMessage` against the recovered DID. A
   player can't forge a move for someone else.
-- **Chain via `cg:supersedes`.** The board isn't a database row —
+- **Chain via `iep:supersedes`.** The board isn't a database row —
   it's a chain of descriptors, each pointing back at its predecessor.
   Walk the chain to replay the whole game.
 - **Ontology-clean.** `npm run lint:ontology` exits 0. No new terms
-  in `cg:` / `cgh:` / `pgsl:` / `ie:` / any other owned prefix —
+  in `iep:` / `ieh:` / `pgsl:` / `ie:` / any other owned prefix —
   game-specific vocabulary lives under the vertical `tictactoe:`
   namespace.
 - **Saga-replay safe.** Writes that span more than one descriptor go

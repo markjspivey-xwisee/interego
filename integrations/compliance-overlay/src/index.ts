@@ -2,7 +2,7 @@
  * @interego/compliance-overlay
  *
  * Generic agent-action → compliance-descriptor translator. Wraps every
- * tool call the runtime emits as a typed cg:ContextDescriptor with
+ * tool call the runtime emits as a typed iep:ContextDescriptor with
  * proper Provenance + Temporal + Semiotic facets and dct:conformsTo
  * citations into the framework controls already declared in the
  * substrate's compliance ontologies.

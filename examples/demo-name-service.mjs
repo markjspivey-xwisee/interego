@@ -1,7 +1,7 @@
 // Cool demo: the Interego name service — attestation-based naming.
 //
 // A name is a VERIFIABLE ATTESTATION, not a claimed registration:
-// `<did> foaf:nick "alice"` published as an ordinary cg:ContextDescriptor
+// `<did> foaf:nick "alice"` published as an ordinary iep:ContextDescriptor
 // with Trust + Provenance facets. Resolution is federated discovery +
 // a pluggable trust policy — name conflicts resolve by trust, NEVER
 // first-come-first-served. No central registrar, no root, no namespace
@@ -14,7 +14,7 @@
 // See docs/NAME-SERVICE.md (incl. the ENS comparison).
 //
 // Built entirely on existing primitives — the descriptor builder, the
-// seven facets, cg:supersedes, foaf:nick (W3C FOAF), federated discover.
+// seven facets, iep:supersedes, foaf:nick (W3C FOAF), federated discover.
 // NO new ontology terms.
 //
 // Runs fully offline: the resolvers take an injectable `fetch`, so an
@@ -41,18 +41,18 @@ function createInMemoryPod(podUrl) {
     publish(built, { descriptorUrl, trustLevel, modalStatus = 'Asserted', validFrom }) {
       graphs.set(descriptorUrl.replace(/\.ttl$/, '-graph.trig'), built.graphContent);
       const lines = [
-        `<${descriptorUrl}> a cg:ManifestEntry ;`,
-        `    cg:describes <${built.graphIri}> ;`,
-        `    cg:trustLevel cg:${trustLevel} ;`,
-        `    cg:modalStatus cg:${modalStatus} ;`,
+        `<${descriptorUrl}> a iep:ManifestEntry ;`,
+        `    iep:describes <${built.graphIri}> ;`,
+        `    iep:trustLevel iep:${trustLevel} ;`,
+        `    iep:modalStatus iep:${modalStatus} ;`,
       ];
-      if (validFrom) lines.push(`    cg:validFrom "${validFrom}" ;`);
-      // A real pod's publish() mirrors the descriptor's cg:supersedes
+      if (validFrom) lines.push(`    iep:validFrom "${validFrom}" ;`);
+      // A real pod's publish() mirrors the descriptor's iep:supersedes
       // into the manifest entry (see ManifestEntry.supersedes) — so the
       // resolver can find head-of-chain entries without re-fetching every
       // descriptor. Mirror that here from built.descriptor.supersedes.
       for (const s of built.descriptor.supersedes ?? []) {
-        lines.push(`    cg:supersedes <${s}> ;`);
+        lines.push(`    iep:supersedes <${s}> ;`);
       }
       lines[lines.length - 1] = lines[lines.length - 1].replace(/ ;$/, ' .');
       entries.push(lines.join('\n'));
@@ -91,7 +91,7 @@ console.log('buildNameAttestation({ subject: <alice DID>, name: "alice" }) →')
 console.log('  attestation IRI :', aliceSelf.attestationIri);
 console.log('  graph           :', aliceSelf.graphContent.trim());
 console.log('  facets          :', aliceSelf.descriptor.facets.map((f) => f.type).join(', '));
-console.log('  → a signed cg:ContextDescriptor over a foaf:nick triple. No new vocabulary.\n');
+console.log('  → a signed iep:ContextDescriptor over a foaf:nick triple. No new vocabulary.\n');
 pod.publish(aliceSelf, {
   descriptorUrl: POD + 'cg/alice-self.ttl',
   trustLevel: 'SelfAsserted',
@@ -160,7 +160,7 @@ console.log(`                         (${afterRename.length} total — the impos
 console.log('                          and that is fine: it is just a low-trust binding)');
 console.log(`  resolveName("allie") → ${allieHits.length} binding(s): ${allieHits.map((h) => h.subject).join(', ')}`);
 console.log('  → alice\'s old "alice" descriptors are still on the pod, audit-walkable');
-console.log('    via cg:supersedes — they are simply no longer surfaced by default.\n');
+console.log('    via iep:supersedes — they are simply no longer surfaced by default.\n');
 
 // ── 4. Reverse lookup ─────────────────────────────────────────
 console.log('── 4. Reverse lookup — every active name for a principal ──\n');
@@ -174,7 +174,7 @@ console.log('   A federated name service with NO central registrar, NO root, NO'
 console.log('   namespace governance. A name is a signed attestation; resolution');
 console.log('   is discovery + a pluggable trust policy. Conflicts resolve by');
 console.log('   trust, never first-come-first-served. Renames supersede, never');
-console.log('   delete. Built on cg:ContextDescriptor + foaf:nick + cg:supersedes');
+console.log('   delete. Built on iep:ContextDescriptor + foaf:nick + iep:supersedes');
 console.log('   — no new ontology terms (L2 pattern, sibling of registry: / passport:).');
 console.log('');
 console.log('   The honest cost: a name is trust-relative, not globally unique —');

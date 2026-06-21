@@ -82,7 +82,7 @@ function _enqueueWrite(podSlug, fn) {
  *
  * The relay's publish_context expects `graph_content` (Turtle), not a
  * raw JSON object — so we wrap the payload as a `ttt:payload` literal
- * inside a minimal `urn:cg:ns:ttt:Event` graph. The aggregator on the
+ * inside a minimal `urn:iep:ns:ttt:Event` graph. The aggregator on the
  * read side knows this convention and pulls the JSON back out.
  *
  * Writes to the same pod are SERIALIZED via _enqueueWrite — concurrent
@@ -95,11 +95,11 @@ export async function publishContext({ wallet, did, graphIri, kind, payload }) {
 }
 
 async function _publishContextNow({ wallet, did, graphIri, kind, payload }) {
-  const eventId = `urn:cg:ttt-event:${kind}:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const eventId = `urn:iep:ttt-event:${kind}:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const escape = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const graphContent =
-`@prefix ttt: <urn:cg:ns:ttt:> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+`@prefix ttt: <urn:iep:ns:ttt:> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <${eventId}>
@@ -107,7 +107,7 @@ async function _publishContextNow({ wallet, did, graphIri, kind, payload }) {
     ttt:channel "${escape(kind)}" ;
     ttt:payloadJson "${escape(JSON.stringify(payload))}" ;
     prov:wasAttributedTo <${did}> ;
-    cg:modalStatus cg:Asserted .
+    iep:modalStatus iep:Asserted .
 `;
   const args = {
     graph_iri: graphIri,
@@ -139,10 +139,10 @@ async function _publishContextNow({ wallet, did, graphIri, kind, payload }) {
  * Fetch the GRAPH PAYLOAD for a descriptor and parse the
  * `ttt:payloadJson` literal back into a JS object.
  *
- * The descriptor URL points at the cg:ContextDescriptor metadata
+ * The descriptor URL points at the iep:ContextDescriptor metadata
  * (facets, provenance, trust). The actual graph content lives at a
  * sibling URL by convention: `<descriptor-url>-graph.trig`. The
- * descriptor's cg:Affordance / hydra:target points to it explicitly —
+ * descriptor's iep:Affordance / hydra:target points to it explicitly —
  * we follow the naming convention to skip a round-trip.
  */
 export async function readEventPayload(descriptorUrl) {

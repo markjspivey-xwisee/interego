@@ -5,7 +5,7 @@
 > [`tests/naming.test.ts`](../tests/naming.test.ts)). Non-normative.
 >
 > **Layer:** L2 architecture pattern. A construction *over* L1
-> primitives (typed descriptors, the seven facets, `cg:supersedes`,
+> primitives (typed descriptors, the seven facets, `iep:supersedes`,
 > federated discovery) — sibling of [`registry:`](ns/registry.ttl) and
 > [`passport:`](ns/passport.ttl). It adds **no new L1/L2 ontology
 > terms**: a name is a `foaf:nick` literal on a DID, inside an ordinary
@@ -83,12 +83,12 @@ So an Interego name service must not be a registrar.
 
 ## The model: a name is a verifiable attestation
 
-A name binding is an ordinary `cg:ContextDescriptor`:
+A name binding is an ordinary `iep:ContextDescriptor`:
 
 ```turtle
-<urn:cg:name-attestation:…>
-    a cg:ContextDescriptor ;
-    cg:describes <urn:graph:…> .
+<urn:iep:name-attestation:…>
+    a iep:ContextDescriptor ;
+    iep:describes <urn:graph:…> .
 # the graph it describes:
 <did:web:pod.example:users:abc> foaf:nick "alice" .
 ```
@@ -103,7 +103,7 @@ A name binding is an ordinary `cg:ContextDescriptor`:
 - **Provenance facet** — `wasAttributedTo` / `wasGeneratedBy`,
   audit-walkable.
 - **Temporal facet** — `validFrom` / `validUntil`.
-- **`cg:supersedes`** — renaming or reassigning is a supersession chain,
+- **`iep:supersedes`** — renaming or reassigning is a supersession chain,
   never a destructive overwrite. The history stays.
 
 No new vocabulary: `foaf:nick` is W3C FOAF (already in
@@ -205,7 +205,7 @@ opt into a `did:web` or ENS tier.
   derived, not claimed."
 - ✅ Federated — resolution walks pods + directory; no membership service.
 - ✅ Verifiable — every binding is a signed, provenance-stamped descriptor.
-- ✅ Non-destructive — renames are `cg:supersedes` chains.
+- ✅ Non-destructive — renames are `iep:supersedes` chains.
 - ✅ Composes existing primitives — descriptors, facets, discovery, ABAC,
   `amta:`, the pod directory. **No new L1/L2 ontology terms.**
 - ✅ Layer-clean — L2 pattern, sibling of `registry:` / `passport:`.

@@ -310,7 +310,7 @@ Detailed in [`policies/04-incident-response.md`](policies/04-incident-response.m
 4. Begin containment (stop the bleeding)
 5. Update status page within 30 minutes
 6. Notify affected customers within 4 hours
-7. Document timeline as you go (incident descriptor + chained updates via `cg:supersedes`)
+7. Document timeline as you go (incident descriptor + chained updates via `iep:supersedes`)
 
 ### Post-incident
 

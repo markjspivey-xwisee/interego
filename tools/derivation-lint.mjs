@@ -6,7 +6,7 @@
 // A class is GROUNDED if ANY of these appears in its definition:
 //   (a) owl:equivalentClass <L1-or-W3C-term>
 //   (b) rdfs:subClassOf <L1-or-W3C-term-or-same-file-grounded-class>
-//   (c) cg:constructedFrom (...)
+//   (c) iep:constructedFrom (...)
 //   (d) explicit primitive marker (rdfs:comment contains "primitive")
 //
 // Ungrounded classes fail the lint with a non-zero exit code so CI
@@ -85,9 +85,9 @@ function isGrounded(body, otherGroundedClasses, prefix) {
     }
   }
 
-  // (c) cg:constructedFrom (...)
-  if (/cg:constructedFrom\s+\(/.test(body)) {
-    return { grounded: true, reason: 'cg:constructedFrom' };
+  // (c) iep:constructedFrom (...)
+  if (/iep:constructedFrom\s+\(/.test(body)) {
+    return { grounded: true, reason: 'iep:constructedFrom' };
   }
 
   // (d) primitive marker in rdfs:comment
@@ -152,7 +152,7 @@ console.log('');
 console.log(`Total: ${totalChecked - totalUngrounded}/${totalChecked} classes grounded`);
 
 if (totalUngrounded > 0) {
-  console.error(`\nFAIL: ${totalUngrounded} ungrounded class(es). Add rdfs:subClassOf, owl:equivalentClass, or cg:constructedFrom, or mark primitive.`);
+  console.error(`\nFAIL: ${totalUngrounded} ungrounded class(es). Add rdfs:subClassOf, owl:equivalentClass, or iep:constructedFrom, or mark primitive.`);
   process.exit(1);
 }
 console.log('\nPASS: every L2/L3 class is grounded.');

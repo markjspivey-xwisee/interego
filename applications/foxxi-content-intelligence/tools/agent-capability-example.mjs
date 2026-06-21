@@ -5,7 +5,7 @@
  *
  * The point: the ELR machinery is ACTOR-AGNOSTIC. The same affordances
  * that record a human's training + on-the-job performance record an AI
- * agent's tool use — the agent is just another cg:Agent with a DID.
+ * agent's tool use — the agent is just another iep:Agent with a DID.
  *
  * This script:
  *   1. records a sequence of `performed` events for an agent exercising
@@ -103,7 +103,7 @@ for (const c of elr.competencies) {
   console.log(`  · ${c.label}`);
   console.log(`      basis=${c.basis}  modalStatus=${c.modalStatus}  —  ${es.performanceExecutions} executions, ` +
     `${Math.round((es.performanceSuccessRate ?? 0) * 100)}% success, avg quality ${es.performanceAvgQuality ?? '—'}`);
-  if (c.supersedes) console.log(`      cg:supersedes — ${c.supersedes}`);
+  if (c.supersedes) console.log(`      iep:supersedes — ${c.supersedes}`);
 }
 console.log('\nP2997 raw-data-location provenance:');
 for (const p of elr.provenance.rawDataLocations.slice(0, 3)) {

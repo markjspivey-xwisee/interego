@@ -1,4 +1,4 @@
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#>.
@@ -8,7 +8,7 @@
 @prefix dct:  <http://purl.org/dc/terms/>.
 
 # ══════════════════════════════════════════════════════════════
-#  Interego 1.0 — Normative SHACL Shapes for cg:
+#  Interego 1.0 — Normative SHACL Shapes for iep:
 #
 #  Layer 1 (protocol, normative) — see spec/LAYERS.md.
 #  Conformance test suite uses these shapes as oracles; see
@@ -20,12 +20,12 @@
 #  paired with a conformance-suite fixture.
 # ══════════════════════════════════════════════════════════════
 
-<https://markjspivey-xwisee.github.io/interego/ns/cg-shapes>
+<https://markjspivey-xwisee.github.io/interego/ns/iep-shapes>
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
     dct:title "Interego 1.0 — Normative SHACL Shapes" ;
-    dct:description "Normative SHACL shapes for the cg: core namespace." ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+    dct:description "Normative SHACL shapes for the iep: core namespace." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> .
 
 # ──────────────────────────────────────────────────────────────
 #  1. SemioticFacet — modal-truth consistency
@@ -41,20 +41,20 @@
 #  false Counterfactual and a Counterfactual from being queried as
 #  if it were Asserted.
 # ──────────────────────────────────────────────────────────────
-cg:SemioticFacetModalTruthConsistencyShape a sh:NodeShape ;
-    sh:targetClass cg:SemioticFacet ;
+iep:SemioticFacetModalTruthConsistencyShape a sh:NodeShape ;
+    sh:targetClass iep:SemioticFacet ;
     sh:sparql [
         sh:message "SemioticFacet: Asserted requires groundTruth=true, Counterfactual requires groundTruth=false, Hypothetical MUST NOT set groundTruth." ;
-        sh:prefixes cg: ;
+        sh:prefixes iep: ;
         sh:select """
-            PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+            PREFIX iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>
             SELECT $this ?modalStatus ?groundTruth WHERE {
-              $this cg:modalStatus ?modalStatus .
-              OPTIONAL { $this cg:groundTruth ?groundTruth . }
+              $this iep:modalStatus ?modalStatus .
+              OPTIONAL { $this iep:groundTruth ?groundTruth . }
               FILTER (
-                ( ?modalStatus = cg:Asserted       && ( !BOUND(?groundTruth) || ?groundTruth != true ) ) ||
-                ( ?modalStatus = cg:Counterfactual && ( !BOUND(?groundTruth) || ?groundTruth != false ) ) ||
-                ( ?modalStatus = cg:Hypothetical   && BOUND(?groundTruth) )
+                ( ?modalStatus = iep:Asserted       && ( !BOUND(?groundTruth) || ?groundTruth != true ) ) ||
+                ( ?modalStatus = iep:Counterfactual && ( !BOUND(?groundTruth) || ?groundTruth != false ) ) ||
+                ( ?modalStatus = iep:Hypothetical   && BOUND(?groundTruth) )
               )
             }
         """
@@ -69,17 +69,17 @@ cg:SemioticFacetModalTruthConsistencyShape a sh:NodeShape ;
 #  MAY downgrade this from Warning to Info if the descriptor also
 #  carries explicit semantics indicating the future-date is intentional.
 # ──────────────────────────────────────────────────────────────
-cg:TemporalFacetNonFutureValidFromShape a sh:NodeShape ;
-    sh:targetClass cg:TemporalFacet ;
+iep:TemporalFacetNonFutureValidFromShape a sh:NodeShape ;
+    sh:targetClass iep:TemporalFacet ;
     sh:severity sh:Warning ;
     sh:sparql [
         sh:message "TemporalFacet.validFrom is in the future — claim is not yet in effect. If intentional (scheduled claim), ignore this warning." ;
-        sh:prefixes cg: ;
+        sh:prefixes iep: ;
         sh:select """
-            PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+            PREFIX iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>
             PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
             SELECT $this ?validFrom WHERE {
-              $this cg:validFrom ?validFrom .
+              $this iep:validFrom ?validFrom .
               FILTER (?validFrom > NOW())
             }
         """
@@ -96,17 +96,17 @@ cg:TemporalFacetNonFutureValidFromShape a sh:NodeShape ;
 #  parsing the query; implementations MAY choose a more precise
 #  parser-based check but MUST reject at minimum this string form.
 # ──────────────────────────────────────────────────────────────
-cg:RevocationConditionNoSelfReferenceShape a sh:NodeShape ;
-    sh:targetClass cg:RevocationCondition ;
+iep:RevocationConditionNoSelfReferenceShape a sh:NodeShape ;
+    sh:targetClass iep:RevocationCondition ;
     sh:sparql [
         sh:message "Revocation successor query references the enclosing descriptor's own graph IRI — malformed (self-revoking by existence)." ;
-        sh:prefixes cg: ;
+        sh:prefixes iep: ;
         sh:select """
-            PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+            PREFIX iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>
             SELECT $this ?query WHERE {
-              ?descriptor cg:revokedIf|cg:revokedBy $this .
-              ?descriptor cg:describes ?graphIri .
-              $this cg:successorQuery ?query .
+              ?descriptor iep:revokedIf|iep:revokedBy $this .
+              ?descriptor iep:describes ?graphIri .
+              $this iep:successorQuery ?query .
               FILTER (CONTAINS(STR(?query), STR(?graphIri)))
             }
         """
@@ -121,45 +121,45 @@ cg:RevocationConditionNoSelfReferenceShape a sh:NodeShape ;
 #  RevocationFacet) are permitted but MUST NOT replace any of the
 #  six core facets.
 #
-#  NOTE: extensions to Context Graphs 1.0 (such as a RevocationFacet
+#  NOTE: extensions to Interego Protocol 1.0 (such as a RevocationFacet
 #  proposal) relax "exactly six" to "at least six" without breaking
 #  this shape — they'd add an additional at-most-one shape for the
 #  new facet type. Don't conflate that future relaxation with a
 #  current requirement.
 # ──────────────────────────────────────────────────────────────
-cg:DescriptorSixFacetShape a sh:NodeShape ;
-    sh:targetClass cg:ContextDescriptor ;
+iep:DescriptorSixFacetShape a sh:NodeShape ;
+    sh:targetClass iep:ContextDescriptor ;
     sh:property [
-        sh:path cg:hasFacet ;
-        sh:qualifiedValueShape [ sh:class cg:TemporalFacet ] ;
+        sh:path iep:hasFacet ;
+        sh:qualifiedValueShape [ sh:class iep:TemporalFacet ] ;
         sh:qualifiedMinCount 1 ;
         sh:qualifiedMaxCount 1 ;
         sh:message "ContextDescriptor MUST have exactly one TemporalFacet."
     ] ;
     sh:property [
-        sh:path cg:hasFacet ;
-        sh:qualifiedValueShape [ sh:class cg:ProvenanceFacet ] ;
+        sh:path iep:hasFacet ;
+        sh:qualifiedValueShape [ sh:class iep:ProvenanceFacet ] ;
         sh:qualifiedMinCount 1 ;
         sh:qualifiedMaxCount 1 ;
         sh:message "ContextDescriptor MUST have exactly one ProvenanceFacet."
     ] ;
     sh:property [
-        sh:path cg:hasFacet ;
-        sh:qualifiedValueShape [ sh:class cg:AgentFacet ] ;
+        sh:path iep:hasFacet ;
+        sh:qualifiedValueShape [ sh:class iep:AgentFacet ] ;
         sh:qualifiedMinCount 1 ;
         sh:qualifiedMaxCount 1 ;
         sh:message "ContextDescriptor MUST have exactly one AgentFacet."
     ] ;
     sh:property [
-        sh:path cg:hasFacet ;
-        sh:qualifiedValueShape [ sh:class cg:SemioticFacet ] ;
+        sh:path iep:hasFacet ;
+        sh:qualifiedValueShape [ sh:class iep:SemioticFacet ] ;
         sh:qualifiedMinCount 1 ;
         sh:qualifiedMaxCount 1 ;
         sh:message "ContextDescriptor MUST have exactly one SemioticFacet."
     ] ;
     sh:property [
-        sh:path cg:hasFacet ;
-        sh:qualifiedValueShape [ sh:class cg:TrustFacet ] ;
+        sh:path iep:hasFacet ;
+        sh:qualifiedValueShape [ sh:class iep:TrustFacet ] ;
         sh:qualifiedMinCount 1 ;
         sh:qualifiedMaxCount 1 ;
         sh:message "ContextDescriptor MUST have exactly one TrustFacet."
@@ -174,23 +174,23 @@ cg:DescriptorSixFacetShape a sh:NodeShape ;
 #  (not violation) because there are legitimate ghost-write patterns
 #  (e.g. agent X proxying for agent Y) where this is intentional.
 # ──────────────────────────────────────────────────────────────
-cg:AgentProvenanceConsistencyShape a sh:NodeShape ;
-    sh:targetClass cg:ContextDescriptor ;
+iep:AgentProvenanceConsistencyShape a sh:NodeShape ;
+    sh:targetClass iep:ContextDescriptor ;
     sh:severity sh:Warning ;
     sh:sparql [
         sh:message "AgentFacet.assertingAgent != ProvenanceFacet.wasAssociatedWith — identity fork detected. If intentional (ghost-write), ignore." ;
-        sh:prefixes cg: ;
+        sh:prefixes iep: ;
         sh:select """
-            PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+            PREFIX iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>
             PREFIX prov: <http://www.w3.org/ns/prov#>
             SELECT $this ?aa ?pa WHERE {
-              $this cg:hasFacet ?agentFacet .
-              ?agentFacet a cg:AgentFacet ;
-                          cg:assertingAgent/cg:agentIdentity ?aa .
-              $this cg:hasFacet ?provFacet .
-              ?provFacet a cg:ProvenanceFacet ;
-                         cg:wasGeneratedBy ?activity .
-              ?activity cg:agent ?pa .
+              $this iep:hasFacet ?agentFacet .
+              ?agentFacet a iep:AgentFacet ;
+                          iep:assertingAgent/iep:agentIdentity ?aa .
+              $this iep:hasFacet ?provFacet .
+              ?provFacet a iep:ProvenanceFacet ;
+                         iep:wasGeneratedBy ?activity .
+              ?activity iep:agent ?pa .
               FILTER (?aa != ?pa)
             }
         """
@@ -199,40 +199,40 @@ cg:AgentProvenanceConsistencyShape a sh:NodeShape ;
 # ──────────────────────────────────────────────────────────────
 #  6. Distribution — visibility / encryption consistency
 #
-#  cg:visibility classifies the audience for the affordance's payload:
-#    public  ↔ cg:encrypted MUST be false  (plaintext readable by any
+#  iep:visibility classifies the audience for the affordance's payload:
+#    public  ↔ iep:encrypted MUST be false  (plaintext readable by any
 #                                            authenticated user via
 #                                            foaf:Agent acl:Read)
-#    shared  ↔ cg:encrypted MUST be true   (JOSE envelope wrapped to
+#    shared  ↔ iep:encrypted MUST be true   (JOSE envelope wrapped to
 #                                            the pod's authorized agents
 #                                            plus optional share_with)
-#    private ↔ cg:encrypted MUST be true   (JOSE envelope wrapped to the
+#    private ↔ iep:encrypted MUST be true   (JOSE envelope wrapped to the
 #                                            publishing agent only)
 #
 #  Prevents a descriptor claiming "public" while shipping ciphertext
 #  (no anonymous reader can decrypt) or claiming "shared"/"private"
 #  while shipping plaintext (the audience-class promise is silently
-#  violated). cg:visibility is optional — when absent, the shape is
+#  violated). iep:visibility is optional — when absent, the shape is
 #  inert and existing pre-visibility descriptors continue to pass.
 #  Only one of the three legal string values is permitted.
 # ──────────────────────────────────────────────────────────────
-cg:VisibilityShape a sh:NodeShape ;
-    sh:targetClass cg:Affordance ;
+iep:VisibilityShape a sh:NodeShape ;
+    sh:targetClass iep:Affordance ;
     sh:property [
-        sh:path cg:visibility ;
+        sh:path iep:visibility ;
         sh:datatype xsd:string ;
         sh:in ( "public" "shared" "private" ) ;
         sh:maxCount 1 ;
-        sh:message "cg:visibility MUST be one of \"public\", \"shared\", or \"private\" (functional property — at most one value per distribution)."
+        sh:message "iep:visibility MUST be one of \"public\", \"shared\", or \"private\" (functional property — at most one value per distribution)."
     ] ;
     sh:sparql [
-        sh:message "cg:visibility consistency: \"public\" requires cg:encrypted=false; \"shared\" and \"private\" require cg:encrypted=true." ;
-        sh:prefixes cg: ;
+        sh:message "iep:visibility consistency: \"public\" requires iep:encrypted=false; \"shared\" and \"private\" require iep:encrypted=true." ;
+        sh:prefixes iep: ;
         sh:select """
-            PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+            PREFIX iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>
             SELECT $this ?visibility ?encrypted WHERE {
-              $this cg:visibility ?visibility .
-              $this cg:encrypted ?encrypted .
+              $this iep:visibility ?visibility .
+              $this iep:encrypted ?encrypted .
               FILTER (
                 ( ?visibility = "public"  && ?encrypted != false ) ||
                 ( ?visibility = "shared"  && ?encrypted != true  ) ||
@@ -243,87 +243,87 @@ cg:VisibilityShape a sh:NodeShape ;
     ] .
 
 # ──────────────────────────────────────────────────────────────
-#  7. AuthorshipProof — required fields for cg:SignedAuthorship
+#  7. AuthorshipProof — required fields for iep:SignedAuthorship
 #
-#  When a descriptor embeds cg:authorshipProof [...], the embedded
+#  When a descriptor embeds iep:authorshipProof [...], the embedded
 #  blank node MUST declare every field the canonical-payload reconstructor
 #  reads. Missing any of these makes the proof unverifiable from the
 #  descriptor alone, defeating the whole point of embedded authorship.
 #
 #  Required:
-#    cg:scheme              — signature suite name
-#    cg:issuer              — agent IRI claiming authorship
-#    cg:verificationMethod  — IRI naming the public key (did:ethr:<addr>)
-#    cg:signerAddress       — authoritative public-id of the signer
-#    cg:created             — ISO 8601 timestamp
-#    cg:ownerWebId          — pod owner WebID
-#    cg:descriptorId        — descriptor IRI the proof binds to
-#    cg:proofValue          — the signature itself
+#    iep:scheme              — signature suite name
+#    iep:issuer              — agent IRI claiming authorship
+#    iep:verificationMethod  — IRI naming the public key (did:ethr:<addr>)
+#    iep:signerAddress       — authoritative public-id of the signer
+#    iep:created             — ISO 8601 timestamp
+#    iep:ownerWebId          — pod owner WebID
+#    iep:descriptorId        — descriptor IRI the proof binds to
+#    iep:proofValue          — the signature itself
 #
 #  Optional:
-#    cg:agentDid            — DID-resolution hint
+#    iep:agentDid            — DID-resolution hint
 # ──────────────────────────────────────────────────────────────
-cg:AuthorshipProofShape a sh:NodeShape ;
-    sh:targetClass cg:SignedAuthorship ;
+iep:AuthorshipProofShape a sh:NodeShape ;
+    sh:targetClass iep:SignedAuthorship ;
     sh:property [
-        sh:path cg:scheme ;
+        sh:path iep:scheme ;
         sh:datatype xsd:string ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:message "cg:SignedAuthorship MUST declare cg:scheme (signature suite)."
+        sh:message "iep:SignedAuthorship MUST declare iep:scheme (signature suite)."
     ] ;
     sh:property [
-        sh:path cg:issuer ;
+        sh:path iep:issuer ;
         sh:nodeKind sh:IRI ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:message "cg:SignedAuthorship MUST declare cg:issuer (agent IRI)."
+        sh:message "iep:SignedAuthorship MUST declare iep:issuer (agent IRI)."
     ] ;
     sh:property [
-        sh:path cg:verificationMethod ;
+        sh:path iep:verificationMethod ;
         sh:nodeKind sh:IRI ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:message "cg:SignedAuthorship MUST declare cg:verificationMethod (key IRI)."
+        sh:message "iep:SignedAuthorship MUST declare iep:verificationMethod (key IRI)."
     ] ;
     sh:property [
-        sh:path cg:signerAddress ;
+        sh:path iep:signerAddress ;
         sh:datatype xsd:string ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:message "cg:SignedAuthorship MUST declare cg:signerAddress."
+        sh:message "iep:SignedAuthorship MUST declare iep:signerAddress."
     ] ;
     sh:property [
-        sh:path cg:created ;
+        sh:path iep:created ;
         sh:datatype xsd:dateTime ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:message "cg:SignedAuthorship MUST declare cg:created (ISO 8601 timestamp)."
+        sh:message "iep:SignedAuthorship MUST declare iep:created (ISO 8601 timestamp)."
     ] ;
     sh:property [
-        sh:path cg:ownerWebId ;
+        sh:path iep:ownerWebId ;
         sh:nodeKind sh:IRI ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:message "cg:SignedAuthorship MUST declare cg:ownerWebId."
+        sh:message "iep:SignedAuthorship MUST declare iep:ownerWebId."
     ] ;
     sh:property [
-        sh:path cg:descriptorId ;
+        sh:path iep:descriptorId ;
         sh:nodeKind sh:IRI ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:message "cg:SignedAuthorship MUST declare cg:descriptorId (the descriptor IRI the proof binds to)."
+        sh:message "iep:SignedAuthorship MUST declare iep:descriptorId (the descriptor IRI the proof binds to)."
     ] ;
     sh:property [
-        sh:path cg:proofValue ;
+        sh:path iep:proofValue ;
         sh:datatype xsd:string ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:message "cg:SignedAuthorship MUST declare cg:proofValue (the signature)."
+        sh:message "iep:SignedAuthorship MUST declare iep:proofValue (the signature)."
     ] ;
     sh:property [
-        sh:path cg:agentDid ;
+        sh:path iep:agentDid ;
         sh:datatype xsd:string ;
         sh:maxCount 1 ;
-        sh:message "cg:agentDid is optional but MUST be at most one when present."
+        sh:message "iep:agentDid is optional but MUST be at most one when present."
     ] .

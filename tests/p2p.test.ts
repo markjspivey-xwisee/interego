@@ -60,7 +60,7 @@ describe('P2P transport — two independent agents through one relay', () => {
     // Alice publishes — could be from her phone (claude.ai mobile)
     // or her desktop (Claude Code). Same code path, same event shape.
     const pub = await alice.publishDescriptor({
-      descriptorId: 'urn:cg:alice:claim-1',
+      descriptorId: 'urn:iep:alice:claim-1',
       cid: 'bafkreialice123',
       graphIri: 'urn:graph:shared',
       facetTypes: ['Temporal', 'Trust'],
@@ -75,7 +75,7 @@ describe('P2P transport — two independent agents through one relay', () => {
     expect(found).toHaveLength(1);
     const ann = found[0]!;
     expect(ann.publisher).toBe(alice.pubkey);
-    expect(ann.descriptorId).toBe('urn:cg:alice:claim-1');
+    expect(ann.descriptorId).toBe('urn:iep:alice:claim-1');
     expect(ann.cid).toBe('bafkreialice123');
     expect(ann.facetTypes).toEqual(['Temporal', 'Trust']);
     expect(ann.conformsTo).toEqual(['https://example.org/schema/claim']);
@@ -97,7 +97,7 @@ describe('P2P transport — two independent agents through one relay', () => {
 
     // Bob publishes — Alice should see it without polling
     await bob.publishDescriptor({
-      descriptorId: 'urn:cg:bob:claim-1',
+      descriptorId: 'urn:iep:bob:claim-1',
       cid: 'bafkreibob123',
       graphIri: 'urn:graph:shared',
       facetTypes: ['Provenance'],
@@ -109,7 +109,7 @@ describe('P2P transport — two independent agents through one relay', () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]!.publisher).toBe(bob.pubkey);
-    expect(received[0]!.descriptorId).toBe('urn:cg:bob:claim-1');
+    expect(received[0]!.descriptorId).toBe('urn:iep:bob:claim-1');
 
     sub.close();
   });
@@ -119,13 +119,13 @@ describe('P2P transport — two independent agents through one relay', () => {
     const alice = makeAgent('alice', ALICE_KEY, relay);
 
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:alice:rev-test',
+      descriptorId: 'urn:iep:alice:rev-test',
       cid: 'bafkrei-v1',
       graphIri: 'urn:graph:shared',
     });
     await new Promise(r => setTimeout(r, 1100)); // ensure created_at advances
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:alice:rev-test',
+      descriptorId: 'urn:iep:alice:rev-test',
       cid: 'bafkrei-v2',
       graphIri: 'urn:graph:shared',
     });
@@ -146,12 +146,12 @@ describe('P2P transport — two independent agents through one relay', () => {
     const carol = makeAgent('carol', CAROL_KEY, relay);
 
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:alice:obs',
+      descriptorId: 'urn:iep:alice:obs',
       cid: 'bafkrei-alice-obs',
       graphIri: 'urn:graph:public-channel',
     });
     await bob.publishDescriptor({
-      descriptorId: 'urn:cg:bob:obs',
+      descriptorId: 'urn:iep:bob:obs',
       cid: 'bafkrei-bob-obs',
       graphIri: 'urn:graph:public-channel',
     });
@@ -188,7 +188,7 @@ describe('P2P transport — two independent agents through one relay', () => {
     const bob = makeAgent('bob', BOB_KEY, relay);
 
     const pub = await alice.publishDescriptor({
-      descriptorId: 'urn:cg:alice:attested',
+      descriptorId: 'urn:iep:alice:attested',
       cid: 'bafkrei-attested',
       graphIri: 'urn:graph:contested',
     });
@@ -203,7 +203,7 @@ describe('P2P transport — security properties', () => {
     const relay = new InMemoryRelay();
     const alice = makeAgent('alice', ALICE_KEY, relay);
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:alice:tamper',
+      descriptorId: 'urn:iep:alice:tamper',
       cid: 'bafkrei-original',
       graphIri: 'urn:graph:t',
     });
@@ -226,13 +226,13 @@ describe('P2P transport — security properties', () => {
     const bob = makeAgent('bob', BOB_KEY, relayB);
 
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:alice:forged',
+      descriptorId: 'urn:iep:alice:forged',
       cid: 'bafkrei-x',
       graphIri: 'urn:graph:x',
     });
     const aliceEvents = await relayA.query({ kinds: [KIND_DESCRIPTOR] });
     await bob.publishDescriptor({
-      descriptorId: 'urn:cg:bob:other',
+      descriptorId: 'urn:iep:bob:other',
       cid: 'bafkrei-y',
       graphIri: 'urn:graph:y',
     });
@@ -268,13 +268,13 @@ describe('P2P transport — security properties', () => {
 
     // But a real publish goes through fine
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:alice:real',
+      descriptorId: 'urn:iep:alice:real',
       cid: 'bafkrei-real',
       graphIri: 'urn:graph:real',
     });
     const found2 = await alice.queryDescriptors({});
     expect(found2).toHaveLength(1);
-    expect(found2[0]!.descriptorId).toBe('urn:cg:alice:real');
+    expect(found2[0]!.descriptorId).toBe('urn:iep:alice:real');
   });
 });
 
@@ -299,12 +299,12 @@ describe('P2P transport — Schnorr signatures (BIP-340 / public-Nostr interop)'
 
     // Publish one of each kind through the same relay
     await ecdsaClient.publishDescriptor({
-      descriptorId: 'urn:cg:dual-ecdsa',
+      descriptorId: 'urn:iep:dual-ecdsa',
       cid: 'bafkrei-ecdsa',
       graphIri: 'urn:graph:dual',
     });
     await schnorrClient.publishDescriptor({
-      descriptorId: 'urn:cg:dual-schnorr',
+      descriptorId: 'urn:iep:dual-schnorr',
       cid: 'bafkrei-schnorr',
       graphIri: 'urn:graph:dual',
     });
@@ -323,7 +323,7 @@ describe('P2P transport — Schnorr signatures (BIP-340 / public-Nostr interop)'
     const client = new P2pClient(relay, wallet, { signingScheme: 'schnorr' });
 
     await client.publishDescriptor({
-      descriptorId: 'urn:cg:schnorr-tamper',
+      descriptorId: 'urn:iep:schnorr-tamper',
       cid: 'bafkrei-original',
       graphIri: 'urn:graph:t',
     });
@@ -343,7 +343,7 @@ describe('P2P transport — Schnorr signatures (BIP-340 / public-Nostr interop)'
     expect(alice.pubkey).not.toBe(bob.pubkey);
 
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:from-alice',
+      descriptorId: 'urn:iep:from-alice',
       cid: 'bafkrei-a',
       graphIri: 'urn:graph:auth-test',
     });
@@ -501,7 +501,7 @@ describe('P2P transport — desktop + mobile workflow (single-process verificati
 
     // Desktop kicks off a working memory note
     await desktop.publishDescriptor({
-      descriptorId: 'urn:cg:desktop:note-1',
+      descriptorId: 'urn:iep:desktop:note-1',
       cid: 'bafkrei-desktop-1',
       graphIri: 'urn:graph:project-x',
       facetTypes: ['Temporal', 'Provenance'],
@@ -518,7 +518,7 @@ describe('P2P transport — desktop + mobile workflow (single-process verificati
 
     // Mobile replies with an addition
     await mobile.publishDescriptor({
-      descriptorId: 'urn:cg:mobile:reply-1',
+      descriptorId: 'urn:iep:mobile:reply-1',
       cid: 'bafkrei-mobile-1',
       graphIri: 'urn:graph:project-x',
       facetTypes: ['Temporal'],

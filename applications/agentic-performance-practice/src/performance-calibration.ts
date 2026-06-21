@@ -27,7 +27,7 @@
  * Composing the substrate:
  *   · Modal status — a cell is Hypothetical until it has enough samples
  *     to Assert a rate; the system never over-claims from thin evidence.
- *   · cg:supersedes — a new profile supersedes the prior one.
+ *   · iep:supersedes — a new profile supersedes the prior one.
  *   · Federation — profiles are unioned across organizations
  *     (`composeCalibrationProfiles`): one org's evidence calibrates
  *     another's. The union is the substrate's composition algebra.

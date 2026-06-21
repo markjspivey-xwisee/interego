@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   console.log('\n[extend-standards] live');
   const xc = await post('/agent/extend-standards', { kind: 'XapiContextExtension', name: 'collaborationDepth', definition: 'How many distinct peers contributed.' }).then(r => r.json()) as Record<string, unknown>;
   check('xAPI extension: ok + Profile artifact', xc.ok === true && (xc.artifact as Record<string, unknown>)?.type === 'Profile');
-  check('self-descriptive cg:StandardsExtension descriptor', JSON.stringify(xc.descriptor).includes('StandardsExtension'));
+  check('self-descriptive iep:StandardsExtension descriptor', JSON.stringify(xc.descriptor).includes('StandardsExtension'));
   check('in-flow guidance attached (teaches + howToLearn)', !!(xc._guidance as Record<string, unknown>)?.teaches && !!(xc._guidance as Record<string, unknown>)?.howToLearn);
 
   const ler = await post('/agent/extend-standards', { kind: 'LerTerm', name: 'AgentMastery', definition: 'A mastery record for an agent.' }).then(r => r.json()) as Record<string, unknown>;

@@ -26,7 +26,7 @@ All code, configuration, and deployment artifacts in:
 
 ### 3.1 Design
 
-- New features affecting trust, identity, encryption, or composition MUST start with a design note (PR description, issue, or descriptor with `cg:modalStatus Hypothetical`).
+- New features affecting trust, identity, encryption, or composition MUST start with a design note (PR description, issue, or descriptor with `iep:modalStatus Hypothetical`).
 - Designs MUST identify: data sensitivity, trust boundaries crossed, threat model implications.
 - For features at the protocol layer, the design MUST be classified per [`spec/LAYERS.md`](../LAYERS.md). Layer-1 work requires architectural review.
 
@@ -74,7 +74,7 @@ All code, configuration, and deployment artifacts in:
 
 - Major features MUST include a brief threat model (could be a paragraph in the design note).
 - Reference framework: STRIDE.
-- Threat model artifacts retained as compliance descriptors with `cg:modalStatus Hypothetical`.
+- Threat model artifacts retained as compliance descriptors with `iep:modalStatus Hypothetical`.
 
 ### 4.2 Dependency management
 

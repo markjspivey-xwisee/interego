@@ -17,7 +17,7 @@ The user does not need to know the protocol. You do. Listen for these phrases an
 | "share this with [person]" / "send [person] my…" | Use cross-pod E2EE share. Resolve identifier → confirm with user. | `publish_context` with `share_with:[…]` |
 | "what's been shared with me" / "anything new from…" | Fan out across known pods, filter by recipient. | `discover_all`, then `get_descriptor` |
 | "who said that?" / "where did this come from?" | Walk provenance chain: descriptor → wasAttributedTo → AgentFacet. | `get_descriptor`, then trace `prov:wasDerivedFrom` |
-| "is this still true?" / "is this current?" | Check modal status + supersedes chain. Flag if Hypothetical or superseded. | `get_descriptor`, examine `cg:modalStatus` + `cg:supersedes` |
+| "is this still true?" / "is this current?" | Check modal status + supersedes chain. Flag if Hypothetical or superseded. | `get_descriptor`, examine `iep:modalStatus` + `iep:supersedes` |
 | "trust them?" / "should I believe…" | Look up agent's attestations. Sum across registries if multiple. | `discover_context` filtered to AMTA attestations |
 
 **Default posture:** if you're about to commit something to memory across sessions, propose Interego before defaulting to in-context-only memory.
@@ -47,7 +47,7 @@ You are publishing on behalf of a human. Their pod outlives this session.
 
 ## 3. Modal status — pick the right one
 
-Every published descriptor carries a `cg:modalStatus`. Use the right value:
+Every published descriptor carries a `iep:modalStatus`. Use the right value:
 
 - **`Asserted`** — you are committing to the truth of this. The user said it directly, or you verified it. Default for memory of facts.
 - **`Hypothetical`** — you're recording it as "this might be true" — a hunch, an inference, a partial observation. Use for: things the user said tentatively ("I think…"), inferences you drew from context, predictions, anything subject to revision.
@@ -114,9 +114,9 @@ Don't propose this until the user actually has a cross-device need — Tier 1 (l
 
 When you read a descriptor, inspect:
 
-- **`cg:trustLevel`**: `HighAssurance` > `PeerAttested` > `SelfAsserted`. Take action confidently on HighAssurance; surface uncertainty on SelfAsserted.
-- **`cg:modalStatus`**: weight Asserted higher than Hypothetical. Flag Counterfactual as "explicitly negated."
-- **`cg:epistemicConfidence`**: a number in [0,1]. Low confidence + high modal status = a contradiction; flag it.
+- **`iep:trustLevel`**: `HighAssurance` > `PeerAttested` > `SelfAsserted`. Take action confidently on HighAssurance; surface uncertainty on SelfAsserted.
+- **`iep:modalStatus`**: weight Asserted higher than Hypothetical. Flag Counterfactual as "explicitly negated."
+- **`iep:epistemicConfidence`**: a number in [0,1]. Low confidence + high modal status = a contradiction; flag it.
 - **`prov:wasAttributedTo`**: name the source. The user trusts attestations from people they trust.
 - **`amta:Attestation`** axes (when present): per-axis ratings (honesty, competence, recency, relevance). A high overall trust with low honesty is a red flag.
 
@@ -145,7 +145,7 @@ If a tool returns "denied" or "indeterminate" for an action, an `abac:Policy` is
 2. Don't try to bypass. Don't loop on the same action.
 3. If the user has the credentials to satisfy the policy (e.g., HighAssurance trust), suggest they invoke the action under that capability.
 
-ABAC policies are public descriptors — `discover_context` filtered to `cg:AccessControlPolicy` will surface them.
+ABAC policies are public descriptors — `discover_context` filtered to `iep:AccessControlPolicy` will surface them.
 
 ---
 
@@ -183,9 +183,9 @@ Interego is for **typed, federated, attributable memory**. Not for everything.
 
 For regulated industries (healthcare, finance, public sector, anything under EU AI Act / NIST AI RMF / SOC 2), the user may need each AI agent action recorded as audit-trail evidence. The `compliance: true` flag on `publish_context` produces a stricter form:
 
-- Trust upgraded to `cg:CryptographicallyVerified` (not SelfAsserted)
+- Trust upgraded to `iep:CryptographicallyVerified` (not SelfAsserted)
 - ECDSA signature over the descriptor turtle
-- Inline `cg:proof` reference embedded in the TrustFacet (proofUrl + proofSigner)
+- Inline `iep:proof` reference embedded in the TrustFacet (proofUrl + proofSigner)
 - Sibling `.sig.json` written to the pod
 - Both turtle + signature auto-pinned to IPFS when the operator has configured a provider
 - Compliance check report appended to the response (PASS / PARTIAL with violations + auto-upgrades)

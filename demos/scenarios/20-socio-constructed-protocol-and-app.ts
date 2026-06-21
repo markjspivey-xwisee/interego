@@ -6,13 +6,13 @@
  * declared up front; the protocol EMERGES from agent activity.
  * No app is hand-coded; the app COMPOSES the emergent protocol.
  * Governance applies because the constitutional layer ratifies the
- * protocol set, and a typed cgh:protocolConformance on the app pins
+ * protocol set, and a typed ieh:protocolConformance on the app pins
  * the authoring intent for audit.
  *
  * Phases:
  *
  *   A — Proposal (3 parallel agents). Each agent publishes one typed
- *     cg:Affordance descriptor proposing a new action for a knowledge-
+ *     iep:Affordance descriptor proposing a new action for a knowledge-
  *     capture domain (capture-fact, capture-decision, capture-question).
  *     Each affordance declares hydra:expects with typed inputs. Modal
  *     status: Hypothetical — no consensus yet.
@@ -23,19 +23,19 @@
  *
  *   C — Promotion (harness). Aggregates attestations per affordance;
  *     promotes those clearing the threshold (Hypothetical → Asserted
- *     via cg:supersedes). The protocol-in-emergence is the set of
+ *     via iep:supersedes). The protocol-in-emergence is the set of
  *     currently-Asserted affordances.
  *
  *   D — Constitutional ratification (harness). Proposes + ratifies
- *     amendment "knowledge-protocol-v1." Publishes a typed cgh:Protocol
+ *     amendment "knowledge-protocol-v1." Publishes a typed ieh:Protocol
  *     descriptor bundling the promoted affordances. Publishes a
- *     cgh:PromotionConstraint requiring future affordances in this
+ *     ieh:PromotionConstraint requiring future affordances in this
  *     protocol space to declare provenance — substrate-enforced
  *     governance for what counts as a future addition.
  *
  *   E — App construction (1 builder agent). Composes the 3 promoted
- *     affordances into a typed cgh:WorkflowApp ("team knowledge
- *     journal"), with cgh:protocolConformance linking back to the
+ *     affordances into a typed ieh:WorkflowApp ("team knowledge
+ *     journal"), with ieh:protocolConformance linking back to the
  *     ratified Protocol IRI for audit-trail integrity.
  *
  *   F — App consumption (1 consumer agent, different process, no
@@ -46,11 +46,11 @@
  *     decision, one question.
  *
  * Verification asserts:
- *   - 3 distinct cg:Affordance descriptors authored
+ *   - 3 distinct iep:Affordance descriptors authored
  *   - 6 peer attestations recorded
  *   - ≥1 affordance promoted to Asserted
- *   - 1 cgh:Protocol descriptor present on the pod
- *   - 1 cgh:WorkflowApp descriptor present, with cgh:protocolConformance
+ *   - 1 ieh:Protocol descriptor present on the pod
+ *   - 1 ieh:WorkflowApp descriptor present, with ieh:protocolConformance
  *     pointing at the Protocol
  *   - Consumer agent published ≥3 typed records, each conforming to
  *     one of the protocol's affordance shapes
@@ -83,7 +83,7 @@ const PROPOSERS = [
     id: 'did:web:alpha-proposer.example',
     short: 'alpha',
     affordanceName: 'knowledge.capture-fact',
-    actionIri: 'urn:cg:action:knowledge:capture-fact',
+    actionIri: 'urn:iep:action:knowledge:capture-fact',
     title: 'Capture a typed fact',
     description: 'Capture a single typed fact (subject, predicate, object) with a provenance source.',
     inputs: [
@@ -97,7 +97,7 @@ const PROPOSERS = [
     id: 'did:web:beta-proposer.example',
     short: 'beta',
     affordanceName: 'knowledge.capture-decision',
-    actionIri: 'urn:cg:action:knowledge:capture-decision',
+    actionIri: 'urn:iep:action:knowledge:capture-decision',
     title: 'Capture a decision',
     description: 'Record a decision with topic, rationale, decided-by, and ISO-8601 decision time.',
     inputs: [
@@ -111,7 +111,7 @@ const PROPOSERS = [
     id: 'did:web:gamma-proposer.example',
     short: 'gamma',
     affordanceName: 'knowledge.capture-question',
-    actionIri: 'urn:cg:action:knowledge:capture-question',
+    actionIri: 'urn:iep:action:knowledge:capture-question',
     title: 'Capture an open question',
     description: 'Log an open question with topic, surrounding context, who is asking, and ISO-8601 first-asked time.',
     inputs: [
@@ -132,11 +132,11 @@ const AXES = ['correctness', 'generality', 'utility'] as const;
 const BUILDER = { id: 'did:web:delta-builder.example', short: 'delta' };
 const CONSUMER = { id: 'did:web:epsilon-consumer.example', short: 'epsilon' };
 
-const PROTOCOL_IRI = `urn:cgh:protocol:knowledge-protocol-v1:${Date.now()}`;
-const APP_IRI = `urn:cgh:app:team-knowledge-journal:${Date.now()}`;
-const AMENDMENT_IRI = `urn:cg:amendment:knowledge-protocol-v1-ratification:${Date.now()}`;
-const CONSTRAINT_IRI = `urn:cgh:promotion-constraint:knowledge-protocol-future-additions:${Date.now()}`;
-const POLICY_IRI = 'urn:cg:policy:knowledge-protocol-governance:v0';
+const PROTOCOL_IRI = `urn:ieh:protocol:knowledge-protocol-v1:${Date.now()}`;
+const APP_IRI = `urn:ieh:app:team-knowledge-journal:${Date.now()}`;
+const AMENDMENT_IRI = `urn:iep:amendment:knowledge-protocol-v1-ratification:${Date.now()}`;
+const CONSTRAINT_IRI = `urn:ieh:promotion-constraint:knowledge-protocol-future-additions:${Date.now()}`;
+const POLICY_IRI = 'urn:iep:policy:knowledge-protocol-governance:v0';
 
 async function spawnInteregoBridge(podUrl: string, port: number, didPrefix: string): Promise<BridgeHandle> {
   const cwd = join(REPO_ROOT, 'demos', 'interego-bridge');
@@ -205,24 +205,24 @@ async function main(): Promise<void> {
     step(2, `PHASE A — ${PROPOSERS.length} agents propose typed affordances in parallel`);
     const phaseAStart = Date.now();
     const proposed = await Promise.all(PROPOSERS.map(async (p) => {
-      const affordanceIri = `urn:cg:affordance:${p.affordanceName.replace('.', ':')}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const affordanceIri = `urn:iep:affordance:${p.affordanceName.replace('.', ':')}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const inputsTtl = p.inputs.map(i => `[
     hydra:property "${i.name}" ;
     hydra:required ${i.required ? 'true' : 'false'} ;
-    cg:dataType "${i.type}"
+    iep:dataType "${i.type}"
   ]`).join(', ');
-      const turtle = `@prefix cg:    <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-@prefix cgh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+      const turtle = `@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix dct:   <http://purl.org/dc/terms/> .
 
-<${affordanceIri}> a cg:Affordance, hydra:Operation ;
-  cg:action <${p.actionIri}> ;
+<${affordanceIri}> a iep:Affordance, hydra:Operation ;
+  iep:action <${p.actionIri}> ;
   hydra:method "POST" ;
   hydra:title "${p.title}" ;
   rdfs:comment ${JSON.stringify(p.description)} ;
-  cg:proposedBy <${p.id}> ;
+  iep:proposedBy <${p.id}> ;
   hydra:expects [
     a hydra:Class ;
     hydra:supportedProperty ${inputsTtl}
@@ -346,13 +346,13 @@ long and LLMs sometimes truncate them:
       if (willPromote) {
         // Publish an Asserted successor that supersedes the Hypothetical original.
         const successorIri = `${p.affordance_iri}-asserted`;
-        const turtle = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+        const turtle = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-<${successorIri}> a cg:Affordance ;
-  cg:supersedes <${p.affordance_iri}> ;
+<${successorIri}> a iep:Affordance ;
+  iep:supersedes <${p.affordance_iri}> ;
   dct:title "Promoted: ${p.affordance_name}" ;
-  cg:meanPeerRating "${mean.toFixed(3)}" ;
-  cg:axesCovered "${axes.join(',')}" .`;
+  iep:meanPeerRating "${mean.toFixed(3)}" ;
+  iep:axesCovered "${axes.join(',')}" .`;
         await bridgeCall(bridge.url, 'protocol.publish_descriptor', {
           graph_iri: successorIri,
           graph_content: turtle,
@@ -377,13 +377,13 @@ long and LLMs sometimes truncate them:
     ok(`${promotedAffordances.length}/${proposed.length} affordances promoted; protocol-in-emergence size = ${promotedAffordances.length}`);
 
     // ── Phase D — Constitutional ratification ──────────────────
-    step(5, 'PHASE D — Constitutional ratification + cgh:Protocol publish');
+    step(5, 'PHASE D — Constitutional ratification + ieh:Protocol publish');
     await bridgeCall(bridge.url, 'protocol.constitutional_propose', {
       amendment_id: AMENDMENT_IRI,
       amends: POLICY_IRI,
       tier: 3,
       proposer_did: BUILDER.id,
-      diff_summary: `Ratify "knowledge-protocol-v1" — bundles ${promotedAffordances.length} community-attested affordances. Future additions to this protocol space MUST declare provenance (cgh:PromotionConstraint cgh:requiresAttestationAxis "provenance").`,
+      diff_summary: `Ratify "knowledge-protocol-v1" — bundles ${promotedAffordances.length} community-attested affordances. Future additions to this protocol space MUST declare provenance (ieh:PromotionConstraint ieh:requiresAttestationAxis "provenance").`,
       added_rules: ['knowledge-protocol-v1-ratified'],
     });
     await bridgeCall(bridge.url, 'protocol.constitutional_vote', {
@@ -397,28 +397,28 @@ long and LLMs sometimes truncate them:
     }) as { ratified: boolean; status: string };
     if (!ratify.ratified) fail(`amendment did not ratify: ${ratify.status}`);
 
-    const protocolTtl = `@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+    const protocolTtl = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-<${PROTOCOL_IRI}> a cgh:Protocol ;
+<${PROTOCOL_IRI}> a ieh:Protocol ;
   dct:title "Knowledge Protocol v1" ;
-  cgh:protocolVersion "v1.0.0" ;
-  cgh:ratifiedBy <${AMENDMENT_IRI}> ;
-${promotedAffordances.map(p => `  cgh:bundlesAffordance <${p.affordanceIri}>`).join(' ;\n')} .`;
+  ieh:protocolVersion "v1.0.0" ;
+  ieh:ratifiedBy <${AMENDMENT_IRI}> ;
+${promotedAffordances.map(p => `  ieh:bundlesAffordance <${p.affordanceIri}>`).join(' ;\n')} .`;
     const protocolPub = await bridgeCall(bridge.url, 'protocol.publish_descriptor', {
       graph_iri: PROTOCOL_IRI,
       graph_content: protocolTtl,
       modal_status: 'Asserted',
       confidence: 0.99,
     }) as { descriptor_url: string };
-    ok(`cgh:Protocol descriptor published: ${PROTOCOL_IRI}`);
+    ok(`ieh:Protocol descriptor published: ${PROTOCOL_IRI}`);
 
-    const constraintTtl = `@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+    const constraintTtl = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-<${CONSTRAINT_IRI}> a cgh:PromotionConstraint ;
+<${CONSTRAINT_IRI}> a ieh:PromotionConstraint ;
   dct:title "Future knowledge-protocol additions must declare provenance" ;
-  cgh:requiresAttestationAxis "provenance" ;
-  cgh:appliesToToolType <${PROTOCOL_IRI}> ;
-  cgh:ratifiedBy <${AMENDMENT_IRI}> .`;
+  ieh:requiresAttestationAxis "provenance" ;
+  ieh:appliesToToolType <${PROTOCOL_IRI}> ;
+  ieh:ratifiedBy <${AMENDMENT_IRI}> .`;
     await bridgeCall(bridge.url, 'protocol.publish_descriptor', {
       graph_iri: CONSTRAINT_IRI,
       graph_content: constraintTtl,
@@ -428,7 +428,7 @@ ${promotedAffordances.map(p => `  cgh:bundlesAffordance <${p.affordanceIri}>`).j
     ok('Substrate-enforceable PromotionConstraint published for future protocol additions');
 
     // ── Phase E — App construction ─────────────────────────────
-    step(6, 'PHASE E — Builder agent assembles a typed cgh:WorkflowApp');
+    step(6, 'PHASE E — Builder agent assembles a typed ieh:WorkflowApp');
     const builderPrompt = `
 You are the builder agent ${BUILDER.id}. You have one MCP server:
 ig-bridge.
@@ -438,7 +438,7 @@ these promoted affordances:
 
 ${promotedAffordances.map(p => `  - ${p.affordance_name} → <${p.affordanceIri}>`).join('\n')}
 
-Your task: publish a typed cgh:WorkflowApp descriptor that composes
+Your task: publish a typed ieh:WorkflowApp descriptor that composes
 these affordances into a usable application — "Team Knowledge
 Journal." The app will let consumers capture facts, decisions, and
 questions in chronological order keyed by topic.
@@ -447,13 +447,13 @@ Build the Turtle and call protocol.publish_descriptor with:
 
   graph_iri:     "${APP_IRI}"
   graph_content: |
-    @prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+    @prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
     @prefix dct: <http://purl.org/dc/terms/> .
-    <${APP_IRI}> a cgh:WorkflowApp ;
+    <${APP_IRI}> a ieh:WorkflowApp ;
       dct:title "Team Knowledge Journal" ;
-      cgh:appNarrative "A small workflow app that lets a team capture facts, decisions, and open questions in chronological order. Consumers walk the cgh:composes list and call each affordance with topic-keyed inputs." ;
-      cgh:protocolConformance <${PROTOCOL_IRI}> ;
-${promotedAffordances.map(p => `      cgh:composes <${p.affordanceIri}>`).join(' ;\n')} .
+      ieh:appNarrative "A small workflow app that lets a team capture facts, decisions, and open questions in chronological order. Consumers walk the ieh:composes list and call each affordance with topic-keyed inputs." ;
+      ieh:protocolConformance <${PROTOCOL_IRI}> ;
+${promotedAffordances.map(p => `      ieh:composes <${p.affordanceIri}>`).join(' ;\n')} .
   modal_status:  "Asserted"
   confidence:    0.9
 
@@ -471,7 +471,7 @@ Output ONLY a JSON object on a single line:
       fail('could not parse builder summary');
     }
     const builderOut = JSON.parse(builderMatch[0]) as { app_iri: string; app_descriptor_url: string; composed_affordance_count: number };
-    ok(`cgh:WorkflowApp published: ${builderOut.app_iri.slice(-40)} (composes ${builderOut.composed_affordance_count} affordances)`);
+    ok(`ieh:WorkflowApp published: ${builderOut.app_iri.slice(-40)} (composes ${builderOut.composed_affordance_count} affordances)`);
 
     // ── Phase F — App consumption ─────────────────────────────
     step(7, 'PHASE F — Consumer agent (independent process) discovers + operates the app');
@@ -481,17 +481,17 @@ ig-bridge. You have NO in-memory state from earlier phases.
 
 Step 1 — Discover the app on the pod.
   Call protocol.discover_descriptors with no arguments. Find the
-  descriptor of type cgh:WorkflowApp (its IRI starts with
-  "urn:cgh:app:team-knowledge-journal:"). You should find:
+  descriptor of type ieh:WorkflowApp (its IRI starts with
+  "urn:ieh:app:team-knowledge-journal:"). You should find:
     app_iri: "${APP_IRI}"
 
 Step 2 — Read the app's typed structure.
   Call protocol.get_descriptor with descriptor_url = the URL of the
-  cgh:WorkflowApp descriptor (from Step 1). Parse the returned
+  ieh:WorkflowApp descriptor (from Step 1). Parse the returned
   Turtle to extract:
-    - cgh:protocolConformance — IRI of the Protocol the app conforms to
-    - cgh:composes — list of affordance IRIs the app uses
-    - cgh:appNarrative — the human-readable description
+    - ieh:protocolConformance — IRI of the Protocol the app conforms to
+    - ieh:composes — list of affordance IRIs the app uses
+    - ieh:appNarrative — the human-readable description
 
 Step 3 — Walk the composed affordances and operate each one. The
 app composes three affordances:
@@ -546,24 +546,24 @@ Output ONLY a JSON object on a single line:
 
     // Spot-check the protocol descriptor's graph contains the bundled affordances
     const protocolTrig = await fetchGraphTrig(protocolPub.descriptor_url);
-    if (!protocolTrig.includes('cgh:Protocol')) fail('Protocol descriptor missing cgh:Protocol type');
+    if (!protocolTrig.includes('ieh:Protocol')) fail('Protocol descriptor missing ieh:Protocol type');
     for (const p of promotedAffordances) {
       if (!protocolTrig.includes(p.affordanceIri)) fail(`Protocol does not bundle ${p.affordanceName}`);
     }
-    ok('cgh:Protocol descriptor bundles every promoted affordance');
+    ok('ieh:Protocol descriptor bundles every promoted affordance');
 
     // Spot-check the app descriptor links to the protocol
     const appTrig = await fetchGraphTrig(builderOut.app_descriptor_url);
-    if (!appTrig.includes('cgh:WorkflowApp')) fail('App descriptor missing cgh:WorkflowApp type');
-    if (!appTrig.includes(PROTOCOL_IRI)) fail(`App's cgh:protocolConformance does not reference ${PROTOCOL_IRI}`);
-    ok('cgh:WorkflowApp pins cgh:protocolConformance to the ratified Protocol');
+    if (!appTrig.includes('ieh:WorkflowApp')) fail('App descriptor missing ieh:WorkflowApp type');
+    if (!appTrig.includes(PROTOCOL_IRI)) fail(`App's ieh:protocolConformance does not reference ${PROTOCOL_IRI}`);
+    ok('ieh:WorkflowApp pins ieh:protocolConformance to the ratified Protocol');
 
     // Audit-trail integrity: app → protocol → bundled affordances → original proposers
     info('Audit chain (app → protocol → affordance → proposer) recoverable from pod alone:');
     info(`  app:      ${APP_IRI}`);
-    info(`  ↓ cgh:protocolConformance`);
+    info(`  ↓ ieh:protocolConformance`);
     info(`  protocol: ${PROTOCOL_IRI}`);
-    info(`  ↓ cgh:bundlesAffordance × ${promotedAffordances.length}`);
+    info(`  ↓ ieh:bundlesAffordance × ${promotedAffordances.length}`);
     for (const p of promotedAffordances) {
       info(`  ↓ ${p.affordanceName} → proposed by ${p.proposer.split(':').pop()} (mean rating ${p.meanRating.toFixed(2)})`);
     }
@@ -610,7 +610,7 @@ Output ONLY a JSON object on a single line:
       ``,
       `- App IRI: \`${builderOut.app_iri}\``,
       `- Composes ${builderOut.composed_affordance_count} affordances`,
-      `- Pinned to protocol via cgh:protocolConformance`,
+      `- Pinned to protocol via ieh:protocolConformance`,
       ``,
       `## Phase F — App consumption (independent process)`,
       ``,
@@ -624,15 +624,15 @@ Output ONLY a JSON object on a single line:
       ``,
       `\`\`\``,
       `app:      ${APP_IRI}`,
-      `  ↓ cgh:protocolConformance`,
+      `  ↓ ieh:protocolConformance`,
       `protocol: ${PROTOCOL_IRI}`,
-      `  ↓ cgh:bundlesAffordance × ${promotedAffordances.length}`,
+      `  ↓ ieh:bundlesAffordance × ${promotedAffordances.length}`,
       ...promotedAffordances.map(p => `  → ${p.affordanceName} (proposed by ${p.proposer.split(':').pop()}, mean rating ${p.meanRating.toFixed(2)})`),
       `\`\`\``,
       ``,
       `## What this proves`,
       ``,
-      `The substrate is sufficient to bootstrap an entire application surface from agent activity alone. Three agents proposed typed affordances; three agents (themselves, in different roles) cross-attested them; the substrate's promotion arithmetic decided which made it into the protocol; the constitutional layer ratified the protocol set; one agent assembled an app composing the protocol's affordances; another agent — different process, no shared memory — discovered + operated the app under a typed cgh:protocolConformance pin.`,
+      `The substrate is sufficient to bootstrap an entire application surface from agent activity alone. Three agents proposed typed affordances; three agents (themselves, in different roles) cross-attested them; the substrate's promotion arithmetic decided which made it into the protocol; the constitutional layer ratified the protocol set; one agent assembled an app composing the protocol's affordances; another agent — different process, no shared memory — discovered + operated the app under a typed ieh:protocolConformance pin.`,
       ``,
       `Every layer is on the same pod. Every layer composes the previous. The audit chain (app → protocol → bundled affordances → original proposers + their attestations) is recoverable from the pod alone — no external coordinator, no central registry, no out-of-band documentation. This is the substrate's fifth named loop: socio-construction of an emergent protocol-and-app, with governance derived from the constitutional layer over the same artifacts.`,
     ].join('\n'));

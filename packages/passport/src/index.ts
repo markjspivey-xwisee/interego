@@ -1,7 +1,7 @@
 /**
  * @module passport
  * @description Capability Passport — persistent agent biographical
- *   identity. Built on cg:ContextDescriptor + amta:Attestation +
+ *   identity. Built on iep:ContextDescriptor + amta:Attestation +
  *   registry:RegistryEntry.
  *
  *   A passport is what the agent says about itself, signed by its
@@ -35,7 +35,7 @@ export interface LifeEvent {
 export interface StatedValue {
   readonly statement: string;          // "prefer cited sources"
   readonly assertedAt: string;
-  /** Optional retraction record (cg:supersedes). */
+  /** Optional retraction record (iep:supersedes). */
   readonly retractedAt?: string;
   readonly retractionReason?: string;
 }
@@ -193,7 +193,7 @@ export function detectValueDrift(passport: Passport): readonly { event: LifeEven
 
 // ── Serialization ────────────────────────────────────────────
 
-/** Convert the passport to a cg:ContextDescriptor with all 6 facets,
+/** Convert the passport to a iep:ContextDescriptor with all 6 facets,
  *  ready to be published to the agent's pod. */
 export function passportToDescriptor(passport: Passport): ContextDescriptorData {
   const passportIri = `${passport.currentPod}passport.ttl#passport-v${passport.version}` as IRI;

@@ -22,7 +22,7 @@ import type {
 
 describe('Projection Facet Builder', () => {
   it('builds with explicit projection()', () => {
-    const desc = ContextDescriptor.create('urn:cg:proj' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:proj' as IRI)
       .describes('urn:graph:data' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .projection({
@@ -57,7 +57,7 @@ describe('Projection Facet Builder', () => {
   });
 
   it('builds with bindsTo() convenience', () => {
-    const desc = ContextDescriptor.create('urn:cg:bind' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:bind' as IRI)
       .describes('urn:graph:data' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .bindsTo(
@@ -83,7 +83,7 @@ describe('Projection Facet Builder', () => {
   });
 
   it('builds with mapsVocabulary() convenience', () => {
-    const desc = ContextDescriptor.create('urn:cg:map' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:map' as IRI)
       .describes('urn:graph:data' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .mapsVocabulary(
@@ -109,7 +109,7 @@ describe('Projection Facet Builder', () => {
   });
 
   it('accumulates bindings and mappings on same facet', () => {
-    const desc = ContextDescriptor.create('urn:cg:combo' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:combo' as IRI)
       .describes('urn:graph:data' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .bindsTo('urn:a' as IRI, 'urn:ext:a' as IRI)
@@ -131,7 +131,7 @@ describe('Projection Facet Builder', () => {
 
 describe('Projection Serialization', () => {
   it('serializes to Turtle', () => {
-    const desc = ContextDescriptor.create('urn:cg:proj' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:proj' as IRI)
       .describes('urn:graph:data' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .bindsTo(
@@ -143,14 +143,14 @@ describe('Projection Serialization', () => {
       .build();
 
     const turtle = toTurtle(desc);
-    expect(turtle).toContain('cg:ProjectionFacet');
-    expect(turtle).toContain('cg:ExternalBinding');
-    expect(turtle).toContain('cg:bindingStrength cg:Strong');
+    expect(turtle).toContain('iep:ProjectionFacet');
+    expect(turtle).toContain('iep:ExternalBinding');
+    expect(turtle).toContain('iep:bindingStrength iep:Strong');
     expect(turtle).toContain('<http://schema.org/City>');
   });
 
   it('serializes vocabulary mappings to Turtle', () => {
-    const desc = ContextDescriptor.create('urn:cg:map' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:map' as IRI)
       .describes('urn:graph:data' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .mapsVocabulary(
@@ -162,21 +162,21 @@ describe('Projection Serialization', () => {
       .build();
 
     const turtle = toTurtle(desc);
-    expect(turtle).toContain('cg:VocabularyMapping');
-    expect(turtle).toContain('cg:mappingType "class"');
-    expect(turtle).toContain('cg:mappingRelationship "exact"');
+    expect(turtle).toContain('iep:VocabularyMapping');
+    expect(turtle).toContain('iep:mappingType "class"');
+    expect(turtle).toContain('iep:mappingRelationship "exact"');
   });
 
   it('serializes to JSON-LD', () => {
-    const desc = ContextDescriptor.create('urn:cg:proj' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:proj' as IRI)
       .describes('urn:graph:data' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .bindsTo('urn:a' as IRI, 'urn:ext:a' as IRI, 'Approximate')
       .build();
 
     const jsonld = toJsonLdString(desc, { pretty: true });
-    expect(jsonld).toContain('cg:ProjectionFacet');
-    expect(jsonld).toContain('cg:Approximate');
+    expect(jsonld).toContain('iep:ProjectionFacet');
+    expect(jsonld).toContain('iep:Approximate');
   });
 });
 
@@ -186,7 +186,7 @@ describe('Projection Serialization', () => {
 
 describe('Projection Validation', () => {
   it('validates well-formed projection', () => {
-    const desc = ContextDescriptor.create('urn:cg:ok' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:ok' as IRI)
       .describes('urn:graph:data' as IRI)
       .bindsTo('urn:a' as IRI, 'urn:ext:a' as IRI, 'Strong', 0.9)
       .build();
@@ -195,7 +195,7 @@ describe('Projection Validation', () => {
 
   it('rejects invalid binding strength', () => {
     const desc = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: ['urn:graph:x' as IRI],
       facets: [{
         type: 'Projection' as const,
@@ -213,7 +213,7 @@ describe('Projection Validation', () => {
 
   it('rejects binding confidence > 1', () => {
     const desc = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: ['urn:graph:x' as IRI],
       facets: [{
         type: 'Projection' as const,
@@ -231,7 +231,7 @@ describe('Projection Validation', () => {
 
   it('rejects invalid mapping type', () => {
     const desc = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: ['urn:graph:x' as IRI],
       facets: [{
         type: 'Projection' as const,
@@ -277,8 +277,8 @@ describe('RDF 1.2 Triple Annotations', () => {
     const turtle = toTripleAnnotationTurtle(annotation);
     expect(turtle).toContain('{|');
     expect(turtle).toContain('|}');
-    expect(turtle).toContain('cg:ProvenanceFacet');
-    expect(turtle).toContain('cg:SemioticFacet');
+    expect(turtle).toContain('iep:ProvenanceFacet');
+    expect(turtle).toContain('iep:SemioticFacet');
     expect(turtle).toContain('<urn:entity:vancouver>');
   });
 
@@ -297,7 +297,7 @@ describe('RDF 1.2 Triple Annotations', () => {
     const turtle = toTripleAnnotationTurtle(annotation);
     expect(turtle).toContain('<urn:entity:bc>');
     expect(turtle).toContain('{|');
-    expect(turtle).toContain('cg:TemporalFacet');
+    expect(turtle).toContain('iep:TemporalFacet');
   });
 
   it('serializes triple without annotation', () => {
@@ -331,7 +331,7 @@ describe('RDF 1.2 Triple Annotations', () => {
     expect(doc).toContain('<urn:a>');
     expect(doc).toContain('<urn:c>');
     // Prefixes only once
-    const prefixCount = (doc.match(/@prefix cg:/g) || []).length;
+    const prefixCount = (doc.match(/@prefix iep:/g) || []).length;
     expect(prefixCount).toBe(1);
   });
 });

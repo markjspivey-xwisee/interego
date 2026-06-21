@@ -19,20 +19,20 @@
  *     Each player decides its own moves; the orchestrator never tells
  *     a player where to play. Each call to make_move signs the move
  *     payload with the player's wallet.
- *   · Every game state lives on the pod as a chain of cg:ContextDescriptor
- *     move-descriptors linked via cg:supersedes. No agent ever sees the
+ *   · Every game state lives on the pod as a chain of iep:ContextDescriptor
+ *     move-descriptors linked via iep:supersedes. No agent ever sees the
  *     board through an in-memory shortcut — each player must call
  *     discover() + fetch the latest move's TriG and decode the board
  *     before deciding.
- *   · The Designer publishes a public cg:Affordance up front so any future
+ *   · The Designer publishes a public iep:Affordance up front so any future
  *     Interego agent can discover the tournament, mint a NewGameChallenge
  *     descriptor, and join. After the six matches the Designer publishes
  *     an aggregated standings-descriptor referencing every match's
- *     terminal move via cg:hasMember.
+ *     terminal move via iep:hasMember.
  *   · No new ontology terms in any owned core/pattern/adjacent prefix.
- *     The descriptor metadata uses only existing cg: / cgh: / hydra: /
- *     dcat: / prov: / dcterms: terms (cg:ContextDescriptor, cg:supersedes,
- *     cg:hasMember, cg:Affordance, hydra:Operation, hydra:expects,
+ *     The descriptor metadata uses only existing iep: / ieh: / hydra: /
+ *     dcat: / prov: / dcterms: terms (iep:ContextDescriptor, iep:supersedes,
+ *     iep:hasMember, iep:Affordance, hydra:Operation, hydra:expects,
  *     hydra:returns, dcat:Distribution, prov:wasGeneratedBy,
  *     dcterms:conformsTo, dcterms:hasPart). Game-specific predicates
  *     (move-number, mark, cell, board, winner, draw, score, ...) live
@@ -81,7 +81,7 @@ const STANDINGS_IRI = `${TOURNAMENT_NS}:standings`;
 
 // Vertical namespace for tic-tac-toe-specific predicates + types.
 // Per CLAUDE.md ontology hygiene: invented terms must NOT land in any
-// owned prefix (cg:/cgh:/pgsl:/ie:/...). Vertical/domain namespaces are
+// owned prefix (iep:/ieh:/pgsl:/ie:/...). Vertical/domain namespaces are
 // fine and don't require docs/ns/ declarations.
 const TICTAC_NS = 'https://interego-tournament.example/ns/tictactoe#';
 const NEW_GAME_CHALLENGE_IRI = `${TICTAC_NS}NewGameChallenge`;
@@ -259,13 +259,13 @@ function moveSlug(matchId, n)   { return `match-${matchId}-move-${String(n).padS
 // All of these write to the live CSS pod via the standard Interego
 // publish() — same code path every Interego agent uses. The graph
 // payload is plain Turtle; the descriptor TTL on the pod additionally
-// carries cg:supersedes / dcterms:conformsTo / etc.
+// carries iep:supersedes / dcterms:conformsTo / etc.
 
 async function publishRules(designer) {
   const challengesContainer = `${TOURNAMENT_POD}challenges/`;
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
-@prefix cgh: <https://w3id.org/cg/hypermedia#> .
+@prefix iep: <https://w3id.org/cg/> .
+@prefix ieh: <https://w3id.org/cg/hypermedia#> .
 @prefix dcat: <http://www.w3.org/ns/dcat#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
@@ -273,14 +273,14 @@ async function publishRules(designer) {
 @prefix tictactoe: <${TICTAC_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${RULES_IRI}> a cg:ContextDescriptor ;
+<${RULES_IRI}> a iep:ContextDescriptor ;
   dcterms:title "Tic-Tac-Toe Tournament Rules (${TOURNAMENT_DATE})" ;
-  dcterms:description "3x3 board, cells indexed 0..8 left-to-right top-to-bottom. X moves first. A move-descriptor with cg:supersedes <prior-descriptor-url> publishes a move; the descriptor's graph carries gameId, moveNumber, player (DID), mark (X|O), cell (0..8), boardBefore + boardAfter (as JSON string), and a wallet signature over the move payload. Game ends when one player completes a line (rows 0-1-2,3-4-5,6-7-8; cols 0-3-6,1-4-7,2-5-8; diagonals 0-4-8,2-4-6) or when all 9 cells are filled (draw). Terminal move-descriptors carry tictactoe:winner <did> or tictactoe:draw true." ;
+  dcterms:description "3x3 board, cells indexed 0..8 left-to-right top-to-bottom. X moves first. A move-descriptor with iep:supersedes <prior-descriptor-url> publishes a move; the descriptor's graph carries gameId, moveNumber, player (DID), mark (X|O), cell (0..8), boardBefore + boardAfter (as JSON string), and a wallet signature over the move payload. Game ends when one player completes a line (rows 0-1-2,3-4-5,6-7-8; cols 0-3-6,1-4-7,2-5-8; diagonals 0-4-8,2-4-6) or when all 9 cells are filled (draw). Terminal move-descriptors carry tictactoe:winner <did> or tictactoe:draw true." ;
   tictactoe:board "3x3" ;
   prov:wasGeneratedBy <${designer.did}> ;
   prov:generatedAtTime "${new Date().toISOString()}"^^xsd:dateTime ;
-  cg:affordance [
-    a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ;
+  iep:affordance [
+    a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
     hydra:method "POST" ;
     hydra:target <${challengesContainer}> ;
     hydra:expects <${NEW_GAME_CHALLENGE_IRI}> ;
@@ -314,13 +314,13 @@ async function publishRules(designer) {
 async function publishMatchPairing(designer, matchId, xPlayer, oPlayer) {
   const iri = challengeIri(matchId);
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix tictactoe: <${TICTAC_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, tictactoe:NewGameChallenge ;
+<${iri}> a iep:ContextDescriptor, tictactoe:NewGameChallenge ;
   dcterms:conformsTo <${NEW_GAME_CHALLENGE_IRI}> ;
   tictactoe:gameId <${TOURNAMENT_NS}:match-${matchId}> ;
   tictactoe:xPlayer <${xPlayer.did}> ;
@@ -373,7 +373,7 @@ async function publishMove({ matchId, state, player, mark, cell, signedPayload, 
 
   // Game-specific payload as a JSON literal (same pattern as
   // foxxi:bundleJson in publishCalibrationSnapshotDescriptor): the
-  // descriptor's RDF carries only existing cg:/prov:/dcterms: + the
+  // descriptor's RDF carries only existing iep:/prov:/dcterms: + the
   // vertical tictactoe: predicates; the rich move payload travels as
   // a single JSON string for downstream consumers.
   const movePayload = {
@@ -390,13 +390,13 @@ async function publishMove({ matchId, state, player, mark, cell, signedPayload, 
   const moveJson = JSON.stringify(movePayload).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix tictactoe: <${TICTAC_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, tictactoe:Move ;
+<${iri}> a iep:ContextDescriptor, tictactoe:Move ;
   dcterms:conformsTo <${RULES_IRI}> ;
   tictactoe:gameId <${state.gameId}> ;
   tictactoe:moveNumber ${n} ;
@@ -471,7 +471,7 @@ async function publishStandings(designer, results) {
   ]`).join(', ');
 
   // Aggregated standings payload as a JSON literal (same bundleJson
-  // pattern). The descriptor's RDF carries only existing cg:/dcterms:/
+  // pattern). The descriptor's RDF carries only existing iep:/dcterms:/
   // prov: + the vertical tictactoe: predicates; the full standings
   // table travels as a single JSON string for downstream consumers.
   const standingsPayload = {
@@ -497,16 +497,16 @@ async function publishStandings(designer, results) {
   const standingsJson = JSON.stringify(standingsPayload).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix tictactoe: <${TICTAC_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${STANDINGS_IRI}> a cg:ContextDescriptor, tictactoe:Standings ;
+<${STANDINGS_IRI}> a iep:ContextDescriptor, tictactoe:Standings ;
   dcterms:conformsTo <${RULES_IRI}> ;
   dcterms:title "Final standings — tic-tac-toe tournament ${TOURNAMENT_DATE}" ;
-  cg:hasMember ${memberTriples} ;
+  iep:hasMember ${memberTriples} ;
   dcterms:hasPart ${partBlocks} ;
   tictactoe:standingsJson "${standingsJson}" ;
   prov:wasGeneratedBy <${designer.did}> ;
@@ -579,7 +579,7 @@ function makePlayerTools(agent, gameRef, perAgentLog) {
     ),
     tool(
       'make_move',
-      'Publish a signed move descriptor to the live pod, superseding the prior descriptor. The move payload is signed by your wallet (ECDSA); the descriptor declares dcterms:conformsTo the rules-IRI and cg:supersedes the prior descriptor URL. Returns the new descriptor URL + the resulting board + whether the game is over.',
+      'Publish a signed move descriptor to the live pod, superseding the prior descriptor. The move payload is signed by your wallet (ECDSA); the descriptor declares dcterms:conformsTo the rules-IRI and iep:supersedes the prior descriptor URL. Returns the new descriptor URL + the resulting board + whether the game is over.',
       {
         cell: z.number().int().min(0).max(8).describe('Cell index 0..8 (left-to-right, top-to-bottom). MUST be currently empty.'),
         reason: z.string().describe('One short sentence on why you chose this cell — bakes your disposition into the provenance trail.'),
@@ -649,8 +649,8 @@ HOW THE SUBSTRATE WORKS
   the board in your head between turns — you call discover_board, which
   walks the descriptor chain on the pod and returns the current state.
   Then you decide a cell and call make_move; make_move signs the move
-  payload with your wallet and publishes a new cg:ContextDescriptor
-  that cg:supersedes the prior descriptor. This is how the entire
+  payload with your wallet and publishes a new iep:ContextDescriptor
+  that iep:supersedes the prior descriptor. This is how the entire
   collective sees your move.
 
 YOUR TOOLS (real HTTP to the live pod — every call really moves the substrate)
@@ -761,7 +761,7 @@ Make exactly one move.`;
 }
 
 // ── ACT 2 — Designer publishes the rules + public play affordance ────
-h('ACT 2 — Designer publishes the rules + public cg:Affordance for NewGameChallenge');
+h('ACT 2 — Designer publishes the rules + public iep:Affordance for NewGameChallenge');
 const rulesPub = await publishRules(DESIGNER);
 console.log(`   rules descriptor:  ${rulesPub.descriptorUrl}`);
 console.log(`   rules graph:       ${rulesPub.graphUrl}`);
@@ -826,7 +826,7 @@ const challengeCount = allEntries.filter(e =>
   e.descriptorUrl.includes('-challenge.ttl')).length;
 console.log(`   total descriptors on pod:  ${allEntries.length}`);
 console.log(`   match-pairing descriptors: ${challengeCount}`);
-console.log(`   move descriptors (chained via cg:supersedes): ${moveCount}`);
+console.log(`   move descriptors (chained via iep:supersedes): ${moveCount}`);
 console.log(`   rules + standings:         2`);
 console.log(`   rules-conforming entries:  ${allEntries.filter(e => (e.conformsTo ?? []).includes(RULES_IRI)).length}`);
 console.log(`   discoverable at:           ${TOURNAMENT_POD}.well-known/context-graphs`);
@@ -849,4 +849,4 @@ console.log('through descriptors they published to the live Interego pod. The');
 console.log('tournament\'s rules, every move\'s signed payload, and the aggregated');
 console.log('standings are now publicly discoverable at the tournament pod URL.');
 console.log('Any future Interego agent can read the rules descriptor, find the');
-console.log('cg:Affordance, mint a tictactoe:NewGameChallenge, and join.');
+console.log('iep:Affordance, mint a tictactoe:NewGameChallenge, and join.');

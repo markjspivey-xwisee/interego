@@ -67,7 +67,7 @@ export function TryNow({ initialRole, onAbout, onHome }: {
             You just exercised every layer of the substrate.
           </div>
           <div style={{ color: 'rgba(245,239,226,0.75)', fontSize: 14, marginBottom: 18 }}>
-            ECDSA session token → admin-only X25519 decryption → cg:discover on the tenant pod →
+            ECDSA session token → admin-only X25519 decryption → iep:discover on the tenant pod →
             VC issuance via eddsa-jcs-2022 → BBS+ selective-disclosure derivation → standards-conformant payloads, end to end.
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>

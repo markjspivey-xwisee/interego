@@ -26,7 +26,7 @@
  *   fully-typed AuthInfo the provider needs to reconstruct its Map
  *   (clientId, scopes, expiresAt, extra { agentId, ownerWebId, ... }).
  *
- *   Operational-state storage on purpose: NOT a `cg:` Context Descriptor.
+ *   Operational-state storage on purpose: NOT a `iep:` Context Descriptor.
  *   Tokens are short-lived (1h access, 14d refresh), opaque to the
  *   federation, and never shared. A descriptor with the seven facets
  *   would carry a lot of ceremony for no semantic gain — this is the
@@ -195,8 +195,8 @@ interface PersistedRefreshToken {
 const JSONLD_CTX: Record<string, string> = {
   relay: 'https://interego-emergent.example/ns/mcp-relay#',
 };
-const TYPE_ACCESS = 'urn:cg:relay:AccessToken';
-const TYPE_REFRESH = 'urn:cg:relay:RefreshToken';
+const TYPE_ACCESS = 'urn:iep:relay:AccessToken';
+const TYPE_REFRESH = 'urn:iep:relay:RefreshToken';
 
 // ── save: access token ──────────────────────────────────────
 

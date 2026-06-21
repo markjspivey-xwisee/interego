@@ -5,7 +5,7 @@
  *   Self-amending policy machinery: a community publishes
  *   ConstitutionalPolicies that govern which other policies can be
  *   enacted, amended, or retracted. Built on existing
- *   cg:AccessControlPolicy + ModalAlgebra + cg:supersedes — no new
+ *   iep:AccessControlPolicy + ModalAlgebra + iep:supersedes — no new
  *   L1 protocol primitives.
  *
  *   Reference runtime — single-coordinator vote tallying. Production

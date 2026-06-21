@@ -67,23 +67,23 @@ function mockFetchReturning(body: string, getCalls: string[]): FetchFn {
 
 async function main(): Promise<void> {
   const wallet = await createWallet('agent', 'relay-compliance-test');
-  const descriptorId = 'urn:cg:test:compliance:sign' as IRI;
+  const descriptorId = 'urn:iep:test:compliance:sign' as IRI;
   const descriptorUrl = 'https://pod.example/test/context-graphs/d.ttl';
 
   // The body publish() would have built locally — what the pod returns
   // differs (prefixes reordered + extra trailing newline + whitespace
   // tweak), simulating what a real LDP server does on PUT/GET round-trip.
   const localBody =
-    '@prefix cg: <urn:cg:> .\n' +
+    '@prefix iep: <urn:iep:> .\n' +
     '@prefix prov: <http://www.w3.org/ns/prov#> .\n' +
-    '<urn:cg:test:compliance:sign> a cg:ContextDescriptor ;\n' +
-    '  cg:describes <urn:graph:test> .\n';
+    '<urn:iep:test:compliance:sign> a iep:ContextDescriptor ;\n' +
+    '  iep:describes <urn:graph:test> .\n';
   const podBody =
     '@prefix prov: <http://www.w3.org/ns/prov#> .\n' +
-    '@prefix cg: <urn:cg:> .\n' +
+    '@prefix iep: <urn:iep:> .\n' +
     '\n' +
-    '<urn:cg:test:compliance:sign> a cg:ContextDescriptor ;\n' +
-    '    cg:describes <urn:graph:test> .\n' +
+    '<urn:iep:test:compliance:sign> a iep:ContextDescriptor ;\n' +
+    '    iep:describes <urn:graph:test> .\n' +
     '\n';
 
   if (localBody === podBody) {

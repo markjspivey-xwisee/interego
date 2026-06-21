@@ -26,10 +26,10 @@ async function putText(url, body) {
 function descriptorTtl({ id, graph, issuer, modal, confidence, supersedes, wasDerivedFrom, extra = '' }) {
   const now = new Date().toISOString();
   const groundTruth = modal === 'Asserted' ? 'true' : modal === 'Counterfactual' ? 'false' : null;
-  const gtLine = groundTruth ? `        cg:groundTruth "${groundTruth}"^^xsd:boolean ;\n` : '';
-  const supLine = supersedes ? `    cg:supersedes <${supersedes}> ;\n` : '';
+  const gtLine = groundTruth ? `        iep:groundTruth "${groundTruth}"^^xsd:boolean ;\n` : '';
+  const supLine = supersedes ? `    iep:supersedes <${supersedes}> ;\n` : '';
   const derivedLines = (wasDerivedFrom || []).map(u => `        prov:wasDerivedFrom <${u}> ;`).join('\n');
-  return `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+  return `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -37,25 +37,25 @@ function descriptorTtl({ id, graph, issuer, modal, confidence, supersedes, wasDe
 @prefix acc: <urn:accumulation:> .
 
 <${id}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
-${supLine}    cg:describes <${graph}> ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
+${supLine}    iep:describes <${graph}> ;
 ${extra}
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${issuer}> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
 ${derivedLines}
         prov:wasAttributedTo <${issuer}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${issuer}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${issuer}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ;
-${gtLine}        cg:modalStatus cg:${modal} ;
-        cg:epistemicConfidence "${confidence.toFixed(3)}"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${issuer}> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${issuer}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${issuer}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ;
+${gtLine}        iep:modalStatus iep:${modal} ;
+        iep:epistemicConfidence "${confidence.toFixed(3)}"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${issuer}> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 }
 
@@ -64,11 +64,11 @@ async function publishDescriptor(id, graph, ttl) {
   await putText(url, ttl);
   const entry = `
 
-<${url}> a cg:ManifestEntry ;
-    cg:describes <${graph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+<${url}> a iep:ManifestEntry ;
+    iep:describes <${graph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
   const cur = await fetchText(MANIFEST_URL);
   await putText(MANIFEST_URL, (cur ?? '') + entry);
@@ -78,7 +78,7 @@ async function publishDescriptor(id, graph, ttl) {
 console.log('=== Accumulation-threshold emergence ===\n');
 
 const ts = Date.now();
-const hypothesisId = `urn:cg:hypothesis:${ts}`;
+const hypothesisId = `urn:iep:hypothesis:${ts}`;
 const hypothesisGraph = `urn:graph:hypothesis:${ts}`;
 
 // ── Publish the hypothesis (Hypothetical, low confidence) ──
@@ -111,7 +111,7 @@ const supporters = [
 let aggConf = 0.2;  // starting confidence
 const supporterUrls = [];
 for (const s of supporters) {
-  const supId = `urn:cg:supporter:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const supId = `urn:iep:supporter:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const supGraph = `urn:graph:supporter:${Date.now()}`;
   aggConf = Math.min(1.0, aggConf + s.delta);
   const supUrl = await publishDescriptor(
@@ -151,7 +151,7 @@ console.log(`   Threshold for emergence: 0.8\n`);
 const THRESHOLD = 0.8;
 if (aggConf >= THRESHOLD) {
   console.log(`4. Threshold crossed (${aggConf.toFixed(3)} ≥ ${THRESHOLD}) — emerging:`);
-  const emergedId = `urn:cg:emerged:${Date.now()}`;
+  const emergedId = `urn:iep:emerged:${Date.now()}`;
   const emergedGraph = `urn:graph:emerged:${Date.now()}`;
   const emergedUrl = await publishDescriptor(
     emergedId,
@@ -168,7 +168,7 @@ if (aggConf >= THRESHOLD) {
     }),
   );
   console.log(`   ✓ Asserted supersession published: ${emergedUrl.split('/').pop()}`);
-  console.log(`     cg:supersedes → the original Hypothetical`);
+  console.log(`     iep:supersedes → the original Hypothetical`);
   console.log(`     prov:wasDerivedFrom → all 5 supporters`);
   console.log(`     confidence: ${aggConf.toFixed(3)} (above 0.8 threshold)\n`);
 } else {

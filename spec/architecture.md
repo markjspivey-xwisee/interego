@@ -12,8 +12,8 @@
 
 **Status:** **Last Call Working Draft (2026-05-16).** Core sections (§1–§5: descriptor model, facets, composition, serialization, federation) are frozen for v1.0 pending Candidate Recommendation. Until 2027-05-16 the editors commit that:
 
-- No change to the L1 wire format (Turtle / TriG / JSON-LD serializations of the seven facets, the composition operators, modal status, `cg:supersedes` chains) without a deprecation cycle of at least one minor version.
-- No removal or rename of any term in the `cg:`, `cgh:`, `pgsl:`, `ie:`, or `align:` namespaces. Additive changes (new optional terms, new optional facets) are permitted within v1.x.
+- No change to the L1 wire format (Turtle / TriG / JSON-LD serializations of the seven facets, the composition operators, modal status, `iep:supersedes` chains) without a deprecation cycle of at least one minor version.
+- No removal or rename of any term in the `iep:`, `ieh:`, `pgsl:`, `ie:`, or `align:` namespaces. Additive changes (new optional terms, new optional facets) are permitted within v1.x.
 - Sections explicitly marked "informative" or "extension" remain non-normative and may evolve in v1.x without affecting conformance claims.
 
 Promotion to W3C-style **Candidate Recommendation** requires (a) two independent interoperable implementations passing the L1 conformance fixtures and (b) a 30-day review window with no substantive change requests; neither has occurred yet. See [`STABILITY.md`](STABILITY.md) for the practical adopter-facing summary of what this means.
@@ -25,7 +25,7 @@ Promotion to W3C-style **Candidate Recommendation** requires (a) two independent
 **Out of scope — what this document is not:**
 
 - Not a deployment manual. Specific container runtimes, object stores, and identity providers are Layer 3 implementation choices.
-- Not a domain ontology. `code:`, `med:`, `learning:`, and every future domain vocabulary are separate artifacts riding on top of this protocol; they MUST NOT appear in `cg:` / `cgh:` / `pgsl:` / `ie:` / `align:`.
+- Not a domain ontology. `code:`, `med:`, `learning:`, and every future domain vocabulary are separate artifacts riding on top of this protocol; they MUST NOT appear in `iep:` / `ieh:` / `pgsl:` / `ie:` / `align:`.
 - Not a product spec. `@interego/core`, the relay, the dashboard, and the CLI are reference implementations; they do not bind the protocol to their choices.
 
 ---
@@ -79,8 +79,8 @@ The system is grounded in Peircean triadic semiotics:
 
 Across all layers, the protocol's structural shape is a **holonic
 hypergraph** rather than a tree. Each typed entity — a PGSL atom, a
-PGSL fragment, a Context Descriptor, an `cgh:Affordance`, a
-`cg:Constitutional` amendment — is simultaneously a *whole* over its
+PGSL fragment, a Context Descriptor, an `ieh:Affordance`, a
+`iep:Constitutional` amendment — is simultaneously a *whole* over its
 constituents and a *part* in containing structures (Koestler's
 Janus-faced holon). Containment is many-to-many: the same atom can
 participate in multiple fragments; the same descriptor can appear in
@@ -93,7 +93,7 @@ parent-child tree with hypergraph connectivity. The Janus property
 (autonomy at one's own level, integration into the level above)
 becomes the restriction/extension adjunction in the presheaf
 interpretation. n-ary relations are first-class hyperedges, not
-reified binary edges, which is what lets `cgh:Affordance` natively
+reified binary edges, which is what lets `ieh:Affordance` natively
 encode Peircean Thirdness as a single 3-ary structure over (sign,
 target, mediating inputs).
 
@@ -167,7 +167,7 @@ Interego targets **RDF 1.2** (W3C Candidate Recommendation,
 
 - **Triple-term annotations for descriptor facets.** The main
   descriptor serialization remains blank-node-based
-  (`<desc> cg:hasFacet [ ... ]`) for SHACL 1.1 toolchain
+  (`<desc> iep:hasFacet [ ... ]`) for SHACL 1.1 toolchain
   compatibility. Callers MAY use the annotation form via
   `toTripleAnnotationTurtle` when targeting RDF 1.2-native
   consumers.
@@ -187,7 +187,7 @@ Interego targets **RDF 1.2** (W3C Candidate Recommendation,
 **SHACL 1.2 features NOT used:**
 
 - **`sh:rule`** for SHACL-based derivation rules — we use the
-  `cg:constructedFrom` + runtime-constructor pattern instead
+  `iep:constructedFrom` + runtime-constructor pattern instead
   (see `spec/DERIVATION.md`).
 - **Full SHACL 1.2 Node Expressions** — our mini-SHACL validator
   in `examples/_lib.mjs` covers the subset we ship shapes for.
@@ -588,7 +588,7 @@ Each agent owns their Solid pod. Federation is discovery-based.
 
 | Operation | Function | Description |
 |-----------|----------|-------------|
-| Publish | `publish(descriptor, graph, podUrl, { encrypt })` | Write descriptor + graph to pod. When `encrypt` is set, wraps the graph in an X25519 envelope + appends a `cg:affordance` hypermedia block to the descriptor |
+| Publish | `publish(descriptor, graph, podUrl, { encrypt })` | Write descriptor + graph to pod. When `encrypt` is set, wraps the graph in an X25519 envelope + appends a `iep:affordance` hypermedia block to the descriptor |
 | Discover | `discover(podUrl, filters)` | Query pod manifest with facet filters |
 | Subscribe | `subscribe(podUrl, callback)` | Solid Notifications subscription |
 | Directory | `publishToDirectory()` | Advertise pod in directory |
@@ -633,7 +633,7 @@ The entire system is queryable as standard RDF. Any SPARQL client
 
 | Endpoint | Method | Content-Type | Description |
 |----------|--------|-------------|-------------|
-| `/ontology` | GET | `text/turtle` | Full OWL ontology (cg:, pgsl:, Hydra, DCAT, PROV-O) |
+| `/ontology` | GET | `text/turtle` | Full OWL ontology (iep:, pgsl:, Hydra, DCAT, PROV-O) |
 | `/ontology/shacl` | GET | `text/turtle` | System SHACL shapes |
 | `/api-doc` | GET | `application/ld+json` | Hydra API description (machine-readable) |
 | `/catalog` | GET | `text/turtle` | DCAT/DPROD federation catalog |
@@ -1050,15 +1050,15 @@ All real implementations. No mocks.
 
 **Recipient set composition** (graph envelope):
 
-1. Every non-revoked `cg:AuthorizedAgent` on the target pod with a registered `cg:encryptionPublicKey`.
+1. Every non-revoked `iep:AuthorizedAgent` on the target pod with a registered `iep:encryptionPublicKey`.
 2. The publishing agent's own X25519 key (always included).
 3. Any `share_with` handles resolved to external pods' authorized agents (see §3.8 Federation).
 
-**Per-agent, not per-device**: each surface (stdio, relay, future clients) holds its own X25519 keypair; the user's pod lists every surface as a first-class `cg:AuthorizedAgent`. Revocation is per-surface. The envelope format is identical whether the key lives on a user's device, a server-side agent host, or a future hardware-backed wallet.
+**Per-agent, not per-device**: each surface (stdio, relay, future clients) holds its own X25519 keypair; the user's pod lists every surface as a first-class `iep:AuthorizedAgent`. Revocation is per-surface. The envelope format is identical whether the key lives on a user's device, a server-side agent host, or a future hardware-backed wallet.
 
 **Wire format**: the envelope is a JSON document served at `<slug>-graph.envelope.jose.json` with `Content-Type: application/jose+json`. Structure: `{ content: { ciphertext, nonce, algorithm }, wrappedKeys: [{ recipientPublicKey, wrappedKey, nonce, senderPublicKey }], algorithm: "X25519-XSalsa20-Poly1305", version: 1 }`. See [`docs/e2ee.md`](../docs/e2ee.md) for the full architecture.
 
-**Descriptor link to envelope** (HATEOAS — see §6): every descriptor Turtle embeds a `cg:affordance` block that is simultaneously `cg:Affordance`, `cgh:Affordance`, `hydra:Operation`, and `dcat:Distribution`. Clients follow `hydra:target` / `dcat:accessURL` — no filename convention. Described further in §6.4.
+**Descriptor link to envelope** (HATEOAS — see §6): every descriptor Turtle embeds a `iep:affordance` block that is simultaneously `iep:Affordance`, `ieh:Affordance`, `hydra:Operation`, and `dcat:Distribution`. Clients follow `hydra:target` / `dcat:accessURL` — no filename convention. Described further in §6.4.
 
 #### 5.2.1 Cleartext / ciphertext layering (normative protocol boundary)
 
@@ -1080,7 +1080,7 @@ This is why the descriptor carries six facets: the facets are the query surface 
 The protocol distinguishes two temporal concepts that implementations MUST NOT conflate:
 
 - `prov:generatedAtTime` (ProvenanceFacet) — the wall-clock moment at which the assertion was made by the agent.
-- `cg:validFrom` / `cg:validUntil` (TemporalFacet) — the boundaries of the interval over which the assertion holds.
+- `iep:validFrom` / `iep:validUntil` (TemporalFacet) — the boundaries of the interval over which the assertion holds.
 
 These values are often equal in new claims — the author is asserting "I claim this, and it starts being true now." They diverge for:
 
@@ -1101,13 +1101,13 @@ Given a descriptor with `validFrom = F` and (optionally) `validUntil = U`, and a
 - Match iff `F ≤ T` AND (`U ≥ T` OR `U` absent).
 - If the descriptor's manifest entry omits `validFrom` or `validUntil`, conformant implementations SHOULD treat the omitted endpoint as "always-started" / "never-ends" respectively — *but* they MUST document this (the reference implementation does).
 
-Manifest writers MUST emit `cg:validFrom` / `cg:validUntil` for every new descriptor so downstream federation readers can compute the interval-contains query without fetching each descriptor body.
+Manifest writers MUST emit `iep:validFrom` / `iep:validUntil` for every new descriptor so downstream federation readers can compute the interval-contains query without fetching each descriptor body.
 
 #### 5.2.4 Descriptor-level cross-references (normative)
 
-`cg:ContextDescriptor` carries these optional top-level predicates for cross-descriptor relationships:
+`iep:ContextDescriptor` carries these optional top-level predicates for cross-descriptor relationships:
 
-- `cg:supersedes <iri>` — this descriptor replaces the named prior descriptor.
+- `iep:supersedes <iri>` — this descriptor replaces the named prior descriptor.
 - `dct:conformsTo <iri>` — this descriptor's claim conforms to the named schema, vocabulary, or shape.
 
 These MUST be mirrored from the encrypted graph content at publish time (see `normalizePublishInputs` in the reference implementation) and written into both the descriptor Turtle and the manifest entry. Federation readers filter on these without needing to decrypt the payload.
@@ -1204,30 +1204,30 @@ state restricts available controls.
 
 ### 6.4 Descriptor Affordance (Hypermedia link to graph payload)
 
-Every `cg:ContextDescriptor` emitted by `publish()` carries a self-describing
+Every `iep:ContextDescriptor` emitted by `publish()` carries a self-describing
 affordance block that is simultaneously:
 
-- `cg:Affordance`      — discovery-time capability declaration (matches
-                          `cg:canPublish` / `cg:canDiscover` /
-                          `cg:canSubscribe` pattern)
-- `cgh:Affordance`     — harness-execution-time affordance for
+- `iep:Affordance`      — discovery-time capability declaration (matches
+                          `iep:canPublish` / `iep:canDiscover` /
+                          `iep:canSubscribe` pattern)
+- `ieh:Affordance`     — harness-execution-time affordance for
                           decorator pipelines
 - `hydra:Operation`    — HATEOAS client dispatch target
 - `dcat:Distribution`  — DCAT-3 compatible for external catalog ingestion
 
 ```turtle
-<> cg:affordance [
-    a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ;
-    cg:action cg:canDecrypt ;   # or cg:canFetchPayload for plaintext
+<> iep:affordance [
+    a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
+    iep:action iep:canDecrypt ;   # or iep:canFetchPayload for plaintext
     hydra:method "GET" ;
     hydra:target <.../slug-graph.envelope.jose.json> ;
-    hydra:returns cg:EncryptedGraphEnvelope ;
+    hydra:returns iep:EncryptedGraphEnvelope ;
     hydra:title "Fetch encrypted graph envelope" ;
     dcat:accessURL <.../slug-graph.envelope.jose.json> ;
     dcat:mediaType "application/jose+json" ;
-    cg:encrypted true ;
-    cg:encryptionAlgorithm "X25519-XSalsa20-Poly1305" ;
-    cg:recipientCount 3
+    iep:encrypted true ;
+    iep:encryptionAlgorithm "X25519-XSalsa20-Poly1305" ;
+    iep:recipientCount 3
 ] .
 ```
 
@@ -1235,7 +1235,7 @@ Four compatible types on one RDF node — any client speaking any one of
 these vocabularies can dispatch the retrieval without Interego-specific
 understanding. DCAT-aware catalogs ingest the descriptor as a dataset;
 Hydra clients auto-generate UI; harness agents integrate it into
-affordance-decorator pipelines; cg: discovery sees it as a capability.
+affordance-decorator pipelines; iep: discovery sees it as a capability.
 
 **No filename conventions.** Clients follow `hydra:target` /
 `dcat:accessURL`. The companion envelope's location is declared in the
@@ -1250,13 +1250,13 @@ and MCP tools follow the link the same way.
 
 ### 6.5a Multi-affordance descriptors and runtime resolution (normative)
 
-A descriptor MAY carry multiple `cg:affordance` blocks with distinct
-`cg:action` values. Each is an independent HATEOAS control; consumers
-resolve affordances by `cg:action` and invoke each independently.
+A descriptor MAY carry multiple `iep:affordance` blocks with distinct
+`iep:action` values. Each is an independent HATEOAS control; consumers
+resolve affordances by `iep:action` and invoke each independently.
 
 **Normative rules:**
 
-- Affordances MUST declare a `cg:action` IRI. Implementations MUST NOT
+- Affordances MUST declare a `iep:action` IRI. Implementations MUST NOT
   assume any default action; `canDecrypt` was the default for the
   payload-link case in §6.4 and remains the default only there.
 - Affordances MUST declare either `hydra:method` + `hydra:target` (for
@@ -1264,15 +1264,15 @@ resolve affordances by `cg:action` and invoke each independently.
   When both are present they MUST agree on the URL.
 - The action vocabulary is OPEN. Canonical values that SHOULD be
   recognized by all implementations:
-  - `cg:canDecrypt` — fetch the encrypted-graph envelope (covers §6.4)
-  - `cg:canFetchPayload` — fetch a plaintext payload
-  - `cg:canAudit` — invoke an audit over the descriptor's target
-  - `cg:canPay` — pay for the resource (x402-compatible)
-  - `cg:canVerify` — invoke signature / proof verification
-  - `cg:canCompose` — apply a composition operator
+  - `iep:canDecrypt` — fetch the encrypted-graph envelope (covers §6.4)
+  - `iep:canFetchPayload` — fetch a plaintext payload
+  - `iep:canAudit` — invoke an audit over the descriptor's target
+  - `iep:canPay` — pay for the resource (x402-compatible)
+  - `iep:canVerify` — invoke signature / proof verification
+  - `iep:canCompose` — apply a composition operator
   Domain-specific actions use their own namespace (e.g., `cap:`, `med:`).
 - Multiple affordances on the same descriptor MUST have distinct
-  `cg:action` values OR distinct `hydra:target` URLs. Implementations
+  `iep:action` values OR distinct `hydra:target` URLs. Implementations
   MAY reject descriptors that declare two affordances with identical
   `(action, target)` pairs as malformed.
 - Affordances MAY cross pod boundaries — `hydra:target` is a URL,
@@ -1284,8 +1284,8 @@ resolve affordances by `cg:action` and invoke each independently.
 **Runtime resolution pattern (informative reference):**
 
 1. Consumer walks the manifest, enumerates descriptors.
-2. For each descriptor, parses every `cg:affordance` block.
-3. Groups by `cg:action` to find available capabilities.
+2. For each descriptor, parses every `iep:affordance` block.
+3. Groups by `iep:action` to find available capabilities.
 4. For a chosen action, constructs the HTTP request from
    `hydra:method` + `hydra:target`; supplies any additional headers
    (auth, X-Payment for x402, Accept negotiation).
@@ -1319,7 +1319,7 @@ conformance. For interoperability:
   index without walking the full manifest.
 - Shape evolution uses the standard supersession model: a new
   shape version is a new descriptor; the new shape's descriptor
-  MAY declare `cg:supersedes` over the older shape's descriptor
+  MAY declare `iep:supersedes` over the older shape's descriptor
   so consumers walking the chain find the latest version.
 
 Consumers validating a descriptor against a `dct:conformsTo` target:
@@ -1336,7 +1336,7 @@ Consumers validating a descriptor against a `dct:conformsTo` target:
 ### 6.5c `wasDerivedFrom` consistency (normative)
 
 `prov:wasDerivedFrom` is an indicator of derivation provenance.
-Where it MAY appear on both a `cg:ProvenanceFacet` AND at descriptor
+Where it MAY appear on both a `iep:ProvenanceFacet` AND at descriptor
 top-level (as a result of the cleartext-mirror pattern in §5.2.4),
 the two sets MUST be consistent:
 
@@ -1381,7 +1381,7 @@ independently useful, each opt-in:
   `.well-known/interego-agents`, the path under which domain
   operators publish a Turtle or JSON-LD document enumerating
   their pods + agents. Convention is Turtle with
-  `<catalog-iri> a cg:AgentCatalog ; cg:hasAgent [ ... ] ; ...`.
+  `<catalog-iri> a iep:AgentCatalog ; iep:hasAgent [ ... ] ; ...`.
 - T4 federation-directory descriptors MUST conform to a shape
   with `dct:conformsTo <federation-directory-v1>`. Any pod MAY
   host such a directory; no single "official" directory exists.
@@ -1408,12 +1408,12 @@ registration on a censorship-resistant substrate.
 
 Each surface a user operates from (Claude Code VS Code, Claude Desktop,
 Claude Mobile via OAuth, claude.ai web, any future client) registers
-as its own first-class `cg:AuthorizedAgent` on the user's pod, with:
+as its own first-class `iep:AuthorizedAgent` on the user's pod, with:
 
 - Its own `did:web:<identity-host>:agents:<surface-id>` DID
 - Its own persisted X25519 keypair for envelope decryption
 - Its own delegation credential at `/credentials/<agent-id>.jsonld`
-- Its own `cg:encryptionPublicKey` in the pod's agent registry
+- Its own `iep:encryptionPublicKey` in the pod's agent registry
 
 The identity server's OAuth `/auth/*` endpoints accept a `surfaceAgent`
 hint from the relay; identity mints or reuses `<hint>-<userId>` as the
@@ -1570,7 +1570,7 @@ Full identity provider supporting:
 
 | Prefix | Namespace | Scope |
 |--------|-----------|-------|
-| `cg:` | `https://markjspivey-xwisee.github.io/interego/ns/cg#` | Interego system |
+| `iep:` | `https://markjspivey-xwisee.github.io/interego/ns/iep#` | Interego system |
 | `pgsl:` | `https://markjspivey-xwisee.github.io/interego/ns/pgsl#` | PGSL lattice |
 
 ### 10.2 W3C Standard Namespaces

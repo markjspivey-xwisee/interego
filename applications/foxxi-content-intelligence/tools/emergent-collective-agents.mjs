@@ -475,8 +475,8 @@ const atlasTools = [
       // tuple — that's the attestation the bridge checks before counting
       // the transfer in the calibration profile.
       const teachingPackage = {
-        iri: 'urn:cg:teaching:reference-for-field-guidance-autonomous',
-        artifactIri: 'urn:cg:tool:field-reference',
+        iri: 'urn:iep:teaching:reference-for-field-guidance-autonomous',
+        artifactIri: 'urn:iep:tool:field-reference',
         competency, olkeStage: 'Articulate', modalStatus: 'Hypothetical',
       };
       const targetBehaviour = { description: behaviourDescription, signalMarkers, antiSignalMarkers };

@@ -79,7 +79,7 @@ async function fetchManifestEntries(
     if (!resp || !resp.ok) return [];
     const ttl = await resp.text();
     const urls: string[] = [];
-    for (const m of ttl.matchAll(/<([^>]+)>\s+a\s+cg:ManifestEntry/g)) urls.push(m[1]!);
+    for (const m of ttl.matchAll(/<([^>]+)>\s+a\s+iep:ManifestEntry/g)) urls.push(m[1]!);
     return urls;
   } catch { return []; }
 }

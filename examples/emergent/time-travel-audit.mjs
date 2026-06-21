@@ -4,7 +4,7 @@
  *   npx tsx examples/emergent/time-travel-audit.mjs
  *
  * What this scenario is
- *   A single auditor publishes a 12-descriptor cg:supersedes chain of
+ *   A single auditor publishes a 12-descriptor iep:supersedes chain of
  *   "rate-limit policy" revisions whose effective-at intervals (the
  *   descriptor's validFrom / validUntil) and asserted-at instants (the
  *   provenance generatedAtTime + wall-clock publish order) deliberately
@@ -38,7 +38,7 @@
  *   - out-of-order publish with backdated effective-at
  *
  * Descriptor chain (12 nodes, strict linear supersedes)
- *   policy-v1  ──cg:supersedes──┐
+ *   policy-v1  ──iep:supersedes──┐
  *   policy-v2  ─────────────────┤── chain root at v1
  *   …
  *   policy-v12 ─────────────────┘
@@ -80,7 +80,7 @@ const POD = `${CSS}/demos/emergent-time-travel-audit-${SCENARIO_DATE}/`;
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 
 // Vertical namespace for scenario-specific predicates. Never reuse
-// cg:/passport:/registry:/amta: for scenario-only terms — that would
+// iep:/passport:/registry:/amta: for scenario-only terms — that would
 // trip ontology-lint. Vertical prefixes don't require ns declarations.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/time-travel-audit#';
 
@@ -191,13 +191,13 @@ async function publishPolicyVersion({
   const { hash, signature } = await signClaim(wallet, versionPayload);
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix scen: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, scen:RateLimitPolicy ;
+<${iri}> a iep:ContextDescriptor, scen:RateLimitPolicy ;
   dcterms:title "Rate-limit policy v${version} (${regime})" ;
   scen:policyVersion ${version} ;
   scen:effectiveFrom "${effectiveFrom}"^^xsd:dateTime ;
@@ -215,7 +215,7 @@ async function publishPolicyVersion({
   let builder = ContextDescriptor.create(iri)
     .describes(`${iri}-graph`)
     // Effective-at window — also mirrored into the manifest as
-    // cg:validFrom / cg:validUntil so the substrate's discover() filter
+    // iep:validFrom / iep:validUntil so the substrate's discover() filter
     // can read it. This is the descriptor's "true in the world" window.
     .temporal({ validFrom: effectiveFrom, validUntil: effectiveUntil })
     .validFrom(effectiveFrom)
@@ -382,7 +382,7 @@ for (let i = 1; i < ROWS.length; i++) {
     break;
   }
 }
-check('manifest mirrors cg:supersedes pointing at the immediate predecessor for v2..v12',
+check('manifest mirrors iep:supersedes pointing at the immediate predecessor for v2..v12',
   chainOk);
 
 // ── ACT 5 — auditor builds the bitemporal index from graph payloads ──
@@ -580,12 +580,12 @@ check('discover()\'s effectiveAt filter + latest-asserted tiebreaker agrees with
 h('ACT 9 — Auditor publishes a scen:Verdict descriptor summarizing findings');
 const verdictIri = `${POD}context-graphs/verdict.ttl#verdict-${SCENARIO_DATE}`;
 const verdictGraph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix scen: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${verdictIri}> a cg:ContextDescriptor, scen:Verdict ;
+<${verdictIri}> a iep:ContextDescriptor, scen:Verdict ;
   dcterms:title "Time-travel audit verdict (${SCENARIO_DATE})" ;
   scen:passCount ${pass} ;
   scen:failCount ${fail} ;

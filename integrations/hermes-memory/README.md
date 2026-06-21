@@ -18,7 +18,7 @@ This provider extends that story without replacing it:
 | Hermes built-in memory | + Interego provider |
 |---|---|
 | Local markdown + SQLite, one machine | Pod-rooted — survives a machine change, a Hermes backend switch (local → Docker → SSH → Modal), or a move off Hermes entirely |
-| Trusted by convention | **Verifiable** — every write is a signed `cg:ContextDescriptor` carrying who wrote it, when, and on whose behalf |
+| Trusted by convention | **Verifiable** — every write is a signed `iep:ContextDescriptor` carrying who wrote it, when, and on whose behalf |
 | One bot's private memory | **Federated** — two Hermes bots, or a Hermes bot + a Claude Code agent + a Cursor agent, can share context on the same pod |
 | `remove` deletes the line | **Non-destructive** — "forget" is a Counterfactual supersession; the prior record stays audit-walkable |
 | No cross-agent attestation | Multi-axis attestation (`amta:`), modal status, governance — all available by composition, no extra code |
@@ -65,7 +65,7 @@ stable REST surface (`POST /tool/publish_context`,
 
 | Hermes hook | → Interego |
 |---|---|
-| `sync_turn(user, assistant)` | `publish_context` — the turn as a `cgh:AgentMemory` graph, modal `Asserted` (non-blocking, daemon thread, per Hermes' contract) |
+| `sync_turn(user, assistant)` | `publish_context` — the turn as a `ieh:AgentMemory` graph, modal `Asserted` (non-blocking, daemon thread, per Hermes' contract) |
 | `prefetch(query)` | `discover_context` — structural recall over the pod's memory descriptors, each line decorated with its affordances; Hermes' own FTS5 / vector layer ranks on top |
 | `on_memory_write(action, target, content)` | mirrors `MEMORY.md` / `USER.md` edits: `add`/`replace` → `publish_context` (the relay's auto-supersede links the prior record); `remove` → a Counterfactual retraction |
 | `get_tool_schemas()` | the fixed 3-tool HATEOAS surface — see below |
@@ -73,9 +73,9 @@ stable REST surface (`POST /tool/publish_context`,
 
 No Interego substrate code is duplicated here — the relay (running
 `@interego/core`) does descriptor construction, signing, and
-`cg:supersedes` chaining. The memory-graph shape written here is
+`iep:supersedes` chaining. The memory-graph shape written here is
 deliberately **identical** to the OpenClaw memory bridge's
-(`cgh:AgentMemory`), so a Hermes bot and an OpenClaw agent on the same
+(`ieh:AgentMemory`), so a Hermes bot and an OpenClaw agent on the same
 pod read each other's memories.
 
 Stdlib-only Python (`urllib`, `json`, `threading`) — no pip
@@ -125,7 +125,7 @@ Full rationale: [`docs/integrations/hermes-full-substrate.md`](../../docs/integr
   this — every turn is still published and signed.
 * `on_memory_write` `remove` is a **retraction, not a delete**. The
   original descriptor + graph stay on the pod (audit-walkable via
-  `cg:supersedes`). For data-subject erasure, delete at the pod's
+  `iep:supersedes`). For data-subject erasure, delete at the pod's
   storage layer separately.
 * Memory writes are **best-effort**: a flaky relay is swallowed, never
   blocking the agent loop — Hermes' built-in `MEMORY.md` still holds the
@@ -140,4 +140,4 @@ Full rationale: [`docs/integrations/hermes-full-substrate.md`](../../docs/integr
 * [`docs/integrations/agent-runtime-integration.md`](../../docs/integrations/agent-runtime-integration.md)
   — all integration paths (MCP / memory plugin / skills / compliance)
 * [`integrations/openclaw-memory/`](../openclaw-memory/) — the
-  sibling OpenClaw provider; same `cgh:AgentMemory` shape
+  sibling OpenClaw provider; same `ieh:AgentMemory` shape

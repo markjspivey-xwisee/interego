@@ -203,7 +203,7 @@ function artifactsOf(data: unknown): Array<{ label: string; text?: string; json?
   const turtle = d?.artifact?.turtle ?? (d?.mediaType === 'text/turtle' ? d?.turtle : undefined);
   if (turtle) out.push({ label: 'artifact · Turtle (composes the IEEE-LER / ADL-TLA layer)', text: String(turtle) });
   else if (d?.artifact) out.push({ label: 'artifact · xAPI Profile fragment', json: d.artifact });
-  if (d?.descriptor) out.push({ label: 'self-descriptive descriptor (cg:StandardsExtension)', json: d.descriptor });
+  if (d?.descriptor) out.push({ label: 'self-descriptive descriptor (iep:StandardsExtension)', json: d.descriptor });
   if (d?.elr?.competencies) out.push({ label: 'ELR competencies', json: d.elr.competencies });
   if (d?.justifiedBy) out.push({ label: 'chain of custody → justified by verification holon', text: String(d.justifiedBy) });
   if (d?.credential || d?.issuerDid) out.push({ label: 'credential (OB3 / VC)', json: d.credential ?? d });
@@ -308,7 +308,7 @@ function VerificationMatrix({ d }: { d: any }) {
       </div>
       {d.verificationHolonUri ? (
         <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3 }}>
-          &#8627; published as a dereferenceable <strong>cg:Verification</strong> holon (chain of custody: credential &rarr; verification &rarr; evidence) &mdash; explore it in <em>Reports &rarr; Lattice (PGSL)</em>.
+          &#8627; published as a dereferenceable <strong>iep:Verification</strong> holon (chain of custody: credential &rarr; verification &rarr; evidence) &mdash; explore it in <em>Reports &rarr; Lattice (PGSL)</em>.
         </div>
       ) : null}
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, lineHeight: 1.45 }}>

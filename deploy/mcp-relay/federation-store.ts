@@ -31,7 +31,7 @@
  *   Storage layout mirrors `oauth-token-store.ts`: same service-account
  *   pod (`svc-relay-dcr/` by default), one subcontainer
  *   (`federation/`), one tiny JSON-LD file per entry. Operational
- *   state — not a `cg:` Context Descriptor — because federation entries
+ *   state — not a `iep:` Context Descriptor — because federation entries
  *   are flat operational metadata (URL + label + owner + how-we-learned-
  *   about-it) with no facet semantics worth serializing as RDF.
  *
@@ -164,7 +164,7 @@ interface PersistedEntry {
 const JSONLD_CTX: Record<string, string> = {
   relay: 'https://interego-emergent.example/ns/mcp-relay#',
 };
-const TYPE_ENTRY = 'urn:cg:relay:FederationEntry';
+const TYPE_ENTRY = 'urn:iep:relay:FederationEntry';
 
 // ── save ────────────────────────────────────────────────────
 

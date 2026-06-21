@@ -1,9 +1,9 @@
 /**
- * Kernel `reduce` verb — fold over a cg:supersedes chain.
+ * Kernel `reduce` verb — fold over a iep:supersedes chain.
  *
  * Verifies the substrate's 9th first-class verb:
  *
- *   1. Walks the cg:supersedes chain back-links from a head IRI to
+ *   1. Walks the iep:supersedes chain back-links from a head IRI to
  *      the chain's origin (cycle defence via Set-of-visited mirrors
  *      delegation.ts:783-795).
  *   2. Applies the declared reducer left-to-right (oldest → newest).
@@ -11,7 +11,7 @@
  *      chain CIDs (in walk order), the reducer CID, periodic state
  *      checkpoints, and the final head-state CID.
  *   4. Two reducer shapes work: inline { kind: 'turtle-template' }
- *      and a `cg:reducer <iri>` link off the chain head that the
+ *      and a `iep:reducer <iri>` link off the chain head that the
  *      kernel dereferences and classifies.
  *   5. The replay is deterministic — calling reduce twice with the
  *      same inputs yields the same ReplayProof byte-for-byte. That
@@ -37,7 +37,7 @@ setSolidModuleForTests({
 const G1 = 'urn:graph:reduce-test:g1' as IRI;
 const G2 = 'urn:graph:reduce-test:g2' as IRI;
 const G3 = 'urn:graph:reduce-test:g3' as IRI;
-const REDUCER_IRI = 'urn:cg:reducer:test:merge-template' as IRI;
+const REDUCER_IRI = 'urn:iep:reducer:test:merge-template' as IRI;
 
 // Chain: g1 (origin) ← g2 (supersedes g1) ← g3 (HEAD, supersedes g2).
 // Each link contributes one triple to the eventual fold.
@@ -48,16 +48,16 @@ ex:item1 ex:value "alpha" .
 
 const G2_BODY = `
 @prefix ex:  <https://example.org/test#> .
-@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-<${G2}> cg:supersedes <${G1}> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+<${G2}> iep:supersedes <${G1}> .
 ex:item2 ex:value "beta" .
 `.trim();
 
 const G3_BODY = `
 @prefix ex:  <https://example.org/test#> .
-@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-<${G3}> cg:supersedes <${G2}> ;
-        cg:reducer <${REDUCER_IRI}> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+<${G3}> iep:supersedes <${G2}> ;
+        iep:reducer <${REDUCER_IRI}> .
 ex:item3 ex:value "gamma" .
 `.trim();
 
@@ -79,11 +79,11 @@ function makeFetcher(): (iri: IRI) => Promise<string | null> {
   return async (iri) => map[iri] ?? null;
 }
 
-describe('kernel.reduce — fold over a cg:supersedes chain', () => {
+describe('kernel.reduce — fold over a iep:supersedes chain', () => {
   it('walks the chain back to its origin and folds in oldest-first order', async () => {
     const r = await reduce(G3, {
       fetch: makeFetcher(),
-      // Inline reducer wins over cg:reducer on the head (so this
+      // Inline reducer wins over iep:reducer on the head (so this
       // test exercises the inline path independently of the
       // dereference path).
       reducerSpec: { kind: 'turtle-template', template: REDUCER_BODY },
@@ -101,11 +101,11 @@ describe('kernel.reduce — fold over a cg:supersedes chain', () => {
     expect(r.replayProof.chainCids).toHaveLength(3);
     expect(r.replayProof.reducerKind).toBe('turtle-template');
     expect(r.replayProof.chainLength).toBe(3);
-    expect(r.replayProof.headStateCid).toMatch(/^urn:cg:cid:/);
-    expect(r.replayProof.reducerCid).toMatch(/^urn:cg:cid:/);
+    expect(r.replayProof.headStateCid).toMatch(/^urn:iep:cid:/);
+    expect(r.replayProof.reducerCid).toMatch(/^urn:iep:cid:/);
     // Every chain CID is content-addressed.
     for (const cid of r.replayProof.chainCids) {
-      expect(cid).toMatch(/^urn:cg:cid:[0-9a-f]+$/);
+      expect(cid).toMatch(/^urn:iep:cid:[0-9a-f]+$/);
     }
     // Final checkpoint is always emitted so verifiers have a state
     // anchor at the head end.
@@ -115,14 +115,14 @@ describe('kernel.reduce — fold over a cg:supersedes chain', () => {
     expect(last!.stateCid).toBe(r.replayProof.headStateCid);
   });
 
-  it('resolves cg:reducer off the chain head when no inline spec is supplied', async () => {
+  it('resolves iep:reducer off the chain head when no inline spec is supplied', async () => {
     const r = await reduce(G3, { fetch: makeFetcher() });
 
     expect(r.chainLength).toBe(3);
     expect(r.replayProof.reducerKind).toBe('turtle-template');
     // The reducer was dereferenced from REDUCER_IRI; its CID anchors
     // the fold.
-    expect(r.replayProof.reducerCid).toMatch(/^urn:cg:cid:/);
+    expect(r.replayProof.reducerCid).toMatch(/^urn:iep:cid:/);
     expect(r.head).toContain('gamma');
   });
 
@@ -168,8 +168,8 @@ describe('kernel.reduce — fold over a cg:supersedes chain', () => {
   });
 
   it('throws when no reducer is declared and none is supplied inline', async () => {
-    // Drop the cg:reducer link from g3.
-    const g3NoReducer = G3_BODY.replace(/\s*;\s*cg:reducer <[^>]+>/, '');
+    // Drop the iep:reducer link from g3.
+    const g3NoReducer = G3_BODY.replace(/\s*;\s*iep:reducer <[^>]+>/, '');
     const fetcher = async (iri: IRI): Promise<string | null> => {
       const map: Record<string, string> = {
         [G1]: G1_BODY,
@@ -185,8 +185,8 @@ describe('kernel.reduce — fold over a cg:supersedes chain', () => {
     // g3 supersedes g3 — pathological tampered chain.
     const cyclicG3 = `
 @prefix ex:  <https://example.org/test#> .
-@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-<${G3}> cg:supersedes <${G3}> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+<${G3}> iep:supersedes <${G3}> .
 ex:item3 ex:value "gamma" .
 `.trim();
     const fetcher = async (iri: IRI): Promise<string | null> =>
@@ -233,28 +233,28 @@ ex:MergeShape a sh:NodeShape ;
 
     const v1Body = `
 @prefix ex:  <https://example.org/test#> .
-@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-<${v1Iri}> cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime .
+<${v1Iri}> iep:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime .
 ex:item1 ex:value "v1-alpha" .
 `.trim();
 
     const v2Body = `
 @prefix ex:  <https://example.org/test#> .
-@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-<${v2Iri}> cg:supersedes <${v1Iri}> ;
-           cg:validFrom "2026-02-01T00:00:00Z"^^xsd:dateTime .
+<${v2Iri}> iep:supersedes <${v1Iri}> ;
+           iep:validFrom "2026-02-01T00:00:00Z"^^xsd:dateTime .
 ex:item2 ex:value "v2-beta" .
 `.trim();
 
     // v3 supersedes BOTH v1 AND v2 — the auto_supersede_prior pattern.
     const v3Body = `
 @prefix ex:  <https://example.org/test#> .
-@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-<${v3Iri}> cg:supersedes <${v1Iri}>, <${v2Iri}> ;
-           cg:validFrom "2026-03-01T00:00:00Z"^^xsd:dateTime .
+<${v3Iri}> iep:supersedes <${v1Iri}>, <${v2Iri}> ;
+           iep:validFrom "2026-03-01T00:00:00Z"^^xsd:dateTime .
 ex:item3 ex:value "v3-gamma" .
 `.trim();
 
@@ -266,7 +266,7 @@ ex:item3 ex:value "v3-gamma" .
     const fetcher = async (iri: IRI): Promise<string | null> => map[iri] ?? null;
 
     // shortest path — auto_supersede_prior makes v3's first
-    // cg:supersedes target the breadth-shortest hop, so the walker
+    // iep:supersedes target the breadth-shortest hop, so the walker
     // collapses the lineage to v3 + one ancestor (chainLength 2).
     const shortest = await reduce(v3Iri, {
       fetch: fetcher,

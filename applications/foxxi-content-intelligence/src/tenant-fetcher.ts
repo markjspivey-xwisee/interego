@@ -135,7 +135,7 @@ async function fetchBundleJson(
 ): Promise<unknown> {
   // The entry tracks the descriptor URL; the graph lives at a separate
   // URL discoverable via the descriptor's Distribution block. Walk the
-  // descriptor Turtle to find its cg:affordance / hydra:target — never
+  // descriptor Turtle to find its iep:affordance / hydra:target — never
   // reconstruct the URL by filename convention.
   const fetchFn = (config.fetch ?? globalThis.fetch) as typeof globalThis.fetch;
   const descRes = await fetchFn(entry.descriptorUrl, {
@@ -147,7 +147,7 @@ async function fetchBundleJson(
   const descTurtle = await descRes.text();
   const graphUrl = extractDistributionTarget(descTurtle);
   if (!graphUrl) {
-    throw new Error(`Descriptor ${entry.descriptorUrl} has no hydra:target / dcat:accessURL on its cg:affordance block`);
+    throw new Error(`Descriptor ${entry.descriptorUrl} has no hydra:target / dcat:accessURL on its iep:affordance block`);
   }
 
   const adminKeyPair = resolveAdminKeyPair(config);
@@ -166,7 +166,7 @@ async function fetchBundleJson(
 
 /**
  * Pull the `hydra:target` (or `dcat:accessURL`) IRI from the descriptor
- * Turtle's cg:affordance block. Substrate writes both — we accept either.
+ * Turtle's iep:affordance block. Substrate writes both — we accept either.
  */
 function extractDistributionTarget(descTurtle: string): string | null {
   // Look for `hydra:target <url>` first (substrate writes this).

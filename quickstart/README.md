@@ -78,9 +78,9 @@ When the agent reports back, you'll have:
 
 - 2 typed `owm:Person` descriptors on the pod (signed by the org DID).
 - 1 `owm:Project` with an OLKE knowledge stage.
-- 1 `owm:Decision` with `cg:modalStatus = Hypothetical`.
+- 1 `owm:Decision` with `iep:modalStatus = Hypothetical`.
 - 1 `owm:FollowUp` with a future `owm:dueAt`.
-- A `cg:supersedes` chain ready to receive future revisions.
+- A `iep:supersedes` chain ready to receive future revisions.
 
 In a SECOND fresh session — no shared state with the first — ask:
 

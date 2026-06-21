@@ -646,7 +646,7 @@ function verifySignedRequest(body: unknown): SignedAuthResult {
 // the canonical host is now `interego-css.internal.livelysky-<id>...`. A
 // non-trivial number of LIVE descriptors on the markj pod (plus external
 // caches / wallet snapshots / search indexes) still carry the OLD
-// public-host URL in `cg:origin` / `descriptorUrl` / `dcat:accessURL`
+// public-host URL in `iep:origin` / `descriptorUrl` / `dcat:accessURL`
 // positions. Dereferencing those would 404 against the now-internal-only
 // host.
 //
@@ -734,7 +734,7 @@ let notificationLog: ContextChangeEvent[] = [];
 // subscribe_to_pod and use it directly in the SSE URL.
 interface NotificationEvent {
   readonly '@context': string;
-  readonly type: 'cg:Notification';
+  readonly type: 'iep:Notification';
   readonly eventType: 'created' | 'updated' | 'superseded';
   readonly timestamp: string;
   readonly podUrl: string;
@@ -761,8 +761,8 @@ function emitNotification(
   partial: Omit<NotificationEvent, '@context' | 'type' | 'timestamp' | 'podUrl'> & { timestamp?: string },
 ): void {
   const event: NotificationEvent = {
-    '@context': 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
-    type: 'cg:Notification',
+    '@context': 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
+    type: 'iep:Notification',
     timestamp: partial.timestamp ?? new Date().toISOString(),
     podUrl,
     eventType: partial.eventType,
@@ -1279,22 +1279,22 @@ function renderAppendOnlyEntry(args: {
   issuer?: string;
 }): string {
   const lines: string[] = [
-    '@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .',
+    '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .',
     '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
     '@prefix dct: <http://purl.org/dc/terms/> .',
     '',
-    `<${args.descriptorUrl}> a cg:ManifestEntry ;`,
+    `<${args.descriptorUrl}> a iep:ManifestEntry ;`,
   ];
-  if (args.contentCid) lines.push(`    cg:contentCid "${args.contentCid}" ;`);
-  for (const g of args.graphIris ?? []) lines.push(`    cg:describes <${g}> ;`);
-  for (const ft of args.facetTypes ?? []) lines.push(`    cg:hasFacetType cg:${ft} ;`);
-  if (args.validFrom)  lines.push(`    cg:validFrom "${args.validFrom}"^^xsd:dateTime ;`);
-  if (args.validUntil) lines.push(`    cg:validUntil "${args.validUntil}"^^xsd:dateTime ;`);
+  if (args.contentCid) lines.push(`    iep:contentCid "${args.contentCid}" ;`);
+  for (const g of args.graphIris ?? []) lines.push(`    iep:describes <${g}> ;`);
+  for (const ft of args.facetTypes ?? []) lines.push(`    iep:hasFacetType iep:${ft} ;`);
+  if (args.validFrom)  lines.push(`    iep:validFrom "${args.validFrom}"^^xsd:dateTime ;`);
+  if (args.validUntil) lines.push(`    iep:validUntil "${args.validUntil}"^^xsd:dateTime ;`);
   for (const c of args.conformsTo ?? []) lines.push(`    dct:conformsTo <${c}> ;`);
-  for (const s of args.supersedes ?? []) lines.push(`    cg:supersedes <${s}> ;`);
-  if (args.modalStatus) lines.push(`    cg:modalStatus cg:${args.modalStatus} ;`);
-  if (args.trustLevel)  lines.push(`    cg:trustLevel cg:${args.trustLevel} ;`);
-  if (args.issuer)      lines.push(`    cg:issuer <${args.issuer}> ;`);
+  for (const s of args.supersedes ?? []) lines.push(`    iep:supersedes <${s}> ;`);
+  if (args.modalStatus) lines.push(`    iep:modalStatus iep:${args.modalStatus} ;`);
+  if (args.trustLevel)  lines.push(`    iep:trustLevel iep:${args.trustLevel} ;`);
+  if (args.issuer)      lines.push(`    iep:issuer <${args.issuer}> ;`);
   // Terminate (replace trailing semicolon)
   const last = lines[lines.length - 1];
   lines[lines.length - 1] = last.endsWith(' ;') ? last.slice(0, -2) + ' .' : last + ' .';
@@ -1335,7 +1335,7 @@ function writeAppendOnlyEntryAsync(podUrl: string, descriptorUrl: string, entryT
 
 // Read entries from the append-only container. Returns the parsed
 // ManifestEntry[] (parseManifest can handle our renderAppendOnlyEntry
-// format since each entry uses the same `<url> a cg:ManifestEntry`
+// format since each entry uses the same `<url> a iep:ManifestEntry`
 // anchor). Empty array if container does not exist.
 async function readAppendOnlyEntries(podUrl: string): Promise<ManifestEntry[]> {
   const containerUrl = appendOnlyContainerUrl(podUrl);
@@ -1371,7 +1371,7 @@ async function readAppendOnlyEntries(podUrl: string): Promise<ManifestEntry[]> {
 // ── Descriptor body cache (Fix-4 outer) ─────────────────────
 //
 // Descriptors and their graph bodies are content-addressed via
-// cg:contentCid — once published, the URL → bytes mapping is immutable.
+// iep:contentCid — once published, the URL → bytes mapping is immutable.
 // Cache plaintext (non-encrypted) bodies with a long TTL so repeated
 // dereference / get_descriptor / federated-read calls don't hit CSS
 // for the same URL. Encrypted envelopes are NEVER cached (the bytes
@@ -1435,7 +1435,7 @@ export function getDeferredPublishStatus(descriptorUrl: string): DeferredPublish
 
 // ── Conformance gate (SHACL) ────────────────────────────────
 //
-// FIX 4 — at publish time, look up `cg:conformsTo <shapeIri>` triples
+// FIX 4 — at publish time, look up `iep:conformsTo <shapeIri>` triples
 // declared on the target pod's container metadata, fetch each shape,
 // and validate the inbound graph_content against it. On non-conformance
 // reject 422 BEFORE the CSS write so a violating descriptor never lands
@@ -1444,10 +1444,10 @@ export function getDeferredPublishStatus(descriptorUrl: string): DeferredPublish
 //
 // Container-shape lookup precedence:
 //   1. <container>.well-known/container-shape  (Turtle, listing
-//      cg:conformsTo IRIs as cg:declares-shape triples — purpose-built
+//      iep:conformsTo IRIs as iep:declares-shape triples — purpose-built
 //      home for shape declarations that isn't tied to the manifest CAS
 //      dance).
-//   2. The pod manifest (.well-known/context-graphs) — any cg:conformsTo
+//   2. The pod manifest (.well-known/context-graphs) — any iep:conformsTo
 //      / dct:conformsTo on the manifest collection subject is treated
 //      as a container-level declaration.
 //
@@ -1469,9 +1469,9 @@ async function fetchContainerShapes(podUrl: string): Promise<readonly string[]> 
     const r = await solidFetch(containerShapeUrl, { method: 'GET', headers: { 'Accept': 'text/turtle' } });
     if (r.ok) {
       const body = await r.text();
-      for (const m of body.matchAll(/cg:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
+      for (const m of body.matchAll(/iep:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
       for (const m of body.matchAll(/dct:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
-      for (const m of body.matchAll(/cg:declares-shape\s+<([^>]+)>/g)) shapes.add(m[1]!);
+      for (const m of body.matchAll(/iep:declares-shape\s+<([^>]+)>/g)) shapes.add(m[1]!);
     }
   } catch { /* ignore — fall through to manifest scan */ }
 
@@ -1490,7 +1490,7 @@ async function fetchContainerShapes(podUrl: string): Promise<readonly string[]> 
           new RegExp(`<${escapedManifest}>[\\s\\S]*?(?=\\n<|$)`),
         )?.[0];
         if (collectionBlock) {
-          for (const m of collectionBlock.matchAll(/cg:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
+          for (const m of collectionBlock.matchAll(/iep:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
           for (const m of collectionBlock.matchAll(/dct:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
         }
       }
@@ -1569,7 +1569,7 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
  * fetch them.
  *
  * Container-declared shapes (from .well-known/container-shape or the
- * pod's manifest collection's cg:conformsTo / dct:conformsTo triples)
+ * pod's manifest collection's iep:conformsTo / dct:conformsTo triples)
  * AND caller-supplied shapes are both validated — any one failing rejects.
  * De-duplicated by IRI: if the same shape appears in both sources, it
  * runs once.
@@ -1613,7 +1613,7 @@ async function runConformanceGate(
 
 // ── Scope gate ──────────────────────────────────────────────
 //
-// FIX 4 — registry-declared cg:scope (ReadWrite / ReadOnly / PublishOnly
+// FIX 4 — registry-declared iep:scope (ReadWrite / ReadOnly / PublishOnly
 // / DiscoverOnly) was previously decorative: handlePublishContext didn't
 // check it at all, so a Read-scoped agent could call publish_context and
 // the relay would happily write the descriptor + payload on their pod.
@@ -1631,7 +1631,7 @@ const WRITE_ELIGIBLE_SCOPES = new Set(['ReadWrite', 'PublishOnly']);
 
 // ── OAuth-level read/write scope split ──────────────────────────
 //
-// The substrate scope above (cg:scope: ReadWrite / ReadOnly / PublishOnly
+// The substrate scope above (iep:scope: ReadWrite / ReadOnly / PublishOnly
 // / DiscoverOnly) lives in the pod's agent registry and is keyed on the
 // AGENT delegation chain — every publish_context invocation walks it
 // before the CSS write. That gate is mature.
@@ -1661,7 +1661,7 @@ const WRITE_ELIGIBLE_SCOPES = new Set(['ReadWrite', 'PublishOnly']);
 // This is intentionally INDEPENDENT of the substrate-level scope gate
 // — the two gates compose. A bearer might pass the OAuth scope check
 // (carries `mcp` or `mcp:write`) and still be refused by the substrate
-// gate because the delegated agent's cg:scope is ReadOnly. Either gate
+// gate because the delegated agent's iep:scope is ReadOnly. Either gate
 // can independently produce a 403; verifiers need both to be
 // independently testable, hence FIX D.
 const OAUTH_SCOPE_FULL = 'mcp';
@@ -1777,7 +1777,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const podUrl = `${CSS_URL}${podName}/`;
   const agentId = (args.agent_id as string) ?? 'urn:agent:remote:unknown';
   const ownerWebId = (args.owner_webid as string) ?? `https://id.example.com/${podName}/profile#me`;
-  const descId = (args.descriptor_id as string ?? `urn:cg:${podName}:${Date.now()}`) as IRI;
+  const descId = (args.descriptor_id as string ?? `urn:iep:${podName}:${Date.now()}`) as IRI;
   const now = new Date().toISOString();
 
   // Ensure pod container exists. Skip on steady-state — lazy-pod-init's
@@ -1898,7 +1898,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // Manifest-mirrored head-CID lookup. Threaded into Phase A precondition
   // AND into publish()'s sync path so the descriptor-body GET +
   // computeCid step is skipped whenever the manifest carries the head's
-  // cg:contentCid (always the case for entries written by post-fix
+  // iep:contentCid (always the case for entries written by post-fix
   // publishes; legacy entries fall through to the body fetch).
   //
   // URL-form normalization: manifest entries can carry either the
@@ -2104,9 +2104,9 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         issuer: ownerWebId as IRI,
       };
       if (!chainVerified) return baseTrust;
-      // Pre-compute the sig URL so cg:proof can be embedded in the
+      // Pre-compute the sig URL so iep:proof can be embedded in the
       // Turtle BEFORE signing. Verifies against tampering: if anyone
-      // edits cg:proof in transit the signature won't validate.
+      // edits iep:proof in transit the signature won't validate.
       const predicted = predictDescriptorUrl(podUrl, descId);
       const cw = await ensureRelayComplianceWallet();
       return {
@@ -2256,11 +2256,11 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const selfIncluded = computed.selfIncluded;
 
   // relayBaseUrl is threaded in so encrypted publishes emit a SECOND
-  // affordance — cg:renderView — pointing at this relay's
+  // affordance — iep:renderView — pointing at this relay's
   // /render/<descriptorIri> endpoint. Thin clients (no X25519 keypair)
   // follow that affordance with a bearer token to get plaintext Turtle
   // server-side. Without a configured public base we omit the renderView
-  // affordance (cg:canDecrypt remains the only path), so behavior is
+  // affordance (iep:canDecrypt remains the only path), so behavior is
   // unchanged for dev runs that don't set PUBLIC_BASE_URL.
   const publishRelayBase = (PUBLIC_BASE_URL || '').replace(/\/$/, '');
 
@@ -2269,16 +2269,16 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // `sign_authorship: true` mints a small ECDSA signature over the
   // canonical (agentId, ownerWebId, descriptorId, created, agentDid?)
   // tuple — the AgentFacet's identity claim, bound to THIS descriptor.
-  // Embedded into the descriptor Turtle as `cg:authorshipProof [...]`
+  // Embedded into the descriptor Turtle as `iep:authorshipProof [...]`
   // and verified on read from the descriptor ALONE (no pod-storage
   // trust). Default off preserves SelfAsserted neutrality for callers
   // that have not opted into agent-level signing.
   //
   // Independent of the compliance branch below:
-  //   - cg:proof on TrustFacet (compliance branch): operator-grade
+  //   - iep:proof on TrustFacet (compliance branch): operator-grade
   //     signature over the WHOLE descriptor turtle, lands in
   //     <descriptor>.sig.json, opt-in via `compliance: true`.
-  //   - cg:authorshipProof (this block): agent-grade signature over
+  //   - iep:authorshipProof (this block): agent-grade signature over
   //     the AgentFacet payload, embedded INSIDE the descriptor turtle,
   //     opt-in via `sign_authorship: true`.
   // The two stack: a publish can carry both, neither, or either.
@@ -2403,7 +2403,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   //
   // Manifest-CID fast-path: getCachedManifest is a single lightweight
   // GET on `.well-known/context-graphs` that already mirrors the head
-  // CID into each entry's `cg:contentCid` triple (publish path always
+  // CID into each entry's `iep:contentCid` triple (publish path always
   // writes it; legacy entries fall through to the body-fetch path
   // inside the substrate gate). Threading the cached entries' CIDs
   // through as `headCidLookup` removes 1xN descriptor body GETs from
@@ -2760,7 +2760,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     previousHeadCid: result.previousHeadCid,
     previousHeadUrl: result.previousHeadUrl,
     // SolidNotifications channel — the relay-hosted SSE endpoint that
-    // delivers cg:Notification events for this pod. Consumers can
+    // delivers iep:Notification events for this pod. Consumers can
     // `EventSource(notifications.sse_url)` to receive every subsequent
     // create/update/supersede event without polling. Honors the
     // syncProtocol contract declared on the descriptor's FederationFacet.
@@ -2775,7 +2775,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     sensitivityPreflight: sensitivityWarning || undefined,
     // Agent-level authorship-signing report (when args.sign_authorship
     // === true). The signed proof block is embedded directly in the
-    // descriptor turtle (cg:authorshipProof [...]); this object echoes
+    // descriptor turtle (iep:authorshipProof [...]); this object echoes
     // back what was signed for downstream callers + audit. Verifiers
     // re-derive the canonical payload from the descriptor turtle and
     // run delegationVerifier on dereference — see handleGetDescriptor.
@@ -2934,7 +2934,7 @@ async function handleRecordTrajectoryStep(args: ToolArgs): Promise<string> {
     ? args.session_id
     : `default-${new Date().toISOString().slice(0, 10)}`;
   const graphIri = `urn:graph:trajectory:${agentSlug}`;
-  const stepId = `urn:cg:trajectory-step:${agentSlug}:${Date.now()}`;
+  const stepId = `urn:iep:trajectory-step:${agentSlug}:${Date.now()}`;
   // Inline turtle for the step's graph payload. Facets are emitted on
   // the publish_context side; this is the substantive content the
   // verifier reads.
@@ -2943,7 +2943,7 @@ async function handleRecordTrajectoryStep(args: ToolArgs): Promise<string> {
     ? `    traj:parentStep <${args.parent_step_id}> ;\n`
     : '';
   const supersedesLine = typeof args.supersedes_step_id === 'string' && args.supersedes_step_id
-    ? `    cg:supersedes <${args.supersedes_step_id}> ;\n`
+    ? `    iep:supersedes <${args.supersedes_step_id}> ;\n`
     : '';
   const derivedLines = Array.isArray(args.was_derived_from)
     ? (args.was_derived_from as unknown[])
@@ -2962,9 +2962,9 @@ async function handleRecordTrajectoryStep(args: ToolArgs): Promise<string> {
     if (note !== undefined) inner.push(`        traj:resultNote "${escape(note)}"`);
     return `    traj:result [\n${inner.join(' ;\n')}\n    ] ;\n`;
   })();
-  const graphContent = `@prefix traj: <urn:cg:ns:trajectory:> .
+  const graphContent = `@prefix traj: <urn:iep:ns:trajectory:> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 <${stepId}>
@@ -2975,7 +2975,7 @@ async function handleRecordTrajectoryStep(args: ToolArgs): Promise<string> {
     traj:objectName "${escape(objectName)}" ;
     traj:granularity "${granularity}" ;
 ${parentLine}${supersedesLine}${derivedLines}${resultBlock}    prov:wasAttributedTo <${agentId}> ;
-    cg:modalStatus cg:${modalStatus} .
+    iep:modalStatus iep:${modalStatus} .
 `;
 
   // Defaults that match the trajectory recording's intent:
@@ -3163,8 +3163,8 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
   }
 
   // Hypermedia follow-your-nose: the descriptor Turtle includes
-  // cg:hasDistribution [ dcat:accessURL <...> ; dcat:mediaType "..." ;
-  // cg:encrypted <bool> ; ... ]. We parse that instead of reconstructing
+  // iep:hasDistribution [ dcat:accessURL <...> ; dcat:mediaType "..." ;
+  // iep:encrypted <bool> ; ... ]. We parse that instead of reconstructing
   // the URL by naming convention, so clients and this handler alike
   // stay decoupled from the relay's internal filename scheme. Matches
   // the REST / HATEOAS / DCAT / Hydra principles the project builds on.
@@ -3182,7 +3182,7 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
 
   // ── Authorship verification (automatic, not opt-in) ──────────
   //
-  // When the descriptor embeds `cg:authorshipProof [...]`, re-derive
+  // When the descriptor embeds `iep:authorshipProof [...]`, re-derive
   // the canonical payload and run delegationVerifier against the
   // descriptor turtle ALONE. Verifiers do not need to trust the pod's
   // storage layer — the verification method (did:ethr:<addr>) lets us
@@ -3602,7 +3602,7 @@ async function handleSubscribeToPod(args: ToolArgs): Promise<string> {
       pod: podUrl,
       // SolidNotifications SSE channel for this pod — clients can
       // connect directly with `EventSource(sse_url, { withCredentials })`
-      // to receive every cg:Notification event without paying the
+      // to receive every iep:Notification event without paying the
       // /sse global polling tax.
       sse_url: sseUrl,
       pod_slug: slug,
@@ -4335,7 +4335,7 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
 // composed vertical over Interego, not a substrate primitive, so baking a
 // foxxi-named tool into the relay would couple the substrate to a vertical. The
 // capability is reached emergently instead: an agent discovers the published
-// cg:Affordance urn:interego:foxxi:capability:review_foxxi_record, dereferences
+// iep:Affordance urn:interego:foxxi:capability:review_foxxi_record, dereferences
 // it, and invokes it with the generic `act` verb — the Foxxi bridge authenticates
 // the agent's OWN signed request directly (no relay vouching).
 
@@ -4402,7 +4402,7 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
       _signed_payload: signedPayload,
       signed_as: agentId,
       anchor: `did:ethr:${signerAddress}`,
-      hint: 'Pass this object as the `payload` of `act` on a rev-196 signed-request affordance (e.g. cg:action urn:cg:action:foxxi:review-record). The endpoint verifies your delegation on your own pod — no key material leaves the relay.',
+      hint: 'Pass this object as the `payload` of `act` on a rev-196 signed-request affordance (e.g. iep:action urn:iep:action:foxxi:review-record). The endpoint verifies your delegation on your own pod — no key material leaves the relay.',
     });
   } catch (err) {
     return JSON.stringify({ error: `sign_request: signing failed: ${(err as Error).message}` });
@@ -4912,7 +4912,7 @@ async function handlePgslIngest(args: ToolArgs): Promise<string> {
       const desc = liftToDescriptor(
         pgsl,
         topUri,
-        `urn:cg:${podName}:pgsl:${Date.now()}` as IRI,
+        `urn:iep:${podName}:pgsl:${Date.now()}` as IRI,
         [{
           type: 'Temporal',
           validFrom: now,
@@ -5021,7 +5021,7 @@ async function handlePgslToTurtle(_args: ToolArgs): Promise<string> {
 // Resolution strategy:
 //   1. Read the pod's .well-known/context-graphs manifest (cache-bypassed
 //      so we observe fresh server state).
-//   2. Filter to entries whose cg:describes contains the supplied urn.
+//   2. Filter to entries whose iep:describes contains the supplied urn.
 //   3. Pick the entry that is NOT supersededBy any other entry — i.e.
 //      the chain HEAD. If multiple unsuperseded entries exist (the
 //      forked-chain symptom this fix is meant to prevent), all are
@@ -5049,8 +5049,8 @@ async function handleGetCurrentHead(args: ToolArgs): Promise<string> {
   if (describing.length === 0) {
     return JSON.stringify({ urn, podUrl, head: null, message: 'No descriptor on this pod describes the requested urn.' });
   }
-  // An entry is a chain head iff no other entry's cg:supersedes points
-  // at it. The manifest mirrors cg:supersedes (see manifestEntryTurtle),
+  // An entry is a chain head iff no other entry's iep:supersedes points
+  // at it. The manifest mirrors iep:supersedes (see manifestEntryTurtle),
   // so we can compute this without fetching descriptors.
   const superseded = new Set<string>();
   for (const e of describing) {
@@ -5062,7 +5062,7 @@ async function handleGetCurrentHead(args: ToolArgs): Promise<string> {
   // Compute CIDs for each candidate head. If there are multiple, the
   // chain has forked — the caller needs to see all of them.
   //
-  // Manifest fast-path: post-fix manifest entries carry `cg:contentCid`
+  // Manifest fast-path: post-fix manifest entries carry `iep:contentCid`
   // mirroring the descriptor's content-CID, so the head CID is already
   // known from the single manifest GET above — no need to body-fetch +
   // rehash each candidate. Legacy entries (no mirror) fall through to
@@ -5115,7 +5115,7 @@ async function handleGetCurrentHead(args: ToolArgs): Promise<string> {
 
 // ── Generic affordance follower ─────────────────────────────
 //
-// Proxies a `cg:Affordance` invocation through the MCP layer so a single
+// Proxies a `iep:Affordance` invocation through the MCP layer so a single
 // Interego connector reaches any vertical's affordances (Foxxi, LRS, OWM,
 // ADP, AC, LPC, ...) without installing the per-vertical bridge. Discover
 // available actions via `discover_context` + `get_descriptor`; this handler
@@ -5136,7 +5136,7 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   const authorization = args.authorization as string | undefined;
   if (!descriptorUrl) throw new Error('invoke_affordance: descriptor_url is required');
   if (!actionIri) throw new Error('invoke_affordance: action_iri is required');
-  // Pass `recipientKeyPair` so `cg:canDecrypt` affordances return
+  // Pass `recipientKeyPair` so `iep:canDecrypt` affordances return
   // plaintext to authorized recipients (the relay's session agent is in
   // the envelope's recipient set whenever it published or was added as
   // a share target). Non-recipients fall through and see the raw
@@ -5167,18 +5167,18 @@ async function handleKernelMint(args: ToolArgs): Promise<string> {
   // The advertised affordances MUST be invokable through `act` against the
   // minted holon's IRI. `act` routes urn:pgsl:* targets through
   // actOnLatticeNode, which dispatches only on the canonical
-  // `urn:cg:action:kernel:{dereference,decompose,promote}` action IRIs and
+  // `urn:iep:action:kernel:{dereference,decompose,promote}` action IRIs and
   // expects the holon IRI itself as the target. The previous
-  // `urn:cg:action:{dereference,promote,decompose}` action IRIs plus the
-  // bogus `urn:cg:tool:promote` / `urn:cg:tool:decompose` targets broke the
+  // `urn:iep:action:{dereference,promote,decompose}` action IRIs plus the
+  // bogus `urn:iep:tool:promote` / `urn:iep:tool:decompose` targets broke the
   // hypermedia round-trip (act → 405 unsupported_action_on_lattice_target).
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
     kind: 'mint',
     id: r.holon.iri,
     nextSteps: [
-      { action: 'urn:cg:action:kernel:dereference', target: r.holon.iri, method: 'GET' },
-      { action: 'urn:cg:action:kernel:promote',     target: r.holon.iri, method: 'POST' },
-      { action: 'urn:cg:action:kernel:decompose',   target: r.holon.iri, method: 'POST' },
+      { action: 'urn:iep:action:kernel:dereference', target: r.holon.iri, method: 'GET' },
+      { action: 'urn:iep:action:kernel:promote',     target: r.holon.iri, method: 'POST' },
+      { action: 'urn:iep:action:kernel:decompose',   target: r.holon.iri, method: 'POST' },
     ],
   }));
 }
@@ -5228,8 +5228,8 @@ async function handleKernelCompose(args: ToolArgs): Promise<string> {
     kind: 'compose',
     id: r.composed.id,
     nextSteps: [
-      { action: 'urn:cg:action:restrict', target: 'urn:cg:tool:restrict', method: 'POST' },
-      { action: 'urn:cg:action:publish',  target: 'urn:cg:tool:publish_context', method: 'POST' },
+      { action: 'urn:iep:action:restrict', target: 'urn:iep:tool:restrict', method: 'POST' },
+      { action: 'urn:iep:action:publish',  target: 'urn:iep:tool:publish_context', method: 'POST' },
     ],
   }));
 }
@@ -5279,7 +5279,7 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
         method: (args['method'] as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | undefined) ?? 'POST',
         ...(args['media_type'] ? { mediaType: args['media_type'] as string } : {}),
       };
-  // Pass the relay's session key as recipient so a `cg:canDecrypt`
+  // Pass the relay's session key as recipient so a `iep:canDecrypt`
   // affordance returns plaintext when the relay's agent is in the
   // envelope's recipient set. Non-recipients fall through and see the
   // raw envelope as today.
@@ -5315,8 +5315,8 @@ async function handleKernelRestrict(args: ToolArgs): Promise<string> {
     kind: 'restrict',
     id: r.restricted.id,
     nextSteps: [
-      { action: 'urn:cg:action:extend',  target: 'urn:cg:tool:extend',  method: 'POST' },
-      { action: 'urn:cg:action:publish', target: 'urn:cg:tool:publish_context', method: 'POST' },
+      { action: 'urn:iep:action:extend',  target: 'urn:iep:tool:extend',  method: 'POST' },
+      { action: 'urn:iep:action:publish', target: 'urn:iep:tool:publish_context', method: 'POST' },
     ],
   }));
 }
@@ -5329,8 +5329,8 @@ async function handleKernelExtend(args: ToolArgs): Promise<string> {
     kind: 'extend',
     id: r.extended.id,
     nextSteps: [
-      { action: 'urn:cg:action:restrict', target: 'urn:cg:tool:restrict', method: 'POST' },
-      { action: 'urn:cg:action:publish',  target: 'urn:cg:tool:publish_context', method: 'POST' },
+      { action: 'urn:iep:action:restrict', target: 'urn:iep:tool:restrict', method: 'POST' },
+      { action: 'urn:iep:action:publish',  target: 'urn:iep:tool:publish_context', method: 'POST' },
     ],
   }));
 }
@@ -5338,14 +5338,14 @@ async function handleKernelPromote(args: ToolArgs): Promise<string> {
   const atoms = (args['atoms'] ?? []) as Parameters<typeof kernelPromote>[0];
   const r = kernelPromote(atoms);
   // Same hypermedia contract as handleKernelMint: emit canonical
-  // `urn:cg:action:kernel:*` action IRIs with the apex's urn:pgsl:* IRI as
+  // `urn:iep:action:kernel:*` action IRIs with the apex's urn:pgsl:* IRI as
   // the target so `act` round-trips through actOnLatticeNode cleanly.
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
     kind: 'promote',
     id: r.apex,
     nextSteps: [
-      { action: 'urn:cg:action:kernel:dereference', target: r.apex, method: 'GET' },
-      { action: 'urn:cg:action:kernel:decompose',   target: r.apex, method: 'POST' },
+      { action: 'urn:iep:action:kernel:dereference', target: r.apex, method: 'GET' },
+      { action: 'urn:iep:action:kernel:decompose',   target: r.apex, method: 'POST' },
     ],
   }));
 }
@@ -5360,7 +5360,7 @@ async function handleKernelDecompose(args: ToolArgs): Promise<string> {
       kind: 'decompose',
       id: iri,
       nextSteps: [
-        { action: 'urn:cg:action:kernel:dereference', target: iri, method: 'GET' },
+        { action: 'urn:iep:action:kernel:dereference', target: iri, method: 'GET' },
       ],
     }));
   }
@@ -5368,17 +5368,17 @@ async function handleKernelDecompose(args: ToolArgs): Promise<string> {
     kind: 'decompose',
     id: r.apex,
     nextSteps: [
-      { action: 'urn:cg:action:kernel:dereference', target: r.left,    method: 'GET' },
-      { action: 'urn:cg:action:kernel:dereference', target: r.right,   method: 'GET' },
-      { action: 'urn:cg:action:kernel:dereference', target: r.overlap, method: 'GET' },
+      { action: 'urn:iep:action:kernel:dereference', target: r.left,    method: 'GET' },
+      { action: 'urn:iep:action:kernel:dereference', target: r.right,   method: 'GET' },
+      { action: 'urn:iep:action:kernel:dereference', target: r.overlap, method: 'GET' },
     ],
   }));
 }
 
-// Kernel verb #9 — reduce a cg:supersedes chain through a declarative
+// Kernel verb #9 — reduce a iep:supersedes chain through a declarative
 // reducer and return the canonical state + a content-addressed
 // ReplayProof. The reducer is either inlined (turtle-template /
-// shacl-transform body) OR resolved via `cg:reducer <iri>` declared
+// shacl-transform body) OR resolved via `iep:reducer <iri>` declared
 // on the chain head. The fold is the colimit of the chain in the
 // supersession category; the ReplayProof lets any third party
 // independently re-fetch by CID and replay.
@@ -5387,13 +5387,13 @@ async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
   if (!chainIri) {
     return JSON.stringify({
       error: 'chain_iri is required',
-      detail: 'reduce_chain folds a cg:supersedes chain — supply the chain HEAD IRI as `chain_iri`.',
+      detail: 'reduce_chain folds a iep:supersedes chain — supply the chain HEAD IRI as `chain_iri`.',
     });
   }
 
   // Reducer resolution: either inline reducer_spec wins, or
   // reducer_iri is dereferenced and its body classified, or the
-  // kernel reads `cg:reducer` off the chain head.
+  // kernel reads `iep:reducer` off the chain head.
   let reducerSpec: ReducerSpec | undefined;
   const inline = args['reducer_spec'] as
     | { kind: 'turtle-template'; template: string }
@@ -5455,7 +5455,7 @@ async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
       // reduce_chain on the same head and verify by comparing the
       // replayProof.headStateCid.
       nextSteps: [
-        { action: 'urn:cg:action:kernel:dereference', target: chainIri, method: 'GET' },
+        { action: 'urn:iep:action:kernel:dereference', target: chainIri, method: 'GET' },
       ],
     }));
   } catch (err) {
@@ -5479,7 +5479,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   extend: { description: 'Kernel verb — adjunction right half (part → whole)', handler: handleKernelExtend },
   promote: { description: 'Kernel verb — PGSL fibration vertical movement upward', handler: handleKernelPromote },
   decompose: { description: 'Kernel verb — PGSL fibration vertical movement downward', handler: handleKernelDecompose },
-  reduce_chain: { description: 'Kernel verb — fold a cg:supersedes chain through a declarative reducer (turtle-template OR shacl-transform) and return the canonical head state + a content-addressed ReplayProof (chain CIDs, reducer CID, periodic state checkpoints, head-state CID) that any third party can use to independently re-fetch + re-fold + verify.', handler: handleKernelReduceChain },
+  reduce_chain: { description: 'Kernel verb — fold a iep:supersedes chain through a declarative reducer (turtle-template OR shacl-transform) and return the canonical head state + a content-addressed ReplayProof (chain CIDs, reducer CID, periodic state checkpoints, head-state CID) that any third party can use to independently re-fetch + re-fold + verify.', handler: handleKernelReduceChain },
   // ── Core tools (compatibility shims; internal implementation routes through kernel where natural) ──
   publish_context: { description: 'Publish a context-annotated knowledge graph', handler: handlePublishContext },
   record_trajectory_step: { description: 'Record one step of an agent\'s trajectory as a signed, content-addressed ContextDescriptor — substrate-native dogfood that turns the agent\'s own actions into discoverable evidence (later read by verifyCapabilityTransfer and the calibration loop)', handler: handleRecordTrajectoryStep },
@@ -5523,7 +5523,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   pgsl_meet: { description: 'Compute the lattice meet of two PGSL fragments', handler: handlePgslMeet },
   pgsl_to_turtle: { description: 'Serialize the PGSL lattice as RDF Turtle', handler: handlePgslToTurtle },
   // Generic affordance follower (Path A — reach any vertical without per-vertical bridge)
-  invoke_affordance: { description: 'Invoke a vertical affordance by descriptor URL + cg:action IRI', handler: handleInvokeAffordance },
+  invoke_affordance: { description: 'Invoke a vertical affordance by descriptor URL + iep:action IRI', handler: handleInvokeAffordance },
 };
 
 // ── Tier-4: dynamic relay-tool registry over ac:AgentTool ────
@@ -5541,7 +5541,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
 //
 // Handlers proxy through the affordance machinery: when a dynamic
 // tool is invoked, the handler dereferences the descriptor and
-// returns its cg:affordance block + body so the caller can follow it
+// returns its iep:affordance block + body so the caller can follow it
 // (or, when hydra:target is present, invokes it directly via
 // kernelAct). Either way the relay never executes arbitrary code
 // from a pod — the affordance is itself a hypermedia operation, not
@@ -5594,11 +5594,11 @@ async function loadDynamicTools(): Promise<number> {
       if (!resp.ok) continue;
       const turtle = await resp.text();
       // Only Asserted, only ac:AgentTool.
-      if (!/cg:modalStatus\s+cg:Asserted/i.test(turtle)) continue;
+      if (!/iep:modalStatus\s+iep:Asserted/i.test(turtle)) continue;
       if (!/\ba ac:AgentTool\b|\ba\s+ac:AgentTool/.test(turtle)) continue;
       const labelMatch = turtle.match(/rdfs:label\s+"([^"]+)"/);
-      const actionMatch = turtle.match(/cg:action\s+<([^>]+)>/);
-      const commentMatch = turtle.match(/cg:affordance\s+\[[\s\S]*?rdfs:comment\s+"([^"]+)"/);
+      const actionMatch = turtle.match(/iep:action\s+<([^>]+)>/);
+      const commentMatch = turtle.match(/iep:affordance\s+\[[\s\S]*?rdfs:comment\s+"([^"]+)"/);
       if (!labelMatch) continue;
       const rawName = labelMatch[1]!;
       const toolName = `dynamic:${rawName.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase()}`;
@@ -5918,7 +5918,7 @@ const DISCOVER_CONTEXT_OUTPUT = mcpOutputSchema({
 
 const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
   type: 'object',
-  description: "Descriptor Turtle plus optional decrypted graph payload reached via the descriptor's cg:hasDistribution link.",
+  description: "Descriptor Turtle plus optional decrypted graph payload reached via the descriptor's iep:hasDistribution link.",
   properties: {
     url: { type: 'string', description: 'Echo of the descriptor URL requested' },
     turtle: { type: 'string', description: 'Full Turtle of the descriptor (when the URL is a .ttl)' },
@@ -5927,7 +5927,7 @@ const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
     content: { type: 'string', description: 'Resolved graph payload (decrypted when this agent is a recipient)' },
     graph: {
       type: 'object',
-      description: 'Distribution-followed graph payload (when descriptor has cg:hasDistribution and content was reachable)',
+      description: 'Distribution-followed graph payload (when descriptor has iep:hasDistribution and content was reachable)',
       properties: {
         url: { type: 'string' },
         mediaType: { type: 'string' },
@@ -5937,7 +5937,7 @@ const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
     },
     authorship: {
       type: 'object',
-      description: 'When the descriptor embeds a cg:authorshipProof, the relay automatically re-derives the canonical authorship payload and runs the delegation verifier from the descriptor turtle alone. authorshipVerified=true means the signature matched and the named agent really signed the AgentFacet. When BOTH the authorship proof and the delegation chain verify, effectiveTrustLevel becomes CryptographicallyVerified even if the descriptor body shipped SelfAsserted.',
+      description: 'When the descriptor embeds a iep:authorshipProof, the relay automatically re-derives the canonical authorship payload and runs the delegation verifier from the descriptor turtle alone. authorshipVerified=true means the signature matched and the named agent really signed the AgentFacet. When BOTH the authorship proof and the delegation chain verify, effectiveTrustLevel becomes CryptographicallyVerified even if the descriptor body shipped SelfAsserted.',
       properties: {
         authorshipVerified: { type: 'boolean' },
         signedBy: { type: 'string', description: 'Agent IRI claimed in the proof' },
@@ -6059,7 +6059,7 @@ const STUB_REDIRECT_OUTPUT = mcpOutputSchema({
 
 const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
   type: 'object',
-  description: 'Result of a cg:Affordance invocation — echo of the resolved affordance metadata plus the raw HTTP response from the target. Parse body based on contentType; 4xx is informative (e.g. forbidden / validation), 5xx is retried internally before surfacing.',
+  description: 'Result of a iep:Affordance invocation — echo of the resolved affordance metadata plus the raw HTTP response from the target. Parse body based on contentType; 4xx is informative (e.g. forbidden / validation), 5xx is retried internally before surfacing.',
   properties: {
     status: { type: 'integer', description: 'HTTP status from the target' },
     statusText: { type: 'string' },
@@ -6069,7 +6069,7 @@ const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
       type: 'object',
       description: 'Resolved affordance metadata from the descriptor',
       properties: {
-        action: { type: 'string', description: 'cg:action IRI selected by the caller' },
+        action: { type: 'string', description: 'iep:action IRI selected by the caller' },
         target: { type: 'string', description: 'hydra:target URL invoked' },
         method: { type: 'string', description: 'hydra:method (default POST when absent on the descriptor)' },
         mediaType: { type: 'string', description: 'dcat:mediaType when present' },
@@ -6172,7 +6172,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'extend',
-    description: 'Kernel verb — adjunction right half (part → whole). Inverse of restrict; back-links via cg:supersedes.',
+    description: 'Kernel verb — adjunction right half (part → whole). Inverse of restrict; back-links via iep:supersedes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -6213,22 +6213,22 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'reduce_chain',
-    description: 'Kernel verb — fold a cg:supersedes chain through a declarative reducer (Turtle-template OR SHACL-transform) and return the canonical head state alongside a content-addressed ReplayProof. The proof carries each chain link\'s CID in walk order, the reducer artifact\'s CID, periodic state checkpoints, and the final head-state CID. Any third party can independently re-fetch by CID and replay the same fold to verify the result — no trust in the original kernel is required. Reducer resolution order: (1) inline reducer_spec wins, (2) reducer_iri is dereferenced and classified, (3) the kernel reads `cg:reducer <iri>` declared on the chain head.',
+    description: 'Kernel verb — fold a iep:supersedes chain through a declarative reducer (Turtle-template OR SHACL-transform) and return the canonical head state alongside a content-addressed ReplayProof. The proof carries each chain link\'s CID in walk order, the reducer artifact\'s CID, periodic state checkpoints, and the final head-state CID. Any third party can independently re-fetch by CID and replay the same fold to verify the result — no trust in the original kernel is required. Reducer resolution order: (1) inline reducer_spec wins, (2) reducer_iri is dereferenced and classified, (3) the kernel reads `iep:reducer <iri>` declared on the chain head.',
     inputSchema: {
       type: 'object',
       properties: {
-        chain_iri: { type: 'string', description: 'Chain HEAD IRI — the most recent descriptor in the cg:supersedes chain. The fold walks back to the chain origin and applies the reducer left-to-right.' },
+        chain_iri: { type: 'string', description: 'Chain HEAD IRI — the most recent descriptor in the iep:supersedes chain. The fold walks back to the chain origin and applies the reducer left-to-right.' },
         reducer_iri: { type: 'string', description: 'Optional reducer artifact IRI to dereference + apply. Body starting with sh:rule / sh:construct / sh:* is treated as a SHACL transform; otherwise as a Turtle template with `{?prior}` / `{?current}` placeholders.' },
         reducer_spec: {
           type: 'object',
-          description: 'Inline reducer spec. Wins over reducer_iri and over cg:reducer on the chain head when supplied. Shape: { kind: "turtle-template", template: "<turtle>" } OR { kind: "shacl-transform", shape: "<shacl-turtle>" }.',
+          description: 'Inline reducer spec. Wins over reducer_iri and over iep:reducer on the chain head when supplied. Shape: { kind: "turtle-template", template: "<turtle>" } OR { kind: "shacl-transform", shape: "<shacl-turtle>" }.',
         },
         max_chain: { type: 'number', description: 'Maximum chain length to walk (default 64). Defense in depth against tampered cyclic chains; supersedes is normatively a DAG.' },
         checkpoint_every: { type: 'number', description: 'Emit a state checkpoint every Nth link (default 8). Verifiers can short-circuit replay from the nearest checkpoint when partial trust is acceptable.' },
         traversal: {
           type: 'string',
           enum: ['shortest', 'full'],
-          description: 'How the walker reconstructs the chain from cg:supersedes back-links. "shortest" (default) follows the first cg:supersedes per link — fast and historical-compat. "full" walks every cg:supersedes branch transitively, then folds the union in canonical order (cg:validFrom ascending, descriptor-IRI lexical tiebreak). Use "full" for a complete lineage audit when auto_supersede_prior writes ALL priors per version — the ReplayProof\'s chainCids[] cover the entire DAG closure so independent verifiers reproduce the same head.',
+          description: 'How the walker reconstructs the chain from iep:supersedes back-links. "shortest" (default) follows the first iep:supersedes per link — fast and historical-compat. "full" walks every iep:supersedes branch transitively, then folds the union in canonical order (iep:validFrom ascending, descriptor-IRI lexical tiebreak). Use "full" for a complete lineage audit when auto_supersede_prior writes ALL priors per version — the ReplayProof\'s chainCids[] cover the entire DAG closure so independent verifiers reproduce the same head.',
         },
       },
       required: ['chain_iri'],
@@ -6243,7 +6243,7 @@ const TOOL_SCHEMAS = [
   // ═══════════════════════════════════════════════════════════
   {
     name: 'publish_context',
-    description: 'Compatibility shim — internally composes kernel(compose+act) over a publish affordance plus E2EE/anchoring/compliance plumbing. Publishes a context-annotated knowledge graph (Turtle) to your Solid pod with the full 6-facet descriptor (Temporal, Provenance, Agent, Semiotic, Trust, Federation). Attributes the descriptor to the pod owner and associates it with the calling agent. Audience class is set via `visibility`: "public" (plaintext payload + foaf:Agent acl:Read — useful for wiki-style notes or jam:renderView projections), "shared" (default; JOSE envelope to the pod\'s authorized agents plus optional share_with recipients), or "private" (envelope to the calling agent ONLY; share_with ignored). SHACL conformance gate: pass `conforms_to_shapes` as an array of shape IRIs — every shape is fetched, parsed, and validated against the inbound graph_content BEFORE the pod write; non-conformance returns a 422 envelope `{ error: "shape_violation", code: 422, shape, violations: [...] }` and the descriptor/payload never lands on the pod. Caller-supplied shapes stack with any cg:conformsTo / dct:conformsTo declarations the target container (or its manifest) already carries — either failing rejects.',
+    description: 'Compatibility shim — internally composes kernel(compose+act) over a publish affordance plus E2EE/anchoring/compliance plumbing. Publishes a context-annotated knowledge graph (Turtle) to your Solid pod with the full 6-facet descriptor (Temporal, Provenance, Agent, Semiotic, Trust, Federation). Attributes the descriptor to the pod owner and associates it with the calling agent. Audience class is set via `visibility`: "public" (plaintext payload + foaf:Agent acl:Read — useful for wiki-style notes or jam:renderView projections), "shared" (default; JOSE envelope to the pod\'s authorized agents plus optional share_with recipients), or "private" (envelope to the calling agent ONLY; share_with ignored). SHACL conformance gate: pass `conforms_to_shapes` as an array of shape IRIs — every shape is fetched, parsed, and validated against the inbound graph_content BEFORE the pod write; non-conformance returns a 422 envelope `{ error: "shape_violation", code: 422, shape, violations: [...] }` and the descriptor/payload never lands on the pod. Caller-supplied shapes stack with any iep:conformsTo / dct:conformsTo declarations the target container (or its manifest) already carries — either failing rejects.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -6258,7 +6258,7 @@ const TOOL_SCHEMAS = [
         visibility: {
           type: 'string',
           enum: ['public', 'shared', 'private'],
-          description: 'Audience class for the published payload. Default "shared". "public" → no envelope; plaintext Turtle written to the pod; the descriptor + payload .acl grants acl:Read to acl:agentClass foaf:Agent (any authenticated user); descriptor advertises cg:visibility "public" and cg:encrypted false. Use for wiki-style notes, jam:renderView projections, or anything the user explicitly wants publicly readable. "shared" (DEFAULT) → JOSE envelope wrapped to the pod\'s authorized agents + author\'s session-agent key + any share_with recipients — historical behavior, preserves wire compat. "private" → envelope to the author\'s session agent ONLY; even other authorized agents on the same pod cannot decrypt. Use for personal scratchpads. share_with is ignored under "public" and "private" (a warn is logged if it was supplied).',
+          description: 'Audience class for the published payload. Default "shared". "public" → no envelope; plaintext Turtle written to the pod; the descriptor + payload .acl grants acl:Read to acl:agentClass foaf:Agent (any authenticated user); descriptor advertises iep:visibility "public" and iep:encrypted false. Use for wiki-style notes, jam:renderView projections, or anything the user explicitly wants publicly readable. "shared" (DEFAULT) → JOSE envelope wrapped to the pod\'s authorized agents + author\'s session-agent key + any share_with recipients — historical behavior, preserves wire compat. "private" → envelope to the author\'s session agent ONLY; even other authorized agents on the same pod cannot decrypt. Use for personal scratchpads. share_with is ignored under "public" and "private" (a warn is logged if it was supplied).',
         },
         share_with: {
           type: 'array',
@@ -6267,7 +6267,7 @@ const TOOL_SCHEMAS = [
         },
         auto_supersede_prior: {
           type: 'boolean',
-          description: 'When true (default), automatically add cg:supersedes links to any prior descriptor on this pod that describes the same graph_iri. Makes republish-to-add-recipients cleanly mark the older version as superseded. Set to false to allow multiple coexisting descriptors for the same graph.',
+          description: 'When true (default), automatically add iep:supersedes links to any prior descriptor on this pod that describes the same graph_iri. Makes republish-to-add-recipients cleanly mark the older version as superseded. Set to false to allow multiple coexisting descriptors for the same graph.',
         },
         if_match: {
           type: 'string',
@@ -6284,7 +6284,7 @@ const TOOL_SCHEMAS = [
         },
         sign_authorship: {
           type: 'boolean',
-          description: 'When true, embed an agent-level cg:authorshipProof block in the descriptor turtle. The proof signs a canonical payload of (agentId, ownerWebId, descriptorId, created, agentDid?) with the agent\'s delegation key (same ECDSA key the signed delegation VC chain uses). Verifiable from the descriptor ALONE: the verificationMethod (did:ethr:<addr>) lets a reader recover the public key without trusting pod storage. On dereference (get_descriptor), the relay automatically runs the verifier and returns { authorshipVerified, signedBy, verificationMethod, effectiveTrustLevel }. When BOTH the authorship proof AND the delegation chain verify, the EFFECTIVE trustLevel is CryptographicallyVerified even when the descriptor body ships TrustFacet.trustLevel = SelfAsserted. Default false to preserve SelfAsserted neutrality. Independent of `compliance` (the trust-facet operator-grade cg:proof block) — the two stack: a publish can carry both, neither, or either.',
+          description: 'When true, embed an agent-level iep:authorshipProof block in the descriptor turtle. The proof signs a canonical payload of (agentId, ownerWebId, descriptorId, created, agentDid?) with the agent\'s delegation key (same ECDSA key the signed delegation VC chain uses). Verifiable from the descriptor ALONE: the verificationMethod (did:ethr:<addr>) lets a reader recover the public key without trusting pod storage. On dereference (get_descriptor), the relay automatically runs the verifier and returns { authorshipVerified, signedBy, verificationMethod, effectiveTrustLevel }. When BOTH the authorship proof AND the delegation chain verify, the EFFECTIVE trustLevel is CryptographicallyVerified even when the descriptor body ships TrustFacet.trustLevel = SelfAsserted. Default false to preserve SelfAsserted neutrality. Independent of `compliance` (the trust-facet operator-grade iep:proof block) — the two stack: a publish can carry both, neither, or either.',
         },
         agent_did: {
           type: 'string',
@@ -6293,7 +6293,7 @@ const TOOL_SCHEMAS = [
         conforms_to_shapes: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of SHACL shape IRIs the inbound graph_content MUST conform to. Each shape is fetched (text/turtle) and run against the payload BEFORE any pod write — non-conformance rejects with the same 422 envelope as the container-declared conformance gate ({ error: "shape_violation", code: 422, shape, violations: [...] }) and the descriptor + payload never land on the pod. Stacks on top of any cg:conformsTo / dct:conformsTo shapes the target container (or its manifest collection) already declares; ALL shapes (container-declared + caller-supplied) must conform — any one failing rejects. Use to enforce a per-publish shape contract from the MCP wire without relying on the pod\'s .well-known/container-shape file being present.',
+          description: 'Optional list of SHACL shape IRIs the inbound graph_content MUST conform to. Each shape is fetched (text/turtle) and run against the payload BEFORE any pod write — non-conformance rejects with the same 422 envelope as the container-declared conformance gate ({ error: "shape_violation", code: 422, shape, violations: [...] }) and the descriptor + payload never land on the pod. Stacks on top of any iep:conformsTo / dct:conformsTo shapes the target container (or its manifest collection) already declares; ALL shapes (container-declared + caller-supplied) must conform — any one failing rejects. Use to enforce a per-publish shape contract from the MCP wire without relying on the pod\'s .well-known/container-shape file being present.',
         },
       },
       required: ['graph_iri', 'graph_content'],
@@ -6341,9 +6341,9 @@ const TOOL_SCHEMAS = [
       },
       required: ['verb', 'object_name'],
       examples: [
-        { verb: 'walked', object_name: 'cg:supersedes chain to head' },
+        { verb: 'walked', object_name: 'iep:supersedes chain to head' },
         { verb: 'planning', object_name: 'rev5 supersession of rev4', modal_status: 'Hypothetical', granularity: 'task' },
-        { verb: 'published', object_name: 'rev5 via signed+CAS', modal_status: 'Asserted', supersedes_step_id: 'urn:cg:trajectory-step:johnny:1780851000000', result_success: true },
+        { verb: 'published', object_name: 'rev5 via signed+CAS', modal_status: 'Asserted', supersedes_step_id: 'urn:iep:trajectory-step:johnny:1780851000000', result_success: true },
       ],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
@@ -6411,7 +6411,7 @@ const TOOL_SCHEMAS = [
       type: 'object',
       properties: {
         pod_url: { type: 'string', description: 'Solid pod URL to discover from (e.g. https://pod.example.com/agent/)' },
-        graph_iri: { type: 'string', description: 'Narrow to descriptors that mention this urn:graph:* IRI in their cg:describes set. Server-side filter — avoids fetching+truncating the full manifest. If you only want the LIVE HEAD descriptor for this IRI (not the whole lineage), prefer `get_current_head`.' },
+        graph_iri: { type: 'string', description: 'Narrow to descriptors that mention this urn:graph:* IRI in their iep:describes set. Server-side filter — avoids fetching+truncating the full manifest. If you only want the LIVE HEAD descriptor for this IRI (not the whole lineage), prefer `get_current_head`.' },
         facet_type: { type: 'string', enum: ['Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation'], description: 'Filter by facet type' },
         valid_from: { type: 'string', description: 'Filter: valid at or after this ISO datetime' },
         valid_until: { type: 'string', description: 'Filter: valid at or before this ISO datetime' },
@@ -6427,7 +6427,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'get_descriptor',
-    description: 'Compatibility shim — internally `dereference(descriptorUrl)`. Fetches the full Turtle content of a specific context descriptor. WHEN TO REACH FOR THIS: when you already have a concrete descriptor URL (e.g. from a prior `get_current_head` / `discover_context` / `prov:wasDerivedFrom` link) and want the body — including its `cg:affordance` block which self-describes how to participate (action IRIs, hydra:target endpoints, input templates). Reading affordances from a descriptor IS the emergent agent-teaching pattern: the publisher embeds the call surface, the consumer dereferences and invokes. For pure substrate access, use `dereference` directly.',
+    description: 'Compatibility shim — internally `dereference(descriptorUrl)`. Fetches the full Turtle content of a specific context descriptor. WHEN TO REACH FOR THIS: when you already have a concrete descriptor URL (e.g. from a prior `get_current_head` / `discover_context` / `prov:wasDerivedFrom` link) and want the body — including its `iep:affordance` block which self-describes how to participate (action IRIs, hydra:target endpoints, input templates). Reading affordances from a descriptor IS the emergent agent-teaching pattern: the publisher embeds the call surface, the consumer dereferences and invokes. For pure substrate access, use `dereference` directly.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -6515,7 +6515,7 @@ const TOOL_SCHEMAS = [
     inputSchema: {
       type: 'object',
       properties: {
-        graph_iri: { type: 'string', description: 'Narrow to descriptors mentioning this urn:graph:* IRI in their cg:describes set. Applied per pod, server-side.' },
+        graph_iri: { type: 'string', description: 'Narrow to descriptors mentioning this urn:graph:* IRI in their iep:describes set. Applied per pod, server-side.' },
         facet_type: { type: 'string', enum: ['Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation'], description: 'Filter by facet type' },
         valid_from: { type: 'string', description: 'Filter: valid at or after this ISO datetime' },
         valid_until: { type: 'string', description: 'Filter: valid at or before this ISO datetime' },
@@ -6621,7 +6621,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'sign_request',
-    description: 'Sign a payload AS your bound identity, producing a rev-196 signed-request envelope { _signature, _signed_payload }. This is your signing primitive: relay-mediated agents hold no key of their own, so to invoke an affordance that authenticates via a signed request (e.g. the Foxxi performance-record review, cg:action urn:cg:action:foxxi:review-record) you call sign_request with your intended args as `payload`, then pass the returned envelope as the `payload` of `act` on that affordance. The relay signs with its delegation key, binding YOUR authenticated identity (derived from your session — you cannot sign as anyone else); the target verifies your delegation against your own pod. No key material is exposed. WHAT IS SIGNED: the canonical message commits to your IDENTITY (agent_id), your pod, and a fresh timestamp (replay protection) — these are the security boundary, and the target binds the acted-on subject to this signed identity, so a caller can never reach another subject\'s data. Response-affecting options you pass (e.g. include_clr) are folded into the signed payload on a best-effort basis (object or JSON-string `payload`); treat them as ADVISORY — they only ever shape your OWN response and are never a cross-subject authority.',
+    description: 'Sign a payload AS your bound identity, producing a rev-196 signed-request envelope { _signature, _signed_payload }. This is your signing primitive: relay-mediated agents hold no key of their own, so to invoke an affordance that authenticates via a signed request (e.g. the Foxxi performance-record review, iep:action urn:iep:action:foxxi:review-record) you call sign_request with your intended args as `payload`, then pass the returned envelope as the `payload` of `act` on that affordance. The relay signs with its delegation key, binding YOUR authenticated identity (derived from your session — you cannot sign as anyone else); the target verifies your delegation against your own pod. No key material is exposed. WHAT IS SIGNED: the canonical message commits to your IDENTITY (agent_id), your pod, and a fresh timestamp (replay protection) — these are the security boundary, and the target binds the acted-on subject to this signed identity, so a caller can never reach another subject\'s data. Response-affecting options you pass (e.g. include_clr) are folded into the signed payload on a best-effort basis (object or JSON-string `payload`); treat them as ADVISORY — they only ever shape your OWN response and are never a cross-subject authority.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -6756,7 +6756,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'interrogative_route',
-    description: 'Answer interrogatives about a context descriptor by projecting the facet(s) that answer each — the runtime realization of the Interego ie: grammar. Pass a natural-language `question` (lexically classified into interrogative types from the ie: SKOS labels) OR an explicit `interrogatives` list (' + CANONICAL_ORDER.join(' / ') + '), plus the descriptor `url`. Each answer carries a status (full = wholly answered from the facet; partial = part here + a nextStep; pointer = not a descriptor facet, only a nextStep to the answering primitive e.g. pgsl_resolve for What; absent = the answering facet is missing). NOTE: this is NOT analyze_question (that picks a memory-retrieval strategy); and Why and How are both answered from the same cg:ProvenanceFacet. Read-only; composes get_descriptor.',
+    description: 'Answer interrogatives about a context descriptor by projecting the facet(s) that answer each — the runtime realization of the Interego ie: grammar. Pass a natural-language `question` (lexically classified into interrogative types from the ie: SKOS labels) OR an explicit `interrogatives` list (' + CANONICAL_ORDER.join(' / ') + '), plus the descriptor `url`. Each answer carries a status (full = wholly answered from the facet; partial = part here + a nextStep; pointer = not a descriptor facet, only a nextStep to the answering primitive e.g. pgsl_resolve for What; absent = the answering facet is missing). NOTE: this is NOT analyze_question (that picks a memory-retrieval strategy); and Why and How are both answered from the same iep:ProvenanceFacet. Read-only; composes get_descriptor.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -6830,12 +6830,12 @@ const TOOL_SCHEMAS = [
   // ── Generic affordance follower (Path A — reach any vertical) ──
   {
     name: 'invoke_affordance',
-    description: 'Compatibility shim — internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a cg:action IRI, this fetches the descriptor, finds the matching cg:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
+    description: 'Compatibility shim — internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a iep:action IRI, this fetches the descriptor, finds the matching iep:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
     inputSchema: {
       type: 'object',
       properties: {
         descriptor_url: { type: 'string', description: 'URL of the Context Descriptor containing the affordance (e.g., a Foxxi course descriptor URL).' },
-        action_iri: { type: 'string', description: 'The cg:action IRI of the affordance to invoke (e.g., urn:cg:action:foxxi:discover-assigned-courses). Discover available actions via discover_context + get_descriptor.' },
+        action_iri: { type: 'string', description: 'The iep:action IRI of the affordance to invoke (e.g., urn:iep:action:foxxi:discover-assigned-courses). Discover available actions via discover_context + get_descriptor.' },
         payload: { type: 'object', additionalProperties: true, description: 'Arguments to POST to the affordance target. Shape depends on the specific affordance — read the descriptor or the affordance\'s inputs metadata to learn what fields are required.' },
         authorization: { type: 'string', description: 'Optional Authorization header value to forward (e.g., Bearer <token>). Use when the target requires auth. The relay caller\'s own bearer token is NOT auto-forwarded — supply it explicitly if needed.' },
       },
@@ -6865,7 +6865,7 @@ PROACTIVE TRIGGERS — listen for these and use Interego unprompted:
 - "share this with [person]" → publish_context with share_with: [...]
 - "what's been shared with me" → discover_all + filter to recipient
 - "who said that" / "where did this come from" → get_descriptor → trace prov
-- "is this still true" → check cg:modalStatus + cg:supersedes chain
+- "is this still true" → check iep:modalStatus + iep:supersedes chain
 - the user references prior sessions / other AI tools → search the pod first
 - audit trail / regulated / EU AI Act / NIST RMF / SOC 2 / "auditable" /
   "regulators will see this" → publish_context with compliance: true +
@@ -6893,7 +6893,7 @@ MODAL STATUS (don't drift to "Asserted for safety"):
 - Counterfactual: explicitly negated / retracted. Rare.
 
 TRUST TIER (don't drift to "SelfAsserted by omission" when a verifier is reading):
-The substrate has a trust-level ladder. The body's cg:trustLevel is a CLAIM;
+The substrate has a trust-level ladder. The body's iep:trustLevel is a CLAIM;
 what readers actually see is effectiveTrustLevel, which the relay computes
 when proofs verify. Pick the tier on PURPOSE based on who will read your
 descriptor and what they need to be sure of:
@@ -6902,7 +6902,7 @@ descriptor and what they need to be sure of:
   authenticated the principal, so for memory / scratchpad / inferences this
   is the right tier (and matches Hypothetical's neutrality discipline).
 - CryptographicallyVerified — pass \`sign_authorship: true\` on publish_context.
-  The relay embeds a cg:authorshipProof signed with the calling agent's
+  The relay embeds a iep:authorshipProof signed with the calling agent's
   delegation key (ECDSA-secp256k1). The proof verifies from the descriptor
   ALONE — readers don't need to trust pod storage. USE THIS when: another
   agent will verify this came from YOU (not just your pod), you are
@@ -6915,7 +6915,7 @@ descriptor and what they need to be sure of:
 
 CONTRACTS MAY REQUIRE A MINIMUM TIER. When publishing into an existing
 odrl:Agreement, ttt:Game, ratification flow, or similar policy, READ the
-contract's required cg:trustLevel before publishing. If it asks for
+contract's required iep:trustLevel before publishing. If it asks for
 CryptographicallyVerified, pass sign_authorship: true — do NOT emit a
 \`"signed": true\` triple in the body and call it done; that is a SelfAsserted
 CLAIM about signing, not an actual signature. The relay's verifier (and any
@@ -6939,7 +6939,7 @@ KEY INVARIANTS (do not violate):
   user-supplied userId.
 - All cross-pod content is end-to-end encrypted; recipients are
   cryptographic, not access-list.
-- Descriptors are versioned via cg:supersedes; cached decisions are
+- Descriptors are versioned via iep:supersedes; cached decisions are
   verifiable-stale, not silent.
 
 DEEPER REFERENCE (fetch via resources/read when you need it):
@@ -7265,7 +7265,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // `mcp:read` scope is refused by every write-side tool here, BEFORE
     // any pod state is touched and BEFORE the substrate-level scope
     // gate (which would also refuse but for a different reason — the
-    // delegated agent's cg:scope rather than the OAuth bearer's scope).
+    // delegated agent's iep:scope rather than the OAuth bearer's scope).
     //
     // External verifiers can drive this gate end-to-end via the
     // standard OAuth flow:
@@ -7569,8 +7569,8 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
   res.type(wantsJsonLd ? 'application/ld+json' : 'application/json').json({
     '@context': KERNEL_JSONLD_CONTEXT,
     '@id': `${issuerHref}/.well-known/oauth-authorization-server`,
-    '@type': ['hydra:Resource', 'urn:cg:oauth:AuthorizationServerMetadata'],
-    conformsToShape: 'urn:cg:shape:OAuthAuthorizationServerMetadata',
+    '@type': ['hydra:Resource', 'urn:iep:oauth:AuthorizationServerMetadata'],
+    conformsToShape: 'urn:iep:shape:OAuthAuthorizationServerMetadata',
     issuer: DEFAULT_ISSUER.href,
     authorization_endpoint: `${issuerHref}/authorize`,
     token_endpoint: `${issuerHref}/token`,
@@ -7610,27 +7610,27 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
     // clients can navigate the auth flow via link traversal.
     affordances: [
       {
-        '@type': ['cg:Affordance', 'hydra:Operation'],
-        action: 'urn:cg:action:oauth:authorize',
+        '@type': ['iep:Affordance', 'hydra:Operation'],
+        action: 'urn:iep:action:oauth:authorize',
         target: `${issuerHref}/authorize`,
         method: 'GET',
-        returns: 'urn:cg:type:AuthorizationCode',
+        returns: 'urn:iep:type:AuthorizationCode',
       },
       {
-        '@type': ['cg:Affordance', 'hydra:Operation'],
-        action: 'urn:cg:action:oauth:token',
+        '@type': ['iep:Affordance', 'hydra:Operation'],
+        action: 'urn:iep:action:oauth:token',
         target: `${issuerHref}/token`,
         method: 'POST',
-        expects: 'urn:cg:type:TokenRequest',
-        returns: 'urn:cg:type:AccessToken',
+        expects: 'urn:iep:type:TokenRequest',
+        returns: 'urn:iep:type:AccessToken',
       },
       {
-        '@type': ['cg:Affordance', 'hydra:Operation'],
-        action: 'urn:cg:action:oauth:register',
+        '@type': ['iep:Affordance', 'hydra:Operation'],
+        action: 'urn:iep:action:oauth:register',
         target: `${issuerHref}/register`,
         method: 'POST',
-        expects: 'urn:cg:type:ClientRegistrationRequest',
-        returns: 'urn:cg:type:ClientRegistration',
+        expects: 'urn:iep:type:ClientRegistrationRequest',
+        returns: 'urn:iep:type:ClientRegistration',
       },
     ],
   });
@@ -7643,8 +7643,8 @@ app.get('/.well-known/oauth-protected-resource', (req, res) => {
   res.type(wantsJsonLd ? 'application/ld+json' : 'application/json').json({
     '@context': KERNEL_JSONLD_CONTEXT,
     '@id': `${issuerHref}/.well-known/oauth-protected-resource`,
-    '@type': ['hydra:Resource', 'urn:cg:oauth:ProtectedResourceMetadata'],
-    conformsToShape: 'urn:cg:shape:OAuthProtectedResourceMetadata',
+    '@type': ['hydra:Resource', 'urn:iep:oauth:ProtectedResourceMetadata'],
+    conformsToShape: 'urn:iep:shape:OAuthProtectedResourceMetadata',
     resource: issuerHref + '/',
     authorization_servers: [DEFAULT_ISSUER.href],
     // Mirror the authorization-server metadata's scope vocabulary. See
@@ -7660,40 +7660,40 @@ app.get('/.well-known/oauth-protected-resource', (req, res) => {
     bearer_methods_supported: RELAY_REQUIRE_DPOP ? ['DPoP'] : ['header', 'DPoP'],
     affordances: [
       {
-        '@type': ['cg:Affordance', 'hydra:Operation'],
-        action: 'urn:cg:action:oauth:discover-authorization-server',
+        '@type': ['iep:Affordance', 'hydra:Operation'],
+        action: 'urn:iep:action:oauth:discover-authorization-server',
         target: `${issuerHref}/.well-known/oauth-authorization-server`,
         method: 'GET',
-        returns: 'urn:cg:type:AuthorizationServerMetadata',
+        returns: 'urn:iep:type:AuthorizationServerMetadata',
       },
       {
-        '@type': ['cg:Affordance', 'hydra:Operation'],
-        action: 'urn:cg:action:mcp:invoke',
+        '@type': ['iep:Affordance', 'hydra:Operation'],
+        action: 'urn:iep:action:mcp:invoke',
         target: `${issuerHref}/mcp`,
         method: 'POST',
-        expects: 'urn:cg:type:McpRequest',
-        returns: 'urn:cg:type:McpResponse',
+        expects: 'urn:iep:type:McpRequest',
+        returns: 'urn:iep:type:McpResponse',
       },
       {
-        '@type': ['cg:Affordance', 'hydra:Operation'],
-        action: 'urn:cg:action:mcp:list-tools',
+        '@type': ['iep:Affordance', 'hydra:Operation'],
+        action: 'urn:iep:action:mcp:list-tools',
         target: `${issuerHref}/tools`,
         method: 'GET',
-        returns: 'urn:cg:type:HydraCollection',
+        returns: 'urn:iep:type:HydraCollection',
       },
       {
         // /.well-known/operations — typed substrate-operation catalog
-        // (8 kernel verbs + every thin-facade shim) as cg:Affordance
+        // (8 kernel verbs + every thin-facade shim) as iep:Affordance
         // entries. Lets a hypermedia client walk discovery → catalog →
         // shape → invocation without an MCP client. See FIX 4 in the
         // survey plan; the underlying route remains POST /mcp (or
         // POST /tool/:name for the REST shortcut), the catalog only
         // publishes WHAT exists and WHERE to send it.
-        '@type': ['cg:Affordance', 'hydra:Operation'],
-        action: 'urn:cg:action:operations:catalog',
+        '@type': ['iep:Affordance', 'hydra:Operation'],
+        action: 'urn:iep:action:operations:catalog',
         target: `${issuerHref}/.well-known/operations`,
         method: 'GET',
-        returns: 'urn:cg:type:OperationsCatalog',
+        returns: 'urn:iep:type:OperationsCatalog',
       },
     ],
   });
@@ -7716,7 +7716,7 @@ app.get('/.well-known/oauth-protected-resource', (req, res) => {
 // app.post('/tool/:name', …) dispatcher handles the rest — no new
 // route. kernel.act() callers can use the same catalog uniformly:
 // act({descriptorUrl: '<base>/.well-known/operations', actionIri:
-// 'urn:cg:action:<name>'}, payload).
+// 'urn:iep:action:<name>'}, payload).
 app.get('/.well-known/operations', (req, res) => {
   // Same Accept-driven negotiation as the OAuth metadata documents:
   // application/json by default (max-compat with non-JSON-LD clients),
@@ -7741,15 +7741,15 @@ app.get('/.well-known/operations', (req, res) => {
     const schema = schemaByName.get(name);
     const classification = KERNEL_VERBS.has(name) ? 'kernel-verb' : 'thin-facade';
     const authRequired = AUTH_REQUIRED_TOOLS.has(name);
-    const shapeIri = `urn:cg:shape:input:${name}`;
-    const returnsIri = `urn:cg:shape:output:${name}`;
+    const shapeIri = `urn:iep:shape:input:${name}`;
+    const returnsIri = `urn:iep:shape:output:${name}`;
     const title = schema && typeof (schema as { annotations?: { title?: string } }).annotations?.title === 'string'
       ? (schema as { annotations: { title: string } }).annotations.title
       : name;
     return {
-      '@id': `urn:cg:operation:${name}`,
-      '@type': ['cg:Affordance', 'hydra:Operation'],
-      action: `urn:cg:action:${name}`,
+      '@id': `urn:iep:operation:${name}`,
+      '@type': ['iep:Affordance', 'hydra:Operation'],
+      action: `urn:iep:action:${name}`,
       // REST shortcut — POST to /tool/:name is dispatched by the
       // existing handler at app.post('/tool/:name', …) which routes
       // by toolName through the same TOOLS registry.
@@ -7777,8 +7777,8 @@ app.get('/.well-known/operations', (req, res) => {
   res.type(wantsJsonLd ? 'application/ld+json' : 'application/json').json({
     '@context': KERNEL_JSONLD_CONTEXT,
     '@id': catalogId,
-    '@type': ['hydra:Collection', 'urn:cg:type:OperationsCatalog'],
-    conformsToShape: 'urn:cg:shape:OperationsCatalog',
+    '@type': ['hydra:Collection', 'urn:iep:type:OperationsCatalog'],
+    conformsToShape: 'urn:iep:shape:OperationsCatalog',
     'hydra:totalItems': members.length,
     'hydra:member': members,
   });
@@ -7871,26 +7871,26 @@ function relayShimNextSteps(name: string, payload: Record<string, unknown>): Rea
       const descriptorUrl = pick('descriptorUrl');
       const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [];
       if (descriptorUrl) {
-        steps.push({ action: 'urn:cg:action:read',      target: descriptorUrl, method: 'GET' });
-        steps.push({ action: 'urn:cg:action:supersede', target: descriptorUrl, method: 'POST' });
+        steps.push({ action: 'urn:iep:action:read',      target: descriptorUrl, method: 'GET' });
+        steps.push({ action: 'urn:iep:action:supersede', target: descriptorUrl, method: 'POST' });
       }
       return steps;
     }
     case 'discover_context':
     case 'discover_all':
-      return [{ action: 'urn:cg:action:refine-search', target: 'urn:cg:tool:discover_context', method: 'POST' }];
+      return [{ action: 'urn:iep:action:refine-search', target: 'urn:iep:tool:discover_context', method: 'POST' }];
     case 'get_descriptor': {
       const url = pick('url');
       return url
-        ? [{ action: 'urn:cg:action:dereference', target: url, method: 'GET' }]
+        ? [{ action: 'urn:iep:action:dereference', target: url, method: 'GET' }]
         : [];
     }
     case 'register_agent': {
       const agentIri = pick('agentIri') ?? pick('agentId');
       const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [
-        { action: 'urn:cg:action:verify-agent', target: 'urn:cg:tool:verify_agent', method: 'POST' },
+        { action: 'urn:iep:action:verify-agent', target: 'urn:iep:tool:verify_agent', method: 'POST' },
       ];
-      if (agentIri) steps.push({ action: 'urn:cg:action:revoke-agent', target: agentIri, method: 'DELETE' });
+      if (agentIri) steps.push({ action: 'urn:iep:action:revoke-agent', target: agentIri, method: 'DELETE' });
       return steps;
     }
     default:
@@ -8636,9 +8636,9 @@ async function bootstrapPod(params: {
         surfaceAgentIri,
       });
     }
-    // FIX C: write the cg:PodBootstrap descriptor in the same
+    // FIX C: write the iep:PodBootstrap descriptor in the same
     // single-writer block as /agents + /profile/card. Idempotent
-    // (fixed IRI urn:cg:pod-bootstrap:<userId>:v1) so re-bootstraps
+    // (fixed IRI urn:iep:pod-bootstrap:<userId>:v1) so re-bootstraps
     // don't duplicate the manifest entry. Best-effort — see
     // publishPodBootstrapDescriptor's failure-mode comment. We only
     // publish on first-touch because the bootstrap describes the pod's
@@ -8732,7 +8732,7 @@ const { bootstrappedPods, ensurePodInitialized } = createLazyPodInit({
 // card — it points to `<pod>/agents` (via rdfs:seeAlso) as the
 // authoritative authorized-agent list.
 //
-// We deliberately keep the inline `cg:authorizedAgent` payload narrow
+// We deliberately keep the inline `iep:authorizedAgent` payload narrow
 // (the current surface agent only). The full multi-surface list lives
 // on `<pod>/agents` and is read from there by every cross-pod
 // resolution flow.
@@ -8772,7 +8772,7 @@ async function putRelayProfileCard(params: {
     `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
     `@prefix solid: <http://www.w3.org/ns/solid/terms#> .`,
     `@prefix pim: <http://www.w3.org/ns/pim/space#> .`,
-    `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .`,
+    `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .`,
     `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .`,
     ``,
     `<${cardUrl}#me>`,
@@ -8781,7 +8781,7 @@ async function putRelayProfileCard(params: {
     `    solid:oidcIssuer <${IDENTITY_URL}> ;`,
     `    solid:storage <${podUrl}> ;`,
     `    pim:storage <${podUrl}> ;`,
-    `    cg:agentRegistry <${agentsRegistryUrl}> ;`,
+    `    iep:agentRegistry <${agentsRegistryUrl}> ;`,
     `    rdfs:seeAlso ${seeAlsoTargets.map(t => `<${t}>`).join(', ')} .`,
     ``,
     // Owner WebID returned by identity (`<identityWebId>`) is the
@@ -8818,10 +8818,10 @@ function escapeTurtleString(s: string): string {
 // ── Pod-bootstrap descriptor writer (FIX C) ───────────────────────
 //
 // On first-touch pod init the relay also publishes a single
-// `cg:PodBootstrap` Context Descriptor into the pod's
+// `iep:PodBootstrap` Context Descriptor into the pod's
 // `.well-known/context-graphs` manifest. The descriptor self-describes
-// the pod (cg:owner / cg:storage / cg:webId / cg:agentRegistry /
-// cg:profileCard) and carries one cg:Affordance (cg:canPublish) whose
+// the pod (iep:owner / iep:storage / iep:webId / iep:agentRegistry /
+// iep:profileCard) and carries one iep:Affordance (iep:canPublish) whose
 // hydra:target points back at the relay's publish_context tool so a
 // client discovering the pristine pod has a strictly better UX signal
 // than an empty manifest: "pod is alive, owned by X, here is how to
@@ -8829,7 +8829,7 @@ function escapeTurtleString(s: string): string {
 //
 // Idempotency
 // -----------
-// Descriptor IRI is pinned to `urn:cg:pod-bootstrap:<userId>:v1` — the
+// Descriptor IRI is pinned to `urn:iep:pod-bootstrap:<userId>:v1` — the
 // same IRI every time. `publish()` on the substrate is idempotent at
 // the manifest level (it observes the entry already exists and skips
 // the PUT), so subsequent bootstrap calls are no-ops at the manifest
@@ -8852,11 +8852,11 @@ async function publishPodBootstrapDescriptor(params: {
   surfaceAgentIri: IRI;
 }): Promise<void> {
   const { podUrl, ownerWebId, userId, surfaceAgentIri } = params;
-  const descId = `urn:cg:pod-bootstrap:${userId}:v1` as IRI;
+  const descId = `urn:iep:pod-bootstrap:${userId}:v1` as IRI;
   const agentsRegistryUrl = `${podUrl}agents`;
   const cardUrl = `${podUrl}profile/card`;
   const ownerWebIdHash = `${cardUrl}#me`;
-  // hydra:target for the cg:canPublish affordance. PUBLIC_BASE_URL is
+  // hydra:target for the iep:canPublish affordance. PUBLIC_BASE_URL is
   // the relay's public origin (set in container env). When unset the
   // affordance still gets a sensible local-dev target so dev-mode
   // discovers behave consistently with prod.
@@ -8893,24 +8893,24 @@ async function publishPodBootstrapDescriptor(params: {
     return;
   }
 
-  // Named-graph body: the pod self-description + one cg:canPublish
-  // affordance. Kept compact; conventional cg: / hydra: / dcat:
+  // Named-graph body: the pod self-description + one iep:canPublish
+  // affordance. Kept compact; conventional iep: / hydra: / dcat:
   // vocabularies only. Lines are emitted without prefix declarations —
   // `wrapAsTriG()` hoists the descriptor's prefix block above the
-  // named-graph body so cg: / hydra: / dcat: / prov: are already in
+  // named-graph body so iep: / hydra: / dcat: / prov: are already in
   // scope inside the graph block.
   const graphContent = [
     `<${podUrl}>`,
-    `    a cg:PodBootstrap ;`,
-    `    cg:owner <${ownerWebId}> ;`,
-    `    cg:storage <${podUrl}> ;`,
-    `    cg:webId <${ownerWebIdHash}> ;`,
-    `    cg:agentRegistry <${agentsRegistryUrl}> ;`,
-    `    cg:profileCard <${cardUrl}> ;`,
+    `    a iep:PodBootstrap ;`,
+    `    iep:owner <${ownerWebId}> ;`,
+    `    iep:storage <${podUrl}> ;`,
+    `    iep:webId <${ownerWebIdHash}> ;`,
+    `    iep:agentRegistry <${agentsRegistryUrl}> ;`,
+    `    iep:profileCard <${cardUrl}> ;`,
     `    prov:wasGeneratedBy <${surfaceAgentIri}> ;`,
-    `    cg:affordance [`,
-    `        a cg:Affordance, hydra:Operation ;`,
-    `        cg:action cg:canPublish ;`,
+    `    iep:affordance [`,
+    `        a iep:Affordance, hydra:Operation ;`,
+    `        iep:action iep:canPublish ;`,
     `        hydra:method "POST" ;`,
     `        hydra:target <${publishTarget}> ;`,
     `        hydra:title "Publish a new context descriptor to this pod"`,
@@ -9062,12 +9062,12 @@ app.get('/', (req, res) => {
       { name: 'mcp-stream',       target: '/sse',                            method: 'GET',  description: 'Server-sent-events stream for MCP notifications.' },
       { name: 'audit-frameworks', target: '/audit/frameworks',               method: 'GET',  description: 'List known compliance frameworks + their controls.' },
       { name: 'audit-events',     target: '/audit/events?pod=<url>',         method: 'GET',  description: 'List recent descriptors on a pod (audit log).' },
-      { name: 'audit-lineage',    target: '/audit/lineage?descriptor=<url>', method: 'GET',  description: 'Walk prov:wasDerivedFrom + cg:supersedes for one descriptor.' },
+      { name: 'audit-lineage',    target: '/audit/lineage?descriptor=<url>', method: 'GET',  description: 'Walk prov:wasDerivedFrom + iep:supersedes for one descriptor.' },
       { name: 'audit-compliance', target: '/audit/compliance/{framework}',   method: 'GET',  description: 'Generate a regulatory framework report.' },
       { name: 'inbox',            target: '/inbox?pod=<url>',                method: 'GET',  description: 'What\'s new on a pod (consumer-friendly framing of /audit/events).' },
       { name: 'oauth-as-meta',    target: '/.well-known/oauth-authorization-server', method: 'GET', description: 'OAuth 2.0 Authorization Server Metadata (RFC 8414) + Hydra.' },
       { name: 'oauth-pr-meta',    target: '/.well-known/oauth-protected-resource',    method: 'GET', description: 'OAuth Protected Resource Metadata (RFC 9728) + Hydra.' },
-      { name: 'operations',       target: '/.well-known/operations',         method: 'GET',  description: 'Typed substrate-operation catalog — 8 kernel verbs + every thin-facade shim as cg:Affordance entries (FIX 4).' },
+      { name: 'operations',       target: '/.well-known/operations',         method: 'GET',  description: 'Typed substrate-operation catalog — 8 kernel verbs + every thin-facade shim as iep:Affordance entries (FIX 4).' },
       { name: 'shacl-shapes',     target: '/.well-known/shacl-shapes',       method: 'GET',  description: 'SHACL shapes graph this relay\'s responses conform to.' },
       { name: 'health',           target: '/health',                         method: 'GET',  description: 'Relay liveness probe.' },
       { name: 'federation-status', target: '/relay/federation-status',       method: 'GET',  description: 'Federation registry durability snapshot (entry count + last-hydrate / last-persist timestamps + hydrate source pod). No auth required.' },
@@ -9077,7 +9077,7 @@ app.get('/', (req, res) => {
 });
 
 // SHACL shapes graph — Turtle export of every shape the relay's
-// responses reference via cg:conformsToShape. Lets validators verify
+// responses reference via iep:conformsToShape. Lets validators verify
 // any kernel-verb / shim payload without out-of-band schema lookup.
 app.get('/.well-known/shacl-shapes', (_req, res) => {
   res.type('text/turtle').send(getShaclShapesTurtle());
@@ -9174,7 +9174,7 @@ app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
 // host outside RFC1918 / link-local / loopback / IMDS ranges.
 //
 // /audit/events — list recent descriptors on a pod (audit log).
-// /audit/lineage — walk prov:wasDerivedFrom + cg:supersedes for one descriptor.
+// /audit/lineage — walk prov:wasDerivedFrom + iep:supersedes for one descriptor.
 // /audit/compliance/:framework — generate a regulatory framework report.
 // /audit/frameworks — list known frameworks + their controls (public; no URL input).
 
@@ -9501,7 +9501,7 @@ app.get('/audit/compliance/:framework', bearerVerifyLimiter, async (req, res) =>
   try {
     const entries = await discover(podUrl, undefined, { fetch: solidFetch });
     // Map manifest entries → AuditableDescriptor. v1: derive evidence
-    // citations from a (currently absent) cg:evidenceForControl predicate;
+    // citations from a (currently absent) iep:evidenceForControl predicate;
     // for now the heuristic is the dct:conformsTo array (pre-existing).
     const auditable: AuditableDescriptor[] = entries.map(e => ({
       id: e.descriptorUrl as IRI,
@@ -9674,7 +9674,7 @@ app.post('/verify-token', verifyTokenLimiter, async (req, res) => {
 
 /**
  * POST /admin/backfill-manifest-cid — one-shot rewrite that adds the
- * `cg:contentCid "<cid>"` triple to existing manifest entries that
+ * `iep:contentCid "<cid>"` triple to existing manifest entries that
  * predate the mirror. Closes the legacy-entry gap in the Phase A CAS
  * precondition fast-path: post-fix publishes always write the mirror,
  * but entries written by pre-fix publishes (every head currently on
@@ -9858,8 +9858,8 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
       skipped: entries.length,
       entries: [],
       note: whitelist
-        ? 'All whitelisted entries already carry cg:contentCid (or were not present in the manifest); nothing to backfill.'
-        : 'All manifest entries already carry cg:contentCid; nothing to backfill.',
+        ? 'All whitelisted entries already carry iep:contentCid (or were not present in the manifest); nothing to backfill.'
+        : 'All manifest entries already carry iep:contentCid; nothing to backfill.',
     });
     return;
   }
@@ -9894,9 +9894,9 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
     return;
   }
 
-  // 4. Inject `cg:contentCid "<cid>" ;` into each target entry.
+  // 4. Inject `iep:contentCid "<cid>" ;` into each target entry.
   // The manifest format is line-oriented (parseManifest is too): each
-  // entry begins with `<URL> a cg:ManifestEntry ;` and runs until a
+  // entry begins with `<URL> a iep:ManifestEntry ;` and runs until a
   // line ending in `.`. Insert the new triple right after the entry
   // header so it sits in the same field-order publish() now emits.
   const editByUrl = new Map(edits.map(e => [e.descriptorUrl, e.cid]));
@@ -9904,7 +9904,7 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
   const out: string[] = [];
   for (const ln of lines) {
     out.push(ln);
-    const m = ln.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry\s*;/);
+    const m = ln.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry\s*;/);
     if (m) {
       const url = m[1]!;
       const cid = editByUrl.get(url);
@@ -9913,7 +9913,7 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
         // is the manifestEntryTurtle convention; fall back to leading
         // whitespace of the next non-blank if present).
         const indent = '    ';
-        out.push(`${indent}cg:contentCid "${cid}" ;`);
+        out.push(`${indent}iep:contentCid "${cid}" ;`);
       }
     }
   }
@@ -9960,8 +9960,8 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
  * GET /render/:descriptorIri — server-side plaintext projection of an
  * encrypted graph payload for thin clients (no X25519 keypair).
  *
- * Implements the `cg:renderView` affordance pattern: the publisher
- * emits a second affordance on the descriptor (alongside cg:canDecrypt)
+ * Implements the `iep:renderView` affordance pattern: the publisher
+ * emits a second affordance on the descriptor (alongside iep:canDecrypt)
  * pointing at this endpoint. Holders of a bearer token whose minted
  * surface-agent is in the descriptor's envelope recipient set follow
  * that link and receive the decrypted named-graph as `text/turtle`.
@@ -9985,14 +9985,14 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
  *   404 when the descriptor can't be resolved
  *   409 when the descriptor's payload is NOT encrypted (no projection
  *       needed — caller can fetch the payload URL directly via the
- *       existing cg:canFetchPayload affordance)
+ *       existing iep:canFetchPayload affordance)
  */
 app.get('/render/:descriptorIri', async (req, res) => {
   const auth = await verifyBearerToken(req.headers.authorization);
   if (!auth.authenticated) {
     res.status(401).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
-      '@type': ['hydra:Status', 'urn:cg:error:Unauthorized'],
+      '@type': ['hydra:Status', 'urn:iep:error:Unauthorized'],
       error: auth.error ?? 'Bearer token required',
     });
     return;
@@ -10001,7 +10001,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
   if (!descriptorIri) {
     res.status(400).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
-      '@type': ['hydra:Status', 'urn:cg:error:BadRequest'],
+      '@type': ['hydra:Status', 'urn:iep:error:BadRequest'],
       error: 'descriptorIri path segment required',
     });
     return;
@@ -10035,7 +10035,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
     if (!descriptorUrl) {
       res.status(404).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:cg:error:DescriptorNotFound'],
+        '@type': ['hydra:Status', 'urn:iep:error:DescriptorNotFound'],
         error: `Cannot resolve descriptor IRI: ${descriptorIri}`,
       });
       return;
@@ -10048,7 +10048,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
     if (!descResp.ok) {
       res.status(404).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:cg:error:DescriptorNotFound'],
+        '@type': ['hydra:Status', 'urn:iep:error:DescriptorNotFound'],
         error: `Descriptor GET failed: ${descResp.status} ${descResp.statusText}`,
         descriptorUrl,
       });
@@ -10059,7 +10059,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
     if (!dist) {
       res.status(404).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:cg:error:NoDistribution'],
+        '@type': ['hydra:Status', 'urn:iep:error:NoDistribution'],
         error: 'Descriptor has no parseable Distribution affordance',
         descriptorUrl,
       });
@@ -10068,8 +10068,8 @@ app.get('/render/:descriptorIri', async (req, res) => {
     if (!dist.encrypted) {
       res.status(409).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:cg:error:NotEncrypted'],
-        error: 'Payload is not encrypted; cg:renderView is only meaningful for encrypted distributions. Follow the cg:canFetchPayload affordance directly.',
+        '@type': ['hydra:Status', 'urn:iep:error:NotEncrypted'],
+        error: 'Payload is not encrypted; iep:renderView is only meaningful for encrypted distributions. Follow the iep:canFetchPayload affordance directly.',
         accessURL: dist.accessURL,
       });
       return;
@@ -10082,7 +10082,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
     if (!envResp.ok) {
       res.status(502).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:cg:error:EnvelopeFetchFailed'],
+        '@type': ['hydra:Status', 'urn:iep:error:EnvelopeFetchFailed'],
         error: `Envelope GET failed: ${envResp.status} ${envResp.statusText}`,
         envelopeUrl: dist.accessURL,
       });
@@ -10095,7 +10095,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
     } catch (err) {
       res.status(502).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:cg:error:MalformedEnvelope'],
+        '@type': ['hydra:Status', 'urn:iep:error:MalformedEnvelope'],
         error: `Envelope is not valid JSON: ${(err as Error).message}`,
       });
       return;
@@ -10103,7 +10103,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
     if (!envelope || envelope.algorithm !== 'X25519-XSalsa20-Poly1305' || !Array.isArray(envelope.wrappedKeys)) {
       res.status(502).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:cg:error:MalformedEnvelope'],
+        '@type': ['hydra:Status', 'urn:iep:error:MalformedEnvelope'],
         error: 'Envelope is not a valid X25519-XSalsa20-Poly1305 JOSE envelope',
       });
       return;
@@ -10120,7 +10120,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
     if (!inRecipientSet) {
       res.status(403).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:cg:error:NotARecipient'],
+        '@type': ['hydra:Status', 'urn:iep:error:NotARecipient'],
         error: 'Relay agent is not in the envelope recipient set; cannot render plaintext projection.',
         relayAgentPublicKey: relayAgentKey.publicKey,
         recipientCount: envelope.wrappedKeys.length,
@@ -10131,7 +10131,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
     if (plaintext === null) {
       res.status(500).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:cg:error:UnwrapFailed'],
+        '@type': ['hydra:Status', 'urn:iep:error:UnwrapFailed'],
         error: 'Relay agent is in recipient set but unwrap failed (key material corrupted?).',
       });
       return;
@@ -10143,7 +10143,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
   } catch (err) {
     res.status(500).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
-      '@type': ['hydra:Status', 'urn:cg:error:RenderFailed'],
+      '@type': ['hydra:Status', 'urn:iep:error:RenderFailed'],
       error: `Render failed: ${(err as Error).message}`,
     });
   }
@@ -10220,7 +10220,7 @@ app.post('/agents/:agentIri/revoke', bearerVerifyLimiter, async (req, res) => {
         action: 'revoked',
         principal: agentIri,
         system: `pod:${podUrl}`,
-        scope: `cg:authorizedAgent on ${podUrl}`,
+        scope: `iep:authorizedAgent on ${podUrl}`,
         grantorDid: tokenOwnerWebId,
         justification: (req.body && typeof req.body === 'object' && typeof req.body.reason === 'string')
           ? req.body.reason
@@ -10296,16 +10296,16 @@ app.get('/tools', (req, res) => {
     // catalog to an individual invocation by following links.
     return {
       '@id': `${base}/tool/${name}`,
-      '@type': ['hydra:Resource', 'urn:cg:type:McpTool'],
+      '@type': ['hydra:Resource', 'urn:iep:type:McpTool'],
       ...baseSchema,
       affordances: [
         {
-          '@type': ['cg:Affordance', 'hydra:Operation'],
-          action: `urn:cg:action:invoke:${name}`,
+          '@type': ['iep:Affordance', 'hydra:Operation'],
+          action: `urn:iep:action:invoke:${name}`,
           target: `${base}/tool/${name}`,
           method: 'POST',
-          expects: 'urn:cg:type:ToolInput',
-          returns: 'urn:cg:type:ToolResult',
+          expects: 'urn:iep:type:ToolInput',
+          returns: 'urn:iep:type:ToolResult',
         },
       ],
     };
@@ -10313,8 +10313,8 @@ app.get('/tools', (req, res) => {
   res.type('application/ld+json').json({
     '@context': KERNEL_JSONLD_CONTEXT,
     '@id': `${base}/tools`,
-    '@type': ['hydra:Collection', 'urn:cg:type:McpToolCatalog'],
-    conformsToShape: 'urn:cg:shape:McpToolCatalog',
+    '@type': ['hydra:Collection', 'urn:iep:type:McpToolCatalog'],
+    conformsToShape: 'urn:iep:shape:McpToolCatalog',
     'hydra:totalItems': members.length,
     'hydra:member': members,
   });
@@ -10335,7 +10335,7 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
   if (!tool) {
     res.status(404).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
-      '@type': ['hydra:Status', 'urn:cg:error:UnknownTool'],
+      '@type': ['hydra:Status', 'urn:iep:error:UnknownTool'],
       error: `Unknown tool: ${toolName}`,
     });
     return;
@@ -10373,20 +10373,20 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     if (!auth.authenticated) {
       res.status(401).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:cg:error:Unauthorized'],
+        '@type': ['hydra:Status', 'urn:iep:error:Unauthorized'],
         error: 'Authentication required for write operations',
         detail: auth.error,
         hint: `Two paths: (1) OAuth bearer via ${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/authorize (browser-mediated), or (2) ECDSA signed request — POST body with { _signature: "0x...", _signed_payload: JSON.stringify({ ...args, agent_id: "did:ethr:<addr>", timestamp: <ISO 8601> }) } signed with the wallet matching agent_id.`,
         affordances: [
           {
-            '@type': ['cg:Affordance', 'hydra:Operation'],
-            action: 'urn:cg:action:identity:try',
+            '@type': ['iep:Affordance', 'hydra:Operation'],
+            action: 'urn:iep:action:identity:try',
             target: `${IDENTITY_URL}/try`,
             method: 'POST',
           },
           {
-            '@type': ['cg:Affordance', 'hydra:Operation'],
-            action: 'urn:cg:action:identity:authorize',
+            '@type': ['iep:Affordance', 'hydra:Operation'],
+            action: 'urn:iep:action:identity:authorize',
             target: `${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/authorize`,
             method: 'GET',
           },
@@ -10468,7 +10468,7 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
   } catch (err) {
     res.status(500).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
-      '@type': ['hydra:Status', 'urn:cg:error:ToolFailure'],
+      '@type': ['hydra:Status', 'urn:iep:error:ToolFailure'],
       error: (err as Error).message,
     });
   }
@@ -10504,7 +10504,7 @@ app.get('/sse', (req, res, next) => mcpGate(req, res, next), (req, res) => {
 // Honors the syncProtocol: 'SolidNotifications' contract declared
 // in every descriptor's FederationFacet. Clients connect with
 // `EventSource(url)`; each `data:` event is a JSON-LD
-// cg:Notification describing a descriptor lifecycle event
+// iep:Notification describing a descriptor lifecycle event
 // (created | updated | superseded). The producer side is
 // emitNotification() — called at the end of handlePublishContext
 // AND from every WebSocket subscription tee, so every relay-mediated
@@ -10554,8 +10554,8 @@ app.get('/notifications/:podSlug', bearerVerifyLimiter, async (req, res) => {
 
   // Hello event so the client confirms the channel is live.
   res.write(`data: ${JSON.stringify({
-    '@context': 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
-    type: 'cg:NotificationChannelOpen',
+    '@context': 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
+    type: 'iep:NotificationChannelOpen',
     podUrl,
     pod_slug: slug,
     timestamp: new Date().toISOString(),
@@ -10583,7 +10583,7 @@ app.get('/notifications/:podSlug', bearerVerifyLimiter, async (req, res) => {
 });
 
 // POST /notifications/:podSlug/webhook — register an HTTP webhook URL
-// so the relay can POST cg:Notification events to it in addition to
+// so the relay can POST iep:Notification events to it in addition to
 // the SSE fan-out. Bearer-gated identically to the SSE channel.
 app.post('/notifications/:podSlug/webhook', bearerVerifyLimiter, express.json(), async (req, res) => {
   const slug = String(req.params.podSlug);

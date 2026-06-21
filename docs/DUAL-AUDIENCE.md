@@ -46,7 +46,7 @@ out of L1/L2 primitives that already exist:
 | Institutional aggregation without surveillance | Aggregate-privacy queries ([`spec/AGGREGATE-PRIVACY.md`](../spec/AGGREGATE-PRIVACY.md)); ZK range / temporal / merkle proofs ([`src/crypto/`](../src/crypto/)); attestation aggregation that returns counts / proofs / thresholds without exposing individual records. |
 | Institutional authorship | Institutions publish their own descriptors (training content, credentials, policies) to *their own* pod; protagonists' agents discover via federation and pull. The institution is a peer, not a hub. |
 | Bilateral audit trail | Every action is signed ([`src/compliance/`](../src/compliance/)); both sides see who said what when, in their own vocabulary (`eu-ai-act:`, `nist-rmf:`, `soc2:` for the institution; `passport:LifeEvent` chain for the protagonist). |
-| Modal honesty in both directions | `cg:modalStatus` (Asserted / Hypothetical / Counterfactual) keeps institutional inferences distinct from protagonist commitments; no side gets to silently upgrade tentative claims into facts. |
+| Modal honesty in both directions | `iep:modalStatus` (Asserted / Hypothetical / Counterfactual) keeps institutional inferences distinct from protagonist commitments; no side gets to silently upgrade tentative claims into facts. |
 
 If a vertical wants a dual-audience surface and discovers the
 substrate doesn't already enable it without new ontology terms, that's

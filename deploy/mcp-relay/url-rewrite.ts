@@ -8,7 +8,7 @@
  *
  * (note the extra `.internal.` subdomain). A non-trivial number of LIVE
  * descriptors on the markj pod, plus external caches / wallet snapshots /
- * search indexes, still carry the OLD public-host URL in `cg:origin` /
+ * search indexes, still carry the OLD public-host URL in `iep:origin` /
  * `descriptorUrl` / `dcat:accessURL` positions. Dereferencing those would
  * 404 against the now-internal-only host.
  *

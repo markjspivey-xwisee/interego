@@ -3,9 +3,9 @@
  * @description Reference implementation of the `registry:` L2 pattern —
  *   a public agent attestation registry. Builds on:
  *
- *     - cg:ContextDescriptor (the registry IS one)
+ *     - iep:ContextDescriptor (the registry IS one)
  *     - amta:Attestation (the reputation inputs)
- *     - cg:AccessControlPolicy (registry-specific governance rules)
+ *     - iep:AccessControlPolicy (registry-specific governance rules)
  *
  *   No new L1 primitives required. Registries co-exist; each one
  *   is just a typed descriptor that other agents (and other
@@ -22,7 +22,7 @@ export interface RegistryEntry {
   readonly entryId: IRI;
   readonly agentIdentity: IRI;        // DID or WebID
   readonly agentPod: string;           // Pod URL
-  readonly capabilities: readonly IRI[]; // cg:Affordance class IRIs
+  readonly capabilities: readonly IRI[]; // iep:Affordance class IRIs
   readonly registeredAt: string;       // ISO 8601
   readonly reputation: ReputationSnapshot | null;
 }
@@ -248,7 +248,7 @@ export function federateLookup(
 }
 
 /**
- * Serialize the registry as a cg:ContextDescriptor — a registry IS one.
+ * Serialize the registry as a iep:ContextDescriptor — a registry IS one.
  * Returns the descriptor data structure; a publish step would convert
  * to Turtle and write to a pod.
  */

@@ -104,7 +104,7 @@ if (!RELAY_URL_RAW) {
 }
 const RELAY_URL = RELAY_URL_RAW.replace(/\/$/, '');
 const REPO_URL = process.env['REPO_URL'] ?? 'https://github.com/markjspivey-xwisee/interego';
-const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const TOKEN_TTL_SECONDS = 86400; // 24 hours
 
 // Shared secret guarding POST /tokens/verify. Mirrors the relay's
@@ -225,7 +225,7 @@ interface KeyPair {
   x25519PrivateKey: crypto.KeyObject;
   x25519PublicKey: crypto.KeyObject;
   /** Raw 32-byte X25519 public key, base64-encoded — matches the on-pod
-   *  `cg:AuthorizedAgent.encryptionPublicKey` shape so cross-pod sharing
+   *  `iep:AuthorizedAgent.encryptionPublicKey` shape so cross-pod sharing
    *  can resolve a DID doc keyAgreement key and use it as a recipient
    *  without a second registry round-trip. */
   x25519PublicKeyBase64: string;
@@ -432,7 +432,7 @@ interface Identity {
 }
 
 // Auth methods schema persisted in each user's pod as JSON-LD. Canonical
-// predicates live under the cg: and sec: namespaces; any RDF-aware tool
+// predicates live under the iep: and sec: namespaces; any RDF-aware tool
 // can consume the file. A user can have multiple methods of each kind
 // (multiple wallets, multiple passkeys, multiple DID keys) registered.
 interface AuthMethods {
@@ -471,12 +471,12 @@ interface AuthMethods {
 function emptyAuthMethods(userId: string, name = userId, agentId?: string): AuthMethods {
   const m: AuthMethods = {
     '@context': {
-      cg: ONTOLOGY_URL,
+      iep: ONTOLOGY_URL,
       sec: 'https://w3id.org/security#',
       xsd: 'http://www.w3.org/2001/XMLSchema#',
     },
     '@id': `#auth-${userId}`,
-    '@type': 'cg:AuthMethods',
+    '@type': 'iep:AuthMethods',
     userId,
     name,
     walletAddresses: [],
@@ -719,7 +719,7 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<
 // /oauth/verify handler is the single authoritative pod-side writer
 // for both — it has the OAuth context, the user's identityToken, and
 // the relay's X25519 keypair needed to populate
-// `cg:AuthorizedAgent.encryptionPublicKey` on the registry entry, and
+// `iep:AuthorizedAgent.encryptionPublicKey` on the registry entry, and
 // it runs the writes synchronously before returning the OAuth code.
 //
 // The functions below (`buildPodProfileCard`, `putPodProfileCard`,
@@ -754,7 +754,7 @@ function buildPodProfileCard(identity: Identity): string {
     `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
     `@prefix solid: <http://www.w3.org/ns/solid/terms#> .`,
     `@prefix pim: <http://www.w3.org/ns/pim/space#> .`,
-    `@prefix cg: <${ONTOLOGY_URL}> .`,
+    `@prefix iep: <${ONTOLOGY_URL}> .`,
     `@prefix prov: <http://www.w3.org/ns/prov#> .`,
     `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .`,
     ``,
@@ -765,7 +765,7 @@ function buildPodProfileCard(identity: Identity): string {
     `    solid:storage <${podUrl}> ;`,
     `    pim:storage <${podUrl}> ;`,
     ...(agents.length > 0 ? [
-      `    cg:authorizedAgent`,
+      `    iep:authorizedAgent`,
       ...agents.map((a, i) => {
         const sep = i < agents.length - 1 ? ',' : ';';
         return `        <${BASE_URL}/agents/${a.id}/profile#agent>${sep}`;
@@ -775,11 +775,11 @@ function buildPodProfileCard(identity: Identity): string {
     ``,
     ...agents.map(a => [
       `<${BASE_URL}/agents/${a.id}/profile#agent>`,
-      `    a cg:AuthorizedAgent, prov:SoftwareAgent ;`,
+      `    a iep:AuthorizedAgent, prov:SoftwareAgent ;`,
       `    rdfs:label "${a.name}" ;`,
-      `    cg:agentIdentity <did:web:${host}:agents:${a.id}> ;`,
-      `    cg:delegatedBy <${cardUrl}#me> ;`,
-      `    cg:scope "${a.scope ?? 'ReadWrite'}" .`,
+      `    iep:agentIdentity <did:web:${host}:agents:${a.id}> ;`,
+      `    iep:delegatedBy <${cardUrl}#me> ;`,
+      `    iep:scope "${a.scope ?? 'ReadWrite'}" .`,
       ``,
     ].join('\n')),
   ].join('\n');
@@ -842,7 +842,7 @@ async function putPodProfileCard(userId: string): Promise<void> {
 // (so a per-surface mint via ensureSurfaceAgent triggers a fresh
 // write that includes every active agent for the user).
 //
-// Mirrors the cg:AuthorizedAgent shape used by
+// Mirrors the iep:AuthorizedAgent shape used by
 // @interego/core's ownerProfileToTurtle so downstream parsers
 // (readAgentRegistry / parseOwnerProfile) stay compatible.
 function podAgentRegistryUrl(userId: string): string {
@@ -857,7 +857,7 @@ function buildPodAgentRegistry(identity: Identity): string {
   const now = new Date().toISOString();
 
   const lines: string[] = [];
-  lines.push('@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .');
+  lines.push('@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .');
   lines.push('@prefix foaf: <http://xmlns.com/foaf/0.1/> .');
   lines.push('@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .');
   lines.push('@prefix prov: <http://www.w3.org/ns/prov#> .');
@@ -874,10 +874,10 @@ function buildPodAgentRegistry(identity: Identity): string {
   }
 
   // Canonical Turtle predicate-object list: a single
-  // `cg:authorizedAgent` predicate followed by comma-separated objects,
+  // `iep:authorizedAgent` predicate followed by comma-separated objects,
   // closed with `.` since this is the last predicate on the subject.
   // Mirrors ownerProfileToTurtle so strict parsers round-trip identically.
-  lines.push('    cg:authorizedAgent');
+  lines.push('    iep:authorizedAgent');
   for (let i = 0; i < agents.length; i++) {
     const a = agents[i]!;
     const sep = i < agents.length - 1 ? ',' : ' .';
@@ -889,12 +889,12 @@ function buildPodAgentRegistry(identity: Identity): string {
   for (const a of agents) {
     const frag = `#agent-${encodeURIComponent(a.id)}`;
     const agentDid = `did:web:${host}:agents:${a.id}`;
-    lines.push(`<${frag}> a cg:AuthorizedAgent, prov:SoftwareAgent ;`);
-    lines.push(`    cg:agentIdentity <${agentDid}> ;`);
-    lines.push(`    cg:delegatedBy <${ownerWebId}> ;`);
-    lines.push(`    cg:scope cg:${a.scope ?? 'ReadWrite'} ;`);
-    lines.push(`    cg:validFrom "${a.createdAt}"^^xsd:dateTime ;`);
-    lines.push(`    cg:registeredAt "${now}"^^xsd:dateTime ;`);
+    lines.push(`<${frag}> a iep:AuthorizedAgent, prov:SoftwareAgent ;`);
+    lines.push(`    iep:agentIdentity <${agentDid}> ;`);
+    lines.push(`    iep:delegatedBy <${ownerWebId}> ;`);
+    lines.push(`    iep:scope iep:${a.scope ?? 'ReadWrite'} ;`);
+    lines.push(`    iep:validFrom "${a.createdAt}"^^xsd:dateTime ;`);
+    lines.push(`    iep:registeredAt "${now}"^^xsd:dateTime ;`);
     lines.push(`    foaf:name "${a.name}" .`);
     lines.push('');
   }
@@ -1605,7 +1605,7 @@ function buildWebIdProfile(identity: Identity): string {
   return [
     `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
     `@prefix solid: <http://www.w3.org/ns/solid/terms#> .`,
-    `@prefix cg: <${ONTOLOGY_URL}> .`,
+    `@prefix iep: <${ONTOLOGY_URL}> .`,
     `@prefix prov: <http://www.w3.org/ns/prov#> .`,
     `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .`,
     ``,
@@ -1615,7 +1615,7 @@ function buildWebIdProfile(identity: Identity): string {
     `    solid:oidcIssuer <${BASE_URL}> ;`,
     `    solid:storage <${podUrl}> ;`,
     ...(agents.length > 0 ? [
-      `    cg:authorizedAgent`,
+      `    iep:authorizedAgent`,
       ...agents.map((a, i) => {
         const sep = i < agents.length - 1 ? ',' : ';';
         return `        <${BASE_URL}/agents/${a.id}/profile#agent>${sep}`;
@@ -1625,11 +1625,11 @@ function buildWebIdProfile(identity: Identity): string {
     ``,
     ...agents.map(a => [
       `<${BASE_URL}/agents/${a.id}/profile#agent>`,
-      `    a cg:AuthorizedAgent, prov:SoftwareAgent ;`,
+      `    a iep:AuthorizedAgent, prov:SoftwareAgent ;`,
       `    rdfs:label "${a.name}" ;`,
-      `    cg:agentIdentity <did:web:${new URL(BASE_URL).host}:agents:${a.id}> ;`,
-      `    cg:delegatedBy <${profileUrl}#me> ;`,
-      `    cg:scope "${a.scope ?? 'ReadWrite'}" .`,
+      `    iep:agentIdentity <did:web:${new URL(BASE_URL).host}:agents:${a.id}> ;`,
+      `    iep:delegatedBy <${profileUrl}#me> ;`,
+      `    iep:scope "${a.scope ?? 'ReadWrite'}" .`,
       ``,
     ].join('\n')),
   ].join('\n');
@@ -2928,7 +2928,7 @@ async function issueTokenResponse(user: Identity, surfaceAgent?: string): Promis
     name: user.name,
     agentId: agent.id,
     // Display label for the per-surface agent — also needed by the relay's
-    // pod-side registry write so cg:AuthorizedAgent entries get a meaningful
+    // pod-side registry write so iep:AuthorizedAgent entries get a meaningful
     // foaf:name instead of just "Surface agent <slug>".
     agentName: agent.name,
     token: tokenRecord.token,
@@ -3156,16 +3156,16 @@ app.get('/agents/:id/profile', (req, res) => {
   const owner = identity.owner ?? 'unknown';
   res.setHeader('Content-Type', 'text/turtle');
   res.send([
-    `@prefix cg: <${ONTOLOGY_URL}> .`,
+    `@prefix iep: <${ONTOLOGY_URL}> .`,
     `@prefix prov: <http://www.w3.org/ns/prov#> .`,
     `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .`,
     ``,
     `<${BASE_URL}/agents/${identity.id}/profile#agent>`,
-    `    a cg:AuthorizedAgent, prov:SoftwareAgent ;`,
+    `    a iep:AuthorizedAgent, prov:SoftwareAgent ;`,
     `    rdfs:label "${identity.name}" ;`,
-    `    cg:agentIdentity <${did}> ;`,
-    `    cg:delegatedBy <${BASE_URL}/users/${owner}/profile#me> ;`,
-    `    cg:scope "${identity.scope ?? 'ReadWrite'}" .`,
+    `    iep:agentIdentity <${did}> ;`,
+    `    iep:delegatedBy <${BASE_URL}/users/${owner}/profile#me> ;`,
+    `    iep:scope "${identity.scope ?? 'ReadWrite'}" .`,
   ].join('\n'));
 });
 

@@ -87,7 +87,7 @@ Each test passes if you can reproduce the listed observation. Track each one —
 
 1. **On desktop (Claude Code):**
    ```
-   Use personal-bridge:publish_p2p with descriptorId='urn:cg:test:from-desktop',
+   Use personal-bridge:publish_p2p with descriptorId='urn:iep:test:from-desktop',
    cid='bafkrei-from-desktop', graphIri='urn:graph:cross-device-test',
    summary='hello from my laptop'
    ```

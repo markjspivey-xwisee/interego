@@ -3,12 +3,12 @@
  *
  * Splits a tenant snapshot into discrete, independently-versionable
  * sections (catalog / directory / policies / connectors / events / audit)
- * and publishes each as a `cg:ContextDescriptor` + graph pair on the
+ * and publishes each as a `iep:ContextDescriptor` + graph pair on the
  * tenant's Solid pod via the substrate's standard `publish()` machinery.
  *
  * Each descriptor declares `dct:conformsTo` pointing at the section's
  * foxxi type IRI (fxs:CourseCatalog, fxa:AuditLogStream, etc.) so the
- * bridge later discovers and fetches each section via `cg:discover()`
+ * bridge later discovers and fetches each section via `iep:discover()`
  * filtered on the manifest entry's `conformsTo` field — NO hardcoded
  * pod paths anywhere.
  *

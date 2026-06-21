@@ -48,11 +48,11 @@ async function publishDescriptor(id, graph, ttl) {
   await putText(url, ttl);
   const entry = `
 
-<${url}> a cg:ManifestEntry ;
-    cg:describes <${graph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+<${url}> a iep:ManifestEntry ;
+    iep:describes <${graph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
   const cur = await fetchText(MANIFEST_URL);
   await putText(MANIFEST_URL, (cur ?? '') + entry);
@@ -63,13 +63,13 @@ console.log('=== ZK reputation proof ===\n');
 
 // ── Step 0: publish the ZK-reputation-proof shape ─────────
 const ZK_SHAPE_TTL = `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix zk: <urn:zk:> .
 
 <${ZK_SHAPE}#Shape> a sh:NodeShape ;
-  sh:targetClass cg:ContextDescriptor ;
+  sh:targetClass iep:ContextDescriptor ;
   sh:property [ sh:path dct:conformsTo ; sh:hasValue <${ZK_SHAPE}> ; sh:minCount 1 ] ;
   sh:property [ sh:path zk:threshold ; sh:minCount 1 ; sh:message "Proof MUST declare the threshold it proves above." ] ;
   sh:property [ sh:path zk:commitment ; sh:minCount 1 ; sh:message "Proof MUST include a commitment (sha256)." ] ;
@@ -93,10 +93,10 @@ console.log(`     type:       ${proof.type}`);
 console.log(`     threshold:  ${proof.threshold}  (prover's actual score NEVER appears in proof)\n`);
 
 // ── Step 2: prover publishes proof descriptor ──────────────
-const proofId = `urn:cg:zk-proof:${Date.now()}`;
+const proofId = `urn:iep:zk-proof:${Date.now()}`;
 const proofGraph = `urn:graph:zk-proof:${Date.now()}`;
 const now1 = new Date().toISOString();
-const proofTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const proofTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -104,26 +104,26 @@ const proofTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/
 @prefix zk: <urn:zk:> .
 
 <${proofId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now1}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now1}"^^xsd:dateTime ;
     dct:conformsTo <${ZK_SHAPE}> ;
-    cg:describes <${proofGraph}> ;
+    iep:describes <${proofGraph}> ;
     zk:proofKind "RangeProof" ;
     zk:threshold "${proof.threshold}"^^xsd:double ;
     zk:commitment "${proof.commitment}" ;
     zk:proofBlob "${proof.proof}" ;
     zk:proofType "${proof.type}" ;
     zk:claim "reputation score is >= ${threshold}" ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now1}"^^xsd:dateTime ] ;
-    cg:hasFacet [ a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now1}"^^xsd:dateTime ] ;
+    iep:hasFacet [ a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <urn:agent:zk-prover> ; prov:endedAtTime "${now1}"^^xsd:dateTime ] ;
         prov:wasAttributedTo <urn:agent:zk-prover> ;
         prov:generatedAtTime "${now1}"^^xsd:dateTime ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <urn:agent:zk-prover> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <urn:agent:zk-prover> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "1.0"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <urn:agent:zk-prover> ; cg:trustLevel cg:CryptoAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <urn:agent:zk-prover> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <urn:agent:zk-prover> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "1.0"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <urn:agent:zk-prover> ; iep:trustLevel iep:CryptoAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 const proofUrl = await publishDescriptor(proofId, proofGraph, proofTtl);
 console.log(`2. Prover published proof descriptor:`);
@@ -150,10 +150,10 @@ console.log(`   verifier learned: score ≥ ${threshold}`);
 console.log(`   verifier did NOT learn: the exact score (0.85), the attestations, the blinding factor\n`);
 
 // ── Step 4: verifier publishes endorsement ─────────────────
-const endorseId = `urn:cg:zk-endorsement:${Date.now()}`;
+const endorseId = `urn:iep:zk-endorsement:${Date.now()}`;
 const endorseGraph = `urn:graph:zk-endorsement:${Date.now()}`;
 const now2 = new Date().toISOString();
-const endorseTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const endorseTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -161,23 +161,23 @@ const endorseTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/n
 @prefix zk: <urn:zk:> .
 
 <${endorseId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now2}"^^xsd:dateTime ;
-    cg:describes <${endorseGraph}> ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now2}"^^xsd:dateTime ;
+    iep:describes <${endorseGraph}> ;
     zk:verifiedProof <${proofUrl}> ;
     zk:verifiedThreshold "${threshold}"^^xsd:double ;
     zk:verdict "valid" ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now2}"^^xsd:dateTime ] ;
-    cg:hasFacet [ a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now2}"^^xsd:dateTime ] ;
+    iep:hasFacet [ a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <urn:agent:zk-verifier> ; prov:endedAtTime "${now2}"^^xsd:dateTime ] ;
         prov:wasDerivedFrom <${proofUrl}> ;
         prov:wasAttributedTo <urn:agent:zk-verifier> ;
         prov:generatedAtTime "${now2}"^^xsd:dateTime ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <urn:agent:zk-verifier> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <urn:agent:zk-verifier> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "${valid}"^^xsd:boolean ; cg:modalStatus cg:${valid ? 'Asserted' : 'Counterfactual'} ; cg:epistemicConfidence "1.0"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <urn:agent:zk-verifier> ; cg:trustLevel cg:CryptoAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <urn:agent:zk-verifier> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <urn:agent:zk-verifier> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "${valid}"^^xsd:boolean ; iep:modalStatus iep:${valid ? 'Asserted' : 'Counterfactual'} ; iep:epistemicConfidence "1.0"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <urn:agent:zk-verifier> ; iep:trustLevel iep:CryptoAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 const endorseUrl = await publishDescriptor(endorseId, endorseGraph, endorseTtl);
 console.log(`4. Verifier published endorsement descriptor:`);

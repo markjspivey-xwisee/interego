@@ -7,7 +7,7 @@
  *   An autonomous agent rotates its signing wallet half-way through an
  *   on-pod relationship. The agent's identity biography is supposed to
  *   survive the rotation via:
- *     · the capability-passport pattern (passport v2 cg:supersedes v1
+ *     · the capability-passport pattern (passport v2 iep:supersedes v1
  *       and records an infrastructure-migration LifeEvent that names
  *       the previous wallet address as evidence), and
  *     · a compliance soc2:KeyRotationEvent that cites soc2:CC6.7 and
@@ -46,9 +46,9 @@
  * Descriptor chain produced on the pod
  *   1. Agent₁ passport v1   (birth + initial wallet address in biography)
  *   2. Agent₁ rotation desc (signed by v1, declares v1→v2, cites
- *                            soc2:KeyRotationEvent; cg:supersedes the
+ *                            soc2:KeyRotationEvent; iep:supersedes the
  *                            v1 passport's identity claim)
- *   3. Agent₁ passport v2   (cg:supersedes v1, infrastructure-migration
+ *   3. Agent₁ passport v2   (iep:supersedes v1, infrastructure-migration
  *                            LifeEvent carrying both v1 + v2 addresses)
  *   4. [In memory only]     Forged rotation descriptor — signed by a
  *                            third wallet, prepared but NOT published.
@@ -93,7 +93,7 @@ const SCENARIO_DATE = process.env.WALLET_ROTATION_DATE ?? '2026-06-01';
 const POD = `${CSS}/demos/emergent-wallet-rotation-mid-relationship-${SCENARIO_DATE}/`;
 
 // Vertical scenario namespace. Per CLAUDE.md ontology hygiene we MUST
-// NOT mint new terms under owned prefixes (cg:/cgh:/passport:/soc2:/
+// NOT mint new terms under owned prefixes (iep:/ieh:/passport:/soc2:/
 // amta:/abac: …). Scenario-specific predicates and types live under
 // this URL — never an owned namespace. The exact spec-name string is
 // preserved verbatim in the namespace URL as required by the build spec.
@@ -223,14 +223,14 @@ ${evidenceLine}${detailLines}${detailLines ? ' ;\n' : ''}      scen:eventJson "$
     : '';
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix passport: <https://w3id.org/cg/passport#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix scen: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, passport:Passport ;
+<${iri}> a iep:ContextDescriptor, passport:Passport ;
   dcterms:title "Agent1 passport v${version}" ;
   passport:agentIdentity <${did}> ;
   scen:passportVersion ${version} ;
@@ -296,14 +296,14 @@ async function publishLegitimateRotation({
   const { hash, signature } = await signPayload(v1Wallet, rotationPayload);
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix soc2: <https://markjspivey-xwisee.github.io/interego/ns/soc2#> .
 @prefix scen: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, <${TYPE_ROTATION_LEGIT}> ;
+<${iri}> a iep:ContextDescriptor, <${TYPE_ROTATION_LEGIT}> ;
   dcterms:title "Agent1 wallet rotation v1->v2 (signed by v1)" ;
   scen:retiredWalletAddress "${v1Address}" ;
   scen:newActiveWalletAddress "${v2Address}" ;
@@ -438,7 +438,7 @@ function extractAllLiterals(ttl, predicate) {
 }
 
 function extractSupersedes(ttl) {
-  const m = ttl.match(/cg:supersedes\s+(<[^>]+>(?:\s*,\s*<[^>]+>)*)/);
+  const m = ttl.match(/iep:supersedes\s+(<[^>]+>(?:\s*,\s*<[^>]+>)*)/);
   if (!m) return [];
   return Array.from(m[1].matchAll(/<([^>]+)>/g)).map(x => x[1]);
 }
@@ -738,7 +738,7 @@ const verifierIri = `${POD}context-graphs/verifier-attestation.ttl#attest`;
 const verifierGraphIri = `${verifierIri}-graph`;
 const nowIso = new Date().toISOString();
 const verifierGraph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix scen: <${SCENARIO_NS}> .

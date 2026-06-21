@@ -48,7 +48,7 @@ export async function runDesigner({
   }
   log(`[designer ${label}] self-test ${selfBattery.passed}/${selfBattery.total}${selfBattery.failures.length ? ' — failures: ' + selfBattery.failures.slice(0, 2).join('; ') : ''}`);
 
-  const designId = `urn:cg:gamedesign:${createHash('sha256').update(design.engineSource).digest('hex').slice(0, 16)}`;
+  const designId = `urn:iep:gamedesign:${createHash('sha256').update(design.engineSource).digest('hex').slice(0, 16)}`;
   const payload = {
     designId,
     designerLabel: label,

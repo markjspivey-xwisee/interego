@@ -21,12 +21,12 @@
  *                    · credential  — alignments on verified credentials
  *                      (Asserted).
  *                    · inferred    — predicted from a passed/completed
- *                      experience alone (Hypothetical — cg:modalStatus
+ *                      experience alone (Hypothetical — iep:modalStatus
  *                      keeps the prediction honest).
  *   provenance   ← P2997's hallmark: every entry points back to where its
  *                  raw record lives.
  *
- * ACTOR-AGNOSTIC. The subject is a `cg:Agent` identified by a DID — it
+ * ACTOR-AGNOSTIC. The subject is a `iep:Agent` identified by a DID — it
  * may be a human learner/performer OR an AI agent learning + exercising
  * tools. `subjectKind` records which; the data shape is identical. An
  * agent's ELR is its capability record; a human's is their learner +
@@ -52,7 +52,7 @@ export const PERFORMED_VERB = `${FOXXI_VOCAB}performed`;
 /** Structural modal verbs (GAP 5): an Asserted descriptor PERFORMED work; a
  *  Hypothetical one records an INTENDED act (a plan/intention); a Counterfactual
  *  one a CONSIDERED act (a road not taken). These name the MODAL MODE — honestly
- *  derived from cg:ModalStatusEnum, never a fabricated domain verb — and match the
+ *  derived from iep:ModalStatusEnum, never a fabricated domain verb — and match the
  *  Foxxi xAPI Profile's structural verb concepts. */
 export const INTENDED_VERB = `${FOXXI_VOCAB}verbs/intended`;
 export const CONSIDERED_VERB = `${FOXXI_VOCAB}verbs/considered`;
@@ -386,7 +386,7 @@ interface CompetencyDraft {
 }
 
 /** A semantic type IRI's local name is a meaningful label (e.g. cg#Finding →
- *  "Finding", urn:cg:type:ttt:Move → "Move") — UNLIKE an instance graph_iri's
+ *  "Finding", urn:iep:type:ttt:Move → "Move") — UNLIKE an instance graph_iri's
  *  leaf token (…:g4:move:1 → "1"), which is what the competency builder used to
  *  key off, producing junk labels and cross-instance collapse. */
 function typeLocalName(typeIri: string): string {
@@ -402,7 +402,7 @@ function typeLocalName(typeIri: string): string {
  *  which facet its descriptor carried). The mesh projector reads ONLY the protocol
  *  envelope, so when the activity type is one of these it has no domain signal and
  *  must emit NOTHING rather than manufacture a facet-competency. A genuine domain
- *  activity type (cg:Finding, ttt:Move, a substrate-verification activity, …) keyed
+ *  activity type (iep:Finding, ttt:Move, a substrate-verification activity, …) keyed
  *  via richer conformsTo/object.definition.type at the PUBLISHING layer passes. */
 // Protocol-envelope FACETS/proofs + GENERIC fallback task types — none of these
 // names a domain skill, so none may key a competency. AssertedContext is the mesh

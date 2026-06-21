@@ -15,7 +15,7 @@
 #  to RDCEO-shaped competency definitions.                      #
 #                                                                #
 #  Vertical-scoped per layering discipline: lives outside the   #
-#  L1/L2/L3 protocol namespaces (cg:/cgh:/pgsl:/ie:/align:).   #
+#  L1/L2/L3 protocol namespaces (iep:/ieh:/pgsl:/ie:/align:).   #
 #################################################################
 
 <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/rcd> a owl:Ontology ;

@@ -2,10 +2,10 @@
  * Pod browser — render the substrate as linked data.
  *
  * The Foxxi bridge now publishes every work product as a real
- * cg:ContextDescriptor on the tenant pod. This page is the natural
+ * iep:ContextDescriptor on the tenant pod. This page is the natural
  * companion: it walks the pod's manifest, lists the descriptors by
  * type, dereferences any one you click, renders the Turtle as it
- * actually lives on the wire, and turns every cg:Affordance into a
+ * actually lives on the wire, and turns every iep:Affordance into a
  * clickable link so you can navigate the substrate by following
  * affordances.
  *
@@ -69,19 +69,19 @@ interface Affordance {
 /** Tiny Turtle-ish parser for manifest entries — regex-driven, no deps. */
 function parseManifest(turtle: string): ManifestEntry[] {
   const entries: ManifestEntry[] = [];
-  // Each entry starts at a `<url> a cg:ManifestEntry` and ends at the next `.` at column 0
-  const re = /<([^>]+)>\s+a\s+cg:ManifestEntry\s*;([\s\S]*?)\s\./g;
+  // Each entry starts at a `<url> a iep:ManifestEntry` and ends at the next `.` at column 0
+  const re = /<([^>]+)>\s+a\s+iep:ManifestEntry\s*;([\s\S]*?)\s\./g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(turtle)) !== null) {
     const descriptorUrl = m[1];
     const body = m[2];
-    const describes = (body.match(/cg:describes\s+<([^>]+)>/) ?? [, ''])[1];
-    const modalStatus = ((body.match(/cg:modalStatus\s+cg:(\w+)/) ?? [, 'Unknown'])[1]);
-    const trustLevel = ((body.match(/cg:trustLevel\s+cg:(\w+)/) ?? [, 'Unknown'])[1]);
+    const describes = (body.match(/iep:describes\s+<([^>]+)>/) ?? [, ''])[1];
+    const modalStatus = ((body.match(/iep:modalStatus\s+iep:(\w+)/) ?? [, 'Unknown'])[1]);
+    const trustLevel = ((body.match(/iep:trustLevel\s+iep:(\w+)/) ?? [, 'Unknown'])[1]);
     const conformsTo: string[] = [];
     for (const c of body.matchAll(/dct:conformsTo\s+<([^>]+)>/g)) conformsTo.push(c[1]);
     const facetTypes: string[] = [];
-    for (const f of body.matchAll(/cg:hasFacetType\s+cg:(\w+)/g)) facetTypes.push(f[1]);
+    for (const f of body.matchAll(/iep:hasFacetType\s+iep:(\w+)/g)) facetTypes.push(f[1]);
     entries.push({ descriptorUrl, describes, conformsTo, modalStatus, trustLevel, facetTypes });
   }
   return entries;
@@ -97,11 +97,11 @@ function decodeBundleJson(graphTurtle: string): unknown | null {
   } catch { return null; }
 }
 
-/** Parse cg:Affordance blocks out of a descriptor Turtle — present them as clickable Hydra ops. */
+/** Parse iep:Affordance blocks out of a descriptor Turtle — present them as clickable Hydra ops. */
 function parseAffordances(descriptorTurtle: string): Affordance[] {
   const out: Affordance[] = [];
-  // Find affordance blanks: cg:affordance [ ... ]
-  const re = /cg:affordance\s+\[([\s\S]*?)\]/g;
+  // Find affordance blanks: iep:affordance [ ... ]
+  const re = /iep:affordance\s+\[([\s\S]*?)\]/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(descriptorTurtle)) !== null) {
     const block = m[1];
@@ -109,7 +109,7 @@ function parseAffordances(descriptorTurtle: string): Affordance[] {
     const target = (block.match(/hydra:target\s+<([^>]+)>/) ?? [, ''])[1];
     const title = (block.match(/hydra:title\s+"([^"]+)"/) ?? [, ''])[1] || undefined;
     const mediaType = (block.match(/dcat:mediaType\s+"([^"]+)"/) ?? [, ''])[1] || undefined;
-    const encrypted = /cg:encrypted\s+true/.test(block);
+    const encrypted = /iep:encrypted\s+true/.test(block);
     if (target) out.push({ method, target, title, mediaType, encrypted });
   }
   return out;
@@ -123,8 +123,8 @@ function findGraphUrl(affs: Affordance[]): string | null {
 }
 
 // ── Typed facets ───────────────────────────────────────────────────
-// The bridge now emits nested `cg:hasFacet [ a cg:AgentFacet ; … ]` blocks on every
-// descriptor (in addition to the flat cg:hasFacetType markers). Interego maps the
+// The bridge now emits nested `iep:hasFacet [ a iep:AgentFacet ; … ]` blocks on every
+// descriptor (in addition to the flat iep:hasFacetType markers). Interego maps the
 // canonical interrogatives (who/what/when/why/how) onto these facets, so we render
 // them structured + glossed with the interrogative each one answers. Parsed
 // client-side from the descriptor Turtle — no bridge call, same as the rest of this page.
@@ -139,12 +139,12 @@ const FACET_MAP: Record<string, { ie: string; gloss: string }> = {
   AccessControlFacet: { ie: 'Whose',     gloss: 'authority / access' },
 };
 
-/** Extract bracket-balanced `cg:hasFacet [ … ]` blocks (AgentFacet nests a bnode, so a
+/** Extract bracket-balanced `iep:hasFacet [ … ]` blocks (AgentFacet nests a bnode, so a
  *  non-greedy regex would truncate at the inner `]` — count brackets instead). */
 function extractFacetBlocks(turtle: string): string[] {
   const blocks: string[] = [];
   let idx = 0;
-  while ((idx = turtle.indexOf('cg:hasFacet', idx)) !== -1) {
+  while ((idx = turtle.indexOf('iep:hasFacet', idx)) !== -1) {
     const open = turtle.indexOf('[', idx);
     if (open === -1) break;
     let depth = 0, i = open;
@@ -158,7 +158,7 @@ function extractFacetBlocks(turtle: string): string[] {
   return blocks;
 }
 
-const decodeFrame = (v: string): string => { try { return decodeURIComponent(v.replace(/^urn:cg:contenttype:/, '')); } catch { return v; } };
+const decodeFrame = (v: string): string => { try { return decodeURIComponent(v.replace(/^urn:iep:contenttype:/, '')); } catch { return v; } };
 
 /** Pull the salient fields out of one facet block, keyed to exactly what the
  *  serializer emits (projection.ts typedFacetLines). */
@@ -169,21 +169,21 @@ function facetFields(type: string, block: string): Array<{ k: string; v: string 
   const push = (k: string, v: string | null) => { if (v) out.push({ k, v }); };
   switch (type) {
     case 'AgentFacet':
-      push('identity', iri(/cg:agentIdentity\s+<([^>]+)>/));
-      push('role', lit(/cg:agentRole\s+cg:(\w+)/));
+      push('identity', iri(/iep:agentIdentity\s+<([^>]+)>/));
+      push('role', lit(/iep:agentRole\s+iep:(\w+)/));
       break;
     case 'TemporalFacet':
-      push('validFrom', lit(/cg:validFrom\s+"([^"]+)"/));
+      push('validFrom', lit(/iep:validFrom\s+"([^"]+)"/));
       break;
     case 'ProvenanceFacet':
       push('wasAttributedTo', iri(/prov:wasAttributedTo\s+<([^>]+)>/));
       push('generatedAtTime', lit(/prov:generatedAtTime\s+"([^"]+)"/));
       break;
     case 'TrustFacet':
-      push('trustLevel', lit(/cg:trustLevel\s+cg:(\w+)/));
+      push('trustLevel', lit(/iep:trustLevel\s+iep:(\w+)/));
       break;
     case 'SemioticFacet': {
-      const f = iri(/cg:interpretationFrame\s+<([^>]+)>/);
+      const f = iri(/iep:interpretationFrame\s+<([^>]+)>/);
       if (f) out.push({ k: 'interpretationFrame', v: decodeFrame(f) });
       break;
     }
@@ -196,7 +196,7 @@ function facetFields(type: string, block: string): Array<{ k: string; v: string 
 function parseTypedFacets(turtle: string): TypedFacet[] {
   const out: TypedFacet[] = [];
   for (const block of extractFacetBlocks(turtle)) {
-    const type = block.match(/a\s+cg:(\w+)/)?.[1];
+    const type = block.match(/a\s+iep:(\w+)/)?.[1];
     if (!type) continue;
     const map = FACET_MAP[type];
     if (!map) continue;
@@ -312,9 +312,9 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
       </h1>
       <p style={{ fontSize: 15, lineHeight: 1.6, maxWidth: 820, margin: '0 0 18px' }}>
         Every Foxxi work product — outcomes, situations, plans, calibration profiles,
-        teaching packages, xAPI statements, LMS snapshots — is a real <code>cg:ContextDescriptor</code> on the tenant
+        teaching packages, xAPI statements, LMS snapshots — is a real <code>iep:ContextDescriptor</code> on the tenant
         pod. This page walks the pod's manifest, dereferences any descriptor you click as Turtle, and follows
-        its <code>cg:Affordance</code> links. Point it at the federation peer pod to browse that one the same way.
+        its <code>iep:Affordance</code> links. Point it at the federation peer pod to browse that one the same way.
       </p>
 
       {/* Pod URL bar */}
@@ -446,7 +446,7 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
                 )}
                 {!detailLoading && detail && detail.affordances.length > 0 && (
                   <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px', background: 'var(--panel-2)' }}>
-                    <div style={{ ...label, marginBottom: 6 }}>cg:affordance · clickable hydra:Operation links</div>
+                    <div style={{ ...label, marginBottom: 6 }}>iep:affordance · clickable hydra:Operation links</div>
                     {detail.affordances.map((a, i) => (
                       <div key={i} style={{ fontFamily: mono, fontSize: 11, padding: '2px 0' }}>
                         <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{a.method}</span>{' '}
@@ -485,14 +485,14 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
   );
 }
 
-/** The typed cg: facets, rendered structured + glossed with the interrogative each answers. */
+/** The typed iep: facets, rendered structured + glossed with the interrogative each answers. */
 function FacetsView({ turtle }: { turtle: string }) {
   const facets = parseTypedFacets(turtle);
   if (facets.length === 0) {
     return (
       <div style={{ padding: 16, fontFamily: mono, fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
-        No typed <code>cg:hasFacet</code> blocks on this descriptor. (Legacy or manifest-only descriptors carry just the
-        flat <code>cg:hasFacetType</code> markers — see the <em>descriptor (Turtle)</em> tab.)
+        No typed <code>iep:hasFacet</code> blocks on this descriptor. (Legacy or manifest-only descriptors carry just the
+        flat <code>iep:hasFacetType</code> markers — see the <em>descriptor (Turtle)</em> tab.)
       </div>
     );
   }
@@ -502,7 +502,7 @@ function FacetsView({ turtle }: { turtle: string }) {
         Typed facets — the interrogatives Interego can answer about this descriptor
       </div>
       <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.55, margin: '0 0 12px' }}>
-        Every work product the bridge publishes now carries these nested <code>cg:hasFacet</code> blocks. Interego maps the
+        Every work product the bridge publishes now carries these nested <code>iep:hasFacet</code> blocks. Interego maps the
         canonical interrogatives (who / what / when / why / how) onto them, so the same descriptor answers a question
         directly instead of needing a bespoke query.
       </p>

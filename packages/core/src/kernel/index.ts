@@ -21,7 +21,7 @@
  * | `extend`       | Adjunction right half (part → whole)              |
  * | `promote`      | PGSL fibration vertical movement (level k → k+1)  |
  * | `decompose`    | PGSL fibration vertical movement (level k → k-1)  |
- * | `reduce`       | Fold over a cg:supersedes chain (colimit) +       |
+ * | `reduce`       | Fold over a iep:supersedes chain (colimit) +       |
  * |                | verifiable replay proof                           |
  *
  * Each verb either delegates to an existing protocol primitive or
@@ -178,7 +178,7 @@ export type {
  */
 function defaultProvenance(): NodeProvenance {
   return {
-    wasAttributedTo: 'urn:cg:kernel' as IRI,
+    wasAttributedTo: 'urn:iep:kernel' as IRI,
     generatedAtTime: new Date().toISOString(),
   };
 }
@@ -202,9 +202,9 @@ export interface MintOptions {
    *   - `'fragment'` — content is a list of constituent IRIs; the
    *     fragment's IRI is content-addressed over those.
    *   - `'descriptor'` — content is treated as a ContextDescriptorData;
-   *     IRI is `urn:cg:descriptor:<sha-prefix>` derived from its JSON
+   *     IRI is `urn:iep:descriptor:<sha-prefix>` derived from its JSON
    *     canonicalisation.
-   *   - `'opaque'` — IRI is `urn:cg:content:<sha-prefix>` over the
+   *   - `'opaque'` — IRI is `urn:iep:content:<sha-prefix>` over the
    *     UTF-8 bytes; useful for content not yet typed by the substrate.
    */
   readonly kind?: 'atom' | 'fragment' | 'descriptor' | 'opaque';
@@ -222,7 +222,7 @@ export interface MintOptions {
  * Examples:
  * ```ts
  * mint("hello")                       // urn:pgsl:atom:<hex…>     kind: 'atom'
- * mint({ ... }, { kind: 'descriptor' }) // urn:cg:descriptor:<hex…>
+ * mint({ ... }, { kind: 'descriptor' }) // urn:iep:descriptor:<hex…>
  * mint([uri1, uri2], { kind: 'fragment' }) // urn:pgsl:fragment:<hex…>
  * ```
  */
@@ -265,7 +265,7 @@ export function mint(content: unknown, options?: MintOptions): MintResult {
     const desc = content as ContextDescriptorData;
     const canonical = JSON.stringify(desc, Object.keys(desc).sort());
     const hash = sha256Hex(`descriptor:${canonical}`);
-    const iri = `urn:cg:descriptor:${hash.slice(0, 40)}` as IRI;
+    const iri = `urn:iep:descriptor:${hash.slice(0, 40)}` as IRI;
     return {
       holon: {
         iri,
@@ -282,7 +282,7 @@ export function mint(content: unknown, options?: MintOptions): MintResult {
     ? content
     : JSON.stringify(content ?? null);
   const hash = sha256Hex(`opaque:${bytes}`);
-  const iri = `urn:cg:content:${hash.slice(0, 40)}` as IRI;
+  const iri = `urn:iep:content:${hash.slice(0, 40)}` as IRI;
   return {
     holon: {
       iri,
@@ -317,7 +317,7 @@ export interface DereferenceOptions {
    * Pod URL to consult first when resolving a `urn:graph:*` IRI. The
    * substrate's URN-of-graph form is opaque about pod location —
    * different publishers use different segment conventions
-   * (`urn:graph:<podSlug>:...`, `urn:graph:cg:skill:...`,
+   * (`urn:graph:<podSlug>:...`, `urn:graph:iep:skill:...`,
    * `urn:graph:ops:deploy:...`, `urn:graph:audit:...`). Rather than
    * encode a single segment-to-pod mapping the dereferencer takes a
    * `podHint` and tries its manifest first; failing that it falls back
@@ -328,7 +328,7 @@ export interface DereferenceOptions {
    * Known pods to scan when a `urn:graph:*` IRI has no `podHint` and
    * isn't already resolved by the in-process URN→URL cache. Each pod's
    * `.well-known/context-graphs` manifest is fetched in order; the
-   * first whose `cg:describes` matches the URN wins, and the mapping
+   * first whose `iep:describes` matches the URN wins, and the mapping
    * is cached for subsequent dereferences.
    */
   readonly knownPods?: readonly string[];
@@ -359,19 +359,19 @@ function dereferenceLatticeNode(iri: IRI): DereferenceResult {
   if (!node) {
     return { iri, status: 'not-found', contentType: '', affordances: [] };
   }
-  // Synthesize a JSON-LD representation typed against cg: so consumers
+  // Synthesize a JSON-LD representation typed against iep: so consumers
   // see the node as a first-class substrate resource.
   const representation = JSON.stringify({
     '@context': {
-      cg: 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
-      cgh: 'https://markjspivey-xwisee.github.io/interego/ns/cgh#',
+      iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
+      ieh: 'https://markjspivey-xwisee.github.io/interego/ns/cgh#',
       hydra: 'http://www.w3.org/ns/hydra/core#',
     },
     '@id': iri,
-    '@type': node.kind === 'atom' ? 'cg:Atom' : 'cg:Fragment',
-    'cg:level': node.level,
-    'cg:value': node.value,
-    ...(node.kind === 'fragment' ? { 'cg:items': node.items } : {}),
+    '@type': node.kind === 'atom' ? 'iep:Atom' : 'iep:Fragment',
+    'iep:level': node.level,
+    'iep:value': node.value,
+    ...(node.kind === 'fragment' ? { 'iep:items': node.items } : {}),
   });
   // Affordances: every lattice holon supports decompose (yields null
   // for atoms but the call is valid) and dereference of each constituent
@@ -379,12 +379,12 @@ function dereferenceLatticeNode(iri: IRI): DereferenceResult {
   // fibration. These route through the kernel verbs themselves.
   const affordances: Affordance[] = [
     {
-      action: 'urn:cg:action:kernel:decompose',
+      action: 'urn:iep:action:kernel:decompose',
       target: iri,
       method: 'POST',
     },
     {
-      action: 'urn:cg:action:kernel:promote',
+      action: 'urn:iep:action:kernel:promote',
       target: iri,
       method: 'POST',
     },
@@ -392,7 +392,7 @@ function dereferenceLatticeNode(iri: IRI): DereferenceResult {
   if (node.kind === 'fragment') {
     for (const item of node.items) {
       affordances.push({
-        action: 'urn:cg:action:kernel:dereference',
+        action: 'urn:iep:action:kernel:dereference',
         target: item,
         method: 'GET',
       });
@@ -430,7 +430,7 @@ export function clearUrnGraphCache(): void {
  *   1. If the URN is in the in-process cache, fetch the cached graph
  *      URL directly.
  *   2. Otherwise scan candidate pods (podHint first, then knownPods)
- *      for a manifest entry whose `cg:describes` includes the URN.
+ *      for a manifest entry whose `iep:describes` includes the URN.
  *   3. Fetch the matched descriptor, parse its distribution block to
  *      recover the `dcat:accessURL` / `hydra:target` of the actual
  *      graph payload, then fetch that payload.
@@ -439,7 +439,7 @@ export function clearUrnGraphCache(): void {
  *
  * The substrate's URN-of-graph segments are not standardized — different
  * publishers use different conventions (`urn:graph:<podSlug>:...`,
- * `urn:graph:cg:skill:...`, `urn:graph:ops:deploy:...`,
+ * `urn:graph:iep:skill:...`, `urn:graph:ops:deploy:...`,
  * `urn:graph:audit:...`). We therefore do NOT try to parse a pod hint
  * out of the URN itself; the hint (or known-pods scan) is the source
  * of pod location.
@@ -531,7 +531,7 @@ async function dereferenceUrnGraph(
       continue;
     }
 
-    // Parse the distribution block (cg:affordance / dcat:Distribution /
+    // Parse the distribution block (iep:affordance / dcat:Distribution /
     // hydra:Operation) to discover the graph payload URL. If the
     // descriptor doesn't advertise a distribution, fall back to
     // returning the descriptor body itself — the descriptor IS a
@@ -820,7 +820,7 @@ async function dereferenceManifest(
 
 /**
  * Walk a Turtle/TriG body via the substrate's structured RDF parser
- * (`parseTrig`) to recover full provenance: every prov:* and cg:supersedes
+ * (`parseTrig`) to recover full provenance: every prov:* and iep:supersedes
  * and dct:conformsTo across every subject in the document — both the
  * descriptor's own subject IRI and any nested named-graph subjects.
  *
@@ -843,7 +843,7 @@ function readProvenance(body: string): DereferenceResult['provenance'] {
   // Canonical full-IRI form of each predicate we walk. parseTrig
   // expands prefixed names to full IRIs, so we match on the full form.
   const PROV = 'http://www.w3.org/ns/prov#';
-  const CG = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+  const CG = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
   const DCT = 'http://purl.org/dc/terms/';
 
   const derivedFrom = new Set<string>();
@@ -997,24 +997,24 @@ export interface ActOptions {
   /** Forwarded `Authorization` header value (e.g. `"Bearer <token>"`). */
   readonly authorization?: string;
   /**
-   * Recipient keypair for transparent unwrap of `cg:canDecrypt`
-   * affordances. When the resolved affordance carries `cg:action
-   * cg:canDecrypt`, `act` performs the underlying HTTP fetch as usual,
+   * Recipient keypair for transparent unwrap of `iep:canDecrypt`
+   * affordances. When the resolved affordance carries `iep:action
+   * iep:canDecrypt`, `act` performs the underlying HTTP fetch as usual,
    * then opens the returned envelope against this keypair and surfaces
    * the plaintext as the `body`. Without the key the raw envelope JSON
    * is returned (so existing decrypt-on-client callers still work). */
   readonly recipientKeyPair?: EncryptionKeyPair;
 }
 
-// The set of cg:action IRIs (and their prefixed equivalents) that mean
+// The set of iep:action IRIs (and their prefixed equivalents) that mean
 // "GET an encrypted envelope and unwrap it for the recipient." Kept as
 // constants rather than an inline string-match so the substrate's
 // E2EE/hypermedia contract has a single source of truth.
 const CAN_DECRYPT_ACTION_IRIS: ReadonlySet<string> = new Set([
   `${CG}canDecrypt`,
-  'cg:canDecrypt',
+  'iep:canDecrypt',
   // Defensive: callers occasionally over-IRI-prefix the action.
-  `urn:cg:action:${CG}canDecrypt`,
+  `urn:iep:action:${CG}canDecrypt`,
 ]);
 
 function isCanDecryptAction(action: string | undefined): boolean {
@@ -1084,13 +1084,13 @@ async function actOnLatticeNode(
     body: JSON.stringify(body),
     affordance,
   });
-  if (affordance.action === 'urn:cg:action:kernel:dereference') {
+  if (affordance.action === 'urn:iep:action:kernel:dereference') {
     return ok(dereferenceLatticeNode(target));
   }
-  if (affordance.action === 'urn:cg:action:kernel:decompose') {
+  if (affordance.action === 'urn:iep:action:kernel:decompose') {
     return ok(decompose(target));
   }
-  if (affordance.action === 'urn:cg:action:kernel:promote') {
+  if (affordance.action === 'urn:iep:action:kernel:promote') {
     const items = payload && typeof payload === 'object' && Array.isArray((payload as { items?: unknown }).items)
       ? (payload as { items: readonly (LatticeValue | IRI)[] }).items
       : null;
@@ -1106,7 +1106,7 @@ async function actOnLatticeNode(
   }
   return err(405, 'Method Not Allowed', {
     error: 'unsupported_action_on_lattice_target',
-    detail: `Action ${affordance.action} is not defined for urn:pgsl:* targets. Supported: urn:cg:action:kernel:{dereference,decompose,promote}.`,
+    detail: `Action ${affordance.action} is not defined for urn:pgsl:* targets. Supported: urn:iep:action:kernel:{dereference,decompose,promote}.`,
   });
 }
 
@@ -1154,7 +1154,7 @@ export async function act(
       return r;
     });
     const responseBody = await response.text();
-    // cg:canDecrypt semantics: the GET fetches an envelope; the kernel's
+    // iep:canDecrypt semantics: the GET fetches an envelope; the kernel's
     // contract is to surface its plaintext to authorized recipients. If
     // the caller supplied a recipientKeyPair AND we recognize an
     // envelope shape, unwrap before returning. Non-recipients see the
@@ -1197,7 +1197,7 @@ export async function act(
     ...(result.affordance.mediaType ? { mediaType: result.affordance.mediaType } : {}),
     fromDescriptor: affordance.descriptorUrl,
   };
-  // cg:canDecrypt semantics — see the symmetrical branch above.
+  // iep:canDecrypt semantics — see the symmetrical branch above.
   if (isCanDecryptAction(resolved.action) && options?.recipientKeyPair) {
     const plaintext = tryUnwrapEnvelopeBody(result.body, options.recipientKeyPair);
     if (typeof plaintext === 'string') {
@@ -1260,7 +1260,7 @@ export function restrict(
 export interface ExtendOptions {
   /**
    * When `true` (default), back-link the extended descriptor to the
-   * part it came from via `cg:supersedes`, preserving the restriction
+   * part it came from via `iep:supersedes`, preserving the restriction
    * witness across the adjunction unit/counit cycle.
    */
   readonly preserveWitness?: boolean;
@@ -1273,7 +1273,7 @@ export interface ExtendOptions {
  * categorical inverse of `restrict`: from a part (a restricted
  * descriptor) and a containing whole, produce a descriptor whose
  * facets are the whole's, but with the part's restriction witness
- * preserved via `cg:supersedes`.
+ * preserved via `iep:supersedes`.
  *
  * Implementation: `compose([part, containingWhole], 'union')` plus a
  * supersedes back-link so the adjunction's unit law
@@ -1379,10 +1379,10 @@ export function decompose(fragmentIri: IRI): DecomposeResult | null {
 
 // ═══════════════════════════════════════════════════════════════
 //  Verb 9 — reduce
-//  Fold over a cg:supersedes chain — the colimit of the chain in the
+//  Fold over a iep:supersedes chain — the colimit of the chain in the
 //  supersession category, witnessed by a content-addressed ReplayProof.
 //
-//  Categorical role: each link in a cg:supersedes chain is an arrow
+//  Categorical role: each link in a iep:supersedes chain is an arrow
 //  in the descriptor category. The chain itself is a diagram D whose
 //  colimit is "the latest state plus its derivation." reduce computes
 //  that colimit declaratively — the reducer is the algebra; the fold
@@ -1402,21 +1402,21 @@ export function decompose(fragmentIri: IRI): DecomposeResult | null {
 
 const REDUCE_DEFAULT_MAX_CHAIN = 64;
 const REDUCE_DEFAULT_CHECKPOINT_EVERY = 8;
-const REDUCE_CG_SUPERSEDES = 'https://markjspivey-xwisee.github.io/interego/ns/cg#supersedes';
-const REDUCE_CG_REDUCER = 'https://markjspivey-xwisee.github.io/interego/ns/cg#reducer';
+const REDUCE_CG_SUPERSEDES = 'https://markjspivey-xwisee.github.io/interego/ns/iep#supersedes';
+const REDUCE_CG_REDUCER = 'https://markjspivey-xwisee.github.io/interego/ns/iep#reducer';
 
 /**
  * Content-address `s` as a stable CID prefix. Uses the kernel's local
  * sha256 helper so this module has no @interego/core circular import.
- * The CID format is `urn:cg:cid:<hex-prefix>` — same scheme the rest
+ * The CID format is `urn:iep:cid:<hex-prefix>` — same scheme the rest
  * of the kernel uses for content-addressed identifiers.
  */
 function reduceCid(s: string): string {
-  return `urn:cg:cid:${sha256Hex(s).slice(0, 40)}`;
+  return `urn:iep:cid:${sha256Hex(s).slice(0, 40)}`;
 }
 
 /**
- * Walk cg:supersedes back-links from `headIri` to the chain origin
+ * Walk iep:supersedes back-links from `headIri` to the chain origin
  * via a breadth-first traversal. Returns links in CHAIN ORDER —
  * oldest first, newest last — so the caller can fold left-to-right.
  *
@@ -1445,11 +1445,11 @@ async function walkSupersedesChain(
     if (body === null) break; // unresolved link terminates the walk
     linksNewestFirst.push({ iri: current, body });
 
-    // Parse cg:supersedes from the body. parseTrig is forgiving; on
+    // Parse iep:supersedes from the body. parseTrig is forgiving; on
     // failure we fall back to a regex scan of the raw Turtle for any
-    // `cg:supersedes <iri>` triple. The fallback is necessary because
+    // `iep:supersedes <iri>` triple. The fallback is necessary because
     // pod-published descriptors routinely embed affordance blocks
-    // using vocabularies (cgh:, hydra:, dcat:) whose @prefix lines
+    // using vocabularies (ieh:, hydra:, dcat:) whose @prefix lines
     // may be absent from the descriptor body — a strict parse fails
     // even though the chain back-link itself is well-formed.
     let next: IRI | undefined;
@@ -1466,10 +1466,10 @@ async function walkSupersedesChain(
         }
       }
     } catch {
-      // Fallback — regex-scan for `cg:supersedes <IRI>` triples. We
+      // Fallback — regex-scan for `iep:supersedes <IRI>` triples. We
       // only need ONE back-link to keep walking; the walker's visited
       // set still guards against cycles.
-      const m = body.match(/cg:supersedes\s*<([^>]+)>/);
+      const m = body.match(/iep:supersedes\s*<([^>]+)>/);
       if (m && m[1]) next = m[1] as IRI;
     }
     // Same regex fallback when parseTrig succeeds but found no
@@ -1477,7 +1477,7 @@ async function walkSupersedesChain(
     // the parser from associating the property (e.g., subject `<>`
     // with implicit base IRI).
     if (!next) {
-      const m = body.match(/cg:supersedes\s*<([^>]+)>/);
+      const m = body.match(/iep:supersedes\s*<([^>]+)>/);
       if (m && m[1]) next = m[1] as IRI;
     }
     current = next;
@@ -1488,14 +1488,14 @@ async function walkSupersedesChain(
 }
 
 /**
- * Read `cg:validFrom` from a descriptor body — the canonical sort key
+ * Read `iep:validFrom` from a descriptor body — the canonical sort key
  * for `traversal: 'full'` lineage ordering. parseTrig recovers literal
  * values via {kind:'literal', value:string}; the value is an ISO 8601
  * dateTime string. Returns undefined when validFrom is absent or the
  * body is unparseable; the sort then falls back to lexical ordering of
  * the descriptor IRI so the canonical order is still deterministic.
  */
-const REDUCE_CG_VALID_FROM = 'https://markjspivey-xwisee.github.io/interego/ns/cg#validFrom';
+const REDUCE_CG_VALID_FROM = 'https://markjspivey-xwisee.github.io/interego/ns/iep#validFrom';
 function readValidFrom(body: string): string | undefined {
   if (!body) return undefined;
   try {
@@ -1512,14 +1512,14 @@ function readValidFrom(body: string): string | undefined {
   }
   // Regex fallback — pod descriptors routinely embed vocabularies
   // without explicit @prefix declarations; the well-formed
-  // `cg:validFrom "<iso>"^^xsd:dateTime` triple still scans cleanly.
-  const m = body.match(/cg:validFrom\s+"([^"]+)"/);
+  // `iep:validFrom "<iso>"^^xsd:dateTime` triple still scans cleanly.
+  const m = body.match(/iep:validFrom\s+"([^"]+)"/);
   if (m && m[1]) return m[1];
   return undefined;
 }
 
 /**
- * Collect every cg:supersedes back-link IRI declared in a descriptor
+ * Collect every iep:supersedes back-link IRI declared in a descriptor
  * body — used by the `'full'` traversal to walk every branch of the
  * lineage DAG rather than picking the first link the way the
  * shortest-path walker does.
@@ -1542,11 +1542,11 @@ function readAllSupersedes(body: string): IRI[] {
   } catch {
     // Fall through to regex fallback.
   }
-  // Regex fallback — match every `cg:supersedes <IRI>` (with optional
+  // Regex fallback — match every `iep:supersedes <IRI>` (with optional
   // comma-separated continuations) in the body. parseTrig may have
   // succeeded but missed the property (e.g., subject `<>` with implicit
   // base IRI); we always run the fallback so we union the two sets.
-  const re = /cg:supersedes\s+((?:<[^>]+>\s*,?\s*)+)/g;
+  const re = /iep:supersedes\s+((?:<[^>]+>\s*,?\s*)+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(body)) !== null) {
     const list = m[1] ?? '';
@@ -1564,19 +1564,19 @@ function readAllSupersedes(body: string): IRI[] {
 }
 
 /**
- * Walk EVERY cg:supersedes branch transitively from `headIri`, then
+ * Walk EVERY iep:supersedes branch transitively from `headIri`, then
  * return the union in canonical lineage order:
  *
  *   1. BFS/DFS the transitive supersedes closure (cycle-guarded). Any
  *      descriptor reachable from the head through any chain of
- *      `cg:supersedes` arrows is collected.
- *   2. Sort the collected links by `cg:validFrom` ascending (oldest
+ *      `iep:supersedes` arrows is collected.
+ *   2. Sort the collected links by `iep:validFrom` ascending (oldest
  *      first). Falls back to descriptor-IRI lexical sort for ties OR
  *      missing validFrom values — keeps the order deterministic across
  *      independent verifiers.
  *
  * Why this matters: `auto_supersede_prior` in publish_context writes a
- * cg:supersedes link to EVERY prior descriptor that names the same
+ * iep:supersedes link to EVERY prior descriptor that names the same
  * graph, not just the immediate predecessor. The shortest-path walker
  * sees only one branch (chainLength = 2 for a 3-version chain); the
  * full walker recovers the entire lineage so a verifier can audit it
@@ -1626,7 +1626,7 @@ async function walkSupersedesChainFull(
 }
 
 /**
- * Read `cg:reducer <iri>` from a chain head's Turtle body. Returns
+ * Read `iep:reducer <iri>` from a chain head's Turtle body. Returns
  * the first reducer IRI found, or undefined when none is declared.
  */
 function readReducerIri(headBody: string): IRI | undefined {
@@ -1643,10 +1643,10 @@ function readReducerIri(headBody: string): IRI | undefined {
     // Fall through to regex fallback below.
   }
   // Regex fallback — pod descriptors routinely embed vocabularies
-  // (cgh:, hydra:, dcat:) without explicit @prefix declarations,
-  // which a strict parse rejects. The well-formed `cg:reducer <iri>`
+  // (ieh:, hydra:, dcat:) without explicit @prefix declarations,
+  // which a strict parse rejects. The well-formed `iep:reducer <iri>`
   // triple still scans cleanly.
-  const m = headBody.match(/cg:reducer\s*<([^>]+)>/);
+  const m = headBody.match(/iep:reducer\s*<([^>]+)>/);
   if (m && m[1]) return m[1] as IRI;
   return undefined;
 }
@@ -1679,8 +1679,8 @@ function applyReducerStep(
 ): string {
   if (spec.kind === 'turtle-template') {
     // Substitute placeholders. We accept either `{?prior}` /
-    // `{?current}` (whole-body) or `{?prior.cg:value}` /
-    // `{?current.cg:value}` (extracted field) forms; the latter
+    // `{?current}` (whole-body) or `{?prior.iep:value}` /
+    // `{?current.iep:value}` (extracted field) forms; the latter
     // collapses to whole-body in the MVP.
     const materialized = spec.template
       .replace(/\{\?prior(?:\.[^}]+)?\}/g, () => prior)
@@ -1699,14 +1699,14 @@ function applyReducerStep(
 }
 
 /**
- * `reduce(chainHeadIri, options?)` — fold a cg:supersedes chain through
+ * `reduce(chainHeadIri, options?)` — fold a iep:supersedes chain through
  * a declarative reducer; return canonical state + a verifiable
  * ReplayProof.
  *
  * Lookup order for the reducer:
  *   1. `options.reducerSpec` (inline) wins outright.
  *   2. Otherwise the chain head's body is parsed for
- *      `<head> cg:reducer <iri>`; the IRI is dereferenced and the
+ *      `<head> iep:reducer <iri>`; the IRI is dereferenced and the
  *      response body becomes the reducer source. The kernel treats
  *      a body starting with `@prefix` or containing `sh:` as a
  *      shacl-transform; anything else is treated as a turtle-template.
@@ -1734,10 +1734,10 @@ export async function reduce(
 
   // 1. Walk the chain back to its origin. Traversal mode picks which
   //    walker we use:
-  //      - 'shortest' (default) — follow the first cg:supersedes
+  //      - 'shortest' (default) — follow the first iep:supersedes
   //        per link; fast and preserves historical behaviour.
   //      - 'full' — collect the transitive supersedes closure, then
-  //        sort by cg:validFrom ascending (lexical IRI tiebreak) so
+  //        sort by iep:validFrom ascending (lexical IRI tiebreak) so
   //        the fold is over the entire lineage in canonical order.
   const traversal = options?.traversal ?? 'shortest';
   const chain = traversal === 'full'
@@ -1748,7 +1748,7 @@ export async function reduce(
   }
 
   // 2. Resolve the reducer. Inline arg wins; otherwise parse the
-  //    chain head body for cg:reducer and dereference.
+  //    chain head body for iep:reducer and dereference.
   let spec: ReducerSpec | undefined = options?.reducerSpec;
   let reducerSource: string;
   if (!spec) {
@@ -1757,12 +1757,12 @@ export async function reduce(
     const reducerIri = readReducerIri(headBody);
     if (!reducerIri) {
       throw new TypeError(
-        `reduce(${chainHeadIri}) requires a reducer — pass options.reducerSpec or declare \`cg:reducer <iri>\` on the chain head.`,
+        `reduce(${chainHeadIri}) requires a reducer — pass options.reducerSpec or declare \`iep:reducer <iri>\` on the chain head.`,
       );
     }
     const reducerBody = await fetcher(reducerIri);
     if (reducerBody === null) {
-      throw new TypeError(`reduce(${chainHeadIri}) failed to dereference cg:reducer <${reducerIri}>`);
+      throw new TypeError(`reduce(${chainHeadIri}) failed to dereference iep:reducer <${reducerIri}>`);
     }
     reducerSource = reducerBody;
     // Heuristic: SHACL bodies almost always reference `sh:` /

@@ -27,7 +27,7 @@ import { createEncryptedEnvelope, openEncryptedEnvelope, type EncryptedEnvelope,
  * as a redacted placeholder.
  */
 export interface EncryptedFacetValue {
-  readonly '@type': 'cg:EncryptedValue';
+  readonly '@type': 'iep:EncryptedValue';
   /** Hints at the expected post-decryption datatype (e.g. 'xsd:dateTime'). */
   readonly expectedDatatype?: string;
   readonly envelope: EncryptedEnvelope;
@@ -37,7 +37,7 @@ export function isEncryptedFacetValue(v: unknown): v is EncryptedFacetValue {
   return (
     typeof v === 'object' &&
     v !== null &&
-    (v as { '@type'?: string })['@type'] === 'cg:EncryptedValue' &&
+    (v as { '@type'?: string })['@type'] === 'iep:EncryptedValue' &&
     typeof (v as { envelope?: unknown }).envelope === 'object'
   );
 }
@@ -57,7 +57,7 @@ export function encryptFacetValue(
 ): EncryptedFacetValue {
   const plaintext = typeof value === 'string' ? value : JSON.stringify(value);
   const envelope = createEncryptedEnvelope(plaintext, recipients, senderKeyPair);
-  const result: EncryptedFacetValue = { '@type': 'cg:EncryptedValue', envelope };
+  const result: EncryptedFacetValue = { '@type': 'iep:EncryptedValue', envelope };
   if (expectedDatatype) (result as { expectedDatatype?: string }).expectedDatatype = expectedDatatype;
   return result;
 }
@@ -96,9 +96,9 @@ export function decryptFacetValue(
  * Render an EncryptedFacetValue as Turtle blank-node syntax suitable for
  * inlining as a facet object. Format:
  *
- *   [ a cg:EncryptedValue ;
- *     cg:expectedDatatype "xsd:dateTime" ;
- *     cg:envelope "<base64-json>" ]
+ *   [ a iep:EncryptedValue ;
+ *     iep:expectedDatatype "xsd:dateTime" ;
+ *     iep:envelope "<base64-json>" ]
  *
  * The envelope is stored as a single base64-encoded JSON string to keep
  * the Turtle grammar simple (envelopes contain arrays + nested objects
@@ -109,28 +109,28 @@ export function encryptedFacetValueToTurtle(v: EncryptedFacetValue): string {
   const envelopeJson = JSON.stringify(v.envelope);
   const envelopeB64 = Buffer.from(envelopeJson, 'utf8').toString('base64');
   const lines: string[] = [
-    '[ a cg:EncryptedValue',
+    '[ a iep:EncryptedValue',
   ];
   if (v.expectedDatatype) {
-    lines.push(`    ; cg:expectedDatatype "${v.expectedDatatype}"`);
+    lines.push(`    ; iep:expectedDatatype "${v.expectedDatatype}"`);
   }
-  lines.push(`    ; cg:envelope "${envelopeB64}" ]`);
+  lines.push(`    ; iep:envelope "${envelopeB64}" ]`);
   return lines.join('\n    ');
 }
 
 /**
  * Parse an EncryptedFacetValue blank-node block out of a Turtle fragment.
- * Returns null if the fragment is not an `cg:EncryptedValue` block.
+ * Returns null if the fragment is not an `iep:EncryptedValue` block.
  */
 export function parseEncryptedFacetValueFromTurtle(fragment: string): EncryptedFacetValue | null {
-  if (!/a\s+cg:EncryptedValue/.test(fragment)) return null;
-  const envB64Match = fragment.match(/cg:envelope\s+"([^"]+)"/);
+  if (!/a\s+iep:EncryptedValue/.test(fragment)) return null;
+  const envB64Match = fragment.match(/iep:envelope\s+"([^"]+)"/);
   if (!envB64Match) return null;
   try {
     const json = Buffer.from(envB64Match[1]!, 'base64').toString('utf8');
     const envelope = JSON.parse(json) as EncryptedEnvelope;
-    const dtMatch = fragment.match(/cg:expectedDatatype\s+"([^"]+)"/);
-    const result: EncryptedFacetValue = { '@type': 'cg:EncryptedValue', envelope };
+    const dtMatch = fragment.match(/iep:expectedDatatype\s+"([^"]+)"/);
+    const result: EncryptedFacetValue = { '@type': 'iep:EncryptedValue', envelope };
     if (dtMatch) (result as { expectedDatatype?: string }).expectedDatatype = dtMatch[1];
     return result;
   } catch {

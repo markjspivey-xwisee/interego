@@ -41,7 +41,7 @@
  * intervention decision is a paradigmatic operation (the intervention
  * space is a paradigm set, the regime read supplies the constraints, the
  * selected intervention is the surviving cell). In the Knowable regime
- * the evaluation loop closes with `cg:supersedes` — a measured new
+ * the evaluation loop closes with `iep:supersedes` — a measured new
  * performance state supersedes the old.
  *
  * This is the project's own synthesis. It is informed by established
@@ -679,7 +679,7 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
   };
 }
 
-// ── Evaluation — closing a Knowable gap (four-level → cg:supersedes) ─
+// ── Evaluation — closing a Knowable gap (four-level → iep:supersedes) ─
 
 /**
  * A four-level evaluation of an intervention. This is the Knowable
@@ -693,7 +693,7 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
  *                statement / a trajectory step in the work context).
  *   outcome    — the situation's observed-state, re-measured against the
  *                exemplary one. If the gap closed, the intervention
- *                worked; the new state supersedes the old (`cg:supersedes`).
+ *                worked; the new state supersedes the old (`iep:supersedes`).
  */
 export interface EvaluateInput {
   plan: InterventionPlan;
@@ -739,7 +739,7 @@ export function evaluateIntervention(input: EvaluateInput): InterventionEvaluati
     levels.outcome = { gapClosed, before: situation.observed, after: input.newObserved };
     if (gapClosed) {
       verdict = 'closed';
-      nextAction = `The gap is closed. Emit a cg:supersedes-linked PerformanceSituation descriptor whose observed-state is "${input.newObserved}" and modalStatus Asserted; retire the intervention.`;
+      nextAction = `The gap is closed. Emit a iep:supersedes-linked PerformanceSituation descriptor whose observed-state is "${input.newObserved}" and modalStatus Asserted; retire the intervention.`;
     } else if (input.newObserved !== situation.observed) {
       verdict = 'improved';
       nextAction = 'Performance improved but the gap is not fully closed. Re-contextualize against the new observed-state — the remaining gap may now have a different root cause.';

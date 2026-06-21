@@ -4,7 +4,7 @@
  *   evaluator. Implements the L2 pattern declared in docs/ns/abac.ttl
  *   over L1 primitives in cg.ttl.
  *
- *   - Policies are `cg:AccessControlPolicy` descriptors (L1).
+ *   - Policies are `iep:AccessControlPolicy` descriptors (L1).
  *   - The pattern for how to evaluate, resolve, cache, audit is `abac:` (L2).
  *   - This module is the reference implementation of that pattern (L3).
  */
@@ -101,7 +101,7 @@ export interface PredicateConstraint {
 }
 
 /**
- * A cached decision, stored with the same shape a `cg:TrustFacet`
+ * A cached decision, stored with the same shape a `iep:TrustFacet`
  * carries so that it's verifiable: who decided (issuer), when
  * (validity window), what was decided (verdict). Stale entries are
  * verifiable stale — not silent drift.

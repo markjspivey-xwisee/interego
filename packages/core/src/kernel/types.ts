@@ -71,7 +71,7 @@ export interface Holon {
 // ── Affordance (the Peircean Third made operational) ─────────
 
 /**
- * Structured form of a `cg:Affordance` block read from a descriptor's
+ * Structured form of a `iep:Affordance` block read from a descriptor's
  * representation. Carries everything `act` needs to follow the link.
  *
  * This is intentionally a flat, JSON-friendly shape — the kernel
@@ -79,7 +79,7 @@ export interface Holon {
  * APIs) as well as the TS library.
  */
 export interface Affordance {
-  /** The `cg:action` IRI — what the affordance does. */
+  /** The `iep:action` IRI — what the affordance does. */
   readonly action: string;
   /** The `hydra:target` URL — where to invoke. */
   readonly target: string;
@@ -94,7 +94,7 @@ export interface Affordance {
    */
   readonly fromDescriptor?: string;
   /**
-   * The subject IRI of the `cg:Affordance` block inside the descriptor,
+   * The subject IRI of the `iep:Affordance` block inside the descriptor,
    * when the block has a named subject. Useful for debugging and for
    * agents that index affordances by IRI.
    */
@@ -145,7 +145,7 @@ export interface DereferenceResult {
   readonly manifestEntries?: readonly DereferencedManifestEntry[];
   /**
    * Structured provenance read from the representation. Parsed via the
-   * substrate's `parseTrig` so every prov:* / cg:supersedes / dct:* triple
+   * substrate's `parseTrig` so every prov:* / iep:supersedes / dct:* triple
    * is recovered, including multi-value lists and across all subjects in
    * the document (descriptor IRI + named graph IRI + any blank-node
    * provenance constructs). When the body is unparseable, `provenance`
@@ -160,7 +160,7 @@ export interface DereferenceResult {
     readonly wasAttributedTo?: readonly string[];
     /** prov:generatedAtTime — when the holon came into being. */
     readonly generatedAtTime?: string;
-    /** cg:supersedes — IRIs of holons this one replaces in a chain. */
+    /** iep:supersedes — IRIs of holons this one replaces in a chain. */
     readonly supersedes?: readonly string[];
     /** dct:conformsTo — SHACL shapes / ontology terms this conforms to. */
     readonly conformsTo?: readonly string[];
@@ -241,9 +241,9 @@ export interface DecomposeResult {
   readonly overlap: IRI;
 }
 
-// ── Verb 9 — reduce (fold over a cg:supersedes chain) ────────
+// ── Verb 9 — reduce (fold over a iep:supersedes chain) ────────
 //
-// `reduce(chainHeadIri, reducerSpec?)` walks the cg:supersedes back-
+// `reduce(chainHeadIri, reducerSpec?)` walks the iep:supersedes back-
 // links from the head to the oldest link, folds the chain through a
 // declarative reducer (NOT arbitrary code), and returns a canonical
 // "current state" alongside a ReplayProof a third party can use to
@@ -259,8 +259,8 @@ export interface DecomposeResult {
 /**
  * Declarative reducer specification. Two substrate-honest kinds:
  *
- *   - `'turtle-template'` — a Turtle document with `{?prior.cg:value}`
- *     / `{?current.cg:value}` placeholders. The kernel binds them and
+ *   - `'turtle-template'` — a Turtle document with `{?prior.iep:value}`
+ *     / `{?current.iep:value}` placeholders. The kernel binds them and
  *     materializes triples. Pure data; no execution.
  *
  *   - `'shacl-transform'` — a SHACL graph using `sh:rule` /
@@ -280,7 +280,7 @@ export type ReducerSpec =
 export interface ReduceOptions {
   /**
    * Inline reducer specification. When omitted, the kernel reads
-   * `cg:reducer <iri>` from the chain head's descriptor body and
+   * `iep:reducer <iri>` from the chain head's descriptor body and
    * dereferences the named reducer artifact (itself content-addressed).
    */
   readonly reducerSpec?: ReducerSpec;
@@ -300,23 +300,23 @@ export interface ReduceOptions {
   readonly checkpointEvery?: number;
   /**
    * Resolver for individual chain links. When omitted, the kernel uses
-   * its own `dereference` against each `cg:supersedes` IRI. Tests
+   * its own `dereference` against each `iep:supersedes` IRI. Tests
    * supply a stub so the fold can be exercised without touching HTTP.
    */
   readonly fetch?: (iri: IRI) => Promise<string | null>;
   /**
-   * How the walker reconstructs the chain from `cg:supersedes`
+   * How the walker reconstructs the chain from `iep:supersedes`
    * back-links:
    *
    *   - `'shortest'` (default) — preserves historical behaviour: at each
-   *     link the walker follows the FIRST cg:supersedes IRI it finds
+   *     link the walker follows the FIRST iep:supersedes IRI it finds
    *     (effectively a breadth-shortest path back to an origin). Fast,
    *     deterministic, and correct when each descriptor declares a
    *     single back-link.
    *
    *   - `'full'` — collects every descriptor reachable through the
-   *     transitive cg:supersedes closure of the head, then folds them
-   *     in canonical lineage order: sorted by `cg:validFrom` ascending
+   *     transitive iep:supersedes closure of the head, then folds them
+   *     in canonical lineage order: sorted by `iep:validFrom` ascending
    *     (oldest first), falling back to descriptor-URL lexical sort for
    *     ties. The ReplayProof's `chainCids[]` are emitted in that same
    *     sorted order so independent verifiers reproduce the same head.

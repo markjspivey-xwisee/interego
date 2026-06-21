@@ -1,8 +1,8 @@
 // Cool test: Policy versioning + verifiable-stale cache.
 //
-// A policy is a cg:AccessControlPolicy — a context descriptor like
+// A policy is a iep:AccessControlPolicy — a context descriptor like
 // any other. That means it participates in the protocol's version
-// machinery: cg:supersedes lets you replace an old version; every
+// machinery: iep:supersedes lets you replace an old version; every
 // cached decision carries prov:wasDerivedFrom pointing to the
 // specific policy version it was evaluated against.
 //
@@ -13,7 +13,7 @@
 // state, not a hidden bug.
 //
 // This demo exercises:
-//   - cg:supersedes between policy versions
+//   - iep:supersedes between policy versions
 //   - Cache entries carrying the version they were computed against
 //   - Fresh evaluation using latest-non-superseded policy diverging
 //     from the cache result
@@ -50,7 +50,7 @@ const qualityShapeV2 = {
 
 // Policies are descriptors. We carry the descriptor metadata
 // inline here — in production these would be real
-// cg:ContextDescriptor instances with temporal + provenance facets.
+// iep:ContextDescriptor instances with temporal + provenance facets.
 const policyV1 = {
   id: 'urn:policy:merge-gate#v1',
   policyPredicateShape: qualityShapeV1.iri,
@@ -69,7 +69,7 @@ const policyV2 = {
   deonticMode: 'Permit',
   _version: 2,
   _publishedAt: T2,
-  _supersedes: [policyV1.id],  // cg:supersedes
+  _supersedes: [policyV1.id],  // iep:supersedes
 };
 
 function latestPolicies(policies, now) {
@@ -173,7 +173,7 @@ console.log('   Both the T1 verdict (Allowed against v1) and the T3 verdict');
 console.log('   (Indeterminate against v2) are simultaneously correct — at');
 console.log('   their respective policy versions.');
 console.log('');
-console.log('   Because a policy is a descriptor, cg:supersedes provides a');
+console.log('   Because a policy is a descriptor, iep:supersedes provides a');
 console.log('   first-class versioning axis. A cached decision carries which');
 console.log('   version it was computed against; any consumer can detect');
 console.log('   stale-by-version by comparing the cache\'s version set to the');

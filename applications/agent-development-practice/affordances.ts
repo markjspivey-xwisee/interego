@@ -2,7 +2,7 @@
  * Affordance declarations for the agent-development-practice vertical.
  *
  * Each capability declared once as an Affordance — bridge derives MCP
- * tool schemas; protocol publishes as cg:Affordance for generic
+ * tool schemas; protocol publishes as iep:Affordance for generic
  * discovery.
  */
 
@@ -13,7 +13,7 @@ import type {
 
 const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
   {
-    action: 'urn:cg:action:adp:define-capability' as IRI,
+    action: 'urn:iep:action:adp:define-capability' as IRI,
     toolName: 'adp.define_capability',
     title: 'Declare a capability space',
     description: 'Declare a capability SPACE (not target) with rubric criteria as guides (not gates) and a Cynefin domain. Publishes adp:Capability + adp:RubricCriterion entries.',
@@ -39,7 +39,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:adp:record-probe' as IRI,
+    action: 'urn:iep:action:adp:record-probe' as IRI,
     toolName: 'adp.record_probe',
     title: 'Record a safe-to-fail probe',
     description: 'Record a safe-to-fail probe. Always Hypothetical. REQUIRES amplification + dampening triggers stated up-front (prevents retconning).',
@@ -67,7 +67,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:adp:record-narrative-fragment' as IRI,
+    action: 'urn:iep:action:adp:record-narrative-fragment' as IRI,
     toolName: 'adp.record_narrative_fragment',
     title: 'Record a narrative fragment',
     description: 'Record a narrative observation against a probe. Always Hypothetical (observation, not causation claim). Carries situation signifiers + agent response + emergent signifier.',
@@ -93,7 +93,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:adp:emerge-synthesis' as IRI,
+    action: 'urn:iep:action:adp:emerge-synthesis' as IRI,
     toolName: 'adp.emerge_synthesis',
     title: 'Emerge a synthesis from fragments',
     description: 'Compose multiple narrative fragments into a synthesis. Always Hypothetical. REQUIRES ≥2 coherent narratives — silent-collapse prevention.',
@@ -119,7 +119,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:adp:record-evolution-step' as IRI,
+    action: 'urn:iep:action:adp:record-evolution-step' as IRI,
     toolName: 'adp.record_evolution_step',
     title: 'Record an amplify/dampen evolution decision',
     description: 'Operator amplify/dampen decision. Asserted (operator commits) BUT REQUIRES explicit_decision_not_made — counter-cultural; forces writing down what is NOT being claimed.',
@@ -146,7 +146,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:adp:refine-constraint' as IRI,
+    action: 'urn:iep:action:adp:refine-constraint' as IRI,
     toolName: 'adp.refine_constraint',
     title: 'Refine a constraint emerged from synthesis cycles',
     description: 'Refine a constraint emerged from synthesis cycles. Boundary (what NOT to do) + exits (when relaxed). REQUIRES emergedFrom — constraints emerge from sensemaking, not from declaration.',
@@ -173,7 +173,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:adp:recognize-capability-evolution' as IRI,
+    action: 'urn:iep:action:adp:recognize-capability-evolution' as IRI,
     toolName: 'adp.recognize_capability_evolution',
     title: 'Recognize an emergent capability as a passport:LifeEvent',
     description: 'Record a passport:LifeEvent biographical record for an emergent capability. REQUIRES explicit_decision_not_made — humility-forward clauses travel with the agent across deployments.',
@@ -200,7 +200,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:adp:list-cycle' as IRI,
+    action: 'urn:iep:action:adp:list-cycle' as IRI,
     toolName: 'adp.list_cycle',
     title: 'Load the operator\'s probe cycle state',
     description: 'Load the operator\'s probe cycle state from the pod: capabilities, probes, fragments, syntheses, evolution steps, constraints, capability evolution events.',

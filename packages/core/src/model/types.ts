@@ -159,7 +159,7 @@ export interface Authorization {
  *
  * Two modes coexist: (a) classic identity-based authorizations per
  * WAC (`authorizations`); (b) attribute-based policy references
- * (`policyRefs`) pointing at `cg:AccessControlPolicy` descriptors.
+ * (`policyRefs`) pointing at `iep:AccessControlPolicy` descriptors.
  * The effective decision is the meet (deny-overrides-permit) across
  * whichever applies. Evaluation pattern for ABAC is specified by the
  * `abac:` L2 ontology and implemented in `src/abac/`.
@@ -168,7 +168,7 @@ export interface AccessControlFacetData {
   readonly type: 'AccessControl';
   readonly authorizations: readonly Authorization[];
   readonly consentBasis?: IRI;
-  /** IRIs of `cg:AccessControlPolicy` descriptors that govern access. */
+  /** IRIs of `iep:AccessControlPolicy` descriptors that govern access. */
   readonly policyRefs?: readonly IRI[];
 }
 
@@ -200,16 +200,16 @@ export interface AccessControlPolicyData {
  *
  * Declarative condition under which a claim's effective groundTruth
  * transitions per the RevocationAction. Shared between Proposal A
- * (cg:RevocationFacet — 7th facet) and Proposal B (cg:revokedIf
+ * (iep:RevocationFacet — 7th facet) and Proposal B (iep:revokedIf
  * predicate on SemioticFacet). Neither proposal is adopted yet; the
  * terms carry vs:term_status "testing" in the ontology.
  */
 export interface RevocationConditionData {
-  /** SPARQL 1.1 ASK / SELECT / CONSTRUCT query (cg:successorQuery). */
+  /** SPARQL 1.1 ASK / SELECT / CONSTRUCT query (iep:successorQuery). */
   readonly successorQuery: string;
-  /** Federation scope — cg:LocalPod / cg:KnownFederation / cg:WebFingerResolvable. */
+  /** Federation scope — iep:LocalPod / iep:KnownFederation / iep:WebFingerResolvable. */
   readonly evaluationScope?: 'LocalPod' | 'KnownFederation' | 'WebFingerResolvable';
-  /** Action when the query matches — cg:MarkInvalid / cg:DowngradeToHypothetical / cg:RequireReconfirmation. */
+  /** Action when the query matches — iep:MarkInvalid / iep:DowngradeToHypothetical / iep:RequireReconfirmation. */
   readonly onRevocation?: 'MarkInvalid' | 'DowngradeToHypothetical' | 'RequireReconfirmation';
   /** Optional issuer — may differ from the descriptor author (regulator, auditor). */
   readonly revocationIssuer?: IRI;
@@ -275,7 +275,7 @@ export interface TrustFacetData {
   readonly paymentRequirement?: PaymentRequirement;
   readonly paymentReceipt?: PaymentReceipt;
   /**
-   * Inline proof reference (cg:proof). For compliance descriptors:
+   * Inline proof reference (iep:proof). For compliance descriptors:
    * carries the URL of the sibling .sig.json + the signature scheme
    * + the public signer address. Lets verifiers find the signature
    * via the descriptor itself rather than guessing a URL convention.

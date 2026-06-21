@@ -234,7 +234,7 @@ async function agentLRS() {
   log('LRS', '  stmt:004 — attempted Emergency Missed Approach (score: 78, FAILED)');
   log('LRS', '  stmt:005 — completed Emergency Missed Approach retry (score: 91)');
 
-  const descriptor = ContextDescriptor.create('urn:cg:lrs:xapi-session-2026-03-15' as IRI)
+  const descriptor = ContextDescriptor.create('urn:iep:lrs:xapi-session-2026-03-15' as IRI)
 .describes('urn:graph:lrs:flight-sim-statements' as IRI)
 .temporal({
       validFrom: '2026-03-15T14:30:00Z',
@@ -354,7 +354,7 @@ async function agentCompetency(lrsDescriptor: any) {
     comp:assessedAt "2026-03-17T09:00:00Z"^^xsd:dateTime.
 `.trim();
 
-  const descriptor = ContextDescriptor.create('urn:cg:competency:chen-sarah-assessment-2026-03' as IRI)
+  const descriptor = ContextDescriptor.create('urn:iep:competency:chen-sarah-assessment-2026-03' as IRI)
 .describes('urn:graph:competency:chen-sarah-assertions' as IRI)
 .temporal({
       validFrom: '2026-03-17T09:00:00Z',
@@ -368,7 +368,7 @@ async function agentCompetency(lrsDescriptor: any) {
       },
       wasAttributedTo: 'did:web:competency.training.airforce.mil' as IRI,
       generatedAtTime: '2026-03-17T09:05:00Z',
-      sources: ['urn:cg:lrs:xapi-session-2026-03-15' as IRI],
+      sources: ['urn:iep:lrs:xapi-session-2026-03-15' as IRI],
     })
 .agent('did:web:competency.training.airforce.mil' as IRI, 'Assessor')
 .semiotic({
@@ -457,8 +457,8 @@ async function agentCredential(lrsDesc: any, compDesc: any) {
             lers:framework "USAF Instrument Rating Competency Framework v3"
         ] ;
         lers:evidence [
-            lers:xapiSource <urn:cg:lrs:xapi-session-2026-03-15> ;
-            lers:competencySource <urn:cg:competency:chen-sarah-assessment-2026-03> ;
+            lers:xapiSource <urn:iep:lrs:xapi-session-2026-03-15> ;
+            lers:competencySource <urn:iep:competency:chen-sarah-assessment-2026-03> ;
             lers:statementCount 5 ;
             lers:competencyCount 4 ;
             lers:averageScore "91.6"^^xsd:decimal ;
@@ -476,7 +476,7 @@ async function agentCredential(lrsDesc: any, compDesc: any) {
   log('Credential', '  Issuer: did:web:credential.training.airforce.mil');
   log('Credential', '  Valid: 2026-03-17 to 2027-03-17 (1 year)');
 
-  const descriptor = ContextDescriptor.create('urn:cg:credential:chen-sarah-instrument-2026' as IRI)
+  const descriptor = ContextDescriptor.create('urn:iep:credential:chen-sarah-instrument-2026' as IRI)
 .describes('urn:graph:credential:chen-sarah-lers' as IRI)
 .temporal({
       validFrom: '2026-03-17T10:00:00Z',
@@ -491,8 +491,8 @@ async function agentCredential(lrsDesc: any, compDesc: any) {
       wasAttributedTo: 'did:web:credential.training.airforce.mil' as IRI,
       generatedAtTime: '2026-03-17T10:00:05Z',
       sources: [
-        'urn:cg:lrs:xapi-session-2026-03-15' as IRI,
-        'urn:cg:competency:chen-sarah-assessment-2026-03' as IRI,
+        'urn:iep:lrs:xapi-session-2026-03-15' as IRI,
+        'urn:iep:competency:chen-sarah-assessment-2026-03' as IRI,
       ],
     })
 .agent('did:web:credential.training.airforce.mil' as IRI, 'Issuer')

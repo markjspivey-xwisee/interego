@@ -21,7 +21,7 @@ import {
  * exports the same constant — they MUST stay in sync.
  */
 export const PGSL_NS  = 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#' as const;
-export const CG_NS    = 'https://markjspivey-xwisee.github.io/interego/ns/cg#' as const;
+export const CG_NS    = 'https://markjspivey-xwisee.github.io/interego/ns/iep#' as const;
 export const WAC_NS   = ACL;
 export const HYDRA_NS = HYDRA;
 export const DCAT_NS  = DCAT;
@@ -42,7 +42,7 @@ export const FOAF_NS  = FOAF;
  */
 export function allPrefixes(): string {
   return [
-    `@prefix cg: <${CG_NS}> .`,
+    `@prefix iep: <${CG_NS}> .`,
     `@prefix pgsl: <${PGSL_NS}> .`,
     `@prefix hydra: <${HYDRA_NS}> .`,
     `@prefix dcat: <${DCAT_NS}> .`,
@@ -82,7 +82,7 @@ export function systemOntology(): string {
 
 pgsl:Atom rdfs:subClassOf prov:Entity .
 pgsl:Fragment rdfs:subClassOf prov:Entity .
-cg:ContextDescriptor rdfs:subClassOf prov:Entity .
+iep:ContextDescriptor rdfs:subClassOf prov:Entity .
 
 # ── Transitive / Inverse Properties (PGSL) ──────────────────
 
@@ -95,415 +95,415 @@ pgsl:containedIn a owl:ObjectProperty ;
     rdfs:label "contained in" ;
     rdfs:comment "Inverse of pgsl:contains." .
 
-cg:describes owl:inverseOf cg:describedBy .
+iep:describes owl:inverseOf iep:describedBy .
 
-cg:describedBy a owl:ObjectProperty ;
+iep:describedBy a owl:ObjectProperty ;
     rdfs:label "described by" ;
-    rdfs:comment "Inverse of cg:describes — links a named graph to its descriptor." .
+    rdfs:comment "Inverse of iep:describes — links a named graph to its descriptor." .
 
 # ── CG Classes: Core Descriptor ─────────────────────────────
 
-cg:ContextDescriptor a owl:Class ;
+iep:ContextDescriptor a owl:Class ;
     rdfs:label "Context Descriptor" ;
     rdfs:comment "The core metadata envelope that describes a named graph with typed facets." .
 
-cg:ComposedDescriptor a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+iep:ComposedDescriptor a owl:Class ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Composed Descriptor" ;
     rdfs:comment "A descriptor produced by algebraic composition of source descriptors." .
 
 # ── CG Classes: Facet Hierarchy ──────────────────────────────
 
-cg:ContextFacet a owl:Class ;
+iep:ContextFacet a owl:Class ;
     rdfs:label "Context Facet" ;
     rdfs:comment "Abstract base for all typed facets attached to a context descriptor." .
 
-cg:TemporalFacet a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
-    owl:disjointWith cg:ProvenanceFacet, cg:AgentFacet, cg:AccessControlFacet,
-        cg:SemioticFacet, cg:TrustFacet, cg:FederationFacet, cg:CausalFacet, cg:ProjectionFacet ;
+iep:TemporalFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    owl:disjointWith iep:ProvenanceFacet, iep:AgentFacet, iep:AccessControlFacet,
+        iep:SemioticFacet, iep:TrustFacet, iep:FederationFacet, iep:CausalFacet, iep:ProjectionFacet ;
     rdfs:label "Temporal Facet" ;
     rdfs:comment "Time-bounded validity window for context." .
 
-cg:ProvenanceFacet a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
-    owl:disjointWith cg:AgentFacet, cg:AccessControlFacet, cg:SemioticFacet,
-        cg:TrustFacet, cg:FederationFacet, cg:CausalFacet, cg:ProjectionFacet ;
+iep:ProvenanceFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    owl:disjointWith iep:AgentFacet, iep:AccessControlFacet, iep:SemioticFacet,
+        iep:TrustFacet, iep:FederationFacet, iep:CausalFacet, iep:ProjectionFacet ;
     rdfs:label "Provenance Facet" ;
     rdfs:comment "Origin and derivation chain of the context." .
 
-cg:AgentFacet a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
-    owl:disjointWith cg:AccessControlFacet, cg:SemioticFacet, cg:TrustFacet,
-        cg:FederationFacet, cg:CausalFacet, cg:ProjectionFacet ;
+iep:AgentFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    owl:disjointWith iep:AccessControlFacet, iep:SemioticFacet, iep:TrustFacet,
+        iep:FederationFacet, iep:CausalFacet, iep:ProjectionFacet ;
     rdfs:label "Agent Facet" ;
     rdfs:comment "The asserting agent, role, and delegation chain." .
 
-cg:AccessControlFacet a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
-    owl:disjointWith cg:SemioticFacet, cg:TrustFacet, cg:FederationFacet,
-        cg:CausalFacet, cg:ProjectionFacet ;
+iep:AccessControlFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    owl:disjointWith iep:SemioticFacet, iep:TrustFacet, iep:FederationFacet,
+        iep:CausalFacet, iep:ProjectionFacet ;
     rdfs:label "Access Control Facet" ;
     rdfs:comment "WAC-based authorization and consent." .
 
-cg:SemioticFacet a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
-    owl:disjointWith cg:TrustFacet, cg:FederationFacet, cg:CausalFacet, cg:ProjectionFacet ;
+iep:SemioticFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    owl:disjointWith iep:TrustFacet, iep:FederationFacet, iep:CausalFacet, iep:ProjectionFacet ;
     rdfs:label "Semiotic Facet" ;
     rdfs:comment "Interpretation frame, modal status, and epistemic confidence." .
 
-cg:TrustFacet a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
-    owl:disjointWith cg:FederationFacet, cg:CausalFacet, cg:ProjectionFacet ;
+iep:TrustFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    owl:disjointWith iep:FederationFacet, iep:CausalFacet, iep:ProjectionFacet ;
     rdfs:label "Trust Facet" ;
     rdfs:comment "Verifiable credentials, trust level, and revocation status." .
 
-cg:FederationFacet a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
-    owl:disjointWith cg:CausalFacet, cg:ProjectionFacet ;
+iep:FederationFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    owl:disjointWith iep:CausalFacet, iep:ProjectionFacet ;
     rdfs:label "Federation Facet" ;
     rdfs:comment "Origin pod, storage endpoint, and sync protocol." .
 
-cg:CausalFacet a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
-    owl:disjointWith cg:ProjectionFacet ;
+iep:CausalFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    owl:disjointWith iep:ProjectionFacet ;
     rdfs:label "Causal Facet" ;
     rdfs:comment "Pearl-style structural causal model attachment." .
 
-cg:ProjectionFacet a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
+iep:ProjectionFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
     rdfs:label "Projection Facet" ;
     rdfs:comment "Vocabulary mapping and selective exposure for cross-boundary sharing." .
 
 # ── CG Properties ────────────────────────────────────────────
 
-cg:describes a owl:ObjectProperty ;
-    rdfs:domain cg:ContextDescriptor ;
+iep:describes a owl:ObjectProperty ;
+    rdfs:domain iep:ContextDescriptor ;
     rdfs:label "describes" ;
     rdfs:comment "Links a descriptor to the named graph it describes." .
 
-cg:hasFacet a owl:ObjectProperty ;
-    rdfs:domain cg:ContextDescriptor ;
-    rdfs:range cg:ContextFacet ;
+iep:hasFacet a owl:ObjectProperty ;
+    rdfs:domain iep:ContextDescriptor ;
+    rdfs:range iep:ContextFacet ;
     rdfs:label "has facet" ;
     rdfs:comment "Links a descriptor to one of its typed facets." .
 
-cg:validFrom a owl:DatatypeProperty, owl:FunctionalProperty ;
-    rdfs:domain cg:TemporalFacet ;
+iep:validFrom a owl:DatatypeProperty, owl:FunctionalProperty ;
+    rdfs:domain iep:TemporalFacet ;
     rdfs:range xsd:dateTime ;
     rdfs:label "valid from" ;
     rdfs:comment "Start of the temporal validity window." .
 
-cg:validUntil a owl:DatatypeProperty, owl:FunctionalProperty ;
-    rdfs:domain cg:TemporalFacet ;
+iep:validUntil a owl:DatatypeProperty, owl:FunctionalProperty ;
+    rdfs:domain iep:TemporalFacet ;
     rdfs:range xsd:dateTime ;
     rdfs:label "valid until" ;
     rdfs:comment "End of the temporal validity window (open-ended if absent)." .
 
-cg:trustLevel a owl:ObjectProperty, owl:FunctionalProperty ;
-    rdfs:domain cg:TrustFacet ;
-    rdfs:range cg:TrustLevelEnum ;
+iep:trustLevel a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain iep:TrustFacet ;
+    rdfs:range iep:TrustLevelEnum ;
     rdfs:label "trust level" ;
     rdfs:comment "Verification tier: SelfAsserted, ThirdPartyAttested, or CryptographicallyVerified." .
 
-cg:TrustLevelEnum a owl:Class ;
-    owl:oneOf ( cg:SelfAsserted cg:ThirdPartyAttested cg:CryptographicallyVerified ) ;
+iep:TrustLevelEnum a owl:Class ;
+    owl:oneOf ( iep:SelfAsserted iep:ThirdPartyAttested iep:CryptographicallyVerified ) ;
     rdfs:label "Trust Level Enumeration" .
 
-cg:SelfAsserted a owl:NamedIndividual, cg:TrustLevelEnum ;
+iep:SelfAsserted a owl:NamedIndividual, iep:TrustLevelEnum ;
     rdfs:label "Self-Asserted" .
-cg:ThirdPartyAttested a owl:NamedIndividual, cg:TrustLevelEnum ;
+iep:ThirdPartyAttested a owl:NamedIndividual, iep:TrustLevelEnum ;
     rdfs:label "Third-Party Attested" .
-cg:CryptographicallyVerified a owl:NamedIndividual, cg:TrustLevelEnum ;
+iep:CryptographicallyVerified a owl:NamedIndividual, iep:TrustLevelEnum ;
     rdfs:label "Cryptographically Verified" .
 
-cg:modalStatus a owl:ObjectProperty, owl:FunctionalProperty ;
-    rdfs:domain cg:SemioticFacet ;
-    rdfs:range cg:ModalStatusEnum ;
+iep:modalStatus a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain iep:SemioticFacet ;
+    rdfs:range iep:ModalStatusEnum ;
     rdfs:label "modal status" ;
     rdfs:comment "Epistemic modality of the assertion." .
 
-cg:ModalStatusEnum a owl:Class ;
-    owl:oneOf ( cg:Asserted cg:Hypothetical cg:Counterfactual cg:Quoted cg:Retracted ) ;
+iep:ModalStatusEnum a owl:Class ;
+    owl:oneOf ( iep:Asserted iep:Hypothetical iep:Counterfactual iep:Quoted iep:Retracted ) ;
     rdfs:label "Modal Status Enumeration" .
 
-cg:Asserted a owl:NamedIndividual, cg:ModalStatusEnum ;
+iep:Asserted a owl:NamedIndividual, iep:ModalStatusEnum ;
     rdfs:label "Asserted" .
-cg:Hypothetical a owl:NamedIndividual, cg:ModalStatusEnum ;
+iep:Hypothetical a owl:NamedIndividual, iep:ModalStatusEnum ;
     rdfs:label "Hypothetical" .
-cg:Counterfactual a owl:NamedIndividual, cg:ModalStatusEnum ;
+iep:Counterfactual a owl:NamedIndividual, iep:ModalStatusEnum ;
     rdfs:label "Counterfactual" .
-cg:Quoted a owl:NamedIndividual, cg:ModalStatusEnum ;
+iep:Quoted a owl:NamedIndividual, iep:ModalStatusEnum ;
     rdfs:label "Quoted" .
-cg:Retracted a owl:NamedIndividual, cg:ModalStatusEnum ;
+iep:Retracted a owl:NamedIndividual, iep:ModalStatusEnum ;
     rdfs:label "Retracted" .
 
-cg:epistemicConfidence a owl:DatatypeProperty, owl:FunctionalProperty ;
-    rdfs:domain cg:SemioticFacet ;
+iep:epistemicConfidence a owl:DatatypeProperty, owl:FunctionalProperty ;
+    rdfs:domain iep:SemioticFacet ;
     rdfs:range xsd:double ;
     rdfs:label "epistemic confidence" ;
     rdfs:comment "Confidence level between 0.0 and 1.0." .
 
-cg:wasAttributedTo a owl:ObjectProperty ;
-    rdfs:domain cg:ProvenanceFacet ;
+iep:wasAttributedTo a owl:ObjectProperty ;
+    rdfs:domain iep:ProvenanceFacet ;
     rdfs:label "was attributed to" ;
     rdfs:comment "The agent responsible for this context." .
 
-cg:composedFrom a owl:ObjectProperty ;
-    rdfs:domain cg:ComposedDescriptor ;
-    rdfs:range cg:ContextDescriptor ;
+iep:composedFrom a owl:ObjectProperty ;
+    rdfs:domain iep:ComposedDescriptor ;
+    rdfs:range iep:ContextDescriptor ;
     rdfs:label "composed from" ;
     rdfs:comment "Links a composed descriptor to its source descriptors." .
 
-cg:compositionOp a owl:ObjectProperty, owl:FunctionalProperty ;
-    rdfs:domain cg:ComposedDescriptor ;
-    rdfs:range cg:CompositionOperator ;
+iep:compositionOp a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain iep:ComposedDescriptor ;
+    rdfs:range iep:CompositionOperator ;
     rdfs:label "composition operator" ;
     rdfs:comment "The algebraic operator used: union, intersection, restriction, or override." .
 
-cg:union a owl:NamedIndividual, cg:CompositionOperator ;
+iep:union a owl:NamedIndividual, iep:CompositionOperator ;
     rdfs:label "Union" .
-cg:intersection a owl:NamedIndividual, cg:CompositionOperator ;
+iep:intersection a owl:NamedIndividual, iep:CompositionOperator ;
     rdfs:label "Intersection" .
-cg:restriction a owl:NamedIndividual, cg:CompositionOperator ;
+iep:restriction a owl:NamedIndividual, iep:CompositionOperator ;
     rdfs:label "Restriction" .
-cg:override a owl:NamedIndividual, cg:CompositionOperator ;
+iep:override a owl:NamedIndividual, iep:CompositionOperator ;
     rdfs:label "Override" .
 
 # ── Coherence Classes ────────────────────────────────────────
 
-cg:CoherenceCertificate a owl:Class ;
+iep:CoherenceCertificate a owl:Class ;
     rdfs:label "Coherence Certificate" ;
     rdfs:comment "Result of a coherence verification between two agents' views." .
 
-cg:CoherenceStatus a owl:Class ;
-    owl:oneOf ( cg:Verified cg:Divergent cg:Unexamined ) ;
+iep:CoherenceStatus a owl:Class ;
+    owl:oneOf ( iep:Verified iep:Divergent iep:Unexamined ) ;
     rdfs:label "Coherence Status" .
 
-cg:Verified a owl:NamedIndividual, cg:CoherenceStatus ;
+iep:Verified a owl:NamedIndividual, iep:CoherenceStatus ;
     rdfs:label "Verified" .
-cg:Divergent a owl:NamedIndividual, cg:CoherenceStatus ;
+iep:Divergent a owl:NamedIndividual, iep:CoherenceStatus ;
     rdfs:label "Divergent" .
-cg:Unexamined a owl:NamedIndividual, cg:CoherenceStatus ;
+iep:Unexamined a owl:NamedIndividual, iep:CoherenceStatus ;
     rdfs:label "Unexamined" .
 
-cg:AtomCoherence a owl:Class ;
+iep:AtomCoherence a owl:Class ;
     rdfs:label "Atom Coherence" ;
     rdfs:comment "Per-atom usage analysis within a coherence check." .
 
-cg:CoherenceObstruction a owl:Class ;
+iep:CoherenceObstruction a owl:Class ;
     rdfs:label "Coherence Obstruction" ;
     rdfs:comment "A specific divergence point between two agents' interpretations." .
 
-cg:agentA a owl:ObjectProperty ;
-    rdfs:domain cg:CoherenceCertificate ;
+iep:agentA a owl:ObjectProperty ;
+    rdfs:domain iep:CoherenceCertificate ;
     rdfs:label "agent A" .
 
-cg:agentB a owl:ObjectProperty ;
-    rdfs:domain cg:CoherenceCertificate ;
+iep:agentB a owl:ObjectProperty ;
+    rdfs:domain iep:CoherenceCertificate ;
     rdfs:label "agent B" .
 
-cg:coherenceStatus a owl:ObjectProperty, owl:FunctionalProperty ;
-    rdfs:domain cg:CoherenceCertificate ;
-    rdfs:range cg:CoherenceStatus ;
+iep:coherenceStatus a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain iep:CoherenceCertificate ;
+    rdfs:range iep:CoherenceStatus ;
     rdfs:label "coherence status" .
 
-cg:hasObstruction a owl:ObjectProperty ;
-    rdfs:domain cg:CoherenceCertificate ;
-    rdfs:range cg:CoherenceObstruction ;
+iep:hasObstruction a owl:ObjectProperty ;
+    rdfs:domain iep:CoherenceCertificate ;
+    rdfs:range iep:CoherenceObstruction ;
     rdfs:label "has obstruction" .
 
-cg:obstructionAtom a owl:ObjectProperty ;
-    rdfs:domain cg:CoherenceObstruction ;
+iep:obstructionAtom a owl:ObjectProperty ;
+    rdfs:domain iep:CoherenceObstruction ;
     rdfs:range pgsl:Atom ;
     rdfs:label "obstruction atom" .
 
 # ── Paradigm Classes ─────────────────────────────────────────
 
-cg:ParadigmSet a owl:Class ;
+iep:ParadigmSet a owl:Class ;
     rdfs:label "Paradigm Set" ;
     rdfs:comment "A computed set of interchangeable items at a syntagmatic position." .
 
-cg:ParadigmConstraint a owl:Class ;
+iep:ParadigmConstraint a owl:Class ;
     rdfs:label "Paradigm Constraint" ;
     rdfs:comment "A rule linking two paradigm sets via an operation." .
 
-cg:ParadigmOperation a owl:Class ;
-    owl:oneOf ( cg:Subset cg:Intersect cg:Union cg:Exclude cg:Equal ) ;
+iep:ParadigmOperation a owl:Class ;
+    owl:oneOf ( iep:Subset iep:Intersect iep:Union iep:Exclude iep:Equal ) ;
     rdfs:label "Paradigm Operation" .
 
-cg:Subset a owl:NamedIndividual, cg:ParadigmOperation ;
+iep:Subset a owl:NamedIndividual, iep:ParadigmOperation ;
     rdfs:label "Subset" .
-cg:Intersect a owl:NamedIndividual, cg:ParadigmOperation ;
+iep:Intersect a owl:NamedIndividual, iep:ParadigmOperation ;
     rdfs:label "Intersect" .
-cg:Union a owl:NamedIndividual, cg:ParadigmOperation ;
+iep:Union a owl:NamedIndividual, iep:ParadigmOperation ;
     rdfs:label "Union" .
-cg:Exclude a owl:NamedIndividual, cg:ParadigmOperation ;
+iep:Exclude a owl:NamedIndividual, iep:ParadigmOperation ;
     rdfs:label "Exclude" .
-cg:Equal a owl:NamedIndividual, cg:ParadigmOperation ;
+iep:Equal a owl:NamedIndividual, iep:ParadigmOperation ;
     rdfs:label "Equal" .
 
-cg:SyntagmaticPattern a owl:Class ;
+iep:SyntagmaticPattern a owl:Class ;
     rdfs:label "Syntagmatic Pattern" ;
     rdfs:comment "A chain pattern with wildcards for paradigm set computation." .
 
-cg:patternA a owl:ObjectProperty ;
-    rdfs:domain cg:ParadigmConstraint ;
-    rdfs:range cg:SyntagmaticPattern ;
+iep:patternA a owl:ObjectProperty ;
+    rdfs:domain iep:ParadigmConstraint ;
+    rdfs:range iep:SyntagmaticPattern ;
     rdfs:label "pattern A" .
 
-cg:positionA a owl:DatatypeProperty ;
-    rdfs:domain cg:ParadigmConstraint ;
+iep:positionA a owl:DatatypeProperty ;
+    rdfs:domain iep:ParadigmConstraint ;
     rdfs:range xsd:nonNegativeInteger ;
     rdfs:label "position A" .
 
-cg:patternB a owl:ObjectProperty ;
-    rdfs:domain cg:ParadigmConstraint ;
-    rdfs:range cg:SyntagmaticPattern ;
+iep:patternB a owl:ObjectProperty ;
+    rdfs:domain iep:ParadigmConstraint ;
+    rdfs:range iep:SyntagmaticPattern ;
     rdfs:label "pattern B" .
 
-cg:positionB a owl:DatatypeProperty ;
-    rdfs:domain cg:ParadigmConstraint ;
+iep:positionB a owl:DatatypeProperty ;
+    rdfs:domain iep:ParadigmConstraint ;
     rdfs:range xsd:nonNegativeInteger ;
     rdfs:label "position B" .
 
-cg:paradigmOp a owl:ObjectProperty, owl:FunctionalProperty ;
-    rdfs:domain cg:ParadigmConstraint ;
-    rdfs:range cg:ParadigmOperation ;
+iep:paradigmOp a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain iep:ParadigmConstraint ;
+    rdfs:range iep:ParadigmOperation ;
     rdfs:label "paradigm operation" .
 
 # ── Persistence Classes ──────────────────────────────────────
 
-cg:PersistenceRecord a owl:Class ;
+iep:PersistenceRecord a owl:Class ;
     rdfs:label "Persistence Record" ;
     rdfs:comment "Tier metadata tracking where a node is stored." .
 
-cg:PersistenceTier a owl:Class ;
-    owl:oneOf ( cg:MemoryTier cg:Local cg:PodTier cg:IPFS cg:ChainTier ) ;
+iep:PersistenceTier a owl:Class ;
+    owl:oneOf ( iep:MemoryTier iep:Local iep:PodTier iep:IPFS iep:ChainTier ) ;
     rdfs:label "Persistence Tier" .
 
-cg:MemoryTier a owl:NamedIndividual, cg:PersistenceTier ;
+iep:MemoryTier a owl:NamedIndividual, iep:PersistenceTier ;
     rdfs:label "Memory" .
-cg:Local a owl:NamedIndividual, cg:PersistenceTier ;
+iep:Local a owl:NamedIndividual, iep:PersistenceTier ;
     rdfs:label "Local" .
-cg:PodTier a owl:NamedIndividual, cg:PersistenceTier ;
+iep:PodTier a owl:NamedIndividual, iep:PersistenceTier ;
     rdfs:label "Pod" .
-cg:IPFS a owl:NamedIndividual, cg:PersistenceTier ;
+iep:IPFS a owl:NamedIndividual, iep:PersistenceTier ;
     rdfs:label "IPFS" .
-cg:ChainTier a owl:NamedIndividual, cg:PersistenceTier ;
+iep:ChainTier a owl:NamedIndividual, iep:PersistenceTier ;
     rdfs:label "Chain" .
 
-cg:persistenceUri a owl:DatatypeProperty ;
-    rdfs:domain cg:PersistenceRecord ;
+iep:persistenceUri a owl:DatatypeProperty ;
+    rdfs:domain iep:PersistenceRecord ;
     rdfs:range xsd:anyURI ;
     rdfs:label "persistence URI" .
 
-cg:persistenceTier a owl:ObjectProperty, owl:FunctionalProperty ;
-    rdfs:domain cg:PersistenceRecord ;
-    rdfs:range cg:PersistenceTier ;
+iep:persistenceTier a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain iep:PersistenceRecord ;
+    rdfs:range iep:PersistenceTier ;
     rdfs:label "persistence tier" .
 
-cg:promotedAt a owl:DatatypeProperty ;
-    rdfs:domain cg:PersistenceRecord ;
+iep:promotedAt a owl:DatatypeProperty ;
+    rdfs:domain iep:PersistenceRecord ;
     rdfs:range xsd:dateTime ;
     rdfs:label "promoted at" .
 
 # ── Decision Classes ─────────────────────────────────────────
 
-cg:Decision a owl:Class ;
+iep:Decision a owl:Class ;
     rdfs:label "Decision" ;
     rdfs:comment "A selected affordance from a paradigm set." .
 
-cg:DecisionStrategy a owl:Class ;
-    owl:oneOf ( cg:Exploit cg:Explore cg:DelegateStrategy cg:Abstain ) ;
+iep:DecisionStrategy a owl:Class ;
+    owl:oneOf ( iep:Exploit iep:Explore iep:DelegateStrategy iep:Abstain ) ;
     rdfs:label "Decision Strategy" .
 
-cg:Exploit a owl:NamedIndividual, cg:DecisionStrategy ;
+iep:Exploit a owl:NamedIndividual, iep:DecisionStrategy ;
     rdfs:label "Exploit" .
-cg:Explore a owl:NamedIndividual, cg:DecisionStrategy ;
+iep:Explore a owl:NamedIndividual, iep:DecisionStrategy ;
     rdfs:label "Explore" .
-cg:DelegateStrategy a owl:NamedIndividual, cg:DecisionStrategy ;
+iep:DelegateStrategy a owl:NamedIndividual, iep:DecisionStrategy ;
     rdfs:label "Delegate" .
-cg:Abstain a owl:NamedIndividual, cg:DecisionStrategy ;
+iep:Abstain a owl:NamedIndividual, iep:DecisionStrategy ;
     rdfs:label "Abstain" .
 
-cg:ObservationSection a owl:Class ;
+iep:ObservationSection a owl:Class ;
     rdfs:label "Observation Section" ;
     rdfs:comment "What an agent has seen — the observed portion of a chain." .
 
-cg:decisionStrategy a owl:ObjectProperty, owl:FunctionalProperty ;
-    rdfs:domain cg:Decision ;
-    rdfs:range cg:DecisionStrategy ;
+iep:decisionStrategy a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain iep:Decision ;
+    rdfs:range iep:DecisionStrategy ;
     rdfs:label "decision strategy" .
 
-cg:selectedAffordance a owl:ObjectProperty ;
-    rdfs:domain cg:Decision ;
+iep:selectedAffordance a owl:ObjectProperty ;
+    rdfs:domain iep:Decision ;
     rdfs:label "selected affordance" .
 
-cg:observation a owl:ObjectProperty ;
-    rdfs:domain cg:Decision ;
-    rdfs:range cg:ObservationSection ;
+iep:observation a owl:ObjectProperty ;
+    rdfs:domain iep:Decision ;
+    rdfs:range iep:ObservationSection ;
     rdfs:label "observation" .
 
 # ── DCAT / DPROD Alignment ───────────────────────────────────
 
-cg:PodService a owl:Class ;
+iep:PodService a owl:Class ;
     rdfs:subClassOf dcat:DataService ;
     rdfs:label "Pod" ;
     rdfs:comment "A Solid pod exposed as a DCAT DataService." .
 
-cg:PodCatalog a owl:Class ;
+iep:PodCatalog a owl:Class ;
     rdfs:subClassOf dcat:Catalog ;
     rdfs:label "Pod Catalog" ;
     rdfs:comment "Federation-wide catalog of discoverable pods." .
 
 # ── Hydra Integration (class stubs for API) ──────────────────
 
-cg:NodeEndpoint a owl:Class, hydra:Class ;
+iep:NodeEndpoint a owl:Class, hydra:Class ;
     rdfs:label "Node Endpoint" ;
     rdfs:comment "HATEOAS-driven node resource." .
 
-cg:ChainEndpoint a owl:Class, hydra:Class ;
+iep:ChainEndpoint a owl:Class, hydra:Class ;
     rdfs:label "Chain Endpoint" ;
     rdfs:comment "HATEOAS-driven chain resource." .
 
-cg:NodeRepresentation a owl:Class ;
+iep:NodeRepresentation a owl:Class ;
     rdfs:label "Node Representation" ;
     rdfs:comment "The JSON representation of a dereferenced node." .
 
-cg:IngestRequest a owl:Class ;
+iep:IngestRequest a owl:Class ;
     rdfs:label "Ingest Request" ;
     rdfs:comment "Payload for ingesting raw content." .
 
-cg:IngestResponse a owl:Class ;
+iep:IngestResponse a owl:Class ;
     rdfs:label "Ingest Response" ;
     rdfs:comment "Result of an ingest operation." .
 
-cg:ComposeRequest a owl:Class ;
+iep:ComposeRequest a owl:Class ;
     rdfs:label "Compose Request" ;
     rdfs:comment "Payload for algebraic composition." .
 
-cg:ComposeResponse a owl:Class ;
+iep:ComposeResponse a owl:Class ;
     rdfs:label "Compose Response" ;
     rdfs:comment "Result of a compose operation." .
 
-cg:ConstraintRequest a owl:Class ;
+iep:ConstraintRequest a owl:Class ;
     rdfs:label "Constraint Request" ;
     rdfs:comment "Payload for creating a paradigm constraint." .
 
-cg:QueryRequest a owl:Class ;
+iep:QueryRequest a owl:Class ;
     rdfs:label "Query Request" ;
     rdfs:comment "SPARQL query payload." .
 
-cg:QueryResponse a owl:Class ;
+iep:QueryResponse a owl:Class ;
     rdfs:label "Query Response" ;
     rdfs:comment "SPARQL query result." .
 
-cg:CoherenceRequest a owl:Class ;
+iep:CoherenceRequest a owl:Class ;
     rdfs:label "Coherence Request" ;
     rdfs:comment "Payload for a coherence check." .
 
-cg:PodAddRequest a owl:Class ;
+iep:PodAddRequest a owl:Class ;
     rdfs:label "Pod Add Request" ;
     rdfs:comment "Payload for adding a pod to the federation." .
 `;
@@ -523,35 +523,35 @@ export function systemShaclShapes(): string {
 
 # ── Context Descriptor Shape ─────────────────────────────────
 
-cg:ContextDescriptorShape a sh:NodeShape ;
-    sh:targetClass cg:ContextDescriptor ;
+iep:ContextDescriptorShape a sh:NodeShape ;
+    sh:targetClass iep:ContextDescriptor ;
     sh:property [
-        sh:path cg:describes ;
+        sh:path iep:describes ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:nodeKind sh:IRI ;
         sh:name "describes"
     ] ;
     sh:property [
-        sh:path cg:hasFacet ;
+        sh:path iep:hasFacet ;
         sh:minCount 1 ;
-        sh:class cg:ContextFacet ;
+        sh:class iep:ContextFacet ;
         sh:name "must have at least one facet"
     ] .
 
 # ── Temporal Facet Shape ─────────────────────────────────────
 
-cg:TemporalFacetShape a sh:NodeShape ;
-    sh:targetClass cg:TemporalFacet ;
+iep:TemporalFacetShape a sh:NodeShape ;
+    sh:targetClass iep:TemporalFacet ;
     sh:property [
-        sh:path cg:validFrom ;
+        sh:path iep:validFrom ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
         sh:name "valid from (required)"
     ] ;
     sh:property [
-        sh:path cg:validUntil ;
+        sh:path iep:validUntil ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
         sh:name "valid until (optional)"
@@ -559,29 +559,29 @@ cg:TemporalFacetShape a sh:NodeShape ;
 
 # ── Trust Facet Shape ────────────────────────────────────────
 
-cg:TrustFacetShape a sh:NodeShape ;
-    sh:targetClass cg:TrustFacet ;
+iep:TrustFacetShape a sh:NodeShape ;
+    sh:targetClass iep:TrustFacet ;
     sh:property [
-        sh:path cg:trustLevel ;
+        sh:path iep:trustLevel ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:in ( cg:SelfAsserted cg:ThirdPartyAttested cg:CryptographicallyVerified ) ;
+        sh:in ( iep:SelfAsserted iep:ThirdPartyAttested iep:CryptographicallyVerified ) ;
         sh:name "trust level (required, from enumeration)"
     ] .
 
 # ── Semiotic Facet Shape ─────────────────────────────────────
 
-cg:SemioticFacetShape a sh:NodeShape ;
-    sh:targetClass cg:SemioticFacet ;
+iep:SemioticFacetShape a sh:NodeShape ;
+    sh:targetClass iep:SemioticFacet ;
     sh:property [
-        sh:path cg:modalStatus ;
+        sh:path iep:modalStatus ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:in ( cg:Asserted cg:Hypothetical cg:Counterfactual cg:Quoted cg:Retracted ) ;
+        sh:in ( iep:Asserted iep:Hypothetical iep:Counterfactual iep:Quoted iep:Retracted ) ;
         sh:name "modal status (required)"
     ] ;
     sh:property [
-        sh:path cg:epistemicConfidence ;
+        sh:path iep:epistemicConfidence ;
         sh:maxCount 1 ;
         sh:datatype xsd:decimal ;
         sh:minInclusive 0 ;
@@ -591,63 +591,63 @@ cg:SemioticFacetShape a sh:NodeShape ;
 
 # ── Coherence Certificate Shape ──────────────────────────────
 
-cg:CoherenceCertificateShape a sh:NodeShape ;
-    sh:targetClass cg:CoherenceCertificate ;
+iep:CoherenceCertificateShape a sh:NodeShape ;
+    sh:targetClass iep:CoherenceCertificate ;
     sh:property [
-        sh:path cg:agentA ;
+        sh:path iep:agentA ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:nodeKind sh:IRI ;
         sh:name "agent A (required)"
     ] ;
     sh:property [
-        sh:path cg:agentB ;
+        sh:path iep:agentB ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:nodeKind sh:IRI ;
         sh:name "agent B (required)"
     ] ;
     sh:property [
-        sh:path cg:coherenceStatus ;
+        sh:path iep:coherenceStatus ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:in ( cg:Verified cg:Divergent cg:Unexamined ) ;
+        sh:in ( iep:Verified iep:Divergent iep:Unexamined ) ;
         sh:name "status (required)"
     ] .
 
 # ── Paradigm Constraint Shape ────────────────────────────────
 
-cg:ParadigmConstraintShape a sh:NodeShape ;
-    sh:targetClass cg:ParadigmConstraint ;
+iep:ParadigmConstraintShape a sh:NodeShape ;
+    sh:targetClass iep:ParadigmConstraint ;
     sh:property [
-        sh:path cg:patternA ;
+        sh:path iep:patternA ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:class cg:SyntagmaticPattern ;
+        sh:class iep:SyntagmaticPattern ;
         sh:name "pattern A (required)"
     ] ;
     sh:property [
-        sh:path cg:positionA ;
+        sh:path iep:positionA ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:datatype xsd:nonNegativeInteger ;
         sh:name "position A (required)"
     ] ;
     sh:property [
-        sh:path cg:paradigmOp ;
+        sh:path iep:paradigmOp ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:in ( cg:Subset cg:Intersect cg:Union cg:Exclude cg:Equal ) ;
+        sh:in ( iep:Subset iep:Intersect iep:Union iep:Exclude iep:Equal ) ;
         sh:name "operation (required)"
     ] ;
     sh:property [
-        sh:path cg:patternB ;
+        sh:path iep:patternB ;
         sh:maxCount 1 ;
-        sh:class cg:SyntagmaticPattern ;
+        sh:class iep:SyntagmaticPattern ;
         sh:name "pattern B (optional — omitted for unary constraints)"
     ] ;
     sh:property [
-        sh:path cg:positionB ;
+        sh:path iep:positionB ;
         sh:maxCount 1 ;
         sh:datatype xsd:nonNegativeInteger ;
         sh:name "position B (optional)"
@@ -655,24 +655,24 @@ cg:ParadigmConstraintShape a sh:NodeShape ;
 
 # ── Persistence Record Shape ─────────────────────────────────
 
-cg:PersistenceRecordShape a sh:NodeShape ;
-    sh:targetClass cg:PersistenceRecord ;
+iep:PersistenceRecordShape a sh:NodeShape ;
+    sh:targetClass iep:PersistenceRecord ;
     sh:property [
-        sh:path cg:persistenceUri ;
+        sh:path iep:persistenceUri ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:datatype xsd:anyURI ;
         sh:name "URI (required)"
     ] ;
     sh:property [
-        sh:path cg:persistenceTier ;
+        sh:path iep:persistenceTier ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:in ( cg:MemoryTier cg:Local cg:PodTier cg:IPFS cg:ChainTier ) ;
+        sh:in ( iep:MemoryTier iep:Local iep:PodTier iep:IPFS iep:ChainTier ) ;
         sh:name "tier (required)"
     ] ;
     sh:property [
-        sh:path cg:promotedAt ;
+        sh:path iep:promotedAt ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
@@ -693,17 +693,17 @@ export function systemHydraApi(): string {
 # Interego Hydra API Documentation
 # ════════════════════════════════════════════════════════════
 
-cg:ApiDocumentation a hydra:ApiDocumentation ;
+iep:ApiDocumentation a hydra:ApiDocumentation ;
     hydra:title "Interego API" ;
     hydra:description "HATEOAS-driven API for the Interego system." ;
     hydra:entrypoint </api> ;
     hydra:supportedClass
-        cg:NodeEndpoint,
-        cg:ChainEndpoint .
+        iep:NodeEndpoint,
+        iep:ChainEndpoint .
 
 # ── Node Endpoint ────────────────────────────────────────────
 
-cg:NodeEndpoint a hydra:Class ;
+iep:NodeEndpoint a hydra:Class ;
     hydra:title "Node" ;
     hydra:description "A PGSL node (atom or fragment) with context descriptors and affordances." ;
     hydra:supportedOperation [
@@ -711,12 +711,12 @@ cg:NodeEndpoint a hydra:Class ;
         hydra:method "GET" ;
         hydra:title "Dereference node" ;
         hydra:description "Retrieve the full representation of a node including its context descriptors." ;
-        hydra:returns cg:NodeRepresentation ;
+        hydra:returns iep:NodeRepresentation ;
     ] .
 
 # ── Chain Endpoint ───────────────────────────────────────────
 
-cg:ChainEndpoint a hydra:Class ;
+iep:ChainEndpoint a hydra:Class ;
     hydra:title "Chain" ;
     hydra:description "A syntagmatic chain (sequence of fragments)." ;
     hydra:supportedOperation [
@@ -724,97 +724,97 @@ cg:ChainEndpoint a hydra:Class ;
         hydra:method "GET" ;
         hydra:title "Dereference chain" ;
         hydra:description "Retrieve the chain and its paradigm sets at each position." ;
-        hydra:returns cg:NodeRepresentation ;
+        hydra:returns iep:NodeRepresentation ;
     ] .
 
 # ── Ingest Operation ─────────────────────────────────────────
 
-cg:IngestOperation a hydra:Operation ;
+iep:IngestOperation a hydra:Operation ;
     hydra:method "POST" ;
     hydra:title "Ingest content" ;
     hydra:description "Ingest raw text content, producing atoms and initial fragments." ;
-    hydra:expects cg:IngestRequest ;
-    hydra:returns cg:IngestResponse .
+    hydra:expects iep:IngestRequest ;
+    hydra:returns iep:IngestResponse .
 
 # ── Ingest URIs Operation ────────────────────────────────────
 
-cg:IngestUrisOperation a hydra:Operation ;
+iep:IngestUrisOperation a hydra:Operation ;
     hydra:method "POST" ;
     hydra:title "Ingest URIs" ;
     hydra:description "Ingest content from one or more URIs." ;
-    hydra:expects cg:IngestRequest ;
-    hydra:returns cg:IngestResponse .
+    hydra:expects iep:IngestRequest ;
+    hydra:returns iep:IngestResponse .
 
 # ── Chain (build) Operation ──────────────────────────────────
 
-cg:ChainBuildOperation a hydra:Operation ;
+iep:ChainBuildOperation a hydra:Operation ;
     hydra:method "POST" ;
     hydra:title "Build chain" ;
     hydra:description "Build a syntagmatic chain from a sequence of node URIs." ;
-    hydra:expects cg:IngestRequest ;
-    hydra:returns cg:NodeRepresentation .
+    hydra:expects iep:IngestRequest ;
+    hydra:returns iep:NodeRepresentation .
 
 # ── Constraint Operation ─────────────────────────────────────
 
-cg:ConstrainOperation a hydra:Operation ;
+iep:ConstrainOperation a hydra:Operation ;
     hydra:method "POST" ;
     hydra:title "Create paradigm constraint" ;
     hydra:description "Create a constraint linking two paradigm sets via an operation." ;
-    hydra:expects cg:ConstraintRequest ;
-    hydra:returns cg:ConstraintRequest .
+    hydra:expects iep:ConstraintRequest ;
+    hydra:returns iep:ConstraintRequest .
 
 # ── Query Operation ──────────────────────────────────────────
 
-cg:QueryOperation a hydra:Operation ;
+iep:QueryOperation a hydra:Operation ;
     hydra:method "POST" ;
     hydra:title "SPARQL query" ;
     hydra:description "Execute a SPARQL 1.2 query against the Interego store." ;
-    hydra:expects cg:QueryRequest ;
-    hydra:returns cg:QueryResponse .
+    hydra:expects iep:QueryRequest ;
+    hydra:returns iep:QueryResponse .
 
 # ── Compose Operation ────────────────────────────────────────
 
-cg:ComposeOperation a hydra:Operation ;
+iep:ComposeOperation a hydra:Operation ;
     hydra:method "POST" ;
     hydra:title "Algebraic composition" ;
     hydra:description "Compose context descriptors using union, intersection, restriction, or override." ;
-    hydra:expects cg:ComposeRequest ;
-    hydra:returns cg:ComposeResponse .
+    hydra:expects iep:ComposeRequest ;
+    hydra:returns iep:ComposeResponse .
 
 # ── Coherence Check Operation ────────────────────────────────
 
-cg:CoherenceCheckOperation a hydra:Operation ;
+iep:CoherenceCheckOperation a hydra:Operation ;
     hydra:method "POST" ;
     hydra:title "Coherence check" ;
     hydra:description "Check coherence between two agents' views of a chain." ;
-    hydra:expects cg:CoherenceRequest ;
-    hydra:returns cg:CoherenceCertificate .
+    hydra:expects iep:CoherenceRequest ;
+    hydra:returns iep:CoherenceCertificate .
 
 # ── Decision Operation ───────────────────────────────────────
 
-cg:DecisionOperation a hydra:Operation ;
+iep:DecisionOperation a hydra:Operation ;
     hydra:method "POST" ;
     hydra:title "Record decision" ;
     hydra:description "Record an agent's decision (selected affordance) at a paradigm position." ;
-    hydra:expects cg:Decision ;
-    hydra:returns cg:Decision .
+    hydra:expects iep:Decision ;
+    hydra:returns iep:Decision .
 
 # ── Pod Add Operation ────────────────────────────────────────
 
-cg:PodAddOperation a hydra:Operation ;
+iep:PodAddOperation a hydra:Operation ;
     hydra:method "POST" ;
     hydra:title "Add pod" ;
     hydra:description "Register a new Solid pod in the federation." ;
-    hydra:expects cg:PodAddRequest ;
-    hydra:returns cg:PodService .
+    hydra:expects iep:PodAddRequest ;
+    hydra:returns iep:PodService .
 
 # ── Pod Discover Operation ───────────────────────────────────
 
-cg:PodDiscoverOperation a hydra:Operation ;
+iep:PodDiscoverOperation a hydra:Operation ;
     hydra:method "GET" ;
     hydra:title "Discover pods" ;
     hydra:description "Discover all pods in the federation catalog." ;
-    hydra:returns cg:PodCatalog .
+    hydra:returns iep:PodCatalog .
 `;
 }
 

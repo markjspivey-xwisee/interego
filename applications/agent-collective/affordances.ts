@@ -3,7 +3,7 @@
  *
  * Multi-agent federation: tool authoring + attestation + teaching
  * packages + cross-agent audit. Capabilities declared once; bridge
- * derives MCP tool schemas; protocol publishes as cg:Affordance for
+ * derives MCP tool schemas; protocol publishes as iep:Affordance for
  * generic discovery.
  */
 
@@ -14,17 +14,17 @@ import type {
 
 const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
   {
-    action: 'urn:cg:action:ac:author-tool' as IRI,
+    action: 'urn:iep:action:ac:author-tool' as IRI,
     toolName: 'ac.author_tool',
     title: 'Author a new agent tool',
-    description: 'Author a new agent tool. Published Hypothetical (cg:modalStatus = Hypothetical) — fresh tools are not trusted yet. Source code stored as content-addressed pgsl:Atom.',
+    description: 'Author a new agent tool. Published Hypothetical (iep:modalStatus = Hypothetical) — fresh tools are not trusted yet. Source code stored as content-addressed pgsl:Atom.',
     method: 'POST',
     targetTemplate: '{base}/ac/author_tool',
     annotations: { title: 'Author a new agent tool', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tool_name', type: 'string', required: true, description: 'Tool name.' },
       { name: 'source_code', type: 'string', required: true, description: 'Source code string. Stored as content-addressed atom.' },
-      { name: 'affordance_action', type: 'string', required: true, description: 'IRI of the cg:Action this tool exposes.' },
+      { name: 'affordance_action', type: 'string', required: true, description: 'IRI of the iep:Action this tool exposes.' },
       { name: 'affordance_description', type: 'string', required: false, description: 'Free-text description of the affordance.' },
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'authoring_agent_did', type: 'string', required: false, description: 'Authoring agent DID.' },
@@ -41,7 +41,7 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:ac:attest-tool' as IRI,
+    action: 'urn:iep:action:ac:attest-tool' as IRI,
     toolName: 'ac.attest_tool',
     title: 'Record an attestation against a tool',
     description: 'Record an amta:Attestation against a tool. Direction is Self (the tool author attests to their own tool) or Peer (another agent attests after using). Multiple axes possible.',
@@ -68,10 +68,10 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:ac:promote-tool' as IRI,
+    action: 'urn:iep:action:ac:promote-tool' as IRI,
     toolName: 'ac.promote_tool',
     title: 'Promote a Hypothetical tool to Asserted',
-    description: 'Promote Hypothetical tool to Asserted. REFUSES unless attestation threshold is met (default: ≥5 self + ≥2 peer + ≥2 axes covered). Publishes successor with cg:supersedes.',
+    description: 'Promote Hypothetical tool to Asserted. REFUSES unless attestation threshold is met (default: ≥5 self + ≥2 peer + ≥2 axes covered). Publishes successor with iep:supersedes.',
     method: 'POST',
     targetTemplate: '{base}/ac/promote_tool',
     annotations: { title: 'Promote a Hypothetical tool to Asserted', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -83,19 +83,19 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'threshold_self', type: 'integer', required: false, description: 'Override default self-attestation threshold.' },
       { name: 'threshold_peer', type: 'integer', required: false, description: 'Override default peer-attestation threshold.' },
       { name: 'threshold_axes', type: 'integer', required: false, description: 'Override default axes-covered threshold.' },
-      { name: 'enforce_constitutional_constraints', type: 'boolean', required: false, description: 'When true, the publisher consults active cgh:PromotionConstraint descriptors on the pod and enforces them in addition to the threshold policy. Substrate-enforced downward causation rather than agent-mediated.' },
+      { name: 'enforce_constitutional_constraints', type: 'boolean', required: false, description: 'When true, the publisher consults active ieh:PromotionConstraint descriptors on the pod and enforces them in addition to the threshold policy. Substrate-enforced downward causation rather than agent-mediated.' },
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'authoring_agent_did', type: 'string', required: false, description: 'Promoting agent DID.' },
     ],
     outputs: {
-      description: 'PromoteToolResult — IRI of the new Asserted successor (with cg:supersedes back to the Hypothetical original) + the descriptor/graph URLs + which active PromotionConstraints were enforced (empty unless enforce_constitutional_constraints was true).',
+      description: 'PromoteToolResult — IRI of the new Asserted successor (with iep:supersedes back to the Hypothetical original) + the descriptor/graph URLs + which active PromotionConstraints were enforced (empty unless enforce_constitutional_constraints was true).',
       properties: {
         promotedToolIri: { type: 'string', description: 'IRI of the Asserted successor tool.' },
         descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
         graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
         constraintsApplied: {
           type: 'array',
-          description: 'IRIs of active cgh:PromotionConstraint descriptors that were enforced. Empty when enforce_constitutional_constraints was false.',
+          description: 'IRIs of active ieh:PromotionConstraint descriptors that were enforced. Empty when enforce_constitutional_constraints was false.',
           items: { type: 'string' },
         },
       },
@@ -103,7 +103,7 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:ac:bundle-teaching-package' as IRI,
+    action: 'urn:iep:action:ac:bundle-teaching-package' as IRI,
     toolName: 'ac.bundle_teaching_package',
     title: 'Bundle a teaching package (artifact + practice)',
     description: 'Bundle a tool with the practice context (narratives + synthesis + constraint + capability-evolution) into an ac:TeachingPackage another agent can fetch. REFUSES if no narrative fragments — partial teaching transfers artifact without practice context.',
@@ -131,7 +131,7 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:ac:record-cross-agent-audit' as IRI,
+    action: 'urn:iep:action:ac:record-cross-agent-audit' as IRI,
     toolName: 'ac.record_cross_agent_audit',
     title: 'Record a cross-agent audit entry in the human owner\'s pod',
     description: 'Record an ac:CrossAgentAuditEntry for a chime-in / response / check-in exchange. The audit lives in the HUMAN OWNER\'s pod (not the agent\'s) so the human can audit what their agent said + received.',

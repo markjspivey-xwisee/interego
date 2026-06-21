@@ -36,8 +36,8 @@ const learner = { id: 'did:web:acme#agent-nova', kind: 'agent' };
 // ac:bundleTeachingPackage (an ac:AgentTool artifact + adp: practice).
 // Foxxi references it; it never redefines or re-authors it.
 const pkg = {
-  iri: 'urn:cg:teaching:sev2-triage-doctrine',
-  artifactIri: 'urn:cg:tool:documented-rollback',
+  iri: 'urn:iep:teaching:sev2-triage-doctrine',
+  artifactIri: 'urn:iep:tool:documented-rollback',
   competency: 'triaging sev-2 incidents to doctrine',
   olkeStage: 'Articulate',
   modalStatus: 'Hypothetical',

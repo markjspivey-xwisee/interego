@@ -10,7 +10,7 @@ export function Substrate({ onNavigate }: { onNavigate: (r: Route) => void }) {
       <div style={eyebrow}>Context Graphs 1.0 · the L1 protocol</div>
       <h1 style={h1}>The substrate</h1>
       <p style={lede}>
-        Every claim in Interego is a <code style={codeChip}>cg:ContextDescriptor</code>: a typed
+        Every claim in Interego is a <code style={codeChip}>iep:ContextDescriptor</code>: a typed
         envelope over a named graph with seven facets, a modal status, an optional supersedes chain,
         and a list of dereferenceable affordances. The protocol is small on purpose — primitives
         compose into everything else.
@@ -78,7 +78,7 @@ export function Substrate({ onNavigate }: { onNavigate: (r: Route) => void }) {
       {/* HATEOAS */}
       <h2 style={h2}>HATEOAS affordances</h2>
       <p style={{ ...para, maxWidth: 820 }}>
-        Every descriptor carries a <code style={codeChip}>cg:affordance</code> block that lists the
+        Every descriptor carries a <code style={codeChip}>iep:affordance</code> block that lists the
         operations a consumer can perform on it as <code style={codeChip}>hydra:Operation</code> /
         <code style={codeChip}>dcat:Distribution</code> links: fetch the graph payload, supersede
         the descriptor, follow a federation pointer, etc. A consumer that knows nothing about your
@@ -95,7 +95,7 @@ export function Substrate({ onNavigate }: { onNavigate: (r: Route) => void }) {
       <p style={{ ...para, maxWidth: 820 }}>
         A pod is a sovereign Solid pod. The substrate spans many pods; <code style={codeChip}>discover()</code>
         walks each pod's <code style={codeChip}>.well-known/context-graphs</code> manifest, returns
-        the matching <code style={codeChip}>cg:ManifestEntry</code> set, and dereferences whatever
+        the matching <code style={codeChip}>iep:ManifestEntry</code> set, and dereferences whatever
         is needed. Aggregate privacy is built in: <b>federationView()</b> withholds cells under a
         k-anonymity threshold before they cross a pod boundary, so coarser summaries can be shared
         while individual records stay private.
@@ -176,7 +176,7 @@ function ModalPill({ modalStatus }: { modalStatus: 'Asserted' | 'Hypothetical' |
       background: c.bg, borderRadius: 6, border: '1px solid var(--border)',
     }}>
       <div style={{ fontFamily: mono, fontSize: 11, color: c.fg, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-        cg:{modalStatus}
+        iep:{modalStatus}
       </div>
       <p style={{ margin: '4px 0 0', fontSize: 14, lineHeight: 1.5 }}>{c.explain}</p>
     </div>

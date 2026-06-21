@@ -2,7 +2,7 @@
  * @module model/derivation
  * @description Runtime derivation constructors per spec/DERIVATION.md.
  *
- * Every higher-level ontology term tagged `cg:constructedFrom (A B ...)`
+ * Every higher-level ontology term tagged `iep:constructedFrom (A B ...)`
  * has a corresponding runtime constructor here, so the grounding is
  * operational, not just declarative.
  *

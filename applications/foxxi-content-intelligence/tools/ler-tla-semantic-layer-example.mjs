@@ -84,7 +84,7 @@ async function main() {
   console.log(`\n  ── dereferenceability check`);
   console.log(`     ler:EnterpriseLearnerRecord  -> ${term['@type']} (${term.construction})`);
   console.log(`     adl-tla Turtle               -> ${ttl.split('\n').length} lines, ` +
-    `${(ttl.match(/cg:constructedFrom/g) ?? []).length} cg:constructedFrom triples`);
+    `${(ttl.match(/iep:constructedFrom/g) ?? []).length} iep:constructedFrom triples`);
   console.log(`\n  OK — the semantic layer is live, dereferenceable linked data.\n`);
 }
 

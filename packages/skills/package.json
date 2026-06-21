@@ -1,7 +1,7 @@
 {
   "name": "@interego/skills",
   "version": "0.2.0",
-  "description": "agentskills.io <-> cg:Affordance bidirectional translator over @interego/core. Parses + emits skill.md frontmatter; maps to descriptor bundles. Particular external-schema binding.",
+  "description": "agentskills.io <-> iep:Affordance bidirectional translator over @interego/core. Parses + emits skill.md frontmatter; maps to descriptor bundles. Particular external-schema binding.",
   "author": "Mark Spivey",
   "license": "MIT",
   "type": "module",

@@ -37,7 +37,7 @@ const extensions = [
 const activityTypes = [
   activity('PerformanceSituation', 'Performance Situation', 'The unit — a situation in which a performer performs, contextualized by its work regime.'),
   activity('Capability', 'Capability', 'A productive capability composed of skills + tools + knowledge.'),
-  activity('PerformanceAffordance', 'Performance Affordance', 'An action-possibility a situation offers a performer given capability (ecological affordance; not a cg:Affordance).'),
+  activity('PerformanceAffordance', 'Performance Affordance', 'An action-possibility a situation offers a performer given capability (ecological affordance; not a iep:Affordance).'),
   activity('Actualization', 'Actualization', 'Capability x Situation x Affordance -> Performance.'),
   activity('Performance', 'Performance', 'The realized performance an actualization yields.'),
 ];

@@ -245,7 +245,7 @@ export function LearnerRecordPanel({ session }: { session: FoxxiSession }) {
                     )}
                     {c.supersedes && (
                       <div style={{ flexBasis: '100%', fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic' }}>
-                        cg:supersedes — {c.supersedes}
+                        iep:supersedes — {c.supersedes}
                       </div>
                     )}
                   </div>
@@ -435,7 +435,7 @@ function basisTone(b: 'performance' | 'credential' | 'inferred'): 'good' | 'neut
   return b === 'inferred' ? 'neutral' : 'good';
 }
 function basisTitle(b: 'performance' | 'credential' | 'inferred'): string {
-  if (b === 'performance') return 'cg:modalStatus = Asserted — proven by successful production performance; supersedes weaker training-only evidence.';
-  if (b === 'credential') return 'cg:modalStatus = Asserted — backed by a verified credential.';
-  return 'cg:modalStatus = Hypothetical — inferred from a passed/completed experience; not yet verified by credential or performance.';
+  if (b === 'performance') return 'iep:modalStatus = Asserted — proven by successful production performance; supersedes weaker training-only evidence.';
+  if (b === 'credential') return 'iep:modalStatus = Asserted — backed by a verified credential.';
+  return 'iep:modalStatus = Hypothetical — inferred from a passed/completed experience; not yet verified by credential or performance.';
 }

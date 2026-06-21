@@ -154,7 +154,7 @@ export function createDelegationCredential(
 export function ownerProfileToTurtle(profile: OwnerProfileData): string {
   const lines: string[] = [];
 
-  lines.push('@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .');
+  lines.push('@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .');
   lines.push('@prefix foaf: <http://xmlns.com/foaf/0.1/> .');
   lines.push('@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .');
   lines.push('@prefix prov: <http://www.w3.org/ns/prov#> .');
@@ -168,11 +168,11 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
   const activeAgents = profile.authorizedAgents.filter(a => !a.revoked);
   if (activeAgents.length > 0) {
     // Canonical Turtle predicate-object list: a single
-    // `cg:authorizedAgent` predicate followed by comma-separated objects,
+    // `iep:authorizedAgent` predicate followed by comma-separated objects,
     // closed with `.` since this is the last predicate on the subject.
     // Repeating the predicate per object (which would still parse but
     // is non-canonical) trips strict round-trip validators.
-    lines.push('    cg:authorizedAgent');
+    lines.push('    iep:authorizedAgent');
     for (let i = 0; i < activeAgents.length; i++) {
       const a = activeAgents[i]!;
       const sep = i < activeAgents.length - 1 ? ',' : ' .';
@@ -188,13 +188,13 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
 
   for (const agent of activeAgents) {
     const frag = `#agent-${encodeURIComponent(agent.agentId)}`;
-    lines.push(`<${frag}> a cg:AuthorizedAgent ;`);
-    lines.push(`    cg:agentIdentity <${agent.agentId}> ;`);
-    lines.push(`    cg:delegatedBy <${profile.webId}> ;`);
-    lines.push(`    cg:scope cg:${agent.scope} ;`);
-    lines.push(`    cg:validFrom "${agent.validFrom}"^^xsd:dateTime ;`);
+    lines.push(`<${frag}> a iep:AuthorizedAgent ;`);
+    lines.push(`    iep:agentIdentity <${agent.agentId}> ;`);
+    lines.push(`    iep:delegatedBy <${profile.webId}> ;`);
+    lines.push(`    iep:scope iep:${agent.scope} ;`);
+    lines.push(`    iep:validFrom "${agent.validFrom}"^^xsd:dateTime ;`);
     if (agent.validUntil) {
-      lines.push(`    cg:validUntil "${agent.validUntil}"^^xsd:dateTime ;`);
+      lines.push(`    iep:validUntil "${agent.validUntil}"^^xsd:dateTime ;`);
     }
     if (agent.label) {
       lines.push(`    foaf:name "${agent.label}" ;`);
@@ -205,9 +205,9 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
     if (agent.encryptionPublicKey) {
       // Public key is base64 — publish as a literal so downstream tools
       // (including non-RDF clients) can read it without parsing additional
-      // vocabularies. cg:encryptionPublicKey is the relationship; the
+      // vocabularies. iep:encryptionPublicKey is the relationship; the
       // algorithm is implicit X25519-XSalsa20-Poly1305 per the crypto layer.
-      lines.push(`    cg:encryptionPublicKey "${agent.encryptionPublicKey}" ;`);
+      lines.push(`    iep:encryptionPublicKey "${agent.encryptionPublicKey}" ;`);
     }
     if (agent.encryptionKeyHistory && agent.encryptionKeyHistory.length > 0) {
       // Pubkey rollover (Sec #12): each retired key is a pipe-delimited
@@ -218,7 +218,7 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
       // to in-window retired keys.
       for (const h of agent.encryptionKeyHistory) {
         const safeLabel = (h.label ?? '').replace(/\|/g, '%7C').replace(/"/g, '\\"');
-        lines.push(`    cg:retiredEncryptionKey "${h.publicKey}|${h.createdAt}|${h.retiredAt}|${safeLabel}" ;`);
+        lines.push(`    iep:retiredEncryptionKey "${h.publicKey}|${h.createdAt}|${h.retiredAt}|${safeLabel}" ;`);
       }
     }
     // Close
@@ -251,22 +251,22 @@ export function parseOwnerProfile(turtle: string): OwnerProfileData {
   // Extract agents
   const agentBlocks = turtle.split(/(?=<#agent-)/);
   for (const block of agentBlocks) {
-    if (!block.includes('a cg:AuthorizedAgent')) continue;
+    if (!block.includes('a iep:AuthorizedAgent')) continue;
 
-    const idMatch = block.match(/cg:agentIdentity\s+<([^>]+)>/);
-    const delegatedByMatch = block.match(/cg:delegatedBy\s+<([^>]+)>/);
-    const scopeMatch = block.match(/cg:scope\s+cg:(\w+)/);
-    const fromMatch = block.match(/cg:validFrom\s+"([^"]+)"/);
-    const untilMatch = block.match(/cg:validUntil\s+"([^"]+)"/);
+    const idMatch = block.match(/iep:agentIdentity\s+<([^>]+)>/);
+    const delegatedByMatch = block.match(/iep:delegatedBy\s+<([^>]+)>/);
+    const scopeMatch = block.match(/iep:scope\s+iep:(\w+)/);
+    const fromMatch = block.match(/iep:validFrom\s+"([^"]+)"/);
+    const untilMatch = block.match(/iep:validUntil\s+"([^"]+)"/);
     const labelMatch = block.match(/foaf:name\s+"([^"]+)"/);
-    const encKeyMatch = block.match(/cg:encryptionPublicKey\s+"([^"]+)"/);
+    const encKeyMatch = block.match(/iep:encryptionPublicKey\s+"([^"]+)"/);
     const isSoftware = block.includes('prov:SoftwareAgent');
 
     // Pubkey rollover history (Sec #12): one or more
-    // cg:retiredEncryptionKey literals, each pipe-delimited
+    // iep:retiredEncryptionKey literals, each pipe-delimited
     // "<pubkey>|<createdAt>|<retiredAt>|<label?>". Parsed via matchAll;
     // malformed entries (fewer than 3 segments) are skipped defensively.
-    const historyMatches = [...block.matchAll(/cg:retiredEncryptionKey\s+"([^"]+)"/g)];
+    const historyMatches = [...block.matchAll(/iep:retiredEncryptionKey\s+"([^"]+)"/g)];
     const encryptionKeyHistory = historyMatches
       .map(m => {
         const parts = m[1]!.split('|');
@@ -318,7 +318,7 @@ export function canonicalCredentialPayload(
   const ordered: Record<string, unknown> = {
     '@context': [
       'https://www.w3.org/2018/credentials/v1',
-      'https://markjspivey-xwisee.github.io/interego/ns/cg/delegation/v1',
+      'https://markjspivey-xwisee.github.io/interego/ns/iep/delegation/v1',
     ],
     id: credential.id,
     type: [...credential.type].sort(),
@@ -383,7 +383,7 @@ export function delegationCredentialToJsonLd(
   const doc: Record<string, unknown> = {
     '@context': [
       'https://www.w3.org/2018/credentials/v1',
-      'https://markjspivey-xwisee.github.io/interego/ns/cg/delegation/v1',
+      'https://markjspivey-xwisee.github.io/interego/ns/iep/delegation/v1',
     ],
     id: credential.id,
     type: [...credential.type],
@@ -575,7 +575,7 @@ export async function verifyDelegation(
 
 // ── Authorship Proof ─────────────────────────────────────────
 //
-// Independent of the descriptor-level compliance signature (cg:proof on
+// Independent of the descriptor-level compliance signature (iep:proof on
 // the TrustFacet, which covers the whole descriptor Turtle and is the
 // pod-operator anchor), the authorship proof is an agent-level claim
 // that THIS agent IRI is the one that minted the descriptor's
@@ -583,8 +583,8 @@ export async function verifyDelegation(
 // owner WebID + descriptor IRI + timestamp — using the same key that
 // backs the agent's signed delegation VC.
 //
-// Why split it from cg:proof:
-//   - cg:proof is opt-in (compliance===true) and operator-grade
+// Why split it from iep:proof:
+//   - iep:proof is opt-in (compliance===true) and operator-grade
 //   - authorship proof can ship on every publish (cheap, single ECDSA
 //     signature) so a reader of any descriptor can independently
 //     confirm "did this agent really sign this AgentFacet?" without
@@ -613,12 +613,12 @@ export interface AuthorshipProofInputs {
 
 /**
  * Embedded authorship-proof block. Matches the Turtle shape
- *   <descriptor> cg:authorshipProof [
- *     a cg:SignedAuthorship ;
- *     cg:issuer <agentId> ;
- *     cg:verificationMethod <did:ethr:0x...> ;
- *     cg:created "2026-06-06T..." ;
- *     cg:proofValue "0x..."
+ *   <descriptor> iep:authorshipProof [
+ *     a iep:SignedAuthorship ;
+ *     iep:issuer <agentId> ;
+ *     iep:verificationMethod <did:ethr:0x...> ;
+ *     iep:created "2026-06-06T..." ;
+ *     iep:proofValue "0x..."
  *   ] .
  */
 export interface AuthorshipProof {
@@ -649,7 +649,7 @@ export function canonicalAuthorshipPayload(
   const ordered: Record<string, unknown> = {
     '@context': [
       'https://www.w3.org/2018/credentials/v1',
-      'https://markjspivey-xwisee.github.io/interego/ns/cg/authorship/v1',
+      'https://markjspivey-xwisee.github.io/interego/ns/iep/authorship/v1',
     ],
     agentId: inputs.agentId,
     created: inputs.created,
@@ -669,7 +669,7 @@ export function canonicalAuthorshipPayload(
  * Reuses the same `DelegationSigner` shape used by signed VCs — typically
  * the relay's secp256k1 wallet (`makeWalletDelegationSigner`). The
  * returned `AuthorshipProof` is shaped to embed directly in the
- * descriptor Turtle alongside the AgentFacet (`cg:authorshipProof [...]`).
+ * descriptor Turtle alongside the AgentFacet (`iep:authorshipProof [...]`).
  */
 export async function createSignedAuthorship(
   inputs: AuthorshipProofInputs,

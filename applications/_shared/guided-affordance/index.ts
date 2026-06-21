@@ -16,7 +16,7 @@
 import type { Express, Request, Response } from 'express';
 
 export interface NextAffordanceHint {
-  /** cg:action IRI of the suggested next affordance. */
+  /** iep:action IRI of the suggested next affordance. */
   readonly action: string;
   /** Link relation in the flow (e.g. 'then', 'learn', 'verify', 'teach', 'undo'). */
   readonly rel: string;
@@ -61,7 +61,7 @@ export function withGuidance<T extends Record<string, unknown>>(
  *  how to learn it, so agents discover CAPABILITIES, not just endpoints. */
 export function capabilityCatalog(entries: readonly GuidedAffordanceEntry[]): Record<string, unknown> {
   return {
-    '@type': ['cg:CapabilityCatalog', 'PerformanceSupport'],
+    '@type': ['iep:CapabilityCatalog', 'PerformanceSupport'],
     summary: 'Capabilities this surface affords, each with the competency it builds and how to learn it. Discover, learn, then teach.',
     capabilities: entries.map(e => ({
       affordance: e.action,

@@ -96,13 +96,13 @@ export interface AgentCatalogEntry {
  * Accepts either JSON-LD or Turtle. The expected shape:
  *
  * ```turtle
- * <urn:catalog> a cg:AgentCatalog ;
- *     cg:hasAgent [
- *         a cg:AuthorizedAgent ;
- *         cg:agentIdentity <did:web:bob.example.com> ;
+ * <urn:catalog> a iep:AgentCatalog ;
+ *     iep:hasAgent [
+ *         a iep:AuthorizedAgent ;
+ *         iep:agentIdentity <did:web:bob.example.com> ;
  *         foaf:name "Bob's coding agent" ;
- *         cg:podUrl <https://bob.example.com/pod/> ;
- *         cg:capability cg:canPublish , cg:canAudit
+ *         iep:podUrl <https://bob.example.com/pod/> ;
+ *         iep:capability iep:canPublish , iep:canAudit
  *     ] .
  * ```
  */
@@ -166,7 +166,7 @@ export function parseAgentsCatalog(ttl: string): readonly AgentCatalogEntry[] {
   if (ttl.length > AGENTS_CATALOG_MAX_BYTES) {
     // Refuse oversized input rather than risk regex backtracking +
     // memory consumption. Truncating wouldn't preserve semantics —
-    // the catalog is a flat list of cg:hasAgent blocks but we'd cut
+    // the catalog is a flat list of iep:hasAgent blocks but we'd cut
     // a block in half and yield malformed entries.
     throw new Error(
       `parseAgentsCatalog: input exceeds ${AGENTS_CATALOG_MAX_BYTES} bytes (${ttl.length}) — likely DoS-shaped. ` +
@@ -174,8 +174,8 @@ export function parseAgentsCatalog(ttl: string): readonly AgentCatalogEntry[] {
     );
   }
   const entries: AgentCatalogEntry[] = [];
-  // Match `cg:hasAgent [ ... ]` blocks.
-  const re = /cg:hasAgent\s+\[([\s\S]*?)\]\s*(?:[;.])/g;
+  // Match `iep:hasAgent [ ... ]` blocks.
+  const re = /iep:hasAgent\s+\[([\s\S]*?)\]\s*(?:[;.])/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(ttl)) !== null) {
     if (entries.length >= AGENTS_CATALOG_MAX_ENTRIES) {
@@ -185,13 +185,13 @@ export function parseAgentsCatalog(ttl: string): readonly AgentCatalogEntry[] {
       );
     }
     const body = m[1]!;
-    const idM = body.match(/cg:agentIdentity\s+<([^>]+)>/);
+    const idM = body.match(/iep:agentIdentity\s+<([^>]+)>/);
     if (!idM) continue;
-    const webIdM = body.match(/cg:webId\s+<([^>]+)>/)
+    const webIdM = body.match(/iep:webId\s+<([^>]+)>/)
       ?? body.match(/foaf:webid\s+<([^>]+)>/i);
-    const podM = body.match(/cg:podUrl\s+<([^>]+)>/);
+    const podM = body.match(/iep:podUrl\s+<([^>]+)>/);
     const nameM = body.match(/foaf:name\s+"([^"]+)"/);
-    const capMatches = [...body.matchAll(/cg:capability\s+((?:\S+\s*,\s*)*\S+)/g)];
+    const capMatches = [...body.matchAll(/iep:capability\s+((?:\S+\s*,\s*)*\S+)/g)];
     const capabilities: string[] = [];
     for (const cm of capMatches) {
       const list = cm[1]!.split(/\s*,\s*/);
@@ -218,22 +218,22 @@ export function agentsCatalogTurtle(
   entries: readonly AgentCatalogEntry[],
 ): string {
   const lines = [
-    '@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .',
+    '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .',
     '@prefix foaf: <http://xmlns.com/foaf/0.1/> .',
     '',
-    `<${catalogIri}> a cg:AgentCatalog ;`,
+    `<${catalogIri}> a iep:AgentCatalog ;`,
   ];
   for (const e of entries) {
     const parts: string[] = [
-      `    cg:hasAgent [`,
-      `        a cg:AuthorizedAgent ;`,
-      `        cg:agentIdentity <${e.agentId}> ;`,
+      `    iep:hasAgent [`,
+      `        a iep:AuthorizedAgent ;`,
+      `        iep:agentIdentity <${e.agentId}> ;`,
     ];
     if (e.label) parts.push(`        foaf:name "${escapeTurtleLiteral(e.label)}" ;`);
-    if (e.webId) parts.push(`        cg:webId <${e.webId}> ;`);
-    if (e.podUrl) parts.push(`        cg:podUrl <${e.podUrl}> ;`);
+    if (e.webId) parts.push(`        iep:webId <${e.webId}> ;`);
+    if (e.podUrl) parts.push(`        iep:podUrl <${e.podUrl}> ;`);
     if (e.capabilities && e.capabilities.length > 0) {
-      parts.push(`        cg:capability ${e.capabilities.join(' , ')} ;`);
+      parts.push(`        iep:capability ${e.capabilities.join(' , ')} ;`);
     }
     // Remove trailing ; from last prop inside the blank node
     parts[parts.length - 1] = parts[parts.length - 1]!.replace(/ ;$/, ' ');

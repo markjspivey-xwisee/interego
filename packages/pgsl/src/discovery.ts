@@ -104,7 +104,7 @@ function agentId(pgsl: PGSLInstance): string {
     .update(`introspection-agent:${pgsl.defaultProvenance.wasAttributedTo}`)
     .digest('hex')
     .slice(0, 16);
-  return `urn:cg:agent:introspect:${hash}`;
+  return `urn:iep:agent:introspect:${hash}`;
 }
 
 /** @internal Build PGSL chains from a discovered schema. */
@@ -130,15 +130,15 @@ function schemaToShapes(schema: DiscoveredSchema): string[] {
   const shapes: string[] = [];
   for (const entity of schema.entities) {
     const lines: string[] = [
-      `cg:${entity.name}Shape a sh:NodeShape ;`,
-      `  sh:targetClass cg:${entity.name} ;`,
+      `iep:${entity.name}Shape a sh:NodeShape ;`,
+      `  sh:targetClass iep:${entity.name} ;`,
     ];
     for (const field of entity.fields) {
       const dt = field.type === 'number' ? 'xsd:decimal'
         : field.type === 'boolean' ? 'xsd:boolean'
         : 'xsd:string';
       lines.push(`  sh:property [`);
-      lines.push(`    sh:path cg:${field.name} ;`);
+      lines.push(`    sh:path iep:${field.name} ;`);
       lines.push(`    sh:datatype ${dt} ;`);
       if (field.required) {
         lines.push(`    sh:minCount 1 ;`);
@@ -1094,34 +1094,34 @@ export function marketplaceToHydra(marketplace: Marketplace): string {
 
   const lines: string[] = [
     '@prefix hydra: <http://www.w3.org/ns/hydra/core#> .',
-    '@prefix cg: <https://contextgraphs.org/ns/> .',
+    '@prefix iep: <https://contextgraphs.org/ns/> .',
     '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
     '@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .',
     '',
-    '<urn:cg:marketplace> a hydra:ApiDocumentation ;',
+    '<urn:iep:marketplace> a hydra:ApiDocumentation ;',
     `  hydra:title "Interego Marketplace" ;`,
     `  hydra:description "Hydra-driven discovery of agents, data sources, and decorators" .`,
     '',
   ];
 
   for (const [, listing] of marketplace.listings) {
-    lines.push(`<${listing.id}> a hydra:Resource, cg:${capitalize(listing.type)} ;`);
+    lines.push(`<${listing.id}> a hydra:Resource, iep:${capitalize(listing.type)} ;`);
     lines.push(`  rdfs:label "${esc(listing.name)}" ;`);
-    lines.push(`  cg:description "${esc(listing.description)}" ;`);
-    lines.push(`  cg:provider "${esc(listing.provider)}" ;`);
-    lines.push(`  cg:trustLevel "${listing.trustLevel}" ;`);
-    lines.push(`  cg:registeredAt "${listing.registeredAt}"^^xsd:dateTime ;`);
+    lines.push(`  iep:description "${esc(listing.description)}" ;`);
+    lines.push(`  iep:provider "${esc(listing.provider)}" ;`);
+    lines.push(`  iep:trustLevel "${listing.trustLevel}" ;`);
+    lines.push(`  iep:registeredAt "${listing.registeredAt}"^^xsd:dateTime ;`);
 
     if (listing.lastSeen) {
-      lines.push(`  cg:lastSeen "${listing.lastSeen}"^^xsd:dateTime ;`);
+      lines.push(`  iep:lastSeen "${listing.lastSeen}"^^xsd:dateTime ;`);
     }
     if (listing.endpoint) {
-      lines.push(`  cg:endpoint <${listing.endpoint}> ;`);
+      lines.push(`  iep:endpoint <${listing.endpoint}> ;`);
     }
 
     // Capabilities
     for (const cap of listing.capabilities) {
-      lines.push(`  cg:capability "${esc(cap)}" ;`);
+      lines.push(`  iep:capability "${esc(cap)}" ;`);
     }
 
     // Operations

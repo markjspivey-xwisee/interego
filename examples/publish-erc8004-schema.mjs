@@ -21,22 +21,22 @@ const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainera
 const SHAPE_URL = `${POD}schemas/erc8004-attestation-v1.ttl`;
 
 const SHAPE_TTL = `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix erc: <urn:erc:8004:> .
 
 <${SHAPE_URL}#Shape> a sh:NodeShape ;
-  sh:targetClass cg:ContextDescriptor ;
+  sh:targetClass iep:ContextDescriptor ;
   sh:property [
-    sh:path cg:modalStatus ;
-    sh:in ( cg:Asserted ) ;
+    sh:path iep:modalStatus ;
+    sh:in ( iep:Asserted ) ;
     sh:minCount 1 ;
     sh:message "ERC-8004 attestations MUST be Asserted."
   ] ;
   sh:property [
-    sh:path cg:epistemicConfidence ;
+    sh:path iep:epistemicConfidence ;
     sh:minInclusive 0.0 ;
     sh:maxInclusive 1.0 ;
     sh:minCount 1 ;

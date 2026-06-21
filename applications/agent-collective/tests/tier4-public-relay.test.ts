@@ -99,7 +99,7 @@ describeOrSkip(`agent-collective — Tier 4 public Nostr relay (${RELAY_URL ?? '
 
       // Mark's agent publishes a tool descriptor announcement
       const pub = await markClient.publishDescriptor({
-        descriptorId: `urn:cg:tool:tier4-detector:${Date.now()}`,
+        descriptorId: `urn:iep:tool:tier4-detector:${Date.now()}`,
         cid: 'bafkrei-tier4-' + Math.random().toString(36).slice(2),
         graphIri: uniqueGraph,
         summary: 'agent-collective Tier 4 cross-bridge test (safe to ignore)',

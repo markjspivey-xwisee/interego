@@ -161,7 +161,7 @@ export function buildMerkleAttestationComplianceDescriptor(args: {
 /**
  * Wrap a v3.3 SignedBudgetAuditLog as a compliance descriptor. This is
  * the "we kept honest accounting on cumulative ε" audit record — the
- * operator can publish it alongside (or with cg:supersedes links from)
+ * operator can publish it alongside (or with iep:supersedes links from)
  * the aggregate-query descriptors so a regulator can replay the budget
  * consumption across the audit window.
  */

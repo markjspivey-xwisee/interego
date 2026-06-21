@@ -5,12 +5,12 @@
 @prefix dcterms: <http://purl.org/dc/terms/> .
 
 @prefix wallet: <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/wallet#> .
-@prefix cg:     <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:     <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 #################################################################
 #  Foxxi learner-wallet pattern (1EdTech CLR 2.0 compatible)    #
 #                                                                #
-#  Vertical-scoped: composes the substrate's L1 cg: primitives  #
+#  Vertical-scoped: composes the substrate's L1 iep: primitives  #
 #  + the foxxi vertical's per-credential descriptors into a     #
 #  1EdTech Comprehensive Learner Record envelope. Aggregator   #
 #  pattern; no new credential or crypto primitives.              #
@@ -22,7 +22,7 @@
     owl:versionInfo "0.1.0" .
 
 wallet:WalletEnvelope a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Learner Wallet Envelope" ;
     rdfs:comment "Aggregates the learner's W3C VCs / OB3 badges / fxa:CompetencyAssertions into a 1EdTech CLR 2.0-shaped document. Serialized as JSON-LD with @context referencing the CLR-2.0 + OB3 specs. The envelope itself is a descriptor; the wrapped credentials remain independently verifiable." .
 

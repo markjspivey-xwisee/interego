@@ -134,28 +134,28 @@ async function buildRealisticWallet(): Promise<UserWallet> {
   return {
     userDid: MARK_DID,
     trainingContent: [{
-      iri: 'urn:cg:lpc:training-content:cs101:mod3' as IRI,
+      iri: 'urn:iep:lpc:training-content:cs101:mod3' as IRI,
       name: 'Customer Service 101 — Module 3',
       authoritativeSource: ACME_DID,
       atoms: [atom1, atom2],
     }],
     credentials: [{
-      iri: 'urn:cg:credential:open-badge-3:cs101-mod3' as IRI,
+      iri: 'urn:iep:credential:open-badge-3:cs101-mod3' as IRI,
       achievementName: 'CS-101 Mod 3: Handling Frustration',
       issuer: ACME_DID,
       issuedAt: '2025-09-15T11:00:00Z',
-      forContent: 'urn:cg:lpc:training-content:cs101:mod3' as IRI,
+      forContent: 'urn:iep:lpc:training-content:cs101:mod3' as IRI,
     }],
     performanceRecords: [{
-      iri: 'urn:cg:lpc:performance-record:q1-2026' as IRI,
+      iri: 'urn:iep:lpc:performance-record:q1-2026' as IRI,
       content: 'Strong performance in customer-service-tone area. Three specific second-contact resolutions where Mark led with explicit acknowledgment of prior contact and frustration. Growth area: in clinical-affect technical scenarios, the explicit acknowledgment occasionally felt out of place; suggest training on tone-matching across affect contexts.',
       attributedTo: JANE_DID,
       recordedAt: '2026-04-20T16:00:00Z',
     }],
     learningExperiences: [{
-      iri: 'urn:cg:lpc:learning-experience:cs101-mod3' as IRI,
-      forContent: 'urn:cg:lpc:training-content:cs101:mod3' as IRI,
-      earnedCredential: 'urn:cg:credential:open-badge-3:cs101-mod3' as IRI,
+      iri: 'urn:iep:lpc:learning-experience:cs101-mod3' as IRI,
+      forContent: 'urn:iep:lpc:training-content:cs101:mod3' as IRI,
+      earnedCredential: 'urn:iep:credential:open-badge-3:cs101-mod3' as IRI,
       summary: 'Completed module 3 with score 0.86',
       completedAt: '2026-04-15T14:32:00Z',
     }],
@@ -184,10 +184,10 @@ describe('Tier 7 — grounded chat: human asks question, agent answers from wall
     expect(cited.atomIri).toMatch(/^urn:pgsl:atom:/);
 
     // Cross-links: training content + completion + credential
-    expect(cited.fromTrainingContent).toBe('urn:cg:lpc:training-content:cs101:mod3');
+    expect(cited.fromTrainingContent).toBe('urn:iep:lpc:training-content:cs101:mod3');
     expect(cited.fromTrainingContentName).toContain('Customer Service 101');
     expect(cited.userCompletedOn).toBe('2026-04-15T14:32:00Z');
-    expect(cited.userEarnedCredential).toBe('urn:cg:credential:open-badge-3:cs101-mod3');
+    expect(cited.userEarnedCredential).toBe('urn:iep:credential:open-badge-3:cs101-mod3');
   });
 
   it('display text composes citations with cross-link annotations (no paraphrasing)', async () => {
@@ -284,7 +284,7 @@ describe('Tier 7 — grounded chat: human asks question, agent answers from wall
     expect(cited.achievementName).toContain('Handling Frustration');
     expect(cited.issuer).toBe(ACME_DID);
     expect(cited.issuedAt).toBe('2025-09-15T11:00:00Z');
-    expect(cited.credentialIri).toBe('urn:cg:credential:open-badge-3:cs101-mod3');
+    expect(cited.credentialIri).toBe('urn:iep:credential:open-badge-3:cs101-mod3');
   });
 
   it('CONTENT question NOT covered in wallet: returns null even though wallet has unrelated content', async () => {
@@ -312,7 +312,7 @@ describe('Tier 7 — grounded chat: human asks question, agent answers from wall
       answer!,
       ARIA_DID,
       MARK_DID,
-      'urn:cg:lpc:cited-response:tier7-test' as IRI,
+      'urn:iep:lpc:cited-response:tier7-test' as IRI,
     );
 
     // Descriptor passes L1 validation

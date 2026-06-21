@@ -149,7 +149,7 @@ async function measure<T>(fn: () => Promise<T>): Promise<{ result: T; ms: number
 
 async function main(): Promise<void> {
   const podUrl = 'https://pod.example/u/';
-  const descriptorId = 'urn:cg:defer:test:1' as IRI;
+  const descriptorId = 'urn:iep:defer:test:1' as IRI;
 
   // ── Predict URLs are O(1) and produce stable, deterministic strings.
   const tPredict = await measure(async () => {
@@ -211,7 +211,7 @@ async function main(): Promise<void> {
       'x'.repeat(sz.bytes) +
       '" .';
     const podForSize = makeSlowPod(50);
-    const descForSize = buildDescriptor(`urn:cg:defer:test:${sz.label}` as string);
+    const descForSize = buildDescriptor(`urn:iep:defer:test:${sz.label}` as string);
 
     const tPredictForSize = await measure(async () => ({
       d: predictDescriptorUrl(podUrl, descForSize.id),

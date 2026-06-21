@@ -31,7 +31,7 @@ descriptors across all three:
 
 | Stratum | Prefix | What it captures | Substrate composition |
 |---|---|---|---|
-| **Structural** | `fxs:` | Package as authored (manifest, items, resources, slides, scenes, audio files) | `cg:ContextDescriptor` + `cg:SemioticFacet` + `dcat:Distribution` |
+| **Structural** | `fxs:` | Package as authored (manifest, items, resources, slides, scenes, audio files) | `iep:ContextDescriptor` + `iep:SemioticFacet` + `dcat:Distribution` |
 | **Knowledge** | `fxk:` | Extracted concepts, claims, prerequisite edges, Peircean Sign/Object/Interpretant decomposition | PGSL atoms + pullbacks; SAT semiotic facet |
 | **Activity** | `fxa:` | Consumption traces, extraction events, competency signals | xAPI projection via [`lrs-adapter/`](../lrs-adapter/); HELA presheaf |
 
@@ -135,7 +135,7 @@ Per [`applications/README.md`](../README.md):
 | Compose with compliance-overlay for audit | shipped |
 | Compose with LRS-adapter for activity projection | shipped (via existing lrs-adapter path) |
 | Real learner Q&A — lexical (grounded against transcripts via LPC's groundedAnswer) | shipped — [`src/course-qa.ts`](src/course-qa.ts) — keyword overlap + tamper-detected atom citations |
-| **Agentic RAG** — federated concept-graph retrieval + prereq-edge expansion + LLM synthesis + Interego descriptor trace | shipped — [`src/agentic-rag.ts`](src/agentic-rag.ts) — ports the prior React app's `buildGraphContext` to TS, exposes `foxxi.ask_course_question_agentic` affordance, emits a 4-step modal-statused trace (question Asserted → retrieval Hypothetical → llm Hypothetical → cited-answer Asserted via `cg:supersedes`); LLM is pluggable via `FOXXI_LLM_API_KEY` env var, retrieval works without it |
+| **Agentic RAG** — federated concept-graph retrieval + prereq-edge expansion + LLM synthesis + Interego descriptor trace | shipped — [`src/agentic-rag.ts`](src/agentic-rag.ts) — ports the prior React app's `buildGraphContext` to TS, exposes `foxxi.ask_course_question_agentic` affordance, emits a 4-step modal-statused trace (question Asserted → retrieval Hypothetical → llm Hypothetical → cited-answer Asserted via `iep:supersedes`); LLM is pluggable via `FOXXI_LLM_API_KEY` env var, retrieval works without it |
 | Real enrollment discovery (walks admin payload + audience-group membership) | shipped — [`src/enrollment.ts`](src/enrollment.ts) |
 | **Closing the loop** — a composed course → a generated cmi5 package + SCORM `.zip` → registered on the LMS → completed in a real browser → xAPI in the live LRS | shipped — [`src/content-package.ts`](src/content-package.ts) + [`src/content-delivery.ts`](src/content-delivery.ts); process recorded in [`CLOSING-THE-LOOP.md`](CLOSING-THE-LOOP.md), verified 14/14 in production |
 | **Context Companion** — one conversational front door over a user's networked context: `POST /content/ask` classifies intent and answers from the substrate's own surfaces — assignments, the live LRS, and (for content) the vertical's existing **agentic RAG** — with sourced answers and an honest no-match, the same for humans and agents. `scope: interego` (default) federates discovery across the tenant pod + `FOXXI_FEDERATION_PODS`; `scope: vertical` narrows to the Foxxi slice. Progress / assignment questions are gated behind a wallet-signed session token | shipped — [`src/context-chat.ts`](src/context-chat.ts); process recorded in [`ASKING-YOUR-CONTEXT.md`](ASKING-YOUR-CONTEXT.md) |

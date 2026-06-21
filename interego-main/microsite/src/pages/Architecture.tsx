@@ -28,8 +28,8 @@ export function Architecture({ onNavigate }: { onNavigate: (r: Route) => void })
               SHOULD. The vocabulary is small and stable.
             </p>
             <div style={{ marginTop: 8 }}>
-              <span style={pill}>cg:</span>
-              <span style={pill}>cgh:</span>
+              <span style={pill}>iep:</span>
+              <span style={pill}>ieh:</span>
               <span style={pill}>pgsl:</span>
               <span style={pill}>ie:</span>
               <span style={pill}>align:</span>
@@ -103,7 +103,7 @@ export function Architecture({ onNavigate }: { onNavigate: (r: Route) => void })
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14, marginTop: 12 }}>
         <Trigger num={1} title="Domain term in a core namespace"
-          body="cg:CommitDescriptor or cg:MedicalFacet — no. Domain semantics go in their own namespace (code:, med:, …) at L3, not in the L1 core." />
+          body="iep:CommitDescriptor or iep:MedicalFacet — no. Domain semantics go in their own namespace (code:, med:, …) at L3, not in the L1 core." />
         <Trigger num={2} title="L1 MUST that names a technology"
           body='"Implementations MUST use Solid Notifications" — no. "Implementations MUST provide a subscription mechanism" — yes. L1 is technology-neutral.' />
         <Trigger num={3} title="Bundling multiple layers in one PR"
@@ -119,7 +119,7 @@ export function Architecture({ onNavigate }: { onNavigate: (r: Route) => void })
       <p style={{ ...para, maxWidth: 820 }}>
         A vertical can implement a conformance surface (xAPI, SCORM, cmi5, LTI, OneRoster) in two ways:
         <b> parallel to the substrate</b> (in-memory store alongside Interego) or <b>as a projection
-        over the substrate</b> (every state change is a real cg:ContextDescriptor on the pod; the
+        over the substrate</b> (every state change is a real iep:ContextDescriptor on the pod; the
         conformance surface is a view). The protocol does not mandate the projection, but Foxxi
         adopted it as a hard rule:
       </p>

@@ -81,7 +81,7 @@ the substrate over the MCP relay's REST surface; the OpenClaw plugin
 composes `@interego/core` directly. Different transport, identical
 shape: a fixed handful of tools, affordance-decorated results, one
 `*_act` tool that follows them. An OpenClaw agent and a Hermes bot on
-the same pod write the same `cgh:AgentMemory` graph shape and navigate
+the same pod write the same `ieh:AgentMemory` graph shape and navigate
 it the same way.
 
 ## Setup
@@ -105,7 +105,7 @@ the context cost.
 
 ## Why this is the substrate's natural shape
 
-`cg:Affordance` / `cgh:Affordance` / `hydra:Operation` are L1/L2
+`iep:Affordance` / `ieh:Affordance` / `hydra:Operation` are L1/L2
 primitives — the affordance engine ([`src/affordance/`](../../src/affordance/))
 computes them as a Gibsonian relation between an agent and a descriptor.
 The OpenClaw plugin isn't inventing a navigation scheme; it surfaces one

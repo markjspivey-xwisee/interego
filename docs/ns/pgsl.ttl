@@ -1,5 +1,5 @@
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#>.
@@ -23,9 +23,9 @@
 #  pullbacks, constituent morphisms, and transitive containment.
 #
 #  PGSL is the substrate layer. The Interego ontology
-#  (cg:) describes typed contexts ABOUT graphs; PGSL describes
+#  (iep:) describes typed contexts ABOUT graphs; PGSL describes
 #  the granular structure of the content INSIDE those graphs.
-#  The harness ontology (cgh:) describes the agent/eval machinery
+#  The harness ontology (ieh:) describes the agent/eval machinery
 #  that REASONS over PGSL substrate state.
 #
 #  Formal foundation:
@@ -39,7 +39,7 @@
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
     dct:title "PGSL — Poly-Granular Sequence Lattice 1.0 Ontology" ;
-    dct:description "Content-addressed, lattice-structured representation of text where every fragment gets a stable atom identity and compositional relationships form a bounded lattice. Defines atoms (level 0), fragments (level ≥ 1), pullback squares for the overlapping pair construction, constituent morphisms, transitive containment, and the co-occurrence matrix that grounds usage-based semantics. Aligned with W3C PROV-O for full provenance and designed to compose with the Interego (cg:) typed context layer above it." ;
+    dct:description "Content-addressed, lattice-structured representation of text where every fragment gets a stable atom identity and compositional relationships form a bounded lattice. Defines atoms (level 0), fragments (level ≥ 1), pullback squares for the overlapping pair construction, constituent morphisms, transitive containment, and the co-occurrence matrix that grounds usage-based semantics. Aligned with W3C PROV-O for full provenance and designed to compose with the Interego (iep:) typed context layer above it." ;
     dct:creator [
         a foaf:Organization ;
         foaf:name "Interego" ;
@@ -51,7 +51,7 @@
     vann:preferredNamespacePrefix "pgsl" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/pgsl#" ;
     owl:imports <http://www.w3.org/ns/prov-o> ;
-    rdfs:seeAlso <https://markjspivey-xwisee.github.io/interego/ns/cg#> ,
+    rdfs:seeAlso <https://markjspivey-xwisee.github.io/interego/ns/iep#> ,
                  <https://markjspivey-xwisee.github.io/interego/ns/harness#> ,
                  <https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html>.
 

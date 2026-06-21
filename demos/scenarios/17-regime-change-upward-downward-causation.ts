@@ -122,19 +122,19 @@ const POP_B = [
 const TOOL_VARIANTS = [
   {
     name: 'sentiment-classifier',
-    affordanceAction: 'urn:cg:action:demo:sentiment-classify',
+    affordanceAction: 'urn:iep:action:demo:sentiment-classify',
     source: 'function classify(text) { const pos = ["good","great","love","excellent"]; const neg = ["bad","terrible","hate","awful"]; const t = text.toLowerCase(); let s = 0; for (const w of pos) if (t.includes(w)) s++; for (const w of neg) if (t.includes(w)) s--; return s > 0 ? "positive" : s < 0 ? "negative" : "neutral"; }',
     description: 'Lexicon-based sentiment classifier. Three-way output.',
   },
   {
     name: 'pii-redactor',
-    affordanceAction: 'urn:cg:action:demo:pii-redact',
+    affordanceAction: 'urn:iep:action:demo:pii-redact',
     source: 'function redact(text) { return text.replace(/\\b\\d{3}-\\d{2}-\\d{4}\\b/g, "[SSN]").replace(/\\b\\d{3}-\\d{3}-\\d{4}\\b/g, "[PHONE]").replace(/[\\w.-]+@[\\w.-]+/g, "[EMAIL]"); }',
     description: 'Regex-based PII redactor for SSN/phone/email patterns.',
   },
   {
     name: 'rate-limiter',
-    affordanceAction: 'urn:cg:action:demo:rate-limit',
+    affordanceAction: 'urn:iep:action:demo:rate-limit',
     source: 'function check(key, store, limit, windowMs) { const now = Date.now(); const arr = (store[key] = (store[key] || []).filter(t => now - t < windowMs)); if (arr.length >= limit) return false; arr.push(now); return true; }',
     description: 'Sliding-window rate limiter; returns false when over limit.',
   },
@@ -142,8 +142,8 @@ const TOOL_VARIANTS = [
 
 // The constitutional rule R1 we want to ratify in Phase 2.
 const AMENDMENT_R1_TEXT = 'Tools may be promoted to Asserted only if their accumulated attestations include the safety axis at least once. Pre-existing Asserted tools are not retroactively invalidated; the rule applies to promotion attempts after this amendment ratifies.';
-const AMENDMENT_R1_ID = `urn:cg:amendment:safety-axis-required:${Date.now()}`;
-const POLICY_R0_ID = 'urn:cg:policy:agent-tool-promotion:v0';
+const AMENDMENT_R1_ID = `urn:iep:amendment:safety-axis-required:${Date.now()}`;
+const POLICY_R0_ID = 'urn:iep:policy:agent-tool-promotion:v0';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -335,14 +335,14 @@ Output ONLY a JSON object on a single line:
     // Publish a constitution descriptor on the pod so it's auditable
     // and Phase-4 agents can read it via the standard discover flow.
     await bridgeCall(interegoBridge.url, 'protocol.publish_descriptor', {
-      graph_iri: 'urn:cg:constitution:demo-17:current',
-      graph_content: `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+      graph_iri: 'urn:iep:constitution:demo-17:current',
+      graph_content: `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-<urn:cg:constitution:demo-17:current> a cg:Constitution ;
+<urn:iep:constitution:demo-17:current> a iep:Constitution ;
   dct:title "Tool-promotion regime, post-R1 ratification" ;
   dct:description ${JSON.stringify(AMENDMENT_R1_TEXT)} ;
-  cg:ratifiedAmendment <${AMENDMENT_R1_ID}> ;
-  cg:ratifiedAt "${new Date().toISOString()}" .`,
+  iep:ratifiedAmendment <${AMENDMENT_R1_ID}> ;
+  iep:ratifiedAt "${new Date().toISOString()}" .`,
       modal_status: 'Asserted',
       confidence: 0.99,
       conforms_to: [`${AMENDMENT_R1_ID}`],

@@ -264,7 +264,7 @@ expects all six attempts to be made. Each step is one tool call.
 STEP 1 of 6 — ac.author_tool
   tool_name="second-contact-detector"
   source_code="function detect(s) { return s.match(/\\?/g) ?.length > 1; }"
-  affordance_action="urn:cg:action:demo:detect-second-contact"
+  affordance_action="urn:iep:action:demo:detect-second-contact"
   Save the tool_iri returned — STEPS 2-5 reference it.
 
 STEP 2 of 6 — ac.attest_tool x5 (loop, 5 distinct calls)
@@ -285,8 +285,8 @@ STEP 4 of 6 — ac.promote_tool
 
 STEP 5 of 6 — ac.bundle_teaching_package
   tool_iri=<the promoted tool's iri>
-  narrative_fragment_iris=["urn:cg:fragment:demo:1"]
-  synthesis_iri="urn:cg:synthesis:demo:1"
+  narrative_fragment_iris=["urn:iep:fragment:demo:1"]
+  synthesis_iri="urn:iep:synthesis:demo:1"
   olke_stage="Articulate"
   Save the teaching_iri returned — STEP 6 references it.
 

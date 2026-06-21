@@ -28,7 +28,7 @@
  *        - tools/call mint
  *        - tools/call pgsl_ingest
  *        - tools/call dereference  (KERNEL COHERENCE FIX)
- *        - tools/call act  (urn:cg:action:kernel:decompose on the fragment)
+ *        - tools/call act  (urn:iep:action:kernel:decompose on the fragment)
  *
  * Uses only Node 22 builtins (fetch, node:crypto). Tokens stay in memory.
  */
@@ -486,7 +486,7 @@ async function main() {
       record('8c\'. tools/call promote (kernel-adapter fragment)', 'fail', r.error);
     } else {
       const p = r.payload;
-      kernelFragmentIri = p?.apex ?? p?.['cg:apex'] ?? p?.['@id'];
+      kernelFragmentIri = p?.apex ?? p?.['iep:apex'] ?? p?.['@id'];
       if (typeof kernelFragmentIri === 'string' && kernelFragmentIri.startsWith('urn:pgsl:')) {
         record('8c\'. tools/call promote (kernel-adapter fragment)', 'pass', `apex=${kernelFragmentIri}`);
         minted.fragmentKernelAdapter = kernelFragmentIri;
@@ -526,8 +526,8 @@ async function main() {
       // Expected shape (per commit 4b45072): the kernel's
       // dereferenceLatticeNode returns a DereferenceResult whose
       // `representation` field is a STRINGIFIED JSON-LD doc with
-      //   { '@type': 'cg:Atom'|'cg:Fragment', 'cg:level': N,
-      //     'cg:value':..., 'cg:items': [...] }
+      //   { '@type': 'iep:Atom'|'iep:Fragment', 'iep:level': N,
+      //     'iep:value':..., 'iep:items': [...] }
       // plus top-level `affordances: [{ action, target, method }, ...]`
       // (the decompose/promote/per-item-dereference affordances).
       // decorateKernelResult merges the result's own fields at top level
@@ -546,12 +546,12 @@ async function main() {
         if (/Atom|Fragment/.test(ts)) { foundType = ts; }
         const aff = c.affordances ?? c.existing;
         if (Array.isArray(aff) && aff.length > 0 && foundAffordances.length === 0) foundAffordances = aff;
-        for (const k of ['cg:level', 'cg:value', 'cg:items', 'level', 'value', 'items', 'kind', 'iri']) {
+        for (const k of ['iep:level', 'iep:value', 'iep:items', 'level', 'value', 'items', 'kind', 'iri']) {
           if (c[k] !== undefined && latticeFields[k] === undefined) latticeFields[k] = c[k];
         }
       }
       // Also accept top-level `existing` (from decorateKernelResult) and
-      // the kernel's flat shape (cg:level + cg:value + cg:items).
+      // the kernel's flat shape (iep:level + iep:value + iep:items).
       const typeStr = foundType
         || String(p?.['@type'] ?? p?.type ?? '');
       const affordances = foundAffordances.length > 0
@@ -582,7 +582,7 @@ async function main() {
     record('8d. tools/call dereference (KERNEL COHERENCE FIX)', 'fail', 'no urn:pgsl:* IRI available from earlier steps');
   }
 
-  // 8e. act — urn:cg:action:kernel:decompose on the fragment.
+  // 8e. act — urn:iep:action:kernel:decompose on the fragment.
   // Per commit 4b45072: kernel.act() detects urn:pgsl:* targets on
   // pre-resolved affordances and dispatches internally. Expected
   // payload is a pullback square { apex, left, right, overlap }
@@ -593,7 +593,7 @@ async function main() {
     // not a nested { affordance } object. See deploy/mcp-relay/server.ts
     // around handleKernelAct (~L1405). Pass the affordance flattened.
     const r = await callTool('act', {
-      action: 'urn:cg:action:kernel:decompose',
+      action: 'urn:iep:action:kernel:decompose',
       target: dereferenceTarget,
       method: 'POST',
     }, 5);
@@ -610,10 +610,10 @@ async function main() {
       if (typeof p?.body === 'string') {
         try { bodyParsed = JSON.parse(p.body); } catch { /* leave null */ }
       }
-      const apex = p?.apex ?? p?.['cg:apex'] ?? p?.result?.apex ?? bodyParsed?.apex ?? bodyParsed?.['cg:apex'];
-      const left = p?.left ?? p?.['cg:left'] ?? bodyParsed?.left ?? bodyParsed?.['cg:left'];
-      const right = p?.right ?? p?.['cg:right'] ?? bodyParsed?.right ?? bodyParsed?.['cg:right'];
-      const overlap = p?.overlap ?? p?.['cg:overlap'] ?? bodyParsed?.overlap ?? bodyParsed?.['cg:overlap'];
+      const apex = p?.apex ?? p?.['iep:apex'] ?? p?.result?.apex ?? bodyParsed?.apex ?? bodyParsed?.['iep:apex'];
+      const left = p?.left ?? p?.['iep:left'] ?? bodyParsed?.left ?? bodyParsed?.['iep:left'];
+      const right = p?.right ?? p?.['iep:right'] ?? bodyParsed?.right ?? bodyParsed?.['iep:right'];
+      const overlap = p?.overlap ?? p?.['iep:overlap'] ?? bodyParsed?.overlap ?? bodyParsed?.['iep:overlap'];
       const status = p?.status;
       const isPullback = apex && left && right && overlap;
       if (isPullback) {

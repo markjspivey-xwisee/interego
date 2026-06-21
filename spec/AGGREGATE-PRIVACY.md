@@ -25,7 +25,7 @@ was valid (bounded, signed, fresh).
 
 ## Approach
 
-A **federated aggregate query** is itself a `cg:ContextDescriptor`:
+A **federated aggregate query** is itself a `iep:ContextDescriptor`:
 
 ```turtle
 <urn:agg:q-42> a aggregate:Query ;
@@ -56,7 +56,7 @@ The aggregator:
 
 ```turtle
 aggregate:Query a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:comment "A federated aggregate query specification." .
 
 aggregate:Operation a owl:Class ;
@@ -67,7 +67,7 @@ aggregate:Sum       a aggregate:Operation .
 aggregate:Count     a aggregate:Operation .
 
 aggregate:Result a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:comment "The DP-noised aggregate result + per-contribution ZK proof bundle. Re-verifiable by the requester." .
 
 aggregate:dpEpsilon a owl:DatatypeProperty ;
@@ -131,7 +131,7 @@ piece has known good implementations in adjacent ecosystems
 
 ## Composition with other primitives
 
-- **ABAC:** an aggregate query is gated by a `cg:AccessControlPolicy`
+- **ABAC:** an aggregate query is gated by a `iep:AccessControlPolicy`
   that the requester must satisfy (e.g., "only auditors can request
   aggregates over health data").
 - **Capability passport:** a successful aggregate participation is a

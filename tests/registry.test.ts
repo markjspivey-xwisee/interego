@@ -6,7 +6,7 @@
  *   - aggregateReputation: trust-weighted, recency-decayed, axis breakdown
  *   - Self-asserted attestations don't count (default policy)
  *   - federateLookup: cross-registry agent lookup + reputation averaging
- *   - registryToDescriptor produces a valid cg:ContextDescriptor shape
+ *   - registryToDescriptor produces a valid iep:ContextDescriptor shape
  */
 
 import { describe, it, expect } from 'vitest';
@@ -39,7 +39,7 @@ describe('registry — basic ops', () => {
     r = registerAgent(r, {
       agentIdentity: 'urn:agent:alice' as IRI,
       agentPod: 'https://pod.example/alice/',
-      capabilities: ['cg:canReviewCode' as IRI],
+      capabilities: ['iep:canReviewCode' as IRI],
       now: NOW,
     });
     expect(r.entries.size).toBe(1);
@@ -52,15 +52,15 @@ describe('registry — basic ops', () => {
     r = registerAgent(r, {
       agentIdentity: 'urn:agent:alice' as IRI,
       agentPod: 'p1',
-      capabilities: ['cg:canReviewCode' as IRI],
+      capabilities: ['iep:canReviewCode' as IRI],
     });
     r = registerAgent(r, {
       agentIdentity: 'urn:agent:bob' as IRI,
       agentPod: 'p2',
-      capabilities: ['cg:canTranslate' as IRI],
+      capabilities: ['iep:canTranslate' as IRI],
     });
-    expect(queryEntries(r, { hasCapability: 'cg:canReviewCode' as IRI })).toHaveLength(1);
-    expect(queryEntries(r, { hasCapability: 'cg:canTranslate' as IRI })).toHaveLength(1);
+    expect(queryEntries(r, { hasCapability: 'iep:canReviewCode' as IRI })).toHaveLength(1);
+    expect(queryEntries(r, { hasCapability: 'iep:canTranslate' as IRI })).toHaveLength(1);
   });
 });
 
@@ -134,7 +134,7 @@ describe('registry — refreshReputation', () => {
     const ALICE = 'urn:agent:alice' as IRI;
     r = registerAgent(r, {
       agentIdentity: ALICE, agentPod: 'p',
-      capabilities: ['cg:canReviewCode' as IRI],
+      capabilities: ['iep:canReviewCode' as IRI],
     });
     const att: AttestationInput = {
       id: 'urn:att:1' as IRI, issuer: 'urn:agent:bob' as IRI, subject: ALICE,
@@ -181,7 +181,7 @@ describe('registry — cross-registry federation', () => {
 });
 
 describe('registry — descriptor serialization', () => {
-  it('produces a valid cg:ContextDescriptor shape with all 6 facets', () => {
+  it('produces a valid iep:ContextDescriptor shape with all 6 facets', () => {
     const r = createRegistry({ id: 'urn:registry:r' as IRI, description: 'r' });
     const desc = registryToDescriptor(r, 'urn:agent:owner' as IRI);
     expect(desc.id).toBe(r.id);

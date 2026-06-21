@@ -1,7 +1,7 @@
 /**
  * HEADLESS proof for the ROADMAP additions on top of the base emergent arc:
  *   - Transfer probe: B extends a DIFFERENT, UNTAUGHT standard (LerTerm) and records it.
- *   - cg:Verification holon: A's verify_extension composes a dereferenceable
+ *   - iep:Verification holon: A's verify_extension composes a dereferenceable
  *     foxxi:Verification holon and returns verificationHolonUri.
  *   - Chain of custody: A's issue_credential(justified_by) echoes justifiedBy = that uri.
  *   - Independent re-check: a FRESH third agent C re-runs verify_extension on B's OWN pod.
@@ -102,7 +102,7 @@ async function main(): Promise<void> {
   check('A reads B ELR', review.status === 200 && review.body?.ok === true, `subjectStatements=${review.body?.subject?.statementCount}`);
   check('B ELR shows performed competency(ies)', comps.length > 0, `competencies=${comps.length}: ${comps.map(c => c.label ?? c.id).join(', ').slice(0, 120)}`);
 
-  console.log('\n[6] A independently verifies + composes a cg:Verification holon');
+  console.log('\n[6] A independently verifies + composes a iep:Verification holon');
   const verA = await postSigned('/agent/verify-extension', A, { subject_did: didB, name: taughtExt, kind: 'XapiContextExtension' });
   check('verify-extension verified:true', verA.status === 200 && verA.body?.verified === true, `checks=${JSON.stringify(verA.body?.checks)}`);
   const holonUri = verA.body?.verificationHolonUri as string | undefined;

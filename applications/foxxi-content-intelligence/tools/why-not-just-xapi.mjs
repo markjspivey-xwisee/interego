@@ -158,7 +158,7 @@ qa(4, 'Treat Scout and Drafter as ONE team. What is their joint run?',
 const revised = team.steps.filter(s => s.supersedesId);
 qa(5, 'Where did the team REVISE its plan in flight?',
   'NO — xAPI cannot link an executed step to the intention it replaced. Revision is unrepresentable.',
-  `YES — ${revised.length} steps carry a cg:supersedes edge. e.g. the cache query supersedes the original DB-first plan.`);
+  `YES — ${revised.length} steps carry a iep:supersedes edge. e.g. the cache query supersedes the original DB-first plan.`);
 
 // Q6 — disposition + work regime
 const disposition = assessDisposition([team]);

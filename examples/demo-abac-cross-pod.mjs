@@ -13,11 +13,11 @@
 //     and emits a PolicyDecision.
 //
 // No central registry. No hand-written "merge gate" code. The
-// decision is computed from L1 primitives (cg:AccessControlPolicy
+// decision is computed from L1 primitives (iep:AccessControlPolicy
 // + facets) via the L2 evaluation pattern (abac:).
 //
 // Principles exercised:
-//   - Policies as first-class linked data (cg:AccessControlPolicy)
+//   - Policies as first-class linked data (iep:AccessControlPolicy)
 //   - SHACL predicates as policy gates
 //   - Cross-pod attribute resolution (peer attestations aggregate)
 //   - Deny-overrides-Permit composition
@@ -99,8 +99,8 @@ console.log(`Resolved attribute graph: ${graph.facets.length} facets from ${new 
 
 const qualityScores = extractAttribute(graph, 'amta:codeQuality');
 console.log(`  amta:codeQuality values:  [${qualityScores.join(', ')}]  (${qualityScores.length} attestations)`);
-const validUntil = extractAttribute(graph, 'cg:validUntil');
-console.log(`  cg:validUntil:            ${validUntil[0]}\n`);
+const validUntil = extractAttribute(graph, 'iep:validUntil');
+console.log(`  iep:validUntil:            ${validUntil[0]}\n`);
 
 // ── 3. Policy: require 2+ codeQuality ≥ 0.8 + validity window ─
 
@@ -109,7 +109,7 @@ const codeQualityShape = {
   constraints: [
     { path: 'amta:codeQuality', minCount: 2, minInclusive: 0.8,
       message: 'need at least 2 peer attestations of codeQuality ≥ 0.8' },
-    { path: 'cg:validUntil', minCount: 1,
+    { path: 'iep:validUntil', minCount: 1,
       message: 'resource must have a validity window' },
   ],
 };
@@ -127,7 +127,7 @@ console.log(`   action:     ${mergePermitPolicy.governedAction}`);
 console.log(`   mode:       ${mergePermitPolicy.deonticMode}`);
 console.log(`   predicate:  ${codeQualityShape.iri}`);
 console.log('     - amta:codeQuality  ≥ 0.8  (minCount: 2)');
-console.log('     - cg:validUntil     present\n');
+console.log('     - iep:validUntil     present\n');
 
 // ── 4. Evaluate ─────────────────────────────────────────────
 
@@ -165,7 +165,7 @@ console.log('── Deny-overrides-Permit: add a Deny policy with broader predic
 const anyLowTrustShape = {
   iri: 'urn:shape:AnyLowTrust',
   constraints: [
-    { path: 'cg:trustLevel', minCount: 1, hasValue: 'SelfAsserted' },
+    { path: 'iep:trustLevel', minCount: 1, hasValue: 'SelfAsserted' },
   ],
 };
 const denyIfSelfAsserted = {
@@ -211,7 +211,7 @@ const stale = cache.get(ALICE, RESOURCE_PR, ACTION_MERGE, wayLater);
 console.log(`   stale at +60 min?        ${stale === null ? 'yes (returns null — re-evaluate)' : 'no'}\n`);
 
 console.log('── Observed ──');
-console.log('   The policy is a first-class descriptor (cg:AccessControlPolicy).');
+console.log('   The policy is a first-class descriptor (iep:AccessControlPolicy).');
 console.log('   Its SHACL predicate is evaluated over an attribute graph that');
 console.log('   was assembled from three different sources — alice\'s own pod,');
 console.log('   bob\'s attestation, carol\'s attestation. The evaluator didn\'t');

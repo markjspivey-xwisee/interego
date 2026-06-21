@@ -31,7 +31,7 @@ const VERTICALS: Vertical[] = [
       'A complete L&D stack: ingest SCORM/cmi5/xAPI packages, run a real xAPI 2.0 LRS, a SCORM 2004 SN ' +
       'engine, cmi5 launch + moveOn, LTI 1.3 Advantage, OneRoster CSV — every conformance surface a ' +
       'projection over Interego pods, not a parallel store. From the outside it is the standard you ' +
-      'expect; from the inside every state change is a real cg:ContextDescriptor with seven facets.',
+      'expect; from the inside every state change is a real iep:ContextDescriptor with seven facets.',
     surfaces: [
       'live deployed bridge (Azure) — full API surface + the projection layer',
       'live microsite with /emergent (autonomous Claude collective) and /pod (linked-data browser)',
@@ -39,7 +39,7 @@ const VERTICALS: Vertical[] = [
     ],
     marquee: [
       'The Performance Architecture — diagnosis-driven routing across four work regimes',
-      'The reflexive calibration loop with cg:CalibrationProfile descriptors on every Hypothetical→Asserted flip',
+      'The reflexive calibration loop with iep:CalibrationProfile descriptors on every Hypothetical→Asserted flip',
       'The Emergent Collective — five real Claude subagents racing the substrate, real cryptographic identities, real federation',
     ],
     links: [

@@ -133,7 +133,7 @@ async function main() {
   }
 
   console.log('');
-  console.log('done. bridge can now call cg:discover() on the pod and find every section.');
+  console.log('done. bridge can now call iep:discover() on the pod and find every section.');
 }
 
 /**

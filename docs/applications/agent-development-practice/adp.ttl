@@ -1,5 +1,5 @@
 @prefix adp:      <https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#> .
-@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix abac:     <https://markjspivey-xwisee.github.io/interego/ns/abac#> .
 @prefix passport: <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
 @prefix olke:     <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
@@ -28,7 +28,7 @@
 #  without modifying it.
 #
 #  Layering: application-over-L3. If you find yourself wanting to add a
-#  property here that "really belongs in cg:" — STOP. Either generalize
+#  property here that "really belongs in iep:" — STOP. Either generalize
 #  it for an L1/L2/L3 ontology in a separate proposal, or keep it scoped
 #  to this vertical. The protocol does not bend toward verticals.
 #
@@ -37,11 +37,11 @@
 <https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp>
     a owl:Ontology ;
     dct:title "adp: — Agent Development Practice (vertical application)" ;
-    dct:description "Vertical-scoped, non-normative vocabulary for complexity-informed agent development. NOT part of the Interego protocol. Composes cg:, abac:, passport:, olke:, amta:, registry:." ;
+    dct:description "Vertical-scoped, non-normative vocabulary for complexity-informed agent development. NOT part of the Interego protocol. Composes iep:, abac:, passport:, olke:, amta:, registry:." ;
     vann:preferredNamespacePrefix "adp" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#" ;
     rdfs:comment "Vertical application ontology. Non-normative. The Interego protocol does not depend on this; it is one specific use case / implementation." ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/abac> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/passport> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/olke> .
@@ -49,12 +49,12 @@
 # ── Classes ────────────────────────────────────────────────────────────
 
 adp:Capability a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Capability (open-ended space)" ;
     rdfs:comment "An open-ended capability SPACE — not a target threshold. Mastery is recognized through emerging behavior patterns in narrative observations, not threshold-crossing on metrics. The Cynefin domain (adp:cynefinDomain) determines which governance pattern is appropriate." .
 
 adp:RubricCriterion a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "Rubric Criterion (guide, not gate)" ;
     rdfs:comment "A guide for what we care about — NOT a pass/fail threshold. Used during sensemaking to direct attention; never used as a binary acceptance test." .
 
@@ -64,27 +64,27 @@ adp:Constraint a owl:Class ;
     rdfs:comment "Governance via boundary, not via prescription. A constraint says 'the agent must not X' or 'must operate within Y'. Observable + enforceable; does not specify HOW the agent achieves the boundary. Refined from synthesis cycles, not declared up-front." .
 
 adp:Probe a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Safe-to-Fail Probe" ;
-    rdfs:comment "A small parallel experiment. Carries a Hypothetical hypothesis, a variant (prompt / tools / model), explicit amplification + dampening triggers, and a time-bound. Many probes run concurrently; many fail; a few amplify. Never has cg:modalStatus Asserted." .
+    rdfs:comment "A small parallel experiment. Carries a Hypothetical hypothesis, a variant (prompt / tools / model), explicit amplification + dampening triggers, and a time-bound. Many probes run concurrently; many fail; a few amplify. Never has iep:modalStatus Asserted." .
 
 adp:NarrativeFragment a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Narrative Fragment" ;
-    rdfs:comment "A qualitative observation: situation signifiers + agent response + emergent signifiers. ALWAYS recorded with cg:modalStatus Hypothetical — we are recording an observation, not asserting causation. Multiple fragments compose into a synthesis." .
+    rdfs:comment "A qualitative observation: situation signifiers + agent response + emergent signifiers. ALWAYS recorded with iep:modalStatus Hypothetical — we are recording an observation, not asserting causation. Multiple fragments compose into a synthesis." .
 
 adp:Signifier a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "Signifier (SenseMaker-style)" ;
     rdfs:comment "Short tag emerging from a narrative — used later to find patterns across many fragments. A signifier is descriptive, not evaluative; it labels what is present, not whether it is good or bad." .
 
 adp:Synthesis a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Sensemaking Synthesis" ;
-    rdfs:comment "Composed view of many narrative fragments via cg:union. Surfaces recurring signifier patterns; PRESERVES MULTIPLE COHERENT NARRATIVES rather than declaring one root cause. cg:modalStatus stays Hypothetical." .
+    rdfs:comment "Composed view of many narrative fragments via iep:union. Surfaces recurring signifier patterns; PRESERVES MULTIPLE COHERENT NARRATIVES rather than declaring one root cause. iep:modalStatus stays Hypothetical." .
 
 adp:EvolutionStep a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Amplify/Dampen Decision" ;
     rdfs:comment "Operator decision to amplify some probes and dampen others, based on a synthesis. Carries an explicit-decision-not-made statement to prevent the decision from being read as a 'fix' or 'answer'. The decision is provisional and re-examinable; carries a next-revisit time." .
 
@@ -236,7 +236,7 @@ adp:explicitDecisionNotMade a owl:DatatypeProperty ;
 adp:emergedFrom a owl:ObjectProperty ;
     rdfs:label "emerged from" ;
     rdfs:comment "Links a constraint or capability-evolution event to the synthesis cycles that produced it." ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 adp:olkeStage a owl:ObjectProperty ;
     rdfs:label "OLKE stage" ;

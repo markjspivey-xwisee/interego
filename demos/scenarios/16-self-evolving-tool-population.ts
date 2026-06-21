@@ -13,7 +13,7 @@
  *
  * A fifth claude process — Generation 2 — receives the teaching
  * package for the winner and authors a refined successor whose
- * cg:supersedes chain points back at the Gen-1 winner. The
+ * iep:supersedes chain points back at the Gen-1 winner. The
  * population's capability frontier has moved without anyone outside
  * the loop redesigning the agents.
  *
@@ -65,25 +65,25 @@ interface Variant {
 const VARIANTS: ReadonlyArray<Variant> = [
   {
     name: 'literal-questionmark',
-    affordanceAction: 'urn:cg:action:demo:detect-question:literal',
+    affordanceAction: 'urn:iep:action:demo:detect-question:literal',
     source: 'function isQuestion(msg) { return typeof msg === "string" && msg.trim().endsWith("?"); }',
     description: 'Returns true iff the trimmed message ends with a question mark. Single signal, low cost, brittle to questions phrased without "?".',
   },
   {
     name: 'wh-prefix',
-    affordanceAction: 'urn:cg:action:demo:detect-question:wh',
+    affordanceAction: 'urn:iep:action:demo:detect-question:wh',
     source: 'function isQuestion(msg) { if (typeof msg !== "string") return false; return /^\\s*(who|what|where|when|why|how|which|whose)\\b/i.test(msg); }',
     description: 'Returns true iff the message begins with a wh-question word. Catches many natural questions even without punctuation; misses yes/no questions ("can you...", "is it...").',
   },
   {
     name: 'inflection-words',
-    affordanceAction: 'urn:cg:action:demo:detect-question:inflection',
+    affordanceAction: 'urn:iep:action:demo:detect-question:inflection',
     source: 'function isQuestion(msg) { if (typeof msg !== "string") return false; return /\\b(do|does|did|can|could|will|would|is|are|was|were|should|may|might)\\s+\\w/i.test(msg); }',
     description: 'Returns true iff the message contains an early auxiliary-verb pattern that typically marks yes/no questions. Catches "do you...", "is it..."; may overmatch declarative sentences ("I will go").',
   },
   {
     name: 'hybrid-multi-signal',
-    affordanceAction: 'urn:cg:action:demo:detect-question:hybrid',
+    affordanceAction: 'urn:iep:action:demo:detect-question:hybrid',
     source: `function isQuestion(msg) {
   if (typeof msg !== "string") return false;
   const trimmed = msg.trim();
@@ -520,7 +520,7 @@ Output ONLY a JSON object on a single line:
       ``,
       `**Selection is not programmed.** The harness never told the agents which variant should win. Each peer attestation was an independent honest evaluation by an agent that had not seen the other reviewers' decisions. The promotion rule is a deterministic function of the attestation set already on the pod: aggregate peer-rating ≥ ${PROMOTE_THRESHOLD} → Asserted.`,
       ``,
-      `**Evolution is recorded, not narrated.** The Gen-2 successor's \`cg:supersedes\` chain points back at the Gen-1 winner. Anyone walking the pod can replay how the population's capability frontier moved across generations without any meta-agent narrating the story.`,
+      `**Evolution is recorded, not narrated.** The Gen-2 successor's \`iep:supersedes\` chain points back at the Gen-1 winner. Anyone walking the pod can replay how the population's capability frontier moved across generations without any meta-agent narrating the story.`,
       ``,
       `**Diversity survives.** Losing variants stay on the pod as Hypothetical descriptors, not deleted. Future evidence — a new probe, a different evaluator panel, a contradicting attestation — could resurrect them. Loss is reversible because the substrate keeps the audit trail.`,
       ``,

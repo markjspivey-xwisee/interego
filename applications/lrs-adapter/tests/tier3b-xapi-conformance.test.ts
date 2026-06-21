@@ -8,7 +8,7 @@
  *   - cmi5 contextActivity profile (https://w3id.org/xapi/cmi5)
  *   - Sub-Statement (a Statement whose object is itself a Statement)
  *   - Statement voiding (xAPI's mechanism for soft-deleting; how the
- *     adapter projects cg:supersedes when an LRS-anchored team needs it)
+ *     adapter projects iep:supersedes when an LRS-anchored team needs it)
  *   - Multi-statement batch POST
  *   - Statement filtering by verb / agent / activity
  *   - GET /xapi/statements with paging + Last-Modified semantics
@@ -130,7 +130,7 @@ describe('Tier 3b — deeper xAPI 2.0 conformance against Lrsql', () => {
       objectType: 'SubStatement',
       actor: { objectType: 'Agent', account: { homePage: 'https://acme.example', name: 'observer-ravi' } },
       verb: { id: 'http://adlnet.gov/expapi/verbs/observed', display: { 'en-US': 'observed' } },
-      object: { objectType: 'Activity', id: 'urn:cg:fragment:tone-week-1-frag-1' },
+      object: { objectType: 'Activity', id: 'urn:iep:fragment:tone-week-1-frag-1' },
     };
 
     const stmt = {
@@ -155,7 +155,7 @@ describe('Tier 3b — deeper xAPI 2.0 conformance against Lrsql', () => {
     expect(fetched.object.verb.id).toBe('http://adlnet.gov/expapi/verbs/observed');
   });
 
-  it('voiding: a void Statement marks the original as voided (xAPI mechanism for cg:supersedes)', { timeout: 15000 }, async (ctx) => {
+  it('voiding: a void Statement marks the original as voided (xAPI mechanism for iep:supersedes)', { timeout: 15000 }, async (ctx) => {
     if (!lrsReachable) return ctx.skip();
 
     const original = {

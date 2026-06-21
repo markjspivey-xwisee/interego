@@ -174,11 +174,11 @@ export interface PublishOptions {
 
   /**
    * Audience class of the published payload. Affects the distribution
-   * block (`cg:visibility`, `cg:encrypted`) and is intended to be paired
+   * block (`iep:visibility`, `iep:encrypted`) and is intended to be paired
    * with an ACL writer at the caller for `public`.
    *
    * - `public`  — no envelope; plaintext payload; descriptor advertises
-   *               `cg:visibility "public"` and `cg:encrypted false`.
+   *               `iep:visibility "public"` and `iep:encrypted false`.
    *               Callers should also grant `acl:Read` to
    *               `acl:agentClass foaf:Agent` on the payload + descriptor.
    * - `shared`  — envelope to the caller-supplied recipient set
@@ -191,19 +191,19 @@ export interface PublishOptions {
   /**
    * Optional relay base URL (no trailing slash). When set AND the
    * publish is encrypted, the emitted distribution block carries a
-   * SECOND affordance — `cg:renderView` — whose hydra:target is
+   * SECOND affordance — `iep:renderView` — whose hydra:target is
    * `<relayBaseUrl>/render/<encodeURIComponent(descriptor.id)>`. Thin
    * clients (no X25519 keypair) follow that link with a bearer token
-   * to receive server-side-unwrapped plaintext Turtle. cg:canDecrypt
+   * to receive server-side-unwrapped plaintext Turtle. iep:canDecrypt
    * remains the point-of-fetch path for clients that hold the key.
    */
   readonly relayBaseUrl?: string;
 
   /**
    * Optional agent-level authorship proof, embedded in the descriptor
-   * Turtle adjacent to the AgentFacet block as a `cg:authorshipProof`
+   * Turtle adjacent to the AgentFacet block as a `iep:authorshipProof`
    * blank node. Independent of the descriptor-level compliance signature
-   * (`cg:proof` on the TrustFacet, which covers the whole descriptor
+   * (`iep:proof` on the TrustFacet, which covers the whole descriptor
    * Turtle and is the pod-operator anchor): authorship binds an agent's
    * identity claim to the AgentFacet via the agent's own delegation
    * key, so any reader can re-derive the canonical payload and
@@ -238,7 +238,7 @@ export interface PublishOptions {
    *
    * Fixes the auto-supersede race in the MCP shim: without this gate,
    * two concurrent publishers republishing the same graph_iri each see
-   * the same prior head, each emit a cg:supersedes back-link to it, and
+   * the same prior head, each emit a iep:supersedes back-link to it, and
    * both succeed — producing a forked chain with two heads. The
    * precondition forces the second writer to re-read first.
    */
@@ -258,7 +258,7 @@ export interface PublishOptions {
   /**
    * Optional manifest-mirrored head-CID resolver. When provided AND a
    * supersedes target has its content-CID mirrored on the manifest (the
-   * `cg:contentCid` triple added at publish time), the CAS precondition
+   * `iep:contentCid` triple added at publish time), the CAS precondition
    * comparison skips the descriptor body GET + rehash entirely and uses
    * the manifest-supplied CID. Falls through to body-fetch when the
    * lookup misses (legacy manifest entries written before the mirror
@@ -322,7 +322,7 @@ export interface DiscoverFilter {
   /** Only return descriptors with this modal status. */
   readonly modalStatus?: ModalStatus;
   /**
-   * Only return descriptors whose `cg:describes` set includes this
+   * Only return descriptors whose `iep:describes` set includes this
    * graph IRI. The single most useful narrowing filter for typical
    * agent workflows ("find the descriptors for `urn:graph:X` on this
    * pod") — without it, callers fetch the whole manifest and post-

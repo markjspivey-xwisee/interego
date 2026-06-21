@@ -306,7 +306,7 @@ const evalC = evaluateIntervention({
   transfer: { transferred: true, evidence: 'LRS shows first-contact resolution on 14 of the next 16 in-policy disputes' },
   newObserved: exemplaryC,
 });
-console.log(`\n   intervention evaluation (four-level evaluation → cg:supersedes):`);
+console.log(`\n   intervention evaluation (four-level evaluation → iep:supersedes):`);
 console.log(`     capability : ${evalC.levels.capability.passed ? 'passed' : 'failed'}`);
 console.log(`     transfer   : ${evalC.levels.transfer.transferred ? 'transferred to real work' : 'did not transfer'}`);
 console.log(`     outcome    : gap ${evalC.levels.outcome.gapClosed ? 'CLOSED' : 'open'}`);

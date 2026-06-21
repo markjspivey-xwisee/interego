@@ -3,7 +3,7 @@
  * surface over the LPC vertical.
  *
  * Generic agents don't need this — they can discover + invoke this
- * vertical's affordances via the protocol's cg:Affordance manifest at
+ * vertical's affordances via the protocol's iep:Affordance manifest at
  * GET /affordances. The bridge is just an ergonomic accelerant for
  * clients that prefer named MCP tools.
  *

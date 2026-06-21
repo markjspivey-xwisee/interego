@@ -9,12 +9,12 @@
  * is a big diff with conformance risk. Instead, each surface registers
  * a "collect snapshot" function and a Foxxi type IRI; this module
  * debounces calls, publishes a versioned snapshot descriptor on the
- * pod (cg:supersedes-chained to the previous), and provides a hydrate
+ * pod (iep:supersedes-chained to the previous), and provides a hydrate
  * call the bridge runs at startup to restore the state from the pod.
  *
  * The pod is the durable source of truth across container restarts.
  * In-memory state is the hot cache; it dies with the process but
- * snapshots persist. Each surface's snapshot is one cg:ContextDescriptor
+ * snapshots persist. Each surface's snapshot is one iep:ContextDescriptor
  * (conformsTo foxxi:<Surface>Snapshot) carrying the full surface state
  * as foxxi:bundleJson — coarse grained at the surface level, which
  * matches how operators inspect the substrate (one descriptor per
@@ -175,7 +175,7 @@ function snapshotGraph(args: {
   lines.push(`@prefix dct:   <http://purl.org/dc/terms/> .`);
   lines.push(`@prefix prov:  <http://www.w3.org/ns/prov#> .`);
   lines.push(`@prefix pgsl:  <https://markjspivey-xwisee.github.io/interego/ns/pgsl/v1#> .`);
-  lines.push(`@prefix cg:    <https://markjspivey-xwisee.github.io/interego/ns/cg#> .`);
+  lines.push(`@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .`);
   lines.push(`@prefix foxxi: <${FOXXI}> .`);
   lines.push(`@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .`);
   lines.push(``);
@@ -186,7 +186,7 @@ function snapshotGraph(args: {
   lines.push(`  pgsl:hasAtom <${args.payloadAtom}> ;`);
   lines.push(`  dct:identifier "sha256:${hash}" ;`);
   lines.push(`  <${FOXXI_VERSION}> "${args.version}"^^xsd:integer ;`);
-  if (args.previousIri) lines.push(`  cg:supersedes <${args.previousIri}> ;`);
+  if (args.previousIri) lines.push(`  iep:supersedes <${args.previousIri}> ;`);
   if (args.bridgeSignature) lines.push(`  foxxi:agentSignature "${args.bridgeSignature}" ;`);
   lines.push(`  <${FOXXI_BUNDLE_JSON}> "${b64}"^^xsd:base64Binary .`);
   return lines.join('\n');
@@ -208,7 +208,7 @@ async function doPublish(reg: SnapshotRegistration): Promise<void> {
   const payloadJson = JSON.stringify(payload);
   const payloadAtom = mintAtom(pgsl(), payloadJson);
   // Sign as the bridge service so the snapshot lands with
-  // cg:CryptographicallyVerified trust; failure to sign just degrades to
+  // iep:CryptographicallyVerified trust; failure to sign just degrades to
   // SelfAsserted (a missing FOXXI_BRIDGE_PRIVATE_KEY in dev, for
   // example, shouldn't break the publish path).
   let bridgeSignature: string | undefined;

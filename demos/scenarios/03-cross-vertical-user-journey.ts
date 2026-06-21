@@ -100,7 +100,7 @@ ${zipBase64}
 
 (E) AC: author a small tool via ac.author_tool with tool_name="echo-sniff",
     source_code="function detectEcho(s) { return s.includes('?'); }",
-    affordance_action="urn:cg:action:demo:detect-echo".
+    affordance_action="urn:iep:action:demo:detect-echo".
 
 (F) AC: attest the tool via ac.attest_tool with axis="correctness",
     rating=0.85, direction="Self".

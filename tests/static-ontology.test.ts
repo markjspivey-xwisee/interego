@@ -33,10 +33,10 @@ describe('static ontology manifest', () => {
     const names = ONTOLOGY_MANIFEST.map(e => e.name).sort();
     expect(names).toEqual([
       'alignment',
-      'cg',
-      'cg-shapes',
       'harness',
       'harness-shapes',
+      'iep',
+      'iep-shapes',
       'interego',
       'interego-shapes',
       'pgsl',
@@ -73,11 +73,11 @@ describe('static ontology files exist and parse as Turtle', () => {
   }
 });
 
-describe('cg.ttl — key concepts present', () => {
-  const ttl = loadOntology('cg');
+describe('iep.ttl — key concepts present', () => {
+  const ttl = loadOntology('iep');
 
   it('declares the ContextDescriptor class', () => {
-    expect(ttl).toMatch(/cg:ContextDescriptor\s+a\s+owl:Class/);
+    expect(ttl).toMatch(/iep:ContextDescriptor\s+a\s+owl:Class/);
   });
 
   it('declares all seven facet types', () => {
@@ -90,13 +90,13 @@ describe('cg.ttl — key concepts present', () => {
       'TrustFacet',
       'FederationFacet',
     ]) {
-      expect(ttl).toContain(`cg:${facet}`);
+      expect(ttl).toContain(`iep:${facet}`);
     }
   });
 
   it('declares the four composition operators', () => {
     for (const op of ['union', 'intersection', 'restriction', 'override']) {
-      expect(ttl).toMatch(new RegExp(`cg:${op}\\s+a\\s+cg:CompositionOperator`));
+      expect(ttl).toMatch(new RegExp(`iep:${op}\\s+a\\s+iep:CompositionOperator`));
     }
   });
 });
@@ -131,38 +131,38 @@ describe('harness.ttl — key concepts present', () => {
 
   it('declares the six built-in AATs', () => {
     for (const aat of ['Observer', 'Analyst', 'Executor', 'Arbiter', 'Archivist', 'FullAccess']) {
-      expect(ttl).toContain(`cgh:${aat} a cgh:AbstractAgentType`);
+      expect(ttl).toContain(`ieh:${aat} a ieh:AbstractAgentType`);
     }
   });
 
   it('declares the deontic SKOS concept scheme', () => {
-    expect(ttl).toContain('cgh:DeonticMode');
+    expect(ttl).toContain('ieh:DeonticMode');
     for (const mode of ['Permit', 'Deny', 'Duty']) {
-      expect(ttl).toContain(`cgh:${mode} a skos:Concept`);
+      expect(ttl).toContain(`ieh:${mode} a skos:Concept`);
     }
   });
 
   it('declares the confidence level SKOS concept scheme', () => {
-    expect(ttl).toContain('cgh:ConfidenceLevel');
+    expect(ttl).toContain('ieh:ConfidenceLevel');
     for (const level of ['HighConfidence', 'MediumConfidence', 'LowConfidence', 'Uncertain']) {
-      expect(ttl).toContain(`cgh:${level}`);
+      expect(ttl).toContain(`ieh:${level}`);
     }
   });
 
   it('declares the four eval actions', () => {
     for (const action of ['Accept', 'Retry', 'Escalate', 'Abstain']) {
-      expect(ttl).toContain(`cgh:${action}`);
+      expect(ttl).toContain(`ieh:${action}`);
     }
   });
 
   it('declares the four decision strategies', () => {
     for (const strat of ['Exploit', 'Explore', 'Delegate']) {
-      expect(ttl).toContain(`cgh:${strat}`);
+      expect(ttl).toContain(`ieh:${strat}`);
     }
   });
 
   it('extends PROV-O for ProvTrace', () => {
-    expect(ttl).toMatch(/cgh:ProvTrace\s+a\s+owl:Class\s*;\s*rdfs:subClassOf\s+prov:Activity/);
+    expect(ttl).toMatch(/ieh:ProvTrace\s+a\s+owl:Class\s*;\s*rdfs:subClassOf\s+prov:Activity/);
   });
 
   it('aligns Affordance with Hydra', () => {
@@ -175,7 +175,7 @@ describe('alignment.ttl — cross-layer axioms present', () => {
 
   it('imports all three layer ontologies', () => {
     expect(ttl).toContain('pgsl#');
-    expect(ttl).toContain('/cg#');
+    expect(ttl).toContain('/iep#');
     expect(ttl).toContain('harness#');
   });
 
@@ -193,12 +193,12 @@ describe('alignment.ttl — cross-layer axioms present', () => {
   });
 
   it('declares disjointness between context facets and PGSL nodes', () => {
-    expect(ttl).toContain('cg:ContextFacet owl:disjointWith pgsl:Node');
+    expect(ttl).toContain('iep:ContextFacet owl:disjointWith pgsl:Node');
   });
 
   it('declares PROV-O subClassOf relations for harness activities', () => {
-    expect(ttl).toContain('cgh:ProvTrace rdfs:subClassOf prov:Activity');
-    expect(ttl).toContain('cgh:RuntimeEval rdfs:subClassOf prov:Activity');
+    expect(ttl).toContain('ieh:ProvTrace rdfs:subClassOf prov:Activity');
+    expect(ttl).toContain('ieh:RuntimeEval rdfs:subClassOf prov:Activity');
   });
 });
 
@@ -217,11 +217,11 @@ describe('pgsl-shapes.ttl — key SHACL shapes present', () => {
 describe('harness-shapes.ttl — key SHACL shapes present', () => {
   const ttl = loadOntology('harness-shapes');
   it('targets AAT, PolicyRule, PolicyDecision, ProvTrace, RuntimeEval', () => {
-    expect(ttl).toContain('sh:targetClass cgh:AbstractAgentType');
-    expect(ttl).toContain('sh:targetClass cgh:PolicyRule');
-    expect(ttl).toContain('sh:targetClass cgh:PolicyDecision');
-    expect(ttl).toContain('sh:targetClass cgh:ProvTrace');
-    expect(ttl).toContain('sh:targetClass cgh:RuntimeEval');
+    expect(ttl).toContain('sh:targetClass ieh:AbstractAgentType');
+    expect(ttl).toContain('sh:targetClass ieh:PolicyRule');
+    expect(ttl).toContain('sh:targetClass ieh:PolicyDecision');
+    expect(ttl).toContain('sh:targetClass ieh:ProvTrace');
+    expect(ttl).toContain('sh:targetClass ieh:RuntimeEval');
   });
   it('bounds confidence to [0.0, 1.0]', () => {
     expect(ttl).toContain('sh:minInclusive "0.0"^^xsd:double');
@@ -307,9 +307,9 @@ describe('loadFullOntology and loadFullShapes', () => {
     expect(parseTtl(full)).toBeGreaterThan(1000);
     // Should contain concepts from every layer
     expect(full).toContain('ie:Interrogative');
-    expect(full).toContain('cg:ContextDescriptor');
+    expect(full).toContain('iep:ContextDescriptor');
     expect(full).toContain('pgsl:Atom');
-    expect(full).toContain('cgh:AbstractAgentType');
+    expect(full).toContain('ieh:AbstractAgentType');
     expect(full).toContain('align:IntegrationPattern');
   });
 
@@ -318,6 +318,6 @@ describe('loadFullOntology and loadFullShapes', () => {
     expect(parseTtl(full)).toBeGreaterThan(400);
     expect(full).toContain('sh:targetClass ie:Act');
     expect(full).toContain('sh:targetClass pgsl:Atom');
-    expect(full).toContain('sh:targetClass cgh:ProvTrace');
+    expect(full).toContain('sh:targetClass ieh:ProvTrace');
   });
 });

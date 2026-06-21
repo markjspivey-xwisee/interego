@@ -86,7 +86,7 @@ describeOrSkip(`P2P transport — real public Nostr relay (${RELAY_URL ?? 'SKIPP
       // Use a unique graph IRI to avoid collisions across runs
       const uniqueGraph = `urn:graph:public-relay-test:${Date.now()}`;
       const pub = await client.publishDescriptor({
-        descriptorId: `urn:cg:public-relay-test:${Date.now()}`,
+        descriptorId: `urn:iep:public-relay-test:${Date.now()}`,
         cid: 'bafkrei-public-relay-' + Math.random().toString(36).slice(2),
         graphIri: uniqueGraph,
         summary: 'Interego P2P public-relay smoke test (safe to ignore)',

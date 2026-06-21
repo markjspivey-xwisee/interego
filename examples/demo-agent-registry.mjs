@@ -12,9 +12,9 @@
 // minimum-attestation thresholds).
 //
 // Built entirely on existing primitives:
-//   - registry IS a cg:ContextDescriptor
+//   - registry IS a iep:ContextDescriptor
 //   - reputation INPUT is amta:Attestation descriptors
-//   - aggregation policy IS a cg:AccessControlPolicy
+//   - aggregation policy IS a iep:AccessControlPolicy
 //   - cross-registry citations USE prov:wasDerivedFrom
 
 import {
@@ -72,14 +72,14 @@ const POD = 'https://pod.example/alice/';
 codeRegistry = registerAgent(codeRegistry, {
   agentIdentity: ALICE,
   agentPod: POD,
-  capabilities: ['cg:canReviewCode', 'cg:canExtractCodeBlocks'],
+  capabilities: ['iep:canReviewCode', 'iep:canExtractCodeBlocks'],
   now: NOW,
 });
 
 researchRegistry = registerAgent(researchRegistry, {
   agentIdentity: ALICE,
   agentPod: POD,
-  capabilities: ['cg:canReviewResearch', 'cg:canSummarize'],
+  capabilities: ['iep:canReviewResearch', 'iep:canSummarize'],
   now: NOW,
 });
 
@@ -167,7 +167,7 @@ console.log();
 console.log('── Capability-filtered query ──\n');
 console.log('"Find me agents on the code-quality registry who can review code AND have score ≥ 0.85":');
 const matches = queryEntries(codeRegistry, {
-  hasCapability: 'cg:canReviewCode',
+  hasCapability: 'iep:canReviewCode',
   minScore: 0.85,
 });
 for (const m of matches) {
@@ -178,9 +178,9 @@ if (matches.length === 0) console.log('   (none matched)');
 
 console.log('\n── What this demonstrates ──');
 console.log('   A federated public agent registry built entirely from existing');
-console.log('   primitives — registry IS a cg:ContextDescriptor; attestations ARE');
+console.log('   primitives — registry IS a iep:ContextDescriptor; attestations ARE');
 console.log('   amta:Attestation descriptors; aggregation policies ARE');
-console.log('   cg:AccessControlPolicy.');
+console.log('   iep:AccessControlPolicy.');
 console.log('');
 console.log('   No central operator. Multiple registries with different policies');
 console.log('   coexist. The same agent has different reputation in different');

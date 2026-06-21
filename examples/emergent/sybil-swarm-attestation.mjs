@@ -33,7 +33,7 @@
  *   1. 3 × honest-clique TrustFacet descriptors (HighAssurance, Asserted)
  *   2. 24 × sybil amta:codeQuality attestations (SelfAsserted, Asserted)
  *   3. 1 × sybil-cluster detection descriptor (Hypothetical,
- *      cg:supersedes top-N sybil descriptors)
+ *      iep:supersedes top-N sybil descriptors)
  *   4. 1 × unfiltered ABAC evaluation record (Asserted)
  *   5. 1 × filtered ABAC evaluation record + honest-survivor evaluation
  *
@@ -72,7 +72,7 @@ const SCENARIO_DATE = process.env.SYBIL_SWARM_DATE ?? '2026-06-01';
 const POD = `${CSS}/demos/emergent-sybil-swarm-attestation-${SCENARIO_DATE}/`;
 
 // Vertical scenario namespace — per CLAUDE.md ontology hygiene, NEVER
-// invent cg:/cgh:/pgsl:/amta:/abac:/etc. terms. Anything scenario-
+// invent iep:/ieh:/pgsl:/amta:/abac:/etc. terms. Anything scenario-
 // specific (NodeFinding, Verdict, ClusterFlag, EvaluationRecord) lives
 // here and never needs an owned-ontology declaration.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/sybil-swarm-attestation#';
@@ -166,7 +166,7 @@ async function publishHonestAttestation(issuer, subject, qualityValue) {
   const graphIri = `${id}-graph`;
   const now = new Date().toISOString();
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix amta: <https://w3id.org/cg/amta#> .
@@ -225,7 +225,7 @@ async function publishSybilAttestation(sybil, subject, qualityValue) {
   const { hash, signature } = await signPayload(sybil.wallet, payload);
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix amta: <https://w3id.org/cg/amta#> .
@@ -279,7 +279,7 @@ async function publishDetection(detector, sybilEntries, flags, window) {
   const graphIri = `${id}-graph`;
   const now = new Date().toISOString();
 
-  // cite the sybil descriptor IRIs in the graph + as cg:supersedes
+  // cite the sybil descriptor IRIs in the graph + as iep:supersedes
   // edges on the descriptor itself (top-10 for size; clusterSize covers
   // the rest).
   const derivedLines = sybilEntries
@@ -287,7 +287,7 @@ async function publishDetection(detector, sybilEntries, flags, window) {
   const flagLines = flags.map(f => `  sybilswarm:raisedFlag <${f}> ;`).join('\n');
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix sybilswarm: <${SCENARIO_NS}> .
@@ -337,7 +337,7 @@ async function publishEvaluationRecord({ verifier, kind, verdict, considered, ke
   const graphIri = `${id}-graph`;
   const now = new Date().toISOString();
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix sybilswarm: <${SCENARIO_NS}> .
@@ -529,7 +529,7 @@ check('shared-target flag raised (all 24 cite the same subject graph)', sharedFl
 check('metadata-homogeneity flag raised (identical codeQuality 0.95 across all 24)', homogeneous, { distinct: distinctQ.size });
 check('detector classifies the cluster as sybil-like (3-of-3 flags, ⚠ verdict)', flagsRaised.length === 3, flagsRaised.length);
 
-// Detector publishes the detection descriptor (Hypothetical, cg:supersedes top-10).
+// Detector publishes the detection descriptor (Hypothetical, iep:supersedes top-10).
 const detection = await publishDetection(detector, ledger.sybilAttestations, flagsRaised, tempWin / 1000);
 console.log(`   detection descriptor: ${detection.descriptorUrl}`);
 

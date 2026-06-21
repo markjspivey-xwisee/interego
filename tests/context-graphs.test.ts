@@ -60,19 +60,19 @@ function makeSimpleDescriptor(id: string, graph: string): ContextDescriptorData 
 
 describe('ContextDescriptor Builder', () => {
   it('creates a minimal valid descriptor', () => {
-    const desc = ContextDescriptor.create('urn:cg:test-1' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:test-1' as IRI)
 .describes('urn:graph:g1' as IRI)
 .temporal({ validFrom: '2026-01-01T00:00:00Z' })
 .build();
 
-    expect(desc.id).toBe('urn:cg:test-1');
+    expect(desc.id).toBe('urn:iep:test-1');
     expect(desc.describes).toEqual(['urn:graph:g1']);
     expect(desc.facets).toHaveLength(1);
     expect(desc.facets[0]!.type).toBe('Temporal');
   });
 
   it('supports multiple facets via fluent API', () => {
-    const desc = ContextDescriptor.create('urn:cg:test-2' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:test-2' as IRI)
 .describes('urn:graph:g1' as IRI)
 .temporal({
         validFrom: '2026-01-01T00:00:00Z',
@@ -96,7 +96,7 @@ describe('ContextDescriptor Builder', () => {
   });
 
   it('supports multiple graphs per descriptor', () => {
-    const desc = ContextDescriptor.create('urn:cg:multi' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:multi' as IRI)
 .describes('urn:graph:a' as IRI, 'urn:graph:b' as IRI, 'urn:graph:c' as IRI)
 .temporal({ validFrom: '2026-01-01T00:00:00Z' })
 .build();
@@ -106,7 +106,7 @@ describe('ContextDescriptor Builder', () => {
 
   it('throws on empty describes', () => {
     expect(() =>
-      ContextDescriptor.create('urn:cg:bad' as IRI)
+      ContextDescriptor.create('urn:iep:bad' as IRI)
 .temporal({ validFrom: '2026-01-01T00:00:00Z' })
 .build()
     ).toThrow('must describe at least one Named Graph');
@@ -114,7 +114,7 @@ describe('ContextDescriptor Builder', () => {
 
   it('throws on empty facets', () => {
     expect(() =>
-      ContextDescriptor.create('urn:cg:bad' as IRI)
+      ContextDescriptor.create('urn:iep:bad' as IRI)
 .describes('urn:graph:g1' as IRI)
 .build()
     ).toThrow('must have at least one facet');
@@ -122,21 +122,21 @@ describe('ContextDescriptor Builder', () => {
 
   it('validates epistemicConfidence range', () => {
     expect(() =>
-      ContextDescriptor.create('urn:cg:bad' as IRI)
+      ContextDescriptor.create('urn:iep:bad' as IRI)
 .describes('urn:graph:g1' as IRI)
 .semiotic({ epistemicConfidence: 1.5 })
     ).toThrow('must be in [0.0, 1.0]');
   });
 
   it('reconstructs from data via.from()', () => {
-    const original = makeSimpleDescriptor('urn:cg:orig', 'urn:graph:g1');
+    const original = makeSimpleDescriptor('urn:iep:orig', 'urn:graph:g1');
     const rebuilt = ContextDescriptor.from(original);
     expect(rebuilt.id).toBe(original.id);
     expect(rebuilt.build().facets).toEqual(original.facets);
   });
 
   it('introspection methods work', () => {
-    const builder = ContextDescriptor.create('urn:cg:intro' as IRI)
+    const builder = ContextDescriptor.create('urn:iep:intro' as IRI)
 .describes('urn:graph:g1' as IRI)
 .temporal({ validFrom: '2026-01-01T00:00:00Z' })
 .asserted(0.9);
@@ -157,7 +157,7 @@ describe('Composition Operators', () => {
   beforeEach(() => resetComposedIdCounter());
 
   const d1: ContextDescriptorData = {
-    id: 'urn:cg:d1' as IRI,
+    id: 'urn:iep:d1' as IRI,
     describes: ['urn:graph:shared' as IRI],
     facets: [
       { type: 'Temporal', validFrom: '2026-01-01T00:00:00Z', validUntil: '2026-06-30T23:59:59Z' },
@@ -166,7 +166,7 @@ describe('Composition Operators', () => {
   };
 
   const d2: ContextDescriptorData = {
-    id: 'urn:cg:d2' as IRI,
+    id: 'urn:iep:d2' as IRI,
     describes: ['urn:graph:shared' as IRI],
     facets: [
       { type: 'Temporal', validFrom: '2026-03-01T00:00:00Z', validUntil: '2026-12-31T23:59:59Z' },
@@ -200,7 +200,7 @@ describe('Composition Operators', () => {
     it('sets compositionOp to union', () => {
       const result = union(d1, d2);
       expect(result.compositionOp).toBe('union');
-      expect(result.operands).toEqual(['urn:cg:d1', 'urn:cg:d2']);
+      expect(result.operands).toEqual(['urn:iep:d1', 'urn:iep:d2']);
     });
   });
 
@@ -233,7 +233,7 @@ describe('Composition Operators', () => {
     it('keeps preserve-all instances that share a structural fingerprint', () => {
       const sharedIssuer = 'did:web:shared' as IRI;
       const a: ContextDescriptorData = {
-        id: 'urn:cg:a' as IRI,
+        id: 'urn:iep:a' as IRI,
         describes: ['urn:graph:g' as IRI],
         facets: [
           { type: 'Trust', trustLevel: 'CryptographicallyVerified', issuer: sharedIssuer },
@@ -241,7 +241,7 @@ describe('Composition Operators', () => {
         ],
       };
       const b: ContextDescriptorData = {
-        id: 'urn:cg:b' as IRI,
+        id: 'urn:iep:b' as IRI,
         describes: ['urn:graph:g' as IRI],
         facets: [
           { type: 'Trust', trustLevel: 'CryptographicallyVerified', issuer: sharedIssuer },
@@ -256,14 +256,14 @@ describe('Composition Operators', () => {
 
     it('returns null temporal facet for non-overlapping intervals', () => {
       const d3: ContextDescriptorData = {
-        id: 'urn:cg:d3' as IRI,
+        id: 'urn:iep:d3' as IRI,
         describes: ['urn:graph:g' as IRI],
         facets: [
           { type: 'Temporal', validFrom: '2025-01-01T00:00:00Z', validUntil: '2025-06-30T23:59:59Z' },
         ],
       };
       const d4: ContextDescriptorData = {
-        id: 'urn:cg:d4' as IRI,
+        id: 'urn:iep:d4' as IRI,
         describes: ['urn:graph:g' as IRI],
         facets: [
           { type: 'Temporal', validFrom: '2026-01-01T00:00:00Z', validUntil: '2026-06-30T23:59:59Z' },
@@ -340,7 +340,7 @@ describe('Composition Operators', () => {
 
 describe('Validation', () => {
   it('passes for a valid descriptor', () => {
-    const desc = makeSimpleDescriptor('urn:cg:valid', 'urn:graph:g1');
+    const desc = makeSimpleDescriptor('urn:iep:valid', 'urn:graph:g1');
     const result = validate(desc);
     expect(result.conforms).toBe(true);
     expect(result.violations).toHaveLength(0);
@@ -348,7 +348,7 @@ describe('Validation', () => {
 
   it('fails for missing facets', () => {
     const bad: ContextDescriptorData = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: ['urn:graph:g1' as IRI],
       facets: [],
     };
@@ -359,7 +359,7 @@ describe('Validation', () => {
 
   it('fails for missing describes', () => {
     const bad: ContextDescriptorData = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: [],
       facets: [{ type: 'Temporal', validFrom: '2026-01-01T00:00:00Z' }],
     };
@@ -369,7 +369,7 @@ describe('Validation', () => {
 
   it('validates temporal facet ordering', () => {
     const bad: ContextDescriptorData = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: ['urn:graph:g1' as IRI],
       facets: [{
         type: 'Temporal',
@@ -384,7 +384,7 @@ describe('Validation', () => {
 
   it('validates epistemicConfidence range', () => {
     const bad: ContextDescriptorData = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: ['urn:graph:g1' as IRI],
       facets: [{
         type: 'Semiotic',
@@ -397,7 +397,7 @@ describe('Validation', () => {
 
   it('validates modal status enum', () => {
     const bad: ContextDescriptorData = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: ['urn:graph:g1' as IRI],
       facets: [{
         type: 'Semiotic',
@@ -410,7 +410,7 @@ describe('Validation', () => {
 
   it('assertValid throws with descriptive message', () => {
     const bad: ContextDescriptorData = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: [],
       facets: [],
     };
@@ -424,31 +424,31 @@ describe('Validation', () => {
 
 describe('Turtle Serialization', () => {
   it('produces valid Turtle with prefixes', () => {
-    const desc = makeSimpleDescriptor('urn:cg:ttl-test', 'urn:graph:g1');
+    const desc = makeSimpleDescriptor('urn:iep:ttl-test', 'urn:graph:g1');
     const ttl = toTurtle(desc);
 
-    expect(ttl).toContain('@prefix cg:');
+    expect(ttl).toContain('@prefix iep:');
     expect(ttl).toContain('@prefix prov:');
-    expect(ttl).toContain('a cg:ContextDescriptor');
-    expect(ttl).toContain('cg:describes <urn:graph:g1>');
-    expect(ttl).toContain('a cg:TemporalFacet');
-    expect(ttl).toContain('cg:validFrom');
+    expect(ttl).toContain('a iep:ContextDescriptor');
+    expect(ttl).toContain('iep:describes <urn:graph:g1>');
+    expect(ttl).toContain('a iep:TemporalFacet');
+    expect(ttl).toContain('iep:validFrom');
   });
 
   it('serializes composed descriptors', () => {
-    const d1 = makeSimpleDescriptor('urn:cg:d1', 'urn:graph:g1');
-    const d2 = makeSimpleDescriptor('urn:cg:d2', 'urn:graph:g1');
+    const d1 = makeSimpleDescriptor('urn:iep:d1', 'urn:graph:g1');
+    const d2 = makeSimpleDescriptor('urn:iep:d2', 'urn:graph:g1');
     resetComposedIdCounter();
     const composed = union(d1, d2);
     const ttl = toTurtle(composed);
 
-    expect(ttl).toContain('a cg:ComposedDescriptor');
-    expect(ttl).toContain('cg:compositionOp cg:union');
-    expect(ttl).toContain('cg:operand <urn:cg:d1>');
+    expect(ttl).toContain('a iep:ComposedDescriptor');
+    expect(ttl).toContain('iep:compositionOp iep:union');
+    expect(ttl).toContain('iep:operand <urn:iep:d1>');
   });
 
   it('can skip prefix declarations', () => {
-    const desc = makeSimpleDescriptor('urn:cg:no-prefix', 'urn:graph:g1');
+    const desc = makeSimpleDescriptor('urn:iep:no-prefix', 'urn:graph:g1');
     const ttl = toTurtle(desc, { prefixes: false });
     expect(ttl).not.toContain('@prefix');
   });
@@ -460,18 +460,18 @@ describe('Turtle Serialization', () => {
 
 describe('JSON-LD Serialization', () => {
   it('produces valid compact JSON-LD', () => {
-    const desc = makeSimpleDescriptor('urn:cg:jsonld-test', 'urn:graph:g1');
+    const desc = makeSimpleDescriptor('urn:iep:jsonld-test', 'urn:graph:g1');
     const json = toJsonLd(desc);
 
     expect(json['@context']).toBeDefined();
-    expect(json['@id']).toBe('urn:cg:jsonld-test');
+    expect(json['@id']).toBe('urn:iep:jsonld-test');
     expect(json['@type']).toBe('ContextDescriptor');
     expect(json.describes).toBe('urn:graph:g1');
     expect(json.hasFacet).toHaveLength(1);
   });
 
   it('round-trips through fromJsonLd', () => {
-    const desc = ContextDescriptor.create('urn:cg:roundtrip' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:roundtrip' as IRI)
 .describes('urn:graph:g1' as IRI)
 .temporal({
         validFrom: '2026-01-01T00:00:00Z',
@@ -492,7 +492,7 @@ describe('JSON-LD Serialization', () => {
   });
 
   it('serializes to string', () => {
-    const desc = makeSimpleDescriptor('urn:cg:str', 'urn:graph:g1');
+    const desc = makeSimpleDescriptor('urn:iep:str', 'urn:graph:g1');
     const str = toJsonLdString(desc);
     expect(() => JSON.parse(str)).not.toThrow();
   });
@@ -504,14 +504,14 @@ describe('JSON-LD Serialization', () => {
 
 describe('Namespaces', () => {
   it('expand resolves prefixed names', () => {
-    expect(expand('cg:ContextDescriptor'))
-.toBe('https://markjspivey-xwisee.github.io/interego/ns/cg#ContextDescriptor');
+    expect(expand('iep:ContextDescriptor'))
+.toBe('https://markjspivey-xwisee.github.io/interego/ns/iep#ContextDescriptor');
     expect(expand('prov:Entity'))
 .toBe('http://www.w3.org/ns/prov#Entity');
   });
 
   it('compact produces prefixed names', () => {
-    expect(compact(`${CG}ContextDescriptor`)).toBe('cg:ContextDescriptor');
+    expect(compact(`${CG}ContextDescriptor`)).toBe('iep:ContextDescriptor');
     expect(compact(`${PROV}Entity`)).toBe('prov:Entity');
   });
 
@@ -533,8 +533,8 @@ describe('Namespaces', () => {
 describe('SPARQL Patterns', () => {
   it('generates context query for a graph', () => {
     const q = queryContextForGraph('urn:graph:g1');
-    expect(q).toContain('PREFIX cg:');
-    expect(q).toContain('cg:describes <urn:graph:g1>');
+    expect(q).toContain('PREFIX iep:');
+    expect(q).toContain('iep:describes <urn:graph:g1>');
     expect(q).toContain('SELECT');
   });
 
@@ -546,14 +546,14 @@ describe('SPARQL Patterns', () => {
 
   it('generates modal status query', () => {
     const q = queryGraphsByModalStatus('Asserted');
-    expect(q).toContain('cg:modalStatus cg:Asserted');
+    expect(q).toContain('iep:modalStatus iep:Asserted');
     expect(q).toContain('ORDER BY DESC(?confidence)');
   });
 
   it('generates ASK query', () => {
     const q = askHasContextType('urn:graph:g1', 'Temporal');
     expect(q).toContain('ASK');
-    expect(q).toContain('cg:TemporalFacet');
+    expect(q).toContain('iep:TemporalFacet');
   });
 });
 
@@ -564,9 +564,9 @@ describe('SPARQL Patterns', () => {
 describe('SHACL Shapes', () => {
   it('exports valid Turtle shapes', () => {
     const shapes = getShaclShapesTurtle();
-    expect(shapes).toContain('sh:targetClass cg:ContextDescriptor');
+    expect(shapes).toContain('sh:targetClass iep:ContextDescriptor');
     expect(shapes).toContain('sh:minCount 1');
-    expect(shapes).toContain('cg:SemioticFacetShape');
+    expect(shapes).toContain('iep:SemioticFacetShape');
     expect(shapes).toContain('sh:minInclusive 0.0');
     expect(shapes).toContain('sh:maxInclusive 1.0');
   });

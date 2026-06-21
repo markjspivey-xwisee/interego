@@ -1,4 +1,4 @@
-# Path 3 — agentskills.io SKILL.md as `cg:Affordance`
+# Path 3 — agentskills.io SKILL.md as `iep:Affordance`
 
 > Path 3 of [agent-runtime-integration.md](agent-runtime-integration.md).
 > Bidirectional translator that turns the agentskills.io packaging
@@ -23,11 +23,11 @@ Framework, and Cursor all consume this format. None of them have a
 shared, federated, attestable layer for skills — every user's skills
 live in their own `~/.openclaw/skills/`, `~/.hermes/skills/`, etc.
 
-A SKILL.md is *structurally* a `cg:Affordance` — a discoverable named
+A SKILL.md is *structurally* a `iep:Affordance` — a discoverable named
 capability with a hydra-style invocation surface. Interego already has
 this typed predicate. The translator goes both ways:
 
-* **publish:** SKILL.md directory → typed `cg:Affordance` descriptor
+* **publish:** SKILL.md directory → typed `iep:Affordance` descriptor
   with PROV provenance, modal status, content-hashed `pgsl:Atom` for
   every file, signed authorship.
 * **discover:** any cross-pod `discover` for affordances yields back a
@@ -40,12 +40,12 @@ code** — once skills are typed descriptors:
 | Property | Composes from |
 |---|---|
 | Multi-axis attestation | `amta:Attestation` (correctness / safety / efficiency / generality) — same flow as the AC vertical's tool attestation |
-| Modal-status promotion | `cg:Hypothetical → cg:Asserted` via cohort threshold (Demo 19) |
-| Versioning | `cg:supersedes` chain across SKILL.md edits |
+| Modal-status promotion | `iep:Hypothetical → iep:Asserted` via cohort threshold (Demo 19) |
+| Versioning | `iep:supersedes` chain across SKILL.md edits |
 | Federated discovery | `discover_all` / `subscribe_to_pod` — a colleague's skill is discoverable from your pod if shared |
 | E2EE skill share | `publish_context(share_with: [did:web:bob])` — per-skill visibility |
-| Governance | `cgh:PromotionConstraint` — "this skill cannot be Asserted until it has a safety-axis attestation" (Demo 19's machinery, no skill-specific code) |
-| Tamper detection | `cg:contentHash` on every `pgsl:Atom`, including SKILL.md and every script/reference file |
+| Governance | `ieh:PromotionConstraint` — "this skill cannot be Asserted until it has a safety-axis attestation" (Demo 19's machinery, no skill-specific code) |
+| Tamper detection | `iep:contentHash` on every `pgsl:Atom`, including SKILL.md and every script/reference file |
 | Audit trail | PROV-O `wasAttributedTo` (owner) + `wasAssociatedWith` (agent), supersedes-walkable |
 | Compliance | When a skill is for a regulated workflow, publish via the [compliance overlay](path-4-compliance-overlay.md) — Article-15 cited in the same descriptor |
 
@@ -82,7 +82,7 @@ await publish(descriptor, graphContent, podUrl);
 // Reverse: pod descriptor → bundle (drop into ~/.hermes/skills/)
 const hits = await discover(podUrl);
 for (const hit of hits) {
-  if (!hit.types.includes('https://markjspivey-xwisee.github.io/interego/ns/cg#Affordance')) continue;
+  if (!hit.types.includes('https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance')) continue;
   const trig = await fetchGraph(hit.graphUrl);
   const recovered = descriptorGraphToSkillBundle(trig);
   // Write recovered.skillMd + recovered.files into ~/.hermes/skills/<name>/
@@ -93,11 +93,11 @@ for (const hit of hits) {
 
 The translator is intentionally narrow:
 
-* No new namespace. Uses only `cg:`, `cgh:`, `dct:`, `hydra:`, `dcat:`,
+* No new namespace. Uses only `iep:`, `ieh:`, `dct:`, `hydra:`, `dcat:`,
   `pgsl:`, `prov:`, `rdfs:` — every predicate already in the protocol.
 * No new IRI scheme rules. Skill IRIs use
-  `urn:cg:skill:<name>:<sha256(SKILL.md)[:16]>` — the same shape as
-  `urn:cg:tool:<name>:<id>` the AC vertical uses for tools. Stable +
+  `urn:iep:skill:<name>:<sha256(SKILL.md)[:16]>` — the same shape as
+  `urn:iep:tool:<name>:<id>` the AC vertical uses for tools. Stable +
   content-derived = same skill produces the same IRI from any author.
 * No new attestation flow. The AC vertical's `attestTool` /
   `promoteTool` work unchanged on a skill IRI; `amta:axis` of
@@ -105,7 +105,7 @@ The translator is intentionally narrow:
   identically.
 
 The substrate doesn't know it's a "skill" rather than a "tool" or a
-"teaching package" — they're all `cg:Affordance` subjects with
+"teaching package" — they're all `iep:Affordance` subjects with
 provenance + modal status. The translator is the only piece that
 cares about the SKILL.md surface; everything else is composition.
 
@@ -113,7 +113,7 @@ cares about the SKILL.md surface; everything else is composition.
 
 See [`demos/scenarios/22-skills-as-substrate.ts`](../../demos/scenarios/22-skills-as-substrate.ts)
 *(future)*. Three agents publish SKILL.md skills to a shared pod; a
-`cgh:PromotionConstraint` requires a safety-axis attestation; agents
+`ieh:PromotionConstraint` requires a safety-axis attestation; agents
 cross-attest; some skills get promoted, some don't. Discovery from a
 fourth agent's pod yields the promoted skills back as ready-to-drop
 SKILL.md directories.

@@ -230,7 +230,7 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
     // Alice publishes — should travel through her mirror, the relay,
     // and Bob's mirror, ending up in Bob's local subscriber callback
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:cross-bridge:1',
+      descriptorId: 'urn:iep:cross-bridge:1',
       cid: 'bafkrei-cross',
       graphIri: 'urn:graph:cross-bridge',
       facetTypes: ['Temporal'],
@@ -239,7 +239,7 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
     await waitFor(() => bobInbox.length >= 1);
     expect(bobInbox).toHaveLength(1);
     expect(bobInbox[0]!.publisher).toBe(alice.pubkey);
-    expect(bobInbox[0]!.descriptorId).toBe('urn:cg:cross-bridge:1');
+    expect(bobInbox[0]!.descriptorId).toBe('urn:iep:cross-bridge:1');
 
     // Status reflects success
     const aStatus = mirrorA.status();
@@ -261,7 +261,7 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
     await waitFor(() => mirror.status().every(s => s.state === 'connected'));
 
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:dedup:1',
+      descriptorId: 'urn:iep:dedup:1',
       cid: 'bafkrei-dedup',
       graphIri: 'urn:graph:dedup',
     });
@@ -320,7 +320,7 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
     // (or we just publish a real event to nudge delivery)
     const alice = new P2pClient(mirror, importWallet(ALICE_KEY, 'agent', 'alice'));
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:nudge',
+      descriptorId: 'urn:iep:nudge',
       cid: 'bafkrei-nudge',
       graphIri: 'urn:graph:nudge',
     });
@@ -355,7 +355,7 @@ describe('WebSocketRelayMirror — inbound author allow-list (default outbound-o
     seedMirror.start();
     await waitFor(() => seedMirror.status().every(s => s.state === 'connected'));
     await seedClient.publishDescriptor({
-      descriptorId: 'urn:cg:from-stranger',
+      descriptorId: 'urn:iep:from-stranger',
       cid: 'bafk-stranger',
       graphIri: 'urn:graph:stranger',
     });
@@ -392,12 +392,12 @@ describe('WebSocketRelayMirror — inbound author allow-list (default outbound-o
     const aliceClient = new P2pClient(seedMirror, alice);
     const bobClient = new P2pClient(seedMirror, bob);
     await aliceClient.publishDescriptor({
-      descriptorId: 'urn:cg:from-alice',
+      descriptorId: 'urn:iep:from-alice',
       cid: 'bafk-a',
       graphIri: 'urn:graph:gated',
     });
     await bobClient.publishDescriptor({
-      descriptorId: 'urn:cg:from-bob',
+      descriptorId: 'urn:iep:from-bob',
       cid: 'bafk-b',
       graphIri: 'urn:graph:gated',
     });
@@ -439,7 +439,7 @@ describe('WebSocketRelayMirror — inbound author allow-list (default outbound-o
 
     // Real descriptor
     await aliceClient.publishDescriptor({
-      descriptorId: 'urn:cg:real-thing',
+      descriptorId: 'urn:iep:real-thing',
       cid: 'bafk-real',
       graphIri: 'urn:graph:filtered',
     });
@@ -468,7 +468,7 @@ describe('WebSocketRelayMirror — inbound author allow-list (default outbound-o
       pubkey: aliceClient.pubkey,
       created_at: 0,
       kind: KIND_DESCRIPTOR,
-      tags: [['d', 'urn:cg:x'], ['cid', 'bafk-x'], ['graph', 'urn:graph:x']],
+      tags: [['d', 'urn:iep:x'], ['cid', 'bafk-x'], ['graph', 'urn:graph:x']],
       content: '',
       sig: '0xinvalid',
     };
@@ -488,7 +488,7 @@ describe('WebSocketRelayMirror — inbound author allow-list (default outbound-o
 
     const reader = new P2pClient(mirror, alice);
     const found = await reader.queryDescriptors({});
-    expect(found.some(f => f.descriptorId === 'urn:cg:real-thing')).toBe(true);
+    expect(found.some(f => f.descriptorId === 'urn:iep:real-thing')).toBe(true);
   });
 
   it('isInteregoEvent shape coverage', () => {

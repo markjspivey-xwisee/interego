@@ -145,7 +145,7 @@ async function fetchTurtle(url: string, timeoutMs: number): Promise<string | nul
 }
 
 function extractGraphUrl(turtle: string): string | null {
-  const m = /cg:affordance\s+\[[^\]]*?hydra:target\s+<([^>]+)>/s.exec(turtle);
+  const m = /iep:affordance\s+\[[^\]]*?hydra:target\s+<([^>]+)>/s.exec(turtle);
   return m ? m[1]! : null;
 }
 
@@ -269,7 +269,7 @@ export async function loadProbeCycle(config: LoaderConfig): Promise<ProbeCycleSt
             amplificationTrigger: findMulti(e.graphContent, 'adp:amplificationTrigger') ?? '',
             dampeningTrigger: findMulti(e.graphContent, 'adp:dampeningTrigger') ?? '',
             timeBound: findString(e.graphContent, 'adp:timeBound') ?? '',
-            modalStatus: findEnum(e.blob, 'cg:modalStatus'),
+            modalStatus: findEnum(e.blob, 'iep:modalStatus'),
           });
           break;
         case 'NarrativeFragment':
@@ -279,7 +279,7 @@ export async function loadProbeCycle(config: LoaderConfig): Promise<ProbeCycleSt
             contextSignifiers: findAllString(e.graphContent, 'adp:contextSignifier'),
             response: findMulti(e.graphContent, 'adp:response') ?? '',
             emergentSignifier: findString(e.graphContent, 'adp:emergentSignifier') ?? '',
-            modalStatus: findEnum(e.blob, 'cg:modalStatus'),
+            modalStatus: findEnum(e.blob, 'iep:modalStatus'),
           });
           break;
         case 'Synthesis':
@@ -289,7 +289,7 @@ export async function loadProbeCycle(config: LoaderConfig): Promise<ProbeCycleSt
             fragmentsConsidered: findAllIri(e.graphContent, 'adp:fragmentsConsidered'),
             emergentPattern: findMulti(e.graphContent, 'adp:emergentPattern') ?? '',
             coherentNarratives: findAllMulti(e.graphContent, 'adp:coherentNarrative'),
-            modalStatus: findEnum(e.blob, 'cg:modalStatus'),
+            modalStatus: findEnum(e.blob, 'iep:modalStatus'),
           });
           break;
         case 'EvolutionStep':
@@ -300,7 +300,7 @@ export async function loadProbeCycle(config: LoaderConfig): Promise<ProbeCycleSt
             dampenProbeIris: findAllIri(e.graphContent, 'adp:dampenProbe'),
             explicitDecisionNotMade: findMulti(e.graphContent, 'adp:explicitDecisionNotMade') ?? '',
             nextRevisitAt: findString(e.graphContent, 'adp:nextRevisitAt') ?? '',
-            modalStatus: findEnum(e.blob, 'cg:modalStatus'),
+            modalStatus: findEnum(e.blob, 'iep:modalStatus'),
           });
           break;
         case 'Constraint':
@@ -310,7 +310,7 @@ export async function loadProbeCycle(config: LoaderConfig): Promise<ProbeCycleSt
             emergedFromIris: findAllIri(e.graphContent, 'adp:emergedFrom'),
             boundary: findMulti(e.graphContent, 'adp:boundary') ?? '',
             exitsConstraint: findMulti(e.graphContent, 'adp:exitsConstraint') ?? '',
-            modalStatus: findEnum(e.blob, 'cg:modalStatus'),
+            modalStatus: findEnum(e.blob, 'iep:modalStatus'),
           });
           break;
         case 'CapabilityEvolution':
@@ -321,7 +321,7 @@ export async function loadProbeCycle(config: LoaderConfig): Promise<ProbeCycleSt
             olkeStage: findEnum(e.blob, 'adp:olkeStage'),
             emergedFromIris: findAllIri(e.graphContent, 'adp:emergedFrom'),
             explicitDecisionNotMade: findMulti(e.graphContent, 'adp:explicitDecisionNotMade') ?? '',
-            modalStatus: findEnum(e.blob, 'cg:modalStatus'),
+            modalStatus: findEnum(e.blob, 'iep:modalStatus'),
           });
           break;
         case 'unknown':

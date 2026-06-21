@@ -301,7 +301,7 @@ async function main() {
   log('scanner', `CRDT: ${getPendingOps(scanner.crdtState).length} pending ops`);
 
   // Publish to pod
-  const scannerDesc = ContextDescriptor.create(`urn:cg:scanner:findings-${Date.now()}` as IRI)
+  const scannerDesc = ContextDescriptor.create(`urn:iep:scanner:findings-${Date.now()}` as IRI)
 .describes('urn:graph:scanner:security-findings' as IRI)
 .temporal({ validFrom: new Date().toISOString() })
 .provenance({ wasGeneratedBy: { agent: scanner.did as IRI }, wasAttributedTo: scanner.did as IRI, generatedAtTime: new Date().toISOString() })
@@ -346,7 +346,7 @@ async function main() {
   log('analyst', `Lattice: ${analystStats.atoms} atoms, ${analystStats.fragments} fragments`);
 
   // Publish assessments to analyst pod
-  const analystDesc = ContextDescriptor.create(`urn:cg:analyst:assessments-${Date.now()}` as IRI)
+  const analystDesc = ContextDescriptor.create(`urn:iep:analyst:assessments-${Date.now()}` as IRI)
 .describes('urn:graph:analyst:risk-assessments' as IRI)
 .temporal({ validFrom: new Date().toISOString() })
 .provenance({ wasGeneratedBy: { agent: analyst.did as IRI }, wasAttributedTo: analyst.did as IRI, generatedAtTime: new Date().toISOString(), sources: [scannerDesc.id] })
@@ -433,7 +433,7 @@ async function main() {
   }
 
   // Publish lead's decision
-  const leadDesc = ContextDescriptor.create(`urn:cg:lead:decision-${Date.now()}` as IRI)
+  const leadDesc = ContextDescriptor.create(`urn:iep:lead:decision-${Date.now()}` as IRI)
 .describes('urn:graph:lead:remediation-plan' as IRI)
 .temporal({ validFrom: new Date().toISOString() })
 .provenance({ wasGeneratedBy: { agent: lead.did as IRI }, wasAttributedTo: lead.did as IRI, generatedAtTime: new Date().toISOString(), sources: [scannerDesc.id, analystDesc.id] })

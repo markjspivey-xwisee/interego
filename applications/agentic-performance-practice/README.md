@@ -16,7 +16,7 @@ There are three layers, and they should not be conflated:
 
 - **Interego (substrate).** Context infrastructure: signed descriptors, trust /
   provenance / federation, PGSL, and the L0 **HATEOAS / hypermedia affordances**
-  (`cg:Affordance` — discover → dereference → `act`). Everything here is
+  (`iep:Affordance` — discover → dereference → `act`). Everything here is
   ontology-driven and dereferenceable as RESTful linked data.
 - **Foxxi (standards vertical).** Composes / implements the *external standards* as
   its substrate: xAPI 2.0 (IEEE 9274.1.1) LRS, IEEE-LER / P2997, ADL-TLA, plus
@@ -37,7 +37,7 @@ gap-analysis is the method of **one** regime (Knowable), never the universal fra
 
 ## The two senses of "affordance" (kept deliberately distinct)
 
-- **`cg:Affordance` (L0).** A machine-followable REST / HATEOAS transition — what you
+- **`iep:Affordance` (L0).** A machine-followable REST / HATEOAS transition — what you
   can *do* with a resource right now (`hydra:method` + `hydra:target`). The bridge's
   `affordances.ts` declares these.
 - **`agp:PerformanceAffordance` (this vertical).** Affordance theory in the
@@ -46,7 +46,7 @@ gap-analysis is the method of **one** regime (Knowable), never the universal fra
   `Capability × Situation × PerformanceAffordance → Performance`.
 
 They relate — a performance affordance may ultimately be *realized through*
-`cg:Affordances` — but they are different layers, in different namespaces, and the
+`iep:Affordances` — but they are different layers, in different namespaces, and the
 ontology comments enforce the distinction.
 
 ## What the ontology formalizes
@@ -62,7 +62,7 @@ protocol.
   default | unclassified — only *derived* may gap-analyse or accrue calibration), and
   the regime-routed `agp:PerformanceMethod` (gap-analysis bound to Knowable only).
 - **Capability composition (net-new)** — `agp:Capability` `agp:composedOf` /
-  `cg:constructedFrom` its constituent `agp:Skill` + `agp:Tool` (`skos:closeMatch`
+  `iep:constructedFrom` its constituent `agp:Skill` + `agp:Tool` (`skos:closeMatch`
   `ac:AgentTool`) + `agp:Knowledge` (by codifiability). An empty capability is
   rejected by SHACL.
 - **Affordance actualization (net-new)** — `agp:PerformanceAffordance`
@@ -93,13 +93,13 @@ the *author-AND-serve* pattern (sibling verticals author `.ttl` but do not serve
 | `GET /ns/agp/term/:name` | per-term JSON-LD (never 404s an owned-namespace fragment) |
 | `GET /ns/agp/shapes` | the SHACL node shapes (Turtle) |
 
-Instances are published as `cg:ContextDescriptor`s carrying `dct:conformsTo` the
+Instances are published as `iep:ContextDescriptor`s carrying `dct:conformsTo` the
 relevant shape; the container declares the shapes so the relay conformance gate
 (`runConformanceGate`) validates them **before** the pod write.
 
 ## How agents (and teams of agents) reach it
 
-- **Path A (protocol-native):** discover the `cg:Affordance` manifest at
+- **Path A (protocol-native):** discover the `iep:Affordance` manifest at
   `GET /affordances`, read `hydra:method` + `hydra:target`, POST the typed inputs.
 - **Path B (named MCP tools):** the optional bridge at [`bridge/`](bridge/) exposes
   the same capabilities as `agp.*` tools (port 6030 by default).
@@ -110,12 +110,12 @@ for the xAPI side — including authoring a custom xAPI Profile for performance 
 
 ## What this is NOT
 
-- NOT a protocol change. It introduces no `cg:` / `pgsl:` terms and requires no L1/L2/L3
+- NOT a protocol change. It introduces no `iep:` / `pgsl:` terms and requires no L1/L2/L3
   ontology to bend toward it.
 - NOT a re-implementation of xAPI / LER / TLA — it **composes** Foxxi for those.
 - NOT a leaderboard or a universal gap-analysis. The unit is a performance situation;
   the method follows the regime.
-- NOT the L0 affordance layer. `agp:PerformanceAffordance` ≠ `cg:Affordance`.
+- NOT the L0 affordance layer. `agp:PerformanceAffordance` ≠ `iep:Affordance`.
 
 ## Status — staged extraction
 

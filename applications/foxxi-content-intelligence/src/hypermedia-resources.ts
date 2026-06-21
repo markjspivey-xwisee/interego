@@ -308,7 +308,7 @@ function itemEnvelope(args: {
   affordances: ReadonlyArray<Affordance>;
   baseUrl: string;
   embedded?: Record<string, unknown>;
-  /** The item's cg:modalStatus, when it carries one. */
+  /** The item's iep:modalStatus, when it carries one. */
   modalStatus?: string;
 }): Record<string, unknown> {
   // Merge any resource-supplied _links (e.g. a course's templated
@@ -473,7 +473,7 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
           e => (e as { user_id?: string; course_id?: string }).user_id === slug
             && (e as { user_id?: string; course_id?: string }).course_id === p.course_id,
         ) as undefined | { assigned_at?: string; due_at?: string; status?: string; completed_at?: string | null };
-        // Modal status (cg:modalStatus) of the enrollment record itself:
+        // Modal status (iep:modalStatus) of the enrollment record itself:
         //   Asserted     — backed by a real lifecycle event in admin.events
         //                  (the learner was actually assigned / progressed /
         //                  completed; this is observed fact).

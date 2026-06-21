@@ -1,13 +1,13 @@
 // Affordance→tool bridge — turn declared HATEOAS controls into
 // runtime-callable tools, close the gap between "descriptors carry
-// cg:affordance blocks" and "agents can invoke discovered
+// iep:affordance blocks" and "agents can invoke discovered
 // capabilities without pre-registration."
 //
 // Four stages:
 //
 //   1. Publish capability-manifest-v1 SHACL shape (constrains what
 //      a capability-enumeration descriptor must carry).
-//   2. Enumerate every cg:affordance block in the pod's manifest.
+//   2. Enumerate every iep:affordance block in the pod's manifest.
 //   3. Build a resolver: affordance → tool spec (name, inputSchema,
 //      method, target, invoke-fn).
 //   4. Invoke one live (an existing canDecrypt affordance — GET the
@@ -35,32 +35,32 @@ async function putText(url, body) {
 // ── Stage 1: publish the capability manifest shape ──────────
 
 const CAP_SHAPE_TTL = `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix cap: <urn:capability:> .
 
 <${CAP_SHAPE}#Shape> a sh:NodeShape ;
-  sh:targetClass cg:ContextDescriptor ;
-  sh:property [ sh:path cg:modalStatus ; sh:in ( cg:Asserted ) ; sh:minCount 1 ;
+  sh:targetClass iep:ContextDescriptor ;
+  sh:property [ sh:path iep:modalStatus ; sh:in ( iep:Asserted ) ; sh:minCount 1 ;
     sh:message "Capability manifest MUST be Asserted." ] ;
   sh:property [ sh:path dct:conformsTo ; sh:hasValue <${CAP_SHAPE}> ;
     sh:message "Must self-reference the capability-manifest shape." ] ;
   sh:property [ sh:path cap:affordanceCount ; sh:minCount 1 ;
     sh:message "Manifest MUST report affordanceCount." ] ;
   sh:property [ sh:path cap:distinctActions ; sh:minCount 1 ;
-    sh:message "Manifest MUST report how many distinct cg:action values exist." ] .
+    sh:message "Manifest MUST report how many distinct iep:action values exist." ] .
 `;
 await putText(CAP_SHAPE, CAP_SHAPE_TTL);
 console.log(`1. PUT capability-manifest shape → ${CAP_SHAPE.split('/').pop()}\n`);
 
-// ── Stage 2: enumerate every cg:affordance on the pod ──────
+// ── Stage 2: enumerate every iep:affordance on the pod ──────
 
 function parseManifestEntries(ttl) {
   const entries = []; let cur = null;
   for (const raw of ttl.split('\n')) {
     const line = raw.trim();
-    const s = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
+    const s = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
     if (s) { cur = { descriptorUrl: s[1] }; continue; }
     if (!cur) continue;
     if (line.endsWith('.')) { entries.push(cur); cur = null; }
@@ -68,23 +68,23 @@ function parseManifestEntries(ttl) {
   return entries;
 }
 
-// Parse the cg:affordance blank-node block from a descriptor Turtle.
+// Parse the iep:affordance blank-node block from a descriptor Turtle.
 // Returns one or more affordance shapes. Tolerant of the exact form
 // buildDistributionBlock produces.
 function extractAffordances(ttl) {
   const affs = [];
-  // cg:affordance [ ... ] — capture bracket contents.
-  const re = /cg:affordance\s+\[([\s\S]*?)\]\s*\./g;
+  // iep:affordance [ ... ] — capture bracket contents.
+  const re = /iep:affordance\s+\[([\s\S]*?)\]\s*\./g;
   let m;
   while ((m = re.exec(ttl)) !== null) {
     const body = m[1];
-    const action = body.match(/cg:action\s+(\S+?)\s*[;\n]/)?.[1];
+    const action = body.match(/iep:action\s+(\S+?)\s*[;\n]/)?.[1];
     const method = body.match(/hydra:method\s+"([^"]+)"/)?.[1];
     const target = body.match(/hydra:target\s+<([^>]+)>/)?.[1];
     const mediaType = body.match(/dcat:mediaType\s+"([^"]+)"/)?.[1];
     const returns = body.match(/hydra:returns\s+(\S+?)\s*[;\n]/)?.[1];
-    const encrypted = /cg:encrypted\s+true/.test(body);
-    const recipientCount = parseInt(body.match(/cg:recipientCount\s+(\d+)/)?.[1] ?? '0', 10);
+    const encrypted = /iep:encrypted\s+true/.test(body);
+    const recipientCount = parseInt(body.match(/iep:recipientCount\s+(\d+)/)?.[1] ?? '0', 10);
     if (action && target) {
       affs.push({ action, method, target, mediaType, returns, encrypted, recipientCount });
     }
@@ -121,7 +121,7 @@ for (const a of allAffs) {
   byAction.get(a.action).push(a);
 }
 
-console.log(`   Found ${allAffs.length} affordances; ${byAction.size} distinct cg:action values:`);
+console.log(`   Found ${allAffs.length} affordances; ${byAction.size} distinct iep:action values:`);
 for (const [action, list] of byAction.entries()) {
   console.log(`     ${action.padEnd(18)} ×${list.length}`);
 }
@@ -131,12 +131,12 @@ console.log('');
 //
 // Given an affordance, return an object the harness can invoke
 // without pre-registering the capability. Tool name is derived
-// from cg:action; input schema is synthesized from hydra + method.
+// from iep:action; input schema is synthesized from hydra + method.
 // The invoke() function performs the actual HTTP call.
 
 function resolveAffordance(aff) {
   const toolName = aff.action
-    .replace(/^cg:/, '')
+    .replace(/^iep:/, '')
     .replace(/^urn:capability:/, '')
     .replace(/^urn:action:/, '')
     .replace(/^[a-z]+:/, '');
@@ -200,7 +200,7 @@ console.log(`   (returns encrypted JOSE envelope — affordance correctly declar
 
 // ── Stage 5: publish the capability manifest descriptor ────
 
-const manifestId = `urn:cg:capabilities:${Date.now()}`;
+const manifestId = `urn:iep:capabilities:${Date.now()}`;
 const manifestGraph = `urn:graph:capabilities:pod:${Date.now()}`;
 const manifestUrl = `${POD}context-graphs/capability-manifest-${Date.now()}.ttl`;
 const now = new Date().toISOString();
@@ -215,7 +215,7 @@ const affordanceList = [...byAction.entries()].map(([action, list]) =>
   `    cap:declaresAction [ cap:action ${action.startsWith('<') ? action : `<${action.startsWith('urn:') || action.includes(':') ? action : 'urn:action:' + action}>`} ; cap:occurrences "${list.length}"^^xsd:integer ; cap:sampleTarget <${list[0].target}> ] ;`
 ).join('\n');
 
-const capTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const capTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -223,38 +223,38 @@ const capTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg
 @prefix cap: <urn:capability:> .
 
 <${manifestId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
     dct:conformsTo <${CAP_SHAPE}> ;
-    cg:describes <${manifestGraph}> ;
+    iep:describes <${manifestGraph}> ;
     cap:affordanceCount "${allAffs.length}"^^xsd:integer ;
     cap:distinctActions "${byAction.size}"^^xsd:integer ;
     cap:scannedDescriptors "${entries.length}"^^xsd:integer ;
 ${affordanceList}
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${BRIDGE_LENS}> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
 ${derivedLines}
         prov:wasAttributedTo <${BRIDGE_LENS}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${BRIDGE_LENS}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${BRIDGE_LENS}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "1.0"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${BRIDGE_LENS}> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${BRIDGE_LENS}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${BRIDGE_LENS}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "1.0"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${BRIDGE_LENS}> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 
 await putText(manifestUrl, capTtl);
 const entry = `
 
-<${manifestUrl}> a cg:ManifestEntry ;
-    cg:describes <${manifestGraph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
+<${manifestUrl}> a iep:ManifestEntry ;
+    iep:describes <${manifestGraph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
     dct:conformsTo <${CAP_SHAPE}> ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
 const cur = await fetchText(MANIFEST_URL);
 await putText(MANIFEST_URL, (cur ?? '') + entry);
@@ -267,12 +267,12 @@ console.log('');
 
 // ── Stage 6: publish an invocation-result descriptor ───────
 
-const invocationId = `urn:cg:invocation:${Date.now()}`;
+const invocationId = `urn:iep:invocation:${Date.now()}`;
 const invocationGraph = `urn:graph:invocation:${Date.now()}`;
 const invocationUrl = `${POD}context-graphs/invocation-${Date.now()}.ttl`;
 const invNow = new Date().toISOString();
 
-const invTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const invTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -280,28 +280,28 @@ const invTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg
 @prefix cap: <urn:capability:> .
 
 <${invocationId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${invNow}"^^xsd:dateTime ;
-    cg:describes <${invocationGraph}> ;
-    cap:invokedAction ${sample.action.startsWith('<') ? sample.action : (sample.action.includes(':') ? `<${sample.action.replace(/^cg:/, 'https://markjspivey-xwisee.github.io/interego/ns/cg#')}>` : `<urn:action:${sample.action}>`)} ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${invNow}"^^xsd:dateTime ;
+    iep:describes <${invocationGraph}> ;
+    cap:invokedAction ${sample.action.startsWith('<') ? sample.action : (sample.action.includes(':') ? `<${sample.action.replace(/^iep:/, 'https://markjspivey-xwisee.github.io/interego/ns/iep#')}>` : `<urn:action:${sample.action}>`)} ;
     cap:toolName "${tool.name}" ;
     cap:invokedTarget <${sample.target}> ;
     cap:responseStatus "${result.status}"^^xsd:integer ;
     cap:responseContentType "${result.contentType ?? ''}" ;
     cap:responseBodyLength "${result.body?.length ?? 0}"^^xsd:integer ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${invNow}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${invNow}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${BRIDGE_LENS}> ; prov:endedAtTime "${invNow}"^^xsd:dateTime ] ;
         prov:wasDerivedFrom <${sample.sourceDescriptor}> ;
         prov:wasAttributedTo <${BRIDGE_LENS}> ;
         prov:generatedAtTime "${invNow}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${BRIDGE_LENS}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${BRIDGE_LENS}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "1.0"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${BRIDGE_LENS}> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${BRIDGE_LENS}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${BRIDGE_LENS}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "1.0"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${BRIDGE_LENS}> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 
 await putText(invocationUrl, invTtl);

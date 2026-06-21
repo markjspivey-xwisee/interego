@@ -102,7 +102,7 @@ function meetFacetsOfType(
 
 let _composedIdCounter = 0;
 function nextComposedId(): IRI {
-  return `urn:cg:composed:${++_composedIdCounter}` as IRI;
+  return `urn:iep:composed:${++_composedIdCounter}` as IRI;
 }
 
 /**

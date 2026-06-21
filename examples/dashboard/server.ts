@@ -185,9 +185,9 @@ async function fetchRegistry(podUrl: string): Promise<PodState['owner'] & { agen
     const agents: PodState['agents'] = [];
     const agentBlocks = turtle.split(/(?=<#agent-)/);
     for (const block of agentBlocks) {
-      if (!block.includes('cg:AuthorizedAgent')) continue;
-      const idMatch = block.match(/cg:agentIdentity\s+<([^>]+)>/);
-      const scopeMatch = block.match(/cg:scope\s+cg:(\w+)/);
+      if (!block.includes('iep:AuthorizedAgent')) continue;
+      const idMatch = block.match(/iep:agentIdentity\s+<([^>]+)>/);
+      const scopeMatch = block.match(/iep:scope\s+iep:(\w+)/);
       const labelMatch = block.match(/foaf:name\s+"([^"]+)"/);
       if (idMatch && scopeMatch) {
         agents.push({
@@ -221,7 +221,7 @@ async function fetchManifest(podUrl: string): Promise<PodState['descriptors']> {
     for (const rawLine of turtle.split('\n')) {
       const line = rawLine.trim();
 
-      const entryMatch = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
+      const entryMatch = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
       if (entryMatch) {
         if (current) descriptors.push(current);
         current = { url: entryMatch[1]!, describes: [], facetTypes: [] };
@@ -229,16 +229,16 @@ async function fetchManifest(podUrl: string): Promise<PodState['descriptors']> {
       }
       if (!current) continue;
 
-      const descMatch = line.match(/cg:describes\s+<([^>]+)>/);
+      const descMatch = line.match(/iep:describes\s+<([^>]+)>/);
       if (descMatch) current.describes.push(descMatch[1]!);
 
-      const facetMatch = line.match(/cg:hasFacetType\s+cg:(\w+)/);
+      const facetMatch = line.match(/iep:hasFacetType\s+iep:(\w+)/);
       if (facetMatch) current.facetTypes.push(facetMatch[1]!);
 
-      const fromMatch = line.match(/cg:validFrom\s+"([^"]+)"/);
+      const fromMatch = line.match(/iep:validFrom\s+"([^"]+)"/);
       if (fromMatch) current.validFrom = fromMatch[1]!;
 
-      const untilMatch = line.match(/cg:validUntil\s+"([^"]+)"/);
+      const untilMatch = line.match(/iep:validUntil\s+"([^"]+)"/);
       if (untilMatch) current.validUntil = untilMatch[1]!;
 
       if (line.endsWith('.') && current) {

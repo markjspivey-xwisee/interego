@@ -9,9 +9,9 @@ Scope: the SEMANTICS are normative for any adopter of either proposal; the PROPO
 | File | Form | Scenario | Expected |
 |---|---|---|---|
 | `facet-form.ttl` | Proposal A | Valid 7th-facet revocation condition | Passes SHACL (with Proposal A's extension shapes loaded); triggers revocation when paired with `trigger-hits.ttl`. |
-| `predicate-form.ttl` | Proposal B | Valid `cg:revokedIf` predicate on SemioticFacet | Passes SHACL (with Proposal B's extension shapes loaded); triggers revocation when paired with `trigger-hits.ttl`. |
-| `self-reference-violation.ttl` | Either | Successor query contains the enclosing descriptor's own graph IRI | `cg:RevocationConditionNoSelfReferenceShape` MUST fire (violation, regardless of proposal). |
-| `trigger-hits.ttl` | — | A graph that satisfies the successor query of `facet-form.ttl` and `predicate-form.ttl` | When loaded alongside either proposal's fixture, revocation evaluator MUST transition the original claim's effective `groundTruth` to false (per `cg:MarkInvalid`). |
+| `predicate-form.ttl` | Proposal B | Valid `iep:revokedIf` predicate on SemioticFacet | Passes SHACL (with Proposal B's extension shapes loaded); triggers revocation when paired with `trigger-hits.ttl`. |
+| `self-reference-violation.ttl` | Either | Successor query contains the enclosing descriptor's own graph IRI | `iep:RevocationConditionNoSelfReferenceShape` MUST fire (violation, regardless of proposal). |
+| `trigger-hits.ttl` | — | A graph that satisfies the successor query of `facet-form.ttl` and `predicate-form.ttl` | When loaded alongside either proposal's fixture, revocation evaluator MUST transition the original claim's effective `groundTruth` to false (per `iep:MarkInvalid`). |
 | `trigger-misses.ttl` | — | A graph that does NOT satisfy the successor query | Evaluator MUST NOT revoke the original claim. |
 
 ## Using the fixtures
@@ -22,7 +22,7 @@ The conformance-runner skeleton (TBD) loads each paired set into a quad store, r
 
 All fixtures use only:
 
-- `cg:` — core protocol (normative terms defined in `cg.ttl`)
+- `iep:` — core protocol (normative terms defined in `cg.ttl`)
 - `ex:` — illustrative only; NOT a domain ontology. Any domain predicate appearing in fixtures is `ex:*` and carries no real-world semantics.
 - `test:` — fixture identifiers
 

@@ -89,7 +89,7 @@ interface PublishArgs {
 
 async function handlePublish(args: PublishArgs): Promise<Record<string, unknown>> {
   const now = new Date().toISOString();
-  const descId = (args.descriptor_id ?? `urn:cg:demo:desc:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`) as IRI;
+  const descId = (args.descriptor_id ?? `urn:iep:demo:desc:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`) as IRI;
   const modal = args.modal_status ?? 'Asserted';
 
   const builder = ContextDescriptor.create(descId)
@@ -246,7 +246,7 @@ function handleConstPropose(args: {
   added_rules?: string[];
   removed_rules?: string[];
 }): unknown {
-  const id = (args.amendment_id ?? `urn:cg:amendment:demo:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`) as IRI;
+  const id = (args.amendment_id ?? `urn:iep:amendment:demo:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`) as IRI;
   const amendment = proposeAmendment({
     id,
     proposedBy: args.proposer_did as IRI,
@@ -356,8 +356,8 @@ const tools: Record<string, ToolDef> = {
         graph_content: { type: 'string', description: 'Turtle content of the graph.' },
         modal_status: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'], description: 'Default Asserted.' },
         confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Epistemic confidence 0..1.' },
-        descriptor_id: { type: 'string', description: 'Optional descriptor IRI (default auto-generated urn:cg:demo:desc:...).' },
-        supersedes: { type: 'array', items: { type: 'string' }, description: 'IRIs of prior descriptors this one supersedes (cg:supersedes).' },
+        descriptor_id: { type: 'string', description: 'Optional descriptor IRI (default auto-generated urn:iep:demo:desc:...).' },
+        supersedes: { type: 'array', items: { type: 'string' }, description: 'IRIs of prior descriptors this one supersedes (iep:supersedes).' },
         ground_truth: { type: 'boolean', description: 'Optional ground-truth marker (must agree with modal_status: Asserted⇒true, Counterfactual⇒false, Hypothetical⇒unset).' },
         conforms_to: { type: 'array', items: { type: 'string' }, description: 'IRIs of regulatory or normative frameworks this descriptor evidences (dct:conformsTo). Used by compliance demos to filter by regulatory lens.' },
       },
@@ -366,11 +366,11 @@ const tools: Record<string, ToolDef> = {
     handler: (a) => handlePublish(a as unknown as PublishArgs),
   },
   'protocol.discover_descriptors': {
-    description: 'List descriptor manifest entries on the pod. Filter by cg:describes IRI and/or by dct:conformsTo IRI prefix (the latter is how regulators query their own framework lens).',
+    description: 'List descriptor manifest entries on the pod. Filter by iep:describes IRI and/or by dct:conformsTo IRI prefix (the latter is how regulators query their own framework lens).',
     inputSchema: {
       type: 'object',
       properties: {
-        describes_iri: { type: 'string', description: 'Filter to descriptors whose cg:describes contains this IRI.' },
+        describes_iri: { type: 'string', description: 'Filter to descriptors whose iep:describes contains this IRI.' },
         conforms_to_prefix: { type: 'string', description: 'Filter to descriptors with at least one dct:conformsTo IRI starting with this prefix (e.g., "https://markjspivey-xwisee.github.io/interego/ns/soc2#").' },
       },
     },
@@ -626,9 +626,9 @@ app.get('/affordances', (_req, res) => {
   // Minimal Turtle stub so the readiness probe in agent-lib's spawnBridge
   // shape works. Demos that need actual affordance discovery against this
   // bridge can rely on tools/list via MCP.
-  res.type('text/turtle').send(`@prefix cg: <https://markjspivey-xwisee.github.io/context-graphs/ns#> .
-<${DEPLOYMENT_URL}/affordances> a cg:AffordanceManifest ;
-  cg:provides "${Object.keys(tools).length} tools — see /mcp tools/list" .
+  res.type('text/turtle').send(`@prefix iep: <https://markjspivey-xwisee.github.io/context-graphs/ns#> .
+<${DEPLOYMENT_URL}/affordances> a iep:AffordanceManifest ;
+  iep:provides "${Object.keys(tools).length} tools — see /mcp tools/list" .
 `);
 });
 

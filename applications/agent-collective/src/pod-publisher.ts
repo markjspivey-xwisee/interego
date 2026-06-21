@@ -57,7 +57,7 @@ export interface PublishConfig {
 export interface AuthorToolArgs {
   readonly toolName: string;
   readonly sourceCode: string;
-  readonly affordanceAction: string;  // IRI of the cg:Action
+  readonly affordanceAction: string;  // IRI of the iep:Action
   readonly affordanceDescription?: string;
 }
 
@@ -73,7 +73,7 @@ export async function authorTool(args: AuthorToolArgs, config: PublishConfig): P
   if (!args.affordanceAction.trim()) throw new Error('tool requires an affordance action');
 
   const toolId = sha16(args.toolName + args.sourceCode);
-  const toolIri = `urn:cg:tool:${args.toolName.replace(/[^a-zA-Z0-9-]/g, '-')}:${toolId}` as IRI;
+  const toolIri = `urn:iep:tool:${args.toolName.replace(/[^a-zA-Z0-9-]/g, '-')}:${toolId}` as IRI;
   const graphIri = `urn:graph:ac:tool:${toolId}` as IRI;
   const atomIri = `urn:pgsl:atom:tool-source:${toolId}` as IRI;
 
@@ -86,7 +86,7 @@ export async function authorTool(args: AuthorToolArgs, config: PublishConfig): P
     .build();
 
   const graphContent = `@prefix ac:   <${AC_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix code: <https://markjspivey-xwisee.github.io/interego/ns/code#> .
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
@@ -96,17 +96,17 @@ export async function authorTool(args: AuthorToolArgs, config: PublishConfig): P
     rdfs:label "${escapeLit(args.toolName)}" ;
     ac:authoredBy <${config.authoringAgentDid}> ;
     ac:toolSource <${atomIri}> ;
-    cg:affordance [
-        a cg:Affordance ;
-        cg:action <${args.affordanceAction}> ;
+    iep:affordance [
+        a iep:Affordance ;
+        iep:action <${args.affordanceAction}> ;
         ${args.affordanceDescription ? `rdfs:comment "${escapeLit(args.affordanceDescription)}" ;` : ''}
     ] ;
-    cg:modalStatus cg:Hypothetical ;
+    iep:modalStatus iep:Hypothetical ;
     prov:wasAttributedTo <${config.authoringAgentDid}> .
 
 <${atomIri}> a pgsl:Atom ;
     pgsl:value """${escapeMulti(args.sourceCode)}""" ;
-    cg:contentHash "${createHash('sha256').update(args.sourceCode, 'utf8').digest('hex')}" .
+    iep:contentHash "${createHash('sha256').update(args.sourceCode, 'utf8').digest('hex')}" .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -133,7 +133,7 @@ export async function attestTool(args: AttestToolArgs, config: PublishConfig): P
   if (args.rating < 0 || args.rating > 1) throw new Error('attestation rating must be in [0, 1]');
 
   const attId = sha16(args.toolIri + config.authoringAgentDid + args.axis + nowIso());
-  const attIri = `urn:cg:attestation:${attId}` as IRI;
+  const attIri = `urn:iep:attestation:${attId}` as IRI;
   const graphIri = `urn:graph:ac:attestation:${attId}` as IRI;
 
   const desc = ContextDescriptor.create(attIri)
@@ -148,7 +148,7 @@ export async function attestTool(args: AttestToolArgs, config: PublishConfig): P
 
   const graphContent = `@prefix ac:   <${AC_NS}> .
 @prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <${attIri}> a amta:Attestation ;
@@ -158,7 +158,7 @@ export async function attestTool(args: AttestToolArgs, config: PublishConfig): P
     ac:attestationDirection ac:${args.direction} ;
     ${evidenceTriple}
     prov:wasAttributedTo <${config.authoringAgentDid}> ;
-    cg:modalStatus cg:Asserted .
+    iep:modalStatus iep:Asserted .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -178,7 +178,7 @@ export interface PromoteToolArgs {
   readonly thresholdPeer?: number;
   readonly thresholdAxes?: number;
   /** When true, the publisher consults the org pod for active
-   *  cgh:PromotionConstraint descriptors and enforces them in
+   *  ieh:PromotionConstraint descriptors and enforces them in
    *  addition to the threshold policy. Closes the gap noted in
    *  Demo 17's honest-scoping section: substrate-enforced
    *  downward causation rather than agent-mediated. */
@@ -207,7 +207,7 @@ interface PromotionConstraint {
  * "Active" = the constraint descriptor is Asserted and not superseded
  * by a later descriptor.
  *
- * Constraints are typed cgh:PromotionConstraint descriptors. Each
+ * Constraints are typed ieh:PromotionConstraint descriptors. Each
  * declares a set of required attestation axes and (optionally)
  * minimum self/peer attestation counts that promote_tool must
  * satisfy in addition to its default threshold policy.
@@ -339,13 +339,13 @@ export async function promoteTool(args: PromoteToolArgs, config: PublishConfig):
 
   const graphContent = `@prefix ac:   <${AC_NS}> .
 @prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix code: <https://markjspivey-xwisee.github.io/interego/ns/code#> .
 
 <${promotedIri}> a ac:AgentTool , code:Commit ;
     ac:attestedFrom <${args.toolIri}> ;
-    cg:supersedes <${args.toolIri}> ;
-    cg:modalStatus cg:Asserted ;
+    iep:supersedes <${args.toolIri}> ;
+    iep:modalStatus iep:Asserted ;
     ac:attestationThresholdMet [
         ac:selfAttestations ${args.selfAttestations} ;
         ac:peerAttestations ${args.peerAttestations} ;
@@ -380,7 +380,7 @@ export async function bundleTeachingPackage(args: BundleTeachingPackageArgs, con
   }
 
   const tId = sha16(args.toolIri + args.synthesisIri);
-  const tIri = `urn:cg:teaching:${tId}` as IRI;
+  const tIri = `urn:iep:teaching:${tId}` as IRI;
   const graphIri = `urn:graph:ac:teaching:${tId}` as IRI;
 
   const desc = ContextDescriptor.create(tIri)
@@ -396,7 +396,7 @@ export async function bundleTeachingPackage(args: BundleTeachingPackageArgs, con
   const ceTriple = args.capabilityEvolutionIri ? `ac:teachesCapabilityEvolution <${args.capabilityEvolutionIri}> ;` : '';
 
   const graphContent = `@prefix ac:   <${AC_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix olke: <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
 
 <${tIri}> a ac:TeachingPackage ;
@@ -406,7 +406,7 @@ export async function bundleTeachingPackage(args: BundleTeachingPackageArgs, con
     ${constraintTriple}
     ${ceTriple}
     ac:olkeStage olke:${args.olkeStage} ;
-    cg:modalStatus cg:Hypothetical .
+    iep:modalStatus iep:Hypothetical .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -430,7 +430,7 @@ export interface RecordCrossAgentAuditResult {
 
 export async function recordCrossAgentAudit(args: RecordCrossAgentAuditArgs, config: PublishConfig): Promise<RecordCrossAgentAuditResult> {
   const auditId = sha16(args.exchangeIri + args.direction + nowIso());
-  const auditIri = `urn:cg:ac-audit:${auditId}` as IRI;
+  const auditIri = `urn:iep:ac-audit:${auditId}` as IRI;
   const graphIri = `urn:graph:ac:audit:${auditId}` as IRI;
 
   const desc = ContextDescriptor.create(auditIri)
@@ -442,7 +442,7 @@ export async function recordCrossAgentAudit(args: RecordCrossAgentAuditArgs, con
     .build();
 
   const graphContent = `@prefix ac:   <${AC_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <${auditIri}> a ac:CrossAgentAuditEntry ;
@@ -450,7 +450,7 @@ export async function recordCrossAgentAudit(args: RecordCrossAgentAuditArgs, con
     ac:auditedAgent <${args.auditedAgentDid}> ;
     ac:auditDirection ac:${args.direction} ;
     prov:wasAttributedTo <${args.humanOwnerDid}> ;
-    cg:modalStatus cg:Asserted .
+    iep:modalStatus iep:Asserted .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);

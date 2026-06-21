@@ -1,7 +1,7 @@
 @prefix ie:    <https://markjspivey-xwisee.github.io/interego/ns/interego#>.
-@prefix cg:    <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 @prefix pgsl:  <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
-@prefix cgh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+@prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
 @prefix align: <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#>.
@@ -27,10 +27,10 @@
 #
 #    ie:   — interrogatives core (user-facing grammar: Who/What/
 #            Where/When/Why/How/Which/WhatKind/HowMuch/Whose/Whether)
-#    cg:   — typed context descriptors (WHAT we say about graphs)
+#    iep:   — typed context descriptors (WHAT we say about graphs)
 #    pgsl: — poly-granular sequence lattice substrate (HOW content
 #            is structured)
-#    cgh:  — harness scaffolding (HOW agents reason and act)
+#    ieh:  — harness scaffolding (HOW agents reason and act)
 #
 #  None of the four ontologies depend on each other. They are
 #  separately importable. This alignment ontology is what you
@@ -40,7 +40,7 @@
 #  Contents:
 #    1. cg ↔ pgsl: context descriptors describing lattice content
 #    2. cgh ↔ pgsl: harness operates on substrate state
-#    3. cgh ↔ cg: harness produces typed context output
+#    3. cgh ↔ iep: harness produces typed context output
 #    4. SKOS concept scheme matches (trust levels, modal status,
 #       agent roles) across layers
 #    5. External W3C vocabulary alignments (PROV-O, Hydra, ODRL,
@@ -62,7 +62,7 @@
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
     dct:title "Interego 1.0 Cross-Layer Alignment Ontology" ;
-    dct:description "Cross-layer alignment ontology that ties together the three Interego ontologies (cg:, pgsl:, cgh:) and their external W3C alignments (PROV-O, Hydra, ODRL, ACL, VC, DCAT, OWL-Time). Importing this ontology gives you the full picture: typed context descriptors ABOUT lattice content WRAPPED BY agent harness machinery, all grounded in standard W3C vocabularies. The alignment is declarative — every cross-layer relationship is an OWL axiom annotated with the design rationale." ;
+    dct:description "Cross-layer alignment ontology that ties together the three Interego ontologies (iep:, pgsl:, ieh:) and their external W3C alignments (PROV-O, Hydra, ODRL, ACL, VC, DCAT, OWL-Time). Importing this ontology gives you the full picture: typed context descriptors ABOUT lattice content WRAPPED BY agent harness machinery, all grounded in standard W3C vocabularies. The alignment is declarative — every cross-layer relationship is an OWL axiom annotated with the design rationale." ;
     dct:creator [
         a foaf:Organization ;
         foaf:name "Interego" ;
@@ -75,7 +75,7 @@
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/alignment#" ;
     owl:imports <http://www.w3.org/ns/prov-o> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/interego#> ,
-                <https://markjspivey-xwisee.github.io/interego/ns/cg#> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/iep#> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/harness#> ;
     rdfs:seeAlso <https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html>.
@@ -86,38 +86,38 @@
 #
 #  A ContextDescriptor describes one or more Named Graphs. Each
 #  Named Graph is populated with PGSL atoms and fragments. The
-#  alignment below wires the cg:describes relation through to
+#  alignment below wires the iep:describes relation through to
 #  PGSL nodes so you can ask, in SPARQL: "which ContextDescriptors
 #  describe graphs containing this specific PGSL atom?".
 
 align:describesFragment a owl:ObjectProperty ;
-    rdfs:subPropertyOf cg:describes ;
+    rdfs:subPropertyOf iep:describes ;
     rdfs:label "describes fragment" ;
-    rdfs:comment "Specialization of cg:describes for the case where the described graph's content is a PGSL fragment. Declared as a subPropertyOf so any cg:describes query automatically includes fragment-level descriptions." ;
-    rdfs:domain cg:ContextDescriptor ;
+    rdfs:comment "Specialization of iep:describes for the case where the described graph's content is a PGSL fragment. Declared as a subPropertyOf so any iep:describes query automatically includes fragment-level descriptions." ;
+    rdfs:domain iep:ContextDescriptor ;
     rdfs:range pgsl:Fragment ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
 align:describesAtom a owl:ObjectProperty ;
-    rdfs:subPropertyOf cg:describes ;
+    rdfs:subPropertyOf iep:describes ;
     rdfs:label "describes atom" ;
-    rdfs:comment "Specialization of cg:describes for individual PGSL atoms. Useful for attaching fine-grained trust / temporal / semiotic facets to specific atoms without wrapping them in a fragment." ;
-    rdfs:domain cg:ContextDescriptor ;
+    rdfs:comment "Specialization of iep:describes for individual PGSL atoms. Useful for attaching fine-grained trust / temporal / semiotic facets to specific atoms without wrapping them in a fragment." ;
+    rdfs:domain iep:ContextDescriptor ;
     rdfs:range pgsl:Atom ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
 align:describesLattice a owl:ObjectProperty ;
-    rdfs:subPropertyOf cg:describes ;
+    rdfs:subPropertyOf iep:describes ;
     rdfs:label "describes lattice" ;
-    rdfs:comment "Specialization of cg:describes for an entire pgsl:Lattice instance. Used when a context descriptor applies to ALL content in the lattice (e.g. a pod-wide provenance statement)." ;
-    rdfs:domain cg:ContextDescriptor ;
+    rdfs:comment "Specialization of iep:describes for an entire pgsl:Lattice instance. Used when a context descriptor applies to ALL content in the lattice (e.g. a pod-wide provenance statement)." ;
+    rdfs:domain iep:ContextDescriptor ;
     rdfs:range pgsl:Lattice ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
 # ── Fragments and Atoms inherit PROV entity-hood from both layers ──
 #
 #  Both pgsl:Atom and pgsl:Fragment are prov:Entity (declared in pgsl.ttl).
-#  Context descriptors' cg:ProvenanceFacet uses prov:Activity / prov:Agent.
+#  Context descriptors' iep:ProvenanceFacet uses prov:Activity / prov:Agent.
 #  No extra alignment needed — PROV-O is the shared pivot.
 
 # ══════════════════════════════════════════════════════════════
@@ -132,15 +132,15 @@ align:observedAtom a owl:ObjectProperty ;
     rdfs:subPropertyOf prov:used ;
     rdfs:label "observed atom" ;
     rdfs:comment "An ObservationSection references the specific PGSL atoms it observed. Declared as subPropertyOf prov:used so standard PROV tooling can walk from a decision back to the atoms that grounded it." ;
-    rdfs:domain cgh:ObservationSection ;
+    rdfs:domain ieh:ObservationSection ;
     rdfs:range pgsl:Atom ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
 align:affordanceOn a owl:ObjectProperty ;
-    owl:equivalentProperty cgh:affordanceTarget ;
+    owl:equivalentProperty ieh:affordanceTarget ;
     rdfs:label "affordance on" ;
-    rdfs:comment "Alias for cgh:affordanceTarget, emphasizing that affordances are directed at a specific PGSL node. Use this when the emphasis is on navigation ('what can I do from HERE?'), cgh:affordanceTarget when the emphasis is on the affordance itself." ;
-    rdfs:domain cgh:Affordance ;
+    rdfs:comment "Alias for ieh:affordanceTarget, emphasizing that affordances are directed at a specific PGSL node. Use this when the emphasis is on navigation ('what can I do from HERE?'), ieh:affordanceTarget when the emphasis is on the affordance itself." ;
+    rdfs:domain ieh:Affordance ;
     rdfs:range pgsl:Node ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
@@ -148,7 +148,7 @@ align:evaluatedNode a owl:ObjectProperty ;
     rdfs:subPropertyOf prov:used ;
     rdfs:label "evaluated node" ;
     rdfs:comment "A runtime evaluation references the PGSL node whose retrieval/answer was scored. Subproperty of prov:used so the evaluation's PROV inputs are discoverable." ;
-    rdfs:domain cgh:RuntimeEval ;
+    rdfs:domain ieh:RuntimeEval ;
     rdfs:range pgsl:Node ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
@@ -158,7 +158,7 @@ align:contextNode a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:subPropertyOf prov:used ;
     rdfs:label "context node" ;
     rdfs:comment "The PGSL node at the center of a DecoratorContext. Functional — each context is for exactly one node." ;
-    rdfs:domain cgh:DecoratorContext ;
+    rdfs:domain ieh:DecoratorContext ;
     rdfs:range pgsl:Node ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
@@ -166,7 +166,7 @@ align:contextLattice a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:subPropertyOf prov:used ;
     rdfs:label "context lattice" ;
     rdfs:comment "The PGSL Lattice a DecoratorContext is part of. Functional — a context is always from one lattice." ;
-    rdfs:domain cgh:DecoratorContext ;
+    rdfs:domain ieh:DecoratorContext ;
     rdfs:range pgsl:Lattice ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
@@ -176,7 +176,7 @@ align:contextLattice a owl:ObjectProperty , owl:FunctionalProperty ;
 #
 #  Runtime evaluations, policy decisions, and decorator outputs
 #  are themselves context-bearing artifacts. The alignment below
-#  lets the harness's outputs SUPPORT cg: facets — most importantly
+#  lets the harness's outputs SUPPORT iep: facets — most importantly
 #  the TrustFacet (confidence derived from runtime eval) and the
 #  ProvenanceFacet (provenance inherited from PROV trace).
 
@@ -185,28 +185,28 @@ align:produces a owl:ObjectProperty ;
     rdfs:label "produces" ;
     rdfs:comment "A harness activity (e.g. RuntimeEval, Decision, PolicyDecision) can produce a ContextDescriptor as its output. The produced descriptor then describes the subject entity with whatever facets the harness computed." ;
     rdfs:domain prov:Activity ;
-    rdfs:range cg:ContextDescriptor ;
+    rdfs:range iep:ContextDescriptor ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
 align:confidenceToTrust a owl:ObjectProperty ;
     rdfs:label "confidence → trust" ;
-    rdfs:comment "Links a runtime evaluation to the cg:TrustFacet it materializes. The harness's numeric confidence (cgh:confidence) projects onto cg:epistemicConfidence, and the cgh:ConfidenceLevel projects onto a cg:TrustLevel via this relation." ;
-    rdfs:domain cgh:RuntimeEval ;
-    rdfs:range cg:TrustFacet ;
+    rdfs:comment "Links a runtime evaluation to the iep:TrustFacet it materializes. The harness's numeric confidence (ieh:confidence) projects onto iep:epistemicConfidence, and the ieh:ConfidenceLevel projects onto a iep:TrustLevel via this relation." ;
+    rdfs:domain ieh:RuntimeEval ;
+    rdfs:range iep:TrustFacet ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
 align:policyDecisionToAccessControl a owl:ObjectProperty ;
     rdfs:label "policy decision → access control" ;
-    rdfs:comment "Links a cgh:PolicyDecision to the cg:AccessControlFacet it authorizes. A granted policy decision materializes as an authorization triple in the AccessControlFacet." ;
-    rdfs:domain cgh:PolicyDecision ;
-    rdfs:range cg:AccessControlFacet ;
+    rdfs:comment "Links a ieh:PolicyDecision to the iep:AccessControlFacet it authorizes. A granted policy decision materializes as an authorization triple in the AccessControlFacet." ;
+    rdfs:domain ieh:PolicyDecision ;
+    rdfs:range iep:AccessControlFacet ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
 align:traceToProvenance a owl:ObjectProperty ;
     rdfs:label "trace → provenance" ;
-    rdfs:comment "Links a cgh:ProvTrace to the cg:ProvenanceFacet that records it in a context descriptor. Since ProvTrace is already a prov:Activity, this is a re-materialization of the trace as a first-class provenance facet on the affected entity." ;
-    rdfs:domain cgh:ProvTrace ;
-    rdfs:range cg:ProvenanceFacet ;
+    rdfs:comment "Links a ieh:ProvTrace to the iep:ProvenanceFacet that records it in a context descriptor. Since ProvTrace is already a prov:Activity, this is a re-materialization of the trace as a first-class provenance facet on the affected entity." ;
+    rdfs:domain ieh:ProvTrace ;
+    rdfs:range iep:ProvenanceFacet ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
 # ══════════════════════════════════════════════════════════════
@@ -218,38 +218,38 @@ align:traceToProvenance a owl:ObjectProperty ;
 #  so any reasoner or querying agent can navigate between them
 #  without hardcoding the mappings.
 
-# ── Trust: cgh:ConfidenceLevel → cg TrustLevel individuals ──
+# ── Trust: ieh:ConfidenceLevel → cg TrustLevel individuals ──
 
-cgh:HighConfidence skos:closeMatch cg:CryptographicallyVerified ;
-    rdfs:comment "High harness confidence (≥0.8) maps to cg:CryptographicallyVerified trust when backed by VC proof, or at least to the highest trust class the asserting chain supports. skos:closeMatch because the scales are comparable but not exactly equivalent — confidence is derived from structural signals, trust from cryptographic proof.".
+ieh:HighConfidence skos:closeMatch iep:CryptographicallyVerified ;
+    rdfs:comment "High harness confidence (≥0.8) maps to iep:CryptographicallyVerified trust when backed by VC proof, or at least to the highest trust class the asserting chain supports. skos:closeMatch because the scales are comparable but not exactly equivalent — confidence is derived from structural signals, trust from cryptographic proof.".
 
-cgh:MediumConfidence skos:closeMatch cg:ThirdPartyAttested ;
+ieh:MediumConfidence skos:closeMatch iep:ThirdPartyAttested ;
     rdfs:comment "Medium harness confidence corresponds to third-party attestation — multiple independent signals agree, but there is no cryptographic ground truth.".
 
-cgh:LowConfidence skos:closeMatch cg:SelfAsserted ;
+ieh:LowConfidence skos:closeMatch iep:SelfAsserted ;
     rdfs:comment "Low harness confidence corresponds to self-assertion — only the harness itself claims the result, without corroborating signals.".
 
 # ── Modal status: cg modality ↔ cgh eval action ──
 
-cg:Asserted skos:related cgh:Accept ;
-    rdfs:comment "When a runtime eval returns Accept, the downstream context descriptor's modal status is typically cg:Asserted.".
+iep:Asserted skos:related ieh:Accept ;
+    rdfs:comment "When a runtime eval returns Accept, the downstream context descriptor's modal status is typically iep:Asserted.".
 
-cg:Hypothetical skos:related cgh:Retry ;
+iep:Hypothetical skos:related ieh:Retry ;
     rdfs:comment "Retry produces a hypothetical alternative that has not yet been committed.".
 
-cg:Retracted skos:related cgh:Abstain ;
+iep:Retracted skos:related ieh:Abstain ;
     rdfs:comment "Abstain corresponds to a retraction — the harness explicitly declines to assert anything.".
 
 # ── Agent roles: cg roles ↔ cgh AATs ──
 
-cg:Author skos:broadMatch cgh:Executor ;
-    rdfs:comment "cg:Author in the descriptor layer corresponds to an Executor AAT in the harness layer — both are the entities that produce new content.".
+iep:Author skos:broadMatch ieh:Executor ;
+    rdfs:comment "iep:Author in the descriptor layer corresponds to an Executor AAT in the harness layer — both are the entities that produce new content.".
 
-cg:Curator skos:broadMatch cgh:Archivist ;
-    rdfs:comment "cg:Curator maps to Archivist — both are responsible for the ongoing lifecycle of content without authoring new content themselves.".
+iep:Curator skos:broadMatch ieh:Archivist ;
+    rdfs:comment "iep:Curator maps to Archivist — both are responsible for the ongoing lifecycle of content without authoring new content themselves.".
 
-cg:Validator skos:broadMatch cgh:Arbiter ;
-    rdfs:comment "cg:Validator maps to Arbiter — both arbitrate the correctness of other agents' output.".
+iep:Validator skos:broadMatch ieh:Arbiter ;
+    rdfs:comment "iep:Validator maps to Arbiter — both arbitrate the correctness of other agents' output.".
 
 # ══════════════════════════════════════════════════════════════
 #  PART 5 — External W3C vocabulary alignments
@@ -264,67 +264,67 @@ cg:Validator skos:broadMatch cgh:Arbiter ;
 pgsl:Atom rdfs:subClassOf prov:Entity.
 pgsl:Fragment rdfs:subClassOf prov:Entity.
 
-cgh:AbstractAgentType rdfs:subClassOf prov:Plan.
-cgh:ProvTrace rdfs:subClassOf prov:Activity.
-cgh:PolicyDecision rdfs:subClassOf prov:Activity.
-cgh:RuntimeEval rdfs:subClassOf prov:Activity.
-cgh:Decision rdfs:subClassOf prov:Activity.
-cgh:Conversation rdfs:subClassOf prov:Collection.
-cgh:ConversationMessage rdfs:subClassOf prov:Entity.
+ieh:AbstractAgentType rdfs:subClassOf prov:Plan.
+ieh:ProvTrace rdfs:subClassOf prov:Activity.
+ieh:PolicyDecision rdfs:subClassOf prov:Activity.
+ieh:RuntimeEval rdfs:subClassOf prov:Activity.
+ieh:Decision rdfs:subClassOf prov:Activity.
+ieh:Conversation rdfs:subClassOf prov:Collection.
+ieh:ConversationMessage rdfs:subClassOf prov:Entity.
 
-cg:AuthorizedAgent rdfs:subClassOf prov:SoftwareAgent.
+iep:AuthorizedAgent rdfs:subClassOf prov:SoftwareAgent.
 
 # ── Hydra alignments (HATEOAS affordances) ───────────────────
 
-cgh:Affordance rdfs:subClassOf hydra:Operation ;
+ieh:Affordance rdfs:subClassOf hydra:Operation ;
     rdfs:comment "Harness affordances are Hydra operations. A harness-produced affordance can be consumed by any Hydra client without understanding the harness ontology — it just sees a hydra:Operation with a method, target, and description.".
 
-cgh:DecoratedAffordance rdfs:subClassOf cgh:Affordance.
+ieh:DecoratedAffordance rdfs:subClassOf ieh:Affordance.
 
-cg:Affordance skos:closeMatch cgh:Affordance ;
-    rdfs:comment "The two 'Affordance' classes — one in cg:, one in cgh: — are closely related but NOT identical. cg:Affordance is a high-level capability declared by a pod/manifest (discovery), while cgh:Affordance is a per-node operation produced by a decorator (execution). They are linked but not merged so that discovery-time and execution-time concerns stay separable.".
+iep:Affordance skos:closeMatch ieh:Affordance ;
+    rdfs:comment "The two 'Affordance' classes — one in iep:, one in ieh: — are closely related but NOT identical. iep:Affordance is a high-level capability declared by a pod/manifest (discovery), while ieh:Affordance is a per-node operation produced by a decorator (execution). They are linked but not merged so that discovery-time and execution-time concerns stay separable.".
 
 # ── ODRL alignments (deontic rules) ──────────────────────────
 
-cgh:PolicyRule rdfs:subClassOf odrl:Rule.
-cgh:Permit skos:exactMatch odrl:permission.
-cgh:Deny skos:exactMatch odrl:prohibition.
-cgh:Duty skos:exactMatch odrl:duty.
+ieh:PolicyRule rdfs:subClassOf odrl:Rule.
+ieh:Permit skos:exactMatch odrl:permission.
+ieh:Deny skos:exactMatch odrl:prohibition.
+ieh:Duty skos:exactMatch odrl:duty.
 
 # ── ACL alignments (access control) ──────────────────────────
 
-cg:AccessControlFacet rdfs:seeAlso acl:Authorization.
+iep:AccessControlFacet rdfs:seeAlso acl:Authorization.
 
 align:policyToAclAuthorization a owl:ObjectProperty ;
     rdfs:label "policy → ACL authorization" ;
     rdfs:comment "Projection from a harness PolicyRule to a W3C Web Access Control Authorization. Not an equivalence — ACL is flat (agent × mode × resource), while ODRL/cgh policy rules can carry conditions and obligations." ;
-    rdfs:domain cgh:PolicyRule ;
+    rdfs:domain ieh:PolicyRule ;
     rdfs:range acl:Authorization ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
 # ── Verifiable Credentials alignments ─────────────────────────
 
-cg:TrustFacet rdfs:seeAlso vc:VerifiableCredential.
+iep:TrustFacet rdfs:seeAlso vc:VerifiableCredential.
 
 align:trustFromCredential a owl:ObjectProperty ;
-    rdfs:subPropertyOf cg:verifiableCredential ;
+    rdfs:subPropertyOf iep:verifiableCredential ;
     rdfs:label "trust from credential" ;
-    rdfs:comment "A cg:TrustFacet can be backed by a W3C Verifiable Credential. This alignment just restates cg:verifiableCredential with a clearer name for cross-layer use." ;
+    rdfs:comment "A iep:TrustFacet can be backed by a W3C Verifiable Credential. This alignment just restates iep:verifiableCredential with a clearer name for cross-layer use." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
 # ── DCAT alignments (federation / distribution) ──────────────
 
-cg:DataProduct rdfs:subClassOf dcat:Dataset.
-cg:FederationFacet rdfs:seeAlso dcat:Distribution.
+iep:DataProduct rdfs:subClassOf dcat:Dataset.
+iep:FederationFacet rdfs:seeAlso dcat:Distribution.
 
 # ── OWL-Time alignments (temporal reasoning) ─────────────────
 
-cg:TemporalFacet rdfs:seeAlso time:TemporalEntity.
+iep:TemporalFacet rdfs:seeAlso time:TemporalEntity.
 
 align:temporalIntervalOf a owl:ObjectProperty ;
     rdfs:label "temporal interval of" ;
-    rdfs:comment "Links a cg:TemporalFacet to the underlying OWL-Time ProperInterval. Use this when you need to reason temporally with standard OWL-Time axioms (before, after, during, etc.)." ;
-    rdfs:domain cg:TemporalFacet ;
+    rdfs:comment "Links a iep:TemporalFacet to the underlying OWL-Time ProperInterval. Use this when you need to reason temporally with standard OWL-Time axioms (before, after, during, etc.)." ;
+    rdfs:domain iep:TemporalFacet ;
     rdfs:range time:ProperInterval ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
@@ -339,7 +339,7 @@ align:temporalIntervalOf a owl:ObjectProperty ;
 
 align:IntegrationPattern a owl:Class , skos:ConceptScheme ;
     rdfs:label "Integration Pattern" ;
-    rdfs:comment "A SKOS concept scheme of canonical integration patterns across the three layers. Each pattern names a standard way of using cg:, pgsl:, and cgh: together to achieve a common outcome." ;
+    rdfs:comment "A SKOS concept scheme of canonical integration patterns across the three layers. Each pattern names a standard way of using iep:, pgsl:, and ieh: together to achieve a common outcome." ;
     skos:hasTopConcept
         align:TracedAnswerPattern ,
         align:TrustedRetrievalPattern ,
@@ -351,27 +351,27 @@ align:IntegrationPattern a owl:Class , skos:ConceptScheme ;
 align:TracedAnswerPattern a skos:Concept , align:IntegrationPattern ;
     skos:inScheme align:IntegrationPattern ;
     skos:prefLabel "Traced Answer Pattern" ;
-    skos:definition "Pattern: agent asks a question → harness runs retrieval over PGSL → runtime eval scores the answer → a cgh:ProvTrace records everything → the trace is materialized as a cg:ProvenanceFacet on the answer's ContextDescriptor → the descriptor is published. Every link from the final answer back to the source atoms is walkable via PROV-O.".
+    skos:definition "Pattern: agent asks a question → harness runs retrieval over PGSL → runtime eval scores the answer → a ieh:ProvTrace records everything → the trace is materialized as a iep:ProvenanceFacet on the answer's ContextDescriptor → the descriptor is published. Every link from the final answer back to the source atoms is walkable via PROV-O.".
 
 align:TrustedRetrievalPattern a skos:Concept , align:IntegrationPattern ;
     skos:inScheme align:IntegrationPattern ;
     skos:prefLabel "Trusted Retrieval Pattern" ;
-    skos:definition "Pattern: retrieval returns candidate PGSL atoms → each atom is filtered by the cg:TrustFacet of the ContextDescriptor that describes it → only atoms with trust level ≥ required threshold are passed to the answer pipeline → the runtime eval's confidence is capped by the minimum trust across used atoms.".
+    skos:definition "Pattern: retrieval returns candidate PGSL atoms → each atom is filtered by the iep:TrustFacet of the ContextDescriptor that describes it → only atoms with trust level ≥ required threshold are passed to the answer pipeline → the runtime eval's confidence is capped by the minimum trust across used atoms.".
 
 align:ArbitratedCompositionPattern a skos:Concept , align:IntegrationPattern ;
     skos:inScheme align:IntegrationPattern ;
     skos:prefLabel "Arbitrated Composition Pattern" ;
-    skos:definition "Pattern: two or more Executor agents produce conflicting ContextDescriptors for the same subject → an Arbiter AAT reads both, evaluates coherence → produces a cg:ComposedDescriptor using the override operator, with the Arbiter's policy decision attached as provenance.".
+    skos:definition "Pattern: two or more Executor agents produce conflicting ContextDescriptors for the same subject → an Arbiter AAT reads both, evaluates coherence → produces a iep:ComposedDescriptor using the override operator, with the Arbiter's policy decision attached as provenance.".
 
 align:AuditedPublicationPattern a skos:Concept , align:IntegrationPattern ;
     skos:inScheme align:IntegrationPattern ;
     skos:prefLabel "Audited Publication Pattern" ;
-    skos:definition "Pattern: an Archivist AAT promotes a PGSL fragment from local tier to pod tier → the promotion produces a cgh:ProvTrace → the trace references the specific fragment (prov:used) and the new location (prov:generated) → the promotion is only allowed if the policy engine permits it for the Archivist's AAT.".
+    skos:definition "Pattern: an Archivist AAT promotes a PGSL fragment from local tier to pod tier → the promotion produces a ieh:ProvTrace → the trace references the specific fragment (prov:used) and the new location (prov:generated) → the promotion is only allowed if the policy engine permits it for the Archivist's AAT.".
 
 align:FederatedObservationPattern a skos:Concept , align:IntegrationPattern ;
     skos:inScheme align:IntegrationPattern ;
     skos:prefLabel "Federated Observation Pattern" ;
-    skos:definition "Pattern: multiple agents in different pods each produce ObservationSections over the same logical subject → their observations are unioned via cg:union composition → coherence between agents is computed from the intersection of their observed atoms → a Decision is produced only when coherence ≥ threshold.".
+    skos:definition "Pattern: multiple agents in different pods each produce ObservationSections over the same logical subject → their observations are unioned via iep:union composition → coherence between agents is computed from the intersection of their observed atoms → a Decision is produced only when coherence ≥ threshold.".
 
 # ══════════════════════════════════════════════════════════════
 #  PART 7 — Disjointness assertions
@@ -380,13 +380,13 @@ align:FederatedObservationPattern a skos:Concept , align:IntegrationPattern ;
 #  These prevent common misuses where concepts from different
 #  layers get conflated.
 
-cg:ContextFacet owl:disjointWith pgsl:Node ;
+iep:ContextFacet owl:disjointWith pgsl:Node ;
     rdfs:comment "A context facet is metadata ABOUT a graph; a PGSL node is content IN a graph. They must not be the same resource.".
 
-cgh:Affordance owl:disjointWith pgsl:Node ;
+ieh:Affordance owl:disjointWith pgsl:Node ;
     rdfs:comment "An affordance is a possible action at a node; it is never itself a node.".
 
-cgh:ProvTrace owl:disjointWith pgsl:Atom ;
+ieh:ProvTrace owl:disjointWith pgsl:Atom ;
     rdfs:comment "A trace is an activity; an atom is an entity. PROV-O disjointness applies.".
 
 # ══════════════════════════════════════════════════════════════
@@ -417,27 +417,27 @@ align:answersInterrogative a owl:ObjectProperty ;
     rdfs:range ie:Interrogative ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/alignment#>.
 
-# ── cg: layer → interrogatives ───────────────────────────────
+# ── iep: layer → interrogatives ───────────────────────────────
 
-cg:AgentFacet align:answersInterrogative ie:Who , ie:Whose ;
+iep:AgentFacet align:answersInterrogative ie:Who , ie:Whose ;
     rdfs:comment "The AgentFacet identifies the asserting agent and any delegation relationships, so it answers both ie:Who (who is asserting?) and ie:Whose (on whose behalf?).".
 
-cg:TemporalFacet align:answersInterrogative ie:When ;
+iep:TemporalFacet align:answersInterrogative ie:When ;
     rdfs:comment "The TemporalFacet records validity intervals, temporal resolution, and OWL-Time relations — the direct answer to ie:When.".
 
-cg:FederationFacet align:answersInterrogative ie:Where ;
+iep:FederationFacet align:answersInterrogative ie:Where ;
     rdfs:comment "The FederationFacet records where a context descriptor is hosted, how it syncs, and which pods replicate it — the container-level answer to ie:Where.".
 
-cg:ProvenanceFacet align:answersInterrogative ie:How , ie:Why ;
+iep:ProvenanceFacet align:answersInterrogative ie:How , ie:Why ;
     rdfs:comment "The ProvenanceFacet records provenance chains aligned with PROV-O — both the HOW (method/mechanism of production) and WHY (motivating cause or activity) of an assertion.".
 
-cg:AccessControlFacet align:answersInterrogative ie:Whose , ie:Whether ;
+iep:AccessControlFacet align:answersInterrogative ie:Whose , ie:Whether ;
     rdfs:comment "The AccessControlFacet records who may read/write/append/control an annotated graph, answering ie:Whose (control) and one variant of ie:Whether (is it permitted?).".
 
-cg:SemioticFacet align:answersInterrogative ie:WhatKind , ie:Whether ;
+iep:SemioticFacet align:answersInterrogative ie:WhatKind , ie:Whether ;
     rdfs:comment "The SemioticFacet records interpretive frame, modal status (asserted/hypothetical/counterfactual/quoted/retracted), and epistemic confidence — it answers ie:WhatKind (under what frame?) and ie:Whether (with what modal force?).".
 
-cg:TrustFacet align:answersInterrogative ie:Whether ;
+iep:TrustFacet align:answersInterrogative ie:Whether ;
     rdfs:comment "The TrustFacet records verifiability backing via VC/DID — the epistemic-modality variant of ie:Whether (how sure can I be?).".
 
 # ── pgsl: layer → interrogatives ─────────────────────────────
@@ -457,30 +457,30 @@ pgsl:ConstituentMorphism align:answersInterrogative ie:How ;
 pgsl:Lattice align:answersInterrogative ie:HowMuch ;
     rdfs:comment "The Lattice-level summary statistics (atomCount, fragmentCount, maxLevel) answer ie:HowMuch at the system level.".
 
-# ── cgh: layer → interrogatives ──────────────────────────────
+# ── ieh: layer → interrogatives ──────────────────────────────
 
-cgh:AbstractAgentType align:answersInterrogative ie:Who ;
+ieh:AbstractAgentType align:answersInterrogative ie:Who ;
     rdfs:comment "An AAT classifies an agent's capabilities and constraints — it answers ie:Who (who am I acting as?) when an agent introspects its own identity.".
 
-cgh:ObservationSection align:answersInterrogative ie:What ;
+ieh:ObservationSection align:answersInterrogative ie:What ;
     rdfs:comment "An observation section records what an agent has perceived — a direct answer to ie:What (what do I see?).".
 
-cgh:Decision align:answersInterrogative ie:Which , ie:Why ;
+ieh:Decision align:answersInterrogative ie:Which , ie:Why ;
     rdfs:comment "A Decision selects an affordance and records a justification. It answers ie:Which (which action?) and ie:Why (why this action?).".
 
-cgh:DecisionResult align:answersInterrogative ie:Which ;
+ieh:DecisionResult align:answersInterrogative ie:Which ;
     rdfs:comment "The result of running the decision functor — primarily answers ie:Which (which strategy was chosen?).".
 
-cgh:PolicyDecision align:answersInterrogative ie:Whether ;
+ieh:PolicyDecision align:answersInterrogative ie:Whether ;
     rdfs:comment "A policy decision produces a permit/deny/duty outcome — the deontic variant of ie:Whether (is this permitted?).".
 
-cgh:RuntimeEval align:answersInterrogative ie:Whether , ie:HowMuch ;
+ieh:RuntimeEval align:answersInterrogative ie:Whether , ie:HowMuch ;
     rdfs:comment "A runtime evaluation produces a confidence score and recommendation — the epistemic variant of ie:Whether (is this reliable?) and ie:HowMuch (to what degree?).".
 
-cgh:ProvTrace align:answersInterrogative ie:How , ie:Why ;
+ieh:ProvTrace align:answersInterrogative ie:How , ie:Why ;
     rdfs:comment "A harness trace records activity lineage — how an outcome was produced and why (which policy, which AAT, what inputs).".
 
-cgh:Conversation align:answersInterrogative ie:Who ;
+ieh:Conversation align:answersInterrogative ie:Who ;
     rdfs:comment "A conversation records participants (who is talking to whom) and message history.".
 
 # ── Reverse-index helper (SPARQL-friendly) ───────────────────
@@ -491,58 +491,58 @@ cgh:Conversation align:answersInterrogative ie:Who ;
 #  but it's convenient for hand-written SPARQL queries.
 
 ie:Who skos:related
-    cg:AgentFacet ,
-    cgh:AbstractAgentType ,
-    cgh:Conversation .
+    iep:AgentFacet ,
+    ieh:AbstractAgentType ,
+    ieh:Conversation .
 
 ie:What skos:related
     pgsl:Atom ,
     pgsl:Fragment ,
-    cgh:ObservationSection .
+    ieh:ObservationSection .
 
 ie:Where skos:related
-    cg:FederationFacet .
+    iep:FederationFacet .
 
 ie:When skos:related
-    cg:TemporalFacet .
+    iep:TemporalFacet .
 
 ie:Why skos:related
-    cg:ProvenanceFacet ,
-    cgh:Decision ,
-    cgh:ProvTrace .
+    iep:ProvenanceFacet ,
+    ieh:Decision ,
+    ieh:ProvTrace .
 
 ie:How skos:related
-    cg:ProvenanceFacet ,
+    iep:ProvenanceFacet ,
     pgsl:PullbackSquare ,
     pgsl:ConstituentMorphism ,
-    cgh:ProvTrace .
+    ieh:ProvTrace .
 
 ie:Which skos:related
-    cgh:Decision ,
-    cgh:DecisionResult .
+    ieh:Decision ,
+    ieh:DecisionResult .
 
 ie:WhatKind skos:related
-    cg:SemioticFacet .
+    iep:SemioticFacet .
 
 ie:HowMuch skos:related
     pgsl:Fragment ,
     pgsl:Lattice ,
-    cgh:RuntimeEval .
+    ieh:RuntimeEval .
 
 ie:Whose skos:related
-    cg:AgentFacet ,
-    cg:AccessControlFacet .
+    iep:AgentFacet ,
+    iep:AccessControlFacet .
 
 ie:Whether skos:related
-    cg:AccessControlFacet ,
-    cg:SemioticFacet ,
-    cg:TrustFacet ,
-    cgh:PolicyDecision ,
-    cgh:RuntimeEval .
+    iep:AccessControlFacet ,
+    iep:SemioticFacet ,
+    iep:TrustFacet ,
+    ieh:PolicyDecision ,
+    ieh:RuntimeEval .
 
 # ══════════════════════════════════════════════════════════════
 #  Extended project ontologies: HyprCat, HyprAgent, HELA, SAT,
-#  CTS, OLKE, AMTA — declarative alignments to the core cg:/cgh:/
+#  CTS, OLKE, AMTA — declarative alignments to the core iep:/ieh:/
 #  pgsl:/ie: stack so external tooling navigating the alignment
 #  graph finds every cross-layer equivalence in one place.
 # ══════════════════════════════════════════════════════════════
@@ -562,45 +562,45 @@ ie:Whether skos:related
 hyprcat:FederatedCatalog rdfs:subClassOf dcat:Catalog , dprod:DataProductPlatform ;
     rdfs:comment "HyprCat catalogs are DCAT Catalogs first — any DCAT-aware tool ingests them without HyprCat-specific code. The DPROD DataProductPlatform subclass adds the data-product-lifecycle semantics (input/output ports, freshness, discoverability) on top.".
 
-hyprcat:FederatedDataProduct rdfs:subClassOf dprod:DataProduct , cg:DataProduct ;
-    rdfs:comment "Same structural subclass as DPROD DataProduct; the cg:DataProduct tie lets Interego federation tooling navigate without HyprCat imports.".
+hyprcat:FederatedDataProduct rdfs:subClassOf dprod:DataProduct , iep:DataProduct ;
+    rdfs:comment "Same structural subclass as DPROD DataProduct; the iep:DataProduct tie lets Interego federation tooling navigate without HyprCat imports.".
 
-hyprcat:FederatedDistribution rdfs:subClassOf dcat:Distribution , cg:Affordance , cgh:Affordance , hydra:Operation ;
-    rdfs:comment "A single node that is simultaneously a DCAT distribution, an Interego affordance (both cg: discovery-time and cgh: execution-time), and a Hydra operation. Any client speaking any of those vocabularies can dispatch the distribution.".
+hyprcat:FederatedDistribution rdfs:subClassOf dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:comment "A single node that is simultaneously a DCAT distribution, an Interego affordance (both iep: discovery-time and ieh: execution-time), and a Hydra operation. Any client speaking any of those vocabularies can dispatch the distribution.".
 
 hyprcat:PortAffordance rdfs:subClassOf hyprcat:FederatedDistribution .
 
-hyprcat:FederatedCatalog skos:closeMatch cg:PodCatalog ;
-    rdfs:comment "cg:PodCatalog is the pod-scoped realization of a HyprCat federated catalog. A HyprCat federation may aggregate many cg:PodCatalog instances across pods into one mesh.".
+hyprcat:FederatedCatalog skos:closeMatch iep:PodCatalog ;
+    rdfs:comment "iep:PodCatalog is the pod-scoped realization of a HyprCat federated catalog. A HyprCat federation may aggregate many iep:PodCatalog instances across pods into one mesh.".
 
 # ── HyprAgent: agent machinery ───────────────────────────────
 
-hypragent:Agent rdfs:subClassOf prov:SoftwareAgent , cg:AuthorizedAgent , cgh:Agent ;
-    rdfs:comment "A HyprAgent is simultaneously a PROV SoftwareAgent (for provenance), a cg:AuthorizedAgent (for pod-registry delegation), and a cgh:Agent (for OODA-cycle participation). Walking the subclass graph lets any tooling pick its native abstraction level.".
+hypragent:Agent rdfs:subClassOf prov:SoftwareAgent , iep:AuthorizedAgent , ieh:Agent ;
+    rdfs:comment "A HyprAgent is simultaneously a PROV SoftwareAgent (for provenance), a iep:AuthorizedAgent (for pod-registry delegation), and a ieh:Agent (for OODA-cycle participation). Walking the subclass graph lets any tooling pick its native abstraction level.".
 
 hypragent:DelegationChain rdfs:subClassOf vc:VerifiableCredential ;
-    skos:closeMatch cg:AgentDelegationCredential ;
-    rdfs:comment "HyprAgent delegation chains are ordered sequences of W3C Verifiable Credentials; each link is a cg:AgentDelegationCredential.".
+    skos:closeMatch iep:AgentDelegationCredential ;
+    rdfs:comment "HyprAgent delegation chains are ordered sequences of W3C Verifiable Credentials; each link is a iep:AgentDelegationCredential.".
 
-hypragent:Dispatch rdfs:subClassOf prov:Activity , cgh:DecoratedAffordance ;
-    rdfs:comment "Every HyprAgent dispatch is a provenance activity (so prov:-aware auditors see it) and a decorated cgh: affordance execution (so harness-aware tooling sees it).".
+hypragent:Dispatch rdfs:subClassOf prov:Activity , ieh:DecoratedAffordance ;
+    rdfs:comment "Every HyprAgent dispatch is a provenance activity (so prov:-aware auditors see it) and a decorated ieh: affordance execution (so harness-aware tooling sees it).".
 
 # ── HELA: xAPI presheaf ──────────────────────────────────────
 
 hela:Statement rdfs:subClassOf prov:Activity ;
-    rdfs:seeAlso cg:ProvenanceFacet ;
-    rdfs:comment "A HELA xAPI statement is a prov:Activity; wrapping it in a cg:ContextDescriptor projects its attribution + timing into cg:ProvenanceFacet.".
+    rdfs:seeAlso iep:ProvenanceFacet ;
+    rdfs:comment "A HELA xAPI statement is a prov:Activity; wrapping it in a iep:ContextDescriptor projects its attribution + timing into iep:ProvenanceFacet.".
 
-hela:Actor skos:closeMatch cg:AuthorizedAgent ;
-    rdfs:comment "HELA Actor (the learner) and cg:AuthorizedAgent (the delegate) are different views of the same underlying entity; the Actor view emphasises participation in learning activities.".
+hela:Actor skos:closeMatch iep:AuthorizedAgent ;
+    rdfs:comment "HELA Actor (the learner) and iep:AuthorizedAgent (the delegate) are different views of the same underlying entity; the Actor view emphasises participation in learning activities.".
 
-hela:Trace rdfs:seeAlso cg:ContextDescriptor ;
-    rdfs:comment "A HELA Trace (a learner's full statement sequence) is a sub-presheaf; represented in Interego as a set of cg:ContextDescriptor instances sharing an actor attribution.".
+hela:Trace rdfs:seeAlso iep:ContextDescriptor ;
+    rdfs:comment "A HELA Trace (a learner's full statement sequence) is a sub-presheaf; represented in Interego as a set of iep:ContextDescriptor instances sharing an actor attribution.".
 
 # ── SAT: Semiotic Agent Topos ────────────────────────────────
 
-sat:SemioticFieldFunctor owl:equivalentClass cg:SemioticFacet ;
-    rdfs:comment "The Semiotic Field Functor Σ instantiated at a specific context graph IS the cg:SemioticFacet of that graph's descriptor. Full equivalence — SAT provides the categorical machinery, cg: provides the per-descriptor projection.".
+sat:SemioticFieldFunctor owl:equivalentClass iep:SemioticFacet ;
+    rdfs:comment "The Semiotic Field Functor Σ instantiated at a specific context graph IS the iep:SemioticFacet of that graph's descriptor. Full equivalence — SAT provides the categorical machinery, iep: provides the per-descriptor projection.".
 
 sat:Sign rdfs:seeAlso pgsl:sign ;
     rdfs:comment "SAT Sign (the Peircean representamen) is carried at the substrate layer by pgsl:sign — each lattice node can optionally bind a sign.".
@@ -610,30 +610,30 @@ sat:Semiosis rdfs:seeAlso ie:Interrogative ;
 
 # ── CTS: Compositional Tuple Store ───────────────────────────
 
-cts:Pattern owl:equivalentClass cg:SyntagmaticPattern ;
-    rdfs:comment "CTS patterns and cg:SyntagmaticPattern are the same concept at two abstraction layers: CTS at the raw usage layer, cg: at the typed-context layer. Explicit equivalence lets tooling navigate freely between them.".
+cts:Pattern owl:equivalentClass iep:SyntagmaticPattern ;
+    rdfs:comment "CTS patterns and iep:SyntagmaticPattern are the same concept at two abstraction layers: CTS at the raw usage layer, iep: at the typed-context layer. Explicit equivalence lets tooling navigate freely between them.".
 
-cts:ParadigmSet rdfs:subClassOf cg:ParadigmSet ;
-    rdfs:comment "A CTS paradigm set is the empirically observed distribution of fillers at a position; a cg:ParadigmSet is the declared set of admissible alternatives. CTS paradigm sets become cg: paradigm sets once canonicalised.".
+cts:ParadigmSet rdfs:subClassOf iep:ParadigmSet ;
+    rdfs:comment "A CTS paradigm set is the empirically observed distribution of fillers at a position; a iep:ParadigmSet is the declared set of admissible alternatives. CTS paradigm sets become iep: paradigm sets once canonicalised.".
 
 cts:Tuple rdfs:seeAlso pgsl:Fragment ;
     rdfs:comment "A PGSL fragment at level N is a tuple whose fillers are fragments at level N-1. CTS and PGSL are two views of the same compositional structure — CTS emphasises usage + emergence, PGSL emphasises content-addressed algebra.".
 
 # ── OLKE: Knowledge evolution stages ─────────────────────────
 
-olke:stage rdfs:seeAlso cg:ContextDescriptor ;
-    rdfs:comment "Every cg:ContextDescriptor may carry an olke:stage annotation indicating where in the tacit→articulate→collective→institutional ladder its knowledge currently sits.".
+olke:stage rdfs:seeAlso iep:ContextDescriptor ;
+    rdfs:comment "Every iep:ContextDescriptor may carry an olke:stage annotation indicating where in the tacit→articulate→collective→institutional ladder its knowledge currently sits.".
 
-olke:Transition rdfs:seeAlso cg:PersistenceRecord ;
+olke:Transition rdfs:seeAlso iep:PersistenceRecord ;
     rdfs:comment "A stage transition is a kind of persistence event — the descriptor's bytes persist but its organizational binding evolves.".
 
 # ── AMTA: Trust attestation ──────────────────────────────────
 
-amta:Attestation rdfs:subClassOf cg:TrustFacet ;
-    rdfs:comment "An AMTA attestation is a trust facet with per-axis ratings (competence / honesty / relevance / recency). Downstream cgh:PolicyDecision evaluations can reference these axes via ODRL constraints.".
+amta:Attestation rdfs:subClassOf iep:TrustFacet ;
+    rdfs:comment "An AMTA attestation is a trust facet with per-axis ratings (competence / honesty / relevance / recency). Downstream ieh:PolicyDecision evaluations can reference these axes via ODRL constraints.".
 
-amta:Reputation rdfs:seeAlso cg:TrustFacet ;
-    rdfs:comment "An agent's reputation is the aggregate distribution of amta:Attestation instances it has received over time; materializes into a cg:TrustFacet on the agent's registry entry.".
+amta:Reputation rdfs:seeAlso iep:TrustFacet ;
+    rdfs:comment "An agent's reputation is the aggregate distribution of amta:Attestation instances it has received over time; materializes into a iep:TrustFacet on the agent's registry entry.".
 
 # ── Schema-evolution bridges ─────────────────────────────────
 #
@@ -643,7 +643,7 @@ amta:Reputation rdfs:seeAlso cg:TrustFacet ;
 # subClass owl:Class so they're queryable.
 
 align:NamespaceBridge a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Namespace Bridge" ;
     rdfs:comment "A first-class descriptor that documents an alignment between two namespaces (or two versions of one namespace). Carries source + target prefixes, the per-term mapping, and a confidence/exact-match flag per pair. Bridges are themselves linked data — versionable, citable, queryable.".
 
@@ -654,10 +654,10 @@ align:TermMapping a owl:Class ;
 align:VersionMigration a owl:Class ;
     rdfs:subClassOf align:NamespaceBridge ;
     rdfs:label "Version Migration" ;
-    rdfs:comment "A specialized bridge between two versions of the SAME namespace (e.g. cg:1.0 → cg:2.0). Carries per-term added / removed / renamed / narrowed / widened classifications so consumers can detect breaking changes.".
+    rdfs:comment "A specialized bridge between two versions of the SAME namespace (e.g. iep:1.0 → iep:2.0). Carries per-term added / removed / renamed / narrowed / widened classifications so consumers can detect breaking changes.".
 
 align:DeprecationMarker a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "Deprecation Marker" ;
     rdfs:comment "Attaches to a term descriptor to signal it has been deprecated. Carries the replacement term IRI (if any), the deprecation date, and the version after which the term is removed. Modal status is Counterfactual on the term's claim of being currently-valid.".
 

@@ -98,16 +98,16 @@ describe('normalizePublishInputs — cleartext mirror', () => {
     // not be treated as a descriptor-level conformsTo claim.
     const result = normalizePublishInputs({
       graphContent: `
-        @prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+        @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
         @prefix dct: <http://purl.org/dc/terms/> .
-        <urn:claim> cg:revokedIf [
-          cg:successorQuery """
+        <urn:claim> iep:revokedIf [
+          iep:successorQuery """
             ASK WHERE {
               ?d dct:conformsTo <https://example.org/schemas/replication-v2> .
             }
           """ ;
-          cg:evaluationScope cg:LocalPod ;
-          cg:onRevocation cg:DowngradeToHypothetical
+          iep:evaluationScope iep:LocalPod ;
+          iep:onRevocation iep:DowngradeToHypothetical
         ] .
       `,
     });
@@ -133,13 +133,13 @@ describe('normalizePublishInputs — cleartext mirror', () => {
     // ignore it. This pins both halves of the two-pass design.
     const result = normalizePublishInputs({
       graphContent: `
-        @prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-        <urn:claim> cg:revokedIf [
-          cg:successorQuery """
+        @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+        <urn:claim> iep:revokedIf [
+          iep:successorQuery """
             ASK WHERE { ?d dct:conformsTo <https://example.org/schemas/v2> . }
           """ ;
-          cg:evaluationScope cg:LocalPod ;
-          cg:onRevocation cg:MarkInvalid
+          iep:evaluationScope iep:LocalPod ;
+          iep:onRevocation iep:MarkInvalid
         ] .
       `,
     });
@@ -154,8 +154,8 @@ describe('normalizePublishInputs — cleartext mirror', () => {
   it('deduplicates repeated IRIs', () => {
     const result = normalizePublishInputs({
       graphContent: `
-        <urn:a> cg:supersedes <urn:old> , <urn:old> .
-        <urn:b> cg:supersedes <urn:old> .
+        <urn:a> iep:supersedes <urn:old> , <urn:old> .
+        <urn:b> iep:supersedes <urn:old> .
       `,
     });
     expect(result.supersedes).toEqual(['urn:old']);
@@ -185,17 +185,17 @@ describe('normalizePublishInputs — cleartext mirror', () => {
     // into matching commas inside SPARQL strings either.
     const result = normalizePublishInputs({
       graphContent: `
-        @prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+        @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
         @prefix prov: <http://www.w3.org/ns/prov#> .
         <urn:synthesis> prov:wasDerivedFrom <urn:real:a> , <urn:real:b> ;
-          cg:revokedIf [
-            cg:successorQuery """
+          iep:revokedIf [
+            iep:successorQuery """
               SELECT * WHERE {
                 ?d prov:wasDerivedFrom <urn:fake:x> , <urn:fake:y> .
               }
             """ ;
-            cg:evaluationScope cg:LocalPod ;
-            cg:onRevocation cg:MarkInvalid
+            iep:evaluationScope iep:LocalPod ;
+            iep:onRevocation iep:MarkInvalid
           ] .
       `,
     });
@@ -206,10 +206,10 @@ describe('normalizePublishInputs — cleartext mirror', () => {
 describe('extractRevocationConditions — bracket matching', () => {
   it('handles nested blank nodes inside revokedIf', () => {
     const turtle = `
-      @prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-      <urn:x> cg:revokedIf [
-        cg:successorQuery "ASK { ?d a [ a cg:Foo ] }" ;
-        cg:evaluationScope cg:LocalPod
+      @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+      <urn:x> iep:revokedIf [
+        iep:successorQuery "ASK { ?d a [ a iep:Foo ] }" ;
+        iep:evaluationScope iep:LocalPod
       ] .
     `;
     const results = extractRevocationConditions(turtle);
@@ -219,9 +219,9 @@ describe('extractRevocationConditions — bracket matching', () => {
 
   it('returns [] when successorQuery is missing', () => {
     const turtle = `
-      @prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-      <urn:x> cg:revokedIf [
-        cg:evaluationScope cg:LocalPod
+      @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+      <urn:x> iep:revokedIf [
+        iep:evaluationScope iep:LocalPod
       ] .
     `;
     expect(extractRevocationConditions(turtle)).toEqual([]);

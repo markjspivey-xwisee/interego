@@ -8,7 +8,7 @@ that implements the mapping so you can verify the claim directly.
 Layering reminder: standards-conformant behavior lives in the
 **vertical** (this directory) + the **substrate's L3 reusable
 primitives** (`applications/_shared/`, `src/`). The L1 protocol
-(`cg:`, `cgh:`, `pgsl:`, `ie:`, `align:`) stays technology-neutral —
+(`iep:`, `ieh:`, `pgsl:`, `ie:`, `align:`) stays technology-neutral —
 no SCORM/xAPI/LOM terms leak into it.
 
 ---
@@ -211,7 +211,7 @@ inbound and self-emitted statements are 2.0.0.
 |---|---|---|
 | Pod-as-wallet | **Compliant** | The learner's Solid pod holds every `fxa:CourseCompletionCredential` / `fxa:CompetencyAssertion` |
 | Credential portability | **Compliant** | Standard Solid pod migration; DID unchanged |
-| Wallet contents discoverable by type IRI | **Compliant** | `cg:discover()` filtered on `dct:conformsTo` |
+| Wallet contents discoverable by type IRI | **Compliant** | `iep:discover()` filtered on `dct:conformsTo` |
 | Wallet envelope export (CLR 2.0) | **Compliant** | See §11 |
 | Wallet backup / cross-pod replication | **Not implemented** | Achievable via existing E2EE envelope share; not yet a standard affordance |
 

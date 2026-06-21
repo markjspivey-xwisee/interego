@@ -33,29 +33,29 @@ function parseManifestEntries(ttl) {
   let cur = null;
   for (const raw of ttl.split('\n')) {
     const line = raw.trim();
-    const start = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
+    const start = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
     if (start) { cur = { descriptorUrl: start[1], describes: [], conformsTo: [] }; continue; }
     if (!cur) continue;
     let m;
-    if ((m = line.match(/cg:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
+    if ((m = line.match(/iep:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
     if ((m = line.match(/dct:conformsTo\s+<([^>]+)>/))) cur.conformsTo.push(m[1]);
-    if ((m = line.match(/cg:modalStatus\s+cg:(\w+)/))) cur.modalStatus = m[1];
-    if ((m = line.match(/cg:trustLevel\s+cg:(\w+)/))) cur.trustLevel = m[1];
-    if ((m = line.match(/cg:validFrom\s+"([^"]+)"/))) cur.validFrom = m[1];
+    if ((m = line.match(/iep:modalStatus\s+iep:(\w+)/))) cur.modalStatus = m[1];
+    if ((m = line.match(/iep:trustLevel\s+iep:(\w+)/))) cur.trustLevel = m[1];
+    if ((m = line.match(/iep:validFrom\s+"([^"]+)"/))) cur.validFrom = m[1];
     if (line.endsWith('.')) { entries.push(cur); cur = null; }
   }
   return entries;
 }
 
 function parseDescriptor(ttl) {
-  const issuerM = ttl.match(/cg:TrustFacet[\s\S]*?cg:issuer\s+<([^>]+)>/);
-  const modalM = ttl.match(/cg:modalStatus\s+cg:(\w+)/);
-  const confM = ttl.match(/cg:epistemicConfidence\s+"([\d.]+)"/);
+  const issuerM = ttl.match(/iep:TrustFacet[\s\S]*?iep:issuer\s+<([^>]+)>/);
+  const modalM = ttl.match(/iep:modalStatus\s+iep:(\w+)/);
+  const confM = ttl.match(/iep:epistemicConfidence\s+"([\d.]+)"/);
   const conformsToMatches = [...ttl.matchAll(/dct:conformsTo\s+<([^>]+)>/g)];
   const derivedFromMatches = [...ttl.matchAll(/prov:wasDerivedFrom\s+<([^>]+)>/g)];
-  const supersedesMatches = [...ttl.matchAll(/cg:supersedes\s+<([^>]+)>/g)];
-  const describesM = ttl.match(/cg:describes\s+<([^>]+)>/);
-  const validFromM = ttl.match(/cg:validFrom\s+"([^"]+)"/);
+  const supersedesMatches = [...ttl.matchAll(/iep:supersedes\s+<([^>]+)>/g)];
+  const describesM = ttl.match(/iep:describes\s+<([^>]+)>/);
+  const validFromM = ttl.match(/iep:validFrom\s+"([^"]+)"/);
   return {
     issuer: issuerM?.[1] ?? null,
     modal: modalM?.[1] ?? null,
@@ -73,14 +73,14 @@ function parseDescriptor(ttl) {
 //
 // Shape format (the one produced by publish-shape-and-claims.mjs):
 //   <iri> a sh:NodeShape ;
-//     sh:targetClass cg:ContextDescriptor ;
+//     sh:targetClass iep:ContextDescriptor ;
 //     sh:property [
-//       sh:path cg:modalStatus ;
-//       sh:in ( cg:Asserted ) ;
+//       sh:path iep:modalStatus ;
+//       sh:in ( iep:Asserted ) ;
 //       sh:message "..."
 //     ] ;
 //     sh:property [
-//       sh:path cg:epistemicConfidence ;
+//       sh:path iep:epistemicConfidence ;
 //       sh:minInclusive 0.8 ;
 //     ] ...
 //
@@ -128,10 +128,10 @@ function validateAgainstShape(descriptor, shape) {
 
     if (c.inValues) {
       for (const v of values) {
-        // values in `sh:in` come as prefixed terms like `cg:Asserted`;
+        // values in `sh:in` come as prefixed terms like `iep:Asserted`;
         // descriptor stores modal as bare `Asserted`. Normalize both.
-        const want = c.inValues.map(x => x.replace(/^cg:/, ''));
-        if (!want.includes(String(v).replace(/^cg:/, ''))) {
+        const want = c.inValues.map(x => x.replace(/^iep:/, ''));
+        if (!want.includes(String(v).replace(/^iep:/, ''))) {
           violations.push(c.message ?? `value '${v}' not in allowed set at ${c.path}`);
         }
       }
@@ -167,10 +167,10 @@ function validateAgainstShape(descriptor, shape) {
 // Map SHACL paths onto what our descriptor parse produces.
 function valueAtPath(descriptor, path) {
   switch (path) {
-    case 'cg:modalStatus': return descriptor.modal;
-    case 'cg:epistemicConfidence': return descriptor.confidence;
+    case 'iep:modalStatus': return descriptor.modal;
+    case 'iep:epistemicConfidence': return descriptor.confidence;
     case 'dct:conformsTo': return descriptor.conformsTo;
-    case 'cg:validFrom': return descriptor.validFrom;
+    case 'iep:validFrom': return descriptor.validFrom;
     default: return undefined;
   }
 }

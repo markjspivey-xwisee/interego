@@ -30,48 +30,48 @@ async function putText(url, body) {
 function buildAuditDescriptor({ id, graphIri, issuer, modal, confidence, wasDerivedFrom, conformsTo }) {
   const now = new Date().toISOString();
   const derived = wasDerivedFrom.map(u => `        prov:wasDerivedFrom <${u}> ;`).join('\n');
-  return `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+  return `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix as: <https://www.w3.org/ns/activitystreams#> .
 
 <${id}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
     dct:conformsTo <${conformsTo}> ;
-    cg:describes <${graphIri}> ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:describes <${graphIri}> ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${issuer}> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
 ${derived}
         prov:wasAttributedTo <${issuer}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [
-        a cg:AgentFacet ;
-        cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${issuer}> ] ;
-        cg:agentRole cg:Author ;
-        cg:onBehalfOf <${issuer}>
+    iep:hasFacet [
+        a iep:AgentFacet ;
+        iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${issuer}> ] ;
+        iep:agentRole iep:Author ;
+        iep:onBehalfOf <${issuer}>
     ] ;
-    cg:hasFacet [
-        a cg:SemioticFacet ;
-        cg:groundTruth "true"^^xsd:boolean ;
-        cg:modalStatus cg:${modal} ;
-        cg:epistemicConfidence "${confidence}"^^xsd:double
+    iep:hasFacet [
+        a iep:SemioticFacet ;
+        iep:groundTruth "true"^^xsd:boolean ;
+        iep:modalStatus iep:${modal} ;
+        iep:epistemicConfidence "${confidence}"^^xsd:double
     ] ;
-    cg:hasFacet [
-        a cg:TrustFacet ;
-        cg:issuer <${issuer}> ;
-        cg:trustLevel cg:SelfAsserted
+    iep:hasFacet [
+        a iep:TrustFacet ;
+        iep:issuer <${issuer}> ;
+        iep:trustLevel iep:SelfAsserted
     ] ;
-    cg:hasFacet [
-        a cg:FederationFacet ;
-        cg:origin <${POD}> ;
-        cg:storageEndpoint <${POD}> ;
-        cg:syncProtocol cg:SolidNotifications
+    iep:hasFacet [
+        a iep:FederationFacet ;
+        iep:origin <${POD}> ;
+        iep:storageEndpoint <${POD}> ;
+        iep:syncProtocol iep:SolidNotifications
     ] .
 `;
 }
@@ -79,13 +79,13 @@ ${derived}
 async function appendManifest(descUrl, graphIri, modal, conformsTo) {
   const entry = `
 
-<${descUrl}> a cg:ManifestEntry ;
-    cg:describes <${graphIri}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
+<${descUrl}> a iep:ManifestEntry ;
+    iep:describes <${graphIri}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
     dct:conformsTo <${conformsTo}> ;
-    cg:modalStatus cg:${modal} ;
-    cg:trustLevel cg:SelfAsserted .
+    iep:modalStatus iep:${modal} ;
+    iep:trustLevel iep:SelfAsserted .
 `;
   const cur = await fetchText(MANIFEST_URL);
   return await putText(MANIFEST_URL, (cur ?? '') + entry);
@@ -96,7 +96,7 @@ console.log('=== Publishing three adversarial audits ===\n');
 const ts = Date.now();
 
 // ── 1. Phantom-evidence audit ─────────────────────────────
-const phantomId = `urn:cg:adversarial:phantom:${ts}`;
+const phantomId = `urn:iep:adversarial:phantom:${ts}`;
 const phantomGraph = `urn:graph:adversarial:phantom:${ts}`;
 const phantomUrl = `${POD}context-graphs/adversarial-phantom-${ts}.ttl`;
 const phantomTtl = buildAuditDescriptor({
@@ -126,7 +126,7 @@ const alphaMatch = alphaCitation?.match(/(https:\/\/[^\s>]+urn-cg-multi-\d+-alph
 const alphaUrl = alphaMatch?.[1];
 if (!alphaUrl) { console.log('Alpha citation not found — cannot run COI test'); }
 else {
-  const coiId = `urn:cg:adversarial:coi:${ts}`;
+  const coiId = `urn:iep:adversarial:coi:${ts}`;
   const coiGraph = `urn:graph:adversarial:coi:${ts}`;
   const coiUrl = `${POD}context-graphs/adversarial-coi-${ts}.ttl`;
   const coiTtl = buildAuditDescriptor({
@@ -146,7 +146,7 @@ else {
 }
 
 // ── 3. Shape-violating audit (confidence > 1.0) ──────────
-const shapeId = `urn:cg:adversarial:shape-violator:${ts}`;
+const shapeId = `urn:iep:adversarial:shape-violator:${ts}`;
 const shapeGraph = `urn:graph:adversarial:shape-violator:${ts}`;
 const shapeUrl = `${POD}context-graphs/adversarial-shape-violator-${ts}.ttl`;
 // audit-result-v1 shape requires confidence ∈ [0,1]. We set it to 1.5.

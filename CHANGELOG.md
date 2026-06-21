@@ -41,7 +41,7 @@ that built it. No L1/L2/L3 ontology touches; substrate-composed.
 - **Confidentiality leak** — recipient-wrapped records no longer write the full
   xAPI statement in cleartext; it is redacted to structural metadata and the full
   statement lives only in the encrypted holon. Standing lesson: base64 ≠ encryption.
-- **Cross-seat holon resolution** — the `cg:encryptedHolon` link is advertised on
+- **Cross-seat holon resolution** — the `iep:encryptedHolon` link is advertised on
   the gate host at mint time (write target + ciphertext untouched, so signed
   authorship still verifies). `src/foundation-persist.ts`.
 
@@ -105,7 +105,7 @@ container. No L1/L2/L3 ontology touches; no substrate code touched.
 
 ### Layering audit (unchanged principles)
 
-- Zero L1 (`cg:` / `cgh:` / `pgsl:` / `ie:` / `align:`) additions
+- Zero L1 (`iep:` / `ieh:` / `pgsl:` / `ie:` / `align:`) additions
 - Zero L2/L3 ontology changes in `docs/ns/`
 - Every new vocab term in `vocab.foxximediums.com/*` (vertical-scoped: `fxa:AdaptiveSequencingPolicy`, `fxs:PackageUpload`, `fxs:TenantMetadata`, `fxa:TutorAgentProfile` — referenced by the conformsTo strings in the new handlers; declarations follow in the next commit)
 - All compositions use existing `publish` / `discover` / `fetchGraphContent` / `verifyDataIntegrityProof` / BBS+ / cmi5 primitives. No new substrate code.
@@ -263,7 +263,7 @@ Every demo composes existing primitives:
 - Alignment → pure functions over the alignment payload + BFS
 - Cohort intelligence → existing `discover` + `fetchGraphContent` + plain set math
 
-No L1 (`cg:` / `cgh:` / `pgsl:` / `ie:` / `align:`) terms invented. No L2/L3 ontologies in `docs/ns/` touched. No mcp-server / deploy/mcp-relay touched. All new vocab terms in foxxi-side namespaces (`fxa:` / `fxs:` / `fxk:` / `rcd:` / `wallet:` — all under `vocab.foxximediums.com/*`).
+No L1 (`iep:` / `ieh:` / `pgsl:` / `ie:` / `align:`) terms invented. No L2/L3 ontologies in `docs/ns/` touched. No mcp-server / deploy/mcp-relay touched. All new vocab terms in foxxi-side namespaces (`fxa:` / `fxs:` / `fxk:` / `rcd:` / `wallet:` — all under `vocab.foxximediums.com/*`).
 
 ### Live URL unchanged
 
@@ -410,7 +410,7 @@ Full conformance audit lives in [`applications/foxxi-content-intelligence/CONFOR
 ### NEW vertical files
 
 - [`applications/foxxi-content-intelligence/ns/rcd.ttl`](applications/foxxi-content-intelligence/ns/rcd.ttl) — IEEE 1484.20.2 mapping. Declares `rcd:CompetencyDefinition` (subclass of `fxk:Skill`), `rcd:ProficiencyLevel` with five individuals (`rcd:Novice` → `rcd:Expert`) carrying `rdf:value 1..5`, and `rcd:statement` / `rcd:scope` / `rcd:masteryRubric` predicates.
-- [`applications/foxxi-content-intelligence/ns/wallet.ttl`](applications/foxxi-content-intelligence/ns/wallet.ttl) — Learner-wallet L2 pattern. Declares `wallet:WalletEnvelope` (subclass of `cg:ContextDescriptor`) for CLR-shaped aggregation, plus `wallet:holdsCredential`, `wallet:holderDid`, `wallet:exportedAt`.
+- [`applications/foxxi-content-intelligence/ns/wallet.ttl`](applications/foxxi-content-intelligence/ns/wallet.ttl) — Learner-wallet L2 pattern. Declares `wallet:WalletEnvelope` (subclass of `iep:ContextDescriptor`) for CLR-shaped aggregation, plus `wallet:holdsCredential`, `wallet:holderDid`, `wallet:exportedAt`.
 - [`applications/foxxi-content-intelligence/src/credentials.ts`](applications/foxxi-content-intelligence/src/credentials.ts) — `deriveTenantIssuer(seed)` derives an Ed25519 `did:key` keypair deterministically from `FOXXI_ISSUER_KEY_SEED`; `buildCourseCompletionVc()` constructs the OB3-shaped W3C VC payload; `issueCourseCompletionCredential()` signs with `issueDataIntegrityProof` from the substrate and publishes to the learner's pod via the substrate's `publish()` — running a `verifyDataIntegrityProof()` self-check first so a misconfigured issuer never leaves a bad credential.
 - [`applications/foxxi-content-intelligence/src/clr.ts`](applications/foxxi-content-intelligence/src/clr.ts) — `exportClr(config)` walks the learner's pod via `discover()` filtered on `dct:conformsTo=fxa:CourseCompletionCredential` (+ `fxa:CompetencyAssertion`), fetches each graph, parses the embedded VC out of the `fxs:bundleJson` base64 literal, verifies each `DataIntegrityProof`, cross-checks `credentialSubject.id === holderDid` (defends against an attacker writing someone else's credential to the pod), and emits a 1EdTech CLR 2.0-shaped JSON envelope.
 - [`applications/foxxi-content-intelligence/src/case-exporter.ts`](applications/foxxi-content-intelligence/src/case-exporter.ts) — `frameworkToCase(framework)` maps `fxk:SkillFramework` + `fxk:Skill` (with optional `rcd:` proficiency) to `CFDocument` / `CFItem` / `CFAssociation` / `CFRubric` per CASE 1.0. Sets the proper CASE `@context`; emits one rubric per framework when any skill carries an RDCEO `proficiencyLevel`.
@@ -431,7 +431,7 @@ Full conformance audit lives in [`applications/foxxi-content-intelligence/CONFOR
 
 ### Foxxi vocab additions (in [`ns/foxxi-content-graph-v0.2.ttl`](applications/foxxi-content-intelligence/ns/foxxi-content-graph-v0.2.ttl))
 
-- `fxa:CourseCompletionCredential` (subclass of `cgh:Credential`) — RDF type for the published credential descriptor
+- `fxa:CourseCompletionCredential` (subclass of `ieh:Credential`) — RDF type for the published credential descriptor
 - `fxa:CompetencyAssertion` — RDF type for skill-mastery assertions (issued individually or aggregated into a CLR)
 - `fxk:hasProficiencyLevel`, `fxk:caseFrameworkRef` — RDCEO + CASE binding properties on `fxk:Skill` / `fxk:SkillFramework`
 
@@ -478,7 +478,7 @@ hardcoded role tables — everything wired through substrate primitives.
 - Every handler that touches user data calls `resolveCaller()` first. `foxxi.discover_assigned_courses` checks `caller can query this learner_did` and 403s otherwise; `foxxi.retrieve_course_context` and `foxxi.ask_course_question_agentic` require any authenticated caller and bind `learner_did` to the verified WebID (rejecting any spoofed value in args).
 
 **ABAC policy descriptors (substrate-pure declaration):**
-- Three policies published as `fxa:AbacPolicy` descriptors: `admin-full-access`, `manager-direct-reports`, `learner-self`. Each declares its role, the sections it can read, and the scoping rule. The bridge's `policy.ts` is the enforcer; the published descriptors are the auditor's authoritative declaration of what access decisions are baked in. Regulators / auditors can `cg:discover()` filtered on `dct:conformsTo=fxa:AbacPolicy` to verify the policy set without reading the bridge code.
+- Three policies published as `fxa:AbacPolicy` descriptors: `admin-full-access`, `manager-direct-reports`, `learner-self`. Each declares its role, the sections it can read, and the scoping rule. The bridge's `policy.ts` is the enforcer; the published descriptors are the auditor's authoritative declaration of what access decisions are baked in. Regulators / auditors can `iep:discover()` filtered on `dct:conformsTo=fxa:AbacPolicy` to verify the policy set without reading the bridge code.
 
 **Tenant directory carries wallet addresses:**
 - `publishTenantDirectory(...)` calls `attachDeterministicAddresses(users, walletSeed)` before publishing so each user record carries a `wallet_address` field. The bridge uses this map to verify incoming tokens. Since the directory itself is admin-encrypted, wallet addresses aren't publicly leaked — only the bridge (which holds the admin keypair) can build the address-map.
@@ -530,7 +530,7 @@ type IRIs (`fxs:CourseCatalog`, `fxs:TenantDirectory`,
 `fxa:EnrollmentEventStream`, `fxa:AuditLogStream`,
 `fxa:CoursePackageBundle`). It filters discover-returned manifest
 entries by `dct:conformsTo` matching those IRIs, follows the
-descriptor's `cg:affordance hydra:target` link to find the graph,
+descriptor's `iep:affordance hydra:target` link to find the graph,
 and pulls the payload from a `fxs:bundleJson` literal. The pod
 operator can move files freely — only the type contract is stable.
 
@@ -545,7 +545,7 @@ NEW vertical files:
 
 - [`applications/foxxi-content-intelligence/src/tenant-publisher.ts`](applications/foxxi-content-intelligence/src/tenant-publisher.ts) —
   publishes each section of a tenant snapshot as a separate
-  `cg:ContextDescriptor` + graph pair. Each descriptor carries a
+  `iep:ContextDescriptor` + graph pair. Each descriptor carries a
   Provenance facet `wasAttributedTo` the authoritative source DID +
   a Temporal facet `validFrom` + a Semiotic facet `modalStatus:
   Asserted`. The graph contains one `fxs:bundleJson` literal with
@@ -945,7 +945,7 @@ descriptor blueprint with proper modal status + provenance chain:
                                wasDerivedFrom: [retrieval]
   `fxa:CitedAnswer`            Asserted     (the final cited answer)
                                wasDerivedFrom: [llm, retrieval, question]
-                               cg:supersedes  → llm
+                               iep:supersedes  → llm
 
 The auditor can walk the chain from the final answer back to the
 original question. The trace descriptors are returned as data on the
@@ -974,7 +974,7 @@ replaced. Routes to the agentic endpoint, renders:
 - Retrieval breadcrumbs: seed concepts (with scores + course
   attribution), cited slides (verbatim transcripts, expandable)
 - The full Interego trace: each descriptor with its IRI, modal-status
-  pill, `prov:wasDerivedFrom` chain, and `cg:supersedes` arrow
+  pill, `prov:wasDerivedFrom` chain, and `iep:supersedes` arrow
 - Multi-turn history with prior-turn replay into `history` arg
 
 Dashboard's [`interego/client.ts`](applications/foxxi-content-intelligence/dashboard-app/src/interego/client.ts)
@@ -1083,7 +1083,7 @@ vertical owns its own CORS policy. Configurable via
 - CORS lives in the foxxi bridge's middleware hook, owned by the vertical
 - The dashboard is the third party that can drive the Foxxi vertical
   (after the contract tests + the live MCP smoke); a fourth party (any
-  protocol-aware MCP agent walking `cg:Affordance` descriptors via Path A)
+  protocol-aware MCP agent walking `iep:Affordance` descriptors via Path A)
   works identically without any Foxxi-specific code
 
 ---
@@ -1101,7 +1101,7 @@ TTLs) as a first-class Interego vertical at
   audience table, substrate-composition table.
 - [`affordances.ts`](applications/foxxi-content-intelligence/affordances.ts)
   — 3 learner-side + 7 admin-side affordances, dual-audience split.
-  Action IRIs follow `urn:cg:action:foxxi:<verb>`; tool names follow
+  Action IRIs follow `urn:iep:action:foxxi:<verb>`; tool names follow
   `foxxi.<verb>`.
 - [`src/publisher.ts`](applications/foxxi-content-intelligence/src/publisher.ts)
   — substrate-side glue. `ingestContentPackage` emits three-stratum
@@ -1747,7 +1747,7 @@ decrypt via their own X25519 keypair.
 NEW in `applications/_shared/aggregate-privacy/index.ts`:
 - `publishEncryptedShareDistribution({distribution,
   bundleSumCommitment, operatorDid, podUrl})` — writes the
-  EncryptedShareDistribution as a `cg:ContextDescriptor` on the
+  EncryptedShareDistribution as a `iep:ContextDescriptor` on the
   operator's pod. Content-addressed on (bundleSumCommitment,
   recipientDid) so republish is idempotent.
 - `fetchPublishedEncryptedShareDistribution({graphUrl})` — recipient-
@@ -1824,7 +1824,7 @@ Tests: 1404/1404 passing (tsc clean).
 ## 2026-05-16 — Aggregate-privacy: publishable committee-reconstruction attestation
 
 The CommitteeReconstructionAttestation is now publishable as a normal
-`cg:ContextDescriptor` on the operator's pod. Parallels the existing
+`iep:ContextDescriptor` on the operator's pod. Parallels the existing
 publishAttestedHomomorphicSum / publishSignedBudgetAuditLog pattern:
 JSON body (with bigint-string round-trip) inside `agg:bundleJson`;
 content-addressed on (bundleSumCommitment, reconstructedAt) so
@@ -2366,7 +2366,7 @@ What's committed for the 12 months ending 2027-05-16:
 - **Wire format frozen.** Turtle / TriG / JSON-LD serializations of
   any conforming descriptor written today will parse identically by
   any v1.x implementation.
-- **Vocabulary frozen in `cg:` / `cgh:` / `pgsl:` / `ie:` /
+- **Vocabulary frozen in `iep:` / `ieh:` / `pgsl:` / `ie:` /
   `align:`.** No removals, renames, or semantic narrowing.
   Additive changes (new optional terms, new optional facets) are
   permitted within v1.x.
@@ -2375,7 +2375,7 @@ What's committed for the 12 months ending 2027-05-16:
   satisfy) are normative.
 - **Modal-truth invariants frozen.** The
   Asserted/Quoted/Hypothetical/Counterfactual/Retracted correspondence
-  to `cg:groundTruth` is the L1 contract.
+  to `iep:groundTruth` is the L1 contract.
 - **Conformance-level partition frozen.** L1 / L2 / L3 / L4 categories
   are fixed; tests may be added within a level.
 
@@ -2441,7 +2441,7 @@ Full suite: 1238 passing.
 Nous Research's Hermes Agent (the most-used agent runtime, ~140k stars).
 stdlib-only Python; maps Hermes' memory hooks (`sync_turn`, `prefetch`,
 `on_memory_write`) onto the relay's `publish_context` / `discover_context`
-REST surface. Same `cgh:AgentMemory` graph shape as the OpenClaw
+REST surface. Same `ieh:AgentMemory` graph shape as the OpenClaw
 provider — Hermes bots and OpenClaw agents on one pod read each other's
 memories. New `docs/integrations/path-5-hermes-memory-provider.md`;
 integration map grew from four paths to five.
@@ -2497,7 +2497,7 @@ unrecognized origins — single-origin deployments unaffected.
 `docs/NAME-SERVICE.md` (`17169fe`) + `src/naming/` (`a07a81c`) — a name
 is a **verifiable attestation**, not a claimed registration:
 `<did> foaf:nick "alice"` inside an ordinary Context Descriptor with
-Trust + Provenance facets and `cg:supersedes` chains. Resolution is
+Trust + Provenance facets and `iep:supersedes` chains. Resolution is
 federated discovery + a pluggable trust policy — conflicts resolve by
 the resolver's policy, never first-come-first-served. No central
 registrar, no root, no namespace governance; the honest cost is no
@@ -2660,7 +2660,7 @@ given name.
   `<owner> foaf:nick "name"` triples in the directory document. The
   directory hint is then literally a projection of the attestations —
   re-derivable, never authoritative. No new ontology term in any
-  `cg:` / `cgh:` / pattern namespace.
+  `iep:` / `ieh:` / pattern namespace.
 - **`directoryNameIndex(directories)` materializes a
   `lowercase-name → NameHint[]` map** across one or more pod
   directories. `NameHint` carries the directory ID for provenance.
@@ -2760,7 +2760,7 @@ identity/relay attack surface.
   diagnostics.
 - **Batch 4** (`d4d50c2`) — CAS exponential backoff, PGSL ingest cap,
   WebSocket reconnect, `discover_all` partial-failure summaries.
-- `cg:supersedes` round-trips through `ManifestEntry` (`ba4712f`).
+- `iep:supersedes` round-trips through `ManifestEntry` (`ba4712f`).
 
 ## 2026-05-02 — Complexity-science foundations, demo set 16–23, agent-runtime integration scaffolding
 
@@ -2786,7 +2786,7 @@ Three arcs landed over early May.
   Demo 22 (autonomous game design/build/play) and Demo 23 (federated
   zero-copy semantic layer).
 - **Agent-runtime integration paths 1–4** (`f3fb1c1`) — the skills
-  bridge (SKILL.md ↔ `cg:Affordance`), the OpenClaw memory plugin, the
+  bridge (SKILL.md ↔ `iep:Affordance`), the OpenClaw memory plugin, the
   compliance overlay, and the integration map. The Hermes provider
   (Path 5) and the HATEOAS surface for both plugins followed on
   2026-05-14.
@@ -2815,8 +2815,8 @@ principles:
     affordancesManifestTurtle(...)
   - applications/<vertical>/affordances.ts — single source of truth
     for each vertical's capabilities (LPC: 6, ADP: 8, LRS: 4, AC: 5)
-  - Action IRIs follow urn:cg:action:<vertical>:<verb> convention
-  - Both protocol-level (cg:Affordance) and ergonomic (MCP tool schema)
+  - Action IRIs follow urn:iep:action:<vertical>:<verb> convention
+  - Both protocol-level (iep:Affordance) and ergonomic (MCP tool schema)
     surfaces derive from the same affordance declarations
 
 ### Phase 3 — per-vertical bridges as separate optional deployments
@@ -2834,7 +2834,7 @@ principles:
   - Generic Interego deployments (mcp-server, personal-bridge,
     deploy/mcp-relay) expose ONLY protocol-level tools
   - Verticals are emergent applications, not protocol extensions
-  - Verticals are ALWAYS reachable via the protocol-level cg:Affordance
+  - Verticals are ALWAYS reachable via the protocol-level iep:Affordance
     discovery path — no per-vertical client code required at the
     consuming agent
   - Per-vertical bridges are an optional convenience reification,
@@ -3078,9 +3078,9 @@ doesn't trust the relay.
 ### Added — `compliance: true` flag on `publish_context` (both surfaces)
 
 When set:
-- Trust upgraded to `cg:CryptographicallyVerified`
+- Trust upgraded to `iep:CryptographicallyVerified`
 - Descriptor signed with persisted ECDSA wallet (secp256k1)
-- Inline `cg:proof` reference embedded in TrustFacet (proofScheme,
+- Inline `iep:proof` reference embedded in TrustFacet (proofScheme,
   proofUrl, proofSigner) — included in the SIGNED Turtle so tampering
   invalidates
 - Sibling `.sig.json` written to the pod
@@ -3219,20 +3219,20 @@ relay container on push to master; mcp-server publishes on tag.
 ABAC built out as a first-class protocol mechanism: policies are typed
 context descriptors, predicates are SHACL shapes, attributes are
 resolved across the federation, and decisions are themselves linked
-data. The structural primitives live at L1 (`cg:`); the evaluation
+data. The structural primitives live at L1 (`iep:`); the evaluation
 pattern is L2 (`abac:`); the reference runtime is L3 (`src/abac/`).
 
 ### Added (L1 — Protocol)
 
-- **`cg:AccessControlPolicy`** — a policy IS a `cg:ContextDescriptor`.
+- **`iep:AccessControlPolicy`** — a policy IS a `iep:ContextDescriptor`.
   Every implementation now has the same policy shape.
-- **`cg:DeonticMode`** + individuals `cg:Permit` / `cg:Deny` / `cg:Duty`
+- **`iep:DeonticMode`** + individuals `iep:Permit` / `iep:Deny` / `iep:Duty`
   — ODRL-aligned modal labels without the full ODRL dependency.
-- **`cg:policyRef`** on `cg:AccessControlFacet` — links a facet to one
+- **`iep:policyRef`** on `iep:AccessControlFacet` — links a facet to one
   or more policies. WAC-shaped authorizations coexist, so deployments
   migrate ACL → ABAC incrementally.
-- **`cg:policyPredicate`** (→ `sh:NodeShape`), **`cg:governedAction`**,
-  **`cg:deonticMode`**, **`cg:policyDuty`** properties.
+- **`iep:policyPredicate`** (→ `sh:NodeShape`), **`iep:governedAction`**,
+  **`iep:deonticMode`**, **`iep:policyDuty`** properties.
 - **`AccessControlFacetData.policyRefs`** TS field; new
   `AccessControlPolicyData` + `DeonticMode` types.
 
@@ -3244,7 +3244,7 @@ pattern is L2 (`abac:`); the reference runtime is L3 (`src/abac/`).
   - `abac:AttributeResolver` — federates the subject's attribute graph.
   - `abac:DecisionCache` — cached decisions as verifiable attestations
     (issuer + validity window), so stale cache is verifiably stale.
-  - `abac:EvaluationRecord rdfs:subClassOf cg:ContextDescriptor` — the
+  - `abac:EvaluationRecord rdfs:subClassOf iep:ContextDescriptor` — the
     audit trail is itself linked data.
 - 5 properties + 3 verdict individuals (`abac:Allowed`,
   `abac:Denied`, `abac:Indeterminate` — the Indeterminate case matters
@@ -3302,7 +3302,7 @@ pattern is L2 (`abac:`); the reference runtime is L3 (`src/abac/`).
 
 ### Why
 
-`cg:AccessControlFacet` was WAC-shaped only (identity-based). The
+`iep:AccessControlFacet` was WAC-shaped only (identity-based). The
 federation model already provides attribute-rich facets (Trust,
 Semiotic, Provenance, AMTA-axis attestations) but we had no
 evaluator that consumed them as policy inputs. This lands one.
@@ -3323,10 +3323,10 @@ is sufficient for non-trivial domains without new L1 primitives.
 - **`docs/ns/code.ttl`** — 10 classes + 18 properties for source-code
   artifacts: Repository, Commit, Branch, PullRequest, Review, Defect,
   TestRun, BuildResult, ReviewVerdict, Severity. Every class grounds
-  in L1 (cg:/pgsl:) or a W3C vocabulary. Commits are `pgsl:Fragment`;
-  branches are `cg:ParadigmSet`; reviews `cg:constructedFrom
-  (cg:SemioticFacet cg:ProvenanceFacet)`; defects
-  `cg:constructedFrom (cg:SemioticFacet)`.
+  in L1 (iep:/pgsl:) or a W3C vocabulary. Commits are `pgsl:Fragment`;
+  branches are `iep:ParadigmSet`; reviews `iep:constructedFrom
+  (iep:SemioticFacet iep:ProvenanceFacet)`; defects
+  `iep:constructedFrom (iep:SemioticFacet)`.
 - **`examples/demo-code-domain.mjs`** — runtime demo of creation +
   utilization. Builds a repo + PR + reviews as `code:` instances,
   composes two opposing reviews via `ModalAlgebra.meet` to derive
@@ -3428,10 +3428,10 @@ construction named in the ontology has a runtime constructor.
 
 - **`spec/DERIVATION.md`** — normative construction rules for
   L1 → L2 → L3. A class is grounded if it has
-  `owl:equivalentClass` / `rdfs:subClassOf` / `cg:constructedFrom`
+  `owl:equivalentClass` / `rdfs:subClassOf` / `iep:constructedFrom`
   or is explicitly marked primitive. Dependencies are
   machine-checkable via `tools/derivation-lint.mjs`.
-- **`cg:constructedFrom`** predicate added to `docs/ns/cg.ttl`.
+- **`iep:constructedFrom`** predicate added to `docs/ns/cg.ttl`.
   Declares that a class is constructed at runtime from named L1
   primitives.
 
@@ -3440,23 +3440,23 @@ construction named in the ontology has a runtime constructor.
 All seven L2/L3 ontology files now fully grounded (41/41 classes):
 
 - **SAT** (8/8) — Situation, SemioticField, Interpretant, Sign
-  all `rdfs:subClassOf cg:*`; Semiosis + EmergentMeaning
-  `cg:constructedFrom`.
-- **HELA** (6/6) — Trace, LearningObject subclass cg:ContextDescriptor;
-  Omega `cg:constructedFrom (pgsl:Fragment cg:SemioticFacet)`.
+  all `rdfs:subClassOf iep:*`; Semiosis + EmergentMeaning
+  `iep:constructedFrom`.
+- **HELA** (6/6) — Trace, LearningObject subclass iep:ContextDescriptor;
+  Omega `iep:constructedFrom (pgsl:Fragment iep:SemioticFacet)`.
 - **CTS** (7/7) — Tuple subclass pgsl:Fragment; Position/Filler
-  subclass pgsl:Atom; Pattern `owl:equivalentClass cg:SyntagmaticPattern`.
-- **OLKE** (2/2) — KnowledgeStage subclass cg:SemioticFacet;
-  Transition subclass cg:ProvenanceFacet.
-- **AMTA** (6/6) — every rating subclass cg:TrustFacet or
-  cg:SemioticFacet; Reputation `cg:constructedFrom (amta:Attestation)`.
-- **HyprCat** (6/6) — World now subclass cg:FederationFacet;
+  subclass pgsl:Atom; Pattern `owl:equivalentClass iep:SyntagmaticPattern`.
+- **OLKE** (2/2) — KnowledgeStage subclass iep:SemioticFacet;
+  Transition subclass iep:ProvenanceFacet.
+- **AMTA** (6/6) — every rating subclass iep:TrustFacet or
+  iep:SemioticFacet; Reputation `iep:constructedFrom (amta:Attestation)`.
+- **HyprCat** (6/6) — World now subclass iep:FederationFacet;
   others transitively via same-file subclassing.
 - **HyprAgent** (6/6) — already grounded.
 
 ### Added (L3 — Implementation, `src/model/derivation.ts`)
 
-Runtime constructors for every `cg:constructedFrom`-tagged term:
+Runtime constructors for every `iep:constructedFrom`-tagged term:
 
 - **`constructOmega(name, candidates, validityFn)`** — subobject
   classifier for a presheaf topos. Returns three-valued
@@ -3520,8 +3520,8 @@ tests → demos.
 ### Added (L1 — Protocol, `spec/architecture.md`)
 
 - **§6.5a Multi-affordance descriptors and runtime resolution
-  (normative).** A descriptor MAY carry multiple `cg:affordance`
-  blocks with distinct `cg:action` values. Defines canonical
+  (normative).** A descriptor MAY carry multiple `iep:affordance`
+  blocks with distinct `iep:action` values. Defines canonical
   action vocabulary (canDecrypt / canFetchPayload / canAudit /
   canPay / canVerify / canCompose), cross-pod affordance rules,
   and the runtime-resolution pattern that turns HATEOAS controls
@@ -3539,9 +3539,9 @@ tests → demos.
 
 ### Added (L1 — Ontology, `docs/ns/cg.ttl`)
 
-- **Four canonical affordance actions:** `cg:canAudit`,
-  `cg:canPay`, `cg:canVerify`, `cg:canCompose`. Each declared as
-  `cg:Affordance` with rdfs:label + rdfs:comment per lint
+- **Four canonical affordance actions:** `iep:canAudit`,
+  `iep:canPay`, `iep:canVerify`, `iep:canCompose`. Each declared as
+  `iep:Affordance` with rdfs:label + rdfs:comment per lint
   conventions.
 
 ### Added (L3 — Implementation, `src/solid/shapes.ts`)
@@ -3629,14 +3629,14 @@ Trust substrate + monetization primitives landed. 25 commits
   nonce enforcement, replay detection verified live. Settlement stubbed.
   Commit `13f840b`.
 - **HATEOAS affordance → callable tool bridge.** Walks the manifest, enumerates
-  `cg:affordance` blocks by `cg:action`, resolves each into a runtime-callable
+  `iep:affordance` blocks by `iep:action`, resolves each into a runtime-callable
   tool, invokes and publishes the invocation as a first-class descriptor with
   `prov:wasDerivedFrom` back to the source affordance. Commit `9e44b98`.
 - **Descriptor-level `conformsTo`.** `ContextDescriptorData.conformsTo?: IRI[]`;
   builder `.conformsTo()`; serializer emits top-level `dct:conformsTo`; manifest
   writer surfaces it for cleartext federation filtering. Commit `0b29028`.
 - **Generalized cleartext mirror.** Four cross-descriptor predicates
-  (`cg:revokedIf`, `prov:wasDerivedFrom`, `cg:supersedes`, `dct:conformsTo`)
+  (`iep:revokedIf`, `prov:wasDerivedFrom`, `iep:supersedes`, `dct:conformsTo`)
   extracted at publish and threaded onto the cleartext descriptor layer.
   Commit `0b29028`.
 - **`effective_at` discover semantics** (spec `§5.2.3`, normative). Interval-
@@ -3654,10 +3654,10 @@ Trust substrate + monetization primitives landed. 25 commits
   then uses a bracket-counting parser on the raw body for revocation
   conditions. Object-list shorthand (`pred <a>, <b>, <c>`) now extracts
   all three IRIs, not just the first. Commits `280160b`, `8b1a3df`.
-- **`xsd:double` serialization** for `cg:epistemicConfidence`. `confidence=1`
+- **`xsd:double` serialization** for `iep:epistemicConfidence`. `confidence=1`
   produces `"1.0"^^xsd:double`, not `"1"^^xsd:integer`. Commit `242f054`.
 - **Three-valued modal truth.** `Hypothetical` claims no longer auto-write
-  `cg:groundTruth false`; the field is omitted (three-valued). `Asserted` →
+  `iep:groundTruth false`; the field is omitted (three-valued). `Asserted` →
   true, `Counterfactual` → false. Commits `63e080b`, `cc50be7`.
 - **Aggregator + alt-auditor parallelized.** Sequential HTTP fan-out was
   timing out at 60s past ~90 descriptors. Now uses a bounded concurrency
@@ -3675,10 +3675,10 @@ Trust substrate + monetization primitives landed. 25 commits
   session on a single cold-start fetch failure; now treated as advisory.
   Commit `280160b` (also the Turtle-tokenizer commit).
 - **Regex extractor cross-string-literal matching.** An IRI mentioned inside
-  a `cg:revokedIf` SPARQL successorQuery was mis-lifted as a top-level
+  a `iep:revokedIf` SPARQL successorQuery was mis-lifted as a top-level
   `dct:conformsTo`. Fixed with the two-pass tokenizer. Commit `280160b`.
 - **Revocation SHACL spec.** First-class extension with proposals A
-  (`cg:RevocationFacet`) + B (`cg:revokedIf` predicate on `cg:SemioticFacet`).
+  (`iep:RevocationFacet`) + B (`iep:revokedIf` predicate on `iep:SemioticFacet`).
   Commits `a3c305f`, `cc50be7`.
 
 ### Tests
@@ -3694,7 +3694,7 @@ Trust substrate + monetization primitives landed. 25 commits
 Pre-session capability baseline (inherited):
 
 - End-to-end encrypted pod content (X25519 + XSalsa20-Poly1305 envelopes)
-- Hypermedia-native data products (cg:Affordance + cgh:Affordance +
+- Hypermedia-native data products (iep:Affordance + ieh:Affordance +
   hydra:Operation + dcat:Distribution type union)
 - Per-surface agent minting (relay maps OAuth client_name to surface slug)
 - Decentralized auth (SIWE / WebAuthn / did:key; no passwords; derived userId)

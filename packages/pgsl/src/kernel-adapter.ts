@@ -42,7 +42,7 @@ let _adapterPgsl: PGSLInstance | null = null;
 function adapterPgsl(provenance?: LatticeProvenance): PGSLInstance {
   if (_adapterPgsl) return _adapterPgsl;
   _adapterPgsl = createPGSL({
-    wasAttributedTo: (provenance?.wasAttributedTo ?? 'urn:cg:kernel') as IRI,
+    wasAttributedTo: (provenance?.wasAttributedTo ?? 'urn:iep:kernel') as IRI,
     generatedAtTime: provenance?.generatedAtTime ?? new Date().toISOString(),
   });
   return _adapterPgsl;

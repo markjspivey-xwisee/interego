@@ -1,0 +1,1826 @@
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#>.
+@prefix owl:  <http://www.w3.org/2002/07/owl#>.
+@prefix prov: <http://www.w3.org/ns/prov#>.
+@prefix time: <http://www.w3.org/2006/time#>.
+@prefix dct:  <http://purl.org/dc/terms/>.
+@prefix acl:  <http://www.w3.org/ns/auth/acl#>.
+@prefix vc:   <https://www.w3.org/2018/credentials#>.
+@prefix did:  <https://www.w3.org/ns/did#>.
+@prefix dcat: <http://www.w3.org/ns/dcat#>.
+@prefix ldp:  <http://www.w3.org/ns/ldp#>.
+@prefix solid: <http://www.w3.org/ns/solid/terms#>.
+@prefix hydra: <http://www.w3.org/ns/hydra/core#>.
+@prefix foaf: <http://xmlns.com/foaf/0.1/>.
+@prefix vann: <http://purl.org/vocab/vann/>.
+@prefix skos: <http://www.w3.org/2004/02/skos/core#>.
+@prefix sh:   <http://www.w3.org/ns/shacl#>.
+@prefix vs:   <http://www.w3.org/2003/06/sw-vocab-status/ns#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Interego 1.0 Ontology
+# ══════════════════════════════════════════════════════════════
+
+<https://markjspivey-xwisee.github.io/interego/ns/iep#>
+    a owl:Ontology ;
+    owl:versionInfo "1.0" ;
+    dct:title "Interego 1.0 Ontology" ;
+    dct:description "A compositional framework for typed graph contexts over RDF 1.2 Named Graphs. Defines context descriptors with seven facet types (Temporal, Provenance, Agent, AccessControl, Semiotic, Trust, Federation), composition operators, and federation primitives for decentralized knowledge sharing between AI agents." ;
+    dct:creator [
+        a foaf:Organization ;
+        foaf:name "Interego" ;
+        foaf:homepage <https://markjspivey-xwisee.github.io/interego/>
+    ] ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:created "2026-03-17"^^xsd:date ;
+    dct:modified "2026-03-20"^^xsd:date ;
+    vann:preferredNamespacePrefix "cg" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/iep#" ;
+    rdfs:seeAlso <https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html>.
+
+# ══════════════════════════════════════════════════════════════
+#  Classes
+# ══════════════════════════════════════════════════════════════
+
+# ── Core ──────────────────────────────────────────────────────
+
+iep:ContextDescriptor a owl:Class ;
+    rdfs:label "Context Descriptor" ;
+    rdfs:comment "A metadata envelope that annotates one or more RDF Named Graphs with typed context facets. Each descriptor declares provenance, temporal validity, semiotic frame, trust level, and federation metadata for the graphs it describes." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ComposedDescriptor a owl:Class ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Composed Descriptor" ;
+    rdfs:comment "A context descriptor produced by applying a composition operator (union, intersection, restriction, override) to two or more source descriptors. Preserves full provenance of operands." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Facets ────────────────────────────────────────────────────
+
+iep:ContextFacet a owl:Class ;
+    rdfs:label "Context Facet" ;
+    rdfs:comment "Abstract base class for all context facet types. Each facet captures a specific dimension of context metadata." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:TemporalFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    rdfs:label "Temporal Facet" ;
+    rdfs:comment "Temporal validity of a context. Aligned with OWL-Time and Dublin Core. Declares when the context is valid (validFrom/validUntil), temporal resolution, and relations to other temporal entities." ;
+    rdfs:seeAlso time:TemporalEntity ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ProvenanceFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    rdfs:label "Provenance Facet" ;
+    rdfs:comment "Provenance metadata aligned with W3C PROV-O. Records who/what generated the context, when, and from what prior sources. Supports full provenance chains." ;
+    rdfs:seeAlso prov:Activity ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:AgentFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    rdfs:label "Agent Facet" ;
+    rdfs:comment "Identifies the asserting agent and their role. Supports delegation (onBehalfOf) for AI agents acting on behalf of humans/organizations. Aligned with PROV-O Agent and ActivityStreams." ;
+    rdfs:seeAlso prov:Agent ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:AccessControlFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    rdfs:label "Access Control Facet" ;
+    rdfs:comment "Access control authorizations. Supports two modes in the same facet: (a) W3C WAC-shaped identity-based authorizations (who can Read, Write, Append, or Control) via acl:Authorization; and (b) attribute-based policy references via iep:policyRef → iep:AccessControlPolicy. Both modes coexist so deployments can migrate from ACL to ABAC incrementally." ;
+    rdfs:seeAlso acl:Authorization ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:AccessControlPolicy a owl:Class ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Access Control Policy" ;
+    rdfs:comment "An attribute-based access-control policy, expressed as a first-class context descriptor. A policy carries: (a) iep:policyPredicate — a SHACL shape the subject's attribute graph must satisfy; (b) iep:governedAction — the action (affordance / operation) the policy governs; (c) iep:deonticMode — one of iep:Permit, iep:Deny, iep:Duty; (d) optional iep:policyDuty — obligations to fulfil when Duty mode matches. Attribute sources for the subject can span the federation — the evaluation pattern for that resolution is specified by the abac: L2 ontology, but the structural primitives live here at L1 so that any implementation understands the same policy shape." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:DeonticMode a owl:Class ;
+    rdfs:label "Deontic Mode" ;
+    rdfs:comment "Modality of a policy rule: Permit, Deny, or Duty. Aligned with ODRL deontic semantics (odrl:Permission / odrl:Prohibition / odrl:Duty) so policies are interoperable with ODRL expressions, without requiring the full ODRL vocabulary as a runtime dependency." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Permit a iep:DeonticMode ;
+    rdfs:label "Permit" ;
+    rdfs:comment "The policy authorizes the governed action when its predicate is satisfied." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Deny a iep:DeonticMode ;
+    rdfs:label "Deny" ;
+    rdfs:comment "The policy forbids the governed action when its predicate is satisfied. Deny overrides Permit in composition." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Duty a iep:DeonticMode ;
+    rdfs:label "Duty" ;
+    rdfs:comment "The policy attaches an obligation that MUST be fulfilled alongside the governed action when the predicate is satisfied. Duties accumulate across matching rules." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ConstitutionalPolicy a owl:Class ;
+    rdfs:subClassOf iep:AccessControlPolicy ;
+    rdfs:label "Constitutional Policy" ;
+    rdfs:comment "A policy that governs other policies. Carries a tier (iep:tier) and an amendment process (iep:amendmentProcess). See spec/CONSTITUTIONAL-LAYER.md." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Amendment a owl:Class ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Constitutional Amendment" ;
+    rdfs:comment "A proposed change to a constitutional policy. Carries the diff (added/removed/modified rules), the proponent, the vote descriptors collected, and the ratification status. Built on iep:supersedes for the eventual replacement of the prior policy version." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:SemioticFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    rdfs:label "Semiotic Facet" ;
+    rdfs:comment "Semiotic and epistemic metadata grounded in Peircean triadic semiotics. Captures the interpretive frame, modal status (Asserted, Hypothetical, Counterfactual, etc.), epistemic confidence [0.0-1.0], and whether the content represents ground truth." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:TrustFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    rdfs:label "Trust Facet" ;
+    rdfs:comment "Trust and verifiability metadata aligned with W3C Verifiable Credentials 2.0 and DID Core. Declares trust level, issuer identity, proof mechanism, and optional verifiable credential reference." ;
+    rdfs:seeAlso vc:VerifiableCredential ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:FederationFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    rdfs:label "Federation Facet" ;
+    rdfs:comment "Federation and distribution metadata aligned with DCAT 3, LDP, and Solid Protocol. Declares where the context is stored, sync protocol, replication sources, and distribution endpoints." ;
+    rdfs:seeAlso solid:StorageDescription, dcat:Distribution ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Manifest & Federation ─────────────────────────────────────
+
+iep:ManifestEntry a owl:Class ;
+    rdfs:label "Manifest Entry" ;
+    rdfs:comment "An entry in a pod's.well-known/context-graphs manifest. Lightweight summary of a published context descriptor for discovery." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:PodDirectory a owl:Class ;
+    rdfs:label "Pod Directory" ;
+    rdfs:comment "A decentralized directory graph listing known Solid pods participating in a federation. Itself published as an RDF resource on a pod." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:DataProduct a owl:Class ;
+    rdfs:label "Data Product" ;
+    rdfs:comment "Alignment with DPROD. A context-graphs manifest declares itself as a data product with input/output ports." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Affordance a owl:Class ;
+    rdfs:label "Affordance" ;
+    rdfs:comment "A capability that a pod or manifest supports. Used for HATEOAS-style agent discovery of what operations are available." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:AuthorizedAgent a owl:Class ;
+    rdfs:label "Authorized Agent" ;
+    rdfs:comment "An AI agent or software tool authorized to act on behalf of a pod owner via delegation." ;
+    rdfs:subClassOf prov:SoftwareAgent ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Composition & Context Types ───────────────────────────────
+
+iep:ContextType a owl:Class ;
+    rdfs:label "Context Type" ;
+    rdfs:comment "Enumeration class for the seven facet type identifiers." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:CompositionOperator a owl:Class ;
+    rdfs:label "Composition Operator" ;
+    rdfs:comment "Algebraic operators for composing context descriptors. The four operators (union, intersection, restriction, override) form a bounded lattice." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Kernel result envelopes ───────────────────────────────────
+
+iep:KernelResult a owl:Class ;
+    rdfs:label "Kernel Result" ;
+    rdfs:comment "Abstract superclass of every response envelope emitted by a kernel verb (mint / dereference / compose / act / restrict / extend / promote / decompose). Every instance satisfies iep:KernelResultShape." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:MintResult a owl:Class ;
+    rdfs:subClassOf iep:KernelResult ;
+    rdfs:label "Mint Result" ;
+    rdfs:comment "Response envelope of kernel.mint — wraps a freshly minted iep:Holon and its follow-up affordances." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:DereferenceResult a owl:Class ;
+    rdfs:subClassOf iep:KernelResult ;
+    rdfs:label "Dereference Result" ;
+    rdfs:comment "Response envelope of kernel.dereference — carries the fetched representation plus extracted affordances." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ComposeResult a owl:Class ;
+    rdfs:subClassOf iep:KernelResult ;
+    rdfs:label "Compose Result" ;
+    rdfs:comment "Response envelope of kernel.compose — emits a iep:ComposedDescriptor witness." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ActResult a owl:Class ;
+    rdfs:subClassOf iep:KernelResult ;
+    rdfs:label "Act Result" ;
+    rdfs:comment "Response envelope of kernel.act — wraps an HTTP response and echoes the followed affordance." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:RestrictResult a owl:Class ;
+    rdfs:subClassOf iep:KernelResult ;
+    rdfs:label "Restrict Result" ;
+    rdfs:comment "Response envelope of kernel.restrict — narrowed iep:ContextDescriptor produced by the restriction operator." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ExtendResult a owl:Class ;
+    rdfs:subClassOf iep:KernelResult ;
+    rdfs:label "Extend Result" ;
+    rdfs:comment "Response envelope of kernel.extend — widened iep:ContextDescriptor produced by the override / extend operator." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:PromoteResult a owl:Class ;
+    rdfs:subClassOf iep:KernelResult ;
+    rdfs:label "Promote Result" ;
+    rdfs:comment "Response envelope of kernel.promote — apex IRI plus lattice level and optional pullback square." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:DecomposeResult a owl:Class ;
+    rdfs:subClassOf iep:KernelResult ;
+    rdfs:label "Decompose Result" ;
+    rdfs:comment "Response envelope of kernel.decompose — pullback square (apex + left + right + overlap)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Properties
+# ══════════════════════════════════════════════════════════════
+
+# ── Core descriptor properties ────────────────────────────────
+
+iep:describes a owl:ObjectProperty ;
+    rdfs:label "describes" ;
+    rdfs:comment "Links a ContextDescriptor to the Named Graph(s) it annotates." ;
+    rdfs:domain iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:describedBy a owl:ObjectProperty ;
+    rdfs:label "described by" ;
+    rdfs:comment "Inverse of iep:describes — links a named graph back to its descriptor." ;
+    rdfs:domain rdf:Graph ;
+    rdfs:range iep:ContextDescriptor ;
+    owl:inverseOf iep:describes ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:hasFacet a owl:ObjectProperty ;
+    rdfs:label "has facet" ;
+    rdfs:comment "Links a ContextDescriptor to one of its context facets." ;
+    rdfs:domain iep:ContextDescriptor ;
+    rdfs:range iep:ContextFacet ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:hasFacetType a owl:ObjectProperty ;
+    rdfs:label "has facet type" ;
+    rdfs:comment "Declares which facet types are present in a manifest entry (lightweight discovery)." ;
+    rdfs:domain iep:ManifestEntry ;
+    rdfs:range iep:ContextType ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:version a owl:DatatypeProperty ;
+    rdfs:label "version" ;
+    rdfs:comment "Version number of the context descriptor." ;
+    rdfs:domain iep:ContextDescriptor ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:supersedes a owl:ObjectProperty ;
+    rdfs:label "supersedes" ;
+    rdfs:comment "Links a descriptor to the previous version(s) it replaces." ;
+    rdfs:domain iep:ContextDescriptor ;
+    rdfs:range iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Reduce / replay (kernel verb #9) ──────────────────────────
+# The reduce verb folds a iep:supersedes chain into canonical state
+# under a declarative reducer, producing a content-addressed
+# ReplayProof that lets any third party re-fetch the chain by CID,
+# re-fetch the reducer by CID, and re-fold to verify the result. The
+# fold is the colimit of the chain in the supersession category.
+
+iep:Reducer a owl:Class ;
+    rdfs:label "Reducer" ;
+    rdfs:comment "Declarative fold function applied by the kernel's reduce verb to a iep:supersedes chain. A Reducer is content-addressed (its CID anchors the ReplayProof); two concrete kinds are defined — iep:TurtleTemplateReducer (Turtle body with {?prior}/{?current} placeholders) and iep:ShaclTransformReducer (SHACL graph using sh:rule/sh:construct). Arbitrary code is intentionally excluded so the fold is replayable across implementations." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:TurtleTemplateReducer a owl:Class ;
+    rdfs:subClassOf iep:Reducer ;
+    rdfs:label "Turtle Template Reducer" ;
+    rdfs:comment "A Reducer whose body is a Turtle document with `{?prior}` and `{?current}` placeholders (optionally projected like `{?prior.iep:value}`). The kernel binds the placeholders to the accumulator state and the current chain link, then materializes the resulting triples as the next state." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ShaclTransformReducer a owl:Class ;
+    rdfs:subClassOf iep:Reducer ;
+    rdfs:label "SHACL Transform Reducer" ;
+    rdfs:comment "A Reducer whose body is a SHACL graph declaring `sh:rule` / `sh:construct` over the prior + current state. The kernel runs each chain link through the SHACL engine; the constructed triples become the next state. Pure shape transformation; no procedural code." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:reducer a owl:ObjectProperty ;
+    rdfs:label "reducer" ;
+    rdfs:comment "Declares the reducer the kernel's reduce verb should fold this descriptor's iep:supersedes chain through. The reducer IRI dereferences to a content-addressed iep:Reducer artifact. When absent, callers MUST supply an inline reducer specification to the reduce verb." ;
+    rdfs:domain iep:ContextDescriptor ;
+    rdfs:range iep:Reducer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ReducerSpec a owl:Class ;
+    rdfs:label "Reducer Specification" ;
+    rdfs:comment "Inline form of a iep:Reducer passed directly to the reduce verb without dereferencing through a iep:reducer link. Carries the same kind discriminator (turtle-template | shacl-transform) and body as a stored Reducer; equivalent to dereferencing a hypothetical Reducer whose CID is the hash of the spec." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ReplayProof a owl:Class ;
+    rdfs:label "Replay Proof" ;
+    rdfs:comment "Content-addressed witness produced by the kernel's reduce verb. Carries the CIDs of every chain link in walk order, the CID of the reducer artifact, periodic state checkpoints, and the final head-state CID. Any third party can independently re-fetch the chain + reducer by CID and replay the fold; mismatch at any checkpoint localizes the divergence (chain tampering, reducer drift, or fold non-determinism)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ReduceResult a owl:Class ;
+    rdfs:label "Reduce Result" ;
+    rdfs:comment "Result envelope returned by the kernel's reduce verb. Carries the folded canonical head state, the ReplayProof witnessing the fold, the chain length actually walked, and the chain-head IRI the fold started from." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ReduceResultShape a owl:Class ;
+    rdfs:label "Reduce Result Shape" ;
+    rdfs:comment "SHACL shape IRI advertised by every iep:ReduceResult payload via iep:conformsToShape. Anchors the wire shape of the result envelope (head, replayProof, chainLength, chainHeadIri) so validators can verify the substrate's response surface without out-of-band schema." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:AgentCatalog a owl:Class ;
+    rdfs:label "Agent Catalog" ;
+    rdfs:comment "A domain-level catalog of agents + pods published at <domain>/.well-known/interego-agents per spec §6.5d (progressive discovery T3). Carries one or more iep:hasAgent entries enumerating agents the domain operator wishes to advertise. Consumers use this to discover agents without needing to know specific pod URLs upfront." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:hasAgent a owl:ObjectProperty ;
+    rdfs:label "has agent" ;
+    rdfs:comment "Links a iep:AgentCatalog to an agent entry (typically a blank node or IRI typed iep:AuthorizedAgent). Used in the T3 agents-catalog format." ;
+    rdfs:domain iep:AgentCatalog ;
+    rdfs:range iep:AuthorizedAgent ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:webId a owl:ObjectProperty ;
+    rdfs:label "WebID" ;
+    rdfs:comment "The agent or principal's WebID (Solid profile URL). Used in agent-catalog entries and anywhere a WebID needs to be stated as a typed iep: property alongside did:/foaf: alternatives." ;
+    rdfs:range iep:AuthorizedAgent ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:constructedFrom a owl:ObjectProperty ;
+    rdfs:label "constructed from" ;
+    rdfs:comment "Derivation-discipline predicate (spec/DERIVATION.md). Declares that the subject class / property is constructed at runtime from the named L1 primitives. Objects are typically an rdf:List of one or more L1 class or property IRIs. Used by tools/derivation-lint.mjs to verify every L2/L3 term is grounded in the L1 substrate." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Temporal properties ───────────────────────────────────────
+
+iep:validFrom a owl:DatatypeProperty ;
+    rdfs:label "valid from" ;
+    rdfs:comment "Start of the temporal validity interval." ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:validUntil a owl:DatatypeProperty ;
+    rdfs:label "valid until" ;
+    rdfs:comment "End of the temporal validity interval." ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:temporalResolution a owl:DatatypeProperty ;
+    rdfs:label "temporal resolution" ;
+    rdfs:comment "Granularity of the temporal validity (e.g. xsd:duration)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:temporalRelation a owl:ObjectProperty ;
+    rdfs:label "temporal relation" ;
+    rdfs:comment "OWL-Time relation to another temporal entity." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Temporal modal operators (LTL-style) ─────────────────────
+#
+# Beyond fixed validFrom/validUntil intervals, descriptors MAY
+# carry temporal modal operators describing conditions over time:
+# "valid until X happens", "valid as long as Y is true", "always
+# valid in this scope", "eventually true". These extend the modal
+# logic from a static three-valued lattice to one that reasons
+# about temporal evolution of claims.
+
+iep:validUntilEvent a owl:ObjectProperty ;
+    rdfs:label "valid until event" ;
+    rdfs:comment "The descriptor's claim holds until the named event occurs (e.g. an attestation revocation, a successor descriptor publication, or an external trigger). Object is the IRI of an event-class or specific event instance." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:validWhile a owl:ObjectProperty ;
+    rdfs:label "valid while" ;
+    rdfs:comment "The descriptor's claim holds as long as the named SHACL shape is satisfied by the subject's attribute graph. When the shape stops being satisfied, the descriptor's modal status auto-shifts to Hypothetical (or Counterfactual under explicit retraction). Object is a sh:NodeShape IRI." ;
+    rdfs:range sh:NodeShape ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:alwaysValid a owl:DatatypeProperty ;
+    rdfs:label "always valid" ;
+    rdfs:comment "Atemporal claim: this descriptor is true at every time within the federation's interpretation. Use sparingly — most claims are temporally-scoped. xsd:boolean." ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:eventuallyValid a owl:DatatypeProperty ;
+    rdfs:label "eventually valid" ;
+    rdfs:comment "LTL-style 'eventually': the descriptor's modal claim WILL become Asserted at some future time, given the system's expected evolution. Currently typically Hypothetical with this marker; flips to Asserted when the predicted condition obtains." ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:sinceEvent a owl:ObjectProperty ;
+    rdfs:label "since event" ;
+    rdfs:comment "Symmetric to validUntilEvent — the descriptor's claim has held since the named event occurred. Object is an event IRI. Composes with validUntilEvent to express bounded intervals defined by events rather than dates." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Provenance properties ─────────────────────────────────────
+
+iep:provenanceChain a owl:ObjectProperty ;
+    rdfs:label "provenance chain" ;
+    rdfs:comment "Ordered list of prior provenance activities." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Agent properties ──────────────────────────────────────────
+
+iep:assertingAgent a owl:ObjectProperty ;
+    rdfs:label "asserting agent" ;
+    rdfs:comment "The agent asserting this context." ;
+    rdfs:domain iep:AgentFacet ;
+    rdfs:range prov:Agent ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:onBehalfOf a owl:ObjectProperty ;
+    rdfs:label "on behalf of" ;
+    rdfs:comment "The principal (human/org) the agent acts on behalf of." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:agentRole a owl:ObjectProperty ;
+    rdfs:label "agent role" ;
+    rdfs:comment "Role of the asserting agent (Author, Curator, Validator, etc.)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:agentIdentity a owl:ObjectProperty ;
+    rdfs:label "agent identity" ;
+    rdfs:comment "The identity IRI (DID, WebID) of an agent." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:authorizedAgent a owl:ObjectProperty ;
+    rdfs:label "authorized agent" ;
+    rdfs:comment "Links a pod owner profile to an authorized agent." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:delegatedBy a owl:ObjectProperty ;
+    rdfs:label "delegated by" ;
+    rdfs:comment "The principal who delegated authority to this agent." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:scope a owl:ObjectProperty ;
+    rdfs:label "scope" ;
+    rdfs:comment "Delegation scope: ReadWrite, ReadOnly, PublishOnly, or DiscoverOnly." ;
+    rdfs:range iep:DelegationScopeEnum ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Access Control / Policy properties ───────────────────────
+
+iep:policyRef a owl:ObjectProperty ;
+    rdfs:label "policy reference" ;
+    rdfs:comment "Links an AccessControlFacet to one or more AccessControlPolicy descriptors that govern access to the described graph. Multiple policies compose per the deonticMode rules (Deny overrides Permit; Duties accumulate)." ;
+    rdfs:domain iep:AccessControlFacet ;
+    rdfs:range iep:AccessControlPolicy ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:policyPredicate a owl:ObjectProperty ;
+    rdfs:label "policy predicate" ;
+    rdfs:comment "A SHACL NodeShape that the subject's attribute graph MUST satisfy for the policy to apply. Attributes can be sourced across the federation — the resolution pattern is specified by the abac: L2 ontology." ;
+    rdfs:domain iep:AccessControlPolicy ;
+    rdfs:range sh:NodeShape ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:governedAction a owl:ObjectProperty ;
+    rdfs:label "governed action" ;
+    rdfs:comment "The action (affordance or operation) this policy governs. Typically an IRI for a iep:Affordance, hydra:Operation, or a domain-level action (e.g. code:merge, hr:approve)." ;
+    rdfs:domain iep:AccessControlPolicy ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:deonticMode a owl:ObjectProperty ;
+    rdfs:label "deontic mode" ;
+    rdfs:comment "The policy's modality: iep:Permit, iep:Deny, or iep:Duty. See iep:DeonticMode." ;
+    rdfs:domain iep:AccessControlPolicy ;
+    rdfs:range iep:DeonticMode ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:policyDuty a owl:DatatypeProperty ;
+    rdfs:label "policy duty" ;
+    rdfs:comment "A human-readable obligation attached to a Duty-mode policy. Multiple duties accumulate. Interoperability with ODRL odrl:duty is expected at the evaluator layer." ;
+    rdfs:domain iep:AccessControlPolicy ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:tier a owl:DatatypeProperty ;
+    rdfs:label "constitutional tier" ;
+    rdfs:comment "Tier 0..4 for ConstitutionalPolicy. Tier 0 = bedrock (the spec itself); Tier 1 = community charter; Tier 2 = bylaws; Tier 3 = day-to-day policy; Tier 4 = individual preference. Higher tier governs lower." ;
+    rdfs:domain iep:ConstitutionalPolicy ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:amendmentProcess a owl:ObjectProperty ;
+    rdfs:label "amendment process" ;
+    rdfs:comment "Reference to the descriptor describing how this constitutional policy itself can be amended (vote threshold, quorum, ratification window, etc.). Typically another iep:ConstitutionalPolicy at a higher tier." ;
+    rdfs:domain iep:ConstitutionalPolicy ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ratificationVote a owl:ObjectProperty ;
+    rdfs:label "ratification vote" ;
+    rdfs:comment "A descriptor recording one ratification vote on this amendment. Composes via ModalAlgebra (Asserted=for, Counterfactual=against, Hypothetical=abstain)." ;
+    rdfs:domain iep:Amendment ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ratifiedAt a owl:DatatypeProperty ;
+    rdfs:label "ratified at" ;
+    rdfs:comment "Instant ratification became effective. Before this, the amendment is a proposal; after, it supersedes the prior policy version." ;
+    rdfs:domain iep:Amendment ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Semiotic properties ───────────────────────────────────────
+
+iep:interpretationFrame a owl:ObjectProperty ;
+    rdfs:label "interpretation frame" ;
+    rdfs:comment "The interpretive frame under which the context should be understood." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:signSystem a owl:ObjectProperty ;
+    rdfs:label "sign system" ;
+    rdfs:comment "The sign system or semiotic code used." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:groundTruth a owl:DatatypeProperty ;
+    rdfs:label "ground truth" ;
+    rdfs:comment "Whether this context represents verified ground truth." ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:modalStatus a owl:ObjectProperty ;
+    rdfs:label "modal status" ;
+    rdfs:comment "The modal status of the assertion: Asserted, Hypothetical, Counterfactual, Quoted, or Retracted." ;
+    rdfs:domain iep:SemioticFacet ;
+    rdfs:range iep:ModalStatusEnum ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:epistemicConfidence a owl:DatatypeProperty ;
+    rdfs:label "epistemic confidence" ;
+    rdfs:comment "Confidence level in the assertion, from 0.0 (no confidence) to 1.0 (absolute certainty)." ;
+    rdfs:range xsd:double ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:languageTag a owl:DatatypeProperty ;
+    rdfs:label "language tag" ;
+    rdfs:comment "BCP 47 language tag for the context content." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Trust properties ──────────────────────────────────────────
+
+iep:verifiableCredential a owl:ObjectProperty ;
+    rdfs:label "verifiable credential" ;
+    rdfs:comment "IRI of a W3C Verifiable Credential backing the trust assertion." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:issuer a owl:ObjectProperty ;
+    rdfs:label "issuer" ;
+    rdfs:comment "The issuer of the trust assertion (typically a DID)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:proofMechanism a owl:ObjectProperty ;
+    rdfs:label "proof mechanism" ;
+    rdfs:comment "The cryptographic proof mechanism used (e.g. Ed25519Signature2020)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:trustLevel a owl:ObjectProperty ;
+    rdfs:label "trust level" ;
+    rdfs:comment "Level of trust: SelfAsserted, ThirdPartyAttested, or CryptographicallyVerified." ;
+    rdfs:range iep:TrustLevelEnum ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:revocationStatus a owl:ObjectProperty ;
+    rdfs:label "revocation status" ;
+    rdfs:comment "Whether the trust assertion has been revoked." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:proof a owl:ObjectProperty ;
+    rdfs:label "proof" ;
+    rdfs:comment "Inline cryptographic proof reference on a TrustFacet. For compliance-grade descriptors: links to the sibling .sig.json (iep:proofUrl) and names the signing scheme (iep:proofScheme) + signer (iep:proofSigner). Included in the signed Turtle so tampering with the proof reference invalidates the signature." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:proofScheme a owl:DatatypeProperty ;
+    rdfs:label "proof scheme" ;
+    rdfs:comment "Signature scheme: ECDSA-secp256k1, Ed25519, BBS+, etc." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:proofUrl a owl:ObjectProperty ;
+    rdfs:label "proof URL" ;
+    rdfs:comment "URL of the proof artifact (typically a sibling .sig.json file containing the SignedDescriptor record)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:proofSigner a owl:DatatypeProperty ;
+    rdfs:label "proof signer" ;
+    rdfs:comment "Public identifier of the signer (Ethereum address, did:key fingerprint, ORCID, etc.). Verifiers recover the signer from the signature itself; this field is the authoritative claim of who SHOULD have signed." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Authorship Proof (agent-level signed identity claim) ──────
+#
+# Independent of iep:proof on TrustFacet (which is the operator-grade
+# whole-descriptor signature lodged in a sibling .sig.json). iep:authorshipProof
+# is an inline, agent-level signature over a canonical payload containing
+# the agent IRI, owner WebID, descriptor IRI, and timestamp — the
+# AgentFacet's identity claim, bound to the descriptor it lives in.
+#
+# Verifiable from the descriptor ALONE: the verificationMethod IRI
+# (typically did:ethr:<addr>) lets a reader recover the public key
+# without trusting the pod's storage layer.
+
+iep:SignedAuthorship a owl:Class ;
+    rdfs:label "Signed Authorship" ;
+    rdfs:comment "An agent-level cryptographic claim that a specific agent IRI signed a descriptor's AgentFacet. Embedded into the descriptor turtle alongside the AgentFacet block via iep:authorshipProof. Independent of the operator-grade descriptor-level iep:proof on the TrustFacet." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:authorshipProof a owl:ObjectProperty ;
+    rdfs:label "authorship proof" ;
+    rdfs:comment "Links a ContextDescriptor to an embedded iep:SignedAuthorship blank node. The proof signs a canonical payload of (agentId, ownerWebId, descriptorId, created, agentDid?) with the agent's delegation key (same key the signed delegation VC chain uses). Verifiable from the descriptor alone via the embedded iep:verificationMethod." ;
+    rdfs:range iep:SignedAuthorship ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:scheme a owl:DatatypeProperty ;
+    rdfs:label "signature scheme" ;
+    rdfs:comment "Cryptographic suite used for a signed block (e.g. EcdsaSecp256k1Signature2019, Ed25519Signature2020, BbsBlsSignature2020)." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:verificationMethod a owl:ObjectProperty ;
+    rdfs:label "verification method" ;
+    rdfs:comment "IRI naming the public key that verifies a signed block. Typically did:ethr:<addr> (self-describing, no extra DID-document fetch needed) or <webId>#key-1." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:signerAddress a owl:DatatypeProperty ;
+    rdfs:label "signer address" ;
+    rdfs:comment "Authoritative public identifier of the signer (Ethereum address, did:key fingerprint). Verifiers recover the address from the signature and check it matches this field." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:created a owl:DatatypeProperty ;
+    rdfs:label "created" ;
+    rdfs:comment "ISO 8601 timestamp at which the signed claim was minted. Included in the canonical payload so replay-resistance can be evaluated from the descriptor alone." ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:proofValue a owl:DatatypeProperty ;
+    rdfs:label "proof value" ;
+    rdfs:comment "The hex- or base64-encoded signature value over the canonical payload. Verifiers re-derive the canonical payload from the descriptor and re-run the signature check." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:ownerWebId a owl:ObjectProperty ;
+    rdfs:label "owner WebID" ;
+    rdfs:comment "On a SignedAuthorship block: the pod owner WebID the signing agent acts on behalf of. Included in the canonical authorship payload so tampering with the owner-attribution invalidates the signature." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:descriptorId a owl:ObjectProperty ;
+    rdfs:label "descriptor id" ;
+    rdfs:comment "On a SignedAuthorship block: the descriptor IRI the authorship claim is bound to. Included in the canonical authorship payload so a proof from one descriptor cannot be replayed onto another." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:agentDid a owl:DatatypeProperty ;
+    rdfs:label "agent DID" ;
+    rdfs:comment "Optional DID hint for the signing agent, surfaced in the canonical authorship payload for verifiers that want a resolution shortcut. Independent of iep:verificationMethod (which is the authoritative key-name)." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Federation properties ─────────────────────────────────────
+
+iep:origin a owl:ObjectProperty ;
+    rdfs:label "origin" ;
+    rdfs:comment "The origin Solid pod URL where this context was first published." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:storageEndpoint a owl:ObjectProperty ;
+    rdfs:label "storage endpoint" ;
+    rdfs:comment "The LDP endpoint where the context graph is stored." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:syncProtocol a owl:ObjectProperty ;
+    rdfs:label "sync protocol" ;
+    rdfs:comment "The synchronization protocol used for federation (SolidNotifications, WebSub, LDN, Polling)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:replicaOf a owl:ObjectProperty ;
+    rdfs:label "replica of" ;
+    rdfs:comment "IRI of the original resource this is a replica of." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:lastSynced a owl:DatatypeProperty ;
+    rdfs:label "last synced" ;
+    rdfs:comment "Timestamp of the last successful synchronization." ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Pod directory properties ──────────────────────────────────
+
+iep:hasPod a owl:ObjectProperty ;
+    rdfs:label "has pod" ;
+    rdfs:comment "Links a PodDirectory to a pod entry." ;
+    rdfs:domain iep:PodDirectory ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:podUrl a owl:ObjectProperty ;
+    rdfs:label "pod URL" ;
+    rdfs:comment "The URL of a Solid pod in a directory entry." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Affordance properties ─────────────────────────────────────
+
+iep:affordance a owl:ObjectProperty ;
+    rdfs:label "affordance" ;
+    rdfs:comment "Declares an affordance (capability) that this resource supports." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:action a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "action" ;
+    rdfs:comment "Names the iep:Affordance individual this affordance block instantiates (e.g. iep:canFetchPayload, iep:canDecrypt, iep:canPublish). Lets a Hydra operation carry a stable iep: identifier alongside the operation-specific hydra:method / hydra:target, so discovery clients can reference the affordance vocabulary without string-matching free-text titles." ;
+    rdfs:domain iep:Affordance ;
+    rdfs:range iep:Affordance ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:encrypted a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "encrypted" ;
+    rdfs:comment "Whether the declared distribution's payload is encrypted. When true, clients must decrypt locally using a key registered as an authorized recipient (see iep:encryptionAlgorithm + envelope wrappedKeys)." ;
+    rdfs:domain dcat:Distribution ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:encryptionAlgorithm a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "encryption algorithm" ;
+    rdfs:comment "The envelope's KDF + AEAD suite, e.g. 'X25519-XSalsa20-Poly1305'. Identifies the crypto-primitive combination so clients know which library/mode to use." ;
+    rdfs:domain dcat:Distribution ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:recipientCount a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "recipient count" ;
+    rdfs:comment "Count of wrapped keys inside the encrypted envelope. Discoverable metadata (doesn't leak identities) so clients can reason about key fan-out / audience size without decrypting." ;
+    rdfs:domain dcat:Distribution ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:visibility a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "visibility" ;
+    rdfs:comment "Audience class of the distribution's payload: 'public' (plaintext; the resource grants acl:Read to acl:agentClass foaf:Agent so any authenticated user can dereference), 'shared' (JOSE envelope wrapped to the pod's authorized agents plus any per-graph share_with recipients — historical default), or 'private' (envelope wrapped to the publishing agent ONLY; even other authorized agents on the same pod cannot decrypt). Discoverable metadata so clients can branch their dereference path without first attempting decryption. When equal to 'public', iep:encrypted MUST be false; when 'shared' or 'private', iep:encrypted MUST be true." ;
+    rdfs:domain dcat:Distribution ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Identity / Auth properties ────────────────────────────────
+
+iep:walletAddress a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "wallet address" ;
+    rdfs:comment "Lowercased 0x-prefixed Ethereum address registered as a verification method. Used to match SIWE signatures to an owner." ;
+    rdfs:domain iep:EthereumWallet ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:credentialId a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "credential id" ;
+    rdfs:comment "Base64url-encoded credential ID from a WebAuthn registration response. Stable across sign-ins for the same passkey." ;
+    rdfs:domain iep:WebAuthnCredential ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:publicKey a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "public key" ;
+    rdfs:comment "Base64url-encoded COSE public key for a WebAuthn credential." ;
+    rdfs:domain iep:WebAuthnCredential ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:counter a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "counter" ;
+    rdfs:comment "WebAuthn signature counter. Monotonically increases per sign-in; a non-increasing value on an authenticator that supports counters indicates possible cloning and rejects auth per spec." ;
+    rdfs:domain iep:WebAuthnCredential ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:transports a owl:DatatypeProperty ;
+    rdfs:label "transports" ;
+    rdfs:comment "WebAuthn transport hints ('internal', 'hybrid', 'usb', 'nfc', 'ble') collected at registration and replayed at authentication to let the client pick the right authenticator without prompting." ;
+    rdfs:domain iep:WebAuthnCredential ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:did a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "did" ;
+    rdfs:comment "The W3C DID (e.g. 'did:key:z...' or 'did:web:host:users:name') registered as a verification method." ;
+    rdfs:domain iep:DIDKey ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:keyType a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "key type" ;
+    rdfs:comment "Key type identifier per W3C Security Vocabulary. Currently 'Ed25519VerificationKey2020'." ;
+    rdfs:domain iep:DIDKey ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Encryption properties ─────────────────────────────────────
+
+iep:envelope a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "envelope" ;
+    rdfs:comment "Base64-encoded JSON of the underlying encryption envelope (nacl.box format in current emission). Kept as a literal so Turtle serialization stays grammar-simple; consumers base64-decode + JSON.parse to reconstruct the envelope object." ;
+    rdfs:domain iep:EncryptedValue ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:expectedDatatype a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "expected datatype" ;
+    rdfs:comment "Optional hint of the post-decryption literal's datatype (e.g. 'xsd:dateTime', 'xsd:double') so clients can rebuild typed RDF literals after decrypting." ;
+    rdfs:domain iep:EncryptedValue ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:encryptionPublicKey a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "encryption public key" ;
+    rdfs:comment "Base64 X25519 public key announcing this agent as a valid envelope recipient. Publishers collecting this property across all iep:AuthorizedAgent rows on a pod get the pod's current recipient set." ;
+    rdfs:domain iep:AuthorizedAgent ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:retiredEncryptionKey a owl:DatatypeProperty ;
+    rdfs:label "retired encryption key" ;
+    rdfs:comment "A recently-retired X25519 public key for this agent, serialized as a pipe-delimited string: \"<base64-pubkey>|<createdAt-iso>|<retiredAt-iso>|<optional-label>\". Multiple cardinality — one per rotation kept inside the rollover window. Publishers wrapping new envelopes wrap to the current iep:encryptionPublicKey AND every iep:retiredEncryptionKey whose retiredAt falls inside the window (default 30 days), giving the agent a soft cutover where key rotation does not orphan in-flight shared descriptors. Private keys are NEVER serialized here — agents hold their own historical secret keys locally and try each on decryption (see crypto/encryption.ts openEncryptedEnvelopeWithHistory)." ;
+    rdfs:domain iep:AuthorizedAgent ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Cross-pod sharing property ────────────────────────────────
+
+iep:sharedWith a owl:ObjectProperty ;
+    rdfs:label "shared with" ;
+    rdfs:comment "Declares that this descriptor's payload is encrypted for the listed external identities (DIDs / WebIDs). Discovery-level metadata — the actual envelope wrappedKeys are the authoritative recipient list, but iep:sharedWith lets listeners filter / attribute the cross-pod sharing intent without decrypting." ;
+    rdfs:domain iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:outputPort a owl:ObjectProperty ;
+    rdfs:label "output port" ;
+    rdfs:comment "DPROD alignment: output distribution endpoint for a data product." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:inputPort a owl:ObjectProperty ;
+    rdfs:label "input port" ;
+    rdfs:comment "DPROD alignment: input endpoint for a data product." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Composition properties ────────────────────────────────────
+
+iep:compositionOp a owl:ObjectProperty ;
+    rdfs:label "composition operator" ;
+    rdfs:comment "The composition operator used to produce a ComposedDescriptor." ;
+    rdfs:domain iep:ComposedDescriptor ;
+    rdfs:range iep:CompositionOperator ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:operand a owl:ObjectProperty ;
+    rdfs:label "operand" ;
+    rdfs:comment "Source descriptor used as input to a composition operation." ;
+    rdfs:domain iep:ComposedDescriptor ;
+    rdfs:range iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:restrictToType a owl:ObjectProperty ;
+    rdfs:label "restrict to type" ;
+    rdfs:comment "Facet type(s) to retain in a restriction composition." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Named Individuals
+# ══════════════════════════════════════════════════════════════
+
+# ── Context Types ─────────────────────────────────────────────
+
+iep:Temporal a iep:ContextType ;
+    rdfs:label "Temporal" ;
+    rdfs:comment "Context type for temporal validity metadata.".
+
+iep:Provenance a iep:ContextType ;
+    rdfs:label "Provenance" ;
+    rdfs:comment "Context type for provenance metadata (PROV-O).".
+
+iep:Agent a iep:ContextType ;
+    rdfs:label "Agent" ;
+    rdfs:comment "Context type for agent identity and role metadata.".
+
+iep:AccessControl a iep:ContextType ;
+    rdfs:label "Access Control" ;
+    rdfs:comment "Context type for access control metadata (WAC).".
+
+iep:Semiotic a iep:ContextType ;
+    rdfs:label "Semiotic" ;
+    rdfs:comment "Context type for semiotic and epistemic metadata.".
+
+iep:Trust a iep:ContextType ;
+    rdfs:label "Trust" ;
+    rdfs:comment "Context type for trust and verifiability metadata.".
+
+iep:Federation a iep:ContextType ;
+    rdfs:label "Federation" ;
+    rdfs:comment "Context type for federation and distribution metadata.".
+
+# ── Composition Operators ─────────────────────────────────────
+
+iep:union a iep:CompositionOperator ;
+    rdfs:label "union" ;
+    rdfs:comment "Merges all facets from both descriptors. Forms the join in the composition lattice.".
+
+iep:intersection a iep:CompositionOperator ;
+    rdfs:label "intersection" ;
+    rdfs:comment "Retains only facet types present in both descriptors. Forms the meet in the composition lattice.".
+
+iep:restriction a iep:CompositionOperator ;
+    rdfs:label "restriction" ;
+    rdfs:comment "Restricts to specified facet types only.".
+
+iep:override a iep:CompositionOperator ;
+    rdfs:label "override" ;
+    rdfs:comment "Takes facets from the first descriptor, overriding with the second where types match.".
+
+# ── Modal Status ──────────────────────────────────────────────
+
+iep:Asserted a owl:NamedIndividual, iep:ModalStatusEnum ;
+    rdfs:label "Asserted" ;
+    rdfs:comment "The content is presented as true/factual by the asserting agent.".
+
+iep:Hypothetical a owl:NamedIndividual, iep:ModalStatusEnum ;
+    rdfs:label "Hypothetical" ;
+    rdfs:comment "The content is presented as a hypothesis or possibility.".
+
+iep:Counterfactual a owl:NamedIndividual, iep:ModalStatusEnum ;
+    rdfs:label "Counterfactual" ;
+    rdfs:comment "The content describes a scenario known not to be the case.".
+
+iep:Quoted a owl:NamedIndividual, iep:ModalStatusEnum ;
+    rdfs:label "Quoted" ;
+    rdfs:comment "The content is quoted from another source without endorsement.".
+
+iep:Retracted a owl:NamedIndividual, iep:ModalStatusEnum ;
+    rdfs:label "Retracted" ;
+    rdfs:comment "The content was previously asserted but has been retracted.".
+
+# ── Trust Levels ──────────────────────────────────────────────
+
+iep:SelfAsserted a owl:NamedIndividual, iep:TrustLevelEnum ;
+    rdfs:label "Self-Asserted" ;
+    rdfs:comment "Trust based on the identity of the asserting agent alone.".
+
+iep:ThirdPartyAttested a owl:NamedIndividual, iep:TrustLevelEnum ;
+    rdfs:label "Third-Party Attested" ;
+    rdfs:comment "Trust backed by a third-party attestation.".
+
+iep:CryptographicallyVerified a owl:NamedIndividual, iep:TrustLevelEnum ;
+    rdfs:label "Cryptographically Verified" ;
+    rdfs:comment "Trust backed by cryptographic proof (signed VC, DID-based verification).".
+
+# ── Agent Roles ───────────────────────────────────────────────
+
+iep:Author a owl:NamedIndividual ;
+    rdfs:label "Author" ;
+    rdfs:comment "The agent authored/produced the context.".
+
+iep:Curator a owl:NamedIndividual ;
+    rdfs:label "Curator" ;
+    rdfs:comment "The agent curated or selected the context.".
+
+iep:Validator a owl:NamedIndividual ;
+    rdfs:label "Validator" ;
+    rdfs:comment "The agent validated or reviewed the context.".
+
+# ── Sync Protocols ────────────────────────────────────────────
+
+iep:SolidNotifications a owl:NamedIndividual ;
+    rdfs:label "Solid Notifications" ;
+    rdfs:comment "Solid Notifications Protocol (WebSocket or Webhook) for real-time context change events.".
+
+iep:WebSub a owl:NamedIndividual ;
+    rdfs:label "WebSub" ;
+    rdfs:comment "W3C WebSub for publish-subscribe federation.".
+
+iep:LinkedDataNotifications a owl:NamedIndividual ;
+    rdfs:label "Linked Data Notifications" ;
+    rdfs:comment "W3C LDN for sending notifications between pods.".
+
+iep:Polling a owl:NamedIndividual ;
+    rdfs:label "Polling" ;
+    rdfs:comment "HTTP polling for change detection (fallback).".
+
+# ── Delegation Scopes ─────────────────────────────────────────
+
+iep:ReadWrite a owl:NamedIndividual, iep:DelegationScopeEnum ;
+    rdfs:label "Read/Write" ;
+    rdfs:comment "Delegated agent may read and write context on behalf of the principal.".
+
+iep:ReadOnly a owl:NamedIndividual, iep:DelegationScopeEnum ;
+    rdfs:label "Read Only" ;
+    rdfs:comment "Delegated agent may only read context on behalf of the principal.".
+
+iep:PublishOnly a owl:NamedIndividual, iep:DelegationScopeEnum ;
+    rdfs:label "Publish Only" ;
+    rdfs:comment "Delegated agent may only publish new context on behalf of the principal.".
+
+iep:DiscoverOnly a owl:NamedIndividual, iep:DelegationScopeEnum ;
+    rdfs:label "Discover Only" ;
+    rdfs:comment "Delegated agent may only discover context on behalf of the principal.".
+
+# ── Affordance Individuals ────────────────────────────────────
+
+iep:canPublish a iep:Affordance ;
+    rdfs:label "Can Publish" ;
+    rdfs:comment "This endpoint supports publishing new context descriptors.".
+
+iep:canDiscover a iep:Affordance ;
+    rdfs:label "Can Discover" ;
+    rdfs:comment "This endpoint supports discovering context descriptors.".
+
+iep:canSubscribe a iep:Affordance ;
+    rdfs:label "Can Subscribe" ;
+    rdfs:comment "This endpoint supports WebSocket subscription for live notifications.".
+
+iep:canFetchPayload a iep:Affordance ;
+    rdfs:label "Can Fetch Payload" ;
+    rdfs:comment "This descriptor declares a graph payload retrievable at an accessURL. The client follows the hydra:target / dcat:accessURL of the attached ieh:Affordance (Hydra Operation) to retrieve the payload. Works for plaintext (TriG) and encrypted (JOSE envelope) distributions uniformly.".
+
+iep:canDecrypt a iep:Affordance ;
+    rdfs:label "Can Decrypt" ;
+    rdfs:comment "The declared graph payload is encrypted; clients whose X25519 key is in the envelope's recipient list can decrypt locally. The iep:encryptionAlgorithm on the dcat:Distribution tells clients which KDF / AEAD pair to use. Only present when the Distribution is encrypted.".
+
+iep:renderView a iep:Affordance ;
+    rdfs:label "Render View" ;
+    rdfs:comment "Server-side projection of an encrypted graph payload into authorized plaintext. The hydra:target points at a relay endpoint (typically `<relayBase>/render/<descriptorIri>`); the relay verifies the caller's bearer token, confirms the caller (or an agent the caller delegates) is in the descriptor's envelope recipient set, server-side unwraps the JOSE envelope using the relay's per-agent X25519 private key, and returns the named-graph payload as plaintext Turtle / TriG. Companion to iep:canDecrypt: iep:canDecrypt is the point-of-fetch semantic (client unwraps locally with their own key); iep:renderView is the projection semantic for thin clients (mobile, browser, downstream agents) that hold a bearer token but no X25519 keypair. Both affordances may coexist on the same Distribution — clients pick whichever path their runtime supports.".
+
+iep:canAudit a iep:Affordance ;
+    rdfs:label "Can Audit" ;
+    rdfs:comment "This endpoint accepts an audit invocation targeting a descriptor (or descriptor set). Consumers GET / POST to hydra:target and receive an audit-result-v1-conforming response. Chained with the semantic-alignment auditor's recursive meta-audit pattern — invoking canAudit on an audit descriptor produces a meta-audit.".
+
+iep:canPay a iep:Affordance ;
+    rdfs:label "Can Pay" ;
+    rdfs:comment "The declared resource is behind an x402-style payment challenge. Consumers receive 402 on initial GET with payment requirements (amount, asset, recipient, nonce, expiration); sign an authorization per §6.5a and retry with an X-Payment header. Settlement is out-of-band via the declared facilitator (Base USDC for production x402).".
+
+iep:canVerify a iep:Affordance ;
+    rdfs:label "Can Verify" ;
+    rdfs:comment "This endpoint verifies a signature, proof, or attestation. For ERC-8004 T1+ attestations, consumers POST the signed Turtle + expected signer address; the endpoint recovers the signer and returns { valid, recovered }. Works uniformly for EIP-191, EIP-712, and ECDSA recovery paths.".
+
+iep:canCompose a iep:Affordance ;
+    rdfs:label "Can Compose" ;
+    rdfs:comment "This endpoint applies a composition operator (union / intersection / restriction / override per §3.4) to operand descriptors and returns the composed descriptor. The iep:compositionOp query parameter selects the operator; operand IRIs are supplied via repeated iep:operand parameters.".
+
+# ── Pod self-description (bootstrap) ──────────────────────────
+
+iep:PodBootstrap a owl:Class ;
+    rdfs:label "Pod Bootstrap" ;
+    rdfs:comment "Self-describing context descriptor written into a freshly-initialized pod's manifest. Asserts iep:owner, iep:storage, iep:webId, iep:agentRegistry, iep:profileCard for the pod and carries one iep:Affordance (iep:canPublish) so a client discovering the pristine pod knows where to write subsequent context. Idempotent — one entry per pod, pinned to a stable IRI (urn:iep:pod-bootstrap:<userId>:v1) so re-bootstraps don't accumulate duplicates. Categorically a Context Descriptor like any other: provenance / federation facets apply, and it can be superseded via iep:supersedes when the pod's underlying topology changes." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:storage a owl:ObjectProperty ;
+    rdfs:label "storage" ;
+    rdfs:comment "The pod (LDP root container) URL where this resource is stored. Used in iep:PodBootstrap to name the pod itself; semantically equivalent to pim:storage / solid:storage from the Solid vocabulary but kept as a iep: term so cg-only readers don't need to load the Solid namespace." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:agentRegistry a owl:ObjectProperty ;
+    rdfs:label "agent registry" ;
+    rdfs:comment "URL of the pod-resident agent registry document (typically <pod>/agents) — the authoritative list of iep:AuthorizedAgent entries for the pod's owner. Resolvers follow this property to discover which agents may publish on behalf of the owner and which X25519 public keys recipients should wrap envelopes for." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:profileCard a owl:ObjectProperty ;
+    rdfs:label "profile card" ;
+    rdfs:comment "URL of the pod-resident WebID profile card (typically <pod>/profile/card). The card's #me node is the canonical owner WebID and carries solid:oidcIssuer, solid:storage, and rdfs:seeAlso links back to iep:agentRegistry, so conventional Solid clients can dereference the card alone to find the rest of the pod's identity surface." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Identity / Auth-methods classes (pod-resident) ────────────
+
+iep:AuthMethods a owl:Class ;
+    rdfs:label "Auth Methods" ;
+    rdfs:comment "The pod-resident JSON-LD document at <pod>/auth-methods.jsonld listing the verification methods (wallets, WebAuthn credentials, DID keys) a user has registered. Serves as the pod-layer agent-registry trust anchor: identity servers read it to resolve signature proofs, envelope publishers read it to determine recipient keys. User-owned because it lives in the user's pod." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:EthereumWallet a owl:Class ;
+    rdfs:label "Ethereum Wallet" ;
+    rdfs:comment "An ERC-4361 (SIWE) verifiable wallet registered under a user's iep:AuthMethods. Carries a lowercased 0x-prefixed address (iep:walletAddress). Signature proof is ECDSA over secp256k1 per SIWE." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:WebAuthnCredential a owl:Class ;
+    rdfs:label "WebAuthn Credential" ;
+    rdfs:comment "A registered passkey / platform authenticator per W3C WebAuthn Level 3. Carries credential id, COSE public key, counter, and transports. Proof is a WebAuthn assertion signed by the authenticator over a server-issued challenge." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:DIDKey a owl:Class ;
+    rdfs:label "DID Key" ;
+    rdfs:comment "A W3C DID Core key (did:key or did:web) registered as a verification method. Carries did, publicKeyMultibase, keyType (currently Ed25519VerificationKey2020). Proof is an Ed25519 signature over a server-issued nonce." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Encryption classes (envelope / field-level) ──────────────
+
+iep:EncryptedValue a owl:Class ;
+    rdfs:label "Encrypted Value" ;
+    rdfs:comment "An opt-in field-level encryption wrapper embedding an X25519 envelope (nacl.box over a symmetric content key) so a single facet-field value can be encrypted to a specific recipient set. Used when a descriptor's facet contains sensitive data that shouldn't be plaintext even though facet types stay discoverable. Carries iep:envelope (base64 JSON) and optional iep:expectedDatatype." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:EncryptedGraphEnvelope a owl:Class ;
+    rdfs:subClassOf dcat:Distribution ;
+    rdfs:label "Encrypted Graph Envelope" ;
+    rdfs:comment "An encrypted distribution of a named graph. Its bytes are a JSON document { content: { ciphertext, nonce, algorithm }, wrappedKeys: [{ recipientPublicKey, wrappedKey, ... }], algorithm, version }. Any recipient whose X25519 key is in wrappedKeys can decrypt the payload locally. Carried as dcat:mediaType 'application/jose+json'." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:GraphPayload a owl:Class ;
+    rdfs:subClassOf dcat:Distribution ;
+    rdfs:label "Graph Payload" ;
+    rdfs:comment "A plaintext distribution of a named graph (typically TriG). Used when encryption is disabled for a specific descriptor. Clients reading dcat:mediaType 'application/trig' can parse directly." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ── Session log type (emitted by /save-session slash command) ─
+
+iep:SessionLog a owl:Class ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Session Log" ;
+    rdfs:comment "A descriptor type for cross-session agent memory — decisions, changes, open threads from a single working session so future sessions (this agent or others on the same pod) can recover context. Structure kept intentionally coarse (iep:decision, iep:change, iep:openThread predicates) — implementations free to extend per use case." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Operations, Requests, Responses (API surface types)
+# ══════════════════════════════════════════════════════════════
+
+iep:Operation a owl:Class ;
+    rdfs:subClassOf hydra:Operation ;
+    rdfs:label "Operation" ;
+    rdfs:comment "Abstract parent for concrete iep: operation types. Interoperable with hydra:Operation so Hydra clients can dispatch without understanding iep: semantics." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:IngestOperation a owl:Class ; rdfs:subClassOf iep:Operation ; rdfs:label "Ingest Operation" ; rdfs:comment "An operation that ingests content into the PGSL lattice." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:IngestUrisOperation a owl:Class ; rdfs:subClassOf iep:IngestOperation ; rdfs:label "Ingest URIs Operation" ; rdfs:comment "Bulk-ingest operation that takes a list of URIs and fetches each before ingesting." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ComposeOperation a owl:Class ; rdfs:subClassOf iep:Operation ; rdfs:label "Compose Operation" ; rdfs:comment "Composition operator (union, intersection, restriction, override) applied over two or more descriptors." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:QueryOperation a owl:Class ; rdfs:subClassOf iep:Operation ; rdfs:label "Query Operation" ; rdfs:comment "SPARQL-style query over descriptors / the lattice." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:DecisionOperation a owl:Class ; rdfs:subClassOf iep:Operation ; rdfs:label "Decision Operation" ; rdfs:comment "Harness-driven decision operation (exploit / explore / abstain)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:CoherenceCheckOperation a owl:Class ; rdfs:subClassOf iep:Operation ; rdfs:label "Coherence Check Operation" ; rdfs:comment "Inter-agent coherence verification operation." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ChainBuildOperation a owl:Class ; rdfs:subClassOf iep:Operation ; rdfs:label "Chain Build Operation" ; rdfs:comment "Constructs a reasoning chain over descriptors / fragments." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ConstrainOperation a owl:Class ; rdfs:subClassOf iep:Operation ; rdfs:label "Constrain Operation" ; rdfs:comment "Applies a paradigm constraint to narrow a paradigm set." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:PodAddOperation a owl:Class ; rdfs:subClassOf iep:Operation ; rdfs:label "Pod Add Operation" ; rdfs:comment "Adds a pod to the federation registry." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:PodDiscoverOperation a owl:Class ; rdfs:subClassOf iep:Operation ; rdfs:label "Pod Discover Operation" ; rdfs:comment "Discovers pods from a PodDirectory graph." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Request a owl:Class ; rdfs:label "Request" ; rdfs:comment "Abstract parent of request record types." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Response a owl:Class ; rdfs:label "Response" ; rdfs:comment "Abstract parent of response record types." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:IngestRequest a owl:Class ; rdfs:subClassOf iep:Request ; rdfs:label "Ingest Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:IngestResponse a owl:Class ; rdfs:subClassOf iep:Response ; rdfs:label "Ingest Response" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ComposeRequest a owl:Class ; rdfs:subClassOf iep:Request ; rdfs:label "Compose Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ComposeResponse a owl:Class ; rdfs:subClassOf iep:Response ; rdfs:label "Compose Response" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:QueryRequest a owl:Class ; rdfs:subClassOf iep:Request ; rdfs:label "Query Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:QueryResponse a owl:Class ; rdfs:subClassOf iep:Response ; rdfs:label "Query Response" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:CoherenceRequest a owl:Class ; rdfs:subClassOf iep:Request ; rdfs:label "Coherence Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ConstraintRequest a owl:Class ; rdfs:subClassOf iep:Request ; rdfs:label "Constraint Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:PodAddRequest a owl:Class ; rdfs:subClassOf iep:Request ; rdfs:label "Pod Add Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Anchor receipts (content-addressed provenance)
+# ══════════════════════════════════════════════════════════════
+
+iep:Anchor a owl:Class ;
+    rdfs:label "Anchor" ;
+    rdfs:comment "A zero-copy receipt proving some property (pinning, signing, encryption, lattice ingestion, activity) about a resource without copying its content. Stored at <pod>/anchors/." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:IpfsAnchor a owl:Class ; rdfs:subClassOf iep:Anchor ; rdfs:label "IPFS Anchor" ; rdfs:comment "Proof of IPFS pinning (CID + provider + pinnedAt)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:SignatureAnchor a owl:Class ; rdfs:subClassOf iep:Anchor ; rdfs:label "Signature Anchor" ; rdfs:comment "Proof of digital signing." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:EncryptionAnchor a owl:Class ; rdfs:subClassOf iep:Anchor ; rdfs:label "Encryption Anchor" ; rdfs:comment "Proof that a resource was encrypted for a recipient set." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:PgslAnchor a owl:Class ; rdfs:subClassOf iep:Anchor ; rdfs:label "PGSL Anchor" ; rdfs:comment "Proof of PGSL ingestion (topFragment + atomCount + fragmentCount)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ActivityAnchor a owl:Class ; rdfs:subClassOf iep:Anchor ; rdfs:label "Activity Anchor" ; rdfs:comment "Proof of an agent activity (tool, decision, operation completion)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  SHACL Shape classes referenced from validation code
+# ══════════════════════════════════════════════════════════════
+
+iep:ContextDescriptorShape a sh:NodeShape ; rdfs:label "ContextDescriptor SHACL shape" ; sh:targetClass iep:ContextDescriptor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:TemporalFacetShape a sh:NodeShape ; rdfs:label "TemporalFacet SHACL shape" ; sh:targetClass iep:TemporalFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ProvenanceFacetShape a sh:NodeShape ; rdfs:label "ProvenanceFacet SHACL shape" ; sh:targetClass iep:ProvenanceFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:AgentFacetShape a sh:NodeShape ; rdfs:label "AgentFacet SHACL shape" ; sh:targetClass iep:AgentFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:AccessControlFacetShape a sh:NodeShape ; rdfs:label "AccessControlFacet SHACL shape" ; sh:targetClass iep:AccessControlFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:SemioticFacetShape a sh:NodeShape ; rdfs:label "SemioticFacet SHACL shape" ; sh:targetClass iep:SemioticFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:TrustFacetShape a sh:NodeShape ; rdfs:label "TrustFacet SHACL shape" ; sh:targetClass iep:TrustFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:FederationFacetShape a sh:NodeShape ; rdfs:label "FederationFacet SHACL shape" ; sh:targetClass iep:FederationFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ComposedDescriptorShape a sh:NodeShape ; rdfs:label "ComposedDescriptor SHACL shape" ; sh:targetClass iep:ComposedDescriptor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ParadigmConstraintShape a sh:NodeShape ; rdfs:label "ParadigmConstraint SHACL shape" ; sh:targetClass iep:ParadigmConstraint ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:PersistenceRecordShape a sh:NodeShape ; rdfs:label "PersistenceRecord SHACL shape" ; sh:targetClass iep:PersistenceRecord ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:CoherenceCertificateShape a sh:NodeShape ; rdfs:label "CoherenceCertificate SHACL shape" ; sh:targetClass iep:CoherenceCertificate ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Coherence (inter-agent verification)
+# ══════════════════════════════════════════════════════════════
+
+iep:CoherenceCertificate a owl:Class ; rdfs:label "Coherence Certificate" ; rdfs:comment "Record asserting two agents' fragments are coherent at a given time." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:CoherenceObstruction a owl:Class ; rdfs:label "Coherence Obstruction" ; rdfs:comment "Specific atom/position where two agents' fragments disagree." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:CoherenceStatus a owl:Class ; rdfs:label "Coherence Status" ; rdfs:comment "Enum: Verified, Divergent, Unexamined." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:AtomCoherence a owl:Class ; rdfs:label "Atom Coherence" ; rdfs:comment "Per-atom coherence snapshot used when rolling up to fragment-level status." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Equal a iep:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Equal" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Divergent a iep:CoherenceStatus, owl:NamedIndividual ; rdfs:label "Divergent" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Subset a iep:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Subset" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Intersect a iep:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Intersect" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Union a iep:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Union" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Exclude a iep:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Exclude" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Verified a iep:CoherenceStatus, owl:NamedIndividual ; rdfs:label "Verified" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Unexamined a iep:CoherenceStatus, owl:NamedIndividual ; rdfs:label "Unexamined" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Decision & Strategies
+# ══════════════════════════════════════════════════════════════
+
+iep:Decision a owl:Class ; rdfs:label "Decision" ; rdfs:comment "A recorded decision (selected affordance + strategy + justification)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:DecisionStrategy a owl:Class ; rdfs:label "Decision Strategy" ; rdfs:comment "Enum class for Exploit / Explore / DelegateStrategy / Abstain." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Exploit a iep:DecisionStrategy ; rdfs:label "Exploit" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Explore a iep:DecisionStrategy ; rdfs:label "Explore" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:DelegateStrategy a iep:DecisionStrategy ; rdfs:label "Delegate" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Abstain a iep:DecisionStrategy ; rdfs:label "Abstain" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Composition
+# ══════════════════════════════════════════════════════════════
+
+iep:ExternalBinding a owl:Class ; rdfs:label "External Binding" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:NodeRepresentation a owl:Class ; rdfs:label "Node Representation" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Paradigm, Persistence, Causal, Pod/Federation, Memory
+# ══════════════════════════════════════════════════════════════
+
+iep:ParadigmSet a owl:Class ; rdfs:label "Paradigm Set" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ParadigmConstraint a owl:Class ; rdfs:label "Paradigm Constraint" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ParadigmOperation a owl:Class ; rdfs:subClassOf iep:Operation ; rdfs:label "Paradigm Operation" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:SyntagmaticPattern a owl:Class ; rdfs:label "Syntagmatic Pattern" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:PersistenceRecord a owl:Class ; rdfs:label "Persistence Record" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:PersistenceTier a owl:Class ; owl:oneOf ( iep:MemoryTier iep:Local iep:PodTier iep:IPFS iep:ChainTier ) ; rdfs:label "Persistence Tier" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:MemoryTier a owl:NamedIndividual, iep:PersistenceTier ; rdfs:label "Memory" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Local a owl:NamedIndividual, iep:PersistenceTier ; rdfs:label "Local" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:PodTier a owl:NamedIndividual, iep:PersistenceTier ; rdfs:label "Pod" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:IPFS a owl:NamedIndividual, iep:PersistenceTier ; rdfs:label "IPFS" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ChainTier a owl:NamedIndividual, iep:PersistenceTier ; rdfs:label "Chain" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:CausalFacet a owl:Class ; rdfs:subClassOf iep:ContextFacet ; rdfs:label "Causal Facet" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:CausalVariable a owl:Class ; rdfs:label "Causal Variable" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:CausalEdge a owl:Class ; rdfs:label "Causal Edge" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:StructuralCausalModel a owl:Class ; rdfs:label "Structural Causal Model" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Intervention a owl:Class ; rdfs:label "Intervention" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Pod a owl:Class ; rdfs:label "Pod" ; rdfs:comment "A Solid pod (LDP root) owned by a user." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:PodCatalog a owl:Class ; rdfs:subClassOf iep:DataProduct ; rdfs:label "Pod Catalog" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Chain a owl:Class ; rdfs:label "Chain" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ChainEndpoint a owl:Class ; rdfs:label "Chain Endpoint" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:NodeEndpoint a owl:Class ; rdfs:label "Node Endpoint" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:PodService a owl:Class ; rdfs:label "Pod Service" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ApiDocumentation a owl:Class ; rdfs:subClassOf hydra:ApiDocumentation ; rdfs:label "API Documentation" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:VocabularyMapping a owl:Class ; rdfs:label "Vocabulary Mapping" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Memory a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ; rdfs:label "Memory" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ObservationSection a owl:Class ; rdfs:label "Observation Section" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ProjectionFacet a owl:Class ; rdfs:subClassOf iep:ContextFacet ; rdfs:label "Projection Facet" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Delegate a owl:Class ; rdfs:subClassOf iep:AuthorizedAgent ; rdfs:label "Delegate" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ModalStatusEnum a owl:Class ; rdfs:label "Modal Status Enum" ; owl:oneOf ( iep:Asserted iep:Hypothetical iep:Counterfactual iep:Quoted iep:Retracted ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:TrustLevelEnum a owl:Class ; rdfs:label "Trust Level Enum" ; owl:oneOf ( iep:SelfAsserted iep:ThirdPartyAttested iep:CryptographicallyVerified ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:DelegationScopeEnum a owl:Class ; rdfs:label "Delegation Scope Enum" ; owl:oneOf ( iep:ReadWrite iep:ReadOnly iep:PublishOnly iep:DiscoverOnly ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:BindingStrengthEnum a owl:Class ; rdfs:label "Binding Strength Enum" ; owl:oneOf ( iep:Exact iep:Strong iep:Approximate iep:Weak ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Exact a owl:NamedIndividual, iep:BindingStrengthEnum ; rdfs:label "Exact" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Strong a owl:NamedIndividual, iep:BindingStrengthEnum ; rdfs:label "Strong" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Approximate a owl:NamedIndividual, iep:BindingStrengthEnum ; rdfs:label "Approximate" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:Weak a owl:NamedIndividual, iep:BindingStrengthEnum ; rdfs:label "Weak" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Properties (long tail)
+# ══════════════════════════════════════════════════════════════
+
+iep:activityAnchor a owl:ObjectProperty ; rdfs:label "activityAnchor" ; rdfs:range iep:ActivityAnchor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:encryptionAnchor a owl:ObjectProperty ; rdfs:label "encryptionAnchor" ; rdfs:range iep:EncryptionAnchor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ipfsAnchor a owl:ObjectProperty ; rdfs:label "ipfsAnchor" ; rdfs:range iep:IpfsAnchor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:pgslAnchor a owl:ObjectProperty ; rdfs:label "pgslAnchor" ; rdfs:range iep:PgslAnchor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:signatureAnchor a owl:ObjectProperty ; rdfs:label "signatureAnchor" ; rdfs:range iep:SignatureAnchor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:hasObstruction a owl:ObjectProperty ; rdfs:label "has obstruction" ; rdfs:range iep:CoherenceObstruction ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:obstructionAtom a owl:ObjectProperty ; rdfs:label "obstruction atom" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:coherenceStatus a owl:ObjectProperty ; rdfs:label "coherence status" ; rdfs:range iep:CoherenceStatus ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:hasItem a owl:ObjectProperty ; rdfs:label "has item" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:paradigmOp a owl:ObjectProperty ; rdfs:label "paradigm op" ; rdfs:range iep:ParadigmOperation ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:patternA a owl:ObjectProperty ; rdfs:label "pattern A" ; rdfs:range iep:SyntagmaticPattern ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:patternB a owl:ObjectProperty ; rdfs:label "pattern B" ; rdfs:range iep:SyntagmaticPattern ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:positionA a owl:DatatypeProperty ; rdfs:label "position A" ; rdfs:range xsd:integer ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:positionB a owl:DatatypeProperty ; rdfs:label "position B" ; rdfs:range xsd:integer ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:persistenceTier a owl:ObjectProperty ; rdfs:label "persistence tier" ; rdfs:range iep:PersistenceTier ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:persistenceUri a owl:ObjectProperty ; rdfs:label "persistence URI" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:vocabularyMapping a owl:ObjectProperty ; rdfs:label "vocabulary mapping" ; rdfs:range iep:VocabularyMapping ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:mappingRelationship a owl:ObjectProperty ; rdfs:label "mapping relationship" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:mappingType a owl:ObjectProperty ; rdfs:label "mapping type" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:targetVocabulary a owl:ObjectProperty ; rdfs:label "target vocabulary" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:boundaryShapes a owl:ObjectProperty ; rdfs:label "boundary shapes" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:observation a owl:ObjectProperty ; rdfs:label "observation" ; rdfs:range iep:ObservationSection ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:decisionStrategy a owl:ObjectProperty ; rdfs:label "decision strategy" ; rdfs:range iep:DecisionStrategy ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:selectedAffordance a owl:ObjectProperty ; rdfs:label "selected affordance" ; rdfs:range iep:Affordance ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:capability a owl:ObjectProperty ; rdfs:label "capability" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:endpoint a owl:ObjectProperty ; rdfs:label "endpoint" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:latticeRoot a owl:ObjectProperty ; rdfs:label "lattice root" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:topFragment a owl:ObjectProperty ; rdfs:label "top fragment" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:atomCount a owl:DatatypeProperty ; rdfs:label "atom count" ; rdfs:range xsd:nonNegativeInteger ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:fragmentCount a owl:DatatypeProperty ; rdfs:label "fragment count" ; rdfs:range xsd:nonNegativeInteger ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:chainId a owl:DatatypeProperty ; rdfs:label "chain id" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:description a owl:DatatypeProperty ; rdfs:label "description" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:timestamp a owl:DatatypeProperty ; rdfs:label "timestamp" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:tool a owl:DatatypeProperty ; rdfs:label "tool" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:success a owl:DatatypeProperty ; rdfs:label "success" ; rdfs:range xsd:boolean ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:errorMessage a owl:DatatypeProperty ; rdfs:label "error message" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:affordanceRel a owl:ObjectProperty ; rdfs:label "affordance relation" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:agentA a owl:ObjectProperty ; rdfs:label "agent A" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:agentB a owl:ObjectProperty ; rdfs:label "agent B" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:agentAAT a owl:ObjectProperty ; rdfs:label "agent AAT" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:authorization a owl:ObjectProperty ; rdfs:label "authorization" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:binding a owl:ObjectProperty ; rdfs:label "binding" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:bindingStrength a owl:ObjectProperty ; rdfs:label "binding strength" ; rdfs:range iep:BindingStrengthEnum ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:composedFrom a owl:ObjectProperty ; rdfs:label "composed from" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:consentBasis a owl:ObjectProperty ; rdfs:label "consent basis" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:hasDistribution a owl:ObjectProperty ; rdfs:label "has distribution" ; rdfs:comment "Legacy shim for descriptors written before canonical iep:affordance form. Prefer iep:affordance [ a dcat:Distribution ... ]." ; rdfs:range dcat:Distribution ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:algorithm a owl:DatatypeProperty ; rdfs:label "algorithm" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:cid a owl:DatatypeProperty ; rdfs:label "CID" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:contentHash a owl:DatatypeProperty ; rdfs:label "content hash" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:gatewayUrl a owl:DatatypeProperty ; rdfs:label "gateway URL" ; rdfs:range xsd:anyURI ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:pinnedAt a owl:DatatypeProperty ; rdfs:label "pinned at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:pinnedBy a owl:ObjectProperty ; rdfs:label "pinned by" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:provider a owl:DatatypeProperty ; rdfs:label "provider" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:signature a owl:DatatypeProperty ; rdfs:label "signature" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:signedAt a owl:DatatypeProperty ; rdfs:label "signed at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:signerAddress a owl:DatatypeProperty ; rdfs:label "signer address" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:encryptedAt a owl:DatatypeProperty ; rdfs:label "encrypted at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:recipientFingerprint a owl:DatatypeProperty ; rdfs:label "recipient fingerprint" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:owner a owl:ObjectProperty ; rdfs:label "owner" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ingestedAt a owl:DatatypeProperty ; rdfs:label "ingested at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:promotedAt a owl:DatatypeProperty ; rdfs:label "promoted at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:registeredAt a owl:DatatypeProperty ; rdfs:label "registered at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:lastSeen a owl:DatatypeProperty ; rdfs:label "last seen" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:wasAttributedTo a owl:ObjectProperty ; rdfs:label "was attributed to" ; rdfs:comment "Legacy shim for prov:wasAttributedTo usage inside iep: emissions. Prefer prov:wasAttributedTo directly." ; rdfs:seeAlso prov:wasAttributedTo ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:causes a owl:ObjectProperty ; rdfs:label "causes" ; rdfs:domain iep:CausalEdge ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:effectOf a owl:ObjectProperty ; rdfs:label "effect of" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:effectSize a owl:DatatypeProperty ; rdfs:label "effect size" ; rdfs:range xsd:double ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:mechanism a owl:DatatypeProperty ; rdfs:label "mechanism" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:intervenes a owl:ObjectProperty ; rdfs:label "intervenes" ; rdfs:domain iep:Intervention ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:interventionValue a owl:DatatypeProperty ; rdfs:label "intervention value" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:exogenous a owl:DatatypeProperty ; rdfs:label "exogenous" ; rdfs:range xsd:boolean ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:exposedEntity a owl:ObjectProperty ; rdfs:label "exposed entity" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:hiddenEntity a owl:ObjectProperty ; rdfs:label "hidden entity" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:causalConfidence a owl:DatatypeProperty ; rdfs:label "causal confidence" ; rdfs:range xsd:double ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:causalRole a owl:DatatypeProperty ; rdfs:label "causal role" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:causalEdge a owl:ObjectProperty ; rdfs:label "causal edge" ; rdfs:range iep:CausalEdge ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:causalVariable a owl:ObjectProperty ; rdfs:label "causal variable" ; rdfs:range iep:CausalVariable ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:causalModel a owl:ObjectProperty ; rdfs:label "causal model" ; rdfs:range iep:StructuralCausalModel ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:counterfactualQuery a owl:DatatypeProperty ; rdfs:label "counterfactual query" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:counterfactualTarget a owl:ObjectProperty ; rdfs:label "counterfactual target" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:counterfactualEvidence a owl:ObjectProperty ; rdfs:label "counterfactual evidence" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:parentObservation a owl:ObjectProperty ; rdfs:label "parent observation" ; rdfs:range iep:ObservationSection ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:parentIntervention a owl:ObjectProperty ; rdfs:label "parent intervention" ; rdfs:range iep:Intervention ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:outcome a owl:ObjectProperty ; rdfs:label "outcome" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:selective a owl:DatatypeProperty ; rdfs:label "selective" ; rdfs:range xsd:boolean ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Revocation Extension (DRAFT — rival proposals A + B)
+#
+#  See spec/revocation.md for the prose specification. These terms
+#  are declared with vs:term_status "testing" (W3C SemWeb Vocabulary
+#  Status) to signal they are NOT YET adopted as protocol-normative.
+#  An implementation MAY emit them; readers MAY consume them; neither
+#  is required for v1.0 conformance.
+#
+#  Once one of Proposal A (7th facet) or Proposal B (predicate on
+#  SemioticFacet) is ratified, the adopted terms move to
+#  vs:term_status "stable" and the rival terms move to "archaic".
+#  Until then, the shared RevocationCondition model is specified in
+#  both proposals identically so migration is a blank-node rewrite.
+# ══════════════════════════════════════════════════════════════
+
+# ─── Shared RevocationCondition model (both proposals) ────────
+
+iep:RevocationCondition a owl:Class ;
+    rdfs:label "Revocation Condition" ;
+    rdfs:comment "A declarative condition under which an asserted claim's effective groundTruth transitions to false. Consists of a successor query (SPARQL 1.1 ASK/SELECT), an evaluation scope, and an action to take when the query matches. Shared by Proposal A (RevocationFacet) and Proposal B (revokedIf predicate) so conditions are portable between the two." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:successorQuery a owl:DatatypeProperty ;
+    rdfs:label "successor query" ;
+    rdfs:comment "SPARQL 1.1 ASK/SELECT/CONSTRUCT query evaluated over the scope declared by iep:evaluationScope. A non-empty result triggers the revocation action. MUST NOT reference the enclosing descriptor's own graph IRI (caught by iep:RevocationConditionNoSelfReferenceShape)." ;
+    rdfs:domain iep:RevocationCondition ;
+    rdfs:range xsd:string ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:evaluationScope a owl:ObjectProperty ;
+    rdfs:label "evaluation scope" ;
+    rdfs:comment "The federation scope over which the successor query is evaluated. One of iep:LocalPod, iep:KnownFederation, iep:WebFingerResolvable." ;
+    rdfs:domain iep:RevocationCondition ;
+    rdfs:range iep:RevocationScope ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:onRevocation a owl:ObjectProperty ;
+    rdfs:label "on-revocation action" ;
+    rdfs:comment "Action to take when the successor query matches. One of iep:MarkInvalid, iep:DowngradeToHypothetical, iep:RequireReconfirmation. Implementations MUST support iep:MarkInvalid; the others are RECOMMENDED." ;
+    rdfs:domain iep:RevocationCondition ;
+    rdfs:range iep:RevocationAction ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:revocationIssuer a owl:ObjectProperty ;
+    rdfs:label "revocation issuer" ;
+    rdfs:comment "The agent or principal that asserts this revocation condition. MAY differ from the enclosing descriptor's author (a regulator, auditor, or domain authority attaching a revocation policy to someone else's claim). When absent, the enclosing descriptor's author is assumed." ;
+    rdfs:domain iep:RevocationCondition ;
+    rdfs:range foaf:Agent ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ─── Evaluation-scope closed vocabulary ───────────────────────
+
+iep:RevocationScope a owl:Class ;
+    rdfs:label "Revocation Scope" ;
+    rdfs:comment "Closed vocabulary for the federation scope over which a revocation successor query is evaluated." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:LocalPod a iep:RevocationScope ;
+    rdfs:label "Local Pod" ;
+    rdfs:comment "Evaluate the successor query only against descriptors on the same pod that hosts the declaring descriptor. Cheapest; no federation calls." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:KnownFederation a iep:RevocationScope ;
+    rdfs:label "Known Federation" ;
+    rdfs:comment "Evaluate across every pod in the evaluating reader's known-pods registry. Readers MAY cache federation state; eventual consistency is acceptable." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:WebFingerResolvable a iep:RevocationScope ;
+    rdfs:label "WebFinger Resolvable" ;
+    rdfs:comment "Evaluate across any pod reachable from the query's cited handles via WebFinger (RFC 7033) or DID resolution. Strongest scope; highest latency." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ─── Revocation-action closed vocabulary ──────────────────────
+
+iep:RevocationAction a owl:Class ;
+    rdfs:label "Revocation Action" ;
+    rdfs:comment "Closed vocabulary for the effect of a triggered revocation condition on the enclosing descriptor's modal state." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:MarkInvalid a iep:RevocationAction ;
+    rdfs:label "Mark Invalid" ;
+    rdfs:comment "Effective groundTruth transitions to false. Modal status effectively becomes Counterfactual for readers performing currently-valid queries. This is the default and the only action MUST-supported by conforming implementations." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:DowngradeToHypothetical a iep:RevocationAction ;
+    rdfs:label "Downgrade To Hypothetical" ;
+    rdfs:comment "Modal status transitions to Hypothetical; groundTruth becomes undefined. Signals \"we're no longer sure either way.\"" ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:RequireReconfirmation a iep:RevocationAction ;
+    rdfs:label "Require Reconfirmation" ;
+    rdfs:comment "Modal status is preserved but the descriptor is flagged as requiring the original issuer (or a delegated authority) to re-sign before it may be used for downstream assertions. Useful for high-stakes claims where automatic invalidation would be too aggressive." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ─── Proposal A — seventh-facet RevocationFacet ───────────────
+
+iep:RevocationFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    rdfs:label "Revocation Facet (Proposal A — draft)" ;
+    rdfs:comment "DRAFT. A seventh context-facet type carrying one or more RevocationConditions. Proposal A of the revocation extension spec (see spec/revocation.md). Enables discovery by facet_type=Revocation without inspecting other facets; supports revocation issuers that differ from the descriptor author. Relaxes the six-facet invariant to \"at least six core facets plus at most one RevocationFacet.\" Rival: Proposal B (iep:revokedIf predicate on SemioticFacet). One will be adopted in v1.1; until then, implementations MAY support either, both, or neither." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:revokedBy a owl:ObjectProperty ;
+    rdfs:label "revoked by (Proposal A)" ;
+    rdfs:comment "Links a RevocationFacet to one or more RevocationConditions. Proposal A form." ;
+    rdfs:domain iep:RevocationFacet ;
+    rdfs:range iep:RevocationCondition ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ─── Proposal B — predicate on SemioticFacet ──────────────────
+
+iep:revokedIf a owl:ObjectProperty ;
+    rdfs:label "revoked if (Proposal B)" ;
+    rdfs:comment "DRAFT. Attaches one or more RevocationConditions to a SemioticFacet. When any linked condition's successorQuery returns a hit, the enclosing descriptor's effective groundTruth transitions per the RevocationAction. Proposal B of the revocation extension spec; preserves the exactly-six-facet invariant by nesting revocation inside the Semiotic facet's truth-state unit rather than adding a new facet type. Rival: Proposal A (iep:RevocationFacet)." ;
+    rdfs:domain iep:SemioticFacet ;
+    rdfs:range iep:RevocationCondition ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ─── Hypermedia + SHACL discipline on kernel + shim responses ──
+#
+# Every kernel-verb / shim response carries a JSON-LD envelope that
+# references one of the shapes below via iep:conformsToShape, so SHACL
+# validators can verify the wire shape without out-of-band schema.
+# These shapes describe the *response envelope* — the underlying
+# domain types (ContextDescriptor, ContextFacet, ...) are shaped
+# above.
+
+iep:Holon a owl:Class ;
+    rdfs:label "Holon" ;
+    rdfs:comment "A dereferenceable IRI together with its level + kind in the substrate (atom / fragment / descriptor / manifest / opaque). The atomic unit kernel verbs operate on." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ─── Container + conformance gate vocabulary ────────────────────
+#
+# A iep:Container is a pod-side aggregate (LDP BasicContainer / Solid
+# folder) that hosts iep:Holon resources. Containers MAY declare
+# property/shape/capability metadata via iep:declares, and MAY constrain
+# every Holon written under them to satisfy a sh:NodeShape via
+# iep:conformsTo. The relay's publish gate enforces iep:conformsTo at
+# write time (deploy/mcp-relay/server.ts) — non-conformant Holons are
+# rejected before the CSS write so the container's invariants hold
+# everywhere a federation reader sees the container.
+
+iep:Container a owl:Class ;
+    rdfs:label "Container"@en ;
+    rdfs:comment "A pod-side aggregate (Solid / LDP BasicContainer or equivalent) that hosts iep:Holon resources. Containers MAY declare container-level metadata via iep:declares (properties, shapes, vocabulary terms, capabilities) and MAY constrain every Holon written under them to satisfy a sh:NodeShape via iep:conformsTo. Aligned with ldp:BasicContainer; treated as a kind of iep:Holon so the substrate can reason uniformly about the container and its contents."@en ;
+    rdfs:subClassOf iep:Holon ;
+    rdfs:seeAlso ldp:BasicContainer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:conformsTo a owl:ObjectProperty ;
+    rdfs:label "conforms to"@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:range sh:NodeShape ;
+    rdfs:comment "Asserts that the subject conforms to the indicated SHACL NodeShape. When attached to a container, every Holon written to that container MUST validate against the shape; the publish gate rejects non-conformant writes."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:declares a owl:ObjectProperty ;
+    rdfs:label "declares"@en ;
+    rdfs:domain iep:Container ;
+    rdfs:range owl:Thing ;
+    rdfs:comment "A container declares a property, shape, vocabulary term, or capability. Used to make container-level metadata discoverable (e.g. iep:declares iep:Conformant, iep:declares <shape IRI>)."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ─── PGSL lattice holon subtypes ───────────────────────────────
+#
+# The kernel emits these substrate types in dereference responses
+# (packages/core/src/kernel/index.ts:364–367) — they reify the
+# level-0 vs level-N distinction in the PGSL Grothendieck-fibration
+# lattice as first-class typed subclasses of iep:Holon.
+
+iep:Atom a owl:Class ;
+    rdfs:subClassOf iep:Holon ;
+    rdfs:label "Atom"@en ;
+    rdfs:comment "PGSL level-0 holon — a content-addressed scalar value forming the base of the lattice. Has no internal composition; its iep:value produces its content-address URI."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:Fragment a owl:Class ;
+    rdfs:subClassOf iep:Holon ;
+    rdfs:label "Fragment"@en ;
+    rdfs:comment "PGSL level-N (N>=1) holon — a typed-hyperedge composition over constituent iep:Atoms or lower-level iep:Fragments referenced through iep:items."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:level a owl:DatatypeProperty ;
+    rdfs:domain iep:Holon ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:label "level"@en ;
+    rdfs:comment "PGSL fibration level — 0 for iep:Atom, N>=1 for iep:Fragment composed over level-(N-1) constituents."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:value a owl:DatatypeProperty ;
+    rdfs:domain iep:Holon ;
+    rdfs:range xsd:string ;
+    rdfs:label "value"@en ;
+    rdfs:comment "Recursive string projection of a holon's content — for iep:Atom, the scalar value that produces the atom's content-address URI; for iep:Fragment, the concatenated projection of its items."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:items a owl:ObjectProperty ;
+    rdfs:domain iep:Fragment ;
+    rdfs:range iep:Holon ;
+    rdfs:label "items"@en ;
+    rdfs:comment "Ordered references to the constituents of a iep:Fragment — lower-level iep:Atoms or iep:Fragments composed at this level."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:HolonShape a sh:NodeShape ;
+    rdfs:label "Holon SHACL shape" ;
+    sh:targetClass iep:Holon ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:KernelResultShape a sh:NodeShape ;
+    rdfs:label "Kernel result envelope SHACL shape" ;
+    sh:targetClass iep:KernelResult ;
+    rdfs:comment "Base shape every kernel-verb / shim response satisfies — requires JSON-LD typing + at least one iep:Affordance hint for next-step navigation." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:MintResultShape a sh:NodeShape ;
+    rdfs:label "Mint result SHACL shape" ;
+    sh:targetClass iep:MintResult ;
+    rdfs:comment "Result envelope of kernel.mint — wraps a freshly minted iep:Holon." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:RestrictResultShape a sh:NodeShape ;
+    rdfs:label "Restrict result SHACL shape" ;
+    sh:targetClass iep:RestrictResult ;
+    rdfs:comment "Result envelope of kernel.restrict — narrowed iep:ContextDescriptor." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:ExtendResultShape a sh:NodeShape ;
+    rdfs:label "Extend result SHACL shape" ;
+    sh:targetClass iep:ExtendResult ;
+    rdfs:comment "Result envelope of kernel.extend — widened iep:ContextDescriptor." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:ToolResult a owl:Class ;
+    rdfs:label "Tool result envelope" ;
+    rdfs:comment "Compatibility-shim response envelope — the @type every named-tool (non-kernel-verb) MCP shim emits, shaped by iep:ToolResultShape." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:ToolResultShape a sh:NodeShape ;
+    rdfs:label "Tool result envelope SHACL shape" ;
+    sh:targetClass iep:ToolResult ;
+    rdfs:comment "Base shape every named-tool shim response satisfies — same envelope discipline as kernel verbs." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:RelayEntryPoint a owl:Class ;
+    rdfs:label "Relay entry point" ;
+    rdfs:comment "Top-level Hydra entry-point envelope a hosted MCP relay advertises — co-typed with hydra:EntryPoint and shaped by iep:RelayEntryPointShape; its affordances list the relay's surface operations." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:RelayEntryPointShape a sh:NodeShape ;
+    rdfs:label "Relay entry point SHACL shape" ;
+    sh:targetClass iep:RelayEntryPoint ;
+    rdfs:comment "Hypermedia entry point document for an HTTP relay's surface — every operation listed MUST be a hydra:Operation." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:AffordanceShape a sh:NodeShape ;
+    rdfs:label "Affordance SHACL shape" ;
+    sh:targetClass iep:Affordance ;
+    rdfs:comment "A iep:Affordance MUST also be a hydra:Operation with iep:action + hydra:target + hydra:method." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:DereferenceResultShape a sh:NodeShape ;
+    rdfs:label "Dereference result SHACL shape" ;
+    rdfs:comment "Result envelope of kernel.dereference — carries the fetched representation + extracted affordances." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:ComposeResultShape a sh:NodeShape ;
+    rdfs:label "Compose result SHACL shape" ;
+    rdfs:comment "Result envelope of kernel.compose — emits a ComposedDescriptor witness." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:ActResultShape a sh:NodeShape ;
+    rdfs:label "Act result SHACL shape" ;
+    rdfs:comment "Result envelope of kernel.act — wraps an HTTP response and echoes the followed affordance." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:PromoteResultShape a sh:NodeShape ;
+    rdfs:label "Promote result SHACL shape" ;
+    rdfs:comment "Result envelope of kernel.promote — apex IRI + lattice level + optional pullback square." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:DecomposeResultShape a sh:NodeShape ;
+    rdfs:label "Decompose result SHACL shape" ;
+    rdfs:comment "Result envelope of kernel.decompose — pullback square (apex + left + right + overlap)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:ManifestShape a sh:NodeShape ;
+    rdfs:label "Manifest SHACL shape" ;
+    rdfs:comment "A pod's .well-known/context-graphs manifest is a hydra:Collection of iep:ContextDescriptor entries." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:conformsToShape a owl:ObjectProperty ;
+    rdfs:label "conforms to shape" ;
+    rdfs:comment "Links a response envelope to the SHACL node shape it satisfies. Spiritual sibling of dct:conformsTo, specialised for sh:NodeShape targets." ;
+    rdfs:range sh:NodeShape ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:iri a owl:DatatypeProperty ;
+    rdfs:label "iri" ;
+    rdfs:comment "The dereferenceable IRI of a holon or response envelope. Wire-level shortcut used in kernel result documents." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:status a owl:DatatypeProperty ;
+    rdfs:label "status" ;
+    rdfs:comment "Substrate-level status code on a kernel-verb response (ok / encrypted-no-key / not-found / error)." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:httpStatus a owl:DatatypeProperty ;
+    rdfs:label "http status" ;
+    rdfs:comment "Numeric HTTP status code echoed by kernel.act and dereference result envelopes when the underlying transport is HTTP." ;
+    rdfs:range xsd:integer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:apex a owl:ObjectProperty ;
+    rdfs:label "apex" ;
+    rdfs:comment "The apex fragment IRI of a PGSL pullback square. Used by promote and decompose result envelopes." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:kind a owl:DatatypeProperty ;
+    rdfs:label "kind" ;
+    rdfs:comment "Holon role within the substrate — one of 'atom' (PGSL level-0 scalar), 'fragment' (PGSL level-N composition), 'descriptor' (iep:ContextDescriptor envelope), 'manifest' (hydra:Collection manifest), or 'opaque' (dereferenceable but uninterpreted)." ;
+    rdfs:domain iep:Holon ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:left a owl:ObjectProperty ;
+    rdfs:label "left" ;
+    rdfs:comment "Left leg of a PGSL pullback square emitted by kernel.decompose — the first sub-fragment whose intersection with iep:right is iep:overlap and whose join is iep:apex." ;
+    rdfs:domain iep:ComposedDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:right a owl:ObjectProperty ;
+    rdfs:label "right" ;
+    rdfs:comment "Right leg of a PGSL pullback square emitted by kernel.decompose — the second sub-fragment whose intersection with iep:left is iep:overlap and whose join is iep:apex." ;
+    rdfs:domain iep:ComposedDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:overlap a owl:ObjectProperty ;
+    rdfs:label "overlap" ;
+    rdfs:comment "Shared sub-fragment at the meet of iep:left and iep:right in a PGSL pullback square emitted by kernel.decompose." ;
+    rdfs:domain iep:ComposedDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ══════════════════════════════════════════════════════════════
+#  SolidNotifications — descriptor-lifecycle event format
+# ══════════════════════════════════════════════════════════════
+
+iep:Notification a owl:Class ;
+    rdfs:label "Notification" ;
+    rdfs:comment "A descriptor-lifecycle event emitted by a relay or pod implementing the iep:FederationFacet syncProtocol 'SolidNotifications' contract. Carries the IRI of the descriptor that changed, the kind of change (created / updated / superseded), the producing pod, the timestamp, and optionally the authoring agent. Delivered over Server-Sent Events (text/event-stream) at GET /notifications/:podSlug and/or POSTed to registered webhook URLs as application/ld+json." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:NotificationChannelOpen a owl:Class ;
+    rdfs:subClassOf iep:Notification ;
+    rdfs:label "Notification Channel Open" ;
+    rdfs:comment "A control event sent by a SolidNotifications SSE endpoint as the first data frame after the HTTP headers flush. Confirms the channel is alive and carries the resolved pod URL + slug so the client can sanity-check the routing before processing subsequent iep:Notification events." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:eventType a owl:DatatypeProperty ;
+    rdfs:label "event type" ;
+    rdfs:comment "Kind of descriptor lifecycle event — one of 'created' (new descriptor minted), 'updated' (existing descriptor's payload or facets changed in place), or 'superseded' (a successor descriptor was published via iep:supersedes and the prior head is no longer the canonical view)." ;
+    rdfs:domain iep:Notification ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:podUrl a owl:DatatypeProperty ;
+    rdfs:label "pod URL" ;
+    rdfs:comment "The Solid pod URL the notification originated from. Combined with iep:descriptorUrl it locates the changed resource without requiring the consumer to maintain a separate pod-to-descriptor index." ;
+    rdfs:domain iep:Notification ;
+    rdfs:range xsd:anyURI ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:descriptorUrl a owl:DatatypeProperty ;
+    rdfs:label "descriptor URL" ;
+    rdfs:comment "Dereferenceable IRI of the iep:ContextDescriptor a notification refers to. Used in iep:Notification events to identify the changed descriptor without forcing the consumer to parse the event payload's structure." ;
+    rdfs:range xsd:anyURI ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:graphUrl a owl:DatatypeProperty ;
+    rdfs:label "graph URL" ;
+    rdfs:comment "Dereferenceable IRI of the iep:ContextDescriptor's payload graph (the .nq / .envelope.jose.json artifact). Carried alongside iep:descriptorUrl in iep:Notification events so a consumer can fetch the payload without first re-fetching the descriptor index." ;
+    rdfs:range xsd:anyURI ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:NotificationShape a sh:NodeShape ;
+    rdfs:label "Notification SHACL shape" ;
+    rdfs:comment "Validation shape for iep:Notification events delivered over Server-Sent Events or as JSON-LD webhook payloads. Every event MUST carry a podUrl, descriptorUrl, eventType (one of created / updated / superseded), and a timestamp. graphUrl and author are optional but RECOMMENDED. Implementations honoring the FederationFacet syncProtocol 'SolidNotifications' contract conform to this shape." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> ;
+    sh:targetClass iep:Notification ;
+    sh:property [
+        sh:path iep:podUrl ;
+        sh:datatype xsd:anyURI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "iep:Notification MUST carry exactly one iep:podUrl identifying the source pod."
+    ] ;
+    sh:property [
+        sh:path dct:source ;
+        sh:minCount 0
+    ] ;
+    sh:property [
+        sh:path iep:descriptorUrl ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "iep:Notification MUST carry exactly one iep:descriptorUrl identifying the changed descriptor."
+    ] ;
+    sh:property [
+        sh:path iep:eventType ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:in ( "created" "updated" "superseded" ) ;
+        sh:message "iep:eventType MUST be one of 'created', 'updated', or 'superseded'."
+    ] ;
+    sh:property [
+        sh:path dct:created ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 0 ;
+        sh:maxCount 1
+    ] ;
+    sh:property [
+        sh:path prov:wasAttributedTo ;
+        sh:minCount 0 ;
+        sh:maxCount 1
+    ] .

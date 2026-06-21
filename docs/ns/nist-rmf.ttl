@@ -1,5 +1,5 @@
 @prefix nist-rmf: <https://markjspivey-xwisee.github.io/interego/ns/nist-rmf#> .
-@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix rdf:      <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:     <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:      <http://www.w3.org/2001/XMLSchema#> .
@@ -21,7 +21,7 @@
 #    MEASURE — assessment + monitoring
 #    MANAGE — risk response + treatment
 #
-#  Each function is a cg:SemioticFacet subclass; instances annotate
+#  Each function is a iep:SemioticFacet subclass; instances annotate
 #  descriptors with "this action contributes evidence to NIST RMF
 #  function GOVERN.1.4" or similar. Compliance reports walk the
 #  federation and produce a Map of {function-category : evidence-count}.
@@ -32,34 +32,34 @@
     dct:description "L3 mapping of Interego context primitives to NIST AI RMF (AI 100-1) four functions: Govern / Map / Measure / Manage." ;
     vann:preferredNamespacePrefix "nist-rmf" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/nist-rmf#" ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> .
 
 # ── Functions ──────────────────────────────────────────────
 
 nist-rmf:Govern a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "GOVERN function" ;
     rdfs:comment "Policies, processes, accountability structures, oversight cultures. Categories: Govern.1 (policies), Govern.2 (accountability), Govern.3 (workforce diversity), Govern.4 (commitment), Govern.5 (engagement), Govern.6 (third-party risk)." .
 
 nist-rmf:Map a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "MAP function" ;
     rdfs:comment "Context establishment and risk identification. Categories: Map.1 (context), Map.2 (categorization), Map.3 (capabilities and limits), Map.4 (impacts), Map.5 (risks)." .
 
 nist-rmf:Measure a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "MEASURE function" ;
     rdfs:comment "Quantitative + qualitative assessment of identified risks. Categories: Measure.1 (methods), Measure.2 (quantitative), Measure.3 (effectiveness), Measure.4 (feedback)." .
 
 nist-rmf:Manage a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:label "MANAGE function" ;
     rdfs:comment "Risk response: prioritize, treat, monitor. Categories: Manage.1 (priority), Manage.2 (treatment), Manage.3 (third-party risks), Manage.4 (monitoring + improvement)." .
 
 # ── Evidence record ────────────────────────────────────────
 
 nist-rmf:EvidenceRecord a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "RMF evidence record" ;
     rdfs:comment "A descriptor that contributes evidence toward one or more RMF function categories. Carries nist-rmf:contributesTo links to the specific category IRIs (e.g., nist-rmf:Map.1.2). Compliance reports aggregate evidence per category." .
 
@@ -113,8 +113,8 @@ nist-rmf:evidenceLevel a owl:DatatypeProperty ;
 
 # ── Alignments ─────────────────────────────────────────────
 
-nist-rmf:Manage.4.1 rdfs:seeAlso cg:TrustFacet ;
+nist-rmf:Manage.4.1 rdfs:seeAlso iep:TrustFacet ;
     rdfs:comment "Continuous monitoring (Manage.4.1) is satisfied by AMTA attestations + Interego's federation surface — every action is queryable, attestations accumulate, anomalies surface via SPARQL filters." .
 
-nist-rmf:Map.1.1 rdfs:seeAlso cg:FederationFacet ;
+nist-rmf:Map.1.1 rdfs:seeAlso iep:FederationFacet ;
     rdfs:comment "Context establishment is partly the FederationFacet itself: where the system runs, who's authorized, how it syncs." .

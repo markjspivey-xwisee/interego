@@ -27,7 +27,7 @@ const CONFIG = {
 describe('buildMemoryDescriptor — substrate-pure', () => {
   it('produces an Asserted descriptor by default with all canonical facets', () => {
     const built = buildMemoryDescriptor({ text: 'Bob prefers async standups' }, CONFIG);
-    expect(built.memoryIri).toMatch(/^urn:cg:memory:observation:[0-9a-f]{16}$/);
+    expect(built.memoryIri).toMatch(/^urn:iep:memory:observation:[0-9a-f]{16}$/);
     const facetTypes = built.descriptor.facets.map(f => f.type).sort();
     expect(facetTypes).toContain('Agent');
     expect(facetTypes).toContain('Trust');
@@ -90,7 +90,7 @@ describe('buildMemoryDescriptor — substrate-pure', () => {
       CONFIG,
     );
     const doc = parseTrig(built.graphContent);
-    // Memory entries are typed cgh:AgentMemory (subClassOf prov:Entity)
+    // Memory entries are typed ieh:AgentMemory (subClassOf prov:Entity)
     const memSubjects = findSubjectsOfType(
       doc,
       'https://markjspivey-xwisee.github.io/interego/ns/harness#AgentMemory' as IRI,
@@ -112,14 +112,14 @@ describe('buildMemoryDescriptor — substrate-pure', () => {
   it('uses the kind in the IRI namespace for human-scannable IDs', () => {
     const fact = buildMemoryDescriptor({ text: 'a fact', kind: 'fact' }, CONFIG);
     const pref = buildMemoryDescriptor({ text: 'a preference', kind: 'preference' }, CONFIG);
-    expect(fact.memoryIri).toMatch(/^urn:cg:memory:fact:/);
-    expect(pref.memoryIri).toMatch(/^urn:cg:memory:preference:/);
+    expect(fact.memoryIri).toMatch(/^urn:iep:memory:fact:/);
+    expect(pref.memoryIri).toMatch(/^urn:iep:memory:preference:/);
   });
 
 });
 
 describe('affordancesFor — HATEOAS decoration', () => {
-  const TARGET = 'urn:cg:memory:fact:abc123' as IRI;
+  const TARGET = 'urn:iep:memory:fact:abc123' as IRI;
   const DESC_URL = 'https://pod.example/alice/fact-abc123.ttl';
 
   it('ReadWrite scope is handed the full verb set, each self-describing', () => {
@@ -158,7 +158,7 @@ describe('buildMemoryDescriptor — injection defense', () => {
     // inject a fake triple. With proper escapeLit, the entire value
     // stays inside one quoted literal — the parser sees a single tag
     // with the weird characters in it, not two triples.
-    const malicious = `legit-tag" ;\n<urn:cg:fake-admin> a <urn:cg:Admin> ;\n  <http://xmlns.com/foaf/0.1/name> "evil`;
+    const malicious = `legit-tag" ;\n<urn:iep:fake-admin> a <urn:iep:Admin> ;\n  <http://xmlns.com/foaf/0.1/name> "evil`;
     const built = buildMemoryDescriptor(
       { text: 'tagged with malicious payload', tags: [malicious] },
       CONFIG,
@@ -174,7 +174,7 @@ describe('buildMemoryDescriptor — injection defense', () => {
     const recoveredTags = readStringValues(memSubjects[0]!, 'http://purl.org/dc/terms/subject' as IRI);
     expect(recoveredTags).toEqual([malicious]);
     // No fake-admin subject made it in
-    const fakeAdmin = findSubjectsOfType(doc, 'urn:cg:Admin' as IRI);
+    const fakeAdmin = findSubjectsOfType(doc, 'urn:iep:Admin' as IRI);
     expect(fakeAdmin).toHaveLength(0);
   });
 });

@@ -21,7 +21,7 @@ const SUBJECT = 'urn:agent:alice' as IRI;
 
 function descWith(temporalExtras: Record<string, unknown>, modal: 'Asserted' | 'Hypothetical' | 'Counterfactual' = 'Asserted'): ContextDescriptorData {
   return {
-    id: 'urn:cg:test' as IRI,
+    id: 'urn:iep:test' as IRI,
     describes: [SUBJECT],
     facets: [
       {

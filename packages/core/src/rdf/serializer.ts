@@ -41,7 +41,7 @@ function literal(value: string | number | boolean, datatype?: string): string {
   }
   if (typeof value === 'number') {
     // Explicit datatype overrides auto-inference. Needed because
-    // properties like cg:epistemicConfidence are normatively xsd:double
+    // properties like iep:epistemicConfidence are normatively xsd:double
     // (range declared in cg.ttl) — without the override, values like
     // 0 or 1 would serialize as xsd:integer and fail a SHACL
     // sh:datatype xsd:double constraint.
@@ -76,18 +76,18 @@ function bnode(properties: string[]): string {
 // ── Facet serializers ────────────────────────────────────────
 
 function serializeTemporalFacet(f: TemporalFacetData): string {
-  const props: string[] = ['a cg:TemporalFacet'];
-  if (f.validFrom) props.push(`cg:validFrom ${dateTimeLit(f.validFrom)}`);
-  if (f.validUntil) props.push(`cg:validUntil ${dateTimeLit(f.validUntil)}`);
+  const props: string[] = ['a iep:TemporalFacet'];
+  if (f.validFrom) props.push(`iep:validFrom ${dateTimeLit(f.validFrom)}`);
+  if (f.validUntil) props.push(`iep:validUntil ${dateTimeLit(f.validUntil)}`);
   if (f.temporalResolution) {
-    props.push(`cg:temporalResolution "${f.temporalResolution}"^^xsd:duration`);
+    props.push(`iep:temporalResolution "${f.temporalResolution}"^^xsd:duration`);
   }
-  if (f.temporalRelation) props.push(`cg:temporalRelation ${iri(f.temporalRelation)}`);
+  if (f.temporalRelation) props.push(`iep:temporalRelation ${iri(f.temporalRelation)}`);
   return bnode(props);
 }
 
 function serializeProvenanceFacet(f: ProvenanceFacetData): string {
-  const props: string[] = ['a cg:ProvenanceFacet'];
+  const props: string[] = ['a iep:ProvenanceFacet'];
 
   if (f.wasGeneratedBy) {
     const actProps: string[] = ['a prov:Activity'];
@@ -120,7 +120,7 @@ function serializeProvenanceFacet(f: ProvenanceFacetData): string {
 }
 
 function serializeAgentFacet(f: AgentFacetData): string {
-  const props: string[] = ['a cg:AgentFacet'];
+  const props: string[] = ['a iep:AgentFacet'];
 
   if (f.assertingAgent) {
     const agentProps: string[] = [];
@@ -133,19 +133,19 @@ function serializeAgentFacet(f: AgentFacetData): string {
       agentProps.push(`rdfs:label "${f.assertingAgent.label}"`);
     }
     if (f.assertingAgent.identity) {
-      agentProps.push(`cg:agentIdentity ${iri(f.assertingAgent.identity)}`);
+      agentProps.push(`iep:agentIdentity ${iri(f.assertingAgent.identity)}`);
     }
-    props.push(`cg:assertingAgent ${bnode(agentProps)}`);
+    props.push(`iep:assertingAgent ${bnode(agentProps)}`);
   }
 
-  if (f.agentRole) props.push(`cg:agentRole cg:${f.agentRole}`);
-  if (f.onBehalfOf) props.push(`cg:onBehalfOf ${iri(f.onBehalfOf)}`);
+  if (f.agentRole) props.push(`iep:agentRole iep:${f.agentRole}`);
+  if (f.onBehalfOf) props.push(`iep:onBehalfOf ${iri(f.onBehalfOf)}`);
 
   return bnode(props);
 }
 
 function serializeAccessControlFacet(f: AccessControlFacetData): string {
-  const props: string[] = ['a cg:AccessControlFacet'];
+  const props: string[] = ['a iep:AccessControlFacet'];
 
   for (const auth of f.authorizations) {
     const authProps: string[] = ['a acl:Authorization'];
@@ -154,40 +154,40 @@ function serializeAccessControlFacet(f: AccessControlFacetData): string {
     for (const mode of auth.mode) {
       authProps.push(`acl:mode acl:${mode}`);
     }
-    props.push(`cg:authorization ${bnode(authProps)}`);
+    props.push(`iep:authorization ${bnode(authProps)}`);
   }
 
-  if (f.consentBasis) props.push(`cg:consentBasis ${iri(f.consentBasis)}`);
+  if (f.consentBasis) props.push(`iep:consentBasis ${iri(f.consentBasis)}`);
 
   return bnode(props);
 }
 
 function serializeSemioticFacet(f: SemioticFacetData): string {
-  const props: string[] = ['a cg:SemioticFacet'];
-  if (f.interpretationFrame) props.push(`cg:interpretationFrame ${iri(f.interpretationFrame)}`);
-  if (f.signSystem) props.push(`cg:signSystem ${iri(f.signSystem)}`);
-  if (f.groundTruth !== undefined) props.push(`cg:groundTruth ${literal(f.groundTruth)}`);
-  if (f.modalStatus) props.push(`cg:modalStatus cg:${f.modalStatus}`);
+  const props: string[] = ['a iep:SemioticFacet'];
+  if (f.interpretationFrame) props.push(`iep:interpretationFrame ${iri(f.interpretationFrame)}`);
+  if (f.signSystem) props.push(`iep:signSystem ${iri(f.signSystem)}`);
+  if (f.groundTruth !== undefined) props.push(`iep:groundTruth ${literal(f.groundTruth)}`);
+  if (f.modalStatus) props.push(`iep:modalStatus iep:${f.modalStatus}`);
   if (f.epistemicConfidence !== undefined) {
-    // cg:epistemicConfidence is normatively xsd:double (range in cg.ttl) —
+    // iep:epistemicConfidence is normatively xsd:double (range in cg.ttl) —
     // force the datatype so integer-valued confidences (0, 1) don't
     // serialize as xsd:integer and fail the core-1.0 SHACL datatype shape.
-    props.push(`cg:epistemicConfidence ${literal(f.epistemicConfidence, 'xsd:double')}`);
+    props.push(`iep:epistemicConfidence ${literal(f.epistemicConfidence, 'xsd:double')}`);
   }
-  if (f.languageTag) props.push(`cg:languageTag "${f.languageTag}"^^xsd:language`);
+  if (f.languageTag) props.push(`iep:languageTag "${f.languageTag}"^^xsd:language`);
   // Revocation Extension — Proposal B (spec/revocation.md). Each
   // condition emits as a nested blank node so federation readers can
   // evaluate the successor query without decrypting the payload.
   if (f.revokedIf && f.revokedIf.length > 0) {
     for (const rc of f.revokedIf) {
-      const rcProps: string[] = ['a cg:RevocationCondition'];
+      const rcProps: string[] = ['a iep:RevocationCondition'];
       // SPARQL query as a triple-quoted literal — keeps multiline + embedded quotes sane.
       const q = rc.successorQuery.replace(/\\/g, '\\\\');
-      rcProps.push(`cg:successorQuery """${q}"""`);
-      if (rc.evaluationScope) rcProps.push(`cg:evaluationScope cg:${rc.evaluationScope}`);
-      if (rc.onRevocation) rcProps.push(`cg:onRevocation cg:${rc.onRevocation}`);
-      if (rc.revocationIssuer) rcProps.push(`cg:revocationIssuer ${iri(rc.revocationIssuer)}`);
-      props.push(`cg:revokedIf ${bnode(rcProps)}`);
+      rcProps.push(`iep:successorQuery """${q}"""`);
+      if (rc.evaluationScope) rcProps.push(`iep:evaluationScope iep:${rc.evaluationScope}`);
+      if (rc.onRevocation) rcProps.push(`iep:onRevocation iep:${rc.onRevocation}`);
+      if (rc.revocationIssuer) rcProps.push(`iep:revocationIssuer ${iri(rc.revocationIssuer)}`);
+      props.push(`iep:revokedIf ${bnode(rcProps)}`);
     }
   }
 
@@ -195,33 +195,33 @@ function serializeSemioticFacet(f: SemioticFacetData): string {
 }
 
 function serializeTrustFacet(f: TrustFacetData): string {
-  const props: string[] = ['a cg:TrustFacet'];
-  if (f.verifiableCredential) props.push(`cg:verifiableCredential ${iri(f.verifiableCredential)}`);
-  if (f.issuer) props.push(`cg:issuer ${iri(f.issuer)}`);
-  if (f.proofMechanism) props.push(`cg:proofMechanism ${iri(f.proofMechanism)}`);
-  if (f.trustLevel) props.push(`cg:trustLevel cg:${f.trustLevel}`);
-  if (f.revocationStatus) props.push(`cg:revocationStatus ${iri(f.revocationStatus)}`);
+  const props: string[] = ['a iep:TrustFacet'];
+  if (f.verifiableCredential) props.push(`iep:verifiableCredential ${iri(f.verifiableCredential)}`);
+  if (f.issuer) props.push(`iep:issuer ${iri(f.issuer)}`);
+  if (f.proofMechanism) props.push(`iep:proofMechanism ${iri(f.proofMechanism)}`);
+  if (f.trustLevel) props.push(`iep:trustLevel iep:${f.trustLevel}`);
+  if (f.revocationStatus) props.push(`iep:revocationStatus ${iri(f.revocationStatus)}`);
 
   if (f.proof) {
     const proofProps: string[] = [
-      `cg:proofScheme "${f.proof.scheme}"`,
-      `cg:proofUrl ${iri(f.proof.proofUrl)}`,
+      `iep:proofScheme "${f.proof.scheme}"`,
+      `iep:proofUrl ${iri(f.proof.proofUrl)}`,
     ];
-    if (f.proof.signer) proofProps.push(`cg:proofSigner "${f.proof.signer}"`);
-    props.push(`cg:proof ${bnode(proofProps)}`);
+    if (f.proof.signer) proofProps.push(`iep:proofSigner "${f.proof.signer}"`);
+    props.push(`iep:proof ${bnode(proofProps)}`);
   }
 
   return bnode(props);
 }
 
 function serializeFederationFacet(f: FederationFacetData): string {
-  const props: string[] = ['a cg:FederationFacet'];
-  if (f.origin) props.push(`cg:origin ${iri(f.origin)}`);
-  if (f.storageEndpoint) props.push(`cg:storageEndpoint ${iri(f.storageEndpoint)}`);
+  const props: string[] = ['a iep:FederationFacet'];
+  if (f.origin) props.push(`iep:origin ${iri(f.origin)}`);
+  if (f.storageEndpoint) props.push(`iep:storageEndpoint ${iri(f.storageEndpoint)}`);
   if (f.endpointURL) props.push(`dcat:endpointURL ${iri(f.endpointURL)}`);
-  if (f.syncProtocol) props.push(`cg:syncProtocol cg:${f.syncProtocol}`);
-  if (f.replicaOf) props.push(`cg:replicaOf ${iri(f.replicaOf)}`);
-  if (f.lastSynced) props.push(`cg:lastSynced ${dateTimeLit(f.lastSynced)}`);
+  if (f.syncProtocol) props.push(`iep:syncProtocol iep:${f.syncProtocol}`);
+  if (f.replicaOf) props.push(`iep:replicaOf ${iri(f.replicaOf)}`);
+  if (f.lastSynced) props.push(`iep:lastSynced ${dateTimeLit(f.lastSynced)}`);
 
   if (f.distribution) {
     const distProps: string[] = [
@@ -236,124 +236,124 @@ function serializeFederationFacet(f: FederationFacetData): string {
 }
 
 function serializeCausalFacet(f: CausalFacetData): string {
-  const props: string[] = ['a cg:CausalFacet'];
-  props.push(`cg:causalRole "${f.causalRole}"`);
+  const props: string[] = ['a iep:CausalFacet'];
+  props.push(`iep:causalRole "${f.causalRole}"`);
 
-  if (f.causalModel) props.push(`cg:causalModel ${iri(f.causalModel)}`);
-  if (f.parentObservation) props.push(`cg:parentObservation ${iri(f.parentObservation)}`);
-  if (f.parentIntervention) props.push(`cg:parentIntervention ${iri(f.parentIntervention)}`);
-  if (f.effectSize !== undefined) props.push(`cg:effectSize ${literal(f.effectSize)}`);
-  if (f.causalConfidence !== undefined) props.push(`cg:causalConfidence ${literal(f.causalConfidence)}`);
+  if (f.causalModel) props.push(`iep:causalModel ${iri(f.causalModel)}`);
+  if (f.parentObservation) props.push(`iep:parentObservation ${iri(f.parentObservation)}`);
+  if (f.parentIntervention) props.push(`iep:parentIntervention ${iri(f.parentIntervention)}`);
+  if (f.effectSize !== undefined) props.push(`iep:effectSize ${literal(f.effectSize)}`);
+  if (f.causalConfidence !== undefined) props.push(`iep:causalConfidence ${literal(f.causalConfidence)}`);
 
   // Serialize interventions
   if (f.interventions && f.interventions.length > 0) {
     for (const iv of f.interventions) {
       const ivProps: string[] = [
-        'a cg:Intervention',
-        `cg:intervenes "${iv.variable}"`,
-        `cg:interventionValue "${iv.value}"`,
+        'a iep:Intervention',
+        `iep:intervenes "${iv.variable}"`,
+        `iep:interventionValue "${iv.value}"`,
       ];
-      props.push(`cg:intervenes ${bnode(ivProps)}`);
+      props.push(`iep:intervenes ${bnode(ivProps)}`);
     }
   }
 
   // Serialize counterfactual query
   if (f.counterfactualQuery) {
     const cfProps: string[] = [
-      `cg:counterfactualTarget "${f.counterfactualQuery.target}"`,
+      `iep:counterfactualTarget "${f.counterfactualQuery.target}"`,
     ];
     const iv = f.counterfactualQuery.intervention;
-    cfProps.push(`cg:intervenes ${bnode([
-      'a cg:Intervention',
-      `cg:intervenes "${iv.variable}"`,
-      `cg:interventionValue "${iv.value}"`,
+    cfProps.push(`iep:intervenes ${bnode([
+      'a iep:Intervention',
+      `iep:intervenes "${iv.variable}"`,
+      `iep:interventionValue "${iv.value}"`,
     ])}`);
     for (const [varName, value] of Object.entries(f.counterfactualQuery.evidence)) {
-      cfProps.push(`cg:counterfactualEvidence ${bnode([
-        `cg:causalVariable "${varName}"`,
-        `cg:interventionValue "${value}"`,
+      cfProps.push(`iep:counterfactualEvidence ${bnode([
+        `iep:causalVariable "${varName}"`,
+        `iep:interventionValue "${value}"`,
       ])}`);
     }
-    props.push(`cg:counterfactualQuery ${bnode(cfProps)}`);
+    props.push(`iep:counterfactualQuery ${bnode(cfProps)}`);
   }
 
   // Serialize inline SCM
   if (f.causalModelData) {
     const scm = f.causalModelData;
     const scmProps: string[] = [
-      'a cg:StructuralCausalModel',
+      'a iep:StructuralCausalModel',
     ];
     if (scm.label) scmProps.push(`rdfs:label "${scm.label}"`);
     for (const v of scm.variables) {
       const vProps: string[] = [
-        'a cg:CausalVariable',
+        'a iep:CausalVariable',
         `rdfs:label "${v.name}"`,
       ];
-      if (v.exogenous) vProps.push(`cg:exogenous ${literal(true)}`);
-      if (v.mechanism) vProps.push(`cg:mechanism "${v.mechanism}"`);
+      if (v.exogenous) vProps.push(`iep:exogenous ${literal(true)}`);
+      if (v.mechanism) vProps.push(`iep:mechanism "${v.mechanism}"`);
       if (v.causes) {
         for (const c of v.causes) {
-          vProps.push(`cg:causes "${c}"`);
+          vProps.push(`iep:causes "${c}"`);
         }
       }
-      scmProps.push(`cg:causalVariable ${bnode(vProps)}`);
+      scmProps.push(`iep:causalVariable ${bnode(vProps)}`);
     }
     for (const e of scm.edges) {
       const eProps: string[] = [
-        'a cg:CausalEdge',
-        `cg:causes "${e.from}" ;`,
-        `cg:effectOf "${e.to}"`,
+        'a iep:CausalEdge',
+        `iep:causes "${e.from}" ;`,
+        `iep:effectOf "${e.to}"`,
       ];
-      if (e.mechanism) eProps.push(`cg:mechanism "${e.mechanism}"`);
-      if (e.strength !== undefined) eProps.push(`cg:causalConfidence ${literal(e.strength)}`);
-      scmProps.push(`cg:causalEdge ${bnode(eProps)}`);
+      if (e.mechanism) eProps.push(`iep:mechanism "${e.mechanism}"`);
+      if (e.strength !== undefined) eProps.push(`iep:causalConfidence ${literal(e.strength)}`);
+      scmProps.push(`iep:causalEdge ${bnode(eProps)}`);
     }
-    props.push(`cg:causalModel ${bnode(scmProps)}`);
+    props.push(`iep:causalModel ${bnode(scmProps)}`);
   }
 
   return bnode(props);
 }
 
 function serializeProjectionFacet(f: ProjectionFacetData): string {
-  const props: string[] = ['a cg:ProjectionFacet'];
+  const props: string[] = ['a iep:ProjectionFacet'];
 
-  if (f.targetVocabulary) props.push(`cg:targetVocabulary ${iri(f.targetVocabulary)}`);
-  if (f.boundaryShapes) props.push(`cg:boundaryShapes ${iri(f.boundaryShapes)}`);
-  if (f.selective !== undefined) props.push(`cg:selective ${literal(f.selective)}`);
+  if (f.targetVocabulary) props.push(`iep:targetVocabulary ${iri(f.targetVocabulary)}`);
+  if (f.boundaryShapes) props.push(`iep:boundaryShapes ${iri(f.boundaryShapes)}`);
+  if (f.selective !== undefined) props.push(`iep:selective ${literal(f.selective)}`);
 
   if (f.bindings) {
     for (const b of f.bindings) {
       const bProps: string[] = [
-        'a cg:ExternalBinding',
-        `cg:describes ${iri(b.source)}`,
-        `cg:binding ${iri(b.target)}`,
-        `cg:bindingStrength cg:${b.strength}`,
+        'a iep:ExternalBinding',
+        `iep:describes ${iri(b.source)}`,
+        `iep:binding ${iri(b.target)}`,
+        `iep:bindingStrength iep:${b.strength}`,
       ];
-      if (b.confidence !== undefined) bProps.push(`cg:epistemicConfidence ${literal(b.confidence)}`);
-      if (b.targetVocabulary) bProps.push(`cg:targetVocabulary ${iri(b.targetVocabulary)}`);
+      if (b.confidence !== undefined) bProps.push(`iep:epistemicConfidence ${literal(b.confidence)}`);
+      if (b.targetVocabulary) bProps.push(`iep:targetVocabulary ${iri(b.targetVocabulary)}`);
       if (b.assertedBy) bProps.push(`prov:wasAttributedTo ${iri(b.assertedBy)}`);
-      props.push(`cg:binding ${bnode(bProps)}`);
+      props.push(`iep:binding ${bnode(bProps)}`);
     }
   }
 
   if (f.vocabularyMappings) {
     for (const m of f.vocabularyMappings) {
       const mProps: string[] = [
-        'a cg:VocabularyMapping',
-        `cg:describes ${iri(m.source)}`,
-        `cg:binding ${iri(m.target)}`,
-        `cg:mappingType "${m.mappingType}"`,
-        `cg:mappingRelationship "${m.relationship}"`,
+        'a iep:VocabularyMapping',
+        `iep:describes ${iri(m.source)}`,
+        `iep:binding ${iri(m.target)}`,
+        `iep:mappingType "${m.mappingType}"`,
+        `iep:mappingRelationship "${m.relationship}"`,
       ];
-      props.push(`cg:vocabularyMapping ${bnode(mProps)}`);
+      props.push(`iep:vocabularyMapping ${bnode(mProps)}`);
     }
   }
 
   if (f.exposedEntities) {
-    for (const e of f.exposedEntities) props.push(`cg:exposedEntity ${iri(e)}`);
+    for (const e of f.exposedEntities) props.push(`iep:exposedEntity ${iri(e)}`);
   }
   if (f.hiddenEntities) {
-    for (const e of f.hiddenEntities) props.push(`cg:hiddenEntity ${iri(e)}`);
+    for (const e of f.hiddenEntities) props.push(`iep:hiddenEntity ${iri(e)}`);
   }
 
   return bnode(props);
@@ -409,27 +409,27 @@ export function toTurtle(
 
   // Descriptor header
   const isComposed = 'compositionOp' in descriptor;
-  const rdfType = isComposed ? 'cg:ComposedDescriptor' : 'cg:ContextDescriptor';
+  const rdfType = isComposed ? 'iep:ComposedDescriptor' : 'iep:ContextDescriptor';
 
   const props: string[] = [`a ${rdfType}`];
 
   // Version
   if (descriptor.version !== undefined) {
-    props.push(`cg:version ${literal(descriptor.version)}`);
+    props.push(`iep:version ${literal(descriptor.version)}`);
   }
 
   // Administrative validity
   if (descriptor.validFrom) {
-    props.push(`cg:validFrom ${dateTimeLit(descriptor.validFrom)}`);
+    props.push(`iep:validFrom ${dateTimeLit(descriptor.validFrom)}`);
   }
   if (descriptor.validUntil) {
-    props.push(`cg:validUntil ${dateTimeLit(descriptor.validUntil)}`);
+    props.push(`iep:validUntil ${dateTimeLit(descriptor.validUntil)}`);
   }
 
   // Supersedes
   if (descriptor.supersedes) {
     for (const s of descriptor.supersedes) {
-      props.push(`cg:supersedes ${iri(s)}`);
+      props.push(`iep:supersedes ${iri(s)}`);
     }
   }
 
@@ -442,26 +442,26 @@ export function toTurtle(
 
   // Described graphs
   for (const g of descriptor.describes) {
-    props.push(`cg:describes ${iri(g)}`);
+    props.push(`iep:describes ${iri(g)}`);
   }
 
   // Composition (for ComposedDescriptorData)
   if (isComposed) {
     const comp = descriptor as ComposedDescriptorData;
-    props.push(`cg:compositionOp cg:${comp.compositionOp}`);
+    props.push(`iep:compositionOp iep:${comp.compositionOp}`);
     for (const op of comp.operands) {
-      props.push(`cg:operand ${iri(op)}`);
+      props.push(`iep:operand ${iri(op)}`);
     }
     if (comp.restrictToTypes) {
       for (const t of comp.restrictToTypes) {
-        props.push(`cg:restrictToType cg:${t}`);
+        props.push(`iep:restrictToType iep:${t}`);
       }
     }
   }
 
   // Facets
   for (const facet of descriptor.facets) {
-    props.push(`cg:hasFacet ${serializeFacet(facet)}`);
+    props.push(`iep:hasFacet ${serializeFacet(facet)}`);
   }
 
   // Assemble
@@ -518,7 +518,7 @@ function serializeLiteral(lit: Literal): string {
  * ```turtle
  * <subject> <predicate> <object> {|
  *     prov:wasAttributedTo <agent> ;
- *     cg:epistemicConfidence "0.95"^^xsd:double
+ *     iep:epistemicConfidence "0.95"^^xsd:double
  * |} .
  * ```
  *
@@ -549,7 +549,7 @@ export function toTripleAnnotationTurtle(
   for (const facet of annotation.facets) {
     // Flatten the facet serialization into annotation properties
     const facetStr = serializeFacet(facet);
-    annotationProps.push(`cg:hasFacet ${facetStr}`);
+    annotationProps.push(`iep:hasFacet ${facetStr}`);
   }
 
   lines.push(`${tripleStr} {|`);

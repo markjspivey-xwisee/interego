@@ -23,7 +23,7 @@ cycle of at least one minor version (typically ≥ 90 days)**:
 - **Wire format.** Turtle / TriG / JSON-LD serializations of any
   conforming descriptor written today will parse identically by any
   v1.x implementation.
-- **Vocabulary in core namespaces.** No term in `cg:`, `cgh:`, `pgsl:`,
+- **Vocabulary in core namespaces.** No term in `iep:`, `ieh:`, `pgsl:`,
   `ie:`, or `align:` will be removed, renamed, or have its semantics
   narrowed. Additive changes (new optional terms, new optional facets)
   are permitted within v1.x.
@@ -37,7 +37,7 @@ cycle of at least one minor version (typically ≥ 90 days)**:
   groundTruth=false; Hypothetical ↔ groundTruth absent) is the L1
   contract. No new modal status will be added without a minor version
   bump, and existing ones will not change semantics.
-- **`cg:supersedes` chain resolution.** The "latest non-superseded"
+- **`iep:supersedes` chain resolution.** The "latest non-superseded"
   semantics for current-content queries are normative.
 - **Conformance levels.** The Level 1 / Level 2 / Level 3 / Level 4
   partition in [`CONFORMANCE.md`](CONFORMANCE.md) is fixed. Tests may

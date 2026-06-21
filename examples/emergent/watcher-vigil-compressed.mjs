@@ -9,17 +9,17 @@
  * Passport over a 72-hour simulation compressed into ~30 minutes of
  * wall-clock time. Each simulated hour is one mechanical heartbeat
  * tick; significant ticks publish descriptors, append LifeEvents, and
- * chain via cg:supersedes. The harness exercises the substrate's
+ * chain via iep:supersedes. The harness exercises the substrate's
  * temporal/modal/transactional primitives end-to-end and surfaces gaps
  * the spec audit flagged:
  *
  *   • Modal-status drift on later contradictions (Asserted → Hypothetical)
- *   • Heartbeat-noise dedup via cg:supersedes
+ *   • Heartbeat-noise dedup via iep:supersedes
  *   • Transaction replay (transactionsResumed) across multiple ticks
  *   • Temporal-modal boundary (instant == validFrom)
  *   • Transient-retry budget on manifest CAS conflicts (412)
  *   • Passport biography integrity across N ticks (no dup / no drop)
- *   • cg:supersedes DAG (acyclic, topologically sortable)
+ *   • iep:supersedes DAG (acyclic, topologically sortable)
  *
  * Agent count + roles
  *   1 persistent Vigil agent (ECDSA wallet, did:key); no peers.
@@ -28,7 +28,7 @@
  *   AgentIdentity (setup)
  *     → [Heartbeat LifeEvent / Tick descriptor] × 72
  *     → Passport (final, with full lifecycle)
- *   Each Tick descriptor cg:supersedes the previous Tick descriptor
+ *   Each Tick descriptor iep:supersedes the previous Tick descriptor
  *   (head-of-chain at the end is the latest Tick). The Passport
  *   descriptor cites every published tick IRI as evidence via
  *   prov:wasDerivedFrom.
@@ -220,13 +220,13 @@ h('ACT 2 — publish AgentIdentity + bootstrap passport');
 async function publishIdentity() {
   const validFrom = SIM_T0.toISOString();
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix watcher: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${identityIri}> a cg:ContextDescriptor, watcher:AgentIdentity ;
+<${identityIri}> a iep:ContextDescriptor, watcher:AgentIdentity ;
   dcterms:title "Vigil agent identity (${SCENARIO_DATE})" ;
   watcher:agentDid <${did}> ;
   watcher:simulationStart "${validFrom}"^^xsd:dateTime ;
@@ -275,7 +275,7 @@ passport = recordLifeEvent(passport, {
 console.log(`   passport bootstrapped at version ${passport.version}`);
 
 // ── tick publisher ──────────────────────────────────────────────────
-// One Tick descriptor per significant simulated hour. cg:supersedes
+// One Tick descriptor per significant simulated hour. iep:supersedes
 // chain to the previous tick (or to identityIri for tick 0).
 //
 // We retry transient pod errors via withTransientRetry; the test
@@ -322,13 +322,13 @@ async function publishTick(tickIdx, payload, opts = {}) {
     : '';
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix watcher: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, watcher:HeartbeatTick ;
+<${iri}> a iep:ContextDescriptor, watcher:HeartbeatTick ;
   dcterms:conformsTo <${TICK_TYPE_IRI}> ;
   watcher:tickIndex ${tickIdx} ;
   watcher:simulatedAt "${at}"^^xsd:dateTime ;
@@ -432,7 +432,7 @@ for (let tickIdx = 0; tickIdx < SIM_HOURS; tickIdx++) {
     // pure-republish into a NO-OP LifeEvent. The current
     // recordHeartbeatTickIfChanged considers any publishedDescriptors
     // entry significant, so this is expected to add a LifeEvent —
-    // but the cg:supersedes chain MUST tie the duplicate to its
+    // but the iep:supersedes chain MUST tie the duplicate to its
     // predecessor so the dedup is recoverable downstream.
     const before = passport.lifeEvents.length;
     passport = recordHeartbeatTickIfChanged(passport, {
@@ -543,13 +543,13 @@ const passportPayload = {
 const passportJson = JSON.stringify(passportPayload).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
 const passportGraph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix watcher: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${passportIri}> a cg:ContextDescriptor, watcher:PassportSnapshot ;
+<${passportIri}> a iep:ContextDescriptor, watcher:PassportSnapshot ;
   dcterms:title "Vigil capability passport (final, ${SIM_HOURS}h simulation, ${SCENARIO_DATE})" ;
   watcher:agentDid <${did}> ;
   watcher:passportVersion ${passport.version} ;
@@ -677,7 +677,7 @@ check('transactionsResumed recorded exactly once when txn is rediscovered mid-fl
   txnResumedRecordedCount === 1,
   { txnResumedRecordedCount });
 
-// G. cg:supersedes chain is complete and acyclic (topological sort
+// G. iep:supersedes chain is complete and acyclic (topological sort
 //    exists). We build the chain from the pod's discover() output
 //    and verify it forms a DAG using the substrate's topologicalSort.
 const finalEntries = await withTransientRetry(() => discover(SCENARIO_POD));
@@ -699,7 +699,7 @@ try {
   // (the older one) to come before its successor, so we flip the edge
   // direction here: `from: e.to` (the older descriptor) → `to: e.from`
   // (the newer descriptor). A cycle would mean two descriptors mutually
-  // cg:supersede each other — the topologicalSort result length will
+  // iep:supersede each other — the topologicalSort result length will
   // be less than the node count.
   const variables = [...nodes].map(name => ({ name, type: 'observed' }));
   const adapterEdges = edges.map(e => ({ from: e.to, to: e.from }));
@@ -708,7 +708,7 @@ try {
 } catch (err) {
   topoError = err?.message ?? String(err);
 }
-check('cg:supersedes chain is complete and acyclic (topological sort exists)',
+check('iep:supersedes chain is complete and acyclic (topological sort exists)',
   Array.isArray(topoOrder) && topoOrder.length === nodes.size,
   { topoError, nodes: nodes.size, gotOrder: Array.isArray(topoOrder) ? topoOrder.length : null });
 

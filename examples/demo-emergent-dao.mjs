@@ -9,7 +9,7 @@
 //   3. Any observer walks the pod, tallies votes per proposal by
 //      counting descriptors whose wasDerivedFrom = proposal_i.
 //   4. A resolver publishes a resolution descriptor that:
-//        - cg:supersedes all three proposals
+//        - iep:supersedes all three proposals
 //        - carries the winning proposal ID + tally
 //        - wasDerivedFrom every vote + every proposal (full audit)
 //
@@ -32,10 +32,10 @@ async function putText(url, body) {
 function descriptorTtl({ id, graph, issuer, modal, confidence, supersedes, wasDerivedFrom, extra }) {
   const now = new Date().toISOString();
   const groundTruth = modal === 'Asserted' ? 'true' : null;
-  const gtLine = groundTruth ? `        cg:groundTruth "${groundTruth}"^^xsd:boolean ;\n` : '';
-  const supLines = (supersedes || []).map(s => `    cg:supersedes <${s}> ;`).join('\n');
+  const gtLine = groundTruth ? `        iep:groundTruth "${groundTruth}"^^xsd:boolean ;\n` : '';
+  const supLines = (supersedes || []).map(s => `    iep:supersedes <${s}> ;`).join('\n');
   const derivedLines = (wasDerivedFrom || []).map(u => `        prov:wasDerivedFrom <${u}> ;`).join('\n');
-  return `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+  return `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -43,23 +43,23 @@ function descriptorTtl({ id, graph, issuer, modal, confidence, supersedes, wasDe
 @prefix dao: <urn:dao:> .
 
 <${id}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
-${supLines ? supLines + '\n' : ''}    cg:describes <${graph}> ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
+${supLines ? supLines + '\n' : ''}    iep:describes <${graph}> ;
 ${extra || ''}
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [ a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [ a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${issuer}> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
 ${derivedLines}
         prov:wasAttributedTo <${issuer}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${issuer}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${issuer}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ;
-${gtLine}        cg:modalStatus cg:${modal} ;
-        cg:epistemicConfidence "${confidence.toFixed(3)}"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${issuer}> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${issuer}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${issuer}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ;
+${gtLine}        iep:modalStatus iep:${modal} ;
+        iep:epistemicConfidence "${confidence.toFixed(3)}"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${issuer}> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 }
 
@@ -69,11 +69,11 @@ async function publish(id, graph, ttl) {
   await putText(url, ttl);
   const entry = `
 
-<${url}> a cg:ManifestEntry ;
-    cg:describes <${graph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+<${url}> a iep:ManifestEntry ;
+    iep:describes <${graph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
   const cur = await fetchText(MANIFEST_URL);
   await putText(MANIFEST_URL, (cur ?? '') + entry);
@@ -88,9 +88,9 @@ const ts = Date.now();
 // ── Phase 1: three proposals ─────────────────────────────
 console.log('1. Three proposers publish competing proposals:');
 const proposals = [
-  { id: `urn:cg:proposal:A:${ts}`,  author: 'urn:agent:dao:treasury-chair', title: 'Allocate 40% to R&D, 30% audits, 30% ops',   slug: 'A' },
-  { id: `urn:cg:proposal:B:${ts}`,  author: 'urn:agent:dao:security-lead',  title: 'Allocate 60% audits, 25% R&D, 15% ops',       slug: 'B' },
-  { id: `urn:cg:proposal:C:${ts}`,  author: 'urn:agent:dao:community-rep',  title: 'Allocate 25% R&D, 25% audits, 50% ecosystem', slug: 'C' },
+  { id: `urn:iep:proposal:A:${ts}`,  author: 'urn:agent:dao:treasury-chair', title: 'Allocate 40% to R&D, 30% audits, 30% ops',   slug: 'A' },
+  { id: `urn:iep:proposal:B:${ts}`,  author: 'urn:agent:dao:security-lead',  title: 'Allocate 60% audits, 25% R&D, 15% ops',       slug: 'B' },
+  { id: `urn:iep:proposal:C:${ts}`,  author: 'urn:agent:dao:community-rep',  title: 'Allocate 25% R&D, 25% audits, 50% ecosystem', slug: 'C' },
 ];
 const proposalUrls = {};
 for (const p of proposals) {
@@ -122,7 +122,7 @@ const votes = [
 ];
 const voteUrls = [];
 for (const v of votes) {
-  const voteId = `urn:cg:vote:${v.voter.split(':').pop()}:${ts}`;
+  const voteId = `urn:iep:vote:${v.voter.split(':').pop()}:${ts}`;
   const voteGraph = `${REFERENT}:vote-${v.voter.split(':').pop()}`;
   const ttl = descriptorTtl({
     id: voteId,
@@ -157,7 +157,7 @@ console.log('');
 
 // ── Phase 4: resolver publishes resolution ───────────────
 console.log('4. Resolver publishes resolution descriptor:');
-const resolutionId = `urn:cg:resolution:${ts}`;
+const resolutionId = `urn:iep:resolution:${ts}`;
 const resolutionGraph = `${REFERENT}:resolution`;
 const allProposalUrls = Object.values(proposalUrls);
 const allVoteUrls = voteUrls.map(v => v.url);
@@ -175,7 +175,7 @@ const ttl = descriptorTtl({
 const resUrl = await publish(resolutionId, resolutionGraph, ttl);
 console.log(`   ✓ ${resUrl.split('/').pop()}`);
 console.log(`     dao:winner "${winner}"  (tally ${tally[winner]}/${votes.length})`);
-console.log(`     cg:supersedes → 3 proposals`);
+console.log(`     iep:supersedes → 3 proposals`);
 console.log(`     prov:wasDerivedFrom → 3 proposals + 7 votes (10 total citations)`);
 console.log('');
 

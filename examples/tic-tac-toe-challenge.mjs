@@ -20,7 +20,7 @@
  *     3. Poll (5s) until the collective's watcher publishes a
  *        tictactoe:ChallengeAccepted descriptor for this gameId.
  *     4. Play move-by-move. Each of your moves is a signed
- *        cg:ContextDescriptor that cg:supersedes the prior descriptor.
+ *        iep:ContextDescriptor that iep:supersedes the prior descriptor.
  *        Read the collective's responses by walking the supersedes-chain
  *        with discover() + fetchGraphContent().
  *     5. On terminal (winner found OR 9 moves with no winner = draw):
@@ -68,7 +68,7 @@ const TOURNAMENT_NS = `urn:demo:tic-tac-toe:${TOURNAMENT_DATE}`;
 const RULES_IRI = `${TOURNAMENT_NS}:rules`;
 
 // Vertical namespace — same one the tournament uses. No new ontology
-// terms; the descriptor RDF only uses cg:/cgh:/dcterms:/prov: + this
+// terms; the descriptor RDF only uses iep:/ieh:/dcterms:/prov: + this
 // vertical-scoped prefix. Vertical/domain namespaces don't need owned
 // ontology declarations.
 const TICTAC_NS = 'https://interego-tournament.example/ns/tictactoe#';
@@ -248,13 +248,13 @@ const challengePayload = {
 const { signedPayload: challengeSigned, signature: challengeSig } = await signPayload(ME, challengePayload);
 
 const challengeGraph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix tictactoe: <${TICTAC_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${challengeIri}> a cg:ContextDescriptor, tictactoe:NewGameChallenge ;
+<${challengeIri}> a iep:ContextDescriptor, tictactoe:NewGameChallenge ;
   dcterms:conformsTo <${NEW_GAME_CHALLENGE_IRI}> ;
   tictactoe:gameId <${gameId}> ;
   tictactoe:xPlayer <${xPlayerDid}> ;
@@ -406,13 +406,13 @@ async function publishChallengerMove({ cell, reason }) {
   const moveJson = JSON.stringify(payload).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix tictactoe: <${TICTAC_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, tictactoe:Move ;
+<${iri}> a iep:ContextDescriptor, tictactoe:Move ;
   dcterms:conformsTo <${RULES_IRI}> ;
   tictactoe:gameId <${state.gameId}> ;
   tictactoe:moveNumber ${n} ;
@@ -489,13 +489,13 @@ async function publishForfeit() {
   const moveJson = JSON.stringify(payload).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix tictactoe: <${TICTAC_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, tictactoe:Move ;
+<${iri}> a iep:ContextDescriptor, tictactoe:Move ;
   dcterms:conformsTo <${RULES_IRI}> ;
   tictactoe:gameId <${state.gameId}> ;
   tictactoe:moveNumber ${n} ;
@@ -540,7 +540,7 @@ async function publishForfeit() {
 }
 
 // ── reading the collective's moves off the pod ──────────────────────
-// The collective's move-descriptors cg:supersedes the last descriptor in
+// The collective's move-descriptors iep:supersedes the last descriptor in
 // the chain. We walk discover() looking for any descriptor that
 // supersedes our state.lastDescriptorUrl, fetch its graph, decode the
 // cell + boardAfter, and apply.

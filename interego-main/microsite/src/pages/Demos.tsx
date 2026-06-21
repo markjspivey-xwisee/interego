@@ -25,11 +25,11 @@ const DEMOS: Demo[] = [
     title: 'Linked-data pod browser',
     description:
       'Walks any Interego pod by its .well-known/context-graphs manifest. Click any descriptor ' +
-      'to dereference its Turtle; click any cg:Affordance to follow the link as a Hydra operation. ' +
+      'to dereference its Turtle; click any iep:Affordance to follow the link as a Hydra operation. ' +
       'Defaults to the tenant pod, one-click switch to the federation peer, accepts any pod URL.',
     whatItShows: [
-      'cg:ContextDescriptor as the universal envelope',
-      'cg:Affordance / hydra:Operation / dcat:Distribution links that actually work',
+      'iep:ContextDescriptor as the universal envelope',
+      'iep:Affordance / hydra:Operation / dcat:Distribution links that actually work',
       'Cross-pod browsing — same client, no special protocol',
     ],
     action: { label: 'Open the pod browser →', route: 'pod' },
@@ -78,7 +78,7 @@ const DEMOS: Demo[] = [
       'Performance Architecture + Knowledge Architecture walk-through with sample content).',
     whatItShows: [
       'Performance Architecture — diagnosis-driven routing, not content-first',
-      'The reflexive calibration loop with cg:CalibrationProfile descriptors on every flip',
+      'The reflexive calibration loop with iep:CalibrationProfile descriptors on every flip',
       'Three audiences: learner / admin / learning engineer',
     ],
     action: { label: 'Open Foxxi ↗', href: FOXXI_SITE },
@@ -129,7 +129,7 @@ const DEMOS: Demo[] = [
     whatItShows: [
       'End-to-end run from your machine against the deployed bridge',
       'Both deterministic and LLM-driven editions',
-      'Real signed participation claims published to the pod as cg:ParticipationClaim descriptors',
+      'Real signed participation claims published to the pod as iep:ParticipationClaim descriptors',
     ],
     action: {
       label: 'See the CLI commands ↓',

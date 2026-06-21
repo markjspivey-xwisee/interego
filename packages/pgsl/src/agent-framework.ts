@@ -585,7 +585,7 @@ export function traceToTurtle(trace: ProvTrace): string {
 
   lines.push('@prefix prov: <http://www.w3.org/ns/prov#> .');
   lines.push('@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .');
-  lines.push('@prefix cg:   <https://contextgraphs.org/ns/> .');
+  lines.push('@prefix iep:   <https://contextgraphs.org/ns/> .');
   lines.push('');
 
   // Activity
@@ -594,13 +594,13 @@ export function traceToTurtle(trace: ProvTrace): string {
   if (trace.endedAt) {
     lines.push(`  prov:endedAtTime "${trace.endedAt}"^^xsd:dateTime ;`);
   }
-  lines.push(`  cg:affordanceRel "${trace.activity}" ;`);
-  lines.push(`  cg:success ${trace.success} .`);
+  lines.push(`  iep:affordanceRel "${trace.activity}" ;`);
+  lines.push(`  iep:success ${trace.success} .`);
   lines.push('');
 
   // Agent
   lines.push(`<${trace.wasAssociatedWith}> a prov:Agent ;`);
-  lines.push(`  cg:agentAAT "${trace.agentAAT}" .`);
+  lines.push(`  iep:agentAAT "${trace.agentAAT}" .`);
   lines.push('');
 
   // Association
@@ -628,7 +628,7 @@ export function traceToTurtle(trace: ProvTrace): string {
   // Error annotation
   if (trace.error) {
     lines.push('');
-    lines.push(`<${trace.id}> cg:errorMessage "${escapeForTurtle(trace.error)}" .`);
+    lines.push(`<${trace.id}> iep:errorMessage "${escapeForTurtle(trace.error)}" .`);
   }
 
   lines.push('');

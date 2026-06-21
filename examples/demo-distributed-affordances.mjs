@@ -35,9 +35,9 @@ const descriptor = {
   // Intrinsic affordances — the descriptor publishes these directly.
   // Every reader gets these regardless of who they are.
   intrinsicAffordances: [
-    { rel: 'cg:canRead',     description: 'fetch the document' },
-    { rel: 'cg:canCite',     description: 'reference in another descriptor (prov:wasDerivedFrom)' },
-    { rel: 'cg:canSubscribe', description: 'subscribe to changes via Solid Notifications' },
+    { rel: 'iep:canRead',     description: 'fetch the document' },
+    { rel: 'iep:canCite',     description: 'reference in another descriptor (prov:wasDerivedFrom)' },
+    { rel: 'iep:canSubscribe', description: 'subscribe to changes via Solid Notifications' },
   ],
   // Metadata about the content that downstream agents can react to.
   contentMetadata: {
@@ -62,7 +62,7 @@ const agents = {
     description: 'researcher; speaks Spanish',
     registeredServices: [
       {
-        rel: 'cg:canTranslate',
+        rel: 'iep:canTranslate',
         targetLang: 'es',
         // Service is offered if the resource is text and not already in es.
         appliesIf: (d) => d.contentType.startsWith('text/') && d.language !== 'es',
@@ -75,11 +75,11 @@ const agents = {
     description: 'code-quality reviewer',
     registeredServices: [
       {
-        rel: 'cg:canReviewCode',
+        rel: 'iep:canReviewCode',
         appliesIf: (d) => d.contentType === 'text/markdown' && /code|fix|implementation/i.test(d.contentMetadata?.topic ?? ''),
       },
       {
-        rel: 'cg:canExtractCodeBlocks',
+        rel: 'iep:canExtractCodeBlocks',
         appliesIf: (d) => d.contentType === 'text/markdown',
       },
     ],
@@ -90,16 +90,16 @@ const agents = {
     description: 'accessibility & summarization',
     registeredServices: [
       {
-        rel: 'cg:canSummarize',
+        rel: 'iep:canSummarize',
         appliesIf: (d) => d.contentType.startsWith('text/') && (d.contentMetadata?.estimatedReadingMinutes ?? 0) > 5,
       },
       {
-        rel: 'cg:canNarrate',
+        rel: 'iep:canNarrate',
         targetFormat: 'audio/mpeg',
         appliesIf: (d) => d.contentType.startsWith('text/'),
       },
       {
-        rel: 'cg:canSimplifyLanguage',
+        rel: 'iep:canSimplifyLanguage',
         appliesIf: (d) => d.contentMetadata?.technicalDepth === 'intermediate' || d.contentMetadata?.technicalDepth === 'advanced',
       },
     ],
@@ -137,12 +137,12 @@ function resolveAffordances(descriptor, askingAgent, userContext = {}) {
     }));
 
   // User-context affordances: e.g., if the user has marked this
-  // descriptor as a favorite, expose `cg:canRemoveFromFavorites`.
+  // descriptor as a favorite, expose `iep:canRemoveFromFavorites`.
   const contextual = [];
   if (userContext.favorites?.includes(descriptor.iri)) {
-    contextual.push({ rel: 'cg:canRemoveFromFavorites', description: 'unfavorite', source: 'context' });
+    contextual.push({ rel: 'iep:canRemoveFromFavorites', description: 'unfavorite', source: 'context' });
   } else if (userContext.favoritable !== false) {
-    contextual.push({ rel: 'cg:canAddToFavorites', description: 'add to favorites', source: 'context' });
+    contextual.push({ rel: 'iep:canAddToFavorites', description: 'add to favorites', source: 'context' });
   }
 
   return [...intrinsic, ...distributed, ...contextual];
@@ -189,7 +189,7 @@ const bobUpgraded = {
   ...agents.bob,
   registeredServices: [
     ...agents.bob.registeredServices,
-    { rel: 'cg:canRunInSandbox', appliesIf: (d) => d.contentType === 'text/markdown' },
+    { rel: 'iep:canRunInSandbox', appliesIf: (d) => d.contentType === 'text/markdown' },
   ],
 };
 console.log(`   Bob asks again:`);
@@ -198,7 +198,7 @@ for (const a of affs3) {
   const provider = a.provider ? ` [via ${a.provider.split(':').at(-1)}]` : '';
   console.log(`     [${a.source}] ${a.rel}${provider}`);
 }
-console.log('   → cg:canRunInSandbox now appears, no descriptor change required\n');
+console.log('   → iep:canRunInSandbox now appears, no descriptor change required\n');
 
 // ── Cross-pod federation: borrow another agent's services ──
 

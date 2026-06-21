@@ -117,7 +117,7 @@ cost.
 
 ## Why this is the substrate's natural shape, not a workaround
 
-`cg:Affordance` / `cgh:Affordance` / `hydra:Operation` are L1/L2
+`iep:Affordance` / `ieh:Affordance` / `hydra:Operation` are L1/L2
 primitives — the affordance engine (`src/affordance/`) computes them as
 a Gibsonian relation between an agent and a descriptor. The Hermes
 provider isn't inventing a navigation scheme; it's surfacing one the

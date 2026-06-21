@@ -55,9 +55,9 @@ const OWNER_WEBID = 'https://alice.pod/profile#me' as IRI;
  * bytes → stable CID across runs, so we can pre-compute the expected
  * if_match value at test setup time.
  */
-const PRIOR_HEAD_TURTLE = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-<urn:cg:v1> a cg:ContextDescriptor ;
-    cg:describes <urn:graph:smoke> .
+const PRIOR_HEAD_TURTLE = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+<urn:iep:v1> a iep:ContextDescriptor ;
+    iep:describes <urn:graph:smoke> .
 `;
 
 /**
@@ -112,7 +112,7 @@ function makeRecordingFetch(opts: {
 }
 
 function descV2WithSupersedes(): ReturnType<ReturnType<typeof ContextDescriptor.create>['build']> {
-  return ContextDescriptor.create('urn:cg:v2' as IRI)
+  return ContextDescriptor.create('urn:iep:v2' as IRI)
     .describes('urn:graph:smoke' as IRI)
     .temporal({ validFrom: '2026-06-06T00:00:00Z' })
     .selfAsserted('did:web:alice.example' as IRI)
@@ -265,15 +265,15 @@ describe('publish — signed authorship + if_match CAS (combined gate)', () => {
     const partBlocks: string[] = [];
     for (let i = 0; i < 60; i++) {
       partBlocks.push(
-        `<urn:cg:v1#part-${i}> <http://purl.org/dc/terms/title> ` +
+        `<urn:iep:v1#part-${i}> <http://purl.org/dc/terms/title> ` +
         `"Substantial prior-head payload block ${i} — exercises the ` +
         `~6 KB tier of the diag-signed-cas-size sweep" .`,
       );
     }
     const largePriorHeadTurtle =
-      `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.\n` +
-      `<urn:cg:v1> a cg:ContextDescriptor ;\n` +
-      `    cg:describes <urn:graph:smoke> .\n` +
+      `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.\n` +
+      `<urn:iep:v1> a iep:ContextDescriptor ;\n` +
+      `    iep:describes <urn:graph:smoke> .\n` +
       partBlocks.join('\n') + '\n';
     // Sanity — the prior-head turtle is in the failure-size window.
     expect(Buffer.byteLength(largePriorHeadTurtle, 'utf8')).toBeGreaterThan(6 * 1024);
@@ -292,7 +292,7 @@ describe('publish — signed authorship + if_match CAS (combined gate)', () => {
     const graphBodyLines: string[] = [];
     for (let i = 0; i < 60; i++) {
       graphBodyLines.push(
-        `<urn:graph:smoke> <urn:cg:annotation-${i}> ` +
+        `<urn:graph:smoke> <urn:iep:annotation-${i}> ` +
         `"v2 substantial graph body block ${i} — exercises the ~6 KB ` +
         `tier on the combined sign_authorship + if_match path" .`,
       );
@@ -341,7 +341,7 @@ describe('publish — signed authorship + if_match CAS (combined gate)', () => {
     let runningBytes = 0;
     let i = 0;
     while (runningBytes < targetBytes) {
-      const line = `<urn:graph:smoke> <urn:cg:bulk-${i}> "${filler}" .`;
+      const line = `<urn:graph:smoke> <urn:iep:bulk-${i}> "${filler}" .`;
       lines.push(line);
       runningBytes += Buffer.byteLength(line, 'utf8') + 1;
       i++;

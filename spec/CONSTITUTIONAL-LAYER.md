@@ -7,7 +7,7 @@ enforced by descriptors + ABAC, not by social process alone.
 
 ## The core move
 
-Policies are already first-class descriptors (`cg:AccessControlPolicy`).
+Policies are already first-class descriptors (`iep:AccessControlPolicy`).
 A **constitutional policy** is a policy that governs *which other
 policies can be enacted, amended, or retracted*. It's a meta-policy.
 The community publishes constitutional policies; subsequent policy
@@ -39,32 +39,32 @@ When a policy is proposed for enactment:
 4. If yes, the proposal is *valid*. Whether it *passes* depends on
    the voting mechanism the constitution defines (see §Voting).
 
-## Vocabulary additions (cg:)
+## Vocabulary additions (iep:)
 
 ```turtle
-cg:ConstitutionalPolicy a owl:Class ;
-    rdfs:subClassOf cg:AccessControlPolicy ;
-    rdfs:comment "A policy that governs other policies. Carries a tier (cg:tier) and an amendment process (cg:amendmentProcess)." .
+iep:ConstitutionalPolicy a owl:Class ;
+    rdfs:subClassOf iep:AccessControlPolicy ;
+    rdfs:comment "A policy that governs other policies. Carries a tier (iep:tier) and an amendment process (iep:amendmentProcess)." .
 
-cg:tier a owl:DatatypeProperty ;
-    rdfs:domain cg:ConstitutionalPolicy ;
+iep:tier a owl:DatatypeProperty ;
+    rdfs:domain iep:ConstitutionalPolicy ;
     rdfs:range xsd:integer ;
     rdfs:comment "Tier 0..4. Higher tier policies govern lower tier policies." .
 
-cg:amendmentProcess a owl:ObjectProperty ;
-    rdfs:domain cg:ConstitutionalPolicy ;
+iep:amendmentProcess a owl:ObjectProperty ;
+    rdfs:domain iep:ConstitutionalPolicy ;
     rdfs:comment "Reference to the process descriptor describing how this policy itself can be amended (vote threshold, quorum, ratification window, etc.)." .
 
-cg:Amendment a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+iep:Amendment a owl:Class ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:comment "A proposed change to a constitutional policy. Carries the diff (added/removed/modified rules), the proponent, and the ratification status." .
 
-cg:ratificationVote a owl:ObjectProperty ;
-    rdfs:domain cg:Amendment ;
+iep:ratificationVote a owl:ObjectProperty ;
+    rdfs:domain iep:Amendment ;
     rdfs:comment "A descriptor recording one ratification vote on this amendment. Composes via ModalAlgebra (Asserted=for, Counterfactual=against, Hypothetical=abstain)." .
 
-cg:ratifiedAt a owl:DatatypeProperty ;
-    rdfs:domain cg:Amendment ;
+iep:ratifiedAt a owl:DatatypeProperty ;
+    rdfs:domain iep:Amendment ;
     rdfs:range xsd:dateTime ;
     rdfs:comment "Instant ratification became effective. Before this, the amendment is a proposal; after, it is law." .
 ```
@@ -96,7 +96,7 @@ ratifyIf:
 
 These compose: a Tier 1 amendment requires supermajority *AND* a
 cooling period. A Tier 2 needs majority *AND* a quorum. Each is
-expressed as an ABAC `cg:AccessControlPolicy` over the amendment's
+expressed as an ABAC `iep:AccessControlPolicy` over the amendment's
 descriptor + the votes attached to it.
 
 ## Forks
@@ -119,7 +119,7 @@ can audit the fork's lineage and decide whether to recognize it.
 - `tryRatify(amendment, constitution, allVotes)` → `'Ratified' | 'Rejected' | 'PendingQuorum'`
 - `forkConstitution(parentConstitution, dissenters, newRules)` → `Constitution`
 
-All built on existing `cg:AccessControlPolicy` + `ModalAlgebra` +
+All built on existing `iep:AccessControlPolicy` + `ModalAlgebra` +
 `passport:` primitives. No new L1 protocol machinery required.
 
 ## What this enables

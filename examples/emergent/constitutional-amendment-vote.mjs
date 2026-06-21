@@ -27,7 +27,7 @@
  *     conservative). Aggregated community position is distinct from
  *     formal ratification (the 80% for-weight still passes Tier-3's
  *     51% threshold).
- *   - cg:supersedes link from Resolution → Amendment must round-trip
+ *   - iep:supersedes link from Resolution → Amendment must round-trip
  *     through publish() + discover(). Federation causality fails if
  *     both descriptors are written in the same transaction window
  *     and the pod can't pin the supersession edge.
@@ -53,7 +53,7 @@
  *   3-7. Five Vote descriptors, each wasDerivedFrom the Amendment,
  *        modalStatus ∈ {Asserted, Counterfactual}. Published in parallel
  *        via Promise.allSettled.
- *   8. Resolution descriptor — cg:supersedes the Amendment, carries
+ *   8. Resolution descriptor — iep:supersedes the Amendment, carries
  *      amendment.status='Ratified', ratifiedAt timestamp, voter tally,
  *      and prov:wasDerivedFrom every vote IRI + the amendment IRI.
  *
@@ -98,7 +98,7 @@ const SCENARIO_POD = `${CSS}/demos/emergent-constitutional-amendment-vote-${SCEN
 const MANIFEST_URL = `${SCENARIO_POD}.well-known/context-graphs`;
 
 // Vertical namespace — per CLAUDE.md ontology hygiene: NEVER mint terms
-// into cg:/cgh:/passport:/etc. Scenario-local predicates live under this
+// into iep:/ieh:/passport:/etc. Scenario-local predicates live under this
 // prefix and never need an owned-ontology declaration.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/constitutional-amendment-vote#';
 const TYPE_POLICY      = `${SCENARIO_NS}ConstitutionalPolicy`;
@@ -118,12 +118,12 @@ const PRED_TALLY_AGN   = `${SCENARIO_NS}againstCount`;
 const PRED_COMM_MODAL  = `${SCENARIO_NS}communityModalStatus`;
 
 // IRIs the descriptor chain references. The Amendment IRI pattern must
-// match urn:cg:amendment:agent-disclosure:* per the spec assertions.
-const POLICY_IRI    = `urn:cg:constitution:agent-disclosure:${SCENARIO_DATE}`;
+// match urn:iep:amendment:agent-disclosure:* per the spec assertions.
+const POLICY_IRI    = `urn:iep:constitution:agent-disclosure:${SCENARIO_DATE}`;
 const POLICY_GRAPH  = `${POLICY_IRI}-graph`;
-const AMENDMENT_IRI = `urn:cg:amendment:agent-disclosure:require-runtime-tag:${SCENARIO_DATE}`;
+const AMENDMENT_IRI = `urn:iep:amendment:agent-disclosure:require-runtime-tag:${SCENARIO_DATE}`;
 const AMENDMENT_GRAPH = `${AMENDMENT_IRI}-graph`;
-const RESOLUTION_IRI = `urn:cg:resolution:agent-disclosure:${SCENARIO_DATE}`;
+const RESOLUTION_IRI = `urn:iep:resolution:agent-disclosure:${SCENARIO_DATE}`;
 const RESOLUTION_GRAPH = `${RESOLUTION_IRI}-graph`;
 
 // ── Tiny test harness ────────────────────────────────────────────
@@ -218,7 +218,7 @@ function amendmentGraph(proposer, now) {
     '',
     `<${AMENDMENT_IRI}> a cav:Amendment ;`,
     '  dct:title "Require runtime-tag in every Agent facet" ;',
-    '  dct:description "Add a SHACL constraint to cg:AgentFacet that requires a cg:runtimeTag literal naming the agent\'s operating runtime." ;',
+    '  dct:description "Add a SHACL constraint to iep:AgentFacet that requires a iep:runtimeTag literal naming the agent\'s operating runtime." ;',
     `  cav:tier "3"^^xsd:integer ;`,
     `  cav:amends <${POLICY_IRI}> ;`,
     `  cav:status "Proposed" ;`,
@@ -359,7 +359,7 @@ const amendment = proposeAmendment({
   tier: 3,
   diff: {
     summary: 'Require runtime-tag in every Agent facet',
-    addedRules: ['cg:AgentFacet sh:property [ sh:path cg:runtimeTag ; sh:minCount 1 ]'],
+    addedRules: ['iep:AgentFacet sh:property [ sh:path iep:runtimeTag ; sh:minCount 1 ]'],
   },
   proposedAt: amendmentNow,
 });
@@ -393,8 +393,8 @@ const amendmentResult = await withTransientRetry(() => publish(
 ), { maxAttempts: 4 });
 console.log(`   amendment URL:      ${amendmentResult.descriptorUrl}`);
 check(
-  'Amendment IRI matches urn:cg:amendment:agent-disclosure:* pattern',
-  /^urn:cg:amendment:agent-disclosure:/.test(AMENDMENT_IRI),
+  'Amendment IRI matches urn:iep:amendment:agent-disclosure:* pattern',
+  /^urn:iep:amendment:agent-disclosure:/.test(AMENDMENT_IRI),
   AMENDMENT_IRI,
 );
 
@@ -402,7 +402,7 @@ check(
 h('ACT 5 — five voters publish vote descriptors concurrently (manifest contention)');
 const voteNow = new Date().toISOString();
 const voteBuilds = await Promise.all(voters.map(async v => {
-  const voteIri = `urn:cg:vote:agent-disclosure:${v.name}:${SCENARIO_DATE}`;
+  const voteIri = `urn:iep:vote:agent-disclosure:${v.name}:${SCENARIO_DATE}`;
   const sig = await signPayload(v.wallet, {
     voter: v.address,
     amendment: AMENDMENT_IRI,
@@ -625,9 +625,9 @@ try {
 } catch {}
 
 check(
-  'Resolution descriptor body carries cg:supersedes <Amendment IRI>',
-  resolutionTtl.includes(`<${AMENDMENT_IRI}>`) && /cg:supersedes/.test(resolutionTtl),
-  { hasAmendmentIri: resolutionTtl.includes(`<${AMENDMENT_IRI}>`), hasSupersedes: /cg:supersedes/.test(resolutionTtl) },
+  'Resolution descriptor body carries iep:supersedes <Amendment IRI>',
+  resolutionTtl.includes(`<${AMENDMENT_IRI}>`) && /iep:supersedes/.test(resolutionTtl),
+  { hasAmendmentIri: resolutionTtl.includes(`<${AMENDMENT_IRI}>`), hasSupersedes: /iep:supersedes/.test(resolutionTtl) },
 );
 
 // prov:wasDerivedFrom edges in the resolution body — must reference
@@ -650,7 +650,7 @@ const voteIntegrityDetail = [];
 for (const sv of succeededVotes) {
   try {
     // The substrate writes two resources per publish(): the descriptor
-    // TTL (cg:hasFacet / cg:assertingAgent / cg:supersedes — that's where
+    // TTL (iep:hasFacet / iep:assertingAgent / iep:supersedes — that's where
     // the voter DID lives) and the named-graph TriG (the scenario payload,
     // including cav:voteModalStatus). Vote-integrity needs BOTH, so we
     // fetch each and concatenate before searching. The graph URL follows

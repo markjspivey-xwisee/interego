@@ -8,7 +8,7 @@
  *   1. COMPOSED into the shared PGSL lattice (composeSpecOntology →
  *      composeIntoSharedLattice): every class/property/vocab IRI becomes a
  *      reusable lattice atom, and the whole model is the holon's content atom.
- *      The ontology is now a first-class Interego holon (cg:ContextDescriptor,
+ *      The ontology is now a first-class Interego holon (iep:ContextDescriptor,
  *      provenance, affordances) — emergent of PGSL, not a hosted file.
  *
  *   2. PROJECTED on dereference: OWL Turtle, SHACL, and JSON-LD are renders of

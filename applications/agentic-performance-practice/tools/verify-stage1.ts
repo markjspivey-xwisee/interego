@@ -25,7 +25,7 @@ let owlOk = true, owlErr = '';
 try { parseTrig(owl); } catch (e) { owlOk = false; owlErr = (e as Error).message; }
 check('agp.ttl parses as Turtle', owlOk, owlErr || `${owl.length} bytes`);
 check('agp.ttl declares the net-new primitives', owl.includes('agp:Actualization') && owl.includes('agp:PerformanceAffordance') && owl.includes('agp:composedOf'));
-check('agp.ttl keeps performance-affordance DISTINCT from cg:Affordance', owl.includes('MUST NOT be conflated'));
+check('agp.ttl keeps performance-affordance DISTINCT from iep:Affordance', owl.includes('MUST NOT be conflated'));
 
 const shapes = readShapesTurtle();
 let shOk = true, shErr = '';

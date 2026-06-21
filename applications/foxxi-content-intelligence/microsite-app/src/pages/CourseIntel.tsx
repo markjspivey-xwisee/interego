@@ -375,7 +375,7 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
 }
 
 // ── The Living Curriculum: the course runs each concept through the work-regime
-// engine and proposes a versioned successor (cg:supersedes). The performance
+// engine and proposes a versioned successor (iep:supersedes). The performance
 // signals are illustrative + editable (the performance CONTEXT) — the reasoning
 // and the successor holon are real. Refuses the universal content-gap frame.
 interface ConceptSignal { id: string; label: string; completion: number | null; fieldSuccess: number | null; frequency: string }
@@ -420,7 +420,7 @@ function LivingCurriculum({ analysis }: { analysis: Analysis }) {
     <div style={{ ...card, marginTop: 14 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 15, fontWeight: 600 }}>The living curriculum — the course proposes its own successor</div>
-        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>each concept routed through the work-regime engine; emits a <code style={codeS}>cg:supersedes</code> successor holon</span>
+        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>each concept routed through the work-regime engine; emits a <code style={codeS}>iep:supersedes</code> successor holon</span>
         <button onClick={propose} disabled={busy} style={{ ...pill, marginLeft: 'auto', borderColor: 'var(--accent)', color: 'var(--accent)', opacity: busy ? 0.5 : 1 }}>
           {busy ? 'reasoning…' : 'Propose a successor'}
         </button>
@@ -473,7 +473,7 @@ function LivingCurriculum({ analysis }: { analysis: Analysis }) {
           </div>
           {res.successor?.holonUri && (
             <div style={{ marginTop: 10, padding: '9px 11px', background: '#faf9f7', border: '1px solid var(--accent)', borderRadius: 6, fontSize: 12.5 }}>
-              ↳ emitted a <strong>cg:supersedes successor holon</strong> <code style={codeS}>{String(res.successor.holonUri).slice(0, 40)}…</code>
+              ↳ emitted a <strong>iep:supersedes successor holon</strong> <code style={codeS}>{String(res.successor.holonUri).slice(0, 40)}…</code>
               {res.successor.descriptorUrl && <> · <a href={res.successor.descriptorUrl} target="_blank" rel="noreferrer" style={linkBtn}>dereference it ↗</a></>}
               {analysis.courseKg.descriptorUrl && <> · <a href={analysis.courseKg.descriptorUrl} target="_blank" rel="noreferrer" style={linkBtn}>the original ↗</a></>}
               <div style={{ color: 'var(--text-dim)', marginTop: 3 }}>a first-class, dereferenceable, versioned revision composed into the PGSL lattice — not a doc diff.</div>

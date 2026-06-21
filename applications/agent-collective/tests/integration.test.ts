@@ -9,7 +9,7 @@
  *
  * Verifies:
  *   - Tool descriptor authoring with modal Hypothetical
- *   - Modal flip from Hypothetical to Asserted via cg:supersedes successor
+ *   - Modal flip from Hypothetical to Asserted via iep:supersedes successor
  *   - Cross-pod descriptor announcement (Mark publishes; David queries; finds)
  *   - Encrypted chime-in (David sends → Mark's inbox → Mark decrypts content)
  *   - Encrypted reply (Mark sends → David's inbox → David decrypts)
@@ -46,7 +46,7 @@ const DAVID_WALLET_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4
 // ── Helper: build a tool descriptor (Hypothetical) ───────────────────
 
 function buildToolHypothetical(authorDid: IRI) {
-  return ContextDescriptor.create('urn:cg:tool:second-contact-detector:v1' as IRI)
+  return ContextDescriptor.create('urn:iep:tool:second-contact-detector:v1' as IRI)
     .describes('urn:graph:ac:tool' as IRI)
     .temporal({ validFrom: '2026-04-22T10:00:00Z' })
     .hypothetical(0.4)                                // freshly written; not trusted yet
@@ -56,7 +56,7 @@ function buildToolHypothetical(authorDid: IRI) {
 }
 
 function buildToolAsserted(predecessorIri: IRI, authorDid: IRI) {
-  return ContextDescriptor.create('urn:cg:tool:second-contact-detector:v1.attested' as IRI)
+  return ContextDescriptor.create('urn:iep:tool:second-contact-detector:v1.attested' as IRI)
     .describes('urn:graph:ac:tool' as IRI)
     .temporal({ validFrom: '2026-04-25T10:00:00Z' })
     .asserted(0.85)                                   // attestation threshold met → committed
@@ -78,7 +78,7 @@ describe('agent-collective — descriptor + modal discipline', () => {
     expect(validate(tool).conforms).toBe(true);
   });
 
-  it('Asserted version supersedes Hypothetical via cg:supersedes', () => {
+  it('Asserted version supersedes Hypothetical via iep:supersedes', () => {
     const v1 = buildToolHypothetical('did:web:mark.example' as IRI);
     const v1Attested = buildToolAsserted(v1.id, 'did:web:mark.example' as IRI);
 
@@ -89,7 +89,7 @@ describe('agent-collective — descriptor + modal discipline', () => {
     const semiotic = v1Attested.facets.find(f => f.type === 'Semiotic') as { modalStatus?: string };
     expect(semiotic?.modalStatus).toBe('Asserted');
 
-    // cg:supersedes survives Turtle round-trip
+    // iep:supersedes survives Turtle round-trip
     const ttl = toTurtle(v1Attested);
     expect(ttl).toContain('supersedes');
     expect(ttl).toContain(v1.id);
@@ -112,7 +112,7 @@ describe('agent-collective — REAL cross-bridge p2p (two clients, shared InMemo
 
     // Mark announces a tool descriptor on the shared relay
     const announce = await markClient.publishDescriptor({
-      descriptorId: 'urn:cg:tool:second-contact-detector:v1' as IRI,
+      descriptorId: 'urn:iep:tool:second-contact-detector:v1' as IRI,
       cid: 'bafkrei-tool-source-content-hash' as string,
       graphIri: 'urn:graph:ac:tool' as IRI,
     });
@@ -121,10 +121,10 @@ describe('agent-collective — REAL cross-bridge p2p (two clients, shared InMemo
     // David queries — finds Mark's announcement
     const found = await davidClient.queryDescriptors({ author: markClient.pubkey });
     expect(found.length).toBeGreaterThanOrEqual(1);
-    expect(found.find(d => d.descriptorId === 'urn:cg:tool:second-contact-detector:v1')).toBeDefined();
+    expect(found.find(d => d.descriptorId === 'urn:iep:tool:second-contact-detector:v1')).toBeDefined();
 
     // The announcement is signed by Mark — David cannot impersonate
-    const announcement = found.find(d => d.descriptorId === 'urn:cg:tool:second-contact-detector:v1')!;
+    const announcement = found.find(d => d.descriptorId === 'urn:iep:tool:second-contact-detector:v1')!;
     expect(announcement).toBeDefined();
   });
 
@@ -142,7 +142,7 @@ describe('agent-collective — REAL cross-bridge p2p (two clients, shared InMemo
       threadId: 'thread-2026-04-27-001',
       type: 'ac:ChimeIn',
       payload: 'I refined your second-contact-detector with a clinical-affect axis after 2/3 false-positives in clinical scenarios.',
-      enclosedDescriptors: ['urn:cg:tool:second-contact-detector:v2-david-refined'],
+      enclosedDescriptors: ['urn:iep:tool:second-contact-detector:v2-david-refined'],
     });
 
     await davidClient.publishEncryptedShare({

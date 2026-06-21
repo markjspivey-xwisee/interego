@@ -2,7 +2,7 @@
  * @module abac
  * @description Attribute-Based Access Control — reference
  *   implementation of the `abac:` L2 pattern over L1
- *   `cg:AccessControlPolicy` descriptors.
+ *   `iep:AccessControlPolicy` descriptors.
  *
  * Entry points:
  *   - `evaluate(policies, predicates, context)` → PolicyDecision

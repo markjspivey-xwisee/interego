@@ -75,7 +75,7 @@ The privacy preflight (`screenForSensitiveContent`) is a defensive check; the pr
 - The operator's pod functions as the audit trail of record for SOC 2 evidence.
 - Audit trail integrity is provided by ECDSA signatures + IPFS anchors per [`08-encryption.md`](08-encryption.md).
 - Auditors access via `/audit/*` relay endpoints (read-only) and `/audit/verify-signature` (independent verification).
-- The operator MUST NOT modify or delete audit trail descriptors. Corrections occur via `cg:supersedes` chains, not in-place edits.
+- The operator MUST NOT modify or delete audit trail descriptors. Corrections occur via `iep:supersedes` chains, not in-place edits.
 
 ### 4.6 Log review
 

@@ -61,7 +61,7 @@ for (const m of consensusScoreM) {
 let lastConsensusScore = null;
 if (latestConsensusUrl) {
   const ct = await fetchText(latestConsensusUrl);
-  const m = ct?.match(/cg:epistemicConfidence\s+"([\d.]+)"/);
+  const m = ct?.match(/iep:epistemicConfidence\s+"([\d.]+)"/);
   if (m) lastConsensusScore = parseFloat(m[1]);
 }
 
@@ -79,11 +79,11 @@ console.log(`  last consensus score: ${lastConsensusScore ?? 'n/a'}`);
 console.log(`  total run duration: ${runDurationMs}ms`);
 
 // Publish the heartbeat descriptor.
-const hbId = `urn:cg:heartbeat:${Date.now()}`;
+const hbId = `urn:iep:heartbeat:${Date.now()}`;
 const hbGraph = `urn:graph:monitor:heartbeat:${Date.now()}`;
 const hbUrl = `${POD}context-graphs/heartbeat-${Date.now()}.ttl`;
 
-const ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const ttl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -91,37 +91,37 @@ const ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> 
 @prefix mon: <urn:monitoring:> .
 
 <${hbId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
     dct:conformsTo <${AUDIT_SHAPE}> ;
-    cg:describes <${hbGraph}> ;
+    iep:describes <${hbGraph}> ;
     mon:auditCount "${auditCount}"^^xsd:integer ;
     mon:attestationCount "${attestationCount}"^^xsd:integer ;
     mon:lastConsensusScore "${lastConsensusScore ?? 0}"^^xsd:double ;
     mon:runDurationMs "${runDurationMs}"^^xsd:integer ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${HEARTBEAT_LENS}> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
 ${latestConsensusUrl ? `        prov:wasDerivedFrom <${latestConsensusUrl}> ;\n` : ''}        prov:wasAttributedTo <${HEARTBEAT_LENS}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${HEARTBEAT_LENS}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${HEARTBEAT_LENS}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "1.0"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${HEARTBEAT_LENS}> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${HEARTBEAT_LENS}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${HEARTBEAT_LENS}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "1.0"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${HEARTBEAT_LENS}> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 
 await putText(hbUrl, ttl);
 const entry = `
 
-<${hbUrl}> a cg:ManifestEntry ;
-    cg:describes <${hbGraph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
+<${hbUrl}> a iep:ManifestEntry ;
+    iep:describes <${hbGraph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
     dct:conformsTo <${AUDIT_SHAPE}> ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
 const cur = await fetchText(MANIFEST_URL);
 await putText(MANIFEST_URL, (cur ?? '') + entry);

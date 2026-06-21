@@ -69,7 +69,7 @@ Three structural properties make the split a configuration change:
    file but the bridge only routes to handlers whose names appear
    in the active affordance set.
 3. **The protocol contract is per-affordance, not per-deployment.**
-   A client discovers a `cg:Affordance` and follows
+   A client discovers a `iep:Affordance` and follows
    `hydra:target`; nothing in the contract requires every
    affordance be hosted on the same origin. Splitting hosts is
    transparent to clients.

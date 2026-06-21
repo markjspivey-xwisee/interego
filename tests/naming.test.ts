@@ -45,8 +45,8 @@ const CONFIG: NamingConfig = {
 describe('buildNameAttestation', () => {
   it('describes a name graph and emits a foaf:nick binding', () => {
     const built = buildNameAttestation({ subject: ALICE_DID, name: 'alice' }, CONFIG);
-    expect(built.attestationIri).toMatch(/^urn:cg:name:[0-9a-f]{16}$/);
-    expect(built.graphIri).toMatch(/^urn:graph:cg:name:[0-9a-f]{16}$/);
+    expect(built.attestationIri).toMatch(/^urn:iep:name:[0-9a-f]{16}$/);
+    expect(built.graphIri).toMatch(/^urn:graph:iep:name:[0-9a-f]{16}$/);
     expect(built.descriptor.describes).toContain(built.graphIri);
     expect(built.graphContent).toContain(`<${ALICE_DID}>`);
     expect(built.graphContent).toContain(`<${FOAF_NICK}>`);
@@ -77,7 +77,7 @@ describe('buildNameAttestation', () => {
     expect(t(verified)).toBe('CryptographicallyVerified');
   });
 
-  it('records cg:supersedes for a rename', () => {
+  it('records iep:supersedes for a rename', () => {
     const prior = buildNameAttestation({ subject: ALICE_DID, name: 'old' }, CONFIG);
     const renamed = buildNameAttestation(
       { subject: ALICE_DID, name: 'new', supersedes: [prior.attestationIri] }, CONFIG);
@@ -94,7 +94,7 @@ describe('buildNameAttestation', () => {
 function candidate(over: Partial<NameCandidate>): NameCandidate {
   return {
     name: 'alice', subject: ALICE_DID,
-    attestationIri: 'urn:cg:name:0000000000000000' as IRI,
+    attestationIri: 'urn:iep:name:0000000000000000' as IRI,
     attestationUrl: 'https://pod.example/cg/x.ttl',
     podUrl: 'https://pod.example/',
     trustLevel: 'SelfAsserted', modalStatus: 'Asserted',
@@ -105,31 +105,31 @@ function candidate(over: Partial<NameCandidate>): NameCandidate {
 describe('defaultNameTrustPolicy', () => {
   it('drops retracted (Counterfactual / Retracted) and superseded attestations', () => {
     const out = defaultNameTrustPolicy([
-      candidate({ attestationIri: 'urn:cg:name:active' as IRI }),
-      candidate({ attestationIri: 'urn:cg:name:cf' as IRI, modalStatus: 'Counterfactual' }),
-      candidate({ attestationIri: 'urn:cg:name:rt' as IRI, modalStatus: 'Retracted' }),
-      candidate({ attestationIri: 'urn:cg:name:sup' as IRI, superseded: true }),
+      candidate({ attestationIri: 'urn:iep:name:active' as IRI }),
+      candidate({ attestationIri: 'urn:iep:name:cf' as IRI, modalStatus: 'Counterfactual' }),
+      candidate({ attestationIri: 'urn:iep:name:rt' as IRI, modalStatus: 'Retracted' }),
+      candidate({ attestationIri: 'urn:iep:name:sup' as IRI, superseded: true }),
     ]);
-    expect(out.map(c => c.attestationIri)).toEqual(['urn:cg:name:active']);
+    expect(out.map(c => c.attestationIri)).toEqual(['urn:iep:name:active']);
   });
 
   it('ranks by trust level: CryptographicallyVerified > ThirdPartyAttested > SelfAsserted', () => {
     const out = defaultNameTrustPolicy([
-      candidate({ attestationIri: 'urn:cg:name:self' as IRI, trustLevel: 'SelfAsserted' }),
-      candidate({ attestationIri: 'urn:cg:name:verified' as IRI, trustLevel: 'CryptographicallyVerified' }),
-      candidate({ attestationIri: 'urn:cg:name:third' as IRI, trustLevel: 'ThirdPartyAttested' }),
+      candidate({ attestationIri: 'urn:iep:name:self' as IRI, trustLevel: 'SelfAsserted' }),
+      candidate({ attestationIri: 'urn:iep:name:verified' as IRI, trustLevel: 'CryptographicallyVerified' }),
+      candidate({ attestationIri: 'urn:iep:name:third' as IRI, trustLevel: 'ThirdPartyAttested' }),
     ]);
     expect(out.map(c => c.attestationIri)).toEqual([
-      'urn:cg:name:verified', 'urn:cg:name:third', 'urn:cg:name:self',
+      'urn:iep:name:verified', 'urn:iep:name:third', 'urn:iep:name:self',
     ]);
   });
 
   it('uses recency as the within-level tiebreaker', () => {
     const out = defaultNameTrustPolicy([
-      candidate({ attestationIri: 'urn:cg:name:old' as IRI, attestedAt: '2026-01-01T00:00:00Z' }),
-      candidate({ attestationIri: 'urn:cg:name:new' as IRI, attestedAt: '2026-05-01T00:00:00Z' }),
+      candidate({ attestationIri: 'urn:iep:name:old' as IRI, attestedAt: '2026-01-01T00:00:00Z' }),
+      candidate({ attestationIri: 'urn:iep:name:new' as IRI, attestedAt: '2026-05-01T00:00:00Z' }),
     ]);
-    expect(out[0]?.attestationIri).toBe('urn:cg:name:new');
+    expect(out[0]?.attestationIri).toBe('urn:iep:name:new');
   });
 });
 
@@ -155,13 +155,13 @@ function mockPod(podUrl: string, attestations: readonly FakeAttestation[]): Fetc
     const built = buildNameAttestation({ subject: a.subject, name: a.name }, CONFIG);
     graphByUrl.set(a.descriptorUrl.replace(/\.ttl$/, '-graph.trig'), built.graphContent);
     const lines = [
-      `<${a.descriptorUrl}> a cg:ManifestEntry ;`,
-      `    cg:describes <${built.graphIri}> ;`,
+      `<${a.descriptorUrl}> a iep:ManifestEntry ;`,
+      `    iep:describes <${built.graphIri}> ;`,
     ];
-    if (a.trustLevel) lines.push(`    cg:trustLevel cg:${a.trustLevel} ;`);
-    if (a.modalStatus) lines.push(`    cg:modalStatus cg:${a.modalStatus} ;`);
-    if (a.validFrom) lines.push(`    cg:validFrom "${a.validFrom}" ;`);
-    for (const s of a.supersedes ?? []) lines.push(`    cg:supersedes <${s}> ;`);
+    if (a.trustLevel) lines.push(`    iep:trustLevel iep:${a.trustLevel} ;`);
+    if (a.modalStatus) lines.push(`    iep:modalStatus iep:${a.modalStatus} ;`);
+    if (a.validFrom) lines.push(`    iep:validFrom "${a.validFrom}" ;`);
+    for (const s of a.supersedes ?? []) lines.push(`    iep:supersedes <${s}> ;`);
     lines[lines.length - 1] = lines[lines.length - 1]!.replace(/ ;$/, ' .');
     entries.push(lines.join('\n'));
   }
@@ -335,7 +335,7 @@ describe('resolveName — @-prefix', () => {
   });
 });
 
-// ── Pod-directory name-index — federation hints (foaf:nick on cg:owner) ──
+// ── Pod-directory name-index — federation hints (foaf:nick on iep:owner) ──
 
 describe('PodDirectory — foaf:nick name hints', () => {
   it('round-trips ownerNicks through podDirectoryToTurtle / parsePodDirectory', () => {

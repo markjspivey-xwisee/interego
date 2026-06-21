@@ -4,7 +4,7 @@
 
 **TL;DR.** This document is a reference *composition*, not a new feature. The substrate already has every primitive needed for an agent to wake up, look around its pods, decide, act, and record what changed. This page shows how to glue those primitives into the canonical loop, and how each runtime in the agent ecosystem mounts that loop on its own scheduler.
 
-If you find yourself wanting to invent a new MCP tool, a new `cg:` / `cgh:` term, or a new `LifeEventKind` to make this loop work — stop. The point of the pattern is that everything it needs already exists.
+If you find yourself wanting to invent a new MCP tool, a new `iep:` / `ieh:` term, or a new `LifeEventKind` to make this loop work — stop. The point of the pattern is that everything it needs already exists.
 
 ---
 
@@ -116,7 +116,7 @@ Every runtime below mounts the *same* canonical loop. What changes is the schedu
 - **Scheduler:** Hermes' `sync_turn` for the in-turn write, plus a background worker for between-turn ticks.
 - **Push channel:** the same `subscribe()` if Hermes' worker can hold a socket; otherwise periodic `discover_all({ since })`.
 - **Cadence:** 60 s background worker; `sync_turn` is event-driven by the chat.
-- **Notes:** the memory-graph shape is identical to the OpenClaw plugin (Path 5). Two runtimes ticking on one pod converge through `cg:supersedes` chains — no extra coordination needed.
+- **Notes:** the memory-graph shape is identical to the OpenClaw plugin (Path 5). Two runtimes ticking on one pod converge through `iep:supersedes` chains — no extra coordination needed.
 
 ### Claude Code
 
@@ -162,7 +162,7 @@ When in doubt, pick the slower cadence and rely on the push subscription to surf
 
 The loop preserves the four invariants the substrate is built on. Each invariant maps to a concrete thing the loop does (or refuses to do):
 
-1. **No new primitives.** The loop is `verifyAgentDelegation` + `subscribe` / `discover_all` + the OODA engine + `publish` + `executeTransaction` + `recordHeartbeatTickIfChanged`. Every name in that list already exists in the tree. No new MCP tool is introduced, no new `cg:`/`cgh:` term, no new `LifeEventKind`. If a runtime needs the heartbeat to express a new biographical fact, the right move is to map it onto the existing kinds (`infrastructure-migration`, `registry-registration`, `milestone`), not to extend the ontology — see the kind-selection comment in [`src/passport/heartbeat.ts`](../src/passport/heartbeat.ts).
+1. **No new primitives.** The loop is `verifyAgentDelegation` + `subscribe` / `discover_all` + the OODA engine + `publish` + `executeTransaction` + `recordHeartbeatTickIfChanged`. Every name in that list already exists in the tree. No new MCP tool is introduced, no new `iep:`/`ieh:` term, no new `LifeEventKind`. If a runtime needs the heartbeat to express a new biographical fact, the right move is to map it onto the existing kinds (`infrastructure-migration`, `registry-registration`, `milestone`), not to extend the ontology — see the kind-selection comment in [`src/passport/heartbeat.ts`](../src/passport/heartbeat.ts).
 2. **Storage stays zero-trust.** The loop reads and writes only through `publish` and `subscribe` (and the MCP tools that wrap them). Both already encrypt private content via NaCl envelopes with recipient-wrapped X25519 keys. The pod server sees only ciphertext for private graphs; the loop adds nothing to that path.
 3. **Federation stays cryptographic.** Cross-pod writes go through `executeTransaction`, where each step's `targetPod` is reached over the same federation primitives the substrate already uses — signed publishes, envelope-encrypted graphs, no membership service. There is no central broker the loop calls out to.
 4. **Identity stays portable.** `verifyAgentDelegation` resolves against the user's pod-rooted agent registry (`auth-methods.jsonld` and friends). Pod migration during a tick is a first-class outcome — `recordHeartbeatTickIfChanged` records it as an `infrastructure-migration` `LifeEvent` and the loop keeps running against the new pod URL. No identifier is minted by the loop itself; the `Passport`'s `agentIdentity` is the only canonical handle.
@@ -175,7 +175,7 @@ If a change to the loop would violate any of these, the change is wrong — not 
 
 When a tick crosses more than one pod (cross-pod review, multi-party agreement, capability acquisition), wrap the writes in `executeTransaction`. Compensating actions run in reverse order on first failure; both `forwardAction` and `compensatingAction` must be idempotent. The transaction descriptor on the coordinator's pod records every step's state so an interrupted tick can be picked up on the next one.
 
-The replay convention — how a long-lived loop notices a `cg:TxnPending` transaction it owns and resumes it — lives in [`spec/FEDERATED-TRANSACTIONS.md`](../spec/FEDERATED-TRANSACTIONS.md) (see *Failure modes* and the *Reference runtime* section). Resumed transactions are surfaced through `HeartbeatOutcomes.transactionsResumed`, which `recordHeartbeatTickIfChanged` already understands.
+The replay convention — how a long-lived loop notices a `iep:TxnPending` transaction it owns and resumes it — lives in [`spec/FEDERATED-TRANSACTIONS.md`](../spec/FEDERATED-TRANSACTIONS.md) (see *Failure modes* and the *Reference runtime* section). Resumed transactions are surfaced through `HeartbeatOutcomes.transactionsResumed`, which `recordHeartbeatTickIfChanged` already understands.
 
 ---
 

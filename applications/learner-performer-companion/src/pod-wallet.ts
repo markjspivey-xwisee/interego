@@ -117,7 +117,7 @@ async function fetchTurtle(url: string, timeoutMs: number): Promise<string | nul
 
 function detectDescriptorType(...sources: (string | null | undefined)[]): DescriptorEntry['type'] {
   // The lpc: type triple lives in the graph content (where rich domain
-  // statements go), NOT in the descriptor turtle (which is L1 cg:* only).
+  // statements go), NOT in the descriptor turtle (which is L1 iep:* only).
   // Scan all sources together for the type marker.
   const blob = sources.filter(Boolean).join('\n');
   if (/\ba\b\s+(lpc:Credential|<[^>]*\/lpc#Credential>)/.test(blob)) return 'lpc:Credential';
@@ -129,8 +129,8 @@ function detectDescriptorType(...sources: (string | null | undefined)[]): Descri
 }
 
 function extractGraphUrlFromDescriptor(turtle: string): string | null {
-  const m = /cg:affordance\s+\[[^\]]*?hydra:target\s+<([^>]+)>/s.exec(turtle)
-        ?? /cg:hasDistribution\s+\[[^\]]*?hydra:target\s+<([^>]+)>/s.exec(turtle)
+  const m = /iep:affordance\s+\[[^\]]*?hydra:target\s+<([^>]+)>/s.exec(turtle)
+        ?? /iep:hasDistribution\s+\[[^\]]*?hydra:target\s+<([^>]+)>/s.exec(turtle)
         ?? /dcat:accessURL\s+<([^>]+)>/.exec(turtle);
   return m ? m[1]! : null;
 }
@@ -142,7 +142,7 @@ function extractDescriptorIri(turtle: string): IRI {
   return (m?.[1] ?? '') as IRI;
 }
 
-function extractTimestamp(turtle: string, predicate: 'cg:validFrom' | 'cg:recordedAt' | 'lpc:issuedAt' | 'lpc:completedAt'): string | undefined {
+function extractTimestamp(turtle: string, predicate: 'iep:validFrom' | 'iep:recordedAt' | 'lpc:issuedAt' | 'lpc:completedAt'): string | undefined {
   const re = new RegExp(`${predicate}\\s+"([^"]+)"`);
   return re.exec(turtle)?.[1];
 }
@@ -179,13 +179,13 @@ function parseTrainingContent(entry: DescriptorEntry, allEntries: readonly Descr
             ?? 'untitled training content';
 
   const authoritativeSource = extractIriProperty(entry.turtle, 'lpc:authoritativeSource')
-                            ?? extractIriProperty(entry.turtle, 'cg:issuer')
+                            ?? extractIriProperty(entry.turtle, 'iep:issuer')
                             ?? ('did:unknown' as IRI);
 
   // Atoms come from associated lpc:LearningObjective entries that
   // have lpc:groundingFragment pointing at PGSL atoms; OR atoms can
   // be embedded directly in this content's described graph via
-  // `lpc:groundingFragment <iri> ; pgsl:value "text" ; cg:contentHash "hash"`
+  // `lpc:groundingFragment <iri> ; pgsl:value "text" ; iep:contentHash "hash"`
   const atoms: GroundingAtom[] = [];
 
   // Direct atoms from this descriptor's graph content
@@ -237,8 +237,8 @@ function parseCredential(entry: DescriptorEntry): CredentialRecord | null {
   const iri = extractDescriptorIri(entry.turtle);
   if (!iri) return null;
 
-  const issuer = extractIriProperty(entry.turtle, 'cg:issuer') ?? ('did:unknown' as IRI);
-  const issuedAt = extractTimestamp(entry.turtle, 'cg:validFrom') ?? new Date().toISOString();
+  const issuer = extractIriProperty(entry.turtle, 'iep:issuer') ?? ('did:unknown' as IRI);
+  const issuedAt = extractTimestamp(entry.turtle, 'iep:validFrom') ?? new Date().toISOString();
   const achievementName = extractStringProperty(entry.graphContent ?? '', 'lpc:achievementName')
                         ?? extractStringProperty(entry.turtle, 'lpc:achievementName')
                         ?? extractStringProperty(entry.graphContent ?? '', 'rdfs:label')
@@ -257,8 +257,8 @@ function parsePerformanceRecord(entry: DescriptorEntry): PerformanceRecord | nul
   const attributedTo = extractIriProperty(entry.turtle, 'prov:wasAttributedTo')
                      ?? extractIriProperty(entry.graphContent ?? '', 'prov:wasAttributedTo')
                      ?? ('did:unknown' as IRI);
-  const recordedAt = extractTimestamp(entry.turtle, 'cg:validFrom')
-                  ?? extractTimestamp(entry.turtle, 'cg:recordedAt')
+  const recordedAt = extractTimestamp(entry.turtle, 'iep:validFrom')
+                  ?? extractTimestamp(entry.turtle, 'iep:recordedAt')
                   ?? new Date().toISOString();
   const content = extractMultilineStringProperty(entry.graphContent ?? '', 'lpc:reviewContent')
               ?? extractMultilineStringProperty(entry.graphContent ?? '', 'rdfs:comment')
@@ -279,7 +279,7 @@ function parseLearningExperience(entry: DescriptorEntry): LearningExperience | n
                   ?? extractIriProperty(entry.graphContent ?? '', 'lpc:relatesToContent');
   const earnedCredential = extractIriProperty(entry.turtle, 'lpc:relatesToCredential')
                         ?? extractIriProperty(entry.graphContent ?? '', 'lpc:relatesToCredential');
-  const completedAt = extractTimestamp(entry.turtle, 'cg:validFrom') ?? new Date().toISOString();
+  const completedAt = extractTimestamp(entry.turtle, 'iep:validFrom') ?? new Date().toISOString();
   const summary = extractStringProperty(entry.graphContent ?? '', 'rdfs:comment')
               ?? extractStringProperty(entry.turtle, 'rdfs:comment')
               ?? '';

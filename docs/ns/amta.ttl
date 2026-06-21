@@ -1,6 +1,6 @@
 @prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix ieh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -30,7 +30,7 @@
 #  compositionally — e.g. "require competence > 0.8 AND recency <
 #  30 days" as an ODRL constraint.
 #
-#  AMTA attestations are stored as cg:TrustFacet specializations
+#  AMTA attestations are stored as iep:TrustFacet specializations
 #  on descriptors. An agent's reputation is the distribution of
 #  attestations it has received over time.
 #
@@ -39,45 +39,45 @@
 <https://markjspivey-xwisee.github.io/interego/ns/amta>
     a owl:Ontology ;
     dct:title "AMTA — Agent-Mediated Trust Attestation" ;
-    dct:description "Multi-dimensional trust attestations: competence, honesty, relevance, recency. Each axis is rated ordinally; combined attestation is a vector usable in policy decisions. Stored as cg:TrustFacet specializations." ;
+    dct:description "Multi-dimensional trust attestations: competence, honesty, relevance, recency. Each axis is rated ordinally; combined attestation is a vector usable in policy decisions. Stored as iep:TrustFacet specializations." ;
     vann:preferredNamespacePrefix "amta" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/amta#" ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> .
 
 amta:Attestation a owl:Class ;
-    rdfs:subClassOf cg:TrustFacet ;
+    rdfs:subClassOf iep:TrustFacet ;
     rdfs:label "AMTA Attestation" ;
-    rdfs:comment "A multi-dimensional trust attestation by one agent (the attestor) about another agent or claim (the subject). Subclass of cg:TrustFacet; inherits trust-level + issuer semantics and adds per-axis ratings." .
+    rdfs:comment "A multi-dimensional trust attestation by one agent (the attestor) about another agent or claim (the subject). Subclass of iep:TrustFacet; inherits trust-level + issuer semantics and adds per-axis ratings." .
 
 amta:CompetenceRating a owl:Class ;
     rdfs:label "Competence Rating" ;
-    rdfs:comment "Rating of the subject's ability to produce correct claims in the relevant domain. Ordinal 0.0 - 1.0. A lens on cg:SemioticFacet.epistemicConfidence filtered to the attestor's domain." ;
-    rdfs:subClassOf cg:SemioticFacet .
+    rdfs:comment "Rating of the subject's ability to produce correct claims in the relevant domain. Ordinal 0.0 - 1.0. A lens on iep:SemioticFacet.epistemicConfidence filtered to the attestor's domain." ;
+    rdfs:subClassOf iep:SemioticFacet .
 
 amta:HonestyRating a owl:Class ;
     rdfs:label "Honesty Rating" ;
-    rdfs:comment "Rating of the subject's faithful reporting. Specialization of cg:TrustFacet for a per-axis honesty signal." ;
-    rdfs:subClassOf cg:TrustFacet .
+    rdfs:comment "Rating of the subject's faithful reporting. Specialization of iep:TrustFacet for a per-axis honesty signal." ;
+    rdfs:subClassOf iep:TrustFacet .
 
 amta:RelevanceRating a owl:Class ;
     rdfs:label "Relevance Rating" ;
     rdfs:comment "Rating of whether the subject's expertise is germane to the specific claim being attested." ;
-    rdfs:subClassOf cg:TrustFacet .
+    rdfs:subClassOf iep:TrustFacet .
 
 amta:RecencyRating a owl:Class ;
     rdfs:label "Recency Rating" ;
-    rdfs:comment "Rating derived from time-since-attestation. Constructed from cg:TemporalFacet.validFrom + an attestation's provenance timestamp." ;
-    cg:constructedFrom ( cg:TemporalFacet cg:TrustFacet ) .
+    rdfs:comment "Rating derived from time-since-attestation. Constructed from iep:TemporalFacet.validFrom + an attestation's provenance timestamp." ;
+    iep:constructedFrom ( iep:TemporalFacet iep:TrustFacet ) .
 
 amta:Reputation a owl:Class ;
     rdfs:label "Reputation" ;
     rdfs:comment "The aggregate of attestations an agent has received. Constructed at runtime from a set of amta:Attestation descriptors via statistical aggregation; see examples/reputation-aggregator.mjs for a reference realization." ;
-    cg:constructedFrom ( amta:Attestation ) .
+    iep:constructedFrom ( amta:Attestation ) .
 
 amta:attestor a owl:ObjectProperty ;
     rdfs:label "attestor" ;
     rdfs:domain amta:Attestation ;
-    rdfs:range cg:AuthorizedAgent .
+    rdfs:range iep:AuthorizedAgent .
 
 amta:subject a owl:ObjectProperty ;
     rdfs:label "subject" ;
@@ -110,5 +110,5 @@ amta:attestedAt a owl:DatatypeProperty ;
 
 # ── Alignments ────────────────────────────────────────────────
 
-amta:Attestation rdfs:seeAlso cg:TrustFacet , cgh:PolicyDecision ;
-    rdfs:comment "AMTA attestations become inputs to cgh:PolicyDecision evaluations via ODRL constraints that reference per-axis ratings." .
+amta:Attestation rdfs:seeAlso iep:TrustFacet , ieh:PolicyDecision ;
+    rdfs:comment "AMTA attestations become inputs to ieh:PolicyDecision evaluations via ODRL constraints that reference per-axis ratings." .

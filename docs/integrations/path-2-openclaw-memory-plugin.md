@@ -45,7 +45,7 @@ Path 2 is tighter:
 Same as Path 1 — every memory write is a typed descriptor with:
 
 * Agent + Trust + Provenance + Temporal + Semiotic facets
-* `cg:supersedes` for revisions (and `forgetMemory` publishes a
+* `iep:supersedes` for revisions (and `forgetMemory` publishes a
   Counterfactual that supersedes — never a destructive delete)
 * Cross-pod federation via `discover_all` / `subscribe_to_pod`
 * Multi-axis attestation via `amta:` (the same flow that attests

@@ -7,7 +7,7 @@
  *   A single asserted upstream fact A0 is built upon by three sibling
  *   descriptors (B, C, D) that cite it as evidence, and one
  *   second-order descriptor (E) that cites B. The publisher then
- *   issues A1 which cg:supersedes A0 with modalStatus =
+ *   issues A1 which iep:supersedes A0 with modalStatus =
  *   Counterfactual — i.e. "the original claim turned out to be
  *   false." The verifier then walks the live pod and asserts the
  *   substrate carries that demotion cleanly through the dependency
@@ -17,7 +17,7 @@
  *   The modal-lattice meet is exercised at single-descriptor
  *   granularity by other tests, but propagation of a modal
  *   demotion through descriptor dependency edges
- *   (prov:wasDerivedFrom + cg:supersedes) is untested. This is the
+ *   (prov:wasDerivedFrom + iep:supersedes) is untested. This is the
  *   substrate's main differentiator vs a plain KG: epistemic
  *   accountability that survives composition. The harness fails
  *   loud if:
@@ -29,13 +29,13 @@
  *       B + E without also restoring C / D
  *     · the original A0 Asserted state is no longer queryable
  *       after A1 publishes (history-as-immutable-record is the
- *       point of cg:supersedes)
+ *       point of iep:supersedes)
  *
  * Cast (six descriptors across two epochs)
  *   epoch 1 — A0 (Asserted), B / C / D (Asserted, derivedFrom A0),
  *             E (Asserted, derivedFrom B)
- *   epoch 2 — A1 (Counterfactual, cg:supersedes A0)
- *   epoch 3 — B' (Asserted, cg:supersedes B, derivedFrom A1)
+ *   epoch 2 — A1 (Counterfactual, iep:supersedes A0)
+ *   epoch 3 — B' (Asserted, iep:supersedes B, derivedFrom A1)
  *             → selective reconfirmation: restores B + E only
  *
  * Assertions (every one is a check() call)
@@ -44,7 +44,7 @@
  *   3.  A0 publishes with modalStatus Asserted
  *   4.  B, C, D, E publish and each carries
  *       prov:wasDerivedFrom pointing at its upstream
- *   5.  A1 publishes Counterfactual + cg:supersedes A0
+ *   5.  A1 publishes Counterfactual + iep:supersedes A0
  *   6.  manifest exposes 6 descriptors and A0's Asserted entry is
  *       still present (history preserved)
  *   7.  walking dependency edges from A1 reaches { B, C, D, E } —
@@ -52,7 +52,7 @@
  *   8.  discover(modalStatus:Asserted) excludes any descriptor
  *       transitively derived-from a Counterfactual (or the
  *       Counterfactual itself)
- *   9.  reconfirmation B' publishes Asserted + cg:supersedes B +
+ *   9.  reconfirmation B' publishes Asserted + iep:supersedes B +
  *       wasDerivedFrom A1
  *   10. after reconfirmation, the cascade set 'still tainted by
  *       Counterfactual' = { C, D } (B is restored, E inherits via
@@ -64,7 +64,7 @@
  * Pass / fail
  *   Exits 0 iff every assertion holds; non-zero with a
  *   per-assertion gap report otherwise. $0 cost — no LLM,
- *   no Claude SDK. ontology-lint clean (no new cg:/cgh:/pgsl:
+ *   no Claude SDK. ontology-lint clean (no new iep:/ieh:/pgsl:
  *   terms; only vertical `brc:` predicates in graph bodies).
  */
 
@@ -92,7 +92,7 @@ const MANIFEST_URL = `${SCENARIO_POD}.well-known/context-graphs`;
 
 // Vertical namespace for scenario-specific predicates. Per ontology
 // hygiene rules, vertical/demo prefixes are fine; we MUST NOT mint
-// new cg:/cgh:/pgsl:/etc. terms.
+// new iep:/ieh:/pgsl:/etc. terms.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/belief-revision-cascade#';
 
 // Named graphs each claim describes.
@@ -224,7 +224,7 @@ function buildAsserted({ id, author, graph, derivedFrom, now, summary }) {
 
 function buildCounterfactual({ id, author, graph, supersedes, derivedFrom, now, summary }) {
   // The retraction publish. Modal flips to Counterfactual; the
-  // descriptor declares cg:supersedes against the prior Asserted
+  // descriptor declares iep:supersedes against the prior Asserted
   // descriptor ID, so the manifest mirrors the link and downstream
   // walks can resolve "is my parent still believed?".
   const builder = ContextDescriptor.create(id)
@@ -260,7 +260,7 @@ function graphTurtle({ id, author, graph, derivedFrom, supersedes, modal, summar
     '@prefix dct:  <http://purl.org/dc/terms/> .',
     '@prefix prov: <http://www.w3.org/ns/prov#> .',
     '@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .',
-    '@prefix cg:   <https://contextgraphs.dev/ns/context-graphs#> .',
+    '@prefix iep:   <https://contextgraphs.dev/ns/context-graphs#> .',
     `@prefix brc:  <${SCENARIO_NS}> .`,
     '',
     `<${graph}> a brc:Claim ;`,
@@ -280,7 +280,7 @@ function graphTurtle({ id, author, graph, derivedFrom, supersedes, modal, summar
   }
   if (supersedes && supersedes.length > 0) {
     for (const prior of supersedes) {
-      lines.push(`  ; cg:supersedes <${prior}>`);
+      lines.push(`  ; iep:supersedes <${prior}>`);
     }
   }
   lines.push(' .');
@@ -330,15 +330,15 @@ check(
 // from downstream graph bodies in epoch 1 (we publish A0 first,
 // but the downstream descriptors need its IRI to set
 // wasDerivedFrom).
-const A0_ID = `urn:cg:brc:${SCENARIO_DATE}:a0`;
-const A1_ID = `urn:cg:brc:${SCENARIO_DATE}:a1`;
-const B_ID  = `urn:cg:brc:${SCENARIO_DATE}:b`;
-const C_ID  = `urn:cg:brc:${SCENARIO_DATE}:c`;
-const D_ID  = `urn:cg:brc:${SCENARIO_DATE}:d`;
-const E_ID  = `urn:cg:brc:${SCENARIO_DATE}:e`;
-const B2_ID = `urn:cg:brc:${SCENARIO_DATE}:b-reconfirmed`;
+const A0_ID = `urn:iep:brc:${SCENARIO_DATE}:a0`;
+const A1_ID = `urn:iep:brc:${SCENARIO_DATE}:a1`;
+const B_ID  = `urn:iep:brc:${SCENARIO_DATE}:b`;
+const C_ID  = `urn:iep:brc:${SCENARIO_DATE}:c`;
+const D_ID  = `urn:iep:brc:${SCENARIO_DATE}:d`;
+const E_ID  = `urn:iep:brc:${SCENARIO_DATE}:e`;
+const B2_ID = `urn:iep:brc:${SCENARIO_DATE}:b-reconfirmed`;
 
-// The manifest mirrors descriptorUrl, not the original urn:cg:
+// The manifest mirrors descriptorUrl, not the original urn:iep:
 // id. We need to compare against the URLs that publish() returns
 // for the cascade walks below.
 const publishedUrls = {};
@@ -554,10 +554,10 @@ check(
   { found: m2.length },
 );
 
-// A1 must declare cg:supersedes A0 in the manifest mirror.
+// A1 must declare iep:supersedes A0 in the manifest mirror.
 const a1Entry = m2.find(e => e.descriptorUrl === publishedUrls.a1);
 check(
-  'A1 manifest entry carries cg:supersedes <A0> (substrate mirrored the link)',
+  'A1 manifest entry carries iep:supersedes <A0> (substrate mirrored the link)',
   !!a1Entry && Array.isArray(a1Entry.supersedes) && a1Entry.supersedes.includes(A0_ID),
   { supersedes: a1Entry?.supersedes },
 );
@@ -592,7 +592,7 @@ h('ACT 7 — walk dependency edges from A1 → find tainted downstream');
 // prov:wasDerivedFrom edges. We don't trust in-memory linkage —
 // every edge is re-discovered from the pod.
 function urnIdToManifestUrl(urn) {
-  // descriptors share a urn:cg:brc:<date>:<slug> -> .ttl URL
+  // descriptors share a urn:iep:brc:<date>:<slug> -> .ttl URL
   // mapping; we look it up by checking the published map (which
   // we got back from publish()'s real responses).
   for (const [, url] of Object.entries(publishedUrls)) {
@@ -614,11 +614,11 @@ function addEdge(upstreamUrn, downstreamUrn) {
   s.add(downstreamUrn);
   downstreamOf.set(upstreamUrn, s);
 }
-const URN_RE = /<(urn:cg:brc:[^>]+)>/g;
+const URN_RE = /<(urn:iep:brc:[^>]+)>/g;
 function urnIdsFromGraph(trig, predicate) {
   // crude but exact: split on the predicate and pull URNs.
   const out = new Set();
-  const re = new RegExp(`${predicate}\\s+<(urn:cg:brc:[^>]+)>`, 'g');
+  const re = new RegExp(`${predicate}\\s+<(urn:iep:brc:[^>]+)>`, 'g');
   let m;
   while ((m = re.exec(trig)) !== null) out.add(m[1]);
   return out;
@@ -731,7 +731,7 @@ check(
 );
 
 // ── Epoch 3: selective reconfirmation publish on B ─────────────
-h('ACT 9 — epoch 3: B is reconfirmed (cg:supersedes B, derivedFrom A1)');
+h('ACT 9 — epoch 3: B is reconfirmed (iep:supersedes B, derivedFrom A1)');
 
 const t3 = new Date(Date.now() + 2000).toISOString();
 const b2 = buildAsserted({
@@ -786,7 +786,7 @@ check(
 // B's reconfirmation must be visible as a supersedes edge on B'.
 const b2Entry = m3.find(e => e.descriptorUrl === publishedUrls.b2);
 check(
-  "B' manifest entry carries cg:supersedes <B>",
+  "B' manifest entry carries iep:supersedes <B>",
   !!b2Entry && Array.isArray(b2Entry.supersedes) && b2Entry.supersedes.includes(B_ID),
   { supersedes: b2Entry?.supersedes },
 );
@@ -812,7 +812,7 @@ const b2Derived = urnIdsFromGraph(trigs[publishedUrls.b2], 'prov:wasDerivedFrom'
 for (const up of b2Derived) addEdge(up, B2_ID);
 
 // Build "reconfirmed" set: descriptors that explicitly re-published
-// themselves (carry a cg:supersedes edge in the manifest) AND cite a
+// themselves (carry a iep:supersedes edge in the manifest) AND cite a
 // known-false ancestor (or A1) in their wasDerivedFrom AND are
 // themselves Asserted. The supersedes gate is critical — a stale
 // descriptor (C / D) that merely persists in the manifest and happens

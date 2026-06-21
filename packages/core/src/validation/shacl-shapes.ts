@@ -10,7 +10,7 @@
  */
 
 export const SHACL_SHAPES_TURTLE = `\
-@prefix cg:    <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix sh:    <http://www.w3.org/ns/shacl#> .
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov:  <http://www.w3.org/ns/prov#> .
@@ -19,32 +19,32 @@ export const SHACL_SHAPES_TURTLE = `\
 
 # ── Context Descriptor Shape ──────────────────────────────────
 
-cg:ContextDescriptorShape a sh:NodeShape ;
-    sh:targetClass cg:ContextDescriptor ;
+iep:ContextDescriptorShape a sh:NodeShape ;
+    sh:targetClass iep:ContextDescriptor ;
     sh:property [
-        sh:path cg:hasFacet ;
+        sh:path iep:hasFacet ;
         sh:minCount 1 ;
-        sh:class cg:ContextFacet ;
+        sh:class iep:ContextFacet ;
         sh:message "A ContextDescriptor MUST have at least one facet." ;
     ] ;
     sh:property [
-        sh:path cg:describes ;
+        sh:path iep:describes ;
         sh:minCount 1 ;
         sh:nodeKind sh:IRI ;
         sh:message "A ContextDescriptor MUST describe at least one Named Graph." ;
     ] ;
     sh:property [
-        sh:path cg:version ;
+        sh:path iep:version ;
         sh:maxCount 1 ;
         sh:datatype xsd:nonNegativeInteger ;
     ] ;
     sh:property [
-        sh:path cg:validFrom ;
+        sh:path iep:validFrom ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
     ] ;
     sh:property [
-        sh:path cg:validUntil ;
+        sh:path iep:validUntil ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
     ] ;
@@ -52,8 +52,8 @@ cg:ContextDescriptorShape a sh:NodeShape ;
         sh:message "validUntil MUST be after validFrom when both are present." ;
         sh:select """
             SELECT $this WHERE {
-                $this cg:validFrom ?from .
-                $this cg:validUntil ?until .
+                $this iep:validFrom ?from .
+                $this iep:validUntil ?until .
                 FILTER (?until <= ?from)
             }
         """ ;
@@ -61,36 +61,36 @@ cg:ContextDescriptorShape a sh:NodeShape ;
 
 # ── Composed Descriptor Shape ─────────────────────────────────
 
-cg:ComposedDescriptorShape a sh:NodeShape ;
-    sh:targetClass cg:ComposedDescriptor ;
+iep:ComposedDescriptorShape a sh:NodeShape ;
+    sh:targetClass iep:ComposedDescriptor ;
     sh:property [
-        sh:path cg:compositionOp ;
+        sh:path iep:compositionOp ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:class cg:CompositionOperator ;
+        sh:class iep:CompositionOperator ;
     ] ;
     sh:property [
-        sh:path cg:operand ;
+        sh:path iep:operand ;
         sh:minCount 1 ;
-        sh:class cg:ContextDescriptor ;
+        sh:class iep:ContextDescriptor ;
     ] .
 
 # ── Temporal Facet Shape ──────────────────────────────────────
 
-cg:TemporalFacetShape a sh:NodeShape ;
-    sh:targetClass cg:TemporalFacet ;
+iep:TemporalFacetShape a sh:NodeShape ;
+    sh:targetClass iep:TemporalFacet ;
     sh:property [
-        sh:path cg:validFrom ;
+        sh:path iep:validFrom ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
     ] ;
     sh:property [
-        sh:path cg:validUntil ;
+        sh:path iep:validUntil ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
     ] ;
     sh:property [
-        sh:path cg:temporalResolution ;
+        sh:path iep:temporalResolution ;
         sh:maxCount 1 ;
         sh:datatype xsd:duration ;
     ] ;
@@ -98,8 +98,8 @@ cg:TemporalFacetShape a sh:NodeShape ;
         sh:message "Temporal facet validUntil MUST be after validFrom." ;
         sh:select """
             SELECT $this WHERE {
-                $this cg:validFrom ?from .
-                $this cg:validUntil ?until .
+                $this iep:validFrom ?from .
+                $this iep:validUntil ?until .
                 FILTER (?until <= ?from)
             }
         """ ;
@@ -107,8 +107,8 @@ cg:TemporalFacetShape a sh:NodeShape ;
 
 # ── Provenance Facet Shape ────────────────────────────────────
 
-cg:ProvenanceFacetShape a sh:NodeShape ;
-    sh:targetClass cg:ProvenanceFacet ;
+iep:ProvenanceFacetShape a sh:NodeShape ;
+    sh:targetClass iep:ProvenanceFacet ;
     sh:property [
         sh:path prov:wasGeneratedBy ;
         sh:class prov:Activity ;
@@ -121,24 +121,24 @@ cg:ProvenanceFacetShape a sh:NodeShape ;
 
 # ── Agent Facet Shape ─────────────────────────────────────────
 
-cg:AgentFacetShape a sh:NodeShape ;
-    sh:targetClass cg:AgentFacet ;
+iep:AgentFacetShape a sh:NodeShape ;
+    sh:targetClass iep:AgentFacet ;
     sh:property [
-        sh:path cg:agentRole ;
+        sh:path iep:agentRole ;
         sh:maxCount 1 ;
     ] .
 
 # ── Semiotic Facet Shape ──────────────────────────────────────
 
-cg:SemioticFacetShape a sh:NodeShape ;
-    sh:targetClass cg:SemioticFacet ;
+iep:SemioticFacetShape a sh:NodeShape ;
+    sh:targetClass iep:SemioticFacet ;
     sh:property [
-        sh:path cg:modalStatus ;
+        sh:path iep:modalStatus ;
         sh:maxCount 1 ;
-        sh:in ( cg:Asserted cg:Hypothetical cg:Counterfactual cg:Quoted cg:Retracted ) ;
+        sh:in ( iep:Asserted iep:Hypothetical iep:Counterfactual iep:Quoted iep:Retracted ) ;
     ] ;
     sh:property [
-        sh:path cg:epistemicConfidence ;
+        sh:path iep:epistemicConfidence ;
         sh:maxCount 1 ;
         sh:datatype xsd:double ;
         sh:minInclusive 0.0 ;
@@ -147,30 +147,30 @@ cg:SemioticFacetShape a sh:NodeShape ;
 
 # ── Trust Facet Shape ─────────────────────────────────────────
 
-cg:TrustFacetShape a sh:NodeShape ;
-    sh:targetClass cg:TrustFacet ;
+iep:TrustFacetShape a sh:NodeShape ;
+    sh:targetClass iep:TrustFacet ;
     sh:property [
-        sh:path cg:trustLevel ;
+        sh:path iep:trustLevel ;
         sh:maxCount 1 ;
-        sh:in ( cg:SelfAsserted cg:ThirdPartyAttested cg:CryptographicallyVerified ) ;
+        sh:in ( iep:SelfAsserted iep:ThirdPartyAttested iep:CryptographicallyVerified ) ;
     ] .
 
 # ── Access Control Facet Shape ────────────────────────────────
 
-cg:AccessControlFacetShape a sh:NodeShape ;
-    sh:targetClass cg:AccessControlFacet ;
+iep:AccessControlFacetShape a sh:NodeShape ;
+    sh:targetClass iep:AccessControlFacet ;
     sh:or (
-        [ sh:property [ sh:path cg:authorization ; sh:minCount 1 ] ]
-        [ sh:property [ sh:path cg:policyRef ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path iep:authorization ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path iep:policyRef ; sh:minCount 1 ] ]
     ) ;
-    sh:message "AccessControlFacet must declare at least one access-control mode: cg:authorization (WAC) or cg:policyRef (ABAC)." .
+    sh:message "AccessControlFacet must declare at least one access-control mode: iep:authorization (WAC) or iep:policyRef (ABAC)." .
 
 # ── Federation Facet Shape ────────────────────────────────────
 
-cg:FederationFacetShape a sh:NodeShape ;
-    sh:targetClass cg:FederationFacet ;
+iep:FederationFacetShape a sh:NodeShape ;
+    sh:targetClass iep:FederationFacet ;
     sh:property [
-        sh:path cg:lastSynced ;
+        sh:path iep:lastSynced ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
     ] .
@@ -178,7 +178,7 @@ cg:FederationFacetShape a sh:NodeShape ;
 # ── Kernel Result Shapes ──────────────────────────────────────
 #
 # Hypermedia + JSON-LD discipline: every kernel-verb response carries
-# a SHACL shape IRI on cg:conformsToShape so validators see what to
+# a SHACL shape IRI on iep:conformsToShape so validators see what to
 # check without out-of-band schema. These shapes describe the
 # *wire-level* result envelope each verb emits — they sit alongside
 # the existing facet shapes above (which describe the underlying
@@ -187,8 +187,8 @@ cg:FederationFacetShape a sh:NodeShape ;
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
 
 # Base: every kernel result must carry a JSON-LD context + an @type
-# + at least one cg:Affordance hint for next-step navigation.
-cg:KernelResultShape a sh:NodeShape ;
+# + at least one iep:Affordance hint for next-step navigation.
+iep:KernelResultShape a sh:NodeShape ;
     rdfs:comment "Generic shape every kernel-verb / shim response satisfies. Requires JSON-LD typing + a Hydra affordance set." ;
     sh:property [
         sh:path rdf:type ;
@@ -196,41 +196,41 @@ cg:KernelResultShape a sh:NodeShape ;
         sh:message "Kernel result must declare at least one rdf:type." ;
     ] ;
     sh:property [
-        sh:path cg:affordance ;
+        sh:path iep:affordance ;
         sh:nodeKind sh:IRIOrBlankNode ;
-        sh:message "Kernel result SHOULD carry at least one cg:Affordance for next-step navigation (hydra:Operation)." ;
+        sh:message "Kernel result SHOULD carry at least one iep:Affordance for next-step navigation (hydra:Operation)." ;
     ] .
 
-cg:HolonShape a sh:NodeShape ;
+iep:HolonShape a sh:NodeShape ;
     rdfs:comment "A holon: dereferenceable IRI + level + kind (atom | fragment | descriptor | manifest | opaque)." ;
-    sh:targetClass cg:Holon ;
+    sh:targetClass iep:Holon ;
     sh:property [
-        sh:path cg:iri ;
+        sh:path iep:iri ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:nodeKind sh:IRI ;
     ] ;
     sh:property [
-        sh:path cg:level ;
+        sh:path iep:level ;
         sh:maxCount 1 ;
         sh:datatype xsd:nonNegativeInteger ;
     ] ;
     sh:property [
-        sh:path cg:kind ;
+        sh:path iep:kind ;
         sh:maxCount 1 ;
         sh:in ( "atom" "fragment" "descriptor" "manifest" "opaque" ) ;
     ] .
 
-cg:AffordanceShape a sh:NodeShape ;
-    rdfs:comment "A cg:Affordance MUST be a hydra:Operation with at least cg:action + hydra:target + hydra:method." ;
-    sh:targetClass cg:Affordance ;
+iep:AffordanceShape a sh:NodeShape ;
+    rdfs:comment "A iep:Affordance MUST be a hydra:Operation with at least iep:action + hydra:target + hydra:method." ;
+    sh:targetClass iep:Affordance ;
     sh:property [
         sh:path rdf:type ;
         sh:hasValue hydra:Operation ;
-        sh:message "Every cg:Affordance MUST also be typed hydra:Operation so Hydra clients can ingest it natively." ;
+        sh:message "Every iep:Affordance MUST also be typed hydra:Operation so Hydra clients can ingest it natively." ;
     ] ;
     sh:property [
-        sh:path cg:action ;
+        sh:path iep:action ;
         sh:minCount 1 ;
         sh:nodeKind sh:IRI ;
     ] ;
@@ -245,106 +245,106 @@ cg:AffordanceShape a sh:NodeShape ;
         sh:in ( "GET" "POST" "PUT" "PATCH" "DELETE" ) ;
     ] .
 
-cg:DereferenceResultShape a sh:NodeShape ;
+iep:DereferenceResultShape a sh:NodeShape ;
     rdfs:comment "Result of kernel.dereference — carries the fetched representation + extracted affordances." ;
     sh:property [
-        sh:path cg:iri ;
+        sh:path iep:iri ;
         sh:minCount 1 ;
         sh:nodeKind sh:IRI ;
     ] ;
     sh:property [
-        sh:path cg:status ;
+        sh:path iep:status ;
         sh:maxCount 1 ;
         sh:in ( "ok" "encrypted-no-key" "not-found" "error" ) ;
     ] .
 
-cg:ComposeResultShape a sh:NodeShape ;
+iep:ComposeResultShape a sh:NodeShape ;
     rdfs:comment "Result of kernel.compose — emits a ComposedDescriptor witness." ;
     sh:property [
-        sh:path cg:operand ;
+        sh:path iep:operand ;
         sh:minCount 1 ;
         sh:nodeKind sh:IRI ;
     ] ;
     sh:property [
-        sh:path cg:compositionOp ;
+        sh:path iep:compositionOp ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
     ] .
 
-cg:ActResultShape a sh:NodeShape ;
+iep:ActResultShape a sh:NodeShape ;
     rdfs:comment "Result of kernel.act — wraps an HTTP response and echoes the followed affordance." ;
     sh:property [
-        sh:path cg:httpStatus ;
+        sh:path iep:httpStatus ;
         sh:minCount 1 ;
         sh:datatype xsd:integer ;
     ] .
 
-cg:PromoteResultShape a sh:NodeShape ;
+iep:PromoteResultShape a sh:NodeShape ;
     rdfs:comment "Result of kernel.promote — apex IRI + lattice level + optional pullback square." ;
     sh:property [
-        sh:path cg:apex ;
+        sh:path iep:apex ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:nodeKind sh:IRI ;
     ] ;
     sh:property [
-        sh:path cg:level ;
+        sh:path iep:level ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:datatype xsd:nonNegativeInteger ;
     ] .
 
-cg:DecomposeResultShape a sh:NodeShape ;
+iep:DecomposeResultShape a sh:NodeShape ;
     rdfs:comment "Result of kernel.decompose — pullback square (apex + left + right + overlap)." ;
     sh:property [
-        sh:path cg:apex ;
+        sh:path iep:apex ;
         sh:minCount 1 ;
         sh:nodeKind sh:IRI ;
     ] ;
     sh:property [
-        sh:path cg:left ;
+        sh:path iep:left ;
         sh:minCount 1 ;
         sh:nodeKind sh:IRI ;
     ] ;
     sh:property [
-        sh:path cg:right ;
+        sh:path iep:right ;
         sh:minCount 1 ;
         sh:nodeKind sh:IRI ;
     ] ;
     sh:property [
-        sh:path cg:overlap ;
+        sh:path iep:overlap ;
         sh:minCount 1 ;
         sh:nodeKind sh:IRI ;
     ] .
 
-cg:ManifestShape a sh:NodeShape ;
-    rdfs:comment "A pod's .well-known/context-graphs manifest is a hydra:Collection of cg:ContextDescriptor entries." ;
+iep:ManifestShape a sh:NodeShape ;
+    rdfs:comment "A pod's .well-known/context-graphs manifest is a hydra:Collection of iep:ContextDescriptor entries." ;
     sh:property [
         sh:path rdf:type ;
         sh:hasValue hydra:Collection ;
         sh:message "Manifest MUST be a hydra:Collection." ;
     ] .
 
-cg:ToolResultShape a sh:NodeShape ;
+iep:ToolResultShape a sh:NodeShape ;
     rdfs:comment "Base shape every named-tool shim response satisfies — same envelope discipline as kernel verbs." ;
     sh:property [
         sh:path rdf:type ;
         sh:minCount 1 ;
     ] ;
     sh:property [
-        sh:path cg:affordance ;
+        sh:path iep:affordance ;
         sh:nodeKind sh:IRIOrBlankNode ;
         sh:message "Shim result SHOULD advertise next-step affordances so callers can navigate without out-of-band knowledge." ;
     ] .
 
-cg:RelayEntryPointShape a sh:NodeShape ;
+iep:RelayEntryPointShape a sh:NodeShape ;
     rdfs:comment "Hypermedia entry point document for the relay's HTTP surface — every operation listed MUST be a hydra:Operation." ;
     sh:property [
         sh:path rdf:type ;
         sh:hasValue hydra:EntryPoint ;
     ] ;
     sh:property [
-        sh:path cg:affordance ;
+        sh:path iep:affordance ;
         sh:minCount 1 ;
         sh:message "Entry point MUST list at least one navigable operation." ;
     ] .

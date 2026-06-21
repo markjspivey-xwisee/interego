@@ -43,19 +43,19 @@ describe('PodDirectory', () => {
     it('should serialize a directory to valid Turtle', () => {
       const turtle = podDirectoryToTurtle(directory);
 
-      expect(turtle).toContain('cg:PodDirectory');
-      expect(turtle).toContain('cg:hasPod');
+      expect(turtle).toContain('iep:PodDirectory');
+      expect(turtle).toContain('iep:hasPod');
       expect(turtle).toContain('https://css-a.example.com/alice/');
       expect(turtle).toContain('https://css-b.example.com/bob/');
       expect(turtle).toContain('https://corp.internal/org/');
       expect(turtle).toContain("Alice's pod");
       expect(turtle).toContain("Bob's pod");
-      expect(turtle).toContain('cg:owner');
+      expect(turtle).toContain('iep:owner');
     });
 
     it('should include @prefix declarations', () => {
       const turtle = podDirectoryToTurtle(directory);
-      expect(turtle).toContain('@prefix cg:');
+      expect(turtle).toContain('@prefix iep:');
       expect(turtle).toContain('@prefix rdfs:');
     });
   });

@@ -93,7 +93,7 @@ Exceptions to any policy MUST be:
 1. Requested in writing (issue or descriptor)
 2. Approved by the Operator
 3. Time-bound (default: 30 days)
-4. Recorded as a compliance descriptor with `cg:modalStatus Hypothetical` until the exception expires or is closed
+4. Recorded as a compliance descriptor with `iep:modalStatus Hypothetical` until the exception expires or is closed
 
 ## 7. Mapping
 

@@ -11,7 +11,7 @@
  * What it does:
  *
  *   1. On startup, registers itself on the target pod's agent registry
- *      as a cg:AuthorizedAgent with role=Validator. The registration
+ *      as a iep:AuthorizedAgent with role=Validator. The registration
  *      credential is issued by the relay's register_agent endpoint.
  *   2. Subscribes to Solid Notifications on the pod's context-graphs
  *      container (see deploy/mcp-relay/subscription-client.ts). New
@@ -263,7 +263,7 @@ async function validateAndPublish(descriptorUrl: string): Promise<ValidationResu
     // 3. Build the finding graph: the engine's sh:ValidationReport plus
     //    provenance linking it to the validated descriptor and, when a
     //    shape set was supplied, the ruleset that produced the verdict.
-    const graphIri = `urn:cg:validator-finding:${Date.now()}`;
+    const graphIri = `urn:iep:validator-finding:${Date.now()}`;
     const provLines = [`<${graphIri}> <http://www.w3.org/ns/prov#wasDerivedFrom> <${descriptorUrl}> .`];
     if (SHAPES_URL) {
       provLines.push(`<${graphIri}> <http://www.w3.org/ns/prov#wasDerivedFrom> <${SHAPES_URL}> .`);
@@ -282,7 +282,7 @@ async function validateAndPublish(descriptorUrl: string): Promise<ValidationResu
           pod_name: podNameFromUrl(POD_URL),
           agent_id: AGENT_ID,
           ...(OWNER_WEBID ? { owner_webid: OWNER_WEBID } : {}),
-          descriptor_id: `urn:cg:validator:${Date.now()}`,
+          descriptor_id: `urn:iep:validator:${Date.now()}`,
           graph_iri: graphIri,
           graph_content: graphContent,
           modal_status: 'Asserted',

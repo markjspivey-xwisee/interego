@@ -1,7 +1,7 @@
 @prefix ie:   <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
-@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix ieh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
@@ -22,7 +22,7 @@
 #  This is the CORE ontology of Interego — the interrogatives
 #  layer. It is the user-facing grammar that sits over the
 #  technical machinery in the substrate (pgsl:), typed-context
-#  descriptors (cg:), and agent harness (cgh:). Each of those
+#  descriptors (iep:), and agent harness (ieh:). Each of those
 #  lower layers "answers" one or more interrogatives; the
 #  interrogatives give those answers a common, typed vocabulary
 #  so agents and humans can inquire, refine, reframe, and
@@ -30,17 +30,17 @@
 #
 #  The eleven canonical interrogatives are:
 #
-#     Who       agent / subject        — cg:AgentFacet
+#     Who       agent / subject        — iep:AgentFacet
 #     What      entity / object        — pgsl:Atom, pgsl:Fragment
-#     Where     location / container   — cg:FederationFacet
-#     When      time / duration        — cg:TemporalFacet
-#     Why       cause / motive         — cg:ProvenanceFacet
-#     How       method / means         — cg:ProvenanceFacet, pgsl:PullbackSquare
-#     Which     selection / paradigm   — cgh:Decision
-#     WhatKind  type / category        — cg:SemioticFacet
-#     HowMuch   quantity / extent      — pgsl:level, cgh:confidence
-#     Whose     ownership / control    — cg:AccessControlFacet
-#     Whether   truth / modality       — cg:TrustFacet, cgh:PolicyDecision, cgh:RuntimeEval
+#     Where     location / container   — iep:FederationFacet
+#     When      time / duration        — iep:TemporalFacet
+#     Why       cause / motive         — iep:ProvenanceFacet
+#     How       method / means         — iep:ProvenanceFacet, pgsl:PullbackSquare
+#     Which     selection / paradigm   — ieh:Decision
+#     WhatKind  type / category        — iep:SemioticFacet
+#     HowMuch   quantity / extent      — pgsl:level, ieh:confidence
+#     Whose     ownership / control    — iep:AccessControlFacet
+#     Whether   truth / modality       — iep:TrustFacet, ieh:PolicyDecision, ieh:RuntimeEval
 #
 #  These correspond to Kantian categories, Fillmore case grammar,
 #  FrameNet semantic roles, and Greimasian narrative actants.
@@ -72,7 +72,7 @@
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/interego#" ;
     owl:imports <http://www.w3.org/ns/prov-o> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> ,
-                <https://markjspivey-xwisee.github.io/interego/ns/cg#> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/iep#> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/harness#> ;
     rdfs:seeAlso <https://markjspivey-xwisee.github.io/interego/ns/alignment#> .
 
@@ -111,7 +111,7 @@ ie:Interrogative a owl:Class , skos:ConceptScheme ;
 ie:Who a skos:Concept , ie:Interrogative ;
     skos:inScheme ie:Interrogative ;
     skos:prefLabel "Who" ;
-    skos:definition "Agent/subject interrogative. Asks about the identity of an agent involved in an event, proposition, or assertion. Answered by cg:AgentFacet in the typed-context layer and by prov:Agent in provenance traces." ;
+    skos:definition "Agent/subject interrogative. Asks about the identity of an agent involved in an event, proposition, or assertion. Answered by iep:AgentFacet in the typed-context layer and by prov:Agent in provenance traces." ;
     skos:altLabel "Subject" , "Agent" , "Actor" ;
     skos:example "Who did this? Who is asserting this? Who was present?" .
 
@@ -125,63 +125,63 @@ ie:What a skos:Concept , ie:Interrogative ;
 ie:Where a skos:Concept , ie:Interrogative ;
     skos:inScheme ie:Interrogative ;
     skos:prefLabel "Where" ;
-    skos:definition "Spatial/locational interrogative. Asks about location, container, or place — including non-geographic containers like pods, graphs, or organizational boundaries. Answered by cg:FederationFacet (where is this hosted?) and by container relationships in the substrate." ;
+    skos:definition "Spatial/locational interrogative. Asks about location, container, or place — including non-geographic containers like pods, graphs, or organizational boundaries. Answered by iep:FederationFacet (where is this hosted?) and by container relationships in the substrate." ;
     skos:altLabel "Location" , "Place" , "Container" ;
     skos:example "Where is this stored? Where did this happen? In what context?" .
 
 ie:When a skos:Concept , ie:Interrogative ;
     skos:inScheme ie:Interrogative ;
     skos:prefLabel "When" ;
-    skos:definition "Temporal interrogative. Asks about time — instants, intervals, durations, and temporal relations. Answered by cg:TemporalFacet of context descriptors, aligned with OWL-Time." ;
+    skos:definition "Temporal interrogative. Asks about time — instants, intervals, durations, and temporal relations. Answered by iep:TemporalFacet of context descriptors, aligned with OWL-Time." ;
     skos:altLabel "Time" , "Moment" , "Duration" ;
     skos:example "When did this happen? How long did it last? Is it still valid?" .
 
 ie:Why a skos:Concept , ie:Interrogative ;
     skos:inScheme ie:Interrogative ;
     skos:prefLabel "Why" ;
-    skos:definition "Causal/motivational interrogative. Asks about reasons — both proximate causes (the mechanism that produced an outcome) and motivating reasons (the goal or intention behind an action). Answered by cg:ProvenanceFacet (causal provenance) and by cgh:Decision justification (motivating reasons)." ;
+    skos:definition "Causal/motivational interrogative. Asks about reasons — both proximate causes (the mechanism that produced an outcome) and motivating reasons (the goal or intention behind an action). Answered by iep:ProvenanceFacet (causal provenance) and by ieh:Decision justification (motivating reasons)." ;
     skos:altLabel "Reason" , "Cause" , "Motive" , "Purpose" ;
     skos:example "Why did this happen? Why was this decision made? Why is this true?" .
 
 ie:How a skos:Concept , ie:Interrogative ;
     skos:inScheme ie:Interrogative ;
     skos:prefLabel "How" ;
-    skos:definition "Methodical/procedural interrogative. Asks about means, method, or manner — the procedure by which something came to be or the way it is structured. Answered by cg:ProvenanceFacet (how it was produced), pgsl:PullbackSquare (how it is composed), and cgh:strategyUsed (how the harness approached a question)." ;
+    skos:definition "Methodical/procedural interrogative. Asks about means, method, or manner — the procedure by which something came to be or the way it is structured. Answered by iep:ProvenanceFacet (how it was produced), pgsl:PullbackSquare (how it is composed), and ieh:strategyUsed (how the harness approached a question)." ;
     skos:altLabel "Method" , "Means" , "Manner" , "Procedure" ;
     skos:example "How did this happen? How was it built? How do I do X?" .
 
 ie:Which a skos:Concept , ie:Interrogative ;
     skos:inScheme ie:Interrogative ;
     skos:prefLabel "Which" ;
-    skos:definition "Selection/paradigmatic interrogative. Asks for a choice from a known set of alternatives — the Saussurean paradigm axis. Distinct from ie:What (which asks open-endedly) in that ie:Which assumes a closed set of options. Answered by cgh:Decision (which action to take) and by cg:restriction (which facets to include in a composition)." ;
+    skos:definition "Selection/paradigmatic interrogative. Asks for a choice from a known set of alternatives — the Saussurean paradigm axis. Distinct from ie:What (which asks open-endedly) in that ie:Which assumes a closed set of options. Answered by ieh:Decision (which action to take) and by iep:restriction (which facets to include in a composition)." ;
     skos:altLabel "Selection" , "Choice" , "Alternative" ;
     skos:example "Which of these options? Which choice should I make?" .
 
 ie:WhatKind a skos:Concept , ie:Interrogative ;
     skos:inScheme ie:Interrogative ;
     skos:prefLabel "What kind" ;
-    skos:definition "Typological interrogative. Asks about the type, category, or class of a thing. Answered by cg:SemioticFacet (under what interpretive frame?) and by rdf:type / skos:Concept membership." ;
+    skos:definition "Typological interrogative. Asks about the type, category, or class of a thing. Answered by iep:SemioticFacet (under what interpretive frame?) and by rdf:type / skos:Concept membership." ;
     skos:altLabel "Type" , "Category" , "Class" , "Sort" ;
     skos:example "What kind of thing is this? What category does it belong to?" .
 
 ie:HowMuch a skos:Concept , ie:Interrogative ;
     skos:inScheme ie:Interrogative ;
     skos:prefLabel "How much" ;
-    skos:definition "Quantitative interrogative. Asks about quantity, extent, magnitude, or degree. Includes both continuous (how much water) and discrete (how many items) variants. Answered by pgsl:level / pgsl:atomCount / pgsl:fragmentCount (substrate cardinality) and by cgh:confidence (degree of certainty)." ;
+    skos:definition "Quantitative interrogative. Asks about quantity, extent, magnitude, or degree. Includes both continuous (how much water) and discrete (how many items) variants. Answered by pgsl:level / pgsl:atomCount / pgsl:fragmentCount (substrate cardinality) and by ieh:confidence (degree of certainty)." ;
     skos:altLabel "How many" , "Quantity" , "Extent" , "Magnitude" ;
     skos:example "How much? How many? To what extent?" .
 
 ie:Whose a skos:Concept , ie:Interrogative ;
     skos:inScheme ie:Interrogative ;
     skos:prefLabel "Whose" ;
-    skos:definition "Possessive/ownership interrogative. Asks about control, stewardship, or possession — who has the authority to modify, access, or speak for something. Answered by cg:AccessControlFacet (access rights) and cg:AgentFacet onBehalfOf delegation." ;
+    skos:definition "Possessive/ownership interrogative. Asks about control, stewardship, or possession — who has the authority to modify, access, or speak for something. Answered by iep:AccessControlFacet (access rights) and iep:AgentFacet onBehalfOf delegation." ;
     skos:altLabel "Ownership" , "Control" , "Stewardship" ;
     skos:example "Whose data is this? Who controls this graph? On whose behalf?" .
 
 ie:Whether a skos:Concept , ie:Interrogative ;
     skos:inScheme ie:Interrogative ;
     skos:prefLabel "Whether" ;
-    skos:definition "Modal interrogative. Asks about truth, possibility, permission, or likelihood. Encompasses yes/no questions, epistemic modality (is it true?), deontic modality (is it permitted?), and alethic modality (is it possible?). Answered by cg:TrustFacet (how certain?), cgh:PolicyDecision (is it permitted?), and cgh:RuntimeEval (is the answer reliable?)." ;
+    skos:definition "Modal interrogative. Asks about truth, possibility, permission, or likelihood. Encompasses yes/no questions, epistemic modality (is it true?), deontic modality (is it permitted?), and alethic modality (is it possible?). Answered by iep:TrustFacet (how certain?), ieh:PolicyDecision (is it permitted?), and ieh:RuntimeEval (is the answer reliable?)." ;
     skos:altLabel "Yes/No" , "Truth" , "Modality" , "Possibility" , "Permission" ;
     skos:example "Is this true? May I do this? Is it possible?" .
 
@@ -231,7 +231,7 @@ ie:interrogativeType a owl:ObjectProperty ;
 
 ie:about a owl:ObjectProperty ;
     rdfs:label "about" ;
-    rdfs:comment "The focal entity or entities the interrogative is about. Typically a pgsl:Node (substrate data) or cg:ContextDescriptor (typed context). Gives the act a concrete target; distinct from the interrogative TYPE which is abstract." ;
+    rdfs:comment "The focal entity or entities the interrogative is about. Typically a pgsl:Node (substrate data) or iep:ContextDescriptor (typed context). Gives the act a concrete target; distinct from the interrogative TYPE which is abstract." ;
     rdfs:domain ie:Act ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
 
@@ -277,7 +277,7 @@ ie:grounds a owl:ObjectProperty ;
 
 ie:confidence a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "confidence" ;
-    rdfs:comment "Confidence in [0.0, 1.0] associated with a response. Typically computed by cgh:RuntimeEval and carried over to the response. Functional — each response has one confidence value." ;
+    rdfs:comment "Confidence in [0.0, 1.0] associated with a response. Typically computed by ieh:RuntimeEval and carried over to the response. Functional — each response has one confidence value." ;
     rdfs:domain ie:Response ;
     rdfs:range xsd:double ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
@@ -301,7 +301,7 @@ ie:Sign a owl:Class ;
 
 ie:Object a owl:Class ;
     rdfs:label "Semiotic Object" ;
-    rdfs:comment "The thing a sign is about — what Peirce called the 'dynamic object'. Distinct from the sign itself, and distinct from any particular agent's interpretation. In practice, objects are often pgsl:Node instances (substrate data) or cg:ContextDescriptor references." ;
+    rdfs:comment "The thing a sign is about — what Peirce called the 'dynamic object'. Distinct from the sign itself, and distinct from any particular agent's interpretation. In practice, objects are often pgsl:Node instances (substrate data) or iep:ContextDescriptor references." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
 
 ie:Interpretant a owl:Class ;

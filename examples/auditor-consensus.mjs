@@ -31,11 +31,11 @@ function parseManifestEntries(ttl) {
   const entries = []; let cur = null;
   for (const raw of ttl.split('\n')) {
     const line = raw.trim();
-    const s = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
+    const s = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
     if (s) { cur = { descriptorUrl: s[1], describes: [], conformsTo: [] }; continue; }
     if (!cur) continue;
     let m;
-    if ((m = line.match(/cg:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
+    if ((m = line.match(/iep:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
     if ((m = line.match(/dct:conformsTo\s+<([^>]+)>/))) cur.conformsTo.push(m[1]);
     if (line.endsWith('.')) { entries.push(cur); cur = null; }
   }
@@ -44,8 +44,8 @@ function parseManifestEntries(ttl) {
 
 function parseDescriptor(ttl) {
   return {
-    issuer: ttl.match(/cg:TrustFacet[\s\S]*?cg:issuer\s+<([^>]+)>/)?.[1] ?? null,
-    confidence: parseFloat(ttl.match(/cg:epistemicConfidence\s+"([\d.]+)"/)?.[1] ?? 'NaN'),
+    issuer: ttl.match(/iep:TrustFacet[\s\S]*?iep:issuer\s+<([^>]+)>/)?.[1] ?? null,
+    confidence: parseFloat(ttl.match(/iep:epistemicConfidence\s+"([\d.]+)"/)?.[1] ?? 'NaN'),
     wasDerivedFrom: [...ttl.matchAll(/prov:wasDerivedFrom\s+<([^>]+)>/g)].map(m => m[1]),
     conformsTo: [...ttl.matchAll(/dct:conformsTo\s+<([^>]+)>/g)].map(m => m[1]),
   };
@@ -119,7 +119,7 @@ console.log('');
 
 // Publish consensus descriptor.
 const now = new Date().toISOString();
-const consensusId = `urn:cg:audit:consensus:${Date.now()}`;
+const consensusId = `urn:iep:audit:consensus:${Date.now()}`;
 const consensusGraph = `urn:graph:audit:consensus:${Date.now()}`;
 const consensusUrl = `${POD}context-graphs/audit-consensus-${Date.now()}.ttl`;
 
@@ -132,41 +132,41 @@ const evidence = new Set();
 for (const p of [...agreements, ...divergences]) for (const a of p.audits) evidence.add(a.url);
 const derivedLines = [...evidence].slice(0, 10).map(u => `        prov:wasDerivedFrom <${u}> ;`).join('\n');
 
-const ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const ttl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix as: <https://www.w3.org/ns/activitystreams#> .
 
 <${consensusId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
     dct:conformsTo <${AUDIT_SHAPE}> ;
-    cg:describes <${consensusGraph}> ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:describes <${consensusGraph}> ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${CONSENSUS_LENS}> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
 ${derivedLines}
         prov:wasAttributedTo <${CONSENSUS_LENS}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${CONSENSUS_LENS}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${CONSENSUS_LENS}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "${consensusScore.toFixed(3)}"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${CONSENSUS_LENS}> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${CONSENSUS_LENS}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${CONSENSUS_LENS}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "${consensusScore.toFixed(3)}"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${CONSENSUS_LENS}> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 
 await putText(consensusUrl, ttl);
 const entry = `
 
-<${consensusUrl}> a cg:ManifestEntry ;
-    cg:describes <${consensusGraph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
+<${consensusUrl}> a iep:ManifestEntry ;
+    iep:describes <${consensusGraph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
     dct:conformsTo <${AUDIT_SHAPE}> ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
 const cur = await fetchText(MANIFEST_URL);
 await putText(MANIFEST_URL, (cur ?? '') + entry);

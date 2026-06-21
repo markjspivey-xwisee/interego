@@ -111,7 +111,7 @@ console.log(`     graph:      ${result.graphUrl}`);
 const manifestUrl = `${PEER_POD}.well-known/context-graphs`;
 const res = await fetch(manifestUrl, { headers: { Accept: 'text/turtle' } });
 const turtle = await res.text();
-const entries = (turtle.match(/a cg:ManifestEntry/g) ?? []).length;
+const entries = (turtle.match(/a iep:ManifestEntry/g) ?? []).length;
 console.log(`   ✓ peer manifest reachable (HTTP ${res.status}) — ${entries} ManifestEntry`);
 
 if (res.status !== 200 || entries < 1) {

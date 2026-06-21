@@ -25,6 +25,7 @@
  * → list-of-objects.
  */
 import type { IRI } from '../model/types.js';
+import { canonicalize } from './namespaces.js';
 
 export interface ParsedLiteral {
   readonly kind: 'literal';
@@ -308,7 +309,12 @@ function resolvePrefixed(s: ParserState, prefix: string, local: string): IRI {
   if (base === undefined) {
     throw new ParseError(`unknown prefix "${prefix}:"`, -1);
   }
-  return (base + local) as IRI;
+  // Back-compat: descriptors persisted before the Interego-Protocol rename carry
+  // legacy `…/ns/cg#…` IRIs (whatever prefix they declared them under). Normalize
+  // them onto the canonical `iep:` namespace on PARSE so all downstream
+  // type-matching / SPARQL / SHACL sees one namespace. The signed bytes on the
+  // pod are never touched — only this in-memory term. New data is unaffected.
+  return canonicalize(base + local) as IRI;
 }
 
 function parseTermAsTerm(s: ParserState): ParsedTerm {
@@ -634,7 +640,7 @@ export function parseTrig(src: string): ParsedDocument {
   }
   // Surface inline blank-node subjects (the `[ a Foo ; p o ]` object-position
   // form) as document-level subjects too. Without this, callers using
-  // `findSubjectsOfType` to locate, say, a `cg:Affordance` declared inline
+  // `findSubjectsOfType` to locate, say, a `iep:Affordance` declared inline
   // (the canonical hypermedia descriptor shape — see
   // `buildDistributionBlock()` in @interego/solid) would see zero hits even
   // though the parser captured the inline block's properties. This change

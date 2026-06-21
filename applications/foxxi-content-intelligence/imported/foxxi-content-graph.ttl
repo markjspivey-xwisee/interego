@@ -33,7 +33,7 @@
 #    fxa:  behavioral   — consumption traces, extraction events  #
 #                                                                #
 #  Compositional with: HELA presheaf category, OLKE semiotic     #
-#  decomposition, SAT-Φ 10-tuple, Context Graphs 1.0, xAPI       #
+#  decomposition, SAT-Φ 10-tuple, Interego Protocol 1.0, xAPI       #
 #  Topos Workbench.                                              #
 #################################################################
 

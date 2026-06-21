@@ -90,16 +90,16 @@ export async function ingestTrainingContent(
     const escaped = extraction.text.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
     atomTriples.push(`<${atomIri}> a pgsl:Atom ;
     pgsl:value """${escaped}""" ;
-    cg:contentHash "${extraction.contentHash}" ;
+    iep:contentHash "${extraction.contentHash}" ;
     pgsl:sourceFormat "${extraction.format}" .`);
 
-    const objectiveIri = `urn:cg:lpc:objective:${pkg.identifier}:${i}` as IRI;
+    const objectiveIri = `urn:iep:lpc:objective:${pkg.identifier}:${i}` as IRI;
     objectiveTriples.push(`<${objectiveIri}> a lpc:LearningObjective ;
     lpc:groundingFragment <${atomIri}> ;
     rdfs:label "${lesson.path.replace(/"/g, '\\"')}" .`);
   }
 
-  const tcIri = `urn:cg:lpc:training-content:${pkg.identifier}` as IRI;
+  const tcIri = `urn:iep:lpc:training-content:${pkg.identifier}` as IRI;
   const graphIri = `urn:graph:lpc:training-content:${pkg.identifier}` as IRI;
 
   const desc = ContextDescriptor.create(tcIri)
@@ -112,7 +112,7 @@ export async function ingestTrainingContent(
 
   const graphContent = `@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
 @prefix lpc:  <https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
 <${tcIri}> a lpc:TrainingContent ;
@@ -185,7 +185,7 @@ export async function importCredential(
   }
 
   const credId = sha256Hex(typeof vc === 'string' ? vc : JSON.stringify(vc)).slice(0, 16);
-  const credIri = `urn:cg:credential:${credId}` as IRI;
+  const credIri = `urn:iep:credential:${credId}` as IRI;
   const graphIri = `urn:graph:lpc:credential:${credId}` as IRI;
 
   const desc = ContextDescriptor.create(credIri)
@@ -201,7 +201,7 @@ export async function importCredential(
   const forContentTriple = forContent ? `lpc:forContent <${forContent}> ;` : '';
 
   const graphContent = `@prefix lpc: <https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#> .
-@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
 <${credIri}> a lpc:Credential ;
@@ -210,9 +210,9 @@ export async function importCredential(
     lpc:credentialFormat ${typeof vc === 'string' ? 'lpc:VC' : 'lpc:VC'} ;
     lpc:vcProof """${escapedJson}""" ;
     lpc:verificationStatus lpc:Verified ;
-    cg:issuer <${issuerDid}> ;
+    iep:issuer <${issuerDid}> ;
     ${forContentTriple}
-    cg:validFrom "${issuedAt}" .
+    iep:validFrom "${issuedAt}" .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -258,7 +258,7 @@ export async function recordPerformanceReview(
   if (!args.content.trim()) throw new Error('performance review content is empty');
 
   const recordId = sha256Hex(args.content + args.managerDid + args.recordedAt).slice(0, 16);
-  const recordIri = `urn:cg:lpc:performance-record:${recordId}` as IRI;
+  const recordIri = `urn:iep:lpc:performance-record:${recordId}` as IRI;
   const graphIri = `urn:graph:lpc:performance-record:${recordId}` as IRI;
 
   const desc = ContextDescriptor.create(recordIri)
@@ -273,7 +273,7 @@ export async function recordPerformanceReview(
   const flagsTriple = args.flagsCapability ? `lpc:flagsCapability <${args.flagsCapability}> ;` : '';
 
   const graphContent = `@prefix lpc:  <https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
@@ -283,7 +283,7 @@ export async function recordPerformanceReview(
     lpc:managerSignature "${args.signature}" ;
     prov:wasAttributedTo <${args.managerDid}> ;
     ${flagsTriple}
-    cg:validFrom "${args.recordedAt}" .
+    iep:validFrom "${args.recordedAt}" .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -328,7 +328,7 @@ export async function recordLearningExperience(
   config: PublishConfig,
 ): Promise<RecordLearningExperienceResult> {
   const stmtId = args.statement.id ?? randomUUID();
-  const expIri = `urn:cg:lpc:learning-experience:${stmtId}` as IRI;
+  const expIri = `urn:iep:lpc:learning-experience:${stmtId}` as IRI;
   const graphIri = `urn:graph:lpc:learning-experience:${stmtId}` as IRI;
   const completedAt = args.statement.timestamp ?? nowIso();
 
@@ -351,10 +351,10 @@ export async function recordLearningExperience(
   const escapedSummary = summary.replace(/"/g, '\\"');
   const escapedJson = JSON.stringify(args.statement).replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
   const credentialTriple = args.earnedCredential ? `lpc:relatesToCredential <${args.earnedCredential}> ;` : '';
-  const lrsTriple = args.lrsEndpoint ? `lpc:basedOnStatement <urn:cg:lrs-statement:${stmtId}> ;` : '';
+  const lrsTriple = args.lrsEndpoint ? `lpc:basedOnStatement <urn:iep:lrs-statement:${stmtId}> ;` : '';
 
   const graphContent = `@prefix lpc:  <https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
 <${expIri}> a lpc:LearningExperience ;
@@ -363,7 +363,7 @@ export async function recordLearningExperience(
     ${credentialTriple}
     ${lrsTriple}
     lpc:xapiStatement """${escapedJson}""" ;
-    cg:validFrom "${completedAt}" .
+    iep:validFrom "${completedAt}" .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);
@@ -399,7 +399,7 @@ export async function publishCitedResponse(
   config: PublishConfig,
 ): Promise<PublishCitedResponseResult> {
   const respId = sha256Hex(args.answer.question + JSON.stringify(args.answer.citations) + nowIso()).slice(0, 16);
-  const respIri = `urn:cg:lpc:cited-response:${respId}` as IRI;
+  const respIri = `urn:iep:lpc:cited-response:${respId}` as IRI;
   const graphIri = `urn:graph:lpc:cited-response:${respId}` as IRI;
 
   const desc = ContextDescriptor.create(respIri)
@@ -421,7 +421,7 @@ export async function publishCitedResponse(
   const allCitesDescriptor = [...new Set(citesDescriptorTriples)].join(' ;\n    ');
 
   const graphContent = `@prefix lpc:  <https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <${respIri}> a lpc:CitedResponse ;
@@ -429,7 +429,7 @@ export async function publishCitedResponse(
     lpc:assistantAttribution <${args.assistantDid}> ;
     ${citesAtomTriples ? `${citesAtomTriples} ;` : ''}
     ${allCitesDescriptor ? `${allCitesDescriptor} ;` : ''}
-    cg:validFrom "${nowIso()}" .
+    iep:validFrom "${nowIso()}" .
 `;
 
   const result = await publish(desc, graphContent, config.podUrl);

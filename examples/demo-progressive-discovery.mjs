@@ -55,11 +55,11 @@ const catalogTtl = agentsCatalogTurtle('urn:catalog:markj', [
   { agentId: 'urn:agent:anthropic:claude-code:vscode',
     label: 'Claude Code VS Code',
     podUrl: POD,
-    capabilities: ['cg:canPublish', 'cg:canAudit'] },
+    capabilities: ['iep:canPublish', 'iep:canAudit'] },
   { agentId: 'urn:agent:reputation-aggregator:v1',
     label: 'Reputation Aggregator',
     podUrl: POD,
-    capabilities: ['cg:canCompose'] },
+    capabilities: ['iep:canCompose'] },
 ]);
 await putText(catalogUrl, catalogTtl);
 console.log(`   published catalog: ${catalogUrl}`);
@@ -76,25 +76,25 @@ console.log('');
 console.log('── T4 — Federation directory descriptor');
 const dirShapeUrl = `${POD}schemas/federation-directory-v1.ttl`;
 const dirShapeTtl = `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix fed: <urn:federation:> .
 
 <${dirShapeUrl}#Shape> a sh:NodeShape ;
-  sh:targetClass cg:ContextDescriptor ;
-  sh:property [ sh:path cg:modalStatus ; sh:in ( cg:Asserted ) ; sh:minCount 1 ] ;
+  sh:targetClass iep:ContextDescriptor ;
+  sh:property [ sh:path iep:modalStatus ; sh:in ( iep:Asserted ) ; sh:minCount 1 ] ;
   sh:property [ sh:path dct:conformsTo ; sh:hasValue <${dirShapeUrl}> ; sh:minCount 1 ] ;
   sh:property [ sh:path fed:indexedPod ; sh:minCount 1 ;
     sh:message "Federation directory MUST enumerate at least one pod." ] .
 `;
 await putText(dirShapeUrl, dirShapeTtl);
 
-const dirId = `urn:cg:federation-directory:${Date.now()}`;
+const dirId = `urn:iep:federation-directory:${Date.now()}`;
 const dirGraph = `urn:graph:federation-directory:${Date.now()}`;
 const dirUrl = `${POD}context-graphs/federation-dir-${Date.now()}.ttl`;
 const now = new Date().toISOString();
-const dirTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const dirTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -102,33 +102,33 @@ const dirTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg
 @prefix fed: <urn:federation:> .
 
 <${dirId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
     dct:conformsTo <${dirShapeUrl}> ;
-    cg:describes <${dirGraph}> ;
+    iep:describes <${dirGraph}> ;
     fed:indexedPod <${POD}> , <${POD_B}> ;
     fed:indexedPodCount "2"^^xsd:integer ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [ a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [ a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <urn:agent:federation-directory-publisher> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
         prov:wasAttributedTo <urn:agent:federation-directory-publisher> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <urn:agent:federation-directory-publisher> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <urn:agent:federation-directory-publisher> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "1.0"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <urn:agent:federation-directory-publisher> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <urn:agent:federation-directory-publisher> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <urn:agent:federation-directory-publisher> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "1.0"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <urn:agent:federation-directory-publisher> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 await putText(dirUrl, dirTtl);
 // Append manifest entry
 const entry = `
 
-<${dirUrl}> a cg:ManifestEntry ;
-    cg:describes <${dirGraph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
+<${dirUrl}> a iep:ManifestEntry ;
+    iep:describes <${dirGraph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
     dct:conformsTo <${dirShapeUrl}> ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
 const cur = await fetchText(MANIFEST_URL);
 await putText(MANIFEST_URL, (cur ?? '') + entry);

@@ -70,7 +70,7 @@ const SCENARIO_POD = `${CSS}/demos/emergent-concurrent-cartographers-${SCENARIO_
 const MANIFEST_URL = `${SCENARIO_POD}.well-known/context-graphs`;
 
 // Vertical namespace for scenario-specific predicates / types. Per
-// CLAUDE.md ontology hygiene: NEVER mint terms into cg:/cgh:/passport:/etc.
+// CLAUDE.md ontology hygiene: NEVER mint terms into iep:/ieh:/passport:/etc.
 // Vertical/demo prefixes are fine.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/concurrent-cartographers#';
 
@@ -147,7 +147,7 @@ function mintAgents() {
 
 // ── Descriptor authoring ─────────────────────────────────────────
 function buildDescriptor(agent, now) {
-  const id = `urn:cg:cc:${SCENARIO_DATE}:${agent.name}`;
+  const id = `urn:iep:cc:${SCENARIO_DATE}:${agent.name}`;
   const graphIri = `${id}-graph`;
   const builder = ContextDescriptor.create(id)
     .describes(...agent.graphs)

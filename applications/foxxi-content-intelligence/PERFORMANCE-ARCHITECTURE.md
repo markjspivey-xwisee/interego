@@ -215,7 +215,7 @@ four-level **modal-status progression**:
   xAPI statement from the LRS, or a trajectory step in the work context.
 - **outcome** — the situation's observed-state, re-measured against the
   exemplary one. If the gap closed, the new performance state
-  **supersedes** the old (`cg:supersedes`).
+  **supersedes** the old (`iep:supersedes`).
 
 The **PerformancePortfolio** rolls many contextualized situations into
 the performance-management view. Its headline number is
@@ -273,7 +273,7 @@ It composes the substrate throughout:
 
 - **Modal status** — a cell is `Hypothetical` until it has the samples
   to `Assert` a rate; the system never over-claims from thin evidence.
-- **`cg:supersedes`** — a new profile supersedes the prior one.
+- **`iep:supersedes`** — a new profile supersedes the prior one.
 - **Federation** — profiles union across organizations
   (`composeCalibrationProfiles()`): one org's hard-won evidence
   calibrates another's, and a cell `Hypothetical` for each org alone can
@@ -288,7 +288,7 @@ The federated profile is only as trustworthy as the outcomes that feed
 it. The `federation-outcome-loader` filters peer descriptors by
 signature verification: every peer outcome's `foxxi:agentSignature` is
 checked against the `prov:wasGeneratedBy` DID, and only descriptors
-that recover the claimed signer — `cg:CryptographicallyVerified` —
+that recover the claimed signer — `iep:CryptographicallyVerified` —
 contribute to the rolled-up profile. Unsigned or mis-signed peer
 descriptors are silently dropped. Without that gate the calibration
 cell would be poisonable: any pod could publish junk outcomes
@@ -319,7 +319,7 @@ or wrong, measured, and improved.
 | personalisation | the composition algebra — restriction + override |
 | directionality | the Agent facet — author kind × audience kind |
 | knowledge as flow | the affordance / federation graph |
-| evaluation closing a gap | `cg:supersedes` — a new asserted state supersedes the old |
+| evaluation closing a gap | `iep:supersedes` — a new asserted state supersedes the old |
 | calibration | modal status + federated union + aggregate-privacy k-anonymity |
 
 Nothing here is a monolith. The "performance, content and knowledge
@@ -374,7 +374,7 @@ Rejection responses:
   signature does not match the `0x`-suffix in `author.id`.
 
 On success the server publishes the outcome (or teaching record) into
-the tenant pod with `cg:CryptographicallyVerified` trust. Publish is
+the tenant pod with `iep:CryptographicallyVerified` trust. Publish is
 bounded (~4s) — if it does not land in time, the response returns with
 `published=[]` and the publish completes in the background.
 

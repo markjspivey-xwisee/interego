@@ -3,7 +3,7 @@
  *
  * Bidirectional bridge between an external xAPI LRS and the user's pod:
  *   - ingestStatementFromLrs() — fetch a Statement from the LRS, project
- *     as a cg:ContextDescriptor in the user's pod
+ *     as a iep:ContextDescriptor in the user's pod
  *   - ingestStatementBatchFromLrs() — same, multi-Statement batch
  *   - projectDescriptorToLrs() — read a descriptor from the pod, project
  *     to xAPI Statement, POST to the LRS (with version negotiation)
@@ -81,9 +81,9 @@ async function publishIngestedStatement(
   podConfig: PodPublishConfig,
 ): Promise<IngestStatementResult> {
   const stmtId = (stmt['id'] as string) ?? sha16(JSON.stringify(stmt));
-  const stmtDescIri = `urn:cg:lrs-statement:${stmtId}` as IRI;
+  const stmtDescIri = `urn:iep:lrs-statement:${stmtId}` as IRI;
   const stmtGraphIri = `urn:graph:lrs:statement:${stmtId}` as IRI;
-  const auditIri = `urn:cg:lrs-ingestion:${stmtId}` as IRI;
+  const auditIri = `urn:iep:lrs-ingestion:${stmtId}` as IRI;
   const auditGraphIri = `urn:graph:lrs:ingestion:${stmtId}` as IRI;
 
   const verbId = (stmt['verb'] as { id?: string } | undefined)?.id ?? '';
@@ -117,7 +117,7 @@ async function publishIngestedStatement(
   const escapedJson = JSON.stringify(stmt).replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
 
   const graphContent = `@prefix lrs:  <${LRS_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <${stmtDescIri}> a lrs:StatementIngestion ;
@@ -127,8 +127,8 @@ async function publishIngestedStatement(
     lrs:xapiResult """${escapedJson}""" ;
     prov:wasGeneratedBy <${objectIri}> ;
     prov:wasAttributedTo <urn:agent:${actorName}> ;
-    cg:modalStatus cg:Asserted ;
-    cg:validFrom "${timestamp}" .
+    iep:modalStatus iep:Asserted ;
+    iep:validFrom "${timestamp}" .
 `;
 
   const stmtRes = await publish(desc, graphContent, podConfig.podUrl);
@@ -143,7 +143,7 @@ async function publishIngestedStatement(
     .build();
 
   const auditGraph = `@prefix lrs:  <${LRS_NS}> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 <${auditIri}> a lrs:StatementIngestion ;
     lrs:ingestedFromEndpoint <${lrsEndpoint}> ;
@@ -151,8 +151,8 @@ async function publishIngestedStatement(
     lrs:ingestedDescriptor <${stmtDescIri}> ;
     lrs:projectionLossy false ;
     lrs:xapiVersion "${xapiVersion}" ;
-    cg:modalStatus cg:Asserted ;
-    cg:validFrom "${nowIso()}" .
+    iep:modalStatus iep:Asserted ;
+    iep:validFrom "${nowIso()}" .
 `;
 
   const auditRes = await publish(audit, auditGraph, podConfig.podUrl);
@@ -211,7 +211,7 @@ export async function projectDescriptorToLrs(
 
   // Skip Hypothetical unless caller explicitly opts in
   if (args.modalStatus === 'Hypothetical' && !args.allowHypothetical) {
-    return await writeSkipAudit(args, lrsConfig.endpoint, 'Source descriptor has cg:modalStatus cg:Hypothetical; xAPI Statements are committed claims by spec; skipped to avoid over-claiming', podConfig, client);
+    return await writeSkipAudit(args, lrsConfig.endpoint, 'Source descriptor has iep:modalStatus iep:Hypothetical; xAPI Statements are committed claims by spec; skipped to avoid over-claiming', podConfig, client);
   }
 
   // Construct Statement
@@ -239,14 +239,14 @@ export async function projectDescriptorToLrs(
   };
 
   const exts: Record<string, unknown> = {
-    'urn:cg:source-descriptor': args.descriptorIri,
-    'urn:cg:modal-status': args.modalStatus ?? 'Asserted',
+    'urn:iep:source-descriptor': args.descriptorIri,
+    'urn:iep:modal-status': args.modalStatus ?? 'Asserted',
   };
 
   if (args.coherentNarratives && args.coherentNarratives.length > 1) {
-    exts['urn:cg:coherent-narratives'] = args.coherentNarratives;
-    exts['urn:cg:projection-lossy'] = true;
-    lossNotes.push(`Source had ${args.coherentNarratives.length} coherent narratives; first emitted in result.response, remainder in result.extensions[urn:cg:coherent-narratives]`);
+    exts['urn:iep:coherent-narratives'] = args.coherentNarratives;
+    exts['urn:iep:projection-lossy'] = true;
+    lossNotes.push(`Source had ${args.coherentNarratives.length} coherent narratives; first emitted in result.response, remainder in result.extensions[urn:iep:coherent-narratives]`);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -258,7 +258,7 @@ export async function projectDescriptorToLrs(
 
   // Audit row
   const auditId = sha16(args.descriptorIri + statementId);
-  const auditIri = `urn:cg:lrs-projection:${auditId}` as IRI;
+  const auditIri = `urn:iep:lrs-projection:${auditId}` as IRI;
   const auditGraphIri = `urn:graph:lrs:projection:${auditId}` as IRI;
 
   const auditDesc = ContextDescriptor.create(auditIri)
@@ -272,7 +272,7 @@ export async function projectDescriptorToLrs(
   const lossNotesTriples = lossNotes.map(n => `lrs:lossNote """${n.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"')}"""`).join(' ;\n    ');
 
   const auditGraph = `@prefix lrs: <${LRS_NS}> .
-@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 <${auditIri}> a lrs:StatementProjection ;
     lrs:projectedDescriptor <${args.descriptorIri}> ;
@@ -281,8 +281,8 @@ export async function projectDescriptorToLrs(
     lrs:projectionLossy ${lossy} ;
     lrs:xapiVersion "${xapiVersion}" ;
     ${lossNotesTriples ? `${lossNotesTriples} ;` : ''}
-    cg:modalStatus cg:Asserted ;
-    cg:validFrom "${nowIso()}" .
+    iep:modalStatus iep:Asserted ;
+    iep:validFrom "${nowIso()}" .
 `;
 
   const auditRes = await publish(auditDesc, auditGraph, podConfig.podUrl);
@@ -307,7 +307,7 @@ async function writeSkipAudit(
 ): Promise<ProjectDescriptorResult> {
   const xapiVersion = (await client.negotiateVersion().catch(() => null as XapiVersion | null)) ?? '1.0.3';
   const auditId = sha16(args.descriptorIri + reason);
-  const auditIri = `urn:cg:lrs-skip:${auditId}` as IRI;
+  const auditIri = `urn:iep:lrs-skip:${auditId}` as IRI;
   const auditGraphIri = `urn:graph:lrs:skip:${auditId}` as IRI;
 
   const auditDesc = ContextDescriptor.create(auditIri)
@@ -319,15 +319,15 @@ async function writeSkipAudit(
     .build();
 
   const auditGraph = `@prefix lrs: <${LRS_NS}> .
-@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 <${auditIri}> a lrs:StatementProjection ;
     lrs:projectedDescriptor <${args.descriptorIri}> ;
     lrs:projectedToEndpoint <${lrsEndpoint}> ;
     lrs:projectionLossy true ;
     lrs:xapiSkipReason """${reason.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"')}""" ;
-    cg:modalStatus cg:Asserted ;
-    cg:validFrom "${nowIso()}" .
+    iep:modalStatus iep:Asserted ;
+    iep:validFrom "${nowIso()}" .
 `;
 
   const auditRes = await publish(auditDesc, auditGraph, podConfig.podUrl);

@@ -224,7 +224,7 @@ async function livingCurriculum(): Promise<void> {
   check('high-completion/low-field → demote+job-aid (refuses the content-gap frame)', byId.get('c1')?.recommendation === 'demote-add-job-aid', `c1=${byId.get('c1')?.recommendation} cause=${byId.get('c1')?.cause}`);
   check('low/low → revise instruction (real knowledge gap)', byId.get('c2')?.recommendation === 'revise-instruction', `c2=${byId.get('c2')?.recommendation}`);
   check('no signal → instrument-first (refuses to claim a regime)', byId.get('c3')?.recommendation === 'instrument-first', `c3=${byId.get('c3')?.recommendation} method=${byId.get('c3')?.method}`);
-  check('emits a cg:supersedes successor holon', !!r.body?.successor?.holonUri, String(r.body?.successor?.holonUri ?? '(none)').slice(0, 48));
+  check('emits a iep:supersedes successor holon', !!r.body?.successor?.holonUri, String(r.body?.successor?.holonUri ?? '(none)').slice(0, 48));
 }
 
 async function federatedCalibration(): Promise<void> {

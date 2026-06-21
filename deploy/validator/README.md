@@ -1,7 +1,7 @@
 # Interego Validator-as-Agent Service
 
 A thin orchestrator that lets a SHACL validator participate in a pod's
-federation as a first-class `cg:AuthorizedAgent` (role `Validator`) rather
+federation as a first-class `iep:AuthorizedAgent` (role `Validator`) rather
 than acting as an out-of-band gatekeeper. See `spec/LAYERS.md` — this is a
 Layer 3 reference implementation; the protocol does not mandate it.
 

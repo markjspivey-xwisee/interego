@@ -15,7 +15,7 @@ reference runtime (`src/crdt/`) is a planned follow-up.
 ## The problem
 
 Today: two agents on disconnected pods both edit
-`urn:cg:memory:meeting-notes`. Each pod records their version. On
+`urn:iep:memory:meeting-notes`. Each pod records their version. On
 reconnect, naive last-write-wins clobbers one. Users lose data.
 
 What we want: reconnect → both versions merge automatically; no
@@ -43,7 +43,7 @@ we apply CRDT semantics at the **fragment level**:
     derived from the existing ModalAlgebra (see below).
   - **TrustFacet** — Grow-only Set of attestations.
   - **FederationFacet** — LWW for the home pod URL; Grow-only Set
-    for `cg:knownPods`.
+    for `iep:knownPods`.
 
 ## The modal-CRDT
 
@@ -76,29 +76,29 @@ On reconnect, comparing vector clocks tells us:
 - **Concurrent:** apply CRDT merge per facet
 
 Vector clocks are stored as a `crdt:VectorClock` blank node in the
-descriptor's `cg:FederationFacet`.
+descriptor's `iep:FederationFacet`.
 
 ## Vocabulary additions (`crdt:` namespace, planned)
 
 ```turtle
 crdt:VectorClock a owl:Class ;
-    rdfs:subClassOf cg:FederationFacet ;
+    rdfs:subClassOf iep:FederationFacet ;
     rdfs:comment "Per-pod vector clock for one descriptor's edit history. Used to detect concurrent vs sequential edits during merge." .
 
 crdt:GrowOnlySet a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
+    rdfs:subClassOf iep:ContextFacet ;
     rdfs:comment "A facet whose elements are only added, never removed. Trivially convergent." .
 
 crdt:LWWRegister a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
+    rdfs:subClassOf iep:ContextFacet ;
     rdfs:comment "Last-Writer-Wins register, with timestamps from a logical or wall clock." .
 
 crdt:MultiValueRegister a owl:Class ;
-    rdfs:subClassOf cg:ContextFacet ;
+    rdfs:subClassOf iep:ContextFacet ;
     rdfs:comment "Concurrent edits coexist as alternatives; consumer chooses or resolves." .
 
 crdt:ModalCRDT a owl:Class ;
-    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:subClassOf iep:SemioticFacet ;
     rdfs:comment "Modal status under CRDT semantics: concurrent edits are merged via ModalAlgebra.meet (most-conservative wins). Commutative + associative + idempotent by construction." .
 ```
 
@@ -131,7 +131,7 @@ function mergeFacet(facetA, facetB, type):
 
 ## Composition with existing primitives
 
-- **cg:supersedes**: a CRDT-merged version supersedes both source
+- **iep:supersedes**: a CRDT-merged version supersedes both source
   versions. The merge is recorded as a new descriptor that cites
   both predecessors via `prov:wasDerivedFrom`.
 - **passport:**: a successful CRDT merge is a `passport:LifeEvent`
@@ -145,7 +145,7 @@ function mergeFacet(facetA, facetB, type):
 ## Honest limits
 
 - **No deletes**: pure CRDTs are grow-only. To delete, mark with
-  `cg:supersedes` to a tombstone; the tombstone itself doesn't get
+  `iep:supersedes` to a tombstone; the tombstone itself doesn't get
   un-deleted. (Equivalent: state-based CRDT with a "deleted" flag
   that monotonically becomes true.)
 - **Reference impl is non-trivial**: vector clocks across federated

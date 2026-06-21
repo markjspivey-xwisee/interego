@@ -1,5 +1,5 @@
 @prefix ac:       <https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#> .
-@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix code:     <https://markjspivey-xwisee.github.io/interego/ns/code#> .
 @prefix amta:     <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
 @prefix passport: <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
@@ -39,7 +39,7 @@
     vann:preferredNamespacePrefix "ac" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#" ;
     rdfs:comment "Vertical application ontology. Non-normative. The Interego protocol does not depend on this; it is one specific use case / implementation." ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/code> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/amta> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/passport> ,
@@ -52,39 +52,39 @@
 ac:AgentTool a owl:Class ;
     rdfs:subClassOf code:Commit ;
     rdfs:label "Agent Tool" ;
-    rdfs:comment "A tool authored by an agent. Stored as a code:Commit over a content-addressed pgsl:Atom source. Starts cg:modalStatus Hypothetical; flips to Asserted only after attestation threshold per vertical/affordance policy." .
+    rdfs:comment "A tool authored by an agent. Stored as a code:Commit over a content-addressed pgsl:Atom source. Starts iep:modalStatus Hypothetical; flips to Asserted only after attestation threshold per vertical/affordance policy." .
 
 ac:ToolExecutionEvent a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Tool Execution Event" ;
     rdfs:comment "Audit record of a single execution of an ac:AgentTool. Carries the input, output, success/failure outcome, and produces zero or more amta:Attestation children." .
 
 # ── Teaching surface ───────────────────────────────────────────────────
 
 ac:TeachingPackage a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Teaching Package" ;
     rdfs:comment "Bundle composing the artifact (ac:AgentTool) plus the practice context — narrative fragments, syntheses, constraints, capability evolution events — that produced it. Lets a receiving agent SEED its own probes against its own context, rather than blindly transplanting." .
 
 # ── Coordination surface ───────────────────────────────────────────────
 
 ac:CapabilityAdvertisement a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Capability Advertisement" ;
     rdfs:comment "Published declaration of what kinds of requests an agent will accept. Includes affordances, delegation requirements, attestation thresholds for requesters, rate limits, and async/sync mode. Other agents fetch this before sending requests." .
 
 ac:AgentRequest a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Agent Request" ;
-    rdfs:comment "Outbound request from agent A to agent B, sent encrypted over personal-bridge. Carries a thread ID for correlation, references the delegation credential authorizing the action, targets one of B's advertised affordances. Always cg:modalStatus Hypothetical (it's a request, not a claim)." .
+    rdfs:comment "Outbound request from agent A to agent B, sent encrypted over personal-bridge. Carries a thread ID for correlation, references the delegation credential authorizing the action, targets one of B's advertised affordances. Always iep:modalStatus Hypothetical (it's a request, not a claim)." .
 
 ac:AgentResponse a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Agent Response" ;
     rdfs:comment "Response to an ac:AgentRequest, correlated by thread ID. May carry payload descriptors, rejection reasons, or partial async results. Modal status reflects what the response itself claims (Asserted for committed answers; Hypothetical for in-progress / partial results)." .
 
 ac:ConversationThread a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Conversation Thread" ;
     rdfs:comment "Multi-message exchange between two agents identified by a thread ID. Composes ac:AgentRequest and ac:AgentResponse descriptors. Lets either side reconstruct the full conversation chronologically." .
 
@@ -99,7 +99,7 @@ ac:CheckIn a owl:Class ;
     rdfs:comment "Recurring scheduled query (iCal RRULE recurrence). Implementation expands to a series of ac:AgentRequest instances on schedule. Used for ongoing collaboration on a topic." .
 
 ac:CrossAgentAuditEntry a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Cross-Agent Audit Entry" ;
     rdfs:comment "Audit row recorded in the HUMAN OWNER's pod (not just the agent's). Lets the human audit what their agent said, what it received, and how it responded. Both inbound and outbound exchanges produce audit entries on both sides." .
 
@@ -123,13 +123,13 @@ ac:authoredBy a owl:ObjectProperty ;
     rdfs:label "authored by" ;
     rdfs:comment "Agent that authored the tool (DID)." ;
     rdfs:domain ac:AgentTool ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:toolSource a owl:ObjectProperty ;
     rdfs:label "tool source" ;
     rdfs:comment "Content-addressed pgsl:Atom containing the tool's source code." ;
     rdfs:domain ac:AgentTool ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:attestedFrom a owl:ObjectProperty ;
     rdfs:label "attested from" ;
@@ -154,7 +154,7 @@ ac:axesCovered a owl:ObjectProperty ;
 
 ac:refinementOf a owl:ObjectProperty ;
     rdfs:label "refinement of" ;
-    rdfs:comment "When agent B refines agent A's tool, this points to A's tool. Together with cg:supersedes makes lineage walkable across agents." ;
+    rdfs:comment "When agent B refines agent A's tool, this points to A's tool. Together with iep:supersedes makes lineage walkable across agents." ;
     rdfs:range ac:AgentTool .
 
 ac:refinementNote a owl:DatatypeProperty ;
@@ -173,22 +173,22 @@ ac:teachesNarrative a owl:ObjectProperty ;
     rdfs:label "teaches narrative" ;
     rdfs:comment "Narrative fragment from the agent-development-practice substrate (adp:NarrativeFragment) included in the teaching package." ;
     rdfs:domain ac:TeachingPackage ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:teachesSynthesis a owl:ObjectProperty ;
     rdfs:label "teaches synthesis" ;
     rdfs:domain ac:TeachingPackage ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:teachesConstraint a owl:ObjectProperty ;
     rdfs:label "teaches constraint" ;
     rdfs:domain ac:TeachingPackage ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:teachesCapabilityEvolution a owl:ObjectProperty ;
     rdfs:label "teaches capability evolution" ;
     rdfs:domain ac:TeachingPackage ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:olkeStage a owl:ObjectProperty ;
     rdfs:label "OLKE stage" ;
@@ -200,18 +200,18 @@ ac:olkeStage a owl:ObjectProperty ;
 ac:advertisingAgent a owl:ObjectProperty ;
     rdfs:label "advertising agent" ;
     rdfs:domain ac:CapabilityAdvertisement ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:advertisedAffordance a owl:ObjectProperty ;
     rdfs:label "advertised affordance" ;
     rdfs:comment "An affordance the agent will accept requests for. Multiple per advertisement is normal." ;
     rdfs:domain ac:CapabilityAdvertisement ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:requiresDelegationFrom a owl:ObjectProperty ;
     rdfs:label "requires delegation from" ;
     rdfs:comment "Human owner whose delegation credential the requesting agent must reference. Prevents random-internet agents from sending requests." ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:requiresAttestationsFromRequester a owl:DatatypeProperty ;
     rdfs:label "requires attestations from requester" ;
@@ -237,16 +237,16 @@ ac:threadId a owl:DatatypeProperty ;
 
 ac:fromAgent a owl:ObjectProperty ;
     rdfs:label "from agent" ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:toAgent a owl:ObjectProperty ;
     rdfs:label "to agent" ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:targetAffordance a owl:ObjectProperty ;
     rdfs:label "target affordance" ;
     rdfs:comment "The advertised affordance the request is targeting. Receiver validates this matches its capability advertisement." ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:requestPayload a owl:DatatypeProperty ;
     rdfs:label "request payload" ;
@@ -256,7 +256,7 @@ ac:requestPayload a owl:DatatypeProperty ;
 ac:withinDelegation a owl:ObjectProperty ;
     rdfs:label "within delegation" ;
     rdfs:comment "passport:DelegationCredential authorizing this action. Receiver validates the action falls within delegation scope; outside-scope actions are rejected." ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:respondsTo a owl:ObjectProperty ;
     rdfs:label "responds to" ;
@@ -272,7 +272,7 @@ ac:expectsResponse a owl:DatatypeProperty ;
 ac:enclosesDescriptors a owl:ObjectProperty ;
     rdfs:label "encloses descriptors" ;
     rdfs:comment "Other descriptors carried inside the request/response (e.g., narrative fragments enclosed with a chime-in)." ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:chimeInReason a owl:DatatypeProperty ;
     rdfs:label "chime-in reason" ;
@@ -298,13 +298,13 @@ ac:exchange a owl:ObjectProperty ;
     rdfs:label "exchange" ;
     rdfs:comment "The ac:AgentRequest, ac:AgentResponse, ac:ChimeIn, or ac:CheckIn this audit entry records." ;
     rdfs:domain ac:CrossAgentAuditEntry ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:auditedAgent a owl:ObjectProperty ;
     rdfs:label "audited agent" ;
     rdfs:comment "The agent whose action is being audited. Distinct from the human owner (the audit lives in the human's pod, but is about the agent's behavior)." ;
     rdfs:domain ac:CrossAgentAuditEntry ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 ac:auditDirection a owl:ObjectProperty ;
     rdfs:label "audit direction" ;

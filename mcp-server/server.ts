@@ -638,7 +638,7 @@ async function toolPublishContext(args: {
   share_with?: string[];
   /**
    * When true (default), look up any prior descriptor on the same pod
-   * that describes the same graph_iri and add a cg:supersedes link to
+   * that describes the same graph_iri and add a iep:supersedes link to
    * it. This makes republishing-to-add-recipients cleanly mark the old
    * version as superseded so federation queries filter it out. Set to
    * false if you want multiple coexisting descriptors for the same
@@ -678,7 +678,7 @@ async function toolPublishContext(args: {
 
   const homePod = podRegistry.getHome()!;
   const podUrl = args.target_pod ?? homePod.url;
-  const descId = (args.descriptor_id ?? `urn:cg:${POD_NAME}:${Date.now()}`) as IRI;
+  const descId = (args.descriptor_id ?? `urn:iep:${POD_NAME}:${Date.now()}`) as IRI;
   const now = new Date().toISOString();
 
   // Privacy-hygiene preflight: scan content for credentials, PII, etc.
@@ -767,9 +767,9 @@ async function toolPublishContext(args: {
         verifiableCredential: `${podUrl}credentials/${encodeURIComponent(MY_AGENT_ID)}.jsonld` as IRI,
       };
       if (!args.compliance) return baseTrust;
-      // For compliance descriptors: embed cg:proof reference BEFORE
+      // For compliance descriptors: embed iep:proof reference BEFORE
       // serialization so the signed Turtle carries the self-referential
-      // proof URL. Tampering with cg:proof invalidates the signature.
+      // proof URL. Tampering with iep:proof invalidates the signature.
       const predicted = predictDescriptorUrl(podUrl, descId);
       const cw = await ensureComplianceWallet();
       return {
@@ -788,7 +788,7 @@ async function toolPublishContext(args: {
     })
 .version(1);
   if (args.valid_until) builder.validUntil(args.valid_until);
-  // Union the auto-detected prior versions with any cg:supersedes
+  // Union the auto-detected prior versions with any iep:supersedes
   // explicitly carried in the graph content. Both contribute.
   const allSupersedes = [...new Set([...preprocessed.supersedes, ...priorVersions])];
   if (allSupersedes.length > 0) builder.supersedes(...allSupersedes);
@@ -1105,7 +1105,7 @@ async function toolGetDescriptor(args: { url: string }): Promise<string> {
   }
   const turtle = await resp.text();
 
-  // HATEOAS: follow cg:hasDistribution link from the descriptor to its
+  // HATEOAS: follow iep:hasDistribution link from the descriptor to its
   // graph payload instead of assuming a naming convention. Descriptor
   // self-describes where the payload lives, what media type it serves,
   // and whether it's encrypted — matches DCAT + Hydra semantics.
@@ -1325,7 +1325,7 @@ async function toolVerifyAgent(args: {
 
   // L2 clarification (see post-run findings 2026-04-20): registry
   // membership ≠ envelope-recipient eligibility. An agent without a
-  // registered cg:encryptionPublicKey is authorized to act but
+  // registered iep:encryptionPublicKey is authorized to act but
   // CANNOT decrypt new envelopes (because publish excludes agents
   // missing a public key from recipient-set composition). Decorate
   // the standard envelope with `canDecryptNewEnvelopes` so callers
@@ -1977,7 +1977,7 @@ async function toolPgslIngest(args: {
     const desc = liftToDescriptor(
       pgslInstance,
       topUri,
-      `urn:cg:${POD_NAME}:pgsl:${Date.now()}` as IRI,
+      `urn:iep:${POD_NAME}:pgsl:${Date.now()}` as IRI,
       [{
         type: 'Temporal',
         validFrom: new Date().toISOString(),
@@ -2051,7 +2051,7 @@ async function toolPgslToTurtle(_args: Record<string, never>): Promise<string> {
 
 // ── Generic affordance follower ─────────────────────────────
 //
-// Proxies a `cg:Affordance` invocation through the MCP layer so a single
+// Proxies a `iep:Affordance` invocation through the MCP layer so a single
 // Interego connector reaches any vertical's affordances (Foxxi, LRS, OWM,
 // ADP, AC, LPC, …) without installing the per-vertical bridge. Discover
 // available actions via `discover_context` + `get_descriptor`; this tool
@@ -2100,7 +2100,7 @@ PROACTIVE TRIGGERS — listen for these and use Interego unprompted:
 - "share this with [person]" → publish_context with share_with: [...]
 - "what's been shared with me" → discover_all + filter to recipient
 - "who said that" / "where did this come from" → get_descriptor → trace prov
-- "is this still true" → check cg:modalStatus + cg:supersedes chain
+- "is this still true" → check iep:modalStatus + iep:supersedes chain
 - the user references prior sessions / other AI tools → search the pod first
 - audit trail / regulated / EU AI Act / NIST RMF / SOC 2 / "auditable" / "regulators
   will see this" → publish_context with compliance: true + compliance_framework
@@ -2145,7 +2145,7 @@ KEY INVARIANTS (do not violate):
   user-supplied userId.
 - All cross-pod content is end-to-end encrypted; recipients are
   cryptographic, not access-list.
-- Descriptors are versioned via cg:supersedes; cached decisions are
+- Descriptors are versioned via iep:supersedes; cached decisions are
   verifiable-stale, not silent.
 
 DEEPER REFERENCE (fetch via resources/read when you need it):
@@ -2343,7 +2343,7 @@ const DISCOVER_CONTEXT_OUTPUT = mcpOutputSchema({
 
 const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
   type: 'object',
-  description: "Descriptor Turtle plus optional decrypted graph payload reached via the descriptor's cg:hasDistribution link.",
+  description: "Descriptor Turtle plus optional decrypted graph payload reached via the descriptor's iep:hasDistribution link.",
   properties: {
     url: { type: 'string', description: 'Echo of the descriptor URL requested' },
     turtle: { type: 'string', description: 'Full Turtle of the descriptor (when the URL is a .ttl)' },
@@ -2352,7 +2352,7 @@ const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
     content: { type: 'string', description: 'Resolved graph payload (decrypted when this agent is a recipient)' },
     graph: {
       type: 'object',
-      description: 'Distribution-followed graph payload (when descriptor has cg:hasDistribution and content was reachable)',
+      description: 'Distribution-followed graph payload (when descriptor has iep:hasDistribution and content was reachable)',
       properties: {
         url: { type: 'string' },
         mediaType: { type: 'string' },
@@ -2462,7 +2462,7 @@ const ANALYZE_QUESTION_OUTPUT = mcpOutputSchema({
 
 const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
   type: 'object',
-  description: 'Result of a cg:Affordance invocation — echo of the resolved affordance metadata plus the raw HTTP response from the target. Parse body based on contentType; 4xx is informative (e.g. forbidden / validation), 5xx is retried internally before surfacing.',
+  description: 'Result of a iep:Affordance invocation — echo of the resolved affordance metadata plus the raw HTTP response from the target. Parse body based on contentType; 4xx is informative (e.g. forbidden / validation), 5xx is retried internally before surfacing.',
   properties: {
     status: { type: 'integer', description: 'HTTP status from the target' },
     statusText: { type: 'string' },
@@ -2472,7 +2472,7 @@ const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
       type: 'object',
       description: 'Resolved affordance metadata from the descriptor',
       properties: {
-        action: { type: 'string', description: 'cg:action IRI selected by the caller' },
+        action: { type: 'string', description: 'iep:action IRI selected by the caller' },
         target: { type: 'string', description: 'hydra:target URL invoked' },
         method: { type: 'string', description: 'hydra:method (default POST when absent on the descriptor)' },
         mediaType: { type: 'string', description: 'dcat:mediaType when present' },
@@ -2538,9 +2538,9 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: 'object' as const,
         properties: {
           descriptor_url: { type: 'string', description: 'Descriptor URL when resolving an affordance.' },
-          action_iri: { type: 'string', description: 'The cg:action IRI to select from the descriptor.' },
+          action_iri: { type: 'string', description: 'The iep:action IRI to select from the descriptor.' },
           target: { type: 'string', description: 'Direct invocation: hydra:target URL.' },
-          action: { type: 'string', description: 'Direct invocation: cg:action IRI (echo).' },
+          action: { type: 'string', description: 'Direct invocation: iep:action IRI (echo).' },
           method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], description: 'Direct invocation: HTTP method.' },
           media_type: { type: 'string', description: 'Direct invocation: dcat:mediaType.' },
           payload: { description: 'Payload to send (JSON-serialized).' },
@@ -2571,13 +2571,13 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'extend',
-      description: 'Kernel verb — adjunction right half (part → whole). Inverse of restrict: produces a descriptor whose facets are the whole\'s with the part\'s restriction witness preserved via cg:supersedes.',
+      description: 'Kernel verb — adjunction right half (part → whole). Inverse of restrict: produces a descriptor whose facets are the whole\'s with the part\'s restriction witness preserved via iep:supersedes.',
       inputSchema: {
         type: 'object' as const,
         properties: {
           part: { type: 'object', additionalProperties: true, description: 'The restricted descriptor (the part).' },
           whole: { type: 'object', additionalProperties: true, description: 'The containing whole.' },
-          preserve_witness: { type: 'boolean', description: 'Back-link via cg:supersedes (default true).' },
+          preserve_witness: { type: 'boolean', description: 'Back-link via iep:supersedes (default true).' },
         },
         required: ['part', 'whole'],
       },
@@ -2636,7 +2636,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           auto_supersede_prior: {
             type: 'boolean',
-            description: 'When true (default), automatically add cg:supersedes links to any prior descriptor on this pod that describes the same graph_iri. Makes republish-to-add-recipients cleanly mark the older version as superseded. Set to false to allow multiple coexisting descriptors for the same graph.',
+            description: 'When true (default), automatically add iep:supersedes links to any prior descriptor on this pod that describes the same graph_iri. Makes republish-to-add-recipients cleanly mark the older version as superseded. Set to false to allow multiple coexisting descriptors for the same graph.',
           },
           compliance: {
             type: 'boolean',
@@ -2979,12 +2979,12 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── Generic affordance follower (Path A — reach any vertical) ──
     {
       name: 'invoke_affordance',
-      description: 'Compatibility shim — internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a cg:action IRI, this fetches the descriptor, finds the matching cg:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
+      description: 'Compatibility shim — internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a iep:action IRI, this fetches the descriptor, finds the matching iep:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
       inputSchema: {
         type: 'object' as const,
         properties: {
           descriptor_url: { type: 'string', description: 'URL of the Context Descriptor containing the affordance (e.g., a Foxxi course descriptor URL).' },
-          action_iri: { type: 'string', description: 'The cg:action IRI of the affordance to invoke (e.g., urn:cg:action:foxxi:discover-assigned-courses). Discover available actions via discover_context + get_descriptor.' },
+          action_iri: { type: 'string', description: 'The iep:action IRI of the affordance to invoke (e.g., urn:iep:action:foxxi:discover-assigned-courses). Discover available actions via discover_context + get_descriptor.' },
           payload: { type: 'object', additionalProperties: true, description: 'Arguments to POST to the affordance target. Shape depends on the specific affordance — read the descriptor or the affordance\'s inputs metadata to learn what fields are required.' },
           authorization: { type: 'string', description: 'Optional Authorization header value to forward (e.g., Bearer <token>). Use when the target requires auth. The relay caller\'s own bearer token is NOT auto-forwarded — supply it explicitly if needed.' },
         },
@@ -3011,16 +3011,16 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
       // decompose). The advertised affordances MUST be invokable through
       // `act` against the minted holon's IRI — `act` routes urn:pgsl:*
       // targets through actOnLatticeNode, which dispatches only on
-      // canonical `urn:cg:action:kernel:{dereference,decompose,promote}`
+      // canonical `urn:iep:action:kernel:{dereference,decompose,promote}`
       // action IRIs and expects the holon IRI itself as the target.
-      // Sentinel `urn:cg:tool:*` targets broke the round-trip (405).
+      // Sentinel `urn:iep:tool:*` targets broke the round-trip (405).
       const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
         kind: 'mint',
         id: r.holon.iri,
         nextSteps: [
-          { action: 'urn:cg:action:kernel:dereference', target: r.holon.iri, method: 'GET' },
-          { action: 'urn:cg:action:kernel:promote',     target: r.holon.iri, method: 'POST' },
-          { action: 'urn:cg:action:kernel:decompose',   target: r.holon.iri, method: 'POST' },
+          { action: 'urn:iep:action:kernel:dereference', target: r.holon.iri, method: 'GET' },
+          { action: 'urn:iep:action:kernel:promote',     target: r.holon.iri, method: 'POST' },
+          { action: 'urn:iep:action:kernel:decompose',   target: r.holon.iri, method: 'POST' },
         ],
       });
       return JSON.stringify(decorated);
@@ -3056,8 +3056,8 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
         kind: 'compose',
         id: r.composed.id,
         nextSteps: [
-          { action: 'urn:cg:action:restrict',  target: 'urn:cg:tool:restrict',  method: 'POST' },
-          { action: 'urn:cg:action:publish',   target: 'urn:cg:tool:publish_context', method: 'POST' },
+          { action: 'urn:iep:action:restrict',  target: 'urn:iep:tool:restrict',  method: 'POST' },
+          { action: 'urn:iep:action:publish',   target: 'urn:iep:tool:publish_context', method: 'POST' },
         ],
       });
       return JSON.stringify(decorated);
@@ -3082,7 +3082,7 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
             method: (a.method ?? 'POST'),
             ...(a.media_type ? { mediaType: a.media_type } : {}),
           };
-      // Pass `recipientKeyPair` so a `cg:canDecrypt` affordance returns
+      // Pass `recipientKeyPair` so a `iep:canDecrypt` affordance returns
       // plaintext when this agent is in the envelope's recipient set.
       // Non-recipients fall through and see the raw envelope as today.
       const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], a.payload, {
@@ -3107,8 +3107,8 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
         kind: 'restrict',
         id: r.restricted.id,
         nextSteps: [
-          { action: 'urn:cg:action:extend',  target: 'urn:cg:tool:extend',  method: 'POST' },
-          { action: 'urn:cg:action:publish', target: 'urn:cg:tool:publish_context', method: 'POST' },
+          { action: 'urn:iep:action:extend',  target: 'urn:iep:tool:extend',  method: 'POST' },
+          { action: 'urn:iep:action:publish', target: 'urn:iep:tool:publish_context', method: 'POST' },
         ],
       });
       return JSON.stringify(decorated);
@@ -3124,8 +3124,8 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
         kind: 'extend',
         id: r.extended.id,
         nextSteps: [
-          { action: 'urn:cg:action:restrict', target: 'urn:cg:tool:restrict', method: 'POST' },
-          { action: 'urn:cg:action:publish',  target: 'urn:cg:tool:publish_context', method: 'POST' },
+          { action: 'urn:iep:action:restrict', target: 'urn:iep:tool:restrict', method: 'POST' },
+          { action: 'urn:iep:action:publish',  target: 'urn:iep:tool:publish_context', method: 'POST' },
         ],
       });
       return JSON.stringify(decorated);
@@ -3134,15 +3134,15 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
       const { atoms } = args as { atoms: unknown[] };
       const r = kernelPromote(atoms as Parameters<typeof kernelPromote>[0]);
       // Same hypermedia contract as the mint case: emit canonical
-      // `urn:cg:action:kernel:*` action IRIs with the apex's urn:pgsl:*
+      // `urn:iep:action:kernel:*` action IRIs with the apex's urn:pgsl:*
       // IRI as the target so `act` round-trips through actOnLatticeNode
       // cleanly.
       const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
         kind: 'promote',
         id: r.apex,
         nextSteps: [
-          { action: 'urn:cg:action:kernel:dereference', target: r.apex, method: 'GET' },
-          { action: 'urn:cg:action:kernel:decompose',   target: r.apex, method: 'POST' },
+          { action: 'urn:iep:action:kernel:dereference', target: r.apex, method: 'GET' },
+          { action: 'urn:iep:action:kernel:decompose',   target: r.apex, method: 'POST' },
         ],
       });
       return JSON.stringify(decorated);
@@ -3158,7 +3158,7 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
           kind: 'decompose',
           id: iri,
           nextSteps: [
-            { action: 'urn:cg:action:kernel:dereference', target: iri, method: 'GET' },
+            { action: 'urn:iep:action:kernel:dereference', target: iri, method: 'GET' },
           ],
         });
         return JSON.stringify(decorated);
@@ -3167,9 +3167,9 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
         kind: 'decompose',
         id: r.apex,
         nextSteps: [
-          { action: 'urn:cg:action:kernel:dereference', target: r.left,    method: 'GET' },
-          { action: 'urn:cg:action:kernel:dereference', target: r.right,   method: 'GET' },
-          { action: 'urn:cg:action:kernel:dereference', target: r.overlap, method: 'GET' },
+          { action: 'urn:iep:action:kernel:dereference', target: r.left,    method: 'GET' },
+          { action: 'urn:iep:action:kernel:dereference', target: r.right,   method: 'GET' },
+          { action: 'urn:iep:action:kernel:dereference', target: r.overlap, method: 'GET' },
         ],
       });
       return JSON.stringify(decorated);
@@ -3206,24 +3206,24 @@ function shimNextSteps(name: string, payload: Record<string, unknown>): Readonly
       const graphUrl      = pick('graphUrl');
       const manifestUrl   = pick('manifestUrl');
       const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [];
-      if (descriptorUrl) steps.push({ action: 'urn:cg:action:read',      target: descriptorUrl, method: 'GET' });
-      if (descriptorUrl) steps.push({ action: 'urn:cg:action:supersede', target: descriptorUrl, method: 'POST' });
-      if (graphUrl)      steps.push({ action: 'urn:cg:action:fetch-graph', target: graphUrl,    method: 'GET' });
-      if (manifestUrl)   steps.push({ action: 'urn:cg:action:list-manifest', target: manifestUrl, method: 'GET' });
+      if (descriptorUrl) steps.push({ action: 'urn:iep:action:read',      target: descriptorUrl, method: 'GET' });
+      if (descriptorUrl) steps.push({ action: 'urn:iep:action:supersede', target: descriptorUrl, method: 'POST' });
+      if (graphUrl)      steps.push({ action: 'urn:iep:action:fetch-graph', target: graphUrl,    method: 'GET' });
+      if (manifestUrl)   steps.push({ action: 'urn:iep:action:list-manifest', target: manifestUrl, method: 'GET' });
       return steps;
     }
     case 'discover_context':
     case 'discover_all': {
       // Follow-up: dereference any entry or refine the search.
       const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [
-        { action: 'urn:cg:action:refine-search', target: 'urn:cg:tool:discover_context', method: 'POST' },
+        { action: 'urn:iep:action:refine-search', target: 'urn:iep:tool:discover_context', method: 'POST' },
       ];
       const entries = payload['entries'];
       if (Array.isArray(entries)) {
         for (const e of entries.slice(0, 5)) {
           const ent = e as { descriptorUrl?: string };
           if (typeof ent.descriptorUrl === 'string') {
-            steps.push({ action: 'urn:cg:action:read', target: ent.descriptorUrl, method: 'GET' });
+            steps.push({ action: 'urn:iep:action:read', target: ent.descriptorUrl, method: 'GET' });
           }
         }
       }
@@ -3233,37 +3233,37 @@ function shimNextSteps(name: string, payload: Record<string, unknown>): Readonly
       const url = pick('url');
       const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [];
       if (url) {
-        steps.push({ action: 'urn:cg:action:dereference', target: url, method: 'GET' });
-        steps.push({ action: 'urn:cg:action:supersede',   target: url, method: 'POST' });
+        steps.push({ action: 'urn:iep:action:dereference', target: url, method: 'GET' });
+        steps.push({ action: 'urn:iep:action:supersede',   target: url, method: 'POST' });
       }
       return steps;
     }
     case 'register_agent': {
       const agentIri = pick('agentIri') ?? pick('agentId');
       const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [
-        { action: 'urn:cg:action:verify-agent', target: 'urn:cg:tool:verify_agent', method: 'POST' },
+        { action: 'urn:iep:action:verify-agent', target: 'urn:iep:tool:verify_agent', method: 'POST' },
       ];
-      if (agentIri) steps.push({ action: 'urn:cg:action:revoke-agent', target: agentIri, method: 'DELETE' });
+      if (agentIri) steps.push({ action: 'urn:iep:action:revoke-agent', target: agentIri, method: 'DELETE' });
       return steps;
     }
     case 'revoke_agent':
       return [
-        { action: 'urn:cg:action:verify-agent', target: 'urn:cg:tool:verify_agent', method: 'POST' },
-        { action: 'urn:cg:action:list-pods',    target: 'urn:cg:tool:list_known_pods', method: 'GET' },
+        { action: 'urn:iep:action:verify-agent', target: 'urn:iep:tool:verify_agent', method: 'POST' },
+        { action: 'urn:iep:action:list-pods',    target: 'urn:iep:tool:list_known_pods', method: 'GET' },
       ];
     case 'verify_agent':
       return [
-        { action: 'urn:cg:action:get-pod-status', target: 'urn:cg:tool:get_pod_status', method: 'GET' },
+        { action: 'urn:iep:action:get-pod-status', target: 'urn:iep:tool:get_pod_status', method: 'GET' },
       ];
     case 'subscribe_to_pod':
     case 'subscribe_all':
       return [
-        { action: 'urn:cg:action:list-pods', target: 'urn:cg:tool:list_known_pods', method: 'GET' },
-        { action: 'urn:cg:action:discover-all', target: 'urn:cg:tool:discover_all', method: 'POST' },
+        { action: 'urn:iep:action:list-pods', target: 'urn:iep:tool:list_known_pods', method: 'GET' },
+        { action: 'urn:iep:action:discover-all', target: 'urn:iep:tool:discover_all', method: 'POST' },
       ];
     case 'unsubscribe_from_pod':
       return [
-        { action: 'urn:cg:action:list-pods', target: 'urn:cg:tool:list_known_pods', method: 'GET' },
+        { action: 'urn:iep:action:list-pods', target: 'urn:iep:tool:list_known_pods', method: 'GET' },
       ];
     case 'list_known_pods':
     case 'add_pod':
@@ -3272,14 +3272,14 @@ function shimNextSteps(name: string, payload: Record<string, unknown>): Readonly
     case 'publish_directory':
     case 'resolve_webfinger':
       return [
-        { action: 'urn:cg:action:list-pods',     target: 'urn:cg:tool:list_known_pods', method: 'GET' },
-        { action: 'urn:cg:action:discover-all',  target: 'urn:cg:tool:discover_all',    method: 'POST' },
+        { action: 'urn:iep:action:list-pods',     target: 'urn:iep:tool:list_known_pods', method: 'GET' },
+        { action: 'urn:iep:action:discover-all',  target: 'urn:iep:tool:discover_all',    method: 'POST' },
       ];
     case 'get_pod_status': {
       const pod = pick('pod');
       const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [];
       if (pod) {
-        steps.push({ action: 'urn:cg:action:discover-context', target: 'urn:cg:tool:discover_context', method: 'POST' });
+        steps.push({ action: 'urn:iep:action:discover-context', target: 'urn:iep:tool:discover_context', method: 'POST' });
       }
       return steps;
     }
@@ -3287,11 +3287,11 @@ function shimNextSteps(name: string, payload: Record<string, unknown>): Readonly
     case 'link_wallet':
     case 'check_balance':
       return [
-        { action: 'urn:cg:action:get-pod-status', target: 'urn:cg:tool:get_pod_status', method: 'GET' },
+        { action: 'urn:iep:action:get-pod-status', target: 'urn:iep:tool:get_pod_status', method: 'GET' },
       ];
     case 'analyze_question':
       return [
-        { action: 'urn:cg:action:discover-context', target: 'urn:cg:tool:discover_context', method: 'POST' },
+        { action: 'urn:iep:action:discover-context', target: 'urn:iep:tool:discover_context', method: 'POST' },
       ];
     case 'pgsl_ingest':
     case 'pgsl_resolve':
@@ -3303,15 +3303,15 @@ function shimNextSteps(name: string, payload: Record<string, unknown>): Readonly
       // resolved meet, etc.) and have actOnLatticeNode dispatch it
       // through kernel.{promote,decompose}.
       const pgslTarget = pick('topUri') ?? pick('uri') ?? pick('meet');
-      const target = pgslTarget ?? 'urn:cg:tool:promote';
+      const target = pgslTarget ?? 'urn:iep:tool:promote';
       return [
-        { action: 'urn:cg:action:kernel:promote',   target,                                method: 'POST' },
-        { action: 'urn:cg:action:kernel:decompose', target: pgslTarget ?? 'urn:cg:tool:decompose', method: 'POST' },
+        { action: 'urn:iep:action:kernel:promote',   target,                                method: 'POST' },
+        { action: 'urn:iep:action:kernel:decompose', target: pgslTarget ?? 'urn:iep:tool:decompose', method: 'POST' },
       ];
     }
     case 'invoke_affordance':
       return [
-        { action: 'urn:cg:action:kernel:dereference', target: 'urn:cg:tool:dereference', method: 'GET' },
+        { action: 'urn:iep:action:kernel:dereference', target: 'urn:iep:tool:dereference', method: 'GET' },
       ];
     default:
       return [];
@@ -3477,7 +3477,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     // Hypermedia decoration: JSON-shaped shim results get @context /
-    // @id / @type / cg:conformsToShape / affordances merged on top.
+    // @id / @type / iep:conformsToShape / affordances merged on top.
     // Plain-text results (multi-line human summaries from the
     // legacy publish/discover/get_pod_status paths) are left
     // verbatim so existing line-oriented parsers don't break.

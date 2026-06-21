@@ -44,15 +44,15 @@ async function putText(url, body) {
 //            CID + txHash + chainId requirements)                 ─
 
 const T2_SHAPE_TTL = `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix erc: <urn:erc:8004:> .
 
 <${T2_SHAPE}#Shape> a sh:NodeShape ;
-  sh:targetClass cg:ContextDescriptor ;
-  sh:property [ sh:path cg:modalStatus ; sh:in ( cg:Asserted ) ; sh:minCount 1 ; sh:message "T2 attestation MUST be Asserted." ] ;
+  sh:targetClass iep:ContextDescriptor ;
+  sh:property [ sh:path iep:modalStatus ; sh:in ( iep:Asserted ) ; sh:minCount 1 ; sh:message "T2 attestation MUST be Asserted." ] ;
   sh:property [ sh:path dct:conformsTo ; sh:hasValue <${T2_SHAPE}> ; sh:message "Must self-reference the T2 shape." ] ;
   sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:message "T2 MUST cite the T1 attestation being anchored." ] ;
   sh:property [ sh:path erc:ipfsCid ; sh:minCount 1 ; sh:message "T2 MUST carry the IPFS CID of the anchored T1 body." ] ;
@@ -117,7 +117,7 @@ const subjectMatch = t1Ttl.match(/erc:attester\s+<([^>]+)>/);
 const subject = subjectMatch?.[1]
   ? ethers.getAddress(subjectMatch[1])
   : ethers.getAddress('0x0000000000000000000000000000000000000000');
-const scoreMatch = t1Ttl.match(/cg:epistemicConfidence\s+"([\d.]+)"/);
+const scoreMatch = t1Ttl.match(/iep:epistemicConfidence\s+"([\d.]+)"/);
 const scoreScaled = Math.round((parseFloat(scoreMatch?.[1] ?? '0')) * 10000);
 
 const cidHash = ethers.keccak256(ethers.toUtf8Bytes(pin.cid));
@@ -165,12 +165,12 @@ console.log(`   To broadcast: pass rawTx to eth_sendRawTransaction on a Base Sep
 
 // ── Step 5: publish a T2 attestation descriptor ────────────
 
-const t2Id = `urn:cg:t2:${Date.now()}`;
+const t2Id = `urn:iep:t2:${Date.now()}`;
 const t2Graph = `urn:graph:t2-attest:${Date.now()}`;
 const t2Url = `${POD}context-graphs/t2-attest-${Date.now()}.ttl`;
 const now = new Date().toISOString();
 
-const t2Ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const t2Ttl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -178,11 +178,11 @@ const t2Ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#
 @prefix erc: <urn:erc:8004:> .
 
 <${t2Id}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
     dct:conformsTo <${T2_SHAPE}> ;
-    cg:describes <${t2Graph}> ;
+    iep:describes <${t2Graph}> ;
     erc:progressiveTier "T2" ;
     erc:ipfsCid "${pin.cid}" ;
     erc:contractAddress "${REP_REGISTRY}" ;
@@ -192,29 +192,29 @@ const t2Ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#
     erc:anchorStatus "prepared" ;
     erc:anchoredBy "${anchorerWallet.address}" ;
     erc:cidHash "${cidHash}" ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${anchorerWallet.address}> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
         prov:wasDerivedFrom <${t1Url}> ;
         prov:wasAttributedTo <${anchorerWallet.address}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${anchorerWallet.address}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${anchorerWallet.address}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "0.85"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${anchorerWallet.address}> ; cg:trustLevel cg:CryptoAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${anchorerWallet.address}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${anchorerWallet.address}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "0.85"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${anchorerWallet.address}> ; iep:trustLevel iep:CryptoAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 
 await putText(t2Url, t2Ttl);
 const entry = `
 
-<${t2Url}> a cg:ManifestEntry ;
-    cg:describes <${t2Graph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
+<${t2Url}> a iep:ManifestEntry ;
+    iep:describes <${t2Graph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
     dct:conformsTo <${T2_SHAPE}> ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:CryptoAsserted .
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:CryptoAsserted .
 `;
 const cur = await fetchText(MANIFEST_URL);
 await putText(MANIFEST_URL, (cur ?? '') + entry);
@@ -226,6 +226,6 @@ console.log(`── To complete T2 on-chain:`);
 console.log(`   1. Fund ${anchorerWallet.address} on Base Sepolia with test ETH`);
 console.log(`   2. eth_sendRawTransaction(${rawTx.slice(0, 20)}...)`);
 console.log(`   3. Wait for receipt; publish a new T2 descriptor with anchorStatus="confirmed"`);
-console.log(`      and cg:supersedes pointing at ${t2Id}`);
+console.log(`      and iep:supersedes pointing at ${t2Id}`);
 console.log(`   The supersession pattern lets readers follow the prepared→confirmed transition`);
 console.log(`   without losing the audit trail.`);

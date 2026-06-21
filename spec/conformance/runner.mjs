@@ -29,7 +29,7 @@
  *        (Proposal A) are permitted.
  *
  *   4. Revocation extension — shape validity:
- *        Every cg:RevocationCondition MUST declare a cg:successorQuery.
+ *        Every iep:RevocationCondition MUST declare a iep:successorQuery.
  *
  * Run with:  node spec/conformance/runner.mjs
  * Exits non-zero on any violation.
@@ -51,12 +51,12 @@ const FIXTURES_DIR = resolve(__dirname, 'fixtures');
  */
 function extractSemioticFacets(turtle) {
   const out = [];
-  const re = /a\s+cg:SemioticFacet[\s\S]*?(?=\]|cg:hasFacet\s*\[|$)/g;
+  const re = /a\s+iep:SemioticFacet[\s\S]*?(?=\]|iep:hasFacet\s*\[|$)/g;
   let m;
   while ((m = re.exec(turtle)) !== null) {
     const body = m[0];
-    const modal = body.match(/cg:modalStatus\s+cg:(\w+)/);
-    const gt = body.match(/cg:groundTruth\s+(true|false)/);
+    const modal = body.match(/iep:modalStatus\s+iep:(\w+)/);
+    const gt = body.match(/iep:groundTruth\s+(true|false)/);
     out.push({ modalStatus: modal?.[1] ?? null, groundTruth: gt?.[1] ?? null });
   }
   return out;
@@ -80,12 +80,12 @@ function checkModalTruthConsistency(turtle) {
 
 function checkSelfReferenceRejection(turtle) {
   const violations = [];
-  // find the enclosing descriptor's `cg:describes <...>` target IRI
-  const describesMatch = turtle.match(/cg:describes\s+<([^>]+)>/);
+  // find the enclosing descriptor's `iep:describes <...>` target IRI
+  const describesMatch = turtle.match(/iep:describes\s+<([^>]+)>/);
   if (!describesMatch) return violations;
   const graphIri = describesMatch[1];
   // find every successor query literal (""" ... """ or "..." form)
-  const queryRe = /cg:successorQuery\s+(?:"""([\s\S]*?)"""|"([^"]*)")/g;
+  const queryRe = /iep:successorQuery\s+(?:"""([\s\S]*?)"""|"([^"]*)")/g;
   let m;
   while ((m = queryRe.exec(turtle)) !== null) {
     const text = m[1] ?? m[2] ?? '';
@@ -109,12 +109,12 @@ function checkSixFacets(turtle) {
     'FederationFacet',
   ];
   for (const facetClass of required) {
-    const re = new RegExp(`a\\s+cg:${facetClass}\\b`, 'g');
+    const re = new RegExp(`a\\s+iep:${facetClass}\\b`, 'g');
     const matches = turtle.match(re) ?? [];
     if (matches.length === 0) {
-      violations.push(`Missing required facet: cg:${facetClass}`);
+      violations.push(`Missing required facet: iep:${facetClass}`);
     } else if (matches.length > 1) {
-      violations.push(`Multiple cg:${facetClass} instances (${matches.length}) — expected exactly one`);
+      violations.push(`Multiple iep:${facetClass} instances (${matches.length}) — expected exactly one`);
     }
   }
   return violations;
@@ -123,13 +123,13 @@ function checkSixFacets(turtle) {
 function checkRevocationConditionShape(turtle) {
   const violations = [];
   // every RevocationCondition must have a successorQuery
-  const blockRe = /a\s+cg:RevocationCondition[\s\S]*?(?=\];|\]\s*\.|\]\s*\]|$)/g;
+  const blockRe = /a\s+iep:RevocationCondition[\s\S]*?(?=\];|\]\s*\.|\]\s*\]|$)/g;
   let m;
   let index = 0;
   while ((m = blockRe.exec(turtle)) !== null) {
     const body = m[0];
-    if (!body.match(/cg:successorQuery\s+"""?[\s\S]*?"""?/) && !body.match(/cg:successorQuery\s+"[^"]*"/)) {
-      violations.push(`RevocationCondition #${index + 1} missing cg:successorQuery`);
+    if (!body.match(/iep:successorQuery\s+"""?[\s\S]*?"""?/) && !body.match(/iep:successorQuery\s+"[^"]*"/)) {
+      violations.push(`RevocationCondition #${index + 1} missing iep:successorQuery`);
     }
     index++;
   }

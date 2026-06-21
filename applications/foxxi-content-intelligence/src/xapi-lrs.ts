@@ -41,7 +41,7 @@
  *   GET|PUT|POST|DELETE|HEAD /xapi/agents/profile
  *
  * Not a "memory-only" demo — every Statement persists as a descriptor on
- * the tenant pod, queryable via cg:discover() filtered on
+ * the tenant pod, queryable via iep:discover() filtered on
  * `lrs:StatementIngestion`. The state/profile resources use an in-memory
  * Map sized for demo workloads; swap for Redis/Postgres at production
  * scale (the statement store is already pluggable — see statement-store.ts).

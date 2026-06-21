@@ -81,14 +81,14 @@ const assertedSemioticFacet: ContextFacetData = {
 const highTrustShape: PolicyPredicateShape = {
   iri: 'urn:shape:HighTrust' as IRI,
   constraints: [
-    { path: 'cg:trustLevel', minCount: 1, hasValue: 'HighAssurance' },
+    { path: 'iep:trustLevel', minCount: 1, hasValue: 'HighAssurance' },
   ],
 };
 
 const confidentShape: PolicyPredicateShape = {
   iri: 'urn:shape:HighConfidence' as IRI,
   constraints: [
-    { path: 'cg:epistemicConfidence', minCount: 1, minInclusive: 0.9 },
+    { path: 'iep:epistemicConfidence', minCount: 1, minInclusive: 0.9 },
   ],
 };
 
@@ -221,9 +221,9 @@ describe('ABAC attribute resolver', () => {
 
   it('extractAttribute reads semiotic and trust paths correctly', () => {
     const graph = makeAttributeGraph([highTrustFacet, assertedSemioticFacet]);
-    expect(extractAttribute(graph, 'cg:trustLevel')).toEqual(['HighAssurance']);
-    expect(extractAttribute(graph, 'cg:epistemicConfidence')).toEqual([0.95]);
-    expect(extractAttribute(graph, 'cg:modalStatus')).toEqual(['Asserted']);
+    expect(extractAttribute(graph, 'iep:trustLevel')).toEqual(['HighAssurance']);
+    expect(extractAttribute(graph, 'iep:epistemicConfidence')).toEqual([0.95]);
+    expect(extractAttribute(graph, 'iep:modalStatus')).toEqual(['Asserted']);
   });
 
   it('extractAttribute reads AMTA-style reputation axes from Trust facets', () => {

@@ -25,10 +25,10 @@ export const SOC2_MODEL: OntologyModel = {
   description: 'OWL + SHACL projection of the substrate L3 SOC 2 mapping (docs/ns/soc2.ttl): the Common Criteria logical-access controls (CC6.x) plus the operational evidence event subtypes Interego emits against them (@interego/ops). Composed into PGSL and projected here so a cited control IRI dereferences. An access-control change recorded by the substrate IS the CC6.2/CC6.3 evidence; a deploy IS CC8.1 evidence — Interego is its own SOC 2 evidence substrate.',
   version: '1.0.0',
   spec: 'https://www.aicpa.org/resources/landing/system-and-organization-controls-soc-suite-of-services',
-  prefixes: { cg: 'https://markjspivey-xwisee.github.io/interego/ns/cg#' },
+  prefixes: { iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#' },
   classes: [
     { name: 'TrustServicesCriterion', label: 'Trust Services Criterion', comment: 'A SOC 2 control objective from the AICPA Trust Services Criteria (2017, rev. 2022). The Common Criteria (CC) apply to the Security category that every SOC 2 report covers.' },
-    { name: 'OperationalEvidenceEvent', label: 'Operational Evidence Event', comment: 'A signed, anchored substrate event that serves as operating-effectiveness evidence for one or more Trust Services Criteria over the audit period. Emitted by @interego/ops as a cg:ContextDescriptor.' },
+    { name: 'OperationalEvidenceEvent', label: 'Operational Evidence Event', comment: 'A signed, anchored substrate event that serves as operating-effectiveness evidence for one or more Trust Services Criteria over the audit period. Emitted by @interego/ops as a iep:ContextDescriptor.' },
     { name: 'AccessChangeEvent', label: 'Access Change Event', comment: 'An OperationalEvidenceEvent recording a grant, revoke, or modification of logical access (e.g. an agent registration or revocation). Direct operating evidence for CC6.2 (registration/authorization) and CC6.3 (modification/removal).', subClassOf: ['OperationalEvidenceEvent'] },
     { name: 'DeployEvent', label: 'Deploy Event', comment: 'An OperationalEvidenceEvent recording a change deployed to production. Evidence for CC8.1 (change management).', subClassOf: ['OperationalEvidenceEvent'] },
     { name: 'KeyRotationEvent', label: 'Key Rotation Event', comment: 'An OperationalEvidenceEvent recording rotation of a cryptographic key / credential. Evidence for CC6.1 (logical access security measures).', subClassOf: ['OperationalEvidenceEvent'] },
@@ -75,7 +75,7 @@ export const EU_AI_ACT_MODEL: OntologyModel = {
   description: 'OWL + SHACL projection of the substrate L3 EU AI Act mapping (docs/ns/eu-ai-act.ttl): the high-risk-system obligations most relevant to autonomous agent actions — record-keeping (Art.12), human oversight (Art.14), transparency to deployers (Art.13), risk management (Art.9), data governance (Art.10), accuracy/robustness (Art.15). Composed into PGSL and projected here so a cited Article IRI dereferences. An agent action with an immutable, attributable, dereferenceable log IS Article-12 record-keeping evidence.',
   version: '1.0.0',
   spec: 'https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:L_202401689',
-  prefixes: { cg: 'https://markjspivey-xwisee.github.io/interego/ns/cg#' },
+  prefixes: { iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#' },
   classes: [
     { name: 'Obligation', label: 'AI Act Obligation', comment: 'A provider or deployer obligation under the EU AI Act for high-risk AI systems. An action descriptor declaring conformsToArticle asserts it satisfies the named obligation.' },
     { name: 'RecordKeeping', label: 'Record-Keeping (Art.12)', comment: 'Art.12: high-risk AI systems shall technically allow for the automatic recording of events (logs) over their lifetime, ensuring traceability of functioning. (Interego: every action is a signed, timestamped, dereferenceable descriptor.)', subClassOf: ['Obligation'] },
@@ -121,7 +121,7 @@ export const NIST_RMF_MODEL: OntologyModel = {
   description: 'OWL + SHACL projection of the substrate L3 NIST AI RMF mapping (docs/ns/nist-rmf.ttl): the four core functions (Govern / Map / Measure / Manage) and how a substrate action addresses them. Composed into PGSL and projected here so a cited function IRI dereferences. Independent, cryptographically verifiable measurement of an agent\'s behaviour IS Measure-function evidence; revocable delegation + recorded response IS Manage.',
   version: '1.0.0',
   spec: 'https://www.nist.gov/itl/ai-risk-management-framework',
-  prefixes: { cg: 'https://markjspivey-xwisee.github.io/interego/ns/cg#' },
+  prefixes: { iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#' },
   classes: [
     { name: 'Function', label: 'AI RMF Core Function', comment: 'One of the four NIST AI RMF core functions. A substrate action addressing a function provides evidence toward it.' },
     { name: 'Govern', label: 'Govern', comment: 'Cultivate a culture of risk management; policies, accountability, and oversight structures are in place and applied. (Interego: self-amending constitutional policies + attribution on every descriptor.)', subClassOf: ['Function'] },

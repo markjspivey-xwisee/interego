@@ -5,7 +5,7 @@ Advantage, OneRoster, and the bridge's own performance / agent state)
 are implemented as **projections over the Interego substrate** rather
 than as parallel native stores. From the outside they look like the
 standard they implement; from the inside every state change is a real
-`cg:ContextDescriptor` on the tenant pod.
+`iep:ContextDescriptor` on the tenant pod.
 
 ## The pattern
 
@@ -53,7 +53,7 @@ standard they implement; from the inside every state change is a real
                                     ▼
                   ┌─────────────────────────────────────────┐
                   │       INSIDE: Interego substrate        │
-                  │     Solid pod / cg:ContextDescriptor    │
+                  │     Solid pod / iep:ContextDescriptor    │
                   │  Seven facets · supersedes chains ·     │
                   │  HATEOAS affordances · PGSL atoms       │
                   └─────────────────────────────────────────┘
@@ -175,7 +175,7 @@ hot cache that fronts it.
 
 The federation read path currently composes the tenant profile with a
 seeded peer corpus (`SAMPLE_PEER_OUTCOMES`). The architecture supports
-real federation — `cg:FederationFacet` is populated, `composeCalibrationProfiles`
+real federation — `iep:FederationFacet` is populated, `composeCalibrationProfiles`
 is symmetric, descriptors are dereferenceable across pods — but no
 second deployed bridge instance + second pod is provisioned today.
 
@@ -224,7 +224,7 @@ To turn it on:
 2. Add a "Pod browser" route that lists `foxxi:Outcome`, `foxxi:LearningStatement`,
    `foxxi:ScormTenantSnapshot`, etc., across the federation, with
    click-through to dereferenceable Turtle.
-3. Render `cg:Affordance` blocks as actionable buttons (POST a
+3. Render `iep:Affordance` blocks as actionable buttons (POST a
    superseding outcome, GET the graph payload, etc.).
 
 Scope: significant UI work, multiple weeks. The substrate side is

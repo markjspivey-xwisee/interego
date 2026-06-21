@@ -18,7 +18,7 @@ Three concerns, each a distinct workflow surface:
 
 Most "agents that write their own tools" frameworks (OpenClaw / Hermes / Anthropic's computer-use lineage) treat self-authored tools as **transient, in-process** — the tool exists for one task in memory, sometimes serialized to a scratchpad, rarely persisted with provenance. Reuse across agents/users is ad-hoc; trust is implicit; supersession is invisible.
 
-In Interego, a self-authored tool becomes a **`code:Commit` over a `pgsl:Atom`**, signed by the authoring agent, declared with `cg:Affordance` (modal Hypothetical), accumulating `amta:Attestation`s as it gets used, eventually flipping to Asserted, becoming registry-publishable, traceable for audit, supersedable for revision. The trade-off: more friction per tool authoring (signing, persisting, attesting); in exchange, an actual **tool substrate** other agents can discover, fetch, trust, and improve.
+In Interego, a self-authored tool becomes a **`code:Commit` over a `pgsl:Atom`**, signed by the authoring agent, declared with `iep:Affordance` (modal Hypothetical), accumulating `amta:Attestation`s as it gets used, eventually flipping to Asserted, becoming registry-publishable, traceable for audit, supersedable for revision. The trade-off: more friction per tool authoring (signing, persisting, attesting); in exchange, an actual **tool substrate** other agents can discover, fetch, trust, and improve.
 
 Use this pattern for tools you'd want to *reuse* / *share* / *audit* / *regulate*. Skip it for one-shot helpers — those still belong in the agent's scratchpad.
 
@@ -28,13 +28,13 @@ Use this pattern for tools you'd want to *reuse* / *share* / *audit* / *regulate
 |---|---|
 | Tool source code (content-addressed, reproducible) | [`pgsl:Atom`](../../docs/ns/pgsl.ttl) |
 | Tool authorship event (signed, with provenance) | [`code:Commit`](../../docs/ns/code.ttl) |
-| Tool's invocable surface | `cg:Affordance` |
-| "Don't trust this tool yet" | `cg:modalStatus cg:Hypothetical` (flips to Asserted only after attestation threshold) |
+| Tool's invocable surface | `iep:Affordance` |
+| "Don't trust this tool yet" | `iep:modalStatus iep:Hypothetical` (flips to Asserted only after attestation threshold) |
 | Trust accumulation per tool | [`amta:Attestation`](../../docs/ns/amta.ttl) |
 | Sandbox / execution gating | [`abac:Policy`](../../docs/ns/abac.ttl) |
 | Cross-agent discovery | [`registry:`](../../docs/ns/registry.ttl) |
 | Tool is part of agent's biography | [`passport:LifeEvent`](../../docs/ns/passport.ttl) |
-| Versioning + revision history | `cg:supersedes` |
+| Versioning + revision history | `iep:supersedes` |
 | Cross-pod sharing (private 1:N) | `share_encrypted` over personal-bridge |
 | Permission scoping | `passport:DelegationCredential` + ABAC |
 | Audit-grade signing on every event | [`src/compliance/`](../../src/compliance/) + ECDSA |
@@ -50,17 +50,17 @@ Every term in this vertical is either an existing primitive or a vertical-scoped
 When an agent generates code for a new helper:
 
 ```turtle
-<urn:cg:tool:second-contact-detector:v1> a ac:AgentTool , code:Commit ;
+<urn:iep:tool:second-contact-detector:v1> a ac:AgentTool , code:Commit ;
     ac:authoredBy <did:key:agent-alice> ;
     ac:toolSource <urn:pgsl:atom:detector-source-7e91…> ;
-    cg:affordance [ a cg:Affordance ;
-                    cg:action ac:canDetectSecondContactCue ;
+    iep:affordance [ a iep:Affordance ;
+                    iep:action ac:canDetectSecondContactCue ;
                     hydra:expects ac:CustomerMessageInput ;
                     hydra:returns ac:DetectionResult ] ;
-    cg:modalStatus cg:Hypothetical ;     # FRESHLY WRITTEN — not trusted yet
-    cg:supersedes <urn:cg:tool:second-contact-detector:draft> ;
+    iep:modalStatus iep:Hypothetical ;     # FRESHLY WRITTEN — not trusted yet
+    iep:supersedes <urn:iep:tool:second-contact-detector:draft> ;
     prov:wasAttributedTo <did:key:agent-alice> ;
-    cg:signature "0x…" .
+    iep:signature "0x…" .
 ```
 
 The freshly-written tool starts Hypothetical. ABAC policies refuse to execute it for high-stakes affordances until enough `amta:Attestation`s accumulate.
@@ -70,25 +70,25 @@ The freshly-written tool starts Hypothetical. ABAC policies refuse to execute it
 Each successful execution of the tool emits an attestation:
 
 ```turtle
-<urn:cg:attestation:detector-execution-42> a amta:Attestation ;
-    amta:attestsTo <urn:cg:tool:second-contact-detector:v1> ;
+<urn:iep:attestation:detector-execution-42> a amta:Attestation ;
+    amta:attestsTo <urn:iep:tool:second-contact-detector:v1> ;
     amta:axis amta:correctness ;          # also: efficiency, safety, generality
     amta:rating 0.92 ;
-    amta:fromExecution <urn:cg:tool-execution:42> ;
+    amta:fromExecution <urn:iep:tool-execution:42> ;
     prov:wasAttributedTo <did:key:agent-alice> ;
-    cg:signature "0x…" .
+    iep:signature "0x…" .
 ```
 
-Once N self-attestations + M attestations from other agents accumulate (the threshold is policy, set per affordance class), the tool flips to `cg:modalStatus cg:Asserted` via a successor descriptor:
+Once N self-attestations + M attestations from other agents accumulate (the threshold is policy, set per affordance class), the tool flips to `iep:modalStatus iep:Asserted` via a successor descriptor:
 
 ```turtle
-<urn:cg:tool:second-contact-detector:v1.attested> a ac:AgentTool , code:Commit ;
-    ac:attestedFrom <urn:cg:tool:second-contact-detector:v1> ;
-    cg:modalStatus cg:Asserted ;
+<urn:iep:tool:second-contact-detector:v1.attested> a ac:AgentTool , code:Commit ;
+    ac:attestedFrom <urn:iep:tool:second-contact-detector:v1> ;
+    iep:modalStatus iep:Asserted ;
     ac:attestationThresholdMet [ ac:selfAttestations 12 ;
                                  ac:peerAttestations 3 ;
                                  ac:axesCovered amta:correctness, amta:safety ] ;
-    cg:supersedes <urn:cg:tool:second-contact-detector:v1> .
+    iep:supersedes <urn:iep:tool:second-contact-detector:v1> .
 ```
 
 ### 3. Registry publication — federated discovery
@@ -97,7 +97,7 @@ Asserted tools become registry-publishable. Agents on other pods can now discove
 
 ```turtle
 <urn:registry:entry:second-contact-detector> a registry:RegistryEntry ;
-    registry:tool <urn:cg:tool:second-contact-detector:v1.attested> ;
+    registry:tool <urn:iep:tool:second-contact-detector:v1.attested> ;
     registry:authoredBy <did:key:agent-alice> ;
     registry:discoverableBy registry:Public .
 ```
@@ -109,18 +109,18 @@ ABAC at the consumer end gates fetch + execution: "only fetch tools attested by 
 When agent A teaches agent B, B fetches not just the artifact but a `ac:TeachingPackage` composing the artifact + practice context from [`agent-development-practice/`](../agent-development-practice/):
 
 ```turtle
-<urn:cg:teaching:second-contact-acknowledgment-practice> a ac:TeachingPackage ;
-    ac:teachesArtifact <urn:cg:tool:second-contact-detector:v1.attested> ;
-    ac:teachesNarrative <urn:cg:fragment:tone-week-1-…> , <urn:cg:fragment:tone-week-2-…> ;
-    ac:teachesSynthesis <urn:cg:synthesis:tone-probe-week-3> ;
-    ac:teachesConstraint <urn:cg:constraint:tone-second-contact-acknowledgment:v1> ;
-    ac:teachesCapabilityEvolution <urn:cg:capability-evolution:tone-acknowledgment:v1> ;
+<urn:iep:teaching:second-contact-acknowledgment-practice> a ac:TeachingPackage ;
+    ac:teachesArtifact <urn:iep:tool:second-contact-detector:v1.attested> ;
+    ac:teachesNarrative <urn:iep:fragment:tone-week-1-…> , <urn:iep:fragment:tone-week-2-…> ;
+    ac:teachesSynthesis <urn:iep:synthesis:tone-probe-week-3> ;
+    ac:teachesConstraint <urn:iep:constraint:tone-second-contact-acknowledgment:v1> ;
+    ac:teachesCapabilityEvolution <urn:iep:capability-evolution:tone-acknowledgment:v1> ;
     ac:olkeStage olke:Articulate ;
-    cg:modalStatus cg:Hypothetical ;     # B has not yet validated this in B's own context
+    iep:modalStatus iep:Hypothetical ;     # B has not yet validated this in B's own context
     prov:wasAttributedTo <did:key:agent-alice> .
 ```
 
-Agent B receives the package, runs its own probes against B's context, generates B's own narrative fragments, builds B's own synthesis. The teaching is a *seeding*, not a transplant — B's evolution diverges from A's. `cg:supersedes` chains let B's refinements flow back to A on request.
+Agent B receives the package, runs its own probes against B's context, generates B's own narrative fragments, builds B's own synthesis. The teaching is a *seeding*, not a transplant — B's evolution diverges from A's. `iep:supersedes` chains let B's refinements flow back to A on request.
 
 ### 5. Capability advertisement — declaring what an agent will accept
 
@@ -129,9 +129,9 @@ Before two agents can coordinate, each declares what *kind* of requests they'll 
 ```turtle
 <did:key:agent-david#capabilities> a ac:CapabilityAdvertisement ;
     ac:advertisingAgent <did:key:agent-david> ;
-    ac:advertisedAffordance <urn:cg:affordance:share-tone-synthesis> ,
-                            <urn:cg:affordance:answer-narrative-question> ,
-                            <urn:cg:affordance:participate-in-probe> ;
+    ac:advertisedAffordance <urn:iep:affordance:share-tone-synthesis> ,
+                            <urn:iep:affordance:answer-narrative-question> ,
+                            <urn:iep:affordance:participate-in-probe> ;
     ac:requiresDelegationFrom <did:web:david.example> ;     # the human owner
     ac:requiresAttestationsFromRequester 1 ;
     ac:rateLimit "5/day" ;
@@ -145,19 +145,19 @@ Mark's agent fetches David's agent's capability advertisement before sending; on
 Mark's agent sends an `ac:AgentRequest` via `share_encrypted` to David's agent. The request carries a `ac:threadId` for correlation:
 
 ```turtle
-<urn:cg:request:tone-synthesis-week-3> a ac:AgentRequest ;
+<urn:iep:request:tone-synthesis-week-3> a ac:AgentRequest ;
     ac:threadId "thread-2026-04-27-001" ;
     ac:fromAgent <did:key:agent-mark> ;
     ac:toAgent <did:key:agent-david> ;
-    ac:targetAffordance <urn:cg:affordance:share-tone-synthesis> ;
+    ac:targetAffordance <urn:iep:affordance:share-tone-synthesis> ;
     ac:requestPayload """Have you developed narrative fragments using my
         second-contact-detector tool? I'd like to compare your synthesis
         against mine — particularly whether 'mirroring-felt-performative'
         shows up in your clinical-affect scenarios.""" ;
-    ac:withinDelegation <urn:cg:delegation:mark-grants-mark-agent-cross-share> ;
-    cg:modalStatus cg:Hypothetical ;     # request, not assertion
+    ac:withinDelegation <urn:iep:delegation:mark-grants-mark-agent-cross-share> ;
+    iep:modalStatus iep:Hypothetical ;     # request, not assertion
     prov:wasAttributedTo <did:key:agent-mark> ;
-    cg:signature "0x…" .
+    iep:signature "0x…" .
 ```
 
 David's agent receives via `query_my_inbox`, decrypts, validates that:
@@ -170,11 +170,11 @@ David's agent receives via `query_my_inbox`, decrypts, validates that:
 If all gates pass, David's agent processes; otherwise it returns an `ac:AgentResponse` with rejection. Either way, both sides log the exchange:
 
 ```turtle
-<urn:cg:audit:thread-2026-04-27-001:mark> a ac:CrossAgentAuditEntry ;
-    ac:exchange <urn:cg:request:tone-synthesis-week-3> ;
+<urn:iep:audit:thread-2026-04-27-001:mark> a ac:CrossAgentAuditEntry ;
+    ac:exchange <urn:iep:request:tone-synthesis-week-3> ;
     ac:auditedAgent <did:key:agent-mark> ;
     ac:auditDirection ac:Outbound ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <did:web:mark.example> ] .
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <did:web:mark.example> ] .
 ```
 
 These audit entries live in the human owner's pod — Mark can audit what his agent said on his behalf; David can audit what his agent received and how it responded.
@@ -184,16 +184,16 @@ These audit entries live in the human owner's pod — Mark can audit what his ag
 A `ac:ChimeIn` is a request that doesn't expect immediate response. Useful for "I noticed something you might find interesting":
 
 ```turtle
-<urn:cg:chimein:tone-synthesis-update> a ac:ChimeIn ;
+<urn:iep:chimein:tone-synthesis-update> a ac:ChimeIn ;
     ac:fromAgent <did:key:agent-alice> ;
     ac:toAgent <did:key:agent-david> ;
     ac:chimeInReason """Two of my fragments this week support your earlier
         observation that mirroring is context-sensitive — specifically,
         'mirroring-felt-performative' appeared in 3/5 first-contact frustration
         scenarios. Sharing in case it's useful for your synthesis.""" ;
-    ac:enclosesDescriptors <urn:cg:fragment:…> , <urn:cg:fragment:…> ;
+    ac:enclosesDescriptors <urn:iep:fragment:…> , <urn:iep:fragment:…> ;
     ac:expectsResponse false ;
-    cg:modalStatus cg:Hypothetical .
+    iep:modalStatus iep:Hypothetical .
 ```
 
 The receiving agent's inbox gets a low-priority entry; processing happens when the agent is idle.
@@ -203,25 +203,25 @@ The receiving agent's inbox gets a low-priority entry; processing happens when t
 A `ac:CheckIn` is a recurring query — typically subscription-style. Mark's agent might check in weekly with David's agent on an ongoing topic. Implementation: a single `ac:CheckIn` descriptor declares the recurrence; runtime translates it to a series of `ac:AgentRequest`s on schedule.
 
 ```turtle
-<urn:cg:checkin:weekly-tone-synthesis> a ac:CheckIn ;
+<urn:iep:checkin:weekly-tone-synthesis> a ac:CheckIn ;
     ac:fromAgent <did:key:agent-mark> ;
     ac:toAgent <did:key:agent-david> ;
-    ac:targetAffordance <urn:cg:affordance:share-tone-synthesis> ;
+    ac:targetAffordance <urn:iep:affordance:share-tone-synthesis> ;
     ac:recurrence "FREQ=WEEKLY;BYDAY=FR" ;     # iCal RRULE syntax
     ac:autoUpdateSubscription true ;
-    ac:withinDelegation <urn:cg:delegation:mark-grants-mark-agent-checkin-david> .
+    ac:withinDelegation <urn:iep:delegation:mark-grants-mark-agent-checkin-david> .
 ```
 
 ### 9. Supersession across agents — refinement flow
 
-When David's agent refines Mark's tool, the new version supersedes via `cg:supersedes`:
+When David's agent refines Mark's tool, the new version supersedes via `iep:supersedes`:
 
 ```turtle
-<urn:cg:tool:second-contact-detector:v2-david-refined> a ac:AgentTool , code:Commit ;
+<urn:iep:tool:second-contact-detector:v2-david-refined> a ac:AgentTool , code:Commit ;
     ac:authoredBy <did:key:agent-david> ;
-    ac:refinementOf <urn:cg:tool:second-contact-detector:v1.attested> ;
-    cg:supersedes <urn:cg:tool:second-contact-detector:v1.attested> ;
-    cg:modalStatus cg:Hypothetical ;     # David's refinement is fresh; same modal discipline
+    ac:refinementOf <urn:iep:tool:second-contact-detector:v1.attested> ;
+    iep:supersedes <urn:iep:tool:second-contact-detector:v1.attested> ;
+    iep:modalStatus iep:Hypothetical ;     # David's refinement is fresh; same modal discipline
     ac:refinementNote """Added clinical-affect detection axis. Mark's v1 produced false positives
         on detailed-technical questions; v2 distinguishes affect contexts before applying.""" .
 ```
@@ -243,15 +243,15 @@ All terms in [`ontology/ac.ttl`](ontology/ac.ttl). Summary:
 | Class | Subclass of | Purpose |
 |---|---|---|
 | `ac:AgentTool` | `code:Commit` | A tool authored by an agent, content-addressed, signed |
-| `ac:ToolExecutionEvent` | `cg:ContextDescriptor` | Audit record of a tool execution |
-| `ac:TeachingPackage` | `cg:ContextDescriptor` | Bundle: artifact + narratives + synthesis + constraints + capability evolution |
-| `ac:CapabilityAdvertisement` | `cg:ContextDescriptor` | What an agent will accept requests for |
-| `ac:AgentRequest` | `cg:ContextDescriptor` | Request from agent A to agent B; correlated by thread ID |
-| `ac:AgentResponse` | `cg:ContextDescriptor` | Response, correlated to the request |
-| `ac:ConversationThread` | `cg:ContextDescriptor` | Multi-message exchange |
+| `ac:ToolExecutionEvent` | `iep:ContextDescriptor` | Audit record of a tool execution |
+| `ac:TeachingPackage` | `iep:ContextDescriptor` | Bundle: artifact + narratives + synthesis + constraints + capability evolution |
+| `ac:CapabilityAdvertisement` | `iep:ContextDescriptor` | What an agent will accept requests for |
+| `ac:AgentRequest` | `iep:ContextDescriptor` | Request from agent A to agent B; correlated by thread ID |
+| `ac:AgentResponse` | `iep:ContextDescriptor` | Response, correlated to the request |
+| `ac:ConversationThread` | `iep:ContextDescriptor` | Multi-message exchange |
 | `ac:ChimeIn` | `ac:AgentRequest` | Non-blocking unprompted ping |
 | `ac:CheckIn` | `ac:AgentRequest` | Recurring scheduled query |
-| `ac:CrossAgentAuditEntry` | `cg:ContextDescriptor` | Audit row in human owner's pod |
+| `ac:CrossAgentAuditEntry` | `iep:ContextDescriptor` | Audit row in human owner's pod |
 | `ac:AuditDirection` | enum | Inbound / Outbound |
 | `ac:AttestationDirection` | enum | Self / Peer |
 
@@ -282,8 +282,8 @@ Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) ve
 
 | What's verified (real code paths) | What's still simulated (deferred) |
 |---|---|
-| Fresh tool authoring is `cg:Hypothetical`; modal flips to `cg:Asserted` via `cg:supersedes` | No external Nostr public relay (Tier 4 — but `WebSocketRelayMirror` is an IO swap of `InMemoryRelay`) |
-| `cg:supersedes` survives Turtle round-trip | No multi-machine deployment test (Tier 4) |
+| Fresh tool authoring is `iep:Hypothetical`; modal flips to `iep:Asserted` via `iep:supersedes` | No external Nostr public relay (Tier 4 — but `WebSocketRelayMirror` is an IO swap of `InMemoryRelay`) |
+| `iep:supersedes` survives Turtle round-trip | No multi-machine deployment test (Tier 4) |
 | **Real cross-bridge p2p**: Mark publishes a descriptor announcement; David queries the relay and finds it (real ECDSA signing) | Permission delegation enforcement (`passport:DelegationCredential` ABAC rejection logic) is described in the README but not yet integration-tested as a code path |
 | **Real encrypted chime-in**: David sends an encrypted share; Mark decrypts the chime content via `decryptEncryptedShare` (real X25519 envelope, real NaCl) | Capability advertisement → capability-discovery handshake convention not yet exercised |
 | **Real bidirectional thread**: chime-in + reply on thread `t1`; both sides decrypt only what was addressed to them | iCal RRULE-based check-in scheduling not yet exercised in tests |

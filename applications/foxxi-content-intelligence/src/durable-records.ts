@@ -79,7 +79,7 @@ function redactStatementForPublic(stmt: Record<string, unknown>): Record<string,
     const def = obj.definition as Record<string, unknown> | undefined;
     obj.definition = {
       ...(def && def.type ? { type: def.type } : {}),
-      name: { en: '[redacted — confidential; full statement in the encrypted canonical holon (cg:encryptedHolon)]' },
+      name: { en: '[redacted — confidential; full statement in the encrypted canonical holon (iep:encryptedHolon)]' },
     };
   }
   const res = s.result as Record<string, unknown> | undefined;

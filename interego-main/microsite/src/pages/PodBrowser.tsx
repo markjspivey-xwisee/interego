@@ -2,10 +2,10 @@
  * Pod browser — render the substrate as linked data.
  *
  * The Foxxi bridge now publishes every work product as a real
- * cg:ContextDescriptor on the tenant pod. This page is the natural
+ * iep:ContextDescriptor on the tenant pod. This page is the natural
  * companion: it walks the pod's manifest, lists the descriptors by
  * type, dereferences any one you click, renders the Turtle as it
- * actually lives on the wire, and turns every cg:Affordance into a
+ * actually lives on the wire, and turns every iep:Affordance into a
  * clickable link so you can navigate the substrate by following
  * affordances.
  *
@@ -69,19 +69,19 @@ interface Affordance {
 /** Tiny Turtle-ish parser for manifest entries — regex-driven, no deps. */
 function parseManifest(turtle: string): ManifestEntry[] {
   const entries: ManifestEntry[] = [];
-  // Each entry starts at a `<url> a cg:ManifestEntry` and ends at the next `.` at column 0
-  const re = /<([^>]+)>\s+a\s+cg:ManifestEntry\s*;([\s\S]*?)\s\./g;
+  // Each entry starts at a `<url> a iep:ManifestEntry` and ends at the next `.` at column 0
+  const re = /<([^>]+)>\s+a\s+iep:ManifestEntry\s*;([\s\S]*?)\s\./g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(turtle)) !== null) {
     const descriptorUrl = m[1];
     const body = m[2];
-    const describes = (body.match(/cg:describes\s+<([^>]+)>/) ?? [, ''])[1];
-    const modalStatus = ((body.match(/cg:modalStatus\s+cg:(\w+)/) ?? [, 'Unknown'])[1]);
-    const trustLevel = ((body.match(/cg:trustLevel\s+cg:(\w+)/) ?? [, 'Unknown'])[1]);
+    const describes = (body.match(/iep:describes\s+<([^>]+)>/) ?? [, ''])[1];
+    const modalStatus = ((body.match(/iep:modalStatus\s+iep:(\w+)/) ?? [, 'Unknown'])[1]);
+    const trustLevel = ((body.match(/iep:trustLevel\s+iep:(\w+)/) ?? [, 'Unknown'])[1]);
     const conformsTo: string[] = [];
     for (const c of body.matchAll(/dct:conformsTo\s+<([^>]+)>/g)) conformsTo.push(c[1]);
     const facetTypes: string[] = [];
-    for (const f of body.matchAll(/cg:hasFacetType\s+cg:(\w+)/g)) facetTypes.push(f[1]);
+    for (const f of body.matchAll(/iep:hasFacetType\s+iep:(\w+)/g)) facetTypes.push(f[1]);
     entries.push({ descriptorUrl, describes, conformsTo, modalStatus, trustLevel, facetTypes });
   }
   return entries;
@@ -97,11 +97,11 @@ function decodeBundleJson(graphTurtle: string): unknown | null {
   } catch { return null; }
 }
 
-/** Parse cg:Affordance blocks out of a descriptor Turtle — present them as clickable Hydra ops. */
+/** Parse iep:Affordance blocks out of a descriptor Turtle — present them as clickable Hydra ops. */
 function parseAffordances(descriptorTurtle: string): Affordance[] {
   const out: Affordance[] = [];
-  // Find affordance blanks: cg:affordance [ ... ]
-  const re = /cg:affordance\s+\[([\s\S]*?)\]/g;
+  // Find affordance blanks: iep:affordance [ ... ]
+  const re = /iep:affordance\s+\[([\s\S]*?)\]/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(descriptorTurtle)) !== null) {
     const block = m[1];
@@ -109,7 +109,7 @@ function parseAffordances(descriptorTurtle: string): Affordance[] {
     const target = (block.match(/hydra:target\s+<([^>]+)>/) ?? [, ''])[1];
     const title = (block.match(/hydra:title\s+"([^"]+)"/) ?? [, ''])[1] || undefined;
     const mediaType = (block.match(/dcat:mediaType\s+"([^"]+)"/) ?? [, ''])[1] || undefined;
-    const encrypted = /cg:encrypted\s+true/.test(block);
+    const encrypted = /iep:encrypted\s+true/.test(block);
     if (target) out.push({ method, target, title, mediaType, encrypted });
   }
   return out;
@@ -198,9 +198,9 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
       </h1>
       <p style={{ fontSize: 15, lineHeight: 1.6, maxWidth: 820, margin: '0 0 18px' }}>
         Every Foxxi work product — outcomes, situations, plans, calibration profiles,
-        teaching packages, xAPI statements, LMS snapshots — is a real <code>cg:ContextDescriptor</code> on the tenant
+        teaching packages, xAPI statements, LMS snapshots — is a real <code>iep:ContextDescriptor</code> on the tenant
         pod. This page walks the pod's manifest, dereferences any descriptor you click as Turtle, and follows
-        its <code>cg:Affordance</code> links. Point it at the federation peer pod to browse that one the same way.
+        its <code>iep:Affordance</code> links. Point it at the federation peer pod to browse that one the same way.
       </p>
 
       {/* Pod URL bar */}
@@ -326,7 +326,7 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
                 )}
                 {!detailLoading && detail && detail.affordances.length > 0 && (
                   <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px', background: 'var(--panel-2)' }}>
-                    <div style={{ ...label, marginBottom: 6 }}>cg:affordance · clickable hydra:Operation links</div>
+                    <div style={{ ...label, marginBottom: 6 }}>iep:affordance · clickable hydra:Operation links</div>
                     {detail.affordances.map((a, i) => (
                       <div key={i} style={{ fontFamily: mono, fontSize: 11, padding: '2px 0' }}>
                         <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{a.method}</span>{' '}

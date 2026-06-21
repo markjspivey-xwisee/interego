@@ -173,7 +173,7 @@ describe('Introspection Agents', () => {
     it('generates SHACL shapes with correct datatypes', () => {
       const result = introspectJson(jsonSource(), sampleJson);
       expect(result.shapes.length).toBeGreaterThan(0);
-      const usersShape = result.shapes.find(s => s.includes('cg:UsersShape'));
+      const usersShape = result.shapes.find(s => s.includes('iep:UsersShape'));
       expect(usersShape).toBeDefined();
       expect(usersShape).toContain('sh:NodeShape');
       expect(usersShape).toContain('sh:datatype');
@@ -555,7 +555,7 @@ describe('Homoiconic Metagraph', () => {
 
 describe('Marketplace Discovery', () => {
   const agentListing = makeListing({
-    id: 'urn:cg:agent:search-1',
+    id: 'urn:iep:agent:search-1',
     name: 'SearchAgent',
     type: 'agent',
     capabilities: ['search', 'summarize'],
@@ -563,7 +563,7 @@ describe('Marketplace Discovery', () => {
   });
 
   const dataSourceListing = makeListing({
-    id: 'urn:cg:ds:wiki',
+    id: 'urn:iep:ds:wiki',
     name: 'WikiSource',
     type: 'data-source',
     capabilities: ['read', 'search'],
@@ -571,7 +571,7 @@ describe('Marketplace Discovery', () => {
   });
 
   const decoratorListing = makeListing({
-    id: 'urn:cg:dec:highlight',
+    id: 'urn:iep:dec:highlight',
     name: 'Highlighter',
     type: 'decorator',
     capabilities: ['highlight', 'annotate'],
@@ -581,8 +581,8 @@ describe('Marketplace Discovery', () => {
         method: 'POST',
         href: '/highlight',
         title: 'Highlight text',
-        expects: 'cg:TextInput',
-        returns: 'cg:HighlightedOutput',
+        expects: 'iep:TextInput',
+        returns: 'iep:HighlightedOutput',
       },
     ],
   });

@@ -393,16 +393,16 @@ function renderDescriptorDetail(data, el) {
 
   // Parse facets from turtle
   const facets = [];
-  const facetBlocks = turtle.split(/cg:hasFacet\s+\[/);
+  const facetBlocks = turtle.split(/iep:hasFacet\s+\[/);
   for (let i = 1; i < facetBlocks.length; i++) {
     const block = facetBlocks[i];
-    const typeMatch = block.match(/a\s+cg:(\w+Facet)/);
+    const typeMatch = block.match(/a\s+iep:(\w+Facet)/);
     if (!typeMatch) continue;
     const facetType = typeMatch[1].replace('Facet','');
     const fields = {};
 
     // Extract key-value pairs
-    const fieldRegex = /(?:cg|prov|vc):(\w+)\s+(?:<([^>]+)>|"([^"]*)"(?:\^\^xsd:(\w+))?|cg:(\w+))/g;
+    const fieldRegex = /(?:cg|prov|vc):(\w+)\s+(?:<([^>]+)>|"([^"]*)"(?:\^\^xsd:(\w+))?|iep:(\w+))/g;
     let m;
     while ((m = fieldRegex.exec(block)) !== null) {
       fields[m[1]] = m[2] || m[3] || m[5] || '';
@@ -411,11 +411,11 @@ function renderDescriptorDetail(data, el) {
   }
 
   // Extract describes
-  const describesMatch = turtle.match(/cg:describes\s+<([^>]+)>/);
+  const describesMatch = turtle.match(/iep:describes\s+<([^>]+)>/);
   const describes = describesMatch ? describesMatch[1] : 'unknown';
 
   // Extract version
-  const versionMatch = turtle.match(/cg:version\s+"(\d+)"/);
+  const versionMatch = turtle.match(/iep:version\s+"(\d+)"/);
 
   let html = `<div class="detail-header">`;
   html += `<div class="detail-title">${shortId(describes)}</div>`;

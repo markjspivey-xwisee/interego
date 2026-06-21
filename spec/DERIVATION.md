@@ -13,7 +13,7 @@ derivable from L1 (core protocol) + standard W3C vocabularies
 2. `rdfs:subClassOf <L1-or-W3C-term>` — the higher-level class is
    a specialization.
 3. `rdfs:subPropertyOf <L1-or-W3C-property>` — for properties.
-4. `cg:constructedFrom (<primitive> <primitive> ...)` — explicit
+4. `iep:constructedFrom (<primitive> <primitive> ...)` — explicit
    construction when subClassOf / equivalentClass don't fit
    (e.g., a composite derived from multiple L1 primitives).
 5. The term itself IS primitive (L1) — explicit in the ontology
@@ -30,14 +30,14 @@ be grounded or removed.
                 Set (zero: membership + equality)
                  │
                  ▼
-L1 PRIMITIVES    cg:ContextFacetData  (Set of properties typed by
+L1 PRIMITIVES    iep:ContextFacetData  (Set of properties typed by
                                        facet kind: Temporal,
                                        Provenance, Agent,
                                        AccessControl, Semiotic,
                                        Trust, Federation)
                  │
                  ▼
-L1              cg:ContextDescriptor  (presheaf F^op → Set —
+L1              iep:ContextDescriptor  (presheaf F^op → Set —
                                        maps facet types to
                                        facet-instance sets)
                  │
@@ -71,7 +71,7 @@ L1 ALGEBRA       Composition operators union / intersection /
 
 L2 PATTERNS      hyprcat:, hypragent: — federation / agent-mesh
                  PATTERN ontologies. Each class subClassOf either
-                 a cg:/ie: primitive or a W3C-standard term.
+                 a iep:/ie: primitive or a W3C-standard term.
 
                   ═══════════════ L2/L3 boundary ═══════════════
 
@@ -95,23 +95,23 @@ classes fail CI.
 
 | Class | Grounding | Notes |
 |---|---|---|
-| `sat:SemioticFieldFunctor` | `owl:equivalentClass cg:SemioticFacet` | ✓ strong |
-| `sat:SemioticField` | `rdfs:subClassOf cg:SemioticFacet` | add |
+| `sat:SemioticFieldFunctor` | `owl:equivalentClass iep:SemioticFacet` | ✓ strong |
+| `sat:SemioticField` | `rdfs:subClassOf iep:SemioticFacet` | add |
 | `sat:SemioticAgent` | `rdfs:subClassOf prov:Agent` | add |
-| `sat:SemiosisEndofunctor` | `cg:constructedFrom (cg:SemioticFacet cg:SemioticFacet)` | add (iterated application of the Σ functor) |
-| `sat:Interpretant` | `rdfs:subClassOf cg:SemioticFacet` | add (facet IS the interpretant of the sign) |
-| `sat:Representamen` | `rdfs:subClassOf cg:ContextDescriptor` | add (descriptor IS the sign vehicle) |
-| `sat:Object` | external referent — primitive, not a cg: type | mark explicit primitive |
-| `sat:FixedPoint` | `cg:constructedFrom (sat:SemiosisEndofunctor)` | add (limit of endofunctor iteration) |
+| `sat:SemiosisEndofunctor` | `iep:constructedFrom (iep:SemioticFacet iep:SemioticFacet)` | add (iterated application of the Σ functor) |
+| `sat:Interpretant` | `rdfs:subClassOf iep:SemioticFacet` | add (facet IS the interpretant of the sign) |
+| `sat:Representamen` | `rdfs:subClassOf iep:ContextDescriptor` | add (descriptor IS the sign vehicle) |
+| `sat:Object` | external referent — primitive, not a iep: type | mark explicit primitive |
+| `sat:FixedPoint` | `iep:constructedFrom (sat:SemiosisEndofunctor)` | add (limit of endofunctor iteration) |
 
 ### HELA (topos-theoretic xAPI)
 
 | Class | Grounding |
 |---|---|
 | `hela:Statement` | `rdfs:subClassOf prov:Activity` (already) |
-| `hela:Trace` | `rdfs:subClassOf cg:ContextDescriptor` (add) |
-| `hela:Omega` | `cg:constructedFrom (pgsl:Fragment cg:SemioticFacet)` (add — subobject classifier from PGSL + Semiotic) |
-| `hela:SubPresheaf` | `rdfs:subClassOf cg:ContextDescriptor` (add) |
+| `hela:Trace` | `rdfs:subClassOf iep:ContextDescriptor` (add) |
+| `hela:Omega` | `iep:constructedFrom (pgsl:Fragment iep:SemioticFacet)` (add — subobject classifier from PGSL + Semiotic) |
+| `hela:SubPresheaf` | `rdfs:subClassOf iep:ContextDescriptor` (add) |
 | `hela:LearnerObject` | `rdfs:subClassOf prov:Agent` (add) |
 | `hela:Verb` | primitive — marks explicit |
 
@@ -119,18 +119,18 @@ classes fail CI.
 
 | Class | Grounding |
 |---|---|
-| `cts:Pattern` | `owl:equivalentClass cg:SyntagmaticPattern` (already) |
+| `cts:Pattern` | `owl:equivalentClass iep:SyntagmaticPattern` (already) |
 | rest | audit |
 
 ### OLKE (Organizational Learning)
 
 All 2 classes currently ungrounded. `olke:KnowledgeEvolution`
-should be `rdfs:subClassOf cg:ProvenanceFacet`. Similar for
+should be `rdfs:subClassOf iep:ProvenanceFacet`. Similar for
 `olke:LearningCycle`.
 
 ### AMTA (Agent-Mediated Trust Attestation)
 
-All 6 classes audit; most should `rdfs:subClassOf cg:TrustFacet`
+All 6 classes audit; most should `rdfs:subClassOf iep:TrustFacet`
 or `prov:Attribution`.
 
 ### HyprCat / HyprAgent
@@ -142,7 +142,7 @@ classes checked by the lint.
 
 ## Runtime derivation
 
-When the ontology says `X cg:constructedFrom (A B)`, implementations
+When the ontology says `X iep:constructedFrom (A B)`, implementations
 SHOULD expose a runtime function that actually produces an `X` from
 instances of `A` and `B`:
 
@@ -170,7 +170,7 @@ derivable at runtime from L1 primitives, not just asserted.
    fails CI if any lacks grounding (rules 1-5 above).
 2. **Runtime derivation** — `tests/derivation.test.ts` asserts the
    runtime constructor exists and produces the expected shape for
-   every class with `cg:constructedFrom`.
+   every class with `iep:constructedFrom`.
 3. **Layer discipline** — `spec/LAYERS.md`'s existing transplant
    test is preserved; this derivation rule is additive (L2/L3 can
    still reference their own primitives AS LONG AS those primitives

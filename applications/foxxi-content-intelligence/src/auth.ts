@@ -225,7 +225,7 @@ export function attachDeterministicAddresses<U extends { user_id: string }>(
 // the SAME ECDSA signed-request envelope the relay uses — no relay vouching
 // secret, so the vertical composes over the substrate without coupling to it.
 // The agent reaches the endpoint emergently (discover → dereference → act on a
-// published cg:Affordance); the `act` body carries this envelope.
+// published iep:Affordance); the `act` body carries this envelope.
 //
 //   { _signature: '0x…', _signed_payload: JSON.stringify({ ...args,
 //       agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601> }) }

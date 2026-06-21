@@ -13,7 +13,7 @@ import type { ContextTypeName, ModalStatus, TrustLevel } from '../model/types.js
 
 // ── Default prefixes for CG queries ──────────────────────────
 
-const CG_PREFIXES: PrefixKey[] = ['cg', 'prov', 'xsd', 'rdfs', 'rdf'];
+const CG_PREFIXES: PrefixKey[] = ['iep', 'prov', 'xsd', 'rdfs', 'rdf'];
 
 function prefixBlock(extra?: PrefixKey[]): string {
   const all = new Set([...CG_PREFIXES, ...(extra ?? [])]);
@@ -31,19 +31,19 @@ export function queryContextForGraph(graphIRI: string): string {
 
 SELECT ?descriptor ?facetType ?validFrom ?validUntil ?agent ?modalStatus
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes <${graphIRI}> ;
-        cg:hasFacet ?facet .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes <${graphIRI}> ;
+        iep:hasFacet ?facet .
 
     ?facet a ?facetType .
 
-    OPTIONAL { ?facet cg:validFrom ?validFrom }
-    OPTIONAL { ?facet cg:validUntil ?validUntil }
+    OPTIONAL { ?facet iep:validFrom ?validFrom }
+    OPTIONAL { ?facet iep:validUntil ?validUntil }
     OPTIONAL {
-        ?facet cg:assertingAgent ?agentNode .
-        ?agentNode cg:agentIdentity ?agent .
+        ?facet iep:assertingAgent ?agentNode .
+        ?agentNode iep:agentIdentity ?agent .
     }
-    OPTIONAL { ?facet cg:modalStatus ?modalStatus }
+    OPTIONAL { ?facet iep:modalStatus ?modalStatus }
 }`;
 }
 
@@ -58,13 +58,13 @@ export function queryGraphsAtTime(dateTime: string): string {
 
 SELECT ?graph ?descriptor
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes ?graph ;
-        cg:hasFacet ?tf .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes ?graph ;
+        iep:hasFacet ?tf .
 
-    ?tf a cg:TemporalFacet ;
-        cg:validFrom ?from ;
-        cg:validUntil ?until .
+    ?tf a iep:TemporalFacet ;
+        iep:validFrom ?from ;
+        iep:validUntil ?until .
 
     FILTER (?from <= "${dateTime}"^^xsd:dateTime
          && ?until >= "${dateTime}"^^xsd:dateTime)
@@ -79,13 +79,13 @@ export function queryGraphsInInterval(from: string, until: string): string {
 
 SELECT ?graph ?descriptor ?from ?until
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes ?graph ;
-        cg:hasFacet ?tf .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes ?graph ;
+        iep:hasFacet ?tf .
 
-    ?tf a cg:TemporalFacet ;
-        cg:validFrom ?from ;
-        cg:validUntil ?until .
+    ?tf a iep:TemporalFacet ;
+        iep:validFrom ?from ;
+        iep:validUntil ?until .
 
     FILTER (?from <= "${until}"^^xsd:dateTime
          && ?until >= "${from}"^^xsd:dateTime)
@@ -103,14 +103,14 @@ export function queryGraphsByModalStatus(status: ModalStatus): string {
 
 SELECT ?graph ?descriptor ?confidence
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes ?graph ;
-        cg:hasFacet ?sf .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes ?graph ;
+        iep:hasFacet ?sf .
 
-    ?sf a cg:SemioticFacet ;
-        cg:modalStatus cg:${status} .
+    ?sf a iep:SemioticFacet ;
+        iep:modalStatus iep:${status} .
 
-    OPTIONAL { ?sf cg:epistemicConfidence ?confidence }
+    OPTIONAL { ?sf iep:epistemicConfidence ?confidence }
 }
 ORDER BY DESC(?confidence)`;
 }
@@ -126,11 +126,11 @@ export function queryGraphsByFacetType(facetType: ContextTypeName): string {
 
 SELECT ?graph ?descriptor ?facet
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes ?graph ;
-        cg:hasFacet ?facet .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes ?graph ;
+        iep:hasFacet ?facet .
 
-    ?facet a cg:${facetType}Facet .
+    ?facet a iep:${facetType}Facet .
 }`;
 }
 
@@ -144,11 +144,11 @@ export function queryProvenanceChain(graphIRI: string): string {
 
 SELECT ?descriptor ?activity ?agent ?startedAt ?endedAt ?source
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes <${graphIRI}> ;
-        cg:hasFacet ?pf .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes <${graphIRI}> ;
+        iep:hasFacet ?pf .
 
-    ?pf a cg:ProvenanceFacet .
+    ?pf a iep:ProvenanceFacet .
 
     OPTIONAL {
         ?pf prov:wasGeneratedBy ?activity .
@@ -179,20 +179,20 @@ export function queryGraphsByTrustLevel(minLevel: TrustLevel): string {
 
 SELECT ?graph ?descriptor ?trustLevel ?issuer
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes ?graph ;
-        cg:hasFacet ?tf .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes ?graph ;
+        iep:hasFacet ?tf .
 
-    ?tf a cg:TrustFacet ;
-        cg:trustLevel ?trustLevel .
+    ?tf a iep:TrustFacet ;
+        iep:trustLevel ?trustLevel .
 
-    OPTIONAL { ?tf cg:issuer ?issuer }
+    OPTIONAL { ?tf iep:issuer ?issuer }
 
     # Filter by trust level (semantic ordering)
     VALUES (?trustLevel ?score) {
-        (cg:SelfAsserted 1)
-        (cg:ThirdPartyAttested 2)
-        (cg:CryptographicallyVerified 3)
+        (iep:SelfAsserted 1)
+        (iep:ThirdPartyAttested 2)
+        (iep:CryptographicallyVerified 3)
     }
     FILTER (?score >= ${minScore})
 }
@@ -209,15 +209,15 @@ export function queryGraphsByOrigin(originIRI: string): string {
 
 SELECT ?graph ?descriptor ?lastSynced ?syncProtocol
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes ?graph ;
-        cg:hasFacet ?ff .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes ?graph ;
+        iep:hasFacet ?ff .
 
-    ?ff a cg:FederationFacet ;
-        cg:origin <${originIRI}> .
+    ?ff a iep:FederationFacet ;
+        iep:origin <${originIRI}> .
 
-    OPTIONAL { ?ff cg:lastSynced ?lastSynced }
-    OPTIONAL { ?ff cg:syncProtocol ?syncProtocol }
+    OPTIONAL { ?ff iep:lastSynced ?lastSynced }
+    OPTIONAL { ?ff iep:syncProtocol ?syncProtocol }
 }
 ORDER BY DESC(?lastSynced)`;
 }
@@ -232,14 +232,14 @@ export function queryContextManifest(): string {
 
 SELECT ?descriptor ?graph ?facetType ?version
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes ?graph ;
-        cg:hasFacet ?facet .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes ?graph ;
+        iep:hasFacet ?facet .
 
     ?facet a ?facetType .
-    FILTER (STRSTARTS(STR(?facetType), STR(cg:)))
+    FILTER (STRSTARTS(STR(?facetType), STR(iep:)))
 
-    OPTIONAL { ?descriptor cg:version ?version }
+    OPTIONAL { ?descriptor iep:version ?version }
 }
 ORDER BY ?graph ?descriptor`;
 }
@@ -257,11 +257,11 @@ export function askHasContextType(
   return `${prefixBlock()}
 
 ASK {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes <${graphIRI}> ;
-        cg:hasFacet ?facet .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes <${graphIRI}> ;
+        iep:hasFacet ?facet .
 
-    ?facet a cg:${facetType}Facet .
+    ?facet a iep:${facetType}Facet .
 }`;
 }
 
@@ -272,26 +272,26 @@ export function constructContextForGraph(graphIRI: string): string {
   return `${prefixBlock()}
 
 CONSTRUCT {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes <${graphIRI}> ;
-        cg:version ?version ;
-        cg:validFrom ?dFrom ;
-        cg:validUntil ?dUntil ;
-        cg:hasFacet ?facet .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes <${graphIRI}> ;
+        iep:version ?version ;
+        iep:validFrom ?dFrom ;
+        iep:validUntil ?dUntil ;
+        iep:hasFacet ?facet .
 
     ?facet a ?facetType ;
         ?facetProp ?facetVal .
 }
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes <${graphIRI}> ;
-        cg:hasFacet ?facet .
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes <${graphIRI}> ;
+        iep:hasFacet ?facet .
 
     ?facet a ?facetType ;
         ?facetProp ?facetVal .
 
-    OPTIONAL { ?descriptor cg:version ?version }
-    OPTIONAL { ?descriptor cg:validFrom ?dFrom }
-    OPTIONAL { ?descriptor cg:validUntil ?dUntil }
+    OPTIONAL { ?descriptor iep:version ?version }
+    OPTIONAL { ?descriptor iep:validFrom ?dFrom }
+    OPTIONAL { ?descriptor iep:validUntil ?dUntil }
 }`;
 }

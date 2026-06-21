@@ -38,7 +38,7 @@
  *      on the "accuracy" axis. Same flow Demo 21 / Demo 19 use.
  *   D. Ratification — substrate-enforced PromotionConstraint requires
  *      ≥2 distinct accuracy attestations before a bridge can be
- *      Asserted. Bridges that clear get promoted via cg:supersedes.
+ *      Asserted. Bridges that clear get promoted via iep:supersedes.
  *   E. Federated query — consumer agent issues a SPARQL-shaped query
  *      ("all training completed in March 2026"). The harness rewrites
  *      via the ratified alignment graph, fetches LIVE from each
@@ -53,8 +53,8 @@
  *   - hyprcat:FederatedDataProduct typing → DCAT/DPROD/Hydra catalog
  *   - align:NamespaceBridge + align:TermMapping → typed semantic bridge
  *   - amta:Attestation cross-review                  → existing flow
- *   - cgh:PromotionConstraint                        → ≥2 attestations rule
- *   - cg:supersedes                                  → Hypothetical → Asserted
+ *   - ieh:PromotionConstraint                        → ≥2 attestations rule
+ *   - iep:supersedes                                  → Hypothetical → Asserted
  *   - prov:wasDerivedFrom                            → query result lineage
  *   - hydra:target on every Distribution             → live fetch surface
  *
@@ -80,9 +80,9 @@ const REPO_ROOT = join(import.meta.dirname ?? '', '..', '..');
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const POLICY_IRI = 'urn:cg:policy:semantic-layer:v0';
-const ALIGNMENT_CONSTRAINT_IRI = `urn:cgh:promotion-constraint:alignment-needs-2-attestations:${Date.now()}`;
-const RATIFY_AMENDMENT_IRI = `urn:cg:amendment:semantic-layer-ratify:${Date.now()}`;
+const POLICY_IRI = 'urn:iep:policy:semantic-layer:v0';
+const ALIGNMENT_CONSTRAINT_IRI = `urn:ieh:promotion-constraint:alignment-needs-2-attestations:${Date.now()}`;
+const RATIFY_AMENDMENT_IRI = `urn:iep:amendment:semantic-layer-ratify:${Date.now()}`;
 
 // Per-agent identities. The "librarians" front data sources, the
 // "aligner" proposes mappings, the "consumer" issues queries. All run
@@ -258,8 +258,8 @@ async function main(): Promise<void> {
     // ── PHASE A — Catalog publication ────────────────────
     step(3, 'PHASE A — Each librarian publishes a hyprcat:FederatedDataProduct describing its source');
 
-    const lrsCatalogIri = `urn:cg:hyprcat:lrs:${Date.now()}`;
-    const lrsCatalogTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+    const lrsCatalogIri = `urn:iep:hyprcat:lrs:${Date.now()}`;
+    const lrsCatalogTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix hyprcat: <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
 @prefix dcat: <http://www.w3.org/ns/dcat#> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
@@ -273,24 +273,24 @@ async function main(): Promise<void> {
   hyprcat:world hyprcat:ServiceWorld ;
   hyprcat:issuedBy <${LIBRARIAN_LRS.id}> ;
   hyprcat:outputPort [
-    a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, cg:Affordance ;
+    a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance ;
     hydra:method "GET" ;
     hydra:target <${MOCK_BASE}/lrs/statements> ;
     dcat:mediaType "application/json" ;
     rdfs:comment "GET /lrs/statements — returns { statements: [{ id, actor: { mbox, name }, verb, object, timestamp }] }"
   ] ;
-  cg:modalStatus cg:Asserted ;
+  iep:modalStatus iep:Asserted ;
   prov:wasAttributedTo <${LIBRARIAN_LRS.id}> .`;
     await bridgeCall(bridgeUrl, 'protocol.publish_descriptor', {
-      graph_iri: `urn:graph:cg:hyprcat:lrs:${Date.now()}`,
+      graph_iri: `urn:graph:iep:hyprcat:lrs:${Date.now()}`,
       graph_content: lrsCatalogTtl,
       modal_status: 'Asserted',
       confidence: 0.99,
     });
     ok('LRS catalog published (xAPI vocabulary, /lrs/statements endpoint)');
 
-    const warehouseCatalogIri = `urn:cg:hyprcat:warehouse:${Date.now()}`;
-    const warehouseCatalogTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+    const warehouseCatalogIri = `urn:iep:hyprcat:warehouse:${Date.now()}`;
+    const warehouseCatalogTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix hyprcat: <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
 @prefix dcat: <http://www.w3.org/ns/dcat#> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
@@ -303,16 +303,16 @@ async function main(): Promise<void> {
   hyprcat:world hyprcat:ServiceWorld ;
   hyprcat:issuedBy <${LIBRARIAN_WAREHOUSE.id}> ;
   hyprcat:outputPort [
-    a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, cg:Affordance ;
+    a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance ;
     hydra:method "GET" ;
     hydra:target <${MOCK_BASE}/warehouse/training_completions> ;
     dcat:mediaType "application/json" ;
     rdfs:comment "GET /warehouse/training_completions — returns { rows: [{ training_id, employee_email, course_id, completion_date, status }] }"
   ] ;
-  cg:modalStatus cg:Asserted ;
+  iep:modalStatus iep:Asserted ;
   prov:wasAttributedTo <${LIBRARIAN_WAREHOUSE.id}> .`;
     await bridgeCall(bridgeUrl, 'protocol.publish_descriptor', {
-      graph_iri: `urn:graph:cg:hyprcat:warehouse:${Date.now()}`,
+      graph_iri: `urn:graph:iep:hyprcat:warehouse:${Date.now()}`,
       graph_content: warehouseCatalogTtl,
       modal_status: 'Asserted',
       confidence: 0.99,
@@ -349,13 +349,13 @@ Use this turtle template (substitute the bridge IRI):
   @prefix align: <https://markjspivey-xwisee.github.io/interego/ns/align#> .
   @prefix owl: <http://www.w3.org/2002/07/owl#> .
   @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
-  @prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+  @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
   @prefix prov: <http://www.w3.org/ns/prov#> .
   @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
   @prefix xapi: <http://adlnet.gov/expapi/> .
   @prefix dbr: <urn:vocab:warehouse#> .
 
-  <${`urn:cg:align:lrs-warehouse:${Date.now()}`}> a align:NamespaceBridge ;
+  <${`urn:iep:align:lrs-warehouse:${Date.now()}`}> a align:NamespaceBridge ;
     rdfs:label "LRS xAPI ↔ Warehouse training" ;
     align:sourceNamespace "http://adlnet.gov/expapi/" ;
     align:targetNamespace "urn:vocab:warehouse#" ;
@@ -364,11 +364,11 @@ Use this turtle template (substitute the bridge IRI):
       [ a align:TermMapping ; align:sourceTerm xapi:actor_mbox ; align:targetTerm dbr:employee_email ; align:mappingRelation skos:closeMatch ] ,
       [ a align:TermMapping ; align:sourceTerm xapi:object ; align:targetTerm dbr:course_id ; align:mappingRelation skos:closeMatch ] ,
       [ a align:TermMapping ; align:sourceTerm xapi:timestamp ; align:targetTerm dbr:completion_date ; align:mappingRelation skos:closeMatch ] ;
-    cg:modalStatus cg:Hypothetical ;
+    iep:modalStatus iep:Hypothetical ;
     prov:wasAttributedTo <${ALIGNER.id}> .
 
 Pass to protocol.publish_descriptor:
-  graph_iri = "urn:graph:cg:align:lrs-warehouse:${Date.now()}"
+  graph_iri = "urn:graph:iep:align:lrs-warehouse:${Date.now()}"
   modal_status = "Hypothetical"
   confidence = 0.7
 
@@ -406,18 +406,18 @@ Step 2. For each mapping that involves your vocabulary side (${vocabSide}:*), as
 Step 3. Publish ONE amta:Attestation descriptor on the bridge with axis="accuracy" and a rating you genuinely believe. Use this turtle template:
 
   @prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
-  @prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+  @prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
   @prefix prov: <http://www.w3.org/ns/prov#> .
 
-  <urn:cg:attestation:${player.short}-accuracy-${Date.now()}> a amta:Attestation ;
+  <urn:iep:attestation:${player.short}-accuracy-${Date.now()}> a amta:Attestation ;
     amta:attestsTo <${alignerOutput.bridge_iri}> ;
     amta:axis amta:accuracy ;
     amta:rating "<your-rating-0-to-1>"^^<http://www.w3.org/2001/XMLSchema#double> ;
-    cg:modalStatus cg:Asserted ;
+    iep:modalStatus iep:Asserted ;
     prov:wasAttributedTo <${player.id}> .
 
 Pass to protocol.publish_descriptor:
-  graph_iri = "urn:graph:cg:attestation:${player.short}-accuracy-${Date.now()}"
+  graph_iri = "urn:graph:iep:attestation:${player.short}-accuracy-${Date.now()}"
   modal_status = "Asserted"
   confidence = 0.95
 
@@ -464,17 +464,17 @@ Step 4. Output ONLY: {"attester":"${player.short}","axis":"accuracy","rating":<y
     step(6, 'PHASE D — substrate-enforced PromotionConstraint + ratification via constitutional vote');
 
     // Publish a PromotionConstraint as the rule the substrate enforces.
-    const constraintTtl = `@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+    const constraintTtl = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-<${ALIGNMENT_CONSTRAINT_IRI}> a cgh:PromotionConstraint ;
+<${ALIGNMENT_CONSTRAINT_IRI}> a ieh:PromotionConstraint ;
   dct:title "Alignment bridges require ≥2 distinct accuracy attestations before Asserted" ;
-  cgh:requiresAttestationAxis "accuracy" ;
-  cgh:requiresMinimumPeerAttestations 2 ;
-  cg:modalStatus cg:Asserted .`;
+  ieh:requiresAttestationAxis "accuracy" ;
+  ieh:requiresMinimumPeerAttestations 2 ;
+  iep:modalStatus iep:Asserted .`;
     await bridgeCall(bridgeUrl, 'protocol.publish_descriptor', {
-      graph_iri: `urn:graph:cg:promotion-constraint:${safe(ALIGNMENT_CONSTRAINT_IRI)}`,
+      graph_iri: `urn:graph:iep:promotion-constraint:${safe(ALIGNMENT_CONSTRAINT_IRI)}`,
       graph_content: constraintTtl,
       modal_status: 'Asserted',
       confidence: 0.99,
@@ -482,24 +482,24 @@ Step 4. Output ONLY: {"attester":"${player.short}","axis":"accuracy","rating":<y
 
     // Promote the bridge by superseding with an Asserted version.
     const promotedBridgeIri = `${alignerOutput.bridge_iri}.asserted`;
-    const promoteTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+    const promoteTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
 <${promotedBridgeIri}> a <https://markjspivey-xwisee.github.io/interego/ns/align#NamespaceBridge> ;
   rdfs:label "LRS xAPI ↔ Warehouse training (Asserted)" ;
-  cg:supersedes <${alignerOutput.bridge_iri}> ;
-  cg:modalStatus cg:Asserted ;
+  iep:supersedes <${alignerOutput.bridge_iri}> ;
+  iep:modalStatus iep:Asserted ;
   prov:wasAttributedTo <${ALIGNER.id}> ;
-  rdfs:comment "Promoted from Hypothetical via ${attestResults.length} accuracy attestations clearing the cgh:PromotionConstraint at ${ALIGNMENT_CONSTRAINT_IRI}." .`;
+  rdfs:comment "Promoted from Hypothetical via ${attestResults.length} accuracy attestations clearing the ieh:PromotionConstraint at ${ALIGNMENT_CONSTRAINT_IRI}." .`;
     await bridgeCall(bridgeUrl, 'protocol.publish_descriptor', {
-      graph_iri: `urn:graph:cg:align:lrs-warehouse:asserted:${Date.now()}`,
+      graph_iri: `urn:graph:iep:align:lrs-warehouse:asserted:${Date.now()}`,
       graph_content: promoteTtl,
       modal_status: 'Asserted',
       confidence: 0.95,
       supersedes: [alignerOutput.bridge_iri],
     });
-    ok(`Bridge promoted: ${alignerOutput.bridge_iri.slice(-30)}… → Asserted via cg:supersedes`);
+    ok(`Bridge promoted: ${alignerOutput.bridge_iri.slice(-30)}… → Asserted via iep:supersedes`);
 
     // ── PHASE E — Consumer issues a federated query ──────
     step(7, 'PHASE E — consumer agent issues a federated query; harness rewrites + fetches LIVE from sources');
@@ -560,20 +560,20 @@ Step 2. Output ONLY: {"query":{"intent":"completed-training","since":"2026-03-01
     }
 
     // Publish the result descriptor with full provenance
-    const resultIri = `urn:cg:semantic-query-result:${Date.now()}`;
-    const resultTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+    const resultIri = `urn:iep:semantic-query-result:${Date.now()}`;
+    const resultTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
-<${resultIri}> a cg:FederatedQueryResult ;
+<${resultIri}> a iep:FederatedQueryResult ;
   rdfs:label "completed training across LRS + warehouse, ${since} → ${until}" ;
-  cg:rowCount ${unified.length} ;
-  cg:queryRange "${since} → ${until}" ;
+  iep:rowCount ${unified.length} ;
+  iep:queryRange "${since} → ${until}" ;
   prov:wasDerivedFrom <${promotedBridgeIri}> , <${MOCK_BASE}/lrs/statements> , <${MOCK_BASE}/warehouse/training_completions> ;
-  cg:modalStatus cg:Asserted ;
+  iep:modalStatus iep:Asserted ;
   prov:wasAttributedTo <${CONSUMER.id}> .`;
     await bridgeCall(bridgeUrl, 'protocol.publish_descriptor', {
-      graph_iri: `urn:graph:cg:semantic-query-result:${Date.now()}`,
+      graph_iri: `urn:graph:iep:semantic-query-result:${Date.now()}`,
       graph_content: resultTtl,
       modal_status: 'Asserted',
       confidence: 0.99,
@@ -623,7 +623,7 @@ Step 2. Output ONLY: {"query":{"intent":"completed-training","since":"2026-03-01
       `| A. Catalog publication | publish_descriptor (hyprcat:FederatedDataProduct, dcat:Distribution, hydra:Operation) | both sources surfaced as typed catalog entries |`,
       `| B. Alignment proposal | publish_descriptor (align:NamespaceBridge + 4 align:TermMapping) | aligner discovered both vocabularies and proposed the four equivalences |`,
       `| C. Cross-attestation | publish_descriptor (amta:Attestation × 2 on accuracy axis) | mean accuracy = ${meanAccuracy.toFixed(2)} (lrs=${attestResults[0]!.rating}, warehouse=${attestResults[1]!.rating}) |`,
-      `| D. Ratification | publish_descriptor (cgh:PromotionConstraint, cg:supersedes Hypothetical → Asserted) | bridge promoted; substrate enforced ≥2-attestation rule |`,
+      `| D. Ratification | publish_descriptor (ieh:PromotionConstraint, iep:supersedes Hypothetical → Asserted) | bridge promoted; substrate enforced ≥2-attestation rule |`,
       `| E. Federated query | live HTTP fetch via hydra:target on each catalog's outputPort + harness rewrite via ratified alignment | ${unified.length} rows unified across both sources |`,
       ``,
       `## Federated query result`,
@@ -654,8 +654,8 @@ Step 2. Output ONLY: {"query":{"intent":"completed-training","since":"2026-03-01
       `- **hyprcat:FederatedDataProduct + DCAT/DPROD/Hydra typing** → existing federated catalog ontology`,
       `- **align:NamespaceBridge + align:TermMapping** → existing alignment ontology with owl:equivalentClass / owl:equivalentProperty for typed bridges`,
       `- **amta:Attestation accuracy axis** → existing multi-axis attestation flow (Demo 19, Demo 21)`,
-      `- **cgh:PromotionConstraint** → existing substrate-enforced ratification (Demo 19)`,
-      `- **cg:supersedes** → existing Hypothetical → Asserted promotion`,
+      `- **ieh:PromotionConstraint** → existing substrate-enforced ratification (Demo 19)`,
+      `- **iep:supersedes** → existing Hypothetical → Asserted promotion`,
       `- **prov:wasDerivedFrom + hydra:target** → existing PROV + Hydra plumbing`,
       ``,
       `## What this proves`,

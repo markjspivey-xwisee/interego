@@ -10,7 +10,30 @@
 
 // ── Namespace IRIs ───────────────────────────────────────────
 
-export const CG   = 'https://markjspivey-xwisee.github.io/interego/ns/cg#' as const;
+/**
+ * The L1 protocol namespace — the **Interego Protocol** (`iep:`). This is the
+ * canonical base for all core descriptor / facet / composition / affordance
+ * terms. (Renamed from the former "Context Graphs" `cg:` / `/ns/cg#` namespace;
+ * `CG` below is retained as a deprecated read-alias so existing imports compile
+ * and legacy `cg:` data still resolves.)
+ */
+export const IEP  = 'https://markjspivey-xwisee.github.io/interego/ns/iep#' as const;
+
+/**
+ * The legacy `cg:` ("Context Graphs") base. Retained ONLY for backward
+ * compatibility: descriptors signed/persisted before the rename carry these
+ * IRIs in their signed bytes (so they must still parse, dereference, and match)
+ * — `canonicalize()` maps them onto {@link IEP}. New writes use `iep:`.
+ * @deprecated use {@link IEP}
+ */
+export const CG_LEGACY = 'https://markjspivey-xwisee.github.io/interego/ns/cg#' as const;
+
+/**
+ * @deprecated historical symbol — now an alias of {@link IEP} (the Interego
+ * Protocol namespace). Kept so the ~230 modules importing `CG`/`CGClass`/… keep
+ * compiling while emitting the new `iep:` IRIs. Prefer `IEP` in new code.
+ */
+export const CG = IEP;
 export const RDF  = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#' as const;
 export const RDFS = 'http://www.w3.org/2000/01/rdf-schema#' as const;
 export const XSD  = 'http://www.w3.org/2001/XMLSchema#' as const;
@@ -35,7 +58,8 @@ export const SKOS = 'http://www.w3.org/2004/02/skos/core#' as const;
 // ── Prefix Map ───────────────────────────────────────────────
 
 export const PREFIXES = {
-  cg:    CG,
+  iep:   IEP,        // L1 protocol — Interego Protocol (canonical; listed first so compact() prefers it)
+  cg:    CG_LEGACY,  // @deprecated read-alias of iep: for legacy "Context Graphs" data
   rdf:   RDF,
   rdfs:  RDFS,
   xsd:   XSD,
@@ -218,7 +242,7 @@ export const CGSyncProtocol = {
 
 /**
  * Expand a prefixed name to a full IRI.
- * @example expand('cg:ContextDescriptor') → 'https://markjspivey-xwisee.github.io/interego/ns/cg#ContextDescriptor'
+ * @example expand('iep:ContextDescriptor') → 'https://markjspivey-xwisee.github.io/interego/ns/iep#ContextDescriptor'
  */
 export function expand(prefixed: string): string {
   const colon = prefixed.indexOf(':');
@@ -227,6 +251,18 @@ export function expand(prefixed: string): string {
   const ns = PREFIXES[prefix];
   if (!ns) return prefixed;
   return `${ns}${prefixed.slice(colon + 1)}`;
+}
+
+/**
+ * Normalize a legacy `cg:` ("Context Graphs") IRI onto the canonical
+ * {@link IEP} ("Interego Protocol") namespace. Apply this on the READ /
+ * deserialize / type-match path so descriptors persisted before the rename
+ * (which carry `…/ns/cg#…` IRIs in their immutable, signed bytes) still match
+ * the same terms. New IRIs pass through unchanged. Never rewrite persisted
+ * bytes with this — only the in-memory comparison value.
+ */
+export function canonicalize(iri: string): string {
+  return iri.startsWith(CG_LEGACY) ? `${IEP}${iri.slice(CG_LEGACY.length)}` : iri;
 }
 
 /**

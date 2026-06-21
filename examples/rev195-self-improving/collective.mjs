@@ -283,8 +283,8 @@ async function postTeach({ teacher, learner, judgeVerdict }) {
   // BehaviourSignature describing the "reuse-before-write" capability
   // we want transferred.
   const teachingPackage = {
-    iri: `urn:cg:teaching:reuse-before-write:${Date.now()}`,
-    artifactIri: 'urn:cg:tool:grep-before-edit',
+    iri: `urn:iep:teaching:reuse-before-write:${Date.now()}`,
+    artifactIri: 'urn:iep:tool:grep-before-edit',
     competency: 'reuse existing patterns before writing fresh code',
     olkeStage: 'Articulate',
     modalStatus: 'Hypothetical',
@@ -316,7 +316,7 @@ async function postTeach({ teacher, learner, judgeVerdict }) {
       steps: ['write from scratch', 'invent boilerplate', 'duplicate pattern', 'commit large new file'].map((p, i) => ({
         id: `b${i}`, modalStatus: 'Asserted', granularity: 'tool-call',
         verb: p.split(' ')[0], objectId: `urn:obj:b${i}`, objectName: p, recordedAt: new Date().toISOString(),
-        descriptor: { id: `urn:cg:trajectory-step:b${i}`, facets: [] },
+        descriptor: { id: `urn:iep:trajectory-step:b${i}`, facets: [] },
       })),
     }],
     after: [{
@@ -326,7 +326,7 @@ async function postTeach({ teacher, learner, judgeVerdict }) {
       steps: ['grep existing', 'read pattern', 'reuse helper', 'search again', 'reuse', 'commit small diff'].map((p, i) => ({
         id: `a${i}`, modalStatus: 'Asserted', granularity: 'tool-call',
         verb: p.split(' ')[0], objectId: `urn:obj:a${i}`, objectName: p, recordedAt: new Date().toISOString(),
-        descriptor: { id: `urn:cg:trajectory-step:a${i}`, facets: [] },
+        descriptor: { id: `urn:iep:trajectory-step:a${i}`, facets: [] },
       })),
     }],
   };

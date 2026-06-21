@@ -27,9 +27,9 @@ These ontologies define terms that conforming implementations MUST honor. Terms 
 | File | Prefix | Kind | Terms | What it defines |
 |---|---|---|---|---|
 | [`pgsl.ttl`](pgsl.ttl) | `pgsl:` | OWL | 35 | **Substrate.** Poly-Granular Sequence Lattice — atoms, fragments, pullback squares, transitive containment, SHACL shapes (Atom, Fragment, PullbackSquare, ConstituentIntegrity, LevelConsistency, OverlapValidity, Acyclicity, Canonicality). |
-| [`cg.ttl`](cg.ttl) | `cg:` | OWL | 284 | **Typed-context.** ContextDescriptor with seven facet types + Causal + Projection, composition operators, federation, data products (cg:DataProduct), affordances (cg:Affordance + individuals canPublish/canDiscover/canSubscribe/canFetchPayload/canDecrypt), encryption classes (EncryptedGraphEnvelope, EncryptedValue, GraphPayload), auth-methods (AuthMethods, WebAuthnCredential, DIDKey, EthereumWallet), coherence (CoherenceCertificate + enum Equal/Divergent/Subset/Intersect/Union/Exclude), paradigm / persistence / causal / pod-catalog / session-log types. |
+| [`cg.ttl`](cg.ttl) | `iep:` | OWL | 284 | **Typed-context.** ContextDescriptor with seven facet types + Causal + Projection, composition operators, federation, data products (iep:DataProduct), affordances (iep:Affordance + individuals canPublish/canDiscover/canSubscribe/canFetchPayload/canDecrypt), encryption classes (EncryptedGraphEnvelope, EncryptedValue, GraphPayload), auth-methods (AuthMethods, WebAuthnCredential, DIDKey, EthereumWallet), coherence (CoherenceCertificate + enum Equal/Divergent/Subset/Intersect/Union/Exclude), paradigm / persistence / causal / pod-catalog / session-log types. |
 | [`interego.ttl`](interego.ttl) | `ie:` | OWL | 34 | **Interrogatives.** User-facing grammar of eleven canonical interrogatives (Who/What/Where/When/Why/How/Which/WhatKind/HowMuch/Whose/Whether) with typed cross-layer mapping. |
-| [`harness.ttl`](harness.ttl) | `cgh:` | OWL | 163 | **Agent harness.** Abstract Agent Types (AAT), ODRL policy engine, PROV traces, runtime evaluation with confidence scoring, decision functor, affordance decorators (`cgh:Affordance rdfs:subClassOf hydra:Operation`), Protocol-and-app self-bootstrapping (`cgh:Protocol`, `cgh:WorkflowApp`, `cgh:protocolConformance`), substrate-enforced governance (`cgh:PromotionConstraint`), complexity-aware vocab (`cgh:isAdjacentPossibleTo`, `cgh:RealignmentMeasure`), and agent-runtime integration typing (`cgh:AgentMemory`, `cgh:AgentAction`, `cgh:outcome`, `cgh:durationMs`, `cgh:sessionId`, `cgh:toolArgs`). |
+| [`harness.ttl`](harness.ttl) | `ieh:` | OWL | 163 | **Agent harness.** Abstract Agent Types (AAT), ODRL policy engine, PROV traces, runtime evaluation with confidence scoring, decision functor, affordance decorators (`ieh:Affordance rdfs:subClassOf hydra:Operation`), Protocol-and-app self-bootstrapping (`ieh:Protocol`, `ieh:WorkflowApp`, `ieh:protocolConformance`), substrate-enforced governance (`ieh:PromotionConstraint`), complexity-aware vocab (`ieh:isAdjacentPossibleTo`, `ieh:RealignmentMeasure`), and agent-runtime integration typing (`ieh:AgentMemory`, `ieh:AgentAction`, `ieh:outcome`, `ieh:durationMs`, `ieh:sessionId`, `ieh:toolArgs`). |
 | [`alignment.ttl`](alignment.ttl) | `align:` | OWL | 22 | **Cross-layer glue.** Equivalences, SKOS matches, and W3C vocabulary alignments (Hydra, ODRL, ACL, VC 2.0, DCAT, DPROD, OWL-Time) across all twenty namespaces. |
 
 ### Federation mesh ontologies (Layer 2 — Architecture, informative)
@@ -38,8 +38,8 @@ Applicability-note ontologies describing patterns that implementations tend to a
 
 | File | Prefix | Terms | What it defines |
 |---|---|---|---|
-| [`hyprcat.ttl`](hyprcat.ttl) | `hyprcat:` | 18 | **Federated data-product catalog.** Decorates DCAT + DPROD with distributed identity, affordance-bearing distributions, and the three-world federation boundary (UserWorld / AgentWorld / ServiceWorld). `hyprcat:FederatedDistribution` is simultaneously `dcat:Distribution`, `cg:Affordance`, `cgh:Affordance`, and `hydra:Operation`. |
-| [`hypragent.ttl`](hypragent.ttl) | `hypragent:` | 18 | **Agent machinery for HyprCat.** Cross-world delegation via W3C Verifiable Credentials chains, capability typing (canDecryptEnvelope, canPublishContext, canVerifyDelegation, canSubscribe), dispatch-time policy evaluation. `hypragent:Agent` is simultaneously `prov:SoftwareAgent`, `cg:AuthorizedAgent`, and `cgh:Agent`. |
+| [`hyprcat.ttl`](hyprcat.ttl) | `hyprcat:` | 18 | **Federated data-product catalog.** Decorates DCAT + DPROD with distributed identity, affordance-bearing distributions, and the three-world federation boundary (UserWorld / AgentWorld / ServiceWorld). `hyprcat:FederatedDistribution` is simultaneously `dcat:Distribution`, `iep:Affordance`, `ieh:Affordance`, and `hydra:Operation`. |
+| [`hypragent.ttl`](hypragent.ttl) | `hypragent:` | 18 | **Agent machinery for HyprCat.** Cross-world delegation via W3C Verifiable Credentials chains, capability typing (canDecryptEnvelope, canPublishContext, canVerifyDelegation, canSubscribe), dispatch-time policy evaluation. `hypragent:Agent` is simultaneously `prov:SoftwareAgent`, `iep:AuthorizedAgent`, and `ieh:Agent`. |
 | [`abac.ttl`](abac.ttl) | `abac:` | 16 | **Attribute-based access control.** `abac:Policy` as a typed context descriptor with SHACL predicates; `abac:Evaluator`, `abac:AttributeResolver`, `abac:DecisionCache`, `abac:PolicyContext`, `abac:EvaluationRecord`. Reference runtime in [`src/abac/`](../../src/abac/). |
 | [`registry.ttl`](registry.ttl) | `registry:` | 17 | **Public agent attestation registry.** Federated NPM-for-AI-agents primitive: multiple registries co-exist, reputation aggregates cross-registry. Reference runtime in [`src/registry/`](../../src/registry/). |
 | [`passport.ttl`](passport.ttl) | `passport:` | 15 | **Capability passport.** Persistent agent biographical identity that survives infrastructure migration (framework / pod / model changes) — life events, demonstrated values. Reference runtime in [`src/passport/`](../../src/passport/). |
@@ -48,20 +48,20 @@ Applicability-note ontologies describing patterns that implementations tend to a
 
 These ontologies live here for convenience while the project is early, but they are conceptually independent of the core protocol. Each one could be spun out to a separate repository with its own governance without affecting conformance to Interego 1.0. None of these are required for protocol conformance; any of them MAY be omitted by an implementation that does not target the domain.
 
-**When to write a new ontology under this section rather than extending a core layer:** if the claim the ontology expresses would not transplant into a different domain with the same semantics (medical research, coding agents, finance, organizational learning), it belongs here, not in `cg:`/`cgh:`/`pgsl:`/`ie:`/`align:`.
+**When to write a new ontology under this section rather than extending a core layer:** if the claim the ontology expresses would not transplant into a different domain with the same semantics (medical research, coding agents, finance, organizational learning), it belongs here, not in `iep:`/`ieh:`/`pgsl:`/`ie:`/`align:`.
 
 | File | Prefix | Terms | What it defines |
 |---|---|---|---|
-| [`hela.ttl`](hela.ttl) | `hela:` | 7 | **Topos-theoretic xAPI.** Statements as a presheaf category ℰ = Set^(𝒞_xAPI^op). Statement / Actor / Verb / LearningObject / Trace / SubobjectClassifier. Aligned with `cg:ProvenanceFacet`. |
-| [`sat.ttl`](sat.ttl) | `sat:` | 10 | **Semiotic Agent Topos.** Semiotic Field Functor Σ : Situations → SemioticFields. `sat:SemioticFieldFunctor owl:equivalentClass cg:SemioticFacet`. |
-| [`cts.ttl`](cts.ttl) | `cts:` | 11 | **Compositional Tuple Store.** Usage-based linguistic substrate — meaning is usage, structure emerges from usage. `cts:Pattern owl:equivalentClass cg:SyntagmaticPattern`. |
-| [`olke.ttl`](olke.ttl) | `olke:` | 11 | **Organizational Learning & Knowledge Evolution.** Four-stage ladder Tacit → Articulate → Collective → Institutional; annotates `cg:ContextDescriptor` with current stage. |
-| [`amta.ttl`](amta.ttl) | `amta:` | 14 | **Agent-Mediated Trust Attestation.** Multi-axis trust (competence / honesty / relevance / recency). `amta:Attestation rdfs:subClassOf cg:TrustFacet`. |
-| [`code.ttl`](code.ttl) | `code:` | 35 | **Source-code domain.** Repository, Commit, Branch, PullRequest, Review, Defect, TestRun, BuildResult. Commits are `pgsl:Fragment`; branches are `cg:ParadigmSet`; reviews `cg:constructedFrom (cg:SemioticFacet cg:ProvenanceFacet)`. First L3 domain example. |
+| [`hela.ttl`](hela.ttl) | `hela:` | 7 | **Topos-theoretic xAPI.** Statements as a presheaf category ℰ = Set^(𝒞_xAPI^op). Statement / Actor / Verb / LearningObject / Trace / SubobjectClassifier. Aligned with `iep:ProvenanceFacet`. |
+| [`sat.ttl`](sat.ttl) | `sat:` | 10 | **Semiotic Agent Topos.** Semiotic Field Functor Σ : Situations → SemioticFields. `sat:SemioticFieldFunctor owl:equivalentClass iep:SemioticFacet`. |
+| [`cts.ttl`](cts.ttl) | `cts:` | 11 | **Compositional Tuple Store.** Usage-based linguistic substrate — meaning is usage, structure emerges from usage. `cts:Pattern owl:equivalentClass iep:SyntagmaticPattern`. |
+| [`olke.ttl`](olke.ttl) | `olke:` | 11 | **Organizational Learning & Knowledge Evolution.** Four-stage ladder Tacit → Articulate → Collective → Institutional; annotates `iep:ContextDescriptor` with current stage. |
+| [`amta.ttl`](amta.ttl) | `amta:` | 14 | **Agent-Mediated Trust Attestation.** Multi-axis trust (competence / honesty / relevance / recency). `amta:Attestation rdfs:subClassOf iep:TrustFacet`. |
+| [`code.ttl`](code.ttl) | `code:` | 35 | **Source-code domain.** Repository, Commit, Branch, PullRequest, Review, Defect, TestRun, BuildResult. Commits are `pgsl:Fragment`; branches are `iep:ParadigmSet`; reviews `iep:constructedFrom (iep:SemioticFacet iep:ProvenanceFacet)`. First L3 domain example. |
 | [`eu-ai-act.ttl`](eu-ai-act.ttl) | `eu-ai-act:` | 17 | **EU AI Act mapping.** Articles 6, 9, 10, 12, 13, 14, 15, 50. Lets compliance teams query an Interego pod using the regulation's own vocabulary. |
 | [`nist-rmf.ttl`](nist-rmf.ttl) | `nist-rmf:` | 20 | **NIST AI Risk Management Framework.** Govern / Map / Measure / Manage four-function model. Used together with `compliance: true` publishes for L4 conformance. |
 | [`soc2.ttl`](soc2.ttl) | `soc2:` | 63 | **AICPA SOC 2 Trust Services Criteria.** Common Criteria + Availability + Processing Integrity + Confidentiality + Privacy. Operational event subtypes (DeployEvent, AccessChangeEvent, KeyRotationEvent, IncidentEvent, QuarterlyReviewEvent) emitted by [`src/ops/`](../../src/ops/) — Interego eats its own dog food as the SOC 2 evidence substrate. |
-| [`wks.ttl`](wks.ttl) | `wks:` | 11 | **Weak-Signal vocabulary.** Snowden-informed sensemaking. `wks:WeakSignal` (subclass of `cg:ContextDescriptor`, always Hypothetical), `wks:Reinforcement` (cross-observer aggregation count), `wks:NarrativeEvidence` (anchoring micro-narrative). Reinforcement is structural — two observers minting the same `wks:about` subject reinforce each other automatically via SPARQL. Used in Demo 18 + Demo 21. |
+| [`wks.ttl`](wks.ttl) | `wks:` | 11 | **Weak-Signal vocabulary.** Snowden-informed sensemaking. `wks:WeakSignal` (subclass of `iep:ContextDescriptor`, always Hypothetical), `wks:Reinforcement` (cross-observer aggregation count), `wks:NarrativeEvidence` (anchoring micro-narrative). Reinforcement is structural — two observers minting the same `wks:about` subject reinforce each other automatically via SPARQL. Used in Demo 18 + Demo 21. |
 
 ### SHACL shape files
 
@@ -69,15 +69,15 @@ These ontologies live here for convenience while the project is early, but they 
 |---|---|---|
 | [`pgsl-shapes.ttl`](pgsl-shapes.ttl) | `pgsl:` | Shape file for PGSL invariants |
 | [`interego-shapes.ttl`](interego-shapes.ttl) | `ie:` | Shape file for interrogative bindings |
-| [`harness-shapes.ttl`](harness-shapes.ttl) | `cgh:` | Shape file for harness structures |
+| [`harness-shapes.ttl`](harness-shapes.ttl) | `ieh:` | Shape file for harness structures |
 
-**Totals (2026-04-26):** 19 ontology files, 1 alignment file, 3 SHACL shape files (cg-shapes-1.2.ttl is a draft tracking the SHACL 1.2 CR). Term count by namespace — `cg:` 336, `cgh:` 138, `pgsl:` 35, `ie:` 34, `align:` 22, `hyprcat:` 18, `hypragent:` 18, `abac:` 16, `registry:` 17, `passport:` 15, `hela:` 9, `sat:` 12, `cts:` 13, `olke:` 12, `amta:` 14, `code:` 35, `eu-ai-act:` 17, `nist-rmf:` 20, `soc2:` 63. CI lint enforces every term used in TS code has a matching declaration here.
+**Totals (2026-04-26):** 19 ontology files, 1 alignment file, 3 SHACL shape files (cg-shapes-1.2.ttl is a draft tracking the SHACL 1.2 CR). Term count by namespace — `iep:` 336, `ieh:` 138, `pgsl:` 35, `ie:` 34, `align:` 22, `hyprcat:` 18, `hypragent:` 18, `abac:` 16, `registry:` 17, `passport:` 15, `hela:` 9, `sat:` 12, `cts:` 13, `olke:` 12, `amta:` 14, `code:` 35, `eu-ai-act:` 17, `nist-rmf:` 20, `soc2:` 63. CI lint enforces every term used in TS code has a matching declaration here.
 
 ## Ontology-lint CI gate
 
 Every push touching TypeScript source is checked by `tools/ontology-lint.mjs`, which scans code for `<prefix>:<Term>` emissions and verifies each term exists in the corresponding `docs/ns/<prefix>.ttl` file. Known-external prefixes (rdf, rdfs, xsd, owl, sh, skos, vann, dct, dcat, dprod, prov, time, foaf, vc, hydra, acl, solid, ldp, odrl, did, schema, oa, as) are exempt. See [`tools/ontology-lint.mjs`](../../tools/ontology-lint.mjs) and [`.github/workflows/ontology-lint.yml`](../../.github/workflows/ontology-lint.yml).
 
-Any new code that emits `cg:NewType` without a matching declaration in `cg.ttl` **fails CI** — the forcing function that keeps the ontology in sync with runtime.
+Any new code that emits `iep:NewType` without a matching declaration in `cg.ttl` **fails CI** — the forcing function that keeps the ontology in sync with runtime.
 
 ## Layering philosophy
 
@@ -85,13 +85,13 @@ The three layers are **independent but co-designed**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         cgh: (harness)                          │
+│                         ieh: (harness)                          │
 │    agents, policies, eval, decorators, PROV traces              │
 │    — operates ON pgsl state, produces cg descriptors —          │
 └─────────────────────────────────────────────────────────────────┘
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      cg: (context descriptors)                  │
+│                      iep: (context descriptors)                  │
 │    typed metadata ABOUT named graphs                            │
 │    — describes pgsl fragments + atoms —                         │
 └─────────────────────────────────────────────────────────────────┘
@@ -103,7 +103,7 @@ The three layers are **independent but co-designed**:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**You can use each layer independently.** `pgsl.ttl` is a complete ontology for the lattice substrate with no dependency on `cg:` or `cgh:`. `context-graphs.ttl` describes typed metadata that can be applied to any Named Graph, with or without a PGSL substrate. `harness.ttl` models the agent framework and could wrap any RDF store, not just a PGSL one.
+**You can use each layer independently.** `pgsl.ttl` is a complete ontology for the lattice substrate with no dependency on `iep:` or `ieh:`. `context-graphs.ttl` describes typed metadata that can be applied to any Named Graph, with or without a PGSL substrate. `harness.ttl` models the agent framework and could wrap any RDF store, not just a PGSL one.
 
 **When you want them to work together,** import [`alignment.ttl`](alignment.ttl). It imports all three layer ontologies and adds the cross-layer axioms, SKOS matches, and named integration patterns that tie them into a single coherent system.
 
@@ -160,7 +160,7 @@ for (const entry of ONTOLOGY_MANIFEST) {
 
 The canonical URLs resolve to this directory via GitHub Pages:
 
-- `https://markjspivey-xwisee.github.io/interego/ns/cg.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/iep.ttl`
 - `https://markjspivey-xwisee.github.io/interego/ns/pgsl.ttl`
 - `https://markjspivey-xwisee.github.io/interego/ns/pgsl-shapes.ttl`
 - `https://markjspivey-xwisee.github.io/interego/ns/harness.ttl`

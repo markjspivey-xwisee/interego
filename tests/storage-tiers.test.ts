@@ -113,12 +113,12 @@ describe('Tier 0 — library-only (no daemon, no pod, no network)', () => {
 
 
     // 1. Build
-    const desc = ContextDescriptor.create('urn:cg:tier0-test' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:tier0-test' as IRI)
       .describes('urn:graph:tier0-data' as IRI)
       .temporal({ validFrom: '2026-04-26T00:00:00Z' })
       .selfAsserted('did:key:z6Mkfoo' as IRI)
       .build();
-    expect(desc.id).toBe('urn:cg:tier0-test');
+    expect(desc.id).toBe('urn:iep:tier0-test');
 
     // 2. Validate (in-process SHACL-equivalent)
     const result = validate(desc);
@@ -126,7 +126,7 @@ describe('Tier 0 — library-only (no daemon, no pod, no network)', () => {
 
     // 3. Serialize to Turtle
     const turtle = toTurtle(desc);
-    expect(turtle).toContain('cg:ContextDescriptor');
+    expect(turtle).toContain('iep:ContextDescriptor');
     expect(turtle).toContain('did:key:z6Mkfoo');
 
     // 4. Compute IPFS CID (no network — pure SHA-256 + multihash)
@@ -150,12 +150,12 @@ describe('Tier 0 — library-only (no daemon, no pod, no network)', () => {
 
   it('composes two descriptors with union — composition is in-process', () => {
 
-    const a = ContextDescriptor.create('urn:cg:a' as IRI)
+    const a = ContextDescriptor.create('urn:iep:a' as IRI)
       .describes('urn:graph:shared' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .selfAsserted('did:key:alice' as IRI)
       .build();
-    const b = ContextDescriptor.create('urn:cg:b' as IRI)
+    const b = ContextDescriptor.create('urn:iep:b' as IRI)
       .describes('urn:graph:shared' as IRI)
       .temporal({ validFrom: '2026-02-01T00:00:00Z' })
       .selfAsserted('did:key:bob' as IRI)
@@ -176,7 +176,7 @@ describe('Tier 1 — local single-machine pod (in-memory pod proxy)', () => {
 
     const pod = new InMemoryPod('http://localhost:3456/alice/');
 
-    const desc = ContextDescriptor.create('urn:cg:tier1-test' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:tier1-test' as IRI)
       .describes('urn:graph:tier1-data' as IRI)
       .temporal({ validFrom: '2026-04-26T00:00:00Z' })
       .selfAsserted('did:key:z6Mkalice' as IRI)
@@ -208,7 +208,7 @@ describe('Tier 1 — local single-machine pod (in-memory pod proxy)', () => {
     const pod = new InMemoryPod('http://localhost:3456/alice/');
 
     for (let i = 0; i < 3; i++) {
-      const desc = ContextDescriptor.create(`urn:cg:tier1-multi-${i}` as IRI)
+      const desc = ContextDescriptor.create(`urn:iep:tier1-multi-${i}` as IRI)
         .describes(`urn:graph:tier1-multi-${i}` as IRI)
         .temporal({ validFrom: '2026-04-26T00:00:00Z' })
         .selfAsserted('did:key:z6Mkalice' as IRI)
@@ -249,7 +249,7 @@ describe('Tier 4 — federated across pods (two in-memory pods)', () => {
     };
 
     // Alice publishes a claim
-    const aliceDesc = ContextDescriptor.create('urn:cg:tier4-alice' as IRI)
+    const aliceDesc = ContextDescriptor.create('urn:iep:tier4-alice' as IRI)
       .describes('urn:graph:tier4-shared-claim' as IRI)
       .temporal({ validFrom: '2026-04-26T00:00:00Z' })
       .selfAsserted('did:key:z6Mkalice' as IRI)
@@ -286,7 +286,7 @@ describe('Tier 4 — federated across pods (two in-memory pods)', () => {
 
     // Alice + Bob each publish a different claim
     await publish(
-      ContextDescriptor.create('urn:cg:tier4-alice-claim' as IRI)
+      ContextDescriptor.create('urn:iep:tier4-alice-claim' as IRI)
         .describes('urn:graph:alice-claim' as IRI)
         .temporal({ validFrom: '2026-04-26T00:00:00Z' })
         .selfAsserted('did:key:z6Mkalice' as IRI).build(),
@@ -295,7 +295,7 @@ describe('Tier 4 — federated across pods (two in-memory pods)', () => {
       { fetch: federatedFetch },
     );
     await publish(
-      ContextDescriptor.create('urn:cg:tier4-bob-claim' as IRI)
+      ContextDescriptor.create('urn:iep:tier4-bob-claim' as IRI)
         .describes('urn:graph:bob-claim' as IRI)
         .temporal({ validFrom: '2026-04-26T00:00:00Z' })
         .selfAsserted('did:key:z6Mkbob' as IRI).build(),

@@ -35,15 +35,15 @@ primitives — what changes is how tightly the runtime wraps them.
                        ▼
     ┌─ Path 1 ─ MCP server (config-only)        ── L1 primitives
     │  Path 2 ─ OpenClaw memory-engine plugin   ── L2 patterns
-    │  Path 3 ─ SKILL.md as cg:Affordance       ── L1 primitives
+    │  Path 3 ─ SKILL.md as iep:Affordance       ── L1 primitives
     │  Path 4 ─ Compliance overlay              ── L3 mappings
     └─ Path 5 ─ Hermes memory provider          ── L2 patterns
                        │
                        ▼
-    Interego substrate (Context Graphs 1.0):
+    Interego substrate (Interego Protocol 1.0):
       typed descriptors / 7 facets / 4 ops /
       modal status / supersedes chains / PGSL /
-      DIDs / E2EE / federated pods / amta: / cgh:
+      DIDs / E2EE / federated pods / amta: / ieh:
 ```
 
 Each path is independently adoptable. Adopting Path 1 does not block
@@ -75,7 +75,7 @@ through the substrate without LLM discretion.
 OpenClaw's `memory_store` / `memory_recall` / `memory_forget` tool
 calls — and OpenClaw's auto-recall / auto-capture hooks — flow through
 the substrate transparently. Every memory write becomes a typed,
-signed `cg:ContextDescriptor` with proper modal status.
+signed `iep:ContextDescriptor` with proper modal status.
 
 The plugin claims OpenClaw's exclusive `plugins.slots.memory` slot.
 It does not introduce any Interego concept OpenClaw doesn't already
@@ -100,7 +100,7 @@ memory-plugin slot, fall back to Path 1.
 
 ---
 
-## Path 3 — SKILL.md as `cg:Affordance`
+## Path 3 — SKILL.md as `iep:Affordance`
 
 **Effort:** small library + bidirectional translator (~1 file). **What
 you gain:** the entire agentskills.io ecosystem — already adopted by
@@ -109,10 +109,10 @@ becomes a federated, attestable, governable layer.
 
 A SKILL.md is *structurally* an affordance: a discoverable named
 capability with metadata, instructions, and optional resources. The
-substrate already has `cg:Affordance` and the affordance engine. The
+substrate already has `iep:Affordance` and the affordance engine. The
 translator goes both ways:
 
-* **publish:** `SKILL.md` directory → typed `cg:Affordance` descriptor
+* **publish:** `SKILL.md` directory → typed `iep:Affordance` descriptor
   on a pod, with PROV provenance, modal status, signed authorship.
 * **discover:** any cross-pod `discover` for affordances yields back
   a SKILL.md directory the runtime can drop into `~/.hermes/skills/` or
@@ -122,8 +122,8 @@ What falls out by composition (no new code):
 
 * Multi-axis attestation via `amta:` (correctness / safety / efficiency)
 * Modal-status promotion from Hypothetical → Asserted
-* `cg:supersedes` for skill versioning
-* `cgh:PromotionConstraint` for governance ("safety axis required
+* `iep:supersedes` for skill versioning
+* `ieh:PromotionConstraint` for governance ("safety axis required
   before this skill is Asserted")
 * Federated discovery — bob's skill is discoverable from alice's pod
   if bob has shared with her
@@ -139,7 +139,7 @@ shared-skill-ecosystem properties for free.
 
 **Effort:** thin adapter + per-framework citations (~1 file). **What
 you gain:** every agent action emits a signed, anchored, framework-
-cited `cg:ContextDescriptor` with `compliance: true`. Framework
+cited `iep:ContextDescriptor` with `compliance: true`. Framework
 mappings already exist (`docs/ns/eu-ai-act.ttl`,
 `docs/ns/nist-rmf.ttl`, `docs/ns/soc2.ttl`); the overlay is the bridge
 from the runtime's tool-call event to a typed compliance event.
@@ -168,7 +168,7 @@ across machines, across Hermes backends, even off Hermes entirely.
 It is Path 2's shape against Hermes' contract: `sync_turn` →
 `publish_context`, `prefetch` → `discover_context`, `on_memory_write`
 mirrors `MEMORY.md` / `USER.md` edits. The memory-graph shape is
-identical to the OpenClaw provider's (`cgh:AgentMemory`) — Hermes bots
+identical to the OpenClaw provider's (`ieh:AgentMemory`) — Hermes bots
 and OpenClaw agents on one pod read each other's memories. No substrate
 code is duplicated; the MCP relay does the descriptor work.
 

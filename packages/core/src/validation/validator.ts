@@ -352,7 +352,7 @@ export function validate(descriptor: ContextDescriptorData): ValidationResult {
   if (!descriptor.facets || descriptor.facets.length === 0) {
     violations.push(violation(
       'facets',
-      'A ContextDescriptor MUST have at least one facet (cg:hasFacet minCount 1)'
+      'A ContextDescriptor MUST have at least one facet (iep:hasFacet minCount 1)'
     ));
   }
 
@@ -360,7 +360,7 @@ export function validate(descriptor: ContextDescriptorData): ValidationResult {
   if (!descriptor.describes || descriptor.describes.length === 0) {
     violations.push(violation(
       'describes',
-      'A ContextDescriptor MUST describe at least one Named Graph (cg:describes minCount 1)'
+      'A ContextDescriptor MUST describe at least one Named Graph (iep:describes minCount 1)'
     ));
   }
 

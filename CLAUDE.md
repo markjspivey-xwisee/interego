@@ -4,13 +4,13 @@
 
 Reference implementation of **Interego** — a verifiable, federated substrate for AI-agent context, identity, and coordination. Three pillars sit on one cryptographic root:
 
-1. **Typed context.** The L1 protocol is **Context Graphs 1.0** — typed Context Descriptors over RDF 1.2 Named Graphs, with seven facets (Temporal / Provenance / Agent / AccessControl / Semiotic / Trust / Federation), the composition algebra (union / intersection / restriction / override), modal status (Asserted / Hypothetical / Counterfactual), `cg:supersedes` chains, and the PGSL content-addressed lattice.
+1. **Typed context.** The L1 protocol is **Interego Protocol 1.0** — typed Context Descriptors over RDF 1.2 Named Graphs, with seven facets (Temporal / Provenance / Agent / AccessControl / Semiotic / Trust / Federation), the composition algebra (union / intersection / restriction / override), modal status (Asserted / Hypothetical / Counterfactual), `iep:supersedes` chains, and the PGSL content-addressed lattice.
 2. **Verifiable identity.** Wallet-rooted DIDs, capability passports that survive infrastructure migration, public attestation registries, ABAC over typed attributes.
 3. **Coordination.** Multi-axis attestation, self-amending constitutional policies, federated saga transactions, p2p relays, vertical applications.
 
-Verticals (LPC, ADP, LRS, AC, OWM) and quickstart deployments compose the substrate — they are NOT part of the protocol. When this document refers to "Interego," it means the system as a whole; when it refers to "Context Graphs" or "the L1 protocol" or `cg:`, it means the L1 spec specifically.
+Verticals (LPC, ADP, LRS, AC, OWM) and quickstart deployments compose the substrate — they are NOT part of the protocol. When this document refers to "Interego," it means the system as a whole; when it refers to "Interego Protocol" or "the L1 protocol" or `iep:`, it means the L1 spec specifically.
 
-**L1 Protocol Spec:** `context-graphs-1.0-wd.html` (co-located or at https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)
+**L1 Protocol Spec:** `interego-protocol-1.0-wd.html` (co-located or at https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html). The `iep:` namespace (`/ns/iep#`) is canonical; the former `cg:` ("Context Graphs") namespace is retained as a deprecated read-alias (`docs/ns/cg.ttl`) so pre-rename signed/persisted descriptors still verify, dereference, and type-match via `canonicalize()`.
 
 **Architectural foundations:** [`docs/ARCHITECTURAL-FOUNDATIONS.md`](docs/ARCHITECTURAL-FOUNDATIONS.md) — categorical interpretation of the substrate (holonic hypergraphics, PGSL as Grothendieck fibration, HELA as topos, the four invariants, Peircean correspondence). Read this before writing about why the protocol's choices fit together; it is the formal account underneath the informal naming used in the rest of the docs.
 
@@ -46,7 +46,7 @@ packages/
                       a follow-up `@interego/crypto-impls` split is on
                       the roadmap once the abstract surface stabilizes.
     src/naming/       Naming conventions (L2 attestation-based naming).
-    src/affordance/   cg:Affordance shape + OODA/BDI/Active-Inference
+    src/affordance/   iep:Affordance shape + OODA/BDI/Active-Inference
                       runtime. The runtime is slated for extraction
                       into @interego/affordance-engine once its PGSL
                       cross-cuts are decoupled.
@@ -89,7 +89,7 @@ packages/
                  aggregate cross-pod reputation).
   security-txt/  @interego/security-txt — RFC 9116 body builder shared
                  by every deployed Interego service.
-  skills/        @interego/skills — agentskills.io ↔ cg:Affordance
+  skills/        @interego/skills — agentskills.io ↔ iep:Affordance
                  bidirectional translator (parses + emits skill.md
                  frontmatter; maps to descriptor bundles).
   transactions/  @interego/transactions — federated saga-style
@@ -133,7 +133,7 @@ integrations/
                         Bridge importable from any runtime (Codex, Cursor).
   hermes-memory/        Path 5 — Hermes Agent MemoryProvider plugin
                         (stdlib-only Python) backed by Interego pods over
-                        the MCP relay's REST surface. Same cgh:AgentMemory
+                        the MCP relay's REST surface. Same ieh:AgentMemory
                         shape + HATEOAS affordance navigation as the
                         OpenClaw provider.
   compliance-overlay/   Path 4 — generic agent-action → compliance-grade
@@ -144,7 +144,7 @@ docs/integrations/      Path-1-to-5 integration map for OpenClaw / Hermes /
                         Codex / Cursor / Claude Code etc.
 docs/ns/       Twenty OWL ontologies + three SHACL shape files (~880 terms — see docs/ns/README.md)
 tools/
-  ontology-lint.mjs  Scans TS for cg:/cgh:/pgsl:/ie:/hyprcat:/hypragent:/hela:/
+  ontology-lint.mjs  Scans TS for iep:/ieh:/pgsl:/ie:/hyprcat:/hypragent:/hela:/
                      sat:/cts:/olke:/amta: usages vs ontology definitions.
                      CI-gated: new drift fails the build.
 ```
@@ -159,8 +159,8 @@ tools/
 ### Related concepts (all now formal ontologies in `docs/ns/`)
 
 - **HELA** ([`hela.ttl`](docs/ns/hela.ttl)) — topos-theoretic xAPI stack (presheaf category ℰ = Set^(𝒞_xAPI^op))
-- **SAT** ([`sat.ttl`](docs/ns/sat.ttl)) — Semiotic Agent Topos; `sat:SemioticFieldFunctor owl:equivalentClass cg:SemioticFacet`
-- **CTS** ([`cts.ttl`](docs/ns/cts.ttl)) — Compositional Tuple Store; usage-based linguistics; `cts:Pattern owl:equivalentClass cg:SyntagmaticPattern`
+- **SAT** ([`sat.ttl`](docs/ns/sat.ttl)) — Semiotic Agent Topos; `sat:SemioticFieldFunctor owl:equivalentClass iep:SemioticFacet`
+- **CTS** ([`cts.ttl`](docs/ns/cts.ttl)) — Compositional Tuple Store; usage-based linguistics; `cts:Pattern owl:equivalentClass iep:SyntagmaticPattern`
 - **HyprCat** ([`hyprcat.ttl`](docs/ns/hyprcat.ttl)) — federated data-product catalog decorating DCAT + DPROD + Hydra with distributed identity + three-world federation boundary
 - **HyprAgent** ([`hypragent.ttl`](docs/ns/hypragent.ttl)) — agent machinery for HyprCat; cross-world delegation; capability typing
 - **OLKE** ([`olke.ttl`](docs/ns/olke.ttl)) — Organizational Learning & Knowledge Evolution (Tacit → Articulate → Collective → Institutional)
@@ -168,39 +168,39 @@ tools/
 - **abac** ([`abac.ttl`](docs/ns/abac.ttl)) — L2 attribute-based-access-control evaluation pattern. Specifies `Evaluator`, `AttributeResolver`, `DecisionCache`, `PolicyContext`, `EvaluationRecord` as constructions over L1 primitives. Reference runtime in [`packages/abac/`](packages/abac/).
 - **registry** ([`registry.ttl`](docs/ns/registry.ttl)) — L2 public-agent-attestation-registry pattern. Federated NPM-for-AI-agents primitive. Reference runtime in [`packages/registry/`](packages/registry/).
 - **passport** ([`passport.ttl`](docs/ns/passport.ttl)) — L2 capability-passport pattern. Persistent agent biographical identity that survives infrastructure migration. Reference runtime in [`packages/passport/`](packages/passport/).
-- **code** ([`code.ttl`](docs/ns/code.ttl)) — L3 domain ontology for source-code artifacts (Repository, Commit, Branch, PullRequest, Review, Defect, TestRun, BuildResult). Commits are `pgsl:Fragment`; branches are `cg:ParadigmSet`; reviews `cg:constructedFrom (cg:SemioticFacet cg:ProvenanceFacet)`.
+- **code** ([`code.ttl`](docs/ns/code.ttl)) — L3 domain ontology for source-code artifacts (Repository, Commit, Branch, PullRequest, Review, Defect, TestRun, BuildResult). Commits are `pgsl:Fragment`; branches are `iep:ParadigmSet`; reviews `iep:constructedFrom (iep:SemioticFacet iep:ProvenanceFacet)`.
 - **eu-ai-act** ([`eu-ai-act.ttl`](docs/ns/eu-ai-act.ttl)) — L3 regulatory mapping ontology for the EU AI Act (Articles 6, 9, 10, 12, 13, 14, 15, 50). Lets compliance teams query an Interego pod using the regulation's own vocabulary.
 - **nist-rmf** ([`nist-rmf.ttl`](docs/ns/nist-rmf.ttl)) — L3 mapping for NIST AI Risk Management Framework (Govern / Map / Measure / Manage four-function model).
 - **soc2** ([`soc2.ttl`](docs/ns/soc2.ttl)) — L3 mapping for AICPA SOC 2 Trust Services Criteria (Security/Availability/Processing Integrity/Confidentiality/Privacy). Operational event subtypes (DeployEvent, AccessChangeEvent, KeyRotationEvent, IncidentEvent, QuarterlyReviewEvent) live alongside the control IRIs and are emitted by [`packages/ops/`](packages/ops/) — Interego eats its own dog food as the SOC 2 evidence substrate. See [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md), [`spec/policies/`](spec/policies/), [`spec/OPS-RUNBOOK.md`](spec/OPS-RUNBOOK.md).
 
 ### Ontology hygiene
 
-**Do not invent new `cg:`/`cgh:`/`pgsl:`/`ie:`/`hyprcat:`/`hypragent:`/`hela:`/`sat:`/`cts:`/`olke:`/`amta:`/`abac:`/`registry:`/`passport:`/`code:`/`eu-ai-act:`/`nist-rmf:`/`soc2:` terms in TS code without adding a matching declaration to the corresponding `docs/ns/<prefix>.ttl` file.** CI will block the PR (see `.github/workflows/ontology-lint.yml`). Use existing W3C vocabularies (dcat:, hydra:, prov:, foaf:, etc.) whenever they fit.
+**Do not invent new `iep:`/`ieh:`/`pgsl:`/`ie:`/`hyprcat:`/`hypragent:`/`hela:`/`sat:`/`cts:`/`olke:`/`amta:`/`abac:`/`registry:`/`passport:`/`code:`/`eu-ai-act:`/`nist-rmf:`/`soc2:` terms in TS code without adding a matching declaration to the corresponding `docs/ns/<prefix>.ttl` file.** CI will block the PR (see `.github/workflows/ontology-lint.yml`). Use existing W3C vocabularies (dcat:, hydra:, prov:, foaf:, etc.) whenever they fit.
 
 ### Layering discipline (read before authoring specs, ontologies, or docs)
 
 See [`spec/LAYERS.md`](spec/LAYERS.md). Every artifact in this repository sits on one of three layers — plus a separate non-normative "vertical" surface:
 
-- **Layer 1 — Protocol** (normative): `cg:`, `cgh:`, `pgsl:`, `ie:`, `align:`; `spec/architecture.md`; `spec/conformance/**`. RFC 2119 language.
+- **Layer 1 — Protocol** (normative): `iep:`, `ieh:`, `pgsl:`, `ie:`, `align:`; `spec/architecture.md`; `spec/conformance/**`. RFC 2119 language.
 - **Layer 2 — Architecture** (informative patterns): `hyprcat:`, `hypragent:`, `abac:`, `registry:`, `passport:`; applicability notes; `docs/e2ee.md` architecture sections.
 - **Layer 3 — Implementation & Domain** (non-normative): `hela:`, `sat:`, `cts:`, `olke:`, `amta:`; everything under `src/`, `deploy/`, `examples/`; any future domain vocabulary (`code:`, `med:`, `learning:`, ...).
-- **Vertical applications** (non-normative, application-over-L3): [`applications/`](applications/) holds vertical use cases that COMPOSE the protocol without extending it. Each has its own scoped namespace OUTSIDE the protocol IRI space (e.g., `lpc:`, `adp:`, `lrs:`, `ac:`, `owm:`). Verticals MUST NOT propose changes to L1/L2/L3 ontologies. Current example verticals: `learner-performer-companion/`, `agent-development-practice/`, `lrs-adapter/`, `agent-collective/`, `organizational-working-memory/`. See [`applications/README.md`](applications/README.md) for layering discipline. **Verticals are NEVER bundled into the generic Interego deployments** (mcp-server, examples/personal-bridge, deploy/mcp-relay). Each vertical declares capabilities as `cg:Affordance` descriptors in `<vertical>/affordances.ts` (single source of truth) and exposes them two ways: (Path A) generic protocol-level discovery via the standard `discover_context` flow, then invocation through the substrate's `invoke_affordance` tool — which proxies the HTTP POST to `hydra:target` so MCP clients without raw-HTTP access can still follow the link, (Path B) optional per-vertical MCP bridge under `<vertical>/bridge/` that derives MCP tool schemas from the affordances. Path A is primary and the only path needed for full access; Path B remains useful as ergonomic native tool surface AND as the mandatory handler runtime for verticals with complex domain logic (PDF/SCORM/BBS+/cmi5 etc.) — even when an MCP client uses Path A to invoke, the handler still executes on the per-vertical bridge process behind `hydra:target`.
+- **Vertical applications** (non-normative, application-over-L3): [`applications/`](applications/) holds vertical use cases that COMPOSE the protocol without extending it. Each has its own scoped namespace OUTSIDE the protocol IRI space (e.g., `lpc:`, `adp:`, `lrs:`, `ac:`, `owm:`). Verticals MUST NOT propose changes to L1/L2/L3 ontologies. Current example verticals: `learner-performer-companion/`, `agent-development-practice/`, `lrs-adapter/`, `agent-collective/`, `organizational-working-memory/`. See [`applications/README.md`](applications/README.md) for layering discipline. **Verticals are NEVER bundled into the generic Interego deployments** (mcp-server, examples/personal-bridge, deploy/mcp-relay). Each vertical declares capabilities as `iep:Affordance` descriptors in `<vertical>/affordances.ts` (single source of truth) and exposes them two ways: (Path A) generic protocol-level discovery via the standard `discover_context` flow, then invocation through the substrate's `invoke_affordance` tool — which proxies the HTTP POST to `hydra:target` so MCP clients without raw-HTTP access can still follow the link, (Path B) optional per-vertical MCP bridge under `<vertical>/bridge/` that derives MCP tool schemas from the affordances. Path A is primary and the only path needed for full access; Path B remains useful as ergonomic native tool surface AND as the mandatory handler runtime for verticals with complex domain logic (PDF/SCORM/BBS+/cmi5 etc.) — even when an MCP client uses Path A to invoke, the handler still executes on the per-vertical bridge process behind `hydra:target`.
 
 **Five drift triggers — STOP and flag before proceeding if any appears:**
 
-1. **Adding a domain-specific term to a core namespace.** `cg:CommitDescriptor`, `cg:MedicalFacet`, `cg:CodeReview` → No. Domain semantics go in their own namespace (`code:`, `med:`, etc.), not in the Layer 1 core.
+1. **Adding a domain-specific term to a core namespace.** `iep:CommitDescriptor`, `iep:MedicalFacet`, `iep:CodeReview` → No. Domain semantics go in their own namespace (`code:`, `med:`, etc.), not in the Layer 1 core.
 2. **Writing a MUST/SHOULD in a Layer 1 document that names a specific technology.** "Implementations MUST use Solid Notifications" → No. "Implementations MUST provide a subscription mechanism that delivers descriptor-creation events" → Yes. Layer 1 claims are technology-neutral.
 3. **Bundling multiple layers into a single task or PR.** "Build the coding-agent substrate" is actually three things: (a) a Layer 2 applicability note on lifecycle-mirroring, (b) a Layer 3 domain ontology (`code:`), (c) a Layer 3 reference adapter (GitHub App). Split before writing.
 4. **Cross-layer contamination detected in an existing artifact.** A Layer 1 spec importing `ex:` in a normative section, a Layer 2 applicability note depending on a specific implementation repo — open an issue and restructure rather than building on top.
 5. **A new artifact cannot be classified as L1, L2, or L3.** If the layer is ambiguous, the artifact is probably bundling layers. Apply the transplant test: "would this claim still make sense transplanted into a completely different domain or stack?" — yes → L1/L2; no → L3.
 
-These triggers are enforced by the transplant test at review time. Ontology-lint handles the namespace side of trigger #1 for the current list of core/pattern/adjacent prefixes — do not weaken it to let a domain term into `cg:`.
+These triggers are enforced by the transplant test at review time. Ontology-lint handles the namespace side of trigger #1 for the current list of core/pattern/adjacent prefixes — do not weaken it to let a domain term into `iep:`.
 
 ### E2EE + hypermedia conventions
 
 - Encrypted pod content: use `publish(descriptor, graph, podUrl, { encrypt: { recipients, senderKeyPair } })`. Serialized at `<slug>-graph.envelope.jose.json` with `Content-Type: application/jose+json`.
-- Descriptor link to payload: `buildDistributionBlock()` emits `<> cg:affordance [ a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ; cg:action cg:canDecrypt ; hydra:target <…> ; dcat:mediaType "…" ; cg:encrypted true ; ... ]` — clients follow the link; never reconstruct URLs by filename convention.
-- Field-level encryption: `encryptFacetValue(value, recipients, sender)` → embeddable `cg:EncryptedValue` blank node in Turtle.
+- Descriptor link to payload: `buildDistributionBlock()` emits `<> iep:affordance [ a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ; iep:action iep:canDecrypt ; hydra:target <…> ; dcat:mediaType "…" ; iep:encrypted true ; ... ]` — clients follow the link; never reconstruct URLs by filename convention.
+- Field-level encryption: `encryptFacetValue(value, recipients, sender)` → embeddable `iep:EncryptedValue` blank node in Turtle.
 - PGSL atom encryption: `mintEncryptedAtom(pgsl, value, recipients, sender)` → URI content-addressed but stored value is `'__ENCRYPTED__'` placeholder; `resolveAtomValue(pgsl, uri, keypair)` decrypts.
 - Cross-pod sharing: `publish_context(..., share_with: ['did:web:…', 'acct:bob@…'])` — resolves to external pods' agent registries and adds their X25519 keys to envelope recipients. Per-graph; no pod-level ACL change.
 

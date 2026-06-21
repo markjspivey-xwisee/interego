@@ -215,7 +215,7 @@ export async function publishAuthoringPolicy(args: {
   config: FoxxiConfig;
 }): Promise<{ policyIri: IRI; descriptorUrl: string; graphUrl: string }> {
   const seed = sha256Hex(`foxxi-authoring-policy|${args.config.tenantPodUrl}|${args.policy.effectiveFrom}`).slice(0, 16);
-  const policyIri = `urn:cg:foxxi:authoring-policy:${seed}` as IRI;
+  const policyIri = `urn:iep:foxxi:authoring-policy:${seed}` as IRI;
   const graphIri = `urn:graph:foxxi:authoring-policy:${seed}` as IRI;
 
   const ttl = `@prefix fxs: <${FOXXI_NS}scorm#> .
@@ -259,7 +259,7 @@ export async function assignAudience(args: {
   config: FoxxiConfig;
 }): Promise<{ assignmentIri: IRI; descriptorUrl: string; graphUrl: string }> {
   const seed = sha256Hex(`foxxi-assignment|${args.assignment.courseIri}|${args.assignment.audienceTag}`).slice(0, 16);
-  const assignmentIri = `urn:cg:foxxi:assignment:${seed}` as IRI;
+  const assignmentIri = `urn:iep:foxxi:assignment:${seed}` as IRI;
   const graphIri = `urn:graph:foxxi:assignment:${seed}` as IRI;
   const now = nowIso();
 

@@ -72,15 +72,15 @@ export function parseManifestEntries(ttl) {
   let cur = null;
   for (const raw of ttl.split('\n')) {
     const line = raw.trim();
-    const s = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
+    const s = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
     if (s) { cur = { descriptorUrl: s[1], describes: [], conformsTo: [] }; continue; }
     if (!cur) continue;
     let m;
-    if ((m = line.match(/cg:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
+    if ((m = line.match(/iep:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
     if ((m = line.match(/dct:conformsTo\s+<([^>]+)>/))) cur.conformsTo.push(m[1]);
-    if ((m = line.match(/cg:modalStatus\s+cg:(\w+)/))) cur.modalStatus = m[1];
-    if ((m = line.match(/cg:trustLevel\s+cg:(\w+)/))) cur.trustLevel = m[1];
-    if ((m = line.match(/cg:validFrom\s+"([^"]+)"/))) cur.validFrom = m[1];
+    if ((m = line.match(/iep:modalStatus\s+iep:(\w+)/))) cur.modalStatus = m[1];
+    if ((m = line.match(/iep:trustLevel\s+iep:(\w+)/))) cur.trustLevel = m[1];
+    if ((m = line.match(/iep:validFrom\s+"([^"]+)"/))) cur.validFrom = m[1];
     if (line.endsWith('.')) { entries.push(cur); cur = null; }
   }
   return entries;
@@ -88,14 +88,14 @@ export function parseManifestEntries(ttl) {
 
 export function parseDescriptor(ttl) {
   return {
-    issuer: ttl.match(/cg:TrustFacet[\s\S]*?cg:issuer\s+<([^>]+)>/)?.[1] ?? null,
-    modal: ttl.match(/cg:modalStatus\s+cg:(\w+)/)?.[1] ?? null,
-    confidence: parseFloat(ttl.match(/cg:epistemicConfidence\s+"([\d.]+)"/)?.[1] ?? 'NaN'),
+    issuer: ttl.match(/iep:TrustFacet[\s\S]*?iep:issuer\s+<([^>]+)>/)?.[1] ?? null,
+    modal: ttl.match(/iep:modalStatus\s+iep:(\w+)/)?.[1] ?? null,
+    confidence: parseFloat(ttl.match(/iep:epistemicConfidence\s+"([\d.]+)"/)?.[1] ?? 'NaN'),
     conformsTo: [...ttl.matchAll(/dct:conformsTo\s+<([^>]+)>/g)].map(m => m[1]),
     wasDerivedFrom: [...ttl.matchAll(/prov:wasDerivedFrom\s+<([^>]+)>/g)].map(m => m[1]),
-    supersedes: [...ttl.matchAll(/cg:supersedes\s+<([^>]+)>/g)].map(m => m[1]),
-    describes: ttl.match(/cg:describes\s+<([^>]+)>/)?.[1] ?? null,
-    validFrom: ttl.match(/cg:validFrom\s+"([^"]+)"/)?.[1] ?? null,
+    supersedes: [...ttl.matchAll(/iep:supersedes\s+<([^>]+)>/g)].map(m => m[1]),
+    describes: ttl.match(/iep:describes\s+<([^>]+)>/)?.[1] ?? null,
+    validFrom: ttl.match(/iep:validFrom\s+"([^"]+)"/)?.[1] ?? null,
     rawTtl: ttl,
   };
 }
@@ -127,11 +127,11 @@ export function validateAgainstShape(d, shape) {
   for (const c of shape.properties) {
     if (!c.path) continue;
     const value =
-      c.path === 'cg:modalStatus' ? d.modal :
-      c.path === 'cg:epistemicConfidence' ? d.confidence :
+      c.path === 'iep:modalStatus' ? d.modal :
+      c.path === 'iep:epistemicConfidence' ? d.confidence :
       c.path === 'dct:conformsTo' ? d.conformsTo :
       c.path === 'prov:wasDerivedFrom' ? d.wasDerivedFrom :
-      c.path === 'cg:validFrom' ? d.validFrom :
+      c.path === 'iep:validFrom' ? d.validFrom :
       undefined;
     const values = Array.isArray(value) ? value : value == null || Number.isNaN(value) ? [] : [value];
     if (c.minCount > 0 && values.length === 0) {
@@ -139,8 +139,8 @@ export function validateAgainstShape(d, shape) {
       continue;
     }
     if (c.inValues) {
-      const want = c.inValues.map(x => x.replace(/^cg:/, ''));
-      for (const v of values) if (!want.includes(String(v).replace(/^cg:/, ''))) {
+      const want = c.inValues.map(x => x.replace(/^iep:/, ''));
+      for (const v of values) if (!want.includes(String(v).replace(/^iep:/, ''))) {
         violations.push(c.message ?? `value '${v}' not in allowed set at ${c.path}`);
       }
     }
@@ -173,7 +173,7 @@ export function validateAgainstShape(d, shape) {
  * via the higher-level `publishDescriptor` below.
  *
  * For demos that can't use the builder (e.g. multi-affordance
- * descriptors where the additional cg:affordance blocks are
+ * descriptors where the additional iep:affordance blocks are
  * per-descriptor), authors can call `toTurtle(descriptor)` manually
  * and append their extra triples.
  */
@@ -223,11 +223,11 @@ export async function publishDescriptorTurtle(descUrl, graphIri, ttl, extraManif
   await putText(descUrl, ttl);
   const entry = `
 
-<${descUrl}> a cg:ManifestEntry ;
-    cg:describes <${graphIri}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
-${extraManifestPredicates ? `    ${extraManifestPredicates}\n` : ''}    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+<${descUrl}> a iep:ManifestEntry ;
+    iep:describes <${graphIri}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
+${extraManifestPredicates ? `    ${extraManifestPredicates}\n` : ''}    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
   const cur = await fetchText(MANIFEST_URL);
   await putText(MANIFEST_URL, (cur ?? '') + entry);

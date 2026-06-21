@@ -11,7 +11,7 @@ import { POD, fetchText, putText, buildDescriptorTurtle, publishDescriptorTurtle
 console.log('=== Accumulation-threshold emergence (v2 — dogfooded) ===\n');
 
 const ts = Date.now();
-const hypothesisId = `urn:cg:hypothesis:${ts}`;
+const hypothesisId = `urn:iep:hypothesis:${ts}`;
 const hypothesisGraph = `urn:graph:hypothesis:${ts}`;
 const hypothesisUrl = `${POD}context-graphs/hypothesis-${ts}.ttl`;
 
@@ -41,7 +41,7 @@ let aggConf = 0.2;
 const supporterUrls = [];
 for (const s of supporters) {
   aggConf = Math.min(1.0, aggConf + s.delta);
-  const supId = `urn:cg:supporter:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const supId = `urn:iep:supporter:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const supGraph = `urn:graph:supporter:${Date.now()}`;
   const supUrl = `${POD}context-graphs/${supId.split(':').slice(-1)[0]}.ttl`;
   const ttl = await buildDescriptorTurtle({
@@ -62,7 +62,7 @@ console.log('');
 const THRESHOLD = 0.8;
 if (aggConf >= THRESHOLD) {
   console.log(`3. Threshold crossed (${aggConf.toFixed(3)} ≥ ${THRESHOLD}) — emerging:`);
-  const emId = `urn:cg:emerged:${Date.now()}`;
+  const emId = `urn:iep:emerged:${Date.now()}`;
   const emGraph = `urn:graph:emerged:${Date.now()}`;
   const emUrl = `${POD}context-graphs/emerged-${Date.now()}.ttl`;
   const ttl = await buildDescriptorTurtle({
@@ -76,7 +76,7 @@ if (aggConf >= THRESHOLD) {
   });
   await publishDescriptorTurtle(emUrl, emGraph, ttl);
   console.log(`   ✓ Asserted supersession: ${emUrl.split('/').pop()}`);
-  console.log(`     cg:supersedes → hypothesis ; prov:wasDerivedFrom → ${supporterUrls.length} supporters`);
+  console.log(`     iep:supersedes → hypothesis ; prov:wasDerivedFrom → ${supporterUrls.length} supporters`);
 }
 
 console.log('\n── Dogfooded: all descriptors built via ContextDescriptor.create() + toTurtle().');

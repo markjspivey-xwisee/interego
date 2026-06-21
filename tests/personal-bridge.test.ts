@@ -33,7 +33,7 @@ describe('personal-bridge — tool surface', () => {
 
   it('publish_p2p → query_p2p round-trips a descriptor', async () => {
     const pub = await tools.publish_p2p!.handler({
-      descriptorId: 'urn:cg:bridge-test:1',
+      descriptorId: 'urn:iep:bridge-test:1',
       cid: 'bafkrei-bridge-1',
       graphIri: 'urn:graph:bridge-test',
       summary: 'first',
@@ -43,7 +43,7 @@ describe('personal-bridge — tool surface', () => {
 
     const q = await tools.query_p2p!.handler({ graphIri: 'urn:graph:bridge-test' }) as Array<{ descriptorId: string }>;
     expect(q.length).toBeGreaterThanOrEqual(1);
-    expect(q.find(x => x.descriptorId === 'urn:cg:bridge-test:1')).toBeDefined();
+    expect(q.find(x => x.descriptorId === 'urn:iep:bridge-test:1')).toBeDefined();
   });
 
   it('share_encrypted → query_my_inbox → decrypt_share works for a recipient on the same bridge', async () => {
@@ -112,7 +112,7 @@ describe('personal-bridge — tool surface', () => {
       method: 'tools/call',
       params: {
         name: 'publish_p2p',
-        arguments: { descriptorId: 'urn:cg:mcp-handler-test', cid: 'bafkrei-mcp', graphIri: 'urn:graph:mcp-handler' },
+        arguments: { descriptorId: 'urn:iep:mcp-handler-test', cid: 'bafkrei-mcp', graphIri: 'urn:graph:mcp-handler' },
       },
     });
     expect(r).not.toBeNull();

@@ -152,9 +152,9 @@ export async function composeIntoSharedLattice(args: {
     const node = pgsl.nodes.get(holonUri);
     if (!node) return null;
     const descriptorBase = `${args.podUrl.endsWith('/') ? args.podUrl : `${args.podUrl}/`}foxxi-lattice/`;
-    // typedFacets: emit nested cg: facets (Who/When/Why/How/WhatKind/Whether) from the
+    // typedFacets: emit nested iep: facets (Who/When/Why/How/WhatKind/Whether) from the
     // holon's provenance + content-type so the PUBLISHED descriptor is answerable by the
-    // interrogative router — not just a cg:Projection marker. (See projectHolon JSDoc.)
+    // interrogative router — not just a iep:Projection marker. (See projectHolon JSDoc.)
     const proj = projectHolon(node, pgsl, { descriptorBase, typedFacets: true, contentType: args.contentType });
     // Each requested surface is a render of the SAME holon — proof the lattice is
     // canonical and RDF is one projection of many.
@@ -216,7 +216,7 @@ export function projectAs(label: string, holonUri: string, as: ProjectionKind): 
   const ts = node.provenance.generatedAtTime || '1970-01-01T00:00:00Z';
   if (as === 'rdf') {
     // Parity with the published compose descriptor: the dereference render also
-    // carries typed cg: facets so interrogative_route answers over it too.
+    // carries typed iep: facets so interrogative_route answers over it too.
     const art = readArtifact(label, holonUri);
     return projectHolon(node, a.pgsl, { descriptorBase: `${a.podUrl.replace(/\/$/, '')}/foxxi-lattice/`, typedFacets: true, ...(art ? { contentType: art.contentType } : {}) }).descriptorTurtle;
   }
@@ -241,7 +241,7 @@ export interface TermDereference {
   rightNeighbors?: string[];
   /** Usage neighborhood — other terms it co-occurs with (paradigmatic signal). */
   coOccurring?: string[];
-  /** cg:ContextDescriptor RDF PROJECTED from a containing lattice node (RDF is one of many surfaces). */
+  /** iep:ContextDescriptor RDF PROJECTED from a containing lattice node (RDF is one of many surfaces). */
   projectedRdf?: string;
 }
 

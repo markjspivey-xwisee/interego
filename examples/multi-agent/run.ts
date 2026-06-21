@@ -216,7 +216,7 @@ async function agentAlice(): Promise<ContextDescriptorData> {
   ].join('\n');
 
   // Build the Context Descriptor with full metadata
-  const descriptor = ContextDescriptor.create('urn:cg:alice:arch-review-2026-Q1' as IRI)
+  const descriptor = ContextDescriptor.create('urn:iep:alice:arch-review-2026-Q1' as IRI)
 .describes('urn:graph:alice:architecture-v3' as IRI)
 .temporal({
       validFrom: '2026-01-15T10:00:00Z',
@@ -324,7 +324,7 @@ async function agentBob(aliceDescriptor: ContextDescriptorData): Promise<void> {
 
   // Bob builds his own local context
   log('Bob', 'Building Bob\'s local context descriptor...');
-  const bobDescriptor = ContextDescriptor.create('urn:cg:bob:review-notes' as IRI)
+  const bobDescriptor = ContextDescriptor.create('urn:iep:bob:review-notes' as IRI)
 .describes('urn:graph:alice:architecture-v3' as IRI)  // Same graph!
 .temporal({
       validFrom: '2026-03-01T00:00:00Z',
@@ -410,7 +410,7 @@ async function agentBobSubscribe(): Promise<{ unsubscribe: () => void } | null> 
 async function alicePublishUpdate(): Promise<void> {
   log('Alice', 'Publishing updated descriptor (version 2)...');
 
-  const updatedDescriptor = ContextDescriptor.create('urn:cg:alice:arch-review-2026-Q1-v2' as IRI)
+  const updatedDescriptor = ContextDescriptor.create('urn:iep:alice:arch-review-2026-Q1-v2' as IRI)
 .describes('urn:graph:alice:architecture-v3' as IRI)
 .temporal({
       validFrom: '2026-03-19T00:00:00Z',
@@ -424,7 +424,7 @@ async function alicePublishUpdate(): Promise<void> {
       syncProtocol: 'SolidNotifications',
     })
 .version(2)
-.supersedes('urn:cg:alice:arch-review-2026-Q1' as IRI)
+.supersedes('urn:iep:alice:arch-review-2026-Q1' as IRI)
 .build();
 
   const graphContent = '<urn:arch:api-gateway> <https://schema.org/name> "API Gateway v2".';

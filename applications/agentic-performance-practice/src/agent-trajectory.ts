@@ -32,7 +32,7 @@
  *
  * Layer: L3 vertical. Composes L1 primitives (ContextDescriptorData,
  * the seven facets, modal status, the composition algebra). It defines
- * NO new ontology term — an agent is just a cg:Agent whose pod holds a
+ * NO new ontology term — an agent is just a iep:Agent whose pod holds a
  * modal, poly-granular, composable descriptor trajectory.
  */
 
@@ -51,7 +51,7 @@ const FOXXI_VOCAB = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azu
 
 /** The poly-granular zoom axis (the PGSL principle). */
 export type TrajectoryGranularity = 'task' | 'subtask' | 'tool-call';
-/** Modal status of a step — L1 cg:modalStatus values. */
+/** Modal status of a step — L1 iep:modalStatus values. */
 export type TrajectoryModalStatus = 'Hypothetical' | 'Asserted' | 'Counterfactual';
 
 export interface TrajectoryStepInput {

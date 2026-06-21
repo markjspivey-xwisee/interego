@@ -70,7 +70,7 @@ For solo-operator periods, the Author and Operator are the same; the Reviewer is
 
 ### 4.8 Schema / ontology changes
 
-- Adding terms to any `cg:`, `cgh:`, `pgsl:`, `ie:`, `hyprcat:`, `hypragent:`, `abac:`, `registry:`, `passport:`, `code:`, `eu-ai-act:`, `nist-rmf:`, `soc2:` namespace requires updating the corresponding `docs/ns/*.ttl` file in the same PR.
+- Adding terms to any `iep:`, `ieh:`, `pgsl:`, `ie:`, `hyprcat:`, `hypragent:`, `abac:`, `registry:`, `passport:`, `code:`, `eu-ai-act:`, `nist-rmf:`, `soc2:` namespace requires updating the corresponding `docs/ns/*.ttl` file in the same PR.
 - Removing or renaming a term MUST go through a deprecation cycle: marked deprecated for one minor version before removal.
 
 ## 5. Procedures

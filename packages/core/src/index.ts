@@ -12,7 +12,7 @@
  * ```ts
  * import { ContextDescriptor, toTurtle, validate } from '@interego/core';
  *
- * const desc = ContextDescriptor.create('urn:cg:my-context')
+ * const desc = ContextDescriptor.create('urn:iep:my-context')
  *.describes('urn:graph:observations-2026-Q1')
  *.temporal({ validFrom: '2026-01-01T00:00:00Z', validUntil: '2026-03-31T23:59:59Z' })
  *.asserted(0.95)
@@ -81,7 +81,7 @@ export {
   normalizePublishInputs,
   extractRevocationConditions,
   // Derivation (spec/DERIVATION.md) — runtime constructors for
-  // higher-level ontology terms tagged cg:constructedFrom
+  // higher-level ontology terms tagged iep:constructedFrom
   constructOmega,
   makeGeometricMorphism,
   ModalAlgebra,

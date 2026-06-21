@@ -27,7 +27,7 @@
  *   - sh:qualifiedValueShape
  *   - SHACL-SPARQL (sh:sparql)
  *
- * The motivating use case: container-declared `cg:conformsTo <shapeIri>`
+ * The motivating use case: container-declared `iep:conformsTo <shapeIri>`
  * triples on a Solid pod's manifest. The relay fetches the shape graph,
  * runs validateAgainstShape() against the inbound graph_content, and
  * rejects the publish 422 on non-conformance before the CSS write.

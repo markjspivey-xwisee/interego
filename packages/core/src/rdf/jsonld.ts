@@ -27,12 +27,13 @@ import type {
 // ── JSON-LD Context Document (§7) ────────────────────────────
 
 export const CONTEXT_GRAPHS_JSONLD_CONTEXT_URL =
-  'https://markjspivey-xwisee.github.io/interego/ns/cg/v1' as const;
+  'https://markjspivey-xwisee.github.io/interego/ns/iep/v1' as const;
 
 export const CONTEXT_GRAPHS_JSONLD_CONTEXT = {
   '@context': {
     '@version': 1.1,
-    cg: 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
+    iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
+    cg: 'https://markjspivey-xwisee.github.io/interego/ns/cg#', // @deprecated legacy read-alias so pre-rename JSON-LD still expands
     rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
     rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
     xsd: 'http://www.w3.org/2001/XMLSchema#',
@@ -45,53 +46,53 @@ export const CONTEXT_GRAPHS_JSONLD_CONTEXT = {
     dcat: 'http://www.w3.org/ns/dcat#',
     oa: 'http://www.w3.org/ns/oa#',
 
-    ContextDescriptor: 'cg:ContextDescriptor',
-    ComposedDescriptor: 'cg:ComposedDescriptor',
-    TemporalFacet: 'cg:TemporalFacet',
-    ProvenanceFacet: 'cg:ProvenanceFacet',
-    AgentFacet: 'cg:AgentFacet',
-    AccessControlFacet: 'cg:AccessControlFacet',
-    SemioticFacet: 'cg:SemioticFacet',
-    TrustFacet: 'cg:TrustFacet',
-    FederationFacet: 'cg:FederationFacet',
+    ContextDescriptor: 'iep:ContextDescriptor',
+    ComposedDescriptor: 'iep:ComposedDescriptor',
+    TemporalFacet: 'iep:TemporalFacet',
+    ProvenanceFacet: 'iep:ProvenanceFacet',
+    AgentFacet: 'iep:AgentFacet',
+    AccessControlFacet: 'iep:AccessControlFacet',
+    SemioticFacet: 'iep:SemioticFacet',
+    TrustFacet: 'iep:TrustFacet',
+    FederationFacet: 'iep:FederationFacet',
 
-    describes: { '@id': 'cg:describes', '@type': '@id' },
-    hasFacet: { '@id': 'cg:hasFacet' },
-    compositionOp: { '@id': 'cg:compositionOp', '@type': '@id' },
-    operand: { '@id': 'cg:operand', '@type': '@id', '@container': '@set' },
-    restrictToType: { '@id': 'cg:restrictToType', '@type': '@id', '@container': '@set' },
-    supersedes: { '@id': 'cg:supersedes', '@type': '@id' },
-    version: { '@id': 'cg:version', '@type': 'xsd:nonNegativeInteger' },
+    describes: { '@id': 'iep:describes', '@type': '@id' },
+    hasFacet: { '@id': 'iep:hasFacet' },
+    compositionOp: { '@id': 'iep:compositionOp', '@type': '@id' },
+    operand: { '@id': 'iep:operand', '@type': '@id', '@container': '@set' },
+    restrictToType: { '@id': 'iep:restrictToType', '@type': '@id', '@container': '@set' },
+    supersedes: { '@id': 'iep:supersedes', '@type': '@id' },
+    version: { '@id': 'iep:version', '@type': 'xsd:nonNegativeInteger' },
 
-    validFrom: { '@id': 'cg:validFrom', '@type': 'xsd:dateTime' },
-    validUntil: { '@id': 'cg:validUntil', '@type': 'xsd:dateTime' },
-    temporalResolution: { '@id': 'cg:temporalResolution', '@type': 'xsd:duration' },
+    validFrom: { '@id': 'iep:validFrom', '@type': 'xsd:dateTime' },
+    validUntil: { '@id': 'iep:validUntil', '@type': 'xsd:dateTime' },
+    temporalResolution: { '@id': 'iep:temporalResolution', '@type': 'xsd:duration' },
 
     wasGeneratedBy: { '@id': 'prov:wasGeneratedBy' },
     wasDerivedFrom: { '@id': 'prov:wasDerivedFrom', '@type': '@id' },
     wasAttributedTo: { '@id': 'prov:wasAttributedTo', '@type': '@id' },
     generatedAtTime: { '@id': 'prov:generatedAtTime', '@type': 'xsd:dateTime' },
 
-    assertingAgent: { '@id': 'cg:assertingAgent' },
-    onBehalfOf: { '@id': 'cg:onBehalfOf', '@type': '@id' },
-    agentRole: { '@id': 'cg:agentRole', '@type': '@id' },
-    agentIdentity: { '@id': 'cg:agentIdentity', '@type': '@id' },
+    assertingAgent: { '@id': 'iep:assertingAgent' },
+    onBehalfOf: { '@id': 'iep:onBehalfOf', '@type': '@id' },
+    agentRole: { '@id': 'iep:agentRole', '@type': '@id' },
+    agentIdentity: { '@id': 'iep:agentIdentity', '@type': '@id' },
 
-    interpretationFrame: { '@id': 'cg:interpretationFrame', '@type': '@id' },
-    signSystem: { '@id': 'cg:signSystem', '@type': '@id' },
-    modalStatus: { '@id': 'cg:modalStatus', '@type': '@id' },
-    epistemicConfidence: { '@id': 'cg:epistemicConfidence', '@type': 'xsd:double' },
-    groundTruth: { '@id': 'cg:groundTruth', '@type': 'xsd:boolean' },
+    interpretationFrame: { '@id': 'iep:interpretationFrame', '@type': '@id' },
+    signSystem: { '@id': 'iep:signSystem', '@type': '@id' },
+    modalStatus: { '@id': 'iep:modalStatus', '@type': '@id' },
+    epistemicConfidence: { '@id': 'iep:epistemicConfidence', '@type': 'xsd:double' },
+    groundTruth: { '@id': 'iep:groundTruth', '@type': 'xsd:boolean' },
 
-    trustLevel: { '@id': 'cg:trustLevel', '@type': '@id' },
-    issuer: { '@id': 'cg:issuer', '@type': '@id' },
-    proofMechanism: { '@id': 'cg:proofMechanism', '@type': '@id' },
+    trustLevel: { '@id': 'iep:trustLevel', '@type': '@id' },
+    issuer: { '@id': 'iep:issuer', '@type': '@id' },
+    proofMechanism: { '@id': 'iep:proofMechanism', '@type': '@id' },
 
-    origin: { '@id': 'cg:origin', '@type': '@id' },
-    storageEndpoint: { '@id': 'cg:storageEndpoint', '@type': '@id' },
-    syncProtocol: { '@id': 'cg:syncProtocol', '@type': '@id' },
-    replicaOf: { '@id': 'cg:replicaOf', '@type': '@id' },
-    lastSynced: { '@id': 'cg:lastSynced', '@type': 'xsd:dateTime' },
+    origin: { '@id': 'iep:origin', '@type': '@id' },
+    storageEndpoint: { '@id': 'iep:storageEndpoint', '@type': '@id' },
+    syncProtocol: { '@id': 'iep:syncProtocol', '@type': '@id' },
+    replicaOf: { '@id': 'iep:replicaOf', '@type': '@id' },
+    lastSynced: { '@id': 'iep:lastSynced', '@type': 'xsd:dateTime' },
   },
 } as const;
 
@@ -147,7 +148,7 @@ function serializeAgentFacet(f: AgentFacetData): Record<string, unknown> {
     result.assertingAgent = agent;
   }
 
-  if (f.agentRole) result.agentRole = `cg:${f.agentRole}`;
+  if (f.agentRole) result.agentRole = `iep:${f.agentRole}`;
   if (f.onBehalfOf) result.onBehalfOf = f.onBehalfOf;
 
   return result;
@@ -156,7 +157,7 @@ function serializeAgentFacet(f: AgentFacetData): Record<string, unknown> {
 function serializeAccessControlFacet(f: AccessControlFacetData): Record<string, unknown> {
   const result: Record<string, unknown> = { '@type': 'AccessControlFacet' };
 
-  result['cg:authorization'] = f.authorizations.map(auth => {
+  result['iep:authorization'] = f.authorizations.map(auth => {
     const a: Record<string, unknown> = { '@type': 'acl:Authorization' };
     if (auth.agent) a['acl:agent'] = auth.agent;
     if (auth.agentClass) a['acl:agentClass'] = auth.agentClass;
@@ -164,7 +165,7 @@ function serializeAccessControlFacet(f: AccessControlFacetData): Record<string, 
     return a;
   });
 
-  if (f.consentBasis) result['cg:consentBasis'] = f.consentBasis;
+  if (f.consentBasis) result['iep:consentBasis'] = f.consentBasis;
 
   return result;
 }
@@ -175,20 +176,20 @@ function serializeSemioticFacet(f: SemioticFacetData): Record<string, unknown> {
     interpretationFrame: f.interpretationFrame,
     signSystem: f.signSystem,
     groundTruth: f.groundTruth,
-    modalStatus: f.modalStatus ? `cg:${f.modalStatus}` : undefined,
+    modalStatus: f.modalStatus ? `iep:${f.modalStatus}` : undefined,
     epistemicConfidence: f.epistemicConfidence,
-    'cg:languageTag': f.languageTag,
+    'iep:languageTag': f.languageTag,
   });
 }
 
 function serializeTrustFacet(f: TrustFacetData): Record<string, unknown> {
   return stripUndefined({
     '@type': 'TrustFacet',
-    'cg:verifiableCredential': f.verifiableCredential,
+    'iep:verifiableCredential': f.verifiableCredential,
     issuer: f.issuer,
     proofMechanism: f.proofMechanism,
-    trustLevel: f.trustLevel ? `cg:${f.trustLevel}` : undefined,
-    'cg:revocationStatus': f.revocationStatus,
+    trustLevel: f.trustLevel ? `iep:${f.trustLevel}` : undefined,
+    'iep:revocationStatus': f.revocationStatus,
   });
 }
 
@@ -197,7 +198,7 @@ function serializeFederationFacet(f: FederationFacetData): Record<string, unknow
   if (f.origin) result.origin = f.origin;
   if (f.storageEndpoint) result.storageEndpoint = f.storageEndpoint;
   if (f.endpointURL) result['dcat:endpointURL'] = f.endpointURL;
-  if (f.syncProtocol) result.syncProtocol = `cg:${f.syncProtocol}`;
+  if (f.syncProtocol) result.syncProtocol = `iep:${f.syncProtocol}`;
   if (f.replicaOf) result.replicaOf = f.replicaOf;
   if (f.lastSynced) result.lastSynced = f.lastSynced;
 
@@ -214,31 +215,31 @@ function serializeFederationFacet(f: FederationFacetData): Record<string, unknow
 
 function serializeCausalFacet(f: CausalFacetData): Record<string, unknown> {
   const result: Record<string, unknown> = {
-    '@type': 'cg:CausalFacet',
-    'cg:causalRole': f.causalRole,
+    '@type': 'iep:CausalFacet',
+    'iep:causalRole': f.causalRole,
   };
-  if (f.causalModel) result['cg:causalModel'] = { '@id': f.causalModel };
-  if (f.parentObservation) result['cg:parentObservation'] = { '@id': f.parentObservation };
-  if (f.parentIntervention) result['cg:parentIntervention'] = { '@id': f.parentIntervention };
-  if (f.effectSize !== undefined) result['cg:effectSize'] = f.effectSize;
-  if (f.causalConfidence !== undefined) result['cg:causalConfidence'] = f.causalConfidence;
+  if (f.causalModel) result['iep:causalModel'] = { '@id': f.causalModel };
+  if (f.parentObservation) result['iep:parentObservation'] = { '@id': f.parentObservation };
+  if (f.parentIntervention) result['iep:parentIntervention'] = { '@id': f.parentIntervention };
+  if (f.effectSize !== undefined) result['iep:effectSize'] = f.effectSize;
+  if (f.causalConfidence !== undefined) result['iep:causalConfidence'] = f.causalConfidence;
   if (f.interventions) {
-    result['cg:intervenes'] = f.interventions.map(iv => ({
-      '@type': 'cg:Intervention',
-      'cg:intervenes': iv.variable,
-      'cg:interventionValue': iv.value,
+    result['iep:intervenes'] = f.interventions.map(iv => ({
+      '@type': 'iep:Intervention',
+      'iep:intervenes': iv.variable,
+      'iep:interventionValue': iv.value,
     }));
   }
   if (f.counterfactualQuery) {
-    result['cg:counterfactualQuery'] = {
-      'cg:counterfactualTarget': f.counterfactualQuery.target,
-      'cg:intervenes': {
-        '@type': 'cg:Intervention',
-        'cg:intervenes': f.counterfactualQuery.intervention.variable,
-        'cg:interventionValue': f.counterfactualQuery.intervention.value,
+    result['iep:counterfactualQuery'] = {
+      'iep:counterfactualTarget': f.counterfactualQuery.target,
+      'iep:intervenes': {
+        '@type': 'iep:Intervention',
+        'iep:intervenes': f.counterfactualQuery.intervention.variable,
+        'iep:interventionValue': f.counterfactualQuery.intervention.value,
       },
-      'cg:counterfactualEvidence': Object.entries(f.counterfactualQuery.evidence).map(
-        ([k, v]) => ({ 'cg:causalVariable': k, 'cg:interventionValue': v })
+      'iep:counterfactualEvidence': Object.entries(f.counterfactualQuery.evidence).map(
+        ([k, v]) => ({ 'iep:causalVariable': k, 'iep:interventionValue': v })
       ),
     };
   }
@@ -262,26 +263,26 @@ function serializeFacet(f: ContextFacetData): Record<string, unknown> {
 }
 
 function serializeProjectionFacet(f: ProjectionFacetData): Record<string, unknown> {
-  const result: Record<string, unknown> = { '@type': 'cg:ProjectionFacet' };
-  if (f.targetVocabulary) result['cg:targetVocabulary'] = { '@id': f.targetVocabulary };
-  if (f.boundaryShapes) result['cg:boundaryShapes'] = { '@id': f.boundaryShapes };
-  if (f.selective !== undefined) result['cg:selective'] = f.selective;
+  const result: Record<string, unknown> = { '@type': 'iep:ProjectionFacet' };
+  if (f.targetVocabulary) result['iep:targetVocabulary'] = { '@id': f.targetVocabulary };
+  if (f.boundaryShapes) result['iep:boundaryShapes'] = { '@id': f.boundaryShapes };
+  if (f.selective !== undefined) result['iep:selective'] = f.selective;
   if (f.bindings) {
-    result['cg:binding'] = f.bindings.map(b => ({
-      '@type': 'cg:ExternalBinding',
-      'cg:describes': { '@id': b.source },
-      'cg:binding': { '@id': b.target },
-      'cg:bindingStrength': `cg:${b.strength}`,
-      ...(b.confidence !== undefined ? { 'cg:epistemicConfidence': b.confidence } : {}),
+    result['iep:binding'] = f.bindings.map(b => ({
+      '@type': 'iep:ExternalBinding',
+      'iep:describes': { '@id': b.source },
+      'iep:binding': { '@id': b.target },
+      'iep:bindingStrength': `iep:${b.strength}`,
+      ...(b.confidence !== undefined ? { 'iep:epistemicConfidence': b.confidence } : {}),
     }));
   }
   if (f.vocabularyMappings) {
-    result['cg:vocabularyMapping'] = f.vocabularyMappings.map(m => ({
-      '@type': 'cg:VocabularyMapping',
-      'cg:describes': { '@id': m.source },
-      'cg:binding': { '@id': m.target },
-      'cg:mappingType': m.mappingType,
-      'cg:mappingRelationship': m.relationship,
+    result['iep:vocabularyMapping'] = f.vocabularyMappings.map(m => ({
+      '@type': 'iep:VocabularyMapping',
+      'iep:describes': { '@id': m.source },
+      'iep:binding': { '@id': m.target },
+      'iep:mappingType': m.mappingType,
+      'iep:mappingRelationship': m.relationship,
     }));
   }
   return result;
@@ -331,10 +332,10 @@ export function toJsonLd(
   // Composition metadata
   if (isComposed) {
     const comp = descriptor as ComposedDescriptorData;
-    doc.compositionOp = `cg:${comp.compositionOp}`;
+    doc.compositionOp = `iep:${comp.compositionOp}`;
     doc.operand = comp.operands;
     if (comp.restrictToTypes?.length) {
-      doc.restrictToType = comp.restrictToTypes.map(t => `cg:${t}`);
+      doc.restrictToType = comp.restrictToTypes.map(t => `iep:${t}`);
     }
   }
 
@@ -368,8 +369,12 @@ export function fromJsonLd(doc: Record<string, unknown>): ContextDescriptorData 
 
   const facetDocs = (doc.hasFacet ?? []) as Record<string, unknown>[];
 
+  // Strip the protocol prefix from a compact term, accepting BOTH the new `iep:`
+  // and the legacy `cg:` so descriptors authored before the Interego-Protocol
+  // rename still deserialize.
+  const stripNs = (v: string | undefined): string | undefined => v?.replace(/^(iep|cg):/, '');
   const facets: ContextFacetData[] = facetDocs.map(fd => {
-    const type = fd['@type'] as string;
+    const type = stripNs(fd['@type'] as string) as string;
     switch (type) {
       case 'TemporalFacet':
         return {
@@ -381,7 +386,7 @@ export function fromJsonLd(doc: Record<string, unknown>): ContextDescriptorData 
       case 'SemioticFacet':
         return {
           type: 'Semiotic' as const,
-          modalStatus: (fd.modalStatus as string)?.replace('cg:', '') as
+          modalStatus: stripNs(fd.modalStatus as string) as
             ModalStatus | undefined,
           epistemicConfidence: fd.epistemicConfidence as number | undefined,
           interpretationFrame: fd.interpretationFrame as string | undefined,
@@ -391,7 +396,7 @@ export function fromJsonLd(doc: Record<string, unknown>): ContextDescriptorData 
       case 'TrustFacet':
         return {
           type: 'Trust' as const,
-          trustLevel: (fd.trustLevel as string)?.replace('cg:', '') as
+          trustLevel: stripNs(fd.trustLevel as string) as
             | 'SelfAsserted' | 'ThirdPartyAttested' | 'CryptographicallyVerified'
             | undefined,
           issuer: fd.issuer as string | undefined,

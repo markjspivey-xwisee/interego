@@ -43,13 +43,13 @@ function parseManifestEntries(ttl) {
   const entries = []; let cur = null;
   for (const raw of ttl.split('\n')) {
     const line = raw.trim();
-    const s = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
+    const s = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
     if (s) { cur = { descriptorUrl: s[1], describes: [], conformsTo: [] }; continue; }
     if (!cur) continue;
     let m;
-    if ((m = line.match(/cg:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
+    if ((m = line.match(/iep:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
     if ((m = line.match(/dct:conformsTo\s+<([^>]+)>/))) cur.conformsTo.push(m[1]);
-    if ((m = line.match(/cg:modalStatus\s+cg:(\w+)/))) cur.modalStatus = m[1];
+    if ((m = line.match(/iep:modalStatus\s+iep:(\w+)/))) cur.modalStatus = m[1];
     if (line.endsWith('.')) { entries.push(cur); cur = null; }
   }
   return entries;
@@ -57,12 +57,12 @@ function parseManifestEntries(ttl) {
 
 function parseDescriptor(ttl) {
   return {
-    issuer: ttl.match(/cg:TrustFacet[\s\S]*?cg:issuer\s+<([^>]+)>/)?.[1] ?? null,
-    modal: ttl.match(/cg:modalStatus\s+cg:(\w+)/)?.[1] ?? null,
-    confidence: parseFloat(ttl.match(/cg:epistemicConfidence\s+"([\d.]+)"/)?.[1] ?? 'NaN'),
+    issuer: ttl.match(/iep:TrustFacet[\s\S]*?iep:issuer\s+<([^>]+)>/)?.[1] ?? null,
+    modal: ttl.match(/iep:modalStatus\s+iep:(\w+)/)?.[1] ?? null,
+    confidence: parseFloat(ttl.match(/iep:epistemicConfidence\s+"([\d.]+)"/)?.[1] ?? 'NaN'),
     conformsTo: [...ttl.matchAll(/dct:conformsTo\s+<([^>]+)>/g)].map(m => m[1]),
     wasDerivedFrom: [...ttl.matchAll(/prov:wasDerivedFrom\s+<([^>]+)>/g)].map(m => m[1]),
-    describes: ttl.match(/cg:describes\s+<([^>]+)>/)?.[1] ?? null,
+    describes: ttl.match(/iep:describes\s+<([^>]+)>/)?.[1] ?? null,
   };
 }
 
@@ -88,13 +88,13 @@ function validate(d, shape) {
   const v = [];
   for (const c of shape.properties) {
     const value =
-      c.path === 'cg:modalStatus' ? d.modal :
-      c.path === 'cg:epistemicConfidence' ? d.confidence :
+      c.path === 'iep:modalStatus' ? d.modal :
+      c.path === 'iep:epistemicConfidence' ? d.confidence :
       c.path === 'dct:conformsTo' ? d.conformsTo :
       undefined;
     const values = Array.isArray(value) ? value : value == null || Number.isNaN(value) ? [] : [value];
     if (c.minCount > 0 && values.length === 0) { v.push(c.message ?? `missing ${c.path}`); continue; }
-    if (c.inValues) { const want = c.inValues.map(x => x.replace(/^cg:/, '')); for (const val of values) if (!want.includes(String(val).replace(/^cg:/, ''))) v.push(c.message ?? `bad ${val}`); }
+    if (c.inValues) { const want = c.inValues.map(x => x.replace(/^iep:/, '')); for (const val of values) if (!want.includes(String(val).replace(/^iep:/, ''))) v.push(c.message ?? `bad ${val}`); }
     if (c.hasValue) if (!values.includes(c.hasValue)) v.push(c.message ?? `missing ${c.hasValue}`);
     if (c.minInclusive != null) for (const val of values) { const n = +val; if (Number.isFinite(n) && n < c.minInclusive) v.push(c.message ?? `${n}<${c.minInclusive}`); }
     if (c.maxInclusive != null) for (const val of values) { const n = +val; if (Number.isFinite(n) && n > c.maxInclusive) v.push(c.message ?? `${n}>${c.maxInclusive}`); }
@@ -205,25 +205,25 @@ const passCounts = metaReports.reduce((n, r) => {
 }, 0);
 const avgScore = metaReports.length > 0 ? (passCounts / metaReports.length) : 1.0;
 
-const metaId = `urn:cg:audit:meta:v4:${Date.now()}`;
+const metaId = `urn:iep:audit:meta:v4:${Date.now()}`;
 const metaGraph = `urn:graph:audit:meta:v4:${Date.now()}`;
 const derivedFromLines = allAuditUrls.map(u => `        prov:wasDerivedFrom <${u}> ;`).join('\n');
 
-const metaTtl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const metaTtl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix as: <https://www.w3.org/ns/activitystreams#> .
 
 <${metaId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
     dct:conformsTo <${AUDIT_SHAPE}> ;
-    cg:describes <${metaGraph}> ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:describes <${metaGraph}> ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [
             a prov:Activity ;
             prov:wasAssociatedWith <${META_AUDITOR_LENS}> ;
@@ -233,31 +233,31 @@ ${derivedFromLines}
         prov:wasAttributedTo <${META_AUDITOR_LENS}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [
-        a cg:AgentFacet ;
-        cg:assertingAgent [
+    iep:hasFacet [
+        a iep:AgentFacet ;
+        iep:assertingAgent [
             a prov:SoftwareAgent, as:Application ;
-            cg:agentIdentity <${META_AUDITOR_LENS}>
+            iep:agentIdentity <${META_AUDITOR_LENS}>
         ] ;
-        cg:agentRole cg:Author ;
-        cg:onBehalfOf <${META_AUDITOR_LENS}>
+        iep:agentRole iep:Author ;
+        iep:onBehalfOf <${META_AUDITOR_LENS}>
     ] ;
-    cg:hasFacet [
-        a cg:SemioticFacet ;
-        cg:groundTruth "true"^^xsd:boolean ;
-        cg:modalStatus cg:Asserted ;
-        cg:epistemicConfidence "${avgScore.toFixed(3)}"^^xsd:double
+    iep:hasFacet [
+        a iep:SemioticFacet ;
+        iep:groundTruth "true"^^xsd:boolean ;
+        iep:modalStatus iep:Asserted ;
+        iep:epistemicConfidence "${avgScore.toFixed(3)}"^^xsd:double
     ] ;
-    cg:hasFacet [
-        a cg:TrustFacet ;
-        cg:issuer <${META_AUDITOR_LENS}> ;
-        cg:trustLevel cg:SelfAsserted
+    iep:hasFacet [
+        a iep:TrustFacet ;
+        iep:issuer <${META_AUDITOR_LENS}> ;
+        iep:trustLevel iep:SelfAsserted
     ] ;
-    cg:hasFacet [
-        a cg:FederationFacet ;
-        cg:origin <${POD}> ;
-        cg:storageEndpoint <${POD}> ;
-        cg:syncProtocol cg:SolidNotifications
+    iep:hasFacet [
+        a iep:FederationFacet ;
+        iep:origin <${POD}> ;
+        iep:storageEndpoint <${POD}> ;
+        iep:syncProtocol iep:SolidNotifications
     ] .
 `;
 
@@ -270,17 +270,17 @@ console.log(`   avgScore (pass-ratio across ${metaReports.length} audits): ${avg
 // Append manifest.
 const manifestEntry = `
 
-<${metaUrl}> a cg:ManifestEntry ;
-    cg:describes <${metaGraph}> ;
-    cg:hasFacetType cg:Temporal ;
-    cg:hasFacetType cg:Provenance ;
-    cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ;
-    cg:hasFacetType cg:Trust ;
-    cg:hasFacetType cg:Federation ;
+<${metaUrl}> a iep:ManifestEntry ;
+    iep:describes <${metaGraph}> ;
+    iep:hasFacetType iep:Temporal ;
+    iep:hasFacetType iep:Provenance ;
+    iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ;
+    iep:hasFacetType iep:Trust ;
+    iep:hasFacetType iep:Federation ;
     dct:conformsTo <${AUDIT_SHAPE}> ;
-    cg:modalStatus cg:Asserted ;
-    cg:trustLevel cg:SelfAsserted .
+    iep:modalStatus iep:Asserted ;
+    iep:trustLevel iep:SelfAsserted .
 `;
 const current = await fetchText(MANIFEST_URL);
 await putText(MANIFEST_URL, (current ?? '') + manifestEntry);

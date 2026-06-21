@@ -10,7 +10,7 @@
  *                                       are deterministic RENDERS of the holon
  *
  * The holon (PGSL node) is the source of truth; the descriptor/manifest entry are
- * projections that point back at it via cg:pgslUri (content-addressed, so
+ * projections that point back at it via iep:pgslUri (content-addressed, so
  * structural overlap is detectable across pods). This is ADDITIVE — it does not
  * replace the existing RDF publish path; a caller can run both, exposing agents
  * both altitudes (encrypted canonical PGSL + discoverable RDF projection).
@@ -74,12 +74,12 @@ function holonResourceUrlFor(container: string, holonUri: string): string {
 /**
  * The ADVERTISED (dereference) host for a holon URL. The canonical write target
  * is the env-internal CSS host (placement.target, reachable in-env), but a
- * cg:encryptedHolon link is meant to be fetched cross-seat — including by a
+ * iep:encryptedHolon link is meant to be fetched cross-seat — including by a
  * direct (non-relay) consumer doing owner-decrypt, for whom the env-internal
  * host is unreachable. So the ADVERTISED url is rewritten to the public pod
  * origin (the write-gate) when one is configured (FOXXI_TENANT_POD_URL's
  * origin). The WRITE target is unchanged; only the link embedded in the
- * projection is rewritten. This is signature-safe: the cg:Projection carries NO
+ * projection is rewritten. This is signature-safe: the iep:Projection carries NO
  * authorship proof, and the encrypted-holon JWE bytes at the URL are never
  * touched (the path is identical — only the host differs, and the gate routes
  * the path to the same CSS resource). No-op when no public origin is configured
@@ -177,7 +177,7 @@ export async function readEncryptedHolon(
   return resolveLatticeFromPod(holonResourceUrl, recipientKeyPair, fetchFn as unknown as typeof fetch);
 }
 
-/** Render the projected manifest entry as a cg:ManifestEntry Turtle row. */
+/** Render the projected manifest entry as a iep:ManifestEntry Turtle row. */
 export function manifestRowFor(result: FoundationPersistResult): string {
   return renderManifestEntry(result.manifestEntry);
 }

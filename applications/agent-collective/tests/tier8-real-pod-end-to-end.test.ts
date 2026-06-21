@@ -9,7 +9,7 @@
  * What this verifies end-to-end:
  *   1. Mark's agent authors a tool (Hypothetical) → published to Mark's pod
  *   2. Mark self-attests + David peer-attests → attestations published
- *   3. Mark promotes the tool → Asserted version written with cg:supersedes
+ *   3. Mark promotes the tool → Asserted version written with iep:supersedes
  *   4. Mark bundles a teaching package (artifact + practice) → published
  *   5. David's agent (in-process here, but using real cross-bridge code path)
  *      receives an encrypted chime-in pointing at the teaching package
@@ -104,7 +104,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
       const tool = await authorTool({
         toolName: 'second-contact-detector',
         sourceCode: 'function detectSecondContact(message, history) { /* ... */ return { detected: history.some(h => similarTopic(h, message)) }; }',
-        affordanceAction: 'urn:cg:action:detect-second-contact-cue',
+        affordanceAction: 'urn:iep:action:detect-second-contact-cue',
         affordanceDescription: 'Detect second-contact cues in customer messages.',
       }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID });
       track(tool.descriptorUrl, tool.graphUrl);
@@ -155,11 +155,11 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
       const teaching = await bundleTeachingPackage({
         toolIri: promoted.promotedToolIri,
         narrativeFragmentIris: [
-          'urn:cg:fragment:tone-week-1-frag-1' as IRI,
-          'urn:cg:fragment:tone-week-1-frag-4' as IRI,
+          'urn:iep:fragment:tone-week-1-frag-1' as IRI,
+          'urn:iep:fragment:tone-week-1-frag-4' as IRI,
         ],
-        synthesisIri: 'urn:cg:synthesis:tone-probe-week-3' as IRI,
-        constraintIri: 'urn:cg:constraint:tone-second-contact-acknowledgment:v1' as IRI,
+        synthesisIri: 'urn:iep:synthesis:tone-probe-week-3' as IRI,
+        constraintIri: 'urn:iep:constraint:tone-second-contact-acknowledgment:v1' as IRI,
         olkeStage: 'Articulate',
       }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID });
       track(teaching.descriptorUrl, teaching.graphUrl);
@@ -201,7 +201,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
 
       // Step 6: audit entries in BOTH humans' pods (Mark's outbound, David's inbound)
       const markAudit = await recordCrossAgentAudit({
-        exchangeIri: `urn:cg:ac-chimein:tier8-${Date.now()}` as IRI,
+        exchangeIri: `urn:iep:ac-chimein:tier8-${Date.now()}` as IRI,
         auditedAgentDid: MARK_AGENT_DID,
         direction: 'Outbound',
         humanOwnerDid: MARK_HUMAN_DID,
@@ -209,7 +209,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
       track(markAudit.descriptorUrl, markAudit.graphUrl);
 
       const davidAudit = await recordCrossAgentAudit({
-        exchangeIri: `urn:cg:ac-chimein:tier8-${Date.now()}` as IRI,
+        exchangeIri: `urn:iep:ac-chimein:tier8-${Date.now()}` as IRI,
         auditedAgentDid: DAVID_AGENT_DID,
         direction: 'Inbound',
         humanOwnerDid: DAVID_HUMAN_DID,
@@ -233,7 +233,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
       const tool = await authorTool({
         toolName: 'underAttested',
         sourceCode: 'function noop() {}',
-        affordanceAction: 'urn:cg:action:test',
+        affordanceAction: 'urn:iep:action:test',
       }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID });
       track(tool.descriptorUrl, tool.graphUrl);
 
@@ -262,9 +262,9 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
     try {
       const markPod = uniquePodUrl('mark-ac-tier8');
       await expect(bundleTeachingPackage({
-        toolIri: 'urn:cg:tool:partial' as IRI,
+        toolIri: 'urn:iep:tool:partial' as IRI,
         narrativeFragmentIris: [],   // EMPTY
-        synthesisIri: 'urn:cg:synthesis:partial' as IRI,
+        synthesisIri: 'urn:iep:synthesis:partial' as IRI,
         olkeStage: 'Articulate',
       }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID })).rejects.toThrow(/narrative fragments/);
     } finally {

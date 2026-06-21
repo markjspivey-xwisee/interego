@@ -166,7 +166,7 @@ The relay issues:
 The OAuth scope above (`mcp` / `mcp:read` / `mcp:write`) is enforced
 at the OAUTH LAYER — it gates on the bearer's `scope` claim. It is
 independent of the SUBSTRATE-LAYER per-agent scope
-(`cg:scope: ReadWrite | ReadOnly | PublishOnly | DiscoverOnly`)
+(`iep:scope: ReadWrite | ReadOnly | PublishOnly | DiscoverOnly`)
 declared in the pod's agent registry, which is gated by the signed
 delegation chain.
 
@@ -175,7 +175,7 @@ Either gate can independently produce a 403:
 - A bearer with `scope=mcp:read` calling `publish_context` → 403
   from the OAuth gate (this is the path FIX D exposes).
 - A bearer with `scope=mcp` whose underlying delegated agent has
-  `cg:scope: ReadOnly` calling `publish_context` → 403 from the
+  `iep:scope: ReadOnly` calling `publish_context` → 403 from the
   substrate gate (this is FIX 4, pre-existing).
 
 Verifiers should test both, because they enforce different
@@ -233,7 +233,7 @@ the public OAuth flow — no admin / introspection secret required:
      -H "Content-Type: application/json" \
      -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
        "name":"publish_context",
-       "arguments":{"descriptor_id":"urn:cg:verify:1","graph_content":"<#x> <#p> <#o> ."}
+       "arguments":{"descriptor_id":"urn:iep:verify:1","graph_content":"<#x> <#p> <#o> ."}
      }}'
    ```
 

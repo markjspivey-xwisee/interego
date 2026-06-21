@@ -40,7 +40,7 @@ export async function recordTrajectoryStep({
     // Without a wallet we can't sign — record a local-only stepId so
     // the controller's supersedes-linking still works. This is the
     // graceful-degradation path for callers that don't pass a wallet.
-    const localStepId = `urn:cg:trajectory-step-local:${agentSlug(agentId)}:${Date.now()}`;
+    const localStepId = `urn:iep:trajectory-step-local:${agentSlug(agentId)}:${Date.now()}`;
     return { ok: false, stepId: localStepId, descriptorUrl: null, raw: { error: 'no wallet supplied' } };
   }
   const innerArgs = {

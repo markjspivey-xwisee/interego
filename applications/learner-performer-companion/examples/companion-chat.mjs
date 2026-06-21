@@ -15,7 +15,7 @@
 //   3. TRAINING CONTENT KG — ingest a SCORM-style course as lpc:TrainingContent
 //      with lpc:LearningObjective sub-descriptors and PGSL grounding atoms.
 //   4. PERFORMANCE RECORD — receive a manager review, write to the user's
-//      pod with cg:ProvenanceFacet attributing it to the manager.
+//      pod with iep:ProvenanceFacet attributing it to the manager.
 //   5. CHAT QUERIES — three grounded responses, each producing an
 //      lpc:CitedResponse descriptor with explicit citations:
 //        a. content question      → cites training-content atom
@@ -69,7 +69,7 @@ console.log(`
 
 sep('1. WALLET BUILD-UP — import + verify + store an Open Badge 3.0 credential');
 
-const credentialIri = `urn:cg:credential:open-badge-3:cs101-mod3-${randomUUID().slice(0, 8)}`;
+const credentialIri = `urn:iep:credential:open-badge-3:cs101-mod3-${randomUUID().slice(0, 8)}`;
 const vcProofBlock = {
   type: 'DataIntegrityProof',
   cryptosuite: 'eddsa-rdfc-2022',
@@ -86,20 +86,20 @@ block('Importing Open Badge 3.0 from Acme Training training (verifies VC proof o
     lpc:credentialFramework "OB-3.0" ;
     lpc:vcProof """${JSON.stringify(vcProofBlock)}""" ;
     lpc:verificationStatus lpc:Verified ;
-    cg:temporal     [ a cg:TemporalFacet ;
-                      cg:validFrom "2025-09-15T11:00:00Z"^^xsd:dateTime ] ;
-    cg:provenance   [ a cg:ProvenanceFacet ;
+    iep:temporal     [ a iep:TemporalFacet ;
+                      iep:validFrom "2025-09-15T11:00:00Z"^^xsd:dateTime ] ;
+    iep:provenance   [ a iep:ProvenanceFacet ;
                       prov:wasAttributedTo <${ACME_DID}> ] ;
-    cg:agent        [ a cg:AgentFacet ;
-                      cg:assertingAgent <${MARK_DID}> ;     # subject = Mark
-                      cg:onBehalfOf <${MARK_DID}> ] ;
-    cg:semiotic     [ a cg:SemioticFacet ;
-                      cg:content "Completed Customer Service 101: Module 3 — Handling Frustration" ;
-                      cg:modalStatus cg:Asserted ] ;
-    cg:trust        [ a cg:TrustFacet ;
-                      cg:issuer <${ACME_DID}> ;
-                      cg:trustLevel cg:ThirdPartyAttested ] ;
-    cg:signature "${credSig.signature.slice(0, 24)}…" .
+    iep:agent        [ a iep:AgentFacet ;
+                      iep:assertingAgent <${MARK_DID}> ;     # subject = Mark
+                      iep:onBehalfOf <${MARK_DID}> ] ;
+    iep:semiotic     [ a iep:SemioticFacet ;
+                      iep:content "Completed Customer Service 101: Module 3 — Handling Frustration" ;
+                      iep:modalStatus iep:Asserted ] ;
+    iep:trust        [ a iep:TrustFacet ;
+                      iep:issuer <${ACME_DID}> ;
+                      iep:trustLevel iep:ThirdPartyAttested ] ;
+    iep:signature "${credSig.signature.slice(0, 24)}…" .
 
 # Verification: proof block validated against Acme Training's verificationMethod;
 # verificationStatus = Verified. Stored in Mark's pod, owned by Mark.
@@ -110,14 +110,14 @@ block('Importing Open Badge 3.0 from Acme Training training (verifies VC proof o
 sep('2. LEARNING HISTORY — xAPI Statements ingested via lrs-adapter');
 
 const xapiStatementId = randomUUID();
-const lrsStmtIri = `urn:cg:lrs-statement:${xapiStatementId}`;
-const learningExpIri = `urn:cg:lpc:learning-experience:cs101-mod3-${randomUUID().slice(0, 8)}`;
+const lrsStmtIri = `urn:iep:lrs-statement:${xapiStatementId}`;
+const learningExpIri = `urn:iep:lpc:learning-experience:cs101-mod3-${randomUUID().slice(0, 8)}`;
 
-const trainingContentIri = `urn:cg:lpc:training-content:cs101:module-3`;
+const trainingContentIri = `urn:iep:lpc:training-content:cs101:module-3`;
 
 console.log(`
   → applications/lrs-adapter/ ingests Mark's completion statement from
-    Acme Training's LRS, producing the cg:ContextDescriptor at <${lrsStmtIri}>.
+    Acme Training's LRS, producing the iep:ContextDescriptor at <${lrsStmtIri}>.
   → This vertical wraps that descriptor as lpc:LearningExperience and
     adds cross-links to the credential (1) and the training content (3).`);
 
@@ -126,20 +126,20 @@ block('Resulting lpc:LearningExperience:', `
     lpc:basedOnStatement      <${lrsStmtIri}> ;
     lpc:relatesToContent      <${trainingContentIri}> ;
     lpc:relatesToCredential   <${credentialIri}> ;
-    cg:temporal   [ a cg:TemporalFacet ;
-                    cg:validFrom "2026-04-15T14:32:00Z"^^xsd:dateTime ] ;
-    cg:provenance [ a cg:ProvenanceFacet ;
+    iep:temporal   [ a iep:TemporalFacet ;
+                    iep:validFrom "2026-04-15T14:32:00Z"^^xsd:dateTime ] ;
+    iep:provenance [ a iep:ProvenanceFacet ;
                     prov:wasAttributedTo <${MARK_DID}> ] ;
-    cg:semiotic   [ a cg:SemioticFacet ;
-                    cg:content """Completed module 3 with score 0.86. Identified second-contact
+    iep:semiotic   [ a iep:SemioticFacet ;
+                    iep:content """Completed module 3 with score 0.86. Identified second-contact
                                   escalation cue in 4 of 5 scenarios."""@en ;
-                    cg:modalStatus cg:Asserted ] .`);
+                    iep:modalStatus iep:Asserted ] .`);
 
 // ── 3. TRAINING CONTENT KG ────────────────────────────────────────────
 
 sep('3. TRAINING CONTENT KG — SCORM module ingested as lpc:TrainingContent');
 
-const objectiveIri = 'urn:cg:lpc:objective:cs101:mod3:second-contact-escalation';
+const objectiveIri = 'urn:iep:lpc:objective:cs101:mod3:second-contact-escalation';
 const groundingAtomIri = 'urn:pgsl:atom:cs101-mod3-passage-7';
 const groundingPassage = `When a customer makes second contact about an unresolved issue, do not lead with restating the previous solution. Acknowledge their frustration AND the prior contact explicitly, in that order, before re-engaging on the substance. Even when the technical answer is the same, the leading acknowledgment changes the conversation.`;
 
@@ -149,25 +149,25 @@ block('Training content + objective + grounding atom (PGSL):', `
     lpc:contentStandard     "TLA-LAP" ;
     lpc:authoritativeSource <${ACME_DID}> ;
     lpc:learningObjective   <${objectiveIri}> ;
-    cg:provenance           [ a cg:ProvenanceFacet ;
+    iep:provenance           [ a iep:ProvenanceFacet ;
                               prov:wasAttributedTo <${ACME_DID}> ] ;
-    cg:trust                [ a cg:TrustFacet ;
-                              cg:issuer <${ACME_DID}> ;
-                              cg:trustLevel cg:Authoritative ] ;
-    cg:supersedes           <urn:cg:lpc:training-content:cs101:module-3:v0> .
+    iep:trust                [ a iep:TrustFacet ;
+                              iep:issuer <${ACME_DID}> ;
+                              iep:trustLevel iep:Authoritative ] ;
+    iep:supersedes           <urn:iep:lpc:training-content:cs101:module-3:v0> .
 
 <${objectiveIri}> a lpc:LearningObjective ;
     rdfs:label "Second-contact escalation handling" ;
-    cg:semiotic [ a cg:SemioticFacet ;
-                  cg:content """When a customer makes second contact about an unresolved issue,
+    iep:semiotic [ a iep:SemioticFacet ;
+                  iep:content """When a customer makes second contact about an unresolved issue,
                                 acknowledge their frustration AND the prior contact before
                                 offering the same or similar solution.""" ] ;
     lpc:groundingFragment <${groundingAtomIri}> .
 
 <${groundingAtomIri}> a pgsl:Atom ;
     pgsl:value """${groundingPassage}""" ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${ACME_DID}> ] ;
-    cg:trust      [ a cg:TrustFacet ; cg:issuer <${ACME_DID}> ; cg:trustLevel cg:Authoritative ] .
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${ACME_DID}> ] ;
+    iep:trust      [ a iep:TrustFacet ; iep:issuer <${ACME_DID}> ; iep:trustLevel iep:Authoritative ] .
 
 # Citation = quoting the pgsl:Atom verbatim with its IRI.
 # The user can click the IRI to see the passage in its course context.`);
@@ -176,32 +176,32 @@ block('Training content + objective + grounding atom (PGSL):', `
 
 sep('4. PERFORMANCE RECORD — manager review written to Mark\'s pod');
 
-const reviewIri = `urn:cg:lpc:performance-record:q1-2026:review-${randomUUID().slice(0, 8)}`;
+const reviewIri = `urn:iep:lpc:performance-record:q1-2026:review-${randomUUID().slice(0, 8)}`;
 const reviewSig = signEvent(JANE, reviewIri, 'lpc:PerformanceRecord', { type: 'ManagerReview', subject: MARK_DID });
 
 block('Manager Jane writes a Q1 review to Mark\'s pod (with provenance):', `
 <${reviewIri}> a lpc:PerformanceRecord ;
     lpc:reviewType lpc:ManagerReview ;
-    cg:temporal     [ a cg:TemporalFacet ;
-                      cg:validFrom "2026-04-20T16:00:00Z"^^xsd:dateTime ] ;
-    cg:provenance   [ a cg:ProvenanceFacet ;
+    iep:temporal     [ a iep:TemporalFacet ;
+                      iep:validFrom "2026-04-20T16:00:00Z"^^xsd:dateTime ] ;
+    iep:provenance   [ a iep:ProvenanceFacet ;
                       prov:wasAttributedTo <${JANE_DID}> ] ;
-    cg:agent        [ a cg:AgentFacet ;
-                      cg:assertingAgent <${JANE_DID}> ] ;
-    cg:trust        [ a cg:TrustFacet ;
-                      cg:issuer <https://hr.acme.example> ;
-                      cg:trustLevel cg:ThirdPartyAttested ] ;
-    cg:semiotic     [ a cg:SemioticFacet ;
-                      cg:content """Strong performance in customer-service-tone area. Three
+    iep:agent        [ a iep:AgentFacet ;
+                      iep:assertingAgent <${JANE_DID}> ] ;
+    iep:trust        [ a iep:TrustFacet ;
+                      iep:issuer <https://hr.acme.example> ;
+                      iep:trustLevel iep:ThirdPartyAttested ] ;
+    iep:semiotic     [ a iep:SemioticFacet ;
+                      iep:content """Strong performance in customer-service-tone area. Three
                                     specific second-contact resolutions where Mark led with
                                     explicit acknowledgment of prior contact + frustration.
                                     GROWTH AREA: in clinical-affect technical scenarios, the
                                     explicit acknowledgment occasionally felt out of place;
                                     suggest training on tone-matching across affect contexts.""" ;
-                      cg:modalStatus cg:Asserted ] ;
-    lpc:flagsCapability <urn:cg:lpc:capability:customer-service-tone> ,
-                        <urn:cg:lpc:capability:tone-matching-across-affect> ;
-    cg:signature "${reviewSig.signature.slice(0, 24)}…" .
+                      iep:modalStatus iep:Asserted ] ;
+    lpc:flagsCapability <urn:iep:lpc:capability:customer-service-tone> ,
+                        <urn:iep:lpc:capability:tone-matching-across-affect> ;
+    iep:signature "${reviewSig.signature.slice(0, 24)}…" .
 
 # Mark owns this descriptor in his pod. Jane signed it; Mark cannot
 # silently rewrite the content (his pod stores Jane's signature alongside).
@@ -213,7 +213,7 @@ sep('5a. CHAT — content question (cites training-content atom)');
 
 chat('Mark', 'What did the customer-service training say about second-contact escalation?');
 
-const respAIri = `urn:cg:lpc:cited-response:${randomUUID().slice(0, 8)}`;
+const respAIri = `urn:iep:lpc:cited-response:${randomUUID().slice(0, 8)}`;
 const respASig = signEvent(ARIA, respAIri, 'lpc:CitedResponse', { question: 'second-contact-escalation' });
 
 chat('Aria', `From your Customer Service 101: Module 3 (which you completed on 2026-04-15
@@ -234,15 +234,15 @@ block('Stored as lpc:CitedResponse:', `
     lpc:citesDescriptor <${trainingContentIri}> ,
                         <${learningExpIri}> ,
                         <${credentialIri}> ;
-    cg:semiotic [ a cg:SemioticFacet ; cg:modalStatus cg:Asserted ] ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${ARIA_DID}> ] ;
-    cg:signature "${respASig.signature.slice(0, 24)}…" .`);
+    iep:semiotic [ a iep:SemioticFacet ; iep:modalStatus iep:Asserted ] ;
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${ARIA_DID}> ] ;
+    iep:signature "${respASig.signature.slice(0, 24)}…" .`);
 
 sep('5b. CHAT — credential question (cites lpc:Credential)');
 
 chat('Mark', 'Do I have a credential covering customer-service tone?');
 
-const respBIri = `urn:cg:lpc:cited-response:${randomUUID().slice(0, 8)}`;
+const respBIri = `urn:iep:lpc:cited-response:${randomUUID().slice(0, 8)}`;
 const respBSig = signEvent(ARIA, respBIri, 'lpc:CitedResponse', { question: 'credential-coverage' });
 
 chat('Aria', `Yes — one credential in your wallet covers this area:
@@ -259,16 +259,16 @@ block('Stored as lpc:CitedResponse:', `
     lpc:answeredQuestion """Do I have a credential covering customer-service tone?""" ;
     lpc:assistantAttribution <${ARIA_DID}> ;
     lpc:citesDescriptor <${credentialIri}> ;
-    cg:semiotic [ a cg:SemioticFacet ; cg:modalStatus cg:Asserted ] ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${ARIA_DID}> ] ;
-    cg:signature "${respBSig.signature.slice(0, 24)}…" .`);
+    iep:semiotic [ a iep:SemioticFacet ; iep:modalStatus iep:Asserted ] ;
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${ARIA_DID}> ] ;
+    iep:signature "${respBSig.signature.slice(0, 24)}…" .`);
 
 sep('5c. CHAT — development plan (composes review + training KG; Hypothetical)');
 
 chat('Mark', 'Generate a development plan for the gaps Jane flagged in my Q1 review.');
 
-const planIri = `urn:cg:lpc:development-plan:q2-2026-${randomUUID().slice(0, 8)}`;
-const respCIri = `urn:cg:lpc:cited-response:${randomUUID().slice(0, 8)}`;
+const planIri = `urn:iep:lpc:development-plan:q2-2026-${randomUUID().slice(0, 8)}`;
+const respCIri = `urn:iep:lpc:cited-response:${randomUUID().slice(0, 8)}`;
 const respCSig = signEvent(ARIA, respCIri, 'lpc:CitedResponse', { question: 'development-plan' });
 
 chat('Aria', `Drafting a plan based on your Q1 review (Jane, 2026-04-20) and your
@@ -289,25 +289,25 @@ chat('Aria', `Drafting a plan based on your Q1 review (Jane, 2026-04-20) and you
 
 block('Stored as lpc:DevelopmentPlan + lpc:CitedResponse:', `
 <${planIri}> a lpc:DevelopmentPlan ;
-    cg:semiotic [ a cg:SemioticFacet ;
-                  cg:modalStatus cg:Hypothetical ] ;       # suggestion, not commitment
-    cg:provenance [ a cg:ProvenanceFacet ;
+    iep:semiotic [ a iep:SemioticFacet ;
+                  iep:modalStatus iep:Hypothetical ] ;       # suggestion, not commitment
+    iep:provenance [ a iep:ProvenanceFacet ;
                     prov:wasAttributedTo <${ARIA_DID}> ] ;
-    cg:agent      [ a cg:AgentFacet ;
-                    cg:assertingAgent <${ARIA_DID}> ;
-                    cg:onBehalfOf <${MARK_DID}> ] .
+    iep:agent      [ a iep:AgentFacet ;
+                    iep:assertingAgent <${ARIA_DID}> ;
+                    iep:onBehalfOf <${MARK_DID}> ] .
 
 <${respCIri}> a lpc:CitedResponse ;
     lpc:answeredQuestion """Generate a development plan for the gaps Jane flagged in my Q1 review.""" ;
     lpc:assistantAttribution <${ARIA_DID}> ;
     lpc:citesDescriptor <${reviewIri}> , <${credentialIri}> , <${planIri}> ;
-    cg:semiotic [ a cg:SemioticFacet ; cg:modalStatus cg:Hypothetical ] ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${ARIA_DID}> ] ;
-    cg:signature "${respCSig.signature.slice(0, 24)}…" .
+    iep:semiotic [ a iep:SemioticFacet ; iep:modalStatus iep:Hypothetical ] ;
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${ARIA_DID}> ] ;
+    iep:signature "${respCSig.signature.slice(0, 24)}…" .
 
 # Plan modal = Hypothetical because the assistant suggests; Mark (and
 # possibly Jane) decide whether to commit. If Mark commits, he can write
-# his own cg:modalStatus cg:Asserted descriptor citing this plan.`);
+# his own iep:modalStatus iep:Asserted descriptor citing this plan.`);
 
 // ── Closing ───────────────────────────────────────────────────────────
 
@@ -325,7 +325,7 @@ console.log(`
   Substrate guarantees:
     - Every citation links to a descriptor the user can click through
     - Every credential's VC proof block is preserved + reverifiable
-    - Every performance record carries cg:ProvenanceFacet attributing it
+    - Every performance record carries iep:ProvenanceFacet attributing it
       to the issuer; the user cannot silently rewrite manager-issued content
     - The development plan is Hypothetical — assistant suggests, user decides
     - The wallet is portable; nothing here is locked to Acme Training's infrastructure

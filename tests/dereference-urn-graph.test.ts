@@ -48,33 +48,33 @@ const URN_GRAPH = 'urn:graph:alice:observations:2026-Q2';
 const DESCRIPTOR_URL = 'https://alice.pod/context-graphs/obs.ttl';
 const GRAPH_URL = 'https://alice.pod/context-graphs/obs-graph.trig';
 
-const MANIFEST_TURTLE = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+const MANIFEST_TURTLE = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
 
-<${DESCRIPTOR_URL}> a cg:ManifestEntry ;
-    cg:describes <${URN_GRAPH}> ;
-    cg:hasFacetType cg:Trust ;
-    cg:trustLevel cg:SelfAsserted .
+<${DESCRIPTOR_URL}> a iep:ManifestEntry ;
+    iep:describes <${URN_GRAPH}> ;
+    iep:hasFacetType iep:Trust ;
+    iep:trustLevel iep:SelfAsserted .
 `;
 
-const DESCRIPTOR_TURTLE = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/cgh#>.
+const DESCRIPTOR_TURTLE = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/cgh#>.
 @prefix dcat: <http://www.w3.org/ns/dcat#>.
 @prefix hydra: <http://www.w3.org/ns/hydra/core#>.
 
-<${DESCRIPTOR_URL}> a cg:ContextDescriptor ;
-    cg:describes <${URN_GRAPH}> .
+<${DESCRIPTOR_URL}> a iep:ContextDescriptor ;
+    iep:describes <${URN_GRAPH}> .
 
-<> cg:affordance [
-    a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ;
-    cg:action cg:canFetchPayload ;
+<> iep:affordance [
+    a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
+    iep:action iep:canFetchPayload ;
     hydra:method "GET" ;
     hydra:target <${GRAPH_URL}> ;
-    hydra:returns cg:GraphPayload ;
+    hydra:returns iep:GraphPayload ;
     hydra:title "Fetch graph payload" ;
     dcat:accessURL <${GRAPH_URL}> ;
     dcat:mediaType "application/trig" ;
-    cg:encrypted false
+    iep:encrypted false
 ] .
 `;
 
@@ -192,7 +192,7 @@ describe('kernel.dereference(urn:graph:*)', () => {
       // Bob's pod doesn't carry the URN.
       if (urlStr === `${OTHER_POD}.well-known/context-graphs`) {
         return mockResponse(
-          `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.\n<https://bob.pod/some.ttl> a cg:ManifestEntry ; cg:describes <urn:graph:bob:other> .\n`,
+          `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.\n<https://bob.pod/some.ttl> a iep:ManifestEntry ; iep:describes <urn:graph:bob:other> .\n`,
           { contentType: 'text/turtle' },
         );
       }
@@ -237,7 +237,7 @@ describe('kernel.dereference(urn:graph:*)', () => {
       if (urlStr === `${POD}.well-known/context-graphs`) {
         // Manifest is well-formed but doesn't carry our URN.
         return mockResponse(
-          `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.\n<https://alice.pod/other.ttl> a cg:ManifestEntry ; cg:describes <urn:graph:something-else> .\n`,
+          `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.\n<https://alice.pod/other.ttl> a iep:ManifestEntry ; iep:describes <urn:graph:something-else> .\n`,
           { contentType: 'text/turtle' },
         );
       }

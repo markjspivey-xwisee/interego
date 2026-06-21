@@ -41,7 +41,7 @@ describe('buildAgentActionDescriptor — substrate construction', () => {
     const out = buildAgentActionDescriptor(baseEvent(), { framework: 'eu-ai-act' });
     // Slug normalization: underscores and dots in the tool name become hyphens
     // for URN-segment safety. So "web_browser.fetch" → "web-browser-fetch".
-    expect(out.eventIri).toMatch(/^urn:cg:agent-action:web-browser-fetch:[0-9a-f]{16}$/);
+    expect(out.eventIri).toMatch(/^urn:iep:agent-action:web-browser-fetch:[0-9a-f]{16}$/);
     const facetTypes = out.descriptor.facets.map(f => f.type).sort();
     expect(facetTypes).toContain('Agent');
     expect(facetTypes).toContain('Trust');
@@ -90,7 +90,7 @@ describe('buildAgentActionDescriptor — substrate construction', () => {
     const subjects = findSubjectsOfType(doc, ACTION_TYPE);
     expect(subjects).toHaveLength(1);
     const subj = subjects[0]!;
-    // toolName goes via rdfs:label (W3C — composes; no new cgh: term)
+    // toolName goes via rdfs:label (W3C — composes; no new ieh: term)
     expect(readStringValue(subj, 'http://www.w3.org/2000/01/rdf-schema#label' as IRI)).toBe('web_browser.fetch');
     expect(readStringValue(subj, 'https://markjspivey-xwisee.github.io/interego/ns/harness#outcome' as IRI)).toBe('success');
   });

@@ -12,11 +12,11 @@
  * content-addressed hashing). Does NOT pull from a real LRS or verify a
  * real OB 3.0 VC proof block (Tier 5).
  *
- * Scope finding (worth recording): the L1 cg:TrustFacet has issuer + a
+ * Scope finding (worth recording): the L1 iep:TrustFacet has issuer + a
  * trustLevel enum. Verifiable Credential proof blocks (the JSON Object that
  * holds the cryptographic signature) are vertical-scoped — they live as
  * lpc:vcProof literals on the descriptor IRI in the described graph, NOT
- * inside cg:TrustFacet. So integration tests at L1 verify the trust facet
+ * inside iep:TrustFacet. So integration tests at L1 verify the trust facet
  * structure; full VC proof verification belongs to a Tier 5 test that
  * actually invokes the compliance/ verifier against a real signature.
  */
@@ -46,7 +46,7 @@ const HR_ISSUER = 'did:web:hr.acme.example' as IRI;
 // ── Builders ─────────────────────────────────────────────────────────
 
 function buildCredential() {
-  return ContextDescriptor.create('urn:cg:credential:open-badge-3:cs101-mod3' as IRI)
+  return ContextDescriptor.create('urn:iep:credential:open-badge-3:cs101-mod3' as IRI)
     .describes('urn:graph:lpc:credential' as IRI)
     .temporal({ validFrom: '2025-09-15T11:00:00Z' })
     .asserted(0.99)
@@ -56,7 +56,7 @@ function buildCredential() {
 }
 
 function buildLearningExperience() {
-  return ContextDescriptor.create('urn:cg:lpc:learning-experience:cs101-mod3' as IRI)
+  return ContextDescriptor.create('urn:iep:lpc:learning-experience:cs101-mod3' as IRI)
     .describes('urn:graph:lpc:learning-experience' as IRI)
     .temporal({ validFrom: '2026-04-15T14:32:00Z' })
     .asserted(0.95)
@@ -66,7 +66,7 @@ function buildLearningExperience() {
 }
 
 function buildTrainingContent() {
-  return ContextDescriptor.create('urn:cg:lpc:training-content:cs101:module-3' as IRI)
+  return ContextDescriptor.create('urn:iep:lpc:training-content:cs101:module-3' as IRI)
     .describes('urn:graph:lpc:training-content' as IRI)
     .temporal({ validFrom: '2025-06-01T00:00:00Z' })
     .asserted(0.99)
@@ -75,7 +75,7 @@ function buildTrainingContent() {
 }
 
 function buildPerformanceRecord() {
-  return ContextDescriptor.create('urn:cg:lpc:performance-record:q1-2026' as IRI)
+  return ContextDescriptor.create('urn:iep:lpc:performance-record:q1-2026' as IRI)
     .describes('urn:graph:lpc:performance-record' as IRI)
     .temporal({ validFrom: '2026-04-20T16:00:00Z' })
     .asserted(0.95)
@@ -86,7 +86,7 @@ function buildPerformanceRecord() {
 }
 
 function buildDevelopmentPlan() {
-  return ContextDescriptor.create('urn:cg:lpc:development-plan:q2-2026' as IRI)
+  return ContextDescriptor.create('urn:iep:lpc:development-plan:q2-2026' as IRI)
     .describes('urn:graph:lpc:development-plan' as IRI)
     .temporal({ validFrom: '2026-04-27T10:00:00Z' })
     .hypothetical(0.4)                                                // suggestion, NOT commitment
@@ -96,7 +96,7 @@ function buildDevelopmentPlan() {
 }
 
 function buildCitedResponse() {
-  return ContextDescriptor.create('urn:cg:lpc:cited-response:question-1' as IRI)
+  return ContextDescriptor.create('urn:iep:lpc:cited-response:question-1' as IRI)
     .describes('urn:graph:lpc:cited-response' as IRI)
     .temporal({ validFrom: '2026-04-27T11:00:00Z' })
     .asserted(0.85)

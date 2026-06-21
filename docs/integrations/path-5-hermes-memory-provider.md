@@ -45,7 +45,7 @@ out exactly as Hermes' developer guide specifies. Drop it in
 It is a *translator*, not an extension. Hermes' memory hooks map onto
 Interego's existing primitives, reached over the MCP relay's stable REST
 surface — no Interego substrate code is duplicated, and the memory-graph
-shape is identical to the OpenClaw provider's (`cgh:AgentMemory`), so
+shape is identical to the OpenClaw provider's (`ieh:AgentMemory`), so
 Hermes bots and OpenClaw agents on the same pod read each other's
 memories.
 
@@ -82,7 +82,7 @@ remembering to.
 
 Same as every path — every memory write is a typed descriptor with
 Agent + Trust + Provenance + Temporal + Semiotic facets, optional E2EE
-`share_with`, `cg:supersedes` for revisions, cross-pod federation via
+`share_with`, `iep:supersedes` for revisions, cross-pod federation via
 `discover_all` / `subscribe_to_pod`, and multi-axis `amta:` attestation.
 Nothing extra to write.
 
@@ -122,6 +122,6 @@ hermes interego status     # verify config + relay reachability
 * [`integrations/hermes-memory/`](../../integrations/hermes-memory/) —
   the plugin itself
 * [Path 2 — OpenClaw memory plugin](path-2-openclaw-memory-plugin.md) —
-  the sibling provider, same `cgh:AgentMemory` shape
+  the sibling provider, same `ieh:AgentMemory` shape
 * [Path 1 — MCP server](agent-runtimes-mcp.md) — the lighter route for
   runtimes without a memory-provider slot

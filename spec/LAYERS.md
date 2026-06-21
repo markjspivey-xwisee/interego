@@ -9,13 +9,13 @@ This document defines the three layers of work that sit under the Interego umbre
 
 ## 0. Motivating principle: a namespace is a domain's boundary contract
 
-Every namespace in this project (`cg:`, `pgsl:`, `code:`, `med:`, `learning:`, ...) is the published interface of one domain to all others. The terms inside a namespace are what that domain commits to expose; everything else stays inside the domain's own implementation.
+Every namespace in this project (`iep:`, `pgsl:`, `code:`, `med:`, `learning:`, ...) is the published interface of one domain to all others. The terms inside a namespace are what that domain commits to expose; everything else stays inside the domain's own implementation.
 
 This produces three concrete consequences that the rest of this document operationalises:
 
-1. **Domain-specific terms stay out of core namespaces.** `cg:CodeReview` is wrong because the L1 protocol shouldn't know about source code. The right home is `code:Review` in its own L3 ontology that grounds back to L1 via `rdfs:subClassOf` / `cg:constructedFrom`. The protocol's surface area is the contract it offers; if domain terms creep into it, every consumer has to understand every domain.
+1. **Domain-specific terms stay out of core namespaces.** `iep:CodeReview` is wrong because the L1 protocol shouldn't know about source code. The right home is `code:Review` in its own L3 ontology that grounds back to L1 via `rdfs:subClassOf` / `iep:constructedFrom`. The protocol's surface area is the contract it offers; if domain terms creep into it, every consumer has to understand every domain.
 
-2. **What's in the ontology is the public commitment.** A `cg:` term that exists in the ontology is something every conformant implementation must understand. A term that's emitted in TS code without an ontology declaration is implicit drift — invisible to outside readers, undocumented, ungraspable by other implementations. The CI lint enforces this asymmetry.
+2. **What's in the ontology is the public commitment.** A `iep:` term that exists in the ontology is something every conformant implementation must understand. A term that's emitted in TS code without an ontology declaration is implicit drift — invisible to outside readers, undocumented, ungraspable by other implementations. The CI lint enforces this asymmetry.
 
 3. **Versioning + deprecation are first-class.** Because the namespace is a contract, changing it is a breaking change to that contract. The `align:` schema-evolution machinery (NamespaceBridge / VersionMigration / DeprecationMarker) gives ratifiable, queryable migration paths so the contract can evolve without silently breaking consumers.
 
@@ -65,7 +65,7 @@ Examples:
 
 - `@interego/core` is a TypeScript reference implementation.
 - The relay runs on Azure Container Apps with an Azure Files-backed CSS pod.
-- The `code:` vocabulary is one domain ontology that rides on top of Context Graphs.
+- The `code:` vocabulary is one domain ontology that rides on top of Interego Protocol.
 - The `ex:` namespace used in worked examples is illustrative, not normative.
 
 Layer 3 artifacts have zero normative weight. A second implementation that picked GitLab instead of GitHub, Postgres instead of Azure Files, or a different domain ontology would be identical at Layer 1.
@@ -88,12 +88,12 @@ Every artifact produced under this repository MUST pass the transplant test for 
 
 Layer 1 and Layer 2 namespaces evolve on different timelines than Layer 3 domain ontologies, and they belong under different governance.
 
-- **Core protocol namespaces** (currently `cg:`, `cgh:`, `pgsl:`, `ie:`, `align:`) — governed by the Interego protocol authority. Changes require spec version bumps and conformance-suite updates.
+- **Core protocol namespaces** (currently `iep:`, `ieh:`, `pgsl:`, `ie:`, `align:`) — governed by the Interego protocol authority. Changes require spec version bumps and conformance-suite updates.
 - **Federation-pattern namespaces** (currently `hyprcat:`, `hypragent:`) — Layer 2 applicability patterns. Changes are informative; no conformance-suite impact.
 - **Adjacent-framework namespaces** (currently `hela:`, `sat:`, `cts:`, `olke:`, `amta:`) — Layer 3 domain ontologies that happen to live alongside the protocol in this repository for convenience. They MAY be spun out to separate repositories with separate governance without affecting protocol conformance.
 - **Illustrative namespaces** (`ex:`, `code:`, any future `med:` / `learning:` / `finance:` / etc.) — Layer 3 domain content. Not part of the protocol. Implementations targeting those domains SHOULD publish their vocabularies under authorities appropriate to those communities.
 
-No domain-specific term is ever added to `cg:`. If a coding-agent use case needs a term, it goes under `code:`, not `cg:`. Same for medical, learning analytics, finance, and every future domain. This rule is enforced by the ontology-lint step and by the transplant test.
+No domain-specific term is ever added to `iep:`. If a coding-agent use case needs a term, it goes under `code:`, not `iep:`. Same for medical, learning analytics, finance, and every future domain. This rule is enforced by the ontology-lint step and by the transplant test.
 
 ---
 
@@ -119,7 +119,7 @@ Layer-mislabeled changes are a review-blocking issue: a Layer 3 change masquerad
 
 If any of the following conditions appear while working on an artifact, work MUST stop and escalate to the protocol authority before proceeding:
 
-1. **Adding a domain-specific term to `cg:` / `cgh:` / `pgsl:` / `ie:` / `align:`.** Domain terms belong in their own namespace.
+1. **Adding a domain-specific term to `iep:` / `ieh:` / `pgsl:` / `ie:` / `align:`.** Domain terms belong in their own namespace.
 2. **Writing a MUST / SHOULD in a Layer 1 document that names a specific technology.** "Implementations MUST use Solid Notifications" is not a Layer 1 claim; "implementations MUST provide a subscription mechanism that delivers descriptor creation events" is.
 3. **A single work item bundles protocol, pattern, and implementation/domain into one task.** Split into three tasks with three different authorities, three different review surfaces, three different version policies.
 4. **Cross-layer contamination detected in an existing artifact.** A Layer 1 spec that imports an `ex:` namespace in a normative section, a Layer 2 applicability note that depends on a specific implementation repo — file an issue and restructure before building on top.
@@ -155,7 +155,7 @@ An inventory of the primary artifacts and their layers, for review and gradual c
 | `spec/progressive-persistence.md` | L1 | Extension spec. Check for implementation specifics. |
 | `spec/presentation-notes.md` | L3 | Talk/speaker notes. Not normative. |
 | `spec/conformance/` | L1 (once populated) | The operational definition of conformance. Highest-priority missing artifact. |
-| `docs/ns/cg.ttl`, `cgh.ttl`, `pgsl.ttl`, `ie.ttl`, `align.ttl` | L1 | Core protocol ontologies. `cg:` terms MUST NOT carry domain semantics. |
+| `docs/ns/cg.ttl`, `cgh.ttl`, `pgsl.ttl`, `ie.ttl`, `align.ttl` | L1 | Core protocol ontologies. `iep:` terms MUST NOT carry domain semantics. |
 | `docs/ns/hyprcat.ttl`, `hypragent.ttl` | L2 | Federation-pattern ontologies. |
 | `docs/ns/hela.ttl`, `sat.ttl`, `cts.ttl`, `olke.ttl`, `amta.ttl` | L3 (adjacent) | Domain/framework ontologies. May later be spun out to separate repositories. |
 | `docs/e2ee.md` | L2 + L3 | E2EE envelope architecture is L2 (pattern); deployment specifics are L3. |
@@ -176,7 +176,7 @@ term at L2/L3 MUST be grounded in L1."
 Grounding means one of:
   (a) `owl:equivalentClass <L1-or-W3C-term>`
   (b) `rdfs:subClassOf <L1-or-W3C-term-or-same-file-grounded-class>`
-  (c) `cg:constructedFrom (<primitive> ...)` with a corresponding
+  (c) `iep:constructedFrom (<primitive> ...)` with a corresponding
       runtime constructor in the reference implementation
   (d) Explicit primitive marker (`rdfs:comment` contains "primitive")
 

@@ -91,8 +91,8 @@ function agentIdentity(f: ContextFacetData): IRI | null {
 /**
  * Extract a value from the attribute graph given a mini-SHACL-style
  * path. Supports predicates on every facet type the evaluator
- * understands: cg:modalStatus, cg:epistemicConfidence, cg:trustLevel,
- * cg:validFrom, cg:validUntil, cg:issuer, AMTA attestation axes, etc.
+ * understands: iep:modalStatus, iep:epistemicConfidence, iep:trustLevel,
+ * iep:validFrom, iep:validUntil, iep:issuer, AMTA attestation axes, etc.
  *
  * Returns all matching values across the graph — property paths are
  * many-valued under RDF semantics.
@@ -101,28 +101,28 @@ export function extractAttribute(graph: AttributeGraph, path: string): unknown[]
   const out: unknown[] = [];
   for (const f of graph.facets) {
     // Semiotic
-    if (path === 'cg:modalStatus' && f.type === 'Semiotic') out.push(f.modalStatus);
-    if (path === 'cg:epistemicConfidence' && f.type === 'Semiotic') out.push(f.epistemicConfidence);
-    if (path === 'cg:groundTruth' && f.type === 'Semiotic') out.push(f.groundTruth);
-    if (path === 'cg:interpretationFrame' && f.type === 'Semiotic') out.push((f as { interpretationFrame?: string }).interpretationFrame);
+    if (path === 'iep:modalStatus' && f.type === 'Semiotic') out.push(f.modalStatus);
+    if (path === 'iep:epistemicConfidence' && f.type === 'Semiotic') out.push(f.epistemicConfidence);
+    if (path === 'iep:groundTruth' && f.type === 'Semiotic') out.push(f.groundTruth);
+    if (path === 'iep:interpretationFrame' && f.type === 'Semiotic') out.push((f as { interpretationFrame?: string }).interpretationFrame);
     // Trust
-    if (path === 'cg:trustLevel' && f.type === 'Trust') out.push(f.trustLevel);
-    if (path === 'cg:issuer' && f.type === 'Trust') out.push(f.issuer);
+    if (path === 'iep:trustLevel' && f.type === 'Trust') out.push(f.trustLevel);
+    if (path === 'iep:issuer' && f.type === 'Trust') out.push(f.issuer);
     // Temporal
-    if (path === 'cg:validFrom' && f.type === 'Temporal') out.push(f.validFrom);
-    if (path === 'cg:validUntil' && f.type === 'Temporal') out.push(f.validUntil);
+    if (path === 'iep:validFrom' && f.type === 'Temporal') out.push(f.validFrom);
+    if (path === 'iep:validUntil' && f.type === 'Temporal') out.push(f.validUntil);
     // Agent
-    if (path === 'cg:agentIdentity' && f.type === 'Agent') {
+    if (path === 'iep:agentIdentity' && f.type === 'Agent') {
       const a = (f as { assertingAgent?: { agentIdentity?: string } }).assertingAgent;
       if (a?.agentIdentity) out.push(a.agentIdentity);
     }
-    if (path === 'cg:onBehalfOf' && f.type === 'Agent') {
+    if (path === 'iep:onBehalfOf' && f.type === 'Agent') {
       const o = (f as { onBehalfOf?: string }).onBehalfOf;
       if (o) out.push(o);
     }
     // Federation
-    if (path === 'cg:origin' && f.type === 'Federation') out.push(f.origin);
-    if (path === 'cg:storageEndpoint' && f.type === 'Federation') out.push(f.storageEndpoint);
+    if (path === 'iep:origin' && f.type === 'Federation') out.push(f.origin);
+    if (path === 'iep:storageEndpoint' && f.type === 'Federation') out.push(f.storageEndpoint);
     // AMTA-style attestation axis (e.g. amta:competence, amta:honesty).
     // Exposed on Trust facets that carry amta attributes as extensions.
     if (path.startsWith('amta:') && f.type === 'Trust') {

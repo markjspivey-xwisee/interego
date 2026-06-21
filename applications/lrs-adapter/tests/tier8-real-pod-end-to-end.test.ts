@@ -8,7 +8,7 @@
  *
  * What this verifies end-to-end:
  *   1. POST a Statement to a real LRS to seed it
- *   2. ingestStatementFromLrs() — fetch back, project as cg:ContextDescriptor
+ *   2. ingestStatementFromLrs() — fetch back, project as iep:ContextDescriptor
  *      in the user's pod, audit row created
  *   3. projectDescriptorToLrs() with Asserted descriptor — POSTed to LRS,
  *      version-negotiated, audit row written
@@ -174,10 +174,10 @@ describe('Tier 8 — lrs-adapter production end-to-end', () => {
       const result = await projectDescriptorToLrs(
         { endpoint: LRSQL_ENDPOINT, auth: LRSQL_AUTH, preferredVersion: '2.0.0' },
         {
-          descriptorIri: 'urn:cg:lrs-tier8-test:asserted' as IRI,
+          descriptorIri: 'urn:iep:lrs-tier8-test:asserted' as IRI,
           actor: { objectType: 'Agent', account: { homePage: 'https://acme.example', name: 'tier8-projector' } },
           verbId: 'http://adlnet.gov/expapi/verbs/observed',
-          objectId: 'urn:cg:lrs-tier8-asserted-test',
+          objectId: 'urn:iep:lrs-tier8-asserted-test',
           modalStatus: 'Asserted',
         },
         { podUrl, userDid: USER_DID },
@@ -207,10 +207,10 @@ describe('Tier 8 — lrs-adapter production end-to-end', () => {
       const result = await projectDescriptorToLrs(
         { endpoint: LRSQL_ENDPOINT, auth: LRSQL_AUTH, preferredVersion: '2.0.0' },
         {
-          descriptorIri: 'urn:cg:fragment:lrs-tier8:hypothetical' as IRI,
+          descriptorIri: 'urn:iep:fragment:lrs-tier8:hypothetical' as IRI,
           actor: { objectType: 'Agent', account: { homePage: 'https://acme.example', name: 'tier8-observer' } },
           verbId: 'http://adlnet.gov/expapi/verbs/observed',
-          objectId: 'urn:cg:lrs-tier8-hypothetical-test',
+          objectId: 'urn:iep:lrs-tier8-hypothetical-test',
           modalStatus: 'Hypothetical',
         },
         { podUrl, userDid: USER_DID },
@@ -235,10 +235,10 @@ describe('Tier 8 — lrs-adapter production end-to-end', () => {
       const result = await projectDescriptorToLrs(
         { endpoint: LRSQL_ENDPOINT, auth: LRSQL_AUTH, preferredVersion: '2.0.0' },
         {
-          descriptorIri: 'urn:cg:counterfactual:lrs-tier8' as IRI,
+          descriptorIri: 'urn:iep:counterfactual:lrs-tier8' as IRI,
           actor: { objectType: 'Agent', account: { homePage: 'https://acme.example', name: 'tier8-cf' } },
           verbId: 'http://adlnet.gov/expapi/verbs/observed',
-          objectId: 'urn:cg:lrs-tier8-counterfactual',
+          objectId: 'urn:iep:lrs-tier8-counterfactual',
           modalStatus: 'Counterfactual',
           allowHypothetical: true,  // even with opt-in
         },
@@ -265,10 +265,10 @@ describe('Tier 8 — lrs-adapter production end-to-end', () => {
       const result = await projectDescriptorToLrs(
         { endpoint: LRSQL_ENDPOINT, auth: LRSQL_AUTH, preferredVersion: '2.0.0' },
         {
-          descriptorIri: 'urn:cg:synthesis:lrs-tier8-multi-narrative' as IRI,
+          descriptorIri: 'urn:iep:synthesis:lrs-tier8-multi-narrative' as IRI,
           actor: { objectType: 'Agent', account: { homePage: 'https://acme.example', name: 'tier8-synth' } },
           verbId: 'http://adlnet.gov/expapi/verbs/observed',
-          objectId: 'urn:cg:lrs-tier8-multi-narrative',
+          objectId: 'urn:iep:lrs-tier8-multi-narrative',
           modalStatus: 'Asserted',  // org committed to projecting it as Asserted
           coherentNarratives: narratives,
         },
@@ -285,8 +285,8 @@ describe('Tier 8 — lrs-adapter production end-to-end', () => {
       const stored = await lrs.getStatement(result.statementId!);
       expect(stored).not.toBeNull();
       const extensions = (stored as Record<string, { extensions: Record<string, unknown> }>).result.extensions;
-      expect(extensions['urn:cg:coherent-narratives']).toEqual(narratives);
-      expect(extensions['urn:cg:projection-lossy']).toBe(true);
+      expect(extensions['urn:iep:coherent-narratives']).toEqual(narratives);
+      expect(extensions['urn:iep:projection-lossy']).toBe(true);
     } finally {
       await cleanup();
     }
@@ -318,10 +318,10 @@ describe('Tier 8 — lrs-adapter production end-to-end', () => {
     try {
       const podUrl = uniquePodUrl();
       const projection = {
-        descriptorIri: `urn:cg:lrs-tier8-cross-lrs:${randomUUID()}` as IRI,
+        descriptorIri: `urn:iep:lrs-tier8-cross-lrs:${randomUUID()}` as IRI,
         actor: { objectType: 'Agent', account: { homePage: 'https://acme.example', name: `tier8-cross-${Date.now()}` } },
         verbId: 'http://adlnet.gov/expapi/verbs/observed',
-        objectId: `urn:cg:cross-lrs-test-${Date.now()}`,
+        objectId: `urn:iep:cross-lrs-test-${Date.now()}`,
         modalStatus: 'Asserted' as const,
       };
 

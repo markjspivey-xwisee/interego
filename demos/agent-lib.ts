@@ -313,7 +313,7 @@ export async function cleanupPod(podUrl: string): Promise<void> {
     const r = await fetch(manifestUrl, { headers: { Accept: 'text/turtle' } });
     if (r.ok) {
       const ttl = await r.text();
-      const urls = Array.from(ttl.matchAll(/^<(https?:\/\/[^>]+)>\s+a\s+cg:ManifestEntry/gm), m => m[1]);
+      const urls = Array.from(ttl.matchAll(/^<(https?:\/\/[^>]+)>\s+a\s+iep:ManifestEntry/gm), m => m[1]);
       for (const u of urls) {
         try { await fetch(u!, { method: 'DELETE' }); } catch {}
         // graph file too

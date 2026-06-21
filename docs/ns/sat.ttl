@@ -1,7 +1,7 @@
 @prefix sat:  <https://markjspivey-xwisee.github.io/interego/ns/sat#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
-@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix ieh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix ie:   <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -26,7 +26,7 @@
 #  of those choices under composition.
 #
 #  The Semiotic Field Functor maps directly to Interego's
-#  cg:SemioticFacet — each descriptor's Semiotic facet is a
+#  iep:SemioticFacet — each descriptor's Semiotic facet is a
 #  projection of Σ onto the specific graph the descriptor
 #  describes.
 #
@@ -42,51 +42,51 @@
 <https://markjspivey-xwisee.github.io/interego/ns/sat>
     a owl:Ontology ;
     dct:title "SAT — Semiotic Agent Topos" ;
-    dct:description "Topos-theoretic model of agents as participants in a semiotic field. The Semiotic Field Functor Σ maps situations to possibility-spaces of meaning; every cg:SemioticFacet is a projection of Σ onto a specific context graph. Complements Peircean triadic semiotics with sheaf structure and endofunctor semiosis." ;
+    dct:description "Topos-theoretic model of agents as participants in a semiotic field. The Semiotic Field Functor Σ maps situations to possibility-spaces of meaning; every iep:SemioticFacet is a projection of Σ onto a specific context graph. Complements Peircean triadic semiotics with sheaf structure and endofunctor semiosis." ;
     vann:preferredNamespacePrefix "sat" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/sat#" ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/interego> .
 
 sat:Situation a owl:Class ;
     rdfs:label "Situation" ;
     rdfs:comment "A context in which meaning-making occurs. Inputs to Σ; each situation has a Semiotic Field of possible interpretations, actions, and meaning assignments." ;
-    rdfs:subClassOf cg:ContextDescriptor .
+    rdfs:subClassOf iep:ContextDescriptor .
 
 sat:SemioticField a owl:Class ;
     rdfs:label "Semiotic Field" ;
     rdfs:comment "The output of Σ(situation) — the space of meaning-making possibilities available in a given context." ;
-    rdfs:subClassOf cg:SemioticFacet .
+    rdfs:subClassOf iep:SemioticFacet .
 
 sat:SemioticFieldFunctor a owl:Class ;
     rdfs:label "Semiotic Field Functor" ;
-    rdfs:comment "The functor Σ : Situations → SemioticFields that defines the semiotic topos. Projection of Σ onto a specific graph yields a cg:SemioticFacet." ;
-    owl:equivalentClass cg:SemioticFacet .
+    rdfs:comment "The functor Σ : Situations → SemioticFields that defines the semiotic topos. Projection of Σ onto a specific graph yields a iep:SemioticFacet." ;
+    owl:equivalentClass iep:SemioticFacet .
 
 sat:Interpretant a owl:Class ;
     rdfs:label "Interpretant" ;
-    rdfs:comment "Peircean interpretant — the agent's instantiated meaning-assignment. Every cg:SemioticFacet IS an interpretant (the facet carries the modal status + confidence that realize the interpretant for a specific sign)." ;
-    rdfs:subClassOf cg:SemioticFacet .
+    rdfs:comment "Peircean interpretant — the agent's instantiated meaning-assignment. Every iep:SemioticFacet IS an interpretant (the facet carries the modal status + confidence that realize the interpretant for a specific sign)." ;
+    rdfs:subClassOf iep:SemioticFacet .
 
 sat:Sign a owl:Class ;
     rdfs:label "Sign" ;
-    rdfs:comment "Peircean representamen — the signal that gets interpreted. Every cg:ContextDescriptor IS a sign (graph = representamen, object = referent, facets = interpretant)." ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:comment "Peircean representamen — the signal that gets interpreted. Every iep:ContextDescriptor IS a sign (graph = representamen, object = referent, facets = interpretant)." ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:seeAlso pgsl:sign .
 
 sat:Object a owl:Class ;
     rdfs:label "Semiotic Object" ;
-    rdfs:comment "The thing the sign is about — external referent. Primitive (external to the category of cg: descriptors); in a context graph this is typically the named-graph IRI (cg:describes target)." .
+    rdfs:comment "The thing the sign is about — external referent. Primitive (external to the category of iep: descriptors); in a context graph this is typically the named-graph IRI (iep:describes target)." .
 
 sat:Semiosis a owl:Class ;
     rdfs:label "Semiosis" ;
     rdfs:comment "The process of interpretation itself — endofunctor iterating triadic sign relations until a stable interpretant emerges. Constructed by iterating sat:SemioticFieldFunctor over sat:Interpretant." ;
-    cg:constructedFrom ( sat:SemioticFieldFunctor sat:Interpretant ) .
+    iep:constructedFrom ( sat:SemioticFieldFunctor sat:Interpretant ) .
 
 sat:EmergentMeaning a owl:Class ;
     rdfs:label "Emergent Meaning" ;
     rdfs:comment "Meaning arising from multi-agent semiosis; sheafification of interpretant assignments. Constructed from a set of sat:Interpretant over a sat:SemioticField via categorical colimit." ;
-    cg:constructedFrom ( sat:Interpretant sat:SemioticField ) .
+    iep:constructedFrom ( sat:Interpretant sat:SemioticField ) .
 
 sat:appliesTo a owl:ObjectProperty ;
     rdfs:label "applies to" ;
@@ -100,8 +100,8 @@ sat:possibleInterpretants a owl:ObjectProperty ;
 
 # ── Alignments ────────────────────────────────────────────────
 
-sat:SemioticFieldFunctor owl:equivalentClass cg:SemioticFacet ;
-    rdfs:comment "A per-descriptor SemioticFacet is precisely the value of Σ at the descriptor's described graph, so the two classes are equivalent under projection. SAT provides the categorical machinery; cg: provides the per-descriptor instantiation." .
+sat:SemioticFieldFunctor owl:equivalentClass iep:SemioticFacet ;
+    rdfs:comment "A per-descriptor SemioticFacet is precisely the value of Σ at the descriptor's described graph, so the two classes are equivalent under projection. SAT provides the categorical machinery; iep: provides the per-descriptor instantiation." .
 
 sat:Semiosis rdfs:seeAlso ie:Interrogative ;
     rdfs:comment "The interrogatives (who/what/where/when/why/how/which/...) are the typed entry-points into semiosis — each interrogative prompts a distinct class of interpretant." .
@@ -124,34 +124,34 @@ sat:Semiosis rdfs:seeAlso ie:Interrogative ;
 sat:Disposition a owl:Class ;
     rdfs:label "Disposition" ;
     rdfs:comment "A typed tendency — what a system is currently disposed to do under its present constraints. Distinct from a prediction: a disposition is a structured affordance for next-state action that may or may not actualize. Subject to sat:weakSignal (what surfaces it early), sat:shiftedBy (what alters it), and sat:dampedBy (what suppresses it)." ;
-    rdfs:subClassOf cg:SemioticFacet .
+    rdfs:subClassOf iep:SemioticFacet .
 
 sat:hasDisposition a owl:ObjectProperty ;
     rdfs:label "has disposition" ;
-    rdfs:domain cg:ContextDescriptor ;
+    rdfs:domain iep:ContextDescriptor ;
     rdfs:range sat:Disposition ;
     rdfs:comment "Attaches a typed disposition to the situation a descriptor describes. A descriptor may carry multiple sat:hasDisposition values — they are not mutually exclusive (a system can be disposed to multiple courses simultaneously, with different probabilities or under different sub-conditions)." .
 
 sat:weakSignal a owl:ObjectProperty ;
     rdfs:label "weak signal" ;
     rdfs:domain sat:Disposition ;
-    rdfs:range cg:ContextDescriptor ;
+    rdfs:range iep:ContextDescriptor ;
     rdfs:comment "Links a disposition to a descriptor that, if observed, would surface the disposition early — before it actualizes. Snowden's 'dispositional shift' detection mechanism. The signal need not be predictive on its own — its semiotic work is to make a latent tendency legible." .
 
 sat:shiftedBy a owl:ObjectProperty ;
     rdfs:label "shifted by" ;
     rdfs:domain sat:Disposition ;
-    rdfs:range cg:ContextDescriptor ;
+    rdfs:range iep:ContextDescriptor ;
     rdfs:comment "Identifies an intervention type that, if applied, would alter the disposition. Distinct from a 'fix': the disposition isn't broken; it can be redirected. Used for amplify/dampen routing in Cynefin-Complex domains." .
 
 sat:dampedBy a owl:ObjectProperty ;
     rdfs:label "damped by" ;
     rdfs:domain sat:Disposition ;
-    rdfs:range cg:ContextDescriptor ;
+    rdfs:range iep:ContextDescriptor ;
     rdfs:comment "Identifies an intervention type that, if applied, would suppress the disposition's actualization without claiming to address its underlying conditions. The honest framing: damping buys time, not resolution." .
 
 sat:dispositionalConfidence a owl:DatatypeProperty ;
     rdfs:label "dispositional confidence" ;
     rdfs:domain sat:Disposition ;
     rdfs:range xsd:decimal ;
-    rdfs:comment "Confidence in [0.0, 1.0] that the system is currently disposed as claimed. NOT a probability of actualization; a confidence in the disposition's existence. Pair with cg:modalStatus = Hypothetical for honest semiotics: dispositions are assertions about latent tendency, not about future state." .
+    rdfs:comment "Confidence in [0.0, 1.0] that the system is currently disposed as claimed. NOT a probability of actualization; a confidence in the disposition's existence. Pair with iep:modalStatus = Hypothetical for honest semiotics: dispositions are assertions about latent tendency, not about future state." .

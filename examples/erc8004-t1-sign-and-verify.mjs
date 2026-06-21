@@ -32,15 +32,15 @@ async function putText(url, body) {
 // ── Step 1: publish the T1 shape if absent ─────────────────
 
 const T1_SHAPE_TTL = `@prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <${T1_SHAPE}#Shape> a sh:NodeShape ;
-  sh:targetClass cg:ContextDescriptor ;
-  sh:property [ sh:path cg:modalStatus ; sh:in ( cg:Asserted ) ; sh:minCount 1 ; sh:message "T1 attestation MUST be Asserted." ] ;
-  sh:property [ sh:path cg:epistemicConfidence ; sh:minInclusive 0.0 ; sh:maxInclusive 1.0 ; sh:minCount 1 ; sh:message "Confidence in [0,1]." ] ;
+  sh:targetClass iep:ContextDescriptor ;
+  sh:property [ sh:path iep:modalStatus ; sh:in ( iep:Asserted ) ; sh:minCount 1 ; sh:message "T1 attestation MUST be Asserted." ] ;
+  sh:property [ sh:path iep:epistemicConfidence ; sh:minInclusive 0.0 ; sh:maxInclusive 1.0 ; sh:minCount 1 ; sh:message "Confidence in [0,1]." ] ;
   sh:property [ sh:path dct:conformsTo ; sh:hasValue <${T1_SHAPE}> ; sh:message "Must self-reference the T1 shape." ] ;
   sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:message "T1 MUST cite evidence." ] ;
   sh:property [ sh:path <urn:erc:8004:signatureAlgorithm> ; sh:minCount 1 ; sh:message "T1 MUST declare a signature algorithm (e.g. ECDSA-secp256k1)." ] ;
@@ -63,14 +63,14 @@ console.log(`   (secp256k1; same curve + primitive ERC-8004 uses on-chain)`);
 
 const manifest = await fetchText(`${POD}.well-known/context-graphs`);
 const T0_SHAPE = `${POD}schemas/erc8004-attestation-v1.ttl`;
-const t0Match = [...(manifest?.matchAll(/<([^>]+)>\s+a\s+cg:ManifestEntry\s*;[\s\S]*?dct:conformsTo\s+<[^>]*erc8004-attestation-v1[^>]*>/g) ?? [])];
+const t0Match = [...(manifest?.matchAll(/<([^>]+)>\s+a\s+iep:ManifestEntry\s*;[\s\S]*?dct:conformsTo\s+<[^>]*erc8004-attestation-v1[^>]*>/g) ?? [])];
 if (t0Match.length === 0) { console.log('No T0 attestations to upgrade'); process.exit(1); }
 const t0Url = t0Match[0][1];
 console.log(`\n3. Upgrading T0 attestation → T1:`);
 console.log(`   source: ${t0Url.split('/').pop()}`);
 
 const t0Ttl = await fetchText(t0Url);
-const t0Id = t0Ttl.match(/^<([^>]+)>\s+a\s+cg:ContextDescriptor/m)?.[1];
+const t0Id = t0Ttl.match(/^<([^>]+)>\s+a\s+iep:ContextDescriptor/m)?.[1];
 if (!t0Id) { console.log('Could not find descriptor ID in T0 body'); process.exit(1); }
 
 // ── Step 4: sign the T0 Turtle ─────────────────────────────
@@ -84,12 +84,12 @@ console.log(`   signedAt:      ${signed.signedAt}`);
 
 // ── Step 5: compose the T1 Turtle + republish ──────────────
 
-const t1Id = `urn:cg:t1:${Date.now()}`;
+const t1Id = `urn:iep:t1:${Date.now()}`;
 const t1Graph = `urn:graph:t1-attest:${encodeURIComponent(signed.signerAddress)}:${Date.now()}`;
 const t1Url = `${POD}context-graphs/t1-attest-${Date.now()}.ttl`;
 const now = new Date().toISOString();
 
-const t1Ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const t1Ttl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -97,11 +97,11 @@ const t1Ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#
 @prefix erc: <urn:erc:8004:> .
 
 <${t1Id}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
     dct:conformsTo <${T1_SHAPE}> ;
-    cg:describes <${t1Graph}> ;
+    iep:describes <${t1Graph}> ;
     erc:attester <${signed.signerAddress}> ;
     erc:progressiveTier "T1" ;
     erc:signatureAlgorithm "ECDSA-secp256k1" ;
@@ -110,18 +110,18 @@ const t1Ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#
     erc:contentHash "${signed.contentHash}" ;
     erc:signedSource <${t0Url}> ;
     erc:signedAt "${signed.signedAt}"^^xsd:dateTime ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${signed.signerAddress}> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
         prov:wasDerivedFrom <${t0Url}> ;
         prov:wasAttributedTo <${signed.signerAddress}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${signed.signerAddress}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${signed.signerAddress}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "0.95"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${signed.signerAddress}> ; cg:trustLevel cg:CryptoAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${signed.signerAddress}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${signed.signerAddress}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "0.95"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${signed.signerAddress}> ; iep:trustLevel iep:CryptoAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
 
 await putText(t1Url, t1Ttl);
@@ -129,12 +129,12 @@ console.log(`\n5. Published T1 attestation: ${t1Url.split('/').pop()}`);
 
 const manifestEntry = `
 
-<${t1Url}> a cg:ManifestEntry ;
-    cg:describes <${t1Graph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
+<${t1Url}> a iep:ManifestEntry ;
+    iep:describes <${t1Graph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
     dct:conformsTo <${T1_SHAPE}> ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:CryptoAsserted .
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:CryptoAsserted .
 `;
 const curManifest = await fetchText(`${POD}.well-known/context-graphs`);
 await putText(`${POD}.well-known/context-graphs`, (curManifest ?? '') + manifestEntry);

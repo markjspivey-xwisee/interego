@@ -52,7 +52,7 @@ For solo-operator periods, all roles default to the Operator. Independent Adviso
 ### 5.2 Response
 
 - The Operator MUST acknowledge alerts per the Severity Classification table.
-- Sev-1 incidents MUST trigger immediate creation of an incident descriptor with `dct:conformsTo soc2:CC7.3` and `cg:modalStatus Asserted`.
+- Sev-1 incidents MUST trigger immediate creation of an incident descriptor with `dct:conformsTo soc2:CC7.3` and `iep:modalStatus Asserted`.
 - Containment actions take precedence over investigation. Stop the bleeding first.
 
 ### 5.3 Communication
@@ -77,7 +77,7 @@ For solo-operator periods, all roles default to the Operator. Independent Adviso
 - Sev-1 and Sev-2 incidents MUST have a written post-mortem within 5 business days of resolution.
 - Post-mortems MUST be blameless (focus on systems and processes, not individuals).
 - Post-mortems MUST list: timeline, root cause, contributing factors, remediation actions with owners + due dates.
-- Post-mortem published as compliance descriptor with `dct:conformsTo soc2:CC7.4`, chained to the incident descriptor via `cg:supersedes`.
+- Post-mortem published as compliance descriptor with `dct:conformsTo soc2:CC7.4`, chained to the incident descriptor via `iep:supersedes`.
 
 ### 5.7 Key compromise
 

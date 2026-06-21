@@ -103,14 +103,14 @@ describe('lattice laws — union', () => {
     // Interego union intentionally preserves multi-facet siblings (modal
     // polyphony); classical idempotence holds at the facet-type-set
     // level, not multiset. Tests pin this design decision.
-    const d = buildDescriptor('urn:cg:idempotent', [temporal, semioticA, trust, fed]);
+    const d = buildDescriptor('urn:iep:idempotent', [temporal, semioticA, trust, fed]);
     const dd = union(d, d);
     expect(facetTypeSet(dd)).toBe(facetTypeSet(d));
   });
 
   it('commutativity: union(a, b) ≈ union(b, a)', () => {
-    const a = buildDescriptor('urn:cg:a', [temporal, semioticA, trust]);
-    const b = buildDescriptor('urn:cg:b', [fed, semioticB]);
+    const a = buildDescriptor('urn:iep:a', [temporal, semioticA, trust]);
+    const b = buildDescriptor('urn:iep:b', [fed, semioticB]);
     resetComposedIdCounter();
     const ab = union(a, b);
     resetComposedIdCounter();
@@ -119,9 +119,9 @@ describe('lattice laws — union', () => {
   });
 
   it('associativity: union(union(a,b),c) ≈ union(a,union(b,c))', () => {
-    const a = buildDescriptor('urn:cg:a', [temporal]);
-    const b = buildDescriptor('urn:cg:b', [semioticA]);
-    const c = buildDescriptor('urn:cg:c', [trust, fed]);
+    const a = buildDescriptor('urn:iep:a', [temporal]);
+    const b = buildDescriptor('urn:iep:b', [semioticA]);
+    const c = buildDescriptor('urn:iep:c', [trust, fed]);
     resetComposedIdCounter();
     const left = union(union(a, b), c);
     resetComposedIdCounter();
@@ -134,14 +134,14 @@ describe('lattice laws — intersection', () => {
   beforeEach(() => resetComposedIdCounter());
 
   it('idempotence (type-set level): intersection(d, d) has same facet types as d', () => {
-    const d = buildDescriptor('urn:cg:idem-int', [temporal, semioticA, trust, fed]);
+    const d = buildDescriptor('urn:iep:idem-int', [temporal, semioticA, trust, fed]);
     const dd = intersection(d, d);
     expect(facetTypeSet(dd)).toBe(facetTypeSet(d));
   });
 
   it('commutativity: intersection(a, b) ≈ intersection(b, a)', () => {
-    const a = buildDescriptor('urn:cg:a', [temporal, semioticA, trust]);
-    const b = buildDescriptor('urn:cg:b', [temporal, semioticB, fed]);
+    const a = buildDescriptor('urn:iep:a', [temporal, semioticA, trust]);
+    const b = buildDescriptor('urn:iep:b', [temporal, semioticB, fed]);
     resetComposedIdCounter();
     const ab = intersection(a, b);
     resetComposedIdCounter();
@@ -150,8 +150,8 @@ describe('lattice laws — intersection', () => {
   });
 
   it('empty facet intersection yields empty facet set', () => {
-    const a = buildDescriptor('urn:cg:a', [temporal, semioticA]);
-    const b = buildDescriptor('urn:cg:b', [trust, fed]);  // no shared facet types
+    const a = buildDescriptor('urn:iep:a', [temporal, semioticA]);
+    const b = buildDescriptor('urn:iep:b', [trust, fed]);  // no shared facet types
     const ab = intersection(a, b);
     expect(ab.facets.length).toBe(0);
   });
@@ -161,8 +161,8 @@ describe('lattice laws — intersection', () => {
     // — the UNION — when commonGraphs was empty. That violated `d1 ∧ d2 ≤ d1`
     // and `d1 ∧ d2 ≤ d2`. Empty meet is the empty set; the result must contain
     // no graphs that aren't in both operands.
-    const a = buildDescriptor('urn:cg:a', [temporal]);
-    const b = buildDescriptor('urn:cg:b', [temporal]);
+    const a = buildDescriptor('urn:iep:a', [temporal]);
+    const b = buildDescriptor('urn:iep:b', [temporal]);
     // Override the describes sets so they're DISJOINT.
     const aDisjoint: ContextDescriptorData = { ...a, describes: ['urn:graph:only-a' as IRI] };
     const bDisjoint: ContextDescriptorData = { ...b, describes: ['urn:graph:only-b' as IRI] };
@@ -179,8 +179,8 @@ describe('lattice laws — absorption', () => {
   it('union(a, intersection(a, b)) ≈ a', () => {
     // This law requires that intersection(a,b) be a sub-structure of a.
     // Our union then adds NOTHING new to a (all facets already present).
-    const a = buildDescriptor('urn:cg:a', [temporal, semioticA, trust]);
-    const b = buildDescriptor('urn:cg:b', [temporal, semioticB]);
+    const a = buildDescriptor('urn:iep:a', [temporal, semioticA, trust]);
+    const b = buildDescriptor('urn:iep:b', [temporal, semioticB]);
     resetComposedIdCounter();
     const inner = intersection(a, b);
     resetComposedIdCounter();

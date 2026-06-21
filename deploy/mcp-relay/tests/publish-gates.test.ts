@@ -6,7 +6,7 @@
  * in deploy/mcp-relay/server.ts handlePublishContext:
  *
  *   A. SHACL conformance gate
- *      - Reads cg:conformsTo / dct:conformsTo from the target container's
+ *      - Reads iep:conformsTo / dct:conformsTo from the target container's
  *        metadata (.well-known/container-shape, falling back to the
  *        pod manifest collection subject).
  *      - Fetches each declared shape and validates the inbound
@@ -115,7 +115,7 @@ function makeMemoryPod(initialResources: Record<string, string> = {}): {
 async function main(): Promise<void> {
   // ── Scenario A: SHACL conformance gate rejects non-conformant payload ──
   //
-  // The shape declares cg:Note must carry exactly one dct:title
+  // The shape declares iep:Note must carry exactly one dct:title
   // literal. We publish a graph that is missing dct:title.
   // Expectation:
   //   - PublishShapeViolationError thrown
@@ -125,12 +125,12 @@ async function main(): Promise<void> {
   {
     const shapeTurtle = `
 @prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-cg:NoteShape a sh:NodeShape ;
-    sh:targetClass cg:Note ;
+iep:NoteShape a sh:NodeShape ;
+    sh:targetClass iep:Note ;
     sh:property [
         sh:path dct:title ;
         sh:minCount 1 ;
@@ -139,8 +139,8 @@ cg:NoteShape a sh:NodeShape ;
     ] .
 `;
     const violatingGraph = `
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-<urn:note:1> a cg:Note .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+<urn:note:1> a iep:Note .
 `;
 
     // Standalone engine assertions first — make sure the new
@@ -153,7 +153,7 @@ cg:NoteShape a sh:NodeShape ;
 
     // Now exercise the publish-level gate.
     const pod = makeMemoryPod();
-    const descriptor = ContextDescriptor.create('urn:cg:test:gate:shape' as IRI)
+    const descriptor = ContextDescriptor.create('urn:iep:test:gate:shape' as IRI)
       .describes('urn:graph:note:1' as IRI)
       .semiotic({ modalStatus: 'Asserted' })
       .build();
@@ -202,12 +202,12 @@ cg:NoteShape a sh:NodeShape ;
     const shapeIri = 'https://shapes.example/NoteShape';
     const shapeTurtle = `
 @prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-cg:NoteShape a sh:NodeShape ;
-    sh:targetClass cg:Note ;
+iep:NoteShape a sh:NodeShape ;
+    sh:targetClass iep:Note ;
     sh:property [
         sh:path dct:title ;
         sh:minCount 1 ;
@@ -216,13 +216,13 @@ cg:NoteShape a sh:NodeShape ;
     ] .
 `;
     const violatingGraph = `
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-<urn:note:1> a cg:Note .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+<urn:note:1> a iep:Note .
 `;
     const compliantGraph = `
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-<urn:note:1> a cg:Note ; dct:title "Hello world" .
+<urn:note:1> a iep:Note ; dct:title "Hello world" .
 `;
 
     // ── Sub-case 1: violating payload via caller-supplied shape ──
@@ -235,7 +235,7 @@ cg:NoteShape a sh:NodeShape ;
     // hands the (shapeIri, shapeTurtle) pairs to publish().
     {
       const pod = makeMemoryPod();
-      const descriptor = ContextDescriptor.create('urn:cg:test:gate:caller-shapes:violation' as IRI)
+      const descriptor = ContextDescriptor.create('urn:iep:test:gate:caller-shapes:violation' as IRI)
         .describes('urn:graph:note:1' as IRI)
         .semiotic({ modalStatus: 'Asserted' })
         .build();
@@ -274,7 +274,7 @@ cg:NoteShape a sh:NodeShape ;
     // context-graphs container is observed on the memory pod.
     {
       const pod = makeMemoryPod();
-      const descriptor = ContextDescriptor.create('urn:cg:test:gate:caller-shapes:ok' as IRI)
+      const descriptor = ContextDescriptor.create('urn:iep:test:gate:caller-shapes:ok' as IRI)
         .describes('urn:graph:note:1' as IRI)
         .semiotic({ modalStatus: 'Asserted' })
         .build();
@@ -324,21 +324,21 @@ cg:NoteShape a sh:NodeShape ;
   //       caught (defensive — shouldn't happen in practice).
   {
     const baseGraph = `
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-<urn:note:1> a cg:Note .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+<urn:note:1> a iep:Note .
 `;
 
     // (a) IRI-prefix graph block.
     {
       const trigShape = `
 @prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 <urn:graph:shapes> {
-  cg:NoteShape a sh:NodeShape ;
-      sh:targetClass cg:Note ;
+  iep:NoteShape a sh:NodeShape ;
+      sh:targetClass iep:Note ;
       sh:property [
           sh:path dct:title ;
           sh:minCount 1 ;
@@ -358,13 +358,13 @@ cg:NoteShape a sh:NodeShape ;
     {
       const trigShape = `
 @prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 GRAPH <urn:graph:shapes> {
-  cg:NoteShape a sh:NodeShape ;
-      sh:targetClass cg:Note ;
+  iep:NoteShape a sh:NodeShape ;
+      sh:targetClass iep:Note ;
       sh:property [
           sh:path dct:title ;
           sh:minCount 1 ;
@@ -387,13 +387,13 @@ GRAPH <urn:graph:shapes> {
       const shapeIri = 'https://shapes.example/trig/NoteShape';
       const trigShape = `
 @prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 GRAPH <urn:graph:shapes> {
-  cg:NoteShape a sh:NodeShape ;
-      sh:targetClass cg:Note ;
+  iep:NoteShape a sh:NodeShape ;
+      sh:targetClass iep:Note ;
       sh:property [
           sh:path dct:title ;
           sh:minCount 1 ;
@@ -403,7 +403,7 @@ GRAPH <urn:graph:shapes> {
 }
 `;
       const pod = makeMemoryPod();
-      const descriptor = ContextDescriptor.create('urn:cg:test:gate:trig-graph-shape' as IRI)
+      const descriptor = ContextDescriptor.create('urn:iep:test:gate:trig-graph-shape' as IRI)
         .describes('urn:graph:note:1' as IRI)
         .semiotic({ modalStatus: 'Asserted' })
         .build();
@@ -436,13 +436,13 @@ GRAPH <urn:graph:shapes> {
     {
       const trigShape = `
 @prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 <urn:graph:shapes:base> {
-  cg:NoteShape a sh:NodeShape ;
-      sh:targetClass cg:Note ;
+  iep:NoteShape a sh:NodeShape ;
+      sh:targetClass iep:Note ;
       sh:property [
           sh:path dct:title ;
           sh:minCount 1 ;
@@ -451,7 +451,7 @@ GRAPH <urn:graph:shapes> {
 }
 
 GRAPH <urn:graph:shapes:extension> {
-  cg:NoteShape sh:property [
+  iep:NoteShape sh:property [
       sh:path dct:creator ;
       sh:minCount 1 ;
       sh:nodeKind sh:IRI

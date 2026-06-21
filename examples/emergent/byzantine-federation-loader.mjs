@@ -69,7 +69,7 @@
  *   4. 20 × peer-byz-A mutated-content forgeries
  *   5. 20 × peer-byz-B real-content junk-sig forgeries
  *   6. 20 × peer-byz-C stale re-signed forgeries
- *   7. 1  × federation loader verdict descriptor (cg:supersedes
+ *   7. 1  × federation loader verdict descriptor (iep:supersedes
  *           the per-peer rejected entries it quarantined)
  *
  * PASS / FAIL
@@ -121,7 +121,7 @@ const ALL_PEER_PODS = [
 ];
 
 // Vertical namespace — scenario-specific predicates ONLY. Per CLAUDE.md
-// ontology hygiene this never collides with cg:/cgh:/passport:/registry:
+// ontology hygiene this never collides with iep:/ieh:/passport:/registry:
 // and ontology-lint will not touch it.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/byzantine-federation-loader#';
 const TYPE_ORIGIN_DESCRIPTOR     = `${SCENARIO_NS}OriginDescriptor`;
@@ -283,7 +283,7 @@ async function publishOriginDescriptor(origin, idx, value) {
   const { commitment, signature } = await signPayload(origin.wallet, payload);
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix byz: <${SCENARIO_NS}> .
@@ -346,7 +346,7 @@ async function publishHonestMirror(peerSlug, peerPodUrl, originEntry) {
   const now = new Date().toISOString();
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix byz: <${SCENARIO_NS}> .
@@ -426,7 +426,7 @@ async function publishByzantineMutatedContent(peer, peerPodUrl, originEntry) {
   const { commitment, signature } = await signPayload(peer.wallet, mutatedPayload);
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix byz: <${SCENARIO_NS}> .
@@ -511,7 +511,7 @@ async function publishByzantineJunkSignature(peer, peerPodUrl, originEntry, junk
   }
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix byz: <${SCENARIO_NS}> .
@@ -597,7 +597,7 @@ async function publishByzantineStaleResigned(peer, peerPodUrl, originEntry) {
   const { commitment, signature } = await signPayload(peer.wallet, stalePayload);
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix byz: <${SCENARIO_NS}> .
@@ -669,7 +669,7 @@ async function publishLoaderVerdict(loaderAgent, perPeerSummary, quarantined, me
   ).join('\n');
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix byz: <${SCENARIO_NS}> .
@@ -685,7 +685,7 @@ ${summaryLines}
   prov:generatedAtTime "${now}"^^xsd:dateTime .
 `;
 
-  // Quarantine receipts on cg:supersedes — every Byzantine descriptor
+  // Quarantine receipts on iep:supersedes — every Byzantine descriptor
   // the loader rejected. Cap at 60 (3 peers x 20) so the descriptor
   // stays human-readable in the pod's filesystem.
   const supersededIris = [];

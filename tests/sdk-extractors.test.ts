@@ -25,7 +25,7 @@ describe('Format Detection', () => {
   });
 
   it('detects Turtle RDF', () => {
-    expect(detectFormat('@prefix cg: <urn:cg:> . cg:test cg:value "hello" .')).toBe('turtle');
+    expect(detectFormat('@prefix iep: <urn:iep:> . iep:test iep:value "hello" .')).toBe('turtle');
   });
 
   it('detects by filename extension', () => {

@@ -8,7 +8,7 @@
  *     - Cryptographic signature (ECDSA) over the descriptor
  *     - Anchoring (IPFS CID computed; can be pinned externally)
  *     - Validation against the relevant framework's SHACL shapes
- *     - Append-only via cg:supersedes (no in-place mutation)
+ *     - Append-only via iep:supersedes (no in-place mutation)
  *
  *   Framework conformance check (per-framework: EU AI Act, NIST RMF,
  *   SOC 2) walks a set of descriptors and aggregates evidence per
@@ -484,7 +484,7 @@ export function listValidSignerAddressesAt(path: string, signedAt: Date): readon
 // ── Lineage walk ─────────────────────────────────────────────
 
 /**
- * Walk the prov:wasDerivedFrom + cg:supersedes chains for a given
+ * Walk the prov:wasDerivedFrom + iep:supersedes chains for a given
  * descriptor IRI, returning the full ancestral graph. Used by the
  * /audit/lineage endpoint.
  */

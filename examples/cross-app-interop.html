@@ -256,7 +256,7 @@
 <footer>
   <strong>The point:</strong> none of these apps wrote anything app-specific to the pod.
   None required prior coordination with the pod's author. None know which app produced
-  which descriptor. They all read the same standard <code>cg:</code> + W3C vocabulary
+  which descriptor. They all read the same standard <code>iep:</code> + W3C vocabulary
   shape — Verborgh's interop holy grail.
   &nbsp; · &nbsp;
   <a href="https://github.com/markjspivey-xwisee/interego">github</a>
@@ -267,7 +267,7 @@
 
 const pod = [
   {
-    id: 'urn:cg:memory:vocab-emergence-2026-04-22',
+    id: 'urn:iep:memory:vocab-emergence-2026-04-22',
     describes: 'urn:graph:memory:vocab-emergence-2026-04-22',
     facets: [
       { type: 'Temporal', validFrom: '2026-04-22T14:00:00Z' },
@@ -279,7 +279,7 @@ const pod = [
     payload: 'Vocabulary alignment converges in ~45 rounds with threshold 3 over 9 subjects.',
   },
   {
-    id: 'urn:cg:attestation:bob-attests-mark-2026-04-23',
+    id: 'urn:iep:attestation:bob-attests-mark-2026-04-23',
     describes: 'urn:agent:mark',
     facets: [
       { type: 'Temporal', validFrom: '2026-04-23T09:00:00Z' },
@@ -291,7 +291,7 @@ const pod = [
     payload: '(amta:Attestation about urn:agent:mark)',
   },
   {
-    id: 'urn:cg:attestation:carol-attests-mark-2026-04-23',
+    id: 'urn:iep:attestation:carol-attests-mark-2026-04-23',
     describes: 'urn:agent:mark',
     facets: [
       { type: 'Temporal', validFrom: '2026-04-23T15:30:00Z' },
@@ -303,7 +303,7 @@ const pod = [
     payload: '(amta:Attestation about urn:agent:mark)',
   },
   {
-    id: 'urn:cg:code-review:pr42-bob',
+    id: 'urn:iep:code-review:pr42-bob',
     describes: 'urn:code:pr:42',
     facets: [
       { type: 'Temporal', validFrom: '2026-04-22T11:15:00Z' },
@@ -315,7 +315,7 @@ const pod = [
     payload: '(code:Review verdict=Approved on PR #42)',
   },
   {
-    id: 'urn:cg:memory:meeting-notes-2026-04-23',
+    id: 'urn:iep:memory:meeting-notes-2026-04-23',
     describes: 'urn:graph:notes/team-meeting-2026-04-23',
     facets: [
       { type: 'Temporal', validFrom: '2026-04-23T16:00:00Z' },
@@ -327,7 +327,7 @@ const pod = [
     payload: 'Discussed Q3 priorities; revisit after pitch on Friday.',
   },
   {
-    id: 'urn:cg:hypothetical:emergent-policy-shared-threshold',
+    id: 'urn:iep:hypothetical:emergent-policy-shared-threshold',
     describes: 'urn:claim:emergent-shared-policy-threshold',
     facets: [
       { type: 'Temporal', validFrom: '2026-04-23T18:00:00Z' },
@@ -427,28 +427,28 @@ function renderTrust() {
 function renderRdf() {
   document.getElementById('rdf').innerHTML = pod.map(d => {
     const lines = [`<span class="subject">&lt;${shortIri(d.id)}&gt;</span>`];
-    lines.push(`  a <span class="object-iri">cg:ContextDescriptor</span> ;`);
-    lines.push(`  <span class="predicate">cg:describes</span>             <span class="object-iri">&lt;${shortIri(d.describes)}&gt;</span> ;`);
+    lines.push(`  a <span class="object-iri">iep:ContextDescriptor</span> ;`);
+    lines.push(`  <span class="predicate">iep:describes</span>             <span class="object-iri">&lt;${shortIri(d.describes)}&gt;</span> ;`);
     for (const f of d.facets) {
       switch (f.type) {
         case 'Temporal':
-          lines.push(`  <span class="predicate">cg:validFrom</span>             <span class="object-typed">"${f.validFrom}"^^xsd:dateTime</span> ;`);
+          lines.push(`  <span class="predicate">iep:validFrom</span>             <span class="object-typed">"${f.validFrom}"^^xsd:dateTime</span> ;`);
           break;
         case 'Provenance':
           lines.push(`  <span class="predicate">prov:wasAttributedTo</span>     <span class="object-iri">&lt;${shortIri(f.wasAttributedTo)}&gt;</span> ;`);
           break;
         case 'Agent':
-          lines.push(`  <span class="predicate">cg:assertingAgent</span>        <span class="object-iri">&lt;${shortIri(f.assertingAgent.agentIdentity)}&gt;</span> ;`);
+          lines.push(`  <span class="predicate">iep:assertingAgent</span>        <span class="object-iri">&lt;${shortIri(f.assertingAgent.agentIdentity)}&gt;</span> ;`);
           break;
         case 'Semiotic':
-          lines.push(`  <span class="predicate">cg:modalStatus</span>           <span class="object-iri">cg:${f.modalStatus}</span> ;`);
+          lines.push(`  <span class="predicate">iep:modalStatus</span>           <span class="object-iri">iep:${f.modalStatus}</span> ;`);
           if (f.epistemicConfidence !== undefined) {
-            lines.push(`  <span class="predicate">cg:epistemicConfidence</span>   <span class="object-typed">"${f.epistemicConfidence}"^^xsd:double</span> ;`);
+            lines.push(`  <span class="predicate">iep:epistemicConfidence</span>   <span class="object-typed">"${f.epistemicConfidence}"^^xsd:double</span> ;`);
           }
           break;
         case 'Trust':
-          lines.push(`  <span class="predicate">cg:trustLevel</span>            <span class="object-iri">cg:${f.trustLevel}</span> ;`);
-          lines.push(`  <span class="predicate">cg:issuer</span>                <span class="object-iri">&lt;${shortIri(f.issuer)}&gt;</span> ;`);
+          lines.push(`  <span class="predicate">iep:trustLevel</span>            <span class="object-iri">iep:${f.trustLevel}</span> ;`);
+          lines.push(`  <span class="predicate">iep:issuer</span>                <span class="object-iri">&lt;${shortIri(f.issuer)}&gt;</span> ;`);
           break;
       }
     }

@@ -3,7 +3,7 @@
  * @description SKILL.md (agentskills.io) ↔ Interego substrate translator.
  *
  * Layer-3 implementation. Pure translator; no new substrate types or
- * namespaces. The cg:Affordance + cgh:Affordance + dct:hasPart +
+ * namespaces. The iep:Affordance + ieh:Affordance + dct:hasPart +
  * pgsl:Atom predicates already in the protocol express everything a
  * SKILL.md needs to encode.
  *
@@ -17,8 +17,8 @@
  *
  * Exports:
  *   parseSkillMd / emitSkillMd          — frontmatter parser + emitter
- *   skillBundleToDescriptor             — SKILL.md dir → cg:Affordance descriptor
- *   descriptorGraphToSkillBundle        — cg:Affordance descriptor → SKILL.md dir
+ *   skillBundleToDescriptor             — SKILL.md dir → iep:Affordance descriptor
+ *   descriptorGraphToSkillBundle        — iep:Affordance descriptor → SKILL.md dir
  *   descriptorGraphToSkillMd            — convenience: re-emit SKILL.md text only
  */
 

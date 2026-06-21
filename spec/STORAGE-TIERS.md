@@ -36,7 +36,7 @@ import {
   cryptoComputeCid,
 } from '@interego/core';
 
-const desc = ContextDescriptor.create('urn:cg:my-claim')
+const desc = ContextDescriptor.create('urn:iep:my-claim')
   .describes('urn:graph:my-data')
   .selfAsserted('did:key:z6Mk...')
   .build();
@@ -188,7 +188,7 @@ const relay = new InMemoryRelay(); // or any P2pRelay implementation
 const client = new P2pClient(relay, wallet);
 
 await client.publishDescriptor({
-  descriptorId: 'urn:cg:my-claim',
+  descriptorId: 'urn:iep:my-claim',
   cid: 'bafkrei...',
   graphIri: 'urn:graph:my-data',
   facetTypes: ['Temporal', 'Trust'],

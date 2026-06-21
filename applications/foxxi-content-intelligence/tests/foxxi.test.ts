@@ -7,7 +7,7 @@
  *      affordance-mcp derivation (the bridge derives MCP schemas from
  *      these declarations; CI failure here = adopter's MCP client
  *      can't see Foxxi tools).
- *   2. Affordance action IRIs follow the urn:cg:action:foxxi:<verb>
+ *   2. Affordance action IRIs follow the urn:iep:action:foxxi:<verb>
  *      convention.
  *   3. The dual-audience split is correct — both arrays are
  *      non-empty + disjoint.
@@ -52,9 +52,9 @@ describe('foxxi affordances: shape + naming', () => {
     }
   });
 
-  it('every action IRI follows the urn:cg:action:foxxi:<verb> convention', () => {
+  it('every action IRI follows the urn:iep:action:foxxi:<verb> convention', () => {
     for (const a of [...foxxiAffordances, ...foxxiAdminAffordances]) {
-      expect(a.action).toMatch(/^urn:cg:action:foxxi:[a-z0-9-]+$/);
+      expect(a.action).toMatch(/^urn:iep:action:foxxi:[a-z0-9-]+$/);
     }
   });
 

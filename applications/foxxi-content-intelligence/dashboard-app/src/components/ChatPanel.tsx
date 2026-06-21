@@ -342,7 +342,7 @@ function TurnView({ turn }: { turn: ChatTurn }) {
               )}
               {step.supersedes && (
                 <div style={{ color: 'var(--text-dim)', marginTop: 2 }}>
-                  cg:supersedes → {step.supersedes.split(':').slice(-2).join(':')}
+                  iep:supersedes → {step.supersedes.split(':').slice(-2).join(':')}
                 </div>
               )}
             </div>

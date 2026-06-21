@@ -30,7 +30,7 @@ check('extension missing the kind is rejected', validateAgainstShape(noKind, sha
 console.log('\n[extend-standards] composes Foxxi standards, self-descriptive + guided');
 const xc = proposeStandardsExtension({ kind: 'XapiContextExtension', name: 'collaborationDepth', definition: 'How many distinct peers contributed to the performance.' });
 check('xAPI context extension -> a real Profile artifact', (xc.artifact as Record<string, unknown>).type === 'Profile');
-check('xAPI extension descriptor is a self-descriptive cg:StandardsExtension', Array.isArray((xc.descriptor as Record<string, unknown>)['@type']) && JSON.stringify(xc.descriptor['@type']).includes('StandardsExtension'));
+check('xAPI extension descriptor is a self-descriptive iep:StandardsExtension', Array.isArray((xc.descriptor as Record<string, unknown>)['@type']) && JSON.stringify(xc.descriptor['@type']).includes('StandardsExtension'));
 check('descriptor names the kind + the standard it extends', JSON.stringify(xc.descriptor).includes('XapiContextExtension') && typeof xc.extendsStandard === 'string');
 check('result carries in-flow guidance that names the capability', xc._guidance?.teaches === `${AGP_NS}StandardsExtension` && !!xc._guidance.howToLearn);
 check('iri derives from the proposed name', xc.iri.endsWith('#collaborationDepth') || xc.iri.endsWith('collaborationDepth'));

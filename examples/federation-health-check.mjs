@@ -50,11 +50,11 @@ function parseManifest(ttl) {
   const entries = []; let cur = null;
   for (const raw of ttl.split('\n')) {
     const line = raw.trim();
-    const s = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
+    const s = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
     if (s) { cur = { descriptorUrl: s[1], describes: [], conformsTo: [] }; continue; }
     if (!cur) continue;
     let m;
-    if ((m = line.match(/cg:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
+    if ((m = line.match(/iep:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
     if ((m = line.match(/dct:conformsTo\s+<([^>]+)>/))) cur.conformsTo.push(m[1]);
     if (line.endsWith('.')) { entries.push(cur); cur = null; }
   }
@@ -63,11 +63,11 @@ function parseManifest(ttl) {
 
 function parseDescriptor(ttl) {
   return {
-    issuer: ttl.match(/cg:TrustFacet[\s\S]*?cg:issuer\s+<([^>]+)>/)?.[1] ?? null,
+    issuer: ttl.match(/iep:TrustFacet[\s\S]*?iep:issuer\s+<([^>]+)>/)?.[1] ?? null,
     conformsTo: [...ttl.matchAll(/dct:conformsTo\s+<([^>]+)>/g)].map(m => m[1]),
     wasDerivedFrom: [...ttl.matchAll(/prov:wasDerivedFrom\s+<([^>]+)>/g)].map(m => m[1]),
-    describes: ttl.match(/cg:describes\s+<([^>]+)>/)?.[1] ?? null,
-    modalStatus: ttl.match(/cg:modalStatus\s+cg:(\w+)/)?.[1] ?? null,
+    describes: ttl.match(/iep:describes\s+<([^>]+)>/)?.[1] ?? null,
+    modalStatus: ttl.match(/iep:modalStatus\s+iep:(\w+)/)?.[1] ?? null,
   };
 }
 
@@ -91,7 +91,7 @@ record('connectivity', 'Identity server reachable', identityOk, { status: identi
 const podB = await fetchText(POD_B, 4000);
 record('connectivity', 'POD-B root reachable', podB.ok, { status: podB.status });
 const manifest = await fetchText(MANIFEST_URL, 6000);
-record('connectivity', 'Manifest parseable', !!manifest.body && manifest.body.includes('cg:ManifestEntry'), { bytes: manifest.body?.length ?? 0 });
+record('connectivity', 'Manifest parseable', !!manifest.body && manifest.body.includes('iep:ManifestEntry'), { bytes: manifest.body?.length ?? 0 });
 console.log('');
 
 const entries = parseManifest(manifest.body ?? '');
@@ -157,7 +157,7 @@ for (const url of t1Urls) {
   if (signedSourceM) {
     const sourceR = await fetchText(signedSourceM[1]);
     if (sourceR?.body) {
-      const srcId = sourceR.body.match(/^<([^>]+)>\s+a\s+cg:ContextDescriptor/m)?.[1];
+      const srcId = sourceR.body.match(/^<([^>]+)>\s+a\s+iep:ContextDescriptor/m)?.[1];
       const message = `Interego Descriptor Signature\nDescriptor: ${srcId}\nContent Hash: ${hashM[1]}\nSigned At: ${signedAtM?.[1]}`;
       try {
         const recovered = ethers.verifyMessage(message, sigM[1]);
@@ -239,7 +239,7 @@ if (phantomEntry) {
 const violatorEntry = entries.find(e => e.descriptorUrl.includes('adversarial-shape-violator'));
 if (violatorEntry) {
   const r = await fetchText(violatorEntry.descriptorUrl);
-  const hasHypothetical = r.body?.includes('cg:modalStatus cg:Hypothetical');
+  const hasHypothetical = r.body?.includes('iep:modalStatus iep:Hypothetical');
   record('adversarial', 'shape-violator intact (declares Hypothetical)', !!hasHypothetical);
 }
 console.log('');
@@ -276,7 +276,7 @@ for (const [cls, list] of Object.entries(results)) {
 console.log('');
 
 // ── Publish health-report descriptor ───────────────────────
-const reportId = `urn:cg:health-report:${Date.now()}`;
+const reportId = `urn:iep:health-report:${Date.now()}`;
 const reportGraph = `urn:graph:health-report:${Date.now()}`;
 const reportUrl = `${POD}context-graphs/health-report-${Date.now()}.ttl`;
 const now = new Date().toISOString();
@@ -284,7 +284,7 @@ const classSummary = Object.entries(results).map(([cls, list]) =>
   `    <urn:health:class:${cls}> <urn:health:pass> "${list.filter(x => x.pass).length}"^^xsd:integer ; <urn:health:total> "${list.length}"^^xsd:integer .`
 ).join('\n');
 
-const ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+const ttl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -292,38 +292,38 @@ const ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> 
 @prefix health: <urn:health:> .
 
 <${reportId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
     dct:conformsTo <${AUDIT_SHAPE}> ;
-    cg:describes <${reportGraph}> ;
+    iep:describes <${reportGraph}> ;
     health:totalChecks "${total}"^^xsd:integer ;
     health:checksPassed "${passing}"^^xsd:integer ;
     health:score "${score.toFixed(4)}"^^xsd:double ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${CHECKER_LENS}> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
         prov:wasDerivedFrom <${MANIFEST_URL}> ;
         prov:wasAttributedTo <${CHECKER_LENS}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${CHECKER_LENS}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${CHECKER_LENS}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "${score.toFixed(4)}"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${CHECKER_LENS}> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${CHECKER_LENS}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${CHECKER_LENS}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "${score.toFixed(4)}"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${CHECKER_LENS}> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 
 ${classSummary}
 `;
 await putText(reportUrl, ttl);
 const entry = `
 
-<${reportUrl}> a cg:ManifestEntry ;
-    cg:describes <${reportGraph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
+<${reportUrl}> a iep:ManifestEntry ;
+    iep:describes <${reportGraph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
     dct:conformsTo <${AUDIT_SHAPE}> ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
 const curManifest = await fetchText(MANIFEST_URL);
 await putText(MANIFEST_URL, (curManifest.body ?? '') + entry);

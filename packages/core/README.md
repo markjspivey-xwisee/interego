@@ -8,7 +8,7 @@ of the system:
   operators: union, intersection, restriction, override).
 - **`kernel/`** — The 8 categorical verbs (`mint`, `dereference`,
   `compose`, `act`, `restrict`, `extend`, `promote`, `decompose`).
-- **`affordance/`** — The `cg:Affordance` shape (Peircean Thirdness
+- **`affordance/`** — The `iep:Affordance` shape (Peircean Thirdness
   made operational). The runtime that *computes* per-agent affordance
   sets (OODA + BDI + Active Inference) currently lives here too; it
   is slated for extraction into `@interego/affordance-engine` once the

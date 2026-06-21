@@ -17,8 +17,8 @@
  *   pre-shared DID space. This harness drops both and asks: does the
  *   substrate cleanly support runtime affordance enumeration + invocation
  *   across five heterogeneous verticals using only L1+L2 primitives
- *   (cg:Affordance / hydra:target / hydra:method / cg:supersedes /
- *   cg:modalStatus)? The verifier walks the descriptor chain at the end and
+ *   (iep:Affordance / hydra:target / hydra:method / iep:supersedes /
+ *   iep:modalStatus)? The verifier walks the descriptor chain at the end and
  *   reports which assumptions held.
  *
  * AGENTS (5, each its own ephemeral wallet — no shared DID space)
@@ -30,20 +30,20 @@
  *
  * DESCRIPTOR CHAIN (cross-vertical composition)
  *   Stage 1: five affordance-catalog descriptors (one per vertical),
- *            each carrying multiple cg:Affordance blocks.
+ *            each carrying multiple iep:Affordance blocks.
  *   Stage 2: a discovery-event descriptor (LPC) — Asserted, wasDerivedFrom
  *            every catalog it discovered.
  *   Stage 3: a composition-intent descriptor (LPC) — Hypothetical, names
  *            chosen affordance IRIs from 4+ verticals.
  *   Stage 4: invocation descriptors (one per affordance call) — initially
  *            Hypothetical; flipped to Asserted on success or republished as
- *            Counterfactual + cg:supersedes prior on failure.
+ *            Counterfactual + iep:supersedes prior on failure.
  *   Stage 5: cross-vertical synthesis descriptor (LPC) — Asserted,
  *            wasDerivedFrom every invocation, lists participatingVerticals.
  *
  * SUPERSESSION CHAIN
- *   - Re-planning: new composition-intent cg:supersedes prior.
- *   - Failed invocation: republished w/ Counterfactual cg:supersedes prior.
+ *   - Re-planning: new composition-intent iep:supersedes prior.
+ *   - Failed invocation: republished w/ Counterfactual iep:supersedes prior.
  *   - No supersession on discovery or synthesis (terminal).
  *
  * PASS / FAIL
@@ -88,7 +88,7 @@ const POD = `${CSS}/demos/emergent-closed-loop-learner-${RUN_DATE}/`;
 
 // Vertical namespace for scenario-specific predicates. Per CLAUDE.md
 // ontology hygiene: scenario predicates MUST NOT land in any owned prefix
-// (cg:/cgh:/pgsl:/ie:/...). Scenario namespaces are fine + need no docs/ns/
+// (iep:/ieh:/pgsl:/ie:/...). Scenario namespaces are fine + need no docs/ns/
 // declaration.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/closed-loop-learner#';
 const ec = (s) => `${SCENARIO_NS}${s}`;
@@ -97,7 +97,7 @@ const ec = (s) => `${SCENARIO_NS}${s}`;
 // ManifestEntry doesn't carry the graph URL — the substrate writes the
 // named-graph payload to a sibling resource by convention (`<slug>.ttl`
 // + `<slug>-graph.trig`) and links it from the descriptor's
-// cg:affordance / hydra:target. Until the manifest parser surfaces the
+// iep:affordance / hydra:target. Until the manifest parser surfaces the
 // distribution link directly we derive the graph URL from the descriptor
 // URL using the same convention publish() uses (see src/naming/index.ts).
 function graphUrlFor(descriptorUrl) {
@@ -236,8 +236,8 @@ async function bootstrapAgent(slug, role) {
 // ── catalog: per-vertical affordances ────────────────────────────────
 // Each vertical declares >= 2 affordances. LPC's discover() must surface
 // the IRIs without prior knowledge. The affordance shape mirrors what
-// buildDistributionBlock emits in the L1 stack — cg:Affordance, cgh:Affordance,
-// hydra:Operation, dcat:Distribution; hydra:method / hydra:target / cg:action.
+// buildDistributionBlock emits in the L1 stack — iep:Affordance, ieh:Affordance,
+// hydra:Operation, dcat:Distribution; hydra:method / hydra:target / iep:action.
 const CATALOG = {
   lpc: {
     name: 'Learner Performer Companion',
@@ -292,12 +292,12 @@ async function publishAffordanceCatalog(agent) {
   const catalogIri = `${SCENARIO_NS}catalog:${agent.slug}:${RUN_DATE}`;
   const generatedAt = new Date().toISOString();
 
-  // The descriptor's RDF carries plain dcat:/hydra:/cg: + ec: scenario terms
+  // The descriptor's RDF carries plain dcat:/hydra:/iep: + ec: scenario terms
   // ONLY in the vertical namespace. No invention into owned prefixes.
   const affordanceBlocks = catalog.affordances.map(a => `[
-    a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ;
+    a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
     dcterms:identifier "${a.id}" ;
-    cg:action "${a.action}" ;
+    iep:action "${a.action}" ;
     hydra:method "${a.method}" ;
     hydra:target <${affordanceTarget(agent.slug, a.id)}> ;
     hydra:expects "${a.expects}" ;
@@ -305,8 +305,8 @@ async function publishAffordanceCatalog(agent) {
   ]`).join(', ');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
-@prefix cgh: <https://w3id.org/cg/hypermedia#> .
+@prefix iep: <https://w3id.org/cg/> .
+@prefix ieh: <https://w3id.org/cg/hypermedia#> .
 @prefix dcat: <http://www.w3.org/ns/dcat#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
@@ -314,12 +314,12 @@ async function publishAffordanceCatalog(agent) {
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix ec: <${SCENARIO_NS}> .
 
-<${catalogIri}> a cg:ContextDescriptor, ec:AffordanceCatalog ;
+<${catalogIri}> a iep:ContextDescriptor, ec:AffordanceCatalog ;
   dcterms:title "${catalog.name} affordance catalog (${RUN_DATE})" ;
   ec:vertical "${agent.slug}" ;
   ec:verticalName "${catalog.name}" ;
   ec:affordanceCount ${catalog.affordances.length} ;
-  cg:affordance ${affordanceBlocks} ;
+  iep:affordance ${affordanceBlocks} ;
   prov:wasGeneratedBy <${agent.did}> ;
   prov:generatedAtTime "${generatedAt}"^^xsd:dateTime .
 `;
@@ -355,8 +355,8 @@ function parseAffordanceBlocks(ttl) {
   let m;
   while ((m = re.exec(ttl)) !== null) {
     const body = m[1];
-    if (!/cg:Affordance/.test(body)) continue;
-    const action = body.match(/cg:action\s+"([^"]+)"/)?.[1];
+    if (!/iep:Affordance/.test(body)) continue;
+    const action = body.match(/iep:action\s+"([^"]+)"/)?.[1];
     const method = body.match(/hydra:method\s+"([^"]+)"/)?.[1];
     const target = body.match(/hydra:target\s+<([^>]+)>/)?.[1];
     const id     = body.match(/dcterms:identifier\s+"([^"]+)"/)?.[1];
@@ -374,13 +374,13 @@ async function publishDiscoveryEvent(agent, catalogIris, totalFound) {
   const discoveredTriples = catalogIris.map(c => `ec:discovered <${c}> ;`).join('\n  ');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix ec: <${SCENARIO_NS}> .
 
-<${iri}> a cg:ContextDescriptor, ec:DiscoveryEvent ;
+<${iri}> a iep:ContextDescriptor, ec:DiscoveryEvent ;
   dcterms:title "Discovery event from ${agent.slug} (${RUN_DATE})" ;
   ec:discoverer "${agent.slug}" ;
   ec:totalAffordancesFound ${totalFound} ;
@@ -424,13 +424,13 @@ async function publishCompositionIntent(agent, selected, supersedesIri) {
   ]`).join(', ');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix ec: <${SCENARIO_NS}> .
 
-<${iri}> a cg:ContextDescriptor, ec:CompositionPlan ;
+<${iri}> a iep:ContextDescriptor, ec:CompositionPlan ;
   dcterms:title "Composition intent by ${agent.slug} (${generatedAt})" ;
   ec:planner "${agent.slug}" ;
   ${selectedTriples}
@@ -477,13 +477,13 @@ async function publishInvocation(agent, step, requestId, intentDescriptorUrl) {
   const generatedAt = new Date().toISOString();
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix ec: <${SCENARIO_NS}> .
 
-<${iri}> a cg:ContextDescriptor, ec:AffordanceInvocation ;
+<${iri}> a iep:ContextDescriptor, ec:AffordanceInvocation ;
   dcterms:title "Invocation ${requestId} (${step.action})" ;
   ec:requestId "${requestId}" ;
   ec:invokedAffordance <${step.target}> ;
@@ -518,7 +518,7 @@ async function publishInvocation(agent, step, requestId, intentDescriptorUrl) {
 
 // Republish an invocation descriptor with the final modal status. For
 // success: Asserted + ec:result. For failure: Counterfactual + ec:errorReason.
-// Either way cg:supersedes the prior invocation descriptor IRI.
+// Either way iep:supersedes the prior invocation descriptor IRI.
 async function republishInvocationOutcome(agent, step, requestId, priorDescriptorUrl, outcome) {
   const iri = `${SCENARIO_NS}invocation:${requestId}:${outcome.ok ? 'asserted' : 'counterfactual'}`;
   const generatedAt = new Date().toISOString();
@@ -527,13 +527,13 @@ async function republishInvocationOutcome(agent, step, requestId, priorDescripto
     : `ec:errorReason "${(outcome.errorReason ?? 'unknown').replace(/"/g, '\\"')}" ;`;
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix ec: <${SCENARIO_NS}> .
 
-<${iri}> a cg:ContextDescriptor, ec:AffordanceInvocation ;
+<${iri}> a iep:ContextDescriptor, ec:AffordanceInvocation ;
   dcterms:title "Invocation ${requestId} (${outcome.ok ? 'completed' : 'failed'})" ;
   ec:requestId "${requestId}" ;
   ec:invokedAffordance <${step.target}> ;
@@ -608,13 +608,13 @@ async function publishSynthesis(agent, invocations, verticalsTouched) {
   const derived = invocations.map(i => i.finalDescriptorUrl);
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix ec: <${SCENARIO_NS}> .
 
-<${iri}> a cg:ContextDescriptor, ec:CrossVerticalSynthesis ;
+<${iri}> a iep:ContextDescriptor, ec:CrossVerticalSynthesis ;
   dcterms:title "Cross-vertical synthesis (${RUN_DATE})" ;
   ec:synthesizer "${agent.slug}" ;
   ${verticalsTriples}
@@ -715,7 +715,7 @@ const entries = await discover(POD);
 console.log(`   manifest entries on pod: ${entries.length}`);
 
 // LPC walks each catalog entry (filtered by ec:AffordanceCatalog via the
-// conformsTo it published) and parses cg:affordance blocks out of the
+// conformsTo it published) and parses iep:affordance blocks out of the
 // graph. NOTHING is pre-loaded from CATALOG[].
 const catalogEntries = entries.filter(e =>
   (e.conformsTo ?? []).includes(ec('AffordanceCatalog')));
@@ -875,7 +875,7 @@ for (const e of finalEntries) {
     console.warn(`     spot-check skip: ${e.descriptorUrl} — ${err?.message ?? err}`);
     continue;
   }
-  // Inventions would look like cg:closed-loop... or cgh:closed-loop...
+  // Inventions would look like iep:closed-loop... or ieh:closed-loop...
   // None of the owned prefixes should host scenario terms.
   if (/(?:cg|cgh|pgsl|ie|hyprcat|hypragent|hela|sat|cts|olke|amta|abac|registry|passport)\s*:\s*(?:Closed-?Loop|ClosedLoop|closedLoop|emergent[A-Z])/i.test(tx)) {
     ownedDriftHits++;

@@ -120,7 +120,7 @@ describe('IPFS Pinning (local-unpinned)', () => {
   });
 
   it('pins descriptor Turtle', async () => {
-    const desc = ContextDescriptor.create('urn:cg:test:pin' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:test:pin' as IRI)
       .describes('urn:graph:test' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .asserted(0.9)
@@ -218,9 +218,9 @@ describe('Real Delegation (EIP-712)', () => {
 describe('Real Descriptor Signing', () => {
   it('signs and verifies a descriptor', async () => {
     const agent = await createWallet('agent', 'Signer');
-    const turtle = '@prefix cg: <urn:cg:> . cg:test cg:value "hello" .';
+    const turtle = '@prefix iep: <urn:iep:> . iep:test iep:value "hello" .';
 
-    const signed = await signDescriptor('urn:cg:test:signed' as IRI, turtle, agent);
+    const signed = await signDescriptor('urn:iep:test:signed' as IRI, turtle, agent);
     expect(signed.signature.startsWith('0x')).toBe(true);
     expect(signed.signature.length).toBe(132); // real ECDSA signature
     expect(signed.signerAddress).toBe(agent.address);
@@ -232,11 +232,11 @@ describe('Real Descriptor Signing', () => {
 
   it('rejects tampered content', async () => {
     const agent = await createWallet('agent', 'Signer2');
-    const turtle = '@prefix cg: <urn:cg:> . cg:test cg:value "original" .';
+    const turtle = '@prefix iep: <urn:iep:> . iep:test iep:value "original" .';
 
-    const signed = await signDescriptor('urn:cg:test:tampered' as IRI, turtle, agent);
+    const signed = await signDescriptor('urn:iep:test:tampered' as IRI, turtle, agent);
 
-    const tampered = '@prefix cg: <urn:cg:> . cg:test cg:value "MODIFIED" .';
+    const tampered = '@prefix iep: <urn:iep:> . iep:test iep:value "MODIFIED" .';
     const verification = await verifyDescriptorSignature(signed, tampered);
     expect(verification.valid).toBe(false);
     expect(verification.reason).toContain('mismatch');
@@ -244,9 +244,9 @@ describe('Real Descriptor Signing', () => {
 
   it('rejects signature from wrong wallet', async () => {
     const agent = await createWallet('agent', 'RealSigner');
-    const turtle = '@prefix cg: <urn:cg:> . cg:test cg:value "test" .';
+    const turtle = '@prefix iep: <urn:iep:> . iep:test iep:value "test" .';
 
-    const signed = await signDescriptor('urn:cg:test:wrong' as IRI, turtle, agent);
+    const signed = await signDescriptor('urn:iep:test:wrong' as IRI, turtle, agent);
 
     // Claim it was signed by a different address
     const faked = { ...signed, signerAddress: '0x0000000000000000000000000000000000000000' };

@@ -102,7 +102,7 @@ describe('Tier 8 — agent-development-practice production end-to-end', () => {
         description: 'Open-ended capability space for customer-service tone in Complex situations.',
       }, config);
       track(cap.descriptorUrl, cap.graphUrl);
-      expect(cap.capabilityIri).toContain('urn:cg:capability');
+      expect(cap.capabilityIri).toContain('urn:iep:capability');
 
       // Step 2: three parallel probes — published SEQUENTIALLY because
       // src/solid/publish() does GET-then-PUT on the manifest (no CAS),
@@ -302,8 +302,8 @@ describe('Tier 8 — agent-development-practice production end-to-end', () => {
     try {
       const config = { podUrl: uniquePodUrl(), operatorDid: OPERATOR_DID };
       await expect(emergeSynthesis({
-        probeIri: 'urn:cg:probe:test' as IRI,
-        fragmentIris: ['urn:cg:fragment:test' as IRI],
+        probeIri: 'urn:iep:probe:test' as IRI,
+        fragmentIris: ['urn:iep:fragment:test' as IRI],
         emergentPattern: 'p',
         coherentNarratives: ['only one'],
       }, config)).rejects.toThrow(/coherent narrative/);
@@ -317,8 +317,8 @@ describe('Tier 8 — agent-development-practice production end-to-end', () => {
     try {
       const config = { podUrl: uniquePodUrl(), operatorDid: OPERATOR_DID };
       await expect(recordEvolutionStep({
-        synthesisIri: 'urn:cg:synthesis:test' as IRI,
-        amplifyProbeIris: ['urn:cg:probe:a' as IRI],
+        synthesisIri: 'urn:iep:synthesis:test' as IRI,
+        amplifyProbeIris: ['urn:iep:probe:a' as IRI],
         dampenProbeIris: [],
         explicitDecisionNotMade: '',
       }, config)).rejects.toThrow(/explicitDecisionNotMade/);

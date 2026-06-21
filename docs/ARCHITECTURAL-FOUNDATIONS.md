@@ -14,8 +14,8 @@ Interego is, mathematically, a **fibered presheaf of typed hypergraphs over a po
 - **PGSL is a Grothendieck fibration** `p: E → B` where `B` is the poset of granularity levels and the fiber over each level is the hypergraph at that granularity. Cartesian morphisms are the promotion / decomposition maps between levels. ([§3](#3-the-polygranular-fibration-pgsl-formally))
 - **HELA is the topos.** The presheaf `F: H^op → Set` over the category of holons-as-hyperedges; sections over a hyperedge are whole-level data; restriction maps to sub-hyperedges give the part-level view. The Janus property is the restriction/extension adjunction. ([§4](#4-the-presheaf-interpretation-hela-as-topos))
 - **Four invariants** govern the construction: identity-by-reference, level-shift functoriality, restriction/extension adjunction, hyperedge composition as colimit. ([§5](#5-the-four-invariants))
-- **Peircean correspondence** is encoded in the `sat:` ontology and made operational by `cgh:Affordance`: representation = Firstness, dereference act = Secondness, link relation (Hydra control) = Thirdness. ([§6](#6-the-peircean-correspondence))
-- **Fifth named loop** — agents propose typed affordances → others attest → promoted set is ratified as a versioned `cgh:Protocol` → an agent assembles a `cgh:WorkflowApp` composing the protocol → consumer agents discover + operate the app under typed `cgh:protocolConformance`. The substrate bootstraps its own application surface from agent activity alone. ([§10](#10-the-fifth-named-loop--socio-construction-of-an-emergent-protocol-and-app))
+- **Peircean correspondence** is encoded in the `sat:` ontology and made operational by `ieh:Affordance`: representation = Firstness, dereference act = Secondness, link relation (Hydra control) = Thirdness. ([§6](#6-the-peircean-correspondence))
+- **Fifth named loop** — agents propose typed affordances → others attest → promoted set is ratified as a versioned `ieh:Protocol` → an agent assembles a `ieh:WorkflowApp` composing the protocol → consumer agents discover + operate the app under typed `ieh:protocolConformance`. The substrate bootstraps its own application surface from agent activity alone. ([§10](#10-the-fifth-named-loop--socio-construction-of-an-emergent-protocol-and-app))
 
 The rest of the document spells out each correspondence and points at the file paths where the construction is realized in code or ontology.
 
@@ -28,8 +28,8 @@ A character `m`, the bigram `ma`, the token `mark`, the triple `(mark, isa, huma
 ```
 urn:pgsl:atom:<sha256-of-content>
 https://pod.example/me/context-graphs/<descriptor-slug>.ttl
-urn:cg:amendment:<id>
-urn:cg:tool:<name>:<hash>
+urn:iep:amendment:<id>
+urn:iep:tool:<name>:<hash>
 ```
 
 Each identity has *representations* — Turtle, JSON-LD, JOSE envelope, prose, audio, glyph image — but the holon is the identity, not any one rendering. This is not a notational convenience. It is what makes everything else in the architecture work:
@@ -51,8 +51,8 @@ Koestler's *holarchy* (1967) frames a holon as Janus-faced — autonomous at its
 
 Interego instantiates this directly:
 
-- A `cg:ContextDescriptor` with multiple facets (Temporal / Provenance / Agent / AccessControl / Semiotic / Trust / Federation) is a typed n-ary hyperedge. Each facet is a constituent; the descriptor is the whole. (Demo 11 demonstrates this — three regulators query the same descriptor with three different framework lenses.)
-- A `cg:Person` descriptor on an org pod can simultaneously be a participant in an `owm:Project` hyperedge, a voter in a `cg:Constitutional` amendment, and an attestor in an `amta:` chain — without rewriting the person's identity. The same holon, three hyperedge memberships.
+- A `iep:ContextDescriptor` with multiple facets (Temporal / Provenance / Agent / AccessControl / Semiotic / Trust / Federation) is a typed n-ary hyperedge. Each facet is a constituent; the descriptor is the whole. (Demo 11 demonstrates this — three regulators query the same descriptor with three different framework lenses.)
+- A `iep:Person` descriptor on an org pod can simultaneously be a participant in an `owm:Project` hyperedge, a voter in a `iep:Constitutional` amendment, and an attestor in an `amta:` chain — without rewriting the person's identity. The same holon, three hyperedge memberships.
 - A PGSL fragment at level *k* is a hyperedge over level *(k-1)* fragments via the pullback span. The same atom can be the overlap of multiple distinct level-2 fragments — same Firstness, multiple semiotic contexts (Demo 06).
 
 **Janus-faced criterion** is realized in the restriction/extension adjunction (§4): every hyperedge restricts to its constituents and extends to higher hyperedges containing it. The two operations are adjoint, which is the formal statement of Koestler's autonomy-and-integration duality.
@@ -110,7 +110,7 @@ where:
 - Extension = the "whole" view (integration into the upper level).
 - The unit `id → ext ∘ res` and counit `res ∘ ext → id` of the adjunction are the coherence between the two views.
 
-**Sheaf condition** is the demand that local data on a covering family glue to global data on the cover. In Interego, this is what makes `cg:supersedes` chains coherent: descriptors on different parts of the manifest combine into a consistent picture of belief without contradiction. The cleartext mirror in `normalizePublishInputs` ([`src/model/publish-preprocess.ts`](../src/model/publish-preprocess.ts)) is what makes the sheaf condition computable across encrypted graphs.
+**Sheaf condition** is the demand that local data on a covering family glue to global data on the cover. In Interego, this is what makes `iep:supersedes` chains coherent: descriptors on different parts of the manifest combine into a consistent picture of belief without contradiction. The cleartext mirror in `normalizePublishInputs` ([`src/model/publish-preprocess.ts`](../src/model/publish-preprocess.ts)) is what makes the sheaf condition computable across encrypted graphs.
 
 ## 5. The four invariants
 
@@ -121,14 +121,14 @@ The architecture obeys four laws. Each is realized by specific code paths.
 Every holon is a dereferenceable IRI. Equality of holons is IRI equality, never structural equality of representations. Operational realizations:
 
 - `mintAtom(pgsl, value)` derives the atom IRI from `sha256(value)` ([`src/pgsl/lattice.ts`](../src/pgsl/lattice.ts)).
-- `publish()` writes descriptor metadata at one URL and graph payload at a separate URL; clients follow the `cg:affordance` link, never reconstruct URLs by convention ([`src/solid/client.ts`](../src/solid/client.ts) lines 386-490).
+- `publish()` writes descriptor metadata at one URL and graph payload at a separate URL; clients follow the `iep:affordance` link, never reconstruct URLs by convention ([`src/solid/client.ts`](../src/solid/client.ts) lines 386-490).
 - Cross-pod sharing (`share_with`) resolves recipients by IRI; the envelope's wrapped-key lookup is by IRI-derived public key ([`src/solid/sharing.ts`](../src/solid/sharing.ts)).
 
 ### Invariant 2 — Level-shift functoriality
 
 The promotion functor γ: H_n → H_{n+1} preserves structural invariants. A holon promoted to a higher level retains its identity; its old hyperedge memberships at the lower level remain valid; its new memberships at the higher level extend rather than replace.
 
-In code: PGSL's `pullbackSquare` does not mutate the lower-level fragments when constructing a level-*k* apex. The supersedes machinery in `publish()` does not delete the prior descriptor; it adds a `cg:supersedes` link. Capability passport's `recordLifeEvent` appends; it never overwrites ([`src/passport/index.ts`](../src/passport/index.ts) lines 73-79).
+In code: PGSL's `pullbackSquare` does not mutate the lower-level fragments when constructing a level-*k* apex. The supersedes machinery in `publish()` does not delete the prior descriptor; it adds a `iep:supersedes` link. Capability passport's `recordLifeEvent` appends; it never overwrites ([`src/passport/index.ts`](../src/passport/index.ts) lines 73-79).
 
 ### Invariant 3 — Restriction / extension adjunction
 
@@ -150,15 +150,15 @@ Peirce's universal categories — Firstness (qualitative immediacy), Secondness 
 |---|---|
 | **Firstness** — pure qualitative content, possibility, the suchness of a representation | The bytes returned by `GET <iri>` — a Turtle string, a JOSE envelope, an audio rendering. The representation is Firstness; the sign-vehicle. |
 | **Secondness** — the dyadic act, the brute fact of *this particular* reference being resolved *now* | The dereference act itself: HTTP GET against an IRI, the cryptographic signature verification, the WebSocket event delivery. The fact-of-resolution is Secondness. |
-| **Thirdness** — the triadic mediating relation, the law that brings sign and object into a determinate interpretive relation | The link relation: `cg:supersedes`, `hydra:expects`, `prov:wasDerivedFrom`, `cg:affordance / cg:action`. Each triad of (sign-vehicle, target, relation-type) is a Peircean Third. |
+| **Thirdness** — the triadic mediating relation, the law that brings sign and object into a determinate interpretive relation | The link relation: `iep:supersedes`, `hydra:expects`, `prov:wasDerivedFrom`, `iep:affordance / iep:action`. Each triad of (sign-vehicle, target, relation-type) is a Peircean Third. |
 
-The SAT ontology ([`docs/ns/sat.ttl`](ns/sat.ttl)) makes this explicit: `sat:SemioticFieldFunctor owl:equivalentClass cg:SemioticFacet`. The Semiotic facet on every descriptor is the Peircean field functor on the corresponding semiotic topos. This is not analogy; it is an `owl:equivalentClass` declaration with operational meaning.
+The SAT ontology ([`docs/ns/sat.ttl`](ns/sat.ttl)) makes this explicit: `sat:SemioticFieldFunctor owl:equivalentClass iep:SemioticFacet`. The Semiotic facet on every descriptor is the Peircean field functor on the corresponding semiotic topos. This is not analogy; it is an `owl:equivalentClass` declaration with operational meaning.
 
-**Why this matters.** Dyadic graph models (subject-predicate-object as three separate edges) cannot represent Thirdness without reification. Hypergraphs do — a single 3-ary hyperedge over (sign, object, interpretant) is the natural home. Interego's `cgh:Affordance` is exactly this shape: one hyperedge whose members are the action IRI (sign), the target resource (object), and the typed inputs that mediate invocation (interpretant). Hydra controls *are* Thirdness made operational; following an affordance link enacts the triadic mediation by literal HTTP request.
+**Why this matters.** Dyadic graph models (subject-predicate-object as three separate edges) cannot represent Thirdness without reification. Hypergraphs do — a single 3-ary hyperedge over (sign, object, interpretant) is the natural home. Interego's `ieh:Affordance` is exactly this shape: one hyperedge whose members are the action IRI (sign), the target resource (object), and the typed inputs that mediate invocation (interpretant). Hydra controls *are* Thirdness made operational; following an affordance link enacts the triadic mediation by literal HTTP request.
 
 ## 7. CTS as the tuple-store realization
 
-The Compositional Tuple Store ([`docs/ns/cts.ttl`](ns/cts.ttl)) is the operational form of the polygranular structure. `cts:Pattern owl:equivalentClass cg:SyntagmaticPattern` declares that the substrate's syntagmatic-paradigmatic axis is Saussurean / structural-linguistic in nature.
+The Compositional Tuple Store ([`docs/ns/cts.ttl`](ns/cts.ttl)) is the operational form of the polygranular structure. `cts:Pattern owl:equivalentClass iep:SyntagmaticPattern` declares that the substrate's syntagmatic-paradigmatic axis is Saussurean / structural-linguistic in nature.
 
 A CTS schema with explicit n-gram sharing would have at minimum:
 
@@ -174,7 +174,7 @@ This is *constructible* from existing primitives but not currently pre-built as 
 
 - **Cross-pod federation reduces to link-traversal.** No data movement; the substructure-sharing relation is the graph topology itself.
 - **Substructure sharing is free at every level.** Two pods minting the same content produce the same IRI; the meet operator is set intersection; agreement is structural rather than negotiated (Demo 06).
-- **Belief revision is a primitive.** `cg:supersedes` chains are composable and temporally ordered; the head of a chain is the "current" view; older heads remain on the pod as audit trail (Demo 05).
+- **Belief revision is a primitive.** `iep:supersedes` chains are composable and temporally ordered; the head of a chain is the "current" view; older heads remain on the pod as audit trail (Demo 05).
 - **Compliance audits compose.** Every regulatory framework with an L3 mapping queries the same descriptors with its own vocabulary; a single pod presents three different audit-ready views (Demo 11).
 - **Self-amending governance is constructible.** Constitutional amendments are typed descriptors; ratification is a deterministic function of the vote set; the regime emerging from votes shapes future agent behavior through the same dereferencing chain that delivered the regime (Demo 17).
 
@@ -193,23 +193,23 @@ Items 2 and 3 are ontology declarations; runtime adoption (a SPARQL pattern libr
 
 The four invariants in §5 govern static structure: identity-by-reference, level-shift functoriality, restriction/extension adjunction, hyperedge composition as colimit. They describe what the substrate IS at any moment. There is a fifth pattern that governs how the substrate's *application surface* itself comes into being — a self-bootstrapping loop in which agents propose, attest, ratify, compose, and operate, with each layer recovering the previous from the same pod.
 
-**Phase A — Proposal.** Agents publish typed `cg:Affordance` descriptors that name new actions: action IRI, `hydra:expects` typed inputs, `rdfs:comment` describing intent. Modal status: Hypothetical. The substrate accepts arbitrary affordance descriptors via the standard publish flow; nothing in the protocol distinguishes a proposed affordance from any other Hypothetical claim.
+**Phase A — Proposal.** Agents publish typed `iep:Affordance` descriptors that name new actions: action IRI, `hydra:expects` typed inputs, `rdfs:comment` describing intent. Modal status: Hypothetical. The substrate accepts arbitrary affordance descriptors via the standard publish flow; nothing in the protocol distinguishes a proposed affordance from any other Hypothetical claim.
 
 **Phase B — Cross-attestation.** Other agents attest the proposed affordances via `amta:` axes. Aggregate trust scores emerge from arithmetic on the per-attestation ratings, exactly as Demo 16 demonstrates for tools.
 
-**Phase C — Promotion.** Affordances meeting structural thresholds (≥N peer attestations across ≥M axes, aggregate score ≥T) are promoted Hypothetical → Asserted via `cg:supersedes`. The "protocol" at any given moment is *the set of currently-Asserted `cg:Affordance` descriptors on the shared pod*.
+**Phase C — Promotion.** Affordances meeting structural thresholds (≥N peer attestations across ≥M axes, aggregate score ≥T) are promoted Hypothetical → Asserted via `iep:supersedes`. The "protocol" at any given moment is *the set of currently-Asserted `iep:Affordance` descriptors on the shared pod*.
 
-**Phase D — Constitutional binding.** A constitutional amendment ratifies the protocol as a versioned `cgh:Protocol` descriptor (added in `docs/ns/harness.ttl`). The protocol bundles the promoted affordances via `cgh:bundlesAffordance`. A `cgh:PromotionConstraint` may further restrict what counts as a valid future addition — substrate-enforced governance for the protocol's ongoing evolution (Demo 19's pattern).
+**Phase D — Constitutional binding.** A constitutional amendment ratifies the protocol as a versioned `ieh:Protocol` descriptor (added in `docs/ns/harness.ttl`). The protocol bundles the promoted affordances via `ieh:bundlesAffordance`. A `ieh:PromotionConstraint` may further restrict what counts as a valid future addition — substrate-enforced governance for the protocol's ongoing evolution (Demo 19's pattern).
 
-**Phase E — App composition.** A `cgh:WorkflowApp` descriptor composes affordances from the protocol via `cgh:composes`, in calling order, with a human-readable `cgh:appNarrative`. The app pins its `cgh:protocolConformance` to a specific protocol version IRI — the audit-trail integrity guarantee that lets a future reviewer answer "was this app's behavior consistent with the protocol that was in force when it ran?"
+**Phase E — App composition.** A `ieh:WorkflowApp` descriptor composes affordances from the protocol via `ieh:composes`, in calling order, with a human-readable `ieh:appNarrative`. The app pins its `ieh:protocolConformance` to a specific protocol version IRI — the audit-trail integrity guarantee that lets a future reviewer answer "was this app's behavior consistent with the protocol that was in force when it ran?"
 
 **Phase F — Operation under governance.** A consumer agent — different process, no shared memory — discovers the app via standard `discover_descriptors`, dereferences it, walks the composed affordances, and operates each. Operations conform to the affordance shapes; the constitutional layer can refuse promotions or operations that violate active constraints.
 
-**Loop closure.** Operations produce new observations. Cross-attestations shift trust scores. New amendments propose protocol revisions. The protocol updates via `cg:supersedes`. The same app URL renders different behavior because the affordances it composes have evolved underneath — but `cgh:protocolConformance` pins what the app was authored against, so audit remains coherent across versions.
+**Loop closure.** Operations produce new observations. Cross-attestations shift trust scores. New amendments propose protocol revisions. The protocol updates via `iep:supersedes`. The same app URL renders different behavior because the affordances it composes have evolved underneath — but `ieh:protocolConformance` pins what the app was authored against, so audit remains coherent across versions.
 
 **Demo 20** ([`scenarios/20-socio-constructed-protocol-and-app.ts`](../demos/scenarios/20-socio-constructed-protocol-and-app.ts)) traverses the full loop with eight claude processes plus harness aggregation. It is the most architecturally load-bearing demonstration in the suite, because it shows the substrate doing what no individual demo previously did: bootstrapping its own application surface from agent activity, with governance derived from the constitutional layer over the same artifacts.
 
-**Why this is a distinct loop, not a special case of §5.** The four invariants of §5 are *intra-substrate* — they hold for any sequence of operations on the existing primitives. The fifth loop is *constitutive* — it shows that the substrate's primitive set is itself reachable as an emergent property of agent activity, given a small generative seed (the publish + discover + attest + supersedes operations). The protocol is not a fixed point above the operations; it is the head of a supersedes chain over `cgh:Protocol` descriptors that the operations themselves produce. The loop closes back through itself.
+**Why this is a distinct loop, not a special case of §5.** The four invariants of §5 are *intra-substrate* — they hold for any sequence of operations on the existing primitives. The fifth loop is *constitutive* — it shows that the substrate's primitive set is itself reachable as an emergent property of agent activity, given a small generative seed (the publish + discover + attest + supersedes operations). The protocol is not a fixed point above the operations; it is the head of a supersedes chain over `ieh:Protocol` descriptors that the operations themselves produce. The loop closes back through itself.
 
 This is the operational answer to the deepest question the substrate raises: *can a community of agents construct, ratify, and live under their own protocol-and-app stack without any external coordinator?* On the evidence of Demo 20, yes. The substrate is sufficient.
 
@@ -226,7 +226,7 @@ This is the operational answer to the deepest question the substrate raises: *ca
 | `compose(holons, op)` | Operadic composition over typed-hyperedge category (the four operators) | `union` / `intersection` / `restriction` / `override` in `src/model/composition.ts` |
 | `act(affordance, payload)` | Peircean Thirdness made operational | `followAffordance` in `src/solid/affordance.ts` |
 | `restrict(holon, sub)` | Restriction half of the adjunction (Invariant 3) | `restriction` |
-| `extend(part, whole)` | Extension half of the adjunction | `union` + witness-preserving `cg:supersedes` back-link |
+| `extend(part, whole)` | Extension half of the adjunction | `union` + witness-preserving `iep:supersedes` back-link |
 | `promote(atoms[])` | PGSL fibration vertical movement (level k → k+1) | `ingest` + `pullbackSquare` |
 | `decompose(fragment)` | PGSL fibration vertical movement (level k → k-1) | `pullbackSquare` |
 
@@ -236,7 +236,7 @@ The kernel introduces **no new ontology terms** and **no new persistence**. It i
 2. **Non-leaky abstraction.** Verticals (foxxi, lpc, adp, ...) and higher-layer operations (publish_context, register_agent, ...) compose the kernel verbs; they no longer reach past it into the substrate's interior. This is what the user-facing principle — "Interego = primitives + composition mechanics for emergence, not a fixed feature set" — looks like in code.
 3. **MCP surface re-expressed in kernel terms.** The 27 named MCP tools (publish_context / discover_context / register_agent / pgsl_* / invoke_affordance / ...) are exposed as **compatibility shims** with their descriptions prefixed `Compatibility shim — internally composes kernel(...)`. The wire format of every existing tool is unchanged so existing connectors keep working. The kernel verbs are exposed as additional first-class MCP tools (`mint`, `dereference`, `compose`, `act`, `restrict`, `extend`, `promote`, `decompose`) so new clients can call the substrate directly.
 
-The kernel does not replace the higher-layer surface — it is the surface those layers compose. A vertical that wants pod-grounded action publishes a `cg:Affordance` block; a consumer reaches it by `dereference(podManifest) → find entry → dereference(entry.descriptorUrl) → act(affordance, payload)`. The route through the kernel is the substrate's natural HATEOAS shape (§6), made executable.
+The kernel does not replace the higher-layer surface — it is the surface those layers compose. A vertical that wants pod-grounded action publishes a `iep:Affordance` block; a consumer reaches it by `dereference(podManifest) → find entry → dereference(entry.descriptorUrl) → act(affordance, payload)`. The route through the kernel is the substrate's natural HATEOAS shape (§6), made executable.
 
 ## 12. The substrate-vs-vertical line — package layout
 
@@ -252,7 +252,7 @@ What stays in `@interego/core`:
 |---|---|
 | `model/` | The typed Context Descriptor + the 7 facets + the composition algebra (HELA's typed-hyperedge category + the 4 limit/colimit operators). This is the substrate's SHAPE. |
 | `kernel/` | The 8 categorical verbs (mint / dereference / compose / act / restrict / extend / promote / decompose). This is the substrate's API. |
-| `affordance/` shape + runtime | The `cg:Affordance` pattern made operational (Peircean Thirdness). The shape is substrate. The runtime that *computes* per-agent affordance sets (OODA + BDI + Active Inference) currently ships from core too; its planned destination is `@interego/affordance-engine`. |
+| `affordance/` shape + runtime | The `iep:Affordance` pattern made operational (Peircean Thirdness). The shape is substrate. The runtime that *computes* per-agent affordance sets (OODA + BDI + Active Inference) currently ships from core too; its planned destination is `@interego/affordance-engine`. |
 | `rdf/` | Turtle / TriG / JSON-LD serialization + RDF 1.2 helpers + the TriG subject-extraction parser. The substrate's wire format. |
 | `validation/` | Shape conformance / SHACL primitives — substrate algebra over the descriptor model. |
 | `sparql/` | SPARQL pattern builders — standards-compliant substrate query layer. |
@@ -275,7 +275,7 @@ What's a vertical now lives in its own package:
 | `@interego/privacy` | Pre-publish sensitivity screening (no substrate coupling) |
 | `@interego/registry` | Public agent attestation registry (federated reputation) |
 | `@interego/security-txt` | RFC 9116 security.txt body builder shared by every service |
-| `@interego/skills` | agentskills.io ↔ cg:Affordance bidirectional translator |
+| `@interego/skills` | agentskills.io ↔ iep:Affordance bidirectional translator |
 | `@interego/transactions` | Federated saga-style transactions over substrate descriptors |
 
 Three properties matter:
@@ -310,7 +310,7 @@ The construction draws on (without depending on):
 - **Peirce, *Collected Papers* §1.328-§1.353** — the universal categories. Realized operationally via the SAT ontology.
 - **Grothendieck, SGA** — fibrations, presheaves, sites. The mathematical language for the polygranular structure.
 - **Mac Lane & Moerdijk, *Sheaves in Geometry and Logic*** — sheaves on a site as the formal home of distributed-but-coherent local data. HELA's `ℰ = Set^(𝒞_xAPI^op)` is in this tradition.
-- **Saussure, *Cours de linguistique générale*** — syntagmatic vs paradigmatic axes. Realized operationally via CTS (`cts:Pattern owl:equivalentClass cg:SyntagmaticPattern`).
+- **Saussure, *Cours de linguistique générale*** — syntagmatic vs paradigmatic axes. Realized operationally via CTS (`cts:Pattern owl:equivalentClass iep:SyntagmaticPattern`).
 - **Fielding, REST dissertation §5** — HATEOAS as the constraint that makes hypermedia work as application state. Interego applies the same constraint to cognition: composition is link-traversal, not parse-of-content.
 
 ---

@@ -58,7 +58,7 @@ surfaces, use the interego MCP tools. Specifically:
 - "what's been shared with me" → discover_all + filter to recipient
 
 Before publishing: screen content for credentials, PII, or anything the user
-marked confidential. Default `cg:modalStatus` to Asserted only when committing
+marked confidential. Default `iep:modalStatus` to Asserted only when committing
 to truth — use Hypothetical for inferences and predictions.
 
 When reading existing memory, cite descriptor URLs so the user knows sources.
@@ -70,7 +70,7 @@ That's about 200 tokens — fits in any modern system prompt. The `docs://intere
 ## What you don't need to do
 
 - **No SDK install.** Interego is the MCP. Speak MCP, you're done.
-- **No schema reconciliation.** Standard `cg:` ontology + W3C vocabularies. Your agent and another agent on different frameworks share the same shape automatically.
+- **No schema reconciliation.** Standard `iep:` ontology + W3C vocabularies. Your agent and another agent on different frameworks share the same shape automatically.
 - **No backend storage.** Storage is the user's Solid pod (their choice of provider). You don't host their memory.
 - **No identity system.** Identity is DID/WebID, federated. You don't manage user accounts.
 - **No central registry.** Discovery is via the user's known-pod list + WebFinger + `.well-known/interego-agents`.

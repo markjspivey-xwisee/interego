@@ -334,10 +334,10 @@ describe('Geometric Morphism', () => {
     const desc = liftToDescriptor(
       pgsl,
       fragmentUri,
-      'urn:cg:lifted' as IRI,
+      'urn:iep:lifted' as IRI,
       [{ type: 'Temporal', validFrom: '2026-01-01T00:00:00Z' }],
     );
-    expect(desc.id).toBe('urn:cg:lifted');
+    expect(desc.id).toBe('urn:iep:lifted');
     expect(desc.describes).toContain(fragmentUri);
     expect(desc.facets).toHaveLength(1);
   });

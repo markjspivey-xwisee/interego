@@ -13,7 +13,7 @@
  *
  * Concrete flow:
  *   1. Spin up the LPC bridge (independent process on port 6010)
- *      It exposes /affordances (Hydra-typed cg:Affordance manifest)
+ *      It exposes /affordances (Hydra-typed iep:Affordance manifest)
  *      AND /lpc/<verb> direct HTTP endpoints per affordance.
  *   2. Pre-seed Mark's pod with one training-content descriptor so
  *      there's something to retrieve. (Done via the bridge's HTTP
@@ -127,8 +127,8 @@ grounded question, and use it to answer this question:
 
 Steps you should take:
 1. Fetch the bridge's affordance manifest at ${lpc.url}/affordances (Turtle format).
-2. Parse the affordances. Each is described as cg:Affordance with:
-   - cg:action (action IRI like urn:cg:action:lpc:grounded-answer)
+2. Parse the affordances. Each is described as iep:Affordance with:
+   - iep:action (action IRI like urn:iep:action:lpc:grounded-answer)
    - hydra:method (HTTP method)
    - hydra:target (full URL)
    - hydra:expects (typed inputs — supportedProperty entries name the

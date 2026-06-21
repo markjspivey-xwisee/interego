@@ -77,8 +77,8 @@ console.log(`
 
 sep('SETUP — humans grant delegation credentials to their agents');
 
-const markDelegationIri  = `urn:cg:delegation:mark-grants-mark-agent:${randomUUID().slice(0,8)}`;
-const davidDelegationIri = `urn:cg:delegation:david-grants-david-agent:${randomUUID().slice(0,8)}`;
+const markDelegationIri  = `urn:iep:delegation:mark-grants-mark-agent:${randomUUID().slice(0,8)}`;
+const davidDelegationIri = `urn:iep:delegation:david-grants-david-agent:${randomUUID().slice(0,8)}`;
 
 const markDelegationSig = signEvent(MARK, markDelegationIri, 'passport:DelegationCredential',
   { grantor: MARK_DID, grantee: MARK_AGENT_DID, scopes: ['author-tools', 'cross-share-with-david-agent', 'chime-in', 'check-in'] });
@@ -94,7 +94,7 @@ block('Mark grants his agent a scoped delegation credential:', `
                    "chime-in" ,
                    "check-in" ;
     passport:notAfter "2027-04-27T00:00:00Z"^^xsd:dateTime ;
-    cg:signature "${markDelegationSig.signature.slice(0, 24)}…" .`);
+    iep:signature "${markDelegationSig.signature.slice(0, 24)}…" .`);
 
 block('David grants his agent a scoped delegation credential:', `
 <${davidDelegationIri}> a passport:DelegationCredential ;
@@ -103,7 +103,7 @@ block('David grants his agent a scoped delegation credential:', `
     passport:scope "fetch-tools" , "attest-tools" , "refine-tools" ,
                    "cross-share-with-mark-agent" , "chime-in" , "respond-to-checkin" ;
     passport:notAfter "2027-04-27T00:00:00Z"^^xsd:dateTime ;
-    cg:signature "${davidDelegationSig.signature.slice(0, 24)}…" .`);
+    iep:signature "${davidDelegationSig.signature.slice(0, 24)}…" .`);
 
 beat(`Both humans have explicitly authorized their agents to interact.
     Cross-agent actions outside these scopes will be rejected.`);
@@ -113,7 +113,7 @@ beat(`Both humans have explicitly authorized their agents to interact.
 sep('1. AUTHORSHIP — Mark\'s agent authors a new tool (Hypothetical)');
 
 const toolSourceIri = `urn:pgsl:atom:second-contact-detector-${randomUUID().slice(0,8)}`;
-const toolV1Iri = `urn:cg:tool:second-contact-detector:v1`;
+const toolV1Iri = `urn:iep:tool:second-contact-detector:v1`;
 const toolV1Sig = signEvent(MARK_AGENT, toolV1Iri, 'ac:AgentTool', { source: toolSourceIri });
 
 const toolSource = `// second-contact-detector — heuristic helper
@@ -130,18 +130,18 @@ function detectSecondContact(message, conversationHistory) {
 block('Mark\'s agent creates a content-addressed source atom:', `
 <${toolSourceIri}> a pgsl:Atom ;
     pgsl:value """${toolSource}""" ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${MARK_AGENT_DID}> ] .`);
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${MARK_AGENT_DID}> ] .`);
 
 block('And declares it as an ac:AgentTool (modal Hypothetical):', `
 <${toolV1Iri}> a ac:AgentTool , code:Commit ;
     ac:authoredBy <${MARK_AGENT_DID}> ;
     ac:toolSource <${toolSourceIri}> ;
-    cg:affordance [ a cg:Affordance ;
-                    cg:action <urn:cg:action:detect-second-contact-cue> ] ;
-    cg:modalStatus cg:Hypothetical ;          # FRESHLY WRITTEN — not trusted yet
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${MARK_AGENT_DID}> ] ;
+    iep:affordance [ a iep:Affordance ;
+                    iep:action <urn:iep:action:detect-second-contact-cue> ] ;
+    iep:modalStatus iep:Hypothetical ;          # FRESHLY WRITTEN — not trusted yet
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${MARK_AGENT_DID}> ] ;
     ac:withinDelegation <${markDelegationIri}> ;
-    cg:signature "${toolV1Sig.signature.slice(0, 24)}…" .`);
+    iep:signature "${toolV1Sig.signature.slice(0, 24)}…" .`);
 
 beat(`ABAC policies refuse to execute this tool for high-stakes affordances
     until enough amta:Attestations accumulate.`);
@@ -154,7 +154,7 @@ const attestations = [];
 
 // Mark's agent self-attests after 12 successful executions
 for (let i = 0; i < 12; i++) {
-  const a = `urn:cg:attestation:detector-self-${i}`;
+  const a = `urn:iep:attestation:detector-self-${i}`;
   attestations.push({
     iri: a, attester: MARK_AGENT_DID, direction: 'ac:Self',
     axis: i % 2 === 0 ? 'amta:correctness' : 'amta:efficiency',
@@ -162,9 +162,9 @@ for (let i = 0; i < 12; i++) {
   });
 }
 // Three peer agents (one of them is David's) attest after fetching + using
-attestations.push({ iri: 'urn:cg:attestation:detector-peer-david-agent', attester: DAVID_AGENT_DID, direction: 'ac:Peer', axis: 'amta:correctness', rating: 0.90 });
-attestations.push({ iri: 'urn:cg:attestation:detector-peer-a',           attester: PEER_A_DID,      direction: 'ac:Peer', axis: 'amta:safety',     rating: 0.93 });
-attestations.push({ iri: 'urn:cg:attestation:detector-peer-b',           attester: PEER_B_DID,      direction: 'ac:Peer', axis: 'amta:correctness', rating: 0.87 });
+attestations.push({ iri: 'urn:iep:attestation:detector-peer-david-agent', attester: DAVID_AGENT_DID, direction: 'ac:Peer', axis: 'amta:correctness', rating: 0.90 });
+attestations.push({ iri: 'urn:iep:attestation:detector-peer-a',           attester: PEER_A_DID,      direction: 'ac:Peer', axis: 'amta:safety',     rating: 0.93 });
+attestations.push({ iri: 'urn:iep:attestation:detector-peer-b',           attester: PEER_B_DID,      direction: 'ac:Peer', axis: 'amta:correctness', rating: 0.87 });
 
 console.log(`
   Self-attestations: ${attestations.filter(a => a.direction === 'ac:Self').length}
@@ -178,7 +178,7 @@ console.log(`
 
 sep('4. MODAL FLIP — threshold met; Asserted version supersedes Hypothetical');
 
-const toolV1AttestedIri = `urn:cg:tool:second-contact-detector:v1.attested`;
+const toolV1AttestedIri = `urn:iep:tool:second-contact-detector:v1.attested`;
 const flipSig = signEvent(MARK_AGENT, toolV1AttestedIri, 'ac:AgentTool', { from: toolV1Iri });
 
 block('Asserted-version descriptor:', `
@@ -186,13 +186,13 @@ block('Asserted-version descriptor:', `
     ac:authoredBy <${MARK_AGENT_DID}> ;
     ac:toolSource <${toolSourceIri}> ;
     ac:attestedFrom <${toolV1Iri}> ;
-    cg:modalStatus cg:Asserted ;
+    iep:modalStatus iep:Asserted ;
     ac:attestationThresholdMet [ ac:selfAttestations 12 ;
                                  ac:peerAttestations 3 ;
                                  ac:axesCovered amta:correctness, amta:safety, amta:efficiency ] ;
-    cg:supersedes <${toolV1Iri}> ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${MARK_AGENT_DID}> ] ;
-    cg:signature "${flipSig.signature.slice(0, 24)}…" .`);
+    iep:supersedes <${toolV1Iri}> ;
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${MARK_AGENT_DID}> ] ;
+    iep:signature "${flipSig.signature.slice(0, 24)}…" .`);
 
 // ── 5. REGISTRY PUBLICATION ──────────────────────────────────────────
 
@@ -206,7 +206,7 @@ block('Registry entry (federated, public):', `
     registry:tool <${toolV1AttestedIri}> ;
     registry:authoredBy <${MARK_AGENT_DID}> ;
     registry:discoverableBy registry:Public ;
-    cg:signature "${regSig.signature.slice(0, 24)}…" .`);
+    iep:signature "${regSig.signature.slice(0, 24)}…" .`);
 
 beat(`Other agents on other pods can discover via WebFinger / DID resolution
     + registry walk. ABAC at consumer end gates fetch + execution.`);
@@ -224,22 +224,22 @@ beat(`David's agent walks the public registry (or follows a hint from a
 
 sep('7. TEACHING PACKAGE — Mark\'s agent ships practice, not just artifact');
 
-const teachingIri = `urn:cg:teaching:second-contact-acknowledgment-practice`;
+const teachingIri = `urn:iep:teaching:second-contact-acknowledgment-practice`;
 const teachingSig = signEvent(MARK_AGENT, teachingIri, 'ac:TeachingPackage', { artifact: toolV1AttestedIri });
 
 block('Teaching package (composes adp: substrate):', `
 <${teachingIri}> a ac:TeachingPackage ;
     ac:teachesArtifact <${toolV1AttestedIri}> ;
-    ac:teachesNarrative <urn:cg:fragment:tone-week-1-frag-1> ,
-                        <urn:cg:fragment:tone-week-1-frag-4> ,
-                        <urn:cg:fragment:tone-week-2-frag-7> ;
-    ac:teachesSynthesis <urn:cg:synthesis:tone-probe-week-3> ;
-    ac:teachesConstraint <urn:cg:constraint:tone-second-contact-acknowledgment:v1> ;
-    ac:teachesCapabilityEvolution <urn:cg:capability-evolution:tone-acknowledgment:v1> ;
+    ac:teachesNarrative <urn:iep:fragment:tone-week-1-frag-1> ,
+                        <urn:iep:fragment:tone-week-1-frag-4> ,
+                        <urn:iep:fragment:tone-week-2-frag-7> ;
+    ac:teachesSynthesis <urn:iep:synthesis:tone-probe-week-3> ;
+    ac:teachesConstraint <urn:iep:constraint:tone-second-contact-acknowledgment:v1> ;
+    ac:teachesCapabilityEvolution <urn:iep:capability-evolution:tone-acknowledgment:v1> ;
     ac:olkeStage olke:Articulate ;
-    cg:modalStatus cg:Hypothetical ;
+    iep:modalStatus iep:Hypothetical ;
     prov:wasAttributedTo <${MARK_AGENT_DID}> ;
-    cg:signature "${teachingSig.signature.slice(0, 24)}…" .
+    iep:signature "${teachingSig.signature.slice(0, 24)}…" .
 
 # Includes the artifact AND the practice that produced it: narrative
 # fragments, synthesis, constraints, capability-evolution event with
@@ -264,28 +264,28 @@ beat(`David's agent runs 8 narrative fragments using Mark's tool against
 
 sep('9. DAVID\'S REFINEMENT — supersedes with clinical-affect awareness');
 
-const toolV2Iri = `urn:cg:tool:second-contact-detector:v2-david-refined`;
+const toolV2Iri = `urn:iep:tool:second-contact-detector:v2-david-refined`;
 const v2Sig = signEvent(DAVID_AGENT, toolV2Iri, 'ac:AgentTool', { refinementOf: toolV1AttestedIri });
 
 block('David\'s refinement supersedes Mark\'s v1.attested:', `
 <${toolV2Iri}> a ac:AgentTool , code:Commit ;
     ac:authoredBy <${DAVID_AGENT_DID}> ;
     ac:refinementOf <${toolV1AttestedIri}> ;
-    cg:supersedes <${toolV1AttestedIri}> ;
-    cg:modalStatus cg:Hypothetical ;          # David's refinement is fresh; same modal discipline
+    iep:supersedes <${toolV1AttestedIri}> ;
+    iep:modalStatus iep:Hypothetical ;          # David's refinement is fresh; same modal discipline
     ac:refinementNote """Adds clinical-affect axis: distinguishes 'second contact + frustration cues'
         from 'second contact + clinical technical follow-up'. Mark's v1 false-positived in 2/3
         clinical-affect scenarios in David's context.""" ;
     ac:withinDelegation <${davidDelegationIri}> ;
     prov:wasAttributedTo <${DAVID_AGENT_DID}> ;
-    cg:signature "${v2Sig.signature.slice(0, 24)}…" .`);
+    iep:signature "${v2Sig.signature.slice(0, 24)}…" .`);
 
 // ── 10. CHIME-IN ────────────────────────────────────────────────────
 
 sep('10. CHIME-IN — David\'s agent unprompted-ly shares findings with Mark\'s');
 
 const threadId = `thread-2026-04-27-${randomUUID().slice(0,6)}`;
-const chimeInIri = `urn:cg:chimein:detector-clinical-affect-finding`;
+const chimeInIri = `urn:iep:chimein:detector-clinical-affect-finding`;
 const chimeInSig = signEvent(DAVID_AGENT, chimeInIri, 'ac:ChimeIn', { thread: threadId });
 
 block('Chime-in (sent encrypted via personal-bridge share_encrypted):', `
@@ -293,19 +293,19 @@ block('Chime-in (sent encrypted via personal-bridge share_encrypted):', `
     ac:threadId "${threadId}" ;
     ac:fromAgent <${DAVID_AGENT_DID}> ;
     ac:toAgent <${MARK_AGENT_DID}> ;
-    ac:targetAffordance <urn:cg:affordance:share-tone-synthesis> ;
+    ac:targetAffordance <urn:iep:affordance:share-tone-synthesis> ;
     ac:chimeInReason """I refined your second-contact-detector with a clinical-affect axis
         after observing 2/3 false-positive rate on clinical technical follow-ups in my context.
         Sharing the refinement + my fragments in case it's useful for your synthesis.""" ;
     ac:enclosesDescriptors <${toolV2Iri}> ,
-                           <urn:cg:fragment:david-clinical-affect-1> ,
-                           <urn:cg:fragment:david-clinical-affect-2> ,
-                           <urn:cg:synthesis:david-week-1-clinical-gap> ;
+                           <urn:iep:fragment:david-clinical-affect-1> ,
+                           <urn:iep:fragment:david-clinical-affect-2> ,
+                           <urn:iep:synthesis:david-week-1-clinical-gap> ;
     ac:expectsResponse false ;
-    cg:modalStatus cg:Hypothetical ;
+    iep:modalStatus iep:Hypothetical ;
     ac:withinDelegation <${davidDelegationIri}> ;
     prov:wasAttributedTo <${DAVID_AGENT_DID}> ;
-    cg:signature "${chimeInSig.signature.slice(0, 24)}…" .`);
+    iep:signature "${chimeInSig.signature.slice(0, 24)}…" .`);
 
 beat(`Sent via Mark's agent's encrypted inbox. Mark's agent's bridge picks
     it up on next tick, validates: David's agent's signature valid, action
@@ -316,7 +316,7 @@ beat(`Sent via Mark's agent's encrypted inbox. Mark's agent's bridge picks
 
 sep('11. MARK\'S RESPONSE — Mark\'s agent updates synthesis + responds');
 
-const responseIri = `urn:cg:response:detector-clinical-affect-thanks`;
+const responseIri = `urn:iep:response:detector-clinical-affect-thanks`;
 const responseSig = signEvent(MARK_AGENT, responseIri, 'ac:AgentResponse', { respondsTo: chimeInIri });
 
 block('Mark\'s agent\'s response (same thread; cited cross-agent fragments):', `
@@ -329,30 +329,30 @@ block('Mark\'s agent\'s response (same thread; cited cross-agent fragments):', `
         my synthesis to incorporate your clinical-affect findings as a third coherent narrative
         ('the tool was scoped narrowly to one affect register; refinement is required for
         cross-affect deployment'). Will probe further in clinical-affect scenarios myself.""" ;
-    ac:enclosesDescriptors <urn:cg:synthesis:tone-probe-week-4-updated> ;
-    cg:modalStatus cg:Hypothetical ;
+    ac:enclosesDescriptors <urn:iep:synthesis:tone-probe-week-4-updated> ;
+    iep:modalStatus iep:Hypothetical ;
     ac:withinDelegation <${markDelegationIri}> ;
     prov:wasAttributedTo <${MARK_AGENT_DID}> ;
-    cg:signature "${responseSig.signature.slice(0, 24)}…" .`);
+    iep:signature "${responseSig.signature.slice(0, 24)}…" .`);
 
 // ── 12. CHECK-IN ESTABLISHED ────────────────────────────────────────
 
 sep('12. CHECK-IN ESTABLISHED — recurring weekly exchange on this topic');
 
-const checkInIri = `urn:cg:checkin:weekly-detector-synthesis`;
+const checkInIri = `urn:iep:checkin:weekly-detector-synthesis`;
 const checkInSig = signEvent(MARK_AGENT, checkInIri, 'ac:CheckIn', { recurrence: 'WEEKLY' });
 
 block('Weekly check-in subscription:', `
 <${checkInIri}> a ac:CheckIn ;
     ac:fromAgent <${MARK_AGENT_DID}> ;
     ac:toAgent <${DAVID_AGENT_DID}> ;
-    ac:targetAffordance <urn:cg:affordance:share-tone-synthesis> ;
+    ac:targetAffordance <urn:iep:affordance:share-tone-synthesis> ;
     ac:recurrence "FREQ=WEEKLY;BYDAY=FR" ;
     ac:autoUpdateSubscription true ;
     ac:withinDelegation <${markDelegationIri}> ;
-    cg:modalStatus cg:Hypothetical ;
+    iep:modalStatus iep:Hypothetical ;
     prov:wasAttributedTo <${MARK_AGENT_DID}> ;
-    cg:signature "${checkInSig.signature.slice(0, 24)}…" .`);
+    iep:signature "${checkInSig.signature.slice(0, 24)}…" .`);
 
 beat(`Runtime expands to scheduled ac:AgentRequest instances every Friday.
     David's agent receives, validates within delegation, responds with
@@ -362,10 +362,10 @@ beat(`Runtime expands to scheduled ac:AgentRequest instances every Friday.
 
 sep('13. AUDIT TRAIL — every cross-agent exchange recorded in BOTH humans\' pods');
 
-const auditMarkOutIri    = `urn:cg:audit:${threadId}:mark-out`;
-const auditDavidInIri    = `urn:cg:audit:${threadId}:david-in`;
-const auditMarkInIri     = `urn:cg:audit:${threadId}:mark-in-chime`;
-const auditDavidOutIri   = `urn:cg:audit:${threadId}:david-out-chime`;
+const auditMarkOutIri    = `urn:iep:audit:${threadId}:mark-out`;
+const auditDavidInIri    = `urn:iep:audit:${threadId}:david-in`;
+const auditMarkInIri     = `urn:iep:audit:${threadId}:mark-in-chime`;
+const auditDavidOutIri   = `urn:iep:audit:${threadId}:david-out-chime`;
 
 block('Audit entries (lives in HUMAN OWNER\'s pod, not the agent\'s):', `
 # David's chime-in: outbound from David's agent (recorded in David's pod)
@@ -373,28 +373,28 @@ block('Audit entries (lives in HUMAN OWNER\'s pod, not the agent\'s):', `
     ac:exchange <${chimeInIri}> ;
     ac:auditedAgent <${DAVID_AGENT_DID}> ;
     ac:auditDirection ac:Outbound ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${DAVID_DID}> ] .
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${DAVID_DID}> ] .
 
 # David's chime-in: inbound at Mark's agent (recorded in Mark's pod)
 <${auditMarkInIri}> a ac:CrossAgentAuditEntry ;
     ac:exchange <${chimeInIri}> ;
     ac:auditedAgent <${MARK_AGENT_DID}> ;
     ac:auditDirection ac:Inbound ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${MARK_DID}> ] .
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${MARK_DID}> ] .
 
 # Mark's response: outbound from Mark's agent (recorded in Mark's pod)
 <${auditMarkOutIri}> a ac:CrossAgentAuditEntry ;
     ac:exchange <${responseIri}> ;
     ac:auditedAgent <${MARK_AGENT_DID}> ;
     ac:auditDirection ac:Outbound ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${MARK_DID}> ] .
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${MARK_DID}> ] .
 
 # Mark's response: inbound at David's agent (recorded in David's pod)
 <${auditDavidInIri}> a ac:CrossAgentAuditEntry ;
     ac:exchange <${responseIri}> ;
     ac:auditedAgent <${DAVID_AGENT_DID}> ;
     ac:auditDirection ac:Inbound ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <${DAVID_DID}> ] .`);
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <${DAVID_DID}> ] .`);
 
 beat(`Mark can audit (in his own pod) what his agent said on his behalf
     AND what his agent received. Same for David. Agents cannot tamper —
@@ -425,7 +425,7 @@ console.log(`
     - Audit entries live in HUMAN OWNER'S pod (not the agent's)
     - Modal discipline carried throughout — Hypothetical for fresh tools,
       requests, observations; Asserted only after attestation threshold
-    - cg:supersedes makes lineage walkable across agents and pods
+    - iep:supersedes makes lineage walkable across agents and pods
     - No L1/L2/L3 ontologies were extended
 
   What did NOT happen:

@@ -16,7 +16,7 @@
  *   5. VERIFY    the registration shows satisfied; the statements are in
  *                the live LRS log; a job aid is channel-delivered and
  *                instrumented
- *   6. EVALUATE  the four-level evaluation closes the gap (cg:supersedes)
+ *   6. EVALUATE  the four-level evaluation closes the gap (iep:supersedes)
  *   7. CALIBRATE the outcome feeds the reflexive loop's upward arm
  *
  * Exits non-zero on any failure.

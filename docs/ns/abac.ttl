@@ -1,5 +1,5 @@
 @prefix abac: <https://markjspivey-xwisee.github.io/interego/ns/abac#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
 @prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -15,7 +15,7 @@
 #  abac: — Attribute-Based Access Control pattern (L2)
 # ══════════════════════════════════════════════════════════════
 #
-#  The L1 core (`cg:`) declares what a policy IS: a first-class
+#  The L1 core (`iep:`) declares what a policy IS: a first-class
 #  context descriptor carrying a SHACL predicate, a governed
 #  action, a deontic mode, and optional duties. That structural
 #  claim lives at L1 because every implementation must understand
@@ -40,7 +40,7 @@
 #    - A decision is itself a context descriptor
 #      (`abac:EvaluationRecord`), so the audit trail is
 #      first-class and composable like any other typed context.
-#    - Caching lives on `cg:TrustFacet`-shaped attestations,
+#    - Caching lives on `iep:TrustFacet`-shaped attestations,
 #      which lets repeat decisions short-circuit without losing
 #      verifiability — the attestation carries its own issuer +
 #      validity window, so a stale cache becomes a verifiable
@@ -49,37 +49,37 @@
 <https://markjspivey-xwisee.github.io/interego/ns/abac>
     a owl:Ontology ;
     dct:title "abac: — ABAC evaluation pattern" ;
-    dct:description "L2 pattern ontology for attribute-based access-control evaluation on top of cg:AccessControlPolicy descriptors. Specifies evaluator, attribute resolver, decision cache, and audit record as constructions over L1 primitives." ;
+    dct:description "L2 pattern ontology for attribute-based access-control evaluation on top of iep:AccessControlPolicy descriptors. Specifies evaluator, attribute resolver, decision cache, and audit record as constructions over L1 primitives." ;
     vann:preferredNamespacePrefix "abac" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/abac#" ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> .
 
 # ── Classes ─────────────────────────────────────────────────
 
 abac:Evaluator a owl:Class ;
     rdfs:label "Policy Evaluator" ;
     rdfs:comment "A stateless function that maps (policy, subject, resource, environment) to a decision. Constructed from a policy descriptor + a context — both L1 primitives — so this class is the pattern-level naming of a computation grounded in L1." ;
-    cg:constructedFrom ( cg:AccessControlPolicy abac:PolicyContext ) .
+    iep:constructedFrom ( iep:AccessControlPolicy abac:PolicyContext ) .
 
 abac:PolicyContext a owl:Class ;
     rdfs:label "Policy Evaluation Context" ;
     rdfs:comment "The ambient state for one policy evaluation: the subject's attribute graph, the resource being accessed, the environmental facets (time, federation origin, etc.), and any pre-resolved attestations. Constructed from the seven L1 facets of the invoking request." ;
-    cg:constructedFrom ( cg:AgentFacet cg:TrustFacet cg:SemioticFacet cg:TemporalFacet cg:FederationFacet ) .
+    iep:constructedFrom ( iep:AgentFacet iep:TrustFacet iep:SemioticFacet iep:TemporalFacet iep:FederationFacet ) .
 
 abac:AttributeResolver a owl:Class ;
     rdfs:label "Attribute Resolver" ;
     rdfs:comment "Builds the subject's attribute graph by aggregating facets from: the subject's own descriptor(s), peer-issued attestations cited via provenance, and any trust attestations (e.g. amta:TrustAttestation) reachable from the subject. A natural transformation from a subject IRI to an attribute graph, grounded in the facet lattice." ;
-    cg:constructedFrom ( cg:AgentFacet cg:ProvenanceFacet cg:TrustFacet ) .
+    iep:constructedFrom ( iep:AgentFacet iep:ProvenanceFacet iep:TrustFacet ) .
 
 abac:DecisionCache a owl:Class ;
     rdfs:label "Decision Cache" ;
-    rdfs:comment "Short-circuits repeat evaluations. A cached decision is stored as a cg:TrustFacet-shaped attestation — the issuer is the evaluator, the validity window is explicit, and the attestation is verifiable. A stale cache entry therefore becomes a verifiable stale attestation rather than silent drift." ;
-    cg:constructedFrom ( cg:TrustFacet cg:TemporalFacet ) .
+    rdfs:comment "Short-circuits repeat evaluations. A cached decision is stored as a iep:TrustFacet-shaped attestation — the issuer is the evaluator, the validity window is explicit, and the attestation is verifiable. A stale cache entry therefore becomes a verifiable stale attestation rather than silent drift." ;
+    iep:constructedFrom ( iep:TrustFacet iep:TemporalFacet ) .
 
 abac:EvaluationRecord a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Policy Evaluation Record" ;
-    rdfs:comment "An auditable record of one policy evaluation: inputs, decision, duties, matched policies, timestamp. As a cg:ContextDescriptor it composes with the rest of the system (you can publish it, cite it, validate it, query it) — the audit trail IS linked data." .
+    rdfs:comment "An auditable record of one policy evaluation: inputs, decision, duties, matched policies, timestamp. As a iep:ContextDescriptor it composes with the rest of the system (you can publish it, cite it, validate it, query it) — the audit trail IS linked data." .
 
 # ── Verdict individuals ─────────────────────────────────────
 
@@ -104,9 +104,9 @@ abac:resolvedAttributes a owl:ObjectProperty ;
 
 abac:evaluatedPolicy a owl:ObjectProperty ;
     rdfs:label "evaluated policy" ;
-    rdfs:comment "The cg:AccessControlPolicy that an evaluation record evaluated." ;
+    rdfs:comment "The iep:AccessControlPolicy that an evaluation record evaluated." ;
     rdfs:domain abac:EvaluationRecord ;
-    rdfs:range cg:AccessControlPolicy .
+    rdfs:range iep:AccessControlPolicy .
 
 abac:verdict a owl:ObjectProperty ;
     rdfs:label "verdict" ;
@@ -117,7 +117,7 @@ abac:matchedRule a owl:ObjectProperty ;
     rdfs:label "matched rule" ;
     rdfs:comment "A policy rule that matched during evaluation; used in composed (multi-policy) decisions for traceability." ;
     rdfs:domain abac:EvaluationRecord ;
-    rdfs:range cg:AccessControlPolicy .
+    rdfs:range iep:AccessControlPolicy .
 
 abac:decisionAt a owl:DatatypeProperty ;
     rdfs:label "decided at" ;
@@ -133,7 +133,7 @@ abac:cacheValidUntil a owl:DatatypeProperty ;
 
 # ── Alignments ──────────────────────────────────────────────
 
-abac:EvaluationRecord rdfs:seeAlso cg:TrustFacet ;
+abac:EvaluationRecord rdfs:seeAlso iep:TrustFacet ;
     rdfs:comment "An evaluation record carries the same structural role as a trust attestation — a verifiable claim by an issuer (here, the evaluator) about a subject at a moment in time. Both compose via the same lattice operators." .
 
 abac:AttributeResolver rdfs:seeAlso amta:Attestation ;

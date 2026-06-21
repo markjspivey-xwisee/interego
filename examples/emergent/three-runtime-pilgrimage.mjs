@@ -7,18 +7,18 @@
  *   A single autonomous agent migrates across THREE distinct runtimes
  *   (each its own child-process boundary + freshly-minted wallet/DID +
  *   notionally-distinct pod subpath). At each boundary it publishes a
- *   new Passport descriptor that cg:supersedes the prior version and
+ *   new Passport descriptor that iep:supersedes the prior version and
  *   records an `infrastructure-migration` LifeEvent whose
  *   `.details.previousIdentity` / `.details.previousPod` cite the
  *   previous incarnation. Finally a Discoverer (this script's verifier
- *   block) reads the final passport, walks cg:supersedes backward to
+ *   block) reads the final passport, walks iep:supersedes backward to
  *   the root, and reconstructs the migration lineage.
  *
  * Substrate gap surfaced (per the substrate audit)
  *   The capability-passport pattern claims to "survive infrastructure
  *   migration." This harness adversarially tests that claim end-to-end
  *   on the live pod: every migration produces real descriptors with
- *   real cg:supersedes links and real DID changes; the discoverer
+ *   real iep:supersedes links and real DID changes; the discoverer
  *   reconstructs the lineage pod-side WITHOUT any in-memory shortcut.
  *   Any gap in JSON-LD round-tripping of LifeEvent.details, supersedes
  *   chain traversal of missing nodes, or DID-signature consistency
@@ -32,7 +32,7 @@
  *                       → Passport v4 (capability multi-pod-discover)
  *
  * Descriptor chain produced
- *   passport-v1  ──cg:supersedes──┐
+ *   passport-v1  ──iep:supersedes──┐
  *   passport-v2  ─────────────────┤── chain root at v1
  *   passport-v3  ─────────────────┤
  *   passport-v4  ─────────────────┘
@@ -72,7 +72,7 @@ const POD_B = `${POD_ROOT}runtime-b/`;
 const POD_C = `${POD_ROOT}runtime-c/`;
 
 // Vertical namespace for scenario-specific predicates. NEVER reuse
-// cg:/passport:/registry:/amta: for scenario-only terms — that would
+// iep:/passport:/registry:/amta: for scenario-only terms — that would
 // trip ontology-lint. Vertical prefixes don't require ns declarations.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/three-runtime-pilgrimage Build Spec#';
 const NF_NodeFinding = `${SCENARIO_NS}NodeFinding`;
@@ -200,7 +200,7 @@ function recoverDid(payload, signature, label = 'pilgrim') {
 
 // ── passport-descriptor publishing ───────────────────────────────────
 // We construct the descriptor by hand (rather than calling
-// passportToDescriptor) so the cg:supersedes chain and the LifeEvent
+// passportToDescriptor) so the iep:supersedes chain and the LifeEvent
 // payload carry through the round-trip unambiguously, and so the
 // resulting TriG is human-readable in the pod's filesystem.
 function passportIri(podUrl, version) {
@@ -269,14 +269,14 @@ async function publishPassportVersion({
     : '';
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix passport: <https://w3id.org/cg/passport#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix scen: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, passport:Passport ;
+<${iri}> a iep:ContextDescriptor, passport:Passport ;
   dcterms:title "Pilgrim passport v${version} on ${runtimeLabel}" ;
   passport:agentIdentity <${did}> ;
   scen:currentPod <${podUrl}> ;
@@ -508,7 +508,7 @@ check('Agent publishes passport v4 on pod-C with new capability-acquisition even
   !!v4.descriptorUrl);
 
 // ── ACT 5 — discoverer walks pod-C backward through the chain ────────
-h('ACT 5 — Discoverer: fetch pod-C, walk cg:supersedes back to v1');
+h('ACT 5 — Discoverer: fetch pod-C, walk iep:supersedes back to v1');
 
 const podCEntries = await discover(POD_C);
 const v4Entry = podCEntries.find(e => e.descriptorUrl === v4.descriptorUrl);
@@ -521,7 +521,7 @@ check('Discoverer fetches pod-C and reads passport v4', !!v4Entry, {
 // walk uses ONLY the supersedes field on each fetched descriptor.
 async function fetchDescriptorTtl(url) {
   // The substrate splits a published descriptor into two resources: the
-  // descriptor TTL (cg:hasFacet blocks, the cg:supersedes chain) and the
+  // descriptor TTL (iep:hasFacet blocks, the iep:supersedes chain) and the
   // separately-addressed graph file (the user-supplied payload with
   // scen:lifeEvent / scen:detail_previousPod / scen:detail_previousIdentity
   // triples). Lineage walking needs BOTH — supersedes lives in the
@@ -534,7 +534,7 @@ async function fetchDescriptorTtl(url) {
     if (!descResp.ok) return { ok: false, status: descResp.status, body: '' };
     const descBody = await descResp.text();
     // Graph URL by substrate naming convention (publish() writes
-    // <slug>.ttl + <slug>-graph.trig). The descriptor's cg:affordance /
+    // <slug>.ttl + <slug>-graph.trig). The descriptor's iep:affordance /
     // hydra:target carries the authoritative URL; we fall back to the
     // convention if the descriptor link can't be parsed.
     let graphUrl = null;
@@ -555,8 +555,8 @@ async function fetchDescriptorTtl(url) {
 }
 
 function extractSupersedes(ttl) {
-  // Match `cg:supersedes <url>` (optionally with multiple comma-separated)
-  const m = ttl.match(/cg:supersedes\s+(<[^>]+>(?:\s*,\s*<[^>]+>)*)/);
+  // Match `iep:supersedes <url>` (optionally with multiple comma-separated)
+  const m = ttl.match(/iep:supersedes\s+(<[^>]+>(?:\s*,\s*<[^>]+>)*)/);
   if (!m) return [];
   return Array.from(m[1].matchAll(/<([^>]+)>/g)).map(x => x[1]);
 }
@@ -683,7 +683,7 @@ const walkedUrls = chain.map(c => c.url);
 console.log(`   walked ${chain.length} descriptors:\n     ${walkedUrls.join('\n     ')}`);
 
 const expectedChainUrls = [v4.descriptorUrl, v3.descriptorUrl, v2.descriptorUrl, v1.descriptorUrl];
-check('Discoverer traverses cg:supersedes chain: v4 -> v3 -> v2 -> v1',
+check('Discoverer traverses iep:supersedes chain: v4 -> v3 -> v2 -> v1',
   walkedUrls.length === 4
     && walkedUrls.every((u, i) => u === expectedChainUrls[i])
     && chain.every(c => !c.missing),
@@ -773,12 +773,12 @@ check('LifeEvent.evidence URLs (if present) resolve successfully',
 h('ACT 6 — Discoverer publishes a scen:Verdict descriptor summarizing findings');
 const verdictIri = `${POD_C}context-graphs/verdict.ttl#verdict-${PILGRIMAGE_DATE}`;
 const verdictGraph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix scen: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${verdictIri}> a cg:ContextDescriptor, <${NF_Verdict}> ;
+<${verdictIri}> a iep:ContextDescriptor, <${NF_Verdict}> ;
   dcterms:title "Three-runtime pilgrimage verdict (${PILGRIMAGE_DATE})" ;
   scen:passCount ${pass} ;
   scen:failCount ${fail} ;

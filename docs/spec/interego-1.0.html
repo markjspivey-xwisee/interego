@@ -367,25 +367,25 @@
 <p>This specification defines four conformance classes:</p>
 
 <dl class="spec-terms">
-  <dt>Context Graph Producer</dt>
+  <dt>Interego Protocol Producer</dt>
   <dd>A system that creates RDF data conforming to this specification. A conformant producer
   <span class="rfc2119">MUST</span> generate valid Context Descriptors as defined in
   <a href="#data-model">§3</a> and <span class="rfc2119">MUST</span> pass SHACL validation
   against the shapes defined in <a href="#shacl-shapes">§6</a>.</dd>
 
-  <dt>Context Graph Consumer</dt>
-  <dd>A system that reads and interprets Context Graph data. A conformant consumer
-  <span class="rfc2119">MUST</span> recognize the <code>cg:</code> namespace and
+  <dt>Interego Protocol Consumer</dt>
+  <dd>A system that reads and interprets Interego Protocol data. A conformant consumer
+  <span class="rfc2119">MUST</span> recognize the <code>iep:</code> namespace and
   <span class="rfc2119">MUST</span> preserve unrecognized facets during processing. A consumer
   <span class="rfc2119">SHOULD</span> implement at least the Temporal and Provenance facets.</dd>
 
-  <dt>Context Graph Mediator</dt>
+  <dt>Interego Protocol Mediator</dt>
   <dd>A system that performs composition operations (union, intersection, restriction, projection)
   on Context Descriptors across trust boundaries. A conformant mediator <span class="rfc2119">MUST</span>
   implement all four composition operators defined in <a href="#context-composition">§3.4</a>.</dd>
 
-  <dt>Context Graph Validator</dt>
-  <dd>A system that validates Context Graph data against the SHACL shapes defined in this
+  <dt>Interego Protocol Validator</dt>
+  <dd>A system that validates Interego Protocol data against the SHACL shapes defined in this
   specification. A conformant validator <span class="rfc2119">MUST</span> implement
   [<a href="https://www.w3.org/TR/shacl/">SHACL</a>] Core and <span class="rfc2119">SHOULD</span>
   implement SHACL-SPARQL for advanced constraint evaluation.</dd>
@@ -409,7 +409,7 @@
 <h3 id="context-descriptor">Context Descriptor</h3>
 
 <div class="definition">
-  A <span class="term">Context Descriptor</span> is an RDF resource of type <code>cg:ContextDescriptor</code>
+  A <span class="term">Context Descriptor</span> is an RDF resource of type <code>iep:ContextDescriptor</code>
   that aggregates one or more <em>Context Facets</em> into a single, identifiable unit of contextual
   metadata. Each Context Descriptor is identified by an IRI and carries a set of facet bindings.
 </div>
@@ -455,13 +455,13 @@
   Formally, a Context Facet <em>F</em> is a tuple:
 </p>
 
-<pre><code>F = ( type: cg:ContextType,
+<pre><code>F = ( type: iep:ContextType,
       properties: Map&lt;IRI, RDFTerm&gt; )</code></pre>
 
 <p>
   The specification defines seven core facet types (<a href="#facet-profiles">§5</a>). Implementations
   <span class="rfc2119">MAY</span> define additional facet types by minting new instances of
-  <code>cg:ContextType</code> in their own namespace.
+  <code>iep:ContextType</code> in their own namespace.
 </p>
 
 <table>
@@ -469,13 +469,13 @@
     <tr><th>Facet Type IRI</th><th>Label</th><th>Primary Reused Vocabulary</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>cg:Temporal</code></td><td>Temporal</td><td>OWL-Time, Dublin Core Terms</td></tr>
-    <tr><td><code>cg:Provenance</code></td><td>Provenance</td><td>PROV-O</td></tr>
-    <tr><td><code>cg:Agent</code></td><td>Agent</td><td>PROV-O, Activity Streams 2.0</td></tr>
-    <tr><td><code>cg:AccessControl</code></td><td>Access Control</td><td>WAC, ACP, Solid</td></tr>
-    <tr><td><code>cg:Semiotic</code></td><td>Semiotic</td><td>(new vocabulary; see §5.5)</td></tr>
-    <tr><td><code>cg:Trust</code></td><td>Trust &amp; Verifiability</td><td>Verifiable Credentials 2.0, DID Core</td></tr>
-    <tr><td><code>cg:Federation</code></td><td>Federation</td><td>Solid Protocol, LDP, DCAT 3</td></tr>
+    <tr><td><code>iep:Temporal</code></td><td>Temporal</td><td>OWL-Time, Dublin Core Terms</td></tr>
+    <tr><td><code>iep:Provenance</code></td><td>Provenance</td><td>PROV-O</td></tr>
+    <tr><td><code>iep:Agent</code></td><td>Agent</td><td>PROV-O, Activity Streams 2.0</td></tr>
+    <tr><td><code>iep:AccessControl</code></td><td>Access Control</td><td>WAC, ACP, Solid</td></tr>
+    <tr><td><code>iep:Semiotic</code></td><td>Semiotic</td><td>(new vocabulary; see §5.5)</td></tr>
+    <tr><td><code>iep:Trust</code></td><td>Trust &amp; Verifiability</td><td>Verifiable Credentials 2.0, DID Core</td></tr>
+    <tr><td><code>iep:Federation</code></td><td>Federation</td><td>Solid Protocol, LDP, DCAT 3</td></tr>
   </tbody>
 </table>
 
@@ -484,12 +484,12 @@
 <div class="definition">
   A <span class="term">Context&ndash;Graph Binding</span> is an RDF statement that associates a
   Context Descriptor with one or more Named Graphs within an RDF Dataset. It is expressed using
-  the <code>cg:describes</code> property.
+  the <code>iep:describes</code> property.
 </div>
 
-<pre><code>&lt;urn:cg:descriptor:42&gt; a cg:ContextDescriptor ;
-    cg:describes &lt;urn:graph:observations-2026-Q1&gt; ;
-    cg:describes &lt;urn:graph:observations-2026-Q2&gt;.</code></pre>
+<pre><code>&lt;urn:iep:descriptor:42&gt; a iep:ContextDescriptor ;
+    iep:describes &lt;urn:graph:observations-2026-Q1&gt; ;
+    iep:describes &lt;urn:graph:observations-2026-Q2&gt;.</code></pre>
 
 <p>
   A single Context Descriptor <span class="rfc2119">MAY</span> describe multiple Named Graphs
@@ -514,7 +514,7 @@
   result of any operator applied to valid Context Descriptors is itself a valid Context Descriptor.
 </p>
 
-<h4 id="union-op">Union (<code>cg:union</code>)</h4>
+<h4 id="union-op">Union (<code>iep:union</code>)</h4>
 
 <p>
   Given descriptors <em>D₁</em> and <em>D₂</em>, the union <em>D₁ ∪ D₂</em> produces a new
@@ -523,12 +523,12 @@
   defined by the facet type's profile (see <a href="#facet-profiles">§5</a>).
 </p>
 
-<pre><code>&lt;urn:cg:composed:1&gt; a cg:ComposedDescriptor ;
-    cg:compositionOp cg:union ;
-    cg:operand &lt;urn:cg:descriptor:A&gt; ;
-    cg:operand &lt;urn:cg:descriptor:B&gt;.</code></pre>
+<pre><code>&lt;urn:iep:composed:1&gt; a iep:ComposedDescriptor ;
+    iep:compositionOp iep:union ;
+    iep:operand &lt;urn:iep:descriptor:A&gt; ;
+    iep:operand &lt;urn:iep:descriptor:B&gt;.</code></pre>
 
-<h4 id="intersection-op">Intersection (<code>cg:intersection</code>)</h4>
+<h4 id="intersection-op">Intersection (<code>iep:intersection</code>)</h4>
 
 <p>
   The intersection <em>D₁ ∩ D₂</em> produces a descriptor containing only facet types present in
@@ -537,7 +537,7 @@
   computing the <em>common context</em> when federating graphs from independent sources.
 </p>
 
-<h4 id="restriction-op">Restriction (<code>cg:restriction</code>)</h4>
+<h4 id="restriction-op">Restriction (<code>iep:restriction</code>)</h4>
 
 <p>
   Given a descriptor <em>D</em> and a set of facet types <em>T</em>, the restriction
@@ -546,13 +546,13 @@
   provenance information from a rich context.
 </p>
 
-<pre><code>&lt;urn:cg:restricted:1&gt; a cg:ComposedDescriptor ;
-    cg:compositionOp cg:restriction ;
-    cg:operand &lt;urn:cg:descriptor:A&gt; ;
-    cg:restrictToType cg:Provenance ;
-    cg:restrictToType cg:Temporal.</code></pre>
+<pre><code>&lt;urn:iep:restricted:1&gt; a iep:ComposedDescriptor ;
+    iep:compositionOp iep:restriction ;
+    iep:operand &lt;urn:iep:descriptor:A&gt; ;
+    iep:restrictToType iep:Provenance ;
+    iep:restrictToType iep:Temporal.</code></pre>
 
-<h4 id="override-op">Override (<code>cg:override</code>)</h4>
+<h4 id="override-op">Override (<code>iep:override</code>)</h4>
 
 <p>
   Given descriptors <em>D₁</em> (base) and <em>D₂</em> (override), <em>D₂ ▷ D₁</em> produces a
@@ -563,7 +563,7 @@
 
 <div class="note">
   The four composition operators form a <em>bounded lattice</em> over the set of Context Descriptors,
-  with <code>cg:union</code> as join, <code>cg:intersection</code> as meet, the empty descriptor
+  with <code>iep:union</code> as join, <code>iep:intersection</code> as meet, the empty descriptor
   as bottom, and the universal descriptor (containing all facet types with maximal property ranges)
   as top. This lattice structure ensures that context negotiation in federated settings converges.
 </div>
@@ -578,20 +578,20 @@
 
 <div class="definition">
   A <span class="term">Triple Context Annotation</span> is a set of triples whose subject is a
-  triple term and whose predicates are drawn from the <code>cg:</code> vocabulary, associating
+  triple term and whose predicates are drawn from the <code>iep:</code> vocabulary, associating
   context facet information directly with a specific statement.
 </div>
 
 <pre><code># Graph-level context
-&lt;urn:cg:desc:1&gt; a cg:ContextDescriptor ;
-    cg:describes &lt;urn:graph:G1&gt; ;
-    cg:hasFacet [ a cg:TemporalFacet ;
-        cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ].
+&lt;urn:iep:desc:1&gt; a iep:ContextDescriptor ;
+    iep:describes &lt;urn:graph:G1&gt; ;
+    iep:hasFacet [ a iep:TemporalFacet ;
+        iep:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ].
 
 # Triple-level context override (RDF 1.2 triple term)
 &lt;&lt; &lt;urn:sensor:7&gt; &lt;urn:vocab:reading&gt; "42.3"^^xsd:double &gt;&gt;
-    cg:hasFacet [ a cg:TemporalFacet ;
-        cg:validFrom "2026-03-15T14:30:00Z"^^xsd:dateTime ].</code></pre>
+    iep:hasFacet [ a iep:TemporalFacet ;
+        iep:validFrom "2026-03-15T14:30:00Z"^^xsd:dateTime ].</code></pre>
 
 <p>
   <strong>Inheritance rule:</strong> When a triple within a Named Graph has its own triple-level
@@ -620,10 +620,10 @@
   The Interego vocabulary is identified by the namespace IRI:
 </p>
 
-<pre><code>https://markjspivey-xwisee.github.io/interego/ns/cg#</code></pre>
+<pre><code>https://markjspivey-xwisee.github.io/interego/ns/iep#</code></pre>
 
 <p>
-  The conventional prefix is <code>cg:</code>.
+  The conventional prefix is <code>iep:</code>.
 </p>
 
 <p>
@@ -633,7 +633,7 @@
 <table class="prefix-table">
   <thead><tr><th>Prefix</th><th>Namespace IRI</th><th>Specification</th></tr></thead>
   <tbody>
-    <tr><td><code>cg:</code></td><td>https://markjspivey-xwisee.github.io/interego/ns/cg#</td><td>This specification</td></tr>
+    <tr><td><code>iep:</code></td><td>https://markjspivey-xwisee.github.io/interego/ns/iep#</td><td>This specification</td></tr>
     <tr><td><code>rdf:</code></td><td>http://www.w3.org/1999/02/22-rdf-syntax-ns#</td><td>RDF 1.2</td></tr>
     <tr><td><code>rdfs:</code></td><td>http://www.w3.org/2000/01/rdf-schema#</td><td>RDF Schema 1.2</td></tr>
     <tr><td><code>xsd:</code></td><td>http://www.w3.org/2001/XMLSchema#</td><td>XML Schema Datatypes</td></tr>
@@ -656,7 +656,7 @@
 <h3 id="classes">Classes</h3>
 
 <dl class="spec-terms">
-  <dt><code>cg:ContextDescriptor</code></dt>
+  <dt><code>iep:ContextDescriptor</code></dt>
   <dd>
     <strong>Subclass of:</strong> <code>prov:Entity</code>, <code>dcat:Resource</code><br>
     <strong>Description:</strong> The root class for all context descriptors. Every Context Descriptor
@@ -664,144 +664,144 @@
     (it is discoverable and catalogable).
   </dd>
 
-  <dt><code>cg:ComposedDescriptor</code></dt>
+  <dt><code>iep:ComposedDescriptor</code></dt>
   <dd>
-    <strong>Subclass of:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Subclass of:</strong> <code>iep:ContextDescriptor</code><br>
     <strong>Description:</strong> A Context Descriptor produced by applying a composition operator
-    to one or more operand descriptors. The <code>cg:compositionOp</code> property identifies the
-    operator, and <code>cg:operand</code> links to the input descriptors.
+    to one or more operand descriptors. The <code>iep:compositionOp</code> property identifies the
+    operator, and <code>iep:operand</code> links to the input descriptors.
   </dd>
 
-  <dt><code>cg:ContextFacet</code></dt>
+  <dt><code>iep:ContextFacet</code></dt>
   <dd>
     <strong>Description:</strong> Abstract base class for all context facets. Not intended for
     direct instantiation; use a typed subclass.
   </dd>
 
-  <dt><code>cg:TemporalFacet</code></dt>
-  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code>, <code>time:TemporalEntity</code></dd>
+  <dt><code>iep:TemporalFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>iep:ContextFacet</code>, <code>time:TemporalEntity</code></dd>
 
-  <dt><code>cg:ProvenanceFacet</code></dt>
-  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code>, <code>prov:Entity</code></dd>
+  <dt><code>iep:ProvenanceFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>iep:ContextFacet</code>, <code>prov:Entity</code></dd>
 
-  <dt><code>cg:AgentFacet</code></dt>
-  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code></dd>
+  <dt><code>iep:AgentFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>iep:ContextFacet</code></dd>
 
-  <dt><code>cg:AccessControlFacet</code></dt>
-  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code></dd>
+  <dt><code>iep:AccessControlFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>iep:ContextFacet</code></dd>
 
-  <dt><code>cg:SemioticFacet</code></dt>
-  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code></dd>
+  <dt><code>iep:SemioticFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>iep:ContextFacet</code></dd>
 
-  <dt><code>cg:TrustFacet</code></dt>
-  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code></dd>
+  <dt><code>iep:TrustFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>iep:ContextFacet</code></dd>
 
-  <dt><code>cg:FederationFacet</code></dt>
-  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code>, <code>dcat:DataService</code></dd>
+  <dt><code>iep:FederationFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>iep:ContextFacet</code>, <code>dcat:DataService</code></dd>
 
-  <dt><code>cg:ContextType</code></dt>
+  <dt><code>iep:ContextType</code></dt>
   <dd>
     <strong>Subclass of:</strong> <code>rdfs:Class</code><br>
     <strong>Description:</strong> A metaclass whose instances are the named context types
-    (<code>cg:Temporal</code>, <code>cg:Provenance</code>, etc.). Extensible by third parties.
+    (<code>iep:Temporal</code>, <code>iep:Provenance</code>, etc.). Extensible by third parties.
   </dd>
 </dl>
 
 <h3 id="properties">Properties</h3>
 
 <dl class="spec-terms">
-  <dt><code>cg:describes</code></dt>
+  <dt><code>iep:describes</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Domain:</strong> <code>iep:ContextDescriptor</code><br>
     <strong>Range:</strong> <code>rdfs:Resource</code> (typically a Named Graph IRI)<br>
     <strong>Description:</strong> Associates a Context Descriptor with the Named Graph(s) it describes.
   </dd>
 
-  <dt><code>cg:hasFacet</code></dt>
+  <dt><code>iep:hasFacet</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ContextDescriptor</code> ∪ RDF Triple Term<br>
-    <strong>Range:</strong> <code>cg:ContextFacet</code><br>
+    <strong>Domain:</strong> <code>iep:ContextDescriptor</code> ∪ RDF Triple Term<br>
+    <strong>Range:</strong> <code>iep:ContextFacet</code><br>
     <strong>Description:</strong> Links a descriptor (or a triple term, for statement-level context)
-    to a facet instance. A descriptor <span class="rfc2119">MUST</span> have at least one <code>cg:hasFacet</code> value.
+    to a facet instance. A descriptor <span class="rfc2119">MUST</span> have at least one <code>iep:hasFacet</code> value.
   </dd>
 
-  <dt><code>cg:hasFacetType</code></dt>
+  <dt><code>iep:hasFacetType</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ManifestEntry</code><br>
-    <strong>Range:</strong> <code>cg:ContextType</code><br>
+    <strong>Domain:</strong> <code>iep:ManifestEntry</code><br>
+    <strong>Range:</strong> <code>iep:ContextType</code><br>
     <strong>Description:</strong> Declares which facet types are present in a manifest entry,
     enabling lightweight discovery without dereferencing the descriptor.
   </dd>
 
-  <dt><code>cg:compositionOp</code></dt>
+  <dt><code>iep:compositionOp</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ComposedDescriptor</code><br>
-    <strong>Range:</strong> <code>cg:CompositionOperator</code><br>
+    <strong>Domain:</strong> <code>iep:ComposedDescriptor</code><br>
+    <strong>Range:</strong> <code>iep:CompositionOperator</code><br>
     <strong>Description:</strong> Identifies the algebraic operator used to produce this composed descriptor.
   </dd>
 
-  <dt><code>cg:operand</code></dt>
+  <dt><code>iep:operand</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ComposedDescriptor</code><br>
-    <strong>Range:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Domain:</strong> <code>iep:ComposedDescriptor</code><br>
+    <strong>Range:</strong> <code>iep:ContextDescriptor</code><br>
     <strong>Description:</strong> Links a composed descriptor to its input operand(s).
   </dd>
 
-  <dt><code>cg:restrictToType</code></dt>
+  <dt><code>iep:restrictToType</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ComposedDescriptor</code><br>
-    <strong>Range:</strong> <code>cg:ContextType</code><br>
-    <strong>Description:</strong> Used with <code>cg:restriction</code> to specify which facet types
+    <strong>Domain:</strong> <code>iep:ComposedDescriptor</code><br>
+    <strong>Range:</strong> <code>iep:ContextType</code><br>
+    <strong>Description:</strong> Used with <code>iep:restriction</code> to specify which facet types
     to retain.
   </dd>
 
-  <dt><code>cg:supersedes</code></dt>
+  <dt><code>iep:supersedes</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ContextDescriptor</code><br>
-    <strong>Range:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Domain:</strong> <code>iep:ContextDescriptor</code><br>
+    <strong>Range:</strong> <code>iep:ContextDescriptor</code><br>
     <strong>Description:</strong> Indicates that this descriptor replaces a previous version.
     Consumers <span class="rfc2119">SHOULD</span> prefer the superseding descriptor.
   </dd>
 
-  <dt><code>cg:version</code></dt>
+  <dt><code>iep:version</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Domain:</strong> <code>iep:ContextDescriptor</code><br>
     <strong>Range:</strong> <code>xsd:nonNegativeInteger</code>
   </dd>
 
-  <dt><code>cg:validFrom</code></dt>
+  <dt><code>iep:validFrom</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ContextDescriptor</code> ∪ <code>cg:TemporalFacet</code><br>
+    <strong>Domain:</strong> <code>iep:ContextDescriptor</code> ∪ <code>iep:TemporalFacet</code><br>
     <strong>Range:</strong> <code>xsd:dateTime</code><br>
     <strong>Description:</strong> The earliest instant at which this resource is considered valid.
     Aligned with <code>dct:valid</code> semantics and <code>vc:validFrom</code>.
   </dd>
 
-  <dt><code>cg:validUntil</code></dt>
+  <dt><code>iep:validUntil</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ContextDescriptor</code> ∪ <code>cg:TemporalFacet</code><br>
+    <strong>Domain:</strong> <code>iep:ContextDescriptor</code> ∪ <code>iep:TemporalFacet</code><br>
     <strong>Range:</strong> <code>xsd:dateTime</code>
   </dd>
 </dl>
 
 <h3 id="context-types">Context Types (Controlled Vocabulary)</h3>
 
-<p>The following named individuals are instances of <code>cg:ContextType</code>:</p>
+<p>The following named individuals are instances of <code>iep:ContextType</code>:</p>
 
-<pre><code>cg:Temporal      a cg:ContextType ; rdfs:label "Temporal"@en.
-cg:Provenance    a cg:ContextType ; rdfs:label "Provenance"@en.
-cg:Agent         a cg:ContextType ; rdfs:label "Agent"@en.
-cg:AccessControl a cg:ContextType ; rdfs:label "Access Control"@en.
-cg:Semiotic      a cg:ContextType ; rdfs:label "Semiotic"@en.
-cg:Trust         a cg:ContextType ; rdfs:label "Trust"@en.
-cg:Federation    a cg:ContextType ; rdfs:label "Federation"@en.</code></pre>
+<pre><code>iep:Temporal      a iep:ContextType ; rdfs:label "Temporal"@en.
+iep:Provenance    a iep:ContextType ; rdfs:label "Provenance"@en.
+iep:Agent         a iep:ContextType ; rdfs:label "Agent"@en.
+iep:AccessControl a iep:ContextType ; rdfs:label "Access Control"@en.
+iep:Semiotic      a iep:ContextType ; rdfs:label "Semiotic"@en.
+iep:Trust         a iep:ContextType ; rdfs:label "Trust"@en.
+iep:Federation    a iep:ContextType ; rdfs:label "Federation"@en.</code></pre>
 
 <h3 id="composition-operators">Composition Operators</h3>
 
-<pre><code>cg:union         a cg:CompositionOperator ; rdfs:label "Union"@en.
-cg:intersection  a cg:CompositionOperator ; rdfs:label "Intersection"@en.
-cg:restriction   a cg:CompositionOperator ; rdfs:label "Restriction"@en.
-cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pre>
+<pre><code>iep:union         a iep:CompositionOperator ; rdfs:label "Union"@en.
+iep:intersection  a iep:CompositionOperator ; rdfs:label "Intersection"@en.
+iep:restriction   a iep:CompositionOperator ; rdfs:label "Restriction"@en.
+iep:override      a iep:CompositionOperator ; rdfs:label "Override"@en.</code></pre>
 
 <hr>
 
@@ -825,15 +825,15 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </p>
 
 <dl class="spec-terms">
-  <dt>Class:</dt><dd><code>cg:TemporalFacet</code> (subclass of <code>cg:ContextFacet</code>, <code>time:TemporalEntity</code>)</dd>
+  <dt>Class:</dt><dd><code>iep:TemporalFacet</code> (subclass of <code>iep:ContextFacet</code>, <code>time:TemporalEntity</code>)</dd>
   <dt>Properties:</dt>
   <dd>
-    <code>cg:validFrom</code> → <code>xsd:dateTime</code> (aligned with <code>dct:valid</code> start)<br>
-    <code>cg:validUntil</code> → <code>xsd:dateTime</code><br>
+    <code>iep:validFrom</code> → <code>xsd:dateTime</code> (aligned with <code>dct:valid</code> start)<br>
+    <code>iep:validUntil</code> → <code>xsd:dateTime</code><br>
     <code>time:hasBeginning</code> → <code>time:Instant</code> (for richer temporal modeling)<br>
     <code>time:hasEnd</code> → <code>time:Instant</code><br>
-    <code>cg:temporalResolution</code> → <code>time:Duration</code> (granularity of temporal claims)<br>
-    <code>cg:temporalRelation</code> → Allen Interval relation IRI (e.g., <code>time:intervalDuring</code>)
+    <code>iep:temporalResolution</code> → <code>time:Duration</code> (granularity of temporal claims)<br>
+    <code>iep:temporalRelation</code> → Allen Interval relation IRI (e.g., <code>time:intervalDuring</code>)
   </dd>
   <dt>Merge semantics (union):</dt>
   <dd>The union of two Temporal Facets produces a facet whose <code>validFrom</code> is the
@@ -846,10 +846,10 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </dl>
 
 <div class="example">
-<pre><code>[] a cg:TemporalFacet ;
-    cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
-    cg:validUntil "2026-03-31T23:59:59Z"^^xsd:dateTime ;
-    cg:temporalResolution "P1D"^^xsd:duration ;
+<pre><code>[] a iep:TemporalFacet ;
+    iep:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
+    iep:validUntil "2026-03-31T23:59:59Z"^^xsd:dateTime ;
+    iep:temporalResolution "P1D"^^xsd:duration ;
     time:hasBeginning [ a time:Instant ;
         time:inXSDDateTimeStamp "2026-01-01T00:00:00Z"^^xsd:dateTimeStamp ].</code></pre>
 </div>
@@ -862,7 +862,7 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </p>
 
 <dl class="spec-terms">
-  <dt>Class:</dt><dd><code>cg:ProvenanceFacet</code> (subclass of <code>cg:ContextFacet</code>, <code>prov:Entity</code>)</dd>
+  <dt>Class:</dt><dd><code>iep:ProvenanceFacet</code> (subclass of <code>iep:ContextFacet</code>, <code>prov:Entity</code>)</dd>
   <dt>Properties:</dt>
   <dd>
     <code>prov:wasGeneratedBy</code> → <code>prov:Activity</code><br>
@@ -870,7 +870,7 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
     <code>prov:wasAttributedTo</code> → <code>prov:Agent</code><br>
     <code>prov:generatedAtTime</code> → <code>xsd:dateTime</code><br>
     <code>prov:used</code> → <code>prov:Entity</code> (inputs consumed by the generating activity)<br>
-    <code>cg:provenanceChain</code> → <code>rdf:List</code> of <code>cg:ProvenanceFacet</code> (ordered derivation history)
+    <code>iep:provenanceChain</code> → <code>rdf:List</code> of <code>iep:ProvenanceFacet</code> (ordered derivation history)
   </dd>
   <dt>Merge semantics (union):</dt>
   <dd>The union of Provenance Facets concatenates their provenance chains and unions their
@@ -878,7 +878,7 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </dl>
 
 <div class="example">
-<pre><code>[] a cg:ProvenanceFacet ;
+<pre><code>[] a iep:ProvenanceFacet ;
     prov:wasGeneratedBy [
         a prov:Activity ;
         prov:wasAssociatedWith &lt;https://example.org/agent/etl-pipeline-v3&gt; ;
@@ -897,27 +897,27 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </p>
 
 <dl class="spec-terms">
-  <dt>Class:</dt><dd><code>cg:AgentFacet</code> (subclass of <code>cg:ContextFacet</code>)</dd>
+  <dt>Class:</dt><dd><code>iep:AgentFacet</code> (subclass of <code>iep:ContextFacet</code>)</dd>
   <dt>Properties:</dt>
   <dd>
-    <code>cg:assertingAgent</code> → <code>prov:Agent</code> ∩ <code>as:Actor</code> (the agent asserting the graph)<br>
-    <code>cg:onBehalfOf</code> → <code>prov:Agent</code> (delegation chain, per <code>prov:actedOnBehalfOf</code>)<br>
-    <code>cg:agentRole</code> → <code>cg:AgentRole</code> (e.g., <code>cg:Author</code>, <code>cg:Curator</code>, <code>cg:Validator</code>)<br>
-    <code>cg:agentIdentity</code> → IRI (DID, WebID, ORCID, or other agent identifier)
+    <code>iep:assertingAgent</code> → <code>prov:Agent</code> ∩ <code>as:Actor</code> (the agent asserting the graph)<br>
+    <code>iep:onBehalfOf</code> → <code>prov:Agent</code> (delegation chain, per <code>prov:actedOnBehalfOf</code>)<br>
+    <code>iep:agentRole</code> → <code>iep:AgentRole</code> (e.g., <code>iep:Author</code>, <code>iep:Curator</code>, <code>iep:Validator</code>)<br>
+    <code>iep:agentIdentity</code> → IRI (DID, WebID, ORCID, or other agent identifier)
   </dd>
   <dt>Merge semantics:</dt>
   <dd>Agent Facets union into a set of agents with their roles.</dd>
 </dl>
 
 <div class="example">
-<pre><code>[] a cg:AgentFacet ;
-    cg:assertingAgent [
+<pre><code>[] a iep:AgentFacet ;
+    iep:assertingAgent [
         a prov:SoftwareAgent, as:Application ;
         rdfs:label "HELA Ingestion Pipeline" ;
-        cg:agentIdentity &lt;did:web:example.com:hela:ingest&gt;
+        iep:agentIdentity &lt;did:web:example.com:hela:ingest&gt;
     ] ;
-    cg:agentRole cg:Author ;
-    cg:onBehalfOf &lt;https://example.com/#org&gt;.</code></pre>
+    iep:agentRole iep:Author ;
+    iep:onBehalfOf &lt;https://example.com/#org&gt;.</code></pre>
 </div>
 
 <h3 id="access-facet">Access Control Facet</h3>
@@ -928,14 +928,14 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </p>
 
 <dl class="spec-terms">
-  <dt>Class:</dt><dd><code>cg:AccessControlFacet</code> (subclass of <code>cg:ContextFacet</code>)</dd>
+  <dt>Class:</dt><dd><code>iep:AccessControlFacet</code> (subclass of <code>iep:ContextFacet</code>)</dd>
   <dt>Properties:</dt>
   <dd>
-    <code>cg:authorization</code> → <code>acl:Authorization</code><br>
+    <code>iep:authorization</code> → <code>acl:Authorization</code><br>
     <code>acl:mode</code> → { <code>acl:Read</code>, <code>acl:Write</code>, <code>acl:Append</code>, <code>acl:Control</code> }<br>
     <code>acl:agent</code> → Agent IRI<br>
     <code>acl:agentClass</code> → Class IRI (e.g., <code>foaf:Agent</code> for public access)<br>
-    <code>cg:consentBasis</code> → IRI (legal basis for data processing, e.g., GDPR Article 6 basis)
+    <code>iep:consentBasis</code> → IRI (legal basis for data processing, e.g., GDPR Article 6 basis)
   </dd>
   <dt>Merge semantics (union):</dt>
   <dd>Authorization sets are unioned. Conflicting authorizations (allow vs. deny for same agent/mode)
@@ -952,16 +952,16 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </p>
 
 <dl class="spec-terms">
-  <dt>Class:</dt><dd><code>cg:SemioticFacet</code> (subclass of <code>cg:ContextFacet</code>)</dd>
+  <dt>Class:</dt><dd><code>iep:SemioticFacet</code> (subclass of <code>iep:ContextFacet</code>)</dd>
   <dt>Properties:</dt>
   <dd>
-    <code>cg:interpretationFrame</code> → IRI (the ontological or conceptual framework for interpretation)<br>
-    <code>cg:signSystem</code> → IRI (the vocabulary or schema that defines the sign repertoire)<br>
-    <code>cg:groundTruth</code> → <code>xsd:boolean</code> (whether this graph is asserted as ground truth)<br>
-    <code>cg:modalStatus</code> → { <code>cg:Asserted</code>, <code>cg:Hypothetical</code>,
-       <code>cg:Counterfactual</code>, <code>cg:Quoted</code>, <code>cg:Retracted</code> }<br>
-    <code>cg:epistemicConfidence</code> → <code>xsd:double</code> [0.0, 1.0] (degree of belief)<br>
-    <code>cg:languageTag</code> → <code>xsd:language</code> (natural language of content, aligns with <code>dct:language</code>)
+    <code>iep:interpretationFrame</code> → IRI (the ontological or conceptual framework for interpretation)<br>
+    <code>iep:signSystem</code> → IRI (the vocabulary or schema that defines the sign repertoire)<br>
+    <code>iep:groundTruth</code> → <code>xsd:boolean</code> (whether this graph is asserted as ground truth)<br>
+    <code>iep:modalStatus</code> → { <code>iep:Asserted</code>, <code>iep:Hypothetical</code>,
+       <code>iep:Counterfactual</code>, <code>iep:Quoted</code>, <code>iep:Retracted</code> }<br>
+    <code>iep:epistemicConfidence</code> → <code>xsd:double</code> [0.0, 1.0] (degree of belief)<br>
+    <code>iep:languageTag</code> → <code>xsd:language</code> (natural language of content, aligns with <code>dct:language</code>)
   </dd>
   <dt>Merge semantics (union):</dt>
   <dd>Semiotic Facets do not merge; multiple semiotic facets indicate multiple
@@ -969,18 +969,18 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </dl>
 
 <div class="example">
-<pre><code>[] a cg:SemioticFacet ;
-    cg:interpretationFrame &lt;https://schema.org/MedicalScholarlyArticle&gt; ;
-    cg:signSystem &lt;http://purl.bioontology.org/ontology/SNOMEDCT/&gt; ;
-    cg:modalStatus cg:Asserted ;
-    cg:epistemicConfidence "0.92"^^xsd:double ;
-    cg:languageTag "en"^^xsd:language.</code></pre>
+<pre><code>[] a iep:SemioticFacet ;
+    iep:interpretationFrame &lt;https://schema.org/MedicalScholarlyArticle&gt; ;
+    iep:signSystem &lt;http://purl.bioontology.org/ontology/SNOMEDCT/&gt; ;
+    iep:modalStatus iep:Asserted ;
+    iep:epistemicConfidence "0.92"^^xsd:double ;
+    iep:languageTag "en"^^xsd:language.</code></pre>
 </div>
 
 <div class="note">
   The Semiotic Facet addresses a fundamental gap in RDF: graphs carry no standard indication of
   whether their content is asserted as fact, offered as hypothesis, quoted from a third party,
-  or presented as a counterfactual scenario. The <code>cg:modalStatus</code> property provides
+  or presented as a counterfactual scenario. The <code>iep:modalStatus</code> property provides
   this missing pragmatic layer, extending the annotation capabilities of RDF 1.2 triple terms
   to the graph level.
 </div>
@@ -994,15 +994,15 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </p>
 
 <dl class="spec-terms">
-  <dt>Class:</dt><dd><code>cg:TrustFacet</code> (subclass of <code>cg:ContextFacet</code>)</dd>
+  <dt>Class:</dt><dd><code>iep:TrustFacet</code> (subclass of <code>iep:ContextFacet</code>)</dd>
   <dt>Properties:</dt>
   <dd>
-    <code>cg:verifiableCredential</code> → <code>vc:VerifiableCredential</code><br>
-    <code>cg:issuer</code> → IRI (DID or WebID of the credential issuer, aligned with <code>vc:issuer</code>)<br>
-    <code>cg:proofMechanism</code> → IRI (e.g., <code>https://w3id.org/security#Ed25519Signature2020</code>)<br>
-    <code>cg:trustLevel</code> → { <code>cg:SelfAsserted</code>, <code>cg:ThirdPartyAttested</code>,
-       <code>cg:CryptographicallyVerified</code> }<br>
-    <code>cg:revocationStatus</code> → IRI (link to a VC status list or revocation endpoint)
+    <code>iep:verifiableCredential</code> → <code>vc:VerifiableCredential</code><br>
+    <code>iep:issuer</code> → IRI (DID or WebID of the credential issuer, aligned with <code>vc:issuer</code>)<br>
+    <code>iep:proofMechanism</code> → IRI (e.g., <code>https://w3id.org/security#Ed25519Signature2020</code>)<br>
+    <code>iep:trustLevel</code> → { <code>iep:SelfAsserted</code>, <code>iep:ThirdPartyAttested</code>,
+       <code>iep:CryptographicallyVerified</code> }<br>
+    <code>iep:revocationStatus</code> → IRI (link to a VC status list or revocation endpoint)
   </dd>
   <dt>Merge semantics (intersection):</dt>
   <dd>The intersection of Trust Facets retains only credentials recognized by <em>both</em>
@@ -1019,16 +1019,16 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </p>
 
 <dl class="spec-terms">
-  <dt>Class:</dt><dd><code>cg:FederationFacet</code> (subclass of <code>cg:ContextFacet</code>, <code>dcat:DataService</code>)</dd>
+  <dt>Class:</dt><dd><code>iep:FederationFacet</code> (subclass of <code>iep:ContextFacet</code>, <code>dcat:DataService</code>)</dd>
   <dt>Properties:</dt>
   <dd>
-    <code>cg:origin</code> → IRI (the authoritative source of this graph)<br>
-    <code>cg:storageEndpoint</code> → IRI (the LDP/Solid container or SPARQL endpoint where the graph resides)<br>
+    <code>iep:origin</code> → IRI (the authoritative source of this graph)<br>
+    <code>iep:storageEndpoint</code> → IRI (the LDP/Solid container or SPARQL endpoint where the graph resides)<br>
     <code>dcat:endpointURL</code> → IRI (SPARQL endpoint, if applicable)<br>
-    <code>cg:syncProtocol</code> → { <code>cg:SolidNotifications</code>, <code>cg:WebSub</code>,
-       <code>cg:LinkedDataNotifications</code>, <code>cg:Polling</code> }<br>
-    <code>cg:replicaOf</code> → IRI (link to the authoritative graph IRI if this is a replica)<br>
-    <code>cg:lastSynced</code> → <code>xsd:dateTime</code><br>
+    <code>iep:syncProtocol</code> → { <code>iep:SolidNotifications</code>, <code>iep:WebSub</code>,
+       <code>iep:LinkedDataNotifications</code>, <code>iep:Polling</code> }<br>
+    <code>iep:replicaOf</code> → IRI (link to the authoritative graph IRI if this is a replica)<br>
+    <code>iep:lastSynced</code> → <code>xsd:dateTime</code><br>
     <code>dcat:distribution</code> → <code>dcat:Distribution</code> (format, access URL, media type)
   </dd>
   <dt>Merge semantics:</dt>
@@ -1037,11 +1037,11 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 </dl>
 
 <div class="example">
-<pre><code>[] a cg:FederationFacet ;
-    cg:origin &lt;https://pod.example.org/alice/data/observations&gt; ;
-    cg:storageEndpoint &lt;https://pod.example.org/alice/&gt; ;
-    cg:syncProtocol cg:SolidNotifications ;
-    cg:lastSynced "2026-03-17T12:00:00Z"^^xsd:dateTime ;
+<pre><code>[] a iep:FederationFacet ;
+    iep:origin &lt;https://pod.example.org/alice/data/observations&gt; ;
+    iep:storageEndpoint &lt;https://pod.example.org/alice/&gt; ;
+    iep:syncProtocol iep:SolidNotifications ;
+    iep:lastSynced "2026-03-17T12:00:00Z"^^xsd:dateTime ;
     dcat:endpointURL &lt;https://sparql.example.org/query&gt; ;
     dcat:distribution [
         a dcat:Distribution ;
@@ -1060,12 +1060,12 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 
 <p>
   The following SHACL [<a href="https://www.w3.org/TR/shacl/">SHACL</a>] shapes define the
-  validation constraints for Context Graph data. Conformant producers <span class="rfc2119">MUST</span>
+  validation constraints for Interego Protocol data. Conformant producers <span class="rfc2119">MUST</span>
   generate data that passes validation against these shapes. Conformant validators
   <span class="rfc2119">MUST</span> implement these shapes.
 </p>
 
-<pre><code>@prefix cg:    &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;.
+<pre><code>@prefix iep:    &lt;https://markjspivey-xwisee.github.io/interego/ns/iep#&gt;.
 @prefix sh:    &lt;http://www.w3.org/ns/shacl#&gt;.
 @prefix xsd:   &lt;http://www.w3.org/2001/XMLSchema#&gt;.
 @prefix prov:  &lt;http://www.w3.org/ns/prov#&gt;.
@@ -1073,32 +1073,32 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
 
 # ── Context Descriptor Shape ──────────────────────────────────
 
-cg:ContextDescriptorShape a sh:NodeShape ;
-    sh:targetClass cg:ContextDescriptor ;
+iep:ContextDescriptorShape a sh:NodeShape ;
+    sh:targetClass iep:ContextDescriptor ;
     sh:property [
-        sh:path cg:hasFacet ;
+        sh:path iep:hasFacet ;
         sh:minCount 1 ;
-        sh:class cg:ContextFacet ;
+        sh:class iep:ContextFacet ;
         sh:message "A ContextDescriptor MUST have at least one facet." ;
     ] ;
     sh:property [
-        sh:path cg:describes ;
+        sh:path iep:describes ;
         sh:minCount 1 ;
         sh:nodeKind sh:IRI ;
         sh:message "A ContextDescriptor MUST describe at least one Named Graph." ;
     ] ;
     sh:property [
-        sh:path cg:version ;
+        sh:path iep:version ;
         sh:maxCount 1 ;
         sh:datatype xsd:nonNegativeInteger ;
     ] ;
     sh:property [
-        sh:path cg:validFrom ;
+        sh:path iep:validFrom ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
     ] ;
     sh:property [
-        sh:path cg:validUntil ;
+        sh:path iep:validUntil ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
     ] ;
@@ -1106,8 +1106,8 @@ cg:ContextDescriptorShape a sh:NodeShape ;
         sh:message "validUntil MUST be after validFrom when both are present." ;
         sh:select """
             SELECT $this WHERE {
-                $this cg:validFrom ?from.
-                $this cg:validUntil ?until.
+                $this iep:validFrom ?from.
+                $this iep:validUntil ?until.
                 FILTER (?until &lt;= ?from)
             }
         """ ;
@@ -1115,44 +1115,44 @@ cg:ContextDescriptorShape a sh:NodeShape ;
 
 # ── Composed Descriptor Shape ─────────────────────────────────
 
-cg:ComposedDescriptorShape a sh:NodeShape ;
-    sh:targetClass cg:ComposedDescriptor ;
+iep:ComposedDescriptorShape a sh:NodeShape ;
+    sh:targetClass iep:ComposedDescriptor ;
     sh:property [
-        sh:path cg:compositionOp ;
+        sh:path iep:compositionOp ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:class cg:CompositionOperator ;
+        sh:class iep:CompositionOperator ;
     ] ;
     sh:property [
-        sh:path cg:operand ;
+        sh:path iep:operand ;
         sh:minCount 1 ;
-        sh:class cg:ContextDescriptor ;
+        sh:class iep:ContextDescriptor ;
     ].
 
 # ── Temporal Facet Shape ──────────────────────────────────────
 
-cg:TemporalFacetShape a sh:NodeShape ;
-    sh:targetClass cg:TemporalFacet ;
+iep:TemporalFacetShape a sh:NodeShape ;
+    sh:targetClass iep:TemporalFacet ;
     sh:property [
-        sh:path cg:validFrom ;
+        sh:path iep:validFrom ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
     ] ;
     sh:property [
-        sh:path cg:validUntil ;
+        sh:path iep:validUntil ;
         sh:maxCount 1 ;
         sh:datatype xsd:dateTime ;
     ] ;
     sh:property [
-        sh:path cg:temporalResolution ;
+        sh:path iep:temporalResolution ;
         sh:maxCount 1 ;
         sh:datatype xsd:duration ;
     ].
 
 # ── Provenance Facet Shape ────────────────────────────────────
 
-cg:ProvenanceFacetShape a sh:NodeShape ;
-    sh:targetClass cg:ProvenanceFacet ;
+iep:ProvenanceFacetShape a sh:NodeShape ;
+    sh:targetClass iep:ProvenanceFacet ;
     sh:property [
         sh:path prov:wasGeneratedBy ;
         sh:class prov:Activity ;
@@ -1165,15 +1165,15 @@ cg:ProvenanceFacetShape a sh:NodeShape ;
 
 # ── Semiotic Facet Shape ──────────────────────────────────────
 
-cg:SemioticFacetShape a sh:NodeShape ;
-    sh:targetClass cg:SemioticFacet ;
+iep:SemioticFacetShape a sh:NodeShape ;
+    sh:targetClass iep:SemioticFacet ;
     sh:property [
-        sh:path cg:modalStatus ;
+        sh:path iep:modalStatus ;
         sh:maxCount 1 ;
-        sh:in ( cg:Asserted cg:Hypothetical cg:Counterfactual cg:Quoted cg:Retracted ) ;
+        sh:in ( iep:Asserted iep:Hypothetical iep:Counterfactual iep:Quoted iep:Retracted ) ;
     ] ;
     sh:property [
-        sh:path cg:epistemicConfidence ;
+        sh:path iep:epistemicConfidence ;
         sh:maxCount 1 ;
         sh:datatype xsd:double ;
         sh:minInclusive 0.0 ;
@@ -1182,12 +1182,12 @@ cg:SemioticFacetShape a sh:NodeShape ;
 
 # ── Trust Facet Shape ─────────────────────────────────────────
 
-cg:TrustFacetShape a sh:NodeShape ;
-    sh:targetClass cg:TrustFacet ;
+iep:TrustFacetShape a sh:NodeShape ;
+    sh:targetClass iep:TrustFacet ;
     sh:property [
-        sh:path cg:trustLevel ;
+        sh:path iep:trustLevel ;
         sh:maxCount 1 ;
-        sh:in ( cg:SelfAsserted cg:ThirdPartyAttested cg:CryptographicallyVerified ) ;
+        sh:in ( iep:SelfAsserted iep:ThirdPartyAttested iep:CryptographicallyVerified ) ;
     ].</code></pre>
 
 <hr>
@@ -1200,7 +1200,7 @@ cg:TrustFacetShape a sh:NodeShape ;
 
 <p>
   The following JSON-LD 1.1 [<a href="https://www.w3.org/TR/json-ld11/">JSON-LD11</a>] context
-  document enables compact serialization of Context Graph data. Conformant producers
+  document enables compact serialization of Interego Protocol data. Conformant producers
   <span class="rfc2119">SHOULD</span> reference this context when serializing Interego as
   JSON-LD.
 </p>
@@ -1208,7 +1208,7 @@ cg:TrustFacetShape a sh:NodeShape ;
 <pre><code>{
   "@context": {
     "@version": 1.1,
-    "cg": "https://markjspivey-xwisee.github.io/interego/ns/cg#",
+    "cg": "https://markjspivey-xwisee.github.io/interego/ns/iep#",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
     "xsd": "http://www.w3.org/2001/XMLSchema#",
@@ -1221,55 +1221,55 @@ cg:TrustFacetShape a sh:NodeShape ;
     "dcat": "http://www.w3.org/ns/dcat#",
     "oa": "http://www.w3.org/ns/oa#",
 
-    "ContextDescriptor": "cg:ContextDescriptor",
-    "ComposedDescriptor": "cg:ComposedDescriptor",
-    "ContextFacet": "cg:ContextFacet",
-    "TemporalFacet": "cg:TemporalFacet",
-    "ProvenanceFacet": "cg:ProvenanceFacet",
-    "AgentFacet": "cg:AgentFacet",
-    "AccessControlFacet": "cg:AccessControlFacet",
-    "SemioticFacet": "cg:SemioticFacet",
-    "TrustFacet": "cg:TrustFacet",
-    "FederationFacet": "cg:FederationFacet",
+    "ContextDescriptor": "iep:ContextDescriptor",
+    "ComposedDescriptor": "iep:ComposedDescriptor",
+    "ContextFacet": "iep:ContextFacet",
+    "TemporalFacet": "iep:TemporalFacet",
+    "ProvenanceFacet": "iep:ProvenanceFacet",
+    "AgentFacet": "iep:AgentFacet",
+    "AccessControlFacet": "iep:AccessControlFacet",
+    "SemioticFacet": "iep:SemioticFacet",
+    "TrustFacet": "iep:TrustFacet",
+    "FederationFacet": "iep:FederationFacet",
 
-    "describes": { "@id": "cg:describes", "@type": "@id" },
-    "hasFacet": { "@id": "cg:hasFacet" },
-    "hasFacetType": { "@id": "cg:hasFacetType", "@type": "@id" },
-    "compositionOp": { "@id": "cg:compositionOp", "@type": "@id" },
-    "operand": { "@id": "cg:operand", "@type": "@id", "@container": "@set" },
-    "restrictToType": { "@id": "cg:restrictToType", "@type": "@id", "@container": "@set" },
-    "supersedes": { "@id": "cg:supersedes", "@type": "@id" },
-    "version": { "@id": "cg:version", "@type": "xsd:nonNegativeInteger" },
+    "describes": { "@id": "iep:describes", "@type": "@id" },
+    "hasFacet": { "@id": "iep:hasFacet" },
+    "hasFacetType": { "@id": "iep:hasFacetType", "@type": "@id" },
+    "compositionOp": { "@id": "iep:compositionOp", "@type": "@id" },
+    "operand": { "@id": "iep:operand", "@type": "@id", "@container": "@set" },
+    "restrictToType": { "@id": "iep:restrictToType", "@type": "@id", "@container": "@set" },
+    "supersedes": { "@id": "iep:supersedes", "@type": "@id" },
+    "version": { "@id": "iep:version", "@type": "xsd:nonNegativeInteger" },
 
-    "validFrom": { "@id": "cg:validFrom", "@type": "xsd:dateTime" },
-    "validUntil": { "@id": "cg:validUntil", "@type": "xsd:dateTime" },
-    "temporalResolution": { "@id": "cg:temporalResolution", "@type": "xsd:duration" },
+    "validFrom": { "@id": "iep:validFrom", "@type": "xsd:dateTime" },
+    "validUntil": { "@id": "iep:validUntil", "@type": "xsd:dateTime" },
+    "temporalResolution": { "@id": "iep:temporalResolution", "@type": "xsd:duration" },
 
     "wasGeneratedBy": { "@id": "prov:wasGeneratedBy" },
     "wasDerivedFrom": { "@id": "prov:wasDerivedFrom", "@type": "@id" },
     "wasAttributedTo": { "@id": "prov:wasAttributedTo", "@type": "@id" },
     "generatedAtTime": { "@id": "prov:generatedAtTime", "@type": "xsd:dateTime" },
 
-    "assertingAgent": { "@id": "cg:assertingAgent" },
-    "onBehalfOf": { "@id": "cg:onBehalfOf", "@type": "@id" },
-    "agentRole": { "@id": "cg:agentRole", "@type": "@id" },
-    "agentIdentity": { "@id": "cg:agentIdentity", "@type": "@id" },
+    "assertingAgent": { "@id": "iep:assertingAgent" },
+    "onBehalfOf": { "@id": "iep:onBehalfOf", "@type": "@id" },
+    "agentRole": { "@id": "iep:agentRole", "@type": "@id" },
+    "agentIdentity": { "@id": "iep:agentIdentity", "@type": "@id" },
 
-    "interpretationFrame": { "@id": "cg:interpretationFrame", "@type": "@id" },
-    "signSystem": { "@id": "cg:signSystem", "@type": "@id" },
-    "modalStatus": { "@id": "cg:modalStatus", "@type": "@id" },
-    "epistemicConfidence": { "@id": "cg:epistemicConfidence", "@type": "xsd:double" },
-    "groundTruth": { "@id": "cg:groundTruth", "@type": "xsd:boolean" },
+    "interpretationFrame": { "@id": "iep:interpretationFrame", "@type": "@id" },
+    "signSystem": { "@id": "iep:signSystem", "@type": "@id" },
+    "modalStatus": { "@id": "iep:modalStatus", "@type": "@id" },
+    "epistemicConfidence": { "@id": "iep:epistemicConfidence", "@type": "xsd:double" },
+    "groundTruth": { "@id": "iep:groundTruth", "@type": "xsd:boolean" },
 
-    "trustLevel": { "@id": "cg:trustLevel", "@type": "@id" },
-    "issuer": { "@id": "cg:issuer", "@type": "@id" },
-    "proofMechanism": { "@id": "cg:proofMechanism", "@type": "@id" },
+    "trustLevel": { "@id": "iep:trustLevel", "@type": "@id" },
+    "issuer": { "@id": "iep:issuer", "@type": "@id" },
+    "proofMechanism": { "@id": "iep:proofMechanism", "@type": "@id" },
 
-    "origin": { "@id": "cg:origin", "@type": "@id" },
-    "storageEndpoint": { "@id": "cg:storageEndpoint", "@type": "@id" },
-    "syncProtocol": { "@id": "cg:syncProtocol", "@type": "@id" },
-    "replicaOf": { "@id": "cg:replicaOf", "@type": "@id" },
-    "lastSynced": { "@id": "cg:lastSynced", "@type": "xsd:dateTime" }
+    "origin": { "@id": "iep:origin", "@type": "@id" },
+    "storageEndpoint": { "@id": "iep:storageEndpoint", "@type": "@id" },
+    "syncProtocol": { "@id": "iep:syncProtocol", "@type": "@id" },
+    "replicaOf": { "@id": "iep:replicaOf", "@type": "@id" },
+    "lastSynced": { "@id": "iep:lastSynced", "@type": "xsd:dateTime" }
   }
 }</code></pre>
 
@@ -1289,38 +1289,38 @@ cg:TrustFacetShape a sh:NodeShape ;
 
 <h3>Query Pattern: Retrieving Context for a Named Graph</h3>
 
-<pre><code>PREFIX cg:   &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;
+<pre><code>PREFIX iep:   &lt;https://markjspivey-xwisee.github.io/interego/ns/iep#&gt;
 PREFIX prov: &lt;http://www.w3.org/ns/prov#&gt;
 
 SELECT ?descriptor ?facetType ?validFrom ?validUntil ?agent
 WHERE {
-    ?descriptor a cg:ContextDescriptor ;
-        cg:describes &lt;urn:graph:target&gt; ;
-        cg:hasFacet ?facet.
+    ?descriptor a iep:ContextDescriptor ;
+        iep:describes &lt;urn:graph:target&gt; ;
+        iep:hasFacet ?facet.
 
     ?facet a ?facetType.
 
-    OPTIONAL { ?facet cg:validFrom ?validFrom }
-    OPTIONAL { ?facet cg:validUntil ?validUntil }
+    OPTIONAL { ?facet iep:validFrom ?validFrom }
+    OPTIONAL { ?facet iep:validUntil ?validUntil }
     OPTIONAL {
-        ?facet cg:assertingAgent ?agentNode.
-        ?agentNode cg:agentIdentity ?agent.
+        ?facet iep:assertingAgent ?agentNode.
+        ?agentNode iep:agentIdentity ?agent.
     }
 }</code></pre>
 
 <h3>Query Pattern: Filtering Graphs by Temporal Context</h3>
 
-<pre><code>PREFIX cg: &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;
+<pre><code>PREFIX iep: &lt;https://markjspivey-xwisee.github.io/interego/ns/iep#&gt;
 
 SELECT ?graph ?content
 WHERE {
-    ?desc a cg:ContextDescriptor ;
-        cg:describes ?graph ;
-        cg:hasFacet ?tf.
+    ?desc a iep:ContextDescriptor ;
+        iep:describes ?graph ;
+        iep:hasFacet ?tf.
 
-    ?tf a cg:TemporalFacet ;
-        cg:validFrom ?from ;
-        cg:validUntil ?until.
+    ?tf a iep:TemporalFacet ;
+        iep:validFrom ?from ;
+        iep:validUntil ?until.
 
     FILTER (?from &lt;= "2026-03-01T00:00:00Z"^^xsd:dateTime
          &amp;&amp; ?until &gt;= "2026-03-01T00:00:00Z"^^xsd:dateTime)
@@ -1330,17 +1330,17 @@ WHERE {
 
 <h3>Query Pattern: Filtering by Modal Status (Semiotic Facet)</h3>
 
-<pre><code>PREFIX cg: &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;
+<pre><code>PREFIX iep: &lt;https://markjspivey-xwisee.github.io/interego/ns/iep#&gt;
 
 # Find all graphs whose content is asserted (not hypothetical or quoted)
 SELECT ?graph
 WHERE {
-    ?desc a cg:ContextDescriptor ;
-        cg:describes ?graph ;
-        cg:hasFacet ?sf.
+    ?desc a iep:ContextDescriptor ;
+        iep:describes ?graph ;
+        iep:hasFacet ?sf.
 
-    ?sf a cg:SemioticFacet ;
-        cg:modalStatus cg:Asserted.
+    ?sf a iep:SemioticFacet ;
+        iep:modalStatus iep:Asserted.
 }</code></pre>
 
 <h3>Extension Functions (Informative)</h3>
@@ -1354,17 +1354,17 @@ WHERE {
   <thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
   <tbody>
     <tr>
-      <td><code>cg:effectiveContext</code></td>
+      <td><code>iep:effectiveContext</code></td>
       <td><code>(tripleOrGraph: IRI) → ContextDescriptor</code></td>
       <td>Returns the effective (composed) Context Descriptor for a triple term or Named Graph, applying the inheritance/override rules.</td>
     </tr>
     <tr>
-      <td><code>cg:hasContextType</code></td>
+      <td><code>iep:hasContextType</code></td>
       <td><code>(graph: IRI, type: IRI) → xsd:boolean</code></td>
       <td>Returns <code>true</code> if the graph's effective context includes a facet of the given type.</td>
     </tr>
     <tr>
-      <td><code>cg:temporalOverlaps</code></td>
+      <td><code>iep:temporalOverlaps</code></td>
       <td><code>(graph: IRI, instant: xsd:dateTime) → xsd:boolean</code></td>
       <td>Returns <code>true</code> if the graph's temporal facet interval contains the given instant.</td>
     </tr>
@@ -1456,14 +1456,14 @@ WHERE {
 <p>
   In federated environments, a malicious participant may inject false Context Descriptors to
   misrepresent the provenance, trust level, or temporal validity of graphs. Consumers
-  <span class="rfc2119">MUST</span> verify that the <code>cg:describes</code> target graph
+  <span class="rfc2119">MUST</span> verify that the <code>iep:describes</code> target graph
   actually exists and is reachable, and <span class="rfc2119">SHOULD</span> verify that the
-  descriptor's <code>cg:origin</code> (if present) is authoritative for the described graph.
+  descriptor's <code>iep:origin</code> (if present) is authoritative for the described graph.
 </p>
 
 <h3>Epistemic Confidence Manipulation</h3>
 <p>
-  The <code>cg:epistemicConfidence</code> property in the Semiotic Facet is self-reported and
+  The <code>iep:epistemicConfidence</code> property in the Semiotic Facet is self-reported and
   <span class="rfc2119">MUST NOT</span> be used as the sole basis for trust decisions. It is
   intended for informational use within systems that aggregate and display confidence metadata,
   not as a security mechanism.
@@ -1471,10 +1471,10 @@ WHERE {
 
 <h3>GDPR and Data Protection</h3>
 <p>
-  The <code>cg:consentBasis</code> property on the Access Control Facet is provided for
+  The <code>iep:consentBasis</code> property on the Access Control Facet is provided for
   documentation purposes. It does not constitute a legal compliance mechanism. Implementations
   operating in regulated jurisdictions <span class="rfc2119">MUST</span> ensure that their
-  data processing practices comply with applicable law independently of Context Graph metadata.
+  data processing practices comply with applicable law independently of Interego Protocol metadata.
 </p>
 
 <hr>
@@ -1489,7 +1489,7 @@ WHERE {
 
 <h3>Example 1: Sensor Data with Full Context</h3>
 
-<pre><code>@prefix cg:    &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;.
+<pre><code>@prefix iep:    &lt;https://markjspivey-xwisee.github.io/interego/ns/iep#&gt;.
 @prefix prov:  &lt;http://www.w3.org/ns/prov#&gt;.
 @prefix time:  &lt;http://www.w3.org/2006/time#&gt;.
 @prefix xsd:   &lt;http://www.w3.org/2001/XMLSchema#&gt;.
@@ -1499,22 +1499,22 @@ WHERE {
 
 # ── Context Descriptor ────────────────────────────────────────
 
-ex:ctx-sensor-2026Q1 a cg:ContextDescriptor ;
-    cg:version 1 ;
-    cg:describes ex:graph-sensor-2026Q1 ;
-    cg:validFrom "2026-03-17T00:00:00Z"^^xsd:dateTime ;
+ex:ctx-sensor-2026Q1 a iep:ContextDescriptor ;
+    iep:version 1 ;
+    iep:describes ex:graph-sensor-2026Q1 ;
+    iep:validFrom "2026-03-17T00:00:00Z"^^xsd:dateTime ;
 
     # Temporal Facet
-    cg:hasFacet [
-        a cg:TemporalFacet ;
-        cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
-        cg:validUntil "2026-03-31T23:59:59Z"^^xsd:dateTime ;
-        cg:temporalResolution "PT1H"^^xsd:duration ;
+    iep:hasFacet [
+        a iep:TemporalFacet ;
+        iep:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
+        iep:validUntil "2026-03-31T23:59:59Z"^^xsd:dateTime ;
+        iep:temporalResolution "PT1H"^^xsd:duration ;
     ] ;
 
     # Provenance Facet
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [
             a prov:Activity ;
             prov:wasAssociatedWith ex:agent-etl-v3 ;
@@ -1527,39 +1527,39 @@ ex:ctx-sensor-2026Q1 a cg:ContextDescriptor ;
     ] ;
 
     # Agent Facet
-    cg:hasFacet [
-        a cg:AgentFacet ;
-        cg:assertingAgent [
+    iep:hasFacet [
+        a iep:AgentFacet ;
+        iep:assertingAgent [
             a prov:SoftwareAgent, as:Application ;
             rdfs:label "Sensor ETL Pipeline v3.2" ;
-            cg:agentIdentity &lt;did:web:example.org:agents:etl-v3&gt;
+            iep:agentIdentity &lt;did:web:example.org:agents:etl-v3&gt;
         ] ;
-        cg:agentRole cg:Author ;
+        iep:agentRole iep:Author ;
     ] ;
 
     # Semiotic Facet
-    cg:hasFacet [
-        a cg:SemioticFacet ;
-        cg:modalStatus cg:Asserted ;
-        cg:epistemicConfidence "0.95"^^xsd:double ;
-        cg:interpretationFrame &lt;https://schema.org/Observation&gt; ;
-        cg:signSystem &lt;http://qudt.org/2.1/vocab/unit&gt; ;
+    iep:hasFacet [
+        a iep:SemioticFacet ;
+        iep:modalStatus iep:Asserted ;
+        iep:epistemicConfidence "0.95"^^xsd:double ;
+        iep:interpretationFrame &lt;https://schema.org/Observation&gt; ;
+        iep:signSystem &lt;http://qudt.org/2.1/vocab/unit&gt; ;
     ] ;
 
     # Federation Facet
-    cg:hasFacet [
-        a cg:FederationFacet ;
-        cg:origin &lt;https://pod.example.org/sensors/2026Q1&gt; ;
-        cg:storageEndpoint &lt;https://pod.example.org/sensors/&gt; ;
-        cg:syncProtocol cg:SolidNotifications ;
-        cg:lastSynced "2026-03-17T07:00:00Z"^^xsd:dateTime ;
+    iep:hasFacet [
+        a iep:FederationFacet ;
+        iep:origin &lt;https://pod.example.org/sensors/2026Q1&gt; ;
+        iep:storageEndpoint &lt;https://pod.example.org/sensors/&gt; ;
+        iep:syncProtocol iep:SolidNotifications ;
+        iep:lastSynced "2026-03-17T07:00:00Z"^^xsd:dateTime ;
     ] ;
 
     # Trust Facet
-    cg:hasFacet [
-        a cg:TrustFacet ;
-        cg:trustLevel cg:SelfAsserted ;
-        cg:issuer &lt;did:web:example.org&gt; ;
+    iep:hasFacet [
+        a iep:TrustFacet ;
+        iep:trustLevel iep:SelfAsserted ;
+        iep:issuer &lt;did:web:example.org&gt; ;
     ].
 
 # ── The Described Named Graph ─────────────────────────────────
@@ -1572,55 +1572,55 @@ GRAPH ex:graph-sensor-2026Q1 {
 
 <h3>Example 2: Federated Context Composition</h3>
 
-<pre><code>@prefix cg: &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;.
+<pre><code>@prefix iep: &lt;https://markjspivey-xwisee.github.io/interego/ns/iep#&gt;.
 @prefix ex: &lt;https://example.org/&gt;.
 
 # Alice's context descriptor (from her Solid Pod)
-ex:ctx-alice a cg:ContextDescriptor ;
-    cg:describes ex:graph-shared-research ;
-    cg:hasFacet [
-        a cg:TemporalFacet ;
-        cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
-        cg:validUntil "2026-06-30T23:59:59Z"^^xsd:dateTime ;
+ex:ctx-alice a iep:ContextDescriptor ;
+    iep:describes ex:graph-shared-research ;
+    iep:hasFacet [
+        a iep:TemporalFacet ;
+        iep:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
+        iep:validUntil "2026-06-30T23:59:59Z"^^xsd:dateTime ;
     ] ;
-    cg:hasFacet [
-        a cg:TrustFacet ;
-        cg:trustLevel cg:CryptographicallyVerified ;
-        cg:issuer &lt;did:web:alice.example.org&gt; ;
+    iep:hasFacet [
+        a iep:TrustFacet ;
+        iep:trustLevel iep:CryptographicallyVerified ;
+        iep:issuer &lt;did:web:alice.example.org&gt; ;
     ].
 
 # Bob's context descriptor (from his Solid Pod)
-ex:ctx-bob a cg:ContextDescriptor ;
-    cg:describes ex:graph-shared-research ;
-    cg:hasFacet [
-        a cg:TemporalFacet ;
-        cg:validFrom "2026-03-01T00:00:00Z"^^xsd:dateTime ;
-        cg:validUntil "2026-12-31T23:59:59Z"^^xsd:dateTime ;
+ex:ctx-bob a iep:ContextDescriptor ;
+    iep:describes ex:graph-shared-research ;
+    iep:hasFacet [
+        a iep:TemporalFacet ;
+        iep:validFrom "2026-03-01T00:00:00Z"^^xsd:dateTime ;
+        iep:validUntil "2026-12-31T23:59:59Z"^^xsd:dateTime ;
     ] ;
-    cg:hasFacet [
-        a cg:TrustFacet ;
-        cg:trustLevel cg:ThirdPartyAttested ;
-        cg:issuer &lt;did:web:bob.example.org&gt; ;
+    iep:hasFacet [
+        a iep:TrustFacet ;
+        iep:trustLevel iep:ThirdPartyAttested ;
+        iep:issuer &lt;did:web:bob.example.org&gt; ;
     ].
 
 # Composed: intersection reveals shared temporal window and common trust
-ex:ctx-composed a cg:ComposedDescriptor ;
-    cg:compositionOp cg:intersection ;
-    cg:operand ex:ctx-alice, ex:ctx-bob ;
-    cg:describes ex:graph-shared-research ;
+ex:ctx-composed a iep:ComposedDescriptor ;
+    iep:compositionOp iep:intersection ;
+    iep:operand ex:ctx-alice, ex:ctx-bob ;
+    iep:describes ex:graph-shared-research ;
     # Effective temporal: 2026-03-01 to 2026-06-30 (overlap)
     # Effective trust: both trust facets preserved (no common issuer)
-    cg:hasFacet [
-        a cg:TemporalFacet ;
-        cg:validFrom "2026-03-01T00:00:00Z"^^xsd:dateTime ;
-        cg:validUntil "2026-06-30T23:59:59Z"^^xsd:dateTime ;
+    iep:hasFacet [
+        a iep:TemporalFacet ;
+        iep:validFrom "2026-03-01T00:00:00Z"^^xsd:dateTime ;
+        iep:validUntil "2026-06-30T23:59:59Z"^^xsd:dateTime ;
     ].</code></pre>
 
 <h3>Example 3: JSON-LD Compact Serialization</h3>
 
 <pre><code>{
-  "@context": "https://markjspivey-xwisee.github.io/interego/ns/cg/v1",
-  "@id": "urn:cg:desc:quickstart-1",
+  "@context": "https://markjspivey-xwisee.github.io/interego/ns/iep/v1",
+  "@id": "urn:iep:desc:quickstart-1",
   "@type": "ContextDescriptor",
   "version": 0,
   "describes": "urn:graph:my-observations",
@@ -1641,7 +1641,7 @@ ex:ctx-composed a cg:ComposedDescriptor ;
     },
     {
       "@type": "SemioticFacet",
-      "modalStatus": "cg:Asserted",
+      "modalStatus": "iep:Asserted",
       "epistemicConfidence": 0.88
     }
   ]

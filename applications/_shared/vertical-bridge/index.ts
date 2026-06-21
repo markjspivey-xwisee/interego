@@ -7,7 +7,7 @@
  * endpoints (per the affordance hydra:target).
  *
  * Generic agents don't need this — they discover + invoke via the
- * protocol-level cg:Affordance descriptors. The bridge is just an
+ * protocol-level iep:Affordance descriptors. The bridge is just an
  * ergonomic accelerant for clients that prefer named tools.
  *
  * Each vertical wires its own bridge in ~40 lines using this framework:
@@ -101,7 +101,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
         const result = await opts.handlers[affordance.toolName]!(args);
         // Hypermedia decoration: wrap the handler's payload in the
         // shared JSON-LD envelope so generic clients see @context /
-        // @type / cg:conformsToShape / affordances. The next-step
+        // @type / iep:conformsToShape / affordances. The next-step
         // affordance points back at /affordances so callers can
         // discover sibling capabilities from this response alone.
         const payload = (result && typeof result === 'object' && !Array.isArray(result))
@@ -110,10 +110,10 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
         const decorated = decorateShim(payload, {
           tool: affordance.toolName,
           shape: KERNEL_RESULT_SHAPES['result']!,
-          types: [affordance.returns ?? `urn:cg:type:${affordance.toolName}-result`],
+          types: [affordance.returns ?? `urn:iep:type:${affordance.toolName}-result`],
           nextSteps: [
             {
-              action: 'urn:cg:action:discover-affordances',
+              action: 'urn:iep:action:discover-affordances',
               target: `${deploymentUrl}/affordances`,
               method: 'GET',
             },
@@ -131,7 +131,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
       } catch (err) {
         res.status(400).type('application/ld+json').json({
           '@context': KERNEL_JSONLD_CONTEXT,
-          '@type': ['hydra:Status', 'urn:cg:error:AffordanceFailure'],
+          '@type': ['hydra:Status', 'urn:iep:error:AffordanceFailure'],
           error: (err as Error).message,
         });
       }
@@ -154,7 +154,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
           serverInfo: { name: `interego-${opts.verticalName}-bridge`, version: '0.1.0' },
-          instructions: `Bridge for the ${opts.verticalName} vertical. ${opts.affordances.length} affordances exposed as named MCP tools — each derived from a cg:Affordance declaration. Generic agents can also discover + invoke via the protocol's standard affordance-walk; the manifest turtle is at GET /affordances.`,
+          instructions: `Bridge for the ${opts.verticalName} vertical. ${opts.affordances.length} affordances exposed as named MCP tools — each derived from a iep:Affordance declaration. Generic agents can also discover + invoke via the protocol's standard affordance-walk; the manifest turtle is at GET /affordances.`,
         },
       });
       return;
@@ -193,7 +193,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
 
   // ── GET /affordances — protocol-native discovery surface ─────────
   //
-  // Returns the cg:Affordance manifest as Turtle. Any agent doing
+  // Returns the iep:Affordance manifest as Turtle. Any agent doing
   // generic affordance discovery can fetch this and walk the entries
   // to find what this vertical exposes — no per-vertical knowledge
   // required at the agent.
@@ -216,12 +216,12 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
     res.type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
       '@id': deploymentUrl,
-      '@type': ['hydra:EntryPoint', `urn:cg:vertical:${opts.verticalName}`],
-      conformsToShape: 'urn:cg:shape:VerticalBridgeEntryPoint',
+      '@type': ['hydra:EntryPoint', `urn:iep:vertical:${opts.verticalName}`],
+      conformsToShape: 'urn:iep:shape:VerticalBridgeEntryPoint',
       vertical: opts.verticalName,
       affordanceCount: opts.affordances.length,
       affordances: opts.affordances.map(a => ({
-        '@type': ['cg:Affordance', 'cgh:Affordance', 'hydra:Operation'],
+        '@type': ['iep:Affordance', 'ieh:Affordance', 'hydra:Operation'],
         action: a.action,
         toolName: a.toolName,
         method: a.method,

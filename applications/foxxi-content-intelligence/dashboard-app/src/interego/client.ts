@@ -15,7 +15,7 @@
  *      bridge.
  *
  * Path A (generic affordance walk via `discover_context`) is also
- * possible from this client — the bridge serves a cg:Affordance
+ * possible from this client — the bridge serves a iep:Affordance
  * manifest at GET /affordances — but Path B is simpler for a
  * dashboard's named-tool use case.
  */
@@ -228,8 +228,8 @@ function sampleHandle<T>(name: string, args: Record<string, unknown>): T {
       }
       const traceTime = new Date().toISOString();
       const traceId = `sample-${Date.now()}`;
-      const qIri = `urn:cg:foxxi:trace:question:${traceId}`;
-      const rIri = `urn:cg:foxxi:trace:retrieval:${traceId}`;
+      const qIri = `urn:iep:foxxi:trace:question:${traceId}`;
+      const rIri = `urn:iep:foxxi:trace:retrieval:${traceId}`;
       const trace: AgenticTraceStep[] = [
         {
           iri: qIri, graphIri: `urn:graph:${qIri}`,

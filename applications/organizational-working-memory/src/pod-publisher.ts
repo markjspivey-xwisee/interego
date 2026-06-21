@@ -59,7 +59,7 @@ async function publishOwm(args: {
   ctx: PodCtx;
 }): Promise<PublishResult> {
   const now = nowIso();
-  const descId = `urn:cg:owm:desc:${Date.now()}-${Math.random().toString(36).slice(2, 8)}` as IRI;
+  const descId = `urn:iep:owm:desc:${Date.now()}-${Math.random().toString(36).slice(2, 8)}` as IRI;
 
   const builder = ContextDescriptor.create(descId)
     .describes(args.graphIri)

@@ -6,7 +6,7 @@
  * context descriptor + a manifest entry are DETERMINISTIC RENDERS (projections)
  * of that holon — never independent artifacts maintained out-of-band. So the
  * manifest is a *render of a lattice slice*: `projectLatticeSlice(pgsl, uris)`
- * yields the same entries every time, each carrying `cg:pgslUri` back to the
+ * yields the same entries every time, each carrying `iep:pgslUri` back to the
  * exact holon it projects. Because the holon URI is content-addressed, the same
  * content from two different pods projects to the same `graphUri`/`pgslUri` —
  * structural overlap is detectable across federation from the manifest alone.
@@ -23,7 +23,7 @@ import type { ManifestEntry } from '@interego/core';
 import type { Node, Fragment, PGSLInstance } from './types.js';
 import { nodeToTurtle, pgslTurtlePrefixes } from './rdf.js';
 
-export const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/cg#' as const;
+export const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#' as const;
 export const DCT_NS = 'http://purl.org/dc/terms/' as const;
 
 export interface HolonProjection {
@@ -37,7 +37,7 @@ export interface HolonProjection {
   readonly graphUri: string;
   /** Deterministic descriptor resource URL under the supplied container. */
   readonly descriptorUrl: string;
-  /** cg:ContextDescriptor Turtle (a Projection facet) + the holon's pgsl: triples. */
+  /** iep:ContextDescriptor Turtle (a Projection facet) + the holon's pgsl: triples. */
   readonly descriptorTurtle: string;
   /** Manifest row data for this descriptor — render via {@link renderManifestEntry}. */
   readonly manifestEntry: ManifestEntry;
@@ -52,27 +52,27 @@ export interface ProjectHolonOptions {
   readonly descriptorBase: string;
   /**
    * URL of the ENCRYPTED canonical holon resource this descriptor projects, if
-   * already known. When provided, the descriptor links to it (cg:encryptedHolon)
+   * already known. When provided, the descriptor links to it (iep:encryptedHolon)
    * with a followable hydra affordance — so a reader DISCOVERS + FOLLOWS the link
    * to fetch + decrypt the holon, rather than recomputing a resource path.
    */
   readonly encryptedHolonUrl?: string;
   /**
-   * Opt-in: additionally emit nested typed facets (`cg:hasFacet [a cg:AgentFacet …]`,
+   * Opt-in: additionally emit nested typed facets (`iep:hasFacet [a iep:AgentFacet …]`,
    * Temporal/Provenance/Trust/Semiotic) DERIVED FROM `node.provenance`, so the
    * interrogative router answers Who/When/Why/How/WhatKind/Whether over this
    * descriptor instead of returning `absent`. Default OFF → the descriptor is
    * byte-identical for the manifest-render / persist callers (the new triples are
-   * additive to, and a different predicate from, the existing `cg:hasFacetType
-   * cg:Projection` marker). Honest tiers: Who/When/WhatKind=full; Why/How=partial;
-   * Whether=partial (`SelfAsserted` unless the node is signed). `cg:validFrom` is
+   * additive to, and a different predicate from, the existing `iep:hasFacetType
+   * iep:Projection` marker). Honest tiers: Who/When/WhatKind=full; Why/How=partial;
+   * Whether=partial (`SelfAsserted` unless the node is signed). `iep:validFrom` is
    * sourced from `provenance.generatedAtTime` — for an immutable lattice holon the
    * moment it was minted is when its assertion takes effect (also carried, exactly,
    * as `prov:generatedAtTime` on the Provenance facet).
    */
   readonly typedFacets?: boolean;
   /**
-   * Content-type tag for the Semiotic facet's `cg:interpretationFrame` (e.g.
+   * Content-type tag for the Semiotic facet's `iep:interpretationFrame` (e.g.
    * `foxxi:Verification`, `ob3:OpenBadgeCredential`). Only read when `typedFacets`
    * is set; pure (no clock / IO). When absent a defensible default frame is used so
    * the five core facets are always present together.
@@ -91,19 +91,19 @@ export function descriptorSlug(pgslUri: string): string {
 
 /** Percent-encode a content-type tag into one opaque URN segment (deterministic). */
 function contentTypeFrame(contentType: string): string {
-  return `urn:cg:contenttype:${contentType.replace(/:/g, '%3A')}`;
+  return `urn:iep:contenttype:${contentType.replace(/:/g, '%3A')}`;
 }
 
 /**
  * Nested typed facet bnodes derived ENTIRELY from `node.provenance` + `contentType`
- * (pure, deterministic — no clock read). Emitted as `cg:hasFacet [a cg:XFacet …]` so
- * BOTH the SHACL six-facet shape (which keys off the `cg:hasFacet` wrapper) and the
+ * (pure, deterministic — no clock read). Emitted as `iep:hasFacet [a iep:XFacet …]` so
+ * BOTH the SHACL six-facet shape (which keys off the `iep:hasFacet` wrapper) and the
  * interrogative router (which keys off the bnode's `rdf:type`) read them. Each line
  * ends with ` ;` so it chains inside the descriptor's predicate list.
  *
  * Honest by construction: no synthetic `prov:Activity` (would be empty padding); no
- * `cg:modalStatus` (the modal-truth-consistency shape requires groundTruth when
- * Asserted — we don't fabricate truth of a type tag); no `cg:proof` (the router
+ * `iep:modalStatus` (the modal-truth-consistency shape requires groundTruth when
+ * Asserted — we don't fabricate truth of a type tag); no `iep:proof` (the router
  * never reads it and the demo holons are unsigned). Trust is `SelfAsserted` unless
  * the node actually carries a signature.
  */
@@ -111,19 +111,19 @@ function typedFacetLines(node: Node, contentType?: string): string[] {
   const p = node.provenance;
   const agent = `<${p.wasAttributedTo}>`;
   const when = `"${p.generatedAtTime}"^^xsd:dateTime`;
-  const trustLevel = p.signature ? 'cg:CryptographicallyVerified' : 'cg:SelfAsserted';
+  const trustLevel = p.signature ? 'iep:CryptographicallyVerified' : 'iep:SelfAsserted';
   const frame = contentTypeFrame(contentType ?? 'unspecified');
   return [
-    `    cg:hasFacet [ a cg:AgentFacet ;`,
-    `        cg:assertingAgent [ a prov:Agent ; cg:agentIdentity ${agent} ] ;`,
-    `        cg:agentRole cg:Author ;`,
-    `        cg:onBehalfOf ${agent} ] ;`,
-    `    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom ${when} ] ;`,
-    `    cg:hasFacet [ a cg:ProvenanceFacet ;`,
+    `    iep:hasFacet [ a iep:AgentFacet ;`,
+    `        iep:assertingAgent [ a prov:Agent ; iep:agentIdentity ${agent} ] ;`,
+    `        iep:agentRole iep:Author ;`,
+    `        iep:onBehalfOf ${agent} ] ;`,
+    `    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom ${when} ] ;`,
+    `    iep:hasFacet [ a iep:ProvenanceFacet ;`,
     `        prov:wasAttributedTo ${agent} ;`,
     `        prov:generatedAtTime ${when} ] ;`,
-    `    cg:hasFacet [ a cg:TrustFacet ; cg:trustLevel ${trustLevel} ] ;`,
-    `    cg:hasFacet [ a cg:SemioticFacet ; cg:interpretationFrame <${frame}> ] ;`,
+    `    iep:hasFacet [ a iep:TrustFacet ; iep:trustLevel ${trustLevel} ] ;`,
+    `    iep:hasFacet [ a iep:SemioticFacet ; iep:interpretationFrame <${frame}> ] ;`,
   ];
 }
 
@@ -146,34 +146,34 @@ export function projectHolon(
   const encHolon = opts.encryptedHolonUrl;
   const descriptorTurtle = [
     pgslTurtlePrefixes(),
-    `@prefix cg: <${CG_NS}> .`,
+    `@prefix iep: <${CG_NS}> .`,
     `@prefix dct: <${DCT_NS}> .`,
     `@prefix hydra: <http://www.w3.org/ns/hydra/core#> .`,
     ``,
-    `<${descriptorUrl}> a cg:ContextDescriptor ;`,
-    `    cg:describes <${graphUri}> ;`,
-    `    cg:hasFacetType cg:Projection ;`,
+    `<${descriptorUrl}> a iep:ContextDescriptor ;`,
+    `    iep:describes <${graphUri}> ;`,
+    `    iep:hasFacetType iep:Projection ;`,
     // Opt-in: additive typed facets so interrogative_route answers over this
     // descriptor (default OFF keeps manifest-render / persist callers byte-identical).
     ...(opts.typedFacets ? typedFacetLines(node, opts.contentType) : []),
-    `    cg:pgslUri <${pgslUri}> ;`,
-    `    cg:pgslLevel "${pgslLevel}"^^xsd:nonNegativeInteger ;`,
+    `    iep:pgslUri <${pgslUri}> ;`,
+    `    iep:pgslLevel "${pgslLevel}"^^xsd:nonNegativeInteger ;`,
     // Hypermedia link to the encrypted canonical holon resource — a reader
     // follows this rather than recomputing the resource path.
-    ...(encHolon ? [`    cg:encryptedHolon <${encHolon}> ;`] : []),
+    ...(encHolon ? [`    iep:encryptedHolon <${encHolon}> ;`] : []),
     `    prov:wasAttributedTo <${node.provenance.wasAttributedTo}> .`,
     ``,
     // Describe the encrypted resource + how to read it (followable affordance).
     ...(encHolon ? [
-      `<${encHolon}> a cg:EncryptedHolon ;`,
-      `    cg:ofDescriptor <${descriptorUrl}> ;`,
-      `    cg:pgslUri <${pgslUri}> ;`,
-      `    cg:encryptionAlgorithm "X25519-XSalsa20-Poly1305" ;`,
-      `    cg:affordance [`,
+      `<${encHolon}> a iep:EncryptedHolon ;`,
+      `    iep:ofDescriptor <${descriptorUrl}> ;`,
+      `    iep:pgslUri <${pgslUri}> ;`,
+      `    iep:encryptionAlgorithm "X25519-XSalsa20-Poly1305" ;`,
+      `    iep:affordance [`,
       `        a hydra:Operation ;`,
       `        hydra:method "GET" ;`,
       `        hydra:title "Resolve + decrypt the canonical PGSL holon (recipient key required)" ;`,
-      `        hydra:returns cg:EncryptedHolon`,
+      `        hydra:returns iep:EncryptedHolon`,
       `    ] .`,
       ``,
     ] : []),
@@ -222,24 +222,24 @@ export function projectLatticeSlice(
 }
 
 /**
- * Render one manifest entry as a `cg:ManifestEntry` Turtle row, including the
- * `cg:pgslUri`/`cg:pgslLevel` lattice pointer. Format-compatible with the live
+ * Render one manifest entry as a `iep:ManifestEntry` Turtle row, including the
+ * `iep:pgslUri`/`iep:pgslLevel` lattice pointer. Format-compatible with the live
  * manifest, so `parseManifest` (in @interego/solid) reads it back losslessly.
  */
 export function renderManifestEntry(entry: ManifestEntry): string {
-  const lines: string[] = [`<${entry.descriptorUrl}> a cg:ManifestEntry ;`];
-  if (entry.cid) lines.push(`    cg:contentCid "${entry.cid}" ;`);
-  for (const g of entry.describes) lines.push(`    cg:describes <${g}> ;`);
-  for (const ft of [...new Set(entry.facetTypes)]) lines.push(`    cg:hasFacetType cg:${ft} ;`);
-  if (entry.validFrom) lines.push(`    cg:validFrom "${entry.validFrom}"^^xsd:dateTime ;`);
-  if (entry.validUntil) lines.push(`    cg:validUntil "${entry.validUntil}"^^xsd:dateTime ;`);
+  const lines: string[] = [`<${entry.descriptorUrl}> a iep:ManifestEntry ;`];
+  if (entry.cid) lines.push(`    iep:contentCid "${entry.cid}" ;`);
+  for (const g of entry.describes) lines.push(`    iep:describes <${g}> ;`);
+  for (const ft of [...new Set(entry.facetTypes)]) lines.push(`    iep:hasFacetType iep:${ft} ;`);
+  if (entry.validFrom) lines.push(`    iep:validFrom "${entry.validFrom}"^^xsd:dateTime ;`);
+  if (entry.validUntil) lines.push(`    iep:validUntil "${entry.validUntil}"^^xsd:dateTime ;`);
   if (entry.conformsTo) for (const c of entry.conformsTo) lines.push(`    dct:conformsTo <${c}> ;`);
-  if (entry.supersedes) for (const s of entry.supersedes) lines.push(`    cg:supersedes <${s}> ;`);
-  if (entry.modalStatus) lines.push(`    cg:modalStatus cg:${entry.modalStatus} ;`);
-  if (entry.trustLevel) lines.push(`    cg:trustLevel cg:${entry.trustLevel} ;`);
-  if (entry.issuer) lines.push(`    cg:issuer <${entry.issuer}> ;`);
-  if (entry.pgslUri) lines.push(`    cg:pgslUri <${entry.pgslUri}> ;`);
-  if (entry.pgslLevel !== undefined) lines.push(`    cg:pgslLevel "${entry.pgslLevel}"^^xsd:nonNegativeInteger ;`);
+  if (entry.supersedes) for (const s of entry.supersedes) lines.push(`    iep:supersedes <${s}> ;`);
+  if (entry.modalStatus) lines.push(`    iep:modalStatus iep:${entry.modalStatus} ;`);
+  if (entry.trustLevel) lines.push(`    iep:trustLevel iep:${entry.trustLevel} ;`);
+  if (entry.issuer) lines.push(`    iep:issuer <${entry.issuer}> ;`);
+  if (entry.pgslUri) lines.push(`    iep:pgslUri <${entry.pgslUri}> ;`);
+  if (entry.pgslLevel !== undefined) lines.push(`    iep:pgslLevel "${entry.pgslLevel}"^^xsd:nonNegativeInteger ;`);
   const last = lines.length - 1;
   lines[last] = lines[last]!.replace(/ ;$/, ' .');
   return lines.join('\n');
@@ -362,7 +362,7 @@ export function projectHolonToActivity(
 /** Render a full manifest body (prefixes + entry rows) for a lattice slice. */
 export function renderManifestBody(entries: readonly ManifestEntry[]): string {
   const prefixes = [
-    `@prefix cg: <${CG_NS}> .`,
+    `@prefix iep: <${CG_NS}> .`,
     `@prefix dct: <${DCT_NS}> .`,
     `@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .`,
   ].join('\n');

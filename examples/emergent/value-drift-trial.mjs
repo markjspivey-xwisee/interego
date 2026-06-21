@@ -85,7 +85,7 @@ const POD = `${CSS}/demos/emergent-value-drift-trial-${TRIAL_DATE}/`;
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 
 // Vertical namespace for scenario-specific predicates. NEVER reuse
-// cg:/passport:/registry:/amta: for scenario-only terms — that would
+// iep:/passport:/registry:/amta: for scenario-only terms — that would
 // trip ontology-lint. Vertical prefixes don't require ns declarations.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/value-drift-trial#';
 
@@ -281,14 +281,14 @@ async function publishValueDescriptor({
     : '';
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix passport: <https://w3id.org/cg/passport#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix scen: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, passport:Passport ;
+<${iri}> a iep:ContextDescriptor, passport:Passport ;
   dcterms:title "StatedValue snapshot ${slug}" ;
   passport:agentIdentity <${did}> ;
   scen:topic "${topic}" ;
@@ -725,12 +725,12 @@ check('every privacy descriptor is attributed to the single long-lived agent DID
 h('ACT 7 — publish a scen:Verdict descriptor summarizing the drift findings');
 const verdictIri = `${POD}context-graphs/verdict.ttl#verdict-${TRIAL_DATE}`;
 const verdictGraph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix scen: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${verdictIri}> a cg:ContextDescriptor, scen:Verdict ;
+<${verdictIri}> a iep:ContextDescriptor, scen:Verdict ;
   dcterms:title "Value drift trial verdict (${TRIAL_DATE})" ;
   scen:passCount ${pass} ;
   scen:failCount ${fail} ;

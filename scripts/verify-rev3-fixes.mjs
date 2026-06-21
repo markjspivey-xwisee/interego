@@ -237,7 +237,7 @@ async function main() {
   const v2DescriptorUrl = v2.payload?.descriptorUrl;
   // Relay envelope: supersedesPriorVersions is the field name (relay-side
   // auto-supersede block), and the substrate fills the descriptor's
-  // cg:supersedes from it before writing. Verify both surfaces.
+  // iep:supersedes from it before writing. Verify both surfaces.
   const v2Supersedes = v2.payload?.supersedesPriorVersions ?? v2.payload?.supersedes ?? [];
   const v2Authorship = v2.payload?.authorship;
   const v2AuthorshipSigned = v2Authorship?.signed === true;
@@ -351,10 +351,10 @@ async function main() {
     // — both route via solidFetch → internal-FQDN.
     let trigBody = '';
 
-    // Try invoke_affordance with the cg:-prefixed action IRI
+    // Try invoke_affordance with the iep:-prefixed action IRI
     for (const actionIri of [
-      'cg:canFetchPayload',
-      'https://markjspivey-xwisee.github.io/interego/ns/cg#canFetchPayload',
+      'iep:canFetchPayload',
+      'https://markjspivey-xwisee.github.io/interego/ns/iep#canFetchPayload',
     ]) {
       const fetchPayload = await callTool(RELAY, full.token, 'invoke_affordance', {
         descriptor_url: descriptorUrl,

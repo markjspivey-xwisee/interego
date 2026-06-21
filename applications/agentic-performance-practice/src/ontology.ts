@@ -17,7 +17,7 @@ export const AGP_SHAPES_NS = 'https://markjspivey-xwisee.github.io/interego/appl
 
 const ADP_NS = 'https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#';
 const AC_NS = 'https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#';
-const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const AMTA_NS = 'https://markjspivey-xwisee.github.io/interego/ns/amta#';
 
 /** Read a canonical Turtle artifact from the sibling ontology/ directory.
@@ -70,7 +70,7 @@ export const AGP_TERMS: ReadonlyArray<AgpTerm> = [
   { name: 'Knowledge', kind: 'Class', label: 'Knowledge', subClassOf: `${CG_NS}ContextDescriptor`, comment: 'Knowledge a performer brings; classified by codifiability.' },
   { name: 'KnowledgeComponentKind', kind: 'Class', label: 'Knowledge Component Kind', comment: 'Enumerated codifiability class (Recorded/Trained/Judged/Lived/Innate).' },
   { name: 'Capability', kind: 'Class', label: 'Capability (composed, productive)', subClassOf: `${CG_NS}ContextDescriptor`, related: `${ADP_NS}Capability`, comment: 'Composed of skills + tools + knowledge; what a performer brings and what an affordance requires.' },
-  { name: 'PerformanceAffordance', kind: 'Class', label: 'Performance Affordance (ecological)', subClassOf: `${CG_NS}ContextDescriptor`, related: `${CG_NS}Affordance`, comment: 'An action-possibility a situation offers given capability. ECOLOGICAL affordance — DISTINCT from the L0 cg:Affordance (REST/HATEOAS). MUST NOT be conflated.' },
+  { name: 'PerformanceAffordance', kind: 'Class', label: 'Performance Affordance (ecological)', subClassOf: `${CG_NS}ContextDescriptor`, related: `${CG_NS}Affordance`, comment: 'An action-possibility a situation offers given capability. ECOLOGICAL affordance — DISTINCT from the L0 iep:Affordance (REST/HATEOAS). MUST NOT be conflated.' },
   { name: 'Actualization', kind: 'Class', label: 'Actualization', subClassOf: `${CG_NS}ContextDescriptor`, comment: 'The productive join: Capability x Situation x PerformanceAffordance -> Performance.' },
   { name: 'Performance', kind: 'Class', label: 'Performance', subClassOf: `${CG_NS}ContextDescriptor`, comment: 'The realized performance; projected lossily to one xAPI performed statement via recordedAs.' },
   { name: 'Diagnosis', kind: 'Class', label: 'Diagnosis', subClassOf: `${CG_NS}ContextDescriptor`, comment: 'Regime-aware reading of a situation, with regime-source provenance.' },
@@ -135,7 +135,7 @@ const JSONLD_CONTEXT = {
   owl: 'http://www.w3.org/2002/07/owl#',
   skos: 'http://www.w3.org/2004/02/skos/core#',
   dct: 'http://purl.org/dc/terms/',
-  cg: CG_NS,
+  iep: CG_NS,
   adp: ADP_NS,
   ac: AC_NS,
   agp: AGP_NS,

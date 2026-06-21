@@ -50,14 +50,14 @@ import { publish, checkSupersessionPrecondition } from '@interego/solid';
 const POD = 'https://alice.pod/';
 const PRIOR_HEAD_URL = 'https://alice.pod/context-graphs/v1.ttl';
 
-const PRIOR_HEAD_TURTLE = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-<urn:cg:v1> a cg:ContextDescriptor ;
-    cg:describes <urn:graph:cas-split> .
+const PRIOR_HEAD_TURTLE = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+<urn:iep:v1> a iep:ContextDescriptor ;
+    iep:describes <urn:graph:cas-split> .
 `;
 const EXPECTED_HEAD_CID = computeCid(PRIOR_HEAD_TURTLE);
 
 function descV2WithSupersedes(): ReturnType<ReturnType<typeof ContextDescriptor.create>['build']> {
-  return ContextDescriptor.create('urn:cg:cas-split:v2' as IRI)
+  return ContextDescriptor.create('urn:iep:cas-split:v2' as IRI)
     .describes('urn:graph:cas-split' as IRI)
     .temporal({ validFrom: '2026-06-07T00:00:00Z' })
     .selfAsserted('did:web:alice.example' as IRI)

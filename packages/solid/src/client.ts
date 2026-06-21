@@ -130,7 +130,7 @@ function slugFromIri(iri: string): string {
  * Predict the URL `publish()` will use for a given pod + descriptor ID
  * BEFORE actually calling publish(). Used by callers (notably the
  * compliance flow) that need to know the future URL — e.g., to embed
- * a self-referential `cg:proof` URL in the descriptor's TrustFacet
+ * a self-referential `iep:proof` URL in the descriptor's TrustFacet
  * before the descriptor is serialized + signed.
  *
  * Returns the same URL `publish()` would generate as `descriptorUrl`.
@@ -309,8 +309,8 @@ function wrapAsTriG(
  *
  * Affordances declared:
  *   hydra:operation → PUT (publish new context)
- *   cg:canDiscover  → GET the manifest
- *   cg:canSubscribe → WebSocket via Solid Notifications
+ *   iep:canDiscover  → GET the manifest
+ *   iep:canSubscribe → WebSocket via Solid Notifications
  *
  * DPROD alignment:
  *   Each manifest is also a dprod:DataProduct with an outputPort
@@ -321,10 +321,10 @@ function manifestHeaderTurtle(podUrl: string): string {
   return [
     `# Interego Manifest — Hydra-aware, DPROD-aligned`,
     ``,
-    `<${manifestUrl}> a hydra:Collection, cg:DataProduct ;`,
+    `<${manifestUrl}> a hydra:Collection, iep:DataProduct ;`,
     `    hydra:manages [`,
-    `        hydra:property cg:describes ;`,
-    `        hydra:object cg:ManifestEntry`,
+    `        hydra:property iep:describes ;`,
+    `        hydra:object iep:ManifestEntry`,
     `    ] ;`,
     `    # HATEOAS affordances — what agents can do with this manifest`,
     `    hydra:operation [`,
@@ -332,19 +332,19 @@ function manifestHeaderTurtle(podUrl: string): string {
     `        hydra:method "GET" ;`,
     `        hydra:title "Discover context descriptors" ;`,
     `        hydra:expects <http://www.w3.org/ns/hydra/core#Resource> ;`,
-    `        hydra:returns cg:ManifestEntry`,
+    `        hydra:returns iep:ManifestEntry`,
     `    ] ;`,
     `    hydra:operation [`,
     `        a hydra:Operation ;`,
     `        hydra:method "PUT" ;`,
     `        hydra:title "Publish new context descriptor" ;`,
-    `        hydra:expects cg:ContextDescriptor ;`,
-    `        hydra:returns cg:ManifestEntry`,
+    `        hydra:expects iep:ContextDescriptor ;`,
+    `        hydra:returns iep:ManifestEntry`,
     `    ] ;`,
     `    # Affordance declarations for agent capability discovery`,
-    `    cg:affordance cg:canDiscover, cg:canSubscribe ;`,
+    `    iep:affordance iep:canDiscover, iep:canSubscribe ;`,
     `    # DPROD: this manifest is a data product output port`,
-    `    cg:outputPort [`,
+    `    iep:outputPort [`,
     `        a dcat:Distribution ;`,
     `        dcat:mediaType "text/turtle" ;`,
     `        dcat:accessURL <${manifestUrl}>`,
@@ -357,7 +357,7 @@ function manifestHeaderTurtle(podUrl: string): string {
  *
  * `descriptorCid` (optional) is the content-CID of the descriptor's
  * Turtle body. When supplied it's mirrored onto the entry as
- * `cg:contentCid "<cid>"` so CAS supersession gates can compare
+ * `iep:contentCid "<cid>"` so CAS supersession gates can compare
  * `if_match` against the head identity without a body GET + rehash.
  */
 function manifestEntryTurtle(
@@ -366,26 +366,26 @@ function manifestEntryTurtle(
   descriptorCid?: string,
 ): string {
   const lines: string[] = [];
-  lines.push(`<${descriptorUrl}> a cg:ManifestEntry ;`);
+  lines.push(`<${descriptorUrl}> a iep:ManifestEntry ;`);
 
   if (descriptorCid) {
-    lines.push(`    cg:contentCid "${descriptorCid}" ;`);
+    lines.push(`    iep:contentCid "${descriptorCid}" ;`);
   }
 
   for (const g of descriptor.describes) {
-    lines.push(`    cg:describes <${g}> ;`);
+    lines.push(`    iep:describes <${g}> ;`);
   }
 
   const facetTypes = [...new Set(descriptor.facets.map(f => f.type))];
   for (const ft of facetTypes) {
-    lines.push(`    cg:hasFacetType cg:${ft} ;`);
+    lines.push(`    iep:hasFacetType iep:${ft} ;`);
   }
 
   if (descriptor.validFrom) {
-    lines.push(`    cg:validFrom "${descriptor.validFrom}"^^xsd:dateTime ;`);
+    lines.push(`    iep:validFrom "${descriptor.validFrom}"^^xsd:dateTime ;`);
   }
   if (descriptor.validUntil) {
-    lines.push(`    cg:validUntil "${descriptor.validUntil}"^^xsd:dateTime ;`);
+    lines.push(`    iep:validUntil "${descriptor.validUntil}"^^xsd:dateTime ;`);
   }
 
   // conformsTo (cleartext-mirrored)
@@ -400,27 +400,27 @@ function manifestEntryTurtle(
   // each descriptor's TriG)
   if (descriptor.supersedes && descriptor.supersedes.length > 0) {
     for (const s of descriptor.supersedes) {
-      lines.push(`    cg:supersedes <${s}> ;`);
+      lines.push(`    iep:supersedes <${s}> ;`);
     }
   }
 
   // Extract modalStatus from Semiotic facet if present
   const semioticFacet = descriptor.facets.find((f): f is SemioticFacetData => f.type === 'Semiotic');
   if (semioticFacet?.modalStatus) {
-    lines.push(`    cg:modalStatus cg:${semioticFacet.modalStatus} ;`);
+    lines.push(`    iep:modalStatus iep:${semioticFacet.modalStatus} ;`);
   }
 
   // Extract trustLevel + issuer from Trust facet if present
   const trustFacet = descriptor.facets.find((f): f is TrustFacetData => f.type === 'Trust');
   if (trustFacet?.trustLevel) {
-    lines.push(`    cg:trustLevel cg:${trustFacet.trustLevel} ;`);
+    lines.push(`    iep:trustLevel iep:${trustFacet.trustLevel} ;`);
   }
   if (trustFacet?.issuer) {
     // Cleartext-mirror the issuer DID so trust-aware federation readers
     // can filter by author from the manifest alone (no descriptor fetch).
-    // cg:issuer is already defined in docs/ns/cg.ttl as "the issuer of
+    // iep:issuer is already defined in docs/ns/cg.ttl as "the issuer of
     // the trust assertion (typically a DID)" — exactly what we need here.
-    lines.push(`    cg:issuer <${trustFacet.issuer}> ;`);
+    lines.push(`    iep:issuer <${trustFacet.issuer}> ;`);
   }
 
   // Replace trailing ; with .
@@ -436,10 +436,10 @@ function manifestEntryTurtle(
  * Parse a Turtle manifest into ManifestEntry[].
  *
  * Expects the lightweight format written by publish():
- *   <url> a cg:ManifestEntry ;
- *       cg:describes <graph> ;
- *       cg:hasFacetType cg:Temporal ;
- *       cg:validFrom "..."^^xsd:dateTime .
+ *   <url> a iep:ManifestEntry ;
+ *       iep:describes <graph> ;
+ *       iep:hasFacetType iep:Temporal ;
+ *       iep:validFrom "..."^^xsd:dateTime .
  */
 export function parseManifest(turtle: string): ManifestEntry[] {
   const entries: ManifestEntry[] = [];
@@ -471,7 +471,7 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     //   (a) trustLevel and/or issuer were directly extracted from the
     //       manifest entry by the regex sweep above — populate the facet
     //       with whichever fields landed.
-    //   (b) the manifest declared `cg:hasFacetType cg:Trust` for the entry
+    //   (b) the manifest declared `iep:hasFacetType iep:Trust` for the entry
     //       but neither trustLevel nor issuer were captured. This can
     //       happen when an upstream serializer flattens or re-orders the
     //       entry. Still emit a Trust facet so trust-aware readers see the
@@ -510,7 +510,7 @@ export function parseManifest(turtle: string): ManifestEntry[] {
   for (const rawLine of turtle.split('\n')) {
     const line = rawLine.trim();
 
-    const entryMatch = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
+    const entryMatch = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
     if (entryMatch) {
       if (current) {
         entries.push(finalize(current));
@@ -525,42 +525,42 @@ export function parseManifest(turtle: string): ManifestEntry[] {
 
     if (!current) continue;
 
-    const cidMatch = line.match(/cg:contentCid\s+"([^"]+)"/);
+    const cidMatch = line.match(/iep:contentCid\s+"([^"]+)"/);
     if (cidMatch) {
       current.cid = cidMatch[1]!;
     }
 
-    const describesMatch = line.match(/cg:describes\s+<([^>]+)>/);
+    const describesMatch = line.match(/iep:describes\s+<([^>]+)>/);
     if (describesMatch) {
       current.describes.push(describesMatch[1]!);
     }
 
-    const facetMatch = line.match(/cg:hasFacetType\s+cg:(\w+)/);
+    const facetMatch = line.match(/iep:hasFacetType\s+iep:(\w+)/);
     if (facetMatch) {
       current.facetTypes.push(facetMatch[1]! as ContextTypeName);
     }
 
-    const fromMatch = line.match(/cg:validFrom\s+"([^"]+)"/);
+    const fromMatch = line.match(/iep:validFrom\s+"([^"]+)"/);
     if (fromMatch) {
       current.validFrom = fromMatch[1]!;
     }
 
-    const untilMatch = line.match(/cg:validUntil\s+"([^"]+)"/);
+    const untilMatch = line.match(/iep:validUntil\s+"([^"]+)"/);
     if (untilMatch) {
       current.validUntil = untilMatch[1]!;
     }
 
-    const modalMatch = line.match(/cg:modalStatus\s+cg:(\w+)/);
+    const modalMatch = line.match(/iep:modalStatus\s+iep:(\w+)/);
     if (modalMatch) {
       current.modalStatus = modalMatch[1]! as ModalStatus;
     }
 
-    const trustMatch = line.match(/cg:trustLevel\s+cg:(\w+)/);
+    const trustMatch = line.match(/iep:trustLevel\s+iep:(\w+)/);
     if (trustMatch) {
       current.trustLevel = trustMatch[1]! as TrustLevel;
     }
 
-    const issuerMatch = line.match(/cg:issuer\s+<([^>]+)>/);
+    const issuerMatch = line.match(/iep:issuer\s+<([^>]+)>/);
     if (issuerMatch) {
       current.issuer = issuerMatch[1]!;
     }
@@ -571,7 +571,7 @@ export function parseManifest(turtle: string): ManifestEntry[] {
       current.conformsTo.push(conformsMatch[1]!);
     }
 
-    const supersedesMatch = line.match(/cg:supersedes\s+<([^>]+)>/);
+    const supersedesMatch = line.match(/iep:supersedes\s+<([^>]+)>/);
     if (supersedesMatch) {
       current.supersedes = current.supersedes ?? [];
       current.supersedes.push(supersedesMatch[1]!);
@@ -580,11 +580,11 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     // PGSL lattice pointer (Stage 3 projection) — links a manifest row back to
     // the holon it projects. Content-addressed, so structural overlap across
     // pods is detectable from the manifest alone. Additive: legacy rows omit it.
-    const pgslUriMatch = line.match(/cg:pgslUri\s+<([^>]+)>/);
+    const pgslUriMatch = line.match(/iep:pgslUri\s+<([^>]+)>/);
     if (pgslUriMatch) {
       current.pgslUri = pgslUriMatch[1]!;
     }
-    const pgslLevelMatch = line.match(/cg:pgslLevel\s+"(\d+)"/);
+    const pgslLevelMatch = line.match(/iep:pgslLevel\s+"(\d+)"/);
     if (pgslLevelMatch) {
       current.pgslLevel = Number(pgslLevelMatch[1]);
     }
@@ -628,7 +628,7 @@ const _fetchFallback: FetchFn = (async (url, init) => {
  * the indexable fields (describes, validFrom, conformsTo, supersedes,
  * facet types, modalStatus, trustLevel, contentCid) — mirrors the shape
  * `manifestEntryTurtle` emits. Returns null if the Turtle has no
- * `cg:describes` (i.e. it isn't a descriptor).
+ * `iep:describes` (i.e. it isn't a descriptor).
  */
 function manifestEntryFromDescriptorTurtle(descriptorUrl: string, ttl: string): string | null {
   const grabAll = (src: string): string[] => {
@@ -636,30 +636,30 @@ function manifestEntryFromDescriptorTurtle(descriptorUrl: string, ttl: string): 
     while ((m = re.exec(ttl)) !== null) out.push(m[1]!);
     return out;
   };
-  const describes = grabAll('cg:describes\\s+<([^>]+)>');
+  const describes = grabAll('iep:describes\\s+<([^>]+)>');
   if (describes.length === 0) return null;
   const one = (src: string): string | undefined => (ttl.match(new RegExp(src)) ?? [])[1];
-  const validFrom = one('cg:validFrom\\s+"([^"]+)"');
-  const validUntil = one('cg:validUntil\\s+"([^"]+)"');
+  const validFrom = one('iep:validFrom\\s+"([^"]+)"');
+  const validUntil = one('iep:validUntil\\s+"([^"]+)"');
   const conformsTo = grabAll('dct:conformsTo\\s+<([^>]+)>');
-  const supersedes = grabAll('cg:supersedes\\s+<([^>]+)>');
-  const facetTypes = [...new Set(grabAll('a\\s+cg:(\\w+)Facet\\b'))]; // 'TemporalFacet' → 'Temporal'
-  const modalStatus = one('cg:modalStatus\\s+cg:(\\w+)');
-  const trustLevel = one('cg:trustLevel\\s+cg:(\\w+)');
-  const issuer = one('cg:issuer\\s+<([^>]+)>');
-  const cid = one('cg:contentCid\\s+"([^"]+)"');
+  const supersedes = grabAll('iep:supersedes\\s+<([^>]+)>');
+  const facetTypes = [...new Set(grabAll('a\\s+iep:(\\w+)Facet\\b'))]; // 'TemporalFacet' → 'Temporal'
+  const modalStatus = one('iep:modalStatus\\s+iep:(\\w+)');
+  const trustLevel = one('iep:trustLevel\\s+iep:(\\w+)');
+  const issuer = one('iep:issuer\\s+<([^>]+)>');
+  const cid = one('iep:contentCid\\s+"([^"]+)"');
 
-  const lines: string[] = [`<${descriptorUrl}> a cg:ManifestEntry ;`];
-  if (cid) lines.push(`    cg:contentCid "${cid}" ;`);
-  for (const g of describes) lines.push(`    cg:describes <${g}> ;`);
-  for (const ft of facetTypes) lines.push(`    cg:hasFacetType cg:${ft} ;`);
-  if (validFrom) lines.push(`    cg:validFrom "${validFrom}"^^xsd:dateTime ;`);
-  if (validUntil) lines.push(`    cg:validUntil "${validUntil}"^^xsd:dateTime ;`);
+  const lines: string[] = [`<${descriptorUrl}> a iep:ManifestEntry ;`];
+  if (cid) lines.push(`    iep:contentCid "${cid}" ;`);
+  for (const g of describes) lines.push(`    iep:describes <${g}> ;`);
+  for (const ft of facetTypes) lines.push(`    iep:hasFacetType iep:${ft} ;`);
+  if (validFrom) lines.push(`    iep:validFrom "${validFrom}"^^xsd:dateTime ;`);
+  if (validUntil) lines.push(`    iep:validUntil "${validUntil}"^^xsd:dateTime ;`);
   for (const c of conformsTo) lines.push(`    dct:conformsTo <${c}> ;`);
-  for (const s of supersedes) lines.push(`    cg:supersedes <${s}> ;`);
-  if (modalStatus) lines.push(`    cg:modalStatus cg:${modalStatus} ;`);
-  if (trustLevel) lines.push(`    cg:trustLevel cg:${trustLevel} ;`);
-  if (issuer) lines.push(`    cg:issuer <${issuer}> ;`);
+  for (const s of supersedes) lines.push(`    iep:supersedes <${s}> ;`);
+  if (modalStatus) lines.push(`    iep:modalStatus iep:${modalStatus} ;`);
+  if (trustLevel) lines.push(`    iep:trustLevel iep:${trustLevel} ;`);
+  if (issuer) lines.push(`    iep:issuer <${issuer}> ;`);
   lines[lines.length - 1] = lines[lines.length - 1]!.replace(/;\s*$/, '.');
   return lines.join('\n');
 }
@@ -756,7 +756,7 @@ async function buildManifestBodyFromPod(
       if (entry) entries.push(entry);
     } catch { /* skip unreadable descriptor */ }
   }));
-  const prefixes = turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod', 'dct']);
+  const prefixes = turtlePrefixes(['iep', 'xsd', 'hydra', 'dcat', 'dprod', 'dct']);
   const body = `${prefixes}\n\n${manifestHeaderTurtle(pod)}\n\n${entries.join('\n\n')}\n`;
   return { body, scanned: descriptorUrls.length, written: entries.length };
 }
@@ -819,7 +819,7 @@ function matchesFilter(entry: ManifestEntry, filter: DiscoverFilter): boolean {
   }
 
   // graphIri — narrow to descriptors that mention this graph IRI in
-  // their cg:describes set. The single most useful narrowing filter
+  // their iep:describes set. The single most useful narrowing filter
   // for agent workflows; without it, a learner asking "where is
   // urn:graph:X on this pod" has to fetch the whole manifest and
   // post-filter, which truncates on harness UIs for any pod with
@@ -887,7 +887,7 @@ const DEFAULT_MAX_GRAPH_BYTES = 4 * 1024 * 1024;
  *      (~0.5s/1s/2s/4s/8s/16s, ~32 s ceiling) to match the symmetric
  *      window used by the graph + descriptor PUTs below. The
  *      combined signed-authorship + if_match path always traverses
- *      this code path (cg:supersedes is populated by the relay's
+ *      this code path (iep:supersedes is populated by the relay's
  *      auto-supersede block) and was the only configuration that
  *      consistently surfaced as `fetch failed (4×)` — the default
  *      maxAttempts=4 budget was symmetric on neither side, so a
@@ -998,7 +998,7 @@ export async function checkSupersessionPrecondition(input: {
    * Optional fast-path CID resolver. When provided, the precondition
    * check consults this lookup BEFORE falling back to a full descriptor
    * body GET + rehash. The relay populates this from the cached
-   * manifest's `cg:contentCid` mirror — which is the same source the
+   * manifest's `iep:contentCid` mirror — which is the same source the
    * `get_current_head` tool resolves from. Returning a string skips the
    * body fetch entirely for that supersedes target; returning null
    * (legacy manifest entry without the CID mirror, or unknown target)
@@ -1035,7 +1035,7 @@ export async function checkSupersessionPrecondition(input: {
   // Optimization: if the caller supplied `headCidLookup` and it returns
   // a CID for this target, skip the descriptor body fetch entirely — the
   // manifest is the authoritative head pointer, and now (with the
-  // `cg:contentCid` mirror) the head identity too. Body fetch is the
+  // `iep:contentCid` mirror) the head identity too. Body fetch is the
   // fallback when the lookup misses (legacy manifest entries written
   // before the mirror landed).
   //
@@ -1059,7 +1059,7 @@ export async function checkSupersessionPrecondition(input: {
     // Only http(s) targets are reachable via fetch. Non-http schemes
     // (urn:, did:, ipfs:, etc.) cannot be content-addressed by GET +
     // computeCid here — they're semantic supersession references the
-    // user put in their content's `cg:supersedes` triples, lifted into
+    // user put in their content's `iep:supersedes` triples, lifted into
     // descriptor.supersedes by normalizePublishInputs. Treat them as
     // unresolvable for CAS purposes; record cid:'' so the loop
     // continues and another (http) target can still match if_match.
@@ -1236,7 +1236,7 @@ export async function publish(
   //     read, no cache) and compute its content-CID. The "current head"
   //     is the union of (a) the explicit supersedes targets and (b) any
   //     other descriptor turtles those targets resolve to via further
-  //     cg:supersedes back-links — but we only walk one hop and gate on
+  //     iep:supersedes back-links — but we only walk one hop and gate on
   //     the explicit targets. Manifest-level head resolution belongs in
   //     the caller (see relay's auto_supersede_prior block) so the
   //     substrate primitive stays cheap.
@@ -1249,7 +1249,7 @@ export async function publish(
   //
   // The precondition is observable downstream too: when either match
   // option is supplied AND succeeds, we emit the witness predicate
-  // cg:supersedesPredicate (a custom audit predicate) into the descriptor
+  // iep:supersedesPredicate (a custom audit predicate) into the descriptor
   // Turtle by appending it after the body — that lets verifiers
   // reconstruct which prior head the precondition was gated against.
   let resolvedHeadUrl: string | null = null;
@@ -1300,13 +1300,13 @@ export async function publish(
   const baseDescriptorTurtle = toTurtle(descriptor);
   // When the precondition matched, append a Turtle comment witness so
   // downstream auditors can verify which prior head this publish was
-  // gated against, without introducing a new cg: term (the ontology
-  // lint blocks unregistered cg:* IRIs). The witness rides on top of
-  // the existing cg:supersedes triple already in the descriptor — the
+  // gated against, without introducing a new iep: term (the ontology
+  // lint blocks unregistered iep:* IRIs). The witness rides on top of
+  // the existing iep:supersedes triple already in the descriptor — the
   // comment names the precondition source (URL vs CID) and which one
   // of the supersedes targets satisfied it.
   const descriptorTurtle = preconditionWitness
-    ? `${baseDescriptorTurtle.trimEnd()}\n# ── CAS supersession witness (precondition matched at publish time, via ${preconditionWitness.via}) ──\n# cg:supersedes precondition gated against <${preconditionWitness.matched}>\n`
+    ? `${baseDescriptorTurtle.trimEnd()}\n# ── CAS supersession witness (precondition matched at publish time, via ${preconditionWitness.via}) ──\n# iep:supersedes precondition gated against <${preconditionWitness.matched}>\n`
     : baseDescriptorTurtle;
   const primaryGraph = descriptor.describes[0]!;
 
@@ -1383,14 +1383,14 @@ export async function publish(
   // authorship proof for THIS publish (typically via `sign_authorship:
   // true` in the relay shim → `createSignedAuthorship` with the
   // calling agent's delegation key), embed it as
-  //   <> cg:authorshipProof [ a cg:SignedAuthorship ; ... ] .
+  //   <> iep:authorshipProof [ a iep:SignedAuthorship ; ... ] .
   // adjacent to the AgentFacet block. Independent of the trust-facet
-  // cg:proof block (which signs the whole descriptor turtle and is
+  // iep:proof block (which signs the whole descriptor turtle and is
   // operator-grade): authorship binds the AgentFacet to THIS agent's
   // delegation key so any reader can verify "the named agent actually
   // signed this AgentFacet" without trusting pod storage.
   //
-  // Also asserts `dct:conformsTo <cg:SignedAuthorship>` so readers
+  // Also asserts `dct:conformsTo <iep:SignedAuthorship>` so readers
   // can detect a signed-authorship descriptor by feature, not by
   // probe-parse.
   const authorshipBlock = options.authorshipProof
@@ -1501,7 +1501,7 @@ export async function publish(
         rebuiltBody = null;
       }
       manifestBody = rebuiltBody
-        ?? `${turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod', 'dct'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
+        ?? `${turtlePrefixes(['iep', 'xsd', 'hydra', 'dcat', 'dprod', 'dct'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
     } else {
       // Non-404 non-ok (e.g. 403/401, or a non-5xx transient): the
       // manifest may well EXIST but be momentarily unreadable. Rebuilding
@@ -1657,18 +1657,18 @@ export async function publish(
  * using the project's existing affordance + hypermedia ontology.
  *
  * Emission shape aligns with:
- *   - cg:Affordance individuals (cg:canFetchPayload, cg:canDecrypt)
- *   - cg:affordance object property (from cg.ttl)
- *   - cgh:Affordance class (harness ontology; rdfs:subClassOf hydra:Operation
+ *   - iep:Affordance individuals (iep:canFetchPayload, iep:canDecrypt)
+ *   - iep:affordance object property (from cg.ttl)
+ *   - ieh:Affordance class (harness ontology; rdfs:subClassOf hydra:Operation
  *     — single block is both a Hydra Operation AND a harness affordance)
  *   - dcat:Distribution (W3C data-catalog vocab; the facet is also a DCAT
  *     distribution so DCAT-aware catalogs can ingest it natively)
- *   - alignment.ttl cross-layer axioms (cg:FederationFacet rdfs:seeAlso
- *     dcat:Distribution; cgh:Affordance rdfs:subClassOf hydra:Operation)
+ *   - alignment.ttl cross-layer axioms (iep:FederationFacet rdfs:seeAlso
+ *     dcat:Distribution; ieh:Affordance rdfs:subClassOf hydra:Operation)
  *
  * The block declares a single affordance that is simultaneously:
- *   - a cg:Affordance  (discovery-time capability)
- *   - a cgh:Affordance (execution-time operation, via subclass relation)
+ *   - a iep:Affordance  (discovery-time capability)
+ *   - a ieh:Affordance (execution-time operation, via subclass relation)
  *   - a hydra:Operation (HATEOAS client dispatch target)
  *   - a dcat:Distribution (data-catalog compatible)
  *
@@ -1685,26 +1685,26 @@ function buildDistributionBlock(d: {
   descriptorId?: string;
   relayBaseUrl?: string;
 }): string {
-  const actionIRI = d.encrypted ? 'cg:canDecrypt' : 'cg:canFetchPayload';
-  const returnsClass = d.encrypted ? 'cg:EncryptedGraphEnvelope' : 'cg:GraphPayload';
+  const actionIRI = d.encrypted ? 'iep:canDecrypt' : 'iep:canFetchPayload';
+  const returnsClass = d.encrypted ? 'iep:EncryptedGraphEnvelope' : 'iep:GraphPayload';
   const lines: string[] = [
-    '# ── Affordance (cg:Affordance, cgh:Affordance, dcat:Distribution, hydra:Operation) ──',
-    `<> cg:affordance [`,
-    `    a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ;`,
-    `    cg:action ${actionIRI} ;`,
+    '# ── Affordance (iep:Affordance, ieh:Affordance, dcat:Distribution, hydra:Operation) ──',
+    `<> iep:affordance [`,
+    `    a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;`,
+    `    iep:action ${actionIRI} ;`,
     `    hydra:method "GET" ;`,
     `    hydra:target <${d.graphUrl}> ;`,
     `    hydra:returns ${returnsClass} ;`,
     `    hydra:title "${d.encrypted ? 'Fetch encrypted graph envelope' : 'Fetch graph payload'}" ;`,
     `    dcat:accessURL <${d.graphUrl}> ;`,
     `    dcat:mediaType "${d.graphContentType}" ;`,
-    `    cg:encrypted ${d.encrypted ? 'true' : 'false'}`,
+    `    iep:encrypted ${d.encrypted ? 'true' : 'false'}`,
   ];
   if (d.encrypted && d.encryptionAlgorithm) {
-    lines.push(`    ; cg:encryptionAlgorithm "${d.encryptionAlgorithm}"`);
+    lines.push(`    ; iep:encryptionAlgorithm "${d.encryptionAlgorithm}"`);
   }
   if (d.encrypted && typeof d.recipientCount === 'number') {
-    lines.push(`    ; cg:recipientCount ${d.recipientCount}`);
+    lines.push(`    ; iep:recipientCount ${d.recipientCount}`);
   }
   // Visibility is the audience-class signal for consumers (and for ACL
   // writers that mirror it onto the pod). Default-omitted preserves the
@@ -1712,28 +1712,28 @@ function buildDistributionBlock(d: {
   // declared `public` or `private` so older parsers don't trip on an
   // unknown predicate.
   if (d.visibility === 'public' || d.visibility === 'private') {
-    lines.push(`    ; cg:visibility "${d.visibility}"`);
+    lines.push(`    ; iep:visibility "${d.visibility}"`);
   }
   lines.push(`] .`);
 
-  // Second affordance: cg:renderView. Server-side plaintext projection
+  // Second affordance: iep:renderView. Server-side plaintext projection
   // for thin clients (no X25519 keypair) that hold a bearer token. Only
   // emitted when the payload is encrypted AND the publisher supplied a
   // relay base URL — without one we'd have no projection endpoint to
-  // point at. cg:canDecrypt above remains the point-of-fetch path for
-  // clients holding a recipient key; cg:renderView is the asymmetric
-  // counterpart for thin clients. See cg.ttl `cg:renderView`.
+  // point at. iep:canDecrypt above remains the point-of-fetch path for
+  // clients holding a recipient key; iep:renderView is the asymmetric
+  // counterpart for thin clients. See cg.ttl `iep:renderView`.
   if (d.encrypted && d.relayBaseUrl && d.descriptorId) {
     const relayBase = d.relayBaseUrl.replace(/\/$/, '');
     const renderTarget = `${relayBase}/render/${encodeURIComponent(d.descriptorId)}`;
     lines.push('');
-    lines.push('# ── Affordance (cg:renderView — server-side projection for thin clients) ──');
-    lines.push(`<> cg:affordance [`);
-    lines.push(`    a cg:Affordance, cgh:Affordance, hydra:Operation ;`);
-    lines.push(`    cg:action cg:renderView ;`);
+    lines.push('# ── Affordance (iep:renderView — server-side projection for thin clients) ──');
+    lines.push(`<> iep:affordance [`);
+    lines.push(`    a iep:Affordance, ieh:Affordance, hydra:Operation ;`);
+    lines.push(`    iep:action iep:renderView ;`);
     lines.push(`    hydra:method "GET" ;`);
     lines.push(`    hydra:target <${renderTarget}> ;`);
-    lines.push(`    hydra:returns cg:GraphPayload ;`);
+    lines.push(`    hydra:returns iep:GraphPayload ;`);
     lines.push(`    hydra:title "Render plaintext projection of encrypted graph (relay unwraps for authorized bearer)" ;`);
     lines.push(`    dcat:mediaType "text/turtle"`);
     lines.push(`] .`);
@@ -1745,21 +1745,21 @@ function buildDistributionBlock(d: {
  * Build the Turtle block embedding an authorship proof in the
  * descriptor. Shape:
  *
- *   <> dct:conformsTo <https://markjspivey-xwisee.github.io/interego/ns/cg#SignedAuthorship> .
- *   <> cg:authorshipProof [
- *     a cg:SignedAuthorship ;
- *     cg:scheme "EcdsaSecp256k1Signature2019" ;
- *     cg:issuer <agentId> ;
- *     cg:verificationMethod <did:ethr:0x...> ;
- *     cg:signerAddress "0x..." ;
- *     cg:created "2026-06-06T..." ;
- *     cg:ownerWebId <https://...> ;
- *     cg:descriptorId <descriptorIRI> ;
- *     cg:proofValue "0x..."
+ *   <> dct:conformsTo <https://markjspivey-xwisee.github.io/interego/ns/iep#SignedAuthorship> .
+ *   <> iep:authorshipProof [
+ *     a iep:SignedAuthorship ;
+ *     iep:scheme "EcdsaSecp256k1Signature2019" ;
+ *     iep:issuer <agentId> ;
+ *     iep:verificationMethod <did:ethr:0x...> ;
+ *     iep:signerAddress "0x..." ;
+ *     iep:created "2026-06-06T..." ;
+ *     iep:ownerWebId <https://...> ;
+ *     iep:descriptorId <descriptorIRI> ;
+ *     iep:proofValue "0x..."
  *   ] .
  *
  * Verifiable from the descriptor ALONE: the embedded
- * `cg:verificationMethod` resolves to a public key (did:ethr:0x...
+ * `iep:verificationMethod` resolves to a public key (did:ethr:0x...
  * recovers directly; other DID methods would be resolved). The
  * canonical payload is reconstructed from (issuer, ownerWebId,
  * descriptorId, created, agentDid?) at verify time so any tampering
@@ -1770,28 +1770,28 @@ function buildAuthorshipProofBlock(p: import('@interego/core').AuthorshipProof):
   // address (they are hex / base64 in practice but defensive).
   const esc = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const lines: string[] = [
-    '# ── Authorship Proof (cg:SignedAuthorship) ──',
-    `<> dct:conformsTo <https://markjspivey-xwisee.github.io/interego/ns/cg#SignedAuthorship> .`,
-    `<> cg:authorshipProof [`,
-    `    a cg:SignedAuthorship ;`,
-    `    cg:scheme "${esc(p.scheme)}" ;`,
-    `    cg:issuer <${p.issuer}> ;`,
-    `    cg:verificationMethod <${p.verificationMethod}> ;`,
-    `    cg:signerAddress "${esc(p.signerAddress)}" ;`,
-    `    cg:created "${esc(p.created)}"^^xsd:dateTime ;`,
-    `    cg:ownerWebId <${p.ownerWebId}> ;`,
-    `    cg:descriptorId <${p.descriptorId}> ;`,
+    '# ── Authorship Proof (iep:SignedAuthorship) ──',
+    `<> dct:conformsTo <https://markjspivey-xwisee.github.io/interego/ns/iep#SignedAuthorship> .`,
+    `<> iep:authorshipProof [`,
+    `    a iep:SignedAuthorship ;`,
+    `    iep:scheme "${esc(p.scheme)}" ;`,
+    `    iep:issuer <${p.issuer}> ;`,
+    `    iep:verificationMethod <${p.verificationMethod}> ;`,
+    `    iep:signerAddress "${esc(p.signerAddress)}" ;`,
+    `    iep:created "${esc(p.created)}"^^xsd:dateTime ;`,
+    `    iep:ownerWebId <${p.ownerWebId}> ;`,
+    `    iep:descriptorId <${p.descriptorId}> ;`,
   ];
   if (p.agentDid) {
-    lines.push(`    cg:agentDid "${esc(p.agentDid)}" ;`);
+    lines.push(`    iep:agentDid "${esc(p.agentDid)}" ;`);
   }
-  lines.push(`    cg:proofValue "${esc(p.proofValue)}"`);
+  lines.push(`    iep:proofValue "${esc(p.proofValue)}"`);
   lines.push(`] .`);
   return lines.join('\n');
 }
 
 /**
- * Parse the `cg:authorshipProof [...]` block embedded in a descriptor
+ * Parse the `iep:authorshipProof [...]` block embedded in a descriptor
  * Turtle document. Returns null when no authorship proof is present.
  * Forgiving regex-based parser (mirrors the existing
  * `parseDistributionFromDescriptorTurtle` style) so it stays in step
@@ -1801,22 +1801,22 @@ function buildAuthorshipProofBlock(p: import('@interego/core').AuthorshipProof):
 export function parseAuthorshipProofFromDescriptorTurtle(
   turtle: string,
 ): import('@interego/core').AuthorshipProof | null {
-  const blockMatch = turtle.match(/cg:authorshipProof\s+\[([^\]]+)\]/);
+  const blockMatch = turtle.match(/iep:authorshipProof\s+\[([^\]]+)\]/);
   if (!blockMatch) return null;
   const body = blockMatch[1]!;
   const read = (re: RegExp): string | undefined => {
     const m = body.match(re);
     return m?.[1];
   };
-  const issuer = read(/cg:issuer\s+<([^>]+)>/);
-  const verificationMethod = read(/cg:verificationMethod\s+<([^>]+)>/);
-  const signerAddress = read(/cg:signerAddress\s+"([^"]+)"/);
-  const created = read(/cg:created\s+"([^"]+)"/);
-  const ownerWebId = read(/cg:ownerWebId\s+<([^>]+)>/);
-  const descriptorId = read(/cg:descriptorId\s+<([^>]+)>/);
-  const proofValue = read(/cg:proofValue\s+"([^"]+)"/);
-  const scheme = read(/cg:scheme\s+"([^"]+)"/) ?? 'EcdsaSecp256k1Signature2019';
-  const agentDid = read(/cg:agentDid\s+"([^"]+)"/);
+  const issuer = read(/iep:issuer\s+<([^>]+)>/);
+  const verificationMethod = read(/iep:verificationMethod\s+<([^>]+)>/);
+  const signerAddress = read(/iep:signerAddress\s+"([^"]+)"/);
+  const created = read(/iep:created\s+"([^"]+)"/);
+  const ownerWebId = read(/iep:ownerWebId\s+<([^>]+)>/);
+  const descriptorId = read(/iep:descriptorId\s+<([^>]+)>/);
+  const proofValue = read(/iep:proofValue\s+"([^"]+)"/);
+  const scheme = read(/iep:scheme\s+"([^"]+)"/) ?? 'EcdsaSecp256k1Signature2019';
+  const agentDid = read(/iep:agentDid\s+"([^"]+)"/);
   if (!issuer || !verificationMethod || !signerAddress || !created
       || !ownerWebId || !descriptorId || !proofValue) {
     return null;
@@ -1841,7 +1841,7 @@ export interface DistributionLink {
   readonly encrypted: boolean;
   readonly encryptionAlgorithm?: string;
   /**
-   * Audience class declared on the affordance via `cg:visibility`. Absent
+   * Audience class declared on the affordance via `iep:visibility`. Absent
    * when the descriptor predates the visibility extension (treat as
    * `'shared'` for backwards compatibility).
    */
@@ -1851,16 +1851,16 @@ export interface DistributionLink {
 /**
  * Parse a descriptor's affordance block and return the graph payload's
  * accessURL + media type + encryption status. Matches the canonical
- * `cg:affordance [...]` form plus a legacy `cg:hasDistribution [...]`
+ * `iep:affordance [...]` form plus a legacy `iep:hasDistribution [...]`
  * form (preserved for descriptors written before the ontology
  * realignment). Returns null when no linkage is declared.
  */
 export function parseDistributionFromDescriptorTurtle(turtle: string): DistributionLink | null {
-  // Canonical form: cg:affordance [ ... a dcat:Distribution ... ]
-  // Legacy form:    cg:hasDistribution [ ... a dcat:Distribution ... ]
+  // Canonical form: iep:affordance [ ... a dcat:Distribution ... ]
+  // Legacy form:    iep:hasDistribution [ ... a dcat:Distribution ... ]
   // Try canonical first; fall back to legacy.
-  let match = turtle.match(/cg:affordance\s*\[([\s\S]*?)\]/);
-  if (!match) match = turtle.match(/cg:hasDistribution\s*\[([\s\S]*?)\]/);
+  let match = turtle.match(/iep:affordance\s*\[([\s\S]*?)\]/);
+  if (!match) match = turtle.match(/iep:hasDistribution\s*\[([\s\S]*?)\]/);
   if (!match) return null;
   const block = match[1]!;
   // Prefer hydra:target over dcat:accessURL (they're synonymous in our
@@ -1868,9 +1868,9 @@ export function parseDistributionFromDescriptorTurtle(turtle: string): Distribut
   // dispatch; dcat:accessURL is the catalog-centric view. Either works).
   const accessUrlMatch = block.match(/hydra:target\s+<([^>]+)>/) || block.match(/dcat:accessURL\s+<([^>]+)>/);
   const mediaTypeMatch = block.match(/dcat:mediaType\s+"([^"]+)"/);
-  const encryptedMatch = block.match(/cg:encrypted\s+(true|false)/);
-  const algoMatch = block.match(/cg:encryptionAlgorithm\s+"([^"]+)"/);
-  const visibilityMatch = block.match(/cg:visibility\s+"(public|shared|private)"/);
+  const encryptedMatch = block.match(/iep:encrypted\s+(true|false)/);
+  const algoMatch = block.match(/iep:encryptionAlgorithm\s+"([^"]+)"/);
+  const visibilityMatch = block.match(/iep:visibility\s+"(public|shared|private)"/);
   if (!accessUrlMatch || !mediaTypeMatch) return null;
   const result: DistributionLink = {
     accessURL: accessUrlMatch[1]!,

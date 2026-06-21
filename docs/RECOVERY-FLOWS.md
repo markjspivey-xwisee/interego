@@ -120,7 +120,7 @@ shutdown, region failover, migration in progress).
 
 2. **For permanent migration:** publish a new pod URL to your
    identity record AND retain the old DID by issuing a
-   `cg:supersedes` chain from the old pod's auth-methods to the new
+   `iep:supersedes` chain from the old pod's auth-methods to the new
    pod's. The old pod's descriptors are preserved on the URL; new
    activity goes to the new pod.
 
@@ -129,7 +129,7 @@ shutdown, region failover, migration in progress).
    ```
    1. Spin up CSS pod at new URL.
    2. Copy /<userId>/auth-methods.jsonld from old pod to new pod.
-   3. Publish a `cg:supersedes` descriptor on the OLD pod pointing
+   3. Publish a `iep:supersedes` descriptor on the OLD pod pointing
       at the new pod URL — readers walking your old DID find it.
    4. (Optionally) configure DNS so your DID's well-known WebID
       resolves to the new host.

@@ -24,17 +24,17 @@ function ok(cond: boolean, name: string): void {
 }
 
 const FIXTURE = `
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix acl: <http://www.w3.org/ns/auth/acl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<urn:desc:1> a cg:ContextDescriptor ;
-  cg:describes <urn:graph:thing:42> ;
-  cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ] ;
-  cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent ; rdfs:label "Smith" ; cg:agentIdentity <did:ethr:0xabc> ] ; cg:onBehalfOf <did:web:owner> ] ;
-  cg:hasFacet [ a cg:AccessControlFacet ; cg:authorization [ a acl:Authorization ; acl:agent <did:web:owner> ; acl:mode acl:Read ] ] .
+<urn:desc:1> a iep:ContextDescriptor ;
+  iep:describes <urn:graph:thing:42> ;
+  iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ] ;
+  iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent ; rdfs:label "Smith" ; iep:agentIdentity <did:ethr:0xabc> ] ; iep:onBehalfOf <did:web:owner> ] ;
+  iep:hasFacet [ a iep:AccessControlFacet ; iep:authorization [ a acl:Authorization ; acl:agent <did:web:owner> ; acl:mode acl:Read ] ] .
 `;
 
 function main(): void {

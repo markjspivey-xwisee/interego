@@ -12,7 +12,7 @@
  *            supersedes the Phase-A descriptor; re-discovers; reports
  *            the modal-status flip and the supersedes IRI chain
  *
- * What this proves: modal status + cg:supersedes are not just metadata
+ * What this proves: modal status + iep:supersedes are not just metadata
  * — they form a real belief-revision protocol. An agent that consults
  * the manifest sees an evolving picture of truth, and the substrate
  * makes the evolution legible (tier-0 atoms + tier-1 supersedes IRIs)
@@ -69,7 +69,7 @@ async function spawnInteregoBridge(podUrl: string, port: number, didPrefix: stri
 
 async function main(): Promise<void> {
   header('Demo 05 — Time-paradox memory');
-  info('A Hypothetical claim collapses to Counterfactual via cg:supersedes; the agent rolls its position back.');
+  info('A Hypothetical claim collapses to Counterfactual via iep:supersedes; the agent rolls its position back.');
 
   const podUrl = uniquePodUrl(`demo-${SCENARIO}`);
   let bridge: BridgeHandle | undefined;
@@ -86,8 +86,8 @@ async function main(): Promise<void> {
 
     // Use a stable graph IRI so both publishes describe the SAME subject.
     // The supersedes link is what carries the time-paradox — the second
-    // descriptor explicitly subsumes the first via cg:supersedes.
-    const claimGraphIri = `urn:cg:demo:claim:${Date.now()}`;
+    // descriptor explicitly subsumes the first via iep:supersedes.
+    const claimGraphIri = `urn:iep:demo:claim:${Date.now()}`;
 
     step(3, 'Invoking Claude Code with the three-phase belief-revision task');
     const prompt = `
@@ -101,7 +101,7 @@ PHASE A — Publish a Hypothetical claim.
 Call protocol.publish_descriptor with:
   graph_iri:     "${claimGraphIri}"
   graph_content: |
-    @prefix demo: <urn:cg:demo:> .
+    @prefix demo: <urn:iep:demo:> .
     @prefix dct: <http://purl.org/dc/terms/> .
     <${claimGraphIri}> dct:title "Tentative second-contact escalation rule" ;
       demo:claim "When a customer makes second contact, lead with explicit acknowledgment of the prior interaction." ;
@@ -124,7 +124,7 @@ customers more than it helped. The previous claim is now rejected.
 Call protocol.publish_descriptor with:
   graph_iri:     "${claimGraphIri}"
   graph_content: |
-    @prefix demo: <urn:cg:demo:> .
+    @prefix demo: <urn:iep:demo:> .
     @prefix dct: <http://purl.org/dc/terms/> .
     <${claimGraphIri}> dct:title "Rejected: acknowledgment-first as standalone rule" ;
       demo:claim "Leading with acknowledgment alone is COUNTERPRODUCTIVE; it must be paired with substantive re-engagement, in that order. The standalone rule is rejected." ;
@@ -205,7 +205,7 @@ REPORT the full belief-revision picture:
       ``,
       `## What this proves`,
       ``,
-      `Modal status (Hypothetical → Counterfactual) and cg:supersedes`,
+      `Modal status (Hypothetical → Counterfactual) and iep:supersedes`,
       `together form a belief-revision protocol. The agent's *current*`,
       `view of the claim is the head of the supersedes chain; older`,
       `descriptors remain on the pod (audit trail) but no longer`,

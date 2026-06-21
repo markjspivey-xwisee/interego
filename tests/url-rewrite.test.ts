@@ -15,7 +15,7 @@
  *   .azurecontainerapps.io/markj/` was returning "No agent registry
  *   found" because that public host no longer serves the canonical pod
  *   tree. Live descriptors on the pod still embed the OLD URL in
- *   `cg:origin` / `descriptorUrl` / `dcat:accessURL` positions; the
+ *   `iep:origin` / `descriptorUrl` / `dcat:accessURL` positions; the
  *   relay translates them at the HTTP boundary so external callers
  *   keep working.
  */
@@ -109,7 +109,7 @@ describe('normalizeCssUrl — pass-through (no rewrite)', () => {
     const urns = [
       'urn:graph:markj:user-memory:v1',
       'urn:pgsl:fragment:0xabc',
-      'urn:cg:action:kernel:dereference',
+      'urn:iep:action:kernel:dereference',
     ];
     for (const urn of urns) {
       expect(normalizeCssUrl(urn)).toBe(urn);

@@ -2,7 +2,7 @@
 
 > Path 4 of [agent-runtime-integration.md](agent-runtime-integration.md).
 > Every agent action emits a signed, framework-cited
-> `cg:ContextDescriptor` — EU AI Act / NIST RMF / SOC 2 audit grade.
+> `iep:ContextDescriptor` — EU AI Act / NIST RMF / SOC 2 audit grade.
 
 ## What this is
 
@@ -33,7 +33,7 @@ ontology, or a new framework table.
 | Modal-status filtering | success → Asserted, partial → Hypothetical, failure → Counterfactual |
 | Time-bounded validity | Temporal facet with `validFrom` / `prov:startedAtTime` / `prov:endedAtTime` |
 | Control citations | `dct:conformsTo` triples into the existing FRAMEWORK_CONTROLS table |
-| Tamper detection | `cg:contentHash` over the event fingerprint |
+| Tamper detection | `iep:contentHash` over the event fingerprint |
 | Anchored audit pair | `publish_context(compliance: true, ...)` adds ECDSA signature + IPFS CID; the overlay produces the descriptor; this finishing happens server-side |
 | Cross-pod regulator access | `share_with: [did:web:auditor]` per descriptor; per-event scope |
 

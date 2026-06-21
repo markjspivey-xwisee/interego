@@ -8,8 +8,8 @@
  *   - interego.ttl        — the interrogatives core (ie:)
  *                           the user-facing grammar of the system
  *   - pgsl.ttl            — the substrate lattice layer (pgsl:)
- *   - cg.ttl              — the typed context descriptor layer (cg:)
- *   - harness.ttl         — the agent/eval/decorator harness layer (cgh:)
+ *   - cg.ttl              — the typed context descriptor layer (iep:)
+ *   - harness.ttl         — the agent/eval/decorator harness layer (ieh:)
  *   - alignment.ttl       — cross-layer mappings (align:)
  *
  * Each lower layer has a matching SHACL shapes file:
@@ -36,8 +36,8 @@ export type OntologyName =
   | 'interego-shapes'
   | 'pgsl'
   | 'pgsl-shapes'
-  | 'cg'
-  | 'cg-shapes'
+  | 'iep'
+  | 'iep-shapes'
   | 'harness'
   | 'harness-shapes'
   | 'alignment';
@@ -81,7 +81,7 @@ function resolveNsDir(): string {
  *
  * const interegoTtl = loadOntology('interego');  // interrogatives core
  * const pgslTtl = loadOntology('pgsl');          // substrate layer
- * const cgTtl = loadOntology('cg');              // typed-context layer
+ * const cgTtl = loadOntology('iep');              // typed-context layer
  * const harnessTtl = loadOntology('harness');    // agent harness
  * const alignmentTtl = loadOntology('alignment'); // cross-layer axioms
  * ```
@@ -112,7 +112,7 @@ export function loadFullOntology(): string {
     '',
     loadOntology('pgsl'),
     '',
-    loadOntology('cg'),
+    loadOntology('iep'),
     '',
     loadOntology('harness'),
     '',
@@ -136,7 +136,7 @@ export function loadFullShapes(): string {
     '',
     loadOntology('pgsl-shapes'),
     '',
-    loadOntology('cg-shapes'),
+    loadOntology('iep-shapes'),
     '',
     loadOntology('harness-shapes'),
   ];
@@ -193,25 +193,25 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
       'SHACL shapes that validate PGSL serializations: atom/fragment invariants, pullback commutativity, PROV-O provenance triples.',
   },
   {
-    name: 'cg',
-    namespace: 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
-    prefix: 'cg',
+    name: 'iep',
+    namespace: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
+    prefix: 'iep',
     kind: 'ontology',
     description:
       'Typed context descriptor layer. Seven facet types (Temporal, Provenance, Agent, AccessControl, Semiotic, Trust, Federation), composition operators (union, intersection, restriction, override), and federation primitives. The technical machinery that answers the ie:When / ie:Who / ie:Where / ie:Why / ie:Whose / ie:WhatKind / ie:Whether interrogatives.',
   },
   {
-    name: 'cg-shapes',
-    namespace: 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
-    prefix: 'cg',
+    name: 'iep-shapes',
+    namespace: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
+    prefix: 'iep',
     kind: 'shapes',
     description:
-      'Normative SHACL shapes for the cg: core namespace. Modal-truth consistency (Asserted/Counterfactual/Hypothetical ↔ groundTruth), future-validFrom warning, revocation self-reference rejection, six-facet invariant, and agent-identity consistency across AgentFacet and ProvenanceFacet. Used as oracles by the conformance test suite.',
+      'Normative SHACL shapes for the iep: core namespace. Modal-truth consistency (Asserted/Counterfactual/Hypothetical ↔ groundTruth), future-validFrom warning, revocation self-reference rejection, six-facet invariant, and agent-identity consistency across AgentFacet and ProvenanceFacet. Used as oracles by the conformance test suite.',
   },
   {
     name: 'harness',
     namespace: 'https://markjspivey-xwisee.github.io/interego/ns/harness#',
-    prefix: 'cgh',
+    prefix: 'ieh',
     kind: 'ontology',
     description:
       'Agent harness layer. Abstract Agent Types (AAT), policy engine with ODRL alignment, PROV traces, runtime evaluation with confidence scoring, decision functor, and affordance decorators. Answers ie:Who (what AAT am I?), ie:Which (which action to take?), and ie:Whether (permitted? reliable?).',
@@ -219,7 +219,7 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   {
     name: 'harness-shapes',
     namespace: 'https://markjspivey-xwisee.github.io/interego/ns/harness#',
-    prefix: 'cgh',
+    prefix: 'ieh',
     kind: 'shapes',
     description:
       'SHACL shapes for the harness layer: AAT invariants, policy rule well-formedness, PROV trace completeness, runtime eval bounds.',

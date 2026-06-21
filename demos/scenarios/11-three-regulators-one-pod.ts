@@ -105,8 +105,8 @@ async function main(): Promise<void> {
     ];
     const seeded: string[] = [];
     for (const s of seedSpecs) {
-      const graphIri = `urn:cg:demo:event:${Math.random().toString(36).slice(2, 10)}`;
-      const turtle = `@prefix demo: <urn:cg:demo:> .
+      const graphIri = `urn:iep:demo:event:${Math.random().toString(36).slice(2, 10)}`;
+      const turtle = `@prefix demo: <urn:iep:demo:> .
 @prefix dct: <http://purl.org/dc/terms/> .
 <${graphIri}> a demo:RegulatoryEvent ;
   dct:title ${JSON.stringify(s.label)} ;

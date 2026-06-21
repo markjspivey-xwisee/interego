@@ -1,7 +1,7 @@
 # Emergent Properties — Demonstrations and Results
 
 This document catalogues four demos that show emergent phenomena the
-Interego / Context Graphs protocol is designed to support. Each demo
+Interego / Interego Protocol protocol is designed to support. Each demo
 is a self-contained Node script under [`examples/`](../examples/) and
 is runnable with `node examples/<name>.mjs` — no pod, no network
 dependency, no external services. Every claim below is reproduced by
@@ -328,7 +328,7 @@ exhibits the emergent property it enables:
 
 | Demo | Principle | Protocol artifact |
 |------|-----------|-------------------|
-| 1. Vocabulary emergence | Peircean semiotics + CTS | `cg:SemioticFacet` + modal polyphony |
+| 1. Vocabulary emergence | Peircean semiotics + CTS | `iep:SemioticFacet` + modal polyphony |
 | 2. Emergent mediator | Compositional lattice + pullback | `composition.ts` operators |
 | 3. Localized closed-world | Boundary contracts | SHACL 1.2 `sh:closed` + federation |
 | 4. Stigmergic colony | Shared substrate | Pod as environment + decay dynamics |

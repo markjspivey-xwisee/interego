@@ -312,7 +312,7 @@ export function createStatementStore(spec: string = 'memory'): StatementStore {
     return new PrimaryForwardStatementStore(endpoint, { user, pass }, version || '2.0.0');
   }
   // pod-backed projection: from the outside this is an xAPI 2.0 LRS;
-  // from the inside every statement is a real cg:ContextDescriptor in
+  // from the inside every statement is a real iep:ContextDescriptor in
   // the tenant pod. Reads from FOXXI_TENANT_POD_URL +
   // FOXXI_AUTHORITATIVE_SOURCE env vars.
   if (spec === 'pod' || spec.startsWith('pod:')) {

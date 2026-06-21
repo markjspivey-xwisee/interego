@@ -2206,7 +2206,7 @@ app.post('/api/demo/run', async (_req, res) => {
         const rdfGraph = xapiToRdf(learner, stmts);
 
         // Build descriptor
-        const descId = `urn:cg:lrs:${learner}-session-2026-03` as IRI;
+        const descId = `urn:iep:lrs:${learner}-session-2026-03` as IRI;
         const desc = ContextDescriptor.create(descId)
 .describes(`urn:graph:lrs:${learner}-xapi` as IRI)
 .temporal({ validFrom: stmts[0]!.timestamp, validUntil: stmts[stmts.length - 1]!.timestamp })
@@ -2317,11 +2317,11 @@ SELECT ?atom ?value WHERE { ?atom a pgsl:Atom ; pgsl:value ?value. } LIMIT 30`;
 
         const compGraph = `@prefix comp: <https://example.org/competency#>.\n<urn:competency:${learner}> a comp:CompetencyAssertion ; comp:learner <${info.did}> ; comp:level "${level}" ; comp:score "${avgScore}".`;
 
-        const descId = `urn:cg:competency:${learner}-assessment-2026-03` as IRI;
+        const descId = `urn:iep:competency:${learner}-assessment-2026-03` as IRI;
         const desc = ContextDescriptor.create(descId)
 .describes(`urn:graph:competency:${learner}-assertions` as IRI)
 .temporal({ validFrom: '2026-03-17T09:00:00Z', validUntil: '2026-09-17T09:00:00Z' })
-.provenance({ wasGeneratedBy: { agent: 'urn:system:competency-manager' as IRI, startedAt: '2026-03-17T09:00:00Z', endedAt: '2026-03-17T09:05:00Z' }, wasAttributedTo: 'did:web:competency.training.airforce.mil' as IRI, generatedAtTime: '2026-03-17T09:05:00Z', sources: [`urn:cg:lrs:${learner}-session-2026-03` as IRI] })
+.provenance({ wasGeneratedBy: { agent: 'urn:system:competency-manager' as IRI, startedAt: '2026-03-17T09:00:00Z', endedAt: '2026-03-17T09:05:00Z' }, wasAttributedTo: 'did:web:competency.training.airforce.mil' as IRI, generatedAtTime: '2026-03-17T09:05:00Z', sources: [`urn:iep:lrs:${learner}-session-2026-03` as IRI] })
 .agent('did:web:competency.training.airforce.mil' as IRI, 'Assessor')
 .semiotic({ modalStatus: 'Asserted', epistemicConfidence: 0.92 })
 .trust({ trustLevel: 'ThirdPartyAttested', issuer: 'did:web:competency.training.airforce.mil' as IRI })
@@ -2362,8 +2362,8 @@ SELECT ?atom ?value WHERE { ?atom a pgsl:Atom ; pgsl:value ?value. } LIMIT 30`;
         const avgScore = Math.round(completed.reduce((s, x) => s + x.score, 0) / completed.length);
 
         // Compose: intersection of xAPI + competency descriptors
-        const lrsDescId = `urn:cg:lrs:${learner}-session-2026-03` as IRI;
-        const compDescId = `urn:cg:competency:${learner}-assessment-2026-03` as IRI;
+        const lrsDescId = `urn:iep:lrs:${learner}-session-2026-03` as IRI;
+        const compDescId = `urn:iep:competency:${learner}-assessment-2026-03` as IRI;
         const lrsDesc = demoState.descriptors[lrsDescId];
         const compDesc = demoState.descriptors[compDescId];
         if (lrsDesc && compDesc) {
@@ -2374,7 +2374,7 @@ SELECT ?atom ?value WHERE { ?atom a pgsl:Atom ; pgsl:value ?value. } LIMIT 30`;
         // Build LERS credential
         const credGraph = `@prefix vc: <https://www.w3.org/2018/credentials#>.\n@prefix lers: <https://purl.org/lers/ns#>.\n<urn:lers:${learner}-instrument-2026> a vc:VerifiableCredential, lers:LearningEmploymentRecord ; vc:issuer <did:web:credential.training.airforce.mil> ; vc:issuanceDate "2026-03-17T10:00:00Z" ; vc:credentialSubject [ lers:learner <${info.did}> ; lers:achievement [ lers:level "${avgScore >= 90 ? 'Advanced' : 'Proficient'}" ; lers:framework "USAF Instrument Rating v3" ] ].`;
 
-        const credDescId = `urn:cg:credential:${learner}-instrument-2026` as IRI;
+        const credDescId = `urn:iep:credential:${learner}-instrument-2026` as IRI;
         const credDesc = ContextDescriptor.create(credDescId)
 .describes(`urn:graph:credential:${learner}-lers` as IRI)
 .temporal({ validFrom: '2026-03-17T10:00:00Z', validUntil: '2027-03-17T10:00:00Z' })
@@ -2413,7 +2413,7 @@ SELECT ?atom ?value WHERE { ?atom a pgsl:Atom ; pgsl:value ?value. } LIMIT 30`;
         logActivity(firstName, 'discover', `Found ${credEntries.length} credential(s) on credential pod`);
 
         // Verify ECDSA signature
-        const credDescId = `urn:cg:credential:${learner}-instrument-2026` as IRI;
+        const credDescId = `urn:iep:credential:${learner}-instrument-2026` as IRI;
         const signed = demoState.signatures[credDescId];
         if (signed) {
           const credDesc = demoState.descriptors[credDescId];
@@ -2461,9 +2461,9 @@ SELECT ?atom ?value WHERE { ?atom a pgsl:Atom ; pgsl:value ?value. } LIMIT 30`;
       logActivity('Verifier', 'verify', '── Full Trust Chain ──');
       for (const learner of ['chen', 'park', 'ortiz']) {
         const info = LEARNER_INFO[learner]!;
-        const lrsSig = demoState.signatures[`urn:cg:lrs:${learner}-session-2026-03`];
-        const compSig = demoState.signatures[`urn:cg:competency:${learner}-assessment-2026-03`];
-        const credSig = demoState.signatures[`urn:cg:credential:${learner}-instrument-2026`];
+        const lrsSig = demoState.signatures[`urn:iep:lrs:${learner}-session-2026-03`];
+        const compSig = demoState.signatures[`urn:iep:competency:${learner}-assessment-2026-03`];
+        const credSig = demoState.signatures[`urn:iep:credential:${learner}-instrument-2026`];
 
         const chain = [
           lrsSig ? `LRS(${addr(demoState.wallets['lrs']!)})` : 'LRS(?)',

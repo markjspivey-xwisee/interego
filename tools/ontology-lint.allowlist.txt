@@ -32,19 +32,19 @@ soc2:P1
 # P4.2 referenced in docs/policies for data subject deletion control mapping.
 soc2:P4
 
-# ── cg: ──
+# ── iep: ──
 # Reference in a comment in deploy/mcp-relay/server.ts to a
-# placeholder predicate (cg:evidenceForControl) that's mentioned as a
+# placeholder predicate (iep:evidenceForControl) that's mentioned as a
 # future extension to ManifestEntry. Not actually emitted to RDF.
-cg:evidenceForControl
+iep:evidenceForControl
 # CGContextType.Causal / .Projection in packages/core/src/rdf/namespaces.ts
 # are emitted via `${CG}Causal` / `${CG}Projection` template literals.
-# The corresponding cg:CausalFacet / cg:ProjectionFacet classes ARE
+# The corresponding iep:CausalFacet / iep:ProjectionFacet classes ARE
 # defined in docs/ns/cg.ttl; the bare context-type individuals are not
 # yet declared. Pre-existing drift surfaced by the template-literal
 # scan extension.
-cg:Causal
-cg:Projection
+iep:Causal
+iep:Projection
 
 # ── align: ──
 # False positive from CSS text-align property in HTML style attributes
@@ -52,3 +52,13 @@ cg:Projection
 # `align:center` because the negative lookbehind doesn't reject the
 # hyphen in `text-align`. This is CSS, not an RDF ontology reference.
 align:center
+# PGSL projection-layer terms emitted by packages/pgsl/src/projection.ts +
+# packages/solid/src/client.ts (pre-existing drift, carried through the
+# Interego-Protocol rename; declare in iep.ttl when the projection vocab lands).
+iep:EncryptedHolon
+iep:XFacet
+iep:contentCid
+iep:encryptedHolon
+iep:ofDescriptor
+iep:pgslLevel
+iep:pgslUri

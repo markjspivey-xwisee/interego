@@ -33,7 +33,7 @@
 #    fxa:  behavioral   — consumption traces, extraction events  #
 #                                                                #
 #  Compositional with: HELA presheaf category, OLKE semiotic     #
-#  decomposition, SAT-Φ 10-tuple, Context Graphs 1.0, xAPI       #
+#  decomposition, SAT-Φ 10-tuple, Interego Protocol 1.0, xAPI       #
 #  Topos Workbench.                                              #
 #################################################################
 
@@ -1203,7 +1203,7 @@ fxsh:NamedGraphShape a sh:NodeShape ;
 #################################################################
 #  Tenant publication types — added 2026-05-17                  #
 #  Type IRIs for descriptor-shaped records the tenant publishes #
-#  so the bridge discovers them via cg:discover() + dct:conformsTo
+#  so the bridge discovers them via iep:discover() + dct:conformsTo
 #  filter, then fetches via the standard Distribution link.     #
 #  NO hardcoded paths — discovery is the only entry point.      #
 #################################################################

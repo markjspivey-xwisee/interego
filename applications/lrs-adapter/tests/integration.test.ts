@@ -2,8 +2,8 @@
  * LRS Adapter — integration test.
  *
  * Verifies the boundary translator's invariants using real code paths:
- *   - Ingest: xAPI Statement → cg:ContextDescriptor produces a conforming
- *     descriptor with cg:modalStatus Asserted (Statements are committed
+ *   - Ingest: xAPI Statement → iep:ContextDescriptor produces a conforming
+ *     descriptor with iep:modalStatus Asserted (Statements are committed
  *     claims by spec) and Trust facet attributing to the LRS authority
  *   - Project (Asserted): descriptor → Statement preserves all relevant
  *     fields and emits projectionLossy = false
@@ -50,7 +50,7 @@ interface ProjectionResult {
 }
 
 function ingestStatement(stmt: XapiStatement): ReturnType<typeof ContextDescriptor.prototype.build> {
-  const descriptorIri = `urn:cg:lrs-statement:${stmt.id}` as IRI;
+  const descriptorIri = `urn:iep:lrs-statement:${stmt.id}` as IRI;
   return ContextDescriptor.create(descriptorIri)
     .describes('urn:graph:lrs:statement' as IRI)
     .temporal({ validFrom: stmt.timestamp })
@@ -81,7 +81,7 @@ function projectDescriptor(
       skipped: true,
       lossy: true,
       lossNotes: [],
-      skipReason: 'Source descriptor has cg:modalStatus cg:Hypothetical; xAPI Statements are committed claims by spec; skipping to avoid over-claiming',
+      skipReason: 'Source descriptor has iep:modalStatus iep:Hypothetical; xAPI Statements are committed claims by spec; skipping to avoid over-claiming',
     };
   }
 
@@ -102,7 +102,7 @@ function projectDescriptor(
     lossNotes.push('Source descriptor was Hypothetical; projected per caller request; xAPI consumers may treat as committed unless they read extensions');
   }
   if (options.coherentNarratives && options.coherentNarratives.length > 1) {
-    lossNotes.push(`Source had ${options.coherentNarratives.length} coherent narratives; first emitted in result.response, remainder in result.extensions[urn:cg:coherent-narratives]`);
+    lossNotes.push(`Source had ${options.coherentNarratives.length} coherent narratives; first emitted in result.response, remainder in result.extensions[urn:iep:coherent-narratives]`);
   }
 
   const statement: XapiStatement = {
@@ -126,7 +126,7 @@ function projectDescriptor(
 describe('lrs-adapter — translation invariants', () => {
   // ── INGEST ──────────────────────────────────────────────────────
 
-  it('ingest: xAPI Statement → cg:ContextDescriptor with modalStatus Asserted', () => {
+  it('ingest: xAPI Statement → iep:ContextDescriptor with modalStatus Asserted', () => {
     const stmt: XapiStatement = {
       id: 'stmt-12345',
       actor: { account: { homePage: 'https://acme.example', name: 'mark.spivey' } },
@@ -138,7 +138,7 @@ describe('lrs-adapter — translation invariants', () => {
     };
 
     const desc = ingestStatement(stmt);
-    expect(desc.id).toBe('urn:cg:lrs-statement:stmt-12345');
+    expect(desc.id).toBe('urn:iep:lrs-statement:stmt-12345');
 
     // Modal: Asserted (Statements are committed claims)
     const semiotic = desc.facets.find(f => f.type === 'Semiotic') as { modalStatus?: string };
@@ -155,7 +155,7 @@ describe('lrs-adapter — translation invariants', () => {
   // ── PROJECT (Asserted descriptor → Statement, lossless-ish) ─────
 
   it('project Asserted: emits Statement with lossy=false', () => {
-    const desc = ContextDescriptor.create('urn:cg:performance-record:q1-2026' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:performance-record:q1-2026' as IRI)
       .describes('urn:graph:lpc' as IRI)
       .temporal({ validFrom: '2026-04-20T16:00:00Z' })
       .asserted(0.95)
@@ -172,7 +172,7 @@ describe('lrs-adapter — translation invariants', () => {
   // ── PROJECT (Hypothetical descriptor → SKIP) ────────────────────
 
   it('project Hypothetical: SKIPPED with explicit skip-reason audit', () => {
-    const desc = ContextDescriptor.create('urn:cg:fragment:tone-probe:42' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:fragment:tone-probe:42' as IRI)
       .describes('urn:graph:adp' as IRI)
       .temporal({ validFrom: '2026-04-22T14:00:00Z' })
       .hypothetical(0.5)
@@ -195,7 +195,7 @@ describe('lrs-adapter — translation invariants', () => {
     // For projection-skip testing, we just need a descriptor whose
     // Semiotic facet carries modalStatus 'Counterfactual'. Easiest path:
     // build via .asserted() to get a Semiotic facet, then post-process.
-    const baseDesc = ContextDescriptor.create('urn:cg:counterfactual-claim:1' as IRI)
+    const baseDesc = ContextDescriptor.create('urn:iep:counterfactual-claim:1' as IRI)
       .describes('urn:graph:counterfactual' as IRI)
       .temporal({ validFrom: '2026-04-22T14:00:00Z' })
       .asserted(0.5)
@@ -216,7 +216,7 @@ describe('lrs-adapter — translation invariants', () => {
   // ── PROJECT (multi-narrative: lossy with loud audit) ────────────
 
   it('project multi-narrative: emits Statement BUT lossy=true + lossNote rows', () => {
-    const desc = ContextDescriptor.create('urn:cg:synthesis:tone-week-1' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:synthesis:tone-week-1' as IRI)
       .describes('urn:graph:adp:synthesis' as IRI)
       .temporal({ validFrom: '2026-04-26T10:00:00Z' })
       .asserted(0.6)                                        // synthesis-team committed for dashboards
@@ -240,7 +240,7 @@ describe('lrs-adapter — translation invariants', () => {
   // ── PROJECT (Hypothetical with explicit opt-in: lossy) ──────────
 
   it('project Hypothetical with allowHypothetical opt-in: lossy=true with audit', () => {
-    const desc = ContextDescriptor.create('urn:cg:fragment:tone-probe:43' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:fragment:tone-probe:43' as IRI)
       .describes('urn:graph:adp' as IRI)
       .temporal({ validFrom: '2026-04-22T14:00:00Z' })
       .hypothetical(0.5)

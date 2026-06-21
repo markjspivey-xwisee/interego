@@ -11,7 +11,7 @@
  * published placeholder namespaces (`…/interego/ns/foxxi#` and the now-RETIRED,
  * non-dereferenceable `vocab.foxximediums.com/*`, fully removed from the repo). It sits on the
  * bridge's own host: vertical-scoped, outside the protocol IRI space
- * (where `cg:` etc. live), and — because the bridge serves it — actually
+ * (where `iep:` etc. live), and — because the bridge serves it — actually
  * dereferenceable.
  *
  * Layer: L3 vertical. No protocol-ontology change; a vertical vocabulary.
@@ -54,7 +54,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
 
   // ── Structural (modal) verbs ───────────────────────────────────────
   // Domain-AGNOSTIC verbs naming the MODAL MODE of any agent's context-descriptor
-  // act (cg:ModalStatusEnum), valid for ANY vertical — never a domain term. The
+  // act (iep:ModalStatusEnum), valid for ANY vertical — never a domain term. The
   // xAPI performance verb stays `performed` (above); these label the trajectory
   // step's mode so disposition reads the modal balance. (A Retracted descriptor
   // projects as the ADL core `voided` verb, not a foxxi term.)
@@ -89,7 +89,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'PerformanceSituation', kind: 'Type', label: 'Performance Situation', definition: 'A typed, modal-statused descriptor of a performer (human or agent), the work, and observed performance. The unit the system reasons from — it carries no idealised future state; content is never assumed.' },
   { name: 'Diagnosis', kind: 'Type', label: 'Diagnosis', definition: 'A contextualization of a performance situation: it reads the work regime and applies that regime’s method — apply an established practice (Evident), a cause-factor gap analysis (Knowable), a dispositional read (Emergent), or stabilise first (Turbulent).' },
   { name: 'InterventionPlan', kind: 'Type', label: 'Intervention Plan', definition: 'The full paradigm of interventions for a contextualized situation — instruction, performance-support, reference, practice, assessment, coaching, probe, environmental-fix, no-intervention — each marked selected or ruled-out with its reasoning.' },
-  { name: 'InterventionEvaluation', kind: 'Type', label: 'Intervention Evaluation', definition: 'The Knowable regime’s closing move: a four-level evaluation — response, capability, transfer, outcome — as a modal-status progression; a closed gap supersedes the prior observed-state (cg:supersedes).' },
+  { name: 'InterventionEvaluation', kind: 'Type', label: 'Intervention Evaluation', definition: 'The Knowable regime’s closing move: a four-level evaluation — response, capability, transfer, outcome — as a modal-status progression; a closed gap supersedes the prior observed-state (iep:supersedes).' },
   { name: 'OutcomeRecord', kind: 'Type', label: 'Outcome Record', definition: 'One distilled intervention outcome — in a regime, having named a cause and chosen an intervention, the verdict reached; and, if it missed, the cause re-contextualization found instead. The evidence atom of calibration.' },
   { name: 'CalibrationProfile', kind: 'Type', label: 'Calibration Profile', definition: 'The system’s recorded track record of its own Knowable-regime recommendations: per (regime × cause × intervention) cell, how often that recommendation actually closed the gap. A cell is Hypothetical until it has the samples to Assert a rate; profiles compose across organizations by union.' },
   { name: 'CapabilityTransfer', kind: 'Type', label: 'Capability Transfer', definition: 'The performance reading of one agent teaching another. The unit taught is an ac:TeachingPackage (agent-collective); Foxxi frames a learner agent’s acquisition of it as an A2A instruction intervention, verifies the transfer by reading the learner’s own trajectories before and after, and emits an amta:Attestation that feeds ac:’s modal discipline and the reflexive calibration loop. Foxxi composes the teaching foundation; it does not redefine it.' },
@@ -119,7 +119,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'callerRole', kind: 'Extension', label: 'callerRole', definition: 'Resolved caller role at the time of an affordance call.' },
   { name: 'substrateDescriptorIri', kind: 'Extension', label: 'substrateDescriptorIri', definition: 'IRI of the substrate context descriptor produced by an affordance call (xAPI ↔ substrate cross-link).' },
   // Envelope-derived signals carried verbatim from the context-descriptor (never reinterpreted).
-  { name: 'supersededDescriptor', kind: 'Extension', label: 'supersededDescriptor', definition: 'IRI of a prior descriptor this one revises/closes — the cg:supersedes link carried into xAPI as a structural revision signal (not a domain closure verb).' },
+  { name: 'supersededDescriptor', kind: 'Extension', label: 'supersededDescriptor', definition: 'IRI of a prior descriptor this one revises/closes — the iep:supersedes link carried into xAPI as a structural revision signal (not a domain closure verb).' },
   { name: 'trustLevel', kind: 'Extension', label: 'trustLevel', definition: 'The descriptor\'s TrustFacet level (SelfAsserted / ThirdPartyAttested / CryptographicallyVerified), passed through verbatim.' },
   { name: 'epistemicConfidence', kind: 'Extension', label: 'epistemicConfidence', definition: 'The descriptor\'s SemioticFacet epistemic confidence [0.0–1.0] — confidence that the DESCRIPTOR itself is accurate (infrastructure-level), NOT a performance score. Carried as its own extension, never as result.score.scaled.' },
   { name: 'groundTruth', kind: 'Extension', label: 'groundTruth', definition: 'The descriptor\'s tri-state groundTruth (true for Asserted, false for Counterfactual, undefined for Hypothetical), passed through verbatim.' },

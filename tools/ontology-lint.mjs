@@ -25,8 +25,11 @@ const ROOT = resolve(__dirname, '..');
 
 const OWNED_NAMESPACES = {
   // prefix    : ontology file
-  cg:         'docs/ns/cg.ttl',
-  cgh:        'docs/ns/harness.ttl',
+  iep:         'docs/ns/iep.ttl',      // L1 protocol — Interego Protocol (was cg:)
+  ieh:        'docs/ns/harness.ttl',   // L1 harness (was cgh:)
+  cg:          'docs/ns/iep.ttl',      // @deprecated alias of iep: (legacy "Context Graphs")
+  cgh:         'docs/ns/harness.ttl',  // @deprecated alias of ieh:
+  iprot:       'docs/ns/iep.ttl',      // tolerated synonym
   pgsl:       'docs/ns/pgsl.ttl',
   ie:         'docs/ns/interego.ttl',
   align:      'docs/ns/alignment.ttl',
@@ -87,14 +90,14 @@ const TS_EXTS = new Set(['.ts', '.mts', '.cts']);
 function extractDefinedTerms(ttlPath, prefix) {
   const body = readFileSync(ttlPath, 'utf8');
   const defined = new Set();
-  // Lines like: `cg:Foo a owl:Class ;` or `cg:foo a owl:ObjectProperty ;`
+  // Lines like: `iep:Foo a owl:Class ;` or `iep:foo a owl:ObjectProperty ;`
   const defRegex = new RegExp(`(?:^|\\n)\\s*${prefix}:([A-Za-z][A-Za-z0-9_-]*)\\s+a\\s`, 'g');
   let m;
   while ((m = defRegex.exec(body)) !== null) {
     defined.add(m[1]);
   }
-  // Individuals referenced as `a cg:Xxx` — our existing cg:canPublish etc.
-  // are defined by `cg:canPublish a cg:Affordance`. Since Affordance is
+  // Individuals referenced as `a iep:Xxx` — our existing iep:canPublish etc.
+  // are defined by `iep:canPublish a iep:Affordance`. Since Affordance is
   // already defined by the first regex, no extra work here.
   return defined;
 }
@@ -118,12 +121,16 @@ function* walkFiles(dir) {
 // Map JS template-variable names (e.g. `${CG}Foo`, `${CGH_NS}Foo`) back
 // to the lint prefix they emit. Code that constructs full IRIs via
 // template literals over a namespace constant is otherwise invisible to
-// the curie-only refRegex below — which is how cg:MintResult /
-// cg:ToolResult / cg:RelayEntryPoint drift accumulated unnoticed even
+// the curie-only refRegex below — which is how iep:MintResult /
+// iep:ToolResult / iep:RelayEntryPoint drift accumulated unnoticed even
 // with ontology-lint in CI.
 const TEMPLATE_VAR_TO_PREFIX = {
-  CG: 'cg', CG_NS: 'cg',
-  CGH: 'cgh', CGH_NS: 'cgh',
+  IEP: 'iep', IEP_NS: 'iep',
+  IEH: 'ieh', IEH_NS: 'ieh',
+  // CG/CGH are retained TS symbols whose VALUES are now the iep:/ieh: namespaces,
+  // so their template terms live in iep.ttl / harness.ttl.
+  CG: 'iep', CG_NS: 'iep',
+  CGH: 'ieh', CGH_NS: 'ieh',
   PGSL: 'pgsl', PGSL_NS: 'pgsl',
   IE: 'ie', IE_NS: 'ie', INTEREGO: 'ie', INTEREGO_NS: 'ie',
   ALIGN: 'align', ALIGN_NS: 'align', ALIGNMENT: 'align', ALIGNMENT_NS: 'align',
@@ -151,7 +158,7 @@ function findReferencesInFile(tsPath, prefixes) {
   // the first inner quote of a multi-line template literal (e.g. the
   // SHACL shapes Turtle, which embeds 28 `"` characters in sh:message
   // strings). Negative lookbehind for `:` or word-char still skips
-  // matches inside longer URIs like `urn:cg:my-context`.
+  // matches inside longer URIs like `urn:iep:my-context`.
   const refRegex = new RegExp(
     `(?<![:\\w])(${prefixes.join('|')}):([A-Za-z][A-Za-z0-9_]*)`,
     'g',

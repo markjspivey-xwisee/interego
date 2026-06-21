@@ -57,7 +57,7 @@ export function About({ onTry, onHome }: { onTry: (role: 'learner' | 'admin' | '
         </p>
         <ol style={{ paddingLeft: 22, lineHeight: 1.6 }}>
           <li>verifies your demo wallet signature recovers an address in the published tenant directory</li>
-          <li>fetches the (E2EE-encrypted) directory + policies via <code>cg:discover()</code> against the live Solid pod</li>
+          <li>fetches the (E2EE-encrypted) directory + policies via <code>iep:discover()</code> against the live Solid pod</li>
           <li>decrypts admin sections with its deterministic X25519 admin key</li>
           <li>applies role-based filtering (you only see Joshua's data even if you ask about Jordan)</li>
           <li>composes whatever the affordance demands — agentic RAG, BBS+ derive, CASE export, audit walk — and signs the trace</li>

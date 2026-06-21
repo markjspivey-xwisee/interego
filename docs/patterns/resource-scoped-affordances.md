@@ -6,7 +6,7 @@
 
 ## Problem
 
-A bridge that exposes a vertical's capabilities as `cg:Affordance`
+A bridge that exposes a vertical's capabilities as `iep:Affordance`
 descriptors has a catalogue of *every* operation it supports. The naive
 HATEOAS serialization attaches that whole catalogue to every resource —
 the entry point, every collection, every item. A client reading a
@@ -34,7 +34,7 @@ matching subset to that resource's `_affordances`.
 ```ts
 interface AffordanceScope {
   collections?: readonly string[];  // collection names, or '*'
-  modalStatus?: readonly string[];  // applicable cg:modalStatus values
+  modalStatus?: readonly string[];  // applicable iep:modalStatus values
 }
 ```
 
@@ -56,9 +56,9 @@ sentinel collection.
 ## Layering
 
 This is an L2 *pattern*, not an L1 protocol change. It introduces **no
-new `cg:` term**: `AffordanceScope` is a property of the affordance-
+new `iep:` term**: `AffordanceScope` is a property of the affordance-
 declaration record (the `applications/_shared/affordance-mcp` TS shape),
-and the filter is a pure function over existing data. `cg:modalStatus`
+and the filter is a pure function over existing data. `iep:modalStatus`
 — the one substrate term it reads — already exists in L1. A vertical
 that ignores the pattern is unaffected; its affordances stay unscoped.
 

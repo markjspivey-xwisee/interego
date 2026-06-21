@@ -547,7 +547,7 @@ try {
   console.log(`  conformance check actually dereferenced the vocab in production: ${vocabDereferencedInProd} (Case 7, admin session)`);
   // The IEEE-LER + ADL-TLA emergent composable semantic layer — both
   // ontologies dereference, and composed/view terms carry the
-  // cg:constructedFrom triples that make the composition machine-readable.
+  // iep:constructedFrom triples that make the composition machine-readable.
   let semOk = true;
   for (const slug of ['ieee-ler', 'adl-tla']) {
     const r = await fetch(`${BRIDGE}/ns/${slug}`, { headers: { Accept: 'application/ld+json' } });
@@ -558,7 +558,7 @@ try {
     const ttlR = await fetch(`${BRIDGE}/ns/${slug}`, { headers: { Accept: 'text/turtle' } });
     const ttlBody = await ttlR.text();
     const slugOk = r.status === 200 && t.length > 20 && composed.length > 0
-      && ttlR.status === 200 && ttlBody.includes('cg:constructedFrom');
+      && ttlR.status === 200 && ttlBody.includes('iep:constructedFrom');
     console.log(`  GET /ns/${slug} → HTTP ${r.status}, ${t.length} terms, ${composed.length} emergent (composed/view/role): ${slugOk}`);
     if (!slugOk) semOk = false;
   }

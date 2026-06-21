@@ -15,7 +15,7 @@ operation flows through the substrate transparently.
 Two layers:
 
 * `src/bridge.ts` — **substrate-pure**. Async functions that compose
-  Interego primitives (`publish`, `discover`, `cg:supersedes`): the
+  Interego primitives (`publish`, `discover`, `iep:supersedes`): the
   memory trio (`storeMemory`, `recallMemories`, `forgetMemory`) plus the
   HATEOAS navigation pair (`discoverContexts`, `followAffordance`) and
   the `affordancesFor` decorator. No OpenClaw imports. Reusable by any
@@ -49,7 +49,7 @@ Full rationale: [`docs/integrations/openclaw-full-substrate.md`](../../docs/inte
 
 ## Substrate guarantees
 
-Every memory write is a typed `cg:ContextDescriptor` with:
+Every memory write is a typed `iep:ContextDescriptor` with:
 
 * **Agent + Trust facets** — wallet-rooted DID, self-asserted at publish
   time. Peer attestations land via the existing AC vertical's flow.
@@ -63,7 +63,7 @@ Every memory write is a typed `cg:ContextDescriptor` with:
 
 What you get for free, by composition:
 
-* `cg:supersedes` — every revised fact links back to its predecessor;
+* `iep:supersedes` — every revised fact links back to its predecessor;
   no destructive overwrites.
 * Signed authorship — pod-side wallet signature on save.
 * Federated discovery — `discover_all` / `subscribe_to_pod` work
@@ -134,7 +134,7 @@ rooted typed memory but don't have an OpenClaw-shaped plugin slot.
 * `forgetMemory` (and the `retract` affordance) is **a retraction, not
   a delete** — it publishes a `Counterfactual` descriptor that
   supersedes the target. The original descriptor + graph stay on the
-  pod; an auditor walking `cg:supersedes` can reach them. For GDPR-style
+  pod; an auditor walking `iep:supersedes` can reach them. For GDPR-style
   erasure, do that separately at the pod's storage layer.
 * Cross-pod **E2EE share** (`shareWith` / `defaultShareWith`) is *not*
   applied by the direct bridge — `publish()`'s encryption path needs a

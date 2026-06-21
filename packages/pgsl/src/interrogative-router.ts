@@ -30,7 +30,7 @@ import {
 import { INTERROGATIVE_TABLE } from './interrogative-table.generated.js';
 
 // ── Namespaces (verified against packages/core/src/rdf/namespaces.ts) ─────────
-const CG = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+const CG = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const PROV = 'http://www.w3.org/ns/prov#';
 const ACL = 'http://www.w3.org/ns/auth/acl#';
 const DCAT = 'http://www.w3.org/ns/dcat#';
@@ -65,10 +65,10 @@ export interface InterrogativeEntry {
 // ── 1. Build-time derivation (pure; used by the codegen + the drift test) ─────
 
 const CURIE_PREFIXES: ReadonlyArray<readonly [string, string]> = [
-  ['cg:', CG], ['prov:', PROV], ['acl:', ACL], ['dcat:', DCAT],
+  ['iep:', CG], ['prov:', PROV], ['acl:', ACL], ['dcat:', DCAT],
   ['rdfs:', RDFS], ['ie:', IE], ['skos:', SKOS], ['align:', ALIGN],
   ['pgsl:', 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#'],
-  ['cgh:', 'https://markjspivey-xwisee.github.io/interego/ns/harness#'],
+  ['ieh:', 'https://markjspivey-xwisee.github.io/interego/ns/harness#'],
 ];
 function compact(iri: string): string {
   for (const [pfx, ns] of CURIE_PREFIXES) if (iri.startsWith(ns)) return pfx + iri.slice(ns.length);
@@ -249,7 +249,7 @@ function projectOne(
   switch (t) {
     case 'When': {
       const f = facetOf(doc, 'TemporalFacet');
-      if (!f) return { ...base, status: 'absent', caveat: 'no cg:TemporalFacet on this descriptor' };
+      if (!f) return { ...base, status: 'absent', caveat: 'no iep:TemporalFacet on this descriptor' };
       return { ...base, status: 'full', values: clean({
         validFrom: readStringValue(f, P(CG + 'validFrom')),
         validUntil: readStringValue(f, P(CG + 'validUntil')),
@@ -259,7 +259,7 @@ function projectOne(
     }
     case 'WhatKind': {
       const f = facetOf(doc, 'SemioticFacet');
-      if (!f) return { ...base, status: 'absent', caveat: 'no cg:SemioticFacet on this descriptor' };
+      if (!f) return { ...base, status: 'absent', caveat: 'no iep:SemioticFacet on this descriptor' };
       const conf = readStringValue(f, P(CG + 'epistemicConfidence'));
       return { ...base, status: 'full', values: clean({
         interpretationFrame: readIriValue(f, P(CG + 'interpretationFrame')),
@@ -272,7 +272,7 @@ function projectOne(
     }
     case 'Where': {
       const f = facetOf(doc, 'FederationFacet');
-      if (!f) return { ...base, status: 'absent', caveat: 'no cg:FederationFacet on this descriptor' };
+      if (!f) return { ...base, status: 'absent', caveat: 'no iep:FederationFacet on this descriptor' };
       const dist = derefBnode(doc, firstBnode(f, P(DCAT + 'distribution')));
       return { ...base, status: 'full', values: clean({
         origin: readIriValue(f, P(CG + 'origin')),
@@ -289,7 +289,7 @@ function projectOne(
     }
     case 'Who': {
       const f = facetOf(doc, 'AgentFacet');
-      if (!f) return { ...base, status: 'absent', caveat: 'no cg:AgentFacet on this descriptor' };
+      if (!f) return { ...base, status: 'absent', caveat: 'no iep:AgentFacet on this descriptor' };
       const agent = derefBnode(doc, firstBnode(f, P(CG + 'assertingAgent')));
       const identity = agent ? readIriValue(agent, P(CG + 'agentIdentity')) : undefined;
       const values = clean({
@@ -303,12 +303,12 @@ function projectOne(
       });
       // FULL only if the asserting identity is actually present (the substance of Who).
       const status: AnswerStatus = identity ? 'full' : 'partial';
-      return { ...base, status, values, ...(status === 'partial' ? { caveat: 'AgentFacet present but no cg:assertingAgent identity — only role/delegation available' } : {}) };
+      return { ...base, status, values, ...(status === 'partial' ? { caveat: 'AgentFacet present but no iep:assertingAgent identity — only role/delegation available' } : {}) };
     }
     case 'Whose': {
       const ac = facetOf(doc, 'AccessControlFacet');
       const ag = facetOf(doc, 'AgentFacet');
-      if (!ac && !ag) return { ...base, status: 'absent', caveat: 'no cg:AccessControlFacet or cg:AgentFacet on this descriptor' };
+      if (!ac && !ag) return { ...base, status: 'absent', caveat: 'no iep:AccessControlFacet or iep:AgentFacet on this descriptor' };
       const authorizations = ac ? allBnodes(ac, P(CG + 'authorization')).map(b => derefBnode(doc, b)).filter((s): s is ParsedSubject => !!s).map(a => clean({
         agent: readIriValue(a, P(ACL + 'agent')),
         agentClass: readIriValue(a, P(ACL + 'agentClass')),
@@ -340,13 +340,13 @@ function projectOne(
         ...base,
         status: hasAny ? 'partial' : 'absent',
         values: hasAny ? values : undefined,
-        nextStep: { tool: 'pgsl_decide', reason: 'permission/deontic "whether" (is it allowed?) is a cgh:PolicyDecision — not on the descriptor' },
+        nextStep: { tool: 'pgsl_decide', reason: 'permission/deontic "whether" (is it allowed?) is a ieh:PolicyDecision — not on the descriptor' },
         caveat: 'certainty/modality answered from Trust/Semiotic facets + substrate-verified authorship; permission requires a policy decision',
       };
     }
     case 'Why': {
       const f = facetOf(doc, 'ProvenanceFacet');
-      if (!f) return { ...base, status: 'absent', sharesFacetWith: ['How'], caveat: 'no cg:ProvenanceFacet on this descriptor' };
+      if (!f) return { ...base, status: 'absent', sharesFacetWith: ['How'], caveat: 'no iep:ProvenanceFacet on this descriptor' };
       const act = derefBnode(doc, firstBnode(f, P(PROV + 'wasGeneratedBy')));
       return { ...base, status: 'partial', sharesFacetWith: ['How'], values: clean({
         wasDerivedFrom: iriValuesOf(f, P(PROV + 'wasDerivedFrom')),
@@ -358,11 +358,11 @@ function projectOne(
           endedAt: readStringValue(act, P(PROV + 'endedAtTime')),
           used: iriValuesOf(act, P(PROV + 'used')),
         }) : undefined,
-      }), nextStep: { tool: 'pgsl_decide', reason: 'motivating reason (vs causal provenance) is a cgh:Decision justification — not on the descriptor' }, caveat: 'causal provenance answered here; motive needs the decision record. Shares cg:ProvenanceFacet with How.' };
+      }), nextStep: { tool: 'pgsl_decide', reason: 'motivating reason (vs causal provenance) is a ieh:Decision justification — not on the descriptor' }, caveat: 'causal provenance answered here; motive needs the decision record. Shares iep:ProvenanceFacet with How.' };
     }
     case 'How': {
       const f = facetOf(doc, 'ProvenanceFacet');
-      if (!f) return { ...base, status: 'absent', sharesFacetWith: ['Why'], caveat: 'no cg:ProvenanceFacet on this descriptor' };
+      if (!f) return { ...base, status: 'absent', sharesFacetWith: ['Why'], caveat: 'no iep:ProvenanceFacet on this descriptor' };
       const act = derefBnode(doc, firstBnode(f, P(PROV + 'wasGeneratedBy')));
       return { ...base, status: 'partial', sharesFacetWith: ['Why'], values: clean({
         productionActivity: act ? clean({
@@ -371,7 +371,7 @@ function projectOne(
           used: iriValuesOf(act, P(PROV + 'used')),
         }) : undefined,
         wasDerivedFrom: iriValuesOf(f, P(PROV + 'wasDerivedFrom')),
-      }), nextStep: { tool: 'pgsl_resolve', target: firstTarget, reason: 'compositional "how" (pgsl:PullbackSquare — how the content is composed) lives in the substrate lattice, reachable by resolving cg:describes' }, caveat: 'production-method answered here; compositional structure via pgsl_resolve/decompose. Shares cg:ProvenanceFacet with Why.' };
+      }), nextStep: { tool: 'pgsl_resolve', target: firstTarget, reason: 'compositional "how" (pgsl:PullbackSquare — how the content is composed) lives in the substrate lattice, reachable by resolving iep:describes' }, caveat: 'production-method answered here; compositional structure via pgsl_resolve/decompose. Shares iep:ProvenanceFacet with Why.' };
     }
     case 'HowMuch': {
       const sem = facetOf(doc, 'SemioticFacet');
@@ -383,12 +383,12 @@ function projectOne(
     case 'What': {
       return { ...base, status: 'pointer',
         ...(targets.length ? { values: { describes: targets } } : {}),
-        nextStep: { tool: 'pgsl_resolve', target: firstTarget, reason: 'the VALUE (pgsl:Atom/Fragment) lives in the substrate lattice; the descriptor only points at it via cg:describes' },
-        caveat: 'not on the descriptor — resolve cg:describes in the PGSL lattice' };
+        nextStep: { tool: 'pgsl_resolve', target: firstTarget, reason: 'the VALUE (pgsl:Atom/Fragment) lives in the substrate lattice; the descriptor only points at it via iep:describes' },
+        caveat: 'not on the descriptor — resolve iep:describes in the PGSL lattice' };
     }
     case 'Which': {
       return { ...base, status: 'pointer',
-        nextStep: { tool: 'pgsl_decide', reason: 'selection among alternatives is a cgh:Decision (the OODA decision functor) — not a descriptor facet' },
+        nextStep: { tool: 'pgsl_decide', reason: 'selection among alternatives is a ieh:Decision (the OODA decision functor) — not a descriptor facet' },
         caveat: 'not on the descriptor — a selection is produced by the decision functor' };
     }
   }
@@ -438,7 +438,7 @@ export function routeInterrogatives(opts: RouteOptions): RouteResult | RouteErro
   });
 
   const caveats: string[] = [];
-  if (answers.some(a => a.sharesFacetWith)) caveats.push('Why and How are both answered from the same cg:ProvenanceFacet; the split is by which properties are surfaced + the nextStep, not two distinct facets.');
+  if (answers.some(a => a.sharesFacetWith)) caveats.push('Why and How are both answered from the same iep:ProvenanceFacet; the split is by which properties are surfaced + the nextStep, not two distinct facets.');
   if (answers.some(a => a.status === 'pointer')) caveats.push('Some interrogatives (What/Which) are not descriptor facets — only a nextStep pointer to the answering primitive is returned.');
   if (answers.every(a => a.status === 'absent')) caveats.push('None of the requested interrogatives are answerable from this descriptor (the answering facets are absent).');
 

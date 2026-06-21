@@ -1,8 +1,8 @@
 /**
  * @module skills/agentskills-bridge
- * @description SKILL.md (agentskills.io) ↔ cg:Affordance translator.
+ * @description SKILL.md (agentskills.io) ↔ iep:Affordance translator.
  *
- * Architectural framing: a SKILL.md *is* a cg:Affordance by structure
+ * Architectural framing: a SKILL.md *is* a iep:Affordance by structure
  * — a discoverable named capability with metadata + instructions +
  * optional resources. This module is purely the translator between
  * the runtime-friendly file layout and the substrate's typed
@@ -10,21 +10,21 @@
  *
  * What composes from the rest of the substrate WITHOUT new code:
  *
- *   - Modal status (cg:Hypothetical / cg:Asserted) — "is this skill
+ *   - Modal status (iep:Hypothetical / iep:Asserted) — "is this skill
  *     trusted?"
- *   - cg:supersedes — skill versioning across edits
+ *   - iep:supersedes — skill versioning across edits
  *   - amta:Attestation — multi-axis review (correctness / safety /
  *     efficiency) using the AC vertical's existing attestation flow
- *   - cgh:PromotionConstraint — "this skill cannot be Asserted until
+ *   - ieh:PromotionConstraint — "this skill cannot be Asserted until
  *     it has a safety-axis attestation"
  *   - publish/discover/share_with — federation across pods, E2EE
  *     sharing
  *   - PROV facet — signed authorship, audit-walkable provenance
  *   - pgsl:Atom — content-addressed storage of SKILL.md + scripts +
- *     references; integrity verifiable via cg:contentHash
+ *     references; integrity verifiable via iep:contentHash
  *
  * No `skills:` namespace is introduced. The translator uses existing
- * cg: / cgh: / dct: / hydra: / dcat: / pgsl: predicates only.
+ * iep: / ieh: / dct: / hydra: / dcat: / pgsl: predicates only.
  */
 
 import { ContextDescriptor, sha256, escapeTurtleLiteral } from '@interego/core';
@@ -88,7 +88,7 @@ export interface DescriptorBundle {
   readonly skillValidation: readonly SkillValidationError[];
 }
 
-const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const CGH_NS = 'https://markjspivey-xwisee.github.io/interego/ns/harness#';
 const PGSL_NS = 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#';
 const HYDRA_NS = 'http://www.w3.org/ns/hydra/core#';
@@ -111,12 +111,12 @@ const escapeMulti = escapeTurtleLiteral;
  * its accompanying named-graph TriG content.
  *
  * The descriptor's IRI uses a content-derived stable form,
- * `urn:cg:skill:<name>:<sha256(SKILL.md)[:16]>`. Republishing the same
+ * `urn:iep:skill:<name>:<sha256(SKILL.md)[:16]>`. Republishing the same
  * SKILL.md text by the same author yields the same IRI; editing it
  * yields a new one (which the caller can supersedes-chain to the prior).
  *
  * The graph block contains:
- *   - the skill subject typed as cg:Affordance + cgh:Affordance +
+ *   - the skill subject typed as iep:Affordance + ieh:Affordance +
  *     hydra:Operation + dcat:Distribution
  *   - rdfs:label = SKILL.md `name`
  *   - rdfs:comment = SKILL.md `description`
@@ -143,8 +143,8 @@ export function skillBundleToDescriptor(
 
   const skillContentHash = sha256(bundle.skillMd);
   const skillId = skillContentHash.slice(0, 16);
-  const skillIri = `urn:cg:skill:${fm.name}:${skillId}` as IRI;
-  const graphIri = `urn:graph:cg:skill:${fm.name}:${skillId}` as IRI;
+  const skillIri = `urn:iep:skill:${fm.name}:${skillId}` as IRI;
+  const graphIri = `urn:graph:iep:skill:${fm.name}:${skillId}` as IRI;
   const skillAtomIri = `urn:pgsl:atom:skill-md:${skillContentHash}` as IRI;
 
   // Per-file atoms; sorted for deterministic output
@@ -275,12 +275,12 @@ import {
 export function descriptorGraphToSkillBundle(graphContent: string): SkillBundle {
   const doc = parseTrig(graphContent);
   const affordances = findSubjectsOfType(doc, `${CG_NS}Affordance` as IRI);
-  if (affordances.length === 0) throw new Error('no cg:Affordance subject in graph');
+  if (affordances.length === 0) throw new Error('no iep:Affordance subject in graph');
   // Use the first affordance subject (a graph published by skillBundleToDescriptor has exactly one)
   const affordance = affordances[0]!;
 
   const skillSourceIri = readIriValue(affordance, `${DCT_NS}source` as IRI);
-  if (!skillSourceIri) throw new Error('cg:Affordance subject has no dct:source pointing at the SKILL.md atom');
+  if (!skillSourceIri) throw new Error('iep:Affordance subject has no dct:source pointing at the SKILL.md atom');
 
   // Build a quick lookup of pgsl:Atom subjects by IRI
   const atoms = findSubjectsOfType(doc, `${PGSL_NS}Atom` as IRI);

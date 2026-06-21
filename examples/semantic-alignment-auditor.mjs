@@ -38,15 +38,15 @@ function parseManifestEntries(ttl) {
   let cur = null;
   for (const raw of ttl.split('\n')) {
     const line = raw.trim();
-    const start = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
+    const start = line.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/);
     if (start) { cur = { descriptorUrl: start[1], describes: [], conformsTo: [] }; continue; }
     if (!cur) continue;
     let m;
-    if ((m = line.match(/cg:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
+    if ((m = line.match(/iep:describes\s+<([^>]+)>/))) cur.describes.push(m[1]);
     if ((m = line.match(/dct:conformsTo\s+<([^>]+)>/))) cur.conformsTo.push(m[1]);
-    if ((m = line.match(/cg:modalStatus\s+cg:(\w+)/))) cur.modalStatus = m[1];
-    if ((m = line.match(/cg:trustLevel\s+cg:(\w+)/))) cur.trustLevel = m[1];
-    if ((m = line.match(/cg:validFrom\s+"([^"]+)"/))) cur.validFrom = m[1];
+    if ((m = line.match(/iep:modalStatus\s+iep:(\w+)/))) cur.modalStatus = m[1];
+    if ((m = line.match(/iep:trustLevel\s+iep:(\w+)/))) cur.trustLevel = m[1];
+    if ((m = line.match(/iep:validFrom\s+"([^"]+)"/))) cur.validFrom = m[1];
     if (line.endsWith('.')) { entries.push(cur); cur = null; }
   }
   return entries;
@@ -55,13 +55,13 @@ function parseManifestEntries(ttl) {
 // Pull issuer, modalStatus, epistemicConfidence, wasDerivedFrom from a
 // descriptor's Turtle — the cleartext part, no envelope decryption.
 function parseDescriptor(ttl) {
-  const issuerM = ttl.match(/cg:TrustFacet[\s\S]*?cg:issuer\s+<([^>]+)>/);
-  const modalM = ttl.match(/cg:modalStatus\s+cg:(\w+)/);
-  const confM = ttl.match(/cg:epistemicConfidence\s+"([\d.]+)"/);
+  const issuerM = ttl.match(/iep:TrustFacet[\s\S]*?iep:issuer\s+<([^>]+)>/);
+  const modalM = ttl.match(/iep:modalStatus\s+iep:(\w+)/);
+  const confM = ttl.match(/iep:epistemicConfidence\s+"([\d.]+)"/);
   const conformsToMatches = [...ttl.matchAll(/dct:conformsTo\s+<([^>]+)>/g)];
   const derivedFromMatches = [...ttl.matchAll(/prov:wasDerivedFrom\s+<([^>]+)>/g)];
-  const supersedesMatches = [...ttl.matchAll(/cg:supersedes\s+<([^>]+)>/g)];
-  const describesM = ttl.match(/cg:describes\s+<([^>]+)>/);
+  const supersedesMatches = [...ttl.matchAll(/iep:supersedes\s+<([^>]+)>/g)];
+  const describesM = ttl.match(/iep:describes\s+<([^>]+)>/);
   return {
     issuer: issuerM?.[1] ?? null,
     modal: modalM?.[1] ?? null,
@@ -89,12 +89,12 @@ function audit(graphIri, descriptors, allDescMap) {
   // descriptor's own graph via `describes`; a validation descriptor
   // should have wasDerivedFrom ↦ (some earlier descriptor's ID).
   //
-  // The ID is opaque (urn:cg:markj:<timestamp>), so we check: does
+  // The ID is opaque (urn:iep:markj:<timestamp>), so we check: does
   // each non-first descriptor's `wasDerivedFrom` include at least one
   // other descriptor in this graph's set?
   const descriptorIds = new Set(
     descriptors.map(d => d.descriptorUrl.split('/').pop().replace('.ttl', ''))
-      .map(id => `urn:cg:markj:${id}`),
+      .map(id => `urn:iep:markj:${id}`),
   );
   const sortedDescs = [...descriptors].sort((a, b) => (a.validFrom ?? '').localeCompare(b.validFrom ?? ''));
   const chainClosesCount = sortedDescs.slice(1).filter(d => {

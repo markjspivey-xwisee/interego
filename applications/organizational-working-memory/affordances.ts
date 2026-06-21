@@ -4,7 +4,7 @@
  * Vertical purpose:
  *   Federated organizational memory — people, projects, decisions,
  *   and follow-ups, persisted as typed Context Descriptors on the
- *   org's pod. The "graph" emerges from the substrate (cg:supersedes
+ *   org's pod. The "graph" emerges from the substrate (iep:supersedes
  *   chains carry decision revision; passport:LifeEvent records
  *   identity continuity; pgsl:Atom content-addresses captured notes
  *   so two observers minting the same insight collide on IRI).
@@ -46,10 +46,10 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
   // ── Entity surface ──────────────────────────────────────────
 
   {
-    action: 'urn:cg:action:owm:upsert-person' as IRI,
+    action: 'urn:iep:action:owm:upsert-person' as IRI,
     toolName: 'owm.upsert_person',
     title: 'Create or update a person record',
-    description: 'Upsert an owm:Person descriptor on the org pod. Person IRIs are stable across sessions; subsequent calls supersede prior versions via cg:supersedes. Handles humans (no DID) and agent-people (with DID + capability passport).',
+    description: 'Upsert an owm:Person descriptor on the org pod. Person IRIs are stable across sessions; subsequent calls supersede prior versions via iep:supersedes. Handles humans (no DID) and agent-people (with DID + capability passport).',
     method: 'POST',
     targetTemplate: '{base}/owm/upsert_person',
     annotations: { title: 'Create or update a person', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -63,7 +63,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Org pod URL (defaults from env).' },
     ],
     outputs: {
-      description: 'PublishResult — IRI of the new/updated owm:Person + descriptor/graph URLs + the modalStatus the descriptor was published with + IRIs of any prior descriptors superseded by this upsert (cg:supersedes chain).',
+      description: 'PublishResult — IRI of the new/updated owm:Person + descriptor/graph URLs + the modalStatus the descriptor was published with + IRIs of any prior descriptors superseded by this upsert (iep:supersedes chain).',
       properties: {
         iri: { type: 'string', description: 'Stable owm:Person IRI (content-derived from name + organization).' },
         descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
@@ -75,7 +75,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:upsert-project' as IRI,
+    action: 'urn:iep:action:owm:upsert-project' as IRI,
     toolName: 'owm.upsert_project',
     title: 'Create or update a project record',
     description: 'Upsert an owm:Project descriptor. Projects are owm:WorkingScope subclasses — composable with olke: knowledge-state vocabulary (Tacit / Articulate / Collective / Institutional). Subsequent upserts supersede.',
@@ -103,7 +103,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:record-decision' as IRI,
+    action: 'urn:iep:action:owm:record-decision' as IRI,
     toolName: 'owm.record_decision',
     title: 'Record a decision with modal status',
     description: 'Record an owm:Decision descriptor. Modal status defaults to Hypothetical (decision pending). Use Asserted for committed decisions. To reverse a decision, call again with modal_status=Counterfactual and supersedes=[<prior decision IRI>].',
@@ -120,7 +120,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Org pod URL.' },
     ],
     outputs: {
-      description: 'PublishResult — IRI of the new owm:Decision + descriptor/graph URLs + modalStatus (defaults Hypothetical until promoted) + the cg:supersedes chain (from caller-supplied prior decision IRIs + auto-supersedes of any earlier descriptor at the same IRI).',
+      description: 'PublishResult — IRI of the new owm:Decision + descriptor/graph URLs + modalStatus (defaults Hypothetical until promoted) + the iep:supersedes chain (from caller-supplied prior decision IRIs + auto-supersedes of any earlier descriptor at the same IRI).',
       properties: {
         iri: { type: 'string', description: 'owm:Decision IRI.' },
         descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
@@ -132,7 +132,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:queue-followup' as IRI,
+    action: 'urn:iep:action:owm:queue-followup' as IRI,
     toolName: 'owm.queue_followup',
     title: 'Queue a follow-up to surface later',
     description: 'Queue an owm:FollowUp with a due-date (ISO 8601). The bridge\'s list_overdue_followups affordance surfaces items whose due_at has passed, so a cron or interactive query closes the observe-and-revise loop.',
@@ -159,7 +159,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:record-note' as IRI,
+    action: 'urn:iep:action:owm:record-note' as IRI,
     toolName: 'owm.record_note',
     title: 'Record a content-addressed note',
     description: 'Capture a free-form insight as a content-addressed pgsl:Atom + descriptor. Two observers minting the same verbatim text mint the same atom IRI — duplicate notes collapse structurally.',
@@ -185,7 +185,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:list-overdue-followups' as IRI,
+    action: 'urn:iep:action:owm:list-overdue-followups' as IRI,
     toolName: 'owm.list_overdue_followups',
     title: 'List overdue follow-ups',
     description: 'Return follow-ups whose due_at is on or before now (or `now` arg). Used by cron schedulers and by interactive agents that want to surface pending work at session start.',
@@ -218,7 +218,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:discover-subgraph' as IRI,
+    action: 'urn:iep:action:owm:discover-subgraph' as IRI,
     toolName: 'owm.discover_subgraph',
     title: 'Walk the org graph for a subject',
     description: 'Affordance-walk the org pod for descriptors related to a subject IRI. Returns the manifest entries (descriptor URLs + facet summary + supersedes chain head). Caller can then get_descriptor on URLs of interest.',
@@ -257,7 +257,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
   // ── Navigation surface (per-source isolation) ──────────────
 
   {
-    action: 'urn:cg:action:owm:navigate-source' as IRI,
+    action: 'urn:iep:action:owm:navigate-source' as IRI,
     toolName: 'owm.navigate_source',
     title: 'Read from an external source via uniform verbs',
     description: 'Read an external information source (web, drive, slack, github, ...) using uniform verbs (ls / cat / grep / recent). Each source runs as an isolated sub-handler inside the bridge so the main agent\'s context is never polluted by source-specific tool noise. The source\'s native quirks (auth, pagination, content-type) are handled inside the sub-handler.',
@@ -274,7 +274,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:update-source' as IRI,
+    action: 'urn:iep:action:owm:update-source' as IRI,
     toolName: 'owm.update_source',
     title: 'Write to an external source via uniform action',
     description: 'Write back to an external source (post Slack message, append note to drive doc, comment on PR). Uniform write surface; per-source sub-handler owns the protocol.',
@@ -291,7 +291,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:list-sources' as IRI,
+    action: 'urn:iep:action:owm:list-sources' as IRI,
     toolName: 'owm.list_sources',
     title: 'List currently-wired source adapters',
     description: 'Return the source keys + supported verbs the bridge currently has loaded. Useful before asking the main agent to navigate.',
@@ -355,7 +355,7 @@ export const owmAffordances = OWM_AFFORDANCES;
 //     summary descriptor.
 const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
   {
-    action: 'urn:cg:action:owm:aggregate-decisions-query' as IRI,
+    action: 'urn:iep:action:owm:aggregate-decisions-query' as IRI,
     toolName: 'owm.aggregate_decisions_query',
     title: '[operator] Aggregate-privacy query over decision lineage',
     description: 'Org-operator-side: return counts / thresholds / lineage summaries over owm:Decision descriptors. Five privacy modes layered on the same surface: v1 abac (default) | v2 merkle-attested-opt-in (verifiable count + Merkle inclusion proofs over contributing descriptor URLs) | v3 zk-aggregate (homomorphic Pedersen sum + DP-Laplace noise) | v3.1 + require_signed_bounds (regulator-grade attribution) | v3.2 + epsilon_budget_max (cumulative ε discipline). Distribution-shaped metrics (mean-revision / supersession-distribution / contributor-breadth) work under v1/v2; v3 supports decision-count only. Returns the underlying count + the chosen mode\'s attestation bundle.',
@@ -363,7 +363,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/owm/aggregate_decisions_query',
     annotations: { title: 'Aggregate-privacy decision query', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: 'period_from', type: 'string', required: true, description: 'ISO 8601 lower bound on cg:TemporalFacet.validFrom.' },
+      { name: 'period_from', type: 'string', required: true, description: 'ISO 8601 lower bound on iep:TemporalFacet.validFrom.' },
       { name: 'period_to', type: 'string', required: true, description: 'ISO 8601 upper bound.' },
       { name: 'scope_iri', type: 'string', required: false, description: 'Optional scope (project, team, decision class) to narrow the aggregate.' },
       { name: 'metric', type: 'string', required: true, description: 'One of: decision-count | mean-revision-count | supersession-distribution | contributor-breadth.' },
@@ -391,7 +391,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:project-health-summary' as IRI,
+    action: 'urn:iep:action:owm:project-health-summary' as IRI,
     toolName: 'owm.project_health_summary',
     title: '[operator] Per-project rollup of follow-up flow + decision recency',
     description: 'Org-operator-side: aggregate-shaped rollup over a project — follow-up open/closed counts, decision recency, contributor breadth, supersession churn. Individual descriptors only surface where the contributor has explicitly issued share_with on them. Composes the existing owm:Project + owm:Decision + owm:FollowUp shapes.',
@@ -408,7 +408,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
         projectIri: { type: 'string' },
         windowDays: { type: 'integer' },
         decisionCount: { type: 'integer', description: 'Distinct owm:Decision IRIs in scope.' },
-        recentDecisionCount: { type: 'integer', description: 'Distinct decisions with cg:validFrom inside the window.' },
+        recentDecisionCount: { type: 'integer', description: 'Distinct decisions with iep:validFrom inside the window.' },
         followUpCount: { type: 'integer', description: 'Distinct owm:FollowUp IRIs in scope.' },
         openFollowUpCount: { type: 'integer', description: 'Follow-ups not superseded by a closure / Counterfactual descriptor.' },
         noteCount: { type: 'integer', description: 'Distinct owm:Note descriptors in scope.' },
@@ -419,7 +419,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:publish-org-policy' as IRI,
+    action: 'urn:iep:action:owm:publish-org-policy' as IRI,
     toolName: 'owm.publish_org_policy',
     title: '[operator] Sign and publish an org-level policy descriptor',
     description: 'Org-operator-side: publish a SIGNED org-policy descriptor to the org pod — retention windows, decision-promotion thresholds, framework-compliance attestations, source-adapter governance rules. Authored by an org-authority signing key (NOT a contributor key). Contributors discover via federated read; per-graph share_with is the boundary that determines who sees what.',
@@ -444,7 +444,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
-    action: 'urn:cg:action:owm:publish-compliance-evidence' as IRI,
+    action: 'urn:iep:action:owm:publish-compliance-evidence' as IRI,
     toolName: 'owm.publish_compliance_evidence',
     title: '[operator] Wrap an operational event as compliance-grade evidence',
     description: 'Org-operator-side: wrap an org-level operational event (deploy, access change, key rotation, incident, quarterly review) as a compliance: true descriptor citing the relevant control IRIs (soc2:CC6.1, eu-ai-act:Article15, nist-rmf:MG-1.1, etc.). Composes src/ops/ for the event shape and integrations/compliance-overlay/ for the framework citation. The same code path that records the ops event becomes board-facing audit evidence; no parallel pipeline.',

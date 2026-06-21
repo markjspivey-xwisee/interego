@@ -63,7 +63,7 @@ Call ac.author_tool with:
     function detectSecondContact(message, history) {
       return history.length > 0 && /again|still|already|previously/i.test(message);
     }
-  affordance_action: "urn:cg:action:demo:detect-second-contact"
+  affordance_action: "urn:iep:action:demo:detect-second-contact"
 
 PHASE 2: Self-attest the tool you just authored.
 Call ac.attest_tool with:

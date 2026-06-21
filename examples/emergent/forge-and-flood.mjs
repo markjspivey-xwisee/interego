@@ -23,7 +23,7 @@
  *       is fresh, so naive de-duplication by manifest IRI misses the
  *       replay. The substrate's stance: replays of a valid signed
  *       payload are EQUIVALENT to the original UNLESS distinguished by
- *       cg:supersedes or by temporal-context cues (validFrom +
+ *       iep:supersedes or by temporal-context cues (validFrom +
  *       generatedAtTime). This harness documents that stance and
  *       asserts the reader's content-hash de-duplication catches it.
  *
@@ -41,7 +41,7 @@
  * with ethers.verifyMessage(), and only admit those whose recovered
  * address matches the claimed issuer DID. The reader then downgrades
  * everything else to a non-trusted bucket so calibration counts only
- * cg:CryptographicallyVerified outcomes. Replay attacks ride on top of
+ * iep:CryptographicallyVerified outcomes. Replay attacks ride on top of
  * THIS gate and need a separate content-hash + supersedes check.
  *
  * AGENTS (7, sequential in-process; ephemeral wallets — no Claude SDK)
@@ -67,9 +67,9 @@
  *           honest1/2; mix of unsigned/malformed/wrongSigner)
  *   3.  6 × replayed outcome descriptors (Trust = CryptographicallyVerified
  *           because the signature is still valid; only fresh URL + lack
- *           of cg:supersedes distinguishes them from the originals)
+ *           of iep:supersedes distinguishes them from the originals)
  *   4.  4 × reader admit/reject log descriptors (one per honest reader,
- *           each cg:supersedes the forged descriptors it rejected)
+ *           each iep:supersedes the forged descriptors it rejected)
  *
  * PASS / FAIL
  *   PASS = every assertion in the brief evaluates true on the live pod
@@ -104,7 +104,7 @@ const SCENARIO_DATE = process.env.FORGE_AND_FLOOD_DATE
 const POD = `${CSS}/demos/emergent-forge-and-flood-${SCENARIO_DATE}/`;
 
 // Vertical scenario namespace — per CLAUDE.md ontology hygiene, NEVER
-// invent cg:/cgh:/pgsl:/amta:/abac:/etc. terms. Anything scenario-
+// invent iep:/ieh:/pgsl:/amta:/abac:/etc. terms. Anything scenario-
 // specific lives under this opaque IRI and never needs an owned-ontology
 // declaration; the ontology-lint will not flag it.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/forge-and-flood#';
@@ -199,7 +199,7 @@ function recoverMessageSigner(commitment, signature) {
 
 // Content-hash of the (commitment, signature) pair. Used by readers to
 // detect replays: if the same {commitment, signature} appears under two
-// distinct descriptor URLs with no cg:supersedes edge between them, the
+// distinct descriptor URLs with no iep:supersedes edge between them, the
 // later observation is a replay of the earlier one.
 function contentFingerprint(commitment, signature) {
   return createHash('sha256')
@@ -231,7 +231,7 @@ async function publishHonestOutcome(issuer, idx, value) {
   const { commitment, signature } = await signOutcome(issuer.wallet, payload);
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix forge: <${SCENARIO_NS}> .
@@ -319,7 +319,7 @@ async function publishForgedOutcome(attacker, victim, idx, value, kind) {
   }
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix forge: <${SCENARIO_NS}> .
@@ -372,14 +372,14 @@ async function publishForgedOutcome(attacker, victim, idx, value, kind) {
 // Replay attack: take an honest, validly-signed descriptor and
 // re-publish the SAME {commitment, signature} payload under a fresh
 // pod URL. The signature still verifies cleanly because the rightful
-// key produced it; only content-hash de-duplication or a cg:supersedes
+// key produced it; only content-hash de-duplication or a iep:supersedes
 // edge can distinguish replay from original.
 async function publishReplayedOutcome(attacker, original, idx) {
   const id = `urn:emergent:forge-and-flood:replay:${attacker.slug}:${idx}:${SCENARIO_DATE}`;
   const graphIri = `${id}-graph`;
   const now = new Date().toISOString();
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix forge: <${SCENARIO_NS}> .
@@ -401,7 +401,7 @@ async function publishReplayedOutcome(attacker, original, idx) {
   // is genuine; only the URL is new. Trust facet is set to Verified
   // because the recovered signer DOES match the claimed DID. The
   // substrate's stance is that this is EQUIVALENT to the original
-  // unless a cg:supersedes edge or temporal context distinguishes
+  // unless a iep:supersedes edge or temporal context distinguishes
   // them — readers must therefore content-hash dedupe.
   const desc = ContextDescriptor.create(id)
     .describes(graphIri)
@@ -447,7 +447,7 @@ async function publishReaderLog(reader, admitted, rejected) {
     .map(r => `  forge:rejectedDescriptor [ forge:descriptor <${r.iri}> ; forge:reason <${r.reason}> ] ;`)
     .join('\n');
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix forge: <${SCENARIO_NS}> .
@@ -758,7 +758,7 @@ function runReaderFilter() {
     }
     // (e) replay de-duplication by content-hash. The substrate's stance:
     //     replays of a valid signature are equivalent to the original
-    //     unless cg:supersedes or temporal context distinguishes them.
+    //     unless iep:supersedes or temporal context distinguishes them.
     //     A trust-aware reader therefore content-hash dedupes; the first
     //     observation wins, later ones are tagged as replays.
     const fp = contentFingerprint(commitment, signature);
@@ -810,7 +810,7 @@ check('the reader-side signature filter is deterministic across 4 independent re
 
 // ASSERTION 5 — replayed descriptors have unique URLs but the embedded
 // payload signature is still valid; the substrate's stance is that
-// replays are equivalent unless cg:supersedes or temporal context
+// replays are equivalent unless iep:supersedes or temporal context
 // distinguishes them. The trust-aware reader content-hash dedupes.
 const replayUrls = new Set(ledger.replayed.map(r => r.replayDescriptorUrl));
 const replayPayloads = new Set(ledger.replayed.map(r => r.fingerprint));
@@ -829,14 +829,14 @@ check('reader content-hash de-duplication tags every replay (distinguishes origi
   { rejected: replayRejectsByReader, admitted: replayAdmitsByReader });
 
 // Document the substrate's stance: replays of a valid signature are
-// equivalent UNLESS a cg:supersedes edge or temporal context (validFrom
+// equivalent UNLESS a iep:supersedes edge or temporal context (validFrom
 // + generatedAtTime) distinguishes them. The reader-side filter resolves
 // this by ordering by generatedAtTime ASC and content-hash deduping —
 // the first observation wins, later observations of the same payload
-// are admitted only if they carry a cg:supersedes edge that names an
+// are admitted only if they carry a iep:supersedes edge that names an
 // observation the reader already trusts.
 console.log('   substrate stance: replays of a valid signed payload are equivalent');
-console.log('   to the original unless cg:supersedes or temporal context distinguishes');
+console.log('   to the original unless iep:supersedes or temporal context distinguishes');
 console.log('   them; trust-aware readers content-hash dedupe (first-write-wins by');
 console.log('   generatedAtTime).');
 
@@ -920,5 +920,5 @@ console.log('attack: 20 forged + 6 replayed descriptors remain discoverable on t
 console.log('pod but are excluded from the trust-filtered reads by 4 independent');
 console.log('readers. Replay handling uses content-hash de-duplication ordered by');
 console.log('generatedAtTime — the substrate stance is that valid-signature replays');
-console.log('are equivalent to the original unless cg:supersedes or temporal context');
+console.log('are equivalent to the original unless iep:supersedes or temporal context');
 console.log('distinguishes them.');

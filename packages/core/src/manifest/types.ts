@@ -55,7 +55,7 @@ export interface ManifestEntry {
   readonly conformsTo?: readonly string[];
   /**
    * Descriptor IRIs this entry supersedes. Manifest-mirrored from
-   * cg:supersedes on the descriptor itself so callers can identify
+   * iep:supersedes on the descriptor itself so callers can identify
    * head-of-chain entries (those NOT named in any other entry's
    * supersedes list) without re-fetching every TriG. Empty / absent
    * means this entry supersedes nothing — i.e. it's either a fresh

@@ -22,7 +22,7 @@
  *   adversarially writes both sides' divergent state to the same pod
  *   (the partition is logical — side A and side B publish to disjoint
  *   sub-paths so neither side reads the other during the partition
- *   window) then resolves on heal using discover() + cg:supersedes.
+ *   window) then resolves on heal using discover() + iep:supersedes.
  *
  *   Failures we are watching for:
  *     - Both sides' descriptors recorded but no terminal singleton
@@ -95,7 +95,7 @@ const POD_SIDE_B = `${POD_ROOT}side-b/`;
 const POD_MERGED = `${POD_ROOT}merged/`;
 
 // Vertical namespace for scenario-specific predicates. Never reuse
-// cg:/passport:/registry:/amta: for scenario-only terms (ontology hygiene).
+// iep:/passport:/registry:/amta: for scenario-only terms (ontology hygiene).
 const SCENARIO_NS = 'https://interego-emergent.example/ns/partitioned-saga-replay#';
 
 const SAGA_ID = `urn:saga:psr:${SCENARIO_DATE}:${RUN_ID}`;
@@ -201,7 +201,7 @@ function stepIri(podUrl, stepN, kind, sagaSide) {
 async function publishSagaEvent({
   podUrl, wallet, did,
   stepN, action, status, sagaSide,
-  precedingDescriptorUrl,           // for cg:supersedes
+  precedingDescriptorUrl,           // for iep:supersedes
   occurredAt,
   extraDetails = {},
 }) {
@@ -228,13 +228,13 @@ async function publishSagaEvent({
     .join('\n');
 
   const graph = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix scen: <${SCENARIO_NS}> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<${iri}> a cg:ContextDescriptor, scen:SagaEvent ;
+<${iri}> a iep:ContextDescriptor, scen:SagaEvent ;
   dcterms:title "Saga ${SAGA_ID} step ${stepN} ${status} (side=${sagaSide})" ;
   scen:sagaId "${SAGA_ID}" ;
   scen:stepN ${stepN} ;
@@ -342,7 +342,7 @@ for (const step of STEP_DEFS.slice(0, 3)) {
   events.push(result);
   prev = result.descriptorUrl;
 }
-check('three pre-partition steps published with linear cg:supersedes chain',
+check('three pre-partition steps published with linear iep:supersedes chain',
   events.length === 3 && events.every(e => e.status === 'completed' && e.sagaSide === 'pre'),
   { count: events.length, statuses: events.map(e => e.status) });
 
@@ -487,7 +487,7 @@ function extractNumericField(ttl, predicate) {
 }
 
 function extractSupersedesUrls(ttl) {
-  const m = ttl.match(/cg:supersedes\s+(<[^>]+>(?:\s*,\s*<[^>]+>)*)/);
+  const m = ttl.match(/iep:supersedes\s+(<[^>]+>(?:\s*,\s*<[^>]+>)*)/);
   if (!m) return [];
   return Array.from(m[1].matchAll(/<([^>]+)>/g)).map(x => x[1]);
 }
@@ -653,7 +653,7 @@ check('post-heal there is exactly ONE terminal merged saga state',
 // supersedes chain on the merged terminal must reference the winner.
 const mergedTtl = mergedRecords[0]?.body ?? '';
 const mergedSupersedes = extractSupersedesUrls(mergedTtl);
-check('merged terminal\'s cg:supersedes chain references the resolution winner',
+check('merged terminal\'s iep:supersedes chain references the resolution winner',
   mergedSupersedes.length === 1 && mergedSupersedes[0] === winner.record.descriptorUrl,
   { mergedSupersedes, expected: winner.record.descriptorUrl });
 
@@ -727,7 +727,7 @@ check('replay from scratch yields the SAME terminal saga state as the live walk'
 // ── ACT 10 — supersedes chain shows the resolution path ──────────────
 h('ACT 10 — verify supersedes chain shows the resolution path');
 
-// Walk the merged terminal backward via cg:supersedes — we should hit
+// Walk the merged terminal backward via iep:supersedes — we should hit
 // the winner (sideA step-4 completed), then sideA step-4 in-flight, then
 // step 3 (the partition point). Stop when we run out of links.
 async function walkChainBackward(startUrl, maxHops = 12) {
@@ -769,7 +769,7 @@ const chainMatches = chainHeads.length === expectedSequence.length
     n.stepN === expectedSequence[i].stepN
     && n.status === expectedSequence[i].status
     && n.sagaSide === expectedSequence[i].sagaSide);
-check('cg:supersedes chain from merged terminal shows the full resolution path back to the partition point',
+check('iep:supersedes chain from merged terminal shows the full resolution path back to the partition point',
   chainMatches, { got: chainHeads, expected: expectedSequence });
 
 // ── ACT 11 — every step's wallet signature is wallet-recoverable ─────

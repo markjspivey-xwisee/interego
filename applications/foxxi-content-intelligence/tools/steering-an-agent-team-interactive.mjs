@@ -162,7 +162,7 @@ function probe() {
   console.log(`      OUTCOME:  incident resolved`);
   console.log(`      DOWNTIME: 0 s   (live pool-drain — no restart)`);
   console.log(`      BLAST RADIUS: low   ·   ${xapi.statements.length} conformant xAPI statements emitted`);
-  console.log(`    ${wrap('You changed a constraint, not an outcome. The agents re-planned and chose the drain THEMSELVES — the trajectory records their cg:supersedes edge, not your command. The causal read ties the win to your probe. And because you nudged a constraint, the team is better-shaped for the next incident — not just this one.', 72, '    ')}`);
+  console.log(`    ${wrap('You changed a constraint, not an outcome. The agents re-planned and chose the drain THEMSELVES — the trajectory records their iep:supersedes edge, not your command. The causal read ties the win to your probe. And because you nudged a constraint, the team is better-shaped for the next incident — not just this one.', 72, '    ')}`);
 }
 
 // ── [3] OVERRIDE ─────────────────────────────────────────────────────
@@ -182,7 +182,7 @@ function override() {
   console.log(`      OUTCOME:  incident resolved`);
   console.log(`      DOWNTIME: 0 s`);
   console.log(`    But read what the substrate recorded:`);
-  console.log(`      · the drain step carries NO cg:supersedes edge (hasSupersedes=${hasSupersedes})`);
+  console.log(`      · the drain step carries NO iep:supersedes edge (hasSupersedes=${hasSupersedes})`);
   console.log(`        — the team did not revise its own plan; you replaced it.`);
   console.log(`      · the restart intention is still dangling (unresolved=${danglingIntent})`);
   console.log(`        — the team never reconsidered it.`);

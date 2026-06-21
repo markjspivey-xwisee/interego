@@ -7,13 +7,13 @@ End-to-end encryption of pod content, structured as **per-agent recipient sets**
 1. **Storage is zero-trust.** CSS, Azure Files, the IPFS pinning service, and anyone with raw read access to a pod URL sees only ciphertext for private content. No operator in the chain has enough material to read user data.
 2. **Keys live with agents.** Each agent surface (Claude Code stdio, Claude Desktop, Claude Mobile relay, any future client) holds its own X25519 keypair and never leaves it. The server stores only public keys.
 3. **Metadata stays discoverable.** Descriptor *facets* (type, temporal range, modal status, trust level) remain plaintext so federation queries work. Graph *content* (the actual triples) is encrypted. The split is deliberate: discovery without disclosure.
-4. **Hypermedia-native.** A descriptor self-describes the path from metadata to encrypted payload via `cg:affordance [ a dcat:Distribution, hydra:Operation, cg:Affordance, cgh:Affordance ; … ]`. Clients follow the link; they never reconstruct URLs by filename convention.
+4. **Hypermedia-native.** A descriptor self-describes the path from metadata to encrypted payload via `iep:affordance [ a dcat:Distribution, hydra:Operation, iep:Affordance, ieh:Affordance ; … ]`. Clients follow the link; they never reconstruct URLs by filename convention.
 
 ## Three encryption surfaces
 
 | Surface | What's encrypted | Applied by | Recipients |
 |---|---|---|---|
-| **Graph envelope** | The named-graph payload (TriG) behind a descriptor | `publish()` in `src/solid/client.ts` | Every `cg:AuthorizedAgent` on the pod with an `cg:encryptionPublicKey`, plus any `share_with` handles' agents |
+| **Graph envelope** | The named-graph payload (TriG) behind a descriptor | `publish()` in `src/solid/client.ts` | Every `iep:AuthorizedAgent` on the pod with an `iep:encryptionPublicKey`, plus any `share_with` handles' agents |
 | **Facet value** | Individual sensitive field within a facet (e.g. `prov:wasAttributedTo`) | `encryptFacetValue()` in `src/crypto/facet-encryption.ts` | Explicit recipient list per field |
 | **PGSL atom** | The value of a single lattice atom | `mintEncryptedAtom()` in `src/pgsl/lattice.ts` | Pod-scoped agent set; URI still content-addressed |
 
@@ -49,24 +49,24 @@ All three use the same nacl-box envelope format (`X25519` key-exchange + `XSalsa
 Every encrypted descriptor Turtle includes this block:
 
 ```turtle
-<> cg:affordance [
-    a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ;
-    cg:action cg:canDecrypt ;
+<> iep:affordance [
+    a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
+    iep:action iep:canDecrypt ;
     hydra:method "GET" ;
     hydra:target <https://pod/.../slug-graph.envelope.jose.json> ;
-    hydra:returns cg:EncryptedGraphEnvelope ;
+    hydra:returns iep:EncryptedGraphEnvelope ;
     hydra:title "Fetch encrypted graph envelope" ;
     dcat:accessURL <https://pod/.../slug-graph.envelope.jose.json> ;
     dcat:mediaType "application/jose+json" ;
-    cg:encrypted true ;
-    cg:encryptionAlgorithm "X25519-XSalsa20-Poly1305" ;
-    cg:recipientCount 3
+    iep:encrypted true ;
+    iep:encryptionAlgorithm "X25519-XSalsa20-Poly1305" ;
+    iep:recipientCount 3
 ] .
 ```
 
 **Four compatible types on one RDF node:**
-- `cg:Affordance` — discovery-time capability declaration (matches `cg:canPublish` / `cg:canDiscover` / `cg:canSubscribe` pattern)
-- `cgh:Affordance` — harness-execution-time affordance for decorator pipelines
+- `iep:Affordance` — discovery-time capability declaration (matches `iep:canPublish` / `iep:canDiscover` / `iep:canSubscribe` pattern)
+- `ieh:Affordance` — harness-execution-time affordance for decorator pipelines
 - `hydra:Operation` — HATEOAS client dispatch target
 - `dcat:Distribution` — DCAT-3 compatible for external catalog ingestion
 
@@ -76,7 +76,7 @@ Any client speaking any of these vocabularies can dispatch the retrieval without
 
 On every publish, the recipient set is the union of:
 
-1. **Every non-revoked `cg:AuthorizedAgent`** on the target pod that has registered a `cg:encryptionPublicKey`. Read from `<pod>/agents` via `readAgentRegistry()`.
+1. **Every non-revoked `iep:AuthorizedAgent`** on the target pod that has registered a `iep:encryptionPublicKey`. Read from `<pod>/agents` via `readAgentRegistry()`.
 2. **The publishing agent's own key** (always included so the author can re-read their own publishes later).
 3. **External agents from `share_with`** handles — each handle resolved via WebFinger / DID / direct pod URL to the target user's pod, their authorized agents' keys pulled and added. One graph, selective disclosure without pod-level ACL changes.
 
@@ -87,7 +87,7 @@ Registration is automatic: `publish_context` auto-registers the calling agent on
 | Event | What happens to keys |
 |---|---|
 | **Agent startup** | Load or generate X25519 keypair at `agent-key-<id>.json` (stdio) or `/app/relay-agent-key.json` (relay). File is mode 0600. Persists across container restarts when a persistent volume is mounted. |
-| **First publish** | Agent auto-registers on the pod's `<pod>/agents` Turtle registry with `cg:encryptionPublicKey "<base64>"`. Delegation credential written to `/credentials/<agent-id>.jsonld`. |
+| **First publish** | Agent auto-registers on the pod's `<pod>/agents` Turtle registry with `iep:encryptionPublicKey "<base64>"`. Delegation credential written to `/credentials/<agent-id>.jsonld`. |
 | **Subsequent publishes** | Registry is re-read, recipient set collected, envelope wrapped for everyone. Idempotent. |
 | **Key rotation** | Publish with new keypair — subsequent envelopes include new key as recipient. Old envelopes keep working via old wrapped-keys. |
 | **Revocation** | Remove agent from registry, optionally re-encrypt recent descriptors without the revoked key (old envelopes that a revoked agent already decrypted once are irrecoverably out of your control — this is true of all E2EE systems). |
@@ -123,10 +123,10 @@ Registration is automatic: `publish_context` auto-registers the calling agent on
 
 | Concept | Definition |
 |---|---|
-| `cg:EncryptedGraphEnvelope` | [`docs/ns/cg.ttl`](ns/cg.ttl) — `rdfs:subClassOf dcat:Distribution` |
-| `cg:GraphPayload` | [`docs/ns/cg.ttl`](ns/cg.ttl) — plaintext variant |
-| `cg:EncryptedValue` | [`docs/ns/cg.ttl`](ns/cg.ttl) — facet-value wrapper |
-| `cg:canDecrypt`, `cg:canFetchPayload` | [`docs/ns/cg.ttl`](ns/cg.ttl) — affordance individuals |
-| `cg:encrypted`, `cg:encryptionAlgorithm`, `cg:recipientCount` | [`docs/ns/cg.ttl`](ns/cg.ttl) — distribution properties |
-| `cg:encryptionPublicKey` on `cg:AuthorizedAgent` | [`docs/ns/cg.ttl`](ns/cg.ttl) — per-agent recipient key |
-| `cg:sharedWith` | [`docs/ns/cg.ttl`](ns/cg.ttl) — cross-pod sharing declaration |
+| `iep:EncryptedGraphEnvelope` | [`docs/ns/cg.ttl`](ns/cg.ttl) — `rdfs:subClassOf dcat:Distribution` |
+| `iep:GraphPayload` | [`docs/ns/cg.ttl`](ns/cg.ttl) — plaintext variant |
+| `iep:EncryptedValue` | [`docs/ns/cg.ttl`](ns/cg.ttl) — facet-value wrapper |
+| `iep:canDecrypt`, `iep:canFetchPayload` | [`docs/ns/cg.ttl`](ns/cg.ttl) — affordance individuals |
+| `iep:encrypted`, `iep:encryptionAlgorithm`, `iep:recipientCount` | [`docs/ns/cg.ttl`](ns/cg.ttl) — distribution properties |
+| `iep:encryptionPublicKey` on `iep:AuthorizedAgent` | [`docs/ns/cg.ttl`](ns/cg.ttl) — per-agent recipient key |
+| `iep:sharedWith` | [`docs/ns/cg.ttl`](ns/cg.ttl) — cross-pod sharing declaration |

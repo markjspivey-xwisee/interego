@@ -258,7 +258,7 @@ const traj = (steps) => [{
   })),
 }];
 const teachingPackage = {
-  iri: 'urn:cg:teaching:reference-for-field-guidance', artifactIri: 'urn:cg:tool:field-reference',
+  iri: 'urn:iep:teaching:reference-for-field-guidance', artifactIri: 'urn:iep:tool:field-reference',
   competency: 'reaching guidance at the point of work', olkeStage: 'Articulate', modalStatus: 'Hypothetical',
 };
 const targetBehaviour = {

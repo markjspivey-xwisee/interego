@@ -38,7 +38,7 @@ The rest of this document takes each in turn.
 **Foxxi does not invent agent teaching.** `agent-collective` (`ac:`)
 already establishes it: a teacher agent bundles a tool with its practice
 context into an **`ac:TeachingPackage`**, whose trust accrues through
-`amta:Attestation`s until `cg:modalStatus` flips to Asserted;
+`amta:Attestation`s until `iep:modalStatus` flips to Asserted;
 `agent-development-practice` (`adp:`) supplies the practice the package
 carries. The unit one agent teaches another **is an `ac:TeachingPackage`**.
 
@@ -57,13 +57,13 @@ carry. Given a reference to an `ac:TeachingPackage`:
    agent's trajectories *before* and *after* acquisition are read; the
    transfer holds **iff the taught behaviour now genuinely appears in
    the learner's real work** and the old behaviour has receded. The
-   claim carries a `cg:modalStatus` — `Asserted` only when the learner's
+   claim carries a `iep:modalStatus` — `Asserted` only when the learner's
    own trajectories carry enough evidence to read.
 3. **`transferAttestation`** — a verified transfer is emitted as an
    `amta:Attestation` (axis: correctness). This is a new *kind* of
    evidence — observed behaviour in the learner's trajectories, not an
    execution count — that flows into the **same** attestation discipline
-   `ac:` already uses to promote a package's `cg:modalStatus`. Foxxi
+   `ac:` already uses to promote a package's `iep:modalStatus`. Foxxi
    runs no parallel modal flip.
 4. **`teachingToOutcome`** — a verified transfer distils into a
    calibration `OutcomeRecord`: an agent lacking a documented capability
@@ -111,8 +111,8 @@ things composed:
 
 A *tool* is an affordance. The substrate already has the machinery:
 core `src/skills/` translates an `agentskills.io` SKILL.md to and from a
-`cg:Affordance`. So "an agent builds a tool for another agent" composes
-cleanly: the tool-building agent authors a skill → a `cg:Affordance`
+`iep:Affordance`. So "an agent builds a tool for another agent" composes
+cleanly: the tool-building agent authors a skill → a `iep:Affordance`
 descriptor; the Capability that confers it carries the affordance id;
 the learner that acquires the Capability may now follow that affordance.
 No new tool ontology — tools are affordances, and affordances are how
@@ -159,9 +159,9 @@ to a team rather than one performer.
 | Agent-collaboration concept | What it composes — and whose layer it is |
 |---|---|
 | the unit one agent teaches another | `ac:TeachingPackage` — **agent-collective**, not Foxxi |
-| a tool an agent builds | a `cg:Affordance` — core `src/skills/` (SKILL.md ↔ affordance) |
+| a tool an agent builds | a `iep:Affordance` — core `src/skills/` (SKILL.md ↔ affordance) |
 | the practice a package carries | `adp:` narrative fragments / synthesis / constraints — **agent-development-practice** |
-| a package's trust + modal flip | `amta:Attestation` accumulating until `cg:modalStatus` flips — substrate + `ac:` |
+| a package's trust + modal flip | `amta:Attestation` accumulating until `iep:modalStatus` flips — substrate + `ac:` |
 | what a learner agent holds | a capability passport — core `src/passport/` |
 | publishing a capability for others | the public agent registry — core `src/registry/` |
 | **framing acquisition as a performance intervention** | **Foxxi** — the A2A directionality, a Knowable instruction intervention |
@@ -198,7 +198,7 @@ yet fully wire:
   onto the learner agent's passport (core `src/passport/`) and reading a
   passport to know what a team already holds before teaching.
 - **Tool authoring in the flow** — an agent composing a SKILL.md → a
-  `cg:Affordance` (core `src/skills/`), bundled into a teaching package.
+  `iep:Affordance` (core `src/skills/`), bundled into a teaching package.
 - **Live teaching calibration** — accumulating `/agent/teach` outcomes
   into the live calibration profile, and segmenting calibration by
   directionality so A2A transfer rates are distinguishable from H2H.

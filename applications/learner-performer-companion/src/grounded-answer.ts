@@ -367,7 +367,7 @@ import {
  * Materialize a CitedAnswer as an lpc:CitedResponse descriptor that
  * lives in the user's pod. Every cited descriptor is referenced via the
  * descriptor's facets, and the answer is signed by the assistant on
- * the user's behalf (cg:AgentFacet.onBehalfOf = userDid).
+ * the user's behalf (iep:AgentFacet.onBehalfOf = userDid).
  */
 export function citedAnswerToDescriptor(
   answer: CitedAnswer,

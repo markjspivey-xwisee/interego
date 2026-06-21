@@ -362,8 +362,8 @@ export function EmergentCollective({ onHome, onDemos }: { onHome: () => void; on
       // The teacher signs the (teachingPackage, targetBehaviour) tuple — that's
       // the attestation the bridge checks before counting the transfer.
       const teachingPackage = {
-        iri: `urn:cg:teaching:reference-for-field-guidance-${Date.now()}`,
-        artifactIri: 'urn:cg:tool:field-reference',
+        iri: `urn:iep:teaching:reference-for-field-guidance-${Date.now()}`,
+        artifactIri: 'urn:iep:tool:field-reference',
         competency: 'reaching guidance at the point of work',
         olkeStage: 'Articulate', modalStatus: 'Hypothetical',
       };
@@ -590,7 +590,7 @@ function CellPanel({ cell, initialCell, flipped, glow }: {
             background: glow && isAsserted ? 'rgba(26,127,55,0.10)' : 'transparent',
             transition: 'all 300ms',
           }}>{cell.modalStatus === 'absent' ? 'no cell yet' : cell.modalStatus}</div>
-          <div style={{ ...label, marginTop: 8 }}>cg:modalStatus</div>
+          <div style={{ ...label, marginTop: 8 }}>iep:modalStatus</div>
         </div>
         <div>
           <div style={{ fontFamily: serif, fontSize: 36, fontWeight: 500 }}>

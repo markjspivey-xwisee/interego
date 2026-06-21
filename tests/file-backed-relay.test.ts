@@ -43,9 +43,9 @@ describe('FileBackedRelay — JSONL persistence', () => {
     // Session 1: write 3 events
     const r1 = new FileBackedRelay(path, { log: () => {} });
     const alice = new P2pClient(r1, importWallet(ALICE_KEY, 'agent', 'alice'));
-    await alice.publishDescriptor({ descriptorId: 'urn:cg:fbr:1', cid: 'bafk-1', graphIri: 'urn:graph:fbr' });
-    await alice.publishDescriptor({ descriptorId: 'urn:cg:fbr:2', cid: 'bafk-2', graphIri: 'urn:graph:fbr' });
-    await alice.publishDescriptor({ descriptorId: 'urn:cg:fbr:3', cid: 'bafk-3', graphIri: 'urn:graph:fbr' });
+    await alice.publishDescriptor({ descriptorId: 'urn:iep:fbr:1', cid: 'bafk-1', graphIri: 'urn:graph:fbr' });
+    await alice.publishDescriptor({ descriptorId: 'urn:iep:fbr:2', cid: 'bafk-2', graphIri: 'urn:graph:fbr' });
+    await alice.publishDescriptor({ descriptorId: 'urn:iep:fbr:3', cid: 'bafk-3', graphIri: 'urn:graph:fbr' });
     expect(r1.size()).toBe(3);
     expect(existsSync(path)).toBe(true);
 
@@ -55,7 +55,7 @@ describe('FileBackedRelay — JSONL persistence', () => {
     const events = await r2.query({ kinds: [KIND_DESCRIPTOR] });
     expect(events).toHaveLength(3);
     const ids = events.map(e => e.tags.find(t => t[0] === 'd')?.[1]).sort();
-    expect(ids).toEqual(['urn:cg:fbr:1', 'urn:cg:fbr:2', 'urn:cg:fbr:3']);
+    expect(ids).toEqual(['urn:iep:fbr:1', 'urn:iep:fbr:2', 'urn:iep:fbr:3']);
   });
 
   it('appending after replay continues from where session 1 left off', async () => {
@@ -64,12 +64,12 @@ describe('FileBackedRelay — JSONL persistence', () => {
 
     const r1 = new FileBackedRelay(path, { log: () => {} });
     const alice = new P2pClient(r1, importWallet(ALICE_KEY, 'agent', 'alice'));
-    await alice.publishDescriptor({ descriptorId: 'urn:cg:fbr-append:1', cid: 'bafk-1', graphIri: 'urn:graph:append' });
+    await alice.publishDescriptor({ descriptorId: 'urn:iep:fbr-append:1', cid: 'bafk-1', graphIri: 'urn:graph:append' });
 
     const r2 = new FileBackedRelay(path, { log: () => {} });
     expect(r2.size()).toBe(1);
     const aliceR2 = new P2pClient(r2, importWallet(ALICE_KEY, 'agent', 'alice'));
-    await aliceR2.publishDescriptor({ descriptorId: 'urn:cg:fbr-append:2', cid: 'bafk-2', graphIri: 'urn:graph:append' });
+    await aliceR2.publishDescriptor({ descriptorId: 'urn:iep:fbr-append:2', cid: 'bafk-2', graphIri: 'urn:graph:append' });
     expect(r2.size()).toBe(2);
 
     // Session 3 should see both events
@@ -83,9 +83,9 @@ describe('FileBackedRelay — JSONL persistence', () => {
 
     const r1 = new FileBackedRelay(path, { log: () => {} });
     const alice = new P2pClient(r1, importWallet(ALICE_KEY, 'agent', 'alice'));
-    await alice.publishDescriptor({ descriptorId: 'urn:cg:replace-test', cid: 'v1', graphIri: 'urn:graph:replace' });
+    await alice.publishDescriptor({ descriptorId: 'urn:iep:replace-test', cid: 'v1', graphIri: 'urn:graph:replace' });
     await new Promise(r => setTimeout(r, 1100)); // ensure created_at advances
-    await alice.publishDescriptor({ descriptorId: 'urn:cg:replace-test', cid: 'v2', graphIri: 'urn:graph:replace' });
+    await alice.publishDescriptor({ descriptorId: 'urn:iep:replace-test', cid: 'v2', graphIri: 'urn:graph:replace' });
     // In-memory size: 1 (v2 superseded v1). On-disk file: 2 lines (append-only).
     expect(r1.size()).toBe(1);
 
@@ -105,7 +105,7 @@ describe('FileBackedRelay — JSONL persistence', () => {
     // Hand-write a file with one valid event + one malformed line
     const r1 = new FileBackedRelay(path, { log: () => {} });
     const alice = new P2pClient(r1, importWallet(ALICE_KEY, 'agent', 'alice'));
-    await alice.publishDescriptor({ descriptorId: 'urn:cg:malformed-test', cid: 'bafk-mal', graphIri: 'urn:graph:malformed' });
+    await alice.publishDescriptor({ descriptorId: 'urn:iep:malformed-test', cid: 'bafk-mal', graphIri: 'urn:graph:malformed' });
 
     const original = readFileSync(path, 'utf8');
     writeFileSync(path, original + 'this is not json\n{not json either}\n');
@@ -125,7 +125,7 @@ describe('FileBackedRelay — JSONL persistence', () => {
     expect(r1.isEncrypted()).toBe(true);
     const alice = new P2pClient(r1, importWallet(ALICE_KEY, 'agent', 'alice'));
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:enc-test:secret-1',
+      descriptorId: 'urn:iep:enc-test:secret-1',
       cid: 'bafk-secret-cid',
       graphIri: 'urn:graph:enc',
       summary: 'CONFIDENTIAL: this should not appear in plaintext on disk',
@@ -159,7 +159,7 @@ describe('FileBackedRelay — JSONL persistence', () => {
     const r1 = new FileBackedRelay(path, { log: () => {}, encryptionKey: correctKey });
     const alice = new P2pClient(r1, importWallet(ALICE_KEY, 'agent', 'alice'));
     await alice.publishDescriptor({
-      descriptorId: 'urn:cg:wrong-key',
+      descriptorId: 'urn:iep:wrong-key',
       cid: 'bafk-wk',
       graphIri: 'urn:graph:wk',
     });
@@ -177,9 +177,9 @@ describe('FileBackedRelay — JSONL persistence', () => {
 
     const r1 = new FileBackedRelay(path, { log: () => {}, encryptionKey: key });
     const alice = new P2pClient(r1, importWallet(ALICE_KEY, 'agent', 'alice'));
-    await alice.publishDescriptor({ descriptorId: 'urn:cg:enc-replace', cid: 'v1', graphIri: 'urn:graph:enc-replace' });
+    await alice.publishDescriptor({ descriptorId: 'urn:iep:enc-replace', cid: 'v1', graphIri: 'urn:graph:enc-replace' });
     await new Promise(r => setTimeout(r, 1100));
-    await alice.publishDescriptor({ descriptorId: 'urn:cg:enc-replace', cid: 'v2', graphIri: 'urn:graph:enc-replace' });
+    await alice.publishDescriptor({ descriptorId: 'urn:iep:enc-replace', cid: 'v2', graphIri: 'urn:graph:enc-replace' });
 
     const r2 = new FileBackedRelay(path, { log: () => {}, encryptionKey: key });
     expect(r2.size()).toBe(1);
@@ -204,7 +204,7 @@ describe('FileBackedRelay — JSONL persistence', () => {
     const alice = new P2pClient(r, importWallet(ALICE_KEY, 'agent', 'alice'));
     // publishDescriptor throws when relay returns ok=false
     await expect(alice.publishDescriptor({
-      descriptorId: 'urn:cg:write-fail',
+      descriptorId: 'urn:iep:write-fail',
       cid: 'bafk-x',
       graphIri: 'urn:graph:x',
     })).rejects.toThrow(/Persisted publish failed|Relay rejected/);

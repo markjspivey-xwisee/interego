@@ -6,7 +6,7 @@
  * the same source-of-truth (the affordance declarations):
  *
  *   Path A — generic affordance walk (no per-vertical client install):
- *     fetch GET /affordances → walk cg:Affordance entries → POST hydra:target.
+ *     fetch GET /affordances → walk iep:Affordance entries → POST hydra:target.
  *
  *   Path B — named MCP tools (this bridge):
  *     POST /mcp → tools/list → tools/call. Tool schemas are derived

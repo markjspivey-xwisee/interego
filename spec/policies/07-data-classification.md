@@ -17,7 +17,7 @@ All data that flows through, is stored by, or is produced by Interego production
 
 | Class | Definition | Examples |
 |---|---|---|
-| **Public** | Intentionally published to the world | Spec documents, OWL ontologies, source code, public descriptors with `cg:visibility cg:Public`, README content |
+| **Public** | Intentionally published to the world | Spec documents, OWL ontologies, source code, public descriptors with `iep:visibility iep:Public`, README content |
 | **Internal** | Operator's own non-customer data | Internal policy drafts, operational notes, deploy logs, infrastructure config (non-secret) |
 | **Confidential** | Customer-controlled descriptors and metadata | All customer pod contents, customer DIDs (when not self-published), customer auth methods, share-with recipient lists |
 | **Restricted** | Cryptographic material + credentials | Compliance wallet keys, service principal credentials, API tokens, PII the operator legitimately holds (contact info), breach evidence |
@@ -69,8 +69,8 @@ All data that flows through, is stored by, or is produced by Interego production
 
 ### 5.3 Data labeling in the protocol
 
-- Descriptor `cg:visibility` carries the customer's intended audience. Classification policy reads this as the source of truth for customer descriptors.
-- The operator's own descriptors (compliance evidence, infrastructure events) MUST carry explicit `cg:visibility` matching their classification (often `cg:OperatorOnly` or, when audit-grade, `cg:AuditorReadable`).
+- Descriptor `iep:visibility` carries the customer's intended audience. Classification policy reads this as the source of truth for customer descriptors.
+- The operator's own descriptors (compliance evidence, infrastructure events) MUST carry explicit `iep:visibility` matching their classification (often `iep:OperatorOnly` or, when audit-grade, `iep:AuditorReadable`).
 
 ### 5.4 PII identification
 

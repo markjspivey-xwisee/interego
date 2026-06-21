@@ -1,6 +1,6 @@
 @prefix agp:   <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#> .
 @prefix agpsh: <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp/shapes#> .
-@prefix cg:    <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix sh:    <http://www.w3.org/ns/shacl#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .

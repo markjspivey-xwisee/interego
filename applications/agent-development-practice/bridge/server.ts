@@ -2,7 +2,7 @@
  * agent-development-practice bridge — opinionated MCP-named-tool
  * surface over the ADP vertical.
  *
- * Generic agents discover via cg:Affordance manifest at GET /affordances;
+ * Generic agents discover via iep:Affordance manifest at GET /affordances;
  * this bridge is just the named-MCP-tool ergonomic.
  *
  * Run:

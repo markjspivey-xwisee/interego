@@ -190,7 +190,7 @@ async function agentScanner(): Promise<ContextDescriptorData> {
 `.trim();
 
   // Scanner's context: automated tool output, high confidence on detection, asserted
-  const descriptor = ContextDescriptor.create('urn:cg:scanner:scan-2026-03-15' as IRI)
+  const descriptor = ContextDescriptor.create('urn:iep:scanner:scan-2026-03-15' as IRI)
 .describes('urn:graph:scanner:vulnerability-report' as IRI)
 .temporal({
       validFrom: '2026-03-15T02:00:00Z',
@@ -301,7 +301,7 @@ async function agentAnalyst(scannerDesc: ContextDescriptorData): Promise<Context
     sec:priorityRank 2.
 `.trim();
 
-  const descriptor = ContextDescriptor.create('urn:cg:analyst:triage-2026-03-16' as IRI)
+  const descriptor = ContextDescriptor.create('urn:iep:analyst:triage-2026-03-16' as IRI)
 .describes('urn:graph:analyst:triage-report' as IRI)
 .temporal({
       validFrom: '2026-03-16T09:00:00Z',
@@ -491,7 +491,7 @@ async function agentLead(
 `.trim();
 
   // Lead's context: authoritative, supersedes both inputs, highest trust
-  const leadDescriptor = ContextDescriptor.create('urn:cg:lead:remediation-2026-03' as IRI)
+  const leadDescriptor = ContextDescriptor.create('urn:iep:lead:remediation-2026-03' as IRI)
 .describes('urn:graph:lead:remediation-plan' as IRI)
 .temporal({
       validFrom: '2026-03-16T14:00:00Z',
@@ -506,8 +506,8 @@ async function agentLead(
       wasAttributedTo: 'did:web:lead.security.internal' as IRI,
       generatedAtTime: '2026-03-16T14:30:00Z',
       sources: [
-        'urn:cg:scanner:scan-2026-03-15' as IRI,
-        'urn:cg:analyst:triage-2026-03-16' as IRI,
+        'urn:iep:scanner:scan-2026-03-15' as IRI,
+        'urn:iep:analyst:triage-2026-03-16' as IRI,
       ],
     })
 .agent('did:web:lead.security.internal' as IRI, 'Lead')

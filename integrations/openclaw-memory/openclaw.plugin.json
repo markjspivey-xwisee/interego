@@ -1,7 +1,7 @@
 {
   "id": "interego-memory",
   "name": "Interego Memory",
-  "description": "Pod-rooted typed memory backed by the Interego substrate. Every store becomes a signed cg:ContextDescriptor with proper modal status, supersedes-chains, and (optionally) E2EE cross-pod sharing.",
+  "description": "Pod-rooted typed memory backed by the Interego substrate. Every store becomes a signed iep:ContextDescriptor with proper modal status, supersedes-chains, and (optionally) E2EE cross-pod sharing.",
   "version": "0.1.0",
   "providers": [],
   "configSchema": {

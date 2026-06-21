@@ -10,7 +10,7 @@ An adapter — not a vertical with its own framework. It does one thing: transla
 
 Two directions, **each serving a different audience** of the dual-audience learning vertical (see [`../../docs/DUAL-AUDIENCE.md`](../../docs/DUAL-AUDIENCE.md)):
 
-- **Statement → Descriptor** (the **learner / performer** read path) — a learner's agent connects to any institutional LRS the learner has read access to, pulls the learner's own xAPI Statements (or a TLA-compliant Learning Activity Provider Index entry), and writes them into the learner's pod as `cg:ContextDescriptor` instances with `cg:ProvenanceFacet` capturing the LRS source. The learner's wallet ([`../learner-performer-companion/`](../learner-performer-companion/)) now has a permanent, portable, queryable copy. The institution still has its LRS; the learner gains independent reach to their own history.
+- **Statement → Descriptor** (the **learner / performer** read path) — a learner's agent connects to any institutional LRS the learner has read access to, pulls the learner's own xAPI Statements (or a TLA-compliant Learning Activity Provider Index entry), and writes them into the learner's pod as `iep:ContextDescriptor` instances with `iep:ProvenanceFacet` capturing the LRS source. The learner's wallet ([`../learner-performer-companion/`](../learner-performer-companion/)) now has a permanent, portable, queryable copy. The institution still has its LRS; the learner gains independent reach to their own history.
 - **Descriptor → Statement** (the **enterprise edtech professional** projection path) — institution-side: with the learner's per-graph consent, project Interego descriptors out to a target LRS as xAPI Statements, for organizations whose compliance / reporting / dashboards are LRS-anchored. The institution does not get to mint Statements about a learner without the learner's consent descriptor on the source graph; this is enforced at the projection boundary.
 
 Both directions are **lossy at the boundary** — the next section explains why.
@@ -19,40 +19,40 @@ Both directions are **lossy at the boundary** — the next section explains why.
 
 xAPI's Statement format is **immutable point-in-time records** with a fixed shape. It does not express:
 
-- `cg:modalStatus` (Hypothetical / Asserted / Counterfactual) — every Statement is implicitly a hard claim
-- `cg:supersedes` chains — there's a `voided` extension but no native revision lineage
+- `iep:modalStatus` (Hypothetical / Asserted / Counterfactual) — every Statement is implicitly a hard claim
+- `iep:supersedes` chains — there's a `voided` extension but no native revision lineage
 - Multiple coherent narratives over the same event — Statements are atomic
-- Compositional semantics (`cg:union` / `cg:intersection`) — Statements don't compose
+- Compositional semantics (`iep:union` / `iep:intersection`) — Statements don't compose
 
 Forcing all Interego descriptors through xAPI shape would lose what makes Interego useful for complexity-informed practice (see [`../agent-development-practice/`](../agent-development-practice/)). Forcing all xAPI Statements into Interego shape would over-claim modal status on records that were never qualified that way.
 
-The correct relationship is **lossy translation at the boundary**. Statements ingested as descriptors carry `cg:modalStatus cg:Asserted` because that's how the LRS recorded them, with a `provenance:wasGeneratedBy` link to the LRS-issued statement ID. Descriptors projected as Statements drop the modal facet and leave a note in `result.extensions` that the source descriptor carries richer semantics.
+The correct relationship is **lossy translation at the boundary**. Statements ingested as descriptors carry `iep:modalStatus iep:Asserted` because that's how the LRS recorded them, with a `provenance:wasGeneratedBy` link to the LRS-issued statement ID. Descriptors projected as Statements drop the modal facet and leave a note in `result.extensions` that the source descriptor carries richer semantics.
 
 ## Two-way translation summary
 
-### xAPI Statement → cg:ContextDescriptor
+### xAPI Statement → iep:ContextDescriptor
 
 | xAPI field | Interego mapping |
 |---|---|
-| `id` | `<urn:cg:lrs-statement:{statement-id}>` (stable IRI) |
-| `actor` (Agent / Group) | `cg:AgentFacet { assertingAgent }` resolved via WebFinger / DID where possible |
-| `verb` | `cg:SemioticFacet { content: verb.display }` + a `tcr:xapiVerb` literal preserving the IRI |
-| `object` (Activity / Agent / SubStatement) | descriptor's `cg:ProvenanceFacet { wasGeneratedBy: object.id }` |
-| `result` (success / completion / score / response) | `cg:SemioticFacet { content }` carrying the qualitative narrative; numerics in `tcr:xapiResult` extension |
-| `context` (registration / parent / instructor) | distributed across `cg:AgentFacet` and `cg:ProvenanceFacet` per W3C PROV norms |
-| `timestamp` | `cg:TemporalFacet { validFrom }` |
-| `stored` | descriptor's `cg:provenance.recordedAt` |
-| `authority` | `cg:TrustFacet { issuer: authority.account.homePage }` |
+| `id` | `<urn:iep:lrs-statement:{statement-id}>` (stable IRI) |
+| `actor` (Agent / Group) | `iep:AgentFacet { assertingAgent }` resolved via WebFinger / DID where possible |
+| `verb` | `iep:SemioticFacet { content: verb.display }` + a `tcr:xapiVerb` literal preserving the IRI |
+| `object` (Activity / Agent / SubStatement) | descriptor's `iep:ProvenanceFacet { wasGeneratedBy: object.id }` |
+| `result` (success / completion / score / response) | `iep:SemioticFacet { content }` carrying the qualitative narrative; numerics in `tcr:xapiResult` extension |
+| `context` (registration / parent / instructor) | distributed across `iep:AgentFacet` and `iep:ProvenanceFacet` per W3C PROV norms |
+| `timestamp` | `iep:TemporalFacet { validFrom }` |
+| `stored` | descriptor's `iep:provenance.recordedAt` |
+| `authority` | `iep:TrustFacet { issuer: authority.account.homePage }` |
 | `version` | preserved as `tcr:xapiVersion` on the descriptor |
-| `attachments` | `cg:Distribution` blocks on the descriptor |
+| `attachments` | `iep:Distribution` blocks on the descriptor |
 
-Modal status defaults to `cg:Asserted` (Statements are committed claims by definition).
+Modal status defaults to `iep:Asserted` (Statements are committed claims by definition).
 
-### cg:ContextDescriptor → xAPI Statement
+### iep:ContextDescriptor → xAPI Statement
 
-Only descriptors with `cg:modalStatus cg:Asserted` are projected; Hypothetical / Counterfactual descriptors are skipped (or surfaced through `tcr:xapiSkipReason` if you need an audit trail of what was withheld). Multi-narrative descriptors (those carrying multiple `adp:coherentNarrative` entries from agent-development-practice) emit a single Statement using the first narrative and add the remaining narratives to `result.extensions["urn:cg:coherent-narratives"]` as a JSON array, with a flag indicating the projection is lossy.
+Only descriptors with `iep:modalStatus iep:Asserted` are projected; Hypothetical / Counterfactual descriptors are skipped (or surfaced through `tcr:xapiSkipReason` if you need an audit trail of what was withheld). Multi-narrative descriptors (those carrying multiple `adp:coherentNarrative` entries from agent-development-practice) emit a single Statement using the first narrative and add the remaining narratives to `result.extensions["urn:iep:coherent-narratives"]` as a JSON array, with a flag indicating the projection is lossy.
 
-`cg:supersedes` chains map to xAPI `voided` Statements where appropriate, but the lineage is preserved as `result.extensions["urn:cg:supersedes-chain"]` for tools that understand it.
+`iep:supersedes` chains map to xAPI `voided` Statements where appropriate, but the lineage is preserved as `result.extensions["urn:iep:supersedes-chain"]` for tools that understand it.
 
 ## Vertical-scoped vocabulary
 
@@ -70,8 +70,8 @@ Minimal — the adapter only adds translation-tracking terms in [`ontology/lrs.t
 
 [`examples/translate.mjs`](examples/translate.mjs) demonstrates round-trip translation:
 
-1. A real xAPI Statement (TLA-flavored, with completion + score) is ingested into a `cg:ContextDescriptor`.
-2. A multi-modal Interego descriptor (with `cg:modalStatus Hypothetical` and `cg:supersedes` chain) is projected out to a Statement, demonstrating what's preserved and what's lost.
+1. A real xAPI Statement (TLA-flavored, with completion + score) is ingested into a `iep:ContextDescriptor`.
+2. A multi-modal Interego descriptor (with `iep:modalStatus Hypothetical` and `iep:supersedes` chain) is projected out to a Statement, demonstrating what's preserved and what's lost.
 3. The lossy-translation note is surfaced explicitly in the projected Statement's `result.extensions`.
 
 ```bash
@@ -84,7 +84,7 @@ Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) ve
 
 | What's verified (real code paths) | What's still simulated (deferred) |
 |---|---|
-| Ingest direction: synthetic xAPI Statement → conforming `cg:ContextDescriptor` with `cg:Asserted` modal + LRS Trust attribution | No actual GET against a real LRS endpoint (Tier 3 — Lrsql or Trax in Docker) |
+| Ingest direction: synthetic xAPI Statement → conforming `iep:ContextDescriptor` with `iep:Asserted` modal + LRS Trust attribution | No actual GET against a real LRS endpoint (Tier 3 — Lrsql or Trax in Docker) |
 | Project Asserted: lossy=false, full Statement emitted | No actual POST to a real LRS endpoint |
 | Project Hypothetical: SKIPPED with explicit skip-reason audit row | No xAPI 2.0 conformance suite run end-to-end |
 | Project Counterfactual: ALWAYS skipped regardless of caller opt-in | No round-trip integrity check across a real LRS roundtrip |
@@ -98,7 +98,7 @@ The translation logic itself is verified; the network layer is a separate test c
 **Tier 3** — [`tests/tier3-real-lrs.test.ts`](tests/tier3-real-lrs.test.ts) runs against a real Yet Analytics Lrsql LRS in Docker (`docker run yetanalytics/lrsql`). Verifies:
 - POST projected Asserted Statements → 200 OK + UUID returned
 - GET roundtrip preserves actor / verb / object / score
-- Multi-narrative lossy projection: `result.extensions["urn:cg:coherent-narratives"]` + `urn:cg:projection-lossy: true` + `urn:cg:modal-status: Hypothetical` all survive LRS persistence and round-trip back intact
+- Multi-narrative lossy projection: `result.extensions["urn:iep:coherent-narratives"]` + `urn:iep:projection-lossy: true` + `urn:iep:modal-status: Hypothetical` all survive LRS persistence and round-trip back intact
 - LRS rejects malformed Statements (missing required `actor` field) with 400-class error — confirms the LRS is doing real xAPI 2.0 §4.1 validation
 - Non-existent statement IDs return 404 per xAPI 2.0 §4.2.1
 
@@ -107,7 +107,7 @@ Skips automatically if Lrsql isn't running locally on `:8080`. Set `SKIP_LRSQL_T
 **Tier 3b** — [`tests/tier3b-xapi-conformance.test.ts`](tests/tier3b-xapi-conformance.test.ts) deepens xAPI 2.0 conformance against the real Lrsql:
 - **cmi5 profile** — `launched` + `completed` Statements with cmi5 `contextActivities.category` (`https://w3id.org/xapi/cmi5/context/categories/cmi5` + `moveon`) + `sessionid` extension, accepted as a 2-Statement batch
 - **Sub-Statement** — Statement whose object is itself a `SubStatement` is accepted; LRS preserves nested object on roundtrip
-- **Voiding** (xAPI's mechanism for projected `cg:supersedes`) — POST original; POST `voided` Statement with `StatementRef` object; ordinary GET on the original returns 404 per xAPI 2.0 §4.2.1; `voidedStatementId=` parameter retrieves it; the void Statement itself is retrievable normally
+- **Voiding** (xAPI's mechanism for projected `iep:supersedes`) — POST original; POST `voided` Statement with `StatementRef` object; ordinary GET on the original returns 404 per xAPI 2.0 §4.2.1; `voidedStatementId=` parameter retrieves it; the void Statement itself is retrievable normally
 - **Batch POST** — 5 Statements in single request return 5 IDs in order
 - **Filtering** — GET `?verb=...&agent=...` returns only matching Statements
 - **Alternate request method** (POST with `?method=GET`, xAPI 2.0 §6.2) — handled gracefully whether LRS supports (200) or refuses cleanly (4xx); 5xx server-error would be the failure mode
@@ -117,7 +117,7 @@ Skips automatically if Lrsql isn't running locally on `:8080`. Set `SKIP_LRSQL_T
 - `/about` reports xAPI 1.0.3 specifically — **NOT 2.0.0**. (Real-world finding: SCORM Cloud has not yet adopted xAPI 2.0.)
 - xAPI 2.0 client gets explicit 400 rejection (not silent acceptance), so an adapter that targets 2.0.0 against a 1.0.3-only LRS fails loudly
 - POST + GET roundtrip preserves Statement ID + verb + result.score
-- Lossy-projection extensions (`urn:cg:projection-lossy`, `urn:cg:coherent-narratives`, `urn:cg:modal-status`) survive SCORM Cloud roundtrip
+- Lossy-projection extensions (`urn:iep:projection-lossy`, `urn:iep:coherent-narratives`, `urn:iep:modal-status`) survive SCORM Cloud roundtrip
 - Voiding semantics work the same (xAPI 1.0.3 §4.1.6.7): plain GET → 404; `voidedStatementId=` → retrievable. Cross-LRS-conformant with Lrsql.
 - Cross-LRS confirmation: same Statement shape works against both Lrsql AND SCORM Cloud → adapter is genuinely interoperable across open-source + proprietary LRS implementations
 

@@ -799,7 +799,7 @@ describe('aggregate-privacy: publishable bundles (in-process publish + fetch + r
         bundle,
         podUrl: 'https://mock-pod.example/operator/',
       });
-      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+      expect(published.iri).toMatch(/^urn:iep:aggregate-bundle:/);
       expect(published.graphUrl).toContain('mock-pod.example');
 
       const refetched = await fetchPublishedHomomorphicSum({ graphUrl: published.graphUrl });
@@ -849,7 +849,7 @@ describe('aggregate-privacy: publishable bundles (in-process publish + fetch + r
         signed,
         podUrl: 'https://mock-pod.example/operator/',
       });
-      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+      expect(published.iri).toMatch(/^urn:iep:aggregate-bundle:/);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1401,7 +1401,7 @@ describe('aggregate-privacy v4-partial: committee-reconstruction attestation (ch
         attestation,
         podUrl: 'https://mock-pod.example/operator/',
       });
-      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+      expect(published.iri).toMatch(/^urn:iep:aggregate-bundle:/);
 
       const refetched = await fetchPublishedCommitteeReconstructionAttestation({ graphUrl: published.graphUrl });
       expect(refetched).not.toBeNull();
@@ -1781,7 +1781,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
         operatorDid: AGGREGATOR,
         podUrl: 'https://mock-pod.example/operator/',
       });
-      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+      expect(published.iri).toMatch(/^urn:iep:aggregate-bundle:/);
 
       const refetched = await fetchPublishedEncryptedShareDistribution({ graphUrl: published.graphUrl });
       expect(refetched).not.toBeNull();
@@ -1949,7 +1949,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
         authorization,
         podUrl: 'https://mock-pod.example/operator/',
       });
-      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+      expect(published.iri).toMatch(/^urn:iep:aggregate-bundle:/);
 
       const refetched = await fetchPublishedCommitteeAuthorization({ graphUrl: published.graphUrl });
       expect(refetched).not.toBeNull();
@@ -2184,7 +2184,7 @@ describe('aggregate-privacy v3 distribution: buildAttestedHomomorphicDistributio
         bundle: result,
         podUrl: 'https://mock-pod.example/operator/',
       });
-      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+      expect(published.iri).toMatch(/^urn:iep:aggregate-bundle:/);
 
       const refetched = await fetchPublishedHomomorphicDistribution({ graphUrl: published.graphUrl });
       expect(refetched).not.toBeNull();

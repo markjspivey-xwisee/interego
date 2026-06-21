@@ -28,7 +28,7 @@
  *     so a transient CSS hiccup doesn't lose a registration.
  *   - On cold-start (no descriptors yet, manifest absent), `loadClients`
  *     returns an empty `Map` rather than throwing.
- *   - No new core/cg:/cgh:/pgsl: ontology terms are introduced. The
+ *   - No new core/iep:/ieh:/pgsl: ontology terms are introduced. The
  *     scenario predicates and class `relay:OAuthClient` live under a
  *     non-owned scenario namespace so ontology-lint stays green.
  *   - The graph block is plaintext on the pod by design: encryption with
@@ -72,7 +72,7 @@ import {
 
 // ── Scenario namespace ──────────────────────────────────────
 // Deliberately under a non-owned namespace per the codebase's ontology-
-// hygiene rule: do NOT mint new cg:/cgh:/pgsl: terms. This vocabulary
+// hygiene rule: do NOT mint new iep:/ieh:/pgsl: terms. This vocabulary
 // is private to the MCP relay's persistence concern; it is not part of
 // L1/L2/L3 of the Interego protocol.
 //

@@ -263,7 +263,7 @@ interface CourseGroup {
   headlineRequirement: 'required' | 'recommended' | 'optional';
   /** Worst lifecycle state across all matching policies (overdue > pending > completed). */
   headlineStatus: 'overdue' | 'pending' | 'completed';
-  /** cg:modalStatus of the group: 'Asserted' if any constituent enrollment
+  /** iep:modalStatus of the group: 'Asserted' if any constituent enrollment
    *  is backed by a real event, 'Hypothetical' if every one is merely
    *  policy-inferred. */
   modalStatus: 'Asserted' | 'Hypothetical';
@@ -315,7 +315,7 @@ function CourseRow({ group, canOpen, onOpen, session }: { group: CourseGroup; ca
         <Pill tone={headlineTone}>{headlineLabel}{group.policies.length > 1 ? ` + ${group.policies.length - 1}` : ''}</Pill>
         {group.modalStatus === 'Hypothetical' && (
           <Pill tone="neutral"
-            title="cg:modalStatus = Hypothetical — this assignment is inferred from your audience-group membership. No enrolment event has been recorded yet, so it is a prediction rather than an observed fact.">
+            title="iep:modalStatus = Hypothetical — this assignment is inferred from your audience-group membership. No enrolment event has been recorded yet, so it is a prediction rather than an observed fact.">
             inferred
           </Pill>
         )}

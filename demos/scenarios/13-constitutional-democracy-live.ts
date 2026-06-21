@@ -106,7 +106,7 @@ async function main(): Promise<void> {
 You are the proposer. You have one MCP server: ac-bridge.
 
 Call protocol.constitutional_propose with:
-  amends:        "urn:cg:policy:agent-disclosure:v1"
+  amends:        "urn:iep:policy:agent-disclosure:v1"
   tier:          3
   proposer_did:  "did:web:alice-voter.example"
   diff_summary:  "Add a clause: agents MUST include a self-disclosure statement in any user-facing response longer than 50 characters."

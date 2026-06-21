@@ -57,11 +57,11 @@ Interego provides the substrate. Composing on top:
 
 | Concern | Standards-side | Interego primitives used |
 |---|---|---|
-| Credential wallet | W3C VC + Open Badges 3.0 + IMS CLR + IEEE LERS | `cg:ContextDescriptor` + [`passport:`](../../docs/ns/passport.ttl) + `cg:TrustFacet` (issuer = institution) + [`src/compliance/`](../../src/compliance/) for VC verification |
-| Learning history | xAPI 2.0 Statements (TLA-flavored) | `cg:ProvenanceFacet` + [`pgsl:Fragment`](../../docs/ns/pgsl.ttl) for atom storage; [`../lrs-adapter/`](../lrs-adapter/) for translation at the boundary |
-| Authoritative training content | SCORM packages, cmi5 courses, PDFs, video transcripts, TLA Learning Activity Provider catalogs | [`src/connectors/`](../../src/connectors/) + [`src/extractors/`](../../src/extractors/) + `cg:Affordance` (assistant calls "look up authoritative training content"); `cg:supersedes` for course revision evolution |
-| Performance records | Manager / 360 / self-assessment exports (CSV, JSON) | `cg:ContextDescriptor` + `cg:ProvenanceFacet` (issuer = manager / org) + `cg:TrustFacet` |
-| Goal / development plans | IDP exports, OKRs, IEP-style learner-set goals | `cg:ContextDescriptor` + `olke:` knowledge maturity progression |
+| Credential wallet | W3C VC + Open Badges 3.0 + IMS CLR + IEEE LERS | `iep:ContextDescriptor` + [`passport:`](../../docs/ns/passport.ttl) + `iep:TrustFacet` (issuer = institution) + [`src/compliance/`](../../src/compliance/) for VC verification |
+| Learning history | xAPI 2.0 Statements (TLA-flavored) | `iep:ProvenanceFacet` + [`pgsl:Fragment`](../../docs/ns/pgsl.ttl) for atom storage; [`../lrs-adapter/`](../lrs-adapter/) for translation at the boundary |
+| Authoritative training content | SCORM packages, cmi5 courses, PDFs, video transcripts, TLA Learning Activity Provider catalogs | [`src/connectors/`](../../src/connectors/) + [`src/extractors/`](../../src/extractors/) + `iep:Affordance` (assistant calls "look up authoritative training content"); `iep:supersedes` for course revision evolution |
+| Performance records | Manager / 360 / self-assessment exports (CSV, JSON) | `iep:ContextDescriptor` + `iep:ProvenanceFacet` (issuer = manager / org) + `iep:TrustFacet` |
+| Goal / development plans | IDP exports, OKRs, IEP-style learner-set goals | `iep:ContextDescriptor` + `olke:` knowledge maturity progression |
 
 Every term used in this vertical is either an existing protocol primitive or a vertical-scoped `lpc:` term that subclasses one. Nothing in this vertical proposes changes to L1/L2/L3.
 
@@ -83,7 +83,7 @@ Sample interactions:
 | "Do I have a credential covering this skill?" | credential wallet → finds Open Badge 3.0 issued 2025-Q3 by Acme Training |
 | "What did my last review say about my tone?" | performance records → cites Q1-2026 review verbatim |
 | "Have I completed any training related to what my manager flagged?" | crosses xAPI history × performance records × training-content KG |
-| "Generate a development plan for the gaps my last review identified." | composes performance records + training-content KG + olke: stages, returns a draft plan as `cg:modalStatus Hypothetical` |
+| "Generate a development plan for the gaps my last review identified." | composes performance records + training-content KG + olke: stages, returns a draft plan as `iep:modalStatus Hypothetical` |
 
 The assistant **cites** rather than **summarizes-without-citation**. Every response is grounded in a descriptor the user can click through to. When the user asks a question that the data cannot answer, the assistant says so explicitly rather than confabulating.
 
@@ -103,17 +103,17 @@ This is a **chat-with-your-records** experience. It is NOT:
 The user (or an authorized agent acting on their behalf) imports verifiable credentials into their pod. Each becomes a `lpc:Credential` descriptor:
 
 ```turtle
-<urn:cg:credential:open-badge-3:cs101-completion> a lpc:Credential , passport:Achievement ;
+<urn:iep:credential:open-badge-3:cs101-completion> a lpc:Credential , passport:Achievement ;
     lpc:credentialFormat lpc:OpenBadge3 ;
     lpc:credentialFramework "OB-3.0" ;
-    cg:provenance [ a cg:ProvenanceFacet ;
+    iep:provenance [ a iep:ProvenanceFacet ;
                     prov:wasAttributedTo <https://acme.example/issuers/training> ] ;
-    cg:trust [ a cg:TrustFacet ;
-               cg:issuer <https://acme.example/issuers/training> ;
-               cg:trustLevel cg:ThirdPartyAttested ] ;
-    cg:semiotic [ a cg:SemioticFacet ;
-                  cg:content "Completed Customer Service 101: Module 3" ;
-                  cg:modalStatus cg:Asserted ] ;
+    iep:trust [ a iep:TrustFacet ;
+               iep:issuer <https://acme.example/issuers/training> ;
+               iep:trustLevel iep:ThirdPartyAttested ] ;
+    iep:semiotic [ a iep:SemioticFacet ;
+                  iep:content "Completed Customer Service 101: Module 3" ;
+                  iep:modalStatus iep:Asserted ] ;
     lpc:vcProof """{...verifiable presentation proof block...}""" ;
     lpc:verificationStatus lpc:Verified .
 ```
@@ -125,12 +125,12 @@ Verification is performed by [`src/compliance/`](../../src/compliance/) on impor
 The user (with consent) connects the [`../lrs-adapter/`](../lrs-adapter/) to their employer's LRS. xAPI Statements are translated into descriptors and written to the user's pod. The lrs-adapter handles the translation; this vertical handles the placement and search:
 
 ```turtle
-<urn:cg:lpc:learning-experience:cs101-mod3> a lpc:LearningExperience ;
-    lpc:basedOnStatement <urn:cg:lrs-statement:abc-123> ;
-    lpc:relatesToContent <urn:cg:lpc:training-content:cs101:module-3> ;
-    lpc:relatesToCredential <urn:cg:credential:open-badge-3:cs101-completion> ;
-    cg:temporal  [ a cg:TemporalFacet ; cg:validFrom "2026-04-15T14:32:00Z"^^xsd:dateTime ] ;
-    cg:semiotic  [ a cg:SemioticFacet ; cg:content "Completed module 3 with score 0.86" ] .
+<urn:iep:lpc:learning-experience:cs101-mod3> a lpc:LearningExperience ;
+    lpc:basedOnStatement <urn:iep:lrs-statement:abc-123> ;
+    lpc:relatesToContent <urn:iep:lpc:training-content:cs101:module-3> ;
+    lpc:relatesToCredential <urn:iep:credential:open-badge-3:cs101-completion> ;
+    iep:temporal  [ a iep:TemporalFacet ; iep:validFrom "2026-04-15T14:32:00Z"^^xsd:dateTime ] ;
+    iep:semiotic  [ a iep:SemioticFacet ; iep:content "Completed module 3 with score 0.86" ] .
 ```
 
 Notice the cross-links. The learning experience points to the credential it earned AND the training content it engaged with — composition is what makes the chat surface useful.
@@ -140,18 +140,18 @@ Notice the cross-links. The learning experience points to the credential it earn
 The user (or, with consent, the employer's training team) ingests the SCORM / cmi5 / PDF / video transcript content into the pod as a knowledge graph. Each module becomes a `lpc:TrainingContent` descriptor; lessons become `lpc:LearningObjective` sub-descriptors; passages become `pgsl:Fragment` atoms with content-addressed IRIs:
 
 ```turtle
-<urn:cg:lpc:training-content:cs101:module-3> a lpc:TrainingContent ;
+<urn:iep:lpc:training-content:cs101:module-3> a lpc:TrainingContent ;
     lpc:contentFormat   lpc:ScormPackage ;
     lpc:contentStandard "TLA-LAP" ;
     lpc:authoritativeSource <https://acme.example/issuers/training> ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <https://acme.example/issuers/training> ] ;
-    cg:trust      [ a cg:TrustFacet ; cg:issuer <https://acme.example/issuers/training> ; cg:trustLevel cg:Authoritative ] ;
-    cg:supersedes <urn:cg:lpc:training-content:cs101:module-3:v0> ;
-    lpc:learningObjective <urn:cg:lpc:objective:cs101:mod3:second-contact-escalation> .
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <https://acme.example/issuers/training> ] ;
+    iep:trust      [ a iep:TrustFacet ; iep:issuer <https://acme.example/issuers/training> ; iep:trustLevel iep:Authoritative ] ;
+    iep:supersedes <urn:iep:lpc:training-content:cs101:module-3:v0> ;
+    lpc:learningObjective <urn:iep:lpc:objective:cs101:mod3:second-contact-escalation> .
 
-<urn:cg:lpc:objective:cs101:mod3:second-contact-escalation> a lpc:LearningObjective ;
-    cg:semiotic [ a cg:SemioticFacet ;
-                  cg:content """When a customer makes second contact about an unresolved issue,
+<urn:iep:lpc:objective:cs101:mod3:second-contact-escalation> a lpc:LearningObjective ;
+    iep:semiotic [ a iep:SemioticFacet ;
+                  iep:content """When a customer makes second contact about an unresolved issue,
                                 acknowledge their frustration AND the prior contact before
                                 offering the same or similar solution.""" ] ;
     lpc:groundingFragment <urn:pgsl:atom:cs101-mod3-passage-7> .
@@ -161,20 +161,20 @@ The `lpc:groundingFragment` is the content-addressed atom (PGSL) the assistant c
 
 ### 4. Performance records — into the user's pod, with provenance
 
-Performance records (review feedback, ratings, manager comments) get written to the user's pod with `cg:ProvenanceFacet` capturing who issued them. This is delicate ground (employers may resist users having portable records); the vertical assumes legal / contractual sign-off and provides the substrate, not the policy:
+Performance records (review feedback, ratings, manager comments) get written to the user's pod with `iep:ProvenanceFacet` capturing who issued them. This is delicate ground (employers may resist users having portable records); the vertical assumes legal / contractual sign-off and provides the substrate, not the policy:
 
 ```turtle
-<urn:cg:lpc:performance-record:q1-2026:review> a lpc:PerformanceRecord ;
+<urn:iep:lpc:performance-record:q1-2026:review> a lpc:PerformanceRecord ;
     lpc:reviewType lpc:ManagerReview ;
-    cg:temporal   [ a cg:TemporalFacet ; cg:validFrom "2026-04-20T16:00:00Z"^^xsd:dateTime ] ;
-    cg:provenance [ a cg:ProvenanceFacet ; prov:wasAttributedTo <urn:agent:manager-jane> ] ;
-    cg:trust      [ a cg:TrustFacet ; cg:issuer <https://hr.acme.example> ; cg:trustLevel cg:ThirdPartyAttested ] ;
-    cg:semiotic   [ a cg:SemioticFacet ;
-                    cg:content """Strong performance in customer-service-tone capability;
+    iep:temporal   [ a iep:TemporalFacet ; iep:validFrom "2026-04-20T16:00:00Z"^^xsd:dateTime ] ;
+    iep:provenance [ a iep:ProvenanceFacet ; prov:wasAttributedTo <urn:agent:manager-jane> ] ;
+    iep:trust      [ a iep:TrustFacet ; iep:issuer <https://hr.acme.example> ; iep:trustLevel iep:ThirdPartyAttested ] ;
+    iep:semiotic   [ a iep:SemioticFacet ;
+                    iep:content """Strong performance in customer-service-tone capability;
                                   cited 3 specific second-contact resolutions where Mark
                                   led with explicit acknowledgment.""" ;
-                    cg:modalStatus cg:Asserted ] ;
-    lpc:flagsCapability <urn:cg:lpc:capability:customer-service-tone> .
+                    iep:modalStatus iep:Asserted ] ;
+    lpc:flagsCapability <urn:iep:lpc:capability:customer-service-tone> .
 ```
 
 ### 5. The chat — grounded RAG with citation
@@ -188,14 +188,14 @@ When the user asks "What did the customer-service training say about second-cont
 
 When the user asks "What did my last review say about my tone?", the assistant:
 
-1. Finds `lpc:PerformanceRecord` with most recent `cg:validFrom`
-2. Quotes the `cg:semiotic.content` verbatim
+1. Finds `lpc:PerformanceRecord` with most recent `iep:validFrom`
+2. Quotes the `iep:semiotic.content` verbatim
 3. Surfaces the cross-link to the capability flagged + any related training the user has completed
 
 When the user asks "Generate a development plan for the gaps my last review identified", the assistant:
 
 1. Composes performance records + training-content KG + credential wallet
-2. Returns a draft plan with `cg:modalStatus Hypothetical` because the assistant is *suggesting*, not asserting
+2. Returns a draft plan with `iep:modalStatus Hypothetical` because the assistant is *suggesting*, not asserting
 3. The plan cites which training is being recommended and which credentials it would lead to
 
 ### 6. Cross-employer portability
@@ -208,14 +208,14 @@ All terms in [`ontology/lpc.ttl`](ontology/lpc.ttl). Summary:
 
 | Class | Subclass of | Purpose |
 |---|---|---|
-| `lpc:LearnerWallet` | `cg:ContextDescriptor` | Top-level container linking the user's credentials, learning history, training content, performance records |
+| `lpc:LearnerWallet` | `iep:ContextDescriptor` | Top-level container linking the user's credentials, learning history, training content, performance records |
 | `lpc:Credential` | `passport:Achievement` | A verifiable credential / Open Badge 3.0 / IMS CLR assertion; carries proof + verification status |
-| `lpc:LearningExperience` | `cg:ContextDescriptor` | A user-side record of an xAPI Statement; cross-links to content + credential |
-| `lpc:TrainingContent` | `cg:ContextDescriptor` | An ingested course / module; ground-truth source for citations |
-| `lpc:LearningObjective` | `cg:ContextDescriptor` | A specific objective inside training content; carries the grounding fragment |
-| `lpc:PerformanceRecord` | `cg:ContextDescriptor` | A review / rating / feedback record; provenance attributes it to the issuer |
-| `lpc:DevelopmentPlan` | `cg:ContextDescriptor` | A user-side plan composing performance records + training KG; always Hypothetical |
-| `lpc:CitedResponse` | `cg:ContextDescriptor` | An assistant chat response with explicit citations to grounding fragments |
+| `lpc:LearningExperience` | `iep:ContextDescriptor` | A user-side record of an xAPI Statement; cross-links to content + credential |
+| `lpc:TrainingContent` | `iep:ContextDescriptor` | An ingested course / module; ground-truth source for citations |
+| `lpc:LearningObjective` | `iep:ContextDescriptor` | A specific objective inside training content; carries the grounding fragment |
+| `lpc:PerformanceRecord` | `iep:ContextDescriptor` | A review / rating / feedback record; provenance attributes it to the issuer |
+| `lpc:DevelopmentPlan` | `iep:ContextDescriptor` | A user-side plan composing performance records + training KG; always Hypothetical |
+| `lpc:CitedResponse` | `iep:ContextDescriptor` | An assistant chat response with explicit citations to grounding fragments |
 | `lpc:CredentialFormat` | enum | OpenBadge3 / VC / IMSCLR / LERS |
 | `lpc:ContentFormat` | enum | ScormPackage / cmi5 / PDF / VideoTranscript / HTML |
 | `lpc:ReviewType` | enum | ManagerReview / SelfAssessment / 360Review / SkipLevelReview |
@@ -244,9 +244,9 @@ Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) ve
 | What's verified (real code paths) | What's still deferred |
 |---|---|
 | Real `ContextDescriptor` builder + Turtle + `validate()` for every lpc: class | No actual VC proof verification against a real Open Badges 3.0 issuer (Tier 5) |
-| Credential's `cg:TrustFacet` carries issuer + ThirdPartyAttested level | No actual xAPI Statement pulled from a real LRS (Tier 3) |
-| Performance record's `cg:ProvenanceFacet` attributes to manager (NOT user) | No real SCORM / cmi5 ingestion via `src/connectors/` (Tier 6) |
-| Development plan is `cg:Hypothetical` with `cg:Agent.onBehalfOf` set to user | |
+| Credential's `iep:TrustFacet` carries issuer + ThirdPartyAttested level | No actual xAPI Statement pulled from a real LRS (Tier 3) |
+| Performance record's `iep:ProvenanceFacet` attributes to manager (NOT user) | No real SCORM / cmi5 ingestion via `src/connectors/` (Tier 6) |
+| Development plan is `iep:Hypothetical` with `iep:Agent.onBehalfOf` set to user | |
 | Cited responses asserted by assistant on behalf of user | |
 | `mintAtom` produces deterministic content-addressed IRIs | |
 | **Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) PUTs a real Open Badge 3.0 credential descriptor to the deployed Azure CSS and confirms `ThirdPartyAttested` Trust facet + issuer DID survive the HTTP roundtrip | |
@@ -264,19 +264,19 @@ Per first principles, this vertical's capabilities are reachable two ways. The p
 
 ### Path A — protocol-level (any generic Interego agent)
 
-Each capability is declared as a `cg:Affordance` descriptor with `urn:cg:action:lpc:<verb>` action IRIs. A generic agent does:
+Each capability is declared as a `iep:Affordance` descriptor with `urn:iep:action:lpc:<verb>` action IRIs. A generic agent does:
 1. `discover_context` against the LPC bridge's `/affordances` manifest (or against the user's pod where the vertical's affordances are also published)
 2. Filter for the action IRI of interest
 3. Read `hydra:method` + `hydra:target` + `hydra:expects`
 4. POST typed inputs to `hydra:target`
 
 No LPC-specific client code at the agent. Action IRIs:
-- `urn:cg:action:lpc:ingest-training-content`
-- `urn:cg:action:lpc:import-credential`
-- `urn:cg:action:lpc:record-performance-review`
-- `urn:cg:action:lpc:record-learning-experience`
-- `urn:cg:action:lpc:grounded-answer`
-- `urn:cg:action:lpc:list-wallet`
+- `urn:iep:action:lpc:ingest-training-content`
+- `urn:iep:action:lpc:import-credential`
+- `urn:iep:action:lpc:record-performance-review`
+- `urn:iep:action:lpc:record-learning-experience`
+- `urn:iep:action:lpc:grounded-answer`
+- `urn:iep:action:lpc:list-wallet`
 
 ### Path B — opinionated bridge ([`bridge/`](bridge/))
 
@@ -296,14 +296,14 @@ Connect any MCP client to `http://localhost:6010/mcp` for 6 named tools:
 |---|---|
 | `lpc.ingest_training_content` | SCORM/cmi5 zip → unwrap → extract → atom-mint → publish `lpc:TrainingContent` + `lpc:LearningObjective` to the user's pod. |
 | `lpc.import_credential` | Verify a W3C VC (vc-jwt or DataIntegrityProof JSON-LD); publish as `lpc:Credential`. Verification failures throw. |
-| `lpc.record_performance_review` | Publish a manager-attributed review with `cg:ProvenanceFacet.wasAttributedTo` set to the manager's DID. |
+| `lpc.record_performance_review` | Publish a manager-attributed review with `iep:ProvenanceFacet.wasAttributedTo` set to the manager's DID. |
 | `lpc.record_learning_experience` | Ingest an xAPI Statement (any version) as `lpc:LearningExperience`. |
 | `lpc.grounded_answer` | Loads wallet from pod, retrieves with verbatim citation, publishes the response back as `lpc:CitedResponse`. Returns null for unanswerable questions — honest no-data. |
 | `lpc.list_wallet` | Summarize what's in the pod-backed wallet. |
 
 Tool schemas are derived from the [`affordances.ts`](affordances.ts) declarations — never hand-written. Bridge serves the affordance manifest at `GET /affordances` so Path A consumers can also reach this bridge's running endpoints.
 
-**Scope finding from testing**: VC proof blocks (the JSON Object holding the cryptographic signature) live as vertical-scoped `lpc:vcProof` literals in the described graph, NOT inside `cg:TrustFacet`. The L1 trust facet is structural metadata only; actual signature verification belongs to a Tier 5 test that invokes `src/compliance/` against a real signature.
+**Scope finding from testing**: VC proof blocks (the JSON Object holding the cryptographic signature) live as vertical-scoped `lpc:vcProof` literals in the described graph, NOT inside `iep:TrustFacet`. The L1 trust facet is structural metadata only; actual signature verification belongs to a Tier 5 test that invokes `src/compliance/` against a real signature.
 
 ## What this is NOT
 

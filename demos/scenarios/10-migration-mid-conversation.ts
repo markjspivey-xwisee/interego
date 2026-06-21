@@ -128,7 +128,7 @@ claim works):
   2. "The Curiosity rover landed on Mars on August 6, 2012 (UTC)."
 
 For each, call protocol.publish_descriptor with:
-  graph_iri:     "urn:cg:demo:fact:phase-a:<n>"
+  graph_iri:     "urn:iep:demo:fact:phase-a:<n>"
   graph_content: <Turtle including the claim AND a dct:source / prov:wasDerivedFrom>
   modal_status:  "Asserted"
   confidence:    0.9
@@ -195,7 +195,7 @@ Suggested topics (or pick your own, any non-obvious fact):
   4. "Tardigrades survived 10 days of exposure to outer space (BIOPAN-6, 2007)."
 
 For each, call protocol.publish_descriptor with:
-  graph_iri:     "urn:cg:demo:fact:phase-b:<n>"
+  graph_iri:     "urn:iep:demo:fact:phase-b:<n>"
   graph_content: <Turtle including the claim AND a dct:source / prov:wasDerivedFrom>
   modal_status:  "Asserted"
   confidence:    0.9

@@ -29,7 +29,7 @@
  *        - the retrieval activity      → fxa:RetrievalActivity    Hypothetical
  *        - the LLM completion           → fxa:LlmCompletion         Hypothetical
  *        - the cited answer             → fxa:CitedAnswer           Asserted
- *          (cg:supersedes-chains back through the Hypothetical
+ *          (iep:supersedes-chains back through the Hypothetical
  *          retrieval + completion descriptors, so the auditor walks
  *          the whole agent trace from the final answer)
  *
@@ -126,7 +126,7 @@ export interface AgentTraceDescriptor {
   readonly modalStatus: 'Asserted' | 'Hypothetical';
   /** prov:wasDerivedFrom IRIs of upstream trace descriptors. */
   readonly wasDerivedFrom: readonly IRI[];
-  /** cg:supersedes IRI (for the final Asserted answer superseding its Hypothetical drafts). */
+  /** iep:supersedes IRI (for the final Asserted answer superseding its Hypothetical drafts). */
   readonly supersedes?: IRI;
   /** Body payload for the descriptor's named graph. */
   readonly body: Record<string, unknown>;
@@ -455,7 +455,7 @@ function emitTrace(args: {
   const traceId = sha256Hex(`${args.learnerDid}|${args.course.courseIri}|${args.question}|${nowIso()}`).slice(0, 16);
   const at = nowIso();
 
-  const qIri = `urn:cg:foxxi:trace:question:${traceId}` as IRI;
+  const qIri = `urn:iep:foxxi:trace:question:${traceId}` as IRI;
   const qGraph = `urn:graph:foxxi:trace:question:${traceId}` as IRI;
   const question: AgentTraceDescriptor = {
     iri: qIri,
@@ -471,7 +471,7 @@ function emitTrace(args: {
     recordedAt: at,
   };
 
-  const rIri = `urn:cg:foxxi:trace:retrieval:${traceId}` as IRI;
+  const rIri = `urn:iep:foxxi:trace:retrieval:${traceId}` as IRI;
   const rGraph = `urn:graph:foxxi:trace:retrieval:${traceId}` as IRI;
   const retrieval: AgentTraceDescriptor = {
     iri: rIri,
@@ -492,7 +492,7 @@ function emitTrace(args: {
   const traceList: AgentTraceDescriptor[] = [question, retrieval];
 
   if (args.synthesizedAnswer !== null) {
-    const lIri = `urn:cg:foxxi:trace:llm:${traceId}` as IRI;
+    const lIri = `urn:iep:foxxi:trace:llm:${traceId}` as IRI;
     const lGraph = `urn:graph:foxxi:trace:llm:${traceId}` as IRI;
     const llm: AgentTraceDescriptor = {
       iri: lIri,
@@ -505,7 +505,7 @@ function emitTrace(args: {
     };
     traceList.push(llm);
 
-    const aIri = `urn:cg:foxxi:trace:answer:${traceId}` as IRI;
+    const aIri = `urn:iep:foxxi:trace:answer:${traceId}` as IRI;
     const aGraph = `urn:graph:foxxi:trace:answer:${traceId}` as IRI;
     const answer: AgentTraceDescriptor = {
       iri: aIri,

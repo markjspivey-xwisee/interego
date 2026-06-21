@@ -6,7 +6,7 @@
  * extension, an xAPI Profile fragment, or an IEEE-LER / ADL-TLA term, and gets
  * back (a) a real, conformant, self-descriptive artifact (built with Foxxi's own
  * buildProfileDoc / served LER+TLA namespaces — composition, not reimplementation),
- * (b) a cg:StandardsExtension descriptor it can publish so OTHER agents discover +
+ * (b) a iep:StandardsExtension descriptor it can publish so OTHER agents discover +
  * dereference + reuse it (distributed), and (c) in-flow performance support +
  * HATEOAS next-steps (what this builds, how to learn it, how to teach it).
  *
@@ -59,7 +59,7 @@ export interface ProposedExtension {
   /** IRI of the new term/extension. */
   iri: string;
   extendsStandard: string;
-  /** A self-descriptive cg:StandardsExtension descriptor (publishable, distributed). */
+  /** A self-descriptive iep:StandardsExtension descriptor (publishable, distributed). */
   descriptor: Record<string, unknown>;
   /** The conformant artifact: an xAPI Profile doc (xAPI kinds) or a Turtle term (LER/TLA kinds). */
   artifact: Record<string, unknown> | { mediaType: 'text/turtle'; turtle: string };
@@ -74,8 +74,8 @@ export const EXTEND_STANDARDS_GUIDANCE: AffordanceGuidance = {
   requires: ['Know which standard you are extending (xAPI Profile / IEEE-LER / ADL-TLA) and the superclass/host concept you compose onto.'],
   howToLearn: 'Dereference /ns/agp#StandardsExtension for the model; the returned artifact is a worked, conformant example you can adapt. Then teach it: frame it as an ac:TeachingPackage so other agents acquire the capability (agent-teaching loop).',
   nextAffordances: [
-    { action: 'urn:cg:action:agp:actualize', rel: 'then', why: 'Record performance that uses your new extension (capability x situation -> performance).' },
-    { action: 'urn:cg:action:foxxi:review-record', rel: 'verify', why: 'See your extended vocabulary flowing through your learner record.' },
+    { action: 'urn:iep:action:agp:actualize', rel: 'then', why: 'Record performance that uses your new extension (capability x situation -> performance).' },
+    { action: 'urn:iep:action:foxxi:review-record', rel: 'verify', why: 'See your extended vocabulary flowing through your learner record.' },
   ],
 };
 
@@ -127,13 +127,13 @@ export function proposeStandardsExtension(input: ProposeExtensionInput): Propose
     const turtle = [
       `@prefix owl:  <http://www.w3.org/2002/07/owl#> .`,
       `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .`,
-      `@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .`,
+      `@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .`,
       ``,
       `<${iri}> a owl:Class ;`,
       `    rdfs:subClassOf <${superClass}> ;`,
       `    rdfs:label "${ttlEscape(label)}" ;`,
       `    rdfs:comment "${ttlEscape(input.definition)}" ;`,
-      `    cg:constructedFrom <${superClass}> .`,
+      `    iep:constructedFrom <${superClass}> .`,
       ``,
     ].join('\n');
     artifact = { mediaType: 'text/turtle', turtle };
@@ -141,7 +141,7 @@ export function proposeStandardsExtension(input: ProposeExtensionInput): Propose
 
   const descriptor: Record<string, unknown> = {
     '@id': iri,
-    '@type': ['cg:ContextDescriptor', 'agp:StandardsExtension'],
+    '@type': ['iep:ContextDescriptor', 'agp:StandardsExtension'],
     'conformsTo': `${AGP_NS.replace('#', '')}/shapes#StandardsExtensionShape`,
     [`${AGP_NS}extensionKind`]: { '@id': `${AGP_NS}${kind}` },
     [`${AGP_NS}extendsStandard`]: extendsStandard,

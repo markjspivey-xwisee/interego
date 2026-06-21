@@ -607,7 +607,7 @@ function TraceView({ trace }: { trace: TraceStep[] }) {
                   }}>{s.modalStatus}</span>
                   {s.supersedes && (
                     <span style={{ fontFamily: mono, fontSize: 10, color: 'var(--text-dim)' }}>
-                      cg:supersedes the raw model output
+                      iep:supersedes the raw model output
                     </span>
                   )}
                 </div>

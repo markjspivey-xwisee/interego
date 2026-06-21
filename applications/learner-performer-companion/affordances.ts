@@ -3,12 +3,12 @@
  *
  * Single source of truth: each capability is declared as a typed
  * Affordance object. The vertical's bridge derives MCP tool schemas
- * from this; it ALSO publishes these as cg:Affordance descriptors so
+ * from this; it ALSO publishes these as iep:Affordance descriptors so
  * generic Interego agents can discover and invoke the capabilities
  * via the protocol's standard affordance-walk (no per-vertical client
  * code required at the consuming agent).
  *
- * Action IRIs use the urn:cg:action:lpc:<verb> convention. Targets
+ * Action IRIs use the urn:iep:action:lpc:<verb> convention. Targets
  * use {base} as a placeholder for the bridge's deployment URL,
  * substituted at affordance-publication time.
  */
@@ -20,7 +20,7 @@ import type {
 
 const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
   {
-    action: 'urn:cg:action:lpc:ingest-training-content' as IRI,
+    action: 'urn:iep:action:lpc:ingest-training-content' as IRI,
     toolName: 'lpc.ingest_training_content',
     title: 'Ingest training content',
     description: 'Unwrap a SCORM 1.2 / SCORM 2004 / cmi5 zip package, extract launchable lesson content, mint content-addressed PGSL atoms, and publish lpc:TrainingContent + lpc:LearningObjective descriptors to the user\'s pod.',
@@ -47,7 +47,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
   },
 
   {
-    action: 'urn:cg:action:lpc:import-credential' as IRI,
+    action: 'urn:iep:action:lpc:import-credential' as IRI,
     toolName: 'lpc.import_credential',
     title: 'Import a verifiable credential',
     description: 'Verify a W3C Verifiable Credential (vc-jwt or DataIntegrityProof JSON-LD) and publish as lpc:Credential to the user\'s pod. Verification failures throw — bad VCs never land in the pod under credential IRIs.',
@@ -76,10 +76,10 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
   },
 
   {
-    action: 'urn:cg:action:lpc:record-performance-review' as IRI,
+    action: 'urn:iep:action:lpc:record-performance-review' as IRI,
     toolName: 'lpc.record_performance_review',
     title: 'Record a performance review',
-    description: 'Publish a performance review with cg:ProvenanceFacet attributing it to the manager (NOT the user). Stays in the user\'s pod portably.',
+    description: 'Publish a performance review with iep:ProvenanceFacet attributing it to the manager (NOT the user). Stays in the user\'s pod portably.',
     method: 'POST',
     targetTemplate: '{base}/lpc/record_performance_review',
     annotations: { title: 'Record a performance review', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -93,7 +93,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
     outputs: {
-      description: 'RecordPerformanceReviewResult — IRI of the new lpc:PerformanceRecord (attributed to the manager via cg:ProvenanceFacet) + the descriptor/graph URLs.',
+      description: 'RecordPerformanceReviewResult — IRI of the new lpc:PerformanceRecord (attributed to the manager via iep:ProvenanceFacet) + the descriptor/graph URLs.',
       properties: {
         recordIri: { type: 'string', description: 'IRI of the new lpc:PerformanceRecord.' },
         descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
@@ -104,7 +104,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
   },
 
   {
-    action: 'urn:cg:action:lpc:record-learning-experience' as IRI,
+    action: 'urn:iep:action:lpc:record-learning-experience' as IRI,
     toolName: 'lpc.record_learning_experience',
     title: 'Record a learning experience from an xAPI Statement',
     description: 'Ingest an xAPI Statement (any version 1.0.x or 2.0.x) as an lpc:LearningExperience descriptor in the user\'s pod, cross-linked to training content and credential earned.',
@@ -131,7 +131,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
   },
 
   {
-    action: 'urn:cg:action:lpc:grounded-answer' as IRI,
+    action: 'urn:iep:action:lpc:grounded-answer' as IRI,
     toolName: 'lpc.grounded_answer',
     title: 'Answer a grounded chat question',
     description: 'Answer a natural-language question by retrieving from the user\'s pod with verbatim citation. Returns null when nothing in the wallet grounds the question — honest no-data, no confabulation. Persists an lpc:CitedResponse audit record.',
@@ -186,7 +186,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
   },
 
   {
-    action: 'urn:cg:action:lpc:list-wallet' as IRI,
+    action: 'urn:iep:action:lpc:list-wallet' as IRI,
     toolName: 'lpc.list_wallet',
     title: 'Summarize the user\'s wallet',
     description: 'Return a summary of training content, credentials, performance records, and learning experiences in the user\'s pod-backed wallet.',
@@ -211,7 +211,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
   },
 
   {
-    action: 'urn:cg:action:lpc:opt-into-cohort' as IRI,
+    action: 'urn:iep:action:lpc:opt-into-cohort' as IRI,
     toolName: 'lpc.opt_into_cohort',
     title: 'Opt the learner into an institutional cohort aggregate',
     description: 'Learner-side: publish a SIGNED agg:CohortParticipation descriptor on the learner\'s pod, declaring willingness to be counted in an institutional aggregate-cohort-query for the named cohort_iri. The institution\'s lpc.aggregate_cohort_query with privacy_mode = merkle-attested-opt-in will include this learner\'s pod in the count and emit a Merkle inclusion proof. Revoke by re-publishing the same descriptor with modal status Counterfactual (auto-supersedes the prior Asserted one). The substrate\'s consent boundary — the institution cannot include a learner who has not opted in.',
@@ -272,7 +272,7 @@ export const lpcAffordances = LPC_AFFORDANCES;
 //     their wallet (cf. existing lpc.import_credential).
 const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
   {
-    action: 'urn:cg:action:lpc:publish-authoritative-content' as IRI,
+    action: 'urn:iep:action:lpc:publish-authoritative-content' as IRI,
     toolName: 'lpc.publish_authoritative_content',
     title: '[institutional] Publish authoritative training content',
     description: 'Institution-side: unwrap a SCORM 1.2 / SCORM 2004 / cmi5 / TLA-LAP-catalog-entry package, mint atoms, and publish lpc:TrainingContent + lpc:LearningObjective descriptors to the INSTITUTION\'s own pod (NOT the learner\'s). Learners\' agents discover via federated discovery and pull selectively into their own wallets per their own consent. The institution is a peer, not a hub.',
@@ -299,7 +299,7 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
   },
 
   {
-    action: 'urn:cg:action:lpc:issue-cohort-credential-template' as IRI,
+    action: 'urn:iep:action:lpc:issue-cohort-credential-template' as IRI,
     toolName: 'lpc.issue_cohort_credential_template',
     title: '[institutional] Issue a cohort credential template',
     description: 'Institution-side: publish a SIGNED credential TEMPLATE (the rubric for what is earned) to the institution\'s pod. Eligible learners\' agents discover, verify the issuer\'s signature, and call lpc.import_credential to accept the issuance into their own wallet. Conforms to Open Badges 3.0 / IMS CLR 2.0 / IEEE LERS shapes per the `credential_format` parameter. The institution issues; the learner consents to acceptance.',
@@ -328,7 +328,7 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
   },
 
   {
-    action: 'urn:cg:action:lpc:aggregate-cohort-query' as IRI,
+    action: 'urn:iep:action:lpc:aggregate-cohort-query' as IRI,
     toolName: 'lpc.aggregate_cohort_query',
     title: '[institutional] Run an aggregate-privacy query over a cohort',
     description: 'Institution-side: query aggregate metrics over consenting learners\' pods — completion counts, score distributions, competency-coverage thresholds — without seeing individuals. Five privacy modes layered on the same surface: v1 abac (default) | v2 merkle-attested-opt-in (verifiable count + Merkle inclusion proofs) | v3 zk-aggregate (homomorphic Pedersen sum + DP-Laplace noise) | v3.1 + require_signed_bounds (regulator-grade attribution) | v3.2 + epsilon_budget_max (cumulative ε discipline). See applications/_shared/aggregate-privacy/. Refuses any query that would expose an individual record under the chosen mode.',
@@ -365,7 +365,7 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
   },
 
   {
-    action: 'urn:cg:action:lpc:project-to-lrs' as IRI,
+    action: 'urn:iep:action:lpc:project-to-lrs' as IRI,
     toolName: 'lpc.project_to_lrs',
     title: '[institutional] Project descriptors as xAPI Statements outbound to an LRS',
     description: 'Institution-side: with the learner\'s per-graph consent, translate lpc:LearningExperience descriptors from the learner\'s pod into xAPI 2.0 Statements and POST to a target LRS (Watershed / Veracity / SCORM Cloud / Yet Analytics / Learning Locker). Wraps the boundary translator in ../lrs-adapter/. The result is lossy by definition (xAPI cannot express modal status / supersedes chains); the adapter records this lossiness in result.extensions.',

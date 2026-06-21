@@ -104,7 +104,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
 
   it('publish + fetch back + parse: agent-development-practice probe descriptor', { timeout: 30000 }, async (ctx) => {
     if (!podReachable) return ctx.skip();
-    const probe = ContextDescriptor.create('urn:cg:probe:tier2-test:1' as IRI)
+    const probe = ContextDescriptor.create('urn:iep:probe:tier2-test:1' as IRI)
       .describes('urn:graph:adp:probe' as IRI)
       .temporal({ validFrom: '2026-04-22T10:00:00Z' })
       .hypothetical(0.5)
@@ -130,7 +130,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
 
   it('publish + fetch back: learner-performer-companion credential', { timeout: 30000 }, async (ctx) => {
     if (!podReachable) return ctx.skip();
-    const cred = ContextDescriptor.create('urn:cg:credential:tier2-ob3' as IRI)
+    const cred = ContextDescriptor.create('urn:iep:credential:tier2-ob3' as IRI)
       .describes('urn:graph:lpc:credential' as IRI)
       .temporal({ validFrom: '2025-09-15T11:00:00Z' })
       .asserted(0.95)
@@ -158,7 +158,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
     // This exercises the actual src/solid/publish() — same code that
     // production code calls. It writes the descriptor + (separately) the
     // graph content + a manifest entry.
-    const descId = `urn:cg:tier2-publish-test:${Date.now()}` as IRI;
+    const descId = `urn:iep:tier2-publish-test:${Date.now()}` as IRI;
     const desc = ContextDescriptor.create(descId)
       .describes('urn:graph:tier2-test' as IRI)
       .temporal({ validFrom: '2026-04-27T10:00:00Z' })
@@ -187,7 +187,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
   it('manifest fetch + parse: round-trips through parseManifest()', { timeout: 30000 }, async (ctx) => {
     if (!podReachable) return ctx.skip();
     // First publish a descriptor so the manifest has at least one entry
-    const descId = `urn:cg:tier2-manifest-test:${Date.now()}` as IRI;
+    const descId = `urn:iep:tier2-manifest-test:${Date.now()}` as IRI;
     const desc = ContextDescriptor.create(descId)
       .describes('urn:graph:tier2-manifest' as IRI)
       .temporal({ validFrom: '2026-04-27T11:00:00Z' })
@@ -217,7 +217,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
 
   it('cross-vertical: publish lrs-adapter ingested descriptor + verify roundtrip', { timeout: 30000 }, async (ctx) => {
     if (!podReachable) return ctx.skip();
-    const desc = ContextDescriptor.create('urn:cg:lrs-statement:tier2-stmt' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:lrs-statement:tier2-stmt' as IRI)
       .describes('urn:graph:lrs:statement' as IRI)
       .temporal({ validFrom: '2026-04-15T14:32:00Z' })
       .asserted(0.95)

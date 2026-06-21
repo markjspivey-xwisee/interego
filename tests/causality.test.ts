@@ -368,7 +368,7 @@ describe('CausalFacet Builder', () => {
   beforeEach(() => resetComposedIdCounter());
 
   it('builds observation descriptor', () => {
-    const desc = ContextDescriptor.create('urn:cg:obs' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:obs' as IRI)
       .describes('urn:graph:arch-obs' as IRI)
       .temporal({ validFrom: '2026-03-20T00:00:00Z' })
       .observation('urn:scm:architecture' as IRI)
@@ -384,12 +384,12 @@ describe('CausalFacet Builder', () => {
   });
 
   it('builds intervention descriptor', () => {
-    const desc = ContextDescriptor.create('urn:cg:int' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:int' as IRI)
       .describes('urn:graph:arch-int' as IRI)
       .temporal({ validFrom: '2026-03-20T00:00:00Z' })
       .intervention(
         [{ variable: 'deploymentStrategy', value: 'microservices' }],
-        'urn:cg:obs' as IRI,
+        'urn:iep:obs' as IRI,
       )
       .build();
 
@@ -398,12 +398,12 @@ describe('CausalFacet Builder', () => {
     if (causal!.type === 'Causal') {
       expect(causal!.causalRole).toBe('Intervention');
       expect(causal!.interventions).toHaveLength(1);
-      expect(causal!.parentObservation).toBe('urn:cg:obs');
+      expect(causal!.parentObservation).toBe('urn:iep:obs');
     }
   });
 
   it('builds counterfactual descriptor', () => {
-    const desc = ContextDescriptor.create('urn:cg:cf' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:cf' as IRI)
       .describes('urn:graph:arch-cf' as IRI)
       .temporal({ validFrom: '2026-03-20T00:00:00Z' })
       .counterfactual(
@@ -412,8 +412,8 @@ describe('CausalFacet Builder', () => {
           intervention: { variable: 'deploymentStrategy', value: 'microservices' },
           evidence: { deploymentStrategy: 'monolith', latency: 'high' },
         },
-        'urn:cg:obs' as IRI,
-        'urn:cg:int' as IRI,
+        'urn:iep:obs' as IRI,
+        'urn:iep:int' as IRI,
       )
       .build();
 
@@ -422,14 +422,14 @@ describe('CausalFacet Builder', () => {
     if (causal!.type === 'Causal') {
       expect(causal!.causalRole).toBe('Counterfactual');
       expect(causal!.counterfactualQuery!.target).toBe('userSatisfaction');
-      expect(causal!.parentObservation).toBe('urn:cg:obs');
-      expect(causal!.parentIntervention).toBe('urn:cg:int');
+      expect(causal!.parentObservation).toBe('urn:iep:obs');
+      expect(causal!.parentIntervention).toBe('urn:iep:int');
     }
   });
 
   it('rejects invalid causalConfidence', () => {
     expect(() =>
-      ContextDescriptor.create('urn:cg:bad' as IRI)
+      ContextDescriptor.create('urn:iep:bad' as IRI)
         .describes('urn:graph:x' as IRI)
         .causal({ causalRole: 'Observation', causalConfidence: 1.5 })
         .build()
@@ -443,32 +443,32 @@ describe('CausalFacet Builder', () => {
 
 describe('CausalFacet Serialization', () => {
   it('serializes observation to Turtle', () => {
-    const desc = ContextDescriptor.create('urn:cg:obs' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:obs' as IRI)
       .describes('urn:graph:obs' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .observation('urn:scm:test' as IRI)
       .build();
 
     const turtle = toTurtle(desc);
-    expect(turtle).toContain('cg:CausalFacet');
-    expect(turtle).toContain('cg:causalRole "Observation"');
-    expect(turtle).toContain('cg:causalModel <urn:scm:test>');
+    expect(turtle).toContain('iep:CausalFacet');
+    expect(turtle).toContain('iep:causalRole "Observation"');
+    expect(turtle).toContain('iep:causalModel <urn:scm:test>');
   });
 
   it('serializes intervention with do-operator to Turtle', () => {
-    const desc = ContextDescriptor.create('urn:cg:int' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:int' as IRI)
       .describes('urn:graph:int' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .intervention(
         [{ variable: 'X', value: '1' }],
-        'urn:cg:obs' as IRI,
+        'urn:iep:obs' as IRI,
       )
       .build();
 
     const turtle = toTurtle(desc);
-    expect(turtle).toContain('cg:Intervention');
-    expect(turtle).toContain('cg:intervenes');
-    expect(turtle).toContain('cg:parentObservation');
+    expect(turtle).toContain('iep:Intervention');
+    expect(turtle).toContain('iep:intervenes');
+    expect(turtle).toContain('iep:parentObservation');
   });
 
   it('serializes inline SCM to Turtle', () => {
@@ -478,28 +478,28 @@ describe('CausalFacet Serialization', () => {
       [{ from: 'X', to: 'Y', mechanism: 'direct cause' }],
       'Inline SCM',
     );
-    const desc = ContextDescriptor.create('urn:cg:scm' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:scm' as IRI)
       .describes('urn:graph:scm' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .observation(scm)
       .build();
 
     const turtle = toTurtle(desc);
-    expect(turtle).toContain('cg:StructuralCausalModel');
-    expect(turtle).toContain('cg:CausalVariable');
-    expect(turtle).toContain('cg:CausalEdge');
+    expect(turtle).toContain('iep:StructuralCausalModel');
+    expect(turtle).toContain('iep:CausalVariable');
+    expect(turtle).toContain('iep:CausalEdge');
   });
 
   it('serializes to JSON-LD', () => {
-    const desc = ContextDescriptor.create('urn:cg:obs' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:obs' as IRI)
       .describes('urn:graph:obs' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .observation('urn:scm:test' as IRI)
       .build();
 
     const jsonld = toJsonLdString(desc, { pretty: true });
-    expect(jsonld).toContain('cg:CausalFacet');
-    expect(jsonld).toContain('"cg:causalRole": "Observation"');
+    expect(jsonld).toContain('iep:CausalFacet');
+    expect(jsonld).toContain('"iep:causalRole": "Observation"');
   });
 });
 
@@ -509,7 +509,7 @@ describe('CausalFacet Serialization', () => {
 
 describe('CausalFacet Validation', () => {
   it('validates observation descriptor', () => {
-    const desc = ContextDescriptor.create('urn:cg:obs' as IRI)
+    const desc = ContextDescriptor.create('urn:iep:obs' as IRI)
       .describes('urn:graph:obs' as IRI)
       .observation('urn:scm:test' as IRI)
       .build();
@@ -518,7 +518,7 @@ describe('CausalFacet Validation', () => {
 
   it('rejects intervention without interventions array', () => {
     const desc = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: ['urn:graph:x' as IRI],
       facets: [{ type: 'Causal' as const, causalRole: 'Intervention' as const }],
     };
@@ -529,7 +529,7 @@ describe('CausalFacet Validation', () => {
 
   it('rejects counterfactual without query', () => {
     const desc = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: ['urn:graph:x' as IRI],
       facets: [{ type: 'Causal' as const, causalRole: 'Counterfactual' as const }],
     };
@@ -540,7 +540,7 @@ describe('CausalFacet Validation', () => {
 
   it('rejects invalid causal role', () => {
     const desc = {
-      id: 'urn:cg:bad' as IRI,
+      id: 'urn:iep:bad' as IRI,
       describes: ['urn:graph:x' as IRI],
       facets: [{ type: 'Causal' as const, causalRole: 'Invalid' as never }],
     };
@@ -557,18 +557,18 @@ describe('CausalFacet Composition', () => {
   beforeEach(() => resetComposedIdCounter());
 
   it('union preserves both causal facets', () => {
-    const obs = ContextDescriptor.create('urn:cg:obs' as IRI)
+    const obs = ContextDescriptor.create('urn:iep:obs' as IRI)
       .describes('urn:graph:g' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .observation('urn:scm:test' as IRI)
       .build();
 
-    const int = ContextDescriptor.create('urn:cg:int' as IRI)
+    const int = ContextDescriptor.create('urn:iep:int' as IRI)
       .describes('urn:graph:g' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .intervention(
         [{ variable: 'X', value: '1' }],
-        'urn:cg:obs' as IRI,
+        'urn:iep:obs' as IRI,
       )
       .build();
 
@@ -582,13 +582,13 @@ describe('CausalFacet Composition', () => {
     // meet at the sign-instance level (facetFingerprint equality).
     // Disjoint observations (urn:scm:a vs urn:scm:b) drop out so that
     // A ∧ B ≤ A still holds.
-    const d1 = ContextDescriptor.create('urn:cg:d1' as IRI)
+    const d1 = ContextDescriptor.create('urn:iep:d1' as IRI)
       .describes('urn:graph:g' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .observation('urn:scm:a' as IRI)
       .build();
 
-    const d2 = ContextDescriptor.create('urn:cg:d2' as IRI)
+    const d2 = ContextDescriptor.create('urn:iep:d2' as IRI)
       .describes('urn:graph:g' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .observation('urn:scm:b' as IRI)
@@ -600,13 +600,13 @@ describe('CausalFacet Composition', () => {
 
     // Sanity: when the two operands DO share a causal sign-instance the
     // shared one survives (and only the shared one).
-    const d3 = ContextDescriptor.create('urn:cg:d3' as IRI)
+    const d3 = ContextDescriptor.create('urn:iep:d3' as IRI)
       .describes('urn:graph:g' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .observation('urn:scm:shared' as IRI)
       .build();
 
-    const d4 = ContextDescriptor.create('urn:cg:d4' as IRI)
+    const d4 = ContextDescriptor.create('urn:iep:d4' as IRI)
       .describes('urn:graph:g' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
       .observation('urn:scm:shared' as IRI)

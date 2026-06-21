@@ -3,7 +3,7 @@
  * @description Substrate-side memory bridge — pure functions over
  *              Interego primitives. No OpenClaw imports.
  *
- * Architectural framing: a memory write is a typed cg:ContextDescriptor
+ * Architectural framing: a memory write is a typed iep:ContextDescriptor
  * with a Semiotic facet (modal status + epistemic confidence) and a
  * Provenance facet (signed authorship). A memory recall is
  * cross-pod discovery filtered to memory-shaped subjects. A memory
@@ -161,13 +161,13 @@ export interface ForgetMemoryArgs {
 
 // ── Substrate calls ─────────────────────────────────────────────────
 
-const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const CGH_NS = 'https://markjspivey-xwisee.github.io/interego/ns/harness#';
 const PROV_NS = 'http://www.w3.org/ns/prov#';
 const DCT_NS = 'http://purl.org/dc/terms/';
 
 // We compose with W3C / DCMI vocab where it fits and the harness
-// (cgh:) namespace for the one substrate-pattern type that doesn't
+// (ieh:) namespace for the one substrate-pattern type that doesn't
 // have a clean W3C analog (an "agent memory" entry — auditor's
 // filter handle for SPARQL queries over the descriptor pool).
 const MEMORY_TYPE = `${CGH_NS}AgentMemory` as IRI;
@@ -214,8 +214,8 @@ export function buildMemoryDescriptor(args: StoreMemoryArgs, config: BridgeConfi
 
   const contentHash = sha256(text);
   const memoryId = contentHash.slice(0, 16);
-  const memoryIri = `urn:cg:memory:${kind}:${memoryId}` as IRI;
-  const graphIri = `urn:graph:cg:memory:${memoryId}` as IRI;
+  const memoryIri = `urn:iep:memory:${kind}:${memoryId}` as IRI;
+  const graphIri = `urn:graph:iep:memory:${memoryId}` as IRI;
 
   const owner = config.onBehalfOf ?? config.authoringAgentDid;
 
@@ -357,7 +357,7 @@ export async function recallMemories(args: RecallMemoriesArgs, config: BridgeCon
  *
  * Important: this is a substrate-level retraction, not a delete. The
  * pod still holds the original descriptor + graph; an auditor walking
- * cg:supersedes can reach them. If the operator needs to delete bytes
+ * iep:supersedes can reach them. If the operator needs to delete bytes
  * (data-subject GDPR erasure), that's a separate operation through
  * the pod's storage layer.
  */
@@ -370,7 +370,7 @@ export async function forgetMemory(args: ForgetMemoryArgs, config: BridgeConfig)
       // A forget is a retraction, not a tentative claim — the modal
       // status is Counterfactual (known-no-longer-valid), matching this
       // module's header contract. Recall excludes it by default; an
-      // auditor walking cg:supersedes still reaches it.
+      // auditor walking iep:supersedes still reaches it.
       modalStatus: 'Counterfactual',
       confidence: 0.5,
       supersedes: [args.iri],
@@ -389,10 +389,10 @@ interface DiscoverEntry {
 }
 
 function isMemoryDescriptor(entry: DiscoverEntry): boolean {
-  // describes[0] follows urn:cg:memory:<kind>:<id> when written via
+  // describes[0] follows urn:iep:memory:<kind>:<id> when written via
   // buildMemoryDescriptor. Pure pattern match — no string list to
   // maintain.
-  return entry.describes.some(d => d.startsWith('urn:cg:memory:'));
+  return entry.describes.some(d => d.startsWith('urn:iep:memory:'));
 }
 
 interface ParsedMemoryGraph {

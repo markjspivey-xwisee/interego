@@ -40,11 +40,11 @@ async function publish(url, ttl, graph) {
   await putText(url, ttl);
   const entry = `
 
-<${url}> a cg:ManifestEntry ;
-    cg:describes <${graph}> ;
-    cg:hasFacetType cg:Temporal ; cg:hasFacetType cg:Provenance ; cg:hasFacetType cg:Agent ;
-    cg:hasFacetType cg:Semiotic ; cg:hasFacetType cg:Trust ; cg:hasFacetType cg:Federation ;
-    cg:modalStatus cg:Asserted ; cg:trustLevel cg:SelfAsserted .
+<${url}> a iep:ManifestEntry ;
+    iep:describes <${graph}> ;
+    iep:hasFacetType iep:Temporal ; iep:hasFacetType iep:Provenance ; iep:hasFacetType iep:Agent ;
+    iep:hasFacetType iep:Semiotic ; iep:hasFacetType iep:Trust ; iep:hasFacetType iep:Federation ;
+    iep:modalStatus iep:Asserted ; iep:trustLevel iep:SelfAsserted .
 `;
   const cur = await fetchText(MANIFEST_URL);
   await putText(MANIFEST_URL, (cur ?? '') + entry);
@@ -72,7 +72,7 @@ console.log('2. All 20 Sybils endorse the bad claim within a ~5s window:');
 
 const sybilUrls = [];
 for (const s of sybils) {
-  const id = `urn:cg:sybil:${s.index}:${attackStart}`;
+  const id = `urn:iep:sybil:${s.index}:${attackStart}`;
   const graph = `urn:graph:sybil:endorsement:${s.index}:${attackStart}`;
   const now = new Date().toISOString();
 
@@ -80,7 +80,7 @@ for (const s of sybils) {
   const endorseMsg = `Sybil Endorsement\nTarget: ${BAD_CLAIM}\nEndorser: ${s.address}\nAt: ${now}`;
   const signature = await s.signer.signMessage(endorseMsg);
 
-  const ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+  const ttl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -88,24 +88,24 @@ for (const s of sybils) {
 @prefix sbl: <urn:sybil:> .
 
 <${id}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
-    cg:describes <${graph}> ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
+    iep:describes <${graph}> ;
     sbl:endorsesTarget <${BAD_CLAIM}> ;
     sbl:signature "${signature}" ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <${s.address}> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
         prov:wasDerivedFrom <${BAD_CLAIM}> ;
         prov:wasAttributedTo <${s.address}> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <${s.address}> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <${s.address}> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "0.95"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <${s.address}> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <${s.address}> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <${s.address}> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "0.95"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <${s.address}> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
   const slug = `sybil-${s.index}-${attackStart}`;
   const url = `${POD}context-graphs/${slug}.ttl`;
@@ -142,9 +142,9 @@ const endorseRegexResults = await Promise.all(
   sybilUrls.map(async s => {
     const ttl = await fetchText(s.url);
     return {
-      addr: ttl?.match(/cg:agentIdentity\s+<([^>]+)>/)?.[1],
-      conf: ttl?.match(/cg:epistemicConfidence\s+"([\d.]+)"/)?.[1],
-      modal: ttl?.match(/cg:modalStatus\s+cg:(\w+)/)?.[1],
+      addr: ttl?.match(/iep:agentIdentity\s+<([^>]+)>/)?.[1],
+      conf: ttl?.match(/iep:epistemicConfidence\s+"([\d.]+)"/)?.[1],
+      modal: ttl?.match(/iep:modalStatus\s+iep:(\w+)/)?.[1],
     };
   }),
 );
@@ -161,14 +161,14 @@ console.log(`   → ${flags}/3 flags raised. Cluster is ${isSybil ? '⚠ SYBIL-L
 // ── Phase 4: detector publishes downgrade descriptor ──────
 if (isSybil) {
   console.log('4. Detector publishes Sybil-cluster downgrade descriptor:');
-  const detectId = `urn:cg:sybil-detection:${attackEnd}`;
+  const detectId = `urn:iep:sybil-detection:${attackEnd}`;
   const detectGraph = `urn:graph:sybil-detection:${attackEnd}`;
   const detectUrl = `${POD}context-graphs/sybil-detection-${attackEnd}.ttl`;
   const now = new Date().toISOString();
   const derivedLines = sybilUrls.slice(0, 10).map(s => `        prov:wasDerivedFrom <${s.url}> ;`).join('\n');
-  const supersedesLines = sybilUrls.slice(0, 10).map(s => `    cg:supersedes <${s.url}> ;`).join('\n');
+  const supersedesLines = sybilUrls.slice(0, 10).map(s => `    iep:supersedes <${s.url}> ;`).join('\n');
 
-  const ttl = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+  const ttl = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dct: <http://purl.org/dc/terms/> .
@@ -176,31 +176,31 @@ if (isSybil) {
 @prefix sbl: <urn:sybil:> .
 
 <${detectId}>
-    a cg:ContextDescriptor ;
-    cg:version "1"^^xsd:integer ;
-    cg:validFrom "${now}"^^xsd:dateTime ;
+    a iep:ContextDescriptor ;
+    iep:version "1"^^xsd:integer ;
+    iep:validFrom "${now}"^^xsd:dateTime ;
 ${supersedesLines}
-    cg:describes <${detectGraph}> ;
+    iep:describes <${detectGraph}> ;
     sbl:clusterSize "${sybilUrls.length}"^^xsd:integer ;
     sbl:temporalWindowSec "${(temporalWindow / 1000).toFixed(1)}"^^xsd:double ;
     sbl:flagsRaised "${flags}"^^xsd:integer ;
     sbl:downgradeRecommendation "Exclude cluster from reputation aggregation" ;
-    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "${now}"^^xsd:dateTime ] ;
-    cg:hasFacet [
-        a cg:ProvenanceFacet ;
+    iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "${now}"^^xsd:dateTime ] ;
+    iep:hasFacet [
+        a iep:ProvenanceFacet ;
         prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <urn:agent:sybil-detector:v1> ; prov:endedAtTime "${now}"^^xsd:dateTime ] ;
 ${derivedLines}
         prov:wasAttributedTo <urn:agent:sybil-detector:v1> ;
         prov:generatedAtTime "${now}"^^xsd:dateTime
     ] ;
-    cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent, as:Application ; cg:agentIdentity <urn:agent:sybil-detector:v1> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <urn:agent:sybil-detector:v1> ] ;
-    cg:hasFacet [ a cg:SemioticFacet ; cg:groundTruth "true"^^xsd:boolean ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "0.95"^^xsd:double ] ;
-    cg:hasFacet [ a cg:TrustFacet ; cg:issuer <urn:agent:sybil-detector:v1> ; cg:trustLevel cg:SelfAsserted ] ;
-    cg:hasFacet [ a cg:FederationFacet ; cg:origin <${POD}> ; cg:storageEndpoint <${POD}> ; cg:syncProtocol cg:SolidNotifications ] .
+    iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent, as:Application ; iep:agentIdentity <urn:agent:sybil-detector:v1> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <urn:agent:sybil-detector:v1> ] ;
+    iep:hasFacet [ a iep:SemioticFacet ; iep:groundTruth "true"^^xsd:boolean ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "0.95"^^xsd:double ] ;
+    iep:hasFacet [ a iep:TrustFacet ; iep:issuer <urn:agent:sybil-detector:v1> ; iep:trustLevel iep:SelfAsserted ] ;
+    iep:hasFacet [ a iep:FederationFacet ; iep:origin <${POD}> ; iep:storageEndpoint <${POD}> ; iep:syncProtocol iep:SolidNotifications ] .
 `;
   await publish(detectUrl, ttl, detectGraph);
   console.log(`   ✓ ${detectUrl.split('/').pop()}`);
-  console.log(`     cg:supersedes → 10 of ${sybilUrls.length} Sybil endorsements (sample)`);
+  console.log(`     iep:supersedes → 10 of ${sybilUrls.length} Sybil endorsements (sample)`);
   console.log(`     sbl:clusterSize ${sybilUrls.length}, temporalWindow ${(temporalWindow / 1000).toFixed(1)}s`);
   console.log(`     Recommendation: exclude cluster from reputation aggregation.\n`);
 }

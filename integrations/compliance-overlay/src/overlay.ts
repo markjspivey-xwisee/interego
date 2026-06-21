@@ -19,7 +19,7 @@
  *   - 'soc2'      — CC4.1, CC8.1, CC9.2, etc.
  *
  * The overlay does not invent new event types. It uses
- * prov:Activity + cg:AgentToolCall (a minor cgh: subclass already
+ * prov:Activity + iep:AgentToolCall (a minor ieh: subclass already
  * carried in the ontology) plus dct:conformsTo to cite the controls.
  * If the runtime's tool happens to map onto an existing operator
  * event type (DeployEvent, AccessChangeEvent, …), the runtime can
@@ -131,7 +131,7 @@ export interface OverlayConfig {
 
 // ── Substrate construction ──────────────────────────────────────────
 
-const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const CGH_NS = 'https://markjspivey-xwisee.github.io/interego/ns/harness#';
 const PROV_NS = 'http://www.w3.org/ns/prov#';
 const DCT_NS = 'http://purl.org/dc/terms/';
@@ -141,7 +141,7 @@ const XSD_NS = 'http://www.w3.org/2001/XMLSchema#';
 // We compose with W3C vocab where it fits (prov:Activity, dct:type,
 // dct:description, dct:conformsTo, prov:startedAtTime,
 // prov:endedAtTime, prov:wasAttributedTo, prov:wasAssociatedWith) and
-// add a small harness (cgh:) ontology layer for the substrate-pattern
+// add a small harness (ieh:) ontology layer for the substrate-pattern
 // terms that have no W3C analog (auditable agent-action filtering,
 // JSON-encoded args, machine-readable outcome / duration / session-id).
 const ACTION_TYPE = `${CGH_NS}AgentAction` as IRI;
@@ -222,8 +222,8 @@ export function buildAgentActionDescriptor(
   const contentHash = sha256(fingerprint);
   const id = contentHash.slice(0, 16);
 
-  const eventIri = `urn:cg:agent-action:${slug(event.toolName)}:${id}` as IRI;
-  const graphIri = `urn:graph:cg:agent-action:${id}` as IRI;
+  const eventIri = `urn:iep:agent-action:${slug(event.toolName)}:${id}` as IRI;
+  const graphIri = `urn:graph:iep:agent-action:${id}` as IRI;
   const owner = event.onBehalfOf ?? event.agentDid;
   const startedAt = event.startedAt ?? nowIso();
   const endedAt = event.endedAt ?? startedAt;

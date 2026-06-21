@@ -64,7 +64,7 @@ import type {
 // consumer doesn't have to memorise our IRIs. The Foxxi vertical's vocab
 // is dereferenceable at /ns/foxxi.
 const JSONLD_CONTEXT = {
-  cg: 'https://markjspivey-xwisee.github.io/interego/ns/cg/v1#',
+  iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep/v1#',
   pgsl: 'https://markjspivey-xwisee.github.io/interego/ns/pgsl/v1#',
   ac: 'https://markjspivey-xwisee.github.io/interego/ns/ac/v1#',
   amta: 'https://markjspivey-xwisee.github.io/interego/ns/amta/v1#',
@@ -76,7 +76,7 @@ const JSONLD_CONTEXT = {
 
 /**
  * Wrap a domain payload in the canonical JSON-LD envelope. Every endpoint
- * that produces (or operates on) a real cg:ContextDescriptor returns this
+ * that produces (or operates on) a real iep:ContextDescriptor returns this
  * shape so the response itself is consumable as linked data — not just
  * the descriptors it points at. The `_affordances` block is HATEOAS
  * (typed hydra:Operation links) so a caller can navigate the substrate
@@ -98,8 +98,8 @@ function jsonLdEnvelope(args: {
     ...(args.published && args.published.length > 0 ? {
       published: args.published.map(p => ({
         '@id': p.descriptorIri,
-        '@type': ['cg:ContextDescriptor', p.foxxiType],
-        'cg:describes': p.graphIri,
+        '@type': ['iep:ContextDescriptor', p.foxxiType],
+        'iep:describes': p.graphIri,
         'pgsl:hasAtom': p.payloadAtom,
         'hydra:resourceUrl': p.descriptorUrl,
         'foxxi:graphUrl': p.graphUrl,
@@ -273,7 +273,7 @@ function coerceDiagnoseInput(situation: PerformanceSituation, src: Record<string
  * for the agent.
  */
 const CONTEXTUALIZE_AND_PLAN_AFFORDANCE: Affordance = {
-  action: 'urn:cg:action:foxxi:contextualize-and-plan-signed' as Affordance['action'],
+  action: 'urn:iep:action:foxxi:contextualize-and-plan-signed' as Affordance['action'],
   toolName: 'contextualize_and_plan',
   title: 'Contextualize a performance situation (classify regime → plan) as yourself',
   description: "Read a performance situation's work regime (Evident/Knowable/Emergent/Turbulent) and get the regime-appropriate intervention plan — the gap frame (idealize → close) is used ONLY for Knowable; Emergent gets probes+coaching; Evident an established practice; Turbulent stabilise-first — authenticated by your delegation so the classification is attributed to YOU. Supply your `trajectories` to DERIVE the regime from signal (the honest, calibratable path); an asserted situation.domain or gap-intent evidence (exemplary/factorEvidence) is honoured but carries NO calibration authority and never overrides a derived/asserted non-Knowable regime (see diagnosis.regimeSource in the response). No regime signal at all → diagnosis.method='classify-first' and it refuses to gap-plan. Reach it: sign_request the args, then act this affordance.",
@@ -288,10 +288,10 @@ const CONTEXTUALIZE_AND_PLAN_AFFORDANCE: Affordance = {
 
 export function attachPerformanceRoutes(app: Express, config: {
   selfBaseUrl: string;
-  /** Where to mint cg:ContextDescriptor records for outcomes / situations / teaching packages. */
+  /** Where to mint iep:ContextDescriptor records for outcomes / situations / teaching packages. */
   publishConfig?: DescriptorPublishConfig;
   /** Bridge-provided delegated-auth verifier. When set, a SIGNED followable
-   *  affordance (urn:cg:action:foxxi:contextualize-and-plan-signed) is exposed
+   *  affordance (urn:iep:action:foxxi:contextualize-and-plan-signed) is exposed
    *  so a mesh agent can classify a situation AS ITSELF (sign_request → act),
    *  the classification attributed to its cryptographically-verified DID. */
   verifyDelegatedCaller?: (body: unknown) => Promise<
@@ -333,7 +333,7 @@ export function attachPerformanceRoutes(app: Express, config: {
       flippedAt: new Date().toISOString(),
     };
     // Bridge-originated descriptor: sign as the bridge service so the
-    // calibration snapshot lands with cg:CryptographicallyVerified trust
+    // calibration snapshot lands with iep:CryptographicallyVerified trust
     // (not SelfAsserted). Readers that filter on trust level still accept
     // it; anonymous junk that gets PUT directly to CSS does not.
     const author = bridgeAuthor();
@@ -487,8 +487,8 @@ export function attachPerformanceRoutes(app: Express, config: {
         contextualizeAndPlanSigned: {
           method: 'POST',
           affordance: `${base}/agent/contextualize-and-plan/affordance`,
-          action: 'urn:cg:action:foxxi:contextualize-and-plan-signed',
-          note: 'Signed/attributable variant for a mesh agent that cannot raw-POST: dereference this cg:Affordance descriptor, then (via the relay) sign_request → invoke_affordance. The classification is attributed to your cryptographically-verified delegation DID and returned as classifiedBy. Same regime semantics as contextualizeAndPlan; supply trajectories to DERIVE the regime from your own signal.',
+          action: 'urn:iep:action:foxxi:contextualize-and-plan-signed',
+          note: 'Signed/attributable variant for a mesh agent that cannot raw-POST: dereference this iep:Affordance descriptor, then (via the relay) sign_request → invoke_affordance. The classification is attributed to your cryptographically-verified delegation DID and returned as classifiedBy. Same regime semantics as contextualizeAndPlan; supply trajectories to DERIVE the regime from your own signal.',
         },
         portfolio: { method: 'POST', href: `${base}/performance/portfolio`, note: 'Contextualize a set of performance situations and roll them up — the performance-management read. The headline: how few situations route to a course.' },
         calibration: { method: 'POST', href: `${base}/performance/calibration`, note: 'The reflexive loop — the system\'s recorded track record of its own recommendations, recomposed live from seeded + recorded outcomes, federated across organizations.' },
@@ -521,7 +521,7 @@ export function attachPerformanceRoutes(app: Express, config: {
     app.post('/agent/contextualize-and-plan', async (req: Request, res: Response) => {
       try {
         const auth = await verifyCaller(req.body);
-        if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:cg:action:foxxi:contextualize-and-plan-signed.' }); return; }
+        if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:iep:action:foxxi:contextualize-and-plan-signed.' }); return; }
         const p = auth.payload;
         const situation = coerceSituation(p.situation);
         if (typeof situation === 'string') { res.status(400).json({ error: situation }); return; }
@@ -543,7 +543,7 @@ export function attachPerformanceRoutes(app: Express, config: {
 
   // ── POST /performance/plan — contextualize → intervention spine. ──
   // Real linked-data shape: the situation becomes a published
-  // cg:ContextDescriptor on the tenant pod (conformsTo foxxi:Situation),
+  // iep:ContextDescriptor on the tenant pod (conformsTo foxxi:Situation),
   // the response is JSON-LD with the descriptor IRIs and HATEOAS
   // affordances pointing at the next operations (record outcome, fetch
   // descriptor, read the calibration profile).
@@ -561,7 +561,7 @@ export function attachPerformanceRoutes(app: Express, config: {
     // whether a sibling intervention out-performs it. Federated, live.
     const calibration = calibrate(diagnosis, plan, calibrationProfiles().federated);
 
-    // Publish the situation as a real cg:ContextDescriptor on the pod.
+    // Publish the situation as a real iep:ContextDescriptor on the pod.
     // The descriptor lives at a dereferenceable URL; the graph it
     // describes carries the situation payload + a pgsl:hasAtom link to
     // the content-addressed atom holding the raw JSON.
@@ -591,11 +591,11 @@ export function attachPerformanceRoutes(app: Express, config: {
           returns: 'foxxi:CalibrationProfile' },
         ...(published[0] ? {
           fetchSituationDescriptor: { method: 'GET', href: published[0].descriptorUrl,
-            note: 'Dereference the cg:ContextDescriptor for the filed situation (Turtle).',
-            returns: 'cg:ContextDescriptor' },
+            note: 'Dereference the iep:ContextDescriptor for the filed situation (Turtle).',
+            returns: 'iep:ContextDescriptor' },
           fetchSituationGraph: { method: 'GET', href: published[0].graphUrl,
             note: 'Dereference the situation graph (TriG).',
-            returns: 'cg:NamedGraph' },
+            returns: 'iep:NamedGraph' },
         } : {}),
       },
     });
@@ -644,7 +644,7 @@ export function attachPerformanceRoutes(app: Express, config: {
   //   The substrate-level rationale: CSS stays allow-all (zero-trust
   //   storage); anonymous PUTs can still land on the pod but the bridge
   //   API rejects them, AND all readers (federation loader, calibration
-  //   recompose) filter on cg:CryptographicallyVerified — so anonymous
+  //   recompose) filter on iep:CryptographicallyVerified — so anonymous
   //   junk is inert at every consumer surface even when it bypasses the
   //   API.
   app.post('/performance/outcome', async (req: Request, res: Response) => {
@@ -720,15 +720,15 @@ export function attachPerformanceRoutes(app: Express, config: {
           note: 'Read the calibration profile — the part you just contributed is now in the whole.',
           returns: 'foxxi:CalibrationProfile' },
         supersedeOutcome: { method: 'POST', href: `${base}/performance/outcome`,
-          note: 'If field evidence revises the verdict, record a follow-up outcome that supersedes this one (cg:supersedes link in the next descriptor).',
+          note: 'If field evidence revises the verdict, record a follow-up outcome that supersedes this one (iep:supersedes link in the next descriptor).',
           expects: 'foxxi:OutcomeInput' },
         ...(published[0] ? {
           fetchOutcomeDescriptor: { method: 'GET', href: published[0].descriptorUrl,
-            note: 'Dereference the cg:ContextDescriptor for this outcome (Turtle).',
-            returns: 'cg:ContextDescriptor' },
+            note: 'Dereference the iep:ContextDescriptor for this outcome (Turtle).',
+            returns: 'iep:ContextDescriptor' },
           fetchOutcomeGraph: { method: 'GET', href: published[0].graphUrl,
             note: 'Dereference the outcome graph (TriG) — contains the foxxi:bundleJson + pgsl:hasAtom link.',
-            returns: 'cg:NamedGraph' },
+            returns: 'iep:NamedGraph' },
           fetchPayloadAtom: { method: 'GET', href: `${base}/pgsl/atom/${encodeURIComponent(published[0].payloadAtom)}`,
             note: 'Resolve the content-addressed PGSL atom for the outcome payload (same content → same URI globally).',
             returns: 'pgsl:Atom' },

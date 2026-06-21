@@ -1,5 +1,5 @@
 @prefix agp:      <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#> .
-@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix abac:     <https://markjspivey-xwisee.github.io/interego/ns/abac#> .
 @prefix passport: <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
 @prefix olke:     <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
@@ -42,12 +42,12 @@
 #
 #  Net-new in this ontology (does not exist in adp:/ac:/foxxi:):
 #    (1) skills + tools + knowledge composed into a CAPABILITY that produces
-#        performance (agp:composedOf / cg:constructedFrom);
+#        performance (agp:composedOf / iep:constructedFrom);
 #    (2) AFFORDANCE THEORY as performance — a situation AFFORDS a performer an
 #        action given its capabilities, and ACTUALIZATION is the productive
 #        join Capability × Situation × Affordance -> Performance. This
 #        agp:PerformanceAffordance is the ECOLOGICAL sense and is DELIBERATELY
-#        DISTINCT from the L0 cg:Affordance (REST/HATEOAS) — different layer,
+#        DISTINCT from the L0 iep:Affordance (REST/HATEOAS) — different layer,
 #        different namespace, MUST NOT be conflated.
 #
 #  Layering: application-over-L3. Every agp: class subclasses an existing
@@ -57,11 +57,11 @@
 <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp>
     a owl:Ontology ;
     dct:title "agp: — Agentic Performance Practice (vertical application)" ;
-    dct:description "Vertical-scoped, non-normative vocabulary for a complexity-aware, regime-first theory of performance for agents and teams of agents + humans. NOT part of the Interego protocol. Composes cg:, abac:, passport:, olke:, amta:, adp:, ac:, and Foxxi's xAPI 2.0 / IEEE-LER / ADL-TLA standards layer." ;
+    dct:description "Vertical-scoped, non-normative vocabulary for a complexity-aware, regime-first theory of performance for agents and teams of agents + humans. NOT part of the Interego protocol. Composes iep:, abac:, passport:, olke:, amta:, adp:, ac:, and Foxxi's xAPI 2.0 / IEEE-LER / ADL-TLA standards layer." ;
     vann:preferredNamespacePrefix "agp" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#" ;
-    rdfs:comment "Vertical application ontology. Non-normative. The Interego protocol does not depend on this; it is one specific use case. SHACL node shapes are in agp-shapes.ttl; instances are published as cg:ContextDescriptors carrying dct:conformsTo the relevant shape so the relay conformance gate validates them at write time." ;
-    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+    rdfs:comment "Vertical application ontology. Non-normative. The Interego protocol does not depend on this; it is one specific use case. SHACL node shapes are in agp-shapes.ttl; instances are published as iep:ContextDescriptors carrying dct:conformsTo the relevant shape so the relay conformance gate validates them at write time." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/abac> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/passport> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/olke> ,
@@ -72,12 +72,12 @@
 # ── The unit + the actors ───────────────────────────────────────────────
 
 agp:PerformanceSituation a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Performance Situation" ;
     rdfs:comment "The UNIT of the theory: a bounded situation in which a performer (or team) is to perform. It is contextualized FIRST by its work regime (agp:regime), which determines the appropriate method. NOT a gap — a gap is the framing of one regime (Knowable) only." .
 
 agp:Performer a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Performer" ;
     rdfs:comment "A human, an agent, or a team of either/both that performs in a situation. Actor-agnostic: the same theory applies to humans, agents, and mixed teams." .
 
@@ -132,18 +132,18 @@ agp:ClassifyFirst    a agp:PerformanceMethod ; rdfs:label "Classify first (uncla
 # ── Capability composition: skills + tools + knowledge -> capability ─────
 
 agp:Skill a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Skill" ;
     rdfs:comment "A performer's learned ability to act effectively. A constituent of a capability." .
 
 agp:Tool a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Tool" ;
     rdfs:comment "An instrument a performer wields to extend what it can do. A constituent of a capability." ;
     skos:closeMatch ac:AgentTool .
 
 agp:Knowledge a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Knowledge" ;
     rdfs:comment "Knowledge a performer can bring to bear. Classified by agp:knowledgeComponentKind. A constituent of a capability." .
 
@@ -158,35 +158,35 @@ agp:Lived    a agp:KnowledgeComponentKind ; rdfs:label "Lived (tacit, flows by a
 agp:Innate   a agp:KnowledgeComponentKind ; rdfs:label "Innate (not codifiable; select for it)" .
 
 agp:Capability a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Capability (composed, productive)" ;
-    rdfs:comment "A performer's productive capability, COMPOSED OF skills + tools + knowledge (agp:composedOf / cg:constructedFrom). It is what a performer brings to a situation and what an affordance requires to be actualized. Related to but distinct from adp:Capability (an open-ended capability SPACE for emergent recognition) — agp:Capability is the composed productive unit that meets a situation." ;
+    rdfs:comment "A performer's productive capability, COMPOSED OF skills + tools + knowledge (agp:composedOf / iep:constructedFrom). It is what a performer brings to a situation and what an affordance requires to be actualized. Related to but distinct from adp:Capability (an open-ended capability SPACE for emergent recognition) — agp:Capability is the composed productive unit that meets a situation." ;
     skos:related adp:Capability ;
-    cg:constructedFrom agp:Skill , agp:Tool , agp:Knowledge .
+    iep:constructedFrom agp:Skill , agp:Tool , agp:Knowledge .
 
-# ── Affordance theory as performance (DISTINCT from cg:Affordance) ────────
+# ── Affordance theory as performance (DISTINCT from iep:Affordance) ────────
 
 agp:PerformanceAffordance a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Performance Affordance (ecological)" ;
-    rdfs:comment "An action-possibility a situation OFFERS a performer, conditional on the performer's capability. This is affordance theory in the ECOLOGICAL sense (what the situation affords given capability), NOT the L0 cg:Affordance (a followable REST/HATEOAS hypermedia transition). The two are different layers and MUST NOT be conflated: a performance affordance is a possibility for performance; a cg:Affordance is a machine-followable action on a resource. A performance affordance MAY ultimately be realized THROUGH cg:Affordances, but is not one." ;
-    rdfs:seeAlso cg:Affordance .
+    rdfs:comment "An action-possibility a situation OFFERS a performer, conditional on the performer's capability. This is affordance theory in the ECOLOGICAL sense (what the situation affords given capability), NOT the L0 iep:Affordance (a followable REST/HATEOAS hypermedia transition). The two are different layers and MUST NOT be conflated: a performance affordance is a possibility for performance; a iep:Affordance is a machine-followable action on a resource. A performance affordance MAY ultimately be realized THROUGH iep:Affordances, but is not one." ;
+    rdfs:seeAlso iep:Affordance .
 
 agp:Actualization a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Actualization" ;
     rdfs:comment "The productive JOIN: a capability engaging a situation's affordance to yield performance. Actualization = Capability × Situation × PerformanceAffordance -> Performance. This is the event the theory measures: did latent capability + offered affordance actually become performance." ;
-    cg:constructedFrom agp:Capability , agp:PerformanceSituation , agp:PerformanceAffordance .
+    iep:constructedFrom agp:Capability , agp:PerformanceSituation , agp:PerformanceAffordance .
 
 agp:Performance a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Performance" ;
     rdfs:comment "The realized performance an actualization yields. Projected (lossily) to exactly one xAPI `performed` statement + one trajectory step via agp:recordedAs — Foxxi's xAPI 2.0 LRS records it; the vertical's own custom xAPI Profile (authored in Stage 2) names the capability / actualized-affordance / regime as context extensions. WHAT was performed is carried by the object's conformsTo, never a domain verb." .
 
 # ── Diagnosis -> intervention -> evaluation -> calibration ────────────────
 
 agp:Diagnosis a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Diagnosis" ;
     rdfs:comment "A regime-aware reading of a performance situation: the placed regime, its provenance (agp:regimeSource), the routed method, and — for the Knowable regime only — the dominant performance factor. Carries no fabricated certainty: an asserted/defaulted regime never accrues calibration authority." .
 
@@ -202,22 +202,22 @@ agp:Capacity       a agp:PerformanceFactor ; rdfs:label "Capacity (individual)" 
 agp:Motives        a agp:PerformanceFactor ; rdfs:label "Motives (individual)" .
 
 agp:InterventionPlan a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Intervention Plan" ;
     rdfs:comment "A regime-appropriate plan of interventions emitted by a diagnosis. The plan paradigm spans the environment/individual × inform/instrument/incentivize space; instruction (a course) is warranted only when the dominant cause is a knowledge/skill deficiency in a Knowable situation." .
 
 agp:Intervention a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Intervention" ;
     rdfs:comment "A single intervention within a plan: what is changed (environment or individual), how, and the affordance/capability it targets." .
 
 agp:InterventionEvaluation a owl:Class ;
     rdfs:subClassOf amta:Attestation ;
     rdfs:label "Intervention Evaluation" ;
-    rdfs:comment "A four-level evaluation of an intervention (reaction / capability / transfer / outcome) attesting whether it worked; closes the loop via cg:supersedes on the prior plan. An attestation, so it carries an axis and provenance." .
+    rdfs:comment "A four-level evaluation of an intervention (reaction / capability / transfer / outcome) attesting whether it worked; closes the loop via iep:supersedes on the prior plan. An attestation, so it carries an axis and provenance." .
 
 agp:CalibrationProfile a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Calibration Profile" ;
     rdfs:comment "The reflexive track-record: per (regime × cause × intervention) cell, the closure/effective rate and its modal status (Hypothetical until enough evidence, then Asserted). Federates across orgs by union with k-anonymity withholding. Only DERIVED Knowable regimes accrue calibration authority." .
 
@@ -248,7 +248,7 @@ agp:composedOf a owl:ObjectProperty ;
     rdfs:label "composed of" ;
     rdfs:comment "Composes a capability out of its constituent skills, tools, and knowledge. A capability with no constituents is not productive." ;
     rdfs:domain agp:Capability ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 agp:knowledgeComponentKind a owl:ObjectProperty ;
     rdfs:label "knowledge component kind" ;
@@ -296,7 +296,7 @@ agp:recordedAs a owl:ObjectProperty ;
     rdfs:label "recorded as" ;
     rdfs:comment "Links a performance to its lossy xAPI/trajectory projection (a single `performed` statement). Foxxi's xAPI 2.0 LRS is the system of record; agp: composes it rather than reimplementing it." ;
     rdfs:domain agp:Performance ;
-    rdfs:range cg:ContextDescriptor .
+    rdfs:range iep:ContextDescriptor .
 
 agp:factor a owl:ObjectProperty ;
     rdfs:label "factor" ;
@@ -365,7 +365,7 @@ agp:explicitClaimNotMade a owl:DatatypeProperty ;
 # learn and teach each other (ac:TeachingPackage + the agent-teaching loop).
 
 agp:StandardsExtension a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Standards Extension" ;
     rdfs:comment "An agent-authored extension to a standard — an xAPI context extension, an xAPI Profile fragment, or an IEEE-LER / ADL-TLA term. Self-descriptive (carries its own conformsTo + the standard it extends) and distributed (published as a context descriptor other agents discover, dereference, and reuse). Authoring one is a learnable agp:Capability that agents teach each other." .
 
@@ -383,7 +383,7 @@ agp:TlaTerm a agp:ExtensionKind ; rdfs:label "ADL-TLA term extension" ;
     rdfs:comment "A new term composed onto the ADL-TLA semantic layer." .
 
 agp:PerformanceSupport a owl:Class ;
-    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Performance Support" ;
     rdfs:comment "In-the-flow guidance attached to an affordance / response: what it does, when to use it, the competency it builds, its prerequisites, how to learn it, and where to go next. Self-descriptive performance support delivered in the flow of affordance / hypermedia — not a separate manual." .
 

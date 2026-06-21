@@ -7,11 +7,11 @@ typed Interego descriptor.
 ## What it does
 
 Takes the runtime's per-tool-call event tuple (toolName, args, outcome,
-agent, timing) and produces a typed `cg:ContextDescriptor` whose graph
+agent, timing) and produces a typed `iep:ContextDescriptor` whose graph
 declares:
 
 * `prov:Activity` typing — auditor walks PROV chains as expected
-* `cgh:AgentAction` for substrate-side filtering (e.g. SPARQL queries
+* `ieh:AgentAction` for substrate-side filtering (e.g. SPARQL queries
   over "all agent actions in the past 30 days that touched X")
 * `dct:conformsTo` triples citing the regulatory controls
   (`eu-ai-act:Article15`, `soc2:CC8.1`, etc.) already declared in the

@@ -27,9 +27,9 @@
 //
 // Substrate guarantees you'll see in the output:
 //   - Real ECDSA signing of every event (not mocked)
-//   - cg:modalStatus discipline (Hypothetical for observations; Asserted
+//   - iep:modalStatus discipline (Hypothetical for observations; Asserted
 //     only for the operator's evolution decisions)
-//   - cg:supersedes chains as evolution, never as "fix"
+//   - iep:supersedes chains as evolution, never as "fix"
 //   - vertical-scoped adp: vocabulary throughout (no L1/L2/L3 extension)
 
 import { Wallet, getBytes, hashMessage, SigningKey } from 'ethers';
@@ -77,25 +77,25 @@ console.log(`
 sep('1. CAPABILITY SPACE — open-ended, not a threshold');
 
 const capability = {
-  iri: 'urn:cg:capability:customer-support:tone',
+  iri: 'urn:iep:capability:customer-support:tone',
   type: 'adp:Capability',
   cynefinDomain: 'adp:Complex',
   rubricCriteria: [
-    { iri: 'urn:cg:rubric:tone:user-acknowledgment', label: 'User feels acknowledged' },
-    { iri: 'urn:cg:rubric:tone:appropriate-pacing', label: 'Pacing matches user emotional state' },
-    { iri: 'urn:cg:rubric:tone:resolution-quality', label: 'Resolution is correct AND non-condescending' },
+    { iri: 'urn:iep:rubric:tone:user-acknowledgment', label: 'User feels acknowledged' },
+    { iri: 'urn:iep:rubric:tone:appropriate-pacing', label: 'Pacing matches user emotional state' },
+    { iri: 'urn:iep:rubric:tone:resolution-quality', label: 'Resolution is correct AND non-condescending' },
   ],
-  modalStatus: 'cg:Asserted',
+  modalStatus: 'iep:Asserted',
 };
 
 block('Capability (declared as space, not target):', `
 <${capability.iri}> a adp:Capability ;
     adp:cynefinDomain ${capability.cynefinDomain} ;
     rdfs:label "Customer-support tone (open-ended capability space)" ;
-    adp:rubricCriterion <urn:cg:rubric:tone:user-acknowledgment> ,
-                       <urn:cg:rubric:tone:appropriate-pacing> ,
-                       <urn:cg:rubric:tone:resolution-quality> ;
-    cg:modalStatus cg:Asserted .
+    adp:rubricCriterion <urn:iep:rubric:tone:user-acknowledgment> ,
+                       <urn:iep:rubric:tone:appropriate-pacing> ,
+                       <urn:iep:rubric:tone:resolution-quality> ;
+    iep:modalStatus iep:Asserted .
 
 # NOTE: no thresholds. Mastery is recognized through emerging behavior
 # patterns in narrative observations, not threshold-crossing on metrics.
@@ -107,7 +107,7 @@ sep('2. PARALLEL SAFE-TO-FAIL PROBES — three variants, run concurrently');
 
 const probes = [
   {
-    iri: 'urn:cg:probe:tone:clinical-baseline',
+    iri: 'urn:iep:probe:tone:clinical-baseline',
     operator: ALICE_DID,
     operatorWallet: ALICE,
     variant: 'clinical-baseline',
@@ -116,7 +116,7 @@ const probes = [
     dampen:    'fragments signified user-frustration-escalated OR conversation-restarted',
   },
   {
-    iri: 'urn:cg:probe:tone:explicit-acknowledgment',
+    iri: 'urn:iep:probe:tone:explicit-acknowledgment',
     operator: BOB_DID,
     operatorWallet: BOB,
     variant: 'explicit-acknowledgment',
@@ -125,7 +125,7 @@ const probes = [
     dampen:    'fragments signified user-perceived-stalling OR acknowledgment-felt-scripted',
   },
   {
-    iri: 'urn:cg:probe:tone:empathic-mirroring',
+    iri: 'urn:iep:probe:tone:empathic-mirroring',
     operator: CAROL_DID,
     operatorWallet: CAROL,
     variant: 'empathic-mirroring',
@@ -141,13 +141,13 @@ for (const p of probes) {
 <${p.iri}> a adp:Probe ;
     adp:variant "${p.variant}" ;
     adp:hypothesis """${p.hypothesis}""" ;
-    cg:modalStatus cg:Hypothetical ;        # explicitly NOT asserting cause-effect
+    iep:modalStatus iep:Hypothetical ;        # explicitly NOT asserting cause-effect
     adp:amplificationTrigger """${p.amplify}""" ;
     adp:dampeningTrigger    """${p.dampen}""" ;
     adp:timeBound "2026-05-10T00:00:00Z"^^xsd:dateTime ;
     adp:capability <${capability.iri}> ;
     prov:wasAttributedTo <${p.operator}> ;
-    cg:signature "${sig.signature.slice(0, 24)}…" .`);
+    iep:signature "${sig.signature.slice(0, 24)}…" .`);
 }
 
 console.log(`
@@ -193,7 +193,7 @@ const fragments = [
     emergent: 'matched-affect-stayed-out-of-the-way' },
 ];
 
-const fragIris = fragments.map((f, i) => `urn:cg:fragment:${f.probe.variant}:${i}`);
+const fragIris = fragments.map((f, i) => `urn:iep:fragment:${f.probe.variant}:${i}`);
 
 for (let i = 0; i < fragments.length; i++) {
   const f = fragments[i];
@@ -204,16 +204,16 @@ for (let i = 0; i < fragments.length; i++) {
 ${f.situation.map(s => `    adp:contextSignifier "${s}" ;`).join('\n')}
     adp:response """${f.response}""" ;
     adp:emergentSignifier "${f.emergent}" ;
-    cg:modalStatus cg:Hypothetical ;        # observation only — no causation claim
+    iep:modalStatus iep:Hypothetical ;        # observation only — no causation claim
     prov:wasAttributedTo <${RAVI_DID}> ;
-    cg:signature "${sig.signature.slice(0, 24)}…" .`);
+    iep:signature "${sig.signature.slice(0, 24)}…" .`);
 }
 
 // ── 4. Sensemaking synthesis — multiple coherent narratives ─────
 
 sep('4. SENSEMAKING SYNTHESIS — preserves multiple coherent narratives');
 
-const synthesisIri = 'urn:cg:synthesis:tone-probe-week-1';
+const synthesisIri = 'urn:iep:synthesis:tone-probe-week-1';
 const synthesisSig = signEvent(RAVI, synthesisIri, 'adp:Synthesis', { fragments: fragIris.length });
 
 console.log(`
@@ -234,7 +234,7 @@ console.log(`
 
 block('Synthesis turtle:', `
 <${synthesisIri}> a adp:Synthesis ;
-    cg:modalStatus cg:Hypothetical ;
+    iep:modalStatus iep:Hypothetical ;
     adp:fragmentsConsidered ${fragIris.map(i => `<${i}>`).join(', ')} ;
     adp:emergentPattern """In second-contact-frustration scenarios, the
         explicit-acknowledgment pattern produced narratives signifying
@@ -253,7 +253,7 @@ block('Synthesis turtle:', `
         agent-side prompt evaluation. Worth probing further before claiming
         anything.""" ;
     prov:wasAttributedTo <${RAVI_DID}> ;
-    cg:signature "${synthesisSig.signature.slice(0, 24)}…" .
+    iep:signature "${synthesisSig.signature.slice(0, 24)}…" .
 
 # NOTE: the synthesis does NOT pick a winning narrative. Multiple coherent
 # readings travel with the synthesis indefinitely. Operators downstream
@@ -263,12 +263,12 @@ block('Synthesis turtle:', `
 
 sep('5. AMPLIFICATION + DAMPENING — provisional, with explicit-decision-not-made');
 
-const evolutionIri = 'urn:cg:evolution:tone-week-1-decision';
+const evolutionIri = 'urn:iep:evolution:tone-week-1-decision';
 const evolutionSig = signEvent(MARK, evolutionIri, 'adp:EvolutionStep', { amplify: probes[1].iri, dampen: probes[0].iri });
 
 block('Evolution step turtle:', `
 <${evolutionIri}> a adp:EvolutionStep ;
-    cg:modalStatus cg:Asserted ;
+    iep:modalStatus iep:Asserted ;
     adp:basedOnSynthesis <${synthesisIri}> ;
     adp:amplifyProbe <${probes[1].iri}> ;     # explicit-acknowledgment
     adp:dampenProbe  <${probes[0].iri}> ;     # clinical-baseline
@@ -281,7 +281,7 @@ block('Evolution step turtle:', `
         (noise) remains a live possibility; we will keep probing to
         distinguish it from Readings 1 and 2.""" ;
     prov:wasAttributedTo <${MARK_DID}> ;
-    cg:signature "${evolutionSig.signature.slice(0, 24)}…" .
+    iep:signature "${evolutionSig.signature.slice(0, 24)}…" .
 
 # Counter-cultural by design: the explicit-decision-not-made field forces
 # the operator to write down what they are NOT claiming. Future readers
@@ -291,12 +291,12 @@ block('Evolution step turtle:', `
 
 sep('6. CONSTRAINT EMERGENCE — boundary, not prescription');
 
-const constraintIri = 'urn:cg:constraint:tone-second-contact-acknowledgment:v1';
+const constraintIri = 'urn:iep:constraint:tone-second-contact-acknowledgment:v1';
 const constraintSig = signEvent(MARK, constraintIri, 'adp:Constraint', { boundary: 'must acknowledge' });
 
 block('Constraint turtle (after week-3, when the pattern held across 3 syntheses):', `
 <${constraintIri}> a adp:Constraint ;
-    cg:modalStatus cg:Asserted ;
+    iep:modalStatus iep:Asserted ;
     adp:appliesTo <${capability.iri}> ;
     adp:boundary """When the user signals escalating frustration AND the
         situation is identifiable as a second-contact on the same issue,
@@ -306,12 +306,12 @@ block('Constraint turtle (after week-3, when the pattern held across 3 syntheses
         solution.""" ;
     adp:exitsConstraint """If the user explicitly waives acknowledgment
         ('just give me the answer, please'), the constraint relaxes.""" ;
-    adp:emergedFrom <urn:cg:synthesis:tone-probe-week-1> ,
-                    <urn:cg:synthesis:tone-probe-week-2> ,
-                    <urn:cg:synthesis:tone-probe-week-3> ;
-    cg:supersedes <urn:cg:constraint:tone-second-contact-acknowledgment:draft> ;
+    adp:emergedFrom <urn:iep:synthesis:tone-probe-week-1> ,
+                    <urn:iep:synthesis:tone-probe-week-2> ,
+                    <urn:iep:synthesis:tone-probe-week-3> ;
+    iep:supersedes <urn:iep:constraint:tone-second-contact-acknowledgment:draft> ;
     prov:wasAttributedTo <${MARK_DID}> ;
-    cg:signature "${constraintSig.signature.slice(0, 24)}…" .
+    iep:signature "${constraintSig.signature.slice(0, 24)}…" .
 
 # Constraints are governance via boundary, not via prescription.
 # Observable + enforceable via abac:Policy at runtime; does not prescribe HOW
@@ -322,15 +322,15 @@ block('Constraint turtle (after week-3, when the pattern held across 3 syntheses
 
 sep('7. CAPABILITY EVOLUTION EVENT — emergent recognition, with humility');
 
-const evolveIri = 'urn:cg:capability-evolution:tone-acknowledgment:v1';
+const evolveIri = 'urn:iep:capability-evolution:tone-acknowledgment:v1';
 const evolveSig = signEvent(MARK, evolveIri, 'adp:CapabilityEvolution', { capability: capability.iri });
 
 block('Capability evolution turtle (passport:LifeEvent subclass):', `
 <${evolveIri}> a adp:CapabilityEvolution , passport:LifeEvent ;
-    cg:modalStatus cg:Asserted ;
+    iep:modalStatus iep:Asserted ;
     adp:capability <${capability.iri}> ;
     adp:evolutionType adp:EmergentRecognition ;
-    adp:emergedFrom <urn:cg:synthesis:tone-probe-week-3> ,
+    adp:emergedFrom <urn:iep:synthesis:tone-probe-week-3> ,
                     <${constraintIri}> ;
     adp:olkeStage olke:Articulate ;
     adp:explicitDecisionNotMade """We recognize the explicit-acknowledgment
@@ -340,9 +340,9 @@ block('Capability evolution turtle (passport:LifeEvent subclass):', `
         first-contact or clinical-affect scenarios. We will continue to
         probe. A receiving organization should treat this as a starting
         point for their own probes, not as a certification.""" ;
-    cg:supersedes <urn:cg:capability-evolution:tone-acknowledgment:draft> ;
+    iep:supersedes <urn:iep:capability-evolution:tone-acknowledgment:draft> ;
     prov:wasAttributedTo <${MARK_DID}> ;
-    cg:signature "${evolveSig.signature.slice(0, 24)}…" .
+    iep:signature "${evolveSig.signature.slice(0, 24)}…" .
 
 # This is a passport:LifeEvent — it goes into the agent's career file and
 # travels with the agent across deployments. CRITICALLY, the

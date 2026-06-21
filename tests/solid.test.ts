@@ -46,7 +46,7 @@ function mockResponse(
 }
 
 /** Build a simple descriptor for testing. */
-function testDescriptor(id = 'urn:cg:test-solid') {
+function testDescriptor(id = 'urn:iep:test-solid') {
   return ContextDescriptor.create(id as IRI)
 .describes('urn:graph:g1' as IRI)
 .temporal({
@@ -59,23 +59,23 @@ function testDescriptor(id = 'urn:cg:test-solid') {
 
 // ── Sample manifest ─────────────────────────────────────────
 
-const SAMPLE_MANIFEST = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+const SAMPLE_MANIFEST = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
 
-<https://alice.pod/context-graphs/desc-1.ttl> a cg:ManifestEntry ;
-    cg:describes <urn:graph:g1> ;
-    cg:hasFacetType cg:Temporal ;
-    cg:hasFacetType cg:Trust ;
-    cg:trustLevel cg:SelfAsserted ;
-    cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
-    cg:validUntil "2026-06-30T23:59:59Z"^^xsd:dateTime.
+<https://alice.pod/context-graphs/desc-1.ttl> a iep:ManifestEntry ;
+    iep:describes <urn:graph:g1> ;
+    iep:hasFacetType iep:Temporal ;
+    iep:hasFacetType iep:Trust ;
+    iep:trustLevel iep:SelfAsserted ;
+    iep:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
+    iep:validUntil "2026-06-30T23:59:59Z"^^xsd:dateTime.
 
-<https://alice.pod/context-graphs/desc-2.ttl> a cg:ManifestEntry ;
-    cg:describes <urn:graph:g2> ;
-    cg:hasFacetType cg:Semiotic ;
-    cg:modalStatus cg:Asserted ;
-    cg:validFrom "2026-07-01T00:00:00Z"^^xsd:dateTime ;
-    cg:validUntil "2026-12-31T23:59:59Z"^^xsd:dateTime.
+<https://alice.pod/context-graphs/desc-2.ttl> a iep:ManifestEntry ;
+    iep:describes <urn:graph:g2> ;
+    iep:hasFacetType iep:Semiotic ;
+    iep:modalStatus iep:Asserted ;
+    iep:validFrom "2026-07-01T00:00:00Z"^^xsd:dateTime ;
+    iep:validUntil "2026-12-31T23:59:59Z"^^xsd:dateTime.
 `;
 
 // ═════════════════════════════════════════════════════════════
@@ -100,13 +100,13 @@ describe('parseManifest', () => {
 
   it('returns empty array for empty manifest', () => {
     expect(parseManifest('')).toEqual([]);
-    expect(parseManifest('@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.')).toEqual([]);
+    expect(parseManifest('@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.')).toEqual([]);
   });
 
   it('handles entries without temporal bounds', () => {
-    const turtle = `<https://pod/d.ttl> a cg:ManifestEntry ;
-    cg:describes <urn:graph:x> ;
-    cg:hasFacetType cg:Agent.`;
+    const turtle = `<https://pod/d.ttl> a iep:ManifestEntry ;
+    iep:describes <urn:graph:x> ;
+    iep:hasFacetType iep:Agent.`;
 
     const entries = parseManifest(turtle);
     expect(entries).toHaveLength(1);
@@ -169,7 +169,7 @@ describe('publish', () => {
     expect(calls[1]!.method).toBe('PUT');
     expect(calls[1]!.url).toContain('test-solid.ttl');
     expect(calls[1]!.contentType).toBe('text/turtle');
-    expect(calls[1]!.body).toContain('cg:ContextDescriptor');
+    expect(calls[1]!.body).toContain('iep:ContextDescriptor');
 
     // 3. GET existing manifest (404 → triggers the heal-scan)
     expect(calls[2]!.method).toBe('GET');
@@ -178,8 +178,8 @@ describe('publish', () => {
     // PUT new manifest (after the heal-scan) — carries the descriptor's entry.
     const manifestPut = calls.find(c => c.method === 'PUT' && c.url.includes('.well-known/context-graphs'));
     expect(manifestPut).toBeDefined();
-    expect(manifestPut!.body).toContain('cg:ManifestEntry');
-    expect(manifestPut!.body).toContain('cg:describes');
+    expect(manifestPut!.body).toContain('iep:ManifestEntry');
+    expect(manifestPut!.body).toContain('iep:describes');
 
     // GET manifest AFTER the PUT (post-write verification).
     const manifestPutIdx = calls.indexOf(manifestPut!);
@@ -213,7 +213,7 @@ describe('publish', () => {
       return mockResponse('', { status: 201 });
     }) as unknown as typeof globalThis.fetch;
 
-    const desc = testDescriptor('urn:cg:new-desc');
+    const desc = testDescriptor('urn:iep:new-desc');
     await publish(desc, '', 'https://alice.pod/', { fetch: mockFetch });
 
     // Manifest should contain all three entries now
@@ -291,13 +291,13 @@ describe('publish', () => {
   // ── visibility: 'public' | 'shared' | 'private' ────────────────
   //
   // Audience-class signal in the descriptor's affordance block.
-  // 'public' MUST NOT encrypt and MUST emit cg:visibility "public" +
-  // cg:encrypted false, even when no encrypt option is passed. 'private'
+  // 'public' MUST NOT encrypt and MUST emit iep:visibility "public" +
+  // iep:encrypted false, even when no encrypt option is passed. 'private'
   // looks the same on the wire as a 1-recipient envelope but advertises
-  // its narrower intent via cg:visibility "private". 'shared' (and an
+  // its narrower intent via iep:visibility "private". 'shared' (and an
   // omitted value) preserve historical descriptor output — no
-  // cg:visibility predicate is emitted, so legacy parsers stay happy.
-  it('emits cg:visibility "public" + cg:encrypted false when visibility="public"', async () => {
+  // iep:visibility predicate is emitted, so legacy parsers stay happy.
+  it('emits iep:visibility "public" + iep:encrypted false when visibility="public"', async () => {
     const writes: { url: string; body?: string }[] = [];
     const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
@@ -317,11 +317,11 @@ describe('publish', () => {
     const graphPut = writes.find(w => w.url.endsWith('-graph.trig'))!;
     expect(graphPut).toBeDefined();           // plaintext TriG, NOT .envelope.jose.json
     const descPut = writes.find(w => w.url.endsWith('.ttl') && !w.url.includes('manifest'))!;
-    expect(descPut.body).toContain('cg:encrypted false');
-    expect(descPut.body).toContain('cg:visibility "public"');
+    expect(descPut.body).toContain('iep:encrypted false');
+    expect(descPut.body).toContain('iep:visibility "public"');
   });
 
-  it('encrypts and emits cg:visibility "private" when visibility="private"', async () => {
+  it('encrypts and emits iep:visibility "private" when visibility="private"', async () => {
     const writes: { url: string; body?: string }[] = [];
     const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
@@ -343,11 +343,11 @@ describe('publish', () => {
     const graphPut = writes.find(w => w.url.endsWith('.envelope.jose.json'))!;
     expect(graphPut).toBeDefined();           // envelope written (ciphertext on the pod)
     const descPut = writes.find(w => w.url.endsWith('.ttl') && !w.url.includes('manifest'))!;
-    expect(descPut.body).toContain('cg:encrypted true');
-    expect(descPut.body).toContain('cg:visibility "private"');
+    expect(descPut.body).toContain('iep:encrypted true');
+    expect(descPut.body).toContain('iep:visibility "private"');
   });
 
-  it('omits cg:visibility for shared (default) to preserve historical descriptor format', async () => {
+  it('omits iep:visibility for shared (default) to preserve historical descriptor format', async () => {
     const writes: { url: string; body?: string }[] = [];
     const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
@@ -362,12 +362,12 @@ describe('publish', () => {
     await publish(testDescriptor(), '<urn:s> <urn:p> <urn:o>.', 'https://alice.pod/', {
       fetch: mockFetch,
       // visibility omitted → default 'shared'; no per-graph envelope without
-      // encrypt option, so cg:encrypted is false but visibility predicate
+      // encrypt option, so iep:encrypted is false but visibility predicate
       // is intentionally NOT emitted for back-compat with pre-fix parsers.
     });
 
     const descPut = writes.find(w => w.url.endsWith('.ttl') && !w.url.includes('manifest'))!;
-    expect(descPut.body).not.toContain('cg:visibility');
+    expect(descPut.body).not.toContain('iep:visibility');
   });
 
   // ── TriG @prefix hoisting (visibility: 'public' path) ──────────
@@ -446,7 +446,7 @@ describe('publish', () => {
   });
 
   // De-duplication path: if caller-supplied graphContent re-declares a
-  // prefix the descriptor already declares (e.g. `cg:` or `xsd:`), the
+  // prefix the descriptor already declares (e.g. `iep:` or `xsd:`), the
   // descriptor binding wins and we don't emit a duplicate directive.
   it('de-duplicates caller-supplied prefixes against the descriptor prefix block', async () => {
     const writes: { url: string; body?: string }[] = [];
@@ -461,10 +461,10 @@ describe('publish', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const graphContent = [
-      // Conflicting declaration — descriptor already binds `cg:`. The
+      // Conflicting declaration — descriptor already binds `iep:`. The
       // caller's bogus IRI MUST NOT shadow the descriptor's canonical
       // binding.
-      '@prefix cg: <http://bogus.example/cg#> .',
+      '@prefix iep: <http://bogus.example/cg#> .',
       '@prefix ex: <http://example.org/> .',
       'ex:Thing a ex:Note .',
     ].join('\n');
@@ -477,17 +477,17 @@ describe('publish', () => {
     const graphPut = writes.find(w => w.url.endsWith('-graph.trig'))!;
     const body = graphPut.body!;
 
-    // Bogus cg: re-declaration is dropped.
+    // Bogus iep: re-declaration is dropped.
     expect(body).not.toContain('http://bogus.example/cg#');
     // ex: still hoisted exactly once.
     const exPrefixCount = (body.match(/@prefix ex: <http:\/\/example\.org\/>/g) || []).length;
     expect(exPrefixCount).toBe(1);
 
-    // parseTrig confirms the cg: prefix still points at the descriptor's
-    // canonical namespace (containing "interego/ns/cg"), not the bogus
+    // parseTrig confirms the iep: prefix still points at the descriptor's
+    // canonical namespace (containing "interego/ns/iep"), not the bogus
     // override.
     const parsed = parseTrig(body);
-    expect(parsed.prefixes.get('cg')).toContain('interego/ns/cg');
+    expect(parsed.prefixes.get('iep')).toContain('interego/ns/iep');
     expect(parsed.prefixes.get('ex')).toBe('http://example.org/');
   });
 });
@@ -590,7 +590,7 @@ describe('publish — in-process concurrency (per-pod mutex)', () => {
     // publishes a distinct descriptor so all 5 entries are independent
     // additions to the manifest (no idempotent collapsing).
     const N = 5;
-    const ids = Array.from({ length: N }, (_, i) => `urn:cg:race:${i}`);
+    const ids = Array.from({ length: N }, (_, i) => `urn:iep:race:${i}`);
     await Promise.all(ids.map(id =>
       publish(
         ContextDescriptor.create(id as IRI)
@@ -659,7 +659,7 @@ describe('publish — in-process concurrency (per-pod mutex)', () => {
 
     await Promise.all([
       publish(
-        ContextDescriptor.create('urn:cg:multi-a' as IRI)
+        ContextDescriptor.create('urn:iep:multi-a' as IRI)
           .describes('urn:graph:multi-a' as IRI)
           .temporal({ validFrom: '2026-01-01T00:00:00Z' })
           .selfAsserted('did:web:alice.example' as IRI)
@@ -669,7 +669,7 @@ describe('publish — in-process concurrency (per-pod mutex)', () => {
         { fetch: mockFetch },
       ),
       publish(
-        ContextDescriptor.create('urn:cg:multi-b' as IRI)
+        ContextDescriptor.create('urn:iep:multi-b' as IRI)
           .describes('urn:graph:multi-b' as IRI)
           .temporal({ validFrom: '2026-01-01T00:00:00Z' })
           .selfAsserted('did:web:bob.example' as IRI)
@@ -695,7 +695,7 @@ describe('publish — in-process concurrency (per-pod mutex)', () => {
 //
 // FIX 2: when two concurrent publishers republish the same urn:graph,
 // each reads the same prior chain head from the manifest, each emits a
-// cg:supersedes back-link to it, and (before this fix) both succeeded —
+// iep:supersedes back-link to it, and (before this fix) both succeeded —
 // forking the chain into two competing HEADs. publish() now takes
 // ifMatchSupersedes / ifMatchCid CAS preconditions: the substrate-level
 // gate re-reads the current head and rejects with
@@ -705,9 +705,9 @@ describe('publish — in-process concurrency (per-pod mutex)', () => {
 describe('publish — CAS supersession precondition', () => {
   const podUrl = 'https://alice.pod/';
   const priorHeadUrl = 'https://alice.pod/context-graphs/prior.ttl';
-  const priorHeadTurtle = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-<urn:cg:prior> a cg:ContextDescriptor ;
-    cg:describes <urn:graph:g1>.`;
+  const priorHeadTurtle = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+<urn:iep:prior> a iep:ContextDescriptor ;
+    iep:describes <urn:graph:g1>.`;
 
   function makeMockFetch(opts: { manifestStatus?: number } = {}) {
     const writes: { url: string; method: string }[] = [];
@@ -742,7 +742,7 @@ describe('publish — CAS supersession precondition', () => {
   it('succeeds + returns previousHeadCid when ifMatchSupersedes matches', async () => {
     const { fetch } = makeMockFetch();
     const result = await publish(
-      descWithSupersedes('urn:cg:new-head'),
+      descWithSupersedes('urn:iep:new-head'),
       '',
       podUrl,
       { fetch, ifMatchSupersedes: priorHeadUrl },
@@ -758,7 +758,7 @@ describe('publish — CAS supersession precondition', () => {
     let captured: unknown = null;
     try {
       await publish(
-        descWithSupersedes('urn:cg:new-head'),
+        descWithSupersedes('urn:iep:new-head'),
         '',
         podUrl,
         { fetch, ifMatchSupersedes: stale },
@@ -778,7 +778,7 @@ describe('publish — CAS supersession precondition', () => {
     let captured: unknown = null;
     try {
       await publish(
-        descWithSupersedes('urn:cg:new-head'),
+        descWithSupersedes('urn:iep:new-head'),
         '',
         podUrl,
         { fetch, ifMatchCid: 'bafkreiSTALECIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' },
@@ -792,7 +792,7 @@ describe('publish — CAS supersession precondition', () => {
 
   it('returns previousHeadCid observationally when no precondition is supplied', async () => {
     const { fetch } = makeMockFetch();
-    const result = await publish(descWithSupersedes('urn:cg:new-head'), '', podUrl, { fetch });
+    const result = await publish(descWithSupersedes('urn:iep:new-head'), '', podUrl, { fetch });
     // Best-effort observational CID for downstream chaining.
     expect(result.previousHeadUrl).toBe(priorHeadUrl);
     expect(result.previousHeadCid).toBeDefined();
@@ -800,7 +800,7 @@ describe('publish — CAS supersession precondition', () => {
 
   it('throws when precondition is supplied but descriptor.supersedes is empty', async () => {
     const { fetch } = makeMockFetch();
-    const noSupersedes = ContextDescriptor.create('urn:cg:noprior' as IRI)
+    const noSupersedes = ContextDescriptor.create('urn:iep:noprior' as IRI)
 .describes('urn:graph:g1' as IRI)
 .temporal({ validFrom: '2026-01-01T00:00:00Z' })
 .selfAsserted('did:web:alice.example' as IRI)
@@ -819,7 +819,7 @@ describe('publish — CAS supersession precondition', () => {
     // supersession target, get back a previousHeadCid.
     const { fetch: fetch1 } = makeMockFetch();
     const first = await publish(
-      descWithSupersedes('urn:cg:v2'),
+      descWithSupersedes('urn:iep:v2'),
       '',
       podUrl,
       { fetch: fetch1, ifMatchSupersedes: priorHeadUrl },
@@ -827,13 +827,13 @@ describe('publish — CAS supersession precondition', () => {
     expect(first.previousHeadCid).toBeDefined();
 
     // Simulate a concurrent writer: between first.publish and the second
-    // publish, the chain head changed to a NEW descriptor at urn:cg:v3.
+    // publish, the chain head changed to a NEW descriptor at urn:iep:v3.
     // The original caller still holds the stale previousHeadCid for v2's
     // ancestor (priorHeadUrl) — but they're trying to supersede v3.
     // The stale ifMatchSupersedes still points at priorHeadUrl, which is
     // no longer the current head of the v3 we want to supersede.
     const newHeadUrl = 'https://alice.pod/context-graphs/v3.ttl';
-    const newHeadTurtle = `<urn:cg:v3> a <https://markjspivey-xwisee.github.io/interego/ns/cg#ContextDescriptor> .`;
+    const newHeadTurtle = `<urn:iep:v3> a <https://markjspivey-xwisee.github.io/interego/ns/iep#ContextDescriptor> .`;
     const fetch2 = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
       const method = init?.method ?? 'GET';
@@ -842,7 +842,7 @@ describe('publish — CAS supersession precondition', () => {
       return mockResponse('', { status: 201 });
     }) as unknown as typeof globalThis.fetch;
 
-    const v4 = ContextDescriptor.create('urn:cg:v4' as IRI)
+    const v4 = ContextDescriptor.create('urn:iep:v4' as IRI)
 .describes('urn:graph:g1' as IRI)
 .temporal({ validFrom: '2026-01-01T00:00:00Z' })
 .selfAsserted('did:web:alice.example' as IRI)
@@ -969,7 +969,7 @@ describe('discover', () => {
   // newest entries, and then guess IRI conventions (:g4, :g5) instead
   // of finding the live game graph. The fix: `graphIri`, `sort`, and
   // `limit` filter args plus default `sort: "newest-first"` ordering.
-  it('filters by graphIri (cg:describes membership)', async () => {
+  it('filters by graphIri (iep:describes membership)', async () => {
     const a = await discover(podUrl, { graphIri: 'urn:graph:g1' }, { fetch: makeFetch() });
     expect(a).toHaveLength(1);
     expect(a[0]!.descriptorUrl).toContain('desc-1');

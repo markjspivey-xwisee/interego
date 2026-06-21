@@ -2,14 +2,14 @@
  * Affordance → MCP-tool-schema derivation.
  *
  * First-principles position: a vertical's capabilities are declared as
- * cg:Affordance descriptors (the spec-level artifact). MCP/JSON-RPC
+ * iep:Affordance descriptors (the spec-level artifact). MCP/JSON-RPC
  * tool schemas, REST endpoints, OpenAPI specs — all of those are
  * derivations of the same affordance description.
  *
  * This module:
  *   1. Defines a typed shape for affordances that's easy to author in TS
  *   2. Derives MCP tool schemas (JSON Schema) from that shape
- *   3. Derives Turtle serialization (cg:Affordance / hydra:Operation /
+ *   3. Derives Turtle serialization (iep:Affordance / hydra:Operation /
  *      dcat:Distribution) so generic agents can discover affordances
  *      via the protocol's existing discover_context flow
  *
@@ -64,7 +64,7 @@ export interface AffordanceScope {
    *  include '*' to apply to every collection. */
   readonly collections?: readonly string[];
   /** Applicable only when the resource carries one of these
-   *  cg:modalStatus values ('Asserted', 'Hypothetical', …). Omit to
+   *  iep:modalStatus values ('Asserted', 'Hypothetical', …). Omit to
    *  apply regardless of modal status. */
   readonly modalStatus?: readonly string[];
 }
@@ -137,7 +137,7 @@ export interface OutputSchemaProperty {
 
 /** A capability the vertical exposes. */
 export interface Affordance {
-  /** Canonical action IRI (urn:cg:action:<vertical>:<verb>). */
+  /** Canonical action IRI (urn:iep:action:<vertical>:<verb>). */
   readonly action: IRI;
   /** MCP tool name (typically <vertical>.<verb>). */
   readonly toolName: string;
@@ -178,7 +178,7 @@ export interface ResourceContext {
   /** Collection name being rendered ('courses', 'policies', 'profiles',
    *  …) or 'entry' for the entry point. */
   readonly collection: string;
-  /** The resource's cg:modalStatus, if it carries one. */
+  /** The resource's iep:modalStatus, if it carries one. */
   readonly modalStatus?: string;
 }
 
@@ -357,10 +357,10 @@ export function affordanceToMcpToolSchema(affordance: Affordance): McpToolSchema
   return schema;
 }
 
-// ── Derive: Turtle (cg:Affordance / hydra:Operation) ────────────────
+// ── Derive: Turtle (iep:Affordance / hydra:Operation) ────────────────
 
 /**
- * Derive a `cg:Affordance / cgh:Affordance / hydra:Operation /
+ * Derive a `iep:Affordance / ieh:Affordance / hydra:Operation /
  * dcat:Distribution` Turtle block from an Affordance. The vertical's
  * bridge publishes this on startup so generic Interego agents can
  * discover the capability via the protocol's existing affordance-walk.
@@ -382,8 +382,8 @@ export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string
         ]${i < affordance.inputs.length - 1 ? '' : ''}`;
   }).join(' ,\n');
 
-  return `<${affordance.action}> a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ;
-    cg:action <${affordance.action}> ;
+  return `<${affordance.action}> a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
+    iep:action <${affordance.action}> ;
     hydra:method "${affordance.method}" ;
     hydra:title "${escapeLit(affordance.title)}" ;
     rdfs:comment "${escapeLit(affordance.description)}" ;
@@ -397,7 +397,7 @@ export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string
         hydra:supportedProperty
 ${inputProps}
     ] ;
-    cg:encrypted false .`;
+    iep:encrypted false .`;
 }
 
 /** Multi-affordance turtle document with prefixes and a common manifest IRI. */
@@ -407,8 +407,8 @@ export function affordancesManifestTurtle(
   deploymentUrl: string,
   options?: { verticalLabel?: string; rdfsComment?: string },
 ): string {
-  const prefixes = `@prefix cg:    <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
-@prefix cgh:   <https://markjspivey-xwisee.github.io/interego/ns/cgh#> .
+  const prefixes = `@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/cgh#> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
 @prefix dcat:  <http://www.w3.org/ns/dcat#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .`;
@@ -416,7 +416,7 @@ export function affordancesManifestTurtle(
   const manifestBlock = `<${manifestIri}> a hydra:Collection ;
     rdfs:label "${escapeLit(options?.verticalLabel ?? 'Vertical capability manifest')}" ;
     ${options?.rdfsComment ? `rdfs:comment "${escapeLit(options.rdfsComment)}" ;` : ''}
-${affordances.map(a => `    cg:affordance <${a.action}>`).join(' ;\n')} .`;
+${affordances.map(a => `    iep:affordance <${a.action}>`).join(' ;\n')} .`;
 
   const blocks = affordances.map(a => affordanceToTurtle(a, deploymentUrl)).join('\n\n');
 

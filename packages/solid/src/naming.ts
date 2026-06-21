@@ -6,8 +6,8 @@
  *
  *     <did:web:pod.example:users:abc>  foaf:nick  "alice"
  *
- * published as an ordinary `cg:ContextDescriptor` carrying Trust +
- * Provenance + Temporal facets and `cg:supersedes` chains. Resolution
+ * published as an ordinary `iep:ContextDescriptor` carrying Trust +
+ * Provenance + Temporal facets and `iep:supersedes` chains. Resolution
  * is federated discovery + trust evaluation — name conflicts resolve by
  * the resolver's own trust policy, never first-come-first-served. There
  * is no central registrar, no root, no namespace governance: the cost
@@ -17,7 +17,7 @@
  * for the full design and the ENS comparison.
  *
  * This module composes existing primitives only — the descriptor
- * builder, `publish` / `discover`, the seven facets, `cg:supersedes`,
+ * builder, `publish` / `discover`, the seven facets, `iep:supersedes`,
  * and `foaf:nick` (W3C FOAF). It introduces NO new L1/L2 ontology
  * terms. Layer: L2 architecture pattern (sibling of `registry:` /
  * `passport:`).
@@ -54,8 +54,8 @@ const FOAF_NICK = 'http://xmlns.com/foaf/0.1/nick' as IRI;
 // Recognizable IRI prefixes so federated discovery can cheaply filter
 // to name attestations without fetching every graph. The two share a
 // content hash, so one is derivable from the other.
-const NAME_DESCRIPTOR_PREFIX = 'urn:cg:name:';
-const NAME_GRAPH_PREFIX = 'urn:graph:cg:name:';
+const NAME_DESCRIPTOR_PREFIX = 'urn:iep:name:';
+const NAME_GRAPH_PREFIX = 'urn:graph:iep:name:';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -88,7 +88,7 @@ export interface AttestNameArgs {
   /** Proof IRI for a CryptographicallyVerified attestation. */
   readonly proof?: IRI;
   /**
-   * Prior name-attestation IRIs (`urn:cg:name:…`) this supersedes — a
+   * Prior name-attestation IRIs (`urn:iep:name:…`) this supersedes — a
    * rename or reassignment. The prior attestation stays on the pod,
    * audit-walkable; it just drops out of default resolution.
    */
@@ -486,7 +486,7 @@ export async function namesFor(
   const basePods = options.pods && options.pods.length > 0 ? options.pods : [config.podUrl];
 
   // Reverse-lookup narrowing: any pod whose directory entry has this
-  // subject as `cg:owner` AND advertises any nick is a candidate. We
+  // subject as `iep:owner` AND advertises any nick is a candidate. We
   // don't have a subject-keyed index, but every entry already carries
   // its `owner`, so iterate directly.
   let pods = basePods;

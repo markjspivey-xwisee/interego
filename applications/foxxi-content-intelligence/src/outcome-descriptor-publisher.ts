@@ -1,7 +1,7 @@
 /**
  * Outcome / Situation / Teaching-Package → real Interego work-products.
  *
- * Each act on the Performance Architecture becomes a real cg:ContextDescriptor
+ * Each act on the Performance Architecture becomes a real iep:ContextDescriptor
  * published to the tenant's Solid pod, with its payload minted as a
  * content-addressed PGSL atom. The descriptor carries the canonical seven
  * facets, modal status, and (when the caller signs) a Provenance signature
@@ -12,7 +12,7 @@
  *
  *   agent action          → POST /performance/outcome  (signed by agent's DID)
  *   bridge publisher      → mint PGSL atom (content-address SHA-256)
- *                         → build cg:ContextDescriptor (7 facets)
+ *                         → build iep:ContextDescriptor (7 facets)
  *                         → publish(descriptor, graph, pod)  // @interego/core
  *                         → pod now holds a discoverable, federated,
  *                           dereferenceable record at a stable URL
@@ -56,7 +56,7 @@ import type {
 } from '@interego/solid';
 import { createHash, randomUUID } from 'node:crypto';
 
-// ── Foxxi vocabulary (composes the L1 cg:/pgsl: + ac:/amta: verticals) ──
+// ── Foxxi vocabulary (composes the L1 iep:/pgsl: + ac:/amta: verticals) ──
 //
 // The Foxxi vertical's namespace IRIs. The vocabulary is published at
 // /ns/foxxi on the bridge and is dereferenceable.
@@ -349,7 +349,7 @@ function resolveTrust(args: {
  * Publish a typed Foxxi entity to the tenant pod:
  *   1. mint a content-addressed PGSL atom holding the payload
  *   2. build the entity graph that links the atom to the typed entity
- *   3. build a seven-facet cg:ContextDescriptor describing the entity
+ *   3. build a seven-facet iep:ContextDescriptor describing the entity
  *   4. write both to the pod via @interego/core publish()
  *   5. update the manifest (publish() handles this, with HTTP CAS)
  *

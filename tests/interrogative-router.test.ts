@@ -35,22 +35,22 @@ const here = dirname(fileURLToPath(import.meta.url));
 // Fixture descriptor — mirrors packages/core/src/rdf/serializer.ts output exactly,
 // including the nested anonymous bnodes where the real substance lives.
 const FIXTURE = `
-@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix acl: <http://www.w3.org/ns/auth/acl#> .
 @prefix dcat: <http://www.w3.org/ns/dcat#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<urn:desc:1> a cg:ContextDescriptor ;
-  cg:describes <urn:graph:thing:42> ;
-  cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ; cg:validUntil "2026-12-31T00:00:00Z"^^xsd:dateTime ] ;
-  cg:hasFacet [ a cg:AgentFacet ; cg:assertingAgent [ a prov:SoftwareAgent ; rdfs:label "Agent Smith" ; cg:agentIdentity <did:ethr:0xabc> ] ; cg:agentRole cg:Author ; cg:onBehalfOf <did:web:owner> ] ;
-  cg:hasFacet [ a cg:FederationFacet ; cg:origin <https://pod.example/> ; cg:storageEndpoint <https://pod.example/c/> ; dcat:distribution [ a dcat:Distribution ; dcat:mediaType "text/turtle" ; dcat:accessURL <https://pod.example/g.ttl> ] ] ;
-  cg:hasFacet [ a cg:AccessControlFacet ; cg:authorization [ a acl:Authorization ; acl:agent <did:web:owner> ; acl:mode acl:Read , acl:Write ] ; cg:consentBasis <urn:consent:1> ] ;
-  cg:hasFacet [ a cg:SemioticFacet ; cg:modalStatus cg:Asserted ; cg:epistemicConfidence "0.9"^^xsd:double ; cg:interpretationFrame <urn:frame:default> ] ;
-  cg:hasFacet [ a cg:ProvenanceFacet ; prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <did:ethr:0xabc> ; prov:startedAtTime "2026-01-01T00:00:00Z"^^xsd:dateTime ; prov:used <urn:input:1> ] ; prov:wasDerivedFrom <urn:src:1> ] ;
-  cg:hasFacet [ a cg:TrustFacet ; cg:trustLevel cg:SelfAsserted ; cg:issuer <did:web:owner> ] .
+<urn:desc:1> a iep:ContextDescriptor ;
+  iep:describes <urn:graph:thing:42> ;
+  iep:hasFacet [ a iep:TemporalFacet ; iep:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ; iep:validUntil "2026-12-31T00:00:00Z"^^xsd:dateTime ] ;
+  iep:hasFacet [ a iep:AgentFacet ; iep:assertingAgent [ a prov:SoftwareAgent ; rdfs:label "Agent Smith" ; iep:agentIdentity <did:ethr:0xabc> ] ; iep:agentRole iep:Author ; iep:onBehalfOf <did:web:owner> ] ;
+  iep:hasFacet [ a iep:FederationFacet ; iep:origin <https://pod.example/> ; iep:storageEndpoint <https://pod.example/c/> ; dcat:distribution [ a dcat:Distribution ; dcat:mediaType "text/turtle" ; dcat:accessURL <https://pod.example/g.ttl> ] ] ;
+  iep:hasFacet [ a iep:AccessControlFacet ; iep:authorization [ a acl:Authorization ; acl:agent <did:web:owner> ; acl:mode acl:Read , acl:Write ] ; iep:consentBasis <urn:consent:1> ] ;
+  iep:hasFacet [ a iep:SemioticFacet ; iep:modalStatus iep:Asserted ; iep:epistemicConfidence "0.9"^^xsd:double ; iep:interpretationFrame <urn:frame:default> ] ;
+  iep:hasFacet [ a iep:ProvenanceFacet ; prov:wasGeneratedBy [ a prov:Activity ; prov:wasAssociatedWith <did:ethr:0xabc> ; prov:startedAtTime "2026-01-01T00:00:00Z"^^xsd:dateTime ; prov:used <urn:input:1> ] ; prov:wasDerivedFrom <urn:src:1> ] ;
+  iep:hasFacet [ a iep:TrustFacet ; iep:trustLevel iep:SelfAsserted ; iep:issuer <did:web:owner> ] .
 `;
 
 describe('interrogative table — drift guard (single-sourced from docs/ns)', () => {
@@ -170,7 +170,7 @@ describe('projection (derefBnode recovers nested substance)', () => {
     expect((a.values as any).effectiveTrustLevel).toBe('CryptographicallyVerified');
     expect(a.nextStep?.tool).toBe('pgsl_decide');
   });
-  it('What: pointer to the substrate (cg:describes), not a descriptor facet', () => {
+  it('What: pointer to the substrate (iep:describes), not a descriptor facet', () => {
     const a = answer('What');
     expect(a.status).toBe('pointer');
     expect(a.nextStep?.tool).toBe('pgsl_resolve');
@@ -182,7 +182,7 @@ describe('projection (derefBnode recovers nested substance)', () => {
     expect(answer('Which').nextStep?.tool).toBe('pgsl_decide');
   });
   it('absent facet -> status absent with a caveat', () => {
-    const r = routeInterrogatives({ turtle: '@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .\n<urn:d:2> a cg:ContextDescriptor ; cg:describes <urn:g:1> .', interrogatives: ['When'] });
+    const r = routeInterrogatives({ turtle: '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n<urn:d:2> a iep:ContextDescriptor ; iep:describes <urn:g:1> .', interrogatives: ['When'] });
     if (!r.ok) throw new Error(r.error);
     expect(r.answers[0]!.status).toBe('absent');
   });

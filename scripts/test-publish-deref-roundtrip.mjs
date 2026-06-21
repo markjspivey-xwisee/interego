@@ -176,18 +176,18 @@ function makeSampleTurtle(graphIri) {
   // recovered plaintext — proves round-trip on actual user-visible
   // bytes, not just a hash that could happen to collide.
   const sentinel = `roundtrip-sentinel-${RUN_TAG}`;
-  const turtle = `@prefix cg: <https://w3id.org/context-graphs#> .
+  const turtle = `@prefix iep: <https://w3id.org/context-graphs#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 <${graphIri}#observation-1>
-  a cg:Observation ;
+  a iep:Observation ;
   dct:title "Round-trip self-test observation"@en ;
   dct:description "${sentinel}" ;
   dct:created "2026-06-05T00:00:00Z"^^xsd:dateTime ;
   prov:wasAttributedTo <${graphIri}#agent> ;
-  cg:value "42"^^xsd:integer .
+  iep:value "42"^^xsd:integer .
 
 <${graphIri}#agent>
   a prov:Agent ;
@@ -388,7 +388,7 @@ async function main() {
   // selfIncluded, recovered }.
   async function runScenario({ label, scenarioTag, shareWith, stepBase }) {
     const graphIri = `urn:graph:roundtrip:${RUN_TAG}:${scenarioTag}`;
-    const descriptorId = `urn:cg:roundtrip:${RUN_TAG}:${scenarioTag}`;
+    const descriptorId = `urn:iep:roundtrip:${RUN_TAG}:${scenarioTag}`;
     const { turtle, sentinel } = makeSampleTurtle(graphIri);
 
     // ── publish_context ──
@@ -590,7 +590,7 @@ async function main() {
   const concurrentTag = `concurrent-${RUN_TAG}`;
   const concurrentIris = Array.from({ length: N }, (_, i) => ({
     graphIri: `urn:graph:concurrent:${concurrentTag}:${i}`,
-    descriptorId: `urn:cg:concurrent:${concurrentTag}:${i}`,
+    descriptorId: `urn:iep:concurrent:${concurrentTag}:${i}`,
   }));
   let concurrentResults;
   try {

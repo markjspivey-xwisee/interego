@@ -128,7 +128,7 @@ The generic personal-bridge is **protocol-only — 6 core p2p tools**. It is int
 
 ### Want vertical-application tools (`lpc.*` / `adp.*` / `lrs.*` / `ac.*`)?
 
-Those live in per-vertical bridges, deployed independently. Generic Interego agents can ALSO discover and invoke vertical capabilities via the protocol-level `cg:Affordance` discovery path without running any vertical bridge — see [`applications/README.md`](../../applications/README.md).
+Those live in per-vertical bridges, deployed independently. Generic Interego agents can ALSO discover and invoke vertical capabilities via the protocol-level `iep:Affordance` discovery path without running any vertical bridge — see [`applications/README.md`](../../applications/README.md).
 
 ## Sharing across people (multi-bridge federation)
 

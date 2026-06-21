@@ -1,7 +1,7 @@
 @prefix cts:  <https://markjspivey-xwisee.github.io/interego/ns/cts#> .
-@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
-@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix ieh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix ie:   <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -41,11 +41,11 @@
 <https://markjspivey-xwisee.github.io/interego/ns/cts>
     a owl:Ontology ;
     dct:title "CTS — Compositional Tuple Store" ;
-    dct:description "Usage-based linguistic substrate. Records utterances as tuples (positions × fillers × context); infers patterns as statistical regularities; lets interoperability emerge without a pre-specified schema. Underlies PGSL at the substrate layer and cg:ParadigmSet / cg:SyntagmaticPattern at the grammar layer." ;
+    dct:description "Usage-based linguistic substrate. Records utterances as tuples (positions × fillers × context); infers patterns as statistical regularities; lets interoperability emerge without a pre-specified schema. Underlies PGSL at the substrate layer and iep:ParadigmSet / iep:SyntagmaticPattern at the grammar layer." ;
     vann:preferredNamespacePrefix "cts" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/cts#" ;
     owl:imports <https://markjspivey-xwisee.github.io/interego/ns/pgsl> ,
-                <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+                <https://markjspivey-xwisee.github.io/interego/ns/iep> .
 
 cts:Tuple a owl:Class ;
     rdfs:label "Tuple" ;
@@ -59,28 +59,28 @@ cts:Position a owl:Class ;
 
 cts:Filler a owl:Class ;
     rdfs:label "Filler" ;
-    rdfs:comment "A value occupying a position in a tuple. Can be a pgsl:Atom, a cg:ContextDescriptor, a WebID, or any IRI-addressable entity." ;
+    rdfs:comment "A value occupying a position in a tuple. Can be a pgsl:Atom, a iep:ContextDescriptor, a WebID, or any IRI-addressable entity." ;
     rdfs:subClassOf pgsl:Atom .
 
 cts:Context a owl:Class ;
     rdfs:label "Usage Context" ;
-    rdfs:comment "The surrounding environment of a tuple — time, place, agents present, prior tuples, task being performed. Realized as a cg:ContextDescriptor that accompanies the tuple." ;
-    rdfs:subClassOf cg:ContextDescriptor .
+    rdfs:comment "The surrounding environment of a tuple — time, place, agents present, prior tuples, task being performed. Realized as a iep:ContextDescriptor that accompanies the tuple." ;
+    rdfs:subClassOf iep:ContextDescriptor .
 
 cts:Pattern a owl:Class ;
     rdfs:label "Usage Pattern" ;
     rdfs:comment "A statistical regularity across tuples — e.g. 'position 1 is almost always filled by a hela:Actor' or 'position 3 and position 5 correlate'. Learned from observed tuples, not declared." ;
-    owl:equivalentClass cg:SyntagmaticPattern .
+    owl:equivalentClass iep:SyntagmaticPattern .
 
 cts:ParadigmSet a owl:Class ;
-    rdfs:subClassOf cg:ParadigmSet ;
+    rdfs:subClassOf iep:ParadigmSet ;
     rdfs:label "CTS Paradigm Set" ;
     rdfs:comment "The distribution of fillers observed at a given position across all tuples. Used to infer the class of fillers valid at that position (i.e. the paradigm) — cf. Saussure's paradigmatic axis." .
 
 cts:Emergence a owl:Class ;
     rdfs:label "Emergence" ;
     rdfs:comment "The phenomenon by which interoperability between agents arises without explicit schema agreement. Two agents using the same tuples converge on compatible patterns; the emergence is the quantitative observation that their patterns align over time. Constructed from sets of cts:Pattern via cross-agent comparison." ;
-    cg:constructedFrom ( cts:Pattern cts:Pattern ) .
+    iep:constructedFrom ( cts:Pattern cts:Pattern ) .
 
 # ── Properties ────────────────────────────────────────────────
 
@@ -109,8 +109,8 @@ cts:inducesPattern a owl:ObjectProperty ;
 cts:Tuple rdfs:seeAlso pgsl:Fragment ;
     rdfs:comment "A pgsl:Fragment at level N is a tuple whose fillers are themselves fragments at level N-1 — the overlapping-pair construction is tuple composition. CTS and PGSL are two views of the same structure: CTS emphasises usage + emergence, PGSL emphasises content-addressed lattice algebra." .
 
-cts:Pattern owl:equivalentClass cg:SyntagmaticPattern ;
-    rdfs:comment "CTS patterns and cg:SyntagmaticPattern are the same concept at two different abstraction layers — CTS at the raw usage layer, cg: at the typed-context layer. Explicit equivalence lets tooling navigate freely between them." .
+cts:Pattern owl:equivalentClass iep:SyntagmaticPattern ;
+    rdfs:comment "CTS patterns and iep:SyntagmaticPattern are the same concept at two different abstraction layers — CTS at the raw usage layer, iep: at the typed-context layer. Explicit equivalence lets tooling navigate freely between them." .
 
 # ══════════════════════════════════════════════════════════════
 #  Sub-token compositional reuse (n-gram canonicalization)

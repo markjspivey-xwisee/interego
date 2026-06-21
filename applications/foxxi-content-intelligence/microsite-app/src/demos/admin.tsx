@@ -109,7 +109,7 @@ export const adminSteps: DemoStep[] = [
       <>
         Regulator asks: "show me everything that happened to Joshua's learning record this quarter,
         and which compliance controls each step references." Foxxi composes a single descriptor walk
-        — every <code>cg:ContextDescriptor</code> with a Provenance facet or <code>dct:conformsTo</code> tag
+        — every <code>iep:ContextDescriptor</code> with a Provenance facet or <code>dct:conformsTo</code> tag
         in the window comes back as an ordered chain. Each step's framework citations
         (SOC 2 / EU AI Act / NIST RMF / IEEE LERS) come from the descriptor's own
         <code>dct:conformsTo</code> — no separate compliance database, no audit-prep marathon.

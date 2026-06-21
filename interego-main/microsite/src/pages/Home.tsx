@@ -36,7 +36,7 @@ export function Home({ onNavigate }: { onNavigate: (r: Route) => void }) {
           <div style={eyebrow}>Pillar 1 · L1 protocol</div>
           <h3 style={h3}>Typed context</h3>
           <p style={para}>
-            <b>Context Graphs 1.0</b>. Every claim is a <code style={codeChip}>cg:ContextDescriptor</code>
+            <b>Context Graphs 1.0</b>. Every claim is a <code style={codeChip}>iep:ContextDescriptor</code>
             with seven facets — <i>Temporal · Provenance · Agent · AccessControl · Semiotic · Trust · Federation</i>.
             Composition algebra (union / intersection / restriction / override) and three modal statuses
             (Asserted / Hypothetical / Counterfactual) are first-class.
@@ -67,7 +67,7 @@ export function Home({ onNavigate }: { onNavigate: (r: Route) => void }) {
       <h2 style={h2}>What it feels like to use</h2>
       <p style={{ ...para, maxWidth: 820 }}>
         Every action by a human or agent — recording an outcome, filing a situation, teaching another
-        agent, publishing a credential — becomes a real <code style={codeChip}>cg:ContextDescriptor</code>
+        agent, publishing a credential — becomes a real <code style={codeChip}>iep:ContextDescriptor</code>
         in a Solid pod. Each carries its seven facets, signed, content-addressed via a <code style={codeChip}>pgsl:Atom</code>,
         and dereferenceable on the wire. Conformance surfaces like xAPI 2.0, SCORM, cmi5, or LTI
         become <b>projections</b> over the substrate — from outside they're the standard you expect;
@@ -83,7 +83,7 @@ export function Home({ onNavigate }: { onNavigate: (r: Route) => void }) {
           body={<>
             Walks any Interego pod by reading its <code style={codeChip}>.well-known/context-graphs</code>
             manifest, dereferences any descriptor as Turtle, decodes the graph payload, and follows
-            <code style={codeChip}>cg:Affordance</code> links as clickable Hydra operations.
+            <code style={codeChip}>iep:Affordance</code> links as clickable Hydra operations.
           </>}
           actionLabel="Open the pod browser →"
           onClick={() => onNavigate('pod')}
@@ -93,7 +93,7 @@ export function Home({ onNavigate }: { onNavigate: (r: Route) => void }) {
           eyebrowText="Vertical · Foxxi"
           body={<>
             Five real Claude subagents (via the Claude Agent SDK), each a wallet-rooted identity,
-            coordinating only through the substrate. A <code style={codeChip}>cg:Hypothetical → cg:Asserted</code>
+            coordinating only through the substrate. A <code style={codeChip}>iep:Hypothetical → iep:Asserted</code>
             flip captures the moment evidence becomes claimable knowledge.
           </>}
           actionLabel="Live multi-agent emergence →"

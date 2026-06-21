@@ -58,7 +58,7 @@ graph TD
 
   subgraph Foxxi["Foxxi vertical (the bridge)"]
     REG[Regime engine<br/>diagnose → recommend → calibrate]
-    AFF[Followable cg:Affordances<br/>contextualize-and-plan, record-performance, …]
+    AFF[Followable iep:Affordances<br/>contextualize-and-plan, record-performance, …]
     PERF[POST /performance/plan + GET /performance]
   end
 
@@ -127,7 +127,7 @@ timeline
   Access (b) : signed followable contextualize-and-plan affordance : deployed 8621f17c, end-to-end verified
   johnny ACCEPT : formal role accept + independent attestation
   Sprint-1 dogfood : johnny classifies + composes our Emergent coordination, publishes signed+encrypted : maintainer cross-attests authorship/reachability/regime
-  cg:encryptedHolon fix : advertise gate host at mint (signature-safe) : deployed 4beb81f0
+  iep:encryptedHolon fix : advertise gate host at mint (signature-safe) : deployed 4beb81f0
   recipients arg : multi-recipient durable-key encryption : deployed f14864db, owner-decrypt verified
   Confidentiality fix : redact cleartext xAPI when recipients set (owner caught the leak) : deployed 9495ae3c
   Owner-decrypt : johnny re-emits to 4 recipients; maintainer owner-decrypts with durable key
@@ -182,8 +182,8 @@ conditions — each independently re-derived by a separate verifier in a workflo
 ## 6. Access (b) — the emergent capability johnny invokes as himself
 
 johnny is a mesh agent: he can only act on *discovered, followable affordances*, not raw HTTP.
-So `/performance/plan` was exposed as a signed, followable `cg:Affordance`
-(`urn:cg:action:foxxi:contextualize-and-plan-signed`), reusing the existing
+So `/performance/plan` was exposed as a signed, followable `iep:Affordance`
+(`urn:iep:action:foxxi:contextualize-and-plan-signed`), reusing the existing
 `verifyDelegatedCaller` + `diagnose`/`recommendInterventions`, attributing the classification to
 the caller's verified DID.
 
@@ -193,7 +193,7 @@ sequenceDiagram
   participant RLY as relay
   participant BR as Foxxi bridge
   J->>RLY: discover_context / dereference<br/>GET /agent/contextualize-and-plan/affordance
-  RLY-->>J: cg:Affordance (action IRI + target + input schema)
+  RLY-->>J: iep:Affordance (action IRI + target + input schema)
   J->>RLY: sign_request({situation, trajectories, …})
   RLY-->>J: { _signed_payload, _signature, signed_as }
   J->>RLY: invoke_affordance(descriptor_url, action_iri, payload)
@@ -245,7 +245,7 @@ dereference *target*, never the bytes, so signatures verify. A gate body-rewrite
 broken johnny's zero-trust signature re-verification. Resolution: **coaching** — read via the
 relay (byte-identical) or a direct gate host-swap (both verified live). No build.
 
-### 8b. `cg:encryptedHolon` advertised host — narrow signature-safe build
+### 8b. `iep:encryptedHolon` advertised host — narrow signature-safe build
 The bridge's foundation-persist projection (no authorship proof) emitted the encrypted-holon
 link on the internal host. Fixed at **mint** (`foundation-persist.ts` `toAdvertisedHolonUrl`):
 advertise the gate host; write target + ciphertext untouched. Deployed `4beb81f0`, verified a
@@ -287,7 +287,7 @@ graph TB
   subgraph maintainer["maintainer — build + gatekeep"]
     m1[wi-001 A/B/C + schema exposure]
     m2[signed contextualize-and-plan affordance]
-    m3[cg:encryptedHolon mint fix]
+    m3[iep:encryptedHolon mint fix]
     m4[recipients arg multi-recipient]
     m5[confidentiality redaction]
     m6[independent cross-seat verification + REFLEXIVE-DOGFOOD.md]
@@ -319,7 +319,7 @@ methodology review; boozer owns pod-execution + evidence + owner-decrypt attesta
 | `9256d44b` | wi-001 **B+C** + `GET /performance` input-schema exposure |
 | `e700698` | `default-gap-intent` excluded from the calibration loop (consume + accrue) |
 | `8621f17c` | **Access (b)** — signed followable `contextualize-and-plan` affordance |
-| `4beb81f0` | `cg:encryptedHolon` advertised-host mint fix (signature-safe) |
+| `4beb81f0` | `iep:encryptedHolon` advertised-host mint fix (signature-safe) |
 | `f14864db` | `recipients` arg — multi-recipient durable-key encryption |
 | `9495ae3c` | **Confidentiality** — redact cleartext xAPI when `recipients` set (current) |
 

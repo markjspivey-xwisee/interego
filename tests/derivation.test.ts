@@ -2,7 +2,7 @@
  * Derivation tests — operationalize the grounding chain documented
  * in spec/DERIVATION.md.
  *
- * For every L2/L3 term tagged `cg:constructedFrom (...)`, we assert
+ * For every L2/L3 term tagged `iep:constructedFrom (...)`, we assert
  * (a) a runtime constructor exists and (b) it produces an output of
  * the expected shape from inputs of the declared L1 types.
  *

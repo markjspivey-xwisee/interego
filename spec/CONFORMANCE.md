@@ -12,19 +12,19 @@ conformance test suite verifies the claim.
 The minimum surface every Interego implementation must support to be
 called Interego at all.
 
-- **L1.1 Six-facet invariant:** every `cg:ContextDescriptor` MUST
+- **L1.1 Six-facet invariant:** every `iep:ContextDescriptor` MUST
   carry exactly one of each of the six core facets (Temporal,
   Provenance, Agent, Semiotic, Trust, Federation) plus optionally
   AccessControl. Extension facets (e.g. RevocationFacet, ProjectionFacet,
   CausalFacet) are permitted but never required.
-- **L1.2 Modal-truth consistency:** the SemioticFacet's `cg:modalStatus`
-  and `cg:groundTruth` MUST agree per spec §5.2.2:
+- **L1.2 Modal-truth consistency:** the SemioticFacet's `iep:modalStatus`
+  and `iep:groundTruth` MUST agree per spec §5.2.2:
   Asserted ↔ groundTruth=true; Counterfactual ↔ groundTruth=false;
   Hypothetical ↔ groundTruth absent.
 - **L1.3 Composition operators:** union, intersection, restriction,
   override MUST be implemented per spec §3.4. Composition results MUST
   be valid descriptors (re-pass L1.1 + L1.2).
-- **L1.4 cg:supersedes resolution:** when a descriptor is superseded,
+- **L1.4 iep:supersedes resolution:** when a descriptor is superseded,
   implementations MUST surface the latest non-superseded version when
   asked for "current" content. Cached views MUST be detectable as
   stale-by-version.
@@ -58,7 +58,7 @@ federation. Without L2, an implementation is "Interego-typed" but not
 Optional capabilities that unlock specific use cases. Compliant
 implementations declare which L3 features they support.
 
-- **L3.1 ABAC evaluator:** evaluates `cg:AccessControlPolicy` against
+- **L3.1 ABAC evaluator:** evaluates `iep:AccessControlPolicy` against
   attribute graphs per `docs/ns/abac.ttl`.
 - **L3.2 AMTA aggregation:** aggregates `amta:Attestation` descriptors
   into `registry:ReputationSnapshot` instances.
@@ -79,10 +79,10 @@ opt-in per deployment; not required for L1+L2 conformance. When
 declared, ALL of the following MUST hold for descriptors marked
 `compliance: true`:
 
-- **L4.1 Trust upgrade:** `cg:trustLevel` MUST be
-  `cg:CryptographicallyVerified`. `SelfAsserted` is not acceptable
+- **L4.1 Trust upgrade:** `iep:trustLevel` MUST be
+  `iep:CryptographicallyVerified`. `SelfAsserted` is not acceptable
   for compliance-grade evidence.
-- **L4.2 Modal commitment:** `cg:modalStatus` MUST be `Asserted` or
+- **L4.2 Modal commitment:** `iep:modalStatus` MUST be `Asserted` or
   `Counterfactual`. `Hypothetical` is not acceptable for audit-trail
   records (a hypothesis isn't evidence).
 - **L4.3 Cryptographic signature:** the descriptor MUST carry an
@@ -91,7 +91,7 @@ declared, ALL of the following MUST hold for descriptors marked
   equivalent.
 - **L4.4 Anchored:** the descriptor's content hash SHOULD be
   anchored — IPFS CID at minimum, ideally on-chain (ERC-8004 T2/T3).
-- **L4.5 Append-only:** updates MUST use `cg:supersedes`; no
+- **L4.5 Append-only:** updates MUST use `iep:supersedes`; no
   in-place mutation of compliance descriptors.
 - **L4.6 Framework citation:** if the descriptor is evidence for
   a specific regulatory framework, it MUST cite the framework's
@@ -171,13 +171,13 @@ Example:
 ```
 ✗ L1.2 modal-truth consistency
   fixture: spec/conformance/fixtures/modal-mismatch/asserted-without-groundtruth.ttl
-  reason: descriptor has cg:modalStatus cg:Asserted but no cg:groundTruth
-  fix:    add `cg:groundTruth "true"^^xsd:boolean` to the SemioticFacet
+  reason: descriptor has iep:modalStatus iep:Asserted but no iep:groundTruth
+  fix:    add `iep:groundTruth "true"^^xsd:boolean` to the SemioticFacet
 ```
 
 ## Versioning
 
-The conformance suite itself is versioned via `cg:supersedes` like any
+The conformance suite itself is versioned via `iep:supersedes` like any
 other Interego artifact. A passing implementation should declare the
 suite version it tested against:
 

@@ -42,7 +42,7 @@ If a client only supports the older SSE-style endpoint, swap `/mcp` for `/sse` o
 
 > **Status: reference implementation.** Hosted on the maintainer's free Azure instance for evaluation. Self-host (`examples/personal-bridge/`) before you depend on it. The compliance + audit-trail work in this repo is *infrastructure for* SOC 2 / EU AI Act / NIST RMF evidence — it is not an attested control environment by itself.
 
-> **L1 protocol: Last Call Working Draft (2026-05-16).** Wire format and core vocabulary (`cg:` / `cgh:` / `pgsl:` / `ie:` / `align:`) are frozen for v1.0 pending Candidate Recommendation. Editors commit no breaking changes through 2027-05-16 without a deprecation cycle. See [`spec/STABILITY.md`](spec/STABILITY.md) for the practical adopter-facing commitment, and [`spec/architecture.md`](spec/architecture.md) for the normative spec. Second implementations (any language) are warmly welcomed — open an issue and we will work with you.
+> **L1 protocol: Last Call Working Draft (2026-05-16).** Wire format and core vocabulary (`iep:` / `ieh:` / `pgsl:` / `ie:` / `align:`) are frozen for v1.0 pending Candidate Recommendation. Editors commit no breaking changes through 2027-05-16 without a deprecation cycle. See [`spec/STABILITY.md`](spec/STABILITY.md) for the practical adopter-facing commitment, and [`spec/architecture.md`](spec/architecture.md) for the normative spec. Second implementations (any language) are warmly welcomed — open an issue and we will work with you.
 
 **Author:** Mark Spivey
 **License:** MIT
@@ -50,7 +50,7 @@ If a client only supports the older SSE-style endpoint, swap `/mcp` for `/sse` o
 <details>
 <summary>What's underneath (for readers who want the protocol view)</summary>
 
-The MCP surface above is a thin ergonomic wrapper on three pillars over one cryptographic root: **typed context** (Context Descriptors with seven facets, a composition algebra, modal status, `cg:supersedes` chains, the PGSL content-addressed lattice — the L1 protocol is [Context Graphs 1.0](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)), **verifiable identity** (wallet-rooted DIDs, capability passports that survive infrastructure migration, attribute-based access control), and **coordination** (multi-axis attestation, federated saga transactions, Nostr-style p2p relays). Wrapped in NaCl envelopes, secp256k1 signatures, ZK commitments, IPFS anchoring. Federated across Solid pods by default.
+The MCP surface above is a thin ergonomic wrapper on three pillars over one cryptographic root: **typed context** (Context Descriptors with seven facets, a composition algebra, modal status, `iep:supersedes` chains, the PGSL content-addressed lattice — the L1 protocol is [Interego Protocol 1.0](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)), **verifiable identity** (wallet-rooted DIDs, capability passports that survive infrastructure migration, attribute-based access control), and **coordination** (multi-axis attestation, federated saga transactions, Nostr-style p2p relays). Wrapped in NaCl envelopes, secp256k1 signatures, ZK commitments, IPFS anchoring. Federated across Solid pods by default.
 
 The underlying surface is a small categorical kernel — eight verbs: `mint`, `dereference`, `compose`, `act`, `restrict`, `extend`, `promote`, `decompose` — exposed both as a TypeScript module ([`src/kernel/`](src/kernel/)) and as first-class MCP tools alongside the 27 named compatibility shims (`publish_context`, `register_agent`, `pgsl_*`, `invoke_affordance`, …). The named tools' wire format is unchanged so existing connectors keep working; new clients can call the kernel verbs directly. See [`docs/ARCHITECTURAL-FOUNDATIONS.md`](docs/ARCHITECTURAL-FOUNDATIONS.md) §11 for the categorical structure realized by the kernel.
 
@@ -80,7 +80,7 @@ The underlying surface is a small categorical kernel — eight verbs: `mint`, `d
 Anything built on Interego inherits five properties without writing them itself:
 
 1. **Federation across organizations** — agent identity is wallet-rooted; cross-pod sharing is per-graph and cryptographically scoped. Single-tenant assumptions don't bind you.
-2. **Belief revision as a primitive** — `cg:modalStatus` (Asserted / Hypothetical / Counterfactual) plus `cg:supersedes` chains make claim history and reversal first-class.
+2. **Belief revision as a primitive** — `iep:modalStatus` (Asserted / Hypothetical / Counterfactual) plus `iep:supersedes` chains make claim history and reversal first-class.
 3. **Composition on typed data** — union / intersection / restriction / override operators on descriptors, plus PGSL meet/pullback at the atom layer, give structural — not heuristic — answers to "what do these views agree on."
 4. **Identity portability** — capability passports survive pod migrations, framework changes, and wallet rotations.
 5. **Audit by construction** — every action that goes through `publish_context` produces a signed, timestamped, lineage-walkable descriptor. Regulatory frameworks with an L3 mapping ([`eu-ai-act:`](docs/ns/eu-ai-act.ttl), [`nist-rmf:`](docs/ns/nist-rmf.ttl), [`soc2:`](docs/ns/soc2.ttl)) let compliance teams query that audit trail in their own vocabulary. The mappings are *infrastructure for* compliance evidence; they are not themselves an attestation that any deployment meets the standard.
@@ -96,7 +96,7 @@ The protocol surface has grown substantially. Highlights:
 - **Pilot verticals (dual-audience)** — two verticals in [`applications/`](applications/) are designated pilots for the dual-audience design discipline ([`docs/DUAL-AUDIENCE.md`](docs/DUAL-AUDIENCE.md)): every vertical has at least two first-class audiences (the protagonist whose data it is, and the institutional operator) and gives each its own affordances over the same descriptors. **Learning** ([`learner-performer-companion/`](applications/learner-performer-companion/) + [`lrs-adapter/`](applications/lrs-adapter/)) serves the learner / performer AND the enterprise edtech professional; the interop standards (IEEE LERS, ADL TLA, xAPI, W3C VC, Open Badges 3.0, IMS CLR 2.0) connect both audiences without either dictating the other. **Organizational working memory** ([`organizational-working-memory/`](applications/organizational-working-memory/)) serves the knowledge worker / individual contributor AND the org-level operator. ABAC + per-graph `share_with` + aggregate-privacy queries are the bilateral substrate primitives.
 
 - **Vertical-application examples** (NOT first-party — emergent use cases on top of the protocol) — [`applications/`](applications/) holds reference implementations of how the protocol can be composed for specific industries / domains. They are **separate from Interego itself**: the generic personal-bridge and Azure relay don't load them. Each vertical has:
-  1. **A first-principles affordance declaration** ([`applications/<vertical>/affordances.ts`](applications/learner-performer-companion/affordances.ts)) — the spec-level artifact. A generic Interego agent discovers + invokes vertical capabilities via `cg:Affordance` descriptors using only the protocol's own primitives. No vertical-specific client code needed at the agent.
+  1. **A first-principles affordance declaration** ([`applications/<vertical>/affordances.ts`](applications/learner-performer-companion/affordances.ts)) — the spec-level artifact. A generic Interego agent discovers + invokes vertical capabilities via `iep:Affordance` descriptors using only the protocol's own primitives. No vertical-specific client code needed at the agent.
   2. **An optional per-vertical bridge** ([`applications/<vertical>/bridge/`](applications/learner-performer-companion/bridge/)) — a tiny standalone Express + MCP server that reifies the affordances as named MCP tools. Run it when you want LLM tool-name ergonomics; the bridge derives MCP tool schemas from the affordance declarations (single source of truth — never hand-written).
 
   Current example verticals:
@@ -114,7 +114,7 @@ The protocol surface has grown substantially. Highlights:
 - **P2P transport (Tier 5)** — [`src/p2p/`](src/p2p/) ships a Nostr-style relay-mediated transport so mobile (claude.ai app, ChatGPT app) and desktop (Claude Code, custom MCP clients) interop with no central server we operate. **Two signing schemes coexist on the wire:** ECDSA (Ethereum-style address — matches the existing wallet identity used everywhere else) and BIP-340 Schnorr (32-byte x-only pubkey — for public-Nostr-relay interop). Same wallet, two pubkey representations, `verifyEvent` auto-dispatches by format. **1:N encrypted share** via `KIND_ENCRYPTED_SHARE` (30043) — Tier 4's cross-pod E2EE works over P2P transport too. See [`docs/p2p.md`](docs/p2p.md) for the cross-surface deployment topology + 16 passing tests in [`tests/p2p.test.ts`](tests/p2p.test.ts).
 - **Personal bridge** — [`examples/personal-bridge/`](examples/personal-bridge/) is the ready-to-run reference deployment for Tier 5: a small Node process you run on your own infrastructure (laptop / Raspberry Pi / NAS / Tailscale-exposed home server). Embeds `InMemoryRelay`, exposes MCP at `POST /mcp` + REST + an admin UI. **One URL forever, all your devices.** Local-first by default (`EXTERNAL_RELAYS` env var is empty); sharing is per-publish (`share_with`) or per-bridge (broadcast to public Nostr relays). See [`examples/personal-bridge/README.md`](examples/personal-bridge/README.md) for quick start + cross-device connection table.
 - **SOC 2 readiness package** — [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) (scope, timeline, vendor inventory, mapping of Interego features to SOC 2 controls, solo-operator compensating controls), [`spec/policies/`](spec/policies/) (15 written policies covering CC1–CC9, A1, C1, P-series), [`spec/OPS-RUNBOOK.md`](spec/OPS-RUNBOOK.md) (deploy/access/key-rotation/backup procedures with current vs target state). [`SECURITY.md`](SECURITY.md) + RFC 9116 `/.well-known/security.txt` on every container app. Operational events (deploy, access change, wallet rotation, incident, quarterly review) build into compliance-grade descriptors via `buildDeployEvent` / `buildAccessChangeEvent` / `buildWalletRotationEvent` / `buildIncidentEvent` / `buildQuarterlyReviewEvent` and `tools/publish-ops-event.mjs` — Interego eats its own dog food as the SOC 2 evidence substrate.
-- **Compliance grade publish + regulatory mapping (L4 conformance)** — `publish_context(..., compliance: true, compliance_framework: 'eu-ai-act' | 'nist-rmf' | 'soc2')` produces audit-trail-grade descriptors. Upgrades trust to `CryptographicallyVerified`, signs with ECDSA (secp256k1), embeds inline `cg:proof` in the TrustFacet, writes a sibling `.sig.json` to the pod, auto-pins both to IPFS when configured, validates against the named framework. Wallet rotation + history supported via `rotateComplianceWallet` / `importComplianceWallet`. See [`spec/CONFORMANCE.md`](spec/CONFORMANCE.md) §L4 + [`docs/ns/eu-ai-act.ttl`](docs/ns/eu-ai-act.ttl) / [`nist-rmf.ttl`](docs/ns/nist-rmf.ttl) / [`soc2.ttl`](docs/ns/soc2.ttl).
+- **Compliance grade publish + regulatory mapping (L4 conformance)** — `publish_context(..., compliance: true, compliance_framework: 'eu-ai-act' | 'nist-rmf' | 'soc2')` produces audit-trail-grade descriptors. Upgrades trust to `CryptographicallyVerified`, signs with ECDSA (secp256k1), embeds inline `iep:proof` in the TrustFacet, writes a sibling `.sig.json` to the pod, auto-pins both to IPFS when configured, validates against the named framework. Wallet rotation + history supported via `rotateComplianceWallet` / `importComplianceWallet`. See [`spec/CONFORMANCE.md`](spec/CONFORMANCE.md) §L4 + [`docs/ns/eu-ai-act.ttl`](docs/ns/eu-ai-act.ttl) / [`nist-rmf.ttl`](docs/ns/nist-rmf.ttl) / [`soc2.ttl`](docs/ns/soc2.ttl).
 - **Audit endpoints on the relay** — `/audit/events`, `/audit/lineage`, `/audit/compliance/<framework>`, `/audit/verify-signature`, `/audit/frameworks`. Public read; auditors verify any compliance descriptor's signature without trusting the relay. Companion: [`examples/compliance-dashboard.html`](examples/compliance-dashboard.html) — open in a browser, no install.
 - **Privacy-hygiene preflight** — `screenForSensitiveContent` runs in `publish_context` on both surfaces; flags API keys, JWTs, PEM keys, Luhn-valid credit cards, US SSNs, emails/phones/IPs across three severity tiers. Warning surfaced to the calling agent; never silently filtered.
 - **Agent enablement** — [`docs/AGENT-PLAYBOOK.md`](docs/AGENT-PLAYBOOK.md) (operational "when X do Y" rules for any LLM driving the MCP) + [`docs/AGENT-INTEGRATION-GUIDE.md`](docs/AGENT-INTEGRATION-GUIDE.md) (one-page integrator guide for OpenClaw/Cursor/Cline/Aider/custom). Both fetched on demand via `docs://interego/playbook` + `docs://interego/integration-guide`. SERVER_INSTRUCTIONS strengthened from descriptive to prescriptive (proactive triggers, modal defaults, error patterns).
@@ -131,7 +131,7 @@ The protocol surface has grown substantially. Highlights:
 
 - **End-to-end demo scenarios** in [`demos/scenarios/`](demos/scenarios/) — autonomous multi-agent runs against the real Claude Code CLI, including Demo 22 (two agents design + ratify + play a commit-reveal RPS game) and Demo 23 (four agents emerge a federated zero-copy semantic layer over heterogeneous data sources via `hyprcat:`/`align:`/`amta:` composition). Demos 24 and 25 are the dual-audience pilots (organizational working memory + learning). See [`demos/README.md`](demos/README.md).
 
-- **Agent-runtime integration paths** — [`docs/integrations/agent-runtime-integration.md`](docs/integrations/agent-runtime-integration.md) maps five ways an OpenClaw / Hermes Agent / Codex / Cursor / Claude Code runtime can mount Interego: (1) MCP server (config-only — every substrate primitive becomes an LLM tool), (2) [OpenClaw memory plugin](integrations/openclaw-memory/) (pod-rooted typed memory replacing the local SQLite, with a fixed 5-tool HATEOAS surface that reaches the whole substrate), (3) [agentskills.io SKILL.md as `cg:Affordance`](docs/integrations/path-3-skills-as-affordances.md) (skills become federated, attestable, governable via existing primitives), (4) [compliance overlay](integrations/compliance-overlay/) (every agent action becomes a signed, framework-cited descriptor), (5) [Hermes memory provider](integrations/hermes-memory/) (a `MemoryProvider` plugin for Nous Research's Hermes Agent — same pod-rooted memory + HATEOAS shape). All five are translators, not extensions — no protocol surface added. [`hermes-full-substrate.md`](docs/integrations/hermes-full-substrate.md) / [`openclaw-full-substrate.md`](docs/integrations/openclaw-full-substrate.md) explain how a runtime reaches *all* of Interego without tool-list bloat.
+- **Agent-runtime integration paths** — [`docs/integrations/agent-runtime-integration.md`](docs/integrations/agent-runtime-integration.md) maps five ways an OpenClaw / Hermes Agent / Codex / Cursor / Claude Code runtime can mount Interego: (1) MCP server (config-only — every substrate primitive becomes an LLM tool), (2) [OpenClaw memory plugin](integrations/openclaw-memory/) (pod-rooted typed memory replacing the local SQLite, with a fixed 5-tool HATEOAS surface that reaches the whole substrate), (3) [agentskills.io SKILL.md as `iep:Affordance`](docs/integrations/path-3-skills-as-affordances.md) (skills become federated, attestable, governable via existing primitives), (4) [compliance overlay](integrations/compliance-overlay/) (every agent action becomes a signed, framework-cited descriptor), (5) [Hermes memory provider](integrations/hermes-memory/) (a `MemoryProvider` plugin for Nous Research's Hermes Agent — same pod-rooted memory + HATEOAS shape). All five are translators, not extensions — no protocol surface added. [`hermes-full-substrate.md`](docs/integrations/hermes-full-substrate.md) / [`openclaw-full-substrate.md`](docs/integrations/openclaw-full-substrate.md) explain how a runtime reaches *all* of Interego without tool-list bloat.
 
 - **Foxxi performance architecture (regime-first)** — the [`foxxi-content-intelligence/`](applications/foxxi-content-intelligence/) vertical routes work by **work regime** (Evident / Knowable / Emergent / Turbulent), not by content: a *performance situation* is classified before it is planned, and the endpoint refuses to silently default to a gap frame (the gap frame is correct for the Knowable regime only). `regimeSource` provenance governs calibration authority — only trajectory-*derived* regimes calibrate, so a caller can't assert or gap-frame its way past the invariant. Exposed as a signed, followable `contextualize-and-plan` affordance an agent invokes as itself. Built and then **dogfooded on the team that built it** — see [`ENGAGEMENT-REPORT.md`](ENGAGEMENT-REPORT.md) (full breakdown + Mermaid diagrams; open [`ENGAGEMENT-REPORT.html`](ENGAGEMENT-REPORT.html) in a browser for the rendered version) and [`REFLEXIVE-DOGFOOD.md`](REFLEXIVE-DOGFOOD.md).
 
@@ -164,16 +164,16 @@ For runnable demos of the trust substrate (auditor, ERC-8004 T0-T2, x402, afford
 
 - **End-to-end encrypted pod content.** Every named graph is wrapped in an `X25519 + XSalsa20-Poly1305` envelope with one wrapped key per authorized agent. CSS / Azure Files / IPFS pinning services see only ciphertext. Descriptor *metadata* (facets, manifest entries) stays plaintext so federation queries still work. See [`docs/e2ee.md`](docs/e2ee.md).
 - **Persistent pod state.** Solid pod storage is file-backed with an Azure Files volume mounted at `/data`. State survives container restarts.
-- **Cleartext mirror for federation reasoning.** Cross-descriptor relationships inside encrypted payloads — `cg:revokedIf`, `prov:wasDerivedFrom`, `cg:supersedes`, `dct:conformsTo` — are extracted at publish time and threaded onto the cleartext descriptor so federation readers evaluate lineage, supersession, and schema conformance without decryption keys. One consolidated helper (`normalizePublishInputs`) runs on every publish path.
+- **Cleartext mirror for federation reasoning.** Cross-descriptor relationships inside encrypted payloads — `iep:revokedIf`, `prov:wasDerivedFrom`, `iep:supersedes`, `dct:conformsTo` — are extracted at publish time and threaded onto the cleartext descriptor so federation readers evaluate lineage, supersession, and schema conformance without decryption keys. One consolidated helper (`normalizePublishInputs`) runs on every publish path.
 
 ### Hypermedia & capabilities
 
-- **Hypermedia-native data products.** Every descriptor self-describes its graph payload via a single RDF block that is simultaneously `cg:Affordance`, `cgh:Affordance`, `hydra:Operation`, and `dcat:Distribution`. Works with DCAT catalogs, Hydra clients, and the affordance-bridge resolver without Interego-specific code.
-- **Runtime affordance-to-tool resolution.** An agent walks the pod's manifest, enumerates `cg:affordance` blocks by `cg:action`, and invokes any declared capability without the harness pre-registering it. Invocations publish back as descriptors with `prov:wasDerivedFrom` citing the source affordance — discovered capabilities carry full provenance. See [`examples/affordance-bridge.mjs`](examples/affordance-bridge.mjs).
+- **Hypermedia-native data products.** Every descriptor self-describes its graph payload via a single RDF block that is simultaneously `iep:Affordance`, `ieh:Affordance`, `hydra:Operation`, and `dcat:Distribution`. Works with DCAT catalogs, Hydra clients, and the affordance-bridge resolver without Interego-specific code.
+- **Runtime affordance-to-tool resolution.** An agent walks the pod's manifest, enumerates `iep:affordance` blocks by `iep:action`, and invokes any declared capability without the harness pre-registering it. Invocations publish back as descriptors with `prov:wasDerivedFrom` citing the source affordance — discovered capabilities carry full provenance. See [`examples/affordance-bridge.mjs`](examples/affordance-bridge.mjs).
 
 ### Identity & trust
 
-- **Per-surface agents, auto-detected.** Each client (Claude Code, Claude Desktop, Claude Mobile, ChatGPT, Cursor, Codex, Windsurf, …) registers as its own `cg:AuthorizedAgent` with its own `did:web` identity and X25519 keypair. The relay maps the OAuth `client_name` to a surface slug automatically; unknown clients get their slugified name, never a silent fallback.
+- **Per-surface agents, auto-detected.** Each client (Claude Code, Claude Desktop, Claude Mobile, ChatGPT, Cursor, Codex, Windsurf, …) registers as its own `iep:AuthorizedAgent` with its own `did:web` identity and X25519 keypair. The relay maps the OAuth `client_name` to a surface slug automatically; unknown clients get their slugified name, never a silent fallback.
 - **Cross-pod selective sharing.** `publish_context(..., share_with: ["did:web:...", "acct:bob@example.com"])` resolves handles via DID / WebFinger, pulls target agents' keys, adds them as envelope recipients on that one graph. Per-graph; no pod-level ACL change.
 - **Decentralized auth — no passwords, no user-claimable identifiers.** SIWE (ERC-4361), WebAuthn passkeys, or `did:key` Ed25519 signatures. userId is *derived* from the first credential (`u-pk-<hash>` / `u-eth-<addr>` / `u-did-<hash>`). Identity server is a stateless DID resolver + signature verifier; user auth state lives in `<pod>/auth-methods.jsonld`. See [`deploy/identity/AUTH-ARCHITECTURE.md`](deploy/identity/AUTH-ARCHITECTURE.md).
 - **ERC-8004 progressive support.** T0 federation-native attestations; T1 ECDSA-signed (secp256k1 via ethers.js); T2 IPFS-pinned + signed EIP-1559 transaction against the Reputation Registry. T0 readers parse T1+T2 by ignoring the additive fields — no forking.
@@ -186,9 +186,9 @@ For runnable demos of the trust substrate (auditor, ERC-8004 T0-T2, x402, afford
 
 ### Ontology & protocol discipline
 
-- **Twenty formal ontologies** covering L1 protocol (`cg:`, `cgh:`, `pgsl:`, `ie:`, `align:`), L2 architecture patterns (`hyprcat:`, `hypragent:`, `abac:`, `registry:`, `passport:`), L3 implementation/domain (`hela:`, `sat:`, `cts:`, `olke:`, `amta:`, `code:`), L3 regulatory mappings (`eu-ai-act:`, `nist-rmf:`, `soc2:`), L3 complexity-aware vocabulary (`wks:`). See [`docs/ns/README.md`](docs/ns/README.md). All terms enforced by CI lint.
-- **CI ontology-lint gate.** `tools/ontology-lint.mjs` scans TS source for `<prefix>:<Term>` emissions and verifies each against its corresponding `docs/ns/<prefix>.ttl`. New code cannot land `cg:NewType` without a matching OWL declaration.
-- **CI derivation-lint gate.** `tools/derivation-lint.mjs` enforces that every L2/L3 ontology class has explicit L1 grounding (`owl:equivalentClass` / `rdfs:subClassOf` / `cg:constructedFrom` / declared primitive). Currently 91/91 grounded.
+- **Twenty formal ontologies** covering L1 protocol (`iep:`, `ieh:`, `pgsl:`, `ie:`, `align:`), L2 architecture patterns (`hyprcat:`, `hypragent:`, `abac:`, `registry:`, `passport:`), L3 implementation/domain (`hela:`, `sat:`, `cts:`, `olke:`, `amta:`, `code:`), L3 regulatory mappings (`eu-ai-act:`, `nist-rmf:`, `soc2:`), L3 complexity-aware vocabulary (`wks:`). See [`docs/ns/README.md`](docs/ns/README.md). All terms enforced by CI lint.
+- **CI ontology-lint gate.** `tools/ontology-lint.mjs` scans TS source for `<prefix>:<Term>` emissions and verifies each against its corresponding `docs/ns/<prefix>.ttl`. New code cannot land `iep:NewType` without a matching OWL declaration.
+- **CI derivation-lint gate.** `tools/derivation-lint.mjs` enforces that every L2/L3 ontology class has explicit L1 grounding (`owl:equivalentClass` / `rdfs:subClassOf` / `iep:constructedFrom` / declared primitive). Currently 91/91 grounded.
 - **Layering discipline** (L1 protocol / L2 architecture / L3 implementation). See [`spec/LAYERS.md`](spec/LAYERS.md). Namespace is the boundary contract — domain terms stay out of core namespaces.
 - **Conformance test suite** ([`spec/CONFORMANCE.md`](spec/CONFORMANCE.md)) defines L1 / L2 / L3 conformance levels with badge output. Third-party implementations can claim a level by passing the suite against their serialized output.
 
@@ -248,7 +248,7 @@ packages/
 │       │                      primitives. Ethers/nacl-backed wallet
 │       │                      impls ship here for now.
 │       ├── naming/            L2 attestation-based naming.
-│       ├── affordance/        cg:Affordance shape + OODA/BDI/Active-
+│       ├── affordance/        iep:Affordance shape + OODA/BDI/Active-
 │       │                      Inference runtime (slated for split
 │       │                      into @interego/affordance-engine).
 │       ├── solid/             Solid+LDP binding (slated for split
@@ -269,7 +269,7 @@ packages/
 ├── privacy/                   Pre-publish sensitivity screening
 ├── registry/                  Public agent attestation registry
 ├── security-txt/              RFC 9116 body builder
-├── skills/                    agentskills.io ↔ cg:Affordance bridge
+├── skills/                    agentskills.io ↔ iep:Affordance bridge
 └── transactions/              Federated saga-style transactions
 ├── mcp-server/       Stdio MCP server — substrate tools (publish_context,
 │                     discover_context, get_descriptor, subscribe_to_pod,
@@ -329,7 +329,7 @@ The example verticals under [`applications/`](applications/) are **separate from
 
 **Path A — first-principles (use ANY generic Interego MCP client; no per-vertical install):**
 
-The vertical exposes its capabilities as `cg:Affordance` descriptors. Run any generic Interego agent (e.g., the [stdio MCP server](#-im-an-ai-coding-agent-claude-code-cursor-windsurf-cline--protocol-level-access)), point it at the vertical's affordance manifest, and it discovers + invokes via `discover_context` + a standard HTTP POST to `hydra:target`. No vertical-specific code anywhere on the client side. This is the spec-level path — works for any vertical anyone publishes.
+The vertical exposes its capabilities as `iep:Affordance` descriptors. Run any generic Interego agent (e.g., the [stdio MCP server](#-im-an-ai-coding-agent-claude-code-cursor-windsurf-cline--protocol-level-access)), point it at the vertical's affordance manifest, and it discovers + invokes via `discover_context` + a standard HTTP POST to `hydra:target`. No vertical-specific code anywhere on the client side. This is the spec-level path — works for any vertical anyone publishes.
 
 **Path B — opinionated reified bridge (when you want named MCP tools — `lpc.*`, `adp.*`, `lrs.*`, `ac.*` — for ergonomic LLM tool selection):**
 
@@ -349,7 +349,7 @@ Add `http://localhost:6010/mcp` to your MCP client config. That bridge exposes t
 
 **Either path, you can now do (Path A via affordance walking; Path B via named tool):**
 
-- *"Ingest this SCORM zip into my pod"* → `lpc.ingest_training_content` (Path B) or `discover_context` → find `urn:cg:action:lpc:ingest-training-content` → POST (Path A)
+- *"Ingest this SCORM zip into my pod"* → `lpc.ingest_training_content` (Path B) or `discover_context` → find `urn:iep:action:lpc:ingest-training-content` → POST (Path A)
 - *"What did the customer-service training say about second-contact escalation?"* → `lpc.grounded_answer` — verbatim citation, honest no-data, tamper detection
 - *"Define a capability space and record three parallel probes"* → `adp.define_capability` + `adp.record_probe`
 - *"Pull this xAPI Statement from our LRS into my pod"* → `lrs.ingest_statement` (auto-negotiates xAPI 2.0 / 1.0.3)
@@ -396,7 +396,7 @@ import {
 } from '@interego/core';
 
 // 1. Build a context descriptor (the typed-context layer)
-const desc = ContextDescriptor.create('urn:cg:my-analysis:1')
+const desc = ContextDescriptor.create('urn:iep:my-analysis:1')
 .describes('urn:graph:my-data')
 .temporal({ validFrom: '2026-04-13T00:00:00Z' })
 .asserted(0.92)
@@ -498,7 +498,7 @@ Tagging a release as `vX.Y.Z` triggers npm publish for both packages ([workflow]
 import { ContextDescriptor, validate, toTurtle } from '@interego/core';
 import type { IRI } from '@interego/core';
 
-const descriptor = ContextDescriptor.create('urn:cg:my-analysis:1' as IRI)
+const descriptor = ContextDescriptor.create('urn:iep:my-analysis:1' as IRI)
 .describes('urn:graph:project:arch-v1' as IRI)
 .temporal({ validFrom: '2026-03-20T00:00:00Z' })
 .delegatedBy(
@@ -688,7 +688,7 @@ The entire system is queryable as standard RDF. Any SPARQL client (Comunica, Apa
 
 | Endpoint | What |
 |----------|------|
-| `GET /ontology` | Full OWL ontology (cg:, pgsl:, Hydra, DCAT, PROV-O) |
+| `GET /ontology` | Full OWL ontology (iep:, pgsl:, Hydra, DCAT, PROV-O) |
 | `GET /ontology/shacl` | System SHACL shapes |
 | `GET /api-doc` | Hydra API description |
 | `GET /catalog` | DCAT/DPROD federation catalog |

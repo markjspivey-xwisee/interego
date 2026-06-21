@@ -102,11 +102,11 @@ async function main() {
   // ── Query 6: System metadata (pods, coherence) ──
   console.log('=== Query 6: System Metadata ===');
   const q6 = `
-    PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+    PREFIX iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>
     PREFIX dcat: <http://www.w3.org/ns/dcat#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     SELECT ?pod ?title WHERE {
-      ?pod rdf:type cg:Pod .
+      ?pod rdf:type iep:Pod .
     }
     LIMIT 10
   `;

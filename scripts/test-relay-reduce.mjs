@@ -5,12 +5,12 @@
  * Focused end-to-end verification of the kernel's 9th verb — `reduce` —
  * surfaced as the relay's `reduce_chain` tool.
  *
- * Strategy: publish a 3-link cg:supersedes chain through publish_context
+ * Strategy: publish a 3-link iep:supersedes chain through publish_context
  * (so the chain links live on real pod URLs), then call reduce_chain on
  * the head with an inline turtle-template reducer. Verify:
  *   - chainLength == 3
  *   - replayProof.chainCids length == 3
- *   - replayProof.headStateCid is content-addressed (urn:cg:cid:*)
+ *   - replayProof.headStateCid is content-addressed (urn:iep:cid:*)
  *   - head state contains every link's contribution
  *   - independent re-derivation (call again) produces byte-equal proof
  *     CIDs — that's the trustlessness contract.
@@ -150,9 +150,9 @@ async function main() {
   }
   console.log(`[PASS] reduce_chain advertised in tools/list (total tools=${tools.length})`);
 
-  // ── publish a 3-link cg:supersedes chain ──
+  // ── publish a 3-link iep:supersedes chain ──
   // Strategy: publish the SAME graph_iri three times so the relay's
-  // auto_supersede_prior mechanism wires up the cg:supersedes back-
+  // auto_supersede_prior mechanism wires up the iep:supersedes back-
   // links on each descriptor (TTL) automatically. The kernel's reduce
   // verb walks back-links from a dereferenced descriptor, so we want
   // the back-links to land in the descriptor TTL itself.
@@ -200,13 +200,13 @@ ex:item3 ex:value "gamma-${ts}" .
     console.log(`[PASS] publish_context v3 (HEAD, supersedes v2): ${pub3Url}`);
   }
 
-  // Sanity: dereference v3's descriptor to confirm cg:supersedes is present
+  // Sanity: dereference v3's descriptor to confirm iep:supersedes is present
   {
     const r = await callTool(RELAY, token, 'dereference', { iri: pub3Url }, 13);
     if (r.ok) {
       const rep = r.payload?.representation;
-      const hasSupersedes = typeof rep === 'string' && rep.includes('cg:supersedes');
-      console.log(`[${hasSupersedes ? 'PASS' : 'INFO'}] dereference v3 descriptor: cg:supersedes link present=${hasSupersedes}`);
+      const hasSupersedes = typeof rep === 'string' && rep.includes('iep:supersedes');
+      console.log(`[${hasSupersedes ? 'PASS' : 'INFO'}] dereference v3 descriptor: iep:supersedes link present=${hasSupersedes}`);
       if (typeof rep === 'string') {
         console.log(`[DEBUG] FULL v3 descriptor body (${rep.length} chars):\n${rep}\n[END DEBUG]`);
       }
@@ -217,7 +217,7 @@ ex:item3 ex:value "gamma-${ts}" .
   const reducerTemplate = `# {?prior}\n{?current}`;
 
   // Use the descriptor URL (real address the relay can dereference)
-  // for the head — the kernel walks cg:supersedes back-links from there.
+  // for the head — the kernel walks iep:supersedes back-links from there.
   const chainHead = pub3Url ?? pub2Url ?? pub1Url;
   if (!chainHead) { console.log('[FAIL] no chain head URL available'); process.exit(1); }
 
@@ -252,14 +252,14 @@ ex:item3 ex:value "gamma-${ts}" .
   else console.log(`[PASS] chainLength == ${p1.chainLength} (>= 2)`);
   if (p1.replayProof?.chainCids?.length !== p1.chainLength) { console.log(`[FAIL] chainCids.length=${p1.replayProof?.chainCids?.length} != chainLength=${p1.chainLength}`); pass = false; }
   else console.log(`[PASS] replayProof.chainCids length matches chainLength (${p1.chainLength})`);
-  if (!/^urn:cg:cid:[0-9a-f]+$/.test(p1.replayProof?.headStateCid ?? '')) { console.log(`[FAIL] headStateCid not urn:cg:cid: shape: ${p1.replayProof?.headStateCid}`); pass = false; }
+  if (!/^urn:iep:cid:[0-9a-f]+$/.test(p1.replayProof?.headStateCid ?? '')) { console.log(`[FAIL] headStateCid not urn:iep:cid: shape: ${p1.replayProof?.headStateCid}`); pass = false; }
   else console.log(`[PASS] headStateCid is content-addressed: ${p1.replayProof.headStateCid}`);
-  if (!/^urn:cg:cid:[0-9a-f]+$/.test(p1.replayProof?.reducerCid ?? '')) { console.log(`[FAIL] reducerCid not urn:cg:cid: shape: ${p1.replayProof?.reducerCid}`); pass = false; }
+  if (!/^urn:iep:cid:[0-9a-f]+$/.test(p1.replayProof?.reducerCid ?? '')) { console.log(`[FAIL] reducerCid not urn:iep:cid: shape: ${p1.replayProof?.reducerCid}`); pass = false; }
   else console.log(`[PASS] reducerCid is content-addressed: ${p1.replayProof.reducerCid}`);
   // Every chain CID is content-addressed
-  const allCidsAddressed = p1.replayProof?.chainCids?.every?.(c => /^urn:cg:cid:[0-9a-f]+$/.test(c));
+  const allCidsAddressed = p1.replayProof?.chainCids?.every?.(c => /^urn:iep:cid:[0-9a-f]+$/.test(c));
   if (!allCidsAddressed) { console.log(`[FAIL] not every chain CID is content-addressed`); pass = false; }
-  else console.log(`[PASS] every chain CID is content-addressed (urn:cg:cid:*)`);
+  else console.log(`[PASS] every chain CID is content-addressed (urn:iep:cid:*)`);
   // Head state must contain the chain HEAD's descriptor IRI at minimum
   if (typeof p1.head === 'string' && p1.head.length > 0) {
     console.log(`[PASS] head state is a non-empty string (${p1.head.length} chars)`);

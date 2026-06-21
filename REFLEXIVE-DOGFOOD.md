@@ -78,8 +78,8 @@ The fix shipped in three parts plus a discoverability fix:
 ## Access (b) — the emergent capability johnny invokes as himself
 
 johnny is a mesh agent: he can only act on *discovered, followable affordances*, not raw
-HTTP. So `/performance/plan` was exposed as a signed, followable `cg:Affordance`
-(`urn:cg:action:foxxi:contextualize-and-plan-signed`): discover → `sign_request` →
+HTTP. So `/performance/plan` was exposed as a signed, followable `iep:Affordance`
+(`urn:iep:action:foxxi:contextualize-and-plan-signed`): discover → `sign_request` →
 `invoke_affordance`. The classification is attributed to the caller's cryptographically
 verified delegation (returned as `classifiedBy`). Verified end-to-end (deployed digest
 `8621f17c`): unsigned → 401; signed → 200 with the caller's DID, regime read from signal.
@@ -117,14 +117,14 @@ proposed probes + coaching. The method matched the regime — on us.
 
 A tempting "fix" was to rewrite the css-internal host that appears in published descriptors
 into the public gate host. Investigation showed that would be wrong: those descriptors are
-`cg:SignedAuthorship`, and the relay deliberately rewrites the *dereference target, never the
+`iep:SignedAuthorship`, and the relay deliberately rewrites the *dereference target, never the
 bytes*, so signatures verify. A body-rewrite at the gate would break johnny's own zero-trust
 re-verification. The internal host is canonical by design; cross-seat reads already work two
 ways (both verified live): via the relay (`dereference`/`get_descriptor`, byte-identical) or a
 direct gate host-swap (path-preserving). So for signed descriptors the answer was **coaching**,
 not a build.
 
-Where a build *was* warranted and signature-safe — the bridge's `cg:encryptedHolon` link,
+Where a build *was* warranted and signature-safe — the bridge's `iep:encryptedHolon` link,
 emitted on a deterministic projection with no authorship proof — the maintainer rewrote only
 the *advertised* link host to the gate at mint time (write target and ciphertext untouched),
 deployed (digest `4beb81f0`) and verified a fresh holon resolves cross-seat. Narrow,
@@ -145,11 +145,11 @@ signature-safe, on the exact path.
 johnny's first publish wrapped the payload to one recipient (himself): publish_context's
 `share_with` resolves *session/registry* keys, not the durable `keys/encryption.json` — the
 `f-ephemeral-agent-encryption-key` seam. The fix was on the foundation-persist path (the one
-the `cg:encryptedHolon` gate fix already covered): a `recipients` arg on record-performance
+the `iep:encryptedHolon` gate fix already covered): a `recipients` arg on record-performance
 that resolves each named pod's **durable** key and wraps to it. The maintainer published a
 durable X25519 key (private key held on disk, not session-ephemeral); johnny re-emitted with
 `recipients=[maintainer, boozer]`; the holon wrapped to **four durable recipients** (bridge +
-johnny + maintainer + boozer) with a gate-direct `cg:encryptedHolon`; and the maintainer
+johnny + maintainer + boozer) with a gate-direct `iep:encryptedHolon`; and the maintainer
 fetched it cross-seat and **owner-decrypted it with the durable key** — content confirmed as
 the wi-001 team-dogfood holon, johnny-authored. All four attestation legs now pass:
 classification-faithful, authorship-verified, reachable, owner-decryptable.

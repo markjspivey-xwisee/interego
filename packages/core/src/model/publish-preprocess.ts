@@ -19,9 +19,9 @@
  *      thread them into the descriptor layer so federation readers can
  *      evaluate without decrypting the payload.
  *      Currently mirrors:
- *        - cg:revokedIf / cg:revokedBy  → SemioticFacet.revokedIf
+ *        - iep:revokedIf / iep:revokedBy  → SemioticFacet.revokedIf
  *        - prov:wasDerivedFrom          → ProvenanceFacet.wasDerivedFrom
- *        - cg:supersedes                → descriptor.supersedes
+ *        - iep:supersedes                → descriptor.supersedes
  *        - dct:conformsTo               → descriptor.conformsTo
  *
  * A single publish-path implementation calls `normalizePublishInputs()`,
@@ -106,7 +106,7 @@ export function normalizePublishInputs(inputs: PublishInputs): PreprocessedPubli
   const cleaned = stripStringsAndComments(graphContent);
   const revokedIf = extractRevocationConditions(graphContent, cleaned);
   const wasDerivedFrom = extractIRIList(cleaned, 'prov:wasDerivedFrom');
-  const supersedes = extractIRIList(cleaned, 'cg:supersedes');
+  const supersedes = extractIRIList(cleaned, 'iep:supersedes');
   const conformsTo = extractIRIList(cleaned, 'dct:conformsTo');
 
   const semiotic: PreprocessedPublish['semiotic'] = groundTruth === undefined
@@ -121,11 +121,11 @@ export function normalizePublishInputs(inputs: PublishInputs): PreprocessedPubli
 }
 
 /**
- * Extract cg:revokedIf / cg:revokedBy RevocationCondition blocks from
+ * Extract iep:revokedIf / iep:revokedBy RevocationCondition blocks from
  * caller-supplied Turtle graph content.
  *
  * Two-pass design: find block boundaries in the *cleaned* turtle (so a
- * `cg:revokedIf` string literal can't masquerade as a block opener and
+ * `iep:revokedIf` string literal can't masquerade as a block opener and
  * brackets inside strings don't confuse the matcher), then extract the
  * *raw* body between those brackets because the successorQuery body
  * legitimately lives inside a `"""..."""` literal that the cleaned pass
@@ -137,19 +137,19 @@ export function extractRevocationConditions(
 ): RevocationConditionData[] {
   const results: RevocationConditionData[] = [];
   const clean = cleaned ?? stripStringsAndComments(turtle);
-  const headRe = /cg:(?:revokedIf|revokedBy)\s*\[/g;
+  const headRe = /iep:(?:revokedIf|revokedBy)\s*\[/g;
   let m: RegExpExecArray | null;
   while ((m = headRe.exec(clean)) !== null) {
     const openIdx = m.index + m[0].length - 1; // index of '['
     const closeIdx = findMatchingBracket(clean, openIdx);
     if (closeIdx < 0) continue;
     const body = turtle.slice(openIdx + 1, closeIdx);
-    const qMatch = body.match(/cg:successorQuery\s+"""([\s\S]*?)"""/)
-      ?? body.match(/cg:successorQuery\s+"([^"]*)"/);
+    const qMatch = body.match(/iep:successorQuery\s+"""([\s\S]*?)"""/)
+      ?? body.match(/iep:successorQuery\s+"([^"]*)"/);
     if (!qMatch?.[1]) continue;
-    const scopeMatch = body.match(/cg:evaluationScope\s+cg:(\w+)/);
-    const actionMatch = body.match(/cg:onRevocation\s+cg:(\w+)/);
-    const issuerMatch = body.match(/cg:revocationIssuer\s+<([^>]+)>/);
+    const scopeMatch = body.match(/iep:evaluationScope\s+iep:(\w+)/);
+    const actionMatch = body.match(/iep:onRevocation\s+iep:(\w+)/);
+    const issuerMatch = body.match(/iep:revocationIssuer\s+<([^>]+)>/);
     const scope = scopeMatch?.[1];
     const action = actionMatch?.[1];
     const out: { -readonly [K in keyof RevocationConditionData]?: RevocationConditionData[K] } & { successorQuery: string } = {
@@ -172,7 +172,7 @@ export function extractRevocationConditions(
  * predicate matches the qualified name. Handles Turtle's object-list
  * shorthand — `predicate <a> , <b> , <c>` produces three IRIs, not
  * one. Used for predicates that take an IRI value and can legitimately
- * repeat (prov:wasDerivedFrom, cg:supersedes, dct:conformsTo).
+ * repeat (prov:wasDerivedFrom, iep:supersedes, dct:conformsTo).
  * De-duplicated.
  *
  * Callers MUST pass turtle that has already had string literals and

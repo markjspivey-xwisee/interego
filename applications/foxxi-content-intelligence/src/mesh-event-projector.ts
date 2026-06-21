@@ -10,7 +10,7 @@
  *
  * This projector therefore consumes ONLY the PROTOCOL-defined context-descriptor
  * envelope — the same on every descriptor regardless of vertical: the facet
- * TYPES, modal status (cg:ModalStatusEnum), cg:supersedes, conformsTo, trust
+ * TYPES, modal status (iep:ModalStatusEnum), iep:supersedes, conformsTo, trust
  * level, epistemic confidence, provenance time. From these it mints exactly one
  * xAPI `performed` statement (the IEEE P2997 production-work verb Foxxi already
  * owns) — or a `voided` statement for a Retracted descriptor — plus one
@@ -52,9 +52,9 @@ export interface MeshDiscoverEntry {
   /** The descriptor's OWN type(s) — passed through verbatim, never interpreted. */
   conformsTo?: string[];
   facetTypes?: string[];
-  /** cg:ModalStatusEnum: Asserted | Hypothetical | Counterfactual | Quoted | Retracted. */
+  /** iep:ModalStatusEnum: Asserted | Hypothetical | Counterfactual | Quoted | Retracted. */
   modalStatus?: string;
-  /** cg:supersedes chain — revision/closure of prior descriptor(s). */
+  /** iep:supersedes chain — revision/closure of prior descriptor(s). */
   supersedes?: string[];
   /** Envelope signals (SemioticFacet / TrustFacet / ProvenanceFacet) when mirrored to the manifest. */
   groundTruth?: boolean;
@@ -126,7 +126,7 @@ function timestampFromDescriptor(url: string): string | undefined {
 const tail = (iri: string) => iri.split(/[:/#]/).filter(Boolean).pop() ?? iri;
 const humanLabel = (iri: string) => tail(iri).replace(/[-_]+/g, ' ').trim() || iri;
 
-/** Map cg:ModalStatusEnum (opaque infrastructure) → the structural projection shape.
+/** Map iep:ModalStatusEnum (opaque infrastructure) → the structural projection shape.
  *  This reads the epistemic status of the CLAIM; it never asserts task success. */
 function modalMode(modalStatus?: string): {
   stepVerb: 'asserted' | 'intended' | 'considered';

@@ -179,7 +179,7 @@ async function main() {
 
   banner(2, 'Context Descriptors', 'Typed metadata on every piece of knowledge. Temporal, Trust, Semiotic, Provenance.');
 
-  const erDescriptor = ContextDescriptor.create('urn:cg:er:patient-47-visit' as IRI)
+  const erDescriptor = ContextDescriptor.create('urn:iep:er:patient-47-visit' as IRI)
 .describes('urn:graph:er:patient-47' as IRI)
 .temporal({ validFrom: '2026-04-05T08:00:00Z', validUntil: '2026-04-05T20:00:00Z' })
 .provenance({
@@ -192,21 +192,21 @@ async function main() {
 .trust({ trustLevel: 'SelfAsserted', issuer: 'did:web:er.hospital.org' as IRI })
 .build();
 
-  const labDescriptor = ContextDescriptor.create('urn:cg:lab:patient-47-results' as IRI)
+  const labDescriptor = ContextDescriptor.create('urn:iep:lab:patient-47-results' as IRI)
 .describes('urn:graph:lab:patient-47' as IRI)
 .temporal({ validFrom: '2026-04-05T09:30:00Z', validUntil: '2026-04-06T09:30:00Z' })
 .provenance({
       wasGeneratedBy: { agent: 'urn:system:lab:analyzer' as IRI, startedAt: '2026-04-05T09:30:00Z' },
       wasAttributedTo: 'did:web:lab.hospital.org' as IRI,
       generatedAtTime: '2026-04-05T09:45:00Z',
-      sources: ['urn:cg:er:patient-47-visit' as IRI],
+      sources: ['urn:iep:er:patient-47-visit' as IRI],
     })
 .agent('did:web:lab.hospital.org' as IRI, 'Lab System')
 .semiotic({ modalStatus: 'Asserted', epistemicConfidence: 0.95, groundTruth: false })
 .trust({ trustLevel: 'ThirdPartyAttested', issuer: 'did:web:lab.hospital.org' as IRI })
 .build();
 
-  const pharmaDescriptor = ContextDescriptor.create('urn:cg:pharmacy:patient-47-meds' as IRI)
+  const pharmaDescriptor = ContextDescriptor.create('urn:iep:pharmacy:patient-47-meds' as IRI)
 .describes('urn:graph:pharmacy:patient-47' as IRI)
 .temporal({ validFrom: '2026-04-05T08:15:00Z' })
 .provenance({

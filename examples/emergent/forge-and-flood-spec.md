@@ -17,7 +17,7 @@
  * with ethers.verifyMessage(), and only admit those whose recovered
  * address matches the claimed issuer DID. The reader then downgrades
  * everything else to a non-trusted bucket so calibration counts only
- * cg:CryptographicallyVerified outcomes.
+ * iep:CryptographicallyVerified outcomes.
  *
  * AGENTS (4, sequential in-process; ephemeral wallets — no Claude SDK)
  *   · Agent1 (honest)   : publishes 5 signed outcome descriptors with
@@ -36,7 +36,7 @@
  *   2. 20 × forged outcome descriptors (Trust = SelfAsserted, some signed,
  *           some not, all claiming Agent1)
  *   3.  1 × baseline profile (reader's profile BEFORE the flood)
- *   4.  1 × post-flood profile (cg:supersedes baseline; 25 visible, 5 trusted)
+ *   4.  1 × post-flood profile (iep:supersedes baseline; 25 visible, 5 trusted)
  *   5.  1 × auditor rejection-blame log (Hypothetical, supersedes the
  *           20 forged descriptors)
  *
@@ -72,7 +72,7 @@ const SCENARIO_DATE = process.env.FORGE_AND_FLOOD_DATE ?? '2026-06-01';
 const POD = `${CSS}/demos/emergent-forge-and-flood-spec-${SCENARIO_DATE}/`;
 
 // Vertical scenario namespace — per CLAUDE.md ontology hygiene, NEVER
-// invent cg:/cgh:/pgsl:/amta:/abac:/etc. terms. Anything scenario-
+// invent iep:/ieh:/pgsl:/amta:/abac:/etc. terms. Anything scenario-
 // specific lives here and never needs an owned-ontology declaration.
 const SCENARIO_NS = 'https://interego-emergent.example/ns/forge-and-flood — emergent test scenario build spec#';
 const TYPE_HONEST_OUTCOME       = `${SCENARIO_NS}HonestOutcome`;
@@ -190,7 +190,7 @@ async function publishHonestOutcome(issuer, idx, value) {
   const { commitment, signature } = await signOutcome(issuer.wallet, payload);
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix forge: <${SCENARIO_NS}> .
@@ -277,7 +277,7 @@ async function publishForgedOutcome(attacker, victimDid, victimAddress, idx, val
   }
 
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix forge: <${SCENARIO_NS}> .
@@ -333,9 +333,9 @@ async function publishCalibrationProfile(reader, kind, payload, supersedes) {
   const now = new Date().toISOString();
   const conformsType = kind === 'baseline' ? TYPE_BASELINE_PROFILE : TYPE_POST_FLOOD_PROFILE;
   const supersedesLines = (supersedes ?? [])
-    .map(u => `  cg:supersedes <${u}> ;`).join('\n');
+    .map(u => `  iep:supersedes <${u}> ;`).join('\n');
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix forge: <${SCENARIO_NS}> .
@@ -383,7 +383,7 @@ async function publishBlameLog(auditor, rejected) {
     .map(r => `  forge:rejectedDescriptor [ forge:descriptor <${r.iri}> ; forge:reason <${r.reason}> ] ;`)
     .join('\n');
   const ttl = `
-@prefix cg: <https://w3id.org/cg/> .
+@prefix iep: <https://w3id.org/cg/> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix forge: <${SCENARIO_NS}> .
@@ -536,7 +536,7 @@ check('all 20 forged unsigned outcomes fail signature verification or DID recove
   forgedRecoveryFailures === 20, { failed: forgedRecoveryFailures, expected: 20 });
 
 // ── ACT 4 — reader-side signature filter (federation-outcome-loader) ──
-h('ACT 4 — reader runs federation-outcome-loader with cg:CryptographicallyVerified filter');
+h('ACT 4 — reader runs federation-outcome-loader with iep:CryptographicallyVerified filter');
 
 // Discover ALL descriptors on the pod — 5 honest + 20 forged + 1 baseline.
 // The reader has NO orchestrator-side ledger access. It works only from
@@ -607,7 +607,7 @@ console.log(`   reader filter: admitted=${admitted.length} rejected=${rejected.l
 const reasonBreakdown = rejected.reduce((acc, r) => { acc[r.reason.split('#').pop()] = (acc[r.reason.split('#').pop()] ?? 0) + 1; return acc; }, {});
 console.log(`   reasons: ${JSON.stringify(reasonBreakdown)}`);
 
-check('federation-outcome-loader applies cg:CryptographicallyVerified filter and excludes unsigned descriptors',
+check('federation-outcome-loader applies iep:CryptographicallyVerified filter and excludes unsigned descriptors',
   admitted.length === 5 && rejected.length === 20,
   { admitted: admitted.length, rejected: rejected.length });
 
@@ -696,7 +696,7 @@ for (const entry of auditorOutcomes) {
 console.log(`   auditor replay: admitted=${auditorAdmitted.length} rejected=${auditorRejected.length}`);
 
 // Auditor publishes the blame log naming every rejected descriptor +
-// reason. The descriptor's cg:supersedes edges point to the top-10
+// reason. The descriptor's iep:supersedes edges point to the top-10
 // forged descriptors so downstream readers can fold them out.
 const blameRes = await publishBlameLog(auditor, auditorRejected);
 console.log(`   blame log:  ${blameRes.descriptorUrl}`);
