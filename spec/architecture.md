@@ -1760,10 +1760,10 @@ Complete table of all TypeScript modules in `src/`, sorted by directory.
 
 ## 13. Conformance
 
-### 13.1 W3C Interego 1.0 Working Draft
+### 13.1 W3C Interego Protocol 1.0 Working Draft
 
 The reference implementation conforms to the
-[Interego 1.0 Working Draft](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html):
+[Interego Protocol 1.0 Working Draft](https://markjspivey-xwisee.github.io/interego/spec/interego-protocol-1.0-wd.html):
 
 - **Section 3.1:** Context Descriptor structure --- `ContextDescriptorData` type
 - **Section 3.2:** Context facets --- 9 facet types (Temporal, Provenance, Agent, AccessControl, Semiotic, Trust, Federation, Causal, Projection)

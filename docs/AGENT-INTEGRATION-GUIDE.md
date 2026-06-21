@@ -139,5 +139,5 @@ The only thing the user benefits from knowing: their memory is portable. They ca
 ## Questions?
 
 - Repo: https://github.com/markjspivey-xwisee/interego
-- Spec: https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html
+- Spec: https://markjspivey-xwisee.github.io/interego/spec/interego-protocol-1.0-wd.html
 - Issues / discussion: https://github.com/markjspivey-xwisee/interego/issues

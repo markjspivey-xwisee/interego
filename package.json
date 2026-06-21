@@ -60,7 +60,7 @@
     "type": "git",
     "url": "git+https://github.com/markjspivey-xwisee/interego.git"
   },
-  "homepage": "https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html",
+  "homepage": "https://markjspivey-xwisee.github.io/interego/spec/interego-protocol-1.0-wd.html",
   "bugs": {
     "url": "https://github.com/markjspivey-xwisee/interego/issues"
   },
