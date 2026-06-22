@@ -119,10 +119,10 @@ export const TOOLS: Record<string, ToolDef> = {
   },
   verify_presentation: {
     name: 'verify_presentation',
-    description: 'Cryptographically verify a BBS+ selective-disclosure presentation another agent derived: confirm the issuer signed exactly the disclosed claims while learning ONLY what was disclosed (the hidden fields stay hidden). Pass the `presentation` object you received.',
+    description: 'Cryptographically verify the BBS+ selective-disclosure presentation the counterparty supplied to you: confirm the issuer signed exactly the disclosed claims while learning ONLY what was disclosed (the hidden fields stay hidden). The presentation is already provided to you — call this with NO arguments.',
     input_schema: { type: 'object', properties: {
-      presentation: { type: 'object', description: 'The presentation object returned by prove_competency.' },
-    }, required: ['presentation'] },
+      presentation: { type: 'object', description: 'Optional — leave unset; the presentation supplied to you is used automatically.' },
+    } },
   },
   issue_credential: {
     name: 'issue_credential',
@@ -139,7 +139,7 @@ export const TOOLS: Record<string, ToolDef> = {
 export type ToolName = keyof typeof TOOLS;
 export const toolList = (names: ToolName[]): ToolDef[] => names.map(n => TOOLS[n]);
 
-export interface DispatchCtx { authorDid?: string; subjectDid?: string; holonUri?: string; label?: string; learnerDid?: string }
+export interface DispatchCtx { authorDid?: string; subjectDid?: string; holonUri?: string; label?: string; learnerDid?: string; presentation?: unknown }
 
 /** Make the real bridge call for a tool the LLM chose. */
 export async function dispatchTool(name: string, input: Record<string, unknown>, agent: AgentWallet, ctx: DispatchCtx = {}): Promise<BridgeResult> {
@@ -187,7 +187,10 @@ export async function dispatchTool(name: string, input: Record<string, unknown>,
     case 'prove_competency':
       return postSigned('/agent/prove-competency', agent, { issuer_did: input.issuer_did ?? ctx.authorDid, competency_name: input.competency_name, score: input.score, proficiency: input.proficiency });
     case 'verify_presentation':
-      return postSigned('/agent/verify-presentation', agent, { presentation: input.presentation });
+      // The real (large) presentation is supplied via ctx; prefer it over whatever
+      // the model passes (it cannot reconstruct the full BBS+ object, so a model-
+      // supplied value would 400). Falls back to input for non-ctx callers.
+      return postSigned('/agent/verify-presentation', agent, { presentation: ctx.presentation ?? input.presentation });
     case 'review_record':
       return postSigned('/agent/review-record', agent, { subject_did: input.subject_did ?? ctx.subjectDid, include_clr: input.include_clr ?? false });
     case 'issue_credential':

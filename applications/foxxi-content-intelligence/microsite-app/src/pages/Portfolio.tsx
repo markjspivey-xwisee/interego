@@ -16,7 +16,7 @@
  */
 import React, { useState } from 'react';
 import {
-  buildCredentialedCandidate, evaluateCandidate, makeEmit, resetCounter,
+  buildCredentialedCandidate, evaluateCandidateLLM, makeEmit, resetCounter,
   type CeremonyEvent, type JobSpec, type Proficiency, type Candidate, type Evaluation, PROFICIENCY_ORDER,
 } from '../demo/ceremonies.js';
 import { VerificationMatrix, SelectiveDisclosure } from '../components/proof.js';
@@ -36,21 +36,23 @@ const KIND_COLOR: Record<string, string> = { identity: '#6b7280', phase: 'var(--
 
 export function Portfolio({ onHome }: { onHome: () => void }) {
   const [spec, setSpec] = useState<JobSpec>({ role: 'Standards Integration Engineer', requiredCompetency: 'Standards Extension', minProficiency: 'Advanced', tamperEvidentRequired: true });
+  const [apiKey, setApiKey] = useState('');
   const [events, setEvents] = useState<CeremonyEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [candidate, setCandidate] = useState<Candidate | null>(null);
   const [evalRes, setEvalRes] = useState<Evaluation | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const hasKey = apiKey.trim().length > 0;
 
   async function run() {
-    if (running) return;
+    if (running || !hasKey) return;
     setRunning(true); setErr(null); setEvents([]); setCandidate(null); setEvalRes(null);
     resetCounter();
     const emit = makeEmit(e => setEvents(prev => [...prev, e]));
     try {
-      const cand = await buildCredentialedCandidate(emit);
+      const cand = await buildCredentialedCandidate(emit);   // scripted track-record (no key)
       setCandidate(cand);
-      const ev = await evaluateCandidate(emit, cand, spec);
+      const ev = await evaluateCandidateLLM(apiKey, emit, cand, spec);   // real LLM employer agent (BYOK)
       setEvalRes(ev);
     } catch (e) {
       setErr((e as Error).message);
@@ -63,13 +65,22 @@ export function Portfolio({ onHome }: { onHome: () => void }) {
       <button onClick={onHome} style={linkBtn}>← home</button>
       <h1 style={{ fontFamily: serif, fontSize: 34, margin: '10px 0 6px' }}>An agent walks into a new job</h1>
       <p style={{ color: 'var(--text-dim)', fontSize: 16, maxWidth: 820, lineHeight: 1.5 }}>
-        A <strong>fresh employer agent</strong> — no prior relationship to the candidate — reads the candidate&rsquo;s
-        <strong> own pod</strong> with no admin token, <strong>independently re-runs the verification</strong> (engine-graded,
-        tamper-evident), asks the candidate to prove the required competency via a <strong>BBS+ selective-disclosure proof</strong>
-        (revealing proficiency, hiding the score), and a deterministic decision function matches it against the job spec.
-        A reference check decided on the candidate&rsquo;s <strong>own verifiable, tamper-evident records — not its say-so</strong>.
-        Every step is a real signed call to <code style={codeS}>{BRIDGE_URL.replace(/^https?:\/\//, '')}</code>. <strong>No API key needed.</strong>
+        The employer is a <strong>real LLM agent</strong> — a fresh Claude agent with its own self-sovereign wallet and no prior
+        relationship to the candidate. It does its OWN due diligence over the live substrate (the bridge endpoints are its tools):
+        it reads the candidate&rsquo;s <strong>own pod</strong> with no admin token, <strong>independently re-runs the verification</strong>,
+        cryptographically <strong>verifies a BBS+ selective-disclosure proof</strong> (proficiency revealed, score hidden), then
+        <strong> reasons and decides</strong> — ACCEPT / REJECT / UNDECIDABLE — strictly on what it could independently verify. The
+        cryptography stays deterministic (the tools return real results the model can&rsquo;t fake); the <em>judgment</em> is the
+        agent&rsquo;s. The candidate&rsquo;s track record is built first by a scripted training authority (no key). Every step is a
+        real signed call to <code style={codeS}>{BRIDGE_URL.replace(/^https?:\/\//, '')}</code>.
       </p>
+
+      {/* BYOK — at the top: the employer agent needs a key; candidate setup is key-less */}
+      <div style={{ ...card, marginTop: 18 }}>
+        <div style={{ ...lbl, marginBottom: 4 }}>Anthropic key — the employer is a real LLM agent, so it needs your key (sent only to api.anthropic.com from this tab). The candidate&rsquo;s track record is built key-less.</div>
+        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-… (required — the employer agent reasons + decides with a real model)"
+          autoComplete="off" spellCheck={false} data-1p-ignore data-lpignore="true" style={inp} />
+      </div>
 
       {/* Job spec */}
       <div style={{ ...card, marginTop: 18 }}>
@@ -94,8 +105,10 @@ export function Portfolio({ onHome }: { onHome: () => void }) {
           </Field>
         </div>
         <div style={{ marginTop: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button onClick={run} disabled={running} style={{ ...btn, opacity: running ? 0.5 : 1 }}>{running ? 'Hiring…' : 'Run the hiring'}</button>
-          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>spawns 3 fresh wallets (a training authority, a candidate, an employer) and drives the full arc live</span>
+          <button onClick={run} disabled={running || !hasKey} style={{ ...btn, opacity: running || !hasKey ? 0.5 : 1 }}>{running ? 'Hiring…' : 'Run the hiring'}</button>
+          {!hasKey
+            ? <span style={{ fontSize: 12, color: '#b45309' }}>add your Anthropic key above — the employer is a real LLM agent.</span>
+            : <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>spawns 3 fresh wallets (a scripted training authority + candidate, then a real LLM employer agent) and drives the full arc live</span>}
         </div>
       </div>
 
