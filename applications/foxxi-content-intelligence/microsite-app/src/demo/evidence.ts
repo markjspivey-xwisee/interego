@@ -16,6 +16,8 @@
  * dereferenceable linked data — not mutable rows the same system vouches for.
  */
 import { freshAgent, postSigned, recoverSigner, curlFor, type AgentWallet, type SignedEnvelope } from './agent-signing.js';
+import { dispatchTool, toolList, type ToolName } from './agent-tools.js';
+import { runAgentLoop } from './anthropic-runner.js';
 import { BRIDGE_URL } from '../bridge-client.js';
 
 export const STD_EXT_IRI =
@@ -141,4 +143,60 @@ export async function verifyFromCleanSeat(item: EvidenceItem): Promise<CleanSeat
   const xv = await postJson('/ns/xapi/validate', { instance: xapiInstanceFor(item.did, item.payload?.task_name ?? 'action') });
   const validateOk = xv.body?.conforms === true;
   return { signerOk, recovered, shapeOk, shapeStatus, validateOk, tamperBreaks };
+}
+
+// ── BYOK: a REAL LLM compliance auditor renders the opinion ───────────────────
+// The pack above is assembled DETERMINISTICALLY (signer recovery, SHACL
+// validation, control dereference, tamper check — the math you trust). This adds
+// a genuine Claude auditor agent that reviews the cryptographically-verified pack,
+// independently spot-checks the agent's own pod (review_record tool), and renders
+// an AUDIT OPINION. The crypto facts are inputs it cannot fake; the JUDGMENT —
+// does this evidence satisfy the cited controls? — is the agent's. Requires a key.
+
+export interface AuditResult { opinion: 'PASS' | 'QUALIFIED' | 'FAIL' | 'UNKNOWN'; rationale: string }
+
+const AUDITOR_SYS =
+  'You are an independent compliance auditor agent on the Interego/Foxxi substrate with your own self-sovereign did:ethr identity. You render audit opinions ONLY on cryptographically-verified evidence — you cannot fake or assume facts, and you must respect the verification results given to you. Be rigorous and skeptical. Finish with exactly one line: "OPINION: PASS|QUALIFIED|FAIL — <one-sentence rationale citing the controls and what you verified>".';
+
+export async function auditEvidencePackLLM(
+  apiKey: string, emit: (e: Omit<EvidenceEvent, 'id' | 'ts'>) => void, pack: EvidencePack,
+): Promise<AuditResult> {
+  const A = freshAgent();
+  emit({ kind: 'identity', title: 'Fresh compliance AUDITOR agent (a real LLM) — independent of the audited agent', detail: A.did });
+
+  const facts = pack.items.map((it, i) =>
+    `#${i + 1} "${it.action}": signer ${it.signerMatches ? 'recovered-from-bytes AND matches the actor' : 'MISMATCH'} (${it.signer ?? 'invalid'}); xAPI shape ${it.xapiConforms ? 'CONFORMS' : 'non-conformant'}; SOC 2 projection ${it.soc2Conforms ? 'conforms + cites CC6.1' : 'pending/non-conformant'}; controls ${it.controls.map(c => c.id).join(' / ')}`,
+  ).join('\n');
+  const podStatements = (pack.podAuthority as any)?.subject?.statementCount ?? 0;
+
+  const dispatch = async (name: string, input: Record<string, unknown>): Promise<{ text: string }> => {
+    emit({ kind: 'action', title: `auditor · ${name}`, detail: name === 'review_record' ? `read the audited agent's own pod` : String(input.task_name ?? '') });
+    const r = await dispatchTool(name, input, A, { subjectDid: pack.agent.did });
+    const b: any = r.body ?? {};
+    emit({ kind: name === 'record_performance' ? 'cite' : 'authority', title: `signed → ${name} · HTTP ${r.status}${r.ok ? ' ✓' : ' ✗'}`, detail: name === 'review_record' ? `${b?.subject?.statementCount ?? 0} statements on the audited agent's own pod corroborate the trail` : '' });
+    return { text: typeof r.body === 'string' ? r.body : JSON.stringify(r.body) };
+  };
+
+  const goal =
+    `An agent (${pack.agent.did}) performed signed actions now under audit. The evidence pack was assembled with ZERO trust: the signer was recovered from the raw envelope bytes client-side, the actions were validated against the live xAPI SHACL shapes, projected to SOC 2 OperationalEvidenceEvents, and the cited control IRIs dereference:\n${facts}\n` +
+    `The authority was walked from the agent's OWN pod (${podStatements} statements).\n` +
+    `Do your OWN spot-check: call review_record (the audited agent) to read its pod directly and corroborate the trail. Then render an audit opinion on whether this evidence satisfies the cited controls — SOC 2 CC6.1 (logical access logging), EU AI Act Art.12 (record-keeping / automatic logging), NIST AI RMF MEASURE (verifiable monitoring). PASS only if signer recovery matched, the actions conform, and the pod independently corroborates; QUALIFIED if partial (e.g. the SOC 2 ontology is pending on this deployment); FAIL on any signer mismatch or missing trail. Record your opinion: call record_performance (task_name "Audit opinion: <opinion> for ${pack.agent.did.slice(0, 18)}…", success true ONLY if PASS, quality 1, activity_type "${STD_EXT_IRI}").\n` +
+    `Finish: OPINION: PASS|QUALIFIED|FAIL — <rationale>.`;
+
+  let finalText = '';
+  try {
+    await runAgentLoop({
+      apiKey, system: AUDITOR_SYS, goal,
+      tools: toolList(['review_record', 'record_performance'] as ToolName[]),
+      dispatch,
+      onThinking: t => { finalText = t; emit({ kind: 'cite', title: 'auditor reasoning', detail: t }); },
+      onToolCall: () => {}, onToolResult: () => {}, maxSteps: 6,
+    });
+  } catch (e) { emit({ kind: 'error', title: 'auditor agent error', detail: (e as Error).message }); }
+
+  const m = /OPINION:\s*(PASS|QUALIFIED|FAIL)\b[\s—:-]*([\s\S]*)/i.exec(finalText);
+  const opinion = (m?.[1]?.toUpperCase() as AuditResult['opinion']) ?? 'UNKNOWN';
+  const rationale = (m?.[2]?.trim() || finalText.trim() || 'the auditor agent did not return a parseable opinion').slice(0, 400);
+  emit({ kind: 'cite', title: `Audit opinion (by the LLM auditor agent): ${opinion}`, detail: rationale });
+  return { opinion, rationale };
 }

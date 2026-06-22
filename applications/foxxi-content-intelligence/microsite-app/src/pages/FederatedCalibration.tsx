@@ -14,6 +14,7 @@
  */
 import React, { useState } from 'react';
 import { freshAgent, signEnvelope, type AgentWallet } from '../demo/agent-signing.js';
+import { analyzeMergedCalibrationLLM, type ConsortiumEvent, type ConsortiumAnalysis } from '../demo/consortium.js';
 import { bridgeRest, BRIDGE_URL } from '../bridge-client.js';
 
 const mono = "'JetBrains Mono', monospace";
@@ -51,11 +52,15 @@ const DEFAULT_ORGS: Org[] = [
 
 export function FederatedCalibration({ onHome }: { onHome: () => void }) {
   const [orgs, setOrgs] = useState<Org[]>(DEFAULT_ORGS);
+  const [apiKey, setApiKey] = useState('');
   const [res, setRes] = useState<any>(null);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [interrog, setInterrog] = useState<any>(null);
   const [interrogBusy, setInterrogBusy] = useState(false);
+  const [analystEvents, setAnalystEvents] = useState<ConsortiumEvent[]>([]);
+  const [analysis, setAnalysis] = useState<ConsortiumAnalysis | null>(null);
+  const hasKey = apiKey.trim().length > 0;
 
   function samples(c: Cell) { return c.closed + c.improved + c.noChange; }
   function setCell(oi: number, ci: number, key: keyof Cell, v: string) {
@@ -63,17 +68,23 @@ export function FederatedCalibration({ onHome }: { onHome: () => void }) {
   }
 
   async function merge() {
-    if (running) return;
-    setRunning(true); setErr(null); setRes(null); setInterrog(null);
+    if (running || !hasKey) return;
+    setRunning(true); setErr(null); setRes(null); setInterrog(null); setAnalystEvents([]); setAnalysis(null);
     try {
-      // Each org signs its OWN contribution with a fresh wallet (rev-196).
+      // Each org signs its OWN contribution with a fresh wallet (rev-196). The merge
+      // math (recover signers, k-sample floor, pool, promote modal status) is the
+      // bridge's — deterministic.
       const contributions = await Promise.all(orgs.map(async (o) => {
         const w: AgentWallet = freshAgent();
         return signEnvelope(w, { specs: o.cells });
       }));
       const { status, json } = await bridgeRest('/agent/calibration/merge', { contributions, k: K_FLOOR, assertThreshold: ASSERT_FLOOR });
-      if (status !== 200 || json.ok === false) { setErr(String(json.error ?? `HTTP ${status}`)); }
-      else setRes(json);
+      if (status !== 200 || json.ok === false) { setErr(String(json.error ?? `HTTP ${status}`)); return; }
+      setRes(json);
+      // A real LLM analyst agent reasons over the pooled, merged memory + recommends.
+      const cEvents: ConsortiumEvent[] = [];
+      const a = await analyzeMergedCalibrationLLM(apiKey, e => { cEvents.push(e); setAnalystEvents([...cEvents]); }, json);
+      setAnalysis(a);
     } catch (e) { setErr((e as Error).message); }
     finally { setRunning(false); }
   }
@@ -83,7 +94,11 @@ export function FederatedCalibration({ onHome }: { onHome: () => void }) {
     setInterrogBusy(true); setInterrog(null);
     try {
       // The merged memory is itself interrogable — route the grammar over its holon.
-      const label = String(res.holon.descriptorUrl || '').split('/').filter(Boolean).slice(-2, -1)[0] || 'calibration-consortium';
+      // The lattice label is the pod segment BEFORE "foxxi-lattice" in the descriptor
+      // URL (slice(-2,-1) would wrongly pick "foxxi-lattice" itself → 404).
+      const segs = String(res.holon.descriptorUrl || '').split('/').filter(Boolean);
+      const li = segs.indexOf('foxxi-lattice');
+      const label = (li > 0 ? segs[li - 1] : segs.slice(-3, -2)[0]) || 'calibration-consortium';
       const url = `${BRIDGE_URL}/agent/lattice/${label}/interrogate?uri=${encodeURIComponent(res.holon.holonUri)}&agent_did=${encodeURIComponent('did:web:consortium')}`;
       const r = await fetch(url); const j = await r.json().catch(() => ({}));
       setInterrog(j);
@@ -101,10 +116,20 @@ export function FederatedCalibration({ onHome }: { onHome: () => void }) {
         <code style={codeS}>regime × cause × intervention → did&nbsp;it&nbsp;close</code> cells and contributes them <strong>signed by a distinct key</strong>.
         The bridge applies a <strong>minimum-aggregate (k-sample) suppression floor</strong> (a cell crosses only as an aggregate above {K_FLOOR} samples) and pools
         across <strong>distinct signing keys</strong> — a cell <strong>Hypothetical for each contributor alone becomes Asserted once pooled</strong>. Trust the math, not the
-        aggregator. (Signatures prove the contributing key, not that two keys are independent rival orgs.) Real signed calls to <code style={codeS}>{BRIDGE_URL.replace(/^https?:\/\//, '')}</code>. <strong>No API key.</strong>
+        aggregator. (Signatures prove the contributing key, not that two keys are independent rival orgs.) Then a <strong>real LLM analyst
+        agent</strong> reasons over the pooled memory and recommends what to adopt — the math stays deterministic, the judgment is the agent&rsquo;s.
+        Real signed calls to <code style={codeS}>{BRIDGE_URL.replace(/^https?:\/\//, '')}</code>.
       </p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 18 }}>
+      {/* BYOK — at the top: the analyst agent needs a key; the merge math is key-less */}
+      <div style={{ ...card, marginTop: 18 }}>
+        <div style={{ ...lbl, marginBottom: 4 }}>Anthropic key — the consortium analyst is a real LLM agent, so it needs your key (sent only to api.anthropic.com from this tab). The signed contribution + the merge math run key-less.</div>
+        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-… (required — a real LLM analyst reasons over the merged memory + recommends)"
+          autoComplete="off" spellCheck={false} data-1p-ignore data-lpignore="true"
+          style={{ width: '100%', marginTop: 5, padding: '9px 11px', borderRadius: 6, border: '1px solid var(--border)', fontFamily: mono, fontSize: 13, boxSizing: 'border-box' }} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
         {orgs.map((o, oi) => (
           <div key={oi} style={card}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{o.name}</div>
@@ -133,8 +158,10 @@ export function FederatedCalibration({ onHome }: { onHome: () => void }) {
       </div>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', margin: '14px 0 6px' }}>
-        <button onClick={merge} disabled={running} style={{ ...btn, opacity: running ? 0.5 : 1 }}>{running ? 'Merging…' : 'Each org signs + contribute → merge'}</button>
-        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>min-aggregate (k-sample) floor = {K_FLOOR} samples · assert threshold = {ASSERT_FLOOR} samples (server-enforced)</span>
+        <button onClick={merge} disabled={running || !hasKey} style={{ ...btn, opacity: running || !hasKey ? 0.5 : 1 }}>{running ? 'Working…' : 'Sign + merge → LLM analyst recommends'}</button>
+        {!hasKey
+          ? <span style={{ fontSize: 12, color: '#b45309' }}>add your Anthropic key above — the analyst is a real LLM agent.</span>
+          : <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>min-aggregate (k-sample) floor = {K_FLOOR} · assert threshold = {ASSERT_FLOOR} (server-enforced) · then a real LLM analyst reasons over the result</span>}
       </div>
 
       {err && <div style={{ ...card, borderLeft: '3px solid #c1432a', marginTop: 14, fontFamily: mono, fontSize: 12 }}>⚠ {err}</div>}
@@ -168,6 +195,26 @@ export function FederatedCalibration({ onHome }: { onHome: () => void }) {
               No raw record crossed a boundary — only aggregate cells above the minimum-aggregate (k-sample) suppression floor (cells below it were withheld). Each contribution was signed by a distinct key (recovered, not asserted; same-key resubmissions collapse to one source).{res.distinctSigners != null && <> {res.distinctSigners} distinct signing key(s){res.multiParty === false && ' — single-key merge: self-only profile, not cross-source consensus'}.</>}
             </div>
           </div>
+
+          {(analystEvents.length > 0 || analysis) && (
+            <div style={{ ...card, marginTop: 14, borderLeft: '4px solid var(--accent)' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ fontFamily: serif, fontSize: 20 }}>The consortium analyst’s recommendation</div>
+                <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>a real LLM agent reasoning over the pooled memory — the math stays deterministic</span>
+              </div>
+              {analysis?.recommendation && <div style={{ marginTop: 8, fontSize: 14, color: 'var(--text)', lineHeight: 1.55 }}>↳ {analysis.recommendation}</div>}
+              <div style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', background: 'var(--panel-2, #faf9f7)', maxHeight: 240, overflow: 'auto' }}>
+                {analystEvents.map((e, i) => {
+                  if (e.kind === 'recommendation') return null;
+                  if (e.kind === 'identity') return <div key={i} style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: mono }}>◆ {e.text}</div>;
+                  if (e.kind === 'error') return <div key={i} style={{ fontSize: 12, color: '#c1432a' }}>⚠ {e.text}</div>;
+                  if (e.kind === 'tool') return <div key={i} style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: mono }}>▸ {e.text}{e.detail ? ` (${e.detail})` : ''}</div>;
+                  return <div key={i} style={{ fontSize: 12.5, color: 'var(--text)', margin: '3px 0', lineHeight: 1.4 }}>{e.text}</div>;
+                })}
+                {running && analystEvents.length > 0 && !analysis && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>analyst working…</div>}
+              </div>
+            </div>
+          )}
 
           {res.holon?.holonUri && (
             <div style={{ ...card, marginTop: 14 }}>

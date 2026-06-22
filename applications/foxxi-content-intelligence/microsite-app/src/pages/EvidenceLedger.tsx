@@ -13,7 +13,7 @@
  * cannot do this.
  */
 import React, { useState } from 'react';
-import { buildEvidencePack, verifyFromCleanSeat, makeEmit, resetCounter, type EvidenceEvent, type EvidencePack, type EvidenceItem, type CleanSeatResult } from '../demo/evidence.js';
+import { buildEvidencePack, verifyFromCleanSeat, auditEvidencePackLLM, makeEmit, resetCounter, type EvidenceEvent, type EvidencePack, type EvidenceItem, type CleanSeatResult, type AuditResult } from '../demo/evidence.js';
 import { CodeReveal } from '../components/proof.js';
 import { BRIDGE_URL } from '../bridge-client.js';
 
@@ -27,16 +27,23 @@ const pill: React.CSSProperties = { border: '1px solid var(--border)', borderRad
 const linkBtn: React.CSSProperties = { background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 13 };
 
 export function EvidenceLedger({ onHome }: { onHome: () => void }) {
+  const [apiKey, setApiKey] = useState('');
   const [events, setEvents] = useState<EvidenceEvent[]>([]);
   const [pack, setPack] = useState<EvidencePack | null>(null);
+  const [audit, setAudit] = useState<AuditResult | null>(null);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const hasKey = apiKey.trim().length > 0;
 
   async function run() {
-    if (running) return;
-    setRunning(true); setErr(null); setEvents([]); setPack(null); resetCounter();
+    if (running || !hasKey) return;
+    setRunning(true); setErr(null); setEvents([]); setPack(null); setAudit(null); resetCounter();
     const emit = makeEmit(e => setEvents(prev => [...prev, e]));
-    try { setPack(await buildEvidencePack(emit)); }
+    try {
+      const p = await buildEvidencePack(emit);   // deterministic crypto assembly (no key)
+      setPack(p);
+      setAudit(await auditEvidencePackLLM(apiKey, emit, p));   // real LLM auditor agent (BYOK)
+    }
     catch (e) { setErr((e as Error).message); }
     finally { setRunning(false); }
   }
@@ -46,17 +53,29 @@ export function EvidenceLedger({ onHome }: { onHome: () => void }) {
       <button onClick={onHome} style={linkBtn}>← home</button>
       <h1 style={{ fontFamily: serif, fontSize: 34, margin: '10px 0 6px' }}>Evidence ledger</h1>
       <p style={{ color: 'var(--text-dim)', fontSize: 16, maxWidth: 820, lineHeight: 1.5 }}>
-        Point at any agent action and get a <strong>self-proving audit pack</strong>: the signer recovered from the raw
-        bytes (in your browser), the action validated against the <strong>live SHACL shapes</strong> — click the shape IRI
-        and it dereferences — and a <strong>SOC&nbsp;2 / EU&nbsp;AI&nbsp;Act / NIST</strong> control cited on the event (SOC&nbsp;2
-        validated against its served shape), each IRI dereferenceable. The kill-shot: <strong>re-verify from a clean seat</strong> with zero stored trust, and watch a
-        one-byte tamper break the signature. Mutable audit-log rows the same vendor vouches for can&rsquo;t do this. Real signed
-        calls to <code style={codeS}>{BRIDGE_URL.replace(/^https?:\/\//, '')}</code>. <strong>No API key needed.</strong>
+        A fresh agent performs real signed actions; a <strong>self-proving audit pack</strong> is assembled deterministically —
+        the signer recovered from the raw bytes (in your browser), the action validated against the <strong>live SHACL shapes</strong>
+        (click the shape IRI and it dereferences), and a <strong>SOC&nbsp;2 / EU&nbsp;AI&nbsp;Act / NIST</strong> control cited on the
+        event, each IRI dereferenceable. Then a <strong>real LLM compliance auditor agent</strong> (its own self-sovereign wallet)
+        independently spot-checks the agent&rsquo;s own pod and renders an <strong>audit opinion</strong> — PASS / QUALIFIED / FAIL —
+        on whether the evidence satisfies the cited controls. The cryptography stays deterministic (the math you trust, including
+        the clean-seat re-verify + one-byte tamper kill-shot below); the <em>opinion</em> is the agent&rsquo;s. Real signed calls to
+        <code style={codeS}>{BRIDGE_URL.replace(/^https?:\/\//, '')}</code>.
       </p>
 
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', margin: '18px 0 6px' }}>
-        <button onClick={run} disabled={running} style={{ ...btn, opacity: running ? 0.5 : 1 }}>{running ? 'Building the pack…' : 'Perform actions + assemble the pack'}</button>
-        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>spawns a fresh agent, performs real signed actions, assembles a verifiable pack for each</span>
+      {/* BYOK — at the top: the auditor agent needs a key; pack assembly is key-less */}
+      <div style={{ ...card, marginTop: 18 }}>
+        <div style={{ ...lbl, marginBottom: 4 }}>Anthropic key — the compliance auditor is a real LLM agent, so it needs your key (sent only to api.anthropic.com from this tab). The cryptographic pack assembly + clean-seat re-verify run key-less.</div>
+        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-… (required — a real LLM auditor reviews the verified pack + signs off)"
+          autoComplete="off" spellCheck={false} data-1p-ignore data-lpignore="true"
+          style={{ width: '100%', marginTop: 5, padding: '9px 11px', borderRadius: 6, border: '1px solid var(--border)', fontFamily: mono, fontSize: 13, boxSizing: 'border-box' }} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', margin: '14px 0 6px' }}>
+        <button onClick={run} disabled={running || !hasKey} style={{ ...btn, opacity: running || !hasKey ? 0.5 : 1 }}>{running ? 'Working…' : 'Assemble the pack + get the auditor’s opinion'}</button>
+        {!hasKey
+          ? <span style={{ fontSize: 12, color: '#b45309' }}>add your Anthropic key above — the auditor is a real LLM agent.</span>
+          : <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>a fresh agent performs signed actions, the pack is assembled deterministically, then a real LLM auditor reviews + signs off</span>}
       </div>
 
       {err && <div style={{ ...card, borderLeft: '3px solid #c1432a', marginTop: 14, fontFamily: mono, fontSize: 12 }}>⚠ {err}</div>}
@@ -79,7 +98,24 @@ export function EvidenceLedger({ onHome }: { onHome: () => void }) {
         </div>
       )}
 
+      {audit && <AuditCard audit={audit} />}
       {pack && pack.items.map((it, i) => <PackCard key={i} item={it} n={i + 1} />)}
+    </div>
+  );
+}
+
+function AuditCard({ audit }: { audit: AuditResult }) {
+  const pass = audit.opinion === 'PASS';
+  const tone = pass ? '#2e9c4a' : audit.opinion === 'QUALIFIED' ? '#b45309' : audit.opinion === 'FAIL' ? '#d23f31' : '#6b7280';
+  const head = pass ? '✓ PASS' : audit.opinion === 'QUALIFIED' ? '◐ QUALIFIED' : audit.opinion === 'FAIL' ? '✗ FAIL' : '— OPINION';
+  return (
+    <div style={{ ...card, marginTop: 16, borderLeft: `5px solid ${tone}` }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontFamily: serif, fontSize: 26, color: tone }}>{head}</div>
+        <div style={{ fontSize: 14, color: 'var(--text)' }}>audit opinion — rendered by a <strong>real LLM auditor agent</strong></div>
+        <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-dim)' }}>over cryptographically-verified evidence it could not fake</div>
+      </div>
+      <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>{audit.rationale}</div>
     </div>
   );
 }
