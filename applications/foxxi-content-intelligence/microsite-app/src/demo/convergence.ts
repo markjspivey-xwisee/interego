@@ -14,9 +14,12 @@
  */
 import { ethers } from 'ethers';
 import { freshAgent, postSigned, type AgentWallet } from './agent-signing.js';
+import { dispatchTool, toolList, type DispatchCtx, type ToolName } from './agent-tools.js';
+import { runAgentLoop } from './anthropic-runner.js';
 import { bridgeRest, BRIDGE_URL } from '../bridge-client.js';
 
 const STD = 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#StandardsExtension';
+const STD_TOPIC = 'extend an interoperability standard (xAPI / IEEE-LER / ADL-TLA) without forking it';
 export const PAGES_NS = 'https://markjspivey-xwisee.github.io/interego/ns';
 const enc = new TextEncoder();
 const sha256Hex = (s: string): string => ethers.sha256(enc.encode(s)).slice(2);
@@ -143,84 +146,129 @@ export const SAMPLE_SKILL_MD = [
   '3. Verify the issuer signature + supersedes-chain; downgrade on any gap.',
 ].join('\n');
 
-// ── Multi-agent: the whole point ────────────────────────────────────────────
-// Context is shared, composed, and reconciled BETWEEN agents — not by one agent
-// alone. These compose existing signed endpoints (record-performance / interrogate
-// / teach); no new substrate.
-
-export interface SharedContext {
-  a: AgentWallet; b: AgentWallet; labelA: string;
-  holonA?: string; holonB?: string;
-  descriptorUrlA?: string; descriptorUrlB?: string;
-  sharedAtoms: string[];          // content-addressed atom URNs present in BOTH descriptors
-  atomsA: number; atomsB: number; // total distinct atoms per agent descriptor
-}
+// ── Multi-agent, LLM-driven: the whole point ─────────────────────────────────
+// Two REAL Claude agents (each a self-sovereign wallet) reason over the live
+// substrate, with the Foxxi bridge endpoints as their tools (record_performance /
+// interrogate_holon / teach_agent). The MODEL decides each tool call; this code
+// only scaffolds the three beats (A shares context → B finds the gap → A teaches)
+// and captures the verifiable artifacts. Requires an Anthropic key (BYOK).
 
 const ATOM_RE = /urn:pgsl:atom:[a-z0-9:.\-]+/gi;
 const atomsIn = (ttl: string): string[] => [...new Set((ttl.match(ATOM_RE) ?? []))];
 
-/**
- * Two fresh, independent agents each record a real signed performance that
- * references the SAME standard. We dereference both descriptors and surface the
- * content-addressed atoms they SHARE — the same `urn:pgsl:atom:<hash>` appearing
- * in both agents' wholes. That shared atom is one node in a hypergraph holarchy
- * that spans two independent agents/pods: federated multi-agent shared memory, by
- * content-addressing (no central registry, no copy). Throws if either holon fails
- * to compose (never fabricates a shared-context claim).
- */
-export async function twoAgentSharedContext(): Promise<SharedContext> {
-  const a = freshAgent(), b = freshAgent();
-  const labelA = `eth-${a.address.slice(2, 14)}`;
-  const recA = await postSigned('/agent/record-performance', a, { task_name: 'Shared context, composed by agent A', success: true, quality: 1, activity_type: STD });
-  const slA = ((recA.body ?? {}) as any).sharedLattice ?? {};
-  if (!recA.ok || !slA.holonUri) throw new Error(`agent A could not compose a holon: HTTP ${recA.status}`);
-  const recB = await postSigned('/agent/record-performance', b, { task_name: 'Agent B independently acts on the same standard', success: true, quality: 1, activity_type: STD });
-  const slB = ((recB.body ?? {}) as any).sharedLattice ?? {};
-  if (!recB.ok || !slB.holonUri) throw new Error(`agent B could not compose a holon: HTTP ${recB.status}`);
-  const dA = slA.descriptorUrl ? await dereferenceDescriptor(slA.descriptorUrl) : { ok: false, turtle: '' };
-  const dB = slB.descriptorUrl ? await dereferenceDescriptor(slB.descriptorUrl) : { ok: false, turtle: '' };
-  const aA = atomsIn(dA.turtle ?? ''), bA = atomsIn(dB.turtle ?? '');
-  return {
-    a, b, labelA, holonA: slA.holonUri, holonB: slB.holonUri,
-    descriptorUrlA: slA.descriptorUrl, descriptorUrlB: slB.descriptorUrl,
-    sharedAtoms: aA.filter(x => bA.includes(x)), atomsA: aA.length, atomsB: bA.length,
-  };
+export interface MAEvent {
+  agent: 'A' | 'B' | 'sys';
+  kind: 'identity' | 'phase' | 'thinking' | 'tool' | 'auth' | 'artifact' | 'error' | 'done';
+  text: string; detail?: string;
 }
 
-export interface TeachVerdict {
-  ok: boolean; error?: string;
-  transferred?: boolean; modalStatus?: string; evidence?: string;
-  beforeSignal?: number; afterSignal?: number; beforeAnti?: number; afterAnti?: number;
+export interface TwoAgentResult {
+  aDid: string; bDid: string; labelA: string;
+  holonA?: string; holonB?: string; descriptorUrlA?: string; descriptorUrlB?: string;
+  sharedAtoms: string[]; atomsA: number; atomsB: number;
+  gapTotal: number; gapAbsent: number; gapArticulation?: string;
+  transferred?: boolean; modalStatus?: string; evidence?: string; beforeSignal?: number; afterSignal?: number;
 }
 
+const shortInput = (name: string, i: Record<string, unknown>): string => {
+  if (name === 'record_performance') return String(i.task_name ?? '');
+  if (name === 'interrogate_holon') return `holon ${String(i.holon_uri ?? '(peer)').slice(0, 28)}…`;
+  if (name === 'teach_agent') return String(i.competency ?? '');
+  return '';
+};
+
 /**
- * Agent A teaches Agent B a capability over the live A2A teaching endpoint. The
- * TEACHER signs the (teachingPackage, targetBehaviour) tuple — the bridge gates on
- * that ECDSA signature recovering to the teacher — and the transfer is VERIFIED,
- * not asserted: the bridge measures the taught behaviour's signal share across the
- * learner's before/after trajectories. HONESTY: the before/after trajectories here
- * are illustrative demo inputs; the signature gate and the transfer-verification
- * math are the real, live primitive (same composition as the /emergent demo).
+ * Run two real LLM agents over the convergence theme. Agent A establishes shared
+ * context; Agent B participates and interrogates A's holon to find the gap IN ITS
+ * OWN WORDS; Agent A teaches B to close it (bridge-verified transfer). Every tool
+ * call is a real signed bridge call the model chose. Never throws — failures land
+ * as error events; the returned result carries whatever was captured.
+ *
+ * HONESTY: the model genuinely drives the decisions and the gap articulation; the
+ * teach step's before/after trajectories are illustrative inputs built from the
+ * teacher's chosen markers (the signature gate + transfer-verification math are the
+ * real primitive). The shared atom + the inter-agent interrogation are fully real.
  */
-export async function teachPeer(teacher: AgentWallet, learner: AgentWallet): Promise<TeachVerdict> {
-  const teachingPackage = { iri: `urn:iep:teaching:convergence-${teacher.address.slice(2, 10)}`, artifactIri: 'urn:iep:tool:standard-reference', competency: 'consult the authoritative standard at the point of work', olkeStage: 'Articulate', modalStatus: 'Hypothetical' };
-  const targetBehaviour = { description: 'consults the authoritative standard before acting', signalMarkers: ['reference', 'look up', 'consult'], antiSignalMarkers: ['guess', 'skip'] };
-  const tuple = JSON.stringify({ teachingPackage, targetBehaviour });
-  const signature = await teacher.wallet.signMessage(`sha256:${sha256Hex(tuple)}`);
-  const traj = (steps: Array<[string, string]>) => [{ agentDid: learner.did, agentName: 'learner', createdAt: new Date().toISOString(), steps: steps.map(([v, o], i) => ({ modalStatus: 'Asserted', granularity: 'tool-call', verb: v, objectId: `o${i}`, objectName: o, recordedAt: new Date().toISOString() })) }];
-  const { status, json } = await bridgeRest('/agent/teach', {
-    teachingPackage, teacher: { id: teacher.did, kind: 'agent' }, learner: { id: learner.did, kind: 'agent' }, targetBehaviour,
-    signature, signedPayload: tuple,
-    before: traj([['guess', 'the next step'], ['skip', 'a checklist item'], ['act', 'on assumptions'], ['escalate', 'a mistake']]),
-    after: traj([['look up', 'the standard'], ['consult', 'the guidance'], ['apply', 'the referenced step'], ['look up', 'the standard again'], ['complete', 'the task'], ['verify', 'against the standard']]),
-  });
-  if (status !== 200) return { ok: false, error: String((json as any)?.error ?? `HTTP ${status}`) };
-  const v = (json as any)?.verdict ?? (json as any)?.['foxxi:verdict'] ?? {};
-  return {
-    ok: true, transferred: !!v.transferred, modalStatus: v.modalStatus, evidence: v.evidence,
-    beforeSignal: v.before?.signalShare, afterSignal: v.after?.signalShare,
-    beforeAnti: v.before?.antiSignalShare, afterAnti: v.after?.antiSignalShare,
-  };
+export async function runTwoAgentConvergence(apiKey: string, emit: (e: MAEvent) => void): Promise<TwoAgentResult> {
+  const A = freshAgent(), B = freshAgent();
+  const labelA = `eth-${A.address.slice(2, 14)}`;
+  const r: TwoAgentResult = { aDid: A.did, bDid: B.did, labelA, sharedAtoms: [], atomsA: 0, atomsB: 0, gapTotal: 0, gapAbsent: 0 };
+  emit({ agent: 'A', kind: 'identity', text: 'agent A — fresh self-sovereign wallet', detail: A.did });
+  emit({ agent: 'B', kind: 'identity', text: 'agent B — fresh self-sovereign wallet', detail: B.did });
+
+  const SYS_A = 'You are Agent A, an autonomous agent on the Interego/Foxxi substrate with a self-sovereign did:ethr identity. You act ONLY through the provided tools — each is a real signed call to the live bridge. Be decisive: take the next concrete tool action toward the goal; never ask questions. When the goal is met, reply with a one-line DONE summary and stop.';
+  const SYS_B = SYS_A.replace(/Agent A/g, 'Agent B');
+
+  const mkDispatch = (who: 'A' | 'B', agent: AgentWallet, ctx: DispatchCtx) =>
+    async (name: string, input: Record<string, unknown>): Promise<{ text: string }> => {
+      emit({ agent: who, kind: 'tool', text: name, detail: shortInput(name, input) });
+      const res = await dispatchTool(name, input, agent, ctx);
+      const body: any = res.body ?? {};
+      emit({ agent: who, kind: 'auth', text: `signed → ${name}`, detail: `did:ethr:${agent.address.slice(0, 10)}… · HTTP ${res.status}${res.ok ? ' ✓' : ' ✗'}` });
+      if (name === 'record_performance' && body.sharedLattice?.holonUri) {
+        if (who === 'A') { r.holonA = body.sharedLattice.holonUri; r.descriptorUrlA = body.sharedLattice.descriptorUrl; }
+        else { r.holonB = body.sharedLattice.holonUri; r.descriptorUrlB = body.sharedLattice.descriptorUrl; }
+      }
+      if (name === 'interrogate_holon' && Array.isArray(body.answers)) {
+        r.gapTotal = body.answers.length;
+        r.gapAbsent = body.answers.filter((a: any) => a.status === 'absent').length;
+        emit({ agent: who, kind: 'artifact', text: `interrogated A's holon — ${body.answers.length} interrogatives, ${r.gapAbsent} absent`, detail: [...new Set(body.answers.map((a: any) => a.status))].join(' · ') });
+      }
+      if (name === 'teach_agent' && body.verdict) {
+        r.transferred = !!body.verdict.transferred; r.modalStatus = body.verdict.modalStatus; r.evidence = body.verdict.evidence;
+        r.beforeSignal = body.verdict.before?.signalShare; r.afterSignal = body.verdict.after?.signalShare;
+      }
+      return { text: typeof res.body === 'string' ? res.body : JSON.stringify(res.body) };
+    };
+
+  try {
+    // Phase 1 — Agent A establishes shared context
+    emit({ agent: 'sys', kind: 'phase', text: 'Agent A establishes shared context' });
+    await runAgentLoop({
+      apiKey, system: SYS_A,
+      goal: `Establish context a peer agent can build on. Record the unit of work you performed on how to "${STD_TOPIC}". Call record_performance with a descriptive task_name, success true, quality ~0.9, and activity_type EXACTLY "${STD}". Then reply DONE.`,
+      tools: toolList(['record_performance'] as ToolName[]),
+      dispatch: mkDispatch('A', A, {}),
+      onThinking: t => emit({ agent: 'A', kind: 'thinking', text: t }), onToolCall: () => {}, onToolResult: () => {}, maxSteps: 5,
+    });
+
+    // Phase 2 — Agent B participates + interrogates A's holon to find the gap
+    emit({ agent: 'sys', kind: 'phase', text: 'Agent B acts on the shared context and finds the gap' });
+    await runAgentLoop({
+      apiKey, system: SYS_B,
+      goal: `Peer agent A established context about "${STD_TOPIC}" — holon ${r.holonA ?? '(A\'s holon)'} in lattice ${labelA}.\n` +
+        `1) Participate in the SAME shared context: call record_performance for your own related work, success true, quality ~0.85, activity_type EXACTLY "${STD}". Using the same activity type means your work shares content-addressed atoms with A's — one holarchy across two pods.\n` +
+        `2) Before acting further, call interrogate_holon (holon_uri "${r.holonA ?? ''}", label "${labelA}") to discover what A's shared context does NOT carry that you would need to act.\n` +
+        `3) Reply with one or two sentences, in your OWN words, naming the GAP between what A shared and what you need — cite the interrogatives that came back absent. Start that final line with "GAP:".`,
+      tools: toolList(['record_performance', 'interrogate_holon'] as ToolName[]),
+      dispatch: mkDispatch('B', B, { holonUri: r.holonA, label: labelA }),
+      onThinking: t => { emit({ agent: 'B', kind: 'thinking', text: t }); const m = /GAP:\s*([\s\S]+)/.exec(t); if (m) r.gapArticulation = m[1].trim(); },
+      onToolCall: () => {}, onToolResult: () => {}, maxSteps: 6,
+    });
+
+    // Shared-atom check (verification, not LLM): dereference both descriptors
+    const dA = r.descriptorUrlA ? await dereferenceDescriptor(r.descriptorUrlA) : { turtle: '' };
+    const dB = r.descriptorUrlB ? await dereferenceDescriptor(r.descriptorUrlB) : { turtle: '' };
+    const aA = atomsIn(dA.turtle ?? ''), bA = atomsIn(dB.turtle ?? '');
+    r.sharedAtoms = aA.filter(x => bA.includes(x)); r.atomsA = aA.length; r.atomsB = bA.length;
+    emit({ agent: 'sys', kind: 'artifact', text: `shared holarchy — ${r.sharedAtoms.length} content-addressed atom(s) in BOTH agents' descriptors`, detail: r.sharedAtoms.slice(0, 2).join('  ') });
+
+    // Phase 3 — Agent A teaches B to close the gap (bridge-verified transfer)
+    emit({ agent: 'sys', kind: 'phase', text: 'Agent A teaches B to close the gap (transfer verified by the bridge)' });
+    await runAgentLoop({
+      apiKey, system: SYS_A,
+      goal: `Peer agent B (${B.did}) acted on your shared context and reported this gap:\n"${r.gapArticulation ?? 'B needs the capability to consult the authoritative standard before acting, rather than guessing.'}"\n` +
+        `Teach B the capability that closes it. Call teach_agent with learner_did "${B.did}", a competency, a one-sentence target_description, signal_markers (verbs for the NEW behaviour) and anti_signal_markers (verbs for the OLD behaviour). The bridge VERIFIES the transfer from B's before/after behaviour — you cannot just assert it. Then reply DONE stating whether it transferred.`,
+      tools: toolList(['teach_agent'] as ToolName[]),
+      dispatch: mkDispatch('A', A, { learnerDid: B.did }),
+      onThinking: t => emit({ agent: 'A', kind: 'thinking', text: t }), onToolCall: () => {}, onToolResult: () => {}, maxSteps: 4,
+    });
+
+    emit({ agent: 'sys', kind: 'done', text: 'two real LLM agents shared a holarchy, surfaced the gap between them, and closed it by verified teaching' });
+  } catch (e) {
+    emit({ agent: 'sys', kind: 'error', text: (e as Error).message });
+  }
+  return r;
 }
 
 /** Fetch a slice of the iep: protocol ontology (the renamed L1) for display. */

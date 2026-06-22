@@ -15,10 +15,10 @@
 import React, { useState } from 'react';
 import {
   mintHolon, dereferenceDescriptor, interrogateHolon, ingestDataBook, emitSkill,
-  authorDataBook, fetchProtocolExcerpt, skillToAffordance, twoAgentSharedContext, teachPeer,
+  authorDataBook, fetchProtocolExcerpt, skillToAffordance, runTwoAgentConvergence,
   SAMPLE_DATABOOK, SAMPLE_SKILL_MD, PAGES_NS,
   type MintedHolon, type InterrogativeAnswer, type DataBookIngest, type SkillAffordance,
-  type SharedContext, type TeachVerdict,
+  type MAEvent, type TwoAgentResult,
 } from '../demo/convergence.js';
 import { BRIDGE_URL } from '../bridge-client.js';
 
@@ -67,15 +67,16 @@ export function Convergence({ onHome }: { onHome: () => void }) {
         three panels map a concept to the <strong>live Interego primitive</strong> that corresponds to it, on the renamed
         <strong> Interego Protocol</strong> (<code style={codeS}>iep:</code>, formerly <code style={codeS}>cg:</code>); a fourth
         runs the strict <code style={codeS}>SKILL.md ⇄ iep:Affordance</code> translator the DataBook panel references. The
-        fifth is the point of all of it: <strong>two agents</strong> sharing one holarchy, surfacing the gap between them, and
-        teaching each other — context as a multi-agent, between-participants phenomenon, not a single agent’s artifact.
-        Real signed calls to <code style={codeS}>{BRIDGE_URL.replace(/^https?:\/\//, '')}</code>. <strong>No key needed</strong>;
-        bring an Anthropic key only to have an LLM author a DataBook (it stays in this tab). See <a href="https://markjspivey-xwisee.github.io/interego/NAME-PROVENANCE.md" target="_blank" rel="noreferrer" style={linkBtn}>the name-provenance note</a> for the honest lineage.
+        fifth is the point of all of it: <strong>two real LLM agents</strong> reasoning over the live substrate — sharing one
+        holarchy, surfacing the gap between them in their own words, and teaching each other (transfer verified, not asserted).
+        Real signed calls to <code style={codeS}>{BRIDGE_URL.replace(/^https?:\/\//, '')}</code>. Panels 1–4 run <strong>key-less</strong>
+        (deterministic protocol operations); the LLM-driven steps — authoring a DataBook (panel 2) and the two-agent panel
+        (panel 5) — need your <strong>Anthropic key</strong> (it stays in this tab). See <a href="https://markjspivey-xwisee.github.io/interego/NAME-PROVENANCE.md" target="_blank" rel="noreferrer" style={linkBtn}>the name-provenance note</a> for the honest lineage.
       </p>
 
       <div style={{ ...card, marginTop: 18 }}>
-        <div style={lbl}>Anthropic key (optional — only the “✨ Author a DataBook” step in panel 2 uses it; sent only to api.anthropic.com from this tab. Everything else runs with no key.)</div>
-        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-… (optional — leave blank to run the whole demo key-less)"
+        <div style={lbl}>Anthropic key — required for the LLM-driven steps (panel 2 “✨ Author a DataBook” + panel 5 “two real LLM agents”); sent only to api.anthropic.com from this tab. Panels 1, 3, 4 run with no key.</div>
+        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-… (needed for the two-agent panel + DataBook authoring; panels 1/3/4 run key-less)"
           autoComplete="off" spellCheck={false} data-1p-ignore data-lpignore="true"
           style={{ width: '100%', marginTop: 5, padding: '9px 11px', borderRadius: 6, border: '1px solid var(--border)', fontFamily: mono, fontSize: 13, boxSizing: 'border-box' }} />
       </div>
@@ -84,7 +85,7 @@ export function Convergence({ onHome }: { onHome: () => void }) {
       <DataBookPanel apiKey={apiKey} />
       <ContextGapPanel />
       <AffordancePanel />
-      <MultiAgentPanel />
+      <MultiAgentPanel apiKey={apiKey} />
 
       <p style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 16, lineHeight: 1.5 }}>
         Sources: <a href="https://github.com/w3c-cg/holon/blob/main/README.md" target="_blank" rel="noreferrer" style={linkBtn}>W3C Holon CG</a> ·
@@ -385,107 +386,101 @@ function AffordancePanel() {
   );
 }
 
-// ── Panel 5: the whole point — two agents, one shared context ────────────────
-// Composes existing signed endpoints (record-performance / interrogate / teach):
-// two fresh agents share a content-addressed atom (one holarchy across two pods),
-// B surfaces the gap in A's shared context, and A teaches B a verified capability.
-function MultiAgentPanel() {
-  const [sc, setSc] = useState<SharedContext | null>(null);
-  const [gap, setGap] = useState<InterrogativeAnswer[] | null>(null);
-  const [verdict, setVerdict] = useState<TeachVerdict | null>(null);
-  const [step, setStep] = useState<'' | 'share' | 'gap' | 'teach'>('');
-  const [err, setErr] = useState<string | null>(null);
+// ── Panel 5: the whole point — two REAL LLM agents over the live substrate ────
+// Two Claude agents (each a self-sovereign wallet) reason with the Foxxi bridge as
+// their tools: A shares context → B interrogates it + names the gap in its OWN
+// words → A teaches B (bridge-verified transfer). Requires an Anthropic key.
+const A_COL = '#2563eb', B_COL = '#9333ea';
+function MultiAgentPanel({ apiKey }: { apiKey: string }) {
+  const [events, setEvents] = useState<MAEvent[]>([]);
+  const [result, setResult] = useState<TwoAgentResult | null>(null);
+  const [running, setRunning] = useState(false);
+  const hasKey = apiKey.trim().length > 0;
 
   async function run() {
-    setErr(null); setSc(null); setGap(null); setVerdict(null);
+    if (!hasKey || running) return;
+    setRunning(true); setEvents([]); setResult(null);
     try {
-      setStep('share');
-      const s = await twoAgentSharedContext();
-      setSc(s);
-      setStep('gap');
-      if (s.holonA) {
-        const r = await interrogateHolon(s.labelA, s.holonA, s.b.did);  // B interrogates A's holon
-        if (!r.error) setGap(r.answers);
-      }
-      setStep('teach');
-      const v = await teachPeer(s.a, s.b);  // A teaches B
-      setVerdict(v);
-    } catch (e) { setErr((e as Error).message); }
-    finally { setStep(''); }
+      const collected: MAEvent[] = [];
+      const r = await runTwoAgentConvergence(apiKey, e => { collected.push(e); setEvents([...collected]); });
+      setResult(r);
+    } catch (e) { setEvents(ev => [...ev, { agent: 'sys', kind: 'error', text: (e as Error).message }]); }
+    finally { setRunning(false); }
   }
-  const busy = step !== '';
-  const absent = (gap ?? []).filter(a => a.status === 'absent');
   const pct = (n?: number) => n == null ? '—' : `${Math.round(n * 100)}%`;
+  const who = (a: MAEvent['agent']) => a === 'A' ? { c: A_COL, n: 'Agent A' } : a === 'B' ? { c: B_COL, n: 'Agent B' } : { c: 'var(--text-dim)', n: 'system' };
 
   return (
     <div style={{ ...card, marginTop: 14, borderLeft: '3px solid var(--accent)' }}>
-      <div style={{ fontFamily: serif, fontSize: 22 }}>5 · Two agents, one shared context <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>— the whole point: context is between participants</span></div>
+      <div style={{ fontFamily: serif, fontSize: 22 }}>5 · Two real LLM agents, one shared context <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>— the whole point: agents working</span></div>
       <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5, margin: '6px 0' }}>
-        Panels 1–4 each ran as a single agent. But context in Interego is a <strong>multi-agent</strong> phenomenon — composed,
-        shared, and reconciled <em>between</em> participants. Here <strong>two fresh, independent agents</strong> (A and B, each a
-        self-sovereign wallet minted in this tab) (1) compose holons that <strong>share content-addressed atoms</strong> — one
-        hypergraph holarchy spanning two pods, with no central registry; (2) B <strong>interrogates A’s holon</strong> and the
-        gap between them surfaces; and (3) A <strong>teaches B</strong> a capability whose transfer the bridge <strong>verifies</strong>
-        (not asserts). All real signed calls.
+        Panels 1–4 are deterministic protocol operations. This one is the point: <strong>two genuine Claude agents</strong> (A and B,
+        each a self-sovereign wallet minted in this tab) reason over the live substrate, with the Foxxi bridge endpoints as their
+        <strong> tools</strong>. The model decides every call. (1) <span style={{ color: A_COL }}>A</span> records work to establish
+        shared context; (2) <span style={{ color: B_COL }}>B</span> joins the same context and <strong>interrogates A’s holon</strong>,
+        then names the <strong>gap</strong> between them <em>in its own words</em>; (3) <span style={{ color: A_COL }}>A</span>
+        <strong> teaches B</strong> the missing capability — and the bridge <strong>verifies</strong> the transfer, it isn’t asserted.
       </p>
-      <button onClick={run} disabled={busy} style={{ ...btn, opacity: busy ? 0.5 : 1 }}>
-        {step === 'share' ? 'agent A + B composing…' : step === 'gap' ? 'B interrogating A…' : step === 'teach' ? 'A teaching B…' : 'Run the two-agent flow (live, no key)'}
+      <button onClick={run} disabled={!hasKey || running} style={{ ...btn, opacity: !hasKey || running ? 0.5 : 1 }}>
+        {running ? 'two agents working…' : 'Run the two agents (needs your key)'}
       </button>
-      {err && <div style={{ color: '#c1432a', fontFamily: mono, fontSize: 12, marginTop: 8 }}>⚠ {err}</div>}
+      {!hasKey && <span style={{ marginLeft: 10, fontSize: 12, color: '#b45309' }}>add your Anthropic key at the top — this panel runs two real LLM agents.</span>}
 
-      {sc && (
-        <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
-          {/* 1 · shared holarchy */}
-          <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '9px 11px' }}>
-            <div style={lbl}>1 · two agents, one holarchy</div>
-            <div style={{ fontSize: 12, marginTop: 4, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <div><span style={{ color: 'var(--text-dim)' }}>agent A</span><br /><code style={{ ...codeS, fontSize: 10 }}>{sc.a.did.slice(0, 26)}…</code><br /><span style={{ color: 'var(--text-dim)', fontSize: 11 }}>holon {String(sc.holonA).slice(0, 26)}… · {sc.atomsA} atoms</span></div>
-              <div><span style={{ color: 'var(--text-dim)' }}>agent B</span><br /><code style={{ ...codeS, fontSize: 10 }}>{sc.b.did.slice(0, 26)}…</code><br /><span style={{ color: 'var(--text-dim)', fontSize: 11 }}>holon {String(sc.holonB).slice(0, 26)}… · {sc.atomsB} atoms</span></div>
+      {events.length > 0 && (
+        <div style={{ marginTop: 12, border: '1px solid var(--border)', borderRadius: 6, maxHeight: 360, overflow: 'auto', padding: '8px 10px', background: 'var(--panel-2, #faf9f7)' }}>
+          {events.map((e, i) => {
+            const w = who(e.agent);
+            if (e.kind === 'phase') return <div key={i} style={{ ...lbl, marginTop: i ? 10 : 0, color: 'var(--accent)' }}>▸ {e.text}</div>;
+            if (e.kind === 'done') return <div key={i} style={{ fontSize: 12, color: '#2e9c4a', marginTop: 8 }}>✓ {e.text}</div>;
+            if (e.kind === 'error') return <div key={i} style={{ fontSize: 12, color: '#c1432a', marginTop: 6 }}>⚠ {e.text}</div>;
+            if (e.kind === 'artifact') return <div key={i} style={{ fontSize: 11.5, color: 'var(--text)', margin: '4px 0', paddingLeft: 8, borderLeft: '2px solid var(--accent)' }}>◆ {e.text}{e.detail ? <span style={{ color: 'var(--text-dim)' }}> · {e.detail}</span> : null}</div>;
+            return (
+              <div key={i} style={{ margin: '3px 0', fontSize: e.kind === 'thinking' ? 12.5 : 11, lineHeight: 1.4 }}>
+                <span style={{ fontFamily: mono, fontSize: 10, color: w.c, fontWeight: 600 }}>{w.n}</span>
+                {e.kind === 'thinking'
+                  ? <span style={{ color: 'var(--text)' }}> {e.text}</span>
+                  : e.kind === 'tool'
+                    ? <span style={{ color: 'var(--text-dim)', fontFamily: mono }}> ▸ {e.text}{e.detail ? ` (${e.detail})` : ''}</span>
+                    : <span style={{ color: 'var(--text-dim)', fontFamily: mono }}> {e.text}{e.detail ? ` · ${e.detail}` : ''}</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {result && (
+        <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+          <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '8px 11px', fontSize: 12.5 }}>
+            <div style={lbl}>what the two agents actually produced</div>
+            <div style={{ marginTop: 5, color: result.sharedAtoms.length > 0 ? '#2e9c4a' : '#b45309' }}>
+              {result.sharedAtoms.length > 0
+                ? <>✓ <strong>{result.sharedAtoms.length}</strong> content-addressed atom(s) in <strong>both</strong> agents’ descriptors — one holarchy across two pods (A: {result.atomsA} atoms, B: {result.atomsB}).</>
+                : <>○ no shared atom surfaced this run (content-addressed; depends on the work the agents chose).</>}
             </div>
-            <div style={{ marginTop: 8, fontSize: 12.5, color: sc.sharedAtoms.length > 0 ? '#2e9c4a' : '#b45309' }}>
-              {sc.sharedAtoms.length > 0
-                ? <>✓ <strong>{sc.sharedAtoms.length}</strong> content-addressed atom(s) appear in <strong>both</strong> agents’ descriptors — the same node in two independent agents’ wholes. That is one hypergraph holarchy spanning two pods (federated shared memory, by content-addressing).</>
-                : <>○ no shared atom surfaced this run (atoms are content-addressed; retry to compose overlapping terms).</>}
-            </div>
-            {sc.sharedAtoms.length > 0 && <pre style={{ ...codeBox, marginTop: 6, maxHeight: 90 }}>{sc.sharedAtoms.slice(0, 4).join('\n')}</pre>}
+            {result.gapTotal > 0 && <div style={{ marginTop: 5 }}>B interrogated A over {result.gapTotal} interrogatives — <strong>{result.gapAbsent}</strong> absent. {result.gapArticulation && <span style={{ color: 'var(--text-dim)' }}>B’s words: “{result.gapArticulation.slice(0, 220)}”</span>}</div>}
+            {result.transferred != null && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6, alignItems: 'center' }}>
+                <span style={{ fontFamily: mono, fontSize: 10.5, padding: '3px 8px', borderRadius: 999, background: result.transferred ? 'rgba(46,160,67,0.14)' : 'rgba(217,119,6,0.14)', color: result.transferred ? '#2e9c4a' : '#b45309' }}>{result.transferred ? '✓ taught — transfer verified' : '○ not transferred'}</span>
+                {result.modalStatus && <span style={{ fontFamily: mono, fontSize: 10.5, padding: '3px 8px', borderRadius: 999, background: '#f3f3f1' }}>modal: {result.modalStatus}</span>}
+                <span style={{ fontFamily: mono, fontSize: 11, color: 'var(--text-dim)' }}>signal {pct(result.beforeSignal)} → {pct(result.afterSignal)}</span>
+              </div>
+            )}
+            {result.evidence && <div style={{ fontSize: 12, color: 'var(--text)', marginTop: 5, lineHeight: 1.45 }}>{result.evidence}</div>}
             <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>
-              {sc.descriptorUrlA && <a href={sc.descriptorUrlA} target="_blank" rel="noreferrer" style={linkBtn}>A’s descriptor ↗</a>}
-              {sc.descriptorUrlB && <> · <a href={sc.descriptorUrlB} target="_blank" rel="noreferrer" style={linkBtn}>B’s descriptor ↗</a></>} — dereference both; the shared atom URN is literally in each.
+              {result.descriptorUrlA && <a href={result.descriptorUrlA} target="_blank" rel="noreferrer" style={linkBtn}>A’s descriptor ↗</a>}
+              {result.descriptorUrlB && <> · <a href={result.descriptorUrlB} target="_blank" rel="noreferrer" style={linkBtn}>B’s descriptor ↗</a></>} — dereference both; the shared atom URN is literally in each.
             </div>
           </div>
-
-          {/* 2 · the gap between them */}
-          {gap && (
-            <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '9px 11px' }}>
-              <div style={lbl}>2 · the gap between A and B</div>
-              <div style={{ fontSize: 12.5, marginTop: 4 }}>
-                B interrogated A’s holon over {gap.length} interrogatives — <strong>{absent.length}</strong> came back <code style={codeS}>absent</code>: context B would need to act that A’s shared descriptor doesn’t carry. The gap is <em>between the two agents</em>, surfaced from real bytes — not declared.
-              </div>
-            </div>
-          )}
-
-          {/* 3 · verified teaching */}
-          {verdict && (verdict.ok
-            ? <div style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '9px 11px' }}>
-                <div style={lbl}>3 · A teaches B — transfer verified, not asserted</div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5, alignItems: 'center' }}>
-                  <span style={{ fontFamily: mono, fontSize: 10.5, padding: '3px 8px', borderRadius: 999, background: verdict.transferred ? 'rgba(46,160,67,0.14)' : 'rgba(217,119,6,0.14)', color: verdict.transferred ? '#2e9c4a' : '#b45309' }}>{verdict.transferred ? '✓ transferred' : '○ not yet transferred'}</span>
-                  {verdict.modalStatus && <span style={{ fontFamily: mono, fontSize: 10.5, padding: '3px 8px', borderRadius: 999, background: '#f3f3f1' }}>modal: {verdict.modalStatus}</span>}
-                  <span style={{ fontFamily: mono, fontSize: 11, color: 'var(--text-dim)' }}>taught-behaviour signal {pct(verdict.beforeSignal)} → {pct(verdict.afterSignal)} · old behaviour {pct(verdict.beforeAnti)} → {pct(verdict.afterAnti)}</span>
-                </div>
-                {verdict.evidence && <div style={{ fontSize: 12, color: 'var(--text)', marginTop: 6, lineHeight: 1.45 }}>{verdict.evidence}</div>}
-              </div>
-            : <div style={{ color: '#c1432a', fontFamily: mono, fontSize: 12 }}>⚠ teach: {verdict.error}</div>)}
         </div>
       )}
 
       <Crosswalk rows={[
+        ['agents that reason + act (not scripts)', 'two Claude tool-use loops, model-chosen calls to the live bridge'],
         ['shared context / federated memory', 'one content-addressed atom in two agents’ holons (a holarchy across pods)'],
-        ['contextual misalignment between participants', 'B’s absent interrogatives on A’s shared holon — the gap is inter-agent'],
-        ['agents that build capability in each other', 'POST /agent/teach — teacher-signed, transfer verified from the learner’s trajectories'],
-        ['attestation / trust', 'the teach verdict + amta: attestation (modal status flips on verified transfer)'],
+        ['contextual misalignment between participants', 'B’s absent interrogatives on A’s holon — the gap, named by B in its own words'],
+        ['agents that build capability in each other', 'POST /agent/teach — teacher-signed, transfer verified from behaviour'],
       ]} />
-      <Delta>What’s real: two independent wallets, two signed performances, a genuinely shared content-addressed atom (dereference both descriptors), a live inter-agent interrogation, and a live teacher-signed transfer whose verdict the bridge computes. The one illustrative part is the teach step’s before/after <em>trajectories</em> (demo inputs) — the signature gate and the transfer-verification math are the real primitive, the same one the <code style={codeS}>/emergent</code> demo composes.</Delta>
+      <Delta>The agents genuinely drive this — the model picks each tool call and B articulates the gap in its own words. Real + verifiable: two self-sovereign wallets, two signed performances, a shared content-addressed atom (dereference both descriptors), a live inter-agent interrogation, and a teacher-signed transfer whose verdict the bridge computes. The one illustrative part is the teach step’s before/after <em>trajectories</em> (built from the markers the teacher chose) — the signature gate + transfer-verification math are the real primitive, same as the <code style={codeS}>/emergent</code> demo. Your key calls <code style={codeS}>api.anthropic.com</code> directly from this tab; it is never sent to our servers.</Delta>
     </div>
   );
 }

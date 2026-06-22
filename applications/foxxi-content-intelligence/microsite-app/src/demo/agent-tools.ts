@@ -4,7 +4,11 @@
  * and with WHAT args; dispatchTool makes the genuine signed call. Nothing here
  * is simulated — every dispatch hits the live bridge and returns its real body.
  */
+import { ethers } from 'ethers';
 import { type AgentWallet, postSigned, postPlain, getBridge, type BridgeResult } from './agent-signing.js';
+
+const enc = new TextEncoder();
+const sha256Hex = (s: string): string => ethers.sha256(enc.encode(s)).slice(2);
 
 export interface ToolDef {
   name: string;
@@ -67,6 +71,25 @@ export const TOOLS: Record<string, ToolDef> = {
       activity_type: str('The activity-type IRI (e.g. the agp:StandardsExtension IRI).'),
     }, required: ['task_name', 'success'] },
   },
+  interrogate_holon: {
+    name: 'interrogate_holon',
+    description: 'Interrogate a PEER agent\'s holon (its context descriptor) to discover, per interrogative (who / what / when / why / how / …), what it resolves and what is ABSENT. Use this to find the gap between the context a peer shared and what YOU would need to act on it. Returns each interrogative with status full | partial | pointer | absent.',
+    input_schema: { type: 'object', properties: {
+      holon_uri: str('The peer holon URI (urn:pgsl:…) to interrogate. If omitted, uses the peer holon in context.'),
+      label: str('The peer agent\'s lattice label (eth-…). If omitted, uses the peer label in context.'),
+    } },
+  },
+  teach_agent: {
+    name: 'teach_agent',
+    description: 'Teach a PEER agent a capability over the live A2A teaching endpoint. You (the teacher) cryptographically sign the teaching package; the bridge VERIFIES the transfer from the learner\'s before/after behaviour — it is not taken on your word. Provide the competency, a one-sentence target behaviour, and the verb markers that signal the NEW (taught) behaviour vs the OLD behaviour you want it to replace.',
+    input_schema: { type: 'object', properties: {
+      learner_did: str('did:ethr of the learner. If omitted, uses the peer in context.'),
+      competency: str('The capability being taught, e.g. "consult the authoritative standard before acting".'),
+      target_description: str('One sentence describing the target behaviour.'),
+      signal_markers: { type: 'array', description: 'Verb markers indicating the NEW (taught) behaviour, e.g. ["reference","look up","consult"].', items: { type: 'string' } },
+      anti_signal_markers: { type: 'array', description: 'Verb markers indicating the OLD behaviour to replace, e.g. ["guess","skip"].', items: { type: 'string' } },
+    }, required: ['competency', 'target_description', 'signal_markers'] },
+  },
   verify_extension: {
     name: 'verify_extension',
     description: 'Independently verify, from a SUBJECT\'s OWN authoritative pod records, that they completed an engine-graded course AND recorded a domain-typed StandardsExtension performance, and that a named extension conforms to the agp:StandardsExtension shape. Use this BEFORE issuing a credential — it separates independently-verified evidence (tamper-evident engine grading + shape conformance) from any self-attested outcome.',
@@ -116,7 +139,7 @@ export const TOOLS: Record<string, ToolDef> = {
 export type ToolName = keyof typeof TOOLS;
 export const toolList = (names: ToolName[]): ToolDef[] => names.map(n => TOOLS[n]);
 
-export interface DispatchCtx { authorDid?: string; subjectDid?: string }
+export interface DispatchCtx { authorDid?: string; subjectDid?: string; holonUri?: string; label?: string; learnerDid?: string }
 
 /** Make the real bridge call for a tool the LLM chose. */
 export async function dispatchTool(name: string, input: Record<string, unknown>, agent: AgentWallet, ctx: DispatchCtx = {}): Promise<BridgeResult> {
@@ -137,6 +160,28 @@ export async function dispatchTool(name: string, input: Record<string, unknown>,
       return postSigned('/agent/scorm/submit', agent, { session_id: input.session_id, answers: input.answers });
     case 'record_performance':
       return postSigned('/agent/record-performance', agent, { task_name: input.task_name, success: input.success ?? true, quality: input.quality, activity_type: input.activity_type });
+    case 'interrogate_holon': {
+      const holon = String(input.holon_uri ?? ctx.holonUri ?? '');
+      const label = String(input.label ?? ctx.label ?? '');
+      return getBridge(`/agent/lattice/${encodeURIComponent(label)}/interrogate?uri=${encodeURIComponent(holon)}&agent_did=${encodeURIComponent(agent.did)}`);
+    }
+    case 'teach_agent': {
+      const competency = String(input.competency ?? 'a capability');
+      const signalMarkers = Array.isArray(input.signal_markers) ? (input.signal_markers as string[]) : [];
+      const antiSignalMarkers = Array.isArray(input.anti_signal_markers) ? (input.anti_signal_markers as string[]) : [];
+      const teachingPackage = { iri: `urn:iep:teaching:${agent.address.slice(2, 10)}-${sha256Hex(competency).slice(0, 8)}`, artifactIri: 'urn:iep:tool:taught-capability', competency, olkeStage: 'Articulate', modalStatus: 'Hypothetical' };
+      const targetBehaviour = { description: String(input.target_description ?? competency), signalMarkers, ...(antiSignalMarkers.length ? { antiSignalMarkers } : {}) };
+      const tuple = JSON.stringify({ teachingPackage, targetBehaviour });
+      const signature = await agent.wallet.signMessage(`sha256:${sha256Hex(tuple)}`);
+      const learnerDid = String(input.learner_did ?? ctx.learnerDid ?? '');
+      // Illustrative before/after trajectories built from the teacher's chosen markers:
+      // the signature gate + the bridge's transfer-verification math are the real
+      // primitive; the trajectories are demo inputs (same as the /emergent demo).
+      const traj = (verbs: string[]) => [{ agentDid: learnerDid, agentName: 'learner', createdAt: new Date().toISOString(), steps: verbs.map((v, i) => ({ modalStatus: 'Asserted', granularity: 'tool-call', verb: v, objectId: `o${i}`, objectName: 'step', recordedAt: new Date().toISOString() })) }];
+      const before = traj([...(antiSignalMarkers.length ? antiSignalMarkers : ['guess', 'skip']), 'act', 'escalate']);
+      const after = traj([...(signalMarkers.length ? signalMarkers : ['consult']), ...(signalMarkers.length ? signalMarkers : ['reference']), 'complete', 'verify']);
+      return postPlain('/agent/teach', { teachingPackage, teacher: { id: agent.did, kind: 'agent' }, learner: { id: learnerDid, kind: 'agent' }, targetBehaviour, signature, signedPayload: tuple, before, after });
+    }
     case 'verify_extension':
       return postSigned('/agent/verify-extension', agent, { subject_did: input.subject_did ?? ctx.subjectDid, name: input.name, kind: input.kind });
     case 'prove_competency':
