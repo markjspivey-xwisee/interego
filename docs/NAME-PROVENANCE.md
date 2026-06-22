@@ -10,6 +10,11 @@ contemporaneous W3C efforts: the **Context Graphs Community Group** and the **Ho
 It is deliberately plain and does not claim priority. Where Interego is ahead we say so; where a W3C
 effort does something Interego does not, or got there first, we say that too.
 
+> **Live demo.** A no-signup, bring-your-own-key microsite maps each of these efforts to the live Interego
+> primitive that corresponds to it — minting a holon, ingesting a DataBook, interrogating for context gaps,
+> and running the strict `SKILL.md ⇄ iep:Affordance` translator — against the deployed bridge:
+> **<https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io/convergence>**
+
 ---
 
 ## 1. Summary
@@ -158,3 +163,4 @@ property of Interego": for the gap/mismatch problem, yes — via semiotics, not 
 - Interego Protocol spec: [`spec/interego-protocol-1.0-wd.html`](spec/interego-protocol-1.0-wd.html)
 - Interego architectural foundations: [`ARCHITECTURAL-FOUNDATIONS.md`](ARCHITECTURAL-FOUNDATIONS.md)
 - The `cg:` → `iep:` migration: [`ns/cg.ttl`](ns/cg.ttl) (deprecated alias) → [`ns/iep.ttl`](ns/iep.ttl)
+- Live convergence demo (no signup, BYOK): <https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io/convergence>

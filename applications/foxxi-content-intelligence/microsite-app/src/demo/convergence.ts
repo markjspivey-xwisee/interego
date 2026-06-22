@@ -97,6 +97,49 @@ export async function emitSkill(course: any, holonUri?: string): Promise<{ ok: b
   return { ok: true, skillMd: String((json as any).skillMd ?? '') };
 }
 
+export interface SkillAffordance {
+  ok: boolean; error?: string;
+  skillIri?: string; graphIri?: string;
+  graphContent?: string; roundTripMd?: string;
+  validation?: Array<{ message?: string; path?: string; [k: string]: unknown }>;
+}
+
+/**
+ * The STRICT translator: SKILL.md → a real `iep:Affordance` ContextDescriptor
+ * graph and back, via the CORE `@interego/skills` bridge
+ * (`skillBundleToDescriptor` / `descriptorGraphToSkillMd`) running on the live
+ * bridge. This is the literal agentskills.io ⇄ iep:Affordance translator — the
+ * one the DataBook panel honestly disclaims it is NOT. The returned graph's
+ * subject is typed `iep:Affordance, ieh:Affordance, hydra:Operation,
+ * dcat:Distribution`; the round-trip proves the translation is lossless for the
+ * core fields. Pure translation — no pod write, no signing.
+ */
+export async function skillToAffordance(skillMd: string, agentDid?: string): Promise<SkillAffordance> {
+  const did = agentDid ?? freshAgent().did;  // a real authoring DID → PROV provenance on the descriptor
+  const { status, json } = await bridgeRest('/agent/skill/affordance', { skillMd, agentDid: did });
+  if (status !== 200 || (json as any).ok === false) return { ok: false, error: String((json as any).error ?? `HTTP ${status}`) };
+  const j = json as any;
+  return { ok: true, skillIri: j.skillIri, graphIri: j.graphIri, graphContent: j.graphContent, roundTripMd: j.roundTripMd, validation: j.validation };
+}
+
+/** A small but real SKILL.md (agentskills.io shape) to seed the translator panel. */
+export const SAMPLE_SKILL_MD = [
+  '---',
+  'name: verify-peer-competency',
+  'description: Verify a peer agent’s claimed competency before delegating work to it.',
+  'license: CC-BY-4.0',
+  '---',
+  '## Approach',
+  'Discover the peer’s capability-passport descriptor, dereference its',
+  'CompetencyAssertion VCs, and check each VC’s modal status + signature before',
+  'trusting the claim. Treat an unverifiable claim as Hypothetical, not Asserted.',
+  '',
+  '## Steps',
+  '1. Resolve the peer DID → its registry descriptor.',
+  '2. Follow the iep:Affordance to its competency credentials.',
+  '3. Verify the issuer signature + supersedes-chain; downgrade on any gap.',
+].join('\n');
+
 /** Fetch a slice of the iep: protocol ontology (the renamed L1) for display. */
 export async function fetchProtocolExcerpt(): Promise<string> {
   try {

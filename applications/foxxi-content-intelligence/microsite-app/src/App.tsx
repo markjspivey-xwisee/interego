@@ -59,7 +59,7 @@ export function App() {
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <TopNav active={route} onNavigate={navigate} />
       <main style={{ flex: 1 }}>
-        {route === 'landing' && <Landing onTry={role => navigate('try', role)} onAbout={() => navigate('about')} />}
+        {route === 'landing' && <Landing onTry={role => navigate('try', role)} onAbout={() => navigate('about')} onConvergence={() => navigate('convergence')} />}
         {route === 'try' && <TryNow initialRole={tryRole} onAbout={() => navigate('about')} onHome={() => navigate('landing')} />}
         {route === 'about' && <About onTry={role => navigate('try', role)} onHome={() => navigate('landing')} />}
         {route === 'verify' && <Verify onHome={() => navigate('landing')} />}

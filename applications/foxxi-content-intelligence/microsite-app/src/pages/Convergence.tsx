@@ -15,8 +15,8 @@
 import React, { useState } from 'react';
 import {
   mintHolon, dereferenceDescriptor, interrogateHolon, ingestDataBook, emitSkill,
-  authorDataBook, fetchProtocolExcerpt, SAMPLE_DATABOOK, PAGES_NS,
-  type MintedHolon, type InterrogativeAnswer, type DataBookIngest,
+  authorDataBook, fetchProtocolExcerpt, skillToAffordance, SAMPLE_DATABOOK, SAMPLE_SKILL_MD, PAGES_NS,
+  type MintedHolon, type InterrogativeAnswer, type DataBookIngest, type SkillAffordance,
 } from '../demo/convergence.js';
 import { BRIDGE_URL } from '../bridge-client.js';
 
@@ -61,9 +61,10 @@ export function Convergence({ onHome }: { onHome: () => void }) {
         <strong> Context Graphs</strong> CG (proposed by Ron Itelman) — plus Cagle’s <strong>DataBook</strong> spec (a Holon-CG
         deliverable, currently on his Substack) explore ideas Interego independently arrived at and runs as a live substrate.
         These are <strong>independent, near-contemporaneous</strong> lines of work — no precedence is claimed in either
-        direction (the W3C Context Graphs CG was proposed before this repo’s first commit; see the provenance note). Each panel
-        maps a concept to the <strong>live Interego primitive</strong> that corresponds to it, on the renamed
-        <strong> Interego Protocol</strong> (<code style={codeS}>iep:</code>, formerly <code style={codeS}>cg:</code>).
+        direction (the W3C Context Graphs CG was proposed before this repo’s first commit; see the provenance note). The first
+        three panels map a concept to the <strong>live Interego primitive</strong> that corresponds to it, on the renamed
+        <strong> Interego Protocol</strong> (<code style={codeS}>iep:</code>, formerly <code style={codeS}>cg:</code>); a fourth
+        runs the strict <code style={codeS}>SKILL.md ⇄ iep:Affordance</code> translator the DataBook panel references.
         Real signed calls to <code style={codeS}>{BRIDGE_URL.replace(/^https?:\/\//, '')}</code>. <strong>No key needed</strong>;
         bring an Anthropic key only to have an LLM author a DataBook (it stays in this tab). See <a href="https://markjspivey-xwisee.github.io/interego/NAME-PROVENANCE.md" target="_blank" rel="noreferrer" style={linkBtn}>the name-provenance note</a> for the honest lineage.
       </p>
@@ -71,6 +72,7 @@ export function Convergence({ onHome }: { onHome: () => void }) {
       <HolonPanel />
       <DataBookPanel apiKey={apiKey} />
       <ContextGapPanel />
+      <AffordancePanel />
 
       <div style={{ ...card, marginTop: 14 }}>
         <div style={lbl}>Anthropic key (optional — only for LLM DataBook authoring; sent only to api.anthropic.com from this tab)</div>
@@ -219,7 +221,7 @@ function DataBookPanel({ apiKey }: { apiKey: string }) {
         ['fenced turtle / shacl blocks', 'carried verbatim in the holon’s section content (not parsed to atoms on this path)'],
         ['a DataBook is a holon', 'the ingested artifact is an iep: holon in the lattice'],
       ]} />
-      <Delta>Two honest caveats. (1) This panel uses Foxxi’s <em>course</em> bridge (a richer, interrogable holon) — the strict <code style={codeS}>SKILL.md → iep:Affordance</code> descriptor translator (typed <code style={codeS}>iep:Affordance</code> + <code style={codeS}>hydra:Operation</code> + <code style={codeS}>dcat:Distribution</code>) lives in <code style={codeS}>@interego/skills</code> and is not what this live call invokes. (2) A DataBook <em>executes its embedded logic inline</em> (a CLI runs the fenced SPARQL); Interego deliberately does <strong>not</strong> — it references content-addressed reducers + kernel verbs <em>by</em> the descriptor, so every step is replayable. The carrier idea is shared; the execution locus differs.</Delta>
+      <Delta>Two honest caveats. (1) This panel uses Foxxi’s <em>course</em> bridge (a richer, interrogable holon) — the strict <code style={codeS}>SKILL.md → iep:Affordance</code> descriptor translator (typed <code style={codeS}>iep:Affordance</code> + <code style={codeS}>hydra:Operation</code> + <code style={codeS}>dcat:Distribution</code>) lives in <code style={codeS}>@interego/skills</code> and is not what this live call invokes — <strong>panel 4 below runs that strict translator directly</strong>. (2) A DataBook <em>executes its embedded logic inline</em> (a CLI runs the fenced SPARQL); Interego deliberately does <strong>not</strong> — it references content-addressed reducers + kernel verbs <em>by</em> the descriptor, so every step is replayable. The carrier idea is shared; the execution locus differs.</Delta>
     </div>
   );
 }
@@ -292,6 +294,88 @@ function ContextGapPanel() {
         ['mismatch-category vocabulary', 'emergent usage pattern (not a declared taxonomy)'],
       ]} />
       <Delta>The CG names + is standardizing the problem; Interego treats it implicitly via usage-based semiotics — meaning is use, so categories of mismatch <em>crystallize from usage</em> rather than being authored up front. The piece Interego does <strong>not</strong> yet ship is the gap-detection predicate that would turn an absent interrogative into an abstain/escalate; it can carry the CG’s artifacts once defined, and would conform to a published CG vocabulary.</Delta>
+    </div>
+  );
+}
+
+// ── Panel 4: the strict SKILL.md ⇄ iep:Affordance translator ────────────────
+// True-to-label companion to panel 2: this runs the CORE @interego/skills bridge
+// (skillBundleToDescriptor / descriptorGraphToSkillMd) live — the genuine
+// agentskills.io ⇄ iep:Affordance translator, not the course KG.
+function AffordancePanel() {
+  const [md, setMd] = useState(SAMPLE_SKILL_MD);
+  const [res, setRes] = useState<SkillAffordance | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true); setErr(null); setRes(null);
+    const r = await skillToAffordance(md);
+    setBusy(false);
+    if (r.ok) setRes(r); else setErr(r.error ?? 'translate failed');
+  }
+
+  const g = res?.graphContent ?? '';
+  // Honest type-detection straight from the returned graph (no fabrication). The
+  // graph serializes FULL IRIs in angle brackets (not prefixes), so match the IRI
+  // suffixes the @interego/skills bridge actually emits: iep:→/ns/iep#,
+  // ieh:→/ns/harness#, hydra:→/ns/hydra/core#, dcat:→/ns/dcat#.
+  const types: Array<[string, boolean]> = [
+    ['iep:Affordance', /iep#Affordance|\biep:Affordance\b/.test(g)],
+    ['ieh:Affordance', /harness#Affordance|\bieh:Affordance\b/.test(g)],
+    ['hydra:Operation', /hydra\/core#Operation|\bhydra:Operation\b/.test(g)],
+    ['dcat:Distribution', /dcat#Distribution|\bdcat:Distribution\b/.test(g)],
+  ];
+  const roundTripped = !!res?.roundTripMd && res.roundTripMd.trim().startsWith('---');
+
+  return (
+    <div style={{ ...card, marginTop: 14 }}>
+      <div style={{ fontFamily: serif, fontSize: 22 }}>4 · SKILL.md ⇄ iep:Affordance <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>— the strict <code style={codeS}>@interego/skills</code> translator (the genuine article)</span></div>
+      <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5, margin: '6px 0' }}>
+        Panel 2 honestly disclaims that ingesting a DataBook uses the <em>course</em> bridge, not the strict
+        translator. <strong>This panel runs the strict one</strong>: the core <code style={codeS}>@interego/skills</code> bridge
+        (<code style={codeS}>skillBundleToDescriptor</code> / <code style={codeS}>descriptorGraphToSkillMd</code>) translates an
+        agentskills.io <code style={codeS}>SKILL.md</code> into a real <code style={codeS}>iep:Affordance</code> ContextDescriptor
+        graph — typed <code style={codeS}>iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution</code> — and
+        round-trips it back to a SKILL.md. Pure translation: no pod write, no signing (the authoring DID rides in PROV
+        provenance only).
+      </p>
+      <textarea value={md} onChange={e => setMd(e.target.value)} rows={9} spellCheck={false}
+        style={{ width: '100%', padding: 9, borderRadius: 6, border: '1px solid var(--border)', fontFamily: mono, fontSize: 11.5, boxSizing: 'border-box' }} />
+      <div style={{ marginTop: 8 }}>
+        <button onClick={run} disabled={busy || !md.trim()} style={{ ...btn, opacity: busy || !md.trim() ? 0.5 : 1 }}>{busy ? 'translating…' : 'Translate → iep:Affordance (live, no key)'}</button>
+      </div>
+      {err && <div style={{ color: '#c1432a', fontFamily: mono, fontSize: 12, marginTop: 8 }}>⚠ {err}</div>}
+      {res && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12.5 }}><strong>skill IRI:</strong> <code style={{ ...codeS, fontSize: 11 }}>{res.skillIri}</code></div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+            {types.map(([t, ok]) => (
+              <span key={t} style={{ fontFamily: mono, fontSize: 10.5, padding: '3px 8px', borderRadius: 999, background: ok ? 'rgba(46,160,67,0.14)' : 'rgba(193,67,42,0.12)', color: ok ? '#2e9c4a' : '#c1432a' }}>{ok ? '✓' : '✗'} a {t}</span>
+            ))}
+            <span style={{ fontFamily: mono, fontSize: 10.5, padding: '3px 8px', borderRadius: 999, background: roundTripped ? 'rgba(46,160,67,0.14)' : 'rgba(217,119,6,0.14)', color: roundTripped ? '#2e9c4a' : '#b45309' }}>{roundTripped ? '✓ round-trips to SKILL.md' : '○ round-trip pending'}</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 10 }}>
+            <div>
+              <div style={lbl}>the iep:Affordance descriptor graph (Turtle)</div>
+              <pre style={{ ...codeBox, marginTop: 4 }}>{g.split('\n').slice(0, 30).join('\n')}</pre>
+            </div>
+            <div>
+              <div style={lbl}>round-tripped back to SKILL.md</div>
+              {res.roundTripMd
+                ? <pre style={{ ...codeBox, marginTop: 4 }}>{res.roundTripMd}</pre>
+                : <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>—</div>}
+            </div>
+          </div>
+        </div>
+      )}
+      <Crosswalk rows={[
+        ['agentskills.io SKILL.md', 'iep:Affordance ContextDescriptor (typed iep/ieh:Affordance + hydra:Operation + dcat:Distribution)'],
+        ['frontmatter (name / description / license)', 'descriptor metadata + provenance (dct:license, prov:wasAttributedTo)'],
+        ['the SKILL.md body', 'a content-addressed atom referenced by the descriptor'],
+        ['SKILL.md is the portable form', 'descriptor → SKILL.md round-trip is lossless for the core fields'],
+      ]} />
+      <Delta>This is the strict translator the DataBook panel says it is not. Scope of this one-shot: it translates a single <code style={codeS}>SKILL.md</code> (no bundled side-files) and is pure — it does not sign or persist the descriptor (those are separate kernel verbs) and does not invoke the skill. The round-trip is lossless for the core fields; rich embedded SHACL or multi-file bundles are out of scope on this call.</Delta>
     </div>
   );
 }

@@ -115,6 +115,7 @@ import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, type AgentScormCourseLike } from '../src/course-graph.js';
 import { courseToSkillMd, skillMdToAgenticCourse } from '../src/course-skill-bridge.js';
 import { routeInterrogatives } from '@interego/pgsl';
+import { skillBundleToDescriptor, descriptorGraphToSkillMd } from '@interego/skills';
 import { mintSessionToken } from '../src/auth.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
@@ -3681,6 +3682,37 @@ app.post('/agent/course/analyze-skill', async (req, res) => {
       if (sl) courseKg = { label: realLabel, holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl, agentDid: tenantProfileDid, reusedNodes: sl.reusedNodes, newNodes: sl.newNodes, stats: sl.stats };
     }
     res.json({ ok: true, fingerprint, structure: built.structure, course: built.course, courseKg, fromSkill: true });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+});
+
+// ── The STRICT SKILL.md ⇄ iep:Affordance translator ───────────────────────────
+// The CORE @interego/skills bridge (skillBundleToDescriptor / descriptorGraphToSkillMd),
+// distinct from the course-KG ingest above. Translates a SKILL.md into a real
+// iep:Affordance ContextDescriptor graph — the subject is typed iep:Affordance,
+// ieh:Affordance, hydra:Operation, dcat:Distribution — and round-trips it back to a
+// SKILL.md, demonstrating the markdown-carrier ⇄ typed-affordance translation is
+// lossless for the core fields. Pure translation: no pod write, no signing — the
+// authoring DID rides in PROV provenance only. This is what the convergence demo's
+// DataBook panel honestly disclaims it is NOT (that panel uses the richer course KG).
+app.post('/agent/skill/affordance', (req, res) => {
+  try {
+    const skillMd = typeof req.body?.skillMd === 'string' ? req.body.skillMd : '';
+    if (!skillMd.trim()) { res.status(400).json({ ok: false, error: 'skillMd (a SKILL.md string) required' }); return; }
+    if (skillMd.length > 2_000_000) { res.status(413).json({ ok: false, error: 'skillMd too large (>2MB)' }); return; }
+    const did = typeof req.body?.agentDid === 'string' && req.body.agentDid.startsWith('did:')
+      ? req.body.agentDid : 'did:ethr:0x0000000000000000000000000000000000000000';
+    const bundle = skillBundleToDescriptor({ skillMd, files: new Map() }, { authoringAgentDid: did, modalStatus: 'Hypothetical' });
+    let roundTripMd = '';
+    try { roundTripMd = descriptorGraphToSkillMd(bundle.graphContent); } catch { /* round-trip is best-effort display */ }
+    res.json({
+      ok: true,
+      skillIri: bundle.skillIri,
+      graphIri: bundle.graphIri,
+      graphContent: bundle.graphContent,
+      roundTripMd,
+      atomIris: Object.fromEntries(bundle.atomIris),
+      validation: bundle.skillValidation,
+    });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 

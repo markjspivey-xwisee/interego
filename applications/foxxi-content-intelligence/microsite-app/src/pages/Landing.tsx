@@ -1,6 +1,6 @@
 import React from 'react';
 
-export function Landing({ onTry, onAbout }: { onTry: (role: 'learner' | 'admin' | 'le') => void; onAbout: () => void }) {
+export function Landing({ onTry, onAbout, onConvergence }: { onTry: (role: 'learner' | 'admin' | 'le') => void; onAbout: () => void; onConvergence: () => void }) {
   return (
     <>
       {/* Hero */}
@@ -98,6 +98,28 @@ export function Landing({ onTry, onAbout }: { onTry: (role: 'learner' | 'admin' 
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-dim)' }}>
           Every conformance claim is wired to source code in the public repo.
+        </div>
+      </section>
+
+      {/* W3C convergence callout */}
+      <section style={{ maxWidth: 1100, margin: '34px auto 0', padding: '0 24px' }}>
+        <div style={{
+          padding: 20, background: 'var(--panel)',
+          border: '1px solid var(--border)', borderLeft: '3px solid var(--accent)', borderRadius: 6,
+          display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between',
+        }}>
+          <div style={{ maxWidth: 720 }}>
+            <div style={{ fontFamily: "'EB Garamond', serif", fontStyle: 'italic', fontSize: 21, color: 'var(--text)' }}>
+              How Interego lines up with the W3C
+            </div>
+            <div style={{ fontSize: 14, color: 'var(--text-dim)', lineHeight: 1.55, marginTop: 6 }}>
+              The W3C Holon CG, Kurt Cagle&rsquo;s DataBook spec, and the Context Graphs CG explore ideas Interego
+              independently arrived at. Four live, no-signup panels map each to the corresponding Interego primitive —
+              including the strict <code style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5 }}>SKILL.md&nbsp;&#8644;&nbsp;iep:Affordance</code> translator.
+              No precedence is claimed in either direction.
+            </div>
+          </div>
+          <SecondaryCta onClick={onConvergence}>W3C convergence &rarr;</SecondaryCta>
         </div>
       </section>
 

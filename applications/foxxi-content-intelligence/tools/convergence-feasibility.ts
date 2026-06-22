@@ -8,10 +8,16 @@
  *     atoms in the lattice (a PART of a larger hypergraph holarchy: reusedNodes>0).
  *  (CONTEXT GAP, vs W3C Context Graphs CG)  interrogate the holon -> the per-
  *     interrogative resolution state (full / partial / pointer / absent) IS the
- *     context-gap resolution state; "absent + caveat" IS safe-stop. Emergent.
+ *     context-gap resolution state; an `absent` answer is the unresolved-context
+ *     PRECONDITION a safe-stop keys on (the gap->trigger predicate is not yet
+ *     wired — see docs/NAME-PROVENANCE.md §6). Emergent, not declared.
  *  (DATABOOK, vs Cagle DataBook)  ingest a DataBook-shaped Markdown (YAML
  *     frontmatter + fenced turtle) -> composed into a holon; and emit a SKILL.md
  *     back (markdown-carrier-of-semantics round-trip).
+ *  (AFFORDANCE, the strict @interego/skills translator)  POST a SKILL.md ->
+ *     a real iep:Affordance ContextDescriptor graph (typed iep:Affordance,
+ *     ieh:Affordance, hydra:Operation, dcat:Distribution) -> round-trip back to
+ *     SKILL.md. The genuine agentskills.io <-> iep:Affordance translator.
  *
  * Plus: /ns/iep dereferences (the renamed protocol) and the legacy /ns/cg alias.
  *
@@ -93,6 +99,21 @@ async function main(): Promise<void> {
     const emit = await post('/agent/course/skill', { course: ing.b.course, tool: 'DataBook', holonUri: ing.b?.courseKg?.holonUri });
     check('round-trip: emit a SKILL.md back (markdown-carrier-of-semantics)', emit.s === 200 && typeof emit.b?.skillMd === 'string' && emit.b.skillMd.includes('---'), `skillMd ${String(emit.b?.skillMd ?? '').length} chars`);
   }
+
+  console.log('\n=== (AFFORDANCE) strict SKILL.md -> iep:Affordance translator + round-trip ===');
+  const skillMd = [
+    '---', 'name: verify-peer-competency', 'description: Verify a peer agent’s competency before delegating.',
+    'license: CC-BY-4.0', '---',
+    '## Approach', 'Discover the passport, dereference the CompetencyAssertion VCs, check modal status + signature.',
+  ].join('\n');
+  const aff = await post('/agent/skill/affordance', { skillMd, agentDid: did });
+  const g = String(aff.b?.graphContent ?? '');
+  check('SKILL.md translates to an iep:Affordance descriptor graph', aff.s === 200 && aff.b?.ok !== false && !!g, `skillIri=${String(aff.b?.skillIri ?? '').slice(0, 40)}`);
+  check('subject is typed iep:Affordance + ieh:Affordance + hydra:Operation + dcat:Distribution',
+    /iep#Affordance/.test(g) && /harness#Affordance/.test(g) && /hydra\/core#Operation/.test(g) && /dcat#Distribution/.test(g),
+    `iep=${/iep#Affordance/.test(g)} ieh=${/harness#Affordance/.test(g)} hydra=${/hydra\/core#Operation/.test(g)} dcat=${/dcat#Distribution/.test(g)}`);
+  check('skill IRI is on the renamed protocol (urn:iep:skill:…) + carries PROV provenance', String(aff.b?.skillIri ?? '').startsWith('urn:iep:skill:') && /prov#wasAttributedTo/.test(g), `attributed=${/prov#wasAttributedTo/.test(g)}`);
+  check('round-trips back to a frontmatter-led SKILL.md (lossless for core fields)', typeof aff.b?.roundTripMd === 'string' && aff.b.roundTripMd.trim().startsWith('---') && aff.b.roundTripMd.includes('verify-peer-competency'), `${String(aff.b?.roundTripMd ?? '').length} chars`);
 
   console.log('\n=== (PROTOCOL) /ns/iep dereferences + legacy /ns/cg alias ===');
   for (const [u, want] of [[`${PAGES}/iep.ttl`, 'iep:ContextDescriptor'], [`${PAGES}/cg.ttl`, 'isReplacedBy']] as const) {
