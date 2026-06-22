@@ -12,11 +12,14 @@
  * BYOK (optional, key stays in this tab): an LLM authors a DataBook from a plain
  * description; everything else runs keyless.
  */
+import { ethers } from 'ethers';
 import { freshAgent, postSigned, type AgentWallet } from './agent-signing.js';
 import { bridgeRest, BRIDGE_URL } from '../bridge-client.js';
 
 const STD = 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#StandardsExtension';
 export const PAGES_NS = 'https://markjspivey-xwisee.github.io/interego/ns';
+const enc = new TextEncoder();
+const sha256Hex = (s: string): string => ethers.sha256(enc.encode(s)).slice(2);
 
 export interface MintedHolon {
   agent: AgentWallet; label: string; did: string;
@@ -139,6 +142,86 @@ export const SAMPLE_SKILL_MD = [
   '2. Follow the iep:Affordance to its competency credentials.',
   '3. Verify the issuer signature + supersedes-chain; downgrade on any gap.',
 ].join('\n');
+
+// ── Multi-agent: the whole point ────────────────────────────────────────────
+// Context is shared, composed, and reconciled BETWEEN agents — not by one agent
+// alone. These compose existing signed endpoints (record-performance / interrogate
+// / teach); no new substrate.
+
+export interface SharedContext {
+  a: AgentWallet; b: AgentWallet; labelA: string;
+  holonA?: string; holonB?: string;
+  descriptorUrlA?: string; descriptorUrlB?: string;
+  sharedAtoms: string[];          // content-addressed atom URNs present in BOTH descriptors
+  atomsA: number; atomsB: number; // total distinct atoms per agent descriptor
+}
+
+const ATOM_RE = /urn:pgsl:atom:[a-z0-9:.\-]+/gi;
+const atomsIn = (ttl: string): string[] => [...new Set((ttl.match(ATOM_RE) ?? []))];
+
+/**
+ * Two fresh, independent agents each record a real signed performance that
+ * references the SAME standard. We dereference both descriptors and surface the
+ * content-addressed atoms they SHARE — the same `urn:pgsl:atom:<hash>` appearing
+ * in both agents' wholes. That shared atom is one node in a hypergraph holarchy
+ * that spans two independent agents/pods: federated multi-agent shared memory, by
+ * content-addressing (no central registry, no copy). Throws if either holon fails
+ * to compose (never fabricates a shared-context claim).
+ */
+export async function twoAgentSharedContext(): Promise<SharedContext> {
+  const a = freshAgent(), b = freshAgent();
+  const labelA = `eth-${a.address.slice(2, 14)}`;
+  const recA = await postSigned('/agent/record-performance', a, { task_name: 'Shared context, composed by agent A', success: true, quality: 1, activity_type: STD });
+  const slA = ((recA.body ?? {}) as any).sharedLattice ?? {};
+  if (!recA.ok || !slA.holonUri) throw new Error(`agent A could not compose a holon: HTTP ${recA.status}`);
+  const recB = await postSigned('/agent/record-performance', b, { task_name: 'Agent B independently acts on the same standard', success: true, quality: 1, activity_type: STD });
+  const slB = ((recB.body ?? {}) as any).sharedLattice ?? {};
+  if (!recB.ok || !slB.holonUri) throw new Error(`agent B could not compose a holon: HTTP ${recB.status}`);
+  const dA = slA.descriptorUrl ? await dereferenceDescriptor(slA.descriptorUrl) : { ok: false, turtle: '' };
+  const dB = slB.descriptorUrl ? await dereferenceDescriptor(slB.descriptorUrl) : { ok: false, turtle: '' };
+  const aA = atomsIn(dA.turtle ?? ''), bA = atomsIn(dB.turtle ?? '');
+  return {
+    a, b, labelA, holonA: slA.holonUri, holonB: slB.holonUri,
+    descriptorUrlA: slA.descriptorUrl, descriptorUrlB: slB.descriptorUrl,
+    sharedAtoms: aA.filter(x => bA.includes(x)), atomsA: aA.length, atomsB: bA.length,
+  };
+}
+
+export interface TeachVerdict {
+  ok: boolean; error?: string;
+  transferred?: boolean; modalStatus?: string; evidence?: string;
+  beforeSignal?: number; afterSignal?: number; beforeAnti?: number; afterAnti?: number;
+}
+
+/**
+ * Agent A teaches Agent B a capability over the live A2A teaching endpoint. The
+ * TEACHER signs the (teachingPackage, targetBehaviour) tuple — the bridge gates on
+ * that ECDSA signature recovering to the teacher — and the transfer is VERIFIED,
+ * not asserted: the bridge measures the taught behaviour's signal share across the
+ * learner's before/after trajectories. HONESTY: the before/after trajectories here
+ * are illustrative demo inputs; the signature gate and the transfer-verification
+ * math are the real, live primitive (same composition as the /emergent demo).
+ */
+export async function teachPeer(teacher: AgentWallet, learner: AgentWallet): Promise<TeachVerdict> {
+  const teachingPackage = { iri: `urn:iep:teaching:convergence-${teacher.address.slice(2, 10)}`, artifactIri: 'urn:iep:tool:standard-reference', competency: 'consult the authoritative standard at the point of work', olkeStage: 'Articulate', modalStatus: 'Hypothetical' };
+  const targetBehaviour = { description: 'consults the authoritative standard before acting', signalMarkers: ['reference', 'look up', 'consult'], antiSignalMarkers: ['guess', 'skip'] };
+  const tuple = JSON.stringify({ teachingPackage, targetBehaviour });
+  const signature = await teacher.wallet.signMessage(`sha256:${sha256Hex(tuple)}`);
+  const traj = (steps: Array<[string, string]>) => [{ agentDid: learner.did, agentName: 'learner', createdAt: new Date().toISOString(), steps: steps.map(([v, o], i) => ({ modalStatus: 'Asserted', granularity: 'tool-call', verb: v, objectId: `o${i}`, objectName: o, recordedAt: new Date().toISOString() })) }];
+  const { status, json } = await bridgeRest('/agent/teach', {
+    teachingPackage, teacher: { id: teacher.did, kind: 'agent' }, learner: { id: learner.did, kind: 'agent' }, targetBehaviour,
+    signature, signedPayload: tuple,
+    before: traj([['guess', 'the next step'], ['skip', 'a checklist item'], ['act', 'on assumptions'], ['escalate', 'a mistake']]),
+    after: traj([['look up', 'the standard'], ['consult', 'the guidance'], ['apply', 'the referenced step'], ['look up', 'the standard again'], ['complete', 'the task'], ['verify', 'against the standard']]),
+  });
+  if (status !== 200) return { ok: false, error: String((json as any)?.error ?? `HTTP ${status}`) };
+  const v = (json as any)?.verdict ?? (json as any)?.['foxxi:verdict'] ?? {};
+  return {
+    ok: true, transferred: !!v.transferred, modalStatus: v.modalStatus, evidence: v.evidence,
+    beforeSignal: v.before?.signalShare, afterSignal: v.after?.signalShare,
+    beforeAnti: v.before?.antiSignalShare, afterAnti: v.after?.antiSignalShare,
+  };
+}
 
 /** Fetch a slice of the iep: protocol ontology (the renamed L1) for display. */
 export async function fetchProtocolExcerpt(): Promise<string> {

@@ -18,6 +18,11 @@
  *     a real iep:Affordance ContextDescriptor graph (typed iep:Affordance,
  *     ieh:Affordance, hydra:Operation, dcat:Distribution) -> round-trip back to
  *     SKILL.md. The genuine agentskills.io <-> iep:Affordance translator.
+ *  (MULTI-AGENT, the whole point)  two fresh agents each record a signed holon
+ *     referencing the same standard -> they SHARE a content-addressed atom (one
+ *     holarchy across two pods); B interrogates A's holon (inter-agent gap); and
+ *     A teaches B over /agent/teach (teacher-signed, transfer verified from the
+ *     learner's trajectories, unsigned teach rejected 401).
  *
  * Plus: /ns/iep dereferences (the renamed protocol) and the legacy /ns/cg alias.
  *
@@ -114,6 +119,45 @@ async function main(): Promise<void> {
     `iep=${/iep#Affordance/.test(g)} ieh=${/harness#Affordance/.test(g)} hydra=${/hydra\/core#Operation/.test(g)} dcat=${/dcat#Distribution/.test(g)}`);
   check('skill IRI is on the renamed protocol (urn:iep:skill:…) + carries PROV provenance', String(aff.b?.skillIri ?? '').startsWith('urn:iep:skill:') && /prov#wasAttributedTo/.test(g), `attributed=${/prov#wasAttributedTo/.test(g)}`);
   check('round-trips back to a frontmatter-led SKILL.md (lossless for core fields)', typeof aff.b?.roundTripMd === 'string' && aff.b.roundTripMd.trim().startsWith('---') && aff.b.roundTripMd.includes('verify-peer-competency'), `${String(aff.b?.roundTripMd ?? '').length} chars`);
+
+  console.log('\n=== (MULTI-AGENT) two agents share a holarchy + a gap + verified teaching ===');
+  const A = ethers.Wallet.createRandom(), Bn = ethers.Wallet.createRandom();
+  const aDid = `did:ethr:${A.address.toLowerCase()}`, bDid = `did:ethr:${Bn.address.toLowerCase()}`;
+  const aLabel = `eth-${A.address.slice(2, 14).toLowerCase()}`;
+  const pa = await post('/agent/record-performance', await signed(A, { task_name: 'Shared context A', success: true, quality: 1, activity_type: STD }));
+  const pb = await post('/agent/record-performance', await signed(Bn, { task_name: 'Shared context B', success: true, quality: 1, activity_type: STD }));
+  const sla = pa.b?.sharedLattice, slb = pb.b?.sharedLattice;
+  check('two independent agents each compose a holon', pa.s === 200 && pb.s === 200 && !!sla?.holonUri && !!slb?.holonUri, `A=${String(sla?.holonUri ?? '').slice(0, 30)} B=${String(slb?.holonUri ?? '').slice(0, 30)}`);
+  const atomsOf = (t: string) => [...new Set((t.match(/urn:pgsl:atom:[a-z0-9:.-]+/gi) ?? []))];
+  let sharedAtoms: string[] = [];
+  if (sla?.descriptorUrl && slb?.descriptorUrl) {
+    const ta = await (await fetch(String(sla.descriptorUrl), { headers: { Accept: 'text/turtle' } })).text();
+    const tb2 = await (await fetch(String(slb.descriptorUrl), { headers: { Accept: 'text/turtle' } })).text();
+    const aa = atomsOf(ta), bb = atomsOf(tb2);
+    sharedAtoms = aa.filter(x => bb.includes(x));
+  }
+  check('the two agents SHARE a content-addressed atom (one holarchy across two pods)', sharedAtoms.length > 0, `shared=${sharedAtoms.length} e.g. ${sharedAtoms[0]?.slice(0, 52) ?? '(none)'}`);
+  if (sla?.holonUri) {
+    const r = await fetch(`${BRIDGE}/agent/lattice/${aLabel}/interrogate?uri=${encodeURIComponent(sla.holonUri)}&agent_did=${encodeURIComponent(bDid)}`);
+    const j: any = await r.json().catch(() => ({}));
+    const ans: any[] = Array.isArray(j?.answers) ? j.answers : [];
+    check('agent B can interrogate agent A’s holon (inter-agent gap surfaces)', r.ok && ans.length > 0, `${ans.length} interrogatives, absent=${ans.filter(a => a.status === 'absent').length}`);
+  }
+  // A teaches B — teacher signs (teachingPackage, targetBehaviour); transfer verified from trajectories
+  const teachingPackage = { iri: `urn:iep:teaching:feasibility-${A.address.slice(2, 10)}`, artifactIri: 'urn:iep:tool:standard-reference', competency: 'consult the standard at the point of work', olkeStage: 'Articulate', modalStatus: 'Hypothetical' };
+  const targetBehaviour = { description: 'consults the standard before acting', signalMarkers: ['reference', 'look up', 'consult'], antiSignalMarkers: ['guess', 'skip'] };
+  const tuple = JSON.stringify({ teachingPackage, targetBehaviour });
+  const tSig = await A.signMessage(`sha256:${sha(tuple)}`);
+  const trj = (s: Array<[string, string]>) => [{ agentDid: bDid, agentName: 'B', createdAt: new Date().toISOString(), steps: s.map(([v, o], i) => ({ modalStatus: 'Asserted', granularity: 'tool-call', verb: v, objectId: `o${i}`, objectName: o, recordedAt: new Date().toISOString() })) }];
+  const teach = await post('/agent/teach', {
+    teachingPackage, teacher: { id: aDid, kind: 'agent' }, learner: { id: bDid, kind: 'agent' }, targetBehaviour,
+    signature: tSig, signedPayload: tuple,
+    before: trj([['guess', 'x'], ['skip', 'y'], ['act', 'z'], ['escalate', 'w']]),
+    after: trj([['look up', 's'], ['consult', 'g'], ['apply', 't'], ['look up', 's2'], ['complete', 't2'], ['verify', 'v']]),
+  });
+  const tv = teach.b?.verdict;
+  check('A teaches B — teacher-signed transfer VERIFIED from trajectories', teach.s === 200 && tv?.transferred === true, `transferred=${tv?.transferred} modal=${tv?.modalStatus} signal ${tv?.before?.signalShare}→${tv?.after?.signalShare}`);
+  check('teach signature is gated (unsigned teach is rejected 401)', (await post('/agent/teach', { teachingPackage, teacher: { id: aDid, kind: 'agent' }, learner: { id: bDid, kind: 'agent' }, targetBehaviour })).s === 401, 'unsigned → 401');
 
   console.log('\n=== (PROTOCOL) /ns/iep dereferences + legacy /ns/cg alias ===');
   for (const [u, want] of [[`${PAGES}/iep.ttl`, 'iep:ContextDescriptor'], [`${PAGES}/cg.ttl`, 'isReplacedBy']] as const) {
