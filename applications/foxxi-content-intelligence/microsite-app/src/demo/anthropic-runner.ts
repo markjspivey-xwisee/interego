@@ -34,27 +34,36 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<void> {
   const maxSteps = opts.maxSteps ?? 10;
 
   for (let step = 0; step < maxSteps; step++) {
-    const resp = await fetch(ANTHROPIC_URL, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': opts.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: opts.model ?? DEMO_MODEL,
-        max_tokens: 1800,
-        system: opts.system,
-        tools: opts.tools,
-        messages,
-      }),
-    });
-    if (!resp.ok) {
-      const t = await resp.text().catch(() => '');
-      throw new Error(`Anthropic ${resp.status}: ${t.slice(0, 240)}`);
+    // Transient-error resilience: the Anthropic API can return 429 (rate limit)
+    // or 529 (overloaded) under load. Retry those (and 5xx) with exponential
+    // backoff before giving up, so a momentary blip doesn't abort the whole run.
+    let resp: Response | null = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      resp = await fetch(ANTHROPIC_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': opts.apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: opts.model ?? DEMO_MODEL,
+          max_tokens: 1800,
+          system: opts.system,
+          tools: opts.tools,
+          messages,
+        }),
+      });
+      if (resp.ok) break;
+      const transient = resp.status === 429 || resp.status === 529 || resp.status >= 500;
+      if (!transient || attempt === 4) {
+        const t = await resp.text().catch(() => '');
+        throw new Error(`Anthropic ${resp.status}: ${t.slice(0, 240)}`);
+      }
+      await new Promise(r => setTimeout(r, Math.min(8000, 600 * 2 ** attempt)));
     }
-    const data = await resp.json() as { content?: AnthropicBlock[]; stop_reason?: string };
+    const data = await resp!.json() as { content?: AnthropicBlock[]; stop_reason?: string };
     const content = data.content ?? [];
     messages.push({ role: 'assistant', content });
 

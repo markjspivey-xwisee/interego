@@ -221,9 +221,11 @@ export async function runTwoAgentConvergence(apiKey: string, emit: (e: MAEvent) 
       return { text: typeof res.body === 'string' ? res.body : JSON.stringify(res.body) };
     };
 
+  // Each phase is independently guarded: a transient failure in one beat emits an
+  // error event but does NOT abort the rest of the run (matches the /agents demo).
+  // Phase 1 — Agent A establishes shared context
+  emit({ agent: 'sys', kind: 'phase', text: 'Agent A establishes shared context' });
   try {
-    // Phase 1 — Agent A establishes shared context
-    emit({ agent: 'sys', kind: 'phase', text: 'Agent A establishes shared context' });
     await runAgentLoop({
       apiKey, system: SYS_A,
       goal: `Establish context a peer agent can build on. Record the unit of work you performed on how to "${STD_TOPIC}". Call record_performance with a descriptive task_name, success true, quality ~0.9, and activity_type EXACTLY "${STD}". Then reply DONE.`,
@@ -231,9 +233,11 @@ export async function runTwoAgentConvergence(apiKey: string, emit: (e: MAEvent) 
       dispatch: mkDispatch('A', A, {}),
       onThinking: t => emit({ agent: 'A', kind: 'thinking', text: t }), onToolCall: () => {}, onToolResult: () => {}, maxSteps: 5,
     });
+  } catch (e) { emit({ agent: 'A', kind: 'error', text: `phase 1: ${(e as Error).message}` }); }
 
-    // Phase 2 — Agent B participates + interrogates A's holon to find the gap
-    emit({ agent: 'sys', kind: 'phase', text: 'Agent B acts on the shared context and finds the gap' });
+  // Phase 2 — Agent B participates + interrogates A's holon to find the gap
+  emit({ agent: 'sys', kind: 'phase', text: 'Agent B acts on the shared context and finds the gap' });
+  try {
     await runAgentLoop({
       apiKey, system: SYS_B,
       goal: `Peer agent A established context about "${STD_TOPIC}" — holon ${r.holonA ?? '(A\'s holon)'} in lattice ${labelA}.\n` +
@@ -245,16 +249,20 @@ export async function runTwoAgentConvergence(apiKey: string, emit: (e: MAEvent) 
       onThinking: t => { emit({ agent: 'B', kind: 'thinking', text: t }); const m = /GAP:\s*([\s\S]+)/.exec(t); if (m) r.gapArticulation = m[1].trim(); },
       onToolCall: () => {}, onToolResult: () => {}, maxSteps: 6,
     });
+  } catch (e) { emit({ agent: 'B', kind: 'error', text: `phase 2: ${(e as Error).message}` }); }
 
-    // Shared-atom check (verification, not LLM): dereference both descriptors
+  // Shared-atom check (verification, not LLM): dereference both descriptors
+  try {
     const dA = r.descriptorUrlA ? await dereferenceDescriptor(r.descriptorUrlA) : { turtle: '' };
     const dB = r.descriptorUrlB ? await dereferenceDescriptor(r.descriptorUrlB) : { turtle: '' };
     const aA = atomsIn(dA.turtle ?? ''), bA = atomsIn(dB.turtle ?? '');
     r.sharedAtoms = aA.filter(x => bA.includes(x)); r.atomsA = aA.length; r.atomsB = bA.length;
     emit({ agent: 'sys', kind: 'artifact', text: `shared holarchy — ${r.sharedAtoms.length} content-addressed atom(s) in BOTH agents' descriptors`, detail: r.sharedAtoms.slice(0, 2).join('  ') });
+  } catch (e) { emit({ agent: 'sys', kind: 'error', text: `shared-atom check: ${(e as Error).message}` }); }
 
-    // Phase 3 — Agent A teaches B to close the gap (bridge-verified transfer)
-    emit({ agent: 'sys', kind: 'phase', text: 'Agent A teaches B to close the gap (transfer verified by the bridge)' });
+  // Phase 3 — Agent A teaches B to close the gap (bridge-verified transfer)
+  emit({ agent: 'sys', kind: 'phase', text: 'Agent A teaches B to close the gap (transfer verified by the bridge)' });
+  try {
     await runAgentLoop({
       apiKey, system: SYS_A,
       goal: `Peer agent B (${B.did}) acted on your shared context and reported this gap:\n"${r.gapArticulation ?? 'B needs the capability to consult the authoritative standard before acting, rather than guessing.'}"\n` +
@@ -263,11 +271,9 @@ export async function runTwoAgentConvergence(apiKey: string, emit: (e: MAEvent) 
       dispatch: mkDispatch('A', A, { learnerDid: B.did }),
       onThinking: t => emit({ agent: 'A', kind: 'thinking', text: t }), onToolCall: () => {}, onToolResult: () => {}, maxSteps: 4,
     });
+  } catch (e) { emit({ agent: 'A', kind: 'error', text: `phase 3: ${(e as Error).message}` }); }
 
-    emit({ agent: 'sys', kind: 'done', text: 'two real LLM agents shared a holarchy, surfaced the gap between them, and closed it by verified teaching' });
-  } catch (e) {
-    emit({ agent: 'sys', kind: 'error', text: (e as Error).message });
-  }
+  emit({ agent: 'sys', kind: 'done', text: 'two real LLM agents shared a holarchy, surfaced the gap between them, and closed it by verified teaching' });
   return r;
 }
 
