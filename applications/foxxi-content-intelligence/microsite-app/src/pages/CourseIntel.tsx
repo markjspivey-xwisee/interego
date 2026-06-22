@@ -230,6 +230,16 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
         course graph — and honestly flagged when a question falls outside it. <strong>Bring your own Anthropic key</strong> for synthesis (used only in your browser) — or go key-less and get the cited scaffold.
       </p>
 
+      {/* BYOK — at the top so you know up front what's optional; only the chat
+          synthesis uses it. Without a key you get the honest cited scaffold. */}
+      <div style={{ ...card, marginTop: 18 }}>
+        <div style={lbl}>Anthropic key (optional — only the chat synthesis uses it; key never sent to our servers, runs in your browser)</div>
+        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-… (optional — leave blank for the cited retrieval scaffold)"
+          autoComplete="off" spellCheck={false} data-1p-ignore data-lpignore="true"
+          style={{ width: '100%', marginTop: 5, padding: '9px 11px', borderRadius: 6, border: '1px solid var(--border)', fontFamily: mono, fontSize: 13, boxSizing: 'border-box' }} />
+        <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-dim)' }}>Without a key you get the honest cited retrieval scaffold (the course-graph nodes that answer the question); with a key the agent synthesizes a grounded answer over them.</div>
+      </div>
+
       {/* Source */}
       <div style={{ ...card, marginTop: 18 }}>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -359,14 +369,6 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
                 placeholder="ask the course…" style={{ flex: 1, padding: '9px 11px', borderRadius: 6, border: '1px solid var(--border)', fontFamily: mono, fontSize: 13 }} />
               <button onClick={ask} disabled={asking || !question.trim()} style={{ ...btn, opacity: asking || !question.trim() ? 0.5 : 1 }}>Ask</button>
             </div>
-          </div>
-
-          {/* BYOK */}
-          <div style={{ ...card, marginTop: 14 }}>
-            <div style={lbl}>Anthropic key (optional — synthesis runs in your browser; key never sent to our servers)</div>
-            <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-…"
-              style={{ width: '100%', marginTop: 5, padding: '9px 11px', borderRadius: 6, border: '1px solid var(--border)', fontFamily: mono, fontSize: 13 }} />
-            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-dim)' }}>Without a key you get the honest cited retrieval scaffold (the course graph nodes that answer the question); with a key the agent synthesizes a grounded answer over them.</div>
           </div>
         </>
       )}

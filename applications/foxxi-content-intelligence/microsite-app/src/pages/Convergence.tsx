@@ -69,17 +69,17 @@ export function Convergence({ onHome }: { onHome: () => void }) {
         bring an Anthropic key only to have an LLM author a DataBook (it stays in this tab). See <a href="https://markjspivey-xwisee.github.io/interego/NAME-PROVENANCE.md" target="_blank" rel="noreferrer" style={linkBtn}>the name-provenance note</a> for the honest lineage.
       </p>
 
+      <div style={{ ...card, marginTop: 18 }}>
+        <div style={lbl}>Anthropic key (optional — only the “✨ Author a DataBook” step in panel 2 uses it; sent only to api.anthropic.com from this tab. Everything else runs with no key.)</div>
+        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-… (optional — leave blank to run the whole demo key-less)"
+          autoComplete="off" spellCheck={false} data-1p-ignore data-lpignore="true"
+          style={{ width: '100%', marginTop: 5, padding: '9px 11px', borderRadius: 6, border: '1px solid var(--border)', fontFamily: mono, fontSize: 13, boxSizing: 'border-box' }} />
+      </div>
+
       <HolonPanel />
       <DataBookPanel apiKey={apiKey} />
       <ContextGapPanel />
       <AffordancePanel />
-
-      <div style={{ ...card, marginTop: 14 }}>
-        <div style={lbl}>Anthropic key (optional — only for LLM DataBook authoring; sent only to api.anthropic.com from this tab)</div>
-        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-…"
-          autoComplete="off" spellCheck={false} data-1p-ignore data-lpignore="true"
-          style={{ width: '100%', marginTop: 5, padding: '9px 11px', borderRadius: 6, border: '1px solid var(--border)', fontFamily: mono, fontSize: 13, boxSizing: 'border-box' }} />
-      </div>
 
       <p style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 16, lineHeight: 1.5 }}>
         Sources: <a href="https://github.com/w3c-cg/holon/blob/main/README.md" target="_blank" rel="noreferrer" style={linkBtn}>W3C Holon CG</a> ·
@@ -174,7 +174,7 @@ function DataBookPanel({ apiKey }: { apiKey: string }) {
   const [desc, setDesc] = useState('How an agent verifies a peer’s competency before trusting it.');
 
   async function author() {
-    if (!apiKey.trim()) { setErr('add an Anthropic key below to author with an LLM (or edit the sample directly)'); return; }
+    if (!apiKey.trim()) { setErr('add an Anthropic key at the top of the page to author with an LLM (or edit the sample directly)'); return; }
     setBusy('author'); setErr(null);
     const r = await authorDataBook(apiKey.trim(), desc.trim());
     setBusy('');
