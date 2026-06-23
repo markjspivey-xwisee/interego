@@ -95,7 +95,8 @@ RUN mkdir -p node_modules/@interego \
   && ln -sfn /app/packages/solid node_modules/@interego/solid \
   && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl \
   && ln -sfn /app/packages/passport node_modules/@interego/passport \
-  && ln -sfn /app/packages/skills node_modules/@interego/skills
+  && ln -sfn /app/packages/skills node_modules/@interego/skills \
+  && ln -sfn /app/packages/constitutional node_modules/@interego/constitutional
 
 # ────────────────────────────────────────────────────────────
 #  Runtime stage
