@@ -106,7 +106,7 @@ export function Constitution({ onHome }: { onHome: () => void }) {
             {r1?.status === 'Ratified' ? ' Threshold amended to 51%.' : ' Threshold stays 67%.'}
           </div>
           {r2 && <div style={{ fontSize: 13, marginTop: 4 }}>Round 2 (under {((r2.rules?.threshold ?? 0) * 100).toFixed(0)}% — the rule from round 1): <strong style={{ color: r2.status === 'Ratified' ? '#2e9c4a' : '#b45309' }}>{r2.status}</strong> — {r2.tally?.for}/{(r2.tally?.for ?? 0) + (r2.tally?.against ?? 0)} for ({((r2.tally?.proportion ?? 0) * 100).toFixed(0)}%).</div>}
-          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>The agents&rsquo; own ratified vote set the threshold that judged their next decision — a self-amending constitution, signed end to end.</div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>Whether they amended the rule or upheld it, the agents&rsquo; own signed votes determined the threshold that judged their next decision — a self-amending constitution, signed end to end. (The panel often <em>declines</em> to weaken its own supermajority — emergent, not scripted.)</div>
         </div>
       )}
 
