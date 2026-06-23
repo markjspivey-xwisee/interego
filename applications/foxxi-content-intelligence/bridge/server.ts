@@ -3856,9 +3856,18 @@ app.post('/agent/calibration/merge', async (req, res) => {
     // by recovered signer so one key is one source no matter how many envelopes it
     // submits (replay/double-count defense); count DISTINCT signers.
     const bySigner = new Map<string, OutcomeSpec[]>();
+    let droppedContributions = 0;
     for (const c of contributions) {
       const rec = recoverSignedRequest(c);
       if (!rec.ok) { res.status(401).json({ ok: false, error: `a contribution signature did not verify: ${rec.reason}` }); return; }
+      // BIND the recovered signer to the contribution's OWN claimed agent_id. A
+      // tampered/forged envelope still ecrecovers — but to a PHANTOM address that
+      // does not match its agent_id. Without this binding, ONE wallet manufactures
+      // N "distinct signers" by submitting tampered copies and defeats the
+      // multi-party (>=2 distinct signers) promotion gate. Drop the mismatches so an
+      // honest multi-party merge still proceeds while the forged copies are excluded.
+      const claimedAgent = typeof rec.payload.agent_id === 'string' ? rec.payload.agent_id.toLowerCase() : '';
+      if (!claimedAgent || claimedAgent !== `did:ethr:${rec.signer}`.toLowerCase()) { droppedContributions++; continue; }
       const source = `did:ethr:${rec.signer}`;
       const rawSpecs = Array.isArray(rec.payload.specs) ? rec.payload.specs as Array<Record<string, unknown>> : [];
       if (rawSpecs.length > CAL_MAX_SPECS) { res.status(400).json({ ok: false, error: `a contribution has too many specs (max ${CAL_MAX_SPECS})` }); return; }
@@ -3913,7 +3922,7 @@ app.post('/agent/calibration/merge', async (req, res) => {
       if (sl) holon = { holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl };
     }
 
-    res.json({ ok: true, contributors, distinctSigners, multiParty, federationKThreshold, assertThreshold, merged, readout, promoted, holon,
+    res.json({ ok: true, contributors, distinctSigners, multiParty, droppedContributions, federationKThreshold, assertThreshold, merged, readout, promoted, holon,
       note: multiParty
         ? 'Each contribution is signed by a DISTINCT key (recovered, not asserted; same-key resubmissions collapse to one source). No raw record crossed a boundary — only aggregate cells above the minimum-aggregate (k-sample) suppression floor. A cell Hypothetical for each contributor alone is Asserted once pooled across distinct keys. The merged memory is a dereferenceable, interrogable PGSL holon no single key could assert alone. Note: signatures prove the contributing KEY, not that two keys are independent rival organizations.'
         : 'Single-contributor merge (one distinct signing key) — this is a self-only profile, NOT cross-source consensus. Pooled promotion across sources requires >= 2 distinct keys.' });
