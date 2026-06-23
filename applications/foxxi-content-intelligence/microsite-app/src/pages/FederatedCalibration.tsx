@@ -99,8 +99,15 @@ export function FederatedCalibration({ onHome }: { onHome: () => void }) {
       const segs = String(res.holon.descriptorUrl || '').split('/').filter(Boolean);
       const li = segs.indexOf('foxxi-lattice');
       const label = (li > 0 ? segs[li - 1] : segs.slice(-3, -2)[0]) || 'calibration-consortium';
-      const url = `${BRIDGE_URL}/agent/lattice/${label}/interrogate?uri=${encodeURIComponent(res.holon.holonUri)}&agent_did=${encodeURIComponent('did:web:consortium')}`;
-      const r = await fetch(url); const j = await r.json().catch(() => ({}));
+      const url = `${BRIDGE_URL}/agent/lattice/${encodeURIComponent(label)}/interrogate?uri=${encodeURIComponent(res.holon.holonUri)}&agent_did=${encodeURIComponent('did:web:consortium')}`;
+      // The bridge rehydrates the lattice from the pod best-effort; retry once if the
+      // holon isn't resolvable yet (a transient miss right after the merge projection).
+      let j: any = null;
+      for (const wait of [0, 1200]) {
+        if (wait) await new Promise(r => setTimeout(r, wait));
+        const r = await fetch(url); j = await r.json().catch(() => ({}));
+        if (r.ok && Array.isArray(j?.answers)) break;
+      }
       setInterrog(j);
     } catch (e) { setInterrog({ error: (e as Error).message }); }
     finally { setInterrogBusy(false); }
