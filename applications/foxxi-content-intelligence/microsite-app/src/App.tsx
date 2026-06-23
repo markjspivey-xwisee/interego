@@ -15,8 +15,9 @@ import { Portfolio } from './pages/Portfolio.js';
 import { EvidenceLedger } from './pages/EvidenceLedger.js';
 import { FederatedCalibration } from './pages/FederatedCalibration.js';
 import { Convergence } from './pages/Convergence.js';
+import { RedTeamArena } from './pages/RedTeamArena.js';
 
-export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent' | 'pod' | 'agentdemo' | 'reports' | 'compliance' | 'course' | 'hire' | 'ledger' | 'consortium' | 'convergence';
+export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent' | 'pod' | 'agentdemo' | 'reports' | 'compliance' | 'course' | 'hire' | 'ledger' | 'consortium' | 'convergence' | 'redteam';
 
 export function App() {
   const [route, setRoute] = useState<Route>(initialRoute());
@@ -42,6 +43,7 @@ export function App() {
     else if (r === 'ledger') { url.pathname = '/ledger'; url.searchParams.delete('role'); }
     else if (r === 'consortium') { url.pathname = '/consortium'; url.searchParams.delete('role'); }
     else if (r === 'convergence') { url.pathname = '/convergence'; url.searchParams.delete('role'); }
+    else if (r === 'redteam') { url.pathname = '/red-team'; url.searchParams.delete('role'); }
     window.history.pushState({}, '', url.toString());
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -75,6 +77,7 @@ export function App() {
         {route === 'ledger' && <EvidenceLedger onHome={() => navigate('landing')} />}
         {route === 'consortium' && <FederatedCalibration onHome={() => navigate('landing')} />}
         {route === 'convergence' && <Convergence onHome={() => navigate('landing')} />}
+        {route === 'redteam' && <RedTeamArena onHome={() => navigate('landing')} />}
       </main>
       <SiteFooter />
     </div>
@@ -96,6 +99,7 @@ function initialRoute(): Route {
   if (p.startsWith('/ledger')) return 'ledger';
   if (p.startsWith('/consortium')) return 'consortium';
   if (p.startsWith('/convergence')) return 'convergence';
+  if (p.startsWith('/red-team')) return 'redteam';
   if (p.startsWith('/demos')) return 'demos';
   if (p.startsWith('/pod')) return 'pod';
   return 'landing';
@@ -132,6 +136,7 @@ function TopNav({ active, onNavigate }: { active: Route; onNavigate: (r: Route, 
         <NavLink active={active === 'about'} onClick={() => onNavigate('about')}>How</NavLink>
         <NavLink active={active === 'demos'} onClick={() => onNavigate('demos')}>Demos</NavLink>
         <NavLink active={active === 'agentdemo'} onClick={() => onNavigate('agentdemo')}>Agents ▸</NavLink>
+        <NavLink active={active === 'redteam'} onClick={() => onNavigate('redteam')}>Red-Team</NavLink>
         <NavLink active={active === 'hire'} onClick={() => onNavigate('hire')}>Hire</NavLink>
         <NavLink active={active === 'ledger'} onClick={() => onNavigate('ledger')}>Ledger</NavLink>
         <NavLink active={active === 'consortium'} onClick={() => onNavigate('consortium')}>Consortium</NavLink>
