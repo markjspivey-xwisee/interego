@@ -15,13 +15,14 @@ import { Portfolio } from './pages/Portfolio.js';
 import { EvidenceLedger } from './pages/EvidenceLedger.js';
 import { FederatedCalibration } from './pages/FederatedCalibration.js';
 import { Convergence } from './pages/Convergence.js';
-import { RedTeamArena } from './pages/RedTeamArena.js';
 import { PoisonedKnowledge } from './pages/PoisonedKnowledge.js';
-import { Babel } from './pages/Babel.js';
-import { TheQuorum } from './pages/TheQuorum.js';
-import { Constitution } from './pages/Constitution.js';
 
-export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent' | 'pod' | 'agentdemo' | 'reports' | 'compliance' | 'course' | 'hire' | 'ledger' | 'consortium' | 'convergence' | 'redteam' | 'poison' | 'babel' | 'quorum' | 'constitution';
+// NOTE: the substrate demos (Babel, The Quorum, /constitution, Red-Team Arena)
+// were RELOCATED to the dedicated Interego demo surface (demos/interego-microsite,
+// against demos/interego-bridge) — they are substrate concerns, not Foxxi (L&D).
+// Only genuinely-vertical demos remain here. Poison/calibration stays: federated
+// L&D calibration is a Foxxi domain concern.
+export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent' | 'pod' | 'agentdemo' | 'reports' | 'compliance' | 'course' | 'hire' | 'ledger' | 'consortium' | 'convergence' | 'poison';
 
 export function App() {
   const [route, setRoute] = useState<Route>(initialRoute());
@@ -47,11 +48,7 @@ export function App() {
     else if (r === 'ledger') { url.pathname = '/ledger'; url.searchParams.delete('role'); }
     else if (r === 'consortium') { url.pathname = '/consortium'; url.searchParams.delete('role'); }
     else if (r === 'convergence') { url.pathname = '/convergence'; url.searchParams.delete('role'); }
-    else if (r === 'redteam') { url.pathname = '/red-team'; url.searchParams.delete('role'); }
     else if (r === 'poison') { url.pathname = '/poison'; url.searchParams.delete('role'); }
-    else if (r === 'babel') { url.pathname = '/babel'; url.searchParams.delete('role'); }
-    else if (r === 'quorum') { url.pathname = '/quorum'; url.searchParams.delete('role'); }
-    else if (r === 'constitution') { url.pathname = '/constitution'; url.searchParams.delete('role'); }
     window.history.pushState({}, '', url.toString());
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -85,11 +82,7 @@ export function App() {
         {route === 'ledger' && <EvidenceLedger onHome={() => navigate('landing')} />}
         {route === 'consortium' && <FederatedCalibration onHome={() => navigate('landing')} />}
         {route === 'convergence' && <Convergence onHome={() => navigate('landing')} />}
-        {route === 'redteam' && <RedTeamArena onHome={() => navigate('landing')} />}
         {route === 'poison' && <PoisonedKnowledge onHome={() => navigate('landing')} />}
-        {route === 'babel' && <Babel onHome={() => navigate('landing')} />}
-        {route === 'quorum' && <TheQuorum onHome={() => navigate('landing')} />}
-        {route === 'constitution' && <Constitution onHome={() => navigate('landing')} />}
       </main>
       <SiteFooter />
     </div>
@@ -111,11 +104,7 @@ function initialRoute(): Route {
   if (p.startsWith('/ledger')) return 'ledger';
   if (p.startsWith('/consortium')) return 'consortium';
   if (p.startsWith('/convergence')) return 'convergence';
-  if (p.startsWith('/red-team')) return 'redteam';
   if (p.startsWith('/poison')) return 'poison';
-  if (p.startsWith('/babel')) return 'babel';
-  if (p.startsWith('/quorum')) return 'quorum';
-  if (p.startsWith('/constitution')) return 'constitution';
   if (p.startsWith('/demos')) return 'demos';
   if (p.startsWith('/pod')) return 'pod';
   return 'landing';
@@ -152,11 +141,7 @@ function TopNav({ active, onNavigate }: { active: Route; onNavigate: (r: Route, 
         <NavLink active={active === 'about'} onClick={() => onNavigate('about')}>How</NavLink>
         <NavLink active={active === 'demos'} onClick={() => onNavigate('demos')}>Demos</NavLink>
         <NavLink active={active === 'agentdemo'} onClick={() => onNavigate('agentdemo')}>Agents ▸</NavLink>
-        <NavLink active={active === 'redteam'} onClick={() => onNavigate('redteam')}>Red-Team</NavLink>
         <NavLink active={active === 'poison'} onClick={() => onNavigate('poison')}>Poison</NavLink>
-        <NavLink active={active === 'babel'} onClick={() => onNavigate('babel')}>Babel</NavLink>
-        <NavLink active={active === 'quorum'} onClick={() => onNavigate('quorum')}>Quorum</NavLink>
-        <NavLink active={active === 'constitution'} onClick={() => onNavigate('constitution')}>Charter</NavLink>
         <NavLink active={active === 'hire'} onClick={() => onNavigate('hire')}>Hire</NavLink>
         <NavLink active={active === 'ledger'} onClick={() => onNavigate('ledger')}>Ledger</NavLink>
         <NavLink active={active === 'consortium'} onClick={() => onNavigate('consortium')}>Consortium</NavLink>

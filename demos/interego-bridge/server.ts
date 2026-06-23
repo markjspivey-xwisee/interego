@@ -27,37 +27,34 @@
  */
 
 import express, { type Request, type Response } from 'express';
+// NOTE: this bridge was written against the pre-`packages/` root `src/` layout,
+// which no longer exists. Migrated to the @interego/* workspace packages — the
+// SAME canonical substrate logic the production surfaces (mcp-server, mcp-relay)
+// consume. No new substrate; pure re-pointing.
 import {
   ContextDescriptor,
-  publish,
-  discover,
   type IRI,
-} from '../../src/index.js';
-import {
-  mintAtom,
-  resolveAtomValue,
-  createPGSL,
-} from '../../src/pgsl/lattice.js';
-import type { PGSLInstance } from '../../src/pgsl/types.js';
-import {
   commit, verifyCommitment,
   proveConfidenceAboveThreshold, verifyConfidenceProof, verifyConfidenceProofByReveal,
   buildMerkleTree, generateMerkleProof, verifyMerkleProof,
-} from '../../src/crypto/zk/proofs.js';
+} from '@interego/core';
+import { publish, discover } from '@interego/solid';
+import { mintAtom, resolveAtomValue, createPGSL } from '@interego/pgsl';
+import type { PGSLInstance } from '@interego/pgsl';
 import {
-  proposeAmendment, vote, tryRatify, communityModal,
+  proposeAmendment, vote, tryRatify, communityModal, forkConstitution,
   type Amendment, type Tier, type RatificationRule, DEFAULT_RULES,
-} from '../../src/constitutional/index.js';
-import type { ModalValue } from '../../src/model/derivation.js';
-import { Wallet, verifyMessage } from 'ethers';
+} from '@interego/constitutional';
+import type { ModalValue } from '@interego/core';
+import { Wallet, verifyMessage, sha256 as ethersSha256 } from 'ethers';
 
 const POD_URL = process.env.INTEREGO_DEFAULT_POD_URL;
 const AGENT_DID = (process.env.INTEREGO_DEFAULT_AGENT_DID ?? 'did:web:demo-agent.example') as IRI;
-if (!POD_URL) {
-  console.error('ERROR: set INTEREGO_DEFAULT_POD_URL before starting interego-bridge');
-  process.exit(1);
-}
-const POD_URL_NN: string = POD_URL;
+// POD_URL is only needed by the descriptor publish/discover tools. The marquee
+// substrate demos (governance, PGSL atom fusion, ZK, sign-bound attestation) are
+// pod-free, so the bridge boots without a pod and only those tools degrade.
+if (!POD_URL) console.warn('INTEREGO_DEFAULT_POD_URL unset — descriptor publish/discover disabled; governance / pgsl / zk / attest still work.');
+const POD_URL_NN: string = POD_URL ?? '(pod not configured)';
 
 const PORT = parseInt(process.env.PORT ?? '6050', 10);
 const DEPLOYMENT_URL = process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`;
@@ -298,6 +295,90 @@ function handleConstStatus(args: { amendment_id: string }): unknown {
   const a = amendments.get(args.amendment_id);
   if (!a) return { ok: false, error: `unknown amendment: ${args.amendment_id}` };
   return { ok: true, amendment: a, vote_count: a.votes.length, community_modal: communityModal(a) };
+}
+
+// ── Signature-bound substrate primitives ───────────────────────
+// Recover a rev-196 signed envelope ({ _signature, _signed_payload }) where the
+// signed message is `sha256:<hex(payload)>`. This is the SAME envelope the
+// microsite mints from a fresh wallet. The anti-Sybil rule everywhere below:
+// the recovered signer must equal the payload's claimed agent_id.
+const _enc = new TextEncoder();
+const _sha = (s: string) => ethersSha256(_enc.encode(s)).slice(2);
+function recoverEnvelope(env: unknown): { ok: boolean; signer?: string; payload?: any } {
+  try {
+    const e = env as { _signature?: string; _signed_payload?: string };
+    const sp = String(e?._signed_payload ?? ''); const sig = String(e?._signature ?? '');
+    if (!sp || !sig) return { ok: false };
+    const addr = verifyMessage(`sha256:${_sha(sp)}`, sig).toLowerCase();
+    return { ok: true, signer: `did:ethr:${addr}`, payload: JSON.parse(sp) };
+  } catch { return { ok: false }; }
+}
+const _bound = (r: { ok: boolean; signer?: string; payload?: any }) =>
+  r.ok && r.signer === String(r.payload?.agent_id ?? '').toLowerCase();
+
+// EMERGENT governance round — composes proposeAmendment ∘ vote ∘ tryRatify ∘
+// communityModal ∘ forkConstitution (@interego/constitutional) + content-address
+// the outcome (mintAtom) into a dereferenceable holon. A vote counts only if its
+// recovered signer === claimed agent_id, so the quorum cannot be stuffed or forged.
+// This is a generic substrate tool (discoverable via tools/list), NOT a per-vertical route.
+function handleGovernanceRound(args: any): unknown {
+  const policyId = String(args.policyId ?? 'urn:iep:policy:demo');
+  const tier = ([0, 1, 2, 3, 4].includes(Number(args.tier)) ? Number(args.tier) : 3) as Tier;
+  const diff = {
+    summary: String(args.diff?.summary ?? 'amendment').slice(0, 400),
+    ...(Array.isArray(args.diff?.addedRules) ? { addedRules: args.diff.addedRules.filter((x: unknown) => typeof x === 'string').slice(0, 16) } : {}),
+  };
+  const rules: RatificationRule = {
+    minQuorum: Math.max(1, Math.min(99999, Number(args.rules?.minQuorum) || 3)),
+    threshold: Math.max(0, Math.min(1, typeof args.rules?.threshold === 'number' ? args.rules.threshold : 0.51)),
+    coolingPeriodDays: Math.max(0, Math.min(365, Number(args.rules?.coolingPeriodDays) || 0)),
+  };
+  const pr = recoverEnvelope(args.proposer);
+  if (!pr.ok) return { ok: false, error: 'proposer signature did not verify' };
+  if (!_bound(pr)) return { ok: false, error: 'proposer signer does not match claimed agent_id' };
+  const amendmentId = `urn:iep:amendment:${_sha(policyId + diff.summary).slice(0, 12)}-${Date.now().toString(36)}`;
+  let amendment: Amendment = proposeAmendment({ id: amendmentId as IRI, proposedBy: pr.signer as IRI, amends: policyId as IRI, tier, diff });
+  const votesIn = Array.isArray(args.votes) ? args.votes.slice(0, 64) : [];
+  let droppedVotes = 0; const seen = new Set<string>();
+  for (const v of votesIn) {
+    const vr = recoverEnvelope(v);
+    if (!_bound(vr)) { droppedVotes++; continue; }
+    const m = vr.payload.modalStatus;
+    const ms = (m === 'Asserted' || m === 'Counterfactual' || m === 'Hypothetical') ? m : 'Hypothetical';
+    amendment = vote(amendment, vr.signer as IRI, ms as ModalValue, typeof vr.payload.weight === 'number' ? vr.payload.weight : undefined);
+    seen.add(vr.signer!);
+  }
+  amendment = tryRatify(amendment, rules);
+  const cmodal = communityModal(amendment);
+  const forV = amendment.votes.filter(v => v.modalStatus === 'Asserted');
+  const againstV = amendment.votes.filter(v => v.modalStatus === 'Counterfactual');
+  const abstainV = amendment.votes.filter(v => v.modalStatus === 'Hypothetical');
+  const totalW = [...forV, ...againstV].reduce((s, v) => s + (v.weight ?? 1), 0);
+  const forW = forV.reduce((s, v) => s + (v.weight ?? 1), 0);
+  const tally = { for: forV.length, against: againstV.length, abstain: abstainV.length, distinctVoters: seen.size, quorum: rules.minQuorum, threshold: rules.threshold, proportion: totalW > 0 ? forW / totalW : 0 };
+  let fork: unknown = null;
+  if (amendment.status === 'Rejected' && args.forkOnReject) {
+    fork = forkConstitution({ id: `urn:iep:fork:${Date.now().toString(36)}` as IRI, parentConstitution: policyId as IRI, dissenters: againstV.map(v => v.voter), newConstitution: { id: `${policyId}:fork` as IRI, tier, description: `Fork over: ${diff.summary}`, ratifyRule: rules }, reason: `amendment rejected (${tally.for}/${forV.length + againstV.length} for); dissenters fork` });
+  }
+  const outcome = { kind: 'iep:ConstitutionalAmendment', amendment, tally, communityModal: cmodal, rules, fork };
+  const holonUri = mintAtom(pgslLattice, JSON.stringify(outcome));   // content-addressed, dereferenceable
+  amendments.set(amendmentId, amendment);
+  return { ok: true, amendment: { id: amendment.id, amends: amendment.amends, tier: amendment.tier, status: amendment.status, proposedBy: pr.signer, diff: amendment.diff, ratifiedAt: amendment.ratifiedAt, votes: amendment.votes.map(v => ({ voter: v.voter, modalStatus: v.modalStatus, weight: v.weight })) }, tally, communityModal: cmodal, droppedVotes, rules, fork, holon: { holonUri } };
+}
+
+// Generic sign-bound attestation — the L1 integrity primitive the red-team throws
+// forged/tampered/replayed envelopes at. Recover → require signer===agent_id
+// (defeats impersonation + tampering) → ±60s window (defeats stale replay) → mint
+// the attested holon. A verbatim replay inside the window is accepted but stays
+// attributed to the ORIGINAL signer (the attacker gains no identity).
+function handleAttest(args: any): unknown {
+  const r = recoverEnvelope(args.envelope ?? args);
+  if (!r.ok) return { ok: false, status: 401, error: 'signature does not verify (recovery failed)' };
+  if (!_bound(r)) return { ok: false, status: 401, error: `recovered signer ${r.signer} does not match claimed agent_id ${r.payload?.agent_id ?? '(none)'}` };
+  const ts = Date.parse(String(r.payload.timestamp ?? ''));
+  if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > 60_000) return { ok: false, status: 401, error: 'timestamp drift exceeds ±60s — replay protection' };
+  const holonUri = mintAtom(pgslLattice, JSON.stringify({ kind: 'iep:Attestation', by: r.signer, payload: r.payload }));
+  return { ok: true, status: 200, attestedBy: r.signer, holon: { holonUri } };
 }
 
 // ── secp256k1 signing (Demo 09) ──────────────────────────────
@@ -567,12 +648,45 @@ const tools: Record<string, ToolDef> = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     handler: (a) => handleConstStatus(a as any),
   },
+  'protocol.governance_round': {
+    description: 'Run a complete SIGNED governance round in one call: propose an amendment, tally signed votes (each voter recovered from its rev-196 envelope; a vote counts only if the recovered signer === its claimed agent_id — anti-Sybil), ratify per the rule, fork on dissensus, and content-address the outcome as a dereferenceable holon. Composes @interego/constitutional. Each vote envelope: { _signature, _signed_payload: JSON({ amendmentId, modalStatus: Asserted|Counterfactual|Hypothetical, agent_id, timestamp }) }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        policyId: { type: 'string' }, tier: { type: 'integer', minimum: 0, maximum: 4 },
+        diff: { type: 'object', properties: { summary: { type: 'string' }, addedRules: { type: 'array', items: { type: 'string' } } } },
+        proposer: { type: 'object', description: 'signed envelope of the proposing agent' },
+        votes: { type: 'array', items: { type: 'object' }, description: 'array of signed vote envelopes' },
+        rules: { type: 'object', properties: { minQuorum: { type: 'integer' }, threshold: { type: 'number' }, coolingPeriodDays: { type: 'integer' } } },
+        forkOnReject: { type: 'boolean' },
+      },
+      required: ['proposer', 'votes'],
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handler: (a) => handleGovernanceRound(a as any),
+  },
+  'protocol.attest': {
+    description: 'Generic sign-bound attestation write — the L1 integrity primitive. Recovers the signer from a rev-196 envelope, REQUIRES recovered signer === claimed agent_id (defeats impersonation + one-byte tampering), enforces a ±60s timestamp window (defeats stale replay), then content-addresses the attested payload as a holon. Returns 401 on any forged/tampered/stale envelope. A verbatim replay within the window is accepted but stays attributed to the ORIGINAL signer.',
+    inputSchema: { type: 'object', properties: { envelope: { type: 'object', description: 'rev-196 signed envelope { _signature, _signed_payload }' } }, required: ['envelope'] },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handler: (a) => handleAttest(a as any),
+  },
 };
 
 // ── Express server ─────────────────────────────────────────────
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
+// Browser-reachable substrate surface: permissive CORS. Reads + writes are
+// signature-gated (rev-196 envelopes), not origin-gated — Interego's zero-trust
+// stance (trust lives at the verifier, not the transport).
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.status(204).end(); return; }
+  next();
+});
 
 app.post('/mcp', async (req: Request, res: Response) => {
   const body = req.body as { jsonrpc?: string; id?: number | string | null; method?: string; params?: Record<string, unknown> };

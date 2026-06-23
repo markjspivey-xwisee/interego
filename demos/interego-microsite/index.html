@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Interego — the substrate, demonstrated. Emergent, signature-bound, content-addressed capabilities (governance, semiotic convergence, integrity) you discover and invoke. No vertical, no hardcoded API." />
+    <title>Interego · the substrate, demonstrated</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" />
+    <style>
+      :root {
+        --bg: #0d1117;
+        --panel: #161b27;
+        --panel-2: #1c2330;
+        --border: #2b3344;
+        --text: #e6ecf5;
+        --text-dim: #8b97ad;
+        --accent: #6ea8fe;
+        --accent-2: #b58cff;
+        --good: #2ecc71;
+        --warn: #e0a64a;
+        --bad: #ff6b5e;
+        --shadow: 0 1px 0 rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+      }
+      * { box-sizing: border-box; }
+      html, body, #root { margin: 0; }
+      body {
+        font-family: 'EB Garamond', Garamond, Georgia, serif;
+        background:
+          radial-gradient(1100px 600px at 80% -10%, rgba(110,168,254,0.10), transparent 60%),
+          radial-gradient(900px 500px at -10% 110%, rgba(181,140,255,0.08), transparent 60%),
+          var(--bg);
+        color: var(--text);
+        font-size: 17px; line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+        min-height: 100vh;
+      }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      button { font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace; cursor: pointer; }
+      input, select, textarea { font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace; background: var(--panel-2); color: var(--text); }
+      pre, code, .mono { font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace; }
+      .label { font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
+      :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: var(--panel); }
+      ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

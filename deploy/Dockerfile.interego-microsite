@@ -1,0 +1,37 @@
+# ────────────────────────────────────────────────────────────
+#  Interego substrate demo microsite — Azure Container Apps.
+#
+#  Static Vite + React SPA. VITE_INTEREGO_BRIDGE_URL is baked at build
+#  time so the microsite discovers + invokes the live interego-bridge.
+#  nginx serves the bundle on 8080. Self-contained (no @interego imports
+#  in the browser — it talks to the bridge over HTTP).
+# ────────────────────────────────────────────────────────────
+
+ARG NODE_BASE=node:20-slim
+FROM ${NODE_BASE} AS build
+WORKDIR /app
+
+ARG VITE_INTEREGO_BRIDGE_URL
+ENV VITE_INTEREGO_BRIDGE_URL=${VITE_INTEREGO_BRIDGE_URL}
+RUN test -n "$VITE_INTEREGO_BRIDGE_URL" || (echo "VITE_INTEREGO_BRIDGE_URL build-arg is required" >&2 && exit 1)
+
+ARG CACHEBUST=0
+RUN echo "cachebust ${CACHEBUST}"
+
+COPY demos/interego-microsite/package.json demos/interego-microsite/vite.config.ts demos/interego-microsite/tsconfig.json demos/interego-microsite/index.html /app/
+COPY demos/interego-microsite/src/ /app/src/
+RUN npm install --no-audit --no-fund && npm run build
+
+# ────────────────────────────────────────────────────────────
+FROM public.ecr.aws/docker/library/nginx:1.27-alpine
+RUN printf 'server {\n\
+  listen 8080;\n\
+  root /usr/share/nginx/html;\n\
+  index index.html;\n\
+  location / { try_files $uri $uri/ /index.html; }\n\
+  location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; }\n\
+  location = /index.html { add_header Cache-Control "no-cache, no-store, must-revalidate"; }\n\
+}\n' > /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 8080
+CMD ["nginx", "-g", "daemon off;"]

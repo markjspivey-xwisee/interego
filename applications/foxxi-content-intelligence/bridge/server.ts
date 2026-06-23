@@ -120,7 +120,6 @@ import { mintSessionToken } from '../src/auth.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier } from '@interego/core';
-import { proposeAmendment, vote as castVote, tryRatify, communityModal, forkConstitution } from '@interego/constitutional';
 import { proveCompetency } from '../src/competency-proof.js';
 import {
   buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
@@ -3927,80 +3926,6 @@ app.post('/agent/calibration/merge', async (req, res) => {
       note: multiParty
         ? 'Each contribution is signed by a DISTINCT key (recovered, not asserted; same-key resubmissions collapse to one source). No raw record crossed a boundary — only aggregate cells above the minimum-aggregate (k-sample) suppression floor. A cell Hypothetical for each contributor alone is Asserted once pooled across distinct keys. The merged memory is a dereferenceable, interrogable PGSL holon no single key could assert alone. Note: signatures prove the contributing KEY, not that two keys are independent rival organizations.'
         : 'Single-contributor merge (one distinct signing key) — this is a self-only profile, NOT cross-source consensus. Pooled promotion across sources requires >= 2 distinct keys.' });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
-});
-
-// ── Constitutional governance: agents propose, SIGN votes on, ratify (and fork on
-// dissensus) an amendment to a shared policy. Composes the EXISTING
-// @interego/constitutional state machine (proposeAmendment / vote / tryRatify /
-// communityModal / forkConstitution). The only substrate concern added here is the
-// SAME signer↔agent_id binding the calibration merge uses: a vote counts iff a real
-// distinct key cast it (recovered === claimed agent_id), so the quorum can't be
-// stuffed or forged. Composes a dereferenceable PGSL holon of the outcome.
-const GOV_MAX_VOTES = 64;
-app.post('/agent/govern/amend', async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  try {
-    const b = (req.body ?? {}) as Record<string, any>;
-    const policyId = typeof b.policyId === 'string' ? b.policyId : 'urn:foxxi:policy:demo';
-    const tier = ([0, 1, 2, 3, 4].includes(Number(b.tier)) ? Number(b.tier) : 3) as 0 | 1 | 2 | 3 | 4;
-    const dIn = (b.diff ?? {}) as Record<string, any>;
-    const diff = {
-      summary: typeof dIn.summary === 'string' ? dIn.summary.slice(0, 400) : 'amendment',
-      ...(Array.isArray(dIn.addedRules) ? { addedRules: dIn.addedRules.filter((x: unknown) => typeof x === 'string').slice(0, 16) } : {}),
-      ...(Array.isArray(dIn.removedRules) ? { removedRules: dIn.removedRules.filter((x: unknown) => typeof x === 'string').slice(0, 16) } : {}),
-      ...(Array.isArray(dIn.modifiedRules) ? { modifiedRules: dIn.modifiedRules.slice(0, 16) } : {}),
-    };
-    const rIn = (b.rules ?? {}) as Record<string, any>;
-    const rules = {
-      minQuorum: Math.max(1, Math.min(99999, Number(rIn.minQuorum) || 3)),
-      threshold: Math.max(0, Math.min(1, typeof rIn.threshold === 'number' ? rIn.threshold : 0.51)),
-      coolingPeriodDays: Math.max(0, Math.min(365, Number(rIn.coolingPeriodDays) || 0)),
-    };
-    // Proposer — signed, signer bound to claimed agent_id.
-    const pr = recoverSignedRequest(b.proposer ?? {});
-    if (!pr.ok) { res.status(401).json({ ok: false, error: `proposer signature did not verify: ${pr.reason}` }); return; }
-    if (`did:ethr:${pr.signer}`.toLowerCase() !== String(pr.payload.agent_id ?? '').toLowerCase()) { res.status(401).json({ ok: false, error: 'proposer signer does not match claimed agent_id' }); return; }
-    const proposedBy = `did:ethr:${pr.signer}`;
-    const amendmentId = `urn:foxxi:amendment:${courseLabelFor(diff.summary).replace(/^course-/, '').slice(0, 36)}-${Date.now().toString(36)}`;
-    let amendment = proposeAmendment({ id: amendmentId as any, proposedBy: proposedBy as any, amends: policyId as any, tier, diff });
-    // Signed votes — recover DISTINCT signers, bind to agent_id, drop forgeries/Sybil.
-    const votesIn = Array.isArray(b.votes) ? b.votes.slice(0, GOV_MAX_VOTES) : [];
-    let droppedVotes = 0; const seen = new Set<string>();
-    for (const v of votesIn) {
-      const vr = recoverSignedRequest(v);
-      if (!vr.ok) { droppedVotes++; continue; }
-      if (`did:ethr:${vr.signer}`.toLowerCase() !== String(vr.payload.agent_id ?? '').toLowerCase()) { droppedVotes++; continue; }
-      const m = vr.payload.modalStatus;
-      const ms = (m === 'Asserted' || m === 'Counterfactual' || m === 'Hypothetical') ? m : 'Hypothetical';
-      const weight = typeof vr.payload.weight === 'number' ? Math.max(0, Math.min(100, vr.payload.weight)) : undefined;
-      amendment = castVote(amendment, `did:ethr:${vr.signer}` as any, ms, weight);
-      seen.add(vr.signer);
-    }
-    amendment = tryRatify(amendment, rules);
-    const cmodal = communityModal(amendment);
-    const forV = amendment.votes.filter(v => v.modalStatus === 'Asserted');
-    const againstV = amendment.votes.filter(v => v.modalStatus === 'Counterfactual');
-    const abstainV = amendment.votes.filter(v => v.modalStatus === 'Hypothetical');
-    const nonAbstain = forV.length + againstV.length;
-    const totalW = [...forV, ...againstV].reduce((s, v) => s + (v.weight ?? 1), 0);
-    const forW = forV.reduce((s, v) => s + (v.weight ?? 1), 0);
-    const tally = { for: forV.length, against: againstV.length, abstain: abstainV.length, distinctVoters: seen.size, quorum: rules.minQuorum, threshold: rules.threshold, proportion: totalW > 0 ? forW / totalW : 0 };
-    // Fork on dissensus — the against-voters publish a successor constitution.
-    let fork: unknown = null;
-    if (amendment.status === 'Rejected' && b.forkOnReject) {
-      fork = forkConstitution({ id: `urn:foxxi:fork:${Date.now().toString(36)}` as any, parentConstitution: policyId as any, dissenters: againstV.map(v => v.voter), newConstitution: { id: `${policyId}:fork` as any, tier, description: `Fork over: ${diff.summary}`, ratifyRule: rules }, reason: `amendment rejected (${tally.for}/${nonAbstain} for); dissenters fork` });
-    }
-    // Dereferenceable holon of the outcome.
-    let holon: { holonUri?: string; descriptorUrl?: string } | null = null;
-    if (tenantPodUrl) {
-      const label = courseLabelFor('governance');
-      const podUrl = `${new URL(tenantPodUrl).origin}/${label}/`;
-      const terms = ['urn:foxxi:governance', policyId, amendment.id, proposedBy, ...[...seen].map(s => `did:ethr:${s}`)];
-      const sl = await composeIntoSharedLattice({ podUrl, agentDid: tenantProfileDid, label, terms, content: { kind: 'foxxi:ConstitutionalAmendment', amendment, tally, communityModal: cmodal, rules, fork }, contentType: 'foxxi:ConstitutionalAmendment', projections: ['rdf'] });
-      if (sl) holon = { holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl };
-    }
-    res.json({ ok: true, amendment: { id: amendment.id, amends: amendment.amends, tier: amendment.tier, status: amendment.status, proposedBy, diff: amendment.diff, ratifiedAt: amendment.ratifiedAt, votes: amendment.votes.map(v => ({ voter: v.voter, modalStatus: v.modalStatus, weight: v.weight })) }, tally, communityModal: cmodal, droppedVotes, rules, fork, holon });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 

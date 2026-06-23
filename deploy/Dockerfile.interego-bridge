@@ -1,0 +1,71 @@
+# ────────────────────────────────────────────────────────────
+#  Interego SUBSTRATE demo bridge — Azure Container Apps deployment.
+#
+#  Generic protocol-level HTTP surface over the @interego/* packages
+#  (NOT a vertical). Hosts the substrate demos: constitutional governance,
+#  PGSL content-addressed atoms, ZK proofs, and sign-bound attestation —
+#  all as discoverable MCP tools, none as bespoke per-vertical routes.
+#  Runs demos/interego-bridge/server.ts via tsx (no separate compile of
+#  the bridge itself; the @interego/* packages are built to dist/).
+# ────────────────────────────────────────────────────────────
+
+ARG NODE_BASE=node:20-slim
+FROM ${NODE_BASE} AS build
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+WORKDIR /app
+
+# Workspace manifests — npm ci needs every declared workspace's package.json.
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY packages/abac/package.json ./packages/abac/
+COPY packages/compliance/package.json ./packages/compliance/
+COPY packages/connectors/package.json ./packages/connectors/
+COPY packages/constitutional/package.json ./packages/constitutional/
+COPY packages/core/package.json ./packages/core/
+COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/ops/package.json ./packages/ops/
+COPY packages/p2p/package.json ./packages/p2p/
+COPY packages/passport/package.json ./packages/passport/
+COPY packages/pgsl/package.json ./packages/pgsl/
+COPY packages/privacy/package.json ./packages/privacy/
+COPY packages/registry/package.json ./packages/registry/
+COPY packages/security-txt/package.json ./packages/security-txt/
+COPY packages/skills/package.json ./packages/skills/
+COPY packages/solid/package.json ./packages/solid/
+COPY packages/transactions/package.json ./packages/transactions/
+COPY mcp-server/package.json ./mcp-server/
+COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
+COPY deploy/identity/package.json ./deploy/identity/
+COPY deploy/validator/package.json ./deploy/validator/
+COPY applications/foxxi-content-intelligence/bridge/package.json ./applications/foxxi-content-intelligence/bridge/
+COPY applications/learner-performer-companion/bridge/package.json ./applications/learner-performer-companion/bridge/
+COPY applications/agent-collective/bridge/package.json ./applications/agent-collective/bridge/
+COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
+COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
+COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
+RUN npm ci
+RUN npm install --no-save tsx@4.22.0
+
+# Sources: the @interego/* packages + the demo bridge.
+COPY packages/ ./packages/
+COPY demos/ ./demos/
+
+# Compile all @interego/* packages → dist/ (the bridge resolves them by name).
+RUN npm run build
+
+# Make @interego/* resolvable by name (npm ci creates these; explicit + idempotent).
+RUN mkdir -p node_modules/@interego \
+  && ln -sfn /app/packages/core node_modules/@interego/core \
+  && ln -sfn /app/packages/solid node_modules/@interego/solid \
+  && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl \
+  && ln -sfn /app/packages/constitutional node_modules/@interego/constitutional
+
+# ────────────────────────────────────────────────────────────
+FROM ${NODE_BASE}
+WORKDIR /app
+COPY --from=build /app /app
+EXPOSE 6050
+ENV PORT=6050
+ENV NODE_NO_WARNINGS=1
+ENV INTEREGO_DEFAULT_AGENT_DID=did:web:interego-demo
+ENV BRIDGE_DEPLOYMENT_URL=https://interego-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io
+CMD ["npx", "tsx", "demos/interego-bridge/server.ts"]
