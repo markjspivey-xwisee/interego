@@ -14,6 +14,18 @@ const ACTOR_COL: Record<string, string> = {
 };
 const col = (a: string) => ACTOR_COL[a] ?? 'var(--text-dim)';
 
+// One activity-log line, shared by the main-run log and the controls log.
+function renderEvent(e: EpEvent): React.ReactNode {
+  if (e.kind === 'phase' || e.kind === 'control') return <div key={e.id} style={{ ...lbl, color: e.kind === 'control' ? 'var(--warn)' : 'var(--accent)', marginTop: 8 }}>▸ {e.title}</div>;
+  if (e.kind === 'measure' || e.kind === 'fuse') return <div key={e.id} style={{ fontSize: 12.5, margin: '4px 0', paddingLeft: 8, borderLeft: `2px solid ${e.kind === 'fuse' ? 'var(--good)' : 'var(--accent)'}` }}>◆ {e.title}{e.detail ? <span style={{ color: 'var(--text-dim)' }}> · {e.detail}</span> : null}</div>;
+  if (e.kind === 'tally' || e.kind === 'ratify' || e.kind === 'fork') return <div key={e.id} style={{ fontSize: 13, margin: '4px 0', color: e.kind === 'fork' ? 'var(--warn)' : 'var(--text)' }}>‖ {e.title}{e.detail ? <span style={{ color: 'var(--text-dim)' }}> · {e.detail}</span> : null}</div>;
+  if (e.kind === 'attest' || e.kind === 'prove') return <div key={e.id} style={{ fontSize: 12.5, margin: '3px 0', paddingLeft: 8, borderLeft: '2px solid var(--accent-2)' }}>⛨ {e.title}{e.detail ? <span style={{ color: 'var(--text-dim)' }}> · {e.detail}</span> : null}</div>;
+  if (e.kind === 'calibrate' || e.kind === 'land') return <div key={e.id} style={{ fontSize: 12, margin: '3px 0', color: 'var(--text-dim)' }}>↗ {e.title}{e.detail ? <> · <a href={e.detail} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{e.detail.replace(/^https?:\/\//, '')}</a></> : null}</div>;
+  if (e.kind === 'done') return <div key={e.id} style={{ fontSize: 12.5, color: 'var(--good)', marginTop: 6 }}>✓ {e.title}</div>;
+  if (e.kind === 'error') return <div key={e.id} style={{ fontSize: 12, color: 'var(--bad)' }}>⚠ {e.title}</div>;
+  return <div key={e.id} style={{ display: 'flex', gap: 8, padding: '3px 0' }}><span style={{ fontFamily: mono, fontSize: 9.5, color: col(e.actor), minWidth: 92, fontWeight: 600 }}>{e.actor}</span><span style={{ fontSize: 12.5 }}>{e.title}{e.detail ? <span style={{ color: 'var(--text-dim)' }}> · {e.detail}</span> : null}</span></div>;
+}
+
 // The contrast: the prevailing vendor pattern (self-asserted fields) vs. what this run produces.
 const CONTRAST: Array<{ field: string; vendor: string; here: string }> = [
   { field: 'the record itself', vendor: 'an LRS statement anyone can write — "claude said X" is unsigned', here: 'a signed rev-196 envelope — altering it breaks the signature; backdating is detectable' },
@@ -27,25 +39,26 @@ const CONTRAST: Array<{ field: string; vendor: string; here: string }> = [
 export function EmergentProfile({ onHome }: { onHome: () => void }) {
   const [apiKey, setApiKey] = useState('');
   const [events, setEvents] = useState<EpEvent[]>([]);
+  const [controlEvents, setControlEvents] = useState<EpEvent[]>([]);
   const [result, setResult] = useState<EpResult | null>(null);
   const [controls, setControls] = useState<EpControls>({});
   const [running, setRunning] = useState<null | 'main' | 'controls'>(null);
   const [err, setErr] = useState<string | null>(null);
   const hasKey = apiKey.trim().length > 0;
 
-  function fresh() { setErr(null); setEvents([]); resetCounter(); return makeEmit(e => setEvents(p => [...p, e])); }
-
+  // The main run and the controls keep SEPARATE result + activity panels, so running
+  // one never wipes the other — both stay visible side by side once produced.
   async function runMain() {
     if (running || !hasKey) return;
-    setRunning('main'); setResult(null); setControls({});
-    const emit = fresh();
+    setRunning('main'); setErr(null); setResult(null); setEvents([]); resetCounter();
+    const emit = makeEmit(e => setEvents(p => [...p, e]));
     try { setResult(await runEmergentProfile(apiKey, emit)); }
     catch (e) { setErr((e as Error).message); } finally { setRunning(null); }
   }
   async function runControls() {
     if (running || !hasKey) return;
-    setRunning('controls'); setResult(null);
-    const emit = fresh();
+    setRunning('controls'); setErr(null); setControls({}); setControlEvents([]); resetCounter();
+    const emit = makeEmit(e => setControlEvents(p => [...p, e]));
     try {
       const divergence = await runDivergenceControl(apiKey, emit);
       const dissensus = await runDissensusControl(apiKey, emit);
@@ -121,11 +134,31 @@ export function EmergentProfile({ onHome }: { onHome: () => void }) {
         </div>
       )}
 
+      {events.length > 0 && (
+        <div style={{ ...card, marginTop: 14 }}>
+          <div style={{ ...lbl, marginBottom: 8 }}>the run — coin · measure · negotiate · fuse · sign · ratify · upgrade (real substrate calls)</div>
+          <div style={{ display: 'grid', gap: 2 }}>
+            {events.map(renderEvent)}
+            {running === 'main' && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>working…</div>}
+          </div>
+        </div>
+      )}
+
       {(controls.divergence || controls.dissensus) && (
         <div style={{ ...card, marginTop: 14 }}>
           <div style={{ ...lbl, marginBottom: 6 }}>negative controls — outcomes that CAN fail (that&rsquo;s the point)</div>
           {controls.divergence && <div style={{ fontSize: 13, margin: '4px 0' }}>divergence: {controls.divergence.sharedBefore}→{controls.divergence.sharedAfter} shared — <strong style={{ color: controls.divergence.heldFlat ? 'var(--good)' : 'var(--warn)' }}>{controls.divergence.heldFlat ? 'gate held; term not admitted' : 'terms coincided (same bytes → same atom)'}</strong></div>}
           {controls.dissensus && <div style={{ fontSize: 13, margin: '4px 0' }}>dissensus: status <strong>{controls.dissensus.status}</strong> — <strong style={{ color: controls.dissensus.forked ? 'var(--good)' : 'var(--warn)' }}>{controls.dissensus.forked ? 'over-reach rejected / forked' : 'ratified (a real outcome)'}</strong></div>}
+        </div>
+      )}
+
+      {controlEvents.length > 0 && (
+        <div style={{ ...card, marginTop: 14 }}>
+          <div style={{ ...lbl, marginBottom: 8 }}>the controls — divergence (gate must refuse) · dissensus (over-reach put to a real quorum)</div>
+          <div style={{ display: 'grid', gap: 2 }}>
+            {controlEvents.map(renderEvent)}
+            {running === 'controls' && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>working…</div>}
+          </div>
         </div>
       )}
 
@@ -142,25 +175,6 @@ export function EmergentProfile({ onHome }: { onHome: () => void }) {
           ))}
         </div>
       </div>
-
-      {events.length > 0 && (
-        <div style={{ ...card, marginTop: 14 }}>
-          <div style={{ ...lbl, marginBottom: 8 }}>the run — coin · measure · negotiate · fuse · sign · ratify · upgrade (real substrate calls)</div>
-          <div style={{ display: 'grid', gap: 2 }}>
-            {events.map(e => {
-              if (e.kind === 'phase' || e.kind === 'control') return <div key={e.id} style={{ ...lbl, color: e.kind === 'control' ? 'var(--warn)' : 'var(--accent)', marginTop: 8 }}>▸ {e.title}</div>;
-              if (e.kind === 'measure' || e.kind === 'fuse') return <div key={e.id} style={{ fontSize: 12.5, margin: '4px 0', paddingLeft: 8, borderLeft: `2px solid ${e.kind === 'fuse' ? 'var(--good)' : 'var(--accent)'}` }}>◆ {e.title}{e.detail ? <span style={{ color: 'var(--text-dim)' }}> · {e.detail}</span> : null}</div>;
-              if (e.kind === 'tally' || e.kind === 'ratify' || e.kind === 'fork') return <div key={e.id} style={{ fontSize: 13, margin: '4px 0', color: e.kind === 'fork' ? 'var(--warn)' : 'var(--text)' }}>‖ {e.title}{e.detail ? <span style={{ color: 'var(--text-dim)' }}> · {e.detail}</span> : null}</div>;
-              if (e.kind === 'attest' || e.kind === 'prove') return <div key={e.id} style={{ fontSize: 12.5, margin: '3px 0', paddingLeft: 8, borderLeft: '2px solid var(--accent-2)' }}>⛨ {e.title}{e.detail ? <span style={{ color: 'var(--text-dim)' }}> · {e.detail}</span> : null}</div>;
-              if (e.kind === 'calibrate' || e.kind === 'land') return <div key={e.id} style={{ fontSize: 12, margin: '3px 0', color: 'var(--text-dim)' }}>↗ {e.title}{e.detail ? <> · <a href={e.detail} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{e.detail.replace(/^https?:\/\//, '')}</a></> : null}</div>;
-              if (e.kind === 'done') return <div key={e.id} style={{ fontSize: 12.5, color: 'var(--good)', marginTop: 6 }}>✓ {e.title}</div>;
-              if (e.kind === 'error') return <div key={e.id} style={{ fontSize: 12, color: 'var(--bad)' }}>⚠ {e.title}</div>;
-              return <div key={e.id} style={{ display: 'flex', gap: 8, padding: '3px 0' }}><span style={{ fontFamily: mono, fontSize: 9.5, color: col(e.actor), minWidth: 92, fontWeight: 600 }}>{e.actor}</span><span style={{ fontSize: 12.5 }}>{e.title}{e.detail ? <span style={{ color: 'var(--text-dim)' }}> · {e.detail}</span> : null}</span></div>;
-            })}
-            {running && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>working…</div>}
-          </div>
-        </div>
-      )}
 
       {/* honest ceiling — regime-honest, house style */}
       <div style={{ ...card, marginTop: 14, background: 'var(--panel-2)' }}>
