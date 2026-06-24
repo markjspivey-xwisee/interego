@@ -16,7 +16,7 @@ export interface GovEvent { id: number; actor: string; kind: 'identity' | 'phase
 let counter = 0;
 export function makeEmit(push: (e: GovEvent) => void) { return (e: Omit<GovEvent, 'id' | 'ts'>) => push({ ...e, id: counter++, ts: new Date().toISOString() }); }
 export function resetCounter() { counter = 0; }
-export interface RoundResult { status: string; tally: any; communityModal?: string; fork?: any; holon?: any; rules: any }
+export interface RoundResult { status: string; tally: any; communityModal?: string; fork?: any; holon?: any; rules: any; castVotes?: Array<{ name: string; did: string; verdict: 'FOR' | 'AGAINST' | 'ABSTAIN'; atoms: string[] }> }
 
 export function makePanel(stances: Array<{ name: string; stance: string }>): GovAgent[] {
   return stances.map(s => ({ wallet: freshAgent(), name: s.name, stance: s.stance }));
@@ -24,7 +24,7 @@ export function makePanel(stances: Array<{ name: string; stance: string }>): Gov
 
 export async function runGovernanceRound(
   apiKey: string, emit: (e: Omit<GovEvent, 'id' | 'ts'>) => void,
-  opts: { agents: GovAgent[]; proposerIdx?: number; policyId: string; tier: number; summary: string; addedRules?: string[]; rules: { minQuorum: number; threshold: number; coolingPeriodDays?: number }; forkOnReject?: boolean; context?: string },
+  opts: { agents: GovAgent[]; proposerIdx?: number; policyId: string; tier: number; summary: string; addedRules?: string[]; rules: { minQuorum: number; threshold: number; coolingPeriodDays?: number }; forkOnReject?: boolean; context?: string; voteAtoms?: string[] },
 ): Promise<RoundResult> {
   const { agents } = opts;
   const proposer = agents[opts.proposerIdx ?? 0];
@@ -33,6 +33,7 @@ export async function runGovernanceRound(
 
   const debate: string[] = [];
   const votes: any[] = [];
+  const castVotes: RoundResult['castVotes'] = [];
   for (const a of agents) {
     const prompt = `You are ${a.name}, a self-governing agent. YOUR STANCE: ${a.stance}\n` +
       `${opts.context ? opts.context + '\n' : ''}A proposed amendment to the shared policy "${opts.policyId}" (tier ${opts.tier}): "${opts.summary}".\n` +
@@ -46,7 +47,11 @@ export async function runGovernanceRound(
     const modal = verdict === 'FOR' ? 'Asserted' : verdict === 'AGAINST' ? 'Counterfactual' : 'Hypothetical';
     debate.push(`- ${a.name}: ${verdict} — ${reason}`);
     emit({ actor: a.name, kind: 'vote', title: verdict, detail: reason });
-    votes.push(await signEnvelope(a.wallet, { amendmentId, modalStatus: modal }));
+    // The signed payload BINDS the voter to the exact vocabulary under vote (voteAtoms):
+    // the ratification is then provably over THIS content-addressed term set — you cannot
+    // later swap the vocabulary and claim the same signed quorum approved it.
+    votes.push(await signEnvelope(a.wallet, { amendmentId, modalStatus: modal, ...(opts.voteAtoms ? { atoms: opts.voteAtoms } : {}) }));
+    castVotes.push({ name: a.name, did: a.wallet.did, verdict, atoms: opts.voteAtoms ?? [] });
   }
 
   emit({ actor: 'consortium', kind: 'phase', title: 'Signed votes tallied + ratified on the substrate (protocol.governance_round)' });
@@ -66,5 +71,5 @@ export async function runGovernanceRound(
   emit({ actor: 'consortium', kind: 'ratify', title: ratified ? '✓ RATIFIED — the amendment is now policy' : `✗ ${j.amendment?.status} — not ratified`, detail: `community modal: ${j.communityModal} · holon ${String(j.holon?.holonUri ?? '').slice(0, 30)}…` });
   if (j.fork) emit({ actor: 'consortium', kind: 'fork', title: '⑂ dissenters forked the constitution', detail: `${(j.fork.dissenters ?? []).length} dissenter(s) → ${j.fork.newConstitution?.id}` });
 
-  return { status: j.amendment?.status, tally: j.tally, communityModal: j.communityModal, fork: j.fork, holon: j.holon, rules: opts.rules };
+  return { status: j.amendment?.status, tally: j.tally, communityModal: j.communityModal, fork: j.fork, holon: j.holon, rules: opts.rules, castVotes };
 }

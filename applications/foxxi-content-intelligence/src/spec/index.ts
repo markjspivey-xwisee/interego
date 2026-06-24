@@ -13,6 +13,7 @@ import { CMI5_MODEL } from './cmi5.model.js';
 import { SCORM_CAM_MODEL } from './scorm-cam.model.js';
 import { SCORM_SN_MODEL } from './scorm-sn.model.js';
 import { SCORM_RTE_MODEL } from './scorm-rte.model.js';
+import { AI_ELEARNING_MODEL } from './ai-elearning.model.js';
 
 /** The registered standards ontologies — each composed into the PGSL lattice and
  *  projected (OWL/SHACL/JSON-LD) dereferenceably at <bridge>/ns/<module>. */
@@ -22,6 +23,7 @@ export const SPEC_MODELS: Record<string, OntologyModel> = {
   [SCORM_SN_MODEL.module]: SCORM_SN_MODEL,
   [SCORM_RTE_MODEL.module]: SCORM_RTE_MODEL,
   [CMI5_MODEL.module]: CMI5_MODEL,
+  [AI_ELEARNING_MODEL.module]: AI_ELEARNING_MODEL,
 };
 
 export { validateAgainstShape, shapesIri };

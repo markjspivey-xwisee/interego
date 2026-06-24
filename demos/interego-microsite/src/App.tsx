@@ -3,10 +3,11 @@ import { Quorum } from './pages/Quorum.js';
 import { Constitution } from './pages/Constitution.js';
 import { Babel } from './pages/Babel.js';
 import { RedTeam } from './pages/RedTeam.js';
+import { EmergentProfile } from './pages/EmergentProfile.js';
 import { BRIDGE_URL } from './lib/bridge.js';
 import { card, lbl, codeS, mono, serif } from './styles.js';
 
-type Route = 'home' | 'quorum' | 'constitution' | 'babel' | 'redteam';
+type Route = 'home' | 'quorum' | 'constitution' | 'babel' | 'redteam' | 'profile';
 
 function initial(): Route {
   const p = window.location.pathname;
@@ -14,6 +15,7 @@ function initial(): Route {
   if (p.startsWith('/constitution')) return 'constitution';
   if (p.startsWith('/babel')) return 'babel';
   if (p.startsWith('/red')) return 'redteam';
+  if (p.startsWith('/profile')) return 'profile';
   return 'home';
 }
 
@@ -21,7 +23,7 @@ export function App() {
   const [route, setRoute] = useState<Route>(initial());
   function nav(r: Route) {
     setRoute(r);
-    const path = r === 'home' ? '/' : r === 'redteam' ? '/red-team' : `/${r}`;
+    const path = r === 'home' ? '/' : r === 'redteam' ? '/red-team' : `/${r}`;  // 'profile' → '/profile'
     window.history.pushState({}, '', path);
     window.scrollTo({ top: 0 });
   }
@@ -33,7 +35,7 @@ export function App() {
         <button onClick={() => nav('home')} style={{ background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: mono, fontSize: 14, letterSpacing: '0.18em', textTransform: 'uppercase', padding: 0 }}>Interego</button>
         <span style={{ fontFamily: serif, fontStyle: 'italic', color: 'var(--text-dim)', fontSize: 16 }}>the substrate, demonstrated</span>
         <nav style={{ marginLeft: 'auto', display: 'flex', gap: 16, alignItems: 'center' }}>
-          {(['quorum', 'constitution', 'babel', 'redteam'] as Route[]).map(r => (
+          {(['quorum', 'constitution', 'babel', 'redteam', 'profile'] as Route[]).map(r => (
             <button key={r} onClick={() => nav(r)} style={{ background: 'transparent', border: 'none', color: route === r ? 'var(--accent)' : 'var(--text-dim)', cursor: 'pointer', fontFamily: mono, fontSize: 12.5, textTransform: 'capitalize', padding: 0 }}>{r === 'redteam' ? 'Red-Team' : r}</button>
           ))}
         </nav>
@@ -44,6 +46,7 @@ export function App() {
         {route === 'constitution' && <Constitution onHome={() => nav('home')} />}
         {route === 'babel' && <Babel onHome={() => nav('home')} />}
         {route === 'redteam' && <RedTeam onHome={() => nav('home')} />}
+        {route === 'profile' && <EmergentProfile onHome={() => nav('home')} />}
       </main>
     </div>
   );
@@ -55,6 +58,7 @@ function Landing({ nav }: { nav: (r: Route) => void }) {
     { r: 'constitution' as Route, t: '/constitution', d: 'Reflexive self-amendment — agents amend the rule that governs them, under that rule; it binds the next vote.' },
     { r: 'babel' as Route, t: 'Babel', d: 'Two agents converge on a shared content-addressed atom. Meaning-as-use, measured as sha256 fusion.' },
     { r: 'redteam' as Route, t: 'Red-Team', d: 'An adversarial LLM forges / tampers / replays; the L1 integrity primitive bounces each. Security as a spectator sport.' },
+    { r: 'profile' as Route, t: 'Profile', d: 'A cast of agents emergently build a competing, verifiable AI-in-eLearning vocabulary — fused atoms + a signed quorum, where a vendor would hand-author self-asserted fields.' },
   ];
   return (
     <div style={{ maxWidth: 1000, margin: '0 auto', padding: '56px 24px 80px' }}>
