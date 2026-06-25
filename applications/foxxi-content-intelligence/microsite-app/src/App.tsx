@@ -16,13 +16,14 @@ import { EvidenceLedger } from './pages/EvidenceLedger.js';
 import { FederatedCalibration } from './pages/FederatedCalibration.js';
 import { Convergence } from './pages/Convergence.js';
 import { PoisonedKnowledge } from './pages/PoisonedKnowledge.js';
+import { AiTutor } from './pages/AiTutor.js';
 
 // NOTE: the substrate demos (Babel, The Quorum, /constitution, Red-Team Arena)
 // were RELOCATED to the dedicated Interego demo surface (demos/interego-microsite,
 // against demos/interego-bridge) — they are substrate concerns, not Foxxi (L&D).
 // Only genuinely-vertical demos remain here. Poison/calibration stays: federated
 // L&D calibration is a Foxxi domain concern.
-export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent' | 'pod' | 'agentdemo' | 'reports' | 'compliance' | 'course' | 'hire' | 'ledger' | 'consortium' | 'convergence' | 'poison';
+export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent' | 'pod' | 'agentdemo' | 'reports' | 'compliance' | 'course' | 'hire' | 'ledger' | 'consortium' | 'convergence' | 'poison' | 'aitutor';
 
 export function App() {
   const [route, setRoute] = useState<Route>(initialRoute());
@@ -49,6 +50,7 @@ export function App() {
     else if (r === 'consortium') { url.pathname = '/consortium'; url.searchParams.delete('role'); }
     else if (r === 'convergence') { url.pathname = '/convergence'; url.searchParams.delete('role'); }
     else if (r === 'poison') { url.pathname = '/poison'; url.searchParams.delete('role'); }
+    else if (r === 'aitutor') { url.pathname = '/aitutor'; url.searchParams.delete('role'); }
     window.history.pushState({}, '', url.toString());
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -83,6 +85,7 @@ export function App() {
         {route === 'consortium' && <FederatedCalibration onHome={() => navigate('landing')} />}
         {route === 'convergence' && <Convergence onHome={() => navigate('landing')} />}
         {route === 'poison' && <PoisonedKnowledge onHome={() => navigate('landing')} />}
+        {route === 'aitutor' && <AiTutor onHome={() => navigate('landing')} />}
       </main>
       <SiteFooter />
     </div>
@@ -105,6 +108,7 @@ function initialRoute(): Route {
   if (p.startsWith('/consortium')) return 'consortium';
   if (p.startsWith('/convergence')) return 'convergence';
   if (p.startsWith('/poison')) return 'poison';
+  if (p.startsWith('/aitutor')) return 'aitutor';
   if (p.startsWith('/demos')) return 'demos';
   if (p.startsWith('/pod')) return 'pod';
   return 'landing';
@@ -142,6 +146,7 @@ function TopNav({ active, onNavigate }: { active: Route; onNavigate: (r: Route, 
         <NavLink active={active === 'demos'} onClick={() => onNavigate('demos')}>Demos</NavLink>
         <NavLink active={active === 'agentdemo'} onClick={() => onNavigate('agentdemo')}>Agents ▸</NavLink>
         <NavLink active={active === 'poison'} onClick={() => onNavigate('poison')}>Poison</NavLink>
+        <NavLink active={active === 'aitutor'} onClick={() => onNavigate('aitutor')}>AI tutor</NavLink>
         <NavLink active={active === 'hire'} onClick={() => onNavigate('hire')}>Hire</NavLink>
         <NavLink active={active === 'ledger'} onClick={() => onNavigate('ledger')}>Ledger</NavLink>
         <NavLink active={active === 'consortium'} onClick={() => onNavigate('consortium')}>Consortium</NavLink>
