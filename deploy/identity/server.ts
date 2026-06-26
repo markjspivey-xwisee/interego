@@ -116,11 +116,15 @@ const TOKEN_TTL_SECONDS = 86400; // 24 hours
 // is already prevented by TOKEN_SIGNING_KEY; this is info-disclosure
 // tightening on the verification surface.
 //
-// Rollout: when unset, the endpoint stays open (legacy behavior) so
-// existing css-gate deployments keep working until they're rewired with
-// the same secret. Production deployments MUST set this once the gate
-// carries IDENTITY_INTROSPECTION_SECRET.
+// Rollout: introspection now FAILS CLOSED by default. Operators choose one of:
+//   - set IDENTITY_INTROSPECTION_SECRET (and have callers present it) → enforced, OR
+//   - set ALLOW_OPEN_INTROSPECTION=1 → explicit, warned opt-in to the legacy open
+//     oracle for the migration window only.
+// With neither set, /tokens/verify returns 401 (instead of silently being an open
+// oracle that a forgotten env var leaves exposed). Symmetric with how the relay's
+// /verify-token fails closed and how TOKEN_SIGNING_KEY warns loudly when unset.
 const IDENTITY_INTROSPECTION_SECRET = process.env['IDENTITY_INTROSPECTION_SECRET'] ?? '';
+const ALLOW_OPEN_INTROSPECTION = process.env['ALLOW_OPEN_INTROSPECTION'] === '1';
 
 function log(msg: string) { console.log(`[identity] ${msg}`); }
 
@@ -3005,9 +3009,31 @@ app.post('/register-agent', tokenLimiter, async (req, res) => {
  * Returns: { token, expiresAt }
  */
 app.post('/tokens', tokenLimiter, async (req, res) => {
+  // PROOF-OF-POSSESSION (first-principles guardrail: no credential without proving
+  // key-ownership). Minting a token requires already holding a valid token for THIS
+  // user — the same gate as /register-agent. Both userId and agentId are PUBLIC
+  // (userIds are derived + enumerable; the unauthenticated WebID profile lists every
+  // authorizedAgent), so without this gate anyone could POST a victim's (userId,
+  // agentId) and receive a fully valid bearer. The FIRST token must come from a
+  // credential-proving flow (/auth/siwe, /auth/did, /auth/webauthn/*).
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Bearer token required: present a valid token for this user to mint another (obtain the first via /auth/siwe, /auth/did, or /auth/webauthn)' });
+    return;
+  }
+  const authResult = await verifyToken(authHeader.slice(7));
+  if (!authResult.valid) {
+    res.status(401).json({ error: authResult.reason ?? 'invalid token' });
+    return;
+  }
+
   const { userId, agentId } = req.body;
   if (!userId || !agentId) {
     res.status(400).json({ error: 'userId and agentId are required' });
+    return;
+  }
+  if (authResult.record!.userId !== userId) {
+    res.status(403).json({ error: 'token does not belong to this user' });
     return;
   }
 
@@ -3050,6 +3076,10 @@ app.post('/tokens/verify', tokenLimiter, async (req, res) => {
       res.status(401).json({ error: 'introspection bearer rejected' });
       return;
     }
+  } else if (!ALLOW_OPEN_INTROSPECTION) {
+    // Fail closed: neither a secret nor an explicit open-mode opt-in is set.
+    res.status(401).json({ error: 'token introspection is disabled — set IDENTITY_INTROSPECTION_SECRET (and have callers present it), or set ALLOW_OPEN_INTROSPECTION=1 for the legacy open oracle during migration' });
+    return;
   }
 
   const { token } = req.body;
@@ -4573,6 +4603,11 @@ app.listen(PORT, () => {
   log(`Interego Identity Server v2 started on port ${PORT}`);
   log(`Base URL: ${BASE_URL}`);
   log(`CSS URL: ${CSS_URL}`);
+  if (!IDENTITY_INTROSPECTION_SECRET && ALLOW_OPEN_INTROSPECTION) {
+    log(`WARN: token introspection is running in OPEN mode (ALLOW_OPEN_INTROSPECTION=1) — /tokens/verify is an unauthenticated oracle. Set IDENTITY_INTROSPECTION_SECRET (and have css-gate present it) to fail closed, then remove ALLOW_OPEN_INTROSPECTION.`);
+  } else if (!IDENTITY_INTROSPECTION_SECRET) {
+    log(`Introspection: FAIL-CLOSED (no IDENTITY_INTROSPECTION_SECRET, no ALLOW_OPEN_INTROSPECTION) — /tokens/verify returns 401 until one is set.`);
+  }
   log(`WebAuthn RP: static id=${RP_ID} origin=${RP_ORIGIN}; per-request allowlist=[${[...RP_ALLOWLIST.keys()].join(', ') || '(none)'}]`);
   log(`Auth: decentralized — user credentials stored per-pod at <pod>/auth-methods.jsonld`);
   log(`Bootstrap invites: ${BOOTSTRAP_INVITES.size} configured${BOOTSTRAP_INVITES.size > 0 ? ' (' + [...BOOTSTRAP_INVITES.keys()].join(', ') + ')' : ''}`);

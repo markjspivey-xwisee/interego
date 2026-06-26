@@ -179,16 +179,12 @@ async function registerAgent(name: string, userId: string, agentId: string, aat:
     token = regData.token;
     log(name, `Registered: DID=${did}`);
   } else {
-    // User might already exist — get a token
-    const tokenResp = await fetch(`${IDENTITY_URL}/tokens`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, agentId }),
-    });
-    const tokenData = await tokenResp.json();
-    token = tokenData.token;
-    did = `did:web:localhost:8090:users:${userId}`;
-    webId = `${IDENTITY_URL}/users/${userId}/profile#me`;
-    log(name, `Already registered, got token: DID=${did}`);
+    // User may already exist. NOTE: POST /tokens now requires proof-of-possession
+    // (a valid Bearer for this user) — you can no longer mint a token from public
+    // (userId, agentId) alone. A real client re-authenticates via a credential-
+    // proving flow (/auth/siwe, /auth/did, /auth/webauthn) to obtain its first
+    // token. This example fails fast rather than modelling the closed hole.
+    throw new Error(`${name}: registration failed and no held token to present — re-auth via /auth/siwe|/auth/did|/auth/webauthn to mint a token (POST /tokens now needs a Bearer).`);
   }
 
   // 2. Create pod on CSS
