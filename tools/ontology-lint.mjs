@@ -65,6 +65,10 @@ const SCAN_PATHS = [
   'deploy/identity',
   'deploy/mcp-relay',
   'mcp-server',
+  // Vertical applications — the layer with the highest domain-term pressure,
+  // so their use of CORE prefixes (iep:/ieh:/pgsl:/…) is self-description-checked
+  // too. Vertical-OWNED prefixes (fxs:/lpc:/…) are unowned here and ignored.
+  'applications',
 ];
 
 // Known-drift baseline. Entries here are terms emitted by code that

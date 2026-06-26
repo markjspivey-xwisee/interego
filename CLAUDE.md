@@ -4,7 +4,7 @@
 
 Reference implementation of **Interego** — a verifiable, federated substrate for AI-agent context, identity, and coordination. Three pillars sit on one cryptographic root:
 
-1. **Typed context.** The L1 protocol is **Interego Protocol 1.0** — typed Context Descriptors over RDF 1.2 Named Graphs, with seven facets (Temporal / Provenance / Agent / AccessControl / Semiotic / Trust / Federation), the composition algebra (union / intersection / restriction / override), modal status (Asserted / Hypothetical / Counterfactual), `iep:supersedes` chains, and the PGSL content-addressed lattice.
+1. **Typed context.** The L1 protocol is **Interego Protocol 1.0** — typed Context Descriptors over RDF 1.2 Named Graphs, with nine facet types total — the seven mandatory core facets (Temporal / Provenance / Agent / AccessControl / Semiotic / Trust / Federation) plus the optional Causal and Projection facets — the composition algebra (union / intersection / restriction / override), modal status (Asserted / Hypothetical / Counterfactual), `iep:supersedes` chains, and the PGSL content-addressed lattice.
 2. **Verifiable identity.** Wallet-rooted DIDs, capability passports that survive infrastructure migration, public attestation registries, ABAC over typed attributes.
 3. **Coordination.** Multi-axis attestation, self-amending constitutional policies, federated saga transactions, p2p relays, vertical applications.
 
@@ -50,16 +50,26 @@ packages/
                       runtime. The runtime is slated for extraction
                       into @interego/affordance-engine once its PGSL
                       cross-cuts are decoupled.
-    src/solid/        Solid+LDP binding (publish/discover/subscribe,
-                      anchors, DID resolution, WebFinger, sharing).
-                      Currently inside core because the kernel composes
-                      against it; planned split to @interego/solid.
-    src/pgsl/         Grothendieck-fibration realization (atoms,
-                      fragments, pullbacks, agent framework, decision
-                      functor, SPARQL engine, SHACL, ontology loaders).
-                      Currently inside core because rdf/system-ontology
-                      + rdf/virtualized-layer back-reference PGSL;
-                      planned split to @interego/pgsl.
+  pgsl/          @interego/pgsl (v0.2.0) — Grothendieck-fibration
+                 realization (atoms, fragments, pullbacks, agent
+                 framework, decision functor, SPARQL engine, SHACL,
+                 ontology loaders). Split out of core into its own
+                 standalone workspace; built by `npm run build:leaves`.
+                 STATUS NOTE (be precise when reasoning about "foundation-
+                 first"): PGSL is a PLUGGABLE lattice adapter the kernel can
+                 use — core ships a pure-hash fallback and works without it,
+                 and descriptor/opaque mint kinds bypass the lattice. The
+                 LIVE publish + manifest-recovery path in @interego/solid is
+                 currently DESCRIPTOR/RDF-primary; the foundation-first
+                 projection engine (projectHolon/projectLatticeSlice) is
+                 ADDITIVE and not yet the canonical write path. Treating
+                 "PGSL is THE foundation, RDF/Solid are projections" as the
+                 description of the RUNNING system is aspirational until the
+                 Stage-5 publish-path migration lands.
+  solid/         @interego/solid (v0.2.0) — Solid+LDP binding
+                 (publish/discover/subscribe, anchors, DID resolution,
+                 WebFinger, sharing). Split out of core into its own
+                 standalone workspace; built by `npm run build:leaves`.
   abac/          @interego/abac — Attribute-Based Access Control over
                  substrate descriptors (evaluator + attribute resolver +
                  decision cache + SHACL-shape policy validation).
@@ -102,6 +112,7 @@ Plus surrounding infrastructure:
 mcp-server/    Stdio MCP server — surface = 8 kernel verbs (mint / dereference /
                compose / act / restrict / extend / promote / decompose) AS
                first-class tools + 27 compatibility-shim named tools
+               (the relay is a superset — see deploy/mcp-relay below)
                (publish_context / discover_context / register_agent / pgsl_* /
                invoke_affordance / ...). Each shim's description is tagged
                `Compatibility shim — internally composes kernel(...)`. The
@@ -120,8 +131,10 @@ deploy/
   identity/    Stateless DID resolver + signature verifier;
                auth-methods live in each user's pod (auth-methods.jsonld)
   mcp-relay/   HTTP/SSE OAuth-gated MCP proxy for claude.ai connectors;
-               per-surface agent minting; cross-pod sharing. Same surface as
-               mcp-server: 8 kernel verbs + 27 compatibility-shim named tools.
+               per-surface agent minting; cross-pod sharing. Superset of
+               mcp-server (NOT identical parity): 9 kernel verbs — the
+               stdio server's 8 plus reduce_chain — alongside the
+               compatibility shims and additional relay-only shims.
 integrations/
   openclaw-memory/      Path 2 — OpenClaw memory-engine plugin backed by
                         Interego pods. Substrate-pure bridge.ts +
@@ -152,7 +165,7 @@ tools/
 ### Key design decisions
 
 - **Zero runtime dependencies.** Validation is implemented programmatically (no SHACL engine needed). SHACL shapes are exported as Turtle strings for use with external engines.
-- **Discriminated union pattern.** All seven facet types use `{ type: 'Temporal' | 'Provenance' |... }` for exhaustive switch matching.
+- **Discriminated union pattern.** All nine facet types (the seven core — Temporal / Provenance / Agent / AccessControl / Semiotic / Trust / Federation — plus Causal and Projection) use `{ type: 'Temporal' | 'Provenance' |... }` for exhaustive switch matching.
 - **Composition is algebraic.** The four operators (union, intersection, restriction, override) form a bounded lattice. Each facet type defines its own merge semantics per the spec.
 - **W3C vocabulary reuse.** Every namespace constant, class IRI, and property IRI is typed and exported. The `expand()`/`compact()` helpers handle prefix ↔ full IRI conversion.
 
@@ -184,7 +197,7 @@ See [`spec/LAYERS.md`](spec/LAYERS.md). Every artifact in this repository sits o
 - **Layer 1 — Protocol** (normative): `iep:`, `ieh:`, `pgsl:`, `ie:`, `align:`; `spec/architecture.md`; `spec/conformance/**`. RFC 2119 language.
 - **Layer 2 — Architecture** (informative patterns): `hyprcat:`, `hypragent:`, `abac:`, `registry:`, `passport:`; applicability notes; `docs/e2ee.md` architecture sections.
 - **Layer 3 — Implementation & Domain** (non-normative): `hela:`, `sat:`, `cts:`, `olke:`, `amta:`; everything under `src/`, `deploy/`, `examples/`; any future domain vocabulary (`code:`, `med:`, `learning:`, ...).
-- **Vertical applications** (non-normative, application-over-L3): [`applications/`](applications/) holds vertical use cases that COMPOSE the protocol without extending it. Each has its own scoped namespace OUTSIDE the protocol IRI space (e.g., `lpc:`, `adp:`, `lrs:`, `ac:`, `owm:`). Verticals MUST NOT propose changes to L1/L2/L3 ontologies. Current example verticals: `learner-performer-companion/`, `agent-development-practice/`, `lrs-adapter/`, `agent-collective/`, `organizational-working-memory/`. See [`applications/README.md`](applications/README.md) for layering discipline. **Verticals are NEVER bundled into the generic Interego deployments** (mcp-server, examples/personal-bridge, deploy/mcp-relay). Each vertical declares capabilities as `iep:Affordance` descriptors in `<vertical>/affordances.ts` (single source of truth) and exposes them two ways: (Path A) generic protocol-level discovery via the standard `discover_context` flow, then invocation through the substrate's `invoke_affordance` tool — which proxies the HTTP POST to `hydra:target` so MCP clients without raw-HTTP access can still follow the link, (Path B) optional per-vertical MCP bridge under `<vertical>/bridge/` that derives MCP tool schemas from the affordances. Path A is primary and the only path needed for full access; Path B remains useful as ergonomic native tool surface AND as the mandatory handler runtime for verticals with complex domain logic (PDF/SCORM/BBS+/cmi5 etc.) — even when an MCP client uses Path A to invoke, the handler still executes on the per-vertical bridge process behind `hydra:target`.
+- **Vertical applications** (non-normative, application-over-L3): [`applications/`](applications/) holds vertical use cases that COMPOSE the protocol without extending it. Each has its own scoped namespace OUTSIDE the protocol IRI space (e.g., `lpc:`, `adp:`, `lrs:`, `ac:`, `owm:`). Verticals MUST NOT propose changes to L1/L2/L3 ontologies. Current example verticals: `learner-performer-companion/`, `agent-development-practice/`, `lrs-adapter/`, `agent-collective/`, `organizational-working-memory/`, `foxxi-content-intelligence/`, `agentic-performance-practice/`. See [`applications/README.md`](applications/README.md) for layering discipline. **Verticals are NEVER bundled into the generic Interego deployments** (mcp-server, examples/personal-bridge, deploy/mcp-relay). Each vertical declares capabilities as `iep:Affordance` descriptors in `<vertical>/affordances.ts` (single source of truth) and exposes them two ways: (Path A) generic protocol-level discovery via the standard `discover_context` flow, then invocation through the substrate's `invoke_affordance` tool — which proxies the HTTP POST to `hydra:target` so MCP clients without raw-HTTP access can still follow the link, (Path B) optional per-vertical MCP bridge under `<vertical>/bridge/` that derives MCP tool schemas from the affordances. Path A is primary and the only path needed for full access; Path B remains useful as ergonomic native tool surface AND as the mandatory handler runtime for verticals with complex domain logic (PDF/SCORM/BBS+/cmi5 etc.) — even when an MCP client uses Path A to invoke, the handler still executes on the per-vertical bridge process behind `hydra:target`.
 
 **Five drift triggers — STOP and flag before proceeding if any appears:**
 

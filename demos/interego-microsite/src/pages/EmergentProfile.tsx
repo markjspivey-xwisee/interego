@@ -31,7 +31,7 @@ const CONTRAST: Array<{ field: string; vendor: string; here: string }> = [
   { field: 'the record itself', vendor: 'an LRS statement anyone can write — "claude said X" is unsigned', here: 'a signed rev-196 envelope — altering it breaks the signature; backdating is detectable' },
   { field: 'sources', vendor: 'a free-text array of source strings', here: 'each citation content-addressed to a urn:pgsl:atom — resolves to exactly the captured bytes' },
   { field: 'model / provider', vendor: 'free text ("gpt-4.1", "Anthropic")', here: 'a signed attestation — the gateway attests what it called, attributable to its DID' },
-  { field: 'confidence', vendor: 'a bare self-reported number the spec simply trusts', here: 'a range proof (≥ threshold) — committed and checkable, not merely typed' },
+  { field: 'confidence', vendor: 'a bare self-reported number the spec simply trusts', here: 'a threshold proof (≥ threshold) — proves it clears the bar, revealing only the gap above, not the value (hash-chain, not ZK)' },
   { field: 'the vocabulary', vendor: 'one vendor publishes a doc; it changes on a release cycle', here: 'terms enter by independent atom-fusion + a distinct-signer vote; dissent can fork' },
   { field: 'custody', vendor: 'statements pool in a central LRS', here: "the learner's pod holds the record; the LRS is a reader (Foxxi vertical)" },
 ];
@@ -80,7 +80,7 @@ export function EmergentProfile({ onHome }: { onHome: () => void }) {
         <strong> independently mint byte-identical atoms</strong> (a sha256 they can&rsquo;t fake) <em>and</em> it crosses a
         <strong> distinct-signer governance vote</strong> whose signatures bind the quorum to that exact term set — then each
         field is upgraded by a <strong>real substrate call</strong>: a source becomes a content-addressed atom, the
-        model becomes a signed attestation, the confidence becomes a range proof. Pure substrate
+        model becomes a signed attestation, the confidence becomes a threshold proof. Pure substrate
         (<code style={codeS}>{host}</code>); landing it as xAPI happens on the Foxxi vertical.
       </p>
       <KeyCard apiKey={apiKey} setKey={setApiKey} note="every coiner, negotiator and voter is a real LLM agent" />
@@ -129,7 +129,7 @@ export function EmergentProfile({ onHome }: { onHome: () => void }) {
           <div style={{ display: 'grid', gap: 4, fontSize: 12 }}>
             {result.upgrades.sourceAtom && <div>◆ <strong>source → atom</strong> <span style={{ color: 'var(--text-dim)' }}>· {result.upgrades.sourceAtom}</span></div>}
             {result.upgrades.attestedBy && <div>◆ <strong>model/provider → signed attestation</strong> <span style={{ color: 'var(--text-dim)' }}>· {result.upgrades.attestedBy}</span></div>}
-            {result.upgrades.confidenceProof && <div>◆ <strong>confidence → range proof (≥ {result.upgrades.confidenceProof.threshold})</strong> <span style={{ color: result.upgrades.confidenceProof.ok ? 'var(--good)' : 'var(--bad)' }}>· {result.upgrades.confidenceProof.ok ? 'verified' : 'unverified'}</span></div>}
+            {result.upgrades.confidenceProof && <div>◆ <strong>confidence → threshold proof (≥ {result.upgrades.confidenceProof.threshold})</strong> <span style={{ color: result.upgrades.confidenceProof.ok ? 'var(--good)' : 'var(--bad)' }}>· {result.upgrades.confidenceProof.ok ? 'verified' : 'unverified'}</span></div>}
           </div>
         </div>
       )}
@@ -182,8 +182,9 @@ export function EmergentProfile({ onHome }: { onHome: () => void }) {
         <p style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55, margin: 0 }}>
           Signing proves <strong>who</strong> said it and that it <strong>wasn&rsquo;t altered</strong> — not that it&rsquo;s true.
           A content-addressed citation resolves to exactly the captured bytes; it does <strong>not</strong> verify the cited work
-          exists or that the model read it (a hallucinated string content-addresses fine). The range proof binds an agent to a
-          confidence <em>range</em> it committed to — it is <strong>not</strong> a calibration of the number against ground truth.
+          exists or that the model read it (a hallucinated string content-addresses fine). The threshold proof shows the
+          confidence cleared the bar and reveals only the <em>gap</em> above it (a hash-chain proof, not zero-knowledge or a
+          Pedersen commitment, and <strong>not</strong> a calibration of the number against ground truth).
           The efficacy evidence on the Foxxi vertical is signed self-report aggregated across <strong>distinct keys</strong>, not
           measured accuracy, and distinct keys are not proof of independent rival organizations. The holon is content-addressed and
           tamper-evident, recording that these recovered signers cast these votes — it is not collectively signed by the panel.

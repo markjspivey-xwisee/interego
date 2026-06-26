@@ -13,6 +13,7 @@
     "deploy/identity",
     "deploy/validator",
     "applications/foxxi-content-intelligence/bridge",
+    "applications/agentic-performance-practice/bridge",
     "applications/learner-performer-companion/bridge",
     "applications/agent-collective/bridge",
     "applications/agent-development-practice/bridge",

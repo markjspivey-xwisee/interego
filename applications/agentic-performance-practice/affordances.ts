@@ -22,7 +22,7 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:agp:contextualize-situation' as IRI,
     toolName: 'agp.contextualize_situation',
     title: 'Contextualize a performance situation (regime-first)',
-    description: 'Publish an agp:PerformanceSituation and place its work regime BEFORE choosing any method. Records regimeSource (derived|asserted|default|unclassified); only a derived regime may later gap-analyse or accrue calibration. Routes to the regime-appropriate method (apply-practice/gap-analysis/dispositional-read/stabilise-first/classify-first).',
+    description: 'Publish an agp:PerformanceSituation and place its work regime BEFORE choosing any method. Records regimeSource (derived|asserted|default-gap-intent|unclassified); only a derived regime may later gap-analyse or accrue calibration. Routes to the regime-appropriate method (apply-practice/gap-analysis/dispositional-read/stabilise-first/classify-first).',
     method: 'POST',
     targetTemplate: '{base}/agp/contextualize_situation',
     annotations: { title: 'Contextualize a performance situation', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },

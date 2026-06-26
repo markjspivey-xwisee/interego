@@ -37,8 +37,8 @@ agpsh:PerformanceSituationShape a sh:NodeShape ;
         sh:path agp:regimeSource ;
         sh:minCount 1 ;
         sh:datatype xsd:string ;
-        sh:pattern "^(derived|asserted|default|unclassified)$" ;
-        sh:message "regimeSource MUST be one of derived|asserted|default|unclassified — provenance of the regime placement." ;
+        sh:pattern "^(derived|asserted|default-gap-intent|unclassified)$" ;
+        sh:message "regimeSource MUST be one of derived|asserted|default-gap-intent|unclassified — provenance of the regime placement." ;
         sh:severity sh:Violation ;
     ] .
 

@@ -8,11 +8,11 @@
 
 **Editors:** Interego
 
-**Abstract:** This document is the normative specification of the Interego 1.0 protocol — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs. It defines the descriptor model, facet vocabulary, composition operators, serialization, and federation behavior that every conforming implementation must satisfy. Examples and architectural patterns are illustrative; the reference TypeScript implementation `@interego/core` is one such implementation and is not itself normative.
+**Abstract:** This document is the normative specification of the Interego 1.0 protocol — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs. It defines the descriptor model, facet vocabulary, composition operators, serialization, and federation behavior that every conforming implementation must satisfy. Examples and architectural patterns are illustrative; the reference TypeScript implementation `@interego/core` is one such implementation and is not itself normative. (The descriptor model defines nine facet types total — the seven mandatory core plus the optional Causal and Projection facets.)
 
 **Status:** **Last Call Working Draft (2026-05-16).** Core sections (§1–§5: descriptor model, facets, composition, serialization, federation) are frozen for v1.0 pending Candidate Recommendation. Until 2027-05-16 the editors commit that:
 
-- No change to the L1 wire format (Turtle / TriG / JSON-LD serializations of the seven facets, the composition operators, modal status, `iep:supersedes` chains) without a deprecation cycle of at least one minor version.
+- No change to the L1 wire format (Turtle / TriG / JSON-LD serializations of the seven core facets, the composition operators, modal status, `iep:supersedes` chains) without a deprecation cycle of at least one minor version.
 - No removal or rename of any term in the `iep:`, `ieh:`, `pgsl:`, `ie:`, or `align:` namespaces. Additive changes (new optional terms, new optional facets) are permitted within v1.x.
 - Sections explicitly marked "informative" or "extension" remain non-normative and may evolve in v1.x without affecting conformance claims.
 
@@ -1071,7 +1071,7 @@ The protocol partitions the artifact store into two layers with distinct reader 
 
 Normatively, every claim the protocol asks readers to reason about across a federation — recipient eligibility, modal status, temporal validity, revocation condition, trust level — **MUST** be expressible in the descriptor layer. If a new claim can only be evaluated by reading decrypted content, it is out-of-protocol.
 
-This is why the descriptor carries six facets: the facets are the query surface the federation can reach without holding any key. The payload is epistemically opaque to unauthorized readers by design.
+This is why the descriptor carries the seven core facets: the facets are the query surface the federation can reach without holding any key. The payload is epistemically opaque to unauthorized readers by design.
 
 **Implementation implication (informative):** the reference implementation publishes descriptors as Turtle at publicly-readable URLs and payloads as JOSE envelopes at companion URLs. Any implementation adopting different serializations or transports MUST preserve this cleartext/ciphertext split at the protocol boundary.
 

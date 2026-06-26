@@ -17,7 +17,8 @@
  *
  * HONEST: signing proves who recorded it + that it was not altered, not that the
  * feedback is correct; the content-addressed citation resolves to exact bytes, not to
- * a real-world work; the range proof binds a committed confidence range, not a
+ * a real-world work; the confidence threshold proof shows the value cleared the bar
+ * (revealing only the gap above — a hash-chain proof, not ZK/Pedersen), not a
  * calibration against ground truth.
  */
 import { ethers } from 'ethers';
@@ -108,7 +109,7 @@ export async function runAiTutor(apiKey: string, emit: Emit, topic = 'spaced ret
   // 2 — build the verifiable layer (each a real call).
   emit({ actor: 'sys', kind: 'phase', title: 'the verifiable layer — sign · content-address · attest · prove' });
   const tutor = deriveUserWallet('foxxi-ai-tutor');
-  const env = await signEnvelope(tutor, { kind: 'iep:AiTutorEvaluation', question, answer, feedback, confidence });
+  const env = await signEnvelope(tutor, { kind: 'AiTutorEvaluation', question, answer, feedback, confidence });
   const signer = env.did;
   const signedEnvelope = JSON.stringify({ _signature: env._signature, _signed_payload: env._signed_payload });
   const recordedAt = JSON.parse(env._signed_payload).timestamp as string;
@@ -118,7 +119,7 @@ export async function runAiTutor(apiKey: string, emit: Emit, topic = 'spaced ret
   try { verifiable.sourceAtom = (await sub('protocol.pgsl_mint_atom', { value: citation })).atom_iri; emit({ actor: 'substrate', kind: 'atom', title: 'source → content-addressed atom', detail: verifiable.sourceAtom }); }
   catch (e) { emit({ actor: 'substrate', kind: 'error', title: `atom: ${(e as Error).message}` }); }
   try {
-    const claimEnv = await signEnvelope(tutor, { kind: 'iep:ModelAttestation', model: MODEL, provider: 'Anthropic' });
+    const claimEnv = await signEnvelope(tutor, { kind: 'ModelAttestation', model: MODEL, provider: 'Anthropic' });
     const a = await sub('protocol.attest', { envelope: { _signature: claimEnv._signature, _signed_payload: claimEnv._signed_payload } });
     if (a?.ok) { verifiable.attestedBy = a.attestedBy; emit({ actor: 'substrate', kind: 'attest', title: `model/provider attested (${MODEL} · Anthropic)`, detail: a.attestedBy }); }
   } catch (e) { emit({ actor: 'substrate', kind: 'error', title: `attest: ${(e as Error).message}` }); }
@@ -127,7 +128,7 @@ export async function runAiTutor(apiKey: string, emit: Emit, topic = 'spaced ret
     const p = await sub('protocol.zk_prove_confidence_above_threshold', { confidence, threshold });
     const v = await sub('protocol.zk_verify_confidence_proof', { proof: p.proof ?? p });
     verifiable.proofOk = !!(v?.ok ?? v?.valid);
-    emit({ actor: 'substrate', kind: 'prove', title: `confidence range proof (≥ ${threshold})`, detail: verifiable.proofOk ? 'verified' : 'unverified' });
+    emit({ actor: 'substrate', kind: 'prove', title: `confidence threshold proof (≥ ${threshold})`, detail: verifiable.proofOk ? 'verified — reveals only the gap above, not the value' : 'unverified' });
   } catch (e) { emit({ actor: 'substrate', kind: 'error', title: `proof: ${(e as Error).message}` }); }
 
   // 3 — validate the verifiable record vs the SELF-ASSERTED one against the live profile.

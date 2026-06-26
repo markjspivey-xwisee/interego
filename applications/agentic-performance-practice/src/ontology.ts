@@ -115,7 +115,7 @@ export const AGP_TERMS: ReadonlyArray<AgpTerm> = [
   { name: 'actualizes', kind: 'ObjectProperty', label: 'actualizes', domain: 'Actualization', range: 'PerformanceAffordance' },
   { name: 'yields', kind: 'ObjectProperty', label: 'yields', domain: 'Actualization', range: 'Performance' },
   { name: 'recordedAs', kind: 'ObjectProperty', label: 'recorded as', domain: 'Performance', range: `${CG_NS}ContextDescriptor` },
-  { name: 'regimeSource', kind: 'DatatypeProperty', label: 'regime source', comment: 'derived|asserted|default|unclassified — only derived may gap-analyse or calibrate.' },
+  { name: 'regimeSource', kind: 'DatatypeProperty', label: 'regime source', comment: 'derived|asserted|default-gap-intent|unclassified — only derived may gap-analyse or calibrate.' },
   // Emergent standards-extension capability + in-flow performance support.
   { name: 'StandardsExtension', kind: 'Class', label: 'Standards Extension', subClassOf: `${CG_NS}ContextDescriptor`, comment: 'An agent-authored extension to a standard (xAPI extension / profile fragment / IEEE-LER / ADL-TLA term); self-descriptive + distributed; authoring it is a learnable, teachable capability.' },
   { name: 'ExtensionKind', kind: 'Class', label: 'Extension Kind', comment: 'Enumerated kind of standards extension.' },

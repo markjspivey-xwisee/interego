@@ -62,3 +62,35 @@ iep:encryptedHolon
 iep:ofDescriptor
 iep:pgslLevel
 iep:pgslUri
+
+# ── applications/ baseline (surfaced when the vertical layer was added to
+#    SCAN_PATHS so NEW vertical drift now fails). These are PRE-EXISTING
+#    terms emitted by verticals' use of core/L2/L3 prefixes; several are
+#    genuine concepts that should be DECLARED in their docs/ns/<prefix>.ttl
+#    (e.g. pgsl:hasAtom / pgsl:Atoms / pgsl:sourceFormat → pgsl; the
+#    eu-ai-act / nist-rmf article+function individuals; passport:DelegationCredential;
+#    amta:* rating predicates; abac:Policy) and a few are plurals/typos to
+#    reconcile (iep:Affordances→Affordance). Tracked for a dedicated ontology
+#    pass; not introduced by this remediation.
+abac:Policy
+amta:attestsTo
+amta:axis
+amta:fromExecution
+amta:rating
+eu-ai-act:Article12
+eu-ai-act:Article15
+iep:Affordances
+iep:CapabilityCatalog
+iep:Finding
+iep:NamedGraph
+iep:StandardsExtension
+iep:Verification
+iep:discover
+iep:recordedAt
+nist-rmf:MG
+passport:DelegationCredential
+pgsl:Atoms
+pgsl:hasAtom
+pgsl:sourceFormat
+# deprecated cg: read-alias used by a feasibility tool (migrate to iep:ContextDescriptor)
+cg:ContextDescriptor

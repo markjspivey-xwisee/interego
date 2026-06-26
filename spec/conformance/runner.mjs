@@ -21,11 +21,13 @@
  *        A successor query whose text contains the enclosing
  *        descriptor's own graph IRI is malformed.
  *
- *   3. Six-facet invariant (spec §5):
- *        A descriptor MUST have exactly one of each of the six
+ *   3. Seven-facet invariant (spec §5):
+ *        A descriptor MUST have exactly one of each of the seven
  *        core facets (TemporalFacet, ProvenanceFacet, AgentFacet,
  *        AccessControlFacet, SemioticFacet, TrustFacet,
- *        FederationFacet). Extensions like a 7th RevocationFacet
+ *        FederationFacet). Causal and Projection are additional
+ *        facet types (nine facet types total) beyond the seven
+ *        mandatory core. Extensions like a RevocationFacet
  *        (Proposal A) are permitted.
  *
  *   4. Revocation extension — shape validity:

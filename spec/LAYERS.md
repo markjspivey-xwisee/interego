@@ -33,7 +33,7 @@ Normative claims any conforming implementation MUST satisfy to be interoperable.
 
 Examples:
 
-- A descriptor has exactly one of each of the six core facets.
+- A descriptor has exactly one of each of the seven core facets.
 - A revocation condition declares a successor query in SPARQL 1.1.
 - An agent credential is a dereferenceable JSON-LD resource conforming to W3C Verifiable Credentials 2.0.
 - The descriptor layer is plaintext; the payload layer is encrypted; clients MUST be able to run federation queries over descriptors without decrypting payloads.

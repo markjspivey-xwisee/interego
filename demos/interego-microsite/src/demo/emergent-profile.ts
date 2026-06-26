@@ -11,7 +11,8 @@
  * Then each "accountability" field is upgraded with a REAL substrate call:
  *   - a source becomes a content-addressed atom (tamper-evident bytes),
  *   - the model/provider becomes a SIGNED attestation (attributable),
- *   - the confidence becomes a range PROOF (committed, checkable — not merely typed).
+ *   - the confidence becomes a THRESHOLD PROOF (proves it clears the bar, revealing
+ *     only the gap above — not the exact value; a hash-chain proof, not ZK/Pedersen).
  *
  * This module is thin orchestration only. All crypto / lattice / governance is the
  * substrate's; the judgment is the agents'. Steps 5-6 (calibrate / land) are
@@ -210,7 +211,7 @@ export async function runEmergentProfile(apiKey: string, emit: Emit): Promise<Ep
     const proof = await callTool('protocol.zk_prove_confidence_above_threshold', { confidence: 0.83, threshold });
     const v = await callTool('protocol.zk_verify_confidence_proof', { proof: proof.proof ?? proof });
     upgrades.confidenceProof = { ok: !!(v?.ok ?? v?.valid), threshold };
-    emit({ actor: 'sys', kind: 'prove', title: `confidence → range proof (≥ ${threshold}) — committed + checkable, not a bare number`, detail: upgrades.confidenceProof.ok ? 'proof verified' : 'proof did not verify' });
+    emit({ actor: 'sys', kind: 'prove', title: `confidence → threshold proof (≥ ${threshold}) — proves it clears the bar, not a bare number`, detail: upgrades.confidenceProof.ok ? 'proof verified (reveals only the gap above ' + threshold + ', not the value)' : 'proof did not verify' });
   } catch (e) { emit({ actor: 'sys', kind: 'error', title: `confidence proof: ${(e as Error).message}` }); }
 
   // 6 — POINTER-ONLY to the Foxxi vertical. The substrate POSTs NOTHING to an L&D route.

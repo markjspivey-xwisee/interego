@@ -5,6 +5,8 @@
   "files": [],
   "references": [
     { "path": "./packages/core" },
+    { "path": "./packages/pgsl" },
+    { "path": "./packages/solid" },
     { "path": "./packages/abac" },
     { "path": "./packages/compliance" },
     { "path": "./packages/connectors" },

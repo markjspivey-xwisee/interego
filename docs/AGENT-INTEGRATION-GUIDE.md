@@ -94,7 +94,7 @@ This is for harnesses that want richer features than the MCP exposes. Standard u
 
 The Interego protocol defines four conformance levels (see `spec/CONFORMANCE.md`):
 
-- **L1 Core:** six-facet invariant, modal-truth consistency, composition operators, supersedes resolution
+- **L1 Core:** seven-facet invariant (the seven mandatory core facets; nine facet types total incl. Causal + Projection), modal-truth consistency, composition operators, supersedes resolution
 - **L2 Federation:** pod manifest discovery, cross-pod attribute resolution, WebID/DID resolution
 - **L3 Advanced:** ABAC, AMTA aggregation, RDF 1.2, ZK proofs, capability passport, PGSL
 - **L4 Compliance:** opt-in for regulated deployments — every `compliance: true` descriptor must be signed (ECDSA), trust upgraded, modal committed, anchored, framework-cited. Maps to EU AI Act / NIST AI RMF / SOC 2 controls.

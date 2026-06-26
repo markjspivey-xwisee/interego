@@ -3041,7 +3041,7 @@ const PROFICIENCY = new Set(['Novice', 'Beginner', 'Intermediate', 'Advanced', '
 app.post('/agent/prove-competency', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);   // the HOLDER (subject of the credential)
-    if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:iep:action:foxxi:prove-competency.' }); return; }
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args (delegated holder signature) and POST them to this endpoint. NOTE: this is a direct signed route — it is NOT yet published in the /affordances manifest, so there is no discoverable action IRI to act on (migration to affordances.ts pending).' }); return; }
     if (!issuerKeySeed) { res.status(503).json({ error: 'issuance not configured (FOXXI_ISSUER_KEY_SEED unset)' }); return; }
     const p = auth.payload;
     const holderDid = auth.callerDid;
@@ -3082,7 +3082,7 @@ app.post('/agent/prove-competency', async (req, res) => {
 app.post('/agent/verify-presentation', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);   // the VERIFIER (any independent agent)
-    if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:iep:action:foxxi:verify-presentation.' }); return; }
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args and POST them to this endpoint. NOTE: this is a direct signed route — NOT yet in the /affordances manifest, so there is no discoverable action IRI to act on (migration to affordances.ts pending).' }); return; }
     const pr = (auth.payload.presentation ?? {}) as Record<string, any>;
     if (!pr.proof || !pr.issuerPublicKey) { res.status(400).json({ error: 'presentation { proof, disclosedMessages, issuerPublicKey, issuerDid } required' }); return; }
     const presentation = {

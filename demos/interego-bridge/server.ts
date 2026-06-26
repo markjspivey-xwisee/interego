@@ -509,7 +509,7 @@ const tools: Record<string, ToolDef> = {
     handler: (a) => handleZkVerifyCommitment(a as any),
   },
   'protocol.zk_prove_confidence_above_threshold': {
-    description: 'Range proof: prove confidence ≥ threshold without revealing the exact value.',
+    description: 'Threshold proof (hash-chain): proves confidence ≥ threshold. Reveals (value − threshold) — the chain length leaks how far ABOVE the threshold the value sits — but not the exact value. NOT a zero-knowledge / Pedersen-committed range proof (for gap-hiding, compose the exported Pedersen proveRange/verifyRange instead).',
     inputSchema: {
       type: 'object',
       properties: {

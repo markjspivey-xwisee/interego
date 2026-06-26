@@ -30,7 +30,7 @@ const extensions = [
   ext('capability', 'capability', 'IRI of the agp:Capability the performer engaged in this actualization.'),
   ext('actualizedAffordance', 'actualizedAffordance', 'IRI of the agp:PerformanceAffordance the actualization realized.'),
   ext('regime', 'regime', 'The agp:WorkRegime of the situation (Evident/Knowable/Emergent/Turbulent).'),
-  ext('regimeSource', 'regimeSource', 'Provenance of the regime placement (derived/asserted/default/unclassified).'),
+  ext('regimeSource', 'regimeSource', 'Provenance of the regime placement (derived/asserted/default-gap-intent/unclassified).'),
   ext('situationId', 'situationId', 'IRI of the agp:PerformanceSituation this performance occurred in.'),
 ];
 

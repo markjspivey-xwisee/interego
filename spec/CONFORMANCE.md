@@ -12,11 +12,12 @@ conformance test suite verifies the claim.
 The minimum surface every Interego implementation must support to be
 called Interego at all.
 
-- **L1.1 Six-facet invariant:** every `iep:ContextDescriptor` MUST
-  carry exactly one of each of the six core facets (Temporal,
-  Provenance, Agent, Semiotic, Trust, Federation) plus optionally
-  AccessControl. Extension facets (e.g. RevocationFacet, ProjectionFacet,
-  CausalFacet) are permitted but never required.
+- **L1.1 Seven-facet invariant:** every `iep:ContextDescriptor` MUST
+  carry exactly one of each of the seven core facets (Temporal,
+  Provenance, Agent, AccessControl, Semiotic, Trust, Federation).
+  There are nine facet types total: the seven mandatory core plus
+  Causal and Projection, which (like an extension RevocationFacet)
+  are permitted but never required.
 - **L1.2 Modal-truth consistency:** the SemioticFacet's `iep:modalStatus`
   and `iep:groundTruth` MUST agree per spec §5.2.2:
   Asserted ↔ groundTruth=true; Counterfactual ↔ groundTruth=false;

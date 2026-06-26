@@ -36,7 +36,7 @@ export function AiTutor({ onHome }: { onHome: () => void }) {
         <strong> emergent AI-in-eLearning profile</strong> and lands in the live Foxxi LRS. Unlike the prevailing pattern —
         which trusts whatever the model wrote — every field here is made verifiable by a real call: the statement is
         <strong> signed</strong>, the cited source is <strong>content-addressed</strong>, the model is
-        <strong> attested</strong>, the confidence is a <strong>range proof</strong>. Then the profile&rsquo;s shapes
+        <strong> attested</strong>, the confidence is a <strong>threshold proof</strong>. Then the profile&rsquo;s shapes
         <strong> reject</strong> the self-asserted version and <strong>accept</strong> the verifiable one — and the signed
         xAPI statement is stored in the LRS and read back. The vocabulary itself was{' '}
         <a href={result?.substrateDemo ?? 'https://interego-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io/profile'} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>emergently ratified on the substrate</a>.
@@ -77,7 +77,7 @@ export function AiTutor({ onHome }: { onHome: () => void }) {
             <div>◆ <strong>signed</strong> by <code style={codeS}>{result.verifiable.signer}</code></div>
             {result.verifiable.sourceAtom && <div>◆ <strong>source → atom</strong> <code style={codeS}>{result.verifiable.sourceAtom}</code></div>}
             {result.verifiable.attestedBy && <div>◆ <strong>model attested</strong> by <code style={codeS}>{result.verifiable.attestedBy}</code></div>}
-            {result.verifiable.proofOk !== undefined && <div>◆ <strong>confidence range proof (≥ 0.7)</strong> <span style={{ color: result.verifiable.proofOk ? 'var(--good)' : 'var(--bad)' }}>{result.verifiable.proofOk ? 'verified' : 'unverified'}</span></div>}
+            {result.verifiable.proofOk !== undefined && <div>◆ <strong>confidence threshold proof (≥ 0.7)</strong> <span style={{ color: result.verifiable.proofOk ? 'var(--good)' : 'var(--bad)' }}>{result.verifiable.proofOk ? 'verified' : 'unverified'}</span></div>}
           </div>
 
           <div style={{ ...lbl, marginTop: 14, marginBottom: 6 }}>the profile does its job — self-asserted bounces, verifiable passes</div>
@@ -122,8 +122,9 @@ export function AiTutor({ onHome }: { onHome: () => void }) {
         <p style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55, margin: 0 }}>
           Signing proves <strong>who</strong> recorded the evaluation and that it <strong>wasn&rsquo;t altered</strong> — not that the
           feedback is correct. The content-addressed citation resolves to exactly the captured bytes; it does <strong>not</strong>
-          prove the cited work exists or that the model read it. The range proof binds a committed confidence <em>range</em>, not a
-          calibration against ground truth. The LRS landing uses a self-minted demo session token (any bearer maps to the default
+          prove the cited work exists or that the model read it. The threshold proof shows the confidence cleared the bar and
+          reveals only the <em>gap</em> above it (a hash-chain proof, not zero-knowledge/Pedersen, and not a calibration against
+          ground truth). The LRS landing uses a self-minted demo session token (any bearer maps to the default
           tenant) — it shows the statement is conformant and storable, not that this is a production-authorized writer.
         </p>
       </div>

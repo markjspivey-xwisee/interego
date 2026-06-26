@@ -332,7 +332,7 @@ agp:evaluates a owl:ObjectProperty ;
 
 agp:regimeSource a owl:DatatypeProperty ;
     rdfs:label "regime source" ;
-    rdfs:comment "Provenance of a situation's placed regime: 'derived' (from trajectory evidence — the only source that may gap-analyse or accrue calibration), 'asserted' (a human/operator claim), 'default' (a fallback gap-intent), or 'unclassified'. Load-bearing: the calibration loop excludes non-derived regimes." ;
+    rdfs:comment "Provenance of a situation's placed regime: 'derived' (from trajectory evidence — the only source that may gap-analyse or accrue calibration), 'asserted' (a human/operator claim), 'default-gap-intent' (a fallback gap-intent), or 'unclassified'. Load-bearing: the calibration loop excludes non-derived regimes." ;
     rdfs:range xsd:string .
 
 agp:situationStatement a owl:DatatypeProperty ;
