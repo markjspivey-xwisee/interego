@@ -17,6 +17,9 @@ on:
       - 'mcp-server/**'
       - 'docs/ns/**'
       - 'tools/ontology-lint.mjs'
+      - 'tools/check-foxxi-affordances.mjs'
+      - 'applications/foxxi-content-intelligence/affordances.ts'
+      - 'applications/foxxi-content-intelligence/bridge/server.ts'
       - '.github/workflows/ontology-lint.yml'
   pull_request:
     branches: [master]
@@ -27,6 +30,9 @@ on:
       - 'mcp-server/**'
       - 'docs/ns/**'
       - 'tools/ontology-lint.mjs'
+      - 'tools/check-foxxi-affordances.mjs'
+      - 'applications/foxxi-content-intelligence/affordances.ts'
+      - 'applications/foxxi-content-intelligence/bridge/server.ts'
 
 permissions:
   contents: read
@@ -41,3 +47,5 @@ jobs:
         with: { node-version: '20' }
       - name: Run ontology lint
         run: node tools/ontology-lint.mjs
+      - name: Check Foxxi /agent/* routes are discoverable affordances
+        run: node tools/check-foxxi-affordances.mjs

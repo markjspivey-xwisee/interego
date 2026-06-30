@@ -170,6 +170,15 @@ export interface Affordance {
    *  Claude) default to worst-case hints (WRITE + DESTRUCTIVE + OPEN
    *  WORLD). Verticals SHOULD set all four hints + title explicitly. */
   readonly annotations?: McpToolAnnotations;
+  /** When true, the affordance is DECLARED for discovery (it appears in the
+   *  /affordances manifest, tools/list, and the entry point) but the bridge
+   *  does NOT auto-register an HTTP route or require a handler for it — the
+   *  capability is served by a pre-existing hand-coded route at its
+   *  targetTemplate path (e.g. a route with bespoke signed-delegation auth).
+   *  This makes every capability discoverable via the single manifest without
+   *  relocating route bodies. Agents discover→act it via its HTTP target;
+   *  the named-MCP tools/call shim is unavailable for it (no handler). */
+  readonly externallyRouted?: boolean;
 }
 
 /** The state of the resource a bridge is currently rendering, used to

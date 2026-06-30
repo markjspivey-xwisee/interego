@@ -76,8 +76,12 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
     ?? process.env['BRIDGE_DEPLOYMENT_URL']
     ?? `http://localhost:${process.env['PORT'] ?? '6010'}`;
 
-  // Validate that every affordance has a handler — fail fast on misconfig
+  // Validate that every NON-externally-routed affordance has a handler — fail
+  // fast on misconfig. externallyRouted affordances are declared for discovery
+  // only; their capability is served by a pre-existing hand-coded route, so they
+  // need no handler here.
   const missing = opts.affordances
+    .filter(a => !a.externallyRouted)
     .map(a => a.toolName)
     .filter(name => !opts.handlers[name]);
   if (missing.length > 0) {
@@ -90,6 +94,9 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
   // that walked the affordance manifest can POST directly here without
   // needing MCP at all.
   for (const affordance of opts.affordances) {
+    // externallyRouted affordances are served by a pre-existing hand-coded route
+    // at their target path — do NOT auto-register (would double-bind the path).
+    if (affordance.externallyRouted) continue;
     const path = affordance.targetTemplate.replace('{base}', '');
     const method = affordance.method.toLowerCase() as 'get' | 'post' | 'put' | 'delete' | 'patch';
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -171,7 +178,11 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
       const args = (params?.['arguments'] as Record<string, unknown> | undefined) ?? {};
       const handler = toolName ? opts.handlers[toolName] : undefined;
       if (!handler) {
-        res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${toolName ?? '<undefined>'}` } });
+        const ext = toolName ? opts.affordances.find(a => a.toolName === toolName && a.externallyRouted) : undefined;
+        const message = ext
+          ? `Tool "${toolName}" is externally-routed: invoke it via HTTP ${ext.method} ${ext.targetTemplate.replace('{base}', deploymentUrl)} (it carries bespoke auth and is not exposed as a named-MCP shim).`
+          : `Unknown tool: ${toolName ?? '<undefined>'}`;
+        res.json({ jsonrpc: '2.0', id, error: { code: -32601, message } });
         return;
       }
       try {
