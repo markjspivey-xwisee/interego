@@ -1,4 +1,6 @@
 @prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#>.
@@ -50,6 +52,18 @@ iep:ContextDescriptor a owl:Class ;
     rdfs:label "Context Descriptor" ;
     rdfs:comment "A metadata envelope that annotates one or more RDF Named Graphs with typed context facets. Each descriptor declares provenance, temporal validity, semiotic frame, trust level, and federation metadata for the graphs it describes." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+# Deprecated cg: read-alias. The L1 namespace was renamed Context Graphs (cg:)
+# → Interego Protocol (iep:); the full term-for-term equivalence lives in
+# docs/ns/cg.ttl. This single alias is declared here (where ontology-lint maps
+# the cg: prefix) so a legacy feasibility tool that still emits cg:ContextDescriptor
+# resolves. Authors MUST use iep:ContextDescriptor.
+cg:ContextDescriptor a owl:Class ;
+    owl:equivalentClass iep:ContextDescriptor ;
+    owl:deprecated true ;
+    rdfs:label "Context Descriptor (deprecated cg: alias)" ;
+    rdfs:comment "Deprecated alias of iep:ContextDescriptor; see docs/ns/cg.ttl. New data MUST use iep:ContextDescriptor." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 iep:ComposedDescriptor a owl:Class ;
     rdfs:subClassOf iep:ContextDescriptor ;
@@ -1075,6 +1089,54 @@ iep:canCompose a iep:Affordance ;
     rdfs:label "Can Compose" ;
     rdfs:comment "This endpoint applies a composition operator (union / intersection / restriction / override per §3.4) to operand descriptors and returns the composed descriptor. The iep:compositionOp query parameter selects the operator; operand IRIs are supplied via repeated iep:operand parameters.".
 
+iep:discover a iep:Affordance ;
+    rdfs:label "Discover" ;
+    rdfs:comment "The discovery operation — walks a pod's manifest and returns the iep:ManifestEntry set, optionally filtered (e.g. on dct:conformsTo). The verb form of iep:canDiscover; clients invoke it as iep:discover() to enumerate a pod's published descriptors before dereferencing any one of them.".
+
+# ── Affordance collections + capability catalogs ──────────────
+
+iep:Affordances a owl:Class ;
+    rdfs:label "Affordances" ;
+    rdfs:comment "A collection of iep:Affordance individuals advertised together on a resource (e.g. the affordance set a vertical declares for HATEOAS discovery). Membership is each contained iep:Affordance; the collection is the plural envelope, not a new capability kind." ;
+    rdfs:seeAlso iep:Affordance ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:CapabilityCatalog a owl:Class ;
+    rdfs:subClassOf iep:DataProduct ;
+    rdfs:label "Capability Catalog" ;
+    rdfs:comment "A self-describing catalog of the capabilities (iep:Affordance individuals) a service or vertical offers, typed for HATEOAS-style discovery. Consumers read the catalog to learn which operations are available without a per-vertical client." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:NamedGraph a owl:Class ;
+    rdfs:label "Named Graph" ;
+    rdfs:comment "An RDF 1.2 Named Graph — the unit of content a iep:ContextDescriptor annotates. Used as a typed return value (hydra:returns iep:NamedGraph) for operations that yield a graph payload." ;
+    rdfs:seeAlso rdf:Graph ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Finding a owl:Class ;
+    rdfs:label "Finding" ;
+    rdfs:comment "An analysis / audit result asserted about a subject — the typed activity of recording that some condition was observed (a conformance gap, a verification outcome, a coherence obstruction). Carried as a iep:ContextDescriptor with a SemioticFacet stating the finding's modal status + confidence." ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Verification a owl:Class ;
+    rdfs:label "Verification" ;
+    rdfs:comment "A dereferenceable holon recording that a claim, credential, or attestation was independently verified — the chain-of-custody node linking the verified artifact to the evidence and the verifying agent. Published so any third party can re-walk the verification rather than trust the result." ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:StandardsExtension a owl:Class ;
+    rdfs:label "Standards Extension" ;
+    rdfs:comment "A self-describing, publishable descriptor proposing an extension to an external standard (e.g. a new xAPI Profile term or RDF vocabulary term) together with a conformant artifact. Other agents discover it via iep:discover() and may adopt, attest to, or supersede it." ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:recordedAt a owl:DatatypeProperty ;
+    rdfs:label "recorded at" ;
+    rdfs:comment "Instant a statement, finding, or record was recorded into the substrate (distinct from when the underlying event occurred). Mirrors the xAPI 'stored' timestamp when a learning record is projected as a descriptor." ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
 # ── Pod self-description (bootstrap) ──────────────────────────
 
 iep:PodBootstrap a owl:Class ;
@@ -1494,7 +1556,7 @@ iep:RequireReconfirmation a iep:RevocationAction ;
 iep:RevocationFacet a owl:Class ;
     rdfs:subClassOf iep:ContextFacet ;
     rdfs:label "Revocation Facet (Proposal A — draft)" ;
-    rdfs:comment "DRAFT. A seventh context-facet type carrying one or more RevocationConditions. Proposal A of the revocation extension spec (see spec/revocation.md). Enables discovery by facet_type=Revocation without inspecting other facets; supports revocation issuers that differ from the descriptor author. Relaxes the six-facet invariant to \"at least six core facets plus at most one RevocationFacet.\" Rival: Proposal B (iep:revokedIf predicate on SemioticFacet). One will be adopted in v1.1; until then, implementations MAY support either, both, or neither." ;
+    rdfs:comment "DRAFT. An additional context-facet type carrying one or more RevocationConditions. Proposal A of the revocation extension spec (see spec/revocation.md). Enables discovery by facet_type=Revocation without inspecting other facets; supports revocation issuers that differ from the descriptor author. Relaxes the core-facet invariant to \"at least the seven core facets plus at most one RevocationFacet.\" Rival: Proposal B (iep:revokedIf predicate on SemioticFacet). One will be adopted in v1.1; until then, implementations MAY support either, both, or neither." ;
     vs:term_status "testing" ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
@@ -1510,7 +1572,7 @@ iep:revokedBy a owl:ObjectProperty ;
 
 iep:revokedIf a owl:ObjectProperty ;
     rdfs:label "revoked if (Proposal B)" ;
-    rdfs:comment "DRAFT. Attaches one or more RevocationConditions to a SemioticFacet. When any linked condition's successorQuery returns a hit, the enclosing descriptor's effective groundTruth transitions per the RevocationAction. Proposal B of the revocation extension spec; preserves the exactly-six-facet invariant by nesting revocation inside the Semiotic facet's truth-state unit rather than adding a new facet type. Rival: Proposal A (iep:RevocationFacet)." ;
+    rdfs:comment "DRAFT. Attaches one or more RevocationConditions to a SemioticFacet. When any linked condition's successorQuery returns a hit, the enclosing descriptor's effective groundTruth transitions per the RevocationAction. Proposal B of the revocation extension spec; preserves the exactly-core-facet invariant by nesting revocation inside the Semiotic facet's truth-state unit rather than adding a new facet type. Rival: Proposal A (iep:RevocationFacet)." ;
     rdfs:domain iep:SemioticFacet ;
     rdfs:range iep:RevocationCondition ;
     vs:term_status "testing" ;
@@ -1600,6 +1662,60 @@ iep:items a owl:ObjectProperty ;
     rdfs:range iep:Holon ;
     rdfs:label "items"@en ;
     rdfs:comment "Ordered references to the constituents of a iep:Fragment — lower-level iep:Atoms or iep:Fragments composed at this level."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ─── PGSL projection vocabulary ────────────────────────────────
+#
+# The foundation-first projection engine (packages/pgsl/src/projection.ts +
+# packages/solid/src/client.ts) projects a PGSL lattice node into a
+# iep:ContextDescriptor / manifest entry that carries a stable pointer back
+# to the lattice node it was projected from, plus an optional link to the
+# node's encrypted on-pod payload. These terms make that projection
+# self-describing so a reader can recover the lattice coordinate of any
+# projected descriptor.
+
+iep:EncryptedHolon a owl:Class ;
+    rdfs:subClassOf iep:Holon ;
+    rdfs:label "Encrypted Holon"@en ;
+    rdfs:comment "A holon whose payload is stored as an encrypted (JOSE) envelope on a pod. The clear lattice identity (iep:pgslUri) and its owning descriptor (iep:ofDescriptor) remain visible for discovery, while the value bytes are recoverable only by an envelope recipient. Projected by the foundation-first projection engine alongside the descriptor that describes it."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:XFacet a owl:Class ;
+    rdfs:subClassOf iep:ContextFacet ;
+    rdfs:label "Projection Cross-Cut Facet"@en ;
+    rdfs:comment "A deterministic, clock-free facet attached to a projected descriptor (emitted as iep:hasFacet [ a iep:XFacet … ]) that records the PGSL lattice coordinate (iep:pgslUri / iep:pgslLevel) of the node the descriptor was projected from. Pure projection metadata — its presence lets the same lattice node project to byte-identical descriptors across pods."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:pgslUri a owl:ObjectProperty ;
+    rdfs:label "PGSL URI"@en ;
+    rdfs:comment "Content-addressed IRI of the PGSL lattice node (pgsl:Node) that a descriptor, manifest entry, or iep:EncryptedHolon was projected from. The stable lattice coordinate: equal content projects to the same pgslUri across pods."@en ;
+    rdfs:range pgsl:Node ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:pgslLevel a owl:DatatypeProperty ;
+    rdfs:label "PGSL level"@en ;
+    rdfs:comment "The PGSL fibration level of the projected lattice node — 0 for an atom, N>=1 for a fragment composed over level-(N-1) constituents. Carried on projected descriptors / manifest entries so a reader knows the granularity of the projection without dereferencing the lattice."@en ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:encryptedHolon a owl:ObjectProperty ;
+    rdfs:label "encrypted holon"@en ;
+    rdfs:comment "Links a projected iep:ContextDescriptor to the iep:EncryptedHolon resource holding its encrypted payload on the pod. Present only when the projection produced an encrypted on-pod artifact."@en ;
+    rdfs:domain iep:ContextDescriptor ;
+    rdfs:range iep:EncryptedHolon ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:ofDescriptor a owl:ObjectProperty ;
+    rdfs:label "of descriptor"@en ;
+    rdfs:comment "Inverse-direction link from an iep:EncryptedHolon back to the iep:ContextDescriptor it is the encrypted payload of. Lets a reader who dereferenced the holon recover its describing descriptor."@en ;
+    rdfs:domain iep:EncryptedHolon ;
+    rdfs:range iep:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:contentCid a owl:DatatypeProperty ;
+    rdfs:label "content CID"@en ;
+    rdfs:comment "Content identifier (CID) of a descriptor's canonical bytes, carried on projected descriptors and manifest entries so content-addressed supersession gates can compare versions without re-fetching the full payload."@en ;
+    rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 iep:HolonShape a sh:NodeShape ;

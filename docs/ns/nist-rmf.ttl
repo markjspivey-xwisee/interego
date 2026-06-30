@@ -56,6 +56,17 @@ nist-rmf:Manage a owl:Class ;
     rdfs:label "MANAGE function" ;
     rdfs:comment "Risk response: prioritize, treat, monitor. Categories: Manage.1 (priority), Manage.2 (treatment), Manage.3 (third-party risks), Manage.4 (monitoring + improvement)." .
 
+# ── Function abbreviations (NIST short codes) ───────────────
+# The NIST AI RMF refers to the four functions by two-letter codes
+# (GV / MP / MS / MG) in category identifiers like "MG-1.1". These
+# named individuals make the abbreviated form a citable IRI alongside
+# the spelled-out function classes above.
+
+nist-rmf:MG a owl:NamedIndividual ;
+    rdfs:label "MG — MANAGE function (short code)" ;
+    rdfs:comment "NIST AI RMF short code for the MANAGE function. Citable IRI used in compliance evidence (e.g. nist-rmf:MG-1.1). Equivalent in scope to nist-rmf:Manage." ;
+    rdfs:seeAlso nist-rmf:Manage .
+
 # ── Evidence record ────────────────────────────────────────
 
 nist-rmf:EvidenceRecord a owl:Class ;

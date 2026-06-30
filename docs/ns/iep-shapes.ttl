@@ -113,21 +113,22 @@ iep:RevocationConditionNoSelfReferenceShape a sh:NodeShape ;
     ] .
 
 # ──────────────────────────────────────────────────────────────
-#  4. ContextDescriptor — six-facet invariant (core 1.0)
+#  4. ContextDescriptor — core-facet invariant (core 1.0)
 #
-#  The 1.0 core requires one of each of the six canonical facets:
+#  The 1.0 core requires one of each of the seven core facets:
 #  Temporal, Provenance, Agent, AccessControl, Semiotic, Trust,
-#  Federation. Additional facets (e.g. Causal, Projection, future
+#  Federation (nine facet types total, incl. the optional Causal +
+#  Projection). The optional facets (Causal, Projection, future
 #  RevocationFacet) are permitted but MUST NOT replace any of the
-#  six core facets.
+#  seven core facets.
 #
 #  NOTE: extensions to Interego Protocol 1.0 (such as a RevocationFacet
-#  proposal) relax "exactly six" to "at least six" without breaking
-#  this shape — they'd add an additional at-most-one shape for the
-#  new facet type. Don't conflate that future relaxation with a
-#  current requirement.
+#  proposal) relax "exactly the core facets" to "at least the core
+#  facets" without breaking this shape — they'd add an additional
+#  at-most-one shape for the new facet type. Don't conflate that
+#  future relaxation with a current requirement.
 # ──────────────────────────────────────────────────────────────
-iep:DescriptorSixFacetShape a sh:NodeShape ;
+iep:DescriptorCoreFacetShape a sh:NodeShape ;
     sh:targetClass iep:ContextDescriptor ;
     sh:property [
         sh:path iep:hasFacet ;

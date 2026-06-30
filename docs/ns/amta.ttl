@@ -108,6 +108,34 @@ amta:attestedAt a owl:DatatypeProperty ;
     rdfs:domain amta:Attestation ;
     rdfs:range xsd:dateTime .
 
+# ── Capability / execution-grounded attestation predicates ─────
+#
+# Beyond the per-axis numeric ratings above, an attestation may be
+# bound to a specific capability (tool / teaching package), tagged
+# with the trust axis it rates, grounded in the execution evidence
+# that justifies it, and carry a single normalized rating value.
+
+amta:attestsTo a owl:ObjectProperty ;
+    rdfs:label "attests to" ;
+    rdfs:domain amta:Attestation ;
+    rdfs:comment "The capability the attestation concerns — typically a tool, teaching package, or other artifact IRI. The attestation rates the subject's competence/honesty/etc. with respect to this capability." .
+
+amta:axis a owl:ObjectProperty ;
+    rdfs:label "axis" ;
+    rdfs:domain amta:Attestation ;
+    rdfs:comment "The trust axis this attestation rates (e.g. correctness, efficiency, safety, generality). Lets a single attestation declare which dimension its amta:rating applies to, rather than carrying every per-axis property." .
+
+amta:fromExecution a owl:ObjectProperty ;
+    rdfs:label "from execution" ;
+    rdfs:domain amta:Attestation ;
+    rdfs:comment "The execution-evidence descriptor that grounds this attestation — the recorded tool execution / verified transfer the rating was derived from. Makes the attestation auditable rather than self-asserted." .
+
+amta:rating a owl:DatatypeProperty ;
+    rdfs:label "rating" ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range xsd:double ;
+    rdfs:comment "A single normalized rating value (0.0 - 1.0) for the axis named by amta:axis. Used when an attestation rates one axis at a time rather than carrying the full per-axis vector." .
+
 # ── Alignments ────────────────────────────────────────────────
 
 amta:Attestation rdfs:seeAlso iep:TrustFacet , ieh:PolicyDecision ;

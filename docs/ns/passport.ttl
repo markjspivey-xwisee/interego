@@ -70,6 +70,12 @@ passport:StatedValue a owl:Class ;
     rdfs:label "Stated Value" ;
     rdfs:comment "A value the agent commits to (e.g. \"prefer cited sources\", \"refuse off-topic requests\", \"escalate uncertain claims to human review\"). Carried in the passport as Asserted-modal SemioticFacet so violators are detectable post-hoc by comparing actions to stated values." .
 
+passport:DelegationCredential a owl:Class ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Delegation Credential" ;
+    rdfs:comment "A credential, issued by a human owner (or a delegating agent), that authorizes an agent to act on the owner's behalf within a bounded scope (iep:scope). Every cross-agent action references the DelegationCredential that authorized it; receivers validate the action falls within scope and reject outside-scope actions. Carried in the passport so an agent's standing authority travels with its biography. Built on iep:AuthorizedAgent delegation + a iep:TrustFacet proof." ;
+    rdfs:seeAlso iep:AuthorizedAgent .
+
 # ── Properties ──────────────────────────────────────────────
 
 passport:hasLifeEvent a owl:ObjectProperty ;

@@ -85,6 +85,12 @@ pgsl:Lattice a owl:Class ;
     rdfs:comment "A complete instance of a Poly-Granular Sequence Lattice — the closure of all nodes under the lattice operations (meet, join, pullback). A Lattice resource exposes summary statistics (atom count, fragment count, max level) and serves as a navigable root for SPARQL or HATEOAS access." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
 
+pgsl:Atoms a owl:Class ;
+    rdfs:label "Atoms" ;
+    rdfs:comment "A collection of pgsl:Atom nodes minted together (e.g. one content-addressed atom per launchable lesson). The plural envelope over pgsl:Atom membership, used when a result reports the set of atoms produced by an operation; not a new lattice node kind." ;
+    rdfs:seeAlso pgsl:Atom ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+
 # ── Categorical operations ────────────────────────────────────
 
 pgsl:PullbackSquare a owl:Class ;
@@ -275,3 +281,5 @@ pgsl:generatedAt a owl:DatatypeProperty ; rdfs:label "generated at" ; rdfs:range
 pgsl:resolved a owl:DatatypeProperty ; rdfs:label "resolved" ; rdfs:range xsd:string ; rdfs:comment "The resolved text representation of a fragment (full reconstructed string across all constituents)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
 pgsl:sign a owl:ObjectProperty ; rdfs:label "sign" ; rdfs:comment "Peircean sign associated with this node — the representamen aspect of the triadic sign/object/interpretant structure." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
 pgsl:metagraph a owl:ObjectProperty ; rdfs:label "metagraph" ; rdfs:comment "Reference to a named graph holding meta-level annotations about this pgsl: node." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:hasAtom a owl:ObjectProperty ; rdfs:label "has atom" ; rdfs:range pgsl:Atom ; rdfs:comment "Links a descriptor or record to the content-addressed pgsl:Atom holding its payload — the lattice anchor for the resource's content. Lets a reader recover the immutable, content-addressed payload behind a mutable descriptor." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:sourceFormat a owl:DatatypeProperty ; rdfs:label "source format" ; rdfs:range xsd:string ; rdfs:comment "The original format the content was extracted from before being atomized into the lattice (e.g. 'scorm', 'pdf', 'html', 'cmi5'). Recorded on the minting record for provenance." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.

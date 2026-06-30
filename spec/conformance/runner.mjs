@@ -98,7 +98,7 @@ function checkSelfReferenceRejection(turtle) {
   return violations;
 }
 
-function checkSixFacets(turtle) {
+function checkCoreFacets(turtle) {
   const violations = [];
   // count occurrences of each core facet class
   const required = [
@@ -143,7 +143,7 @@ function checkRevocationConditionShape(turtle) {
 const CATEGORY_CHECKS = {
   revocation: [
     { name: 'modal-truth-consistency', fn: checkModalTruthConsistency },
-    { name: 'six-facet-invariant', fn: checkSixFacets },
+    { name: 'core-facet-invariant', fn: checkCoreFacets },
     { name: 'revocation-condition-shape', fn: checkRevocationConditionShape },
   ],
 };
@@ -217,7 +217,7 @@ function runCategory(categoryDir, checks) {
 // Each existing check maps to a level. The runner reports which
 // levels passed and emits the badge string.
 //
-// L1 — Core (MUST):   six-facet, modal-truth, supersedes, shape-validate, composition
+// L1 — Core (MUST):   core-facet, modal-truth, supersedes, shape-validate, composition
 // L2 — Federation (SHOULD): manifest discovery, cross-pod resolution, WebID/DID, notifications, E2EE
 // L3 — Advanced (MAY): ABAC, AMTA, RDF 1.2, ZK, passport, PGSL
 //
@@ -226,7 +226,7 @@ function runCategory(categoryDir, checks) {
 
 const LEVEL_MAPPING = {
   'modal-truth':            { level: 'L1', rule: 'L1.2 modal-truth consistency' },
-  'six-facet':              { level: 'L1', rule: 'L1.1 six-facet invariant' },
+  'core-facet':             { level: 'L1', rule: 'L1.1 core-facet invariant' },
   'revocation':             { level: 'L1', rule: 'L1.4 supersedes / revocation' },
 };
 

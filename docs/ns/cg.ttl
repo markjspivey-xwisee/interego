@@ -22,7 +22,10 @@
 
 # ── Term-for-term equivalence: cg:X ≡ iep:X ──────────────────────────
 # Classes
-cg:ContextDescriptor   owl:equivalentClass iep:ContextDescriptor .
+cg:ContextDescriptor   a owl:Class ;
+    owl:equivalentClass iep:ContextDescriptor ;
+    owl:deprecated true ;
+    rdfs:comment "Deprecated alias of iep:ContextDescriptor. Retained so a feasibility tool that emits the legacy cg: read-alias resolves; new data MUST use iep:ContextDescriptor." .
 cg:ComposedDescriptor  owl:equivalentClass iep:ComposedDescriptor .
 cg:ContextFacet        owl:equivalentClass iep:ContextFacet .
 cg:TemporalFacet       owl:equivalentClass iep:TemporalFacet .

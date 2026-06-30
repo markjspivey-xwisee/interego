@@ -80,6 +80,11 @@ eu-ai-act:LoggedAction a owl:Class ;
     rdfs:label "Logged action (Article 12)" ;
     rdfs:comment "An action descriptor that satisfies Article 12 record-keeping: includes attributed agent, timestamp, input + output references, model identifier, and a tamper-evident anchor (iep:supersedes chain + ZK or blockchain anchor)." .
 
+eu-ai-act:Article12 a owl:NamedIndividual ;
+    rdfs:label "Article 12 — Record-keeping" ;
+    rdfs:comment "Citable IRI for EU AI Act Article 12 (automatic, lifetime logging ensuring traceability of functioning). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:LoggedAction." ;
+    rdfs:seeAlso eu-ai-act:LoggedAction .
+
 # ── Transparency to deployers (Article 13) ─────────────────
 
 eu-ai-act:TransparencyDisclosure a owl:Class ;
@@ -104,6 +109,11 @@ eu-ai-act:AccuracyAttestation a owl:Class ;
     rdfs:subClassOf iep:TrustFacet ;
     rdfs:label "Accuracy + robustness attestation (Article 15)" ;
     rdfs:comment "Attests measured accuracy/robustness/cybersecurity properties of an AI system per Article 15. Issuer is the conformity assessment body." .
+
+eu-ai-act:Article15 a owl:NamedIndividual ;
+    rdfs:label "Article 15 — Accuracy, robustness and cybersecurity" ;
+    rdfs:comment "Citable IRI for EU AI Act Article 15 (appropriate accuracy, robustness and cybersecurity over the lifecycle). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:AccuracyAttestation." ;
+    rdfs:seeAlso eu-ai-act:AccuracyAttestation .
 
 # ── Article 50 transparency (chatbot disclosure, etc.) ─────
 

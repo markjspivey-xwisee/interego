@@ -97,7 +97,7 @@ function contentTypeFrame(contentType: string): string {
 /**
  * Nested typed facet bnodes derived ENTIRELY from `node.provenance` + `contentType`
  * (pure, deterministic — no clock read). Emitted as `iep:hasFacet [a iep:XFacet …]` so
- * BOTH the SHACL six-facet shape (which keys off the `iep:hasFacet` wrapper) and the
+ * BOTH the SHACL core-facet shape (which keys off the `iep:hasFacet` wrapper) and the
  * interrogative router (which keys off the bnode's `rdf:type`) read them. Each line
  * ends with ` ;` so it chains inside the descriptor's predicate list.
  *

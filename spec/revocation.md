@@ -99,7 +99,7 @@ The agent or principal asserting the condition. MAY differ from the enclosing de
 
 ### 3.1 Structure
 
-Revocation gets its own facet class extending `iep:ContextFacet`. A descriptor MAY carry zero or one `iep:RevocationFacet` in addition to the six core facets.
+Revocation gets its own facet class extending `iep:ContextFacet`. A descriptor MAY carry zero or one `iep:RevocationFacet` in addition to the seven core facets (nine facet types total, incl. the optional Causal + Projection).
 
 ```turtle
 <urn:iep:example:1> a iep:ContextDescriptor ;
@@ -131,12 +131,12 @@ Revocation gets its own facet class extending `iep:ContextFacet`. A descriptor M
 
 **Cons:**
 
-- **Relaxes the six-facet invariant.** v1.0 validators that assert `hasFacet` cardinality `= 6` need updating to `≥ 6` with an at-most-one `RevocationFacet`. That's a v1.1 change, not a patch.
+- **Relaxes the core-facet invariant.** v1.0 validators that assert `hasFacet` cardinality `= 7` (the seven core facets) need updating to `≥ 7` with an at-most-one `RevocationFacet`. That's a v1.1 change, not a patch.
 - **Extra schema surface.** New class, new shape, new validator path.
 
 ### 3.3 SHACL
 
-`iep:DescriptorSixFacetShape` in [`cg-shapes.ttl`](../docs/ns/cg-shapes.ttl) is already structured as "at least one of each of the six core facets, exactly one of each core facet." Adding Proposal A's extension shape is a separate sh:NodeShape declaring `[ qualifiedValueShape [ sh:class iep:RevocationFacet ] ; qualifiedMaxCount 1 ]` — no conflict with the core.
+`iep:DescriptorCoreFacetShape` in [`iep-shapes.ttl`](../docs/ns/iep-shapes.ttl) is already structured as "at least one of each of the seven core facets, exactly one of each core facet." Adding Proposal A's extension shape is a separate sh:NodeShape declaring `[ qualifiedValueShape [ sh:class iep:RevocationFacet ] ; qualifiedMaxCount 1 ]` — no conflict with the core.
 
 ### 3.4 Example
 
@@ -171,7 +171,7 @@ See [`../spec/conformance/fixtures/revocation/facet-form.ttl`](conformance/fixtu
 
 **Pros:**
 
-- **Preserves the exactly-six-facet invariant.** v1.0 validators remain untouched. Ships as v1.0.1 rather than v1.1.
+- **Preserves the exactly-core-facet invariant.** v1.0 validators remain untouched. Ships as v1.0.1 rather than v1.1.
 - **Self-contained SemioticFacet.** The facet that declares the current modal status also declares the conditions under which it flips. Natural cohesion.
 
 **Cons:**

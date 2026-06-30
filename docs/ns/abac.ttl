@@ -56,6 +56,12 @@
 
 # ── Classes ─────────────────────────────────────────────────
 
+abac:Policy a owl:Class ;
+    rdfs:subClassOf iep:AccessControlPolicy ;
+    owl:equivalentClass iep:AccessControlPolicy ;
+    rdfs:label "ABAC Policy" ;
+    rdfs:comment "The pattern-level name for an attribute-based access-control policy. Structurally identical to the L1 iep:AccessControlPolicy (a first-class context descriptor carrying a SHACL predicate, a governed action, a deontic mode, and optional duties); declared here so verticals can type a policy graph in the abac: vocabulary while remaining a iep:AccessControlPolicy for every L1 reader." .
+
 abac:Evaluator a owl:Class ;
     rdfs:label "Policy Evaluator" ;
     rdfs:comment "A stateless function that maps (policy, subject, resource, environment) to a decision. Constructed from a policy descriptor + a context — both L1 primitives — so this class is the pattern-level naming of a computation grounded in L1." ;

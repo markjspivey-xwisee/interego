@@ -206,7 +206,7 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
     prefix: 'iep',
     kind: 'shapes',
     description:
-      'Normative SHACL shapes for the iep: core namespace. Modal-truth consistency (Asserted/Counterfactual/Hypothetical ↔ groundTruth), future-validFrom warning, revocation self-reference rejection, six-facet invariant, and agent-identity consistency across AgentFacet and ProvenanceFacet. Used as oracles by the conformance test suite.',
+      'Normative SHACL shapes for the iep: core namespace. Modal-truth consistency (Asserted/Counterfactual/Hypothetical ↔ groundTruth), future-validFrom warning, revocation self-reference rejection, core-facet invariant (seven mandatory core facets; nine facet types total incl. Causal + Projection), and agent-identity consistency across AgentFacet and ProvenanceFacet. Used as oracles by the conformance test suite.',
   },
   {
     name: 'harness',
