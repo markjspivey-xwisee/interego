@@ -34,7 +34,9 @@ import express, { type Request, type Response } from 'express';
 import {
   ContextDescriptor,
   type IRI,
-  commit, verifyCommitment,
+  commit, verifyCommitment, zkCommit,
+  randomBlinding, proveRange, verifyRange,
+  type PedersenCommitment, type PedersenRangeProof,
   proveConfidenceAboveThreshold, verifyConfidenceProof, verifyConfidenceProofByReveal,
   buildMerkleTree, generateMerkleProof, verifyMerkleProof,
 } from '@interego/core';
@@ -60,7 +62,7 @@ const PORT = parseInt(process.env.PORT ?? '6050', 10);
 const DEPLOYMENT_URL = process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`;
 
 // Demo-scoped state (per-process; in-memory).
-const pgslLattice: PGSLInstance = createPGSL();
+const pgslLattice: PGSLInstance = createPGSL({ wasAttributedTo: 'did:web:interego-bridge' as IRI, generatedAtTime: new Date().toISOString() });
 // Amendments-in-flight keyed by amendment IRI.
 const amendments: Map<string, Amendment> = new Map();
 
@@ -140,7 +142,7 @@ async function handleDiscover(args: { describes_iri?: string; conforms_to_prefix
     descriptor_url: e.descriptorUrl,
     describes: e.describes,
     modal_status: e.modalStatus ?? null,
-    confidence: e.confidence ?? null,
+    confidence: (e as { confidence?: number }).confidence ?? null,
     valid_from: e.validFrom ?? null,
     supersedes: e.supersedes ?? [],
     conforms_to: e.conformsTo ?? [],
@@ -186,16 +188,17 @@ async function handlePgslMeet(args: { atom_iris_a: string[]; atom_iris_b: string
 }
 
 function handleZkCommit(args: { value: string }): unknown {
-  const { commitment, blinding } = commit(args.value);
+  // zkCommit = the hash-chain commitment ({commitment, blinding}); the bare
+  // `commit` import is the Pedersen point commitment used by the range proof above.
+  const { commitment, blinding } = zkCommit(args.value);
   return { ok: true, commitment, blinding };
 }
 
-function handleZkVerifyCommitment(args: { commitment: { commitment: string; algorithm?: string }; value: string; blinding: string }): unknown {
-  // Accept either the raw commitment string or the wrapper object the
-  // commit() function returned. Coerce to the Commitment shape.
-  const c = typeof args.commitment === 'string'
-    ? { commitment: args.commitment, algorithm: 'sha256-blake2b' as const }
-    : { commitment: args.commitment.commitment, algorithm: (args.commitment.algorithm ?? 'sha256-blake2b') as 'sha256-blake2b' };
+function handleZkVerifyCommitment(args: { commitment: string | { commitment: string }; value: string; blinding: string }): unknown {
+  // Accept either the raw commitment string or the wrapper object zkCommit()
+  // returned. Coerce to the hash-chain Commitment shape ({commitment, type}).
+  const raw = typeof args.commitment === 'string' ? args.commitment : args.commitment.commitment;
+  const c = { commitment: raw, type: 'hash-commitment' as const };
   return { ok: verifyCommitment(c, args.value, args.blinding) };
 }
 
@@ -223,6 +226,28 @@ function handleZkVerifyConfidenceByReveal(args: { proof: unknown; value: number;
   // strength to commit-and-reveal plus the range invariant.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return { ok: verifyConfidenceProofByReveal(args.proof as any, args.value, args.blinding) };
+}
+
+// GENUINE gap-hiding range proof (Pedersen + per-bit OR-proofs, ristretto255).
+// Discretizes confidence to integer percent, commits with a fresh blinding, and
+// proves value ∈ [threshold%, 100] WITHOUT revealing the value OR the gap above the
+// threshold — strictly stronger than the hash-chain threshold proof above (which
+// leaks value−threshold). The blinding (witness) is never returned. The commitment +
+// proof are plain JSON and round-trip over the wire for independent verification.
+function handleRangeProveConfidence(args: { confidence: number; threshold: number }): unknown {
+  const value = BigInt(Math.max(0, Math.min(100, Math.round(args.confidence * 100))));
+  const min = BigInt(Math.max(0, Math.min(100, Math.round(args.threshold * 100))));
+  const max = 100n;
+  if (value < min) return { ok: false, error: `confidence ${args.confidence} is below threshold ${args.threshold}` };
+  const blinding = randomBlinding();
+  const commitment = commit(value, blinding);
+  const proof = proveRange({ commitment, value, blinding, min, max });
+  return { ok: true, commitment, proof, scheme: 'ristretto255-pedersen-bit-decomposition', min: Number(min) / 100, max: Number(max) / 100 };
+}
+
+function handleRangeVerifyConfidence(args: { commitment: PedersenCommitment; proof: PedersenRangeProof }): unknown {
+  if (!args?.commitment || !args?.proof) return { ok: false, error: 'commitment + proof required' };
+  return { ok: verifyRange({ commitment: args.commitment, proof: args.proof }) };
 }
 
 // ── Constitutional ─────────────────────────────────────────────
@@ -409,8 +434,8 @@ function handleMerkleBuild(args: { values: string[] }): unknown {
 }
 
 function handleMerkleProve(args: { values: string[]; index: number }): unknown {
-  const tree = buildMerkleTree(args.values);
-  const proof = generateMerkleProof(tree, args.index);
+  // generateMerkleProof(value, values) — prove membership of the value at `index`.
+  const proof = generateMerkleProof(args.values[args.index], args.values);
   return { ok: true, proof };
 }
 
@@ -540,6 +565,29 @@ const tools: Record<string, ToolDef> = {
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     handler: (a) => handleZkVerifyConfidenceByReveal(a as any),
+  },
+  'protocol.zk_prove_confidence_range': {
+    description: 'GENUINE gap-hiding range proof (Pedersen commitment + per-bit OR-proofs, ristretto255): proves confidence ≥ threshold without revealing the value OR the gap above the threshold. Strictly stronger than zk_prove_confidence_above_threshold (which leaks value−threshold). Returns { commitment, proof } — both plain JSON; the blinding witness is never disclosed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        confidence: { type: 'number', minimum: 0, maximum: 1 },
+        threshold: { type: 'number', minimum: 0, maximum: 1 },
+      },
+      required: ['confidence', 'threshold'],
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handler: (a) => handleRangeProveConfidence(a as any),
+  },
+  'protocol.zk_verify_confidence_range': {
+    description: 'Verify a gap-hiding Pedersen range proof from zk_prove_confidence_range. Confirms value ∈ [threshold, max] without learning the value or the gap. Anyone holding { commitment, proof } can verify.',
+    inputSchema: {
+      type: 'object',
+      properties: { commitment: { type: 'object' }, proof: { type: 'object' } },
+      required: ['commitment', 'proof'],
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handler: (a) => handleRangeVerifyConfidence(a as any),
   },
   'protocol.sign_message': {
     description: 'Sign a message with this bridge\'s wallet (secp256k1, EIP-191 personal_sign). Requires BRIDGE_WALLET_KEY env var. Returns the signature and signer address.',

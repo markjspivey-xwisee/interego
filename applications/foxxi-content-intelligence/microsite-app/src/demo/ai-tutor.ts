@@ -17,9 +17,9 @@
  *
  * HONEST: signing proves who recorded it + that it was not altered, not that the
  * feedback is correct; the content-addressed citation resolves to exact bytes, not to
- * a real-world work; the confidence threshold proof shows the value cleared the bar
- * (revealing only the gap above — a hash-chain proof, not ZK/Pedersen), not a
- * calibration against ground truth.
+ * a real-world work; the confidence committed range proof (Pedersen + per-bit
+ * OR-proofs) shows the value cleared the bar while hiding both the value and the
+ * gap, but is not a calibration against ground truth.
  */
 import { ethers } from 'ethers';
 import { BRIDGE_URL as FOXXI_BRIDGE } from '../bridge-client.js';
@@ -125,10 +125,11 @@ export async function runAiTutor(apiKey: string, emit: Emit, topic = 'spaced ret
   } catch (e) { emit({ actor: 'substrate', kind: 'error', title: `attest: ${(e as Error).message}` }); }
   try {
     const threshold = 0.7;
-    const p = await sub('protocol.zk_prove_confidence_above_threshold', { confidence, threshold });
-    const v = await sub('protocol.zk_verify_confidence_proof', { proof: p.proof ?? p });
-    verifiable.proofOk = !!(v?.ok ?? v?.valid);
-    emit({ actor: 'substrate', kind: 'prove', title: `confidence threshold proof (≥ ${threshold})`, detail: verifiable.proofOk ? 'verified — reveals only the gap above, not the value' : 'unverified' });
+    // GENUINE gap-hiding range proof (Pedersen + per-bit OR-proofs).
+    const p = await sub('protocol.zk_prove_confidence_range', { confidence, threshold });
+    const v = await sub('protocol.zk_verify_confidence_range', { commitment: p.commitment, proof: p.proof });
+    verifiable.proofOk = !!v?.ok;
+    emit({ actor: 'substrate', kind: 'prove', title: `confidence committed range proof (≥ ${threshold}, Pedersen gap-hiding)`, detail: verifiable.proofOk ? 'verified — reveals neither the value nor the gap' : 'unverified' });
   } catch (e) { emit({ actor: 'substrate', kind: 'error', title: `proof: ${(e as Error).message}` }); }
 
   // 3 — validate the verifiable record vs the SELF-ASSERTED one against the live profile.

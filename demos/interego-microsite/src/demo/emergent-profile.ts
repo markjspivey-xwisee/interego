@@ -11,8 +11,8 @@
  * Then each "accountability" field is upgraded with a REAL substrate call:
  *   - a source becomes a content-addressed atom (tamper-evident bytes),
  *   - the model/provider becomes a SIGNED attestation (attributable),
- *   - the confidence becomes a THRESHOLD PROOF (proves it clears the bar, revealing
- *     only the gap above — not the exact value; a hash-chain proof, not ZK/Pedersen).
+ *   - the confidence becomes a COMMITTED RANGE PROOF (Pedersen + per-bit OR-proofs):
+ *     proves it clears the bar revealing neither the value nor the gap above it.
  *
  * This module is thin orchestration only. All crypto / lattice / governance is the
  * substrate's; the judgment is the agents'. Steps 5-6 (calibrate / land) are
@@ -208,10 +208,12 @@ export async function runEmergentProfile(apiKey: string, emit: Emit): Promise<Ep
 
   try {
     const threshold = 0.7;
-    const proof = await callTool('protocol.zk_prove_confidence_above_threshold', { confidence: 0.83, threshold });
-    const v = await callTool('protocol.zk_verify_confidence_proof', { proof: proof.proof ?? proof });
-    upgrades.confidenceProof = { ok: !!(v?.ok ?? v?.valid), threshold };
-    emit({ actor: 'sys', kind: 'prove', title: `confidence → threshold proof (≥ ${threshold}) — proves it clears the bar, not a bare number`, detail: upgrades.confidenceProof.ok ? 'proof verified (reveals only the gap above ' + threshold + ', not the value)' : 'proof did not verify' });
+    // GENUINE gap-hiding range proof (Pedersen + per-bit OR-proofs): proves the
+    // confidence ≥ threshold revealing neither the value nor the gap above it.
+    const p = await callTool('protocol.zk_prove_confidence_range', { confidence: 0.83, threshold });
+    const v = await callTool('protocol.zk_verify_confidence_range', { commitment: p.commitment, proof: p.proof });
+    upgrades.confidenceProof = { ok: !!v?.ok, threshold };
+    emit({ actor: 'sys', kind: 'prove', title: `confidence → committed range proof (≥ ${threshold}) — Pedersen, gap-hiding`, detail: upgrades.confidenceProof.ok ? 'proof verified — reveals neither the value nor how far above the threshold' : 'proof did not verify' });
   } catch (e) { emit({ actor: 'sys', kind: 'error', title: `confidence proof: ${(e as Error).message}` }); }
 
   // 6 — POINTER-ONLY to the Foxxi vertical. The substrate POSTs NOTHING to an L&D route.
