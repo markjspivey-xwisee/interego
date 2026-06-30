@@ -116,7 +116,10 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/agp/diagnose',
     annotations: { title: 'Diagnose a situation', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: 'situation_iri', type: 'string', required: true, description: 'IRI of the agp:PerformanceSituation to diagnose.' },
+      { name: 'situation', type: 'object', required: false, description: 'Inline agp:PerformanceSituation to diagnose (preferred): { id, performer{id,kind,role}, workContext, competency, observed, frequency, criticality, modalStatus, provenance, domain? }.' },
+      { name: 'situation_iri', type: 'string', required: false, description: 'IRI of the agp:PerformanceSituation to diagnose (resolved against pod_url). Provide this OR an inline `situation`.' },
+      { name: 'exemplary', type: 'string', required: false, description: 'What good looks like — only used (and only meaningful) for the Knowable regime.' },
+      { name: 'factor_evidence', type: 'object', required: false, description: 'Per-factor adequacy evidence for the Knowable six-factor gap analysis.' },
       ...POD_INPUTS,
     ],
     outputs: {
@@ -134,7 +137,9 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/agp/plan_intervention',
     annotations: { title: 'Plan interventions', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: 'diagnosis_iri', type: 'string', required: true, description: 'IRI of the agp:Diagnosis to plan from.' },
+      { name: 'diagnosis', type: 'object', required: false, description: 'Inline agp:Diagnosis to plan from (preferred): { situationId, regimeSource, method, domain?, rootCauses, skillDeficiency, ... }.' },
+      { name: 'situation', type: 'object', required: false, description: 'The agp:PerformanceSituation the diagnosis is about (required alongside an inline diagnosis).' },
+      { name: 'diagnosis_iri', type: 'string', required: false, description: 'IRI of the agp:Diagnosis to plan from (resolved against pod_url). Provide this OR an inline `diagnosis` + `situation`.' },
       ...POD_INPUTS,
     ],
     outputs: {
