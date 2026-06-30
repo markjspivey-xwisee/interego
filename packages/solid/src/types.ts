@@ -146,6 +146,16 @@ export interface PublishOptions {
    * ingested into the lattice during publish. This creates the structural
    * representation alongside the RDF representation.
    *
+   * OPT-IN double duty (Foundation-first): when set, this same instance ALSO
+   * opts into a PGSL-DERIVED manifest rebuild on the manifest-404 heal path —
+   * `publish()` renders the recovery manifest from a lattice slice
+   * (`projectLatticeSlice` → `renderManifestBody`) instead of scanning the
+   * pod's descriptor files with filename heuristics. The PGSL render is the
+   * inversion of the legacy scan (which was the source of the recurring
+   * manifest-collapse bugs); it falls back to the RDF scan if the PGSL
+   * rebuild fails or writes zero entries. Absent ⇒ the legacy scan-based
+   * heal runs unchanged.
+   *
    * Typed as `unknown` here so the Solid binding does not depend on
    * `@interego/pgsl` at the type level. Callers pass the PGSL instance
    * from `createPGSL()`; the publish path narrows on `.nodes` etc.
@@ -156,6 +166,30 @@ export interface PublishOptions {
   readonly pgsl?: unknown;
   /** Tokenization granularity for PGSL ingestion (default: 'word'). */
   readonly pgslGranularity?: 'character' | 'word' | 'sentence';
+
+  /**
+   * OPT-IN — Foundation-first PGSL-primary publish of THIS descriptor.
+   *
+   * When set, publish() derives the descriptor Turtle from the PGSL
+   * projection engine (`projectHolon`) instead of `toTurtle(descriptor)`:
+   * the holon (a lattice node) becomes the source of truth and the
+   * descriptor + manifest entry are DETERMINISTIC RENDERS of it. The
+   * `descriptor` argument is still consulted for graph-name + id alignment
+   * (an invariant asserts `descriptor.describes[0] === node.uri`) and for
+   * the CAS supersession witness, so the TriG graph name, distribution
+   * block, and manifest entry cannot silently disagree with the projection.
+   *
+   * Absent ⇒ the legacy descriptor/RDF-primary path runs unchanged
+   * (byte-identical output). Typed as `unknown` (not the pgsl types) so the
+   * Solid binding keeps zero compile-time dependency on `@interego/pgsl`;
+   * client.ts narrows + casts inside the dynamic-import branch.
+   *
+   *  - `node`: the lattice `Node` to project (cast to `Node` at use site).
+   *  - `pgsl`: the `PGSLInstance` the node belongs to (cast at use site).
+   *  - `descriptorBase`: container URL the projected descriptor resource
+   *     resolves under (the agent's Type-Index-resolved storage).
+   */
+  readonly pgslNode?: { node: unknown; pgsl: unknown; descriptorBase: string };
 
   /**
    * If set, the named-graph content is encrypted client-side as a

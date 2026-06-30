@@ -762,6 +762,63 @@ async function buildManifestBodyFromPod(
 }
 
 /**
+ * Foundation-first manifest rebuild — render the recovery manifest from a
+ * PGSL lattice slice instead of scanning the pod's descriptor files.
+ *
+ * This inverts {@link buildManifestBodyFromPod}: the lattice is the source
+ * of truth, so the manifest is a deterministic render of a slice of it
+ * (`projectLatticeSlice` → `renderManifestBody`) rather than a scan +
+ * filename-heuristic reconstruction (the recurring manifest-collapse
+ * failure mode). It also PUTs each projected descriptor (best-effort, via
+ * Promise.allSettled) so the pod's descriptor resources match the manifest
+ * it returns.
+ *
+ * Boundary-pure: `@interego/pgsl` is reached ONLY through the dynamic-import
+ * escape hatch (no static import), so the Solid binding keeps zero
+ * compile-time dependency on pgsl.
+ *
+ * @param pgsl A `PGSLInstance` (typed `unknown` to avoid the pgsl type dep).
+ * @returns `{ body, written }` — the rendered manifest body + how many
+ *          descriptors it covers; `written === 0` signals the caller to
+ *          fall through to the RDF scan.
+ */
+async function buildManifestFromPGSL(
+  pgsl: unknown,
+  descriptorBase: string,
+  fetchFn: FetchFn,
+): Promise<{ body: string; written: number }> {
+  const dyn = Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
+  const mod = await dyn('@interego/pgsl') as {
+    projectLatticeSlice: (
+      pgsl: unknown,
+      uris: readonly string[],
+      opts: { descriptorBase: string; typedFacets?: boolean },
+    ) => { entries: readonly unknown[]; descriptors: ReadonlyMap<string, string> };
+    renderManifestBody: (entries: readonly unknown[]) => string;
+  };
+  // The slice is every node currently in the lattice. `.nodes` is a
+  // Map<uri, Node>; project all of them (projectLatticeSlice skips any URI
+  // it can't resolve, so this is safe even mid-build).
+  const nodes = (pgsl as { nodes?: Map<string, unknown> }).nodes;
+  const uris = nodes ? [...nodes.keys()] : [];
+  const slice = mod.projectLatticeSlice(pgsl, uris, { descriptorBase, typedFacets: true });
+  // Write each projected descriptor (best-effort — a transient PUT failure
+  // on one descriptor must not abort the whole rebuild).
+  await Promise.allSettled(
+    [...slice.descriptors.entries()].map(async ([durl, turtle]) => {
+      const r = await fetchFn(durl, {
+        method: 'PUT',
+        headers: { 'Content-Type': TURTLE_CONTENT_TYPE },
+        body: turtle,
+      });
+      if (!r.ok) throw new Error(`descriptor PUT <${durl}> -> ${r.status} ${r.statusText}`);
+    }),
+  );
+  const body = mod.renderManifestBody(slice.entries);
+  return { body, written: slice.entries.length };
+}
+
+/**
  * Reconstruct + write a pod's manifest from its on-pod descriptors.
  * One-shot heal for a collapsed/lost index. Overwrites the manifest
  * (no CAS — this is an operator restore). Returns counts.
@@ -1297,7 +1354,59 @@ export async function publish(
     }
   }
 
-  const baseDescriptorTurtle = toTurtle(descriptor);
+  // ── Descriptor serialization — legacy (toTurtle) OR Foundation-first
+  //    PGSL-primary projection (opt-in via options.pgslNode) ────────────
+  //
+  // Default (no pgslNode): byte-identical to the historical path —
+  // `toTurtle(descriptor)`. When the caller opts in with `pgslNode`, the
+  // descriptor Turtle is DERIVED from the lattice node via the PGSL
+  // projection engine (`projectHolon`), so the holon is the source of
+  // truth and the descriptor is a deterministic render of it. We still
+  // read `descriptor.describes[0]` (graph name) and `descriptor.id` below
+  // from the descriptor argument — so before switching, assert the holon
+  // and descriptor name the SAME graph (CAVEAT C), else the TriG graph
+  // name, distribution block, and manifest entry could silently disagree.
+  let projectedManifestEntry: unknown = null;
+  // When PGSL-primary, the projection owns the descriptor resource URL
+  // (a content-addressed `holon-<hash>.ttl` under descriptorBase). publish()
+  // writes the descriptor body there + points the manifest entry at it, so
+  // the on-pod resource, the Turtle subject IRI, and the manifest row all
+  // agree. Null on the legacy path (slug-derived URL used instead).
+  let projectedDescriptorUrl: string | null = null;
+  let baseDescriptorTurtle: string;
+  if (options.pgslNode) {
+    const pn = options.pgslNode as { node: { uri: string }; pgsl: unknown; descriptorBase: string };
+    // CAVEAT C — graph/id alignment invariant. projectHolon derives graphUri
+    // from node.uri; the rest of publish() reads descriptor.describes[0] +
+    // descriptor.id. They MUST name the same content graph.
+    if (descriptor.describes[0] !== pn.node.uri) {
+      throw new Error(
+        `publish: pgslNode alignment violation — descriptor.describes[0] (<${descriptor.describes[0] ?? ''}>) ` +
+        `must equal the PGSL node uri (<${pn.node.uri}>) so the TriG graph name, distribution block, and manifest entry agree.`,
+      );
+    }
+    if (!descriptor.id) {
+      throw new Error('publish: pgslNode requires descriptor.id to be set (descriptor id anchors the distribution block + slug).');
+    }
+    // Late-import @interego/pgsl via the dynamic-import escape hatch — the
+    // ONLY coupling allowed across the solid → pgsl boundary (NO static
+    // top-of-file import of the pgsl package). Cast to unknown first so TS
+    // does not require the module to be resolvable at compile time.
+    const dyn = Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
+    const mod = await dyn('@interego/pgsl') as {
+      projectHolon: (node: unknown, pgsl: unknown, opts: { descriptorBase: string; typedFacets?: boolean }) => {
+        descriptorTurtle: string;
+        descriptorUrl: string;
+        manifestEntry: unknown;
+      };
+    };
+    const projection = mod.projectHolon(pn.node, pn.pgsl, { descriptorBase: pn.descriptorBase, typedFacets: true });
+    baseDescriptorTurtle = projection.descriptorTurtle;
+    projectedManifestEntry = projection.manifestEntry;
+    projectedDescriptorUrl = projection.descriptorUrl;
+  } else {
+    baseDescriptorTurtle = toTurtle(descriptor);
+  }
   // When the precondition matched, append a Turtle comment witness so
   // downstream auditors can verify which prior head this publish was
   // gated against, without introducing a new iep: term (the ontology
@@ -1305,6 +1414,11 @@ export async function publish(
   // the existing iep:supersedes triple already in the descriptor — the
   // comment names the precondition source (URL vs CID) and which one
   // of the supersedes targets satisfied it.
+  //
+  // CAVEAT A — the witness comment must be appended on BOTH paths. The
+  // PGSL projection does not carry it, so we append it to the projected
+  // turtle's tail too, or the auditor trail is silently dropped on the
+  // PGSL-primary path.
   const descriptorTurtle = preconditionWitness
     ? `${baseDescriptorTurtle.trimEnd()}\n# ── CAS supersession witness (precondition matched at publish time, via ${preconditionWitness.via}) ──\n# iep:supersedes precondition gated against <${preconditionWitness.matched}>\n`
     : baseDescriptorTurtle;
@@ -1368,7 +1482,12 @@ export async function publish(
   //    and what HTTP operations a client can invoke to retrieve and
   //    decrypt it. Clients follow the link instead of constructing URLs
   //    by naming convention.
-  const descriptorUrl = `${container}${slug}.ttl`;
+  // PGSL-primary publishes write the descriptor at the projection's
+  // content-addressed resource URL so the on-pod resource, the descriptor
+  // Turtle's own subject IRI (projectHolon emits `<descriptorUrl> a
+  // iep:ContextDescriptor`), and the manifest entry all reference the same
+  // IRI. Legacy publishes keep the slug-derived URL.
+  const descriptorUrl = projectedDescriptorUrl ?? `${container}${slug}.ttl`;
   const distributionBlock = buildDistributionBlock({
     graphUrl,
     graphContentType,
@@ -1406,6 +1525,16 @@ export async function publish(
   // (`checkSupersessionPrecondition`) can compare `if_match` against
   // the head identity without re-fetching + rehashing the body.
   const descriptorContentCid = computeCid(descriptorWithDistribution);
+  // CAVEAT B — contentCid mirror on the PGSL-projected manifest entry.
+  // `renderManifestEntry` only emits `iep:contentCid` when the entry's
+  // `cid` field is set, and `projectHolon` does NOT populate it. Mirror
+  // the just-computed descriptor CID onto the projected entry BEFORE we
+  // render it, so the CAS supersession fast-path (head-cid lookup /
+  // checkSupersessionPrecondition) still has its contentCid mirror — same
+  // as the legacy `manifestEntryTurtle(..., descriptorContentCid)` path.
+  if (projectedManifestEntry) {
+    (projectedManifestEntry as { cid?: string }).cid = descriptorContentCid;
+  }
   await withTransientRetry(async () => {
     const descResponse = await fetchFn(descriptorUrl, {
       method: 'PUT',
@@ -1437,7 +1566,21 @@ export async function publish(
   //    the PUT succeeds only if no manifest exists — protects against
   //    two cold-start clients clobbering each other.
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
-  const newEntry = manifestEntryTurtle(descriptorUrl, descriptor, descriptorContentCid);
+  // Manifest entry — legacy `manifestEntryTurtle` OR the PGSL-projected
+  // entry rendered via `renderManifestEntry` (Foundation-first). The
+  // projected entry already carries iep:pgslUri/iep:pgslLevel + the
+  // contentCid mirror set above (CAVEAT B), and `renderManifestEntry` is
+  // format-compatible with the legacy row (parseManifest reads both).
+  let newEntry: string;
+  if (options.pgslNode && projectedManifestEntry) {
+    const dyn = Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
+    const mod = await dyn('@interego/pgsl') as {
+      renderManifestEntry: (entry: unknown) => string;
+    };
+    newEntry = mod.renderManifestEntry(projectedManifestEntry);
+  } else {
+    newEntry = manifestEntryTurtle(descriptorUrl, descriptor, descriptorContentCid);
+  }
   // Under N-way concurrent contention (e.g. 5 voters firing Promise.all),
   // 5 internal retries are not enough — the exponential window doesn't
   // grow fast enough to scatter every writer to a clean If-Match slot.
@@ -1490,15 +1633,36 @@ export async function publish(
       // is normally picked up by the scan; append it defensively if the
       // container listing hasn't caught up yet.
       let rebuiltBody: string | null = null;
-      try {
-        const rebuilt = await buildManifestBodyFromPod(pod, fetchFn);
-        if (rebuilt.written > 0) {
-          rebuiltBody = rebuilt.body.includes(`<${descriptorUrl}>`)
-            ? rebuilt.body
-            : `${rebuilt.body.trimEnd()}\n\n${newEntry}\n`;
+      // Foundation-first: when the caller supplied a PGSL instance, PREFER
+      // rebuilding the recovery manifest from a render of the lattice slice
+      // over scanning the pod's descriptor files. The PGSL render is the
+      // inversion of the scan (which was the source of the collapse bugs).
+      // Wrapped in try/catch so a PGSL failure (or pgsl not installed)
+      // degrades cleanly to the RDF scan below.
+      if (options.pgsl) {
+        try {
+          const pgslBase = options.pgslNode?.descriptorBase ?? container;
+          const fromPgsl = await buildManifestFromPGSL(options.pgsl, pgslBase, fetchFn);
+          if (fromPgsl.written > 0) {
+            rebuiltBody = fromPgsl.body.includes(`<${descriptorUrl}>`)
+              ? fromPgsl.body
+              : `${fromPgsl.body.trimEnd()}\n\n${newEntry}\n`;
+          }
+        } catch {
+          rebuiltBody = null;
         }
-      } catch {
-        rebuiltBody = null;
+      }
+      if (rebuiltBody === null) {
+        try {
+          const rebuilt = await buildManifestBodyFromPod(pod, fetchFn);
+          if (rebuilt.written > 0) {
+            rebuiltBody = rebuilt.body.includes(`<${descriptorUrl}>`)
+              ? rebuilt.body
+              : `${rebuilt.body.trimEnd()}\n\n${newEntry}\n`;
+          }
+        } catch {
+          rebuiltBody = null;
+        }
       }
       manifestBody = rebuiltBody
         ?? `${turtlePrefixes(['iep', 'xsd', 'hydra', 'dcat', 'dprod', 'dct'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
