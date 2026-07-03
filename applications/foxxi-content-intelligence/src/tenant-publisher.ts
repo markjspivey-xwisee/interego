@@ -196,6 +196,22 @@ async function publishSection(args: {
       }
     : {};
 
+  // publish() PUTs the graph + descriptor with `If-None-Match: '*'` (create-only)
+  // and SILENTLY tolerates the 412 when the resource already exists — so a
+  // re-publish to a FIXED-slug section keeps the OLD content (the caller sees a
+  // success but nothing changed on the pod). Tenant sections are MUTABLE: updated
+  // in place under a stable slug, single-owner + sequential. So delete the
+  // existing descriptor + graph FIRST, then publish fresh. Best-effort — a 404
+  // (first write) or a transient failure is fine; the publish still lands.
+  const containerPath = args.config.containerPath ?? 'foxxi/';
+  const base = `${args.config.podUrl.replace(/\/?$/, '/')}${containerPath}`;
+  const stale = [
+    `${base}${args.slug}.ttl`,                       // descriptor
+    `${base}${args.slug}-graph.trig`,                // plaintext graph
+    `${base}${args.slug}-graph.envelope.jose.json`,  // encrypted graph
+  ];
+  await Promise.allSettled(stale.map(u => args.config.fetch(u, { method: 'DELETE' })));
+
   return publish(descriptor, graphContent, args.config.podUrl, {
     fetch: args.config.fetch,
     containerPath: args.config.containerPath ?? 'foxxi/',
