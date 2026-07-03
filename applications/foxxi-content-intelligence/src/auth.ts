@@ -208,13 +208,17 @@ export function buildAddressMap(
  * before sending the directory to the pod so the bridge has the address
  * lookup it needs.
  */
-export function attachDeterministicAddresses<U extends { user_id: string }>(
+export function attachDeterministicAddresses<U extends { user_id: string; wallet_address?: string }>(
   users: readonly U[],
   seed: string = DEFAULT_DEMO_SEED,
 ): Array<U & { wallet_address: string }> {
   return users.map(u => ({
     ...u,
-    wallet_address: deriveUserWallet(u.user_id, seed).address,
+    // Preserve a REAL member address if the directory already carries one (real
+    // proof-of-possession); only fall back to the demo-seed derivation when
+    // absent. This lets a tenant mix real-key learners with demo ones, and lets
+    // a fully-real tenant (e.g. a self-sovereign app) skip the seed entirely.
+    wallet_address: u.wallet_address ?? deriveUserWallet(u.user_id, seed).address,
   }));
 }
 

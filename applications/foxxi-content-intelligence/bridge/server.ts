@@ -675,8 +675,43 @@ function channelWebhooks(): Partial<Record<DeliveryChannel, ChannelWebhook>> {
  * same deterministic-derivation function the dashboard uses to sign.
  */
 async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: CallerContext; admin: FoxxiAdminPayload } | { error: string }> {
+  // ── Real proof-of-possession (rev-196 signed request) — the substrate-native
+  //    auth path, composing Interego's recoverSignedRequest (the SAME envelope the
+  //    signed /agent/* affordances use). The caller signs {...args, agent_id,
+  //    timestamp} with their REAL key; we recover the signer address (no shared
+  //    seed, no forgeable bearer) and authorize it against the tenant directory.
+  //    Unwrap the signed args FIRST so tenant_pod_url / course_id etc. inside the
+  //    envelope are visible to the directory fetch AND the handler that reads args.
+  let signedSigner: string | null = null;
+  if (typeof args._signature === 'string' && typeof args._signed_payload === 'string') {
+    const rec = recoverSignedRequest(args);
+    if (!rec.ok) return { error: `auth: ${rec.reason}` };
+    if (rec.payload && typeof rec.payload === 'object') Object.assign(args, rec.payload);
+    signedSigner = rec.signer;
+  }
+
   const admin = await autoFetchAdmin(args);
   if (!admin) return { error: 'tenant pod is not seeded or cannot be decrypted; auth resolution requires the directory' };
+
+  const addressMap = buildAddressMap(admin.users ?? []);
+
+  if (signedSigner) {
+    // Proof-of-possession: the recovered REAL signer address must be a member of
+    // the tenant directory (its wallet_address). No demo seed involved — this is
+    // genuine key ownership, verifiable by anyone. A tenant that stores real
+    // member addresses gets real PoP; one that stores seed-derived addresses
+    // keeps the demo session-token path below.
+    const member = addressMap.get(signedSigner.toLowerCase());
+    if (!member) return { error: `auth: signer ${signedSigner} is not a member of this tenant directory (proof-of-possession)` };
+    const ctx = resolveCallerContext({
+      callerWebId: member.webId,
+      callerUserId: member.userId,
+      users: admin.users as unknown as Parameters<typeof resolveCallerContext>[0]['users'],
+      adminWebId,
+      learningEngineerWebIds,
+    });
+    return { ctx, admin };
+  }
 
   const token = (args.__caller_token as string | undefined);
   if (!token) {
@@ -688,10 +723,9 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
         admin,
       };
     }
-    return { error: 'missing session token — pass Authorization: Bearer <token>' };
+    return { error: 'missing credential — pass a rev-196 signed-request envelope ({_signature,_signed_payload}) for proof-of-possession, or Authorization: Bearer <session token>' };
   }
 
-  const addressMap = buildAddressMap(admin.users ?? []);
   const verified = verifySessionToken(token, addressMap);
   if (!verified.ok) return { error: `auth: ${verified.reason}` };
 
