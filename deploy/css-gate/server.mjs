@@ -249,7 +249,14 @@ export function corsHeadersFor(originHeader) {
     && norm
     && CORS_ALLOWLIST.has(norm);
   return {
-    'Access-Control-Allow-Origin': allowed ? norm : GATE_OWN_ORIGIN,
+    // Allowlisted origin → echo it. Any other REAL (non-null) browser origin →
+    // ACAO * so self-sovereign browser apps can read published (public /
+    // content-addressed) pod graphs directly. SAFE because this gate never sets
+    // Access-Control-Allow-Credentials (no cookies), and private pod content is
+    // E2EE — a wildcard grants no ambient authority and reveals no plaintext.
+    // `Origin: null` (sandboxed iframe / file://) stays blocked (served the
+    // gate's own FQDN, which won't match) — the classic credentialed vector.
+    'Access-Control-Allow-Origin': allowed ? norm : (originHeader && originHeader !== 'null' ? '*' : GATE_OWN_ORIGIN),
     'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE',
     'Access-Control-Allow-Headers': 'Accept, Content-Type, Authorization',
     'Vary': 'Origin',

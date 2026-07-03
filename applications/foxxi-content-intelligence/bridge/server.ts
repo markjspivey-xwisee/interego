@@ -2227,6 +2227,14 @@ const app = createVerticalBridge({
       if (typeof origin === 'string' && ALLOWED_ORIGINS.has(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
+      } else {
+        // Non-allowlisted browser origins get ACAO * — SAFE here because this
+        // surface never sets Access-Control-Allow-Credentials: auth is the
+        // rev-196 signed request (proof-of-possession) or a Bearer in the
+        // payload, never cookies, so a wildcard grants no ambient authority.
+        // This lets any self-sovereign browser app (PoP-signed) reach the
+        // affordances directly.
+        res.setHeader('Access-Control-Allow-Origin', '*');
       }
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Experience-API-Version, If-Match, If-None-Match');
