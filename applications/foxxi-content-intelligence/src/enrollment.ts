@@ -184,7 +184,9 @@ export function discoverAssignedCourses(args: DiscoverAssignedCoursesArgs): Disc
 
     enrollments.push({
       courseId: policy.course_id,
-      courseTitle: policy.course_title,
+      // Prefer the LIVE catalog title/category over the policy's assign-time
+      // snapshot, so re-ingesting richer metadata reflects without re-assigning.
+      courseTitle: catEntry.title || policy.course_title,
       category: catEntry.category,
       requirementType: policy.requirement_type,
       policyId: policy.policy_id,

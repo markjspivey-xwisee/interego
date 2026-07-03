@@ -168,17 +168,28 @@ export async function ingestContentPackage(args: {
   const P = args.parsed as Partial<ParsedFoxxiPackage> & Record<string, unknown>;
   const s = (v: unknown, d = ''): string => (v === undefined || v === null) ? d : String(v);
   const num = (v: unknown): number => Number.isFinite(Number(v)) ? Number(v) : 0;
-  const courseId = s(P.courseId).trim();
+  // Accept BOTH camelCase and snake_case for every field — a caller naturally
+  // sends authoring_tool / slide_count, not just authoringTool / slides.
+  const pick = (...keys: string[]): unknown => {
+    for (const k of keys) { const v = (P as Record<string, unknown>)[k]; if (v !== undefined && v !== null) return v; }
+    return undefined;
+  };
+  const courseId = s(pick('courseId', 'course_id')).trim();
   if (!courseId) throw new Error('parsed.courseId is required (a stable course identifier)');
-  const title = s(P.title, courseId);
-  const packageId = s(P.packageId, courseId);
-  const standard = s(P.standard, 'unspecified');
-  const authoringTool = s(P.authoringTool, 'unspecified');
-  const authoringVersion = s(P.authoringVersion);
-  const parserVersion = s(P.parserVersion);
-  const vocabVersion = s(P.vocabVersion);
-  const stats = (P.stats && typeof P.stats === 'object') ? P.stats as Record<string, unknown> : {};
-  const concepts = Array.isArray(P.concepts) ? P.concepts : [];
+  const title = s(pick('title', 'name'), courseId);
+  const packageId = s(pick('packageId', 'package_id'), courseId);
+  const standard = s(pick('standard'), 'unspecified');
+  const authoringTool = s(pick('authoringTool', 'authoring_tool'), 'unspecified');
+  const authoringVersion = s(pick('authoringVersion', 'authoring_version'));
+  const parserVersion = s(pick('parserVersion', 'parser_version'));
+  const vocabVersion = s(pick('vocabVersion', 'vocab_version'));
+  const statsObj = (typeof pick('stats') === 'object') ? pick('stats') as Record<string, unknown> : {};
+  // A stat may live under parsed.stats.X (camel or snake) OR flat on the bundle.
+  const stat = (...keys: string[]): number => {
+    for (const k of keys) { const v = statsObj[k] ?? (P as Record<string, unknown>)[k]; if (v !== undefined && v !== null) return num(v); }
+    return 0;
+  };
+  const concepts = Array.isArray(pick('concepts')) ? pick('concepts') as unknown[] : [];
 
   const courseIriBase = federationIriBase(args.config.tenantPodUrl, courseId);
   const courseIri = `${courseIriBase}#package` as IRI;
@@ -207,12 +218,12 @@ export async function ingestContentPackage(args: {
   fxs:authoringVersion "${escapeTtl(authoringVersion)}" ;
   fxs:parserVersion "${escapeTtl(parserVersion)}" ;
   fxs:vocabVersion "${escapeTtl(vocabVersion)}" ;
-  fxs:slideCount ${num(stats.slides)} ;
-  fxs:sceneCount ${num(stats.scenes)} ;
-  fxs:audioSeconds ${num(stats.audioSeconds)} ;
-  fxk:conceptCount ${num(stats.conceptsTotal)} ;
-  fxk:freeStandingConceptCount ${num(stats.conceptsFreeStanding)} ;
-  fxk:prereqEdgeCount ${num(stats.prereqEdges)} ;
+  fxs:slideCount ${stat('slides', 'slide_count')} ;
+  fxs:sceneCount ${stat('scenes', 'scene_count')} ;
+  fxs:audioSeconds ${stat('audioSeconds', 'audio_seconds')} ;
+  fxk:conceptCount ${stat('conceptsTotal', 'concepts_total', 'concept_count') || concepts.length} ;
+  fxk:freeStandingConceptCount ${stat('conceptsFreeStanding', 'concepts_free_standing')} ;
+  fxk:prereqEdgeCount ${stat('prereqEdges', 'prereq_edges')} ;
   prov:wasAttributedTo <${args.config.authoritativeSource}> ;
   dct:issued "${computedAt}" .`;
 
@@ -230,18 +241,19 @@ export async function ingestContentPackage(args: {
 
   const r = await publish(built, ttl, args.config.tenantPodUrl);
 
-  const audienceTags = Array.isArray(P.audience_tags) ? (P.audience_tags as unknown[]).map(String) : [];
+  const audienceRaw = pick('audienceTags', 'audience_tags');
+  const audienceTags = Array.isArray(audienceRaw) ? (audienceRaw as unknown[]).map(String) : [];
   const catalogEntry: FoxxiCatalogEntry = {
     course_id: courseId,
     title,
-    category: s(P.category, standard || 'general'),
+    category: s(pick('category'), standard || 'general'),
     audience_tags: audienceTags,
     owner: String(args.config.authoritativeSource),
     authoring_tool: authoringTool,
     standard,
-    concept_count: num(stats.conceptsTotal) || concepts.length,
-    slide_count: num(stats.slides),
-    audio_seconds: num(stats.audioSeconds),
+    concept_count: stat('conceptsTotal', 'concepts_total', 'concept_count') || concepts.length,
+    slide_count: stat('slides', 'slide_count'),
+    audio_seconds: stat('audioSeconds', 'audio_seconds'),
     is_real: true,
     course_iri: courseIri,
   };

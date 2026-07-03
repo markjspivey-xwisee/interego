@@ -4366,13 +4366,23 @@ app.post('/agent/ingest-course', async (req, res) => {
     const callerDid = auth.callerDid; const p = auth.payload;
     const parsed = p.parsed;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { res.status(400).json({ error: 'parsed required — a ParsedFoxxiPackage: { courseId (required), title?, standard?, authoringTool?, stats?, concepts?, audience_tags? }. Only courseId is strictly required; other fields default.' }); return; }
-    const authorPod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // Accept subject_pod_url OR tenant_pod_url (harmonized with the foxxi.* tools);
+    // without either, the pod is derived from the caller's DID — which for a
+    // did:ethr caller is eth-<wallet>, NOT their u-pk pod, so be explicit in the error.
+    const podArg = (typeof p.subject_pod_url === 'string' && p.subject_pod_url) ? p.subject_pod_url
+      : (typeof p.tenant_pod_url === 'string' && p.tenant_pod_url) ? p.tenant_pod_url : undefined;
+    const authorPod = resolveSubjectPodUrl(callerDid, podArg);
     // Ownership guard on the SIGNER (direct mode → the actor; delegated mode → the
     // delegation anchor = the pod owner's key). Stops a self-signed caller from
-    // targeting someone else's self-sovereign pod via subject_pod_url. The
-    // configured tenant is exempt (assertSelfSovereignOwner returns null for it).
+    // targeting someone else's self-sovereign pod. The configured tenant is exempt.
     const ownerErr = await assertSelfSovereignOwner(authorPod, auth.signer);
-    if (ownerErr) { res.status(403).json({ ok: false, error: ownerErr }); return; }
+    if (ownerErr) {
+      const hint = !podArg
+        ? ` — no subject_pod_url/tenant_pod_url was given, so the bridge derived your pod as ${authorPod} from your DID; if your pod is elsewhere (e.g. a u-pk-… pod), pass subject_pod_url = your pod URL in the SIGNED payload.`
+        : '';
+      res.status(403).json({ ok: false, error: ownerErr + hint, resolvedPod: authorPod });
+      return;
+    }
     const source = sourceForPod(authorPod);
     const result = await ingestContentPackage({ parsed: parsed as ParsedFoxxiPackage, config: { tenantPodUrl: authorPod, authoritativeSource: source } });
     // Compose: upsert the CourseCatalog row so the author's own discover joins it.
