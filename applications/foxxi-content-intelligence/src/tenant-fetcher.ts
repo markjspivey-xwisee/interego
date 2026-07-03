@@ -93,6 +93,14 @@ export interface TenantFetchConfig {
   adminKeyPair?: EncryptionKeyPair;
   /** Convenience: pass a seed and the keypair will be derived. */
   adminKeySeed?: string;
+  /**
+   * Force this pod to be treated as a CLOSED tenant even if no encrypted
+   * directory is currently readable. The bridge sets this for its own
+   * configured tenant pod (FOXXI_TENANT_POD_URL) so a stale/undecryptable
+   * directory can NEVER be silently downgraded to a self-sovereign, publicly
+   * enrollable tenant. Fail-closed.
+   */
+  forceClosed?: boolean;
 }
 
 function resolveAdminKeyPair(config: TenantFetchConfig): EncryptionKeyPair | undefined {
@@ -271,20 +279,32 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
   const dir = directory as { users?: unknown; groups?: unknown };
 
   // ── Closed vs self-sovereign membership resolution ──────────────
-  // A CLOSED tenant has an encrypted TenantDirectory this bridge could
-  // DECRYPT (dir.users is non-empty) — it is admin-managed, and its PUBLIC
-  // membership overlay (if any) is deliberately IGNORED, so no one can
-  // self-enroll into an admin tenant by writing a public allowlist onto its
-  // pod. A SELF-SOVEREIGN tenant has no bridge-readable encrypted directory —
-  // its PUBLIC TenantMembership section IS the authoritative allowlist, read
-  // by any bridge with no shared admin key. Fail-closed: when the encrypted
-  // directory is absent/undecryptable we trust ONLY the public membership.
+  // A CLOSED tenant is admin-managed: its allowlist comes ONLY from the
+  // encrypted TenantDirectory, and any PUBLIC TenantMembership overlay on its
+  // pod is deliberately IGNORED — otherwise anyone could self-enroll into an
+  // admin tenant by writing a public allowlist onto it. A SELF-SOVEREIGN
+  // tenant has no encrypted directory at all; its PUBLIC TenantMembership IS
+  // the authoritative allowlist, readable by any bridge with no shared key.
+  //
+  // "Closed" is decided by PRESENCE of a directory descriptor, NOT by whether
+  // we could decrypt it, plus the bridge's forceClosed flag for its own
+  // configured tenant. This FAILS CLOSED: a stale or undecryptable directory
+  // (descriptor present, users empty) still suppresses the public overlay, so
+  // a closed tenant can never be silently downgraded to publicly enrollable.
   const dirUsers = Array.isArray(dir.users) ? (dir.users as unknown[]) : [];
   const memUsers = (() => {
     const m = membership as { users?: unknown };
     return Array.isArray(m.users) ? (m.users as unknown[]) : [];
   })();
-  const effectiveUsers = dirUsers.length > 0 ? dirUsers : memUsers;
+  const directorySettled = settled[1]!;
+  const directoryPresent = directorySettled.status === 'fulfilled'
+    ? true
+    // Only the explicit "no descriptor found" rejection means genuinely absent;
+    // any other failure (encrypted-no-key, fetch error) is treated as present.
+    : !/No descriptor with conformsTo=.*found/i.test(
+        String((directorySettled.reason as Error)?.message ?? directorySettled.reason ?? ''));
+  const closed = Boolean(config.forceClosed) || directoryPresent;
+  const effectiveUsers = closed ? dirUsers : memUsers;
 
   const composed = {
     meta: {

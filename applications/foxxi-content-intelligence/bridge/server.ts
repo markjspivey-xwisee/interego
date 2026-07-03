@@ -426,11 +426,21 @@ function configOrThrow(args: Record<string, unknown>): { tenantPodUrl: string; a
   return { tenantPodUrl: pod, authoritativeSource };
 }
 
+/** True when two pod URLs denote the same pod (trailing-slash / case insensitive). */
+function samePod(a?: string, b?: string): boolean {
+  const norm = (u?: string) => (u ?? '').replace(/\/+$/, '').toLowerCase();
+  return Boolean(a) && Boolean(b) && norm(a) === norm(b);
+}
+
 async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdminPayload | null> {
   const podUrl = (args.tenant_pod_url as string) || tenantPodUrl;
   if (!podUrl) return null;
   try {
-    return await fetchAdminPayload({ ...fetcherConfig(), podUrl }) as FoxxiAdminPayload;
+    // The bridge's own configured tenant is CLOSED by fiat — never let a public
+    // membership overlay on it authorize (fail-closed even if its encrypted
+    // directory is currently stale/undecryptable).
+    const forceClosed = samePod(podUrl, tenantPodUrl);
+    return await fetchAdminPayload({ ...fetcherConfig(), podUrl, forceClosed }) as FoxxiAdminPayload;
   } catch (err) {
     console.error('[foxxi-bridge] autoFetchAdmin failed:', (err as Error).message);
     return null;
@@ -1893,13 +1903,26 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!podUrl) {
       return { error: 'tenant_pod_url (or learner_pod_url) required — the pod that hosts your self-sovereign tenant membership' };
     }
-    // Invariant 2: refuse to overlay a closed (admin-managed) tenant.
+    // Invariant 2: refuse to overlay a CLOSED (admin-managed) tenant — fail-closed.
+    //   (a) the bridge's own configured tenant is closed by fiat; and
+    //   (b) any pod that has PUBLISHED a TenantDirectory descriptor is closed,
+    //       whether or not this bridge can decrypt it — so a stale/undecryptable
+    //       directory can't be downgraded to self-enrollable.
+    if (samePod(podUrl, tenantPodUrl)) {
+      return { error: 'this pod is the bridge\'s configured (closed) tenant — enrollment is via the tenant admin, not self-enrollment' };
+    }
     try {
-      const dirSection = await fetchSection(TENANT_TYPES.TenantDirectory, { ...fetcherConfig(), podUrl }) as { users?: unknown[] };
-      if (Array.isArray(dirSection?.users) && dirSection.users.length > 0) {
-        return { error: 'this pod is an admin-managed (closed) tenant — enrollment is via the tenant admin, not self-enrollment' };
+      await fetchSection(TENANT_TYPES.TenantDirectory, { ...fetcherConfig(), podUrl });
+      // Resolved → an encrypted directory exists (and decrypted) → closed tenant.
+      return { error: 'this pod is an admin-managed (closed) tenant — enrollment is via the tenant admin, not self-enrollment' };
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e);
+      if (!/No descriptor with conformsTo=.*found/i.test(msg)) {
+        // A directory descriptor EXISTS but is encrypted/unreadable → still closed.
+        return { error: 'this pod has an admin-managed directory this bridge cannot serve — enrollment is via the tenant admin, not self-enrollment' };
       }
-    } catch { /* no bridge-readable encrypted directory → self-sovereign pod, proceed */ }
+      // Only a genuine "no directory descriptor" → self-sovereign pod → proceed.
+    }
     // Read the current PUBLIC membership, append the signer idempotently (invariant 1).
     let members: Array<{ user_id: string; web_id: string; wallet_address: string }> = [];
     try {
