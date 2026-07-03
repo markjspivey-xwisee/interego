@@ -246,6 +246,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     ['connections', TENANT_TYPES.ConnectorRegistry],
     ['events', TENANT_TYPES.EnrollmentEventStream],
     ['audit', TENANT_TYPES.AuditLogStream],
+    ['membership', TENANT_TYPES.TenantMembership],
   ];
   const settled = await Promise.allSettled(SECTIONS.map(([, iri]) => fetchSection(iri, config)));
   const missing: string[] = [];
@@ -260,6 +261,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
   const connections = section(3) ?? [];
   const events = section(4) ?? [];
   const audit = section(5) ?? [];
+  const membership = section(6) ?? { users: [] };
   if (missing.length > 0) {
     // eslint-disable-next-line no-console
     console.warn(`[foxxi-tenant-fetcher] tenant ${config.podUrl} is missing sections [${missing.join(', ')}] — composed admin payload with empty defaults (auth/directory still works if 'directory' is present).`);
@@ -267,6 +269,22 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
 
   // directory was published as { users, groups }
   const dir = directory as { users?: unknown; groups?: unknown };
+
+  // ── Closed vs self-sovereign membership resolution ──────────────
+  // A CLOSED tenant has an encrypted TenantDirectory this bridge could
+  // DECRYPT (dir.users is non-empty) — it is admin-managed, and its PUBLIC
+  // membership overlay (if any) is deliberately IGNORED, so no one can
+  // self-enroll into an admin tenant by writing a public allowlist onto its
+  // pod. A SELF-SOVEREIGN tenant has no bridge-readable encrypted directory —
+  // its PUBLIC TenantMembership section IS the authoritative allowlist, read
+  // by any bridge with no shared admin key. Fail-closed: when the encrypted
+  // directory is absent/undecryptable we trust ONLY the public membership.
+  const dirUsers = Array.isArray(dir.users) ? (dir.users as unknown[]) : [];
+  const memUsers = (() => {
+    const m = membership as { users?: unknown };
+    return Array.isArray(m.users) ? (m.users as unknown[]) : [];
+  })();
+  const effectiveUsers = dirUsers.length > 0 ? dirUsers : memUsers;
 
   const composed = {
     meta: {
@@ -280,7 +298,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
       admin_user_role: '',
     },
     catalog,
-    users: dir.users ?? [],
+    users: effectiveUsers,
     groups: dir.groups ?? [],
     policies,
     events,

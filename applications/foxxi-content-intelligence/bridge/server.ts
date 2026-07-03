@@ -95,6 +95,8 @@ import {
 import {
   fetchAdminPayload,
   fetchCoursePackage,
+  fetchSection,
+  invalidateTenantCache,
 } from '../src/tenant-fetcher.js';
 import {
   issueCourseCompletionCredential,
@@ -303,7 +305,7 @@ import {
   emitAccessDecision,
   type CallerContext,
 } from '../src/policy.js';
-import { deriveAdminKeyPair } from '../src/tenant-publisher.js';
+import { deriveAdminKeyPair, publishTenantMembership, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, cmi5BearerTenant, observeCmi5Statement } from '../src/cmi5-lms.js';
@@ -1870,21 +1872,68 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   },
 
   'foxxi.register_self_sovereign_learner': async (args) => {
-    // No admin gate — the whole point is letting a learner register themselves with their own pod + DID.
-    // Audit-record on the bridge that a registration was attempted; the actual descriptor write happens
-    // on the caller's pod with their credentials (we just emit the registration payload they can publish).
-    const descriptor = {
-      '@context': ['https://www.w3.org/ns/credentials/v2'],
-      type: ['fxa:SelfSovereignLearner'],
-      id: `urn:foxxi:self-sovereign-learner:${(args.learner_did as string).replace(/[^a-zA-Z0-9]/g, '-')}`,
-      learnerDid: args.learner_did,
-      learnerPodUrl: args.learner_pod_url,
-      displayName: args.display_name,
-      isAgent: args.is_agent ?? false,
-      registeredAt: new Date().toISOString(),
-      tenant: tenantProfileDid,
+    // Self-sovereign enrollment, Interego-native. The caller PROVES control of a
+    // wallet (rev-196 proof-of-possession envelope) and we append that address to a
+    // PUBLIC tenant-membership allowlist on the tenant's OWN pod. Any bridge then
+    // reads that public section via the substrate — no shared admin key, no per-tenant
+    // bridge env — and PoP-authorizes the member on discover_assigned_courses et al.
+    // Two invariants keep this from becoming a self-service backdoor:
+    //   1. You can only enroll YOURSELF — the address written is the recovered signer,
+    //      never an arbitrary/attacker-supplied one.
+    //   2. A CLOSED (admin-encrypted) tenant is refused — a public allowlist can never
+    //      overlay an admin-managed directory, so this can't grant access to acme et al.
+    const rec = recoverSignedRequest(args);
+    if (!rec.ok) {
+      return { error: `auth: self-enrollment needs proof-of-possession — pass a rev-196 signed-request envelope ({_signature,_signed_payload}). (${rec.reason})` };
+    }
+    const signer = rec.signer;
+    const p = (rec.payload ?? {}) as Record<string, unknown>;
+    const podUrl = (p.tenant_pod_url as string) || (args.tenant_pod_url as string)
+      || (p.learner_pod_url as string) || (args.learner_pod_url as string) || '';
+    if (!podUrl) {
+      return { error: 'tenant_pod_url (or learner_pod_url) required — the pod that hosts your self-sovereign tenant membership' };
+    }
+    // Invariant 2: refuse to overlay a closed (admin-managed) tenant.
+    try {
+      const dirSection = await fetchSection(TENANT_TYPES.TenantDirectory, { ...fetcherConfig(), podUrl }) as { users?: unknown[] };
+      if (Array.isArray(dirSection?.users) && dirSection.users.length > 0) {
+        return { error: 'this pod is an admin-managed (closed) tenant — enrollment is via the tenant admin, not self-enrollment' };
+      }
+    } catch { /* no bridge-readable encrypted directory → self-sovereign pod, proceed */ }
+    // Read the current PUBLIC membership, append the signer idempotently (invariant 1).
+    let members: Array<{ user_id: string; web_id: string; wallet_address: string }> = [];
+    try {
+      const mem = await fetchSection(TENANT_TYPES.TenantMembership, { ...fetcherConfig(), podUrl }) as { users?: typeof members };
+      if (Array.isArray(mem?.users)) members = mem.users.filter(Boolean);
+    } catch { /* none published yet */ }
+    const learnerId = (p.learner_id as string) || (args.learner_id as string) || `u-eth-${signer.slice(2, 14).toLowerCase()}`;
+    const webId = (p.learner_pod_url as string) || (args.learner_pod_url as string) || `${podUrl.replace(/\/+$/, '')}/profile/card#me`;
+    const existing = members.find(m => (m.wallet_address ?? '').toLowerCase() === signer.toLowerCase());
+    if (!existing) members.push({ user_id: learnerId, web_id: webId, wallet_address: signer });
+    const publishConfig = {
+      podUrl,
+      authoritativeSource: ((p.tenant_did as string) || (args.tenant_did as string) || tenantProfileDid) as IRI,
+      // The module-load fetch wrapper attaches the pod-write bearer for css-gate origins.
+      fetch: globalThis.fetch as unknown as TenantPublishConfig['fetch'],
+      adminWebId: webId,
+      adminKeySeed,   // unused for a public section, but required by the config type
+      walletSeed,
     };
-    return { descriptor, note: 'Self-sovereign learner registration payload. Publish this to your own pod via publish_context to make it discoverable; thereafter any tenant can call foxxi.discover_assigned_courses with your did as learner_did.' };
+    let descriptorUrl = '';
+    try {
+      const result = await publishTenantMembership(members, publishConfig);
+      descriptorUrl = result.descriptorUrl;
+      invalidateTenantCache(podUrl);
+    } catch (err) {
+      return { error: `failed to publish public membership to ${podUrl}: ${(err as Error).message}` };
+    }
+    return {
+      enrolled: { user_id: learnerId, wallet_address: signer, web_id: webId, already: Boolean(existing) },
+      tenant_pod_url: podUrl,
+      membershipDescriptorUrl: descriptorUrl,
+      memberCount: members.length,
+      note: `Public self-sovereign membership published. Call foxxi.discover_assigned_courses with a PoP envelope signed by ${signer} and tenant_pod_url=${podUrl} — you will be authorized as a member.`,
+    };
   },
 
   // ─── Wave-of-13 handlers ────────────────────────────────────────────

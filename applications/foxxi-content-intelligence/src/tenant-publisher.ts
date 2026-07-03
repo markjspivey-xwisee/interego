@@ -47,6 +47,16 @@ const FXA = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontai
 export const TENANT_TYPES = {
   CourseCatalog: `${FXS}CourseCatalog` as IRI,
   TenantDirectory: `${FXS}TenantDirectory` as IRI,
+  /**
+   * PUBLIC membership allowlist — the self-sovereign counterpart to
+   * TenantDirectory. Carries only public identifiers (user_id, web_id,
+   * wallet_address), published UNENCRYPTED so ANY bridge can read it via
+   * the substrate with no shared admin key. A tenant that publishes this
+   * (and no encrypted TenantDirectory) is a self-sovereign, open tenant;
+   * one with an encrypted TenantDirectory is a closed, admin-managed tenant
+   * and its public-membership overlay (if any) is deliberately IGNORED.
+   */
+  TenantMembership: `${FXS}TenantMembership` as IRI,
   AssignmentPolicySet: `${FXS}AssignmentPolicySet` as IRI,
   ConnectorRegistry: `${FXS}ConnectorRegistry` as IRI,
   EnrollmentEventStream: `${FXA}EnrollmentEventStream` as IRI,
@@ -213,6 +223,29 @@ export async function publishTenantDirectory(directory: unknown, config: TenantP
     graphIri: `urn:foxxi:tenant:${slugSourceDid(config.authoritativeSource)}:directory` as IRI,
     typeIri: TENANT_TYPES.TenantDirectory,
     payload: enrichedDir,
+  });
+}
+
+/**
+ * Publish a PUBLIC tenant-membership allowlist (see TENANT_TYPES.TenantMembership).
+ *
+ * Unlike publishTenantDirectory this section is NOT encrypted: it holds only
+ * public identifiers (user_id, web_id, wallet_address), so a self-sovereign
+ * tenant can publish it to its own pod and ANY bridge reads it via the
+ * substrate — no shared admin key, no per-tenant bridge env var. Only entries
+ * that carry a real `wallet_address` are kept (a membership entry with no
+ * verifiable address is meaningless for proof-of-possession); addresses are
+ * NOT derived from the demo seed here — self-sovereign members bring their own.
+ */
+export async function publishTenantMembership(users: unknown, config: TenantPublishConfig): Promise<PublishResult> {
+  const list = (users as ReadonlyArray<{ user_id?: string; web_id?: string; wallet_address?: string }>) ?? [];
+  const members = list.filter(u => typeof u.wallet_address === 'string' && u.wallet_address.length > 0);
+  return publishSection({
+    config,
+    slug: 'tenant-membership',
+    graphIri: `urn:foxxi:tenant:${slugSourceDid(config.authoritativeSource)}:membership` as IRI,
+    typeIri: TENANT_TYPES.TenantMembership,
+    payload: { users: members },
   });
 }
 
