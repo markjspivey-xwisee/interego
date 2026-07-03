@@ -238,7 +238,13 @@ export function attachDeterministicAddresses<U extends { user_id: string; wallet
 // Identity binds to the RECOVERED did:ethr, never to a caller-claimed agent_id,
 // so a caller cannot sign with one wallet and claim another's identity.
 
-const AGENT_SIG_REPLAY_WINDOW_MS = 60_000;
+// Replay window for signed requests. 60s is too tight for a relay sign→act
+// round-trip on a large payload (sign, marshal, network, verify) — widened to
+// 5 min by default and made env-tunable. Still bounded (replay protection).
+const AGENT_SIG_REPLAY_WINDOW_MS = (() => {
+  const v = Number(process.env.AGENT_SIG_REPLAY_WINDOW_MS);
+  return Number.isFinite(v) && v > 0 ? v : 300_000;
+})();
 
 export type RecoveredSignedRequest =
   | { ok: true; signer: string; agentId: string; payload: Record<string, unknown> }

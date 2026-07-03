@@ -141,15 +141,36 @@ export async function ingestContentPackage(args: {
   parsed: ParsedFoxxiPackage;
   config: FoxxiConfig;
 }): Promise<IngestContentPackageResult> {
-  const courseIriBase = federationIriBase(args.config.tenantPodUrl, args.parsed.courseId);
+  // Defensive normalization. This runs on EXTERNAL JSON (a caller's parsed
+  // bundle over HTTP), so the static ParsedFoxxiPackage type is NOT a runtime
+  // guarantee — a missing/renamed field must yield a valid (if sparse) catalog
+  // row, never a cryptic "Cannot read properties of undefined (reading
+  // 'replace')". Every string is escaped (a stray quote in a title/id would
+  // otherwise break the Turtle) and every count coerces to a number.
+  const P = args.parsed as Partial<ParsedFoxxiPackage> & Record<string, unknown>;
+  const s = (v: unknown, d = ''): string => (v === undefined || v === null) ? d : String(v);
+  const num = (v: unknown): number => Number.isFinite(Number(v)) ? Number(v) : 0;
+  const courseId = s(P.courseId).trim();
+  if (!courseId) throw new Error('parsed.courseId is required (a stable course identifier)');
+  const title = s(P.title, courseId);
+  const packageId = s(P.packageId, courseId);
+  const standard = s(P.standard, 'unspecified');
+  const authoringTool = s(P.authoringTool, 'unspecified');
+  const authoringVersion = s(P.authoringVersion);
+  const parserVersion = s(P.parserVersion);
+  const vocabVersion = s(P.vocabVersion);
+  const stats = (P.stats && typeof P.stats === 'object') ? P.stats as Record<string, unknown> : {};
+  const concepts = Array.isArray(P.concepts) ? P.concepts : [];
+
+  const courseIriBase = federationIriBase(args.config.tenantPodUrl, courseId);
   const courseIri = `${courseIriBase}#package` as IRI;
-  const graphIri = `urn:graph:foxxi:course:${args.parsed.courseId}` as IRI;
+  const graphIri = `urn:graph:foxxi:course:${encodeURIComponent(courseId)}` as IRI;
   const computedAt = nowIso();
 
   // Mint PGSL atoms for the concept map — each free-standing concept
   // becomes a content-addressed pgsl:Atom that downstream content
   // (other courses, regulators, federated peers) can cite by URI.
-  const conceptAtomCount = args.parsed.concepts.length;
+  const conceptAtomCount = concepts.length;
   // For the small skeleton here we don't persist the atoms (real
   // deployments mint via mintAtom + pod-write); we count them so
   // the catalog row has the right number.
@@ -161,19 +182,19 @@ export async function ingestContentPackage(args: {
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix schema: <http://schema.org/> .
 <${graphIri}> a fxs:Package, schema:Course ;
-  dct:title """${escapeTtl(args.parsed.title)}""" ;
-  dct:identifier "${args.parsed.packageId}" ;
-  fxs:standard "${args.parsed.standard}" ;
-  fxs:authoringTool "${args.parsed.authoringTool}" ;
-  fxs:authoringVersion "${args.parsed.authoringVersion}" ;
-  fxs:parserVersion "${args.parsed.parserVersion}" ;
-  fxs:vocabVersion "${args.parsed.vocabVersion}" ;
-  fxs:slideCount ${args.parsed.stats.slides} ;
-  fxs:sceneCount ${args.parsed.stats.scenes} ;
-  fxs:audioSeconds ${args.parsed.stats.audioSeconds} ;
-  fxk:conceptCount ${args.parsed.stats.conceptsTotal} ;
-  fxk:freeStandingConceptCount ${args.parsed.stats.conceptsFreeStanding} ;
-  fxk:prereqEdgeCount ${args.parsed.stats.prereqEdges} ;
+  dct:title """${escapeTtl(title)}""" ;
+  dct:identifier "${escapeTtl(packageId)}" ;
+  fxs:standard "${escapeTtl(standard)}" ;
+  fxs:authoringTool "${escapeTtl(authoringTool)}" ;
+  fxs:authoringVersion "${escapeTtl(authoringVersion)}" ;
+  fxs:parserVersion "${escapeTtl(parserVersion)}" ;
+  fxs:vocabVersion "${escapeTtl(vocabVersion)}" ;
+  fxs:slideCount ${num(stats.slides)} ;
+  fxs:sceneCount ${num(stats.scenes)} ;
+  fxs:audioSeconds ${num(stats.audioSeconds)} ;
+  fxk:conceptCount ${num(stats.conceptsTotal)} ;
+  fxk:freeStandingConceptCount ${num(stats.conceptsFreeStanding)} ;
+  fxk:prereqEdgeCount ${num(stats.prereqEdges)} ;
   prov:wasAttributedTo <${args.config.authoritativeSource}> ;
   dct:issued "${computedAt}" .`;
 

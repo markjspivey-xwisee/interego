@@ -432,6 +432,35 @@ function samePod(a?: string, b?: string): boolean {
   return Boolean(a) && Boolean(b) && norm(a) === norm(b);
 }
 
+/**
+ * If args carry a rev-196 proof-of-possession envelope ({_signature,
+ * _signed_payload}), verify it and MERGE the signed payload into args, so
+ * downstream reads see the real signed values instead of `undefined` (the bug
+ * where assign_audience published a "<undefined>" policy to the wrong pod).
+ * Returns the recovered signer, or null when no envelope is present. Throws on a
+ * present-but-invalid envelope.
+ */
+function mergeSignedEnvelope(args: Record<string, unknown>): string | null {
+  if (typeof args._signature !== 'string' || typeof args._signed_payload !== 'string') return null;
+  const rec = recoverSignedRequest(args);
+  if (!rec.ok) throw new Error(`auth: invalid signed-request envelope — ${rec.reason}`);
+  if (rec.payload && typeof rec.payload === 'object') Object.assign(args, rec.payload);
+  return rec.signer;
+}
+
+/** Derive a stable self-sovereign tenant DID from a pod URL (did:web:host:path…),
+ *  so a self-sovereign tenant's on-pod artifacts are filed under ITS OWN URN,
+ *  not the bridge's configured (acme) authoritativeSource. */
+function selfSovereignSourceFor(podUrl: string): IRI {
+  try {
+    const u = new URL(podUrl);
+    const segs = u.pathname.split('/').filter(Boolean).map(encodeURIComponent);
+    return `did:web:${u.host}${segs.length ? ':' + segs.join(':') : ''}` as IRI;
+  } catch {
+    return `urn:foxxi:self-sovereign-tenant:${createHash('sha256').update(podUrl).digest('hex').slice(0, 16)}` as IRI;
+  }
+}
+
 async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdminPayload | null> {
   const podUrl = (args.tenant_pod_url as string) || tenantPodUrl;
   if (!podUrl) return null;
@@ -714,7 +743,11 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
     // member addresses gets real PoP; one that stores seed-derived addresses
     // keeps the demo session-token path below.
     const member = addressMap.get(signedSigner.toLowerCase());
-    if (!member) return { error: `auth: signer ${signedSigner} is not a member of this tenant directory (proof-of-possession)` };
+    if (!member) {
+      const podChecked = (args.tenant_pod_url as string) || tenantPodUrl;
+      const usedDefault = !(args.tenant_pod_url);
+      return { error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}` };
+    }
     const ctx = resolveCallerContext({
       callerWebId: member.webId,
       callerUserId: member.userId,
@@ -774,7 +807,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx, admin } = resolved;
 
     // AuthZ: caller can only ask about themselves, their direct reports, or any if admin.
-    const requestedLearnerDid = args.learner_did as string;
+    // Default to querying YOURSELF when learner_did is omitted, or when it is your
+    // wallet DID (did:ethr/key/pkh) rather than your web_id — a common caller
+    // mistake, since the self-check keys on web_id. (Previously this surfaced a
+    // misleading "forbidden … cannot query enrollments for did:ethr:0x…".)
+    const rawLearnerDid = typeof args.learner_did === 'string' ? args.learner_did.trim() : '';
+    const looksLikeWalletDid = /^did:(ethr|key|pkh):/i.test(rawLearnerDid);
+    const requestedLearnerDid = (!rawLearnerDid || looksLikeWalletDid) ? ctx.webId : rawLearnerDid;
     if (ctx.role !== 'admin' && requestedLearnerDid !== ctx.webId) {
       const targetUser = admin.users.find(u => u.web_id === requestedLearnerDid);
       const isDirectReport = !!(targetUser && ctx.directReports.has(targetUser.user_id));
@@ -946,13 +985,23 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   },
 
   'foxxi.assign_audience': async (args) => {
+    // Unwrap a PoP envelope FIRST so course_iri / audience_tag / tenant_pod_url
+    // come from the SIGNED payload. Previously these were read raw, so a signed
+    // caller's values were all undefined → a "<undefined>" policy written to the
+    // default (acme) pod. With the envelope merged, configOrThrow also picks up
+    // the signed tenant_pod_url → the policy lands on the CALLER's own pod.
+    try { mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
     const config = configOrThrow(args);
+    const courseIri = typeof args.course_iri === 'string' ? args.course_iri.trim() : '';
+    const audienceTag = typeof args.audience_tag === 'string' ? args.audience_tag.trim() : '';
+    if (!courseIri) return { error: 'course_iri required — the ingested course IRI (e.g. <pod>/courses/<course_id>#package). Sign it inside _signed_payload.' };
+    if (!audienceTag) return { error: 'audience_tag required — the audience to assign (e.g. "engineering").' };
     const assignment: AudienceAssignment = {
-      courseIri: args.course_iri as IRI,
-      audienceTag: args.audience_tag as string,
+      courseIri: courseIri as IRI,
+      audienceTag,
       requirementType: (args.requirement_type as 'required' | 'recommended') ?? 'recommended',
       trigger: (args.trigger as 'on-hire' | 'on-role-change' | 'on-cycle' | 'manual') ?? 'manual',
-      dueRelativeDays: (args.due_relative_days as number) ?? 30,
+      dueRelativeDays: Number.isFinite(Number(args.due_relative_days)) ? Number(args.due_relative_days) : 30,
     };
     return assignAudience({ assignment, config });
   },
@@ -1935,7 +1984,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!existing) members.push({ user_id: learnerId, web_id: webId, wallet_address: signer });
     const publishConfig = {
       podUrl,
-      authoritativeSource: ((p.tenant_did as string) || (args.tenant_did as string) || tenantProfileDid) as IRI,
+      // File the membership under the SELF-SOVEREIGN tenant's own URN (derived
+      // from its pod), NOT the bridge's configured (acme) authoritativeSource —
+      // otherwise a Weft learner's membership graph is mislabelled `…:acme:…`.
+      authoritativeSource: ((p.tenant_did as string) || (args.tenant_did as string) || selfSovereignSourceFor(podUrl)) as IRI,
       // The module-load fetch wrapper attaches the pod-write bearer for css-gate origins.
       fetch: globalThis.fetch as unknown as TenantPublishConfig['fetch'],
       adminWebId: webId,
