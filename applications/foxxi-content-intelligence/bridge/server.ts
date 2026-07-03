@@ -305,7 +305,7 @@ import {
   emitAccessDecision,
   type CallerContext,
 } from '../src/policy.js';
-import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
+import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, cmi5BearerTenant, observeCmi5Statement } from '../src/cmi5-lms.js';
@@ -1048,11 +1048,27 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }
     const source = sourceForPod(pod);
     const result = await ingestContentPackage({ parsed: args.parsed as ParsedFoxxiPackage, config: { tenantPodUrl: pod, authoritativeSource: source } });
-    // Compose: upsert the CourseCatalog row (public section) so
-    // discover_assigned_courses can join it. No hardcoded path — publishCourseCatalog
-    // writes a substrate descriptor discovered by conformsTo.
+    // Compose: (1) upsert the CourseCatalog SUMMARY row so discover joins it, and
+    // (2) publish the FULL content as a per-course CoursePackageBundle so the
+    // retrieval handlers read it server-side. Both are substrate descriptors
+    // discovered by conformsTo (no hardcoded paths); publishCoursePackage lands at
+    // foxxi/course-<id> per-course (no fixed-slug collision) with delete-then-publish.
     await upsertCatalogEntry(pod, source, result.catalogEntry as unknown as Record<string, unknown>);
-    return { ...result, catalogUpserted: true };
+    const pkg = await publishCoursePackage({ courseId: result.catalogEntry.course_id, payload: result.agenticPayload }, publishConfigFor(pod, source));
+    invalidateTenantCache(pod);
+    return {
+      courseIri: result.courseIri,
+      course_id: result.catalogEntry.course_id,
+      descriptorUrl: pkg.descriptorUrl,
+      graphUrl: pkg.graphUrl,
+      conceptAtomCount: result.conceptAtomCount,
+      parseStatus: result.parseStatus,
+      catalogEntry: result.catalogEntry,
+      catalogUpserted: true,
+      coursePackagePublished: true,
+      conceptCount: result.agenticPayload.concepts.length,
+      slideCount: result.agenticPayload.slides.length,
+    };
   },
 
   'foxxi.publish_authoring_policy': async (args) => {
@@ -1228,7 +1244,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // the subject's self-sovereign pod (wallet/credentials, via exportClr inside
     // assembleEnterpriseLearnerRecord) and their OWN derived LRS view
     // (lens:<agent>, already subject-scoped), never the Foxxi tenant pod/store.
-    const subjectPodUrl = resolveSubjectPodUrl(requestedLearnerDid, args.learner_pod_url as string | undefined);
+    const subjectPodUrl = resolveSubjectPodUrl(requestedLearnerDid, (args.learner_pod_url ?? args.subject_pod_url ?? args.tenant_pod_url) as string | undefined);
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
     // The lens is an in-memory derived view; the durable records on the
     // subject's OWN pod are the system of record. Union them (deduped by id) so
@@ -1306,7 +1322,24 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       },
       timestamp: new Date().toISOString(),
     };
-    const statementId = storeStatementInternal(statement, callTenant(args));
+    // Land the performance in the PERFORMER's OWN lens + shared lattice — the
+    // self-sovereign system of record that assemble_learner_record reads — NOT the
+    // flat env-tenant partition (the legacy outlier; the delegated /agent/record-
+    // performance already writes to the lens). This closes the write/read mismatch
+    // that made assemble_learner_record return all-zeros for a self-sovereign learner.
+    const perfPod = resolveSubjectPodUrl(performerDid, (args.subject_pod_url ?? args.learner_pod_url ?? args.tenant_pod_url) as string | undefined);
+    const perfLabel = actorForPod(perfPod, MESH_ACTOR_LABELS);
+    const perfActivityType = (typeof args.activity_type === 'string' && args.activity_type.trim())
+      ? args.activity_type.trim()
+      : 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#ProductionTask';
+    const statementId = storeStatementInternal(statement, lensTenantFor(perfLabel));
+    void composeIntoSharedLattice({
+      podUrl: perfPod, agentDid: performerDid, label: perfLabel,
+      terms: [performerDid, PERFORMED_VERB, perfActivityType, taskId],
+      content: { ...statement, id: statementId }, contentType: 'xapi:Statement',
+      ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
+      projections: ['rdf', 'vc', 'activity'],
+    }).catch(e => console.warn('[foxxi][record_performance] lattice compose failed:', (e as Error).message));
     return {
       recorded: true,
       statementId,
@@ -1315,6 +1348,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       taskId,
       taskName,
       actorKind,
+      lensTenant: lensTenantFor(perfLabel),
+      durable: perfPod,
       success: args.success as boolean,
     };
   },
@@ -4385,9 +4420,18 @@ app.post('/agent/ingest-course', async (req, res) => {
     }
     const source = sourceForPod(authorPod);
     const result = await ingestContentPackage({ parsed: parsed as ParsedFoxxiPackage, config: { tenantPodUrl: authorPod, authoritativeSource: source } });
-    // Compose: upsert the CourseCatalog row so the author's own discover joins it.
+    // Compose: upsert the CourseCatalog SUMMARY + publish the FULL content as a
+    // per-course CoursePackageBundle (server-side retrievable, per-course slug).
     await upsertCatalogEntry(authorPod, source, result.catalogEntry as unknown as Record<string, unknown>);
-    res.json({ ok: true, authoredBy: callerDid, authorPod, catalogUpserted: true, ...result });
+    const pkg = await publishCoursePackage({ courseId: result.catalogEntry.course_id, payload: result.agenticPayload }, publishConfigFor(authorPod, source));
+    invalidateTenantCache(authorPod);
+    res.json({
+      ok: true, authoredBy: callerDid, authorPod, catalogUpserted: true, coursePackagePublished: true,
+      courseIri: result.courseIri, course_id: result.catalogEntry.course_id,
+      descriptorUrl: pkg.descriptorUrl, graphUrl: pkg.graphUrl,
+      conceptAtomCount: result.conceptAtomCount, parseStatus: result.parseStatus, catalogEntry: result.catalogEntry,
+      conceptCount: result.agenticPayload.concepts.length, slideCount: result.agenticPayload.slides.length,
+    });
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
   }

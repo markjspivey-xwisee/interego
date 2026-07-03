@@ -44,6 +44,7 @@ import {
   type ParticipationHit,
 } from '../../_shared/aggregate-privacy/index.js';
 import { createHash } from 'node:crypto';
+import type { FoxxiAgenticPayload } from './agentic-rag.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -137,12 +138,13 @@ export interface FoxxiCatalogEntry {
 
 export interface IngestContentPackageResult {
   readonly courseIri: IRI;
-  readonly descriptorUrl: string;
-  readonly graphUrl: string;
   readonly conceptAtomCount: number;
   readonly parseStatus: 'clean' | 'violations';
   /** Ready-to-upsert CourseCatalog row (the bridge writes it to the pod's public catalog). */
   readonly catalogEntry: FoxxiCatalogEntry;
+  /** Full course content (concepts / slides / transcripts / edges) — the bridge
+   *  publishes it as a per-course CoursePackageBundle for server-side retrieval. */
+  readonly agenticPayload: FoxxiAgenticPayload;
 }
 
 /**
@@ -177,12 +179,8 @@ export async function ingestContentPackage(args: {
   const courseId = s(pick('courseId', 'course_id')).trim();
   if (!courseId) throw new Error('parsed.courseId is required (a stable course identifier)');
   const title = s(pick('title', 'name'), courseId);
-  const packageId = s(pick('packageId', 'package_id'), courseId);
   const standard = s(pick('standard'), 'unspecified');
   const authoringTool = s(pick('authoringTool', 'authoring_tool'), 'unspecified');
-  const authoringVersion = s(pick('authoringVersion', 'authoring_version'));
-  const parserVersion = s(pick('parserVersion', 'parser_version'));
-  const vocabVersion = s(pick('vocabVersion', 'vocab_version'));
   const statsObj = (typeof pick('stats') === 'object') ? pick('stats') as Record<string, unknown> : {};
   // A stat may live under parsed.stats.X (camel or snake) OR flat on the bundle.
   const stat = (...keys: string[]): number => {
@@ -193,53 +191,73 @@ export async function ingestContentPackage(args: {
 
   const courseIriBase = federationIriBase(args.config.tenantPodUrl, courseId);
   const courseIri = `${courseIriBase}#package` as IRI;
-  const graphIri = `urn:graph:foxxi:course:${encodeURIComponent(courseId)}` as IRI;
-  const computedAt = nowIso();
-
-  // Mint PGSL atoms for the concept map — each free-standing concept
-  // becomes a content-addressed pgsl:Atom that downstream content
-  // (other courses, regulators, federated peers) can cite by URI.
   const conceptAtomCount = concepts.length;
-  // For the small skeleton here we don't persist the atoms (real
-  // deployments mint via mintAtom + pod-write); we count them so
-  // the catalog row has the right number.
   void mintAtom;
 
-  const ttl = `@prefix fxs: <${FOXXI_NS}scorm#> .
-@prefix fxk: <${FOXXI_NS}knowledge#> .
-@prefix dct: <http://purl.org/dc/terms/> .
-@prefix prov: <http://www.w3.org/ns/prov#> .
-@prefix schema: <http://schema.org/> .
-<${graphIri}> a fxs:Package, schema:Course ;
-  dct:title """${escapeTtl(title)}""" ;
-  dct:identifier "${escapeTtl(packageId)}" ;
-  fxs:standard "${escapeTtl(standard)}" ;
-  fxs:authoringTool "${escapeTtl(authoringTool)}" ;
-  fxs:authoringVersion "${escapeTtl(authoringVersion)}" ;
-  fxs:parserVersion "${escapeTtl(parserVersion)}" ;
-  fxs:vocabVersion "${escapeTtl(vocabVersion)}" ;
-  fxs:slideCount ${stat('slides', 'slide_count')} ;
-  fxs:sceneCount ${stat('scenes', 'scene_count')} ;
-  fxs:audioSeconds ${stat('audioSeconds', 'audio_seconds')} ;
-  fxk:conceptCount ${stat('conceptsTotal', 'concepts_total', 'concept_count') || concepts.length} ;
-  fxk:freeStandingConceptCount ${stat('conceptsFreeStanding', 'concepts_free_standing')} ;
-  fxk:prereqEdgeCount ${stat('prereqEdges', 'prereq_edges')} ;
-  prov:wasAttributedTo <${args.config.authoritativeSource}> ;
-  dct:issued "${computedAt}" .`;
+  // ── Build the CoursePackageBundle payload (FoxxiAgenticPayload) ──────
+  // The FULL content the retrieval handlers read server-side: the concept map
+  // (labels / tiers / prereq edges) + slide transcripts — not just counts. The
+  // caller's handler publishes this as a per-course CoursePackageBundle
+  // (discoverable by conformsTo, delete-then-publish for re-ingest). We no longer
+  // write a separate fixed-slug fxs:Package "counts" graph — it collided across
+  // courses (all landed on context-graphs/package.ttl and froze at the first) and
+  // nothing read it: the catalog row carries the summary, this bundle the content.
+  const rec = (x: unknown): Record<string, unknown> => (x && typeof x === 'object') ? x as Record<string, unknown> : {};
+  const strArr = (v: unknown): string[] => Array.isArray(v) ? v.map(String) : [];
+  const mappedConcepts = concepts.map((raw) => {
+    const c = rec(raw);
+    const id = s(c.id ?? c.concept_id);
+    return {
+      id,
+      label: s(c.label ?? c.name ?? id, id),
+      confidence: Number.isFinite(Number(c.confidence)) ? Number(c.confidence) : 1,
+      ...(c.tier != null ? { tier: Number(c.tier) } : {}),
+      ...(('is_free_standing' in c || 'isFreeStanding' in c) ? { is_free_standing: Boolean(c.is_free_standing ?? c.isFreeStanding) } : {}),
+      taught_in_slides: strArr(c.taught_in_slides ?? c.taughtInSlides),
+      ...(c.total_freq != null || c.totalFreq != null ? { total_freq: Number(c.total_freq ?? c.totalFreq) } : {}),
+    };
+  }).filter(c => c.id);
 
-  const built = ContextDescriptor.create(courseIri)
-    .describes(graphIri)
-    .agent(args.config.authoritativeSource)
-    .generatedBy(args.config.authoritativeSource, {
-      onBehalfOf: args.config.authoritativeSource,
-      endedAt: computedAt,
-    })
-    .temporal({ validFrom: computedAt })
-    .asserted(0.95)
-    .verified(args.config.authoritativeSource)
-    .build();
+  // Slides: a provided slides[] array, else one slide per entry of a transcripts
+  // map { slideId: text }, else empty (a concept-only course).
+  const rawSlides = pick('slides');
+  const transcripts = pick('transcripts', 'transcript');
+  let mappedSlides: Array<{ id: string; title: string; sequence_index: number; concept_ids?: string[]; transcript_combined?: string }> = [];
+  if (Array.isArray(rawSlides)) {
+    mappedSlides = rawSlides.map((raw, i) => {
+      const sl = rec(raw);
+      const seq = Number(sl.sequence_index ?? sl.sequenceIndex ?? i);
+      return {
+        id: s(sl.id, `slide-${i + 1}`),
+        title: s(sl.title ?? sl.name, `Slide ${i + 1}`),
+        sequence_index: Number.isFinite(seq) ? seq : i,
+        ...(Array.isArray(sl.concept_ids ?? sl.conceptIds) ? { concept_ids: strArr(sl.concept_ids ?? sl.conceptIds) } : {}),
+        ...(typeof (sl.transcript_combined ?? sl.transcript) === 'string' ? { transcript_combined: String(sl.transcript_combined ?? sl.transcript) } : {}),
+      };
+    });
+  } else if (transcripts && typeof transcripts === 'object' && !Array.isArray(transcripts)) {
+    mappedSlides = Object.entries(transcripts as Record<string, unknown>).map(([sid, text], i) => ({
+      id: sid || `slide-${i + 1}`,
+      title: sid || `Slide ${i + 1}`,
+      sequence_index: i,
+      transcript_combined: String(text ?? ''),
+    }));
+  }
 
-  const r = await publish(built, ttl, args.config.tenantPodUrl);
+  const modRaw = pick('modifierPairs', 'modifier_pairs');
+  const edgeRaw = pick('prereqEdges', 'prereq_edges');
+  const agenticPayload: FoxxiAgenticPayload = {
+    packageMeta: {
+      course_id: courseId,
+      course_label: (title.split(':')[0] || courseId).trim() || courseId,
+      title,
+      federation_iri_base: courseIriBase,
+    },
+    concepts: mappedConcepts,
+    slides: mappedSlides,
+    ...(Array.isArray(modRaw) ? { modifier_pairs: (modRaw as unknown[]).map(m => { const o = rec(m); return { modifier: s(o.modifier), target: s(o.target) }; }) } : {}),
+    ...(Array.isArray(edgeRaw) ? { prereq_edges: (edgeRaw as unknown[]).map(e => { const o = rec(e); return { from: s(o.from), to: s(o.to), ...(o.confidence != null ? { confidence: Number(o.confidence) } : {}) }; }) } : {}),
+  };
 
   const audienceRaw = pick('audienceTags', 'audience_tags');
   const audienceTags = Array.isArray(audienceRaw) ? (audienceRaw as unknown[]).map(String) : [];
@@ -251,8 +269,8 @@ export async function ingestContentPackage(args: {
     owner: String(args.config.authoritativeSource),
     authoring_tool: authoringTool,
     standard,
-    concept_count: stat('conceptsTotal', 'concepts_total', 'concept_count') || concepts.length,
-    slide_count: stat('slides', 'slide_count'),
+    concept_count: stat('conceptsTotal', 'concepts_total', 'concept_count') || mappedConcepts.length,
+    slide_count: stat('slides', 'slide_count') || mappedSlides.length,
     audio_seconds: stat('audioSeconds', 'audio_seconds'),
     is_real: true,
     course_iri: courseIri,
@@ -260,11 +278,10 @@ export async function ingestContentPackage(args: {
 
   return {
     courseIri,
-    descriptorUrl: r.descriptorUrl,
-    graphUrl: r.graphUrl,
     conceptAtomCount,
     parseStatus: 'clean',
     catalogEntry,
+    agenticPayload,
   };
 }
 
@@ -443,7 +460,3 @@ export function coverageQuery(args: CoverageQueryArgs): CoverageQueryResult {
 // ─────────────────────────────────────────────────────────────────────
 //  Helpers
 // ─────────────────────────────────────────────────────────────────────
-
-function escapeTtl(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
-}
