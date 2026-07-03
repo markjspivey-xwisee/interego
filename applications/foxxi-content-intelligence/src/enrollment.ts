@@ -154,11 +154,13 @@ export function discoverAssignedCourses(args: DiscoverAssignedCoursesArgs): Disc
       if (g.member_ids.includes(userId)) matchingGroupIds.add(g.group_id);
     }
   }
-  // Tag-override fallback: derive group_id via the "tag-<audience-tag>"
-  // convention so audience overrides still match the policy join.
-  if (args.audienceTagsOverride || (!userId && tags.length > 0)) {
-    for (const t of tags) matchingGroupIds.add(`tag-${t}`);
-  }
+  // Always derive audience-group ids from the learner's tags via the
+  // "tag-<audience-tag>" convention. A CLOSED tenant matches primarily by
+  // explicit group member_ids above; a SELF-SOVEREIGN learner has audience_tags
+  // (from their membership entry) but no explicit groups, so the tag convention
+  // is how they match a tag-keyed assignment policy — and an audience override
+  // keeps working the same way.
+  for (const t of tags) matchingGroupIds.add(`tag-${t}`);
 
   for (const policy of args.admin.policies) {
     if (!policy.enabled) continue;

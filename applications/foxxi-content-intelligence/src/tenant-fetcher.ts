@@ -255,6 +255,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     ['events', TENANT_TYPES.EnrollmentEventStream],
     ['audit', TENANT_TYPES.AuditLogStream],
     ['membership', TENANT_TYPES.TenantMembership],
+    ['assignments', TENANT_TYPES.TenantAssignments],
   ];
   const settled = await Promise.allSettled(SECTIONS.map(([, iri]) => fetchSection(iri, config)));
   const missing: string[] = [];
@@ -270,6 +271,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
   const events = section(4) ?? [];
   const audit = section(5) ?? [];
   const membership = section(6) ?? { users: [] };
+  const publicAssignments = section(7) ?? [];
   if (missing.length > 0) {
     // eslint-disable-next-line no-console
     console.warn(`[foxxi-tenant-fetcher] tenant ${config.podUrl} is missing sections [${missing.join(', ')}] — composed admin payload with empty defaults (auth/directory still works if 'directory' is present).`);
@@ -305,6 +307,12 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
         String((directorySettled.reason as Error)?.message ?? directorySettled.reason ?? ''));
   const closed = Boolean(config.forceClosed) || directoryPresent;
   const effectiveUsers = closed ? dirUsers : memUsers;
+  // Policies resolve the same way: a CLOSED tenant uses its (encrypted)
+  // AssignmentPolicySet; a SELF-SOVEREIGN tenant uses its PUBLIC TenantAssignments
+  // section (ingest/assign upsert it), read by any bridge with no admin key.
+  const effectivePolicies = closed
+    ? (Array.isArray(policies) ? policies : [])
+    : (Array.isArray(publicAssignments) ? publicAssignments : []);
 
   const composed = {
     meta: {
@@ -320,7 +328,7 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
     catalog,
     users: effectiveUsers,
     groups: dir.groups ?? [],
-    policies,
+    policies: effectivePolicies,
     events,
     audit,
     connections,

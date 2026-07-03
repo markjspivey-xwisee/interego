@@ -119,12 +119,30 @@ export interface ParsedFoxxiPackage {
   }>;
 }
 
+/** A CourseCatalog row — the shape discoverAssignedCourses joins policies against. */
+export interface FoxxiCatalogEntry {
+  readonly course_id: string;
+  readonly title: string;
+  readonly category: string;
+  readonly audience_tags: readonly string[];
+  readonly owner: string;
+  readonly authoring_tool: string;
+  readonly standard: string;
+  readonly concept_count: number;
+  readonly slide_count: number;
+  readonly audio_seconds: number;
+  readonly is_real: boolean;
+  readonly course_iri: IRI;
+}
+
 export interface IngestContentPackageResult {
   readonly courseIri: IRI;
   readonly descriptorUrl: string;
   readonly graphUrl: string;
   readonly conceptAtomCount: number;
   readonly parseStatus: 'clean' | 'violations';
+  /** Ready-to-upsert CourseCatalog row (the bridge writes it to the pod's public catalog). */
+  readonly catalogEntry: FoxxiCatalogEntry;
 }
 
 /**
@@ -212,12 +230,29 @@ export async function ingestContentPackage(args: {
 
   const r = await publish(built, ttl, args.config.tenantPodUrl);
 
+  const audienceTags = Array.isArray(P.audience_tags) ? (P.audience_tags as unknown[]).map(String) : [];
+  const catalogEntry: FoxxiCatalogEntry = {
+    course_id: courseId,
+    title,
+    category: s(P.category, standard || 'general'),
+    audience_tags: audienceTags,
+    owner: String(args.config.authoritativeSource),
+    authoring_tool: authoringTool,
+    standard,
+    concept_count: num(stats.conceptsTotal) || concepts.length,
+    slide_count: num(stats.slides),
+    audio_seconds: num(stats.audioSeconds),
+    is_real: true,
+    course_iri: courseIri,
+  };
+
   return {
     courseIri,
     descriptorUrl: r.descriptorUrl,
     graphUrl: r.graphUrl,
     conceptAtomCount,
     parseStatus: 'clean',
+    catalogEntry,
   };
 }
 

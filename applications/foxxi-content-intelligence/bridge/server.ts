@@ -305,7 +305,7 @@ import {
   emitAccessDecision,
   type CallerContext,
 } from '../src/policy.js';
-import { deriveAdminKeyPair, publishTenantMembership, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
+import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, cmi5BearerTenant, observeCmi5Statement } from '../src/cmi5-lms.js';
@@ -459,6 +459,55 @@ function selfSovereignSourceFor(podUrl: string): IRI {
   } catch {
     return `urn:foxxi:self-sovereign-tenant:${createHash('sha256').update(podUrl).digest('hex').slice(0, 16)}` as IRI;
   }
+}
+
+/** The authoritative source for artifacts written to a pod: the bridge's
+ *  configured authoritativeSource for its OWN tenant, else a self-sovereign
+ *  did:web derived from the pod (so a Weft tenant's catalog/assignments are
+ *  filed under ITS URN, not acme's). */
+function sourceForPod(podUrl: string): IRI {
+  return samePod(podUrl, tenantPodUrl) ? authoritativeSource : selfSovereignSourceFor(podUrl);
+}
+
+/** Publish config targeting a specific pod as a self-sovereign source (the
+ *  module-load fetch wrapper attaches the pod-write bearer for css-gate origins). */
+function publishConfigFor(podUrl: string, source: IRI): TenantPublishConfig {
+  return {
+    podUrl,
+    authoritativeSource: source,
+    fetch: globalThis.fetch as unknown as TenantPublishConfig['fetch'],
+    adminWebId: `${podUrl.replace(/\/+$/, '')}/profile/card#me`,
+    adminKeySeed,
+    walletSeed,
+  };
+}
+
+/** Read a pod's PUBLIC section array (catalog / assignments), [] if absent. */
+async function readSectionArray(podUrl: string, typeIri: IRI): Promise<Array<Record<string, unknown>>> {
+  try {
+    const v = await fetchSection(typeIri, { ...fetcherConfig(), podUrl });
+    return Array.isArray(v) ? v as Array<Record<string, unknown>> : [];
+  } catch { return []; }
+}
+
+/** Upsert a CourseCatalog row (keyed by course_id) into a pod's PUBLIC catalog,
+ *  so discover_assigned_courses can join it. Composes fetchSection + publishCourseCatalog. */
+async function upsertCatalogEntry(podUrl: string, source: IRI, entry: Record<string, unknown>): Promise<void> {
+  const current = await readSectionArray(podUrl, TENANT_TYPES.CourseCatalog);
+  const next = current.filter(e => e.course_id !== entry.course_id);
+  next.push(entry);
+  await publishCourseCatalog(next, publishConfigFor(podUrl, source));
+  invalidateTenantCache(podUrl);
+}
+
+/** Upsert an assignment policy (keyed by course_id + audience_group_id) into a
+ *  pod's PUBLIC TenantAssignments section. Composes fetchSection + publishTenantAssignments. */
+async function upsertAssignmentPolicy(podUrl: string, source: IRI, policy: Record<string, unknown>): Promise<void> {
+  const current = await readSectionArray(podUrl, TENANT_TYPES.TenantAssignments);
+  const next = current.filter(e => !(e.course_id === policy.course_id && e.audience_group_id === policy.audience_group_id));
+  next.push(policy);
+  await publishTenantAssignments(next, publishConfigFor(podUrl, source));
+  invalidateTenantCache(podUrl);
 }
 
 async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdminPayload | null> {
@@ -953,19 +1002,23 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   // ── Admin-side ───────────────────────────────────────────────────────
   'foxxi.ingest_content_package': async (args) => {
-    const config = configOrThrow(args);
-    // The real parse runs the Python parser (imported/foxxi_storyline_parser_v03.py)
-    // out-of-process. The bridge handler accepts the ALREADY-parsed payload
-    // here for the substrate composition step. Stub returns a placeholder.
+    // Accept a PoP envelope (so a self-sovereign caller's tenant_pod_url is read
+    // from the signed payload) and ingest an already-parsed package.
+    try { mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
+    const pod = (args.tenant_pod_url as string) || tenantPodUrl;
+    if (!pod) return { error: 'tenant_pod_url required (or set FOXXI_TENANT_POD_URL)' };
     if (!args.parsed) {
       return {
-        note: 'stub: supply args.parsed (ParsedFoxxiPackage) — production wiring runs the Python parser on args.zip_base64 then calls this',
+        error: 'supply args.parsed — a ParsedFoxxiPackage: { courseId (required), title?, standard?, authoringTool?, stats?:{slides,scenes,audioSeconds,conceptsTotal,conceptsFreeStanding,prereqEdges}, concepts?:[{id,label,confidence,tier}], audience_tags?:[…] }. Only courseId is strictly required; other fields default. The zip→Python-parser path (args.zip_base64) is not wired in this deployment.',
       };
     }
-    return ingestContentPackage({
-      parsed: args.parsed as ParsedFoxxiPackage,
-      config,
-    });
+    const source = sourceForPod(pod);
+    const result = await ingestContentPackage({ parsed: args.parsed as ParsedFoxxiPackage, config: { tenantPodUrl: pod, authoritativeSource: source } });
+    // Compose: upsert the CourseCatalog row (public section) so
+    // discover_assigned_courses can join it. No hardcoded path — publishCourseCatalog
+    // writes a substrate descriptor discovered by conformsTo.
+    await upsertCatalogEntry(pod, source, result.catalogEntry as unknown as Record<string, unknown>);
+    return { ...result, catalogUpserted: true };
   },
 
   'foxxi.publish_authoring_policy': async (args) => {
@@ -991,19 +1044,42 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // default (acme) pod. With the envelope merged, configOrThrow also picks up
     // the signed tenant_pod_url → the policy lands on the CALLER's own pod.
     try { mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
-    const config = configOrThrow(args);
+    const pod = (args.tenant_pod_url as string) || tenantPodUrl;
+    if (!pod) return { error: 'tenant_pod_url required (or set FOXXI_TENANT_POD_URL)' };
     const courseIri = typeof args.course_iri === 'string' ? args.course_iri.trim() : '';
     const audienceTag = typeof args.audience_tag === 'string' ? args.audience_tag.trim() : '';
     if (!courseIri) return { error: 'course_iri required — the ingested course IRI (e.g. <pod>/courses/<course_id>#package). Sign it inside _signed_payload.' };
     if (!audienceTag) return { error: 'audience_tag required — the audience to assign (e.g. "engineering").' };
+    const requirementType = (args.requirement_type as 'required' | 'recommended') ?? 'recommended';
+    const dueRelativeDays = Number.isFinite(Number(args.due_relative_days)) ? Number(args.due_relative_days) : 30;
+    const source = sourceForPod(pod);
     const assignment: AudienceAssignment = {
       courseIri: courseIri as IRI,
       audienceTag,
-      requirementType: (args.requirement_type as 'required' | 'recommended') ?? 'recommended',
+      requirementType,
       trigger: (args.trigger as 'on-hire' | 'on-role-change' | 'on-cycle' | 'manual') ?? 'manual',
-      dueRelativeDays: Number.isFinite(Number(args.due_relative_days)) ? Number(args.due_relative_days) : 30,
+      dueRelativeDays,
     };
-    return assignAudience({ assignment, config });
+    const published = await assignAudience({ assignment, config: { tenantPodUrl: pod, authoritativeSource: source } });
+    // Compose: upsert a policy ROW into the pod's PUBLIC TenantAssignments section
+    // — the shape discover_assigned_courses actually joins. course_id is derived
+    // from the course IRI (…/courses/<course_id>#package); audience is keyed by the
+    // "tag-<audience>" convention discover matches; course_title looked up from the
+    // catalog we already ingested. No hardcoded paths — a substrate descriptor.
+    const courseId = decodeURIComponent(courseIri.match(/\/courses\/([^#?/]+)/)?.[1] ?? courseIri.split(/[#/]/).filter(Boolean).pop() ?? '');
+    const catalog = await readSectionArray(pod, TENANT_TYPES.CourseCatalog);
+    const courseTitle = String(catalog.find(c => c.course_id === courseId)?.title ?? courseId);
+    const audienceGroupId = `tag-${audienceTag}`;
+    await upsertAssignmentPolicy(pod, source, {
+      enabled: true,
+      audience_group_id: audienceGroupId,
+      course_id: courseId,
+      course_title: courseTitle,
+      requirement_type: requirementType,
+      due_relative_days: dueRelativeDays,
+      created_at: new Date().toISOString(),
+    });
+    return { ...published, policyUpserted: true, course_id: courseId, audience_group_id: audienceGroupId };
   },
 
   'foxxi.coverage_query': async (args) => {
@@ -1973,15 +2049,23 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       // Only a genuine "no directory descriptor" → self-sovereign pod → proceed.
     }
     // Read the current PUBLIC membership, append the signer idempotently (invariant 1).
-    let members: Array<{ user_id: string; web_id: string; wallet_address: string }> = [];
+    let members: Array<{ user_id: string; web_id: string; wallet_address: string; audience_tags?: string[] }> = [];
     try {
       const mem = await fetchSection(TENANT_TYPES.TenantMembership, { ...fetcherConfig(), podUrl }) as { users?: typeof members };
       if (Array.isArray(mem?.users)) members = mem.users.filter(Boolean);
     } catch { /* none published yet */ }
     const learnerId = (p.learner_id as string) || (args.learner_id as string) || `u-eth-${signer.slice(2, 14).toLowerCase()}`;
     const webId = (p.learner_pod_url as string) || (args.learner_pod_url as string) || `${podUrl.replace(/\/+$/, '')}/profile/card#me`;
+    // A self-sovereign learner declares their OWN audience (their pod = their
+    // tenant); this is what lets discover match a tag-keyed assignment policy.
+    const audienceTags = Array.isArray(p.audience_tags) ? (p.audience_tags as unknown[]).map(String)
+      : Array.isArray(args.audience_tags) ? (args.audience_tags as unknown[]).map(String) : [];
     const existing = members.find(m => (m.wallet_address ?? '').toLowerCase() === signer.toLowerCase());
-    if (!existing) members.push({ user_id: learnerId, web_id: webId, wallet_address: signer });
+    if (!existing) {
+      members.push({ user_id: learnerId, web_id: webId, wallet_address: signer, audience_tags: audienceTags });
+    } else if (audienceTags.length > 0) {
+      existing.audience_tags = audienceTags; // re-enroll may update audience
+    }
     const publishConfig = {
       podUrl,
       // File the membership under the SELF-SOVEREIGN tenant's own URN (derived
@@ -4233,10 +4317,13 @@ app.post('/agent/ingest-course', async (req, res) => {
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:iep:action:foxxi:ingest-course-signed.' }); return; }
     const callerDid = auth.callerDid; const p = auth.payload;
     const parsed = p.parsed;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { res.status(400).json({ error: 'parsed (ParsedFoxxiPackage: { courseId, title, modules }) required' }); return; }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { res.status(400).json({ error: 'parsed required — a ParsedFoxxiPackage: { courseId (required), title?, standard?, authoringTool?, stats?, concepts?, audience_tags? }. Only courseId is strictly required; other fields default.' }); return; }
     const authorPod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
-    const result = await ingestContentPackage({ parsed: parsed as ParsedFoxxiPackage, config: { tenantPodUrl: authorPod, authoritativeSource } });
-    res.json({ ok: true, authoredBy: callerDid, authorPod, ...result });
+    const source = sourceForPod(authorPod);
+    const result = await ingestContentPackage({ parsed: parsed as ParsedFoxxiPackage, config: { tenantPodUrl: authorPod, authoritativeSource: source } });
+    // Compose: upsert the CourseCatalog row so the author's own discover joins it.
+    await upsertCatalogEntry(authorPod, source, result.catalogEntry as unknown as Record<string, unknown>);
+    res.json({ ok: true, authoredBy: callerDid, authorPod, catalogUpserted: true, ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
   }

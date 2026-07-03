@@ -58,6 +58,17 @@ export const TENANT_TYPES = {
    */
   TenantMembership: `${FXS}TenantMembership` as IRI,
   AssignmentPolicySet: `${FXS}AssignmentPolicySet` as IRI,
+  /**
+   * PUBLIC audience→course assignment policies — the self-sovereign counterpart
+   * to the admin-encrypted AssignmentPolicySet (same rationale as
+   * TenantMembership). A self-sovereign tenant publishes its assignments in the
+   * clear so ANY bridge reads them via the substrate with no admin key; a closed
+   * tenant keeps its encrypted AssignmentPolicySet and its public overlay (if
+   * any) is ignored by the closed-tenant guard. NOTE: CourseCatalog is ALREADY
+   * public (not in ADMIN_ONLY_TYPES), so the catalog needs no public twin —
+   * ingest upserts the existing CourseCatalog section directly.
+   */
+  TenantAssignments: `${FXS}TenantAssignments` as IRI,
   ConnectorRegistry: `${FXS}ConnectorRegistry` as IRI,
   EnrollmentEventStream: `${FXA}EnrollmentEventStream` as IRI,
   AuditLogStream: `${FXA}AuditLogStream` as IRI,
@@ -246,6 +257,24 @@ export async function publishTenantMembership(users: unknown, config: TenantPubl
     graphIri: `urn:foxxi:tenant:${slugSourceDid(config.authoritativeSource)}:membership` as IRI,
     typeIri: TENANT_TYPES.TenantMembership,
     payload: { users: members },
+  });
+}
+
+/**
+ * Publish a PUBLIC audience→course assignment policy set (see
+ * TENANT_TYPES.TenantAssignments). Unencrypted, so a self-sovereign tenant's
+ * assignments are readable by any bridge via the substrate. The payload is the
+ * array of policy rows discover joins against (audience_group_id, course_id,
+ * requirement_type, due_relative_days, …).
+ */
+export async function publishTenantAssignments(policies: unknown, config: TenantPublishConfig): Promise<PublishResult> {
+  const list = Array.isArray(policies) ? policies : [];
+  return publishSection({
+    config,
+    slug: 'tenant-assignments',
+    graphIri: `urn:foxxi:tenant:${slugSourceDid(config.authoritativeSource)}:assignments` as IRI,
+    typeIri: TENANT_TYPES.TenantAssignments,
+    payload: list,
   });
 }
 
