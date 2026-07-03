@@ -500,6 +500,36 @@ async function upsertCatalogEntry(podUrl: string, source: IRI, entry: Record<str
   invalidateTenantCache(podUrl);
 }
 
+/** For a SELF-SOVEREIGN pod (not the bridge's configured tenant), assert the PoP
+ *  signer is the tenant OWNER — the sole member of its public membership. This
+ *  stops a third party from writing (enroll-others / ingest / assign) into someone
+ *  else's self-sovereign tenant via the bridge's cross-pod write key. The
+ *  configured tenant keeps its own (admin/session) gate and is exempt here.
+ *  Returns an error string, or null when authorized. */
+async function assertSelfSovereignOwner(podUrl: string, identity: string | null): Promise<string | null> {
+  if (samePod(podUrl, tenantPodUrl)) return null; // configured (closed) tenant: existing gate applies
+  if (!identity) return 'auth: proof-of-possession (or delegation) required — the bridge must verify you own this self-sovereign tenant.';
+  const id = identity.toLowerCase();
+  const ethAddr = /^did:ethr:(0x[0-9a-f]{40})/.exec(id)?.[1]; // a wallet DID → its address
+  let members: Array<{ wallet_address?: string; web_id?: string; user_id?: string }> = [];
+  try {
+    const mem = await fetchSection(TENANT_TYPES.TenantMembership, { ...fetcherConfig(), podUrl }) as { users?: typeof members };
+    if (Array.isArray(mem?.users)) members = mem.users;
+  } catch { /* no membership yet */ }
+  if (members.length === 0) {
+    return `this self-sovereign tenant has no owner yet — self-enroll first (register_self_sovereign_learner) to establish ownership of ${podUrl}.`;
+  }
+  // The identity may be a wallet address (PoP signer), a wallet DID, a WebID, or
+  // a user_id — match any, so both the PoP and delegated routes verify ownership.
+  const isOwner = members.some(m => {
+    const w = (m.wallet_address ?? '').toLowerCase();
+    return w === id || (Boolean(ethAddr) && w === ethAddr)
+      || (m.web_id ?? '').toLowerCase() === id || (m.user_id ?? '').toLowerCase() === id;
+  });
+  if (!isOwner) return `auth: ${identity} is not the owner of the self-sovereign tenant at ${podUrl} — only its owner may ingest / assign / enroll here.`;
+  return null;
+}
+
 /** Upsert an assignment policy (keyed by course_id + audience_group_id) into a
  *  pod's PUBLIC TenantAssignments section. Composes fetchSection + publishTenantAssignments. */
 async function upsertAssignmentPolicy(podUrl: string, source: IRI, policy: Record<string, unknown>): Promise<void> {
@@ -1004,9 +1034,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   'foxxi.ingest_content_package': async (args) => {
     // Accept a PoP envelope (so a self-sovereign caller's tenant_pod_url is read
     // from the signed payload) and ingest an already-parsed package.
-    try { mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
+    let signer: string | null = null;
+    try { signer = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
     const pod = (args.tenant_pod_url as string) || tenantPodUrl;
     if (!pod) return { error: 'tenant_pod_url required (or set FOXXI_TENANT_POD_URL)' };
+    // Only the self-sovereign tenant's OWNER may write to its catalog.
+    const ownerErr = await assertSelfSovereignOwner(pod, signer);
+    if (ownerErr) return { error: ownerErr };
     if (!args.parsed) {
       return {
         error: 'supply args.parsed — a ParsedFoxxiPackage: { courseId (required), title?, standard?, authoringTool?, stats?:{slides,scenes,audioSeconds,conceptsTotal,conceptsFreeStanding,prereqEdges}, concepts?:[{id,label,confidence,tier}], audience_tags?:[…] }. Only courseId is strictly required; other fields default. The zip→Python-parser path (args.zip_base64) is not wired in this deployment.',
@@ -1043,9 +1077,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // caller's values were all undefined → a "<undefined>" policy written to the
     // default (acme) pod. With the envelope merged, configOrThrow also picks up
     // the signed tenant_pod_url → the policy lands on the CALLER's own pod.
-    try { mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
+    let signer: string | null = null;
+    try { signer = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
     const pod = (args.tenant_pod_url as string) || tenantPodUrl;
     if (!pod) return { error: 'tenant_pod_url required (or set FOXXI_TENANT_POD_URL)' };
+    // Only the self-sovereign tenant's OWNER may publish assignment policies.
+    const assignOwnerErr = await assertSelfSovereignOwner(pod, signer);
+    if (assignOwnerErr) return { error: assignOwnerErr };
     const courseIri = typeof args.course_iri === 'string' ? args.course_iri.trim() : '';
     const audienceTag = typeof args.audience_tag === 'string' ? args.audience_tag.trim() : '';
     if (!courseIri) return { error: 'course_iri required — the ingested course IRI (e.g. <pod>/courses/<course_id>#package). Sign it inside _signed_payload.' };
@@ -2061,6 +2099,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const audienceTags = Array.isArray(p.audience_tags) ? (p.audience_tags as unknown[]).map(String)
       : Array.isArray(args.audience_tags) ? (args.audience_tags as unknown[]).map(String) : [];
     const existing = members.find(m => (m.wallet_address ?? '').toLowerCase() === signer.toLowerCase());
+    // Single-owner self-sovereign tenant: the first PoP enroller owns the pod;
+    // a DIFFERENT signer cannot join it (enroll on your OWN pod instead). Closes
+    // the open-join hole — nobody can inject themselves into someone else's
+    // self-sovereign tenant via the bridge's cross-pod write key.
+    if (members.length > 0 && !existing) {
+      return { error: `this self-sovereign tenant already has an owner — enroll on your OWN pod (tenant_pod_url = your pod), not ${podUrl}.` };
+    }
     if (!existing) {
       members.push({ user_id: learnerId, web_id: webId, wallet_address: signer, audience_tags: audienceTags });
     } else if (audienceTags.length > 0) {
@@ -3362,13 +3407,14 @@ app.post('/agent/verify-presentation', async (req, res) => {
 // agent's on-pod delegation must be CryptographicallyVerified AND the request signer
 // must be its anchor key.
 async function verifyDelegatedCaller(body: unknown):
-  Promise<{ ok: true; callerDid: string; payload: Record<string, unknown> } | { ok: false; status: number; error: string }> {
+  Promise<{ ok: true; callerDid: string; signer: string; payload: Record<string, unknown> } | { ok: false; status: number; error: string }> {
   const rec = recoverSignedRequest(body);
   if (!rec.ok) return { ok: false, status: 401, error: `agent signature required: ${rec.reason}` };
   const p = rec.payload;
   const claimedAddr = rec.agentId.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
   if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
-    return { ok: true, callerDid: `did:ethr:${rec.signer}`, payload: p };
+    // DIRECT mode: the signer IS the actor.
+    return { ok: true, callerDid: `did:ethr:${rec.signer}`, signer: rec.signer, payload: p };
   }
   const delegationPod = resolveSubjectPodUrl(rec.agentId, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
   let del;
@@ -3385,7 +3431,9 @@ async function verifyDelegatedCaller(body: unknown):
   if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
     return { ok: false, status: 401, error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''}` };
   }
-  return { ok: true, callerDid: rec.agentId, payload: p };
+  // DELEGATED mode: the signer is the delegation ANCHOR — the delegator's key
+  // (the pod owner), which is exactly what the ownership guard should check.
+  return { ok: true, callerDid: rec.agentId, signer: rec.signer, payload: p };
 }
 
 // ── Agent-driven performance tracing (delegated auth) ──────────────────────
@@ -4319,6 +4367,12 @@ app.post('/agent/ingest-course', async (req, res) => {
     const parsed = p.parsed;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { res.status(400).json({ error: 'parsed required — a ParsedFoxxiPackage: { courseId (required), title?, standard?, authoringTool?, stats?, concepts?, audience_tags? }. Only courseId is strictly required; other fields default.' }); return; }
     const authorPod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // Ownership guard on the SIGNER (direct mode → the actor; delegated mode → the
+    // delegation anchor = the pod owner's key). Stops a self-signed caller from
+    // targeting someone else's self-sovereign pod via subject_pod_url. The
+    // configured tenant is exempt (assertSelfSovereignOwner returns null for it).
+    const ownerErr = await assertSelfSovereignOwner(authorPod, auth.signer);
+    if (ownerErr) { res.status(403).json({ ok: false, error: ownerErr }); return; }
     const source = sourceForPod(authorPod);
     const result = await ingestContentPackage({ parsed: parsed as ParsedFoxxiPackage, config: { tenantPodUrl: authorPod, authoritativeSource: source } });
     // Compose: upsert the CourseCatalog row so the author's own discover joins it.
