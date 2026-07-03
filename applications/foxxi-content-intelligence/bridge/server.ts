@@ -563,6 +563,14 @@ async function refreshDirectoryCache(): Promise<void> {
   } catch { /* keep last good snapshot */ }
 }
 
+/** Resolve a course_id from args.course_id OR a course_iri (…/courses/<id>#package). */
+function courseIdFrom(args: Record<string, unknown>): string {
+  const cid = typeof args.course_id === 'string' ? args.course_id.trim() : '';
+  if (cid) return cid;
+  const iri = typeof args.course_iri === 'string' ? args.course_iri : '';
+  return decodeURIComponent(iri.match(/\/courses\/([^#?/]+)/)?.[1] ?? '');
+}
+
 async function autoFetchCourse(args: Record<string, unknown>, courseId: string): Promise<FoxxiAgenticPayload | null> {
   const podUrl = (args.tenant_pod_url as string) || tenantPodUrl;
   if (!podUrl) return null;
@@ -956,9 +964,14 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       }
     }
 
-    let primaryPayload = args.primary as FoxxiAgenticPayload | undefined;
-    if (!primaryPayload && !args.course_content && args.course_id) {
-      primaryPayload = await autoFetchCourse(args, args.course_id as string) ?? undefined;
+    // Pod-authoritative: when a course is NAMED (course_id / course_iri), hydrate the
+    // FULL content from the on-pod CoursePackageBundle and PREFER it over any
+    // client-supplied `primary` (which is only a fallback for ad-hoc, unpublished
+    // content). This lets the app drop client content and read pod-native.
+    const askCourseId = courseIdFrom(args);
+    let primaryPayload: FoxxiAgenticPayload | undefined = askCourseId ? (await autoFetchCourse(args, askCourseId) ?? undefined) : undefined;
+    if (!primaryPayload && !args.course_content) {
+      primaryPayload = args.primary as FoxxiAgenticPayload | undefined;
     }
     if (!primaryPayload && !args.course_content) {
       return {
@@ -1006,15 +1019,19 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx } = resolved;
     args.learner_did = ctx.webId; // bind to authenticated identity
 
-    let primaryPayload = args.primary as FoxxiAgenticPayload | undefined;
-    if (!primaryPayload && args.course_id) {
-      primaryPayload = await autoFetchCourse(args, args.course_id as string) ?? undefined;
-    }
+    // Pod-authoritative: when a course is NAMED (course_id / course_iri), hydrate the
+    // FULL content from the on-pod CoursePackageBundle and PREFER it over any client
+    // `primary` (which is only a fallback for ad-hoc/unpublished content). This is
+    // what makes the retrieval genuinely pod-native — a stale/bogus client transcript
+    // no longer wins over what's actually on the pod.
+    const rcCourseId = courseIdFrom(args);
+    let primaryPayload: FoxxiAgenticPayload | undefined = rcCourseId ? (await autoFetchCourse(args, rcCourseId) ?? undefined) : undefined;
+    if (!primaryPayload) primaryPayload = args.primary as FoxxiAgenticPayload | undefined;
     if (!primaryPayload) {
-      return { note: 'No course payload available. Supply args.primary or args.course_id (with pod seeded).' };
+      return { note: 'No course payload available. Supply args.course_id / course_iri (pod-native, preferred) or args.primary (ad-hoc content).' };
     }
     const primary = payloadToAgenticCourse(primaryPayload, (args.authoritative_source as IRI) ?? authoritativeSource);
-    const federation = (args.federation as FoxxiAgenticPayload[] | undefined ?? []).map(p =>
+    const federation = (Array.isArray(args.federation) ? args.federation as FoxxiAgenticPayload[] : []).map(p =>
       payloadToAgenticCourse(p, (args.authoritative_source as IRI) ?? authoritativeSource),
     );
     return retrieveCourseContext({
