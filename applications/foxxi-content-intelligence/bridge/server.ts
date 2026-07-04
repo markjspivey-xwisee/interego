@@ -106,6 +106,7 @@ import { exportClr } from '../src/clr.js';
 import { issueBbsCompletionCredential, deriveCompletionPresentation, verifyCompletionPresentation } from '../src/bbs-credentials.js';
 import {
   readDurableRecordedStatements,
+  persistRecordedStatement,
   mergeStatementsById,
   loadScormCourse,
   NON_PROJECTABLE_LOCALNAMES,
@@ -1350,10 +1351,24 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       ? args.activity_type.trim()
       : 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#ProductionTask';
     const statementId = storeStatementInternal(statement, lensTenantFor(perfLabel));
+    const withId = { ...statement, id: statementId };
+    // DURABLY persist to the performer's OWN pod as a foxxi:RecordedPerformance
+    // descriptor — the exact artifact assemble_learner_record's durable read path
+    // (readDurableRecordedStatements) looks for. Without this, the record lived
+    // ONLY in the in-memory lens/lattice, so a cold lens (bridge/replica restart, or
+    // a read in a later session) surfaced performanceCount:0 even though the write
+    // reported success. Awaited so `recorded:true` means it's actually on the pod.
+    let durablePersisted = false;
+    try {
+      await persistRecordedStatement({ podUrl: perfPod, agentDid: performerDid, statement: withId });
+      durablePersisted = true;
+    } catch (e) {
+      console.warn('[foxxi][record_performance] durable persist failed:', (e as Error).message);
+    }
     void composeIntoSharedLattice({
       podUrl: perfPod, agentDid: performerDid, label: perfLabel,
       terms: [performerDid, PERFORMED_VERB, perfActivityType, taskId],
-      content: { ...statement, id: statementId }, contentType: 'xapi:Statement',
+      content: withId, contentType: 'xapi:Statement',
       ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
       projections: ['rdf', 'vc', 'activity'],
     }).catch(e => console.warn('[foxxi][record_performance] lattice compose failed:', (e as Error).message));
@@ -1367,6 +1382,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       actorKind,
       lensTenant: lensTenantFor(perfLabel),
       durable: perfPod,
+      durablePersisted,
       success: args.success as boolean,
     };
   },
@@ -4365,6 +4381,14 @@ app.post('/agent/record-performance', async (req, res) => {
           .map(x => x.trim())
           .map(x => /^https?:\/\//.test(x) ? x : resolveSubjectPodUrl(x))
       : [];
+    // DURABLY persist as a foxxi:RecordedPerformance descriptor (the artifact
+    // assemble_learner_record's durable read reads), so a cold in-memory lens no
+    // longer surfaces zeros. Same fix as the MCP foxxi.record_performance path.
+    try {
+      await persistRecordedStatement({ podUrl: subjectPod, agentDid: callerDid, statement: { ...statement, id: statementId }, ...(recipientPods.length ? { recipientPods } : {}) });
+    } catch (e) {
+      console.warn('[foxxi][agent-record-performance] durable persist failed:', (e as Error).message);
+    }
     // Forward to the performer's OWN downstream targets (no-op if they set none).
     forwardToTargets(lensTenantFor(label), { ...statement, id: statementId })
       .catch(e => console.warn('[foxxi-forward][record-performance]', (e as Error).message));
