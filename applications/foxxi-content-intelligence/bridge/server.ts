@@ -1287,7 +1287,26 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       statements: learnerStatements,
     });
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.assemble_learner_record', decision: 'allow', appliedPolicies: [subjectKind === 'agent' ? 'agent-capability-public' : ctx.role === 'admin' ? 'admin-full-access' : 'learner-self'] });
-    return { ...elr, accessDecision: trace };
+    // Read diagnostics — expose EXACTLY what the assemble read saw, so a
+    // write→read linkage gap is debuggable from the response instead of a black
+    // box: which pod was read, and how many statements came from each source.
+    // durableCount is the pod's system-of-record (foxxi:RecordedPerformance) count;
+    // if it's >0 but summary.performanceCount is 0, the ELR projector dropped them;
+    // if it's 0, the read targeted the wrong pod (check _readDiag.subjectPodUrl) or
+    // the pod discover failed.
+    return {
+      ...elr,
+      accessDecision: trace,
+      _readDiag: {
+        subjectPodUrl,
+        subjectLabel,
+        lensTenant: lensTenantFor(subjectLabel),
+        latticeCount: latticeStmts.length,
+        lensCount: lensStatements.length,
+        durableCount: durableStatements.length,
+        mergedCount: learnerStatements.length,
+      },
+    };
   },
 
   'foxxi.record_performance': async (args) => {
