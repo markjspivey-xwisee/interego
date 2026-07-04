@@ -241,22 +241,21 @@ const GATE_OWN_ORIGIN = normalizeOrigin(PUBLIC_BASE_URL)
 
 export function corsHeadersFor(originHeader) {
   const norm = normalizeOrigin(originHeader);
-  // Origin: null (sandboxed iframes / file://) is NEVER allowed even if
-  // someone foolishly adds 'null' to the env allowlist — that combination
-  // is the classic credentialed cross-origin attack vector.
   const allowed = Boolean(originHeader)
     && originHeader !== 'null'
     && norm
     && CORS_ALLOWLIST.has(norm);
   return {
-    // Allowlisted origin → echo it. Any other REAL (non-null) browser origin →
-    // ACAO * so self-sovereign browser apps can read published (public /
-    // content-addressed) pod graphs directly. SAFE because this gate never sets
-    // Access-Control-Allow-Credentials (no cookies), and private pod content is
-    // E2EE — a wildcard grants no ambient authority and reveals no plaintext.
-    // `Origin: null` (sandboxed iframe / file://) stays blocked (served the
-    // gate's own FQDN, which won't match) — the classic credentialed vector.
-    'Access-Control-Allow-Origin': allowed ? norm : (originHeader && originHeader !== 'null' ? '*' : GATE_OWN_ORIGIN),
+    // Allowlisted origin → echo it. EVERYTHING else → ACAO * so any browser app
+    // can read published (public / content-addressed) pod graphs directly —
+    // INCLUDING `Origin: null` (sandboxed-iframe previews / file://), which is
+    // exactly how Claude/Anthropic-style app previews present. This is SAFE
+    // because the gate sets NO Access-Control-Allow-Credentials (no cookies), so
+    // there is no ambient authority to steal — the "credentialed null-origin
+    // attack" this used to guard against requires Allow-Credentials, which we
+    // never send — and private pod content is E2EE (a wildcard reveals only
+    // ciphertext). `*` is accepted by null-origin no-credential requests too.
+    'Access-Control-Allow-Origin': allowed ? norm : '*',
     'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE',
     'Access-Control-Allow-Headers': 'Accept, Content-Type, Authorization',
     'Vary': 'Origin',
