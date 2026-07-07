@@ -3026,10 +3026,20 @@ const app = createVerticalBridge({
     // A hash IRI dereferences to the whole document; each term is also
     // its own resource at /ns/foxxi/term/<name> with HATEOAS _links.
     // Content-negotiated: JSON-LD by default, Turtle on Accept.
+    // Foundation-first: foxxi: (its OWN vocab, historically a hardcoded TS array)
+    // is composed into the PGSL lattice on boot (below) so its term IRIs become
+    // content-addressed atoms and the vocab is a lossless holon; /ns/foxxi then
+    // serves the read-back projection FROM that holon (byte-identical fallback to
+    // the in-code render until composed) — the same holon-projection serving the
+    // spec vocabs (xapi/scorm/cmi5) already use.
+    let foxxiVocabHolon: { label: string; holonUri: string } | null = null;
     a.get('/ns/foxxi', (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
+      const projected = foxxiVocabHolon
+        ? (readArtifact(foxxiVocabHolon.label, foxxiVocabHolon.holonUri)?.content as { turtle?: string } | undefined)?.turtle
+        : undefined;
       if ((req.headers.accept ?? '').includes('text/turtle')) {
-        res.type('text/turtle').send(renderVocabTurtle());
+        res.type('text/turtle').send(projected ?? renderVocabTurtle());
       } else {
         res.type('application/ld+json').send(JSON.stringify(renderVocabJsonLd(), null, 2));
       }
@@ -3146,6 +3156,18 @@ const app = createVerticalBridge({
       void Promise.allSettled(Object.values(COMPLIANCE_MODELS).map(m => composeComplianceOntology(m, { podUrl: tenantPodUrl, agentDid: tenantProfileDid })))
         .then(rs => { let n = 0; for (const r of rs) if (r.status === 'fulfilled' && r.value?.holonUri) { specHolons.set(r.value.module, { label: r.value.label, holonUri: r.value.holonUri }); n++; } console.log(`[foxxi-bridge][compliance-ontology] composed ${n}/${rs.length} compliance ontologies into the lattice`); })
         .catch(e => console.warn('[foxxi-bridge][compliance-ontology] compose skipped:', (e as Error).message));
+      // Foundation-first for foxxi: itself — compose its own vocab into the PGSL
+      // lattice (term IRIs → content-addressed atoms; the vocab a lossless holon) so
+      // /ns/foxxi serves the holon projection instead of the hardcoded array. The
+      // read-back is byte-identical to renderVocabTurtle(), so serving is unchanged.
+      void (async () => {
+        try {
+          const turtle = renderVocabTurtle();
+          const terms = parseTrig(turtle).subjects.map(s => (typeof s.subject === 'string' ? String(s.subject) : '')).filter(Boolean);
+          const sl = await composeIntoSharedLattice({ podUrl: tenantPodUrl, agentDid: tenantProfileDid, label: 'ns-foxxi', terms, content: { turtle }, contentType: 'spec:Ontology', projections: ['rdf'] });
+          if (sl?.holonUri) { foxxiVocabHolon = { label: 'ns-foxxi', holonUri: sl.holonUri }; console.log('[foxxi-bridge][foxxi-vocab] composed foxxi: into the lattice; /ns/foxxi now serves the holon projection'); }
+        } catch (e) { console.warn('[foxxi-bridge][foxxi-vocab] compose skipped:', (e as Error).message); }
+      })();
     }
 
     // LRS-admin dashboard endpoints — gated by admin or learning-engineer
