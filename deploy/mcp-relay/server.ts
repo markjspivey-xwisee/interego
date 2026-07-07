@@ -5525,6 +5525,8 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   pgsl_to_turtle: { description: 'Serialize the PGSL lattice as RDF Turtle', handler: handlePgslToTurtle },
   // Generic affordance follower (Path A — reach any vertical without per-vertical bridge)
   invoke_affordance: { description: 'Invoke a vertical affordance by descriptor URL + iep:action IRI', handler: handleInvokeAffordance },
+  // Linked-data dereference for MCP-only clients (the tool-equivalent of GET <relay>/ns/<owner>/<slug>)
+  resolve_linked_data: { description: 'Resolve a published /ns ontology/graph as content-negotiated linked data (Turtle/JSON-LD) — for MCP-only clients that cannot GET the URL directly', handler: handleResolveLinkedData },
 };
 
 // ── Tier-4: dynamic relay-tool registry over ac:AgentTool ────
@@ -6438,6 +6440,20 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: GET_DESCRIPTOR_OUTPUT,
     annotations: { title: 'Fetch descriptor + payload', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: 'resolve_linked_data',
+    description: 'Dereference a published Interego linked-data graph/ontology served at a relay /ns IRI — the MCP-tool equivalent of GET <relay>/ns/<owner>/<slug> for clients that cannot fetch a URL over raw HTTP. Pass the full IRI (e.g. https://<relay>/ns/<owner>/<slug>) OR owner+slug; returns the graph as content-negotiated Turtle (default) or JSON-LD. GENERIC: works for any published PUBLIC graph — an ontology (its #fragment terms like hmd:approve resolve within the returned document), a knowledge graph, or a SHACL shape. Read-only. Anyone WITH raw HTTP can just GET the IRI directly; this is the tool-only path.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        iri: { type: 'string', description: 'Full linked-data IRI to resolve, e.g. https://interego-relay.../ns/<owner>/<slug>. Alternatively pass owner + slug.' },
+        owner: { type: 'string', description: 'Owner userId slug (the pod that published it), e.g. u-pk-436c2247c0e0. Use with slug if you do not have the full IRI.' },
+        slug: { type: 'string', description: 'Ontology/graph slug, e.g. hmd.' },
+        format: { type: 'string', enum: ['turtle', 'jsonld'], description: 'Serialization to return (default: turtle).' },
+      },
+    },
+    annotations: { title: 'Resolve linked data (ontology/graph)', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'get_pod_status',
@@ -9262,52 +9278,82 @@ function nsToOwnerPodInternal(u: string, owner: string): string | null {
   } catch { return null; }
 }
 
-app.options('/ns/:owner/:slug', (_req, res) => { res.status(204).end(); });
-app.get('/ns/:owner/:slug', async (req, res) => {
-  const owner = String(req.params['owner'] ?? '');
-  const slug = String(req.params['slug'] ?? '');
+/** Shared /ns resolver core — used by BOTH the public GET route and the
+ *  resolve_linked_data MCP tool. Discovers the current non-superseded published
+ *  graph at <RELAY_NS_ROOT>/<owner>/<slug>, follows the descriptor (SSRF-safe:
+ *  every fetch URL reduced to the FIXED internal CSS host + the owner's own pod
+ *  path), and returns the clean projected Turtle. Generic — NO conformsTo filter,
+ *  serves any published PUBLIC graph. */
+async function resolveNsGraph(owner: string, slug: string): Promise<
+  | { ok: true; turtle: string; ontologyIri: string; isOntology: boolean; descriptorUrl: string }
+  | { ok: false; status: number; error: string; ontologyIri: string }> {
   const graphIri = `${RELAY_NS_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}`;
   const podUrl = `${CSS_URL}${encodeURIComponent(owner)}/`;
   try {
     const entries = await discover(podUrl, { graphIri }, { fetch: solidFetch });
-    // GENERIC: any published graph at this IRI dereferences — NO conformsTo filter.
     const superseded = new Set(entries.flatMap(e => (e.supersedes ?? []) as string[]));
     const head = entries.find(e => !superseded.has(e.descriptorUrl)) ?? entries[0];
-    if (!head) { res.status(404).type('text/plain').send(`No published graph at ${graphIri} on ${owner}'s pod.`); return; }
-    // SSRF-safe: reduce every descriptor-supplied URL (manifest descriptorUrl,
-    // Distribution accessURL) to the FIXED internal CSS host + the owner's own
-    // pod path before fetching. A malicious/misconfigured descriptor whose
-    // accessURL points at IMDS / .internal / another host can therefore never
-    // turn this public resolver into an SSRF proxy — the fetch host is never
-    // attacker-controlled, and the path is constrained to /<owner>/. We rewrite
-    // the fetch TARGET, never the served bytes (signatures still verify).
+    if (!head) return { ok: false, status: 404, error: `No published graph at ${graphIri} on ${owner}'s pod.`, ontologyIri: graphIri };
     const descUrlSafe = nsToOwnerPodInternal(head.descriptorUrl, owner);
     let dist: ReturnType<typeof parseDistributionFromDescriptorTurtle> = null;
     if (descUrlSafe) {
       const descResp = await solidFetch(descUrlSafe, { headers: { Accept: 'text/turtle' } });
-      const descTurtle = descResp.ok ? await descResp.text() : '';
-      dist = parseDistributionFromDescriptorTurtle(descTurtle);
+      dist = parseDistributionFromDescriptorTurtle(descResp.ok ? await descResp.text() : '');
     }
-    if (dist?.encrypted) { res.status(409).type('text/plain').send(`Graph ${graphIri} is a non-public (encrypted) projection; only public RDF projections dereference here.`); return; }
+    if (dist?.encrypted) return { ok: false, status: 409, error: `Graph ${graphIri} is a non-public (encrypted) projection; only public RDF projections dereference here.`, ontologyIri: graphIri };
     const graphUrl = (dist?.accessURL ? nsToOwnerPodInternal(dist.accessURL, owner) : null)
       ?? `${podUrl}ontologies/${encodeURIComponent(slug)}-graph.trig`;
     const fetched = await fetchGraphContent(graphUrl, { fetch: solidFetch });
     const trig = fetched.content ?? '';
-    if (!trig || (fetched.encrypted && !fetched.content)) { res.status(409).type('text/plain').send(`Graph ${graphIri} has no public content.`); return; }
+    if (!trig || (fetched.encrypted && !fetched.content)) return { ok: false, status: 409, error: `Graph ${graphIri} has no public content.`, ontologyIri: graphIri };
     const turtle = nsExtractGraphTurtle(trig, graphIri) ?? trig;
     const isOntology = (head.conformsTo ?? []).some(c => c === NS_OWL_ONTOLOGY) || /\bowl:Ontology\b/.test(turtle);
-    const fmt = String(req.query['format'] ?? '').toLowerCase();
-    const acc = String(req.headers['accept'] ?? '');
-    if (fmt === 'jsonld' || (!fmt && acc.includes('application/ld+json'))) {
-      try { res.type('application/ld+json').send(JSON.stringify(nsTurtleToJsonLd(turtle), null, 2)); return; } catch { /* fall back to Turtle */ }
-    }
-    if (fmt === 'html' || (!fmt && acc.includes('text/html') && !acc.includes('text/turtle'))) {
-      res.type('text/html').send(nsHtml(graphIri, turtle, { owner, slug, descriptorUrl: head.descriptorUrl, isOntology })); return;
-    }
-    res.type('text/turtle').send(turtle);
+    return { ok: true, turtle, ontologyIri: graphIri, isOntology, descriptorUrl: head.descriptorUrl };
   } catch (err) {
-    res.status(502).type('text/plain').send(`Failed to dereference ${graphIri}: ${(err as Error).message}`);
+    return { ok: false, status: 502, error: `Failed to dereference ${graphIri}: ${(err as Error).message}`, ontologyIri: graphIri };
   }
+}
+
+/** MCP tool handler — resolve a published /ns graph/ontology as linked data for
+ *  MCP-only clients that cannot GET the URL over raw HTTP. Accepts the full
+ *  <relay>/ns/<owner>/<slug> IRI OR explicit owner+slug, + optional format
+ *  (turtle | jsonld). Read-only; wraps resolveNsGraph (the same core the public
+ *  GET route uses). */
+async function handleResolveLinkedData(args: ToolArgs): Promise<string> {
+  let owner = (args['owner'] as string | undefined)?.trim();
+  let slug = (args['slug'] as string | undefined)?.trim();
+  const iri = (args['iri'] as string | undefined)?.trim();
+  if ((!owner || !slug) && iri) {
+    const m = /\/ns\/([^/]+)\/([^/?#]+)/.exec(iri);
+    if (m) { owner = decodeURIComponent(m[1]!); slug = decodeURIComponent(m[2]!); }
+  }
+  if (!owner || !slug) return JSON.stringify({ error: 'Provide { iri: "<relay>/ns/<owner>/<slug>" } OR { owner, slug }.' });
+  const r = await resolveNsGraph(owner, slug);
+  if ('error' in r) return JSON.stringify({ iri: r.ontologyIri, error: r.error });
+  const format = String(args['format'] ?? 'turtle').toLowerCase();
+  if (format === 'jsonld') {
+    try { return JSON.stringify({ iri: r.ontologyIri, contentType: 'application/ld+json', isOntology: r.isOntology, content: nsTurtleToJsonLd(r.turtle) }); }
+    catch { /* fall through to turtle */ }
+  }
+  return JSON.stringify({ iri: r.ontologyIri, contentType: 'text/turtle', isOntology: r.isOntology, content: r.turtle });
+}
+
+app.options('/ns/:owner/:slug', (_req, res) => { res.status(204).end(); });
+app.get('/ns/:owner/:slug', async (req, res) => {
+  const owner = String(req.params['owner'] ?? '');
+  const slug = String(req.params['slug'] ?? '');
+  const r = await resolveNsGraph(owner, slug);
+  if ('error' in r) { res.status(r.status).type('text/plain').send(r.error); return; }
+  const { turtle, ontologyIri, isOntology, descriptorUrl } = r;
+  const fmt = String(req.query['format'] ?? '').toLowerCase();
+  const acc = String(req.headers['accept'] ?? '');
+  if (fmt === 'jsonld' || (!fmt && acc.includes('application/ld+json'))) {
+    try { res.type('application/ld+json').send(JSON.stringify(nsTurtleToJsonLd(turtle), null, 2)); return; } catch { /* fall back to Turtle */ }
+  }
+  if (fmt === 'html' || (!fmt && acc.includes('text/html') && !acc.includes('text/turtle'))) {
+    res.type('text/html').send(nsHtml(ontologyIri, turtle, { owner, slug, descriptorUrl, isOntology })); return;
+  }
+  res.type('text/turtle').send(turtle);
 });
 
 // ── /audit/* — compliance + lineage endpoints ──────────────
