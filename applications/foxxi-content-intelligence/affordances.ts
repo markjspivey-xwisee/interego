@@ -1589,6 +1589,26 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     ],
   },
 
+  {
+    action: 'urn:iep:action:foxxi:publish-ontology' as IRI,
+    toolName: 'foxxi.publish_ontology',
+    title: 'Publish + host an ontology on Interego (a vocabulary is just RDF)',
+    description: 'Host an OWL/SHACL ontology the substrate way — not a raw file PUT, and not a developer-baked route. Send a rev-196 proof-of-possession envelope + the ontology Turtle; the bridge composes the substrate publish() primitive to write a PUBLIC, signed ContextDescriptor + named graph (dct:conformsTo owl:Ontology) on your OWN self-sovereign pod, and serves it as dereferenceable linked data at its own resolvable IRI (content-negotiated Turtle / JSON-LD / HTML). #terms resolve within the document (hash namespace). This is a HIGHER-ORDER COMPOSITION over the substrate: the ontology dereferences at the Interego relay\'s generic /ns RDF-projection surface (an ontology is just a holon used as RDF — the same surface dereferences any published graph, and the system\'s own vocabs once migrated onto it), so the IRI anchors on the substrate, not this vertical. This affordance adds only the PoP-convenient publish path + Foxxi-tenancy owner-gate: you can only publish to a self-sovereign pod you own (self-enroll first via foxxi.register_self_sovereign_learner); the configured (closed) tenant and admin-managed pods are refused.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/publish_ontology',
+    annotations: { title: 'Publish an ontology', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signature', type: 'string', required: true, description: 'rev-196 signature over _signed_payload (EIP-191). Proof-of-possession — you can only publish to a pod you own.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON string carrying at least { agent_id, timestamp, owner_pod_url, slug, ontology_turtle }.' },
+      { name: 'owner_pod_url', type: 'string', required: true, description: 'Your self-sovereign pod (host + serve the ontology here). Sign it inside _signed_payload; sent in the clear it is advisory only.' },
+      { name: 'slug', type: 'string', required: true, description: 'Short name for the ontology (e.g. "hmd"); becomes part of its resolvable IRI <base>/ns/pod/<your-userId>/<slug>.' },
+      { name: 'ontology_turtle', type: 'string', required: true, description: 'The OWL/SHACL Turtle to publish. Bind your namespace prefix to a hash namespace under the returned ontologyIri so #terms resolve at the serving host.' },
+    ],
+    outputs: {
+      description: 'The published ontology object — { ontologyIri (where it dereferences), resolvesAt, descriptorUrl, graphUrl, conformsTo=owl:Ontology }, plus a note with the exact hash-namespace prefix to author against. Returns { error } when not PoP-signed or when the caller does not own the target pod.',
+    },
+  },
+
   // ─── Wave-of-13 extensions ──────────────────────────────────────────
 
   {

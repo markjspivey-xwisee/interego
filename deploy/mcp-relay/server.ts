@@ -123,6 +123,7 @@ import {
   mint as kernelMint,
   normalizePublishInputs,
   openEncryptedEnvelope,
+  parseTrig,
   pinToIpfs,
   promote as kernelPromote,
   removeAuthorizedAgent,
@@ -9158,6 +9159,155 @@ const SECURITY_TXT_BODY = buildSecurityTxtFromEnv(PUBLIC_BASE_URL || undefined);
 app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.send(SECURITY_TXT_BODY);
+});
+
+// ── /ns/:owner/:slug — the RDF-projection dereference surface ─────────────
+//
+// Base Interego is a SUPERSET of RDF: holons are payload-agnostic identities
+// that project to any representation. This route affords "what people expect
+// from RDF" WHERE a holon is used as RDF — a clean, stable IRI that HTTP-
+// dereferences to content-negotiated linked data (Turtle / JSON-LD / HTML),
+// with #fragment terms resolving in-document and rdfs:isDefinedBy / owl:imports
+// following-your-nose. It is GENERIC: it dereferences ANY published PUBLIC graph
+// at this IRI — an ontology, a knowledge graph, a SHACL shape, a course — with
+// NO ontology special-casing. Publishing is the ordinary core publish (the
+// holon's RDF projection, written to the author's own pod); this is only the
+// dereference half. Read-only, public (CORS * incl null via corsMiddleware's
+// /ns carve-out), no auth. Serves the signed projection bytes, never rewrites
+// them. Verticals (agentic memory, Foxxi, Weft) are polygranular CONSUMERS of
+// this surface — the same holon in many hyperedges.
+const RELAY_NS_ROOT = `${(PUBLIC_BASE_URL || 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/+$/, '')}/ns`;
+const NS_OWL_ONTOLOGY = 'http://www.w3.org/2002/07/owl#Ontology';
+
+/** Clean standalone Turtle from a stored `-graph.trig` (publish() wraps the
+ *  named graph as `<graphIri> { …indented… }` under hoisted prefixes). Pure
+ *  string transform so blank nodes / SHACL lists survive byte-for-byte. */
+function nsExtractGraphTurtle(trig: string, graphIri: string): string | null {
+  const open = trig.indexOf(`<${graphIri}> {`);
+  if (open < 0) return null;
+  const bodyStart = trig.indexOf('{', open) + 1;
+  const n = trig.length;
+  // Quote/comment-AWARE brace matcher: only count braces OUTSIDE Turtle string
+  // literals ("…"/'…'/"""…"""/'''…''') and # comments, so a lone/unbalanced `{`
+  // or `}` inside an rdfs:comment (arbitrary agent content) cannot desync the
+  // depth counter and truncate the served graph.
+  let depth = 1, i = bodyStart;
+  while (i < n && depth > 0) {
+    const c = trig[i];
+    if (c === '#') { while (i < n && trig[i] !== '\n') i++; continue; }
+    if (c === '"' || c === "'") {
+      const q = c; const triple = trig[i + 1] === q && trig[i + 2] === q;
+      i += triple ? 3 : 1;
+      while (i < n) {
+        if (trig[i] === '\\') { i += 2; continue; }
+        if (triple) { if (trig[i] === q && trig[i + 1] === q && trig[i + 2] === q) { i += 3; break; } i++; }
+        else { if (trig[i] === q) { i++; break; } if (trig[i] === '\n') { break; } i++; }
+      }
+      continue;
+    }
+    if (c === '{') depth++;
+    else if (c === '}') depth--;
+    i++;
+  }
+  const inner = trig.slice(bodyStart, i - 1);
+  const prefixLines = trig.split('\n').filter(l => /^\s*(@prefix|@base)\s/i.test(l));
+  const deindented = inner.split('\n').map(l => l.replace(/^ {4}/, '')).join('\n').trim();
+  return `${prefixLines.join('\n')}\n\n${deindented}\n`;
+}
+
+/** Flattened JSON-LD projection of the clean Turtle (best-effort; caller falls
+ *  back to Turtle if this throws). */
+function nsTurtleToJsonLd(turtle: string): Record<string, unknown> {
+  const doc = parseTrig(turtle);
+  const ctx: Record<string, string> = {};
+  for (const [p, iri] of doc.prefixes) ctx[p] = iri as string;
+  const graph = doc.subjects.map(s => {
+    const id = typeof s.subject === 'string' ? s.subject : `_:${s.subject.bnode}`;
+    const node: Record<string, unknown> = { '@id': id };
+    for (const [pred, terms] of s.properties) {
+      node[pred as string] = terms.map(t =>
+        t.kind === 'iri' ? { '@id': t.iri }
+          : t.kind === 'bnode' ? { '@id': `_:${t.id}` }
+            : { '@value': t.value, ...(t.datatype ? { '@type': t.datatype } : {}), ...(t.language ? { '@language': t.language } : {}) });
+    }
+    return node;
+  });
+  return { '@context': ctx, '@graph': graph };
+}
+
+function nsHtml(iri: string, turtle: string, meta: { owner: string; slug: string; descriptorUrl: string; isOntology: boolean }): string {
+  const esc = (s: string): string => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<!doctype html><meta charset="utf-8"><title>${esc(meta.slug)}</title>`
+    + `<body style="font-family:system-ui;max-width:60rem;margin:2rem auto;line-height:1.5;padding:0 1rem">`
+    + `<h1>${esc(meta.slug)}</h1>`
+    + `<p><b>IRI:</b> <code>${esc(iri)}</code>${meta.isOntology ? ' · <b>owl:Ontology</b>' : ''}</p>`
+    + `<p>A published Interego holon, dereferenced here as linked data — the RDF projection of a signed, discoverable substrate object (<a href="${esc(meta.descriptorUrl)}">descriptor</a>) on <code>${esc(meta.owner)}</code>'s pod. Terms are hash fragments (<code>${esc(iri)}#&lt;term&gt;</code>) resolving in-document.</p>`
+    + `<p><b>Projections:</b> <a href="?format=turtle">Turtle</a> · <a href="?format=jsonld">JSON-LD</a></p>`
+    + `<h2>Source (Turtle)</h2><pre style="background:#f6f8fa;padding:1rem;overflow:auto;border-radius:6px">${esc(turtle)}</pre>`
+    + `</body>`;
+}
+
+/** Reduce any descriptor-supplied URL to the FIXED internal CSS host + the
+ *  owner's own pod path — an SSRF-safe target rewrite (host is never attacker-
+ *  controlled) constrained to `/<owner>/`. Returns null for a cross-owner /
+ *  off-pod / unparseable URL so the caller uses the safe internal convention.
+ *  Rewrites the fetch TARGET, never the served bytes (signatures verify). */
+function nsToOwnerPodInternal(u: string, owner: string): string | null {
+  try {
+    const cssOrigin = new URL(CSS_URL).origin;
+    const p = new URL(u).pathname;
+    const first = p.split('/').filter(Boolean)[0] ?? '';
+    if (decodeURIComponent(first) !== owner) return null;
+    return `${cssOrigin}${p}`;
+  } catch { return null; }
+}
+
+app.options('/ns/:owner/:slug', (_req, res) => { res.status(204).end(); });
+app.get('/ns/:owner/:slug', async (req, res) => {
+  const owner = String(req.params['owner'] ?? '');
+  const slug = String(req.params['slug'] ?? '');
+  const graphIri = `${RELAY_NS_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}`;
+  const podUrl = `${CSS_URL}${encodeURIComponent(owner)}/`;
+  try {
+    const entries = await discover(podUrl, { graphIri }, { fetch: solidFetch });
+    // GENERIC: any published graph at this IRI dereferences — NO conformsTo filter.
+    const superseded = new Set(entries.flatMap(e => (e.supersedes ?? []) as string[]));
+    const head = entries.find(e => !superseded.has(e.descriptorUrl)) ?? entries[0];
+    if (!head) { res.status(404).type('text/plain').send(`No published graph at ${graphIri} on ${owner}'s pod.`); return; }
+    // SSRF-safe: reduce every descriptor-supplied URL (manifest descriptorUrl,
+    // Distribution accessURL) to the FIXED internal CSS host + the owner's own
+    // pod path before fetching. A malicious/misconfigured descriptor whose
+    // accessURL points at IMDS / .internal / another host can therefore never
+    // turn this public resolver into an SSRF proxy — the fetch host is never
+    // attacker-controlled, and the path is constrained to /<owner>/. We rewrite
+    // the fetch TARGET, never the served bytes (signatures still verify).
+    const descUrlSafe = nsToOwnerPodInternal(head.descriptorUrl, owner);
+    let dist: ReturnType<typeof parseDistributionFromDescriptorTurtle> = null;
+    if (descUrlSafe) {
+      const descResp = await solidFetch(descUrlSafe, { headers: { Accept: 'text/turtle' } });
+      const descTurtle = descResp.ok ? await descResp.text() : '';
+      dist = parseDistributionFromDescriptorTurtle(descTurtle);
+    }
+    if (dist?.encrypted) { res.status(409).type('text/plain').send(`Graph ${graphIri} is a non-public (encrypted) projection; only public RDF projections dereference here.`); return; }
+    const graphUrl = (dist?.accessURL ? nsToOwnerPodInternal(dist.accessURL, owner) : null)
+      ?? `${podUrl}ontologies/${encodeURIComponent(slug)}-graph.trig`;
+    const fetched = await fetchGraphContent(graphUrl, { fetch: solidFetch });
+    const trig = fetched.content ?? '';
+    if (!trig || (fetched.encrypted && !fetched.content)) { res.status(409).type('text/plain').send(`Graph ${graphIri} has no public content.`); return; }
+    const turtle = nsExtractGraphTurtle(trig, graphIri) ?? trig;
+    const isOntology = (head.conformsTo ?? []).some(c => c === NS_OWL_ONTOLOGY) || /\bowl:Ontology\b/.test(turtle);
+    const fmt = String(req.query['format'] ?? '').toLowerCase();
+    const acc = String(req.headers['accept'] ?? '');
+    if (fmt === 'jsonld' || (!fmt && acc.includes('application/ld+json'))) {
+      try { res.type('application/ld+json').send(JSON.stringify(nsTurtleToJsonLd(turtle), null, 2)); return; } catch { /* fall back to Turtle */ }
+    }
+    if (fmt === 'html' || (!fmt && acc.includes('text/html') && !acc.includes('text/turtle'))) {
+      res.type('text/html').send(nsHtml(graphIri, turtle, { owner, slug, descriptorUrl: head.descriptorUrl, isOntology })); return;
+    }
+    res.type('text/turtle').send(turtle);
+  } catch (err) {
+    res.status(502).type('text/plain').send(`Failed to dereference ${graphIri}: ${(err as Error).message}`);
+  }
 });
 
 // ── /audit/* — compliance + lineage endpoints ──────────────

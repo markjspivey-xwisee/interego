@@ -122,7 +122,7 @@ import { skillBundleToDescriptor, descriptorGraphToSkillMd } from '@interego/ski
 import { mintSessionToken } from '../src/auth.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
-import { makeWalletDelegationVerifier } from '@interego/core';
+import { makeWalletDelegationVerifier, parseTrig } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import {
   buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
@@ -236,6 +236,8 @@ import { buildPassedSessionTrace } from '../src/cmi5.js';
 import { pushFrameworkToCass } from '../src/cass-connector.js';
 import {
   discover,
+  publish,
+  fetchGraphContent,
   resolveDid,
   verifyAgentDelegation,
   readDelegationCredential,
@@ -345,6 +347,7 @@ import { attachOauthTokenRoute } from '../src/xapi-oauth.js';
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import type {
   IRI,
+  ContextDescriptorData,
 } from '@interego/core';
 
 const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
@@ -427,9 +430,37 @@ function configOrThrow(args: Record<string, unknown>): { tenantPodUrl: string; a
   return { tenantPodUrl: pod, authoritativeSource };
 }
 
-/** True when two pod URLs denote the same pod (trailing-slash / case insensitive). */
+/** Canonicalize a pod URL's PATH the way css-gate storage does — collapse
+ *  duplicate slashes and resolve `.`/`..` segments — so a body-supplied
+ *  owner_pod_url / tenant_pod_url can't present as a DIFFERENT string to the
+ *  bridge's guards (samePod / TenantDirectory lookup / owner-slug derivation)
+ *  than the collapsed path the gate actually reads and writes. Closes the
+ *  doubled-slash closed-tenant bypass (GATE//foxxi/ ≠ GATE/foxxi/ to a naive
+ *  string compare, but the gate writes both to acme's real pod). Preserves the
+ *  input's trailing-slash intent + any query/fragment; returns the input
+ *  unchanged if unparseable. */
+function canonicalPodUrl(u?: string): string {
+  if (!u) return '';
+  try {
+    const url = new URL(u);
+    const hadTrailing = url.pathname.endsWith('/');
+    const segs: string[] = [];
+    for (const s of url.pathname.split('/')) {
+      if (s === '' || s === '.') continue;
+      if (s === '..') { segs.pop(); continue; }
+      segs.push(s);
+    }
+    url.pathname = '/' + segs.join('/') + (hadTrailing && segs.length ? '/' : '');
+    return url.toString();
+  } catch { return u; }
+}
+
+/** True when two pod URLs denote the same pod (path-canonical, trailing-slash /
+ *  case insensitive). Canonicalizes first so `GATE//foxxi/` and `GATE/foxxi/`
+ *  (which the gate storage treats identically) are correctly seen as the same
+ *  pod — defense-in-depth for every guard that routes on samePod. */
 function samePod(a?: string, b?: string): boolean {
-  const norm = (u?: string) => (u ?? '').replace(/\/+$/, '').toLowerCase();
+  const norm = (u?: string) => canonicalPodUrl(u).replace(/\/+$/, '').toLowerCase();
   return Boolean(a) && Boolean(b) && norm(a) === norm(b);
 }
 
@@ -539,6 +570,95 @@ async function upsertAssignmentPolicy(podUrl: string, source: IRI, policy: Recor
   next.push(policy);
   await publishTenantAssignments(next, publishConfigFor(podUrl, source));
   invalidateTenantCache(podUrl);
+}
+
+// ── Native ontology hosting (domain-neutral substrate capability) ──────────
+// An ontology is not a special kind of thing — it is RDF that happens to use
+// owl:/sh: terms (a vocabulary is just more-specific RDF). So hosting one is
+// NOT a new primitive: it is publish() a PUBLIC signed descriptor + named graph
+// (the mint half, already native) bound to a resolver that serves those signed
+// bytes as dereferenceable linked data (the serve half, added here). The same
+// path serves a Weft vocab (hmd:) and, when published this way, the system's own
+// vocabs — no developer-baked /ns route, no raw-file PUT.
+const OWL_ONTOLOGY_IRI = 'http://www.w3.org/2002/07/owl#Ontology';
+
+/** The canonical dereference home for a published ontology's IRI is the SUBSTRATE
+ *  (the relay's generic /ns RDF-projection surface), NOT this vertical bridge.
+ *  foxxi.publish_ontology is a higher-order COMPOSITION: it writes the holon's
+ *  RDF projection to the caller's own pod and anchors the IRI at the relay, which
+ *  dereferences ANY published graph generically. A published ontology therefore
+ *  resolves at `${NS_POD_ROOT}/<owner>/<slug>` (relay-origin) with #terms in-doc;
+ *  the bridge's own /ns/pod/* 302-redirects there. */
+const RELAY_NS_BASE = `${(process.env.INTEREGO_RELAY_URL
+  ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/+$/, '')}/ns`;
+const NS_POD_ROOT = RELAY_NS_BASE;
+
+/** The css-gate origin (the only public-resolvable pod host) — a userId slug
+ *  `owner` resolves to `${gateOrigin}/${owner}/`. Derived from the configured
+ *  tenant pod, which lives on the same gate as every self-sovereign pod. */
+function gateOriginForResolver(): string {
+  try { return new URL(tenantPodUrl).origin; } catch { return ''; }
+}
+
+/** The stable, resolvable ontology IRI for (owner, slug) — BOTH its logical
+ *  identity (the graph_iri a descriptor describes) AND where it dereferences. */
+function ontologyResolverIri(owner: string, slug: string): string {
+  return `${NS_POD_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}`;
+}
+
+/** Recover the clean, standalone ontology Turtle from a stored `-graph.trig`
+ *  (wrapAsTriG hoists prefixes to the top, then emits `<graphIri> { …indented… }`).
+ *  A pure string transform — prefixes + de-indented graph body — so blank nodes
+ *  and SHACL lists survive byte-for-byte. We serve the signed projection, never
+ *  rewrite it (matches the cross-seat dereference discipline). */
+function extractOntologyTurtle(trig: string, graphIri: string): string | null {
+  const marker = `<${graphIri}> {`;
+  const open = trig.indexOf(marker);
+  if (open < 0) return null;
+  const bodyStart = trig.indexOf('{', open) + 1;
+  let depth = 1, i = bodyStart;
+  for (; i < trig.length && depth > 0; i++) {
+    if (trig[i] === '{') depth++;
+    else if (trig[i] === '}') depth--;
+  }
+  const inner = trig.slice(bodyStart, i - 1);
+  const prefixLines = trig.split('\n').filter(l => /^\s*(@prefix|@base)\s/i.test(l));
+  const deindented = inner.split('\n').map(l => l.replace(/^ {4}/, '')).join('\n').trim();
+  return `${prefixLines.join('\n')}\n\n${deindented}\n`;
+}
+
+/** Flattened JSON-LD projection of an ontology's clean Turtle (best-effort — the
+ *  caller falls back to Turtle if this throws). */
+function ontologyTurtleToJsonLd(turtle: string): Record<string, unknown> {
+  const doc = parseTrig(turtle);
+  const ctx: Record<string, string> = {};
+  for (const [pfx, iri] of doc.prefixes) ctx[pfx] = iri as string;
+  const graph = doc.subjects.map(s => {
+    const id = typeof s.subject === 'string' ? s.subject : `_:${s.subject.bnode}`;
+    const node: Record<string, unknown> = { '@id': id };
+    for (const [pred, terms] of s.properties) {
+      node[pred as string] = terms.map(t =>
+        t.kind === 'iri' ? { '@id': t.iri }
+          : t.kind === 'bnode' ? { '@id': `_:${t.id}` }
+            : { '@value': t.value, ...(t.datatype ? { '@type': t.datatype } : {}), ...(t.language ? { '@language': t.language } : {}) });
+    }
+    return node;
+  });
+  return { '@context': ctx, '@graph': graph };
+}
+
+/** A minimal human-readable HTML view (Accept: text/html) — states what the
+ *  object IS (a signed, agent-published Interego object) and shows its source. */
+function ontologyHtml(ontologyIri: string, turtle: string, meta: { owner: string; slug: string; descriptorUrl: string }): string {
+  const esc = (s: string): string => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<!doctype html><meta charset="utf-8"><title>${esc(meta.slug)} — ontology</title>`
+    + `<body style="font-family:system-ui;max-width:60rem;margin:2rem auto;line-height:1.5;padding:0 1rem">`
+    + `<h1>${esc(meta.slug)}</h1>`
+    + `<p><b>IRI:</b> <code>${esc(ontologyIri)}</code></p>`
+    + `<p>An agent-published ontology — a first-class Interego object (signed <a href="${esc(meta.descriptorUrl)}">ContextDescriptor</a> + named graph) on <code>${esc(meta.owner)}</code>'s self-sovereign pod, served here as dereferenceable linked data. Terms are hash fragments (<code>${esc(ontologyIri)}#&lt;term&gt;</code>) that resolve within this document.</p>`
+    + `<p><b>Projections:</b> <a href="?format=turtle">Turtle</a> · <a href="?format=jsonld">JSON-LD</a></p>`
+    + `<h2>Source (Turtle)</h2><pre style="background:#f6f8fa;padding:1rem;overflow:auto;border-radius:6px">${esc(turtle)}</pre>`
+    + `</body>`;
 }
 
 async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdminPayload | null> {
@@ -2148,8 +2268,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }
     const signer = rec.signer;
     const p = (rec.payload ?? {}) as Record<string, unknown>;
-    const podUrl = (p.tenant_pod_url as string) || (args.tenant_pod_url as string)
-      || (p.learner_pod_url as string) || (args.learner_pod_url as string) || '';
+    // Canonicalize the pod path (collapse //, resolve ./..) BEFORE the
+    // closed-tenant guard — a doubled-slash pod URL reads as "not acme" to a
+    // naive string compare but the gate writes to acme's real pod. See canonicalPodUrl.
+    const podUrl = canonicalPodUrl((p.tenant_pod_url as string) || (args.tenant_pod_url as string)
+      || (p.learner_pod_url as string) || (args.learner_pod_url as string) || '');
     if (!podUrl) {
       return { error: 'tenant_pod_url (or learner_pod_url) required — the pod that hosts your self-sovereign tenant membership' };
     }
@@ -2224,6 +2347,113 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       membershipDescriptorUrl: descriptorUrl,
       memberCount: members.length,
       note: `Public self-sovereign membership published. Call foxxi.discover_assigned_courses with a PoP envelope signed by ${signer} and tenant_pod_url=${podUrl} — you will be authorized as a member.`,
+    };
+  },
+
+  'foxxi.publish_ontology': async (args) => {
+    // Host an ontology THE SUBSTRATE WAY: not a raw .ttl PUT, and not a
+    // developer-baked /ns route — publish it as a first-class Interego object.
+    // A vocabulary is just more-specific RDF, so this composes the existing
+    // publish() primitive to write a PUBLIC (unencrypted) signed ContextDescriptor
+    // + named graph on the caller's OWN pod, with dct:conformsTo owl:Ontology
+    // cleartext-mirrored so discover() + the /ns/pod resolver find and serve it
+    // as dereferenceable linked data at its own IRI. This is a HIGHER-ORDER
+    // COMPOSITION: the generic RDF-projection dereference is a CORE substrate
+    // capability on the relay (GET <relay>/ns/<owner>/<slug>), and the IRI anchors
+    // THERE, not on this bridge. This vertical adds only the PoP-convenient publish
+    // path + Foxxi-tenancy owner-gate. The same relay surface also affords the
+    // system's own vocabs uniformly once they migrate onto it (foundation-first is
+    // aspirational per CLAUDE.md's PGSL note; iep:/foxxi:/xapi: are still baked).
+    // Owner-gated exactly like self-enrollment: PoP-signed, refuse the configured
+    // (closed) tenant + admin-managed pods, and require the signer to OWN this
+    // self-sovereign pod (self-enroll first) — so nobody writes a vocab into
+    // someone else's pod via the bridge's cross-pod write key.
+    const rec = recoverSignedRequest(args);
+    if (!rec.ok) {
+      return { error: `auth: publishing an ontology needs proof-of-possession — pass a rev-196 signed-request envelope ({_signature,_signed_payload}). (${rec.reason})` };
+    }
+    const signer = rec.signer;
+    const p = (rec.payload ?? {}) as Record<string, unknown>;
+    // Canonicalize the pod path (collapse //, resolve ./..) BEFORE any guard so
+    // a doubled-slash owner_pod_url can't slip past the closed-tenant check while
+    // the gate writes to the real (collapsed) pod. See canonicalPodUrl.
+    const podUrl = canonicalPodUrl((p.owner_pod_url as string) || (args.owner_pod_url as string)
+      || (p.tenant_pod_url as string) || (args.tenant_pod_url as string)
+      || (p.pod_url as string) || (args.pod_url as string) || '');
+    const slug = String((p.slug as string) || (args.slug as string) || '')
+      .trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    const ontologyTurtle = String((p.ontology_turtle as string) || (args.ontology_turtle as string) || '');
+    if (!podUrl) return { error: 'owner_pod_url (your pod) required — the self-sovereign pod that will host + serve your ontology.' };
+    if (!slug) return { error: 'slug required — a short name for the ontology (e.g. "hmd"); it becomes part of the ontology\'s resolvable IRI.' };
+    if (!ontologyTurtle.trim()) return { error: 'ontology_turtle required — the OWL/SHACL Turtle to publish (a vocabulary is just RDF).' };
+
+    if (samePod(podUrl, tenantPodUrl)) {
+      return { error: 'this pod is the bridge\'s configured (closed) tenant — publish your ontology to your OWN self-sovereign pod.' };
+    }
+    try {
+      await fetchSection(TENANT_TYPES.TenantDirectory, { ...fetcherConfig(), podUrl });
+      return { error: 'this pod is an admin-managed (closed) tenant — publish your ontology to your OWN self-sovereign pod.' };
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e);
+      if (!/No descriptor with conformsTo=.*found/i.test(msg)) {
+        return { error: 'this pod has an admin-managed directory this bridge cannot serve — publish your ontology to your OWN self-sovereign pod.' };
+      }
+      // A genuine "no directory" → self-sovereign pod → proceed to the owner check.
+    }
+    const ownerErr = await assertSelfSovereignOwner(podUrl, `did:ethr:${signer}`);
+    if (ownerErr) return { error: ownerErr };
+
+    // The owner slug is the pod's userId (first path segment) so the ontology's
+    // IRI resolves back to the same pod at GET <bridge>/ns/pod/<owner>/<slug>.
+    let owner = '';
+    try { owner = new URL(podUrl).pathname.split('/').filter(Boolean)[0] ?? ''; } catch { /* derive below */ }
+    if (!owner) return { error: `could not derive an owner slug from ${podUrl} — expected a pod like <host>/<userId>/.` };
+    const ontologyIri = ontologyResolverIri(owner, slug);
+
+    // PUBLIC (no encrypt) signed descriptor; the named graph == the ontology
+    // Turtle verbatim. dct:conformsTo owl:Ontology is cleartext-mirrored for
+    // discovery. Provenance carries the PoP signer so the vocab's authorship
+    // travels with it.
+    const now = new Date().toISOString();
+    const descriptor: ContextDescriptorData = {
+      id: `${ontologyIri}#descriptor` as IRI,
+      describes: [ontologyIri as IRI],
+      conformsTo: [OWL_ONTOLOGY_IRI as IRI],
+      facets: [
+        { type: 'Temporal', validFrom: now },
+        { type: 'Provenance', wasAttributedTo: `did:ethr:${signer}` as IRI },
+        { type: 'Semiotic', modalStatus: 'Asserted' },
+      ],
+    };
+
+    // Mutable in place under a fixed slug (single-owner, sequential): delete the
+    // prior descriptor/graph FIRST so publish()'s create-only PUT lands fresh
+    // (it silently tolerates the 412 otherwise → stale content).
+    const container = `${podUrl.replace(/\/?$/, '/')}ontologies/`;
+    const stale = [`${container}${slug}.ttl`, `${container}${slug}-graph.trig`, `${container}${slug}-graph.envelope.jose.json`];
+    await Promise.allSettled(stale.map(u => (globalThis.fetch as typeof fetch)(u, { method: 'DELETE' })));
+
+    let descriptorUrl = '', graphUrl = '';
+    try {
+      const result = await publish(descriptor, ontologyTurtle, podUrl, {
+        fetch: globalThis.fetch,
+        containerPath: 'ontologies/',
+        descriptorSlug: slug,
+        graphSlug: `${slug}-graph`,
+      } as Parameters<typeof publish>[3]);
+      descriptorUrl = result.descriptorUrl;
+      graphUrl = result.graphUrl;
+      invalidateTenantCache(podUrl);
+    } catch (err) {
+      return { error: `failed to publish ontology to ${podUrl}: ${(err as Error).message}` };
+    }
+    return {
+      published: { slug, owner, ontologyIri, conformsTo: OWL_ONTOLOGY_IRI },
+      ontologyIri,
+      resolvesAt: ontologyIri,
+      descriptorUrl,
+      graphUrl,
+      note: `Ontology published as a signed, public, discoverable Interego object on ${podUrl} — no raw file, no baked route. It dereferences at ${ontologyIri} (content-negotiated Turtle / JSON-LD / HTML), served by the Interego SUBSTRATE — the relay's generic /ns RDF-projection surface, which dereferences ANY published graph (an ontology is just a holon used as RDF). foxxi.publish_ontology is a higher-order composition: it writes the holon's RDF projection to your pod and anchors the IRI on the substrate. For #terms to resolve, author your Turtle with the ontology's namespace bound to a hash namespace under this IRI — e.g. \`@prefix ${slug}: <${ontologyIri}#> .\` so \`${slug}:approve\` = <${ontologyIri}#approve>.`,
     };
   },
 
@@ -2885,6 +3115,24 @@ const app = createVerticalBridge({
         res.type('application/ld+json').send(JSON.stringify(renderSpecTermJsonLd(liveModel(moduleName, model), req.params.name), null, 2));
       });
     }
+
+    // ── /ns/pod/* → the SUBSTRATE dereference surface (higher-order composition).
+    // The generic RDF-projection dereference is a CORE Interego capability hosted
+    // on the relay: GET <relay>/ns/<owner>/<slug> dereferences ANY published PUBLIC
+    // graph as content-negotiated linked data (an ontology is not special — it is
+    // just a holon used as RDF). This vertical bridge does NOT re-serve it:
+    // foxxi.publish_ontology writes the holon's RDF projection to the caller's pod
+    // and anchors its IRI at the relay, and this route 302-redirects there so any
+    // bridge-origin link resolves at the canonical substrate home. (The generic
+    // relay dereference also affords the system's own vocabs uniformly once they
+    // migrate onto it — the foundation-first track.)
+    a.get('/ns/pod/:owner/:slug', (req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const { owner, slug } = req.params as { owner: string; slug: string };
+      const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+      res.redirect(302, `${RELAY_NS_BASE}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}${qs}`);
+    });
+
     // Emerge the spec ontologies into the shared lattice, then serve them BY PROJECTING
     // those holons (liveModel reads modelFromHolon). Best-effort; until composed, serving
     // renders the single-source model (identical to the holon's content atom).

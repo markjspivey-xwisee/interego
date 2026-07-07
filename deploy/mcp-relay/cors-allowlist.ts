@@ -199,7 +199,7 @@ export function computeCorsHeaders(
 // the non-Express css-gate. The minimal shape we touch is:
 //   req.headers (object), res.setHeader (function), next (function).
 
-export type MinimalReq = { headers: Record<string, string | string[] | undefined> };
+export type MinimalReq = { headers: Record<string, string | string[] | undefined>; url?: string };
 export type MinimalRes = { setHeader: (name: string, value: string) => void };
 export type NextFn = () => void;
 
@@ -207,6 +207,23 @@ export function corsMiddleware(opts: CorsHeaderOptions = {}): (req: MinimalReq, 
   const ownOrigin = normalizeOrigin(opts.ownOrigin ?? '') ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io';
   const allowlist = buildCorsAllowlist(opts);
   return (req, res, next) => {
+    // Public linked-data surface: the /ns/* RDF-projection dereference resolver
+    // serves world-readable, no-credential, content-negotiated RDF (a holon
+    // used as RDF dereferences the way LOD + browser tools expect), so it is
+    // ACAO:* for ANY origin incl. `null` (sandboxed iframe / file://). This is
+    // safe precisely because no Access-Control-Allow-Credentials is ever emitted
+    // and the payload is public — the same posture the css-gate uses for pod
+    // reads. Set here (before the CORS-freeze wrapper) so it survives the SDK's
+    // late wildcard-cors middleware. Runs ahead of the allowlist branch.
+    const url = typeof req.url === 'string' ? req.url : '';
+    if (url.startsWith('/ns/')) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', DEFAULT_ALLOW_HEADERS);
+      res.setHeader('Vary', 'Origin');
+      next();
+      return;
+    }
     const originHeader = req.headers['origin'];
     const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
     const headers = computeCorsHeaders(origin, allowlist, ownOrigin, {
