@@ -17,9 +17,14 @@ WORKDIR /app
 COPY packages/pgsl-store/dist ./packages/pgsl-store/dist
 COPY packages/pgsl-store/package.json ./packages/pgsl-store/package.json
 COPY integrations/pgsl-css-accessor ./integrations/pgsl-css-accessor
+# pg is a runtime dep of pgsl-store's pg-store.js (dynamic import). Install it at
+# the tree ROOT so Node resolves it from packages/pgsl-store/dist/*.js (which walk
+# up to /app/node_modules). Installing it in the accessor subtree would NOT be
+# visible to pg-store.js (a different subtree).
+RUN echo '{"name":"pgsl-deploy-root","private":true}' > package.json \
+ && npm install --no-save pg@8
 WORKDIR /app/integrations/pgsl-css-accessor
 RUN npm install \
- && npm install --no-save pg@8 \
  && npm run build \
  # build-time-only deps must NOT survive into runtime: componentsjs-generator
  # brings a newer @comunica/componentsjs that collides with CSS's at load time.

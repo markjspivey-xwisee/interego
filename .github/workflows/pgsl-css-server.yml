@@ -65,12 +65,18 @@ jobs:
           cp integrations/pgsl-css-accessor/package.json "$APP/integrations/pgsl-css-accessor/package.json"
           cp integrations/pgsl-css-accessor/tsconfig.json "$APP/integrations/pgsl-css-accessor/tsconfig.json"
 
+      - name: Install pg at the tree ROOT (resolvable from packages/pgsl-store/dist)
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          set -euxo pipefail
+          echo '{"name":"pgsl-deploy-root","private":true}' > package.json
+          npm install --no-save pg@8
+
       - name: Install (CSS + generator) and build components in the clean tree
         working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
         run: |
           set -euxo pipefail
           npm install
-          npm install --no-save pg@8
           npm run build
           # componentsjs-generator is BUILD-TIME ONLY: its newer @comunica/componentsjs
           # collide with CSS's at runtime. Remove it (the Docker runtime stage does the same).
