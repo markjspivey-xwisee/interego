@@ -22,10 +22,13 @@ export interface FdbRealOptions {
   apiVersion?: number;
 }
 
-const dynImport = Function('s', 'return import(s)') as (s: string) => Promise<any>;
-
 export async function openRealFdb(opts: FdbRealOptions = {}): Promise<FdbLike> {
-  const fdb: any = await dynImport('foundationdb');
+  // A real dynamic import (a Function('return import()') escape hatch has no
+  // import callback under a VM/vitest and throws ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING).
+  // @ts-ignore optional native dependency; installed only where openRealFdb() is
+  // actually used (CI integration + production), so the package compiles + imports
+  // fine without it.
+  const fdb: any = await import('foundationdb');
   fdb.setAPIVersion(opts.apiVersion ?? 730);
   const db: any = opts.clusterFile ? fdb.open(opts.clusterFile) : fdb.open();
 
