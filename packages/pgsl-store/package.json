@@ -1,0 +1,28 @@
+{
+  "name": "@interego/pgsl-store",
+  "version": "0.0.1",
+  "description": "Durable, transactional store for the PGSL lattice (FoundationDB layer) + atom-granular ABAC attribute model. The Stage-5 foundation-first substrate of record; RDF/Solid are projections over it.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist/", "src/", "README.md"],
+  "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@interego/core": "*",
+    "@interego/pgsl": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
