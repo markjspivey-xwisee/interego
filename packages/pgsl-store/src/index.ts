@@ -48,3 +48,4 @@ export {
   type SourceResource,
   type MigrationReport,
 } from './migrate.js';
+export { runMigration, type PodPlan, type FleetReport } from './runner.js';
