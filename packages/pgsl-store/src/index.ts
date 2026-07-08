@@ -42,3 +42,9 @@ export {
 } from './codec.js';
 export { rdfCodec, splitTurtleStatements, rdfOpaqueUri } from './codec-rdf.js';
 export { LdpStore, type LdpResource } from './ldp.js';
+export {
+  migratePod,
+  verifyMigration,
+  type SourceResource,
+  type MigrationReport,
+} from './migrate.js';
