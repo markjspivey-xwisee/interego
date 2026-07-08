@@ -1,0 +1,64 @@
+name: pgsl-store FDB integration
+
+# Verifies the @interego/pgsl-store real-FoundationDB adapter (openRealFdb) and
+# runs the store suite against a live FoundationDB on Linux — the real-engine
+# check the dev box can't do (the native FDB client is Linux-first). The
+# in-memory suite already runs in the normal test job; this adds real-FDB.
+
+on:
+  push:
+    paths:
+      - 'packages/pgsl-store/**'
+      - 'tests/pgsl-store-*'
+      - '.github/workflows/pgsl-store-fdb.yml'
+  workflow_dispatch:
+
+jobs:
+  fdb-integration:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install FoundationDB (client + single-node server)
+        run: |
+          set -euxo pipefail
+          FDB=7.3.27
+          base="https://github.com/apple/foundationdb/releases/download/${FDB}"
+          curl -fsSL -o fdb-clients.deb "${base}/foundationdb-clients_${FDB}-1_amd64.deb"
+          curl -fsSL -o fdb-server.deb  "${base}/foundationdb-server_${FDB}-1_amd64.deb"
+          sudo dpkg -i fdb-clients.deb fdb-server.deb || sudo apt-get -f install -y
+          sudo service foundationdb start || true
+          # The server .deb creates a local single-node db on install; make sure
+          # it's configured + reachable before the tests run.
+          for i in $(seq 1 30); do
+            if fdbcli --exec "status minimal" | grep -q "available"; then break; fi
+            fdbcli --exec "configure new single ssd" || true
+            sleep 2
+          done
+          fdbcli --exec "status minimal"
+
+      - name: Install workspace deps
+        run: npm ci
+
+      - name: Build the packages the tests import
+        run: |
+          npm run build --workspace @interego/core
+          npm run build --workspace @interego/abac
+
+      - name: Install the FoundationDB node binding (native, needs libfdb_c)
+        run: npm install --no-save foundationdb@2
+
+      - name: Run pgsl-store suite against REAL FoundationDB
+        env:
+          PGSL_FDB_IT: '1'
+          FDB_CLUSTER_FILE: /etc/foundationdb/fdb.cluster
+        run: >-
+          npx vitest run
+          tests/pgsl-store-fdb-integration.test.ts
+          tests/pgsl-store-addressing.test.ts
+          tests/pgsl-store-store.test.ts
+          tests/pgsl-store-compose.test.ts
+          tests/pgsl-store-abac-projection.test.ts

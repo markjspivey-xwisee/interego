@@ -33,3 +33,4 @@ export {
   type ProjectedHolon,
   type ProjectedAtom,
 } from './project.js';
+export { openRealFdb, type FdbRealOptions } from './fdb-real.js';
