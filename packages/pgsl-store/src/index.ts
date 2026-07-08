@@ -3,13 +3,20 @@
  * (FoundationDB layer) + the atom-granular ABAC attribute model.
  *
  * Stage-5 foundation-first: PGSL is the canonical substrate of record; RDF and
- * the W3C Solid surface are projections over it. This package holds the store
- * (FDB), the content-addressing rules, and the access-attribute model.
+ * the W3C Solid surface are projections over it. The store is coded against the
+ * `FdbLike` seam so it runs over an in-memory fake (local unit tests, no Docker)
+ * and the real FoundationDB binding (production + CI).
  *
- * Build status: Stage 0 in progress. Environment-independent core (addressing,
- * codec) landed + unit-tested; the FDB-transactional layer (put/resolve/compose/
- * rehydrate + control-plane) and the mediator-side ABAC project-on-read follow,
- * and require a running FoundationDB (Linux container).
+ * Landed: content-addressing (public/private dedup split), the FdbLike seam +
+ * in-memory transactional fake, and the store's grow-only node writes / resolve
+ * / rehydrate / mutable control-plane.
+ * Next (same seam, no new env): compose-on-write of a lattice slice, structural
+ * indexes, the persistence registry, the AA/AAX ABAC attributes, and the
+ * mediator-side ABAC-filtered project-on-read.
  */
 
 export * from './addressing.js';
+export * from './fdb-like.js';
+export { InMemoryFdb, MemFdbConflict } from './mem-fdb.js';
+export * from './node.js';
+export { PgslStore, openStore, type PutResult, type PutManyResult } from './store.js';
