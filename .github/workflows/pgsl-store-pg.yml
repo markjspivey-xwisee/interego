@@ -1,0 +1,53 @@
+name: pgsl-store PostgreSQL integration
+
+# Proves the ENTIRE PGSL store stack runs over the Postgres FdbLike adapter — the
+# budget-fitting managed backend (Azure Postgres Burstable ~$12-25/mo or free
+# Neon/Supabase; runs on the existing ACA topology, no AKS). node-postgres is
+# pure JS, so a Postgres service container is all that's needed (no native FDB).
+
+on:
+  push:
+    paths:
+      - 'packages/pgsl-store/**'
+      - 'tests/pgsl-store-pg-integration.test.ts'
+      - '.github/workflows/pgsl-store-pg.yml'
+  workflow_dispatch:
+
+jobs:
+  pg-integration:
+    runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pgsl
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install workspace + build the @interego deps the barrel imports
+        run: |
+          npm ci
+          npm run build --workspace @interego/core
+          npm run build --workspace @interego/abac
+      - name: Install node-postgres (pure JS)
+        run: npm install --no-save pg@8
+      - name: Run the FULL pgsl-store stack against real Postgres
+        env:
+          PGSL_PG_IT: '1'
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: pgsl
+        run: npx vitest run tests/pgsl-store-pg-integration.test.ts
