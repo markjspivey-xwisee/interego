@@ -1,16 +1,34 @@
 {
   "name": "pgsl-css-accessor",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Community Solid Server DataAccessor backed by the PGSL store (Stage 2). Isolated from the main npm workspace because it depends on the heavy @solid/community-server + the native foundationdb binding; imports pgsl-store's built dist directly. Verified against a real FoundationDB in CI.",
+  "description": "Community Solid Server storage backend that serves the W3C Solid/LDP surface out of the PGSL lattice (foundation-first Stage 5). Isolated from the main npm workspace because it depends on the heavy @solid/community-server; imports pgsl-store's built dist directly. Verified against real FoundationDB and real PostgreSQL in CI (accessor unit + full CSS HTTP server).",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "lsd:module": "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor",
+  "lsd:components": "dist/components/components.jsonld",
+  "lsd:contexts": {
+    "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor/^1.0.0/components/context.jsonld": "dist/components/context.jsonld"
+  },
+  "lsd:importPaths": {
+    "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor/^1.0.0/components/": "dist/components/",
+    "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor/^1.0.0/config/": "config/",
+    "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor/^1.0.0/dist/": "dist/"
+  },
   "scripts": {
-    "test:it": "tsx test/accessor.it.ts"
+    "build:ts": "tsc",
+    "build:components": "componentsjs-generator -s src -c dist/components -r pgsl --lenient",
+    "build": "npm run build:ts && npm run build:components",
+    "test:it": "tsx test/accessor.it.ts",
+    "test:server": "tsx test/server.it.ts"
   },
   "dependencies": {
     "@solid/community-server": "^7.1.9"
   },
   "devDependencies": {
-    "tsx": "^4.22.0"
+    "componentsjs-generator": "^4.2.0",
+    "tsx": "^4.22.0",
+    "typescript": "^5.6.0"
   }
 }

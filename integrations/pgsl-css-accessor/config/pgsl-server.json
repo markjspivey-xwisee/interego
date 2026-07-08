@@ -1,0 +1,69 @@
+{
+  "comment": [
+    "CSS server whose STORAGE BACKEND is the PGSL lattice (foundation-first Stage 5).",
+    "This imports the standard file-root.json preset stack MINUS the file backend, and redefines",
+    "urn:solid-server:default:ResourceStore_Backend to use the PGSL accessor.",
+    "Storage location = single root (initialize-root.json + location/root.json): the base URL IS",
+    "the storage root. The production canary must match interego-css's actual location/init model",
+    "(swap to pod.json + static-root.json if interego-css is multi-pod) before real-pod migration.",
+    "Authorization is allow-all so the smoke test exercises the storage path (the backend under",
+    "test), not WAC; the production canary config swaps allow-all -> webacl to match interego-css.",
+    "The Postgres connection string is read from PGSL_PG_CONNSTR by the factory, so no secret",
+    "lives in this file. NOTE: componentsjs-generator is BUILD-TIME ONLY — it must not be present",
+    "in the runtime node_modules (its newer @comunica/componentsjs collide with CSS's); the",
+    "Dockerfile prunes it (and tsx/typescript) from the runtime stage."
+  ],
+  "@context": [
+    "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+    "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor/^1.0.0/components/context.jsonld"
+  ],
+  "import": [
+    "css:config/app/init/initialize-root.json",
+    "css:config/app/main/default.json",
+    "css:config/app/variables/default.json",
+    "css:config/http/handler/default.json",
+    "css:config/http/middleware/default.json",
+    "css:config/http/notifications/all.json",
+    "css:config/http/server-factory/http.json",
+    "css:config/http/static/default.json",
+    "css:config/identity/access/public.json",
+    "css:config/identity/email/default.json",
+    "css:config/identity/handler/default.json",
+    "css:config/identity/oidc/default.json",
+    "css:config/identity/ownership/token.json",
+    "css:config/identity/pod/static.json",
+    "css:config/ldp/authentication/dpop-bearer.json",
+    "css:config/ldp/authorization/allow-all.json",
+    "css:config/ldp/handler/default.json",
+    "css:config/ldp/metadata-parser/default.json",
+    "css:config/ldp/metadata-writer/default.json",
+    "css:config/ldp/modes/default.json",
+    "css:config/storage/key-value/resource-store.json",
+    "css:config/storage/location/root.json",
+    "css:config/storage/middleware/default.json",
+    "css:config/util/auxiliary/acl.json",
+    "css:config/util/identifiers/suffix.json",
+    "css:config/util/index/default.json",
+    "css:config/util/logging/winston.json",
+    "css:config/util/representation-conversion/default.json",
+    "css:config/util/resource-locker/file.json",
+    "css:config/util/variables/default.json"
+  ],
+  "@graph": [
+    {
+      "comment": "Same DataAccessorBasedStore as the file backend, but with the PGSL accessor.",
+      "@id": "urn:solid-server:default:ResourceStore_Backend",
+      "@type": "DataAccessorBasedStore",
+      "identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
+      "auxiliaryStrategy": { "@id": "urn:solid-server:default:AuxiliaryStrategy" },
+      "accessor": { "@id": "urn:pgsl-css:default:PgslDataAccessor" },
+      "metadataStrategy": { "@id": "urn:solid-server:default:MetadataStrategy" }
+    },
+    {
+      "comment": "The PGSL-backed DataAccessor. connectionString omitted -> read from PGSL_PG_CONNSTR.",
+      "@id": "urn:pgsl-css:default:PgslDataAccessor",
+      "@type": "PgslDataAccessorFactory",
+      "pod": "css"
+    }
+  ]
+}

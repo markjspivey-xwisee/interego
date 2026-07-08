@@ -1,0 +1,89 @@
+name: pgsl-css-server (full CSS server over PGSL)
+
+# Stage 5 go-live proof: boots a REAL Community Solid Server whose storage backend
+# is the PGSL lattice (PgslDataAccessorFactory via a Components.js config) and drives
+# the W3C LDP surface over HTTP (PUT / GET / byte round-trip / container listing /
+# DELETE -> 404). This proves the whole deployable path end-to-end:
+#   componentsjs descriptor -> CSS config -> AppRunner DI -> PgslDataAccessor
+#   -> LdpStore -> PgslStore -> FdbLike backend.
+#
+# The server is assembled in a CLEAN, deployment-shaped tree OUTSIDE the repo
+# checkout ($RUNNER_TEMP/app). This is deliberate: inside the monorepo, Components.js
+# walks up into the repo-root node_modules whose componentsjs@6 (via @comunica) is
+# incompatible with CSS 7.1.9's componentsjs@5. The clean tree is exactly the shape
+# of the production Docker image, so this job validates the real deployable.
+
+on:
+  push:
+    paths:
+      - 'integrations/pgsl-css-accessor/**'
+      - 'packages/pgsl-store/**'
+      - '.github/workflows/pgsl-css-server.yml'
+  workflow_dispatch:
+
+jobs:
+  css-server:
+    runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pgsl
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build pgsl-store dist (its accessor path has no @interego runtime deps)
+        run: |
+          npm ci
+          npm run build --workspace @interego/core
+          npm run build --workspace @interego/abac
+          npm run build --workspace @interego/pgsl-store
+
+      - name: Assemble deployment-shaped standalone tree (no monorepo root above it)
+        run: |
+          set -euxo pipefail
+          APP="$RUNNER_TEMP/app"
+          rm -rf "$APP"
+          mkdir -p "$APP/packages/pgsl-store" "$APP/integrations/pgsl-css-accessor"
+          cp -r packages/pgsl-store/dist "$APP/packages/pgsl-store/dist"
+          cp packages/pgsl-store/package.json "$APP/packages/pgsl-store/package.json"
+          cp -r integrations/pgsl-css-accessor/src "$APP/integrations/pgsl-css-accessor/src"
+          cp -r integrations/pgsl-css-accessor/config "$APP/integrations/pgsl-css-accessor/config"
+          cp -r integrations/pgsl-css-accessor/test "$APP/integrations/pgsl-css-accessor/test"
+          cp integrations/pgsl-css-accessor/package.json "$APP/integrations/pgsl-css-accessor/package.json"
+          cp integrations/pgsl-css-accessor/tsconfig.json "$APP/integrations/pgsl-css-accessor/tsconfig.json"
+
+      - name: Install (CSS + generator) and build components in the clean tree
+        working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
+        run: |
+          set -euxo pipefail
+          npm install
+          npm install --no-save pg@8
+          npm run build
+          # componentsjs-generator is BUILD-TIME ONLY: its newer @comunica/componentsjs
+          # collide with CSS's at runtime. Remove it (the Docker runtime stage does the same).
+          rm -rf node_modules/componentsjs-generator
+
+      - name: Full CSS server over PGSL — in-memory backend (proves the WIRING)
+        working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
+        env:
+          PGSL_INMEM: '1'
+        run: npm run test:server
+
+      - name: Full CSS server over PGSL — REAL PostgreSQL (proves the deploy backend)
+        working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
+        env:
+          PGSL_PG_CONNSTR: 'postgresql://postgres:postgres@localhost:5432/pgsl'
+        run: npm run test:server
