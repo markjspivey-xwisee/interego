@@ -451,6 +451,15 @@ function manifestEntryTurtle(
 // monolith CAS.
 const APPEND_ONLY_ENABLED = String(process.env['MANIFEST_APPEND_ONLY_ENABLED'] ?? '').toLowerCase() === 'true';
 const APPEND_ONLY_CONTAINER_SLUG = 'cg-entries';
+// Listing the shard container is the cost the union adds to every discover(),
+// and container listings on the single-replica AzureFile (SMB) backend are
+// seconds-slow (and can stall). Cache the parsed listing per-pod with a short
+// TTL so bursts of reads amortize it, bound a slow listing with a soft timeout
+// so it can't dominate discover() latency, and invalidate on publish so a
+// same-process shard write is visible at once. Env-tunable.
+const SHARD_CACHE_TTL_MS = Number(process.env['MANIFEST_SHARD_CACHE_TTL_MS'] ?? 10_000);
+const SHARD_PROBE_TIMEOUT_MS = Number(process.env['MANIFEST_SHARD_PROBE_TIMEOUT_MS'] ?? 6_000);
+const shardEntriesCache = new Map<string, { entries: ManifestEntry[]; expiresAt: number }>();
 
 function appendOnlyContainerUrl(pod: string): string {
   return `${pod}${APPEND_ONLY_CONTAINER_SLUG}/`;
@@ -491,6 +500,8 @@ async function writeShardEntry(pod: string, descriptorUrl: string, entryBody: st
   if (!res.ok && res.status !== 201 && res.status !== 204) {
     throw new Error(`Failed to write manifest shard ${url}: ${res.status} ${res.statusText}`);
   }
+  // Invalidate the read cache so a same-process publish is immediately visible.
+  shardEntriesCache.delete(pod);
 }
 
 /**
@@ -523,6 +534,36 @@ async function readShardEntries(pod: string, fetchFn: FetchFn): Promise<Manifest
   } catch {
     return [];
   }
+}
+
+/**
+ * Cached + soft-timeout-bounded wrapper over readShardEntries(). Amortizes the
+ * SMB-slow container listing across rapid discover() calls; on a slow/failed
+ * listing reuses the last-known set (or [] on a cold miss) and refreshes soon,
+ * so a transient stall self-heals without either hanging discover() or hiding
+ * shards for a full TTL.
+ */
+async function readShardEntriesCached(pod: string, fetchFn: FetchFn): Promise<ManifestEntry[]> {
+  const hit = shardEntriesCache.get(pod);
+  if (hit && hit.expiresAt > Date.now()) return hit.entries;
+  let entries: ManifestEntry[];
+  let ttl = SHARD_CACHE_TTL_MS;
+  try {
+    entries = await Promise.race([
+      readShardEntries(pod, fetchFn),
+      new Promise<ManifestEntry[]>((_, reject) =>
+        setTimeout(() => reject(new Error('shard-listing-timeout')), SHARD_PROBE_TIMEOUT_MS)),
+    ]);
+  } catch {
+    entries = hit?.entries ?? [];
+    ttl = 2_000; // slow listing: retry soon rather than caching the fallback for the full TTL
+  }
+  if (shardEntriesCache.size > 512) {
+    const oldest = shardEntriesCache.keys().next().value;
+    if (oldest !== undefined) shardEntriesCache.delete(oldest);
+  }
+  shardEntriesCache.set(pod, { entries, expiresAt: Date.now() + ttl });
+  return entries;
 }
 
 // ── Manifest parsing ────────────────────────────────────────
@@ -2276,7 +2317,7 @@ export async function discover(
   // readShardEntries yields [] and this is a no-op — discover() returns exactly
   // the monolith entries it always has (byte-identical back-compat).
   if (APPEND_ONLY_ENABLED) {
-    const shardEntries = await readShardEntries(pod, fetchFn);
+    const shardEntries = await readShardEntriesCached(pod, fetchFn);
     if (shardEntries.length) {
       const byUrl = new Map<string, ManifestEntry>();
       for (const e of shardEntries) byUrl.set(String(e.descriptorUrl), e);
