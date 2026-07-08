@@ -41,3 +41,4 @@ export {
   type IngestOptions,
 } from './codec.js';
 export { rdfCodec, splitTurtleStatements, rdfOpaqueUri } from './codec-rdf.js';
+export { LdpStore, type LdpResource } from './ldp.js';

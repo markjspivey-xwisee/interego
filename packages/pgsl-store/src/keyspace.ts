@@ -148,3 +148,11 @@ export function cpKey(collection: string, id: string): Key {
 export function cpRange(collection: string): { begin: Key; end: Key } {
   return range(concat(ROOT, B(TAG_CP), utf8(collection), B(0)));
 }
+export function cpListRange(collection: string, idPrefix: string): { begin: Key; end: Key } {
+  return range(concat(ROOT, B(TAG_CP), utf8(collection), B(0), utf8(idPrefix)));
+}
+/** Extract the id (the part after the collection separator) from a CP key. */
+export function cpIdFromKey(collection: string, key: Key): string {
+  const prefixLen = ROOT.length + 1 + utf8(collection).length + 1;
+  return new TextDecoder().decode(key.slice(prefixLen));
+}

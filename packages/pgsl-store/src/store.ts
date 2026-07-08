@@ -27,7 +27,9 @@ import {
   cbRange,
   ciKey,
   ciRange,
+  cpIdFromKey,
   cpKey,
+  cpListRange,
   cpRange,
   lftKey,
   lvAddrBytes,
@@ -238,6 +240,14 @@ export class PgslStore {
   async cpClearCollection(collection: string): Promise<void> {
     const { begin, end } = cpRange(collection);
     await this.fdb.transact(async (txn) => { txn.clearRange(begin, end); });
+  }
+  /** List control-plane entries in a collection (optionally filtered by id prefix). */
+  async cpList<T = unknown>(collection: string, idPrefix = ''): Promise<Array<{ id: string; value: T }>> {
+    const { begin, end } = cpListRange(collection, idPrefix);
+    return this.fdb.transact(async (txn) => {
+      const rows = await txn.getRange(begin, end);
+      return rows.map((r) => ({ id: cpIdFromKey(collection, r.key), value: decodeJson<T>(r.value) }));
+    });
   }
 }
 
