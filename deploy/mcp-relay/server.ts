@@ -9289,26 +9289,41 @@ async function resolveNsGraph(owner: string, slug: string): Promise<
   | { ok: false; status: number; error: string; ontologyIri: string }> {
   const graphIri = `${RELAY_NS_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}`;
   const podUrl = `${CSS_URL}${encodeURIComponent(owner)}/`;
+  const convGraphUrl = `${podUrl}ontologies/${encodeURIComponent(slug)}-graph.trig`;
+  // Fetch a graph URL + build the served result (null when empty / encrypted-non-public).
+  const serve = async (graphUrl: string, descriptorUrl: string, conformsTo: readonly string[] | undefined) => {
+    const fetched = await fetchGraphContent(graphUrl, { fetch: solidFetch });
+    const trig = fetched.content ?? '';
+    if (!trig || (fetched.encrypted && !fetched.content)) return null;
+    const turtle = nsExtractGraphTurtle(trig, graphIri) ?? trig;
+    const isOntology = (conformsTo ?? []).some(c => c === NS_OWL_ONTOLOGY) || /\bowl:Ontology\b/.test(turtle);
+    return { ok: true as const, turtle, ontologyIri: graphIri, isOntology, descriptorUrl };
+  };
   try {
     const entries = await discover(podUrl, { graphIri }, { fetch: solidFetch });
     const superseded = new Set(entries.flatMap(e => (e.supersedes ?? []) as string[]));
     const head = entries.find(e => !superseded.has(e.descriptorUrl)) ?? entries[0];
-    if (!head) return { ok: false, status: 404, error: `No published graph at ${graphIri} on ${owner}'s pod.`, ontologyIri: graphIri };
-    const descUrlSafe = nsToOwnerPodInternal(head.descriptorUrl, owner);
-    let dist: ReturnType<typeof parseDistributionFromDescriptorTurtle> = null;
-    if (descUrlSafe) {
-      const descResp = await solidFetch(descUrlSafe, { headers: { Accept: 'text/turtle' } });
-      dist = parseDistributionFromDescriptorTurtle(descResp.ok ? await descResp.text() : '');
+    if (head) {
+      const descUrlSafe = nsToOwnerPodInternal(head.descriptorUrl, owner);
+      let dist: ReturnType<typeof parseDistributionFromDescriptorTurtle> = null;
+      if (descUrlSafe) {
+        const descResp = await solidFetch(descUrlSafe, { headers: { Accept: 'text/turtle' } });
+        dist = parseDistributionFromDescriptorTurtle(descResp.ok ? await descResp.text() : '');
+      }
+      if (dist?.encrypted) return { ok: false, status: 409, error: `Graph ${graphIri} is a non-public (encrypted) projection; only public RDF projections dereference here.`, ontologyIri: graphIri };
+      const graphUrl = (dist?.accessURL ? nsToOwnerPodInternal(dist.accessURL, owner) : null) ?? convGraphUrl;
+      const served = await serve(graphUrl, head.descriptorUrl, head.conformsTo);
+      if (served) return served;
     }
-    if (dist?.encrypted) return { ok: false, status: 409, error: `Graph ${graphIri} is a non-public (encrypted) projection; only public RDF projections dereference here.`, ontologyIri: graphIri };
-    const graphUrl = (dist?.accessURL ? nsToOwnerPodInternal(dist.accessURL, owner) : null)
-      ?? `${podUrl}ontologies/${encodeURIComponent(slug)}-graph.trig`;
-    const fetched = await fetchGraphContent(graphUrl, { fetch: solidFetch });
-    const trig = fetched.content ?? '';
-    if (!trig || (fetched.encrypted && !fetched.content)) return { ok: false, status: 409, error: `Graph ${graphIri} has no public content.`, ontologyIri: graphIri };
-    const turtle = nsExtractGraphTurtle(trig, graphIri) ?? trig;
-    const isOntology = (head.conformsTo ?? []).some(c => c === NS_OWL_ONTOLOGY) || /\bowl:Ontology\b/.test(turtle);
-    return { ok: true, turtle, ontologyIri: graphIri, isOntology, descriptorUrl: head.descriptorUrl };
+    // FALLBACK — no manifest entry indexes this IRI (or its graph was unreadable).
+    // Try the ontologies/<slug> CONVENTION graph directly. This makes an ontology
+    // written to the convention dereference even when the pod's manifest could not
+    // be indexed — e.g. an oversized manifest whose write fails (a large pod), or a
+    // publisher that wrote the descriptor+graph but no manifest entry. Bounded: one
+    // internal-host, owner-pod-path GET (SSRF-safe, same as the primary path).
+    const served = await serve(convGraphUrl, convGraphUrl, undefined);
+    if (served) return served;
+    return { ok: false, status: 404, error: `No published graph at ${graphIri} on ${owner}'s pod.`, ontologyIri: graphIri };
   } catch (err) {
     return { ok: false, status: 502, error: `Failed to dereference ${graphIri}: ${(err as Error).message}`, ontologyIri: graphIri };
   }
