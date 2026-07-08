@@ -701,15 +701,27 @@ const solidFetch: FetchFn = async (url, init) => {
   // transparently follows the canonical internal-FQDN target. See
   // `url-rewrite.ts` for the matching regex and rewrite rules.
   const target = normalizeCssUrl(url);
-  const resp = await fetch(target, init as RequestInit);
-  return {
-    ok: resp.ok,
-    status: resp.status,
-    statusText: resp.statusText,
-    headers: { get: (n: string) => resp.headers.get(n) },
-    text: () => resp.text(),
-    json: () => resp.json(),
-  };
+  // Bounded connect+headers deadline. Without this, a CSS host that accepts the
+  // TCP connection but stalls before responding blocks on undici's ~300s default
+  // (and, once it surfaces as "fetch failed", is retried 4-6x by withTransientRetry),
+  // riding far past the ACA ingress timeout and surfacing as an opaque 502. An abort
+  // here is non-transient (AbortError doesn't match the retry matcher), so it fails
+  // fast to a bounded, correctly-classified error instead of a multi-minute hang.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), Number(process.env['NS_FETCH_TIMEOUT_MS'] ?? 15_000));
+  try {
+    const resp = await fetch(target, { ...(init as RequestInit), signal: ac.signal });
+    return {
+      ok: resp.ok,
+      status: resp.status,
+      statusText: resp.statusText,
+      headers: { get: (n: string) => resp.headers.get(n) },
+      text: () => resp.text(),
+      json: () => resp.json(),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 // ── State ───────────────────────────────────────────────────
@@ -9278,6 +9290,16 @@ function nsToOwnerPodInternal(u: string, owner: string): string | null {
   } catch { return null; }
 }
 
+/** A fetchGraphContent()/solidFetch() error whose HTTP status is 404/410 —
+ *  i.e. the target graph is ABSENT, not an upstream failure. Coupled to
+ *  fetchGraphContent's throw format `Failed to GET <url>: <status> <text>`;
+ *  the `: <status>` token (colon-space) can only be the status separator
+ *  (a URL has no space), so it never false-matches on the URL itself. */
+function isAbsentGraphError(e: unknown): boolean {
+  const m = (e as Error)?.message ?? String(e);
+  return /:\s(?:404|410)\b/.test(m);
+}
+
 /** Shared /ns resolver core — used by BOTH the public GET route and the
  *  resolve_linked_data MCP tool. Discovers the current non-superseded published
  *  graph at <RELAY_NS_ROOT>/<owner>/<slug>, follows the descriptor (SSRF-safe:
@@ -9292,7 +9314,19 @@ async function resolveNsGraph(owner: string, slug: string): Promise<
   const convGraphUrl = `${podUrl}ontologies/${encodeURIComponent(slug)}-graph.trig`;
   // Fetch a graph URL + build the served result (null when empty / encrypted-non-public).
   const serve = async (graphUrl: string, descriptorUrl: string, conformsTo: readonly string[] | undefined) => {
-    const fetched = await fetchGraphContent(graphUrl, { fetch: solidFetch });
+    let fetched: Awaited<ReturnType<typeof fetchGraphContent>>;
+    try {
+      fetched = await fetchGraphContent(graphUrl, { fetch: solidFetch });
+    } catch (e) {
+      // An ABSENT graph (CSS 404/410) is a genuine not-found, not an upstream
+      // failure: return null so the caller falls through to the clean 404 instead
+      // of the outer catch's 502. Any other error (5xx / network / abort/timeout)
+      // still throws → 502, the correct status for a real bad gateway. This is what
+      // makes the intended `return { status: 404 }` reachable for an unpublished
+      // slug whose convention graph does not exist (the 0589752 fallback regression).
+      if (isAbsentGraphError(e)) return null;
+      throw e;
+    }
     const trig = fetched.content ?? '';
     if (!trig || (fetched.encrypted && !fetched.content)) return null;
     const turtle = nsExtractGraphTurtle(trig, graphIri) ?? trig;
