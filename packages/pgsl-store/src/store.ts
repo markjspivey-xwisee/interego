@@ -3,36 +3,48 @@
  *
  * Coded against the `FdbLike` seam, so it runs identically over the in-memory
  * fake (local unit tests, no Docker) and the real FoundationDB binding (prod +
- * CI). This increment lands: content-addressed grow-only node writes
- * (set-if-absent), point resolve, a full rehydrate (rebuild the registry from
- * the store — the fix for "node bodies lost on restart"), and the mutable
- * control-plane (.internal accounts / idp / sessions), which coexists with the
- * grow-only lattice because FDB does native UPDATE/DELETE.
+ * CI). Lands: content-addressed grow-only node writes (set-if-absent), point
+ * resolve, full rehydrate (rebuild the registry WITH bodies — fixes the
+ * in-memory-singleton restart loss), compose-on-write of a whole lattice slice
+ * in ONE transaction (nodes + structural indexes + overlay + persistence
+ * registry), the structural queries those indexes enable, and the mutable
+ * control-plane (.internal accounts / idp / sessions).
  *
- * Still to come (next increments): compose-on-write of a whole lattice slice in
- * one transaction, the structural-index + overlay + persistence-registry
- * subspaces, the AA/AAX ABAC attribute store, and the mediator-side
- * ABAC-filtered project-on-read.
+ * Still to come: the AA/AAX ABAC attribute store + the mediator-side
+ * ABAC-filtered project-on-read (both pure/Docker-free), and a thin real-FDB
+ * adapter over this same seam.
  */
 
 import type { FdbLike } from './fdb-like.js';
-import { nodeAddrFromUrn } from './addressing.js';
-import { cpKey, cpRange, nodeKey, nodeRange } from './keyspace.js';
+import { nodeAddrFromUrn, urnFromNodeAddr } from './addressing.js';
 import {
-  decodeJson,
-  decodeNode,
-  encodeJson,
-  encodeNode,
-  type StoredNode,
-} from './node.js';
+  cbFragHash,
+  cbKey,
+  cbRange,
+  ciKey,
+  ciRange,
+  cpKey,
+  cpRange,
+  lftKey,
+  lvAddrBytes,
+  lvKey,
+  lvRange,
+  nodeKey,
+  nodeRange,
+  ovKey,
+  ovrKey,
+  prKey,
+  rgtKey,
+} from './keyspace.js';
+import { decodeJson, decodeNode, encodeJson, encodeNode, type StoredNode } from './node.js';
 
-export interface PutResult {
-  created: boolean;
-}
-export interface PutManyResult {
-  created: number;
-  dedup: number;
-}
+const EMPTY = new Uint8Array(0);
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+export interface PutResult { created: boolean; }
+export interface PutManyResult { created: number; dedup: number; }
+export interface ComposeResult { created: number; dedup: number; topUri: string; }
 
 export class PgslStore {
   constructor(private readonly fdb: FdbLike) {}
@@ -41,33 +53,64 @@ export class PgslStore {
   async put(node: StoredNode): Promise<PutResult> {
     const key = nodeKey(nodeAddrFromUrn(node.uri));
     return this.fdb.transact(async (txn) => {
-      const existing = await txn.get(key);
-      if (existing !== undefined) return { created: false };
+      if ((await txn.get(key)) !== undefined) return { created: false };
       txn.set(key, encodeNode(node));
       return { created: true };
     });
   }
 
-  /**
-   * Write a whole set of nodes (e.g. a lattice slice) in ONE transaction —
-   * atomic and idempotent. Two writers persisting the same slice touch identical
-   * content-addressed keys, so the loser's writes are no-ops (convergent).
-   */
+  /** Write a set of nodes in ONE transaction — atomic + idempotent (convergent). */
   async putMany(nodes: readonly StoredNode[]): Promise<PutManyResult> {
     return this.fdb.transact(async (txn) => {
       let created = 0;
       let dedup = 0;
       for (const node of nodes) {
         const key = nodeKey(nodeAddrFromUrn(node.uri));
-        const existing = await txn.get(key);
-        if (existing === undefined) {
-          txn.set(key, encodeNode(node));
-          created++;
-        } else {
-          dedup++;
-        }
+        if ((await txn.get(key)) === undefined) { txn.set(key, encodeNode(node)); created++; }
+        else dedup++;
       }
       return { created, dedup };
+    });
+  }
+
+  /**
+   * Compose a whole lattice slice into the store in ONE transaction: the nodes
+   * (set-if-absent), the structural index rows (CI fragment->items, CB
+   * item->fragments, LFT/RGT pullback, LV level slice), the persistence-registry
+   * rows (PR, tier 2 = pod), and the overlay (OV resource->holon, OVR
+   * holon->resources) committed together so a reader never sees a partial holon.
+   * Two writers composing the same slice touch identical keys → convergent no-op.
+   * `top` = the highest-level node in the slice.
+   */
+  async compose(
+    slice: readonly StoredNode[],
+    opts: { pod: string; resource: string },
+  ): Promise<ComposeResult> {
+    if (slice.length === 0) throw new Error('compose: empty slice');
+    const top = slice.reduce((a, b) => (b.level >= a.level ? b : a));
+    return this.fdb.transact(async (txn) => {
+      let created = 0;
+      let dedup = 0;
+      for (const node of slice) {
+        const addr = nodeAddrFromUrn(node.uri);
+        const nkey = nodeKey(addr);
+        if ((await txn.get(nkey)) === undefined) { txn.set(nkey, encodeNode(node)); created++; }
+        else dedup++;
+        txn.set(lvKey(node.level, addr), EMPTY);
+        txn.set(prKey(addr, 2), encodeJson({ tier: 2 }));
+        if (node.kind === 'fragment') {
+          (node.items ?? []).forEach((itemUri, pos) => {
+            const itemAddr = nodeAddrFromUrn(itemUri);
+            txn.set(ciKey(addr.hash, pos), enc.encode(itemUri));
+            txn.set(cbKey(itemAddr, addr.hash), EMPTY);
+          });
+          if (node.left) txn.set(lftKey(nodeAddrFromUrn(node.left).hash, addr.hash), EMPTY);
+          if (node.right) txn.set(rgtKey(nodeAddrFromUrn(node.right).hash, addr.hash), EMPTY);
+        }
+      }
+      txn.set(ovKey(opts.pod, opts.resource), enc.encode(top.uri));
+      txn.set(ovrKey(nodeAddrFromUrn(top.uri).hash, opts.pod, opts.resource), EMPTY);
+      return { created, dedup, topUri: top.uri };
     });
   }
 
@@ -80,10 +123,49 @@ export class PgslStore {
     });
   }
 
+  /** Resolve the holon an LDP resource projects (via the OV overlay). */
+  async resolveResource(pod: string, resource: string): Promise<StoredNode | null> {
+    return this.fdb.transact(async (txn) => {
+      const v = await txn.get(ovKey(pod, resource));
+      if (v === undefined) return null;
+      const nv = await txn.get(nodeKey(nodeAddrFromUrn(dec.decode(v))));
+      return nv === undefined ? null : decodeNode(nv);
+    });
+  }
+
+  /** A fragment's ordered item URIs (via the CI index — range read, no scan). */
+  async fragmentItems(fragUri: string): Promise<string[]> {
+    const { begin, end } = ciRange(nodeAddrFromUrn(fragUri).hash);
+    return this.fdb.transact(async (txn) => {
+      const rows = await txn.getRange(begin, end); // key order = ascending position
+      return rows.map((r) => dec.decode(r.value));
+    });
+  }
+
+  /** Which fragments contain an atom/fragment (via the CB index). */
+  async fragmentsContaining(itemUri: string): Promise<string[]> {
+    const { begin, end } = cbRange(nodeAddrFromUrn(itemUri));
+    return this.fdb.transact(async (txn) => {
+      const rows = await txn.getRange(begin, end);
+      return rows.map((r) => urnFromNodeAddr({ kind: 'fragment', hash: cbFragHash(r.key) }));
+    });
+  }
+
+  /** All node URIs at a given level (via the LV index). */
+  async levelSlice(level: number): Promise<string[]> {
+    const { begin, end } = lvRange(level);
+    return this.fdb.transact(async (txn) => {
+      const rows = await txn.getRange(begin, end);
+      return rows.map((r) => {
+        const b = lvAddrBytes(r.key);
+        return urnFromNodeAddr({ kind: b[0] === 0x01 ? 'atom' : 'fragment', hash: b.slice(1) });
+      });
+    });
+  }
+
   /**
    * Rebuild the node registry from the durable store — with node BODIES, not
-   * just recomputable URIs. This is the fix for the in-memory-singleton restart
-   * loss: after a process restart the lattice is reconstructed from here.
+   * just recomputable URIs. The fix for in-memory-singleton restart loss.
    */
   async rehydrate(): Promise<Map<string, StoredNode>> {
     const { begin, end } = nodeRange();
@@ -99,14 +181,9 @@ export class PgslStore {
   }
 
   // ── Mutable control-plane (.internal accounts / idp clients / sessions) ──
-  // FDB does native UPDATE/DELETE, so password rotation + client/session
-  // revocation live here — the thing grow-only content-addressed CAS cannot do.
-
   async cpSet(collection: string, id: string, doc: unknown): Promise<void> {
     const key = cpKey(collection, id);
-    await this.fdb.transact(async (txn) => {
-      txn.set(key, encodeJson(doc));
-    });
+    await this.fdb.transact(async (txn) => { txn.set(key, encodeJson(doc)); });
   }
   async cpGet<T = unknown>(collection: string, id: string): Promise<T | null> {
     const key = cpKey(collection, id);
@@ -117,16 +194,11 @@ export class PgslStore {
   }
   async cpDelete(collection: string, id: string): Promise<void> {
     const key = cpKey(collection, id);
-    await this.fdb.transact(async (txn) => {
-      txn.clear(key);
-    });
+    await this.fdb.transact(async (txn) => { txn.clear(key); });
   }
-  /** Revoke a whole control-plane collection (e.g. all of a user's credentials). */
   async cpClearCollection(collection: string): Promise<void> {
     const { begin, end } = cpRange(collection);
-    await this.fdb.transact(async (txn) => {
-      txn.clearRange(begin, end);
-    });
+    await this.fdb.transact(async (txn) => { txn.clearRange(begin, end); });
   }
 }
 
