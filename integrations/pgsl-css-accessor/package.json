@@ -8,8 +8,7 @@
     "test:it": "tsx test/accessor.it.ts"
   },
   "dependencies": {
-    "@solid/community-server": "^7.1.9",
-    "foundationdb": "^2.0.0"
+    "@solid/community-server": "^7.1.9"
   },
   "devDependencies": {
     "tsx": "^4.22.0"

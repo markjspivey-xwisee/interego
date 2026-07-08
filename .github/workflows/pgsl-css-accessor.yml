@@ -44,8 +44,11 @@ jobs:
           npm run build --workspace @interego/core
           npm run build --workspace @interego/abac
           npm run build --workspace @interego/pgsl-store
+          # pgsl-store/dist/fdb-real.js resolves `foundationdb` relative to ITS
+          # location (root node_modules), so install the native binding at root.
+          npm install --no-save foundationdb@2
 
-      - name: Install isolated accessor deps (CSS + native foundationdb)
+      - name: Install isolated accessor deps (@solid/community-server + tsx)
         working-directory: integrations/pgsl-css-accessor
         run: npm install
 
