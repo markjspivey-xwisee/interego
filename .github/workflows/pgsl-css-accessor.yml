@@ -1,0 +1,56 @@
+name: pgsl-css-accessor (CSS DataAccessor over PGSL)
+
+# Stage 2: verifies the Community Solid Server DataAccessor backed by the PGSL
+# store, exercised against a live FoundationDB on Linux. The accessor + its heavy
+# deps (@solid/community-server + native foundationdb) live in an isolated dir,
+# so this does NOT affect the main workspace install.
+
+on:
+  push:
+    paths:
+      - 'integrations/pgsl-css-accessor/**'
+      - 'packages/pgsl-store/**'
+      - '.github/workflows/pgsl-css-accessor.yml'
+  workflow_dispatch:
+
+jobs:
+  css-accessor-integration:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install FoundationDB (client + single-node server)
+        run: |
+          set -euxo pipefail
+          FDB=7.3.27
+          base="https://github.com/apple/foundationdb/releases/download/${FDB}"
+          curl -fsSL -o fdb-clients.deb "${base}/foundationdb-clients_${FDB}-1_amd64.deb"
+          curl -fsSL -o fdb-server.deb  "${base}/foundationdb-server_${FDB}-1_amd64.deb"
+          sudo dpkg -i fdb-clients.deb fdb-server.deb || sudo apt-get -f install -y
+          sudo service foundationdb start || true
+          for i in $(seq 1 30); do
+            if fdbcli --exec "status minimal" | grep -q "available"; then break; fi
+            fdbcli --exec "configure new single ssd" || true
+            sleep 2
+          done
+          fdbcli --exec "status minimal"
+
+      - name: Build pgsl-store dist (its accessor path has no @interego runtime deps)
+        run: |
+          npm ci
+          npm run build --workspace @interego/core
+          npm run build --workspace @interego/abac
+          npm run build --workspace @interego/pgsl-store
+
+      - name: Install isolated accessor deps (CSS + native foundationdb)
+        working-directory: integrations/pgsl-css-accessor
+        run: npm install
+
+      - name: Run the PgslDataAccessor integration against real FoundationDB
+        working-directory: integrations/pgsl-css-accessor
+        env:
+          FDB_CLUSTER_FILE: /etc/foundationdb/fdb.cluster
+        run: npm run test:it

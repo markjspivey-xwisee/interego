@@ -1,0 +1,17 @@
+{
+  "name": "pgsl-css-accessor",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Community Solid Server DataAccessor backed by the PGSL store (Stage 2). Isolated from the main npm workspace because it depends on the heavy @solid/community-server + the native foundationdb binding; imports pgsl-store's built dist directly. Verified against a real FoundationDB in CI.",
+  "scripts": {
+    "test:it": "tsx test/accessor.it.ts"
+  },
+  "dependencies": {
+    "@solid/community-server": "^7.1.9",
+    "foundationdb": "^2.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.22.0"
+  }
+}
