@@ -19,4 +19,17 @@ export * from './addressing.js';
 export * from './fdb-like.js';
 export { InMemoryFdb, MemFdbConflict } from './mem-fdb.js';
 export * from './node.js';
-export { PgslStore, openStore, type PutResult, type PutManyResult } from './store.js';
+export {
+  PgslStore,
+  openStore,
+  type PutResult,
+  type PutManyResult,
+  type ComposeResult,
+} from './store.js';
+export * from './attributes.js';
+export { clearancePdp, type Pdp, type Verdict } from './abac-pdp.js';
+export {
+  projectHolonFor,
+  type ProjectedHolon,
+  type ProjectedAtom,
+} from './project.js';

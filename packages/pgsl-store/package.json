@@ -18,6 +18,7 @@
   "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
   "engines": { "node": ">=20.0.0" },
   "dependencies": {
+    "@interego/abac": "*",
     "@interego/core": "*",
     "@interego/pgsl": "*"
   },

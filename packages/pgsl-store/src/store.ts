@@ -18,6 +18,10 @@
 import type { FdbLike } from './fdb-like.js';
 import { nodeAddrFromUrn, urnFromNodeAddr } from './addressing.js';
 import {
+  aaAtomAddrBytes,
+  aaKey,
+  aaScopeRange,
+  aaxKey,
   cbFragHash,
   cbKey,
   cbRange,
@@ -37,6 +41,7 @@ import {
   rgtKey,
 } from './keyspace.js';
 import { decodeJson, decodeNode, encodeJson, encodeNode, type StoredNode } from './node.js';
+import type { AtomAccessAttributes } from './attributes.js';
 
 const EMPTY = new Uint8Array(0);
 const enc = new TextEncoder();
@@ -175,6 +180,40 @@ export class PgslStore {
       for (const { value } of rows) {
         const n = decodeNode(value);
         out.set(n.uri, n);
+      }
+      return out;
+    });
+  }
+
+  // ── Per-atom (edge-scoped) ABAC attributes (AA + AAX) ──
+  // The value's identity never carries its access class; class lives on the
+  // containing edge (scope), so one shared atom can be public in one holon and
+  // secret in another. Written/read only by a trusted mediator's PDP.
+
+  async putAtomAttributes(scope: string, atomUri: string, attrs: AtomAccessAttributes): Promise<void> {
+    const addr = nodeAddrFromUrn(atomUri);
+    await this.fdb.transact(async (txn) => {
+      txn.set(aaKey(scope, addr), encodeJson(attrs));
+      txn.set(aaxKey(scope, attrs.classification, addr), EMPTY);
+    });
+  }
+  async getAtomAttributes(scope: string, atomUri: string): Promise<AtomAccessAttributes | undefined> {
+    const addr = nodeAddrFromUrn(atomUri);
+    return this.fdb.transact(async (txn) => {
+      const v = await txn.get(aaKey(scope, addr));
+      return v === undefined ? undefined : decodeJson<AtomAccessAttributes>(v);
+    });
+  }
+  /** All atom attributes recorded in a scope (edge/holon) — one prefix scan. */
+  async getHolonAtomAttributes(scope: string): Promise<Map<string, AtomAccessAttributes>> {
+    const { begin, end } = aaScopeRange(scope);
+    return this.fdb.transact(async (txn) => {
+      const rows = await txn.getRange(begin, end);
+      const out = new Map<string, AtomAccessAttributes>();
+      for (const r of rows) {
+        const b = aaAtomAddrBytes(r.key);
+        const uri = urnFromNodeAddr({ kind: b[0] === 0x01 ? 'atom' : 'fragment', hash: b.slice(1) });
+        out.set(uri, decodeJson<AtomAccessAttributes>(r.value));
       }
       return out;
     });
