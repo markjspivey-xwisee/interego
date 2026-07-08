@@ -44,7 +44,7 @@ export async function openRealFdb(opts: FdbRealOptions = {}): Promise<FdbLike> {
     clear: (key) => { tn.clear(toBuf(key)); },
     clearRange: (begin, end) => { tn.clearRange(toBuf(begin), toBuf(end)); },
     getRange: async (begin, end) => {
-      const arr: any[] = await tn.getRange(toBuf(begin), toBuf(end)).asArray();
+      const arr: any[] = await tn.getRangeAll(toBuf(begin), toBuf(end));
       const out: KeyValue[] = [];
       for (const kv of arr) {
         // The binding may yield [key, value] tuples or {key, value} objects.
