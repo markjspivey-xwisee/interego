@@ -34,3 +34,10 @@ export {
   type ProjectedAtom,
 } from './project.js';
 export { openRealFdb, type FdbRealOptions } from './fdb-real.js';
+export {
+  CodecRegistry,
+  type Codec,
+  type IngestResult,
+  type IngestOptions,
+} from './codec.js';
+export { rdfCodec, splitTurtleStatements, rdfOpaqueUri } from './codec-rdf.js';
