@@ -18,7 +18,8 @@ import type { FdbLike, FdbTxn, Key, KeyValue } from './fdb-like.js';
 export interface FdbRealOptions {
   /** Path to fdb.cluster; omit to use the FDB default. */
   clusterFile?: string;
-  /** FDB API version (default 730). */
+  /** FDB API version (default 720 — the max the node-foundationdb binding
+   *  supports; a 7.x server accepts 720 clients). */
   apiVersion?: number;
 }
 
@@ -29,7 +30,7 @@ export async function openRealFdb(opts: FdbRealOptions = {}): Promise<FdbLike> {
   // actually used (CI integration + production), so the package compiles + imports
   // fine without it.
   const fdb: any = await import('foundationdb');
-  fdb.setAPIVersion(opts.apiVersion ?? 730);
+  fdb.setAPIVersion(opts.apiVersion ?? 720);
   const db: any = opts.clusterFile ? fdb.open(opts.clusterFile) : fdb.open();
 
   const toBuf = (u: Uint8Array): any => Buffer.from(u.buffer, u.byteOffset, u.byteLength);
