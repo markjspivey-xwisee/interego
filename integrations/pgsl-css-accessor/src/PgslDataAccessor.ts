@@ -24,6 +24,7 @@ import {
   RDF,
   LDP,
   POSIX,
+  DC,
   type DataAccessor,
   type Representation,
   type ResourceIdentifier,
@@ -69,6 +70,11 @@ export class PgslDataAccessor implements DataAccessor {
     md.contentType = res.contentType;
     md.add(RDF.terms.type, LDP.terms.Resource);
     md.set(POSIX.terms.size, `${res.bytes.length}`);
+    // dc:modified -> CSS's BasicETagHandler emits an ETag ("<mtime>-<ct>"), which
+    // restores If-Match/If-None-Match optimistic concurrency. Without it, @interego/
+    // solid's manifest read-modify-write falls back to `If-None-Match: *` and 412s on
+    // every 2nd+ publish to a pod (the file backend provided this via file mtime).
+    md.set(DC.terms.modified, new Date(res.updatedAt).toISOString());
     return md;
   }
 

@@ -66,6 +66,32 @@ async function main(): Promise<void> {
     const rootTxt = await root.text();
     assert.ok(rootTxt.includes('pgsl-doc.ttl'), 'root container lists the new document');
 
+    // ETag / optimistic concurrency (the manifest-CAS regression fix): a document
+    // GET must carry an ETag, If-Match CAS must round-trip, and a stale If-Match
+    // must 412. Without dc:modified this ETag is absent and @interego/solid's
+    // manifest read-modify-write silently caps a pod at one indexed descriptor.
+    const etagTarget = `${baseUrl}etag-doc.ttl`;
+    await fetch(etagTarget, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: 'ex:s ex:p "v1" .\n' });
+    const g1 = await fetch(etagTarget, { headers: { accept: 'text/turtle' } });
+    const etag1 = g1.headers.get('etag');
+    assert.ok(etag1 && etag1.length > 0, `GET returns a non-empty ETag (got ${etag1})`);
+    const upd = await fetch(etagTarget, {
+      method: 'PUT',
+      headers: { 'content-type': 'text/turtle', 'if-match': etag1! },
+      body: 'ex:s ex:p "v2" .\n',
+    });
+    assert.ok(upd.ok, `If-Match CAS update should succeed (status ${upd.status})`);
+    const g2 = await fetch(etagTarget, { headers: { accept: 'text/turtle' } });
+    const etag2 = g2.headers.get('etag');
+    assert.ok(etag2 && etag2 !== etag1, `ETag should change after write (${etag1} -> ${etag2})`);
+    const stale = await fetch(etagTarget, {
+      method: 'PUT',
+      headers: { 'content-type': 'text/turtle', 'if-match': etag1! },
+      body: 'ex:s ex:p "v3" .\n',
+    });
+    assert.equal(stale.status, 412, `stale If-Match should 412 (got ${stale.status})`);
+    await fetch(etagTarget, { method: 'DELETE' });
+
     // DELETE -> subsequent GET is 404.
     const del = await fetch(target, { method: 'DELETE' });
     assert.ok(del.ok, `DELETE should succeed (status ${del.status})`);
