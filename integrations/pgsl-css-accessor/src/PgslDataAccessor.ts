@@ -54,14 +54,17 @@ export class PgslDataAccessor implements DataAccessor {
 
   async getMetadata(identifier: ResourceIdentifier): Promise<RepresentationMetadata> {
     if (identifier.path.endsWith('/')) {
-      const exists =
-        (await this.ldp.readResource(this.pod, identifier.path)) !== null ||
-        (await this.ldp.listContainer(this.pod, identifier.path)).length > 0;
+      const marker = await this.ldp.readResource(this.pod, identifier.path);
+      const exists = marker !== null || (await this.ldp.listContainer(this.pod, identifier.path)).length > 0;
       if (!exists) throw new NotFoundHttpError();
       const md = new RepresentationMetadata(identifier);
       md.add(RDF.terms.type, LDP.terms.Container);
       md.add(RDF.terms.type, LDP.terms.BasicContainer);
       md.add(RDF.terms.type, LDP.terms.Resource);
+      // Same dc:modified -> ETag/Last-Modified/304/If-Match support as documents.
+      // CSS refreshes the container marker's timestamp on every child add/delete,
+      // so this makes container conditional requests work too (was container-only gap).
+      if (marker) md.set(DC.terms.modified, new Date(marker.updatedAt).toISOString());
       return md;
     }
     const res = await this.ldp.readResource(this.pod, identifier.path);
@@ -81,7 +84,15 @@ export class PgslDataAccessor implements DataAccessor {
   async *getChildren(identifier: ResourceIdentifier): AsyncIterableIterator<RepresentationMetadata> {
     const children = await this.ldp.listContainer(this.pod, identifier.path);
     for (const childPath of children) {
-      yield new RepresentationMetadata({ path: childPath });
+      const md = new RepresentationMetadata({ path: childPath });
+      // Type each child from its path (trailing slash = container) so the parent
+      // listing carries ldp:Resource/Container without a per-child metadata read.
+      md.add(RDF.terms.type, LDP.terms.Resource);
+      if (childPath.endsWith('/')) {
+        md.add(RDF.terms.type, LDP.terms.Container);
+        md.add(RDF.terms.type, LDP.terms.BasicContainer);
+      }
+      yield md;
     }
   }
 

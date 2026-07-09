@@ -97,6 +97,14 @@ async function main(): Promise<void> {
     const cg = await fetch(`${base}dir/`, { headers: { accept: 'text/turtle' } });
     const cgt = await cg.text();
     check('container GET lists child (ldp:contains)', cg.ok && cgt.includes('x.ttl'), `status ${cg.status}`);
+    // container conditional requests (dc:modified on the container branch)
+    const cEtag = cg.headers.get('etag');
+    const cLm = cg.headers.get('last-modified');
+    check('container GET carries ETag + Last-Modified', !!cEtag && !!cLm, `etag ${cEtag} lm ${cLm}`);
+    if (cEtag) {
+      const c304 = await fetch(`${base}dir/`, { headers: { accept: 'text/turtle', 'if-none-match': cEtag } });
+      check('container conditional GET (If-None-Match) -> 304', c304.status === 304, `status ${c304.status}`);
+    }
     const delNon = await fetch(`${base}dir/`, { method: 'DELETE' });
     check('DELETE non-empty container -> 409', delNon.status === 409, `status ${delNon.status}`);
     const over = await fetch(`${base}dir`, { method: 'PUT', headers: { 'content-type': 'text/turtle' }, body: ttl('o') });
