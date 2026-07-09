@@ -12,10 +12,22 @@
  *
  * Model: one table `kv(k bytea PRIMARY KEY, v bytea)`. The keyspace's
  * order-preserving byte keys are bytea PKs (Postgres compares bytea bytewise), so
- * `getRange` is an indexed `k >= begin AND k < end ORDER BY k` scan. Each
- * transaction is a SERIALIZABLE Postgres transaction with retry on
- * serialization_failure (40001) / deadlock (40P01) — that is what gives the
- * two-writer convergence + all-or-nothing atomicity the store relies on.
+ * `getRange` is an indexed `k >= begin AND k < end ORDER BY k` scan.
+ *
+ * Isolation = READ COMMITTED (with retry on the rare deadlock 40P01). NOT
+ * SERIALIZABLE: the store never depends on cross-key serializability. Every write
+ * is either content-addressed (the value is a pure function of the key, so two
+ * writers of the same node/index row converge via `ON CONFLICT DO UPDATE` — the
+ * `created`/`dedup` counts are best-effort stats, not invariants) or intentional
+ * last-writer-wins (the mutable control-plane). Atomicity ("a reader never sees a
+ * partial holon") comes from BEGIN..COMMIT, which holds at any isolation level.
+ * Optimistic CAS that DOES matter (the CSS If-Match/ETag manifest update) is
+ * serialized a layer up by the CSS resource locker (memory/Redis), not here.
+ * SERIALIZABLE was over-strict for the LDP + notification workload: it flags
+ * convergent concurrent writes to shared atoms / index rows / notification state
+ * as read/write-dependency conflicts (40001), which under load exhaust retries and
+ * surface as 500s (observed: the contract battery over real Postgres). READ
+ * COMMITTED removes those false conflicts while preserving every real invariant.
  *
  * `pg` (node-postgres, pure JS — no native build) is loaded via dynamic import so
  * this package keeps zero hard runtime deps on it; install `pg` where
@@ -33,7 +45,9 @@ export interface PgStoreOptions {
   ensureSchema?: boolean;
 }
 
-const RETRYABLE = new Set(['40001', '40P01']); // serialization_failure, deadlock_detected
+// deadlock_detected (rare under READ COMMITTED) + serialization_failure (kept for
+// safety though READ COMMITTED does not raise it). Both are safe to retry whole.
+const RETRYABLE = new Set(['40P01', '40001']);
 
 export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
   // @ts-ignore optional dependency (pure-JS node-postgres), installed where used.
@@ -56,7 +70,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           if (pending.length) await Promise.all(pending.splice(0));
         };
         try {
-          await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+          await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
           const txn: FdbTxn = {
             get: async (key: Key) => {
               await flush();
