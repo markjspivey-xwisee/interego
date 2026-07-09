@@ -13,9 +13,23 @@ if [ -z "${PGSL_PG_CONNSTR:-}" ]; then
   exit 1
 fi
 
-echo "Starting CSS-on-PGSL on port ${PORT}, baseUrl ${BASE_URL}"
+# Locker selection: REDIS_ADDR set (a redis:// URL) -> shared Redis locker
+# (safe multi-replica over the coherent Postgres backend); otherwise the
+# process-local memory locker (single replica; also used by CI/local tests).
+CONFIG=config/pgsl-server.json
+if [ -n "${REDIS_ADDR:-}" ]; then
+  CONFIG=config/pgsl-server-redis.json
+  # Substitute the redis address into a writable copy of the config.
+  sed "s|__REDIS_ADDR__|${REDIS_ADDR}|g" "$CONFIG" > /tmp/pgsl-server-active.json
+  CONFIG=/tmp/pgsl-server-active.json
+  echo "Locker: shared Redis (${REDIS_ADDR})"
+else
+  echo "Locker: process-local memory (single replica)"
+fi
+
+echo "Starting CSS-on-PGSL on port ${PORT}, baseUrl ${BASE_URL}, config ${CONFIG}"
 exec npx --no-install community-solid-server \
-  -c config/pgsl-server.json \
+  -c "${CONFIG}" \
   -m . \
   -p "${PORT}" \
   -b "${BASE_URL}" \

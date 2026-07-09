@@ -1,0 +1,91 @@
+{
+  "comment": [
+    "MULTI-REPLICA variant of pgsl-server.json: identical (PGSL storage backend over",
+    "managed Postgres, allow-all, single-root, websockets) EXCEPT the process-local memory",
+    "resource-locker is replaced by a SHARED Redis locker, so multiple CSS replicas serialize",
+    "their per-resource operations through one Redis. This is now SAFE because the storage",
+    "backend is the COHERENT Postgres-backed PGSL lattice (not the incoherent AzureFile SMB",
+    "volume that made the old redis-locker attempt fail a concurrent-write torture test).",
+    "redisClient is sed-substituted from __REDIS_ADDR__ at boot by docker-entrypoint.sh",
+    "(a redis:// URL; locks are ephemeral, Lua-scripted, atomic across replicas)."
+  ],
+  "@context": [
+    "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+    "https://linkedsoftwaredependencies.org/bundles/npm/pgsl-css-accessor/^1.0.0/components/context.jsonld"
+  ],
+  "import": [
+    "css:config/app/init/initialize-root.json",
+    "css:config/app/main/default.json",
+    "css:config/app/variables/default.json",
+    "css:config/http/handler/default.json",
+    "css:config/http/middleware/default.json",
+    "css:config/http/notifications/websockets.json",
+    "css:config/http/server-factory/http.json",
+    "css:config/http/static/default.json",
+    "css:config/identity/access/public.json",
+    "css:config/identity/email/default.json",
+    "css:config/identity/handler/default.json",
+    "css:config/identity/oidc/default.json",
+    "css:config/identity/ownership/token.json",
+    "css:config/identity/pod/static.json",
+    "css:config/ldp/authentication/dpop-bearer.json",
+    "css:config/ldp/authorization/allow-all.json",
+    "css:config/ldp/handler/default.json",
+    "css:config/ldp/metadata-parser/default.json",
+    "css:config/ldp/metadata-writer/default.json",
+    "css:config/ldp/modes/default.json",
+    "css:config/storage/key-value/resource-store.json",
+    "css:config/storage/location/root.json",
+    "css:config/storage/middleware/default.json",
+    "css:config/util/auxiliary/acl.json",
+    "css:config/util/identifiers/suffix.json",
+    "css:config/util/index/default.json",
+    "css:config/util/logging/winston.json",
+    "css:config/util/representation-conversion/default.json",
+    "css:config/util/variables/default.json"
+  ],
+  "@graph": [
+    {
+      "comment": "Same DataAccessorBasedStore as the file backend, but with the PGSL accessor.",
+      "@id": "urn:solid-server:default:ResourceStore_Backend",
+      "@type": "DataAccessorBasedStore",
+      "identifierStrategy": { "@id": "urn:solid-server:default:IdentifierStrategy" },
+      "auxiliaryStrategy": { "@id": "urn:solid-server:default:AuxiliaryStrategy" },
+      "accessor": { "@id": "urn:pgsl-css:default:PgslDataAccessor" },
+      "metadataStrategy": { "@id": "urn:solid-server:default:MetadataStrategy" }
+    },
+    {
+      "comment": "The PGSL-backed DataAccessor. connectionString omitted -> read from PGSL_PG_CONNSTR.",
+      "@id": "urn:pgsl-css:default:PgslDataAccessor",
+      "@type": "PgslDataAccessorFactory",
+      "pod": "css"
+    },
+    {
+      "comment": "Shared Redis read-write/resource locker across replicas (ephemeral, atomic).",
+      "@id": "urn:solid-server:default:ResourceLocker",
+      "@type": "WrappedExpiringReadWriteLocker",
+      "locker": {
+        "@id": "urn:solid-server:default:RedisLocker",
+        "@type": "RedisLocker",
+        "redisClient": "__REDIS_ADDR__"
+      },
+      "expiration": 6000
+    },
+    {
+      "comment": "Start the RedisLocker (and clear any stale locks) on boot.",
+      "@id": "urn:solid-server:default:CleanupInitializer",
+      "@type": "SequenceHandler",
+      "handlers": [
+        { "@type": "InitializableHandler", "initializable": { "@id": "urn:solid-server:default:RedisLocker" } }
+      ]
+    },
+    {
+      "comment": "Close the Redis connection + delete remaining locks on shutdown.",
+      "@id": "urn:solid-server:default:CleanupFinalizer",
+      "@type": "SequenceHandler",
+      "handlers": [
+        { "@type": "FinalizableHandler", "finalizable": { "@id": "urn:solid-server:default:RedisLocker" } }
+      ]
+    }
+  ]
+}
