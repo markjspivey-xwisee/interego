@@ -21,7 +21,8 @@
     "build:components": "componentsjs-generator -s src -c dist/components -r pgsl --lenient",
     "build": "npm run build:ts && npm run build:components",
     "test:it": "tsx test/accessor.it.ts",
-    "test:server": "tsx test/server.it.ts"
+    "test:server": "tsx test/server.it.ts",
+    "test:contract": "tsx test/contract.it.ts"
   },
   "dependencies": {
     "@solid/community-server": "^7.1.9"

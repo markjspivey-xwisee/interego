@@ -88,8 +88,20 @@ jobs:
           PGSL_INMEM: '1'
         run: npm run test:server
 
+      - name: Solid/LDP contract battery — in-memory backend
+        working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
+        env:
+          PGSL_INMEM: '1'
+        run: npm run test:contract
+
       - name: Full CSS server over PGSL — REAL PostgreSQL (proves the deploy backend)
         working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
         env:
           PGSL_PG_CONNSTR: 'postgresql://postgres:postgres@localhost:5432/pgsl'
         run: npm run test:server
+
+      - name: Solid/LDP contract battery — REAL PostgreSQL (conditional reqs, PATCH, POST+Slug, CAS, containers)
+        working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
+        env:
+          PGSL_PG_CONNSTR: 'postgresql://postgres:postgres@localhost:5432/pgsl'
+        run: npm run test:contract
