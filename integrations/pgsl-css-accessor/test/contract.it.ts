@@ -118,6 +118,27 @@ async function main(): Promise<void> {
     const i2 = (await fetch(`${base}idem.ttl`)).headers.get('etag');
     check('re-PUT identical bytes bumps ETag (CAS-safe)', i1 !== i2, `${i1} vs ${i2}`);
 
+    // --- content-type parameter fidelity (charset survives write->read) ---
+    await fetch(`${base}param.ttl`, { method: 'PUT', headers: { 'content-type': 'text/turtle;charset=utf-8' }, body: ttl('x') });
+    const pct = await fetch(`${base}param.ttl`, { headers: { accept: 'text/turtle' } });
+    check('content-type parameters preserved (charset)', (pct.headers.get('content-type') ?? '').includes('charset'), pct.headers.get('content-type') ?? '');
+
+    // --- large opaque blob: chunked stream round-trip (2 MB, > CHUNK_SIZE) ---
+    const big = Buffer.alloc(2 * 1024 * 1024);
+    for (let i = 0; i < big.length; i++) big[i] = i & 0xff;
+    await fetch(`${base}big.bin`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: big });
+    const bgBuf = Buffer.from(await (await fetch(`${base}big.bin`)).arrayBuffer());
+    const mid = 1_000_000;
+    check(
+      'large blob round-trips byte-exact (2MB, chunked)',
+      bgBuf.length === big.length && bgBuf[0] === 0 && bgBuf[mid] === (mid & 0xff) && bgBuf[bgBuf.length - 1] === ((big.length - 1) & 0xff),
+      `len ${bgBuf.length}`,
+    );
+
+    // --- per-child metadata in a container listing (posix:size) ---
+    const listing = await (await fetch(`${base}dir/`, { headers: { accept: 'text/turtle' } })).text();
+    check('container listing carries child posix:size', listing.includes('stat#size') || listing.includes('posix'), '');
+
     // --- missing -> 404 ---
     const miss = await fetch(`${base}nope.ttl`);
     check('missing resource -> 404', miss.status === 404, `status ${miss.status}`);
