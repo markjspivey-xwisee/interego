@@ -43,7 +43,14 @@ echo "    ACR: $ACR_LOGIN_SERVER"
 az acr login --name "$ACR_NAME"
 
 # ── 3. Build & Push Images ───────────────────────────────────
-echo ">>> Building CSS image..."
+# NOTE: deploy/Dockerfile.css is the LEGACY file-backend image. The LIVE
+# interego-css was re-platformed onto the PGSL-on-Postgres deployable
+# (integrations/pgsl-css-accessor, image interego-css-pgsl). This DR script still
+# provisions the legacy file backend below; after it completes, swap to the PGSL
+# image + wire the backend (see the "Deploy CSS" note). To rebuild the PGSL image:
+# assemble a clean tree (packages/pgsl-store/dist + integrations/pgsl-css-accessor)
+# and `az acr build -t interego-css-pgsl:<tag> -f integrations/pgsl-css-accessor/Dockerfile <tree>`.
+echo ">>> Building CSS image (LEGACY file backend — see note; live app runs interego-css-pgsl)..."
 az acr build \
   --registry "$ACR_NAME" \
   --image interego-css:latest \
@@ -134,6 +141,15 @@ ACR_PASSWORD=$(az acr credential show --name "$ACR_NAME" --query "passwords[0].v
 
 # ── 5. Deploy CSS ─────────────────────────────────────────────
 echo ">>> Deploying CSS (Community Solid Server)..."
+# LEGACY single-replica file backend on ephemeral /data. The LIVE app runs the
+# PGSL-on-Postgres image instead: after this creates the app, restore the real
+# backend with:
+#   az containerapp update -n interego-css -g "$RESOURCE_GROUP" \
+#     --image "$ACR_LOGIN_SERVER/interego-css-pgsl:<tag>" \
+#     --set-env-vars PGSL_PG_CONNSTR=secretref:pgsl-connstr PORT=3456 \
+#                    REDIS_ADDR=interego-redis:6379 \
+#     --min-replicas 1 --max-replicas 3
+# (provision managed Postgres + a `pgsl-connstr` secret + the interego-redis app first).
 az containerapp create \
   --name "$CSS_APP" \
   --resource-group "$RESOURCE_GROUP" \
