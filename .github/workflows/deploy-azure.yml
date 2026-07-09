@@ -9,7 +9,7 @@ name: Deploy to Azure Container Apps
 #   - interego-pgsl-browser
 #   - interego-relay
 #   - interego-identity
-#   - interego-css                 (Solid pod server; file-backed storage on mounted volume)
+#   - interego-css                 (Solid pod server; PGSL-on-Postgres backend — deployed OUT-OF-BAND, see changes:css)
 #   - interego-css-gate            (write-gate fronting CSS; only external face of CSS after Fix A)
 #   - interego-foxxi-bridge        (Foxxi vertical bridge: MCP/REST surface for content intelligence)
 #   - interego-foxxi-dashboard     (Foxxi vertical operator console; Vite SPA via nginx)
@@ -141,10 +141,15 @@ jobs:
               - 'deploy/identity/**'
               - 'deploy/Dockerfile.identity'
               - '.github/workflows/deploy-azure.yml'
-            css:
-              - 'deploy/Dockerfile.css'
-              - 'examples/multi-agent/css-config.json'
-              - '.github/workflows/deploy-azure.yml'
+            # interego-css is intentionally NOT built/deployed by this workflow.
+            # It was re-platformed OUT-OF-BAND onto the PGSL-on-Postgres deployable
+            # (integrations/pgsl-css-accessor, image interego-css-pgsl) — a different
+            # build (clean-tree assembly + built pgsl-store dist) proven by
+            # pgsl-css-server.yml. Building deploy/Dockerfile.css here would roll the
+            # OLD file backend onto the live app, reverting the Postgres cutover
+            # (orphaning lazy-init pods + wiping Postgres-persisted OAuth/token/
+            # federation state + re-imposing single-replica). Deploy it manually
+            # (az containerapp update --image interego-css-pgsl:<tag>).
             css-gate:
               - 'deploy/Dockerfile.css-gate'
               - 'deploy/css-gate/**'
@@ -216,9 +221,8 @@ jobs:
           - image: interego-identity
             dockerfile: deploy/Dockerfile.identity
             filter: identity
-          - image: interego-css
-            dockerfile: deploy/Dockerfile.css
-            filter: css
+          # interego-css: NOT in this matrix — managed out-of-band as the PGSL
+          # deployable (integrations/pgsl-css-accessor). See the changes:css note.
           - image: interego-css-gate
             dockerfile: deploy/Dockerfile.css-gate
             filter: css-gate

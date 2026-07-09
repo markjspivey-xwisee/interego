@@ -163,7 +163,7 @@ For runnable demos of the trust substrate (auditor, ERC-8004 T0-T2, x402, afford
 ### Storage & content
 
 - **End-to-end encrypted pod content.** Every named graph is wrapped in an `X25519 + XSalsa20-Poly1305` envelope with one wrapped key per authorized agent. CSS / Azure Files / IPFS pinning services see only ciphertext. Descriptor *metadata* (facets, manifest entries) stays plaintext so federation queries still work. See [`docs/e2ee.md`](docs/e2ee.md).
-- **Persistent pod state.** Solid pod storage is file-backed with an Azure Files volume mounted at `/data`. State survives container restarts.
+- **Persistent pod state.** Solid pod storage is the content-addressed PGSL lattice over managed PostgreSQL (a custom CSS `DataAccessor`, [`integrations/pgsl-css-accessor`](integrations/pgsl-css-accessor)); the coherent transactional backend also lets CSS run multiple replicas behind a shared Redis locker. State survives restarts and is no longer bound to a single-replica Azure Files volume.
 - **Cleartext mirror for federation reasoning.** Cross-descriptor relationships inside encrypted payloads — `iep:revokedIf`, `prov:wasDerivedFrom`, `iep:supersedes`, `dct:conformsTo` — are extracted at publish time and threaded onto the cleartext descriptor so federation readers evaluate lineage, supersession, and schema conformance without decryption keys. One consolidated helper (`normalizePublishInputs`) runs on every publish path.
 
 ### Hypermedia & capabilities

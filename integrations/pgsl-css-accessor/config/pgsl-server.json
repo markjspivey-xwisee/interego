@@ -1,7 +1,8 @@
 {
   "comment": [
     "CSS server whose STORAGE BACKEND is the PGSL lattice (foundation-first Stage 5).",
-    "This is a DROP-IN for the live interego-css config (examples/multi-agent/css-config.json):",
+    "This IS the live interego-css config (it replaced the former file-backed",
+    "examples/multi-agent/css-config.json, which is now legacy):",
     "same import set — initialize-root + location/root (single root storage), allow-all",
     "authorization (content privacy is Interego client-side JWE, NOT ACLs), websockets",
     "notifications, memory resource-locker, suffix identifiers — with ONE change: the file",
