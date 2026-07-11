@@ -1,0 +1,60 @@
+'@context':
+  - https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld
+'@id': urn:exchange:release-42:accept-human
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkHumanReleaseManager
+  '@type': prov:Person
+  displayName: Release manager
+act:
+  '@id': urn:act:release-42:accept-a
+  '@type': amep:ProtocolAct
+  actType: amep:Accept
+  actor: did:key:z6MkHumanReleaseManager
+  expectedHead: urn:head:release-42:assert-a
+  acceptedAct: urn:act:release-42:assert-a
+  createdAt: '2026-07-11T14:03:00Z'
+  proof:
+    '@type': iep:SignedAuthorship
+    verificationMethod: did:key:z6MkHumanReleaseManager#key-1
+    created: '2026-07-11T14:03:00Z'
+    proofValue: zTestProofAcceptHuman
+memory:
+  '@id': urn:memory:release-42:answer-a
+  '@type': [amep:MemoryRecord, ieh:AgentMemory]
+  memoryKind: amep:Claim
+  governanceStatus: amep:Committed
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  semanticCid: urn:cid:rdfc-1.0:sha256:e0f05b3b44b58b4b302b67f3e3cb434dfaf5d36b14a2540bacc52bceb7dda81b
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: |
+      Release 42 should ship after the migration checksum and rollback drill
+      both pass. The evidence is linked from the deployment context.
+    epistemicStatus: iep:Asserted
+    attributedTo: did:key:z6MkAgentA
+head: urn:head:release-42:committed-a
+receipts:
+  - '@id': urn:receipt:release-42:accept-a
+    '@type': amep:Receipt
+    receiptFor: urn:act:release-42:accept-a
+    outcome: amep:Applied
+    previousHead: urn:head:release-42:assert-a
+    resultHead: urn:head:release-42:committed-a
+    generatedAt: '2026-07-11T14:03:01Z'
+    validationReport:
+      '@id': urn:report:release-42:accept-a
+      '@type': sh:ValidationReport
+      conforms: true
+affordances:
+  - '@id': urn:affordance:release-42:fork-committed-a
+    '@type': [iep:Affordance, hydra:Operation]
+    action: amep:Fork
+    target: https://interego.xwisee.com/amep/acts
+    method: POST
+    inputShape: amep:ForkInputShape
+    effect: Create an explicit Candidate branch without changing this committed head.
+representationTag: '"sha256-844a7a56a492318c9d7dabde1cf92eb29d58d7b3937f7954e52d5eb31aed7b31"'
+

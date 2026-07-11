@@ -1,0 +1,291 @@
+@prefix amep:  <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix dct:   <http://purl.org/dc/terms/> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+
+# SHACL Core shapes are used wherever possible. SHACL-SPARQL constraints cover
+# invariants that span the act, receipt, and memory nodes.
+
+amep:ExchangeShape a sh:NodeShape ;
+    sh:targetClass amep:Exchange ;
+    sh:property [
+        sh:path dct:conformsTo ;
+        sh:hasValue <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1> ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "An AMEP exchange MUST identify the versioned 0.1 profile IRI."
+    ] ;
+    sh:property [
+        sh:path amep:actor ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:or ( [ sh:class prov:Person ] [ sh:class prov:SoftwareAgent ] ) ;
+        sh:message "The actor MUST be a prov:Person or prov:SoftwareAgent."
+    ] ;
+    sh:property [
+        sh:path amep:act ;
+        sh:class amep:ProtocolAct ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "An exchange carries exactly one protocol act."
+    ] ;
+    sh:property [
+        sh:path amep:representationTag ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:pattern "^\\\"sha256-[0-9a-f]{64}\\\"$" ;
+        sh:message "representationTag MUST be a quoted strong ETag of the form \"sha256-<64 lowercase hex>\"."
+    ] .
+
+amep:ProtocolActShape a sh:NodeShape ;
+    sh:targetClass amep:ProtocolAct ;
+    sh:property [
+        sh:path amep:actType ;
+        sh:in ( amep:Ask amep:Assert amep:Challenge amep:Accept amep:Fork amep:Compose ) ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "actType MUST be Ask, Assert, Challenge, Accept, Fork, or Compose."
+    ] ;
+    sh:property [
+        sh:path amep:actor ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Every act MUST identify exactly one actor IRI."
+    ] ;
+    sh:property [
+        sh:path prov:startedAtTime ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Every act MUST carry one creation timestamp."
+    ] ;
+    sh:property [
+        sh:path iep:proof ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Every submitted act MUST carry one authorship proof."
+    ] ;
+    sh:sparql [
+        sh:message "Assert, Challenge, Accept, Fork, and Compose MUST declare expectedHead; last-write-wins is not permitted." ;
+        sh:select """
+            PREFIX amep: <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#>
+            SELECT $this WHERE {
+              $this amep:actType ?actType .
+              FILTER (?actType IN (amep:Assert, amep:Challenge, amep:Accept, amep:Fork, amep:Compose))
+              FILTER NOT EXISTS { $this amep:expectedHead ?expectedHead }
+            }
+        """
+    ] ;
+    sh:sparql [
+        sh:message "Challenge MUST identify challengedAct." ;
+        sh:select """
+            PREFIX amep: <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#>
+            SELECT $this WHERE {
+              $this amep:actType amep:Challenge .
+              FILTER NOT EXISTS { $this amep:challengedAct ?challengedAct }
+            }
+        """
+    ] ;
+    sh:sparql [
+        sh:message "Accept MUST identify acceptedAct." ;
+        sh:select """
+            PREFIX amep: <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#>
+            SELECT $this WHERE {
+              $this amep:actType amep:Accept .
+              FILTER NOT EXISTS { $this amep:acceptedAct ?acceptedAct }
+            }
+        """
+    ] ;
+    sh:sparql [
+        sh:message "Fork MUST identify parentHead and a non-empty branch label." ;
+        sh:select """
+            PREFIX amep: <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#>
+            SELECT $this WHERE {
+              $this amep:actType amep:Fork .
+              FILTER (
+                NOT EXISTS { $this amep:parentHead ?parentHead } ||
+                NOT EXISTS { $this amep:branch ?branch }
+              )
+            }
+        """
+    ] ;
+    sh:sparql [
+        sh:message "Compose MUST identify at least two distinct operands." ;
+        sh:select """
+            PREFIX amep: <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#>
+            SELECT $this WHERE {
+              $this amep:actType amep:Compose .
+              {
+                SELECT $this (COUNT(DISTINCT ?operand) AS ?count) WHERE {
+                  OPTIONAL { $this amep:operand ?operand }
+                } GROUP BY $this
+              }
+              FILTER (?count < 2)
+            }
+        """
+    ] .
+
+amep:ProofShape a sh:NodeShape ;
+    sh:targetObjectsOf iep:proof ;
+    sh:property [
+        sh:path iep:verificationMethod ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1
+    ] ;
+    sh:property [
+        sh:path iep:proofValue ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1
+    ] ;
+    sh:property [
+        sh:path iep:created ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 1 ;
+        sh:maxCount 1
+    ] .
+
+amep:MemoryRecordShape a sh:NodeShape ;
+    sh:targetClass amep:MemoryRecord ;
+    sh:property [
+        sh:path amep:memoryKind ;
+        sh:in ( amep:Observation amep:Claim amep:Commitment amep:Procedure amep:ContextualUse ) ;
+        sh:minCount 1 ;
+        sh:maxCount 1
+    ] ;
+    sh:property [
+        sh:path amep:governanceStatus ;
+        sh:in ( amep:Candidate amep:Committed amep:Superseded amep:Retracted amep:Expired amep:Redacted ) ;
+        sh:minCount 1 ;
+        sh:maxCount 1
+    ] ;
+    sh:property [
+        sh:path amep:integrityStatus ;
+        sh:in ( amep:Unverified amep:Verified ) ;
+        sh:minCount 1 ;
+        sh:maxCount 1
+    ] ;
+    sh:property [
+        sh:path amep:conformanceStatus ;
+        sh:in ( amep:Unchecked amep:Conformant amep:Nonconformant ) ;
+        sh:minCount 1 ;
+        sh:maxCount 1
+    ] ;
+    sh:property [
+        sh:path amep:semantic ;
+        sh:class amep:SemanticMaterial ;
+        sh:minCount 1 ;
+        sh:maxCount 1
+    ] ;
+    sh:property [
+        sh:path amep:semanticCid ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:pattern "^urn:cid:rdfc-1\\.0:sha256:[0-9a-f]{64}$" ;
+        sh:message "semanticCid MUST be derived from the RDFC-1.0 canonical semantic projection."
+    ] .
+
+amep:ContextualUseShape a sh:NodeShape ;
+    sh:targetClass amep:MemoryRecord ;
+    sh:sparql [
+        sh:message "ContextualUse MUST carry a reusedSemanticCid and its semantic material MUST reference a source with the identical semanticCid." ;
+        sh:select """
+            PREFIX amep: <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#>
+            SELECT $this WHERE {
+              $this amep:memoryKind amep:ContextualUse .
+              OPTIONAL { $this amep:reusedSemanticCid ?declared }
+              OPTIONAL {
+                $this amep:semantic ?semantic .
+                ?semantic amep:reuses ?source .
+                ?source amep:semanticCid ?sourceCid .
+              }
+              FILTER (!BOUND(?declared) || !BOUND(?sourceCid) || ?declared != ?sourceCid)
+            }
+        """
+    ] .
+
+amep:ReceiptShape a sh:NodeShape ;
+    sh:targetClass amep:Receipt ;
+    sh:property [ sh:path amep:receiptFor ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path amep:outcome ; sh:in ( amep:Applied amep:Rejected amep:Duplicate ) ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path prov:generatedAtTime ; sh:datatype xsd:dateTime ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path amep:validationReport ; sh:class sh:ValidationReport ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:sparql [
+        sh:message "An Applied receipt MUST identify resultHead." ;
+        sh:select """
+            PREFIX amep: <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#>
+            SELECT $this WHERE {
+              $this amep:outcome amep:Applied .
+              FILTER NOT EXISTS { $this amep:resultHead ?head }
+            }
+        """
+    ] .
+
+amep:AffordanceContractShape a sh:NodeShape ;
+    sh:targetObjectsOf iep:affordance ;
+    sh:class iep:Affordance ;
+    sh:class hydra:Operation ;
+    sh:property [ sh:path iep:action ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path hydra:target ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path hydra:method ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path amep:inputShape ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path amep:effect ; sh:datatype xsd:string ; sh:minCount 1 ] .
+
+amep:LifecycleTransitionShape a sh:NodeShape ;
+    sh:targetClass amep:Exchange ;
+    sh:sparql [
+        sh:message "Assert, Challenge, Fork, and Compose produce Candidate memory; a receipt MUST NOT auto-commit it." ;
+        sh:select """
+            PREFIX amep: <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#>
+            SELECT $this WHERE {
+              $this amep:act/amep:actType ?actType ;
+                    amep:memory/amep:governanceStatus amep:Committed .
+              FILTER (?actType IN (amep:Assert, amep:Challenge, amep:Fork, amep:Compose))
+            }
+        """
+    ] ;
+    sh:sparql [
+        sh:message "An Applied Accept MUST project the accepted memory as Committed." ;
+        sh:select """
+            PREFIX amep: <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#>
+            SELECT $this WHERE {
+              $this amep:act/amep:actType amep:Accept ;
+                    amep:receipt/amep:outcome amep:Applied .
+              FILTER NOT EXISTS { $this amep:memory/amep:governanceStatus amep:Committed }
+            }
+        """
+    ] .
+
+# Input shapes referenced by hypermedia controls.
+
+amep:AskInputShape
+    sh:property [ sh:path amep:actor ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+amep:AssertInputShape
+    sh:property [ sh:path amep:expectedHead ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path amep:memory ; sh:class amep:MemoryRecord ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+amep:ChallengeInputShape
+    sh:property [ sh:path amep:expectedHead ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path amep:challengedAct ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+amep:AcceptInputShape
+    sh:property [ sh:path amep:expectedHead ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path amep:acceptedAct ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+amep:ForkInputShape
+    sh:property [ sh:path amep:expectedHead ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path amep:parentHead ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path amep:branch ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+amep:ComposeInputShape
+    sh:property [ sh:path amep:expectedHead ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path amep:operand ; sh:nodeKind sh:IRI ; sh:minCount 2 ] .

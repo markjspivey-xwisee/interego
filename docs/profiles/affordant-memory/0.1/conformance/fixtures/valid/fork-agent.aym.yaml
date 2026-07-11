@@ -1,0 +1,60 @@
+'@context':
+  - https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld
+'@id': urn:exchange:release-42:fork-agent
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkAgentA
+  '@type': prov:SoftwareAgent
+  displayName: Agent A
+act:
+  '@id': urn:act:release-42:fork-a
+  '@type': amep:ProtocolAct
+  actType: amep:Fork
+  actor: did:key:z6MkAgentA
+  expectedHead: urn:head:release-42:committed-a
+  parentHead: urn:head:release-42:committed-a
+  branch: checksum-rerun
+  createdAt: '2026-07-11T14:04:00Z'
+  proof:
+    '@type': iep:SignedAuthorship
+    verificationMethod: did:key:z6MkAgentA#key-1
+    created: '2026-07-11T14:04:00Z'
+    proofValue: zTestProofForkAgentA
+memory:
+  '@id': urn:memory:release-42:checksum-rerun
+  '@type': [amep:MemoryRecord, ieh:AgentMemory]
+  memoryKind: amep:Procedure
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  semanticCid: urn:cid:rdfc-1.0:sha256:e45113f09d877d9a0d6f930890a52ea936162e38ab45f69b313da77057c2836c
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: |
+      Re-run the checksum against the immutable release artifact, attach the
+      digest and builder provenance, then request composition with the accepted plan.
+    epistemicStatus: iep:Hypothetical
+    attributedTo: did:key:z6MkAgentA
+head: urn:head:release-42:branch-a
+receipts:
+  - '@id': urn:receipt:release-42:fork-a
+    '@type': amep:Receipt
+    receiptFor: urn:act:release-42:fork-a
+    outcome: amep:Applied
+    previousHead: urn:head:release-42:committed-a
+    resultHead: urn:head:release-42:branch-a
+    generatedAt: '2026-07-11T14:04:01Z'
+    validationReport:
+      '@id': urn:report:release-42:fork-a
+      '@type': sh:ValidationReport
+      conforms: true
+affordances:
+  - '@id': urn:affordance:release-42:compose-after-fork
+    '@type': [iep:Affordance, hydra:Operation]
+    action: amep:Compose
+    target: https://interego.xwisee.com/amep/acts
+    method: POST
+    inputShape: amep:ComposeInputShape
+    effect: Compose this branch with another preserved branch in deterministic order.
+representationTag: '"sha256-aa4ffa9c6b06531a0ae590f21f3ca4de7876d8078b5c3b18d729b21ce1fafc97"'

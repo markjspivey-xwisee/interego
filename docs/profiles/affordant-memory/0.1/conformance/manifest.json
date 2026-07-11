@@ -1,0 +1,47 @@
+{
+  "profile": "https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1",
+  "cases": [
+    { "file": "fixtures/valid/ask-human.aym.yaml", "conforms": true },
+    { "file": "fixtures/valid/assert-agent.aym.yaml", "conforms": true },
+    { "file": "fixtures/valid/assert-human-projection.aym.yaml", "conforms": true },
+    { "file": "fixtures/valid/challenge-agent.aym.yaml", "conforms": true },
+    { "file": "fixtures/valid/accept-human.aym.yaml", "conforms": true },
+    { "file": "fixtures/valid/fork-agent.aym.yaml", "conforms": true },
+    { "file": "fixtures/valid/compose-human.aym.yaml", "conforms": true },
+    { "file": "fixtures/valid/contextual-use-agent.aym.yaml", "conforms": true },
+    { "file": "../examples/release-42.aym.yaml", "conforms": true },
+
+    { "file": "fixtures/invalid/assert-auto-commit.aym.yaml", "conforms": false, "expects": ["amep:LifecycleTransitionShape"] },
+    { "file": "fixtures/invalid/assert-missing-expected-head.aym.yaml", "conforms": false, "expects": ["amep:ExpectedHeadShape"] },
+    { "file": "fixtures/invalid/compose-unsorted.aym.yaml", "conforms": false, "expects": ["amep:DeterministicComposeShape"] },
+    { "file": "fixtures/invalid/contextual-use-rewrites-cid.aym.yaml", "conforms": false, "expects": ["amep:ContextualUseShape"] },
+    { "file": "fixtures/invalid/affordance-missing-input-shape.aym.yaml", "conforms": false, "expects": ["amep:AffordanceContractShape"] },
+    { "file": "fixtures/invalid/accept-no-commit.aym.yaml", "conforms": false, "expects": ["amep:LifecycleTransitionShape"] },
+    { "file": "fixtures/invalid/semantic-cid-mismatch.aym.yaml", "conforms": false, "expects": ["amep:SemanticCidShape"] },
+    { "file": "fixtures/invalid/proof-missing-verification-method.aym.yaml", "conforms": false, "expects": ["amep:ProofShape"] }
+  ],
+  "problems": [
+    {
+      "file": "examples/stale-head.problem.json",
+      "status": 412,
+      "required": ["type", "title", "status", "detail", "instance", "amep:rediscover"]
+    },
+    {
+      "file": "examples/invalid-act.problem.json",
+      "status": 422,
+      "required": ["type", "title", "status", "detail", "instance", "validationReport"]
+    },
+    {
+      "file": "examples/forbidden.problem.json",
+      "status": 403,
+      "required": ["type", "title", "status", "detail", "instance"],
+      "forbidden": ["currentHead", "expectedHead", "head", "memory", "policy", "policyReason", "affordances", "target"]
+    }
+  ],
+  "actionContractEquivalence": [
+    {
+      "left": "fixtures/valid/assert-agent.aym.yaml",
+      "right": "fixtures/valid/assert-human-projection.aym.yaml"
+    }
+  ]
+}

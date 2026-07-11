@@ -1047,6 +1047,7 @@ npm run test:watch   # Watch mode
 | Document | What it covers |
 |----------|---------------|
 | [Interego Protocol 1.0 WD](https://markjspivey-xwisee.github.io/interego/spec/interego-protocol-1.0-wd.html) | Core spec: descriptors, facets, composition, serialization |
+| [`docs/profiles/affordant-memory/0.1/`](docs/profiles/affordant-memory/0.1/) | Affordant Memory Exchange Profile 0.1: one YAML-LD hypermedia contract for human↔agent and agent↔agent acts, receipts, branching memory, contextual reuse, and deterministic replay |
 | [`spec/architecture.md`](spec/architecture.md) | Architecture overview + RDF 1.2 / SHACL 1.2 alignment statement |
 | [`spec/LAYERS.md`](spec/LAYERS.md) | Layering discipline (L1 / L2 / L3); namespace-as-projection-contract; drift triggers |
 | [`spec/DERIVATION.md`](spec/DERIVATION.md) | Construction rules: every L2/L3 class must ground in L1 (CI-enforced) |

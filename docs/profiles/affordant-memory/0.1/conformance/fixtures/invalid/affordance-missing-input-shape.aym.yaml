@@ -1,0 +1,26 @@
+'@context': [https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld]
+'@id': urn:exchange:invalid:affordance-shape
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkHumanReleaseManager
+  '@type': prov:Person
+act:
+  '@id': urn:act:invalid:affordance-shape
+  '@type': amep:ProtocolAct
+  actType: amep:Ask
+  actor: did:key:z6MkHumanReleaseManager
+  createdAt: '2026-07-11T15:04:00Z'
+  proof:
+    verificationMethod: did:key:z6MkHumanReleaseManager#key-1
+    created: '2026-07-11T15:04:00Z'
+    proofValue: zAffordanceShapeProof
+head: urn:head:invalid:affordance-shape
+affordances:
+  - '@id': urn:affordance:invalid:assert
+    '@type': [iep:Affordance, hydra:Operation]
+    action: amep:Assert
+    target: https://interego.xwisee.com/amep/acts
+    method: POST
+    effect: This control intentionally omits its input shape.
+representationTag: '"sha256-4d965b12aaa71cfc1ab565ff3f2f61d0125cceecbb694c22e0355b1143cc0630"'

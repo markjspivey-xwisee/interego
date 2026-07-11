@@ -1,0 +1,46 @@
+'@context': [https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld]
+'@id': urn:exchange:invalid:accept-no-commit
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkHumanReleaseManager
+  '@type': prov:Person
+act:
+  '@id': urn:act:invalid:accept-no-commit
+  '@type': amep:ProtocolAct
+  actType: amep:Accept
+  actor: did:key:z6MkHumanReleaseManager
+  expectedHead: urn:head:invalid:candidate
+  acceptedAct: urn:act:invalid:candidate
+  createdAt: '2026-07-11T15:05:00Z'
+  proof:
+    verificationMethod: did:key:z6MkHumanReleaseManager#key-1
+    created: '2026-07-11T15:05:00Z'
+    proofValue: zAcceptNoCommitProof
+memory:
+  '@id': urn:memory:invalid:accept-no-commit
+  '@type': amep:MemoryRecord
+  memoryKind: amep:Claim
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  semanticCid: urn:cid:rdfc-1.0:sha256:2c77f11992b6cd101c1705140ab9153fecdce6e136ae7c10424c8a1c8b099573
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: The Applied Accept incorrectly leaves this memory Candidate.
+    epistemicStatus: iep:Asserted
+    attributedTo: did:key:z6MkAgentA
+head: urn:head:invalid:accepted
+receipts:
+  - '@id': urn:receipt:invalid:accept-no-commit
+    '@type': amep:Receipt
+    receiptFor: urn:act:invalid:accept-no-commit
+    outcome: amep:Applied
+    previousHead: urn:head:invalid:candidate
+    resultHead: urn:head:invalid:accepted
+    generatedAt: '2026-07-11T15:05:01Z'
+    validationReport:
+      '@id': urn:report:invalid:accept-no-commit
+      '@type': sh:ValidationReport
+      conforms: true
+representationTag: '"sha256-abab891acf217279a08519f476bf59e0b2efe699a5ca77abe6e96d2e202ae3c0"'

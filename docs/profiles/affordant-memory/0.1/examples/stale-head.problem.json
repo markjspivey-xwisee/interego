@@ -1,0 +1,9 @@
+{
+  "type": "https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#stale-head",
+  "title": "Memory head precondition failed",
+  "status": 412,
+  "detail": "The submitted expectedHead is no longer current. No branch was overwritten.",
+  "instance": "urn:problem:release-42:stale-7",
+  "amep:rediscover": "https://interego.xwisee.com/amep/exchanges/release-42"
+}
+

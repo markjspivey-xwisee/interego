@@ -1,0 +1,26 @@
+{
+  "type": "https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#invalid-act",
+  "title": "Act failed profile validation",
+  "status": 422,
+  "detail": "The act did not satisfy its advertised SHACL input shape.",
+  "instance": "urn:problem:release-42:invalid-9",
+  "validationReport": {
+    "@context": {
+      "sh": "http://www.w3.org/ns/shacl#",
+      "amep": "https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#"
+    },
+    "@type": "sh:ValidationReport",
+    "sh:conforms": false,
+    "sh:result": [
+      {
+        "@type": "sh:ValidationResult",
+        "sh:focusNode": "urn:act:release-42:assert-invalid",
+        "sh:resultPath": "amep:expectedHead",
+        "sh:sourceShape": "amep:AssertInputShape",
+        "sh:resultSeverity": "sh:Violation",
+        "sh:resultMessage": "Assert MUST declare expectedHead."
+      }
+    ]
+  }
+}
+

@@ -1,0 +1,173 @@
+@prefix amep:  <https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix ie:    <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
+@prefix pgsl:  <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix dct:   <http://purl.org/dc/terms/> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix vann:  <http://purl.org/vocab/vann/> .
+
+<https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1>
+    a owl:Ontology ;
+    owl:versionInfo "0.1" ;
+    dct:title "Interego Affordant Memory Exchange Profile 0.1" ;
+    dct:description "An additive Interego profile for human-agent and agent-agent acts, signed receipts, conflict-preserving memory, contextual reuse, and hypermedia controls represented as Affordant YAML-LD Markdown." ;
+    dct:created "2026-07-11"^^xsd:date ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    vann:preferredNamespacePrefix "amep" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#" ;
+    owl:imports
+        <https://markjspivey-xwisee.github.io/interego/ns/iep#> ,
+        <https://markjspivey-xwisee.github.io/interego/ns/harness#> ,
+        <https://markjspivey-xwisee.github.io/interego/ns/interego#> ,
+        <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
+
+# Classes
+
+amep:Exchange a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "affordant memory exchange" ;
+    rdfs:comment "A negotiated projection containing one protocol act, its actor-scoped memory state, receipts, and currently available affordances. The exchange is a representation of Interego state, not a replacement for the underlying ContextDescriptor." .
+
+amep:ProtocolAct a owl:Class ;
+    rdfs:subClassOf prov:Activity ;
+    rdfs:label "protocol act" ;
+    rdfs:comment "A replayable human or software-agent act. Human and agent clients use the same action IRI, input shape, preconditions, and effects." .
+
+amep:Receipt a owl:Class ;
+    rdfs:subClassOf iep:Anchor, prov:Entity ;
+    rdfs:label "act receipt" ;
+    rdfs:comment "An immutable acknowledgement of an act outcome. Receipt of an act is not, by itself, commitment of the act's memory content." .
+
+amep:MemoryRecord a owl:Class ;
+    rdfs:subClassOf ieh:AgentMemory, prov:Entity ;
+    rdfs:label "memory record" ;
+    rdfs:comment "A lifecycle-bearing record whose semantic material is content-addressed independently from its governance state and wire representation." .
+
+amep:SemanticMaterial a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "semantic material" ;
+    rdfs:comment "The canonicalizable semantic projection used to derive amep:semanticCid. Governance status, receipts, representation tags, and encrypted-envelope identifiers are intentionally outside this projection." .
+
+amep:ContextualUseRecord a owl:Class ;
+    rdfs:subClassOf amep:MemoryRecord ;
+    rdfs:label "contextual use record" ;
+    rdfs:comment "A new interpretation that reuses an existing semantic CID without mutating the reused holon." .
+
+amep:Head a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "memory head" ;
+    rdfs:comment "A content-addressed lineage head. Concurrent valid heads are preserved until an explicit composition act relates them." .
+
+# Concept schemes and values
+
+amep:ActType a owl:Class, skos:ConceptScheme ;
+    skos:hasTopConcept amep:Ask, amep:Assert, amep:Challenge, amep:Accept, amep:Fork, amep:Compose .
+
+amep:Ask a skos:Concept, amep:ActType ; skos:inScheme amep:ActType ; skos:prefLabel "Ask" .
+amep:Assert a skos:Concept, amep:ActType ; skos:inScheme amep:ActType ; skos:prefLabel "Assert" .
+amep:Challenge a skos:Concept, amep:ActType ; skos:inScheme amep:ActType ; skos:prefLabel "Challenge" .
+amep:Accept a skos:Concept, amep:ActType ; skos:inScheme amep:ActType ; skos:prefLabel "Accept" .
+amep:Fork a skos:Concept, amep:ActType ; skos:inScheme amep:ActType ; skos:prefLabel "Fork" .
+amep:Compose a skos:Concept, amep:ActType ; skos:inScheme amep:ActType ; skos:prefLabel "Compose" .
+
+amep:MemoryKind a owl:Class, skos:ConceptScheme ;
+    skos:hasTopConcept amep:Observation, amep:Claim, amep:Commitment, amep:Procedure, amep:ContextualUse .
+
+amep:Observation a skos:Concept, amep:MemoryKind ; skos:inScheme amep:MemoryKind ; skos:prefLabel "Observation" .
+amep:Claim a skos:Concept, amep:MemoryKind ; skos:inScheme amep:MemoryKind ; skos:prefLabel "Claim" .
+amep:Commitment a skos:Concept, amep:MemoryKind ; skos:inScheme amep:MemoryKind ; skos:prefLabel "Commitment" .
+amep:Procedure a skos:Concept, amep:MemoryKind ; skos:inScheme amep:MemoryKind ; skos:prefLabel "Procedure" .
+amep:ContextualUse a skos:Concept, amep:MemoryKind ; skos:inScheme amep:MemoryKind ; skos:prefLabel "Contextual use" .
+
+amep:GovernanceStatus a owl:Class, skos:ConceptScheme ;
+    skos:hasTopConcept amep:Candidate, amep:Committed, amep:Superseded, amep:Retracted, amep:Expired, amep:Redacted .
+
+amep:Candidate a skos:Concept, amep:GovernanceStatus ; skos:inScheme amep:GovernanceStatus ; skos:prefLabel "Candidate" .
+amep:Committed a skos:Concept, amep:GovernanceStatus ; skos:inScheme amep:GovernanceStatus ; skos:prefLabel "Committed" .
+amep:Superseded a skos:Concept, amep:GovernanceStatus ; skos:inScheme amep:GovernanceStatus ; skos:prefLabel "Superseded" .
+amep:Retracted a skos:Concept, amep:GovernanceStatus ; skos:inScheme amep:GovernanceStatus ; skos:prefLabel "Retracted" .
+amep:Expired a skos:Concept, amep:GovernanceStatus ; skos:inScheme amep:GovernanceStatus ; skos:prefLabel "Expired" .
+amep:Redacted a skos:Concept, amep:GovernanceStatus ; skos:inScheme amep:GovernanceStatus ; skos:prefLabel "Redacted" .
+
+amep:ReceiptOutcome a owl:Class, skos:ConceptScheme ;
+    skos:hasTopConcept amep:Applied, amep:Rejected, amep:Duplicate .
+
+amep:Applied a skos:Concept, amep:ReceiptOutcome ; skos:inScheme amep:ReceiptOutcome ; skos:prefLabel "Applied" .
+amep:Rejected a skos:Concept, amep:ReceiptOutcome ; skos:inScheme amep:ReceiptOutcome ; skos:prefLabel "Rejected" .
+amep:Duplicate a skos:Concept, amep:ReceiptOutcome ; skos:inScheme amep:ReceiptOutcome ; skos:prefLabel "Duplicate" .
+
+amep:IntegrityStatus a owl:Class, skos:ConceptScheme ;
+    skos:hasTopConcept amep:Unverified, amep:Verified .
+amep:Unverified a skos:Concept, amep:IntegrityStatus ; skos:inScheme amep:IntegrityStatus ; skos:prefLabel "Unverified" .
+amep:Verified a skos:Concept, amep:IntegrityStatus ; skos:inScheme amep:IntegrityStatus ; skos:prefLabel "Verified" .
+
+amep:ConformanceStatus a owl:Class, skos:ConceptScheme ;
+    skos:hasTopConcept amep:Unchecked, amep:Conformant, amep:Nonconformant .
+amep:Unchecked a skos:Concept, amep:ConformanceStatus ; skos:inScheme amep:ConformanceStatus ; skos:prefLabel "Unchecked" .
+amep:Conformant a skos:Concept, amep:ConformanceStatus ; skos:inScheme amep:ConformanceStatus ; skos:prefLabel "Conformant" .
+amep:Nonconformant a skos:Concept, amep:ConformanceStatus ; skos:inScheme amep:ConformanceStatus ; skos:prefLabel "Nonconformant" .
+
+# RFC 9457 problem-type IRIs used by the HTTP binding.
+
+amep:stale-head a skos:Concept ;
+    skos:prefLabel "stale head" ;
+    skos:definition "A representation or semantic-head precondition did not match current state; no existing branch was overwritten." .
+
+amep:invalid-act a skos:Concept ;
+    skos:prefLabel "invalid act" ;
+    skos:definition "A submitted act failed its advertised input shape or another profile invariant." .
+
+amep:forbidden a skos:Concept ;
+    skos:prefLabel "forbidden" ;
+    skos:definition "The authenticated actor is not authorized to invoke the operation; the response reveals no protected state." .
+
+# Properties
+
+amep:actor a owl:ObjectProperty ; rdfs:subPropertyOf prov:wasAssociatedWith ; rdfs:range prov:Agent .
+amep:act a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:Exchange ; rdfs:range amep:ProtocolAct .
+amep:receipt a owl:ObjectProperty ; rdfs:domain amep:Exchange ; rdfs:range amep:Receipt .
+amep:memory a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:Exchange ; rdfs:range amep:MemoryRecord .
+amep:actType a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:ProtocolAct ; rdfs:range amep:ActType .
+amep:head a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:Exchange ; rdfs:range amep:Head .
+amep:expectedHead a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:ProtocolAct ; rdfs:range amep:Head .
+amep:previousHead a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:Receipt ; rdfs:range amep:Head .
+amep:resultHead a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:Receipt ; rdfs:range amep:Head .
+amep:parentHead a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:ProtocolAct ; rdfs:range amep:Head .
+amep:branch a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain amep:ProtocolAct ; rdfs:range xsd:string .
+amep:operand a owl:ObjectProperty ; rdfs:domain amep:ProtocolAct ; rdfs:range amep:Head .
+amep:acceptedAct a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:ProtocolAct ; rdfs:range amep:ProtocolAct .
+amep:challengedAct a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:ProtocolAct ; rdfs:range amep:ProtocolAct .
+amep:receiptFor a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:Receipt ; rdfs:range amep:ProtocolAct .
+amep:outcome a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:Receipt ; rdfs:range amep:ReceiptOutcome .
+amep:validationReport a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:Receipt ; rdfs:range sh:ValidationReport .
+amep:memoryKind a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:MemoryRecord ; rdfs:range amep:MemoryKind .
+amep:governanceStatus a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:MemoryRecord ; rdfs:range amep:GovernanceStatus .
+amep:integrityStatus a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:MemoryRecord ; rdfs:range amep:IntegrityStatus .
+amep:conformanceStatus a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:MemoryRecord ; rdfs:range amep:ConformanceStatus .
+amep:epistemicStatus a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:SemanticMaterial .
+amep:semantic a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:MemoryRecord ; rdfs:range amep:SemanticMaterial .
+amep:semanticCid a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:range xsd:string .
+amep:representationTag a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain amep:Exchange ; rdfs:range xsd:string .
+amep:envelopeCid a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain amep:Exchange ; rdfs:range xsd:string .
+amep:reuses a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain amep:SemanticMaterial ; rdfs:range amep:MemoryRecord .
+amep:reusedSemanticCid a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain amep:MemoryRecord ; rdfs:range xsd:string .
+amep:interpretation a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain amep:SemanticMaterial ; rdfs:range xsd:string .
+amep:inputShape a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:subPropertyOf hydra:expects ; rdfs:range sh:NodeShape .
+amep:effect a owl:DatatypeProperty ; rdfs:domain iep:Affordance ; rdfs:range xsd:string .
+
+# Input-shape identifiers used by controls. Their constraints are in shapes.ttl.
+
+amep:AskInputShape a sh:NodeShape .
+amep:AssertInputShape a sh:NodeShape .
+amep:ChallengeInputShape a sh:NodeShape .
+amep:AcceptInputShape a sh:NodeShape .
+amep:ForkInputShape a sh:NodeShape .
+amep:ComposeInputShape a sh:NodeShape .

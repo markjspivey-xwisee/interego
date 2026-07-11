@@ -1,0 +1,66 @@
+'@context':
+  - https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld
+'@id': urn:exchange:release-42:challenge-agent
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkAgentB
+  '@type': prov:SoftwareAgent
+  displayName: Agent B
+act:
+  '@id': urn:act:release-42:challenge-b
+  '@type': amep:ProtocolAct
+  actType: amep:Challenge
+  actor: did:key:z6MkAgentB
+  expectedHead: urn:head:release-42:assert-a
+  challengedAct: urn:act:release-42:assert-a
+  createdAt: '2026-07-11T14:02:00Z'
+  proof:
+    '@type': iep:SignedAuthorship
+    verificationMethod: did:key:z6MkAgentB#key-1
+    created: '2026-07-11T14:02:00Z'
+    proofValue: zTestProofChallengeAgentB
+memory:
+  '@id': urn:memory:release-42:challenge-b
+  '@type': [amep:MemoryRecord, ieh:AgentMemory]
+  memoryKind: amep:Claim
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  semanticCid: urn:cid:rdfc-1.0:sha256:7679a1be192ae44fa50c272886971db1fb802e740f4fdf3f2dbc61ec9a3700ba
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: |
+      The rollback drill passed, but the migration checksum used a stale
+      snapshot. Re-run it against the final artifact before accepting.
+    epistemicStatus: iep:Counterfactual
+    attributedTo: did:key:z6MkAgentB
+head: urn:head:release-42:branch-b
+receipts:
+  - '@id': urn:receipt:release-42:challenge-b
+    '@type': amep:Receipt
+    receiptFor: urn:act:release-42:challenge-b
+    outcome: amep:Applied
+    previousHead: urn:head:release-42:assert-a
+    resultHead: urn:head:release-42:branch-b
+    generatedAt: '2026-07-11T14:02:01Z'
+    validationReport:
+      '@id': urn:report:release-42:challenge-b
+      '@type': sh:ValidationReport
+      conforms: true
+affordances:
+  - '@id': urn:affordance:release-42:accept-challenge-b
+    '@type': [iep:Affordance, hydra:Operation]
+    action: amep:Accept
+    target: https://interego.xwisee.com/amep/acts
+    method: POST
+    inputShape: amep:AcceptInputShape
+    effect: Commit this challenge as the governed memory head.
+  - '@id': urn:affordance:release-42:compose-branches
+    '@type': [iep:Affordance, hydra:Operation]
+    action: amep:Compose
+    target: https://interego.xwisee.com/amep/acts
+    method: POST
+    inputShape: amep:ComposeInputShape
+    effect: Compose both dereferenceable branches into a new Candidate head.
+representationTag: '"sha256-bd3dc18d46ba1c2ca76ba4e72818a251ecfa10705802965f308f25779a15a5cc"'

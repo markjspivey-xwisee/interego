@@ -18,6 +18,18 @@ The suite is the *operational definition of Layer 1*. A change to the protocol i
 - Not a benchmark. Performance is a Layer 3 concern.
 - Not a tutorial. Tutorials belong under `docs/`.
 
+## Profile conformance is separate
+
+Additive Layer-2 profiles do not become part of this L1 suite merely because
+they define their own fixtures. Profile vocabularies, shapes, fixtures, and
+runners live together under [`docs/profiles/`](../../docs/profiles/). Passing a
+profile suite permits a claim about that profile version; it does not raise or
+alter an implementation's Interego L1 conformance level.
+
+The first such pack is the [Affordant Memory Exchange Profile
+0.1](../../docs/profiles/affordant-memory/0.1/), with its executable runner at
+[`tools/amep-conformance/`](../../tools/amep-conformance/).
+
 ## Structure
 
 ```

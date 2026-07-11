@@ -1,0 +1,32 @@
+'@context': [https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld]
+'@id': urn:exchange:invalid:proof
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkAgentB
+  '@type': prov:SoftwareAgent
+act:
+  '@id': urn:act:invalid:proof
+  '@type': amep:ProtocolAct
+  actType: amep:Assert
+  actor: did:key:z6MkAgentB
+  expectedHead: urn:head:invalid:proof-base
+  createdAt: '2026-07-11T15:07:00Z'
+  proof:
+    created: '2026-07-11T15:07:00Z'
+    proofValue: zProofWithoutVerificationMethod
+memory:
+  '@id': urn:memory:invalid:proof
+  '@type': amep:MemoryRecord
+  memoryKind: amep:Observation
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  semanticCid: urn:cid:rdfc-1.0:sha256:df552f796905ed6f39e19b8c792c0f0f9579fa0e5acde7cc2f296e4e27279b02
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: This act proof cannot be verified because its key IRI is absent.
+    epistemicStatus: iep:Asserted
+    attributedTo: did:key:z6MkAgentB
+head: urn:head:invalid:proof
+representationTag: '"sha256-21f828747e261bd3f20096f8c095f454c97e3ce7f46d023c4f46e93e1b3ae229"'

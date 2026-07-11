@@ -1,0 +1,36 @@
+'@context': [https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld]
+'@id': urn:exchange:invalid:compose-unsorted
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkHumanReleaseManager
+  '@type': prov:Person
+act:
+  '@id': urn:act:invalid:compose-unsorted
+  '@type': amep:ProtocolAct
+  actType: amep:Compose
+  actor: did:key:z6MkHumanReleaseManager
+  expectedHead: urn:head:invalid:a
+  operands:
+    - urn:head:invalid:z
+    - urn:head:invalid:a
+  createdAt: '2026-07-11T15:02:00Z'
+  proof:
+    verificationMethod: did:key:z6MkHumanReleaseManager#key-1
+    created: '2026-07-11T15:02:00Z'
+    proofValue: zUnsortedComposeProof
+memory:
+  '@id': urn:memory:invalid:compose-unsorted
+  '@type': amep:MemoryRecord
+  memoryKind: amep:Procedure
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  semanticCid: urn:cid:rdfc-1.0:sha256:761e0652be9e16da55146644e0ff748fbe330b2fcbed28233ca67f5a5b04c1a5
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: The operand set is intentionally out of canonical order.
+    epistemicStatus: iep:Hypothetical
+    attributedTo: did:key:z6MkHumanReleaseManager
+head: urn:head:invalid:compose-unsorted
+representationTag: '"sha256-f13d8d1431f36593c547e9f24f03100bd34c52ca5e26753a42a0c616253b2cab"'

@@ -1,0 +1,32 @@
+'@context': [https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld]
+'@id': urn:exchange:invalid:missing-head
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkAgentA
+  '@type': prov:SoftwareAgent
+act:
+  '@id': urn:act:invalid:missing-head
+  '@type': amep:ProtocolAct
+  actType: amep:Assert
+  actor: did:key:z6MkAgentA
+  createdAt: '2026-07-11T15:01:00Z'
+  proof:
+    verificationMethod: did:key:z6MkAgentA#key-1
+    created: '2026-07-11T15:01:00Z'
+    proofValue: zMissingHeadProof
+memory:
+  '@id': urn:memory:invalid:missing-head
+  '@type': amep:MemoryRecord
+  memoryKind: amep:Observation
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  semanticCid: urn:cid:rdfc-1.0:sha256:00ceeff680a8b07faa72b5b3cae10ee2985a51674339cdcf54df3a06005b5738
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: This write has no compare-and-swap head.
+    epistemicStatus: iep:Asserted
+    attributedTo: did:key:z6MkAgentA
+head: urn:head:invalid:missing-head
+representationTag: '"sha256-b121bbca105897ac91694fbfced9f75331cb8393087e2f9895ab728295930628"'

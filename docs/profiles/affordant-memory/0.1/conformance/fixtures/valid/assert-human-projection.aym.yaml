@@ -1,0 +1,65 @@
+'@context':
+  - https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld
+'@id': urn:exchange:release-42:assert-human
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkHumanReleaseManager
+  '@type': prov:Person
+  displayName: Release manager
+act:
+  '@id': urn:act:release-42:assert-human
+  '@type': amep:ProtocolAct
+  actType: amep:Assert
+  actor: did:key:z6MkHumanReleaseManager
+  expectedHead: urn:head:release-42:question
+  createdAt: '2026-07-11T14:01:30Z'
+  proof:
+    '@type': iep:SignedAuthorship
+    verificationMethod: did:key:z6MkHumanReleaseManager#key-1
+    created: '2026-07-11T14:01:30Z'
+    proofValue: zTestProofAssertHuman
+memory:
+  '@id': urn:memory:release-42:answer-human
+  '@type': [amep:MemoryRecord, ieh:AgentMemory]
+  memoryKind: amep:Claim
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  semanticCid: urn:cid:rdfc-1.0:sha256:8abdd8188aa5b786dd10bf4f9b3d1db236d7c83ec07249155873f401edfd1fa5
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: |
+      Release 42 should ship after the migration checksum and rollback drill
+      both pass. The evidence is linked from the deployment context.
+    epistemicStatus: iep:Asserted
+    attributedTo: did:key:z6MkHumanReleaseManager
+head: urn:head:release-42:assert-human
+receipts:
+  - '@id': urn:receipt:release-42:assert-human
+    '@type': amep:Receipt
+    receiptFor: urn:act:release-42:assert-human
+    outcome: amep:Applied
+    previousHead: urn:head:release-42:question
+    resultHead: urn:head:release-42:assert-human
+    generatedAt: '2026-07-11T14:01:31Z'
+    validationReport:
+      '@id': urn:report:release-42:assert-human
+      '@type': sh:ValidationReport
+      conforms: true
+affordances:
+  - '@id': urn:affordance:release-42:challenge-assert-human
+    '@type': [iep:Affordance, hydra:Operation]
+    action: amep:Challenge
+    target: https://interego.xwisee.com/amep/acts
+    method: POST
+    inputShape: amep:ChallengeInputShape
+    effect: Preserve a Candidate sibling that challenges this assertion.
+  - '@id': urn:affordance:release-42:accept-assert-human
+    '@type': [iep:Affordance, hydra:Operation]
+    action: amep:Accept
+    target: https://interego.xwisee.com/amep/acts
+    method: POST
+    inputShape: amep:AcceptInputShape
+    effect: Commit this Candidate without changing its semantic CID.
+representationTag: '"sha256-48dcc797e92089e631caeb991241e7b877482527905d4f18b02ccf9d02913e1d"'

@@ -1,0 +1,8 @@
+{
+  "type": "https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1#forbidden",
+  "title": "Actor is not authorized for this operation",
+  "status": 403,
+  "detail": "The authenticated actor may not invoke this operation.",
+  "instance": "urn:problem:release-42:forbidden-3"
+}
+

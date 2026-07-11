@@ -1,0 +1,38 @@
+'@context': [https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld]
+'@id': urn:exchange:invalid:contextual-rewrite
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkAgentB
+  '@type': prov:SoftwareAgent
+act:
+  '@id': urn:act:invalid:contextual-rewrite
+  '@type': amep:ProtocolAct
+  actType: amep:Assert
+  actor: did:key:z6MkAgentB
+  expectedHead: urn:head:invalid:source
+  createdAt: '2026-07-11T15:03:00Z'
+  proof:
+    verificationMethod: did:key:z6MkAgentB#key-1
+    created: '2026-07-11T15:03:00Z'
+    proofValue: zContextualRewriteProof
+memory:
+  '@id': urn:memory:invalid:contextual-rewrite
+  '@type': [amep:MemoryRecord, amep:ContextualUseRecord]
+  memoryKind: amep:ContextualUse
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  reusedSemanticCid: urn:cid:rdfc-1.0:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  semanticCid: urn:cid:rdfc-1.0:sha256:a466c55df9e212f2468ad3bda3da871fa12f4161a4c68584fccbb9a2a33377ec
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: This interpretation silently substitutes a different source CID.
+    interpretation: Incorrectly rewritten contextual use.
+    epistemicStatus: iep:Hypothetical
+    attributedTo: did:key:z6MkAgentB
+    reuses:
+      '@id': urn:memory:invalid:source
+      semanticCid: urn:cid:rdfc-1.0:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+head: urn:head:invalid:contextual-rewrite
+representationTag: '"sha256-77b47336a820189f8dac9d89f534965936d25b6402d27326340f5596341c0b73"'

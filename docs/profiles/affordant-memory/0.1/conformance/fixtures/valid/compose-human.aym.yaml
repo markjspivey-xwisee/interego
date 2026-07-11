@@ -1,0 +1,61 @@
+'@context':
+  - https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld
+'@id': urn:exchange:release-42:compose-human
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkHumanReleaseManager
+  '@type': prov:Person
+  displayName: Release manager
+act:
+  '@id': urn:act:release-42:compose
+  '@type': amep:ProtocolAct
+  actType: amep:Compose
+  actor: did:key:z6MkHumanReleaseManager
+  expectedHead: urn:head:release-42:branch-a
+  operands:
+    - urn:head:release-42:branch-a
+    - urn:head:release-42:branch-b
+  createdAt: '2026-07-11T14:05:00Z'
+  proof:
+    '@type': iep:SignedAuthorship
+    verificationMethod: did:key:z6MkHumanReleaseManager#key-1
+    created: '2026-07-11T14:05:00Z'
+    proofValue: zTestProofComposeHuman
+memory:
+  '@id': urn:memory:release-42:composed-plan
+  '@type': [amep:MemoryRecord, ieh:AgentMemory]
+  memoryKind: amep:Procedure
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  semanticCid: urn:cid:rdfc-1.0:sha256:d8931d9f707b4c2691351864836e4a48853e5efd7751c6cd9a6bcedc1971e197
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: |
+      Preserve the accepted release plan, re-run the checksum against the final
+      artifact, and require the new digest before the deployment control appears.
+    epistemicStatus: iep:Hypothetical
+    attributedTo: did:key:z6MkHumanReleaseManager
+head: urn:head:release-42:composed-candidate
+receipts:
+  - '@id': urn:receipt:release-42:compose
+    '@type': amep:Receipt
+    receiptFor: urn:act:release-42:compose
+    outcome: amep:Applied
+    previousHead: urn:head:release-42:branch-a
+    resultHead: urn:head:release-42:composed-candidate
+    generatedAt: '2026-07-11T14:05:01Z'
+    validationReport:
+      '@id': urn:report:release-42:compose
+      '@type': sh:ValidationReport
+      conforms: true
+affordances:
+  - '@id': urn:affordance:release-42:accept-composition
+    '@type': [iep:Affordance, hydra:Operation]
+    action: amep:Accept
+    target: https://interego.xwisee.com/amep/acts
+    method: POST
+    inputShape: amep:AcceptInputShape
+    effect: Commit the composed Candidate as the governed head.
+representationTag: '"sha256-ca34a400a6d00564b789f5db8c999af24b43eac1889371c96b21bfc5eab54612"'

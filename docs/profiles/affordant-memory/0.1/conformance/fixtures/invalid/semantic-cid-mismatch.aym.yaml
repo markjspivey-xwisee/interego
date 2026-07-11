@@ -1,0 +1,33 @@
+'@context': [https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld]
+'@id': urn:exchange:invalid:semantic-cid
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkAgentA
+  '@type': prov:SoftwareAgent
+act:
+  '@id': urn:act:invalid:semantic-cid
+  '@type': amep:ProtocolAct
+  actType: amep:Assert
+  actor: did:key:z6MkAgentA
+  expectedHead: urn:head:invalid:semantic-base
+  createdAt: '2026-07-11T15:06:00Z'
+  proof:
+    verificationMethod: did:key:z6MkAgentA#key-1
+    created: '2026-07-11T15:06:00Z'
+    proofValue: zSemanticCidProof
+memory:
+  '@id': urn:memory:invalid:semantic-cid
+  '@type': amep:MemoryRecord
+  memoryKind: amep:Observation
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  semanticCid: urn:cid:rdfc-1.0:sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: The declared semantic CID does not hash this canonical graph.
+    epistemicStatus: iep:Asserted
+    attributedTo: did:key:z6MkAgentA
+head: urn:head:invalid:semantic-cid
+representationTag: '"sha256-d2b1e0839453175ff88e416f1403f206c9b89badf043735351c98eb9c6a33859"'

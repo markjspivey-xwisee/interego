@@ -1,0 +1,41 @@
+'@context':
+  - https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld
+'@id': urn:exchange:release-42:ask-human
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkHumanReleaseManager
+  '@type': prov:Person
+  displayName: Release manager
+act:
+  '@id': urn:act:release-42:ask
+  '@type': amep:ProtocolAct
+  actType: amep:Ask
+  actor: did:key:z6MkHumanReleaseManager
+  createdAt: '2026-07-11T14:00:00Z'
+  proof:
+    '@type': iep:SignedAuthorship
+    verificationMethod: did:key:z6MkHumanReleaseManager#key-1
+    created: '2026-07-11T14:00:00Z'
+    proofValue: zTestProofAskHuman
+head: urn:head:release-42:question
+receipts:
+  - '@id': urn:receipt:release-42:ask
+    '@type': amep:Receipt
+    receiptFor: urn:act:release-42:ask
+    outcome: amep:Applied
+    resultHead: urn:head:release-42:question
+    generatedAt: '2026-07-11T14:00:01Z'
+    validationReport:
+      '@id': urn:report:release-42:ask
+      '@type': sh:ValidationReport
+      conforms: true
+affordances:
+  - '@id': urn:affordance:release-42:assert
+    '@type': [iep:Affordance, hydra:Operation]
+    action: amep:Assert
+    target: https://interego.xwisee.com/amep/acts
+    method: POST
+    inputShape: amep:AssertInputShape
+    effect: Publish a Candidate answer against the inquiry head.
+representationTag: '"sha256-4ceaed2c448ea2c6b31d56ee7d60f56e7932f2b77068a892a49aab49f894ff50"'

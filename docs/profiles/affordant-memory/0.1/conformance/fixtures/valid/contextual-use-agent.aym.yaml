@@ -1,0 +1,63 @@
+'@context':
+  - https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1/context.jsonld
+'@id': urn:exchange:release-42:contextual-use
+'@type': amep:Exchange
+profile: https://markjspivey-xwisee.github.io/interego/profiles/affordant-memory/0.1
+actor:
+  '@id': did:key:z6MkAgentB
+  '@type': prov:SoftwareAgent
+  displayName: Agent B
+act:
+  '@id': urn:act:release-42:contextual-use
+  '@type': amep:ProtocolAct
+  actType: amep:Assert
+  actor: did:key:z6MkAgentB
+  expectedHead: urn:head:release-42:committed-a
+  createdAt: '2026-07-11T14:06:00Z'
+  proof:
+    '@type': iep:SignedAuthorship
+    verificationMethod: did:key:z6MkAgentB#key-1
+    created: '2026-07-11T14:06:00Z'
+    proofValue: zTestProofContextualUseAgentB
+memory:
+  '@id': urn:memory:release-42:use-in-runbook
+  '@type': [amep:MemoryRecord, amep:ContextualUseRecord, ieh:AgentMemory]
+  memoryKind: amep:ContextualUse
+  governanceStatus: amep:Candidate
+  integrityStatus: amep:Unverified
+  conformanceStatus: amep:Conformant
+  reusedSemanticCid: urn:cid:rdfc-1.0:sha256:e0f05b3b44b58b4b302b67f3e3cb434dfaf5d36b14a2540bacc52bceb7dda81b
+  semanticCid: urn:cid:rdfc-1.0:sha256:3053a7257b72d92b8928ce6268bb8ce0f47cc8598c8c44f9be88f224a78821eb
+  semantic:
+    '@type': amep:SemanticMaterial
+    body: |
+      In the incident runbook, reuse the accepted release criterion as a gate:
+      checksum and rollback evidence must be attached before resuming rollout.
+    interpretation: The accepted release criterion is reused as an incident-recovery gate.
+    epistemicStatus: iep:Hypothetical
+    attributedTo: did:key:z6MkAgentB
+    reuses:
+      '@id': urn:memory:release-42:answer-a
+      semanticCid: urn:cid:rdfc-1.0:sha256:e0f05b3b44b58b4b302b67f3e3cb434dfaf5d36b14a2540bacc52bceb7dda81b
+head: urn:head:release-42:contextual-use
+receipts:
+  - '@id': urn:receipt:release-42:contextual-use
+    '@type': amep:Receipt
+    receiptFor: urn:act:release-42:contextual-use
+    outcome: amep:Applied
+    previousHead: urn:head:release-42:committed-a
+    resultHead: urn:head:release-42:contextual-use
+    generatedAt: '2026-07-11T14:06:01Z'
+    validationReport:
+      '@id': urn:report:release-42:contextual-use
+      '@type': sh:ValidationReport
+      conforms: true
+affordances:
+  - '@id': urn:affordance:release-42:accept-contextual-use
+    '@type': [iep:Affordance, hydra:Operation]
+    action: amep:Accept
+    target: https://interego.xwisee.com/amep/acts
+    method: POST
+    inputShape: amep:AcceptInputShape
+    effect: Commit this interpretation while preserving the reused semantic CID.
+representationTag: '"sha256-fe9d2ce7885353ff67856743f984d84d33bb2f1cf9aac57c840efa14b861abd8"'
