@@ -308,7 +308,7 @@ function affordancesFor(deps: AmepDeps, act: StoredAct, isOpen: boolean): Array<
 function projectExchange(deps: AmepDeps, state: ExchangeState, act: StoredAct): Record<string, unknown> {
   const doc: Record<string, unknown> = {
     '@context': [CONTEXT_IRI],
-    '@id': `urn:exchange:${state.exchange}:${localName(act.actType)?.toLowerCase() ?? 'act'}-${shortId(act.id)}`,
+    '@id': `${deps.publicBase.replace(/\/+$/, '')}/amep/exchanges/${state.exchange}#${localName(act.actType)?.toLowerCase() ?? 'act'}-${shortId(act.id)}`,
     '@type': 'amep:Exchange',
     profile: PROFILE_IRI,
     actor: { '@id': act.actor, displayName: act.actorName || displayFor(act.actor), '@type': act.actorType },
@@ -468,7 +468,10 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
     const actType = localName(act['actType']);
     if (!actType || !ACT_TYPES.has(actType)) return problem(res, 422, 'invalid-act', 'actType is outside the AMEP closed set.', { validationReport: minimalReport('bad actType') });
     const actId = act['@id'];
-    if (typeof actId !== 'string' || !/^urn:act:/.test(actId)) return problem(res, 422, 'invalid-act', 'act @id must be a urn:act: IRI.', { validationReport: minimalReport('bad act @id') });
+    // The act @id is a client-supplied identifier — any absolute URL (or urn).
+    // The spec recommends a dereferenceable URL; the engine accepts any IRI so it
+    // interoperates with implementations that mint their own id scheme.
+    if (typeof actId !== 'string' || !/^[A-Za-z][A-Za-z0-9+.-]*:\S+$/.test(actId)) return problem(res, 422, 'invalid-act', 'act @id must be an absolute IRI (a dereferenceable URL is recommended).', { validationReport: minimalReport('bad act @id') });
 
     // Attribution binding: on the OAuth path act.actor MUST equal the caller.
     const claimedActor = typeof act['actor'] === 'string' ? act['actor'] as string : '';
@@ -478,7 +481,7 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
 
     // Which exchange (state doc) does this act belong to?
     //   - a WRITE act targets the exchange containing its expectedHead; the slug
-    //     is embedded in the head IRI (urn:head:<slug>:<hash>) — self-contained,
+    //     is embedded in the head URL (…/amep/heads/<slug>/<hash>) — self-contained,
     //     no global index needed;
     //   - an Ask opens a NEW exchange, its slug hashed from (principal, act @id)
     //     so a fresh inquiry cannot collide with or squat another principal's.
@@ -488,7 +491,7 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
     let slug: string;
     if (WRITE_ACTS.has(actType)) {
       const eh = typeof act['expectedHead'] === 'string' ? act['expectedHead'] as string : '';
-      const m = /^urn:head:([a-z0-9][a-z0-9-]{0,63}):/.exec(eh);
+      const m = /\/amep\/heads\/([a-z0-9][a-z0-9-]{0,63})\//.exec(eh);
       if (!m) return problem(res, 412, 'stale-head', 'expectedHead does not name a known exchange head.', { 'amep:rediscover': `${deps.publicBase.replace(/\/+$/, '')}/amep` });
       slug = m[1]!;
     } else {
@@ -729,8 +732,12 @@ function minimalReport(msg: string, shape = 'ProtocolActShape'): Record<string, 
   };
 }
 
-function heads(slug: string, actId: string): string { return `urn:head:${slug}:${sha256(actId).slice(0, 12)}`; }
-function receiptId(actId: string): string { return actId.replace('urn:act:', 'urn:receipt:'); }
+// A head IS its own dereference URL: everything in the substrate is a
+// dereferenceable URL, never a bare urn. `${publicBase}/amep/heads/<slug>/<hash>`
+// is exactly the route that serves it, so the @id and the location are one thing.
+function heads(publicBase: string, slug: string, actId: string): string {
+  return `${publicBase.replace(/\/+$/, '')}/amep/heads/${slug}/${sha256(actId).slice(0, 12)}`;
+}
 
 /** Build the stored act (with its memory + receipt) for a validated submission.
  *  semanticCid is computed SERVER-SIDE via the vendored function so the served
@@ -754,7 +761,8 @@ async function buildAct(
   // "the latest" — with sibling branches those differ, and the validator
   // requires receipt.previousHead === act.expectedHead.
   const previousHead = (typeof act['expectedHead'] === 'string' ? act['expectedHead'] as string : null);
-  const resultHead = heads(slug, actId);
+  const resultHead = heads(deps.publicBase, slug, actId);
+  const receiptUrl = receiptLookupUrl(deps, slug, actId);
 
   // Memory: required for every non-Ask act. Candidate acts must supply/keep
   // Candidate; Accept commits the accepted act's memory.
@@ -793,14 +801,14 @@ async function buildAct(
   }
 
   const receipt: Record<string, unknown> = {
-    '@id': receiptId(actId),
+    '@id': receiptUrl,
     '@type': 'amep:Receipt',
     receiptFor: actId,
     outcome: 'amep:Applied',
     ...(previousHead ? { previousHead } : {}),
     resultHead,
     generatedAt: bumpIso(createdAt),
-    validationReport: { '@id': `${receiptId(actId)}#report`, '@type': 'sh:ValidationReport', conforms: true },
+    validationReport: { '@id': `${receiptUrl}#report`, '@type': 'sh:ValidationReport', conforms: true },
     // Relay-recorded authenticated principal — attribution honesty. Kept in the
     // receipt (outside memory.semantic so it does not change any semanticCid).
     'amep:submittedBy': principal.id,
@@ -858,22 +866,25 @@ export async function buildSeedState(deps: AmepDeps): Promise<ExchangeState> {
     return built.stored;
   };
 
+  // Logical ids are dereferenceable URLs, not urns (the substrate principle).
+  const au = (name: string) => `${deps.publicBase.replace(/\/+$/, '')}/amep/acts/${RELEASE_42_SLUG}/${name}`;
+
   // 1. Ask (inquiry head).
   const ask = await apply('Ask', {
-    '@id': 'urn:act:release42:ask', '@type': 'amep:ProtocolAct', actType: 'amep:Ask',
+    '@id': au('ask'), '@type': 'amep:ProtocolAct', actType: 'amep:Ask',
     actor: human, createdAt: '2026-07-11T14:00:00Z',
     proof: { '@type': 'iep:SignedAuthorship', verificationMethod: `${human}#key-1`, created: '2026-07-11T14:00:00Z', proofValue: 'zSeedAsk' },
   }, { actor: { '@id': human, '@type': 'prov:Person', displayName: 'Release manager' } });
 
   // 2. Assert (Candidate claim by the agent).
   const assert = await apply('Assert', {
-    '@id': 'urn:act:release42:assert', '@type': 'amep:ProtocolAct', actType: 'amep:Assert',
+    '@id': au('assert'), '@type': 'amep:ProtocolAct', actType: 'amep:Assert',
     actor: agentA, expectedHead: ask.resultHead, createdAt: '2026-07-11T14:01:00Z',
     proof: { '@type': 'iep:SignedAuthorship', verificationMethod: `${agentA}#key-1`, created: '2026-07-11T14:01:00Z', proofValue: 'zSeedAssert' },
   }, {
     actor: { '@id': agentA, '@type': 'prov:SoftwareAgent', displayName: 'Release bot' },
     memory: {
-      '@id': 'urn:memory:release42:answer', '@type': ['amep:MemoryRecord', 'ieh:AgentMemory'],
+      '@id': `${au('assert')}#memory`, '@type': ['amep:MemoryRecord', 'ieh:AgentMemory'],
       memoryKind: 'amep:Claim',
       semantic: { '@type': 'amep:SemanticMaterial', body: REL42_BODY, epistemicStatus: 'iep:Asserted', attributedTo: agentA },
     },
@@ -881,8 +892,8 @@ export async function buildSeedState(deps: AmepDeps): Promise<ExchangeState> {
 
   // 3. Accept (human commits the candidate).
   await apply('Accept', {
-    '@id': 'urn:act:release42:accept', '@type': 'amep:ProtocolAct', actType: 'amep:Accept',
-    actor: human, expectedHead: assert.resultHead, acceptedAct: 'urn:act:release42:assert',
+    '@id': au('accept'), '@type': 'amep:ProtocolAct', actType: 'amep:Accept',
+    actor: human, expectedHead: assert.resultHead, acceptedAct: au('assert'),
     createdAt: '2026-07-11T14:03:00Z',
     proof: { '@type': 'iep:SignedAuthorship', verificationMethod: `${human}#key-1`, created: '2026-07-11T14:03:00Z', proofValue: 'zSeedAccept' },
   }, { actor: { '@id': human, '@type': 'prov:Person', displayName: 'Release manager' } });

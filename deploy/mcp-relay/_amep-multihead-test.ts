@@ -61,7 +61,7 @@ const rAsk = await post({ '@context': [CTX], '@id': `${ex}:ask`, '@type': 'amep:
   act: { '@id': 'urn:act:mp:ask', '@type': 'amep:ProtocolAct', actType: 'amep:Ask', actor: human, createdAt: now, proof: proof(human) } });
 check('Ask → 201', rAsk._s === 201, `(${rAsk._s})`);
 const askHead = (yaml.load(rAsk._b) as any).head;
-const slug = /urn:head:([a-z0-9]+):/.exec(askHead)![1];
+const slug = /\/amep\/heads\/([a-z0-9-]+)\//.exec(askHead)![1];
 
 // 2. Agent A Asserts a candidate.
 const rA = await post({ '@context': [CTX], '@id': `${ex}:assertA`, '@type': 'amep:Exchange', actor: actor(agentA, 'prov:SoftwareAgent', 'Alpha'),
