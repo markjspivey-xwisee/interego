@@ -70,6 +70,27 @@ Examples:
 
 Layer 3 artifacts have zero normative weight. A second implementation that picked GitLab instead of GitHub, Postgres instead of Azure Files, or a different domain ontology would be identical at Layer 1.
 
+### Affordances across the layers — grammar vs. contract
+
+A recurring confusion: Layer 1 is built on *generic, declarative* affordances (any `iep:action` IRI, discovered from a descriptor, followed via `invoke_affordance`), yet a Layer-2/3 protocol like **AMEP** (the Affordant Memory Exchange Protocol) defines a *closed set of six named acts* (`Ask`/`Assert`/`Challenge`/`Accept`/`Fork`/`Compose`). These look contradictory. They are not — they are different axes.
+
+- **Layer 1 is the affordance *grammar*.** An `iep:Affordance` describes a possible action: an action IRI, a target, a method, an input shape. The substrate does not enumerate which actions exist — an action IRI can be anything. This is open-world and technology-neutral: *how any action is described and followed*, not a fixed vocabulary of actions.
+
+- **A named protocol is a *contract* built from that grammar.** AMEP pins down specific action IRIs (`amep:Assert`, …) and, crucially, agreed *semantics* for them (candidate↔committed governance, receipts, compare-and-swap heads). Collaboration requires this: two agents can only negotiate shared memory if "Accept commits, Challenge preserves a sibling" is a fixed agreement. AMEP is that agreement. It lives in its own namespace (`amep:`), adds **zero** terms to `iep:`/`pgsl:`, and grounds back to L1 (every AMEP act *is* an `iep:Affordance` + `hydra:Operation`). It is a sibling of `code:` and the verticals — a domain contract riding on L1, not a change to L1.
+
+The apparent contradiction dissolves once two things are held separate:
+
+| | Fixed or discovered? | Layer |
+|---|---|---|
+| **What an act *means*** (Assert → produces a Candidate…) | **fixed** — a contract, agreed in advance | L2/L3 (the named protocol) |
+| **Which acts are *available now*** (a Candidate head offers Accept/Challenge; a Committed head offers Fork) | **discovered** — state-dependent, read from the current representation, never assumed by the client | L1 principle (HATEOAS), preserved *inside* the contract |
+
+So even a "hardcoded" protocol stays declarative in the way that matters: a client learns its next legal move by reading the advertised affordances, not by hardcoding the workflow. The reference implementation makes this literal — it computes the affordance set from governance state and refuses to advertise a control it would reject.
+
+**When to reach for which.** Acting on an arbitrary substrate resource with an open action set → the generic affordance mechanism (discover → `invoke_affordance`). Collaborating over shared, versioned memory that needs governance / provenance / dispute / preserved branches → AMEP's acts. A domain workflow (learning, credentialing) → that vertical's affordances. In every case the *mechanism* is the same L1 grammar; the layers differ only in whether a shared vocabulary of action meanings has been agreed on top of it.
+
+**Humans and agents use the same contract.** The acts are not split by actor type. A `prov:Person` and a `prov:SoftwareAgent` see the same affordances over the same resource and the semantics are identical; they differ only in *presentation* (a rendered view vs. YAML-LD frontmatter). "Human vs. agent" is a Layer-3 rendering concern, never a Layer-1 or protocol distinction.
+
 ---
 
 ## 2. The transplant test
