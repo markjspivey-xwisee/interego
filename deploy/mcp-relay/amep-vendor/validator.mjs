@@ -55,6 +55,19 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** True if any node BELOW the document root carries an `@context` key. The root
+ *  @context is required; a nested one is forbidden (SSRF + non-reproducible CID). */
+function hasNestedContext(value, depth = 0) {
+  if (Array.isArray(value)) return value.some(v => hasNestedContext(v, depth));
+  if (isObject(value)) {
+    for (const [k, v] of Object.entries(value)) {
+      if (k === '@context' && depth > 0) return true;
+      if (hasNestedContext(v, depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
 function localName(value, namespace = PROFILE_NS) {
   if (typeof value !== 'string') return null;
   if (value.startsWith('amep:')) return value.slice('amep:'.length);
@@ -368,6 +381,16 @@ export async function validateDocument(document, contextDocument, { validateHash
   const contexts = asArray(document?.['@context']);
   if (!contexts.includes(CONTEXT_IRI)) {
     violations.push(result('ExchangeShape', focus, '@context', `@context MUST include ${CONTEXT_IRI}.`, document?.['@context']));
+  }
+  // A submitted document MUST NOT carry a nested @context below the root
+  // (README §"representation model"). A nested @context — e.g. inside
+  // memory.semantic — overrides the profile-context substitution, so the
+  // semanticCid a server computes no longer matches what a fresh client
+  // recomputes under the profile context, AND drives the JSON-LD processor to
+  // fetch an attacker-named remote context (SSRF). Rejecting it here makes the
+  // reference validator enforce the rule the spec states.
+  if (hasNestedContext(document)) {
+    violations.push(result('NoNestedContextShape', focus, '@context', 'A submitted document MUST NOT contain a nested @context below the root.'));
   }
   if (!typeIncludes(document, 'Exchange')) {
     violations.push(result('ExchangeShape', focus, 'rdf:type', 'Root MUST be typed amep:Exchange.', document?.['@type']));

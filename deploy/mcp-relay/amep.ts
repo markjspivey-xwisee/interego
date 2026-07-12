@@ -221,9 +221,33 @@ interface StoredAct {
 }
 interface ExchangeState {
   exchange: string;
-  currentHead: string;
+  // The OPEN branch heads — every head an act may target via expectedHead. An
+  // exchange holds MORE THAN ONE when a Challenge or Fork opens a sibling that
+  // coexists with the head it branched from ("both valid concurrent branches
+  // remain dereferenceable"). CAS is membership in this set, not equality to a
+  // single tip. (Old v0 docs carried `currentHead`; readState migrates them.)
+  openHeads: string[];
   order: string[];
   acts: Record<string, StoredAct>;
+}
+
+/** How each act transforms the open-head set. The act's expectedHead is the
+ *  branch it targets; resultHead is the head it produces.
+ *   - Ask opens a fresh inquiry head (new exchange).
+ *   - Assert/Compose CONSUME the targeted head and open their result.
+ *   - Challenge/Fork PRESERVE the targeted head and open a sibling beside it.
+ *   - Accept COMMITS: the exchange collapses to the single committed head; the
+ *     losing siblings stay dereferenceable in `acts` but are no longer open. */
+function nextOpenHeads(open: readonly string[], actType: string, expectedHead: string | null, resultHead: string): string[] {
+  switch (actType) {
+    case 'Ask': return [resultHead];
+    case 'Assert':
+    case 'Compose': return open.filter((h) => h !== expectedHead).concat(resultHead);
+    case 'Challenge':
+    case 'Fork': return open.concat(resultHead);
+    case 'Accept': return [resultHead];
+    default: return open.concat(resultHead);
+  }
 }
 
 function statePath(deps: AmepDeps, slug: string): string {
@@ -334,7 +358,9 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
     if (r.status === 404 || r.status === 410) return { state: null, etag: null };
     if (!r.ok) throw new Error(`state GET ${r.status}`);
     const etag = r.headers?.get('etag') ?? null;
-    const state = JSON.parse(await r.text()) as ExchangeState;
+    const state = JSON.parse(await r.text()) as ExchangeState & { currentHead?: string };
+    // Migrate a v0 single-head doc: openHeads = [currentHead].
+    if (!Array.isArray(state.openHeads)) state.openHeads = state.currentHead ? [state.currentHead] : [];
     return { state, etag };
   }
 
@@ -354,7 +380,7 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
     const verify = await deps.solidFetch(url, { method: 'GET', headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
     if (!verify.ok) return 'error';
     const back = JSON.parse(await verify.text()) as ExchangeState;
-    if (back.currentHead !== state.currentHead) return 'error';
+    if (back.order.length !== state.order.length) return 'error';
     return 'ok';
   }
 
@@ -472,34 +498,33 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
           // Growth caps.
           if (state && (state.order.length >= MAX_ACTS_PER_EXCHANGE)) return { kind: 'toobig' as const };
 
-          const currentHead = state?.currentHead ?? null;
+          const openHeads = state?.openHeads ?? [];
           const expectedHead = typeof act['expectedHead'] === 'string' ? act['expectedHead'] as string : null;
 
-          // CAS: only Ask may open a NEW exchange. A write act requires an
-          // existing head equal to expectedHead — you cannot write into a
-          // non-existent exchange (there is no head for the receipt's
-          // previousHead to equal, which the validator enforces).
+          // CAS: a write act targets a head that is CURRENTLY OPEN (membership,
+          // not equality — an exchange can hold sibling branches). Only Ask opens
+          // a new exchange; you cannot write into a non-existent one (no head for
+          // the receipt's previousHead to equal, which the validator enforces).
           if (WRITE_ACTS.has(actType)) {
             if (!expectedHead) return { kind: 'invalid' as const, msg: `${actType} requires expectedHead`, shape: 'ExpectedHeadShape' };
-            if (currentHead === null || expectedHead !== currentHead) {
-              return { kind: 'stale' as const, currentHead };
+            if (!openHeads.includes(expectedHead)) {
+              return { kind: 'stale' as const };
             }
           }
-          if (actType === 'Ask' && currentHead !== null) {
-            // Ask opens a fresh inquiry; re-asking an existing exchange is a new
-            // inquiry head only if it carries no expectedHead conflict. Keep v0
-            // simple: an Ask against an existing exchange is rejected as stale.
-            return { kind: 'stale' as const, currentHead };
+          if (actType === 'Ask' && openHeads.length > 0) {
+            // Ask opens a fresh inquiry exchange; re-asking an existing one is
+            // rejected (a new inquiry gets its own slug).
+            return { kind: 'stale' as const };
           }
 
           // Build the new act + memory + receipt (computes semanticCid).
           const built = await buildAct(deps, slug, state, actType, act, submitted, principal, canonicalSha);
           if ('error' in built) return { kind: 'invalid' as const, msg: built.error, shape: built.shape };
 
-          const newState: ExchangeState = state ?? { exchange: slug, currentHead: built.stored.resultHead, order: [], acts: {} };
+          const newState: ExchangeState = state ?? { exchange: slug, openHeads: [], order: [], acts: {} };
           newState.acts[actId] = built.stored;
           newState.order = [...newState.order, actId];
-          newState.currentHead = built.stored.resultHead;
+          newState.openHeads = nextOpenHeads(newState.openHeads, actType, expectedHead, built.stored.resultHead);
           newState.exchange = newState.exchange || slug;
 
           // PRE-WRITE conformance gate. The projection is validated with the
@@ -606,19 +631,42 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
   app.get('/amep/exchanges/:slug', (req, res) => {
     const slug = String(req.params['slug'] ?? '');
     if (!SLUG_RE.test(slug)) return problem(res, 400, 'malformed-request', 'bad slug');
-    return void serveProjection(req, res, slug, (s) => s.acts[s.order[s.order.length - 1]!] ?? null);
+    return serveProjection(req, res, slug, (s) => s.acts[s.order[s.order.length - 1]!] ?? null);
+  });
+  // The branch map: every OPEN head (targetable by a new act) + every head ever
+  // produced, each with its act type, governance, and a dereference URL. This is
+  // how a client discovers concurrent sibling candidates after a Challenge/Fork
+  // and chooses which to Accept — "both valid concurrent branches remain
+  // dereferenceable".
+  app.get('/amep/exchanges/:slug/heads', async (req, res) => {
+    const slug = String(req.params['slug'] ?? '');
+    if (!SLUG_RE.test(slug)) return problem(res, 400, 'malformed-request', 'bad slug');
+    let state: ExchangeState | null;
+    try { state = (await readState(slug)).state; } catch { return void problem(res, 502, 'store-unavailable', 'unavailable'); }
+    if (!state) return void problem(res, 404, 'not-found', 'No such exchange.');
+    const base = `${deps.publicBase.replace(/\/+$/, '')}/amep/heads/${slug}/`;
+    const heads = state.order.map((id) => {
+      const a = state!.acts[id]!;
+      return {
+        head: a.resultHead, act: a.id, actType: `amep:${a.actType}`,
+        governance: a.memory ? a.memory['governanceStatus'] : null,
+        open: state!.openHeads.includes(a.resultHead),
+        dereference: base + encodeURIComponent(a.resultHead),
+      };
+    });
+    res.type('application/json').send(JSON.stringify({ exchange: slug, openHeads: state.openHeads, heads }, null, 2));
   });
   app.get('/amep/heads/:slug/:headId', (req, res) => {
     const slug = String(req.params['slug'] ?? '');
     if (!SLUG_RE.test(slug)) return problem(res, 400, 'malformed-request', 'bad slug');
     const headId = decodeURIComponent(String(req.params['headId'] ?? ''));
-    return void serveProjection(req, res, slug, (s) => Object.values(s.acts).find((a) => a.resultHead === headId || a.resultHead.endsWith(headId)) ?? null);
+    return serveProjection(req, res, slug, (s) => Object.values(s.acts).find((a) => a.resultHead === headId || a.resultHead.endsWith(headId)) ?? null);
   });
   app.get('/amep/acts/:slug/:actId', (req, res) => {
     const slug = String(req.params['slug'] ?? '');
     if (!SLUG_RE.test(slug)) return problem(res, 400, 'malformed-request', 'bad slug');
     const actId = decodeURIComponent(String(req.params['actId'] ?? ''));
-    return void serveProjection(req, res, slug, (s) => Object.values(s.acts).find((a) => a.id === actId || a.id.endsWith(actId)) ?? null);
+    return serveProjection(req, res, slug, (s) => Object.values(s.acts).find((a) => a.id === actId || a.id.endsWith(actId)) ?? null);
   });
   // Receipt lookup — the Location target of a successful act. Serves the
   // projection at the receipt's act, so the receipt IRI dereferences.
@@ -626,7 +674,7 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
     const slug = String(req.params['slug'] ?? '');
     if (!SLUG_RE.test(slug)) return problem(res, 400, 'malformed-request', 'bad slug');
     const key = decodeURIComponent(String(req.params['key'] ?? ''));
-    return void serveProjection(req, res, slug, (s) => Object.values(s.acts).find((a) => shortId(a.id) === key || (a.receipt['@id'] as string).endsWith(key)) ?? null);
+    return serveProjection(req, res, slug, (s) => Object.values(s.acts).find((a) => shortId(a.id) === key || (a.receipt['@id'] as string).endsWith(key)) ?? null);
   });
 
   // ---- GET /amep (index / discovery) ----
@@ -681,7 +729,10 @@ async function buildAct(
   const actorObj = submitted['actor'] as Record<string, unknown> | undefined;
   const actorType = actorObj && actorObj['@type'] === 'prov:Person' ? 'prov:Person' : 'prov:SoftwareAgent';
   const actorName = actorObj && typeof actorObj['displayName'] === 'string' ? actorObj['displayName'] as string : '';
-  const previousHead = state?.currentHead ?? null;
+  // previousHead is the SPECIFIC head this act targets (its expectedHead), not
+  // "the latest" — with sibling branches those differ, and the validator
+  // requires receipt.previousHead === act.expectedHead.
+  const previousHead = (typeof act['expectedHead'] === 'string' ? act['expectedHead'] as string : null);
   const resultHead = heads(slug, actId);
 
   // Memory: required for every non-Ask act. Candidate acts must supply/keep
@@ -778,10 +829,10 @@ export async function buildSeedState(deps: AmepDeps): Promise<ExchangeState> {
     const full = { ...submitted, act };
     const built = await buildAct(deps, RELEASE_42_SLUG, state, actType, act, full, op, actCanonicalSha({ act, memory: submitted['memory'] ?? null }));
     if ('error' in built) throw new Error(`seed ${actType}: ${built.error}`);
-    const s: ExchangeState = state ?? { exchange: RELEASE_42_SLUG, currentHead: built.stored.resultHead, order: [], acts: {} };
+    const s: ExchangeState = state ?? { exchange: RELEASE_42_SLUG, openHeads: [], order: [], acts: {} };
     s.acts[built.stored.id] = built.stored;
     s.order = [...s.order, built.stored.id];
-    s.currentHead = built.stored.resultHead;
+    s.openHeads = nextOpenHeads(s.openHeads, actType, built.stored.expectedHead, built.stored.resultHead);
     state = s;
     return built.stored;
   };
