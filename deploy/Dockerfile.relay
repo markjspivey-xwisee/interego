@@ -1,9 +1,16 @@
 # ────────────────────────────────────────────────────────────
 #  Build stage: workspace install + pack all @interego/* tarballs
 # ────────────────────────────────────────────────────────────
-# NODE_BASE: Docker Hub by default (local builds), ACR-imported copy in
-# CI via --build-arg — see deploy-azure.yml / Dockerfile.identity.
-ARG NODE_BASE=node:20-slim
+# NODE_BASE: Docker Hub by default (local builds), overridable via --build-arg.
+#
+# Node 22, not 20: undici 7 (pulled in transitively by @comunica/actor-http-fetch)
+# calls worker_threads.markAsUncloneable, which does not exist on Node 20. Recent
+# undici guards it with a no-op fallback; the version this resolves to does not,
+# so on Node 20 the relay dies at import with
+#   TypeError: webidl.util.markAsUncloneable is not a function
+# The other 12 service images still build on Node 20 and will hit this the first
+# time they are rebuilt.
+ARG NODE_BASE=node:22-slim
 FROM ${NODE_BASE} AS build
 
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
@@ -92,7 +99,7 @@ RUN npx tsc
 # ────────────────────────────────────────────────────────────
 #  Runtime stage: distroless image running compiled JS
 # ────────────────────────────────────────────────────────────
-FROM gcr.io/distroless/nodejs20-debian12
+FROM gcr.io/distroless/nodejs22-debian12
 
 WORKDIR /app
 

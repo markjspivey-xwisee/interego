@@ -19,7 +19,8 @@
  * than re-deriving any serialization.
  */
 import { createHash } from 'node:crypto';
-import type { ManifestEntry } from '@interego/core';
+import type { ManifestEntry, HypermediaControl } from '@interego/core';
+import { renderHypermediaMarkdown } from '@interego/core';
 import type { Node, Fragment, PGSLInstance } from './types.js';
 import { nodeToTurtle, pgslTurtlePrefixes } from './rdf.js';
 
@@ -357,6 +358,91 @@ export function projectHolonToActivity(
     ...(opts.to ? { to: opts.to } : {}),
   };
   return activity;
+}
+
+// ── Markdown projection (document channel) ──────────────────
+//
+// A THIRD render target beside the VC and ActivityStreams projections above,
+// and it is exactly that: a RENDER, not a new artifact and not a new protocol.
+// A holon is the source; this is a view of it that survives channels RDF cannot
+// cross (a git file, a README, a pasted message, an MCP resource).
+//
+// The document names WHAT may be done (`actionIri`) and WHERE THE AUTHORITY LIVES
+// (`descriptorUrl`) — never WHERE TO POST. `hydra:target` is re-resolved from the
+// signed descriptor by followAffordance() at execution time. See the SECURITY
+// INVARIANT in @interego/core kernel/hypermedia-markdown.
+
+export interface ProjectMarkdownOptions extends ProjectHolonOptions {
+  /**
+   * The control surface, already reduced to document-safe form. Callers holding
+   * executable Affordances (which carry hydra:target) pass them through
+   * `controlsFromAffordances()` — which drops the target on the floor.
+   */
+  readonly controls?: readonly HypermediaControl[];
+  /** `sh:shapesGraph` the payload conforms to, when known. */
+  readonly conformsToShape?: string;
+  /** Human title for the body's H1. Defaults to the descriptor slug. */
+  readonly title?: string;
+  /** Prose body. When omitted a deterministic default body is rendered. */
+  readonly body?: string;
+}
+
+/**
+ * Project a holon into a hypermedia Markdown document — YAML-LD frontmatter
+ * (identity + data + target-free controls) over human prose.
+ *
+ * Pure + deterministic, exactly like its siblings: same (node, opts) →
+ * byte-identical Markdown. No clock read.
+ */
+export function projectHolonToMarkdown(
+  node: Node,
+  opts: ProjectMarkdownOptions,
+): string {
+  const base = opts.descriptorBase.endsWith('/') ? opts.descriptorBase : `${opts.descriptorBase}/`;
+  const pgslUri = node.uri;
+  const pgslLevel = levelOf(node);
+  const descriptorUrl = `${base}${descriptorSlug(pgslUri)}.ttl`;
+  const controls = opts.controls ?? [];
+  const title = opts.title ?? descriptorSlug(pgslUri);
+
+  const body = opts.body ?? [
+    `# ${title}`,
+    ``,
+    `A ${pgslLevel === 0 ? 'PGSL atom' : `PGSL fragment (level ${pgslLevel})`} — content-addressed, so identical`,
+    `content anywhere in the federation projects to this same identity.`,
+    ``,
+    `- **Holon:** \`${pgslUri}\``,
+    `- **Attributed to:** \`${node.provenance.wasAttributedTo}\``,
+    `- **Descriptor (authority):** ${descriptorUrl}`,
+    ``,
+    ...(controls.length > 0 ? [
+      `## What you can do`,
+      ``,
+      // The point of the whole projection: the affordance set as prose an LLM
+      // reads natively, instead of Turtle only a parser can see.
+      ...controls.flatMap((c) => [
+        `- **\`${c.actionIri}\`**${c.whenToUse ? ` — ${c.whenToUse}` : ''}`,
+        ...(c.requires && c.requires.length > 0 ? [`  - requires: ${c.requires.join(', ')}`] : []),
+      ]),
+      ``,
+      `To act, call \`invoke_affordance\` with the **descriptor URL above** and the`,
+      `\`actionIri\` you want. The target is resolved from the signed descriptor —`,
+      `it is deliberately not published here, and must not be guessed.`,
+    ] : [
+      `This holon publishes no controls.`,
+    ]),
+  ].join('\n');
+
+  return renderHypermediaMarkdown({
+    id: node.uri,
+    type: 'iep:ContextDescriptor',
+    descriptorUrl,
+    ...(opts.conformsToShape ? { conformsToShape: opts.conformsToShape } : {}),
+    pgslUri,
+    pgslLevel,
+    controls,
+    body,
+  });
 }
 
 /** Render a full manifest body (prefixes + entry rows) for a lattice slice. */

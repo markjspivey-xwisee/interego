@@ -377,6 +377,7 @@ export {
   descriptorSlug,
   projectHolonToCredential,
   projectHolonToActivity,
+  projectHolonToMarkdown,
   CG_NS,
   DCT_NS,
 } from './projection.js';
@@ -388,6 +389,7 @@ export type {
   ProjectCredentialOptions,
   HolonActivity,
   ProjectActivityOptions,
+  ProjectMarkdownOptions,
 } from './projection.js';
 // Cognitive strategy (bridges question analysis with the affordance engine)
 export { computeCognitiveStrategy } from './cognitive-strategy.js';

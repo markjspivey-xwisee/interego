@@ -168,6 +168,17 @@ export type {
   HypermediaEnvelope,
   KernelResultKind,
 } from './hypermedia.js';
+export {
+  HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
+  HYPERMEDIA_MARKDOWN_VARIANT,
+  controlsFromAffordances,
+  parseHypermediaMarkdown,
+  renderHypermediaMarkdown,
+} from './hypermedia-markdown.js';
+export type {
+  HypermediaControl,
+  HypermediaMarkdownDoc,
+} from './hypermedia-markdown.js';
 
 // ── Shared substrate state ───────────────────────────────────
 

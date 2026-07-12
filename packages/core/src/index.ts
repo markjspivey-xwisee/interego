@@ -643,8 +643,15 @@ export {
   hydraEntryPoint,
   KERNEL_JSONLD_CONTEXT,
   KERNEL_RESULT_SHAPES,
+  HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
+  HYPERMEDIA_MARKDOWN_VARIANT,
+  controlsFromAffordances,
+  parseHypermediaMarkdown,
+  renderHypermediaMarkdown,
 } from './kernel/index.js';
 export type {
+  HypermediaControl,
+  HypermediaMarkdownDoc,
   Holon,
   Affordance as KernelAffordance,
   KernelCompositionOperator,
