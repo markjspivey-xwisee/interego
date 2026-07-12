@@ -255,6 +255,7 @@ import { createLazyPodInit, POD_AWARE_TOOLS } from './lazy-pod-init.js';
 // audit-load-bearing "sign the bytes the pod actually persists, not
 // the locally-built body" contract has dedicated test coverage.
 import { fetchAndSignCanonicalTurtle } from './compliance-sign.js';
+import { mountAmep, seedRelease42, type AmepDeps } from './amep.js';
 
 // ── Config ──────────────────────────────────────────────────
 
@@ -294,6 +295,9 @@ const RELAY_INTROSPECTION_SECRET = process.env['RELAY_INTROSPECTION_SECRET'] ?? 
 // Must be set in production so the OAuth metadata advertises the correct
 // externally-reachable URL. Falls back to constructing from request host.
 const PUBLIC_BASE_URL = process.env['PUBLIC_BASE_URL'] ?? '';
+// Operator bearer for POST /amep/acts (AMEP engine). Unset ⇒ operator path
+// disabled; OAuth bearers with mcp:write scope still work.
+const AMEP_ACT_SECRET = process.env['AMEP_ACT_SECRET'] ?? '';
 
 // Solid OIDC / RFC 9449 DPoP enforcement.
 //   - Default (false): DPoP is supported but optional. Clients that send a
@@ -9548,6 +9552,61 @@ app.get('/ns/:owner/:slug', async (req, res) => {
   res.type('text/turtle').send(turtle);
 });
 
+// ── /amep/* — AMEP engine (Interego is the reference implementation) ──
+//
+// Six protocol acts over pod-backed exchange state, served in four bindings.
+// Conformance is validated on every response by the AMEP repo's own reference
+// validator (vendored in ./amep-vendor/). See amep.ts for the full hardening.
+const amepDeps: AmepDeps = {
+  solidFetch,
+  withPodMutex,
+  introspect: (token: string) => {
+    const intro = oauthProvider.introspectAccessToken(token);
+    if (!intro) return null;
+    return { userId: intro.userId, scope: intro.scope ?? [], clientId: intro.clientId };
+  },
+  cssUrl: CSS_URL,
+  maintainerPod: RELAY_MAINTAINER_POD_NAME || 'maintainer',
+  publicBase: PUBLIC_BASE_URL || `http://localhost:${PORT}`,
+  actSecret: AMEP_ACT_SECRET,
+  // NON-NORMATIVE presentation binding: the exchange rendered as
+  // hypermedia-Markdown with the affordance set TARGET-FREE (controls carry the
+  // action + the exchange descriptorUrl only; the POST target is re-resolved
+  // from the signed descriptor). This is the zero-trust channel binding — no
+  // profile Link header, excluded from conformance claims.
+  markdownFn: (docUnknown: unknown) => {
+    const doc = docUnknown as Record<string, unknown>;
+    const affs = Array.isArray(doc['affordances']) ? doc['affordances'] as Array<Record<string, unknown>> : [];
+    const controls = controlsFromAffordances(
+      affs.map((a) => ({ action: String(a['action']), target: String(a['target']), method: (a['method'] as 'POST') ?? 'POST' })) as never,
+      Object.fromEntries(affs.map((a) => [String(a['action']), { whenToUse: String(a['effect'] ?? '') }])),
+    );
+    const exchangeUrl = `${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/amep/exchanges/${(doc['@id'] as string ?? '').split(':').pop()}`;
+    const mem = doc['memory'] as Record<string, unknown> | undefined;
+    const semantic = mem?.['semantic'] as Record<string, unknown> | undefined;
+    const body = [
+      `# AMEP exchange`,
+      ``,
+      `An AMEP exchange projected as a document. The RDF / affordance+yaml`,
+      `bindings are the same object; this presentation binding just survives`,
+      `channels those do not.`,
+      ``,
+      `- **Act:** \`${(doc['act'] as Record<string, unknown>)?.['actType'] ?? ''}\``,
+      `- **Head (authority):** ${exchangeUrl}`,
+      ...(semantic?.['body'] ? [``, `## Memory`, ``, String(semantic['body']).trim()] : []),
+    ].join('\n');
+    return renderHypermediaMarkdown({
+      id: String(doc['@id'] ?? ''),
+      type: 'amep:Exchange',
+      descriptorUrl: exchangeUrl,
+      controls,
+      body,
+    });
+  },
+  log: (msg: string, extra?: unknown) => { if (extra !== undefined) console.log(msg, extra); else console.log(msg); },
+};
+mountAmep(app, amepDeps);
+
 // ── /audit/* — compliance + lineage endpoints ──────────────
 //
 // /inbox + /audit/{events,lineage,verify-signature,compliance} take a
@@ -11421,7 +11480,19 @@ app.listen(PORT, () => {
   log(`  GET  /.well-known/oauth-protected-resource    Resource metadata`);
   log(`  GET  /.well-known/operations                  Substrate-operation catalog`);
   log(`  */authorize /token /register /revoke           OAuth endpoints (SDK)`);
+  log(`  GET  /amep  |  POST /amep/acts                 AMEP engine (reference impl)`);
 });
+
+// ── Seed the AMEP release-42 exchange (best-effort, after listen) ────
+// Runs post-listen so it never blocks the health probe. Create-only: skips if
+// the exchange already exists. Requires a warmed maintainer pod.
+void (async () => {
+  try {
+    await seedRelease42(amepDeps);
+  } catch (e) {
+    log(`[amep] seed skipped: ${(e as Error).message}`);
+  }
+})();
 
 // ── One-shot store hygiene (env-gated, background, after listen) ─────
 //

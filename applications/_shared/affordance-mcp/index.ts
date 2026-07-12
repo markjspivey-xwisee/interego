@@ -417,7 +417,7 @@ export function affordancesManifestTurtle(
   options?: { verticalLabel?: string; rdfsComment?: string },
 ): string {
   const prefixes = `@prefix iep:    <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
-@prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/cgh#> .
+@prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
 @prefix dcat:  <http://www.w3.org/ns/dcat#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .`;

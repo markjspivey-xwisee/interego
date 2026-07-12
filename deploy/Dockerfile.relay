@@ -94,7 +94,12 @@ COPY deploy/mcp-relay/compliance-sign.ts ./
 COPY deploy/mcp-relay/agent-mesh.ts ./
 COPY deploy/mcp-relay/activitypub.ts ./
 COPY deploy/mcp-relay/reachability.ts ./
-RUN npx tsc
+COPY deploy/mcp-relay/amep.ts ./
+# AMEP reference validator + JSON-LD context, vendored verbatim. amep.ts loads
+# them by a path relative to the COMPILED module (dist/amep.js), so after tsc
+# they must sit at dist/amep-vendor/.
+COPY deploy/mcp-relay/amep-vendor/ ./amep-vendor/
+RUN npx tsc && cp -r amep-vendor dist/amep-vendor
 
 # ────────────────────────────────────────────────────────────
 #  Runtime stage: distroless image running compiled JS
