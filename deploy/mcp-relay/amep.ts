@@ -794,7 +794,17 @@ async function buildAct(
     // native merge: it consumes the exact head states named and closes them.
     const operands = Array.isArray(act['operands']) ? (act['operands'] as string[]) : [];
     const operator = typeof act['operator'] === 'string' ? act['operator'] as string : 'union';
-    const sortedOps = [...operands].sort();
+    // Canonicalize: a fold over a SORTED, UNIQUE set. De-duplicating here (not
+    // trusting the client to) guarantees the composed body — and therefore the
+    // semanticCid — is a pure function of the DISTINCT operand heads, so a client
+    // that repeats a head cannot double its content or perturb the CID. The stored
+    // + projected act carries this canonical list, keeping the served operands
+    // consistent with the body they produced.
+    const sortedOps = [...new Set(operands)].sort();
+    act['operands'] = sortedOps;
+    if (sortedOps.length < 2) {
+      return { error: 'Compose requires at least two distinct operand heads', shape: 'ComposeInputShape' };
+    }
     if (previousHead && !sortedOps.includes(previousHead)) {
       return { error: `Compose expectedHead ${previousHead} must be one of the operand heads being merged`, shape: 'ComposeInputShape' };
     }
