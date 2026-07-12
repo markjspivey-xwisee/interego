@@ -304,6 +304,14 @@ function buildActNode(act: StoredAct): Record<string, unknown> {
   return node;
 }
 
+// Relay-controlled keys a client MUST NOT be able to set on a memory record.
+// Attribution of a write is carried ONLY on the receipt (amep:submittedBy).
+const RESERVED_MEMORY_KEYS = ['amep:submittedBy', 'submittedBy'];
+function stripReserved(memory: Record<string, unknown>): Record<string, unknown> {
+  for (const k of RESERVED_MEMORY_KEYS) delete memory[k];
+  return memory;
+}
+
 const shortId = (s: string) => sha256(s).slice(0, 8);
 function displayFor(did: string): string {
   return did.length > 24 ? `${did.slice(0, 20)}…` : did;
@@ -494,6 +502,22 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
           newState.currentHead = built.stored.resultHead;
           newState.exchange = newState.exchange || slug;
 
+          // PRE-WRITE conformance gate. The projection is validated with the
+          // reference validator BEFORE the state is persisted, so a submission
+          // that fails an act-type shape (Fork without branch, Compose with
+          // unsorted operands, bad memory, …) is rejected 422 with NOTHING
+          // written — never a torn write that advances the head to an act no
+          // representation can validate. This is the ONLY validation gate; the
+          // served projection is deterministic and identical to the one checked
+          // here, so GET/replay never need to re-validate.
+          const projected = projectExchange(deps, newState, built.stored);
+          const report = await amepValidator.validateDocument(projected, amepContext, { validateHashes: true });
+          if (!report['sh:conforms']) return { kind: 'nonconformant' as const, report };
+
+          // Terminal size cap: reject BEFORE the write so a full exchange is a
+          // clean 409, not a transient-looking 502 the client retries forever.
+          if (JSON.stringify(newState).length > MAX_STATE_BYTES) return { kind: 'toobig' as const };
+
           const w = await writeState(slug, newState, etag);
           if (w === 'ok') return { kind: 'applied' as const, state: newState, act: built.stored };
           if (w === 'conflict') continue; // re-read + retry CAS
@@ -511,27 +535,27 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
           return res.status(200).type(AFFORDANCE_YAML_TYPE).send(yaml.dump(doc));
         }
         case 'applied': {
+          // Already validated pre-write; the projection is deterministic, so this
+          // is the same conformant document — no re-validation needed.
           const doc = projectExchange(deps, result.state, result.act);
-          // Self-check with the reference validator before responding.
-          const report = await amepValidator.validateDocument(doc, amepContext, { validateHashes: true });
-          if (!report['sh:conforms']) {
-            deps.log('[amep] INTERNAL non-conformant projection', report['sh:result']);
-            return problem(res, 500, 'internal-nonconformance', 'Engine produced a non-conformant representation.', { validationReport: report });
-          }
           res.setHeader('ETag', doc['representationTag'] as string);
           res.setHeader('Location', receiptLookupUrl(deps, slug, result.act.id));
           res.setHeader('Link', `<${deps.publicBase.replace(/\/+$/, '')}/amep/exchanges/${slug}>; rel="latest-version"`);
           return res.status(201).type(AFFORDANCE_YAML_TYPE).send(yaml.dump(doc));
         }
+        case 'nonconformant':
+          // The submission built a non-conformant representation (a missing
+          // act-type field, malformed operands, bad memory). Rejected before any
+          // write — the exchange is untouched.
+          return problem(res, 422, 'invalid-act', 'The act does not project a conformant AMEP representation.', { validationReport: result.report });
         case 'idconflict':
           return problem(res, 409, 'act-id-conflict', 'This act @id was already used with different content.');
         case 'stale':
           return problem(res, 412, 'stale-head', 'expectedHead does not match the current head.', {
-            'amep:rediscover': `${deps.publicBase}/amep/exchanges/${slug}`,
-            currentHead: undefined, // MUST NOT leak head values in 412? spec 412 requires rediscover only.
+            'amep:rediscover': `${deps.publicBase.replace(/\/+$/, '')}/amep/exchanges/${slug}`,
           });
         case 'toobig':
-          return problem(res, 409, 'exchange-full', 'This exchange has reached its act limit.');
+          return problem(res, 409, 'exchange-full', 'This exchange is full (act count or size limit reached).');
         case 'invalid':
           return problem(res, 422, 'invalid-act', result.msg, { validationReport: minimalReport(result.msg, result.shape) });
         case 'writefail':
@@ -669,11 +693,17 @@ async function buildAct(
     const prior = state?.acts[acceptedAct];
     if (!prior || !prior.memory) return { error: 'acceptedAct not found in this exchange', shape: 'AcceptInputShape' };
     // Commit: same memory, same semanticCid, governanceStatus → Committed.
-    memory = { ...prior.memory, governanceStatus: 'amep:Committed' };
+    // Strip reserved attribution keys so a memory poisoned upstream cannot carry
+    // a forged submitter into the Committed record.
+    memory = stripReserved({ ...prior.memory, governanceStatus: 'amep:Committed' });
   } else if (actType !== 'Ask') {
     const m = submitted['memory'];
     if (!m || typeof m !== 'object') return { error: `${actType} must carry a memory record`, shape: `${INPUT_SHAPES[actType]}` };
-    memory = { ...(m as Record<string, unknown>) };
+    // Reserved attribution keys are relay-controlled: the authenticated submitter
+    // is recorded ONLY on the receipt (amep:submittedBy), never lifted from the
+    // client memory — else a write-scoped attacker could forge attribution to a
+    // DID that never authenticated.
+    memory = stripReserved({ ...(m as Record<string, unknown>) });
     if (!memory['semantic'] || typeof memory['semantic'] !== 'object') {
       return { error: `${actType} memory must carry amep:SemanticMaterial`, shape: `${INPUT_SHAPES[actType]}` };
     }

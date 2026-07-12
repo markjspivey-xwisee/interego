@@ -121,5 +121,43 @@ nested.memory.semantic['@context'] = 'http://evil.local/ctx';
 const r6 = await post(nested);
 check('nested @context rejected → 400', r6._s === 400, `(got ${r6._s})`);
 
+// 7. TORN-WRITE PREVENTION: a malformed memory (missing attributedTo) that fails
+//    the reference validator must be rejected 422 BEFORE any write — not 500
+//    with the head advanced. Fresh exchange so we can assert the head is intact.
+const ask2 = await post({ ...askAct, '@id': 'urn:exchange:test2:ask', act: { ...askAct.act, '@id': 'urn:act:test2:ask' } });
+const ask2Head = ask2._s === 201 ? (yaml.load(ask2._b) as any).head : null;
+const badAssert = {
+  '@context': [CTX], '@id': 'urn:exchange:test2:assert', '@type': 'amep:Exchange',
+  actor: { '@id': agent, '@type': 'prov:SoftwareAgent', displayName: 'Test' },
+  act: { '@id': 'urn:act:test2:assert1', '@type': 'amep:ProtocolAct', actType: 'amep:Assert', actor: agent, expectedHead: ask2Head, createdAt: now,
+    proof: { '@type': 'iep:SignedAuthorship', verificationMethod: `${agent}#k`, created: now, proofValue: 'zTest' } },
+  // memory.semantic MISSING attributedTo → non-conformant
+  memory: { '@id': 'urn:memory:test2:m1', '@type': ['amep:MemoryRecord', 'ieh:AgentMemory'], memoryKind: 'amep:Claim',
+    semantic: { '@type': 'amep:SemanticMaterial', body: 'Malformed: no attributedTo.', epistemicStatus: 'iep:Asserted' } },
+};
+const rBad = await post(badAssert);
+check('malformed memory → 422 (not 500 torn write)', rBad._s === 422, `(got ${rBad._s})`);
+// Re-POST the SAME bad assert: if the first had been a torn write the head would
+// have advanced and this would 412; a clean pre-write reject stays 422.
+const rBad2 = await post(badAssert);
+check('re-submit malformed → still 422 (head never advanced)', rBad2._s === 422, `(got ${rBad2._s})`);
+
+// 8. RESERVED-KEY STRIPPING: a client-injected amep:submittedBy in memory must
+//    not survive into the served representation (forged attribution).
+const ask3 = await post({ ...askAct, '@id': 'urn:exchange:test3:ask', act: { ...askAct.act, '@id': 'urn:act:test3:ask' } });
+const ask3Head = ask3._s === 201 ? (yaml.load(ask3._b) as any).head : null;
+const forged = {
+  '@context': [CTX], '@id': 'urn:exchange:test3:assert', '@type': 'amep:Exchange',
+  actor: { '@id': agent, '@type': 'prov:SoftwareAgent', displayName: 'Test' },
+  act: { '@id': 'urn:act:test3:assert1', '@type': 'amep:ProtocolAct', actType: 'amep:Assert', actor: agent, expectedHead: ask3Head, createdAt: now,
+    proof: { '@type': 'iep:SignedAuthorship', verificationMethod: `${agent}#k`, created: now, proofValue: 'zTest' } },
+  memory: { '@id': 'urn:memory:test3:m1', '@type': ['amep:MemoryRecord', 'ieh:AgentMemory'], memoryKind: 'amep:Claim',
+    'amep:submittedBy': 'did:key:zForgedTrustedMaintainer',
+    semantic: { '@type': 'amep:SemanticMaterial', body: 'A claim with a forged submitter.', epistemicStatus: 'iep:Asserted', attributedTo: agent } },
+};
+const rForge = await post(forged);
+check('injected amep:submittedBy → 201 (accepted, key stripped)', rForge._s === 201, `(got ${rForge._s})`);
+check('forged submitter NOT in served memory', rForge._s === 201 && !rForge._b.includes('zForgedTrustedMaintainer'));
+
 console.log(`\n${ok}/${ok + bad} checks passed`);
 process.exit(bad === 0 ? 0 : 1);

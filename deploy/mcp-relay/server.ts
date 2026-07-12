@@ -8350,15 +8350,21 @@ async function withPodMutex<T>(podUrl: string, fn: () => Promise<T>): Promise<T>
   const gate = new Promise<void>(resolve => { release = resolve; });
   // Chain so the next caller waits for THIS call's gate, not the prior
   // one. Errors from prior callers must not propagate to the next caller.
-  podWriteMutexes.set(podUrl, prev.then(() => gate, () => gate));
+  // Keep a handle to the EXACT value stored in the map: the cleanup below must
+  // compare against `chained`, not `gate` — the map never holds `gate`, so the
+  // old `=== gate` check never matched and the entry was never freed (an
+  // unbounded leak, one entry per distinct podUrl / AMEP exchange slug forever).
+  const chained = prev.then(() => gate, () => gate);
+  podWriteMutexes.set(podUrl, chained);
   try {
     await prev.catch(() => undefined);
     return await fn();
   } finally {
     release();
-    // Clean up if we're the last entry in the chain.
+    // Clean up if we're still the last entry in the chain (no later caller has
+    // replaced the map value).
     queueMicrotask(() => {
-      if (podWriteMutexes.get(podUrl) === gate) podWriteMutexes.delete(podUrl);
+      if (podWriteMutexes.get(podUrl) === chained) podWriteMutexes.delete(podUrl);
     });
   }
 }
