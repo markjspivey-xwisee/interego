@@ -702,3 +702,28 @@ align:removalVersion a owl:DatatypeProperty ;
     rdfs:domain align:DeprecationMarker ;
     rdfs:range xsd:string ;
     rdfs:label "removal version" .
+
+# ══════════════════════════════════════════════════════════════
+#  Recorded migrations (align:VersionMigration instances)
+# ══════════════════════════════════════════════════════════════
+
+# The harness namespace rename, recorded with the machinery above.
+# `ns/cgh#` was the pre-rename harness base; no cgh.ttl was ever
+# published, so the IRI never dereferenced. The published namespace
+# is `ns/harness#` (harness.ttl). packages/core emitted cgh# in
+# KERNEL_JSONLD_CONTEXT and multi-typed affordance nodes until
+# 2026-07; emissions now use harness#, and cgh# remains read-accepted
+# because affordance blocks persisted/signed in the interim carry it
+# in their bytes.
+
+align:CghToHarnessMigration a align:VersionMigration ;
+    rdfs:label "cgh: → ieh: harness namespace migration" ;
+    align:sourceNamespace <https://markjspivey-xwisee.github.io/interego/ns/cgh#> ;
+    align:targetNamespace <https://markjspivey-xwisee.github.io/interego/ns/harness#> ;
+    align:hasMapping [
+        a align:TermMapping ;
+        align:sourceTerm <https://markjspivey-xwisee.github.io/interego/ns/cgh#Affordance> ;
+        align:targetTerm ieh:Affordance ;
+        align:mappingRelation align:Renamed
+    ] ;
+    rdfs:comment "Writers emit ns/harness# terms; readers accept both. The source namespace never dereferenced (no cgh.ttl was published), which made every emitted ieh: IRI a dead link until this migration." .

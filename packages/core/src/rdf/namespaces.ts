@@ -34,6 +34,25 @@ export const CG_LEGACY = 'https://markjspivey-xwisee.github.io/interego/ns/cg#' 
  * compiling while emitting the new `iep:` IRIs. Prefer `IEP` in new code.
  */
 export const CG = IEP;
+
+/**
+ * The harness namespace (`ieh:`) — agent scaffolding terms (Affordance,
+ * AgentMemory, ObservationSection, …). This is the IRI `docs/ns/harness.ttl`
+ * publishes and the one `packages/pgsl`, `packages/skills`, and
+ * `docs/ns/alignment.ttl` already use. It dereferences.
+ */
+export const IEH = 'https://markjspivey-xwisee.github.io/interego/ns/harness#' as const;
+
+/**
+ * The legacy `cgh:` harness base. `packages/core` kept emitting this IRI in
+ * `KERNEL_JSONLD_CONTEXT` and multi-typed affordance nodes after the
+ * cgh:→ieh: rename, but no `cgh.ttl` was ever published — the IRI 404s.
+ * Retained ONLY as a read-alias: affordance blocks persisted/signed while the
+ * kernel emitted it carry `cgh#Affordance` in their bytes and must keep
+ * matching. New writes use {@link IEH}.
+ * @deprecated use {@link IEH}
+ */
+export const CGH_LEGACY = 'https://markjspivey-xwisee.github.io/interego/ns/cgh#' as const;
 export const RDF  = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#' as const;
 export const RDFS = 'http://www.w3.org/2000/01/rdf-schema#' as const;
 export const XSD  = 'http://www.w3.org/2001/XMLSchema#' as const;
@@ -60,6 +79,8 @@ export const SKOS = 'http://www.w3.org/2004/02/skos/core#' as const;
 export const PREFIXES = {
   iep:   IEP,        // L1 protocol — Interego Protocol (canonical; listed first so compact() prefers it)
   cg:    CG_LEGACY,  // @deprecated read-alias of iep: for legacy "Context Graphs" data
+  ieh:   IEH,        // harness scaffolding (canonical — ns/harness#)
+  cgh:   CGH_LEGACY, // @deprecated read-alias of ieh: (ns/cgh# was never published; 404s)
   rdf:   RDF,
   rdfs:  RDFS,
   xsd:   XSD,
