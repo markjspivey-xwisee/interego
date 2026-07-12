@@ -57,14 +57,29 @@ const hA = (yaml.load(rA._b) as any).head;
 const mB = 'urn:memory:all:B';
 const rB = await post({ '@context': [CTX], '@id': 'urn:exchange:all:B', '@type': 'amep:Exchange', actor: ac(B, 'prov:SoftwareAgent', 'B'), act: { '@id': 'urn:act:all:challengeB', '@type': 'amep:ProtocolAct', actType: 'amep:Challenge', actor: B, expectedHead: hA, challengedAct: 'urn:act:all:assertA', createdAt: now, proof: p(B) }, memory: mem(mB, 'Beta counter-claim.', B) });
 check('3. Challenge → 201 + conforms', rB._s === 201 && await conforms(rB._b), `(${rB._s})`);
+const hB = (yaml.load(rB._b) as any).head;
 
-// 4. Compose the two candidate memories → composed candidate (operands sorted).
-const operands = [mA, mB].sort();
-const mC = 'urn:memory:all:C';
-const rC = await post({ '@context': [CTX], '@id': 'urn:exchange:all:C', '@type': 'amep:Exchange', actor: ac(hum, 'prov:Person', 'H'), act: { '@id': 'urn:act:all:compose', '@type': 'amep:ProtocolAct', actType: 'amep:Compose', actor: hum, expectedHead: hA, operands, createdAt: now, proof: p(hum) }, memory: mem(mC, 'Synthesis of Alpha and Beta: ship Friday with the rollback drill first.', hum) });
-check('4. Compose (2 sorted operands) → 201 + conforms', rC._s === 201 && await conforms(rC._b), `(${rC._s}${rC._s >= 400 ? ' ' + rC._b.slice(0, 160) : ''})`);
-const hC = (yaml.load(rC._b) as any).head;
-check('   composed act carries the 2 operands', (() => { const d: any = yaml.load(rC._b); return Array.isArray(d.act?.operands) && d.act.operands.length === 2; })());
+// 4. Compose — the SERVER deterministically merges the two open OPERAND HEADS
+//    (hA + hB) into one composed memory. The client supplies only the heads and
+//    operator; it does NOT supply the composed material (that would be
+//    unverifiable). Same heads + operator replay to the same body + semanticCid.
+const operands = [hA, hB].sort();
+const rC = await post({ '@context': [CTX], '@id': 'urn:exchange:all:C', '@type': 'amep:Exchange', actor: ac(hum, 'prov:Person', 'H'),
+  act: { '@id': 'urn:act:all:compose', '@type': 'amep:ProtocolAct', actType: 'amep:Compose', actor: hum, expectedHead: hA, operands, operator: 'union', createdAt: now, proof: p(hum) } });
+check('4. Compose (server-computed deterministic merge of 2 heads) → 201 + conforms', rC._s === 201 && await conforms(rC._b), `(${rC._s}${rC._s >= 400 ? ' ' + rC._b.slice(0, 200) : ''})`);
+const cDoc: any = yaml.load(rC._b);
+const hC = cDoc.head;
+check('   composed memory is SERVER-computed (merges BOTH operand bodies)',
+  /Alpha claim/.test(cDoc.memory?.semantic?.body || '') && /Beta counter-claim/.test(cDoc.memory?.semantic?.body || ''));
+// Determinism: the validator (an independent party) recomputes semanticCid over
+// the composed semantic and it matches — proving the merge is verifiable, not
+// trusted. (conforms() above already asserts this.)
+check('   composed act carries the 2 sorted operand HEADS (provenance)',
+  Array.isArray(cDoc.act?.operands) && cDoc.act.operands.length === 2 && cDoc.act.operands.every((o: string) => /\/amep\/heads\//.test(o)));
+// Both merged heads are now CLOSED. Probe: an Assert targeting the consumed
+// sibling head hB must be rejected (stale CAS) — proving Compose closed it.
+const rStale = await post({ '@context': [CTX], '@id': 'urn:exchange:all:stale', '@type': 'amep:Exchange', actor: ac(A, 'prov:SoftwareAgent', 'A'), act: { '@id': 'urn:act:all:stale', '@type': 'amep:ProtocolAct', actType: 'amep:Assert', actor: A, expectedHead: hB, createdAt: now, proof: p(A) }, memory: mem('urn:memory:all:stale', 'late', A) });
+check('   consumed operand head hB rejects further acts (merge closed it)', rStale._s === 409 || rStale._s === 412, `(${rStale._s})`);
 
 // 5. Accept the composed candidate → Committed.
 const rAcc = await post({ '@context': [CTX], '@id': 'urn:exchange:all:acc', '@type': 'amep:Exchange', actor: ac(hum, 'prov:Person', 'H'), act: { '@id': 'urn:act:all:accept', '@type': 'amep:ProtocolAct', actType: 'amep:Accept', actor: hum, expectedHead: hC, acceptedAct: 'urn:act:all:compose', createdAt: now, proof: p(hum) } });

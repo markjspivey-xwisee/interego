@@ -245,12 +245,17 @@ interface ExchangeState {
  * candidate simply stays open (a client may commit it on its own branch, or leave
  * it as a live alternative). Convergence to one decision is NOT required by AMEP;
  * the branch map (`/heads`) shows every committed + candidate lineage. */
-function nextOpenHeads(open: readonly string[], actType: string, expectedHead: string | null, resultHead: string): string[] {
+function nextOpenHeads(open: readonly string[], actType: string, expectedHead: string | null, resultHead: string, operands: readonly string[] | null): string[] {
   switch (actType) {
     case 'Ask': return [resultHead];
     case 'Assert':
-    case 'Compose':
     case 'Accept': return open.filter((h) => h !== expectedHead).concat(resultHead);
+    // Compose MERGES a set of open heads into one: it consumes every operand head
+    // (expectedHead is one of them) and opens a single result head. Merging two
+    // branches must close BOTH, not just the expected one — otherwise the merged
+    // sibling would linger as a live head that no longer reflects the converged
+    // state. (Contrast Accept, which consumes only the head it commits.)
+    case 'Compose': return open.filter((h) => !(operands ?? []).includes(h)).concat(resultHead);
     case 'Challenge':
     case 'Fork': return open.concat(resultHead);
     default: return open.concat(resultHead);
@@ -548,7 +553,7 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
           const newState: ExchangeState = state ?? { exchange: slug, openHeads: [], order: [], acts: {} };
           newState.acts[actId] = built.stored;
           newState.order = [...newState.order, actId];
-          newState.openHeads = nextOpenHeads(newState.openHeads, actType, expectedHead, built.stored.resultHead);
+          newState.openHeads = nextOpenHeads(newState.openHeads, actType, expectedHead, built.stored.resultHead, built.stored.operands);
           newState.exchange = newState.exchange || slug;
 
           // PRE-WRITE conformance gate. The projection is validated with the
@@ -776,6 +781,71 @@ async function buildAct(
     // Strip reserved attribution keys so a memory poisoned upstream cannot carry
     // a forged submitter into the Committed record.
     memory = stripReserved({ ...prior.memory, governanceStatus: 'amep:Committed' });
+  } else if (actType === 'Compose') {
+    // Compose is a DETERMINISTIC server-side merge — the verifiable floor that
+    // happens no matter who submits it (human or agent). The server resolves the
+    // operands from local state and computes the composed material itself; the
+    // client does NOT supply the result. Same operands + operator → the same
+    // body, so any party recomputes and verifies it (this is kernel.compose's
+    // determinism — a bounded-lattice fold over a sorted, unique operand set).
+    // Operands are HEADS (open branch pointers), matching amep:operand's range and
+    // the "everything is a dereferenceable URL" rule — each is resolved to the
+    // memory it points at. Composing branches, not raw memory ids, is the CAS-
+    // native merge: it consumes the exact head states named and closes them.
+    const operands = Array.isArray(act['operands']) ? (act['operands'] as string[]) : [];
+    const operator = typeof act['operator'] === 'string' ? act['operator'] as string : 'union';
+    const sortedOps = [...operands].sort();
+    if (previousHead && !sortedOps.includes(previousHead)) {
+      return { error: `Compose expectedHead ${previousHead} must be one of the operand heads being merged`, shape: 'ComposeInputShape' };
+    }
+    const bodies: string[] = [];
+    for (const headId of sortedOps) {
+      // Head IRIs are resolved ONLY from local state, never fetched. Each operand
+      // must be an OPEN head in this exchange (you can only merge live branches).
+      if (!state?.openHeads.includes(headId)) {
+        return { error: `Compose operand ${headId} is not an open head in this exchange`, shape: 'ComposeInputShape' };
+      }
+      const owner = Object.values(state?.acts ?? {}).find((a) => a.resultHead === headId);
+      const sem = owner?.memory?.['semantic'] as Record<string, unknown> | undefined;
+      if (!sem || typeof sem['body'] !== 'string') {
+        return { error: `Compose operand head ${headId} carries no memory to merge`, shape: 'ComposeInputShape' };
+      }
+      bodies.push((sem['body'] as string).trim());
+    }
+    // The composed body deterministically encodes operator + operand heads +
+    // content, so the semanticCid (computed over it) captures the full provenance
+    // without any new vocabulary. A fresh party rebuilds this exact string from the
+    // operand heads and gets the identical CID — the merge is verifiable, not
+    // trusted. This is kernel.compose's pure fold: sorted, unique, associative.
+    const composedBody = `Composed (${operator}) of:\n${sortedOps.map((id) => `- ${id}`).join('\n')}\n\n`
+      + bodies.map((b, i) => `[${sortedOps[i]}]\n${b}`).join('\n\n---\n\n');
+    const composedSemantic: Record<string, unknown> = {
+      '@type': 'amep:SemanticMaterial',
+      body: composedBody,
+      epistemicStatus: 'iep:Asserted',
+      attributedTo: principal.id,
+    };
+    memory = {
+      '@id': `${resultHead}#memory`,
+      '@type': ['amep:MemoryRecord', 'ieh:AgentMemory'],
+      memoryKind: 'amep:Claim',
+      governanceStatus: 'amep:Candidate',
+      integrityStatus: 'amep:Unverified',
+      conformanceStatus: 'amep:Conformant',
+      semantic: composedSemantic,
+    };
+    try {
+      memory['semanticCid'] = await amepValidator.computeSemanticCid({ memory: { semantic: composedSemantic } }, amepContext);
+    } catch (e) {
+      return { error: `composed material could not be canonicalized: ${(e as Error).message}`, shape: 'SemanticCidShape' };
+    }
+    // NOTE: Compose carries NO client interpretation field. The deterministic
+    // merge is the verifiable floor that always happens; an actor who wants to
+    // "provide their own / decorate" frames it as a SEPARATE contextual-use Assert
+    // that reuses this composed semanticCid (amep:reuses) — a first-class,
+    // attributed, content-addressed, independently-governed memory — or renders a
+    // purely local decoration client-side. Neither can mutate the composed core,
+    // and neither needs new protocol surface.
   } else if (actType !== 'Ask') {
     const m = submitted['memory'];
     if (!m || typeof m !== 'object') return { error: `${actType} must carry a memory record`, shape: `${INPUT_SHAPES[actType]}` };
@@ -861,7 +931,7 @@ export async function buildSeedState(deps: AmepDeps): Promise<ExchangeState> {
     const s: ExchangeState = state ?? { exchange: RELEASE_42_SLUG, openHeads: [], order: [], acts: {} };
     s.acts[built.stored.id] = built.stored;
     s.order = [...s.order, built.stored.id];
-    s.openHeads = nextOpenHeads(s.openHeads, actType, built.stored.expectedHead, built.stored.resultHead);
+    s.openHeads = nextOpenHeads(s.openHeads, actType, built.stored.expectedHead, built.stored.resultHead, built.stored.operands);
     state = s;
     return built.stored;
   };

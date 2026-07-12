@@ -32,6 +32,7 @@
     "parentHead": { "@id": "amep:parentHead", "@type": "@id" },
     "branch": "amep:branch",
     "operands": { "@id": "amep:operand", "@type": "@id", "@container": "@set" },
+    "operator": "amep:operator",
     "acceptedAct": { "@id": "amep:acceptedAct", "@type": "@id" },
     "challengedAct": { "@id": "amep:challengedAct", "@type": "@id" },
     "receiptFor": { "@id": "amep:receiptFor", "@type": "@id" },
