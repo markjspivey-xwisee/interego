@@ -75,3 +75,4 @@ examples/holodeck/.holodeck/
 examples/tic-tac-toe-tournament/_server.log
 examples/tic-tac-toe-tournament/_tournament.log
 examples/tic-tac-toe-tournament/last-run.json
+deploy/railway/
