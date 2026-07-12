@@ -33,6 +33,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `build_args` (optional): the Vite SPAs bake their bridge's PUBLIC URL
+          # at build time via a REQUIRED build-arg (the Dockerfile `test -n` guards
+          # it), so a build with no arg hard-fails. The retired deploy-azure.yml
+          # resolved these from Azure; now the custom domains are stable, so they
+          # are pinned here. They are public browser-facing URLs, not secrets.
           - { image: interego-relay,              dockerfile: deploy/Dockerfile.relay }
           - { image: interego-identity,           dockerfile: deploy/Dockerfile.identity }
           - { image: interego-css-gate,           dockerfile: deploy/Dockerfile.css-gate }
@@ -40,11 +45,11 @@ jobs:
           - { image: interego-bridge,             dockerfile: deploy/Dockerfile.interego-bridge }
           - { image: interego-dashboard,          dockerfile: deploy/Dockerfile.dashboard }
           - { image: interego-pgsl-browser,       dockerfile: deploy/Dockerfile.pgsl-browser }
-          - { image: interego-microsite,          dockerfile: deploy/Dockerfile.interego-microsite }
+          - { image: interego-microsite,          dockerfile: deploy/Dockerfile.interego-microsite, build_args: "VITE_INTEREGO_BRIDGE_URL=https://bridge.interego.xwisee.com" }
           - { image: interego-main,               dockerfile: deploy/Dockerfile.interego-main }
           - { image: interego-acme-id,            dockerfile: deploy/Dockerfile.acme-id }
-          - { image: interego-foxxi-dashboard,    dockerfile: deploy/Dockerfile.foxxi-dashboard }
-          - { image: interego-foxxi-microsite,    dockerfile: deploy/Dockerfile.foxxi-microsite }
+          - { image: interego-foxxi-dashboard,    dockerfile: deploy/Dockerfile.foxxi-dashboard, build_args: "VITE_FOXXI_BRIDGE_URL=https://foxxi-bridge.interego.xwisee.com" }
+          - { image: interego-foxxi-microsite,    dockerfile: deploy/Dockerfile.foxxi-microsite, build_args: "VITE_FOXXI_BRIDGE_URL=https://foxxi-bridge.interego.xwisee.com" }
           - { image: interego-foxxi-scorm-player, dockerfile: deploy/Dockerfile.foxxi-scorm-player }
           # interego-css is managed out-of-band (the PGSL-backed CSS server lives
           # in integrations/pgsl-css-accessor and has its own workflow).
@@ -88,6 +93,9 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
+          # Empty for images without a build_args field; docker/build-push-action
+          # treats an empty build-args as none.
+          build-args: ${{ matrix.build_args }}
           # Immutable sha tag is what Railway pins to; :latest is for humans.
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}
