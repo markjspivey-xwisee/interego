@@ -138,10 +138,16 @@ iep:ConstitutionalPolicy a owl:Class ;
     rdfs:comment "A policy that governs other policies. Carries a tier (iep:tier) and an amendment process (iep:amendmentProcess). See spec/CONSTITUTIONAL-LAYER.md." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
-iep:Amendment a owl:Class ;
+iep:Ratifiable a owl:Class ;
     rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Ratifiable" ;
+    rdfs:comment "Anything whose status can be settled by collected ratification votes composed under the ModalAlgebra (Asserted=for, Counterfactual=against, Hypothetical=abstain). A constitutional Amendment is one Ratifiable; so is any governed assertion that transitions from proposed to ratified — e.g. a collaborative memory record moving Candidate→Committed. Generalized off iep:Amendment so the ratification algebra is reusable by any governance layer (AMEP's Accept/Challenge among them) rather than being constitutional-policy-specific." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:Amendment a owl:Class ;
+    rdfs:subClassOf iep:Ratifiable ;
     rdfs:label "Constitutional Amendment" ;
-    rdfs:comment "A proposed change to a constitutional policy. Carries the diff (added/removed/modified rules), the proponent, the vote descriptors collected, and the ratification status. Built on iep:supersedes for the eventual replacement of the prior policy version." ;
+    rdfs:comment "A proposed change to a constitutional policy. Carries the diff (added/removed/modified rules), the proponent, the vote descriptors collected, and the ratification status. Built on iep:supersedes for the eventual replacement of the prior policy version. A specialization of iep:Ratifiable (which now carries the ratification vocabulary)." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
 iep:SemioticFacet a owl:Class ;
@@ -540,14 +546,14 @@ iep:amendmentProcess a owl:ObjectProperty ;
 
 iep:ratificationVote a owl:ObjectProperty ;
     rdfs:label "ratification vote" ;
-    rdfs:comment "A descriptor recording one ratification vote on this amendment. Composes via ModalAlgebra (Asserted=for, Counterfactual=against, Hypothetical=abstain)." ;
-    rdfs:domain iep:Amendment ;
+    rdfs:comment "A descriptor recording one ratification vote on a Ratifiable. Composes via ModalAlgebra (Asserted=for, Counterfactual=against, Hypothetical=abstain). Domain generalized from iep:Amendment to iep:Ratifiable so any governance layer can reuse the ratification algebra (e.g. AMEP's Accept as a for-vote, Challenge as an against-vote)." ;
+    rdfs:domain iep:Ratifiable ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
 iep:ratifiedAt a owl:DatatypeProperty ;
     rdfs:label "ratified at" ;
-    rdfs:comment "Instant ratification became effective. Before this, the amendment is a proposal; after, it supersedes the prior policy version." ;
-    rdfs:domain iep:Amendment ;
+    rdfs:comment "Instant ratification became effective. Before this, the Ratifiable is a proposal (Candidate); after, it is ratified (Committed) and supersedes the prior version. Domain generalized from iep:Amendment to iep:Ratifiable." ;
+    rdfs:domain iep:Ratifiable ;
     rdfs:range xsd:dateTime ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
