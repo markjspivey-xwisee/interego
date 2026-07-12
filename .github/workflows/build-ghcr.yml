@@ -1,0 +1,94 @@
+# Build & push service images to GitHub Container Registry.
+#
+# REPLACES the retired Azure pipeline (deploy-azure.yml). The stack moved to
+# Railway and the Azure Container Registry `contextgraphsacr` was DELETED, so
+# that workflow can no longer push anywhere. Images now live at
+# ghcr.io/<owner>/<image> and Railway pulls them from there with a read:packages
+# token.
+#
+# Auth is the workflow's own GITHUB_TOKEN (packages: write) — no PAT, nothing to
+# rotate, nothing to leak.
+#
+# Usage:
+#   gh workflow run build-ghcr.yml -f image=interego-relay     # one image
+#   gh workflow run build-ghcr.yml                             # all images
+name: Build & push to GHCR
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Single image to build (leave blank to build all)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: interego-relay,              dockerfile: deploy/Dockerfile.relay }
+          - { image: interego-identity,           dockerfile: deploy/Dockerfile.identity }
+          - { image: interego-css-gate,           dockerfile: deploy/Dockerfile.css-gate }
+          - { image: interego-foxxi-bridge,       dockerfile: deploy/Dockerfile.foxxi-bridge }
+          - { image: interego-bridge,             dockerfile: deploy/Dockerfile.interego-bridge }
+          - { image: interego-dashboard,          dockerfile: deploy/Dockerfile.dashboard }
+          - { image: interego-pgsl-browser,       dockerfile: deploy/Dockerfile.pgsl-browser }
+          - { image: interego-microsite,          dockerfile: deploy/Dockerfile.interego-microsite }
+          - { image: interego-main,               dockerfile: deploy/Dockerfile.interego-main }
+          - { image: interego-acme-id,            dockerfile: deploy/Dockerfile.acme-id }
+          - { image: interego-foxxi-dashboard,    dockerfile: deploy/Dockerfile.foxxi-dashboard }
+          - { image: interego-foxxi-microsite,    dockerfile: deploy/Dockerfile.foxxi-microsite }
+          - { image: interego-foxxi-scorm-player, dockerfile: deploy/Dockerfile.foxxi-scorm-player }
+          # interego-css is managed out-of-band (the PGSL-backed CSS server lives
+          # in integrations/pgsl-css-accessor and has its own workflow).
+
+    steps:
+      - name: Should this matrix leg run?
+        id: gate
+        run: |
+          req='${{ inputs.image }}'
+          if [ -n "$req" ] && [ "$req" != '${{ matrix.image }}' ]; then
+            echo 'skip=true' >> "$GITHUB_OUTPUT"
+            echo "skipping ${{ matrix.image }} (only building $req)"
+          else
+            echo 'skip=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip != 'true'
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.gate.outputs.skip != 'true'
+
+      - name: Log in to GHCR
+        if: steps.gate.outputs.skip != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push
+        if: steps.gate.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          # Immutable sha tag is what Railway pins to; :latest is for humans.
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image pushed
+        if: steps.gate.outputs.skip != 'true'
+        run: echo "ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}"

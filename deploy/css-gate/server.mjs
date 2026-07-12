@@ -540,12 +540,28 @@ const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
   'upgrade',
 ]);
 
+// Forwarded-identity headers: a fronting proxy (Railway's edge, Caddy, ACA
+// ingress) sets these to the PUBLIC hostname. CSS's default middleware
+// (css:config/http/middleware/default.json) reconstructs the request URL from
+// X-Forwarded-Host / X-Forwarded-Proto, which OVERRIDES the Host header we set
+// below — so CSS would compute a public identifier and reject the request as
+// "outside the configured identifier space" (its canonical baseUrl is the
+// internal host). Strip them so CSS honours the Host header we forward.
+// X-Forwarded-For is preserved (client-IP provenance, harmless to CSS).
+const STRIP_FORWARDED_TO_CSS = new Set([
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-forwarded-port',
+  'forwarded',
+]);
+
 function buildUpstreamHeaders(inboundHeaders, hostHeader) {
   const out = {};
   for (const [name, value] of Object.entries(inboundHeaders)) {
     if (value === undefined) continue;
     const lower = name.toLowerCase();
     if (HOP_BY_HOP_REQUEST_HEADERS.has(lower)) continue;
+    if (STRIP_FORWARDED_TO_CSS.has(lower)) continue;
     out[lower] = value;
   }
   // undici Pool/Client honors a caller-supplied host header verbatim
