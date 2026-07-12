@@ -44,7 +44,7 @@
     "governanceStatus": { "@id": "amep:governanceStatus", "@type": "@id" },
     "integrityStatus": { "@id": "amep:integrityStatus", "@type": "@id" },
     "conformanceStatus": { "@id": "amep:conformanceStatus", "@type": "@id" },
-    "epistemicStatus": { "@id": "amep:epistemicStatus", "@type": "@id" },
+    "epistemicStatus": { "@id": "iep:modalStatus", "@type": "@id" },
     "semantic": { "@id": "amep:semantic", "@type": "@id" },
     "semanticCid": "amep:semanticCid",
     "representationTag": "amep:representationTag",
