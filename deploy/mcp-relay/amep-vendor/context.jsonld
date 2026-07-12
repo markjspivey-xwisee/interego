@@ -38,6 +38,7 @@
     "outcome": { "@id": "amep:outcome", "@type": "@id" },
     "validationReport": { "@id": "amep:validationReport", "@type": "@id" },
     "conforms": { "@id": "sh:conforms", "@type": "xsd:boolean" },
+    "submittedBy": { "@id": "amep:submittedBy", "@type": "@id" },
 
     "memoryKind": { "@id": "amep:memoryKind", "@type": "@id" },
     "governanceStatus": { "@id": "amep:governanceStatus", "@type": "@id" },
