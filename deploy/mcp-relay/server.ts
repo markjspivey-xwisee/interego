@@ -9314,7 +9314,7 @@ function nsHtml(iri: string, turtle: string, meta: { owner: string; slug: string
     + `<body style="font-family:system-ui;max-width:60rem;margin:2rem auto;line-height:1.5;padding:0 1rem">`
     + `<h1>${esc(meta.slug)}</h1>`
     + `<p><b>IRI:</b> <code>${esc(iri)}</code>${meta.isOntology ? ' · <b>owl:Ontology</b>' : ''}</p>`
-    + `<p>A published Interego holon, dereferenced here as linked data — the RDF projection of a signed, discoverable substrate object (<a href="${esc(meta.descriptorUrl)}">descriptor</a>) on <code>${esc(meta.owner)}</code>'s pod. Terms are hash fragments (<code>${esc(iri)}#&lt;term&gt;</code>) resolving in-document.</p>`
+    + `<p>A published Interego holon, dereferenced here as linked data — the RDF projection of a signed, discoverable substrate object (<a href="${esc(publishableDescriptorUrl(meta.descriptorUrl, iri))}">descriptor</a>) on <code>${esc(meta.owner)}</code>'s pod. Terms are hash fragments (<code>${esc(iri)}#&lt;term&gt;</code>) resolving in-document.</p>`
     + `<p><b>Projections:</b> <a href="?format=turtle">Turtle</a> · <a href="?format=jsonld">JSON-LD</a></p>`
     + `<h2>Source (Turtle)</h2><pre style="background:#f6f8fa;padding:1rem;overflow:auto;border-radius:6px">${esc(turtle)}</pre>`
     + `</body>`;
@@ -9333,8 +9333,32 @@ function nsHtml(iri: string, turtle: string, meta: { owner: string; slug: string
  *
  *  Reuses the SAME resolveNsGraph() core as the Turtle/JSON-LD branches, so the
  *  SSRF host-pinning (nsToOwnerPodInternal) and the CORS carve-out come free. */
+/**
+ * The descriptor URL a document may PUBLISH.
+ *
+ * `resolveNsGraph` hands back whatever indexed the graph, and on the convention
+ * path that is the internal CSS URL (`http://css.railway.internal:3456/...`).
+ * That is correct as an internal fetch target but useless as a published one:
+ * nobody outside the private network can dereference it. It matters most in the
+ * Markdown projection, whose whole safety story is "the target is not here — go
+ * re-resolve it from descriptorUrl": an authority you cannot reach is not an
+ * authority. So when the resolved descriptor is not publicly dereferenceable,
+ * publish the graph's own IRI instead. That IRI dereferences (here, through this
+ * route) to the same Turtle, carrying the same affordances with their targets —
+ * so re-resolution still works, over a URL the reader can actually fetch.
+ */
+function publishableDescriptorUrl(descriptorUrl: string, graphIri: string): string {
+  try {
+    assertPublicPodUrl(descriptorUrl);
+    return descriptorUrl;
+  } catch {
+    return graphIri;
+  }
+}
+
 function nsMarkdown(iri: string, turtle: string, meta: { owner: string; slug: string; descriptorUrl: string; isOntology: boolean }): string {
-  const controls = controlsFromAffordances(extractAffordancesFromTurtle(turtle, meta.descriptorUrl));
+  const descriptorUrl = publishableDescriptorUrl(meta.descriptorUrl, iri);
+  const controls = controlsFromAffordances(extractAffordancesFromTurtle(turtle, descriptorUrl));
   const body = [
     `# ${meta.slug}`,
     ``,
@@ -9342,7 +9366,7 @@ function nsMarkdown(iri: string, turtle: string, meta: { owner: string; slug: st
     `The RDF projection is the same object; this one just survives channels RDF does not.`,
     ``,
     `- **IRI:** \`${iri}\`${meta.isOntology ? ' (`owl:Ontology` — terms resolve as `#fragment`s in-document)' : ''}`,
-    `- **Descriptor (the authority):** ${meta.descriptorUrl}`,
+    `- **Descriptor (the authority):** ${descriptorUrl}`,
     `- **Other projections:** [Turtle](?format=turtle) · [JSON-LD](?format=jsonld)`,
     ``,
     ...(controls.length > 0 ? [
@@ -9368,7 +9392,7 @@ function nsMarkdown(iri: string, turtle: string, meta: { owner: string; slug: st
   return renderHypermediaMarkdown({
     id: iri,
     type: meta.isOntology ? 'owl:Ontology' : 'iep:ContextDescriptor',
-    descriptorUrl: meta.descriptorUrl,
+    descriptorUrl,
     controls,
     body,
   });
