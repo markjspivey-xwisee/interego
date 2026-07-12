@@ -234,18 +234,25 @@ interface ExchangeState {
 /** How each act transforms the open-head set. The act's expectedHead is the
  *  branch it targets; resultHead is the head it produces.
  *   - Ask opens a fresh inquiry head (new exchange).
- *   - Assert/Compose CONSUME the targeted head and open their result.
- *   - Challenge/Fork PRESERVE the targeted head and open a sibling beside it.
- *   - Accept COMMITS: the exchange collapses to the single committed head; the
- *     losing siblings stay dereferenceable in `acts` but are no longer open. */
+ *   - Assert / Compose / Accept CONSUME the targeted head and open their result.
+ *   - Challenge / Fork PRESERVE the targeted head and open a sibling beside it.
+ *
+ * Accept consumes ONLY the head it commits — it does NOT collapse the whole set.
+ * An earlier version reset openHeads to [committedHead], which silently orphaned
+ * unrelated open branches (an independent Fork, the committed base a Fork
+ * preserved): they stayed in `acts` but left `openHeads`, so any later act
+ * targeting them 412'd forever. Preserving branches is the whole point — a losing
+ * candidate simply stays open (a client may commit it on its own branch, or leave
+ * it as a live alternative). Convergence to one decision is NOT required by AMEP;
+ * the branch map (`/heads`) shows every committed + candidate lineage. */
 function nextOpenHeads(open: readonly string[], actType: string, expectedHead: string | null, resultHead: string): string[] {
   switch (actType) {
     case 'Ask': return [resultHead];
     case 'Assert':
-    case 'Compose': return open.filter((h) => h !== expectedHead).concat(resultHead);
+    case 'Compose':
+    case 'Accept': return open.filter((h) => h !== expectedHead).concat(resultHead);
     case 'Challenge':
     case 'Fork': return open.concat(resultHead);
-    case 'Accept': return [resultHead];
     default: return open.concat(resultHead);
   }
 }
@@ -266,7 +273,13 @@ function statePath(deps: AmepDeps, slug: string): string {
 // only that act's receipt, head == the act's resultHead, one memory for every
 // non-Ask act, actor == act.actor. The whole-log is never dumped into one doc.
 
-function affordancesFor(deps: AmepDeps, act: StoredAct): Array<Record<string, unknown>> {
+function affordancesFor(deps: AmepDeps, act: StoredAct, isOpen: boolean): Array<Record<string, unknown>> {
+  // Affordances are advertised ONLY for an OPEN head. A head that has been
+  // consumed (Assert/Compose/Accept) or is a historical candidate is not in
+  // openHeads, so a write act targeting it would 412 — advertising a control the
+  // engine will reject is a HATEOAS violation (offer only what is followable).
+  // A closed head is terminal: it dereferences read-only with no controls.
+  if (!isOpen) return [];
   const target = `${deps.publicBase.replace(/\/+$/, '')}/amep/acts`;
   const mk = (action: string, effect: string) => ({
     '@id': `${act.resultHead}#${action.toLowerCase()}`,
@@ -303,7 +316,7 @@ function projectExchange(deps: AmepDeps, state: ExchangeState, act: StoredAct): 
     ...(act.memory ? { memory: act.memory } : {}),
     head: act.resultHead,
     receipts: [act.receipt],
-    affordances: affordancesFor(deps, act),
+    affordances: affordancesFor(deps, act, state.openHeads.includes(act.resultHead)),
   };
   // Stamp the representationTag exactly as the validator recomputes it.
   doc['representationTag'] = amepValidator.computeRepresentationTag(doc);
@@ -375,12 +388,20 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
     const put = await deps.solidFetch(url, { method: 'PUT', headers, body });
     if (put.status === 412 || put.status === 409) return 'conflict';
     if (!put.ok) return 'error';
-    // read-after-write verify: CSS has been observed returning 200 while the
-    // write was dropped under a shared lock.
+    // Read-after-write verify. CSS has been observed returning 200 while the
+    // write was dropped or overwritten (a concurrent writer under a shared lock,
+    // the exact multi-replica race the If-Match CAS defends against). An
+    // order.length check is NOT enough: two concurrent writes produce the SAME
+    // length, so a lost write would pass a count-only check. Confirm the readback
+    // actually CONTAINS every act we wrote (by id); if not, our doc was
+    // clobbered — return 'conflict' so the caller re-reads and retries the CAS,
+    // never a 201 whose receipt/head is not actually in the pod.
     const verify = await deps.solidFetch(url, { method: 'GET', headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
     if (!verify.ok) return 'error';
-    const back = JSON.parse(await verify.text()) as ExchangeState;
-    if (back.order.length !== state.order.length) return 'error';
+    const back = JSON.parse(await verify.text()) as ExchangeState & { openHeads?: string[] };
+    for (const id of state.order) {
+      if (!back.acts?.[id]) return 'conflict';
+    }
     return 'ok';
   }
 

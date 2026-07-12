@@ -101,5 +101,34 @@ await routes['GET /amep/heads/:slug/:headId']({ params: { slug, headId: encodeUR
 const bDoc: any = yaml.load(bView._b);
 check('losing sibling B still dereferenceable as Candidate', bView._s === 200 && bDoc.memory?.governanceStatus === 'amep:Candidate', `(${bView._s})`);
 
+// ── Review-fix regressions ──────────────────────────────────
+// The accepted head (A) was CONSUMED by the Accept → it is closed, so it must
+// advertise NO controls (offering one the engine would 412 is a HATEOAS bug).
+const aView = mkRes();
+await routes['GET /amep/heads/:slug/:headId']({ params: { slug, headId: encodeURIComponent(headA) }, query: {}, headers: { accept: 'application/affordance+yaml' } }, aView);
+const aDoc: any = yaml.load(aView._b);
+check('consumed head advertises NO affordances', Array.isArray(aDoc.affordances) && aDoc.affordances.length === 0, `(${(aDoc.affordances || []).length})`);
+
+// Accept must NOT orphan unrelated branches. Fork the committed head twice to open
+// two independent branches, Accept one, and confirm the OTHER stays open + actionable.
+const committedHead = (yaml.load(rAcc._b) as any).head;
+const fork = (n: string, id: string) => ({ '@context': [CTX], '@id': `${ex}:${id}`, '@type': 'amep:Exchange', actor: actor(agentA, 'prov:SoftwareAgent', 'Alpha'),
+  act: { '@id': `urn:act:mp:${id}`, '@type': 'amep:ProtocolAct', actType: 'amep:Fork', actor: agentA, expectedHead: committedHead, parentHead: committedHead, branch: n, createdAt: now, proof: proof(agentA) },
+  memory: mem(`urn:memory:mp:${id}`, `Fork ${n}.`, agentA) });
+const f1 = await post(fork('alt-1', 'f1')); const h1 = (yaml.load(f1._b) as any).head;
+const f2 = await post(fork('alt-2', 'f2')); const h2 = (yaml.load(f2._b) as any).head;
+check('two independent Fork branches open → 201/201', f1._s === 201 && f2._s === 201);
+// Accept fork-1.
+const accF1 = await post({ '@context': [CTX], '@id': `${ex}:accf1`, '@type': 'amep:Exchange', actor: actor(human, 'prov:Person', 'Arbiter'),
+  act: { '@id': 'urn:act:mp:accf1', '@type': 'amep:ProtocolAct', actType: 'amep:Accept', actor: human, expectedHead: h1, acceptedAct: 'urn:act:mp:f1', createdAt: now, proof: proof(human) } });
+check('Accept fork-1 → 201', accF1._s === 201, `(${accF1._s})`);
+// The UNRELATED fork-2 must still be OPEN and actionable (this is the orphan bug).
+const headsAfter = await getHeads(slug);
+check('unrelated Fork-2 still OPEN after the Accept (not orphaned)', headsAfter.openHeads.includes(h2), `open=${JSON.stringify(headsAfter.openHeads.map((x: string) => x.slice(-6)))}`);
+const challengeF2 = await post({ '@context': [CTX], '@id': `${ex}:chf2`, '@type': 'amep:Exchange', actor: actor(agentB, 'prov:SoftwareAgent', 'Beta'),
+  act: { '@id': 'urn:act:mp:chf2', '@type': 'amep:ProtocolAct', actType: 'amep:Challenge', actor: agentB, expectedHead: h2, challengedAct: 'urn:act:mp:f2', createdAt: now, proof: proof(agentB) },
+  memory: mem('urn:memory:mp:chf2', 'Challenging fork-2.', agentB) });
+check('Fork-2 still ACTIONABLE after the Accept → 201 (not 412)', challengeF2._s === 201, `(${challengeF2._s})`);
+
 console.log(`\n${ok}/${ok + bad} checks passed`);
 process.exit(bad === 0 ? 0 : 1);
