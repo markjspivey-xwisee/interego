@@ -35,7 +35,11 @@ import type {
 
 const HYDRA = 'http://www.w3.org/ns/hydra/core#';
 const CG = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
-const CGH = 'https://markjspivey-xwisee.github.io/interego/ns/cgh#';
+// The published harness namespace (docs/ns/harness.ttl). Emissions moved here
+// from the never-published ns/cgh# (which 404s); cgh# stays read-accepted —
+// dereference-urn-graph.test.ts and kernel-act-decrypt.test.ts keep Turtle
+// fixtures typed with the legacy IRI to pin that path.
+const CGH = 'https://markjspivey-xwisee.github.io/interego/ns/harness#';
 
 describe('kernel hypermedia envelope', () => {
   it('mint result wrapped via decorateKernelResult carries @context / @type / shape / affordances', () => {

@@ -49,7 +49,7 @@ import {
   readIriValue,
   readStringValue,
 } from '../rdf/turtle-parser.js';
-import { CG, HYDRA, DCAT } from '../rdf/namespaces.js';
+import { CG, IEH, CGH_LEGACY, HYDRA, DCAT } from '../rdf/namespaces.js';
 
 // ── Error types ──────────────────────────────────────────────
 
@@ -139,7 +139,10 @@ export interface FollowAffordanceResult {
 const AFFORDANCE_TYPE_IRIS: readonly IRI[] = [
   `${CG}Affordance` as IRI,
   // The harness namespace mirror — see applications/_shared/affordance-mcp/index.ts
-  ('https://markjspivey-xwisee.github.io/interego/ns/cgh#Affordance') as IRI,
+  `${IEH}Affordance` as IRI,
+  // Deprecated read-alias: data persisted while the kernel emitted the
+  // never-published ns/cgh# IRI still carries this type in its (signed) bytes.
+  `${CGH_LEGACY}Affordance` as IRI,
   `${HYDRA}Operation` as IRI,
 ];
 

@@ -34,7 +34,7 @@
  */
 
 import type { IRI } from '../model/types.js';
-import { CG, HYDRA, SHACL as SH } from '../rdf/namespaces.js';
+import { CG, IEH, HYDRA, SHACL as SH } from '../rdf/namespaces.js';
 import type { Affordance } from './types.js';
 
 // ── JSON-LD context (the substrate-wide vocabulary surface) ──
@@ -47,7 +47,10 @@ import type { Affordance } from './types.js';
  */
 export const KERNEL_JSONLD_CONTEXT = Object.freeze({
   iep:    CG,
-  ieh:   'https://markjspivey-xwisee.github.io/interego/ns/cgh#',
+  // ns/harness# — the published harness namespace (docs/ns/harness.ttl). The
+  // former value here, ns/cgh#, was never published and 404s; readers keep
+  // accepting it via CGH_LEGACY.
+  ieh:    IEH,
   hydra: HYDRA,
   sh:    SH,
   prov:  'http://www.w3.org/ns/prov#',
@@ -146,7 +149,7 @@ export interface HypermediaAffordance {
 export function hydraAffordance(aff: Affordance): HypermediaAffordance {
   const types: string[] = [
     `${CG}Affordance`,
-    'https://markjspivey-xwisee.github.io/interego/ns/cgh#Affordance',
+    `${IEH}Affordance`,
     `${HYDRA}Operation`,
   ];
   const out: Mutable<HypermediaAffordance> = {
@@ -337,7 +340,7 @@ export function hydraEntryPoint(options: {
   const operations = options.operations.map(op => ({
     '@type': [
       `${CG}Affordance`,
-      'https://markjspivey-xwisee.github.io/interego/ns/cgh#Affordance',
+      `${IEH}Affordance`,
       `${HYDRA}Operation`,
     ],
     action: `urn:iep:action:${op.name}`,

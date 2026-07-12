@@ -129,7 +129,7 @@ import { withTransientRetry } from '../http/retry.js';
 import type { FetchFn } from '../http/types.js';
 import type { EncryptionKeyPair, EncryptedEnvelope } from '../crypto/encryption.js';
 import { openEncryptedEnvelope } from '../crypto/encryption.js';
-import { CG } from '../rdf/namespaces.js';
+import { CG, IEH } from '../rdf/namespaces.js';
 
 import { extractAffordancesFromTurtle } from './affordance-extraction.js';
 
@@ -375,7 +375,7 @@ function dereferenceLatticeNode(iri: IRI): DereferenceResult {
   const representation = JSON.stringify({
     '@context': {
       iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
-      ieh: 'https://markjspivey-xwisee.github.io/interego/ns/cgh#',
+      ieh: IEH,
       hydra: 'http://www.w3.org/ns/hydra/core#',
     },
     '@id': iri,
