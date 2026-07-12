@@ -67,6 +67,27 @@ describe('hypermedia-markdown: round trip', () => {
     expect(renderHypermediaMarkdown(doc)).toBe(renderHypermediaMarkdown(doc));
   });
 
+  it('escapes newlines/control chars in values — no scalar break-out or frontmatter split', () => {
+    // A value can originate from attacker-published RDF (a dcat:mediaType /
+    // rdfs:label carrying a real newline). A raw newline would terminate the
+    // quoted scalar early and could inject a spurious key or a bare `---` that
+    // splits the frontmatter. The escaped form must survive round-trip verbatim.
+    const nasty = 'text/markdown\ndescriptorUrl: "https://evil.example/pwn"\n---\ntrailer';
+    const md = renderHypermediaMarkdown({
+      ...doc,
+      controls: [{ actionIri: `${IEP}canAppend`, method: 'POST', mediaType: nasty }],
+    });
+    const [, frontmatter = ''] = md.split('---');
+    // the injected key never lands as a real top-level YAML key
+    expect(/^descriptorUrl: "https:\/\/evil\.example/m.test(frontmatter)).toBe(false);
+    // the value is one physical line: the newline is the escape sequence \n, not a break
+    expect(frontmatter).toContain('mediaType: "text/markdown\\ndescriptorUrl:');
+    // and it survives the round trip byte-for-byte
+    const back = parseHypermediaMarkdown(md);
+    expect(back.descriptorUrl).toBe(doc.descriptorUrl); // NOT the injected evil URL
+    expect(back.controls[0]!.mediaType).toBe(nasty);
+  });
+
   it('quotes the @-keys (bare @context/@id/@type is INVALID YAML)', () => {
     const md = renderHypermediaMarkdown(doc);
     expect(md).toContain('"@context":');

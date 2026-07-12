@@ -18,7 +18,7 @@
 #      missing or mismatched bearer → 401, request never reaches CSS.
 # ────────────────────────────────────────────────────────────
 
-ARG NODE_BASE=node:20-alpine
+ARG NODE_BASE=node:22-alpine
 FROM ${NODE_BASE}
 
 WORKDIR /app

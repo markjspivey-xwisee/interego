@@ -4,7 +4,7 @@
 # NODE_BASE defaults to Docker Hub so local `docker build` works
 # anonymously; CI overrides it to the ACR-imported copy (--build-arg)
 # to dodge Docker Hub's anonymous pull rate limit. See deploy-azure.yml.
-ARG NODE_BASE=node:20-slim
+ARG NODE_BASE=node:22-slim
 FROM ${NODE_BASE} AS build
 
 WORKDIR /app
@@ -30,11 +30,11 @@ RUN npx tsc
 #  Runtime stage: distroless image running compiled JS
 #
 #  Distroless drops the Debian userland (no shell, no package
-#  manager, ~60MB vs ~200MB for node:20-slim) and dramatically
+#  manager, ~60MB vs ~200MB for node:22-slim) and dramatically
 #  reduces the CVE surface. `node` is the entrypoint, so CMD
 #  is just the script path.
 # ────────────────────────────────────────────────────────────
-FROM gcr.io/distroless/nodejs20-debian12
+FROM gcr.io/distroless/nodejs22-debian12
 
 WORKDIR /app
 

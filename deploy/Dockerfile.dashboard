@@ -1,7 +1,7 @@
 # ────────────────────────────────────────────────────────────
 #  Build stage: workspace install + pack @interego/core tarball
 # ────────────────────────────────────────────────────────────
-ARG NODE_BASE=node:20-slim
+ARG NODE_BASE=node:22-slim
 FROM ${NODE_BASE} AS build
 
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
@@ -46,7 +46,7 @@ RUN cp index.html dist/
 # ────────────────────────────────────────────────────────────
 #  Runtime stage
 # ────────────────────────────────────────────────────────────
-FROM gcr.io/distroless/nodejs20-debian12
+FROM gcr.io/distroless/nodejs22-debian12
 
 WORKDIR /app
 

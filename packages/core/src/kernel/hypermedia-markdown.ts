@@ -112,11 +112,26 @@ function yamlKey(k: string): string {
   return AT_KEYS.has(k) || k.startsWith('@') ? `"${k}"` : k;
 }
 
-/** Double-quote every scalar: total, deterministic, and colon/`#`-safe. */
+/** Double-quote every scalar: total, deterministic, and colon/`#`-safe.
+ *
+ * Escapes backslash, quote, and every C0/DEL control character (newline, CR,
+ * tab, ...) using YAML double-quoted escapes. A raw newline in a value would
+ * otherwise terminate the scalar early — injecting a spurious YAML key or a
+ * bare `---` that splits the frontmatter — and make the output invalid for any
+ * conformant parser. Since a value can originate from attacker-published RDF
+ * (a `dcat:mediaType` / `rdfs:label` carrying a newline), this is a correctness
+ * boundary, not a nicety. `unquote` is the exact inverse. */
 function yamlScalar(v: unknown): string {
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  const s = String(v);
-  return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  const s = String(v)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, (c) =>
+      `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+  return `"${s}"`;
 }
 
 /** Emit a plain object as a YAML block at `indent`. Key order is insertion order (stable). */
@@ -176,12 +191,25 @@ export function renderHypermediaMarkdown(doc: HypermediaMarkdownDoc): string {
 
 // ── Reading back (round-trip) ───────────────────────────────────────────────
 
+/** Inverse of `yamlScalar`. Single left-to-right pass over the escape
+ *  sequences — NOT sequential `.replace()` calls, which double-unescape (a
+ *  literal `\\n` in the source would wrongly decode to a newline). */
 function unquote(v: string): string {
   const t = v.trim();
-  if (t.startsWith('"') && t.endsWith('"')) {
-    return t.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+  if (!(t.startsWith('"') && t.endsWith('"'))) return t;
+  const inner = t.slice(1, -1);
+  let out = '';
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i]!;
+    if (c !== '\\') { out += c; continue; }
+    const n = inner[++i];
+    if (n === 'n') out += '\n';
+    else if (n === 'r') out += '\r';
+    else if (n === 't') out += '\t';
+    else if (n === 'x') { out += String.fromCharCode(parseInt(inner.slice(i + 1, i + 3), 16)); i += 2; }
+    else out += n ?? ''; // covers \" \\ and any stray escape
   }
-  return t;
+  return out;
 }
 
 function parseInlineList(v: string): string[] {

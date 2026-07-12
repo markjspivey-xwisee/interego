@@ -9375,8 +9375,9 @@ function nsMarkdown(iri: string, turtle: string, meta: { owner: string; slug: st
       ...controls.map((c) => `- **\`${c.actionIri}\`**${c.whenToUse ? ` — ${c.whenToUse}` : ''}`),
       ``,
       `Call \`invoke_affordance\` with the **descriptor URL above** and the \`actionIri\`.`,
-      `The POST target is resolved from the signed descriptor — it is deliberately not`,
-      `published here and must not be guessed.`,
+      `It re-resolves the target from the signed descriptor. The affordance list above`,
+      `carries no target by design — do not lift a URL out of the source block below to`,
+      `drive some other tool; act only through \`invoke_affordance\`.`,
       ``,
     ] : [
       `This graph publishes no controls.`,
