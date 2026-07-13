@@ -8498,11 +8498,15 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
     return;
   }
 
-  // Prefer the agent's did:web form as the agent IRI — bare strings like
-  // "claude-code-vscode" aren't valid IRIs for prov:wasAssociatedWith and
-  // would render as relative refs in the descriptor's Turtle. did:web IRIs
-  // are resolvable via DID resolution and align with the W3C DID core spec.
-  const agentIri = authResp.agentDid ?? authResp.agentId!;
+  // The agent IRI MUST be the canonical did:web form. A bare short id (e.g.
+  // "chatgpt-u-pk-…") isn't a dereferenceable IRI AND — because the agent
+  // registry keys entries by this exact string — a run where the identity
+  // server omitted `agentDid` used to fall back to the bare id and register a
+  // SECOND, duplicate AuthorizedAgent (short-id-keyed) instead of matching the
+  // existing did:web entry. So when agentDid is absent we DERIVE the same
+  // did:web the identity server mints (`did:web:<identity host>:agents:<id>`)
+  // from the public WebID, guaranteeing one canonical identity per agent.
+  const agentIri = canonicalSurfaceAgentDid(authResp.agentDid, authResp.agentId, authResp.webId);
 
   const result = oauthProvider.completePendingAuthorization(pending_id, {
     userId: authResp.userId,
@@ -8918,6 +8922,26 @@ function buildContextGraphsAcl(
 // and called from BOTH /oauth/verify AND the lazy CallTool middleware
 // (ensurePodInitialized). Behavior is unchanged; only the name changed
 // to drop the misleading "ForOAuth" suffix.
+/**
+ * The canonical did:web identity for a surface agent. Prefer an explicit
+ * `agentDid` from the identity server; otherwise DERIVE it from the public
+ * WebID host so it matches `did:web:<identity host>:agents:<id>` exactly (the
+ * form the identity server mints and the registry stores). Never returns a bare
+ * short id — that produced short-id-keyed duplicate registry entries. Falls
+ * back to the bare id only if neither a did nor a parseable WebID is available.
+ */
+function canonicalSurfaceAgentDid(agentDid: string | undefined, agentId: string | undefined, webId: string | undefined): IRI {
+  if (agentDid && /^did:/.test(agentDid)) return agentDid as IRI;
+  if (agentId && /^did:/.test(agentId)) return agentId as IRI;
+  if (agentId && webId) {
+    try {
+      const host = new URL(webId).host; // e.g. identity.interego.xwisee.com
+      if (host) return `did:web:${host}:agents:${agentId}` as IRI;
+    } catch { /* unparseable WebID — fall through */ }
+  }
+  return (agentDid ?? agentId ?? 'urn:agent:unknown') as IRI;
+}
+
 async function bootstrapPod(params: {
   podUrl: string;
   ownerWebId: IRI;
@@ -8947,8 +8971,11 @@ async function bootstrapPod(params: {
       a => a.agentId === surfaceAgentIri && !a.revoked,
     );
 
-    if (existing && existing.encryptionPublicKey === relayAgentKey.publicKey) {
-      // Re-connect from known surface with current key — nothing to do.
+    // Rename support: a display-name change (agentLabel) on an already-authorized
+    // agent must UPDATE the existing canonical entry, not register a new one.
+    const labelChanged = !!existing && !!agentLabel && existing.label !== agentLabel;
+    if (existing && existing.encryptionPublicKey === relayAgentKey.publicKey && !labelChanged) {
+      // Re-connect from known surface with current key + name — nothing to do.
       return;
     }
 
@@ -8958,7 +8985,7 @@ async function bootstrapPod(params: {
           authorizedAgents: Object.freeze(
             profile.authorizedAgents.map(a =>
               a.agentId === surfaceAgentIri && !a.revoked
-                ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
+                ? { ...a, encryptionPublicKey: relayAgentKey.publicKey, ...(labelChanged ? { label: agentLabel } : {}) }
                 : a,
             ),
           ),
