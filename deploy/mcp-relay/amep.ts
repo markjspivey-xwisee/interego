@@ -683,7 +683,33 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
         dereference: base + encodeURIComponent(a.resultHead),
       };
     });
-    res.type('application/json').send(JSON.stringify({ exchange: slug, openHeads: state.openHeads, heads }, null, 2));
+    // Compose is the one act that is NOT a per-head affordance (a single
+    // hydra:Operation can't express a multi-head merge). So it is advertised HERE,
+    // at the exchange/branch-map level, as a FOLLOWABLE control: whenever ≥2 OPEN
+    // heads carry mergeable memory, a Compose affordance lists them as its operand
+    // set. This is what lets a THIRD party (not the branch authors) discover +
+    // follow "merge these branches" instead of having to know to hand-assemble a
+    // Compose act — the multi-party shape the protocol is actually for.
+    const mergeable = state.openHeads.filter((h) => {
+      const a = Object.values(state!.acts).find((x) => x.resultHead === h);
+      const sem = a?.memory?.['semantic'] as Record<string, unknown> | undefined;
+      return !!sem && typeof sem['body'] === 'string';
+    }).sort();
+    const acts = `${deps.publicBase.replace(/\/+$/, '')}/amep/acts`;
+    const affordances = mergeable.length >= 2 ? [{
+      '@id': `${deps.publicBase.replace(/\/+$/, '')}/amep/exchanges/${slug}/heads#compose`,
+      '@type': ['iep:Affordance', 'hydra:Operation'],
+      action: 'amep:Compose',
+      target: acts,
+      method: 'POST',
+      inputShape: 'amep:ComposeInputShape',
+      effect: `Merge these ${mergeable.length} open branches into one composed candidate (attributed across their distinct authors).`,
+      // The suggested operand HEAD URLs (dereferenceable). A follower sets
+      // expectedHead to one of these; the server folds them deterministically.
+      operands: mergeable,
+      expectedHead: mergeable[0],
+    }] : [];
+    res.type('application/json').send(JSON.stringify({ exchange: slug, openHeads: state.openHeads, heads, affordances }, null, 2));
   });
   app.get('/amep/heads/:slug/:headId', (req, res) => {
     const slug = String(req.params['slug'] ?? '');

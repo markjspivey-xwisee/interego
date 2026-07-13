@@ -59,6 +59,19 @@ const rB = await post({ '@context': [CTX], '@id': 'urn:exchange:all:B', '@type':
 check('3. Challenge → 201 + conforms', rB._s === 201 && await conforms(rB._b), `(${rB._s})`);
 const hB = (yaml.load(rB._b) as any).head;
 
+// After the Challenge, two branches (A by agent A, B by agent B) are open. The
+// branch map advertises a FOLLOWABLE Compose affordance so a THIRD party can
+// discover + follow "merge these branches" rather than hand-assemble a Compose.
+{
+  const slug = /\/amep\/heads\/([a-z0-9-]+)\//.exec(hA)![1]!;
+  const hres = mkRes();
+  await routes['GET /amep/exchanges/:slug/heads']({ params: { slug }, headers: {}, query: {} }, hres);
+  const hmap: any = JSON.parse(hres._b);
+  const comp = (hmap.affordances || []).find((x: any) => x.action === 'amep:Compose');
+  check('   branch map advertises a followable Compose affordance over the 2 open branches',
+    !!comp && Array.isArray(comp.operands) && comp.operands.length === 2 && comp.target.endsWith('/amep/acts') && comp.inputShape === 'amep:ComposeInputShape');
+}
+
 // 4. Compose — the SERVER deterministically merges the two open OPERAND HEADS
 //    (hA + hB) into one composed memory. The client supplies only the heads and
 //    operator; it does NOT supply the composed material (that would be
