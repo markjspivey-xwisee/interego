@@ -17,7 +17,7 @@ You do **not** need: an API key, an email address, a password, a credit card, or
 
 ## Step 1 — Enroll an identity (2 min)
 
-Open: **https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/**
+Open: **https://identity.interego.xwisee.com/**
 
 You'll see three big buttons. Pick whichever fits your device:
 
@@ -32,7 +32,7 @@ After enrollment, you have:
 
 ## Step 2 — See your dashboard (1 min)
 
-Visit: **https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/dashboard**
+Visit: **https://identity.interego.xwisee.com/dashboard**
 
 You'll see four panels:
 
@@ -48,7 +48,7 @@ You'll see four panels:
 The connector URL you'll paste into every client:
 
 ```
-https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp
+https://relay.interego.xwisee.com/mcp
 ```
 
 `/mcp` is the modern Streamable HTTP transport and is preferred. The relay

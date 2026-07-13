@@ -83,7 +83,7 @@ function loadWebAuthn(): Promise<WebAuthnModule> {
 
 const PORT = parseInt(process.env['PORT'] ?? '8090');
 const BASE_URL = process.env['BASE_URL'] ?? `http://localhost:${PORT}`;
-const CSS_URL = process.env['CSS_URL'] ?? 'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/';
+const CSS_URL = process.env['CSS_URL'] ?? 'http://css.railway.internal:3456/';
 // Hoist these once at module load so hot-path handlers don't re-parse
 // the same URL on every request (per-request `new URL(BASE_URL).host` was
 // showing up on every issueTokenResponse, did-doc build, agent registry
