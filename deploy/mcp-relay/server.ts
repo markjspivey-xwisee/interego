@@ -93,6 +93,7 @@ import {
 } from './dpop.js';
 import { corsMiddleware } from './cors-allowlist.js';
 import { normalizeCssUrl, assertPublicPodUrl } from './url-rewrite.js';
+import { withAmepSession } from './amep-session-bridge.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
@@ -733,6 +734,10 @@ const solidFetch: FetchFn = async (url, init) => {
     clearTimeout(timer);
   }
 };
+
+// AMEP same-origin session bridge (extracted to amep-session-bridge.ts so its
+// same-origin gate + fetch/actor-stamp logic are unit-testable without importing
+// this self-starting module). Call sites pass { solidFetch, PUBLIC_BASE_URL }.
 
 // ── State ───────────────────────────────────────────────────
 
@@ -1712,6 +1717,10 @@ const WRITE_SIDE_TOOLS = new Set<string>([
   'link_wallet',
   'setup_identity',
   'invoke_affordance',
+  // `act` is now a first-class write path (it POSTs AMEP acts to /amep/acts with
+  // the caller's auto-forwarded session), so a read-only OAuth bearer must be
+  // refused at the early scope gate, consistently with invoke_affordance.
+  'act',
 ]);
 
 /** Any scope acceptable as a /mcp resource bearer. */
@@ -5159,6 +5168,18 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   const authorization = args.authorization as string | undefined;
   if (!descriptorUrl) throw new Error('invoke_affordance: descriptor_url is required');
   if (!actionIri) throw new Error('invoke_affordance: action_iri is required');
+  // AMEP same-origin session bridge (same as handleKernelAct): reuse the caller's
+  // verified session for an act that targets the relay's own /amep.
+  const { fetch: invFetch, payload: invPayload } = withAmepSession(
+    descriptorUrl,
+    payload,
+    {
+      sessionBearer: args['_session_bearer'] as string | undefined,
+      principalId: args['_session_principal'] as string | undefined,
+      explicitAuth: authorization,
+    },
+    { solidFetch, publicBaseUrl: PUBLIC_BASE_URL },
+  );
   // Pass `recipientKeyPair` so `iep:canDecrypt` affordances return
   // plaintext to authorized recipients (the relay's session agent is in
   // the envelope's recipient set whenever it published or was added as
@@ -5166,9 +5187,9 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   // envelope as today.
   const result = await kernelAct(
     { descriptorUrl, actionIri },
-    payload,
+    invPayload,
     {
-      fetch: solidFetch,
+      fetch: invFetch,
       recipientKeyPair: relayAgentKey,
       ...(authorization ? { authorization } : {}),
     },
@@ -5319,8 +5340,21 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
       log(`[act-payload-diag] type=${typeof rawPayload} keys=${rawPayload && typeof rawPayload === 'object' ? Object.keys(rawPayload as object).slice(0, 6).join(',') : '-'}`);
     }
   } catch { /* logging must never break the call */ }
-  const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], normPayload, {
-    fetch: solidFetch,
+  // AMEP same-origin session bridge: when this act targets the relay's own
+  // /amep, reuse the caller's verified session (auto-forward the bearer + stamp
+  // act.actor) so an OAuth user drives Compose/etc. without a pasted credential.
+  const { fetch: actFetch, payload: actPayload } = withAmepSession(
+    descriptorUrl ?? targetRaw ?? '',
+    normPayload,
+    {
+      sessionBearer: args['_session_bearer'] as string | undefined,
+      principalId: args['_session_principal'] as string | undefined,
+      explicitAuth: authorization,
+    },
+    { solidFetch, publicBaseUrl: PUBLIC_BASE_URL },
+  );
+  const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], actPayload, {
+    fetch: actFetch,
     recipientKeyPair: relayAgentKey,
     ...(authorization ? { authorization } : {}),
   });
@@ -7212,7 +7246,7 @@ just demo a publish + discover round-trip on their own pod.`,
 // One Server instance per /mcp request (stateless mode). Wires ListTools
 // and CallTool to the same handler registry used by the REST routes.
 
-function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[] } | null): Server {
+function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string } | null): Server {
   const server = new Server(
     { name: '@interego/mcp-relay', version: '0.3.0' },
     {
@@ -7378,6 +7412,13 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     }
 
     const args: ToolArgs = { ...(rawArgs ?? {}) };
+    // SECURITY: these are relay-injected, server-authoritative identity/credential
+    // fields. Strip any client-supplied values UNCONDITIONALLY — before the
+    // authContext guard — so they can never be smuggled in via tools/call args in
+    // open-mode or the legacy-API-key path (where the block below does not run).
+    for (const reserved of ['_session_bearer', '_session_principal', '_identity_token', '_session_agent_did', '_session_agent_id']) {
+      delete (args as Record<string, unknown>)[reserved];
+    }
     // Inject identity from auth context so the authenticated user's default
     // pod / agent / WebID fill in when the caller doesn't specify them.
     // Applies to ALL tools, not just writes — lets reads like get_pod_status
@@ -7402,6 +7443,13 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // this as opaque + non-overridable from the wire (a caller cannot
       // smuggle their own token in via tools/call arguments — we overwrite).
       if (authContext.identityToken) args._identity_token = authContext.identityToken;
+      // Same-origin AMEP session bridge: the raw OAuth access token + the
+      // authenticated principal id, so `act`/`invoke_affordance` can drive
+      // POST /amep/acts as this user without a pasted bearer (withAmepSession).
+      // Reserved + server-injected (stripped from wire input above), so a caller
+      // cannot forge either. Bearer is attached ONLY to a same-origin /amep POST.
+      if (authContext.accessToken) args._session_bearer = authContext.accessToken;
+      if (authContext.userId) args._session_principal = authContext.userId;
       // Thread the THIS-session agent identity through so handlers like
       // handleGetPodStatus can surface the per-surface agent that the
       // current OAuth token actually authorizes (chatgpt-<userId>,
@@ -11183,9 +11231,9 @@ app.post('/messages', messagesLimiter, async (req, res) => {
 //   1. req.auth populated by requireBearerAuth (OAuth token verified by provider)
 //   2. Authorization: Bearer <RELAY_MCP_API_KEY> (legacy API key, for curl/scripts)
 //   3. Unauthenticated (if RELAY_MCP_API_KEY unset AND no OAuth token) — open mode
-function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId: string; userId: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[] } | null {
+function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId: string; userId: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string } | null {
   // OAuth-verified request: bearerAuth middleware already set req.auth
-  const reqAuth = (req as express.Request & { auth?: { scopes?: string[]; extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } } }).auth;
+  const reqAuth = (req as express.Request & { auth?: { token?: string; scopes?: string[]; extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } } }).auth;
   if (reqAuth?.extra?.agentId && reqAuth.extra.ownerWebId && reqAuth.extra.userId) {
     return {
       agentId: reqAuth.extra.agentId,
@@ -11209,6 +11257,11 @@ function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId
       // API-key path below produces no oauthScopes field, so write
       // tools remain accessible via that path (unchanged behavior).
       ...(Array.isArray(reqAuth.scopes) ? { oauthScopes: reqAuth.scopes } : {}),
+      // Raw OAuth access token — the exact bearer the MCP client presented (raw,
+      // never a sha). Threaded so the AMEP same-origin session bridge can reuse
+      // it for POST /amep/acts (see withAmepSession). OAuth branch only; the
+      // legacy API-key path below never carries one, so no auto-forward there.
+      ...(reqAuth.token ? { accessToken: reqAuth.token } : {}),
     };
   }
   // Legacy API-key path: Authorization: Bearer <RELAY_MCP_API_KEY>
