@@ -478,7 +478,7 @@ function log(msg: string): void {
 // otherwise exhaust CG_MAX_SUBSCRIPTIONS or amplify writes to the
 // maintainer pod past the css-gate (the bridge holds WRITE_SECRET).
 const AUTH_REQUIRED_TOOLS = new Set([
-  'publish_context', 'register_agent', 'revoke_agent',
+  'publish_context', 'remember', 'register_agent', 'revoke_agent',
   'publish_directory',
   'subscribe_to_pod', 'add_pod', 'resolve_webfinger',
   // record_trajectory_step ultimately calls publish_context internally,
@@ -1748,6 +1748,7 @@ const ALL_MCP_OAUTH_SCOPES = new Set<string>([OAUTH_SCOPE_FULL, OAUTH_SCOPE_READ
 const WRITE_SIDE_OAUTH_SCOPES = new Set<string>([OAUTH_SCOPE_FULL, OAUTH_SCOPE_WRITE]);
 const WRITE_SIDE_TOOLS = new Set<string>([
   'publish_context',
+  'remember',
   'register_agent',
   'revoke_agent',
   'compose_contexts',
@@ -2958,6 +2959,87 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       : {}),
   });
   }); // end of withPodMutex wrap (Fix-1: per-pod serialization)
+}
+
+/**
+ * `remember` — the seamless memory/note primitive. A thin composer over
+ * publish_context (NOT AMEP: a note is a stored context graph, not a governed
+ * multi-party exchange). Takes `{ title?, body, visibility? }`; the OAuth
+ * session auto-fills who you are (agent_id / owner_webid / pod_name are injected
+ * by the CallTool handler). Writes an `ieh:AgentMemory` graph, encrypted-private
+ * by default, with a GENUINE ECDSA authorship proof (sign_authorship — verifies
+ * to CryptographicallyVerified on read), and returns the note already rendered
+ * as a complete HyperMarkdown document plus its dereferenceable HTTPS view URL.
+ * One call: create + a displayable, signed, private, legible note.
+ */
+async function handleRemember(args: ToolArgs): Promise<string> {
+  const title = typeof args['title'] === 'string' ? (args['title'] as string).trim() : '';
+  const body = typeof args['body'] === 'string' ? (args['body'] as string).trim() : '';
+  if (!body) return JSON.stringify({ error: 'remember: `body` is required (the note text).' });
+  const visibility = (args['visibility'] as string) ?? 'private';
+  const now = new Date().toISOString();
+  const agentId = (args['agent_id'] as string) || 'urn:agent:remote:unknown';
+
+  // Host-free logical graph id; the note's PRESENTED identity is its HTTPS view.
+  const slug = (title || body).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'note';
+  const graphIri = `urn:graph:memory:${slug}-${Date.now()}`;
+  const lit = (s: string) => JSON.stringify(s); // valid Turtle string literal (escapes \n, ", \)
+  const graphContent = [
+    `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .`,
+    `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .`,
+    `@prefix schema: <https://schema.org/> .`,
+    `@prefix dct: <http://purl.org/dc/terms/> .`,
+    `@prefix prov: <http://www.w3.org/ns/prov#> .`,
+    `@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .`,
+    `<${graphIri}> a ieh:AgentMemory, schema:NoteDigitalDocument ;`,
+    ...(title ? [`  schema:name ${lit(title)} ;`] : []),
+    `  schema:text ${lit(body)} ;`,
+    `  prov:wasAttributedTo <${agentId}> ;`,
+    `  dct:created "${now}"^^xsd:dateTime .`,
+  ].join('\n');
+
+  // Compose publish_context: keep the session-injected identity + bearer, add
+  // the memory graph, encrypt (visibility), and sign a real authorship proof.
+  const publishRaw = await handlePublishContext({
+    ...args,
+    graph_iri: graphIri,
+    graph_content: graphContent,
+    visibility,
+    sign_authorship: true,
+  } as ToolArgs);
+  let published: Record<string, unknown>;
+  try { published = JSON.parse(publishRaw) as Record<string, unknown>; }
+  catch { return publishRaw; }
+  if (published['error'] || published['published'] !== true) return publishRaw;
+
+  // Render the note as complete HyperMarkdown to return inline (we already hold
+  // the plaintext graph; fetch the descriptor for its affordances → controls).
+  const publishRelayBase = (PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
+  const viewUrl = `${publishRelayBase}/render/${encodeURIComponent(graphIri)}`;
+  let rendered = '';
+  try {
+    const descUrl = String(published['descriptorUrl'] ?? '');
+    const descResp = descUrl ? await solidFetch(descUrl, { headers: { Accept: 'text/turtle' } }) : null;
+    const descTurtle = descResp?.ok ? await descResp.text() : '';
+    const authority = publishableDescriptorUrl(descUrl, viewUrl);
+    rendered = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle: descTurtle, plaintextTurtle: graphContent });
+  } catch { /* rendered stays '' — the view URL still works */ }
+
+  return JSON.stringify({
+    remembered: true,
+    memory: graphIri,
+    // The note's dereferenceable HTTPS identity + how to fetch it live.
+    view: (published['view'] as Record<string, unknown>) ?? { url: viewUrl, mediaType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE, authenticated: true },
+    visibility: published['visibility'],
+    encrypted: published['encrypted'],
+    // The GENUINE authorship proof (verifies to CryptographicallyVerified on read).
+    authorship: published['authorship'],
+    descriptorUrl: published['descriptorUrl'],
+    // The complete HyperMarkdown note, ready to display inline (prose + fields +
+    // links + controls). Also fetchable live at view.url as text/markdown.
+    rendered,
+    hint: 'Display `rendered` inline as Markdown. It is a signed, private note; anyone re-fetches it live at view.url (Accept: text/markdown). This is a plain memory — NOT an AMEP exchange.',
+  });
 }
 
 /**
@@ -5620,6 +5702,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   reduce_chain: { description: 'Kernel verb — fold a iep:supersedes chain through a declarative reducer (turtle-template OR shacl-transform) and return the canonical head state + a content-addressed ReplayProof (chain CIDs, reducer CID, periodic state checkpoints, head-state CID) that any third party can use to independently re-fetch + re-fold + verify.', handler: handleKernelReduceChain },
   // ── Core tools (compatibility shims; internal implementation routes through kernel where natural) ──
   publish_context: { description: 'Publish a context-annotated knowledge graph', handler: handlePublishContext },
+  remember: { description: 'Create a memory/note (the simple, non-AMEP path)', handler: handleRemember },
   record_trajectory_step: { description: 'Record one step of an agent\'s trajectory as a signed, content-addressed ContextDescriptor — substrate-native dogfood that turns the agent\'s own actions into discoverable evidence (later read by verifyCapabilityTransfer and the calibration loop)', handler: handleRecordTrajectoryStep },
   pgsl_decide: { description: 'OODA decision functor — returns the next-strategy recommendation (exploit / explore / delegate / abstain) for an agent based on its lattice observations + coherence with peers. The substrate-honest "decide" tool that closes the OODA tick.', handler: handlePgslDecide },
   get_current_head: { description: 'Resolve the current chain head (descriptorUrl + content-CID) for a urn:graph:* on a pod — used as the read half of CAS supersession', handler: handleGetCurrentHead },
@@ -6378,6 +6461,23 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Reduce a supersedes chain', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: 'remember',
+    description: 'Create a memory or note — the SIMPLE, default path. Use this (not `act`/AMEP) whenever you just want to record something. A memory is a stored, addressable context graph on your pod; it is NOT an AMEP exchange (Ask/Assert/Challenge/Compose is only for governed, multi-party, contestable claims). '
+      + 'Give `{ title?, body, visibility? }` — nothing else. Who you are (owner + agent + pod) is filled from your authenticated session; the note is written as an ieh:AgentMemory, encrypted-PRIVATE by default, and signed with a GENUINE authorship proof (verifies to CryptographicallyVerified on read — no placeholder). '
+      + 'Returns `rendered` (the complete HyperMarkdown note — prose + fields + describedby/alternate links + its controls — ready to display inline) and `view.url` (its dereferenceable HTTPS identity; GET it with your bearer + Accept: text/markdown to re-fetch live). Display `rendered` directly.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        body: { type: 'string', description: 'The note text (required). Plain prose; it becomes the memory\'s readable rung-1 content.' },
+        title: { type: 'string', description: 'Optional short title (schema:name).' },
+        visibility: { type: 'string', enum: ['private', 'shared', 'public'], description: 'Default "private" — encrypted to your own agent only. "shared" = your pod\'s authorized agents. "public" = plaintext, world-readable.' },
+      },
+      required: ['body'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Remember (create a memory/note)', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   // ═══════════════════════════════════════════════════════════
   //  Compatibility shims — the 27 named tools. Each remains
