@@ -156,6 +156,8 @@ import {
 import {
   buildAccessChangeEvent,
 } from '@interego/ops';
+// Private-note HyperMarkdown projection (extracted for unit-testability; server.ts is self-starting).
+import { noteToHyperMarkdown } from './note-view.js';
 
 import type {
   ContextDescriptorData,
@@ -2811,6 +2813,23 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     descriptorUrl: result.descriptorUrl,
     graphUrl: result.graphUrl,
     encrypted: result.encrypted ?? false,
+    // The note's DEREFERENCEABLE HTTPS identity + how to view it as a complete
+    // HyperMarkdown document (prose + fields + describedby/alternate links +
+    // its controls), rendered/decrypted server-side. Prefer this URL over the
+    // urn:graph logical id when showing the note — everything is a URL, and a
+    // urn is not fetchable. Encrypted notes decrypt for the authorized bearer;
+    // request it as text/markdown.
+    ...(publishRelayBase
+      ? {
+          view: {
+            url: `${publishRelayBase}/render/${encodeURIComponent(result.descriptorUrl)}`,
+            mediaType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
+            howTo: (result.encrypted ?? false)
+              ? 'GET this URL with your bearer + `Accept: text/markdown` for the complete, decrypted HyperMarkdown view (this is the note\'s dereferenceable identity — use it, not the urn:graph).'
+              : 'Public note: GET the descriptorUrl (or resolve_linked_data) for its representations.',
+          },
+        }
+      : {}),
     // Audience-class echoed back so callers can confirm the branch
     // taken (default 'shared' is the back-compat path).
     visibility,
@@ -10501,8 +10520,10 @@ app.post('/admin/backfill-manifest-cid', async (req, res) => {
 });
 
 /**
- * GET /render/:descriptorIri — server-side plaintext projection of an
- * encrypted graph payload for thin clients (no X25519 keypair).
+ * GET /render/:descriptorIri — server-side projection of an encrypted graph
+ * payload for thin clients (no X25519 keypair). Content-negotiated: plaintext
+ * Turtle by default; a complete HyperMarkdown note (prose + fields + links +
+ * controls) when text/markdown is requested.
  *
  * Implements the `iep:renderView` affordance pattern: the publisher
  * emits a second affordance on the descriptor (alongside iep:canDecrypt)
@@ -10680,9 +10701,28 @@ app.get('/render/:descriptorIri', async (req, res) => {
       });
       return;
     }
-    // Return as text/turtle. The envelope body is a TriG document that
-    // wraps the descriptor's prefix block + the named-graph payload —
-    // valid Turtle a thin client can parse without further unwrap.
+    // Content-negotiated projection. Default: plaintext Turtle (the envelope
+    // body is a TriG document wrapping the descriptor prefixes + named-graph
+    // payload — valid Turtle a thin client parses without further unwrap).
+    // text/markdown (or ?format=markdown|hmd): the complete HyperMarkdown note
+    // — the human-legible + agent-actionable view, with the note's own controls
+    // and links, decrypted for this authorized owner. Falls back to Turtle if
+    // projection throws (never 500s a successful decrypt).
+    const kind = negotiateRepresentation(
+      String(req.query['format'] ?? '') || undefined,
+      String(req.headers['accept'] ?? '') || undefined,
+    );
+    res.setHeader('Vary', 'Accept');
+    if (kind === 'markdown') {
+      try {
+        const viewUrl = `${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '')}/render/${encodeURIComponent(descriptorIri)}`;
+        const authority = publishableDescriptorUrl(descriptorUrl, viewUrl);
+        const md = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle: descTurtle, plaintextTurtle: plaintext });
+        res.setHeader('Link', `${HMD_PROFILE_LINK_HEADER}, <${authority}>; rel="describedby"; type="text/turtle"`);
+        res.status(200).type(HYPERMEDIA_MARKDOWN_MEDIA_TYPE).send(md);
+        return;
+      } catch { /* fall back to Turtle */ }
+    }
     res.status(200).type('text/turtle').send(plaintext);
   } catch (err) {
     res.status(500).type('application/ld+json').json({
