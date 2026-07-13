@@ -792,6 +792,10 @@ export function exchangeHyperMarkdown(docUnknown: unknown): string {
   // garbage URLs; the stem is also what authority closure needs, since a
   // document @id must be fragment-free.)
   const exchangeUrl = String(doc['@id'] ?? '').split('#')[0]!;
+  // The EXACT immutable head this document renders (a specific version), vs the
+  // exchange URL (the continuing authority whose head evolves). Distinct things:
+  // conflating them was a real reviewer catch.
+  const headUrl = String(doc['head'] ?? '');
   const mem = doc['memory'] as Record<string, unknown> | undefined;
   const semantic = mem?.['semantic'] as Record<string, unknown> | undefined;
   const governance = mem?.['governanceStatus'];
@@ -808,7 +812,8 @@ export function exchangeHyperMarkdown(docUnknown: unknown): string {
     `survives channels those do not.`,
     ``,
     `- **Act:** \`${(doc['act'] as Record<string, unknown>)?.['actType'] ?? ''}\``,
-    `- **Head (authority):** ${exchangeUrl}`,
+    ...(headUrl ? [`- **Exact head** (this immutable version): ${headUrl}`] : []),
+    `- **Exchange** (continuing authority; its head evolves): ${exchangeUrl}`,
     // Memory bodies are third-party prose: blockquote every line so
     // attacker-authored content can never open a ::: fence (the renderer
     // rejects raw fence lines) or masquerade as document structure.
@@ -822,7 +827,8 @@ export function exchangeHyperMarkdown(docUnknown: unknown): string {
     ...(governance ? { state: String(governance) } : {}),
     extraContext: { amep: AMEP_NS },
     links: [
-      { label: 'Exchange (authority)', href: exchangeUrl, rel: 'describedby', type: AFFORDANCE_YAML_TYPE },
+      ...(headUrl ? [{ label: 'Exact head (this immutable version)', href: headUrl, rel: 'canonical', type: AFFORDANCE_YAML_TYPE }] : []),
+      { label: 'Exchange (continuing authority)', href: exchangeUrl, rel: 'describedby', type: AFFORDANCE_YAML_TYPE },
       { label: 'Turtle', href: `${exchangeUrl}?format=turtle`, rel: 'alternate', type: 'text/turtle' },
       { label: 'JSON-LD', href: `${exchangeUrl}?format=jsonld`, rel: 'alternate', type: 'application/ld+json' },
     ],

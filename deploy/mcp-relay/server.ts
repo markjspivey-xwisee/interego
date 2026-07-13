@@ -2813,22 +2813,31 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     descriptorUrl: result.descriptorUrl,
     graphUrl: result.graphUrl,
     encrypted: result.encrypted ?? false,
-    // The note's DEREFERENCEABLE HTTPS identity + how to view it as a complete
-    // HyperMarkdown document (prose + fields + describedby/alternate links +
-    // its controls), rendered/decrypted server-side. Prefer this URL over the
-    // urn:graph logical id when showing the note — everything is a URL, and a
-    // urn is not fetchable. Encrypted notes decrypt for the authorized bearer;
-    // request it as text/markdown.
+    // The note's DEREFERENCEABLE view: GET it (with your bearer) as
+    // text/markdown for the complete HyperMarkdown document — prose + fields +
+    // describedby/alternate links + the note's controls — rendered (and
+    // decrypted, if private) server-side. The identifier in the path is the
+    // HOST-FREE graph IRI, so no internal pod host ever appears in the URL
+    // (an earlier build leaked css.railway.internal here). Prefer this over the
+    // urn:graph logical id when showing the note — everything is a URL.
     ...(publishRelayBase
-      ? {
-          view: {
-            url: `${publishRelayBase}/render/${encodeURIComponent(result.descriptorUrl)}`,
-            mediaType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
-            howTo: (result.encrypted ?? false)
-              ? 'GET this URL with your bearer + `Accept: text/markdown` for the complete, decrypted HyperMarkdown view (this is the note\'s dereferenceable identity — use it, not the urn:graph).'
-              : 'Public note: GET the descriptorUrl (or resolve_linked_data) for its representations.',
-          },
-        }
+      ? (() => {
+          // Host-free identifier /render resolves via the caller's pod. Never
+          // the internal descriptorUrl (which carries css.railway.internal).
+          const viewId = (args.graph_iri as string)
+            || (Array.isArray(descriptor.describes) ? descriptor.describes[0] as string : undefined)
+            || (descriptor.id as string);
+          return {
+            view: {
+              url: `${publishRelayBase}/render/${encodeURIComponent(viewId)}`,
+              mediaType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
+              authenticated: true,
+              howTo: 'GET this URL with your bearer + `Accept: text/markdown` for the complete HyperMarkdown view'
+                + ((result.encrypted ?? false) ? ' (decrypted for you, the authorized agent).' : '.')
+                + ' This is the note\'s dereferenceable identity — use it, not the urn:graph.',
+            },
+          };
+        })()
       : {}),
     // Audience-class echoed back so callers can confirm the branch
     // taken (default 'shared' is the back-compat path).
@@ -6263,7 +6272,10 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'act',
-    description: 'Kernel verb — Peircean Thirdness operational. Follows an affordance via {descriptor_url, action_iri} or via pre-resolved {target, action, method}.',
+    description: 'Kernel verb — Peircean Thirdness operational. Follows an affordance via {descriptor_url, action_iri} or via pre-resolved {target, action, method}. '
+      + 'SUBMITTING AN AMEP ACT (memory exchange): set target to `<relay>/amep/acts`, method POST, and payload to a COMPLETE amep:Exchange envelope — a bare {body} or {act:"Ask"} returns 422. Shape: '
+      + '{"@context":["https://markjspivey-xwisee.github.io/affordant-memory-protocol/0.1/context.jsonld"],"@type":"amep:Exchange","actor":{"@id":"<did>","@type":"prov:SoftwareAgent"},"act":{"@id":"urn:act:...","@type":"amep:ProtocolAct","actType":"amep:Ask|Assert|Challenge|Accept|Fork|Compose","actor":"<did>","createdAt":"<iso8601>","proof":{"@type":"iep:SignedAuthorship","verificationMethod":"<did>#k","created":"<iso8601>","proofValue":"z"}},"memory":{...for Assert/Challenge}}. '
+      + 'The OAuth session auto-fills actor to your authenticated identity (no impersonation). NOTE: a placeholder proofValue yields `integrityStatus: amep:Unverified` — an honest label, not an error; genuine session-bound signing is a separate step.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -6273,7 +6285,7 @@ const TOOL_SCHEMAS = [
         action: { type: 'string' },
         method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
         media_type: { type: 'string' },
-        payload: {},
+        payload: { description: 'For AMEP acts, a full amep:Exchange envelope (see the tool description). For other affordances, the JSON body the target expects.' },
         authorization: { type: 'string' },
       },
     },
@@ -10630,13 +10642,42 @@ app.get('/render/:descriptorIri', async (req, res) => {
       });
       return;
     }
+    // Negotiate up front: a HyperMarkdown view is available for BOTH public and
+    // private notes; the plaintext-Turtle contract (and its 409 for non-encrypted)
+    // is preserved for existing thin clients that request Turtle.
+    const kind = negotiateRepresentation(
+      String(req.query['format'] ?? '') || undefined,
+      String(req.headers['accept'] ?? '') || undefined,
+    );
+    res.setHeader('Vary', 'Accept');
+
     if (!dist.encrypted) {
-      res.status(409).type('application/ld+json').json({
-        '@context': KERNEL_JSONLD_CONTEXT,
-        '@type': ['hydra:Status', 'urn:iep:error:NotEncrypted'],
-        error: 'Payload is not encrypted; iep:renderView is only meaningful for encrypted distributions. Follow the iep:canFetchPayload affordance directly.',
-        accessURL: dist.accessURL,
-      });
+      // PUBLIC note: no decrypt. For markdown, fetch the graph and project as
+      // HyperMarkdown. For Turtle, preserve the existing 409 (thin clients
+      // follow iep:canFetchPayload directly).
+      if (kind !== 'markdown') {
+        res.status(409).type('application/ld+json').json({
+          '@context': KERNEL_JSONLD_CONTEXT,
+          '@type': ['hydra:Status', 'urn:iep:error:NotEncrypted'],
+          error: 'Payload is not encrypted; request Accept: text/markdown for the HyperMarkdown view, or follow iep:canFetchPayload directly for the graph.',
+          accessURL: dist.accessURL,
+        });
+        return;
+      }
+      let publicGraph = '';
+      try {
+        const gResp = await solidFetch(dist.accessURL, { headers: { 'Accept': 'text/turtle, application/trig, */*' } });
+        if (gResp.ok) publicGraph = await gResp.text();
+      } catch { /* projection falls back to an empty body below */ }
+      try {
+        const viewUrl = `${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '')}/render/${encodeURIComponent(descriptorIri)}`;
+        const authority = publishableDescriptorUrl(descriptorUrl, viewUrl);
+        const md = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle: descTurtle, plaintextTurtle: publicGraph });
+        res.setHeader('Link', `${HMD_PROFILE_LINK_HEADER}, <${authority}>; rel="describedby"; type="text/turtle"`);
+        res.status(200).type(HYPERMEDIA_MARKDOWN_MEDIA_TYPE).send(md);
+      } catch {
+        res.status(200).type('text/turtle').send(publicGraph);
+      }
       return;
     }
 
@@ -10701,18 +10742,12 @@ app.get('/render/:descriptorIri', async (req, res) => {
       });
       return;
     }
-    // Content-negotiated projection. Default: plaintext Turtle (the envelope
-    // body is a TriG document wrapping the descriptor prefixes + named-graph
-    // payload — valid Turtle a thin client parses without further unwrap).
-    // text/markdown (or ?format=markdown|hmd): the complete HyperMarkdown note
-    // — the human-legible + agent-actionable view, with the note's own controls
-    // and links, decrypted for this authorized owner. Falls back to Turtle if
-    // projection throws (never 500s a successful decrypt).
-    const kind = negotiateRepresentation(
-      String(req.query['format'] ?? '') || undefined,
-      String(req.headers['accept'] ?? '') || undefined,
-    );
-    res.setHeader('Vary', 'Accept');
+    // Content-negotiated projection (kind computed up front). Default: plaintext
+    // Turtle (the envelope body is a TriG document wrapping the descriptor
+    // prefixes + named-graph payload — valid Turtle a thin client parses without
+    // further unwrap). text/markdown: the complete HyperMarkdown note — its own
+    // controls and links, decrypted for this authorized owner. Falls back to
+    // Turtle if projection throws (never 500s a successful decrypt).
     if (kind === 'markdown') {
       try {
         const viewUrl = `${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '')}/render/${encodeURIComponent(descriptorIri)}`;
