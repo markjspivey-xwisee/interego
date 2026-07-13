@@ -1214,3 +1214,10 @@ ieh:toolArgs a owl:DatatypeProperty ;
     rdfs:comment "Canonical JSON serialization of the tool's input arguments. Stored as-is for audit recovery. Producers MUST run a sensitivity preflight (see src/privacy/) before publishing — the substrate's pre-publish screen halts on detected secrets, but it is not a substitute for the runtime opting out of recording sensitive args via the overlay's recordArgs:false toggle." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
 
+
+ieh:pgslLevel a owl:DatatypeProperty ;
+    rdfs:label "pgsl level" ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:comment "The PGSL lattice level of the holon a projected document renders — 0 for an atom, n for a fragment n compositions up. Carried by the HyperMarkdown projection's frontmatter so a reasoner recovers the lattice position from the document bytes alone." ;
+    rdfs:seeAlso pgsl: ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.

@@ -170,13 +170,26 @@ export type {
 } from './hypermedia.js';
 export {
   HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
+  HYPERMEDIA_MARKDOWN_MEDIA_TYPE_LEGACY,
   HYPERMEDIA_MARKDOWN_VARIANT,
+  HMD_PROFILE_IRI,
+  HMD_NS,
+  HMD_PROFILE_LINK_HEADER,
+  HMD_PROJECTION_CONTEXT,
+  controlBlockIds,
   controlsFromAffordances,
+  expandHmdTerm,
+  hmdDocumentNode,
+  liftHypermediaMarkdown,
+  negotiateRepresentation,
   parseHypermediaMarkdown,
   renderHypermediaMarkdown,
+  typedLink,
 } from './hypermedia-markdown.js';
 export type {
+  HmdTriple,
   HypermediaControl,
+  HypermediaLink,
   HypermediaMarkdownDoc,
 } from './hypermedia-markdown.js';
 

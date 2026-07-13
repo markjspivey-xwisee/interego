@@ -31,6 +31,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 import jsonld from 'jsonld';
+import {
+  HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
+  HMD_PROFILE_LINK_HEADER,
+  negotiateRepresentation,
+  renderHypermediaMarkdown,
+  type HypermediaControl,
+} from '@interego/core';
 // The AMEP reference validator + its JSON-LD context, vendored verbatim (MIT,
 // same author). computeSemanticCid / computeRepresentationTag / validateDocument
 // are the SPEC's own functions, so our hashes and conformance verdict match the
@@ -56,7 +63,9 @@ const HYDRA_NS = 'http://www.w3.org/ns/hydra/core#';
 const SH_NS = 'http://www.w3.org/ns/shacl#';
 
 const AFFORDANCE_YAML_TYPE = 'application/affordance+yaml';
-const MARKDOWN_TYPE = 'text/markdown; variant=Interego';
+// The HyperMarkdown presentation binding's media type comes from @interego/core
+// (one source of truth — the former hand-duplicated literal drifted by design).
+const MARKDOWN_TYPE = HYPERMEDIA_MARKDOWN_MEDIA_TYPE;
 
 const WRITE_ACTS = new Set(['Assert', 'Challenge', 'Accept', 'Fork', 'Compose']);
 const CANDIDATE_ACTS = new Set(['Assert', 'Challenge', 'Fork', 'Compose']);
@@ -636,22 +645,36 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
   }
 
   async function negotiate(req: Request, res: Response, doc: Record<string, unknown>): Promise<void> {
-    const fmt = String(req.query['format'] ?? '').toLowerCase();
-    const acc = String(req.headers['accept'] ?? '');
+    // The ONE conneg rule (shared with /ns — kills the guard asymmetry where
+    // `Accept: text/turtle, text/markdown` picked different formats per route).
+    const kind = negotiateRepresentation(
+      String(req.query['format'] ?? '') || undefined,
+      String(req.headers['accept'] ?? '') || undefined,
+    );
+    res.setHeader('Vary', 'Accept');
     // Turtle / JSON-LD via jsonld (pinned loader).
-    if (fmt === 'jsonld' || (!fmt && acc.includes('application/ld+json'))) {
+    if (kind === 'jsonld') {
       const expanded = await jsonld.expand(doc);
       return void res.type('application/ld+json').send(JSON.stringify(expanded, null, 2));
     }
-    if (fmt === 'turtle' || fmt === 'ttl' || (!fmt && acc.includes('text/turtle'))) {
+    if (kind === 'turtle') {
       const nquads = await jsonld.toRDF(doc, { format: 'application/n-quads' });
       return void res.type('text/turtle').send(nquads as string);
     }
-    if ((fmt === 'markdown' || fmt === 'md' || (!fmt && acc.includes('text/markdown'))) && deps.markdownFn) {
-      // NON-NORMATIVE presentation binding: target-free, NO profile Link header.
-      return void res.type(MARKDOWN_TYPE).send(deps.markdownFn(doc));
+    if (kind === 'markdown') {
+      // NON-NORMATIVE presentation binding (HyperMarkdown). The profile Link
+      // names the DOCUMENT dialect (RFC 6906) — it is not an AMEP conformance
+      // claim, which stays exclusive to the normative bindings below.
+      // try/catch: negotiate() runs on an async Express route; a renderer
+      // throw must degrade to the conformant YAML default, never crash.
+      try {
+        const md = (deps.markdownFn ?? exchangeHyperMarkdown)(doc);
+        res.setHeader('Link', HMD_PROFILE_LINK_HEADER);
+        return void res.type(MARKDOWN_TYPE).send(md);
+      } catch { /* fall through to affordance+yaml */ }
     }
-    // Default: affordance+yaml, the conformant negotiated representation.
+    // Default (and 'html', which this surface does not render): affordance+yaml,
+    // the conformant negotiated representation.
     res.setHeader('Link', `<${CONTEXT_IRI}>; rel="profile"`);
     res.setHeader('ETag', doc['representationTag'] as string);
     res.type(AFFORDANCE_YAML_TYPE).send(yaml.dump(doc));
@@ -751,6 +774,61 @@ export function mountAmep(app: Express, deps: AmepDeps): void {
   });
 
   deps.log('[amep] routes: POST /amep/acts, GET /amep/exchanges/:slug, /amep/heads, /amep/acts, /amep');
+}
+
+// ── HyperMarkdown presentation binding (default composer) ───
+//
+// The exchange rendered as a HyperMarkdown document — a thin composer over
+// the core renderer, exported so the binding is testable without booting the
+// relay. Controls are authority-closed (the renderer computes each target as
+// a fragment of the exchange's own URL, never a transport endpoint); the POST
+// target is re-resolved from the signed exchange at execution time.
+export function exchangeHyperMarkdown(docUnknown: unknown): string {
+  const doc = docUnknown as Record<string, unknown>;
+  const affs = Array.isArray(doc['affordances']) ? doc['affordances'] as Array<Record<string, unknown>> : [];
+  // The exchange @id is `${publicBase}/amep/exchanges/${slug}#${act}-${id}`:
+  // its fragment stem IS the exchange resource — the head authority. (The
+  // former `split(':').pop()` treated the https IRI as a urn and built
+  // garbage URLs; the stem is also what authority closure needs, since a
+  // document @id must be fragment-free.)
+  const exchangeUrl = String(doc['@id'] ?? '').split('#')[0]!;
+  const mem = doc['memory'] as Record<string, unknown> | undefined;
+  const semantic = mem?.['semantic'] as Record<string, unknown> | undefined;
+  const governance = mem?.['governanceStatus'];
+  const controls: HypermediaControl[] = affs.map((a) => ({
+    action: String(a['action']),
+    ...(a['method'] ? { method: String(a['method']) } : {}),
+    ...(a['effect'] ? { whenToUse: String(a['effect']) } : {}),
+  }));
+  const body = [
+    `# AMEP exchange`,
+    ``,
+    `An AMEP exchange projected as a HyperMarkdown document. The affordance+yaml /`,
+    `JSON-LD / Turtle bindings are the same object; this presentation binding just`,
+    `survives channels those do not.`,
+    ``,
+    `- **Act:** \`${(doc['act'] as Record<string, unknown>)?.['actType'] ?? ''}\``,
+    `- **Head (authority):** ${exchangeUrl}`,
+    // Memory bodies are third-party prose: blockquote every line so
+    // attacker-authored content can never open a ::: fence (the renderer
+    // rejects raw fence lines) or masquerade as document structure.
+    ...(semantic?.['body'] ? [``, `## Memory`, ``, ...String(semantic['body']).trim().split('\n').map((l) => `> ${l}`)] : []),
+  ].join('\n');
+  return renderHypermediaMarkdown({
+    id: exchangeUrl,
+    // hmd:Document typing lives on the frontmatter's document node, not the exchange.
+    type: 'amep:Exchange',
+    descriptorUrl: exchangeUrl,
+    ...(governance ? { state: String(governance) } : {}),
+    extraContext: { amep: AMEP_NS },
+    links: [
+      { label: 'Exchange (authority)', href: exchangeUrl, rel: 'describedby', type: AFFORDANCE_YAML_TYPE },
+      { label: 'Turtle', href: `${exchangeUrl}?format=turtle`, rel: 'alternate', type: 'text/turtle' },
+      { label: 'JSON-LD', href: `${exchangeUrl}?format=jsonld`, rel: 'alternate', type: 'application/ld+json' },
+    ],
+    controls,
+    body,
+  });
 }
 
 // ── Act construction (the six acts) ─────────────────────────

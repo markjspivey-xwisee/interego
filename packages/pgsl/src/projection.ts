@@ -414,32 +414,19 @@ export function projectHolonToMarkdown(
     `- **Holon:** \`${pgslUri}\``,
     `- **Attributed to:** \`${node.provenance.wasAttributedTo}\``,
     `- **Descriptor (authority):** ${descriptorUrl}`,
-    ``,
-    ...(controls.length > 0 ? [
-      `## What you can do`,
-      ``,
-      // The point of the whole projection: the affordance set as prose an LLM
-      // reads natively, instead of Turtle only a parser can see.
-      ...controls.flatMap((c) => [
-        `- **\`${c.actionIri}\`**${c.whenToUse ? ` — ${c.whenToUse}` : ''}`,
-        ...(c.requires && c.requires.length > 0 ? [`  - requires: ${c.requires.join(', ')}`] : []),
-      ]),
-      ``,
-      `To act, call \`invoke_affordance\` with the **descriptor URL above** and the`,
-      `\`actionIri\` you want. The target is resolved from the signed descriptor —`,
-      `it is deliberately not published here, and must not be guessed.`,
-    ] : [
-      `This holon publishes no controls.`,
-    ]),
+    ...(controls.length === 0 ? [``, `This holon publishes no controls.`] : []),
   ].join('\n');
 
   return renderHypermediaMarkdown({
     id: node.uri,
+    // hmd:Document typing lives on the frontmatter's document node, not the holon.
     type: 'iep:ContextDescriptor',
     descriptorUrl,
+    title,
     ...(opts.conformsToShape ? { conformsToShape: opts.conformsToShape } : {}),
-    pgslUri,
-    pgslLevel,
+    // The lattice pointer: `@id` IS the pgsl URI, so only the level needs a
+    // field. `ieh:pgslLevel` is declared in docs/ns/harness.ttl.
+    fields: { 'ieh:pgslLevel': pgslLevel },
     controls,
     body,
   });
