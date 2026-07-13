@@ -35,6 +35,18 @@ const SIBLING_DEPLOYMENT_ORIGINS: readonly string[] = [
   'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  // Live Railway deployment (*.interego.xwisee.com) — the current home. The
+  // Azure hosts above are retained as inert legacy (that environment is paused).
+  // relay.interego.xwisee.com serves the OAuth passwordless sign-in page, whose
+  // WebAuthn/SIWE calls hit this identity server cross-origin — without this
+  // entry the preflight ACAO falls back to identity's own host and the browser
+  // blocks the sign-in.
+  'https://interego.xwisee.com',
+  'https://relay.interego.xwisee.com',
+  'https://identity.interego.xwisee.com',
+  'https://dashboard.interego.xwisee.com',
+  'https://gate.interego.xwisee.com',
+  'https://pgsl-browser.interego.xwisee.com',
 ];
 
 const BROWSER_MCP_CLIENT_ORIGINS: readonly string[] = [
@@ -132,7 +144,7 @@ export type MinimalRes = { setHeader: (name: string, value: string) => void };
 export type NextFn = () => void;
 
 export function corsMiddleware(opts: CorsHeaderOptions = {}): (req: MinimalReq, res: MinimalRes, next: NextFn) => void {
-  const ownOrigin = normalizeOrigin(opts.ownOrigin ?? '') ?? 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  const ownOrigin = normalizeOrigin(opts.ownOrigin ?? '') ?? 'https://identity.interego.xwisee.com';
   const allowlist = buildCorsAllowlist(opts);
   return (req, res, next) => {
     const originHeader = req.headers['origin'];
