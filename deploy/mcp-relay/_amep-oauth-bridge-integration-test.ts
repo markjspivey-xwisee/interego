@@ -112,9 +112,13 @@ check('   composed body merged BOTH operand heads', /Ship Friday/.test(cDoc.memo
 const rNo = await submitViaBridge({ '@id': AID('noauth'), '@type': 'amep:ProtocolAct', actType: 'amep:Ask', createdAt: now, proof }, undefined, { bearer: undefined, principal: undefined });
 check('5. WITHOUT bridge (no bearer) → 401 (bridge is what authorizes)', rNo.status === 401, `(${rNo.status})`);
 
-// 6. SECURITY: user tries to stamp a DIFFERENT actor → bridge leaves it → amep 403 (no impersonation).
+// 6. SECURITY: user (or model) puts a DIFFERENT actor → bridge OVERRIDES it to the
+//    authenticated identity → 201 attributed to YOU (never impersonation, no 403 to reason about).
 const rForge = await submitViaBridge({ '@id': AID('forge'), '@type': 'amep:ProtocolAct', actType: 'amep:Ask', createdAt: now, proof }, undefined, { explicitActor: 'did:key:z6MkSomeoneElse' });
-check('6. forged actor != principal → 403 (bridge never rewrites a stated actor)', rForge.status === 403, `(${rForge.status})`);
+check('6. submitted different actor → overridden to you → 201 (always-you, no impersonation)',
+  rForge.status === 201, `(${rForge.status})`);
+check('   the bridge stamped actor = the authenticated identity (not the submitted DID)',
+  rForge.stampedActor === ALICE);
 
 // 7. SECURITY: a read-only-style token that introspect rejects → 401 (real token still enforced).
 const rBadTok = await submitViaBridge({ '@id': AID('badtok'), '@type': 'amep:ProtocolAct', actType: 'amep:Ask', createdAt: now, proof }, undefined, { bearer: 'not-a-real-token', principal: ALICE });

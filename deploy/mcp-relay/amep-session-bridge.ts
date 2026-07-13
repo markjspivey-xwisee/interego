@@ -67,19 +67,21 @@ export function withAmepSession(
   const { sessionBearer, principalId, explicitAuth } = opts;
   const { solidFetch, publicBaseUrl } = deps;
 
-  // (a) Actor auto-stamp — same-origin /amep only, only when actor is absent. The
-  // OAuth path REQUIRES act.actor === principal.id and rejects an absent actor;
-  // the caller doesn't know their own DID, so the relay fills in the authenticated
-  // identity. A caller who explicitly set a DIFFERENT actor is left as-is → amep
-  // returns its clear 403 (we never silently rewrite a stated actor).
+  // (a) Actor binding — same-origin /amep only. On the OAuth path amep REQUIRES
+  // act.actor === principal.id, so ANY other value (absent, a placeholder the
+  // model invented, or a different DID) is invalid and would only 403. Rather than
+  // make the caller think about a field they can't set correctly, we ALWAYS bind
+  // act.actor to the authenticated identity: an OAuth caller is always attributed
+  // to themselves — never anyone else (no impersonation), and never has to touch
+  // the field. This is not a silent downgrade: you could never be attributed as
+  // someone else either way; this just turns a confusing 403 into "it's you".
   let outPayload = payload;
   if (principalId && amepSameOriginUrl(targetForActor, publicBaseUrl)) {
     try {
       const obj = typeof payload === 'string' ? yaml.load(payload) : payload;
       if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
         const act = (obj as Record<string, unknown>)['act'];
-        if (act && typeof act === 'object' && !Array.isArray(act)
-            && !(act as Record<string, unknown>)['actor']) {
+        if (act && typeof act === 'object' && !Array.isArray(act)) {
           (act as Record<string, unknown>)['actor'] = principalId;
           outPayload = obj;
         }

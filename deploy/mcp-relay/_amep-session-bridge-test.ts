@@ -66,10 +66,11 @@ const authHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) =>
   const { payload } = withAmepSession(`${BASE}/amep/acts`, { act: { actType: 'amep:Compose' } }, { sessionBearer: 'T', principalId: 'u-pk-alice' }, DEPS(recorder().fn));
   check('actor absent → stamped to principal id', (payload as any)?.act?.actor === 'u-pk-alice');
 }
-// 6. actor stamp: caller set a DIFFERENT actor → left as-is (amep will 403, no silent rewrite)
+// 6. actor binding: caller set a DIFFERENT actor → OVERRIDDEN to principal
+//    (always-you; you can never be attributed as someone else, no 403 to reason about)
 {
   const { payload } = withAmepSession(`${BASE}/amep/acts`, { act: { actor: 'did:key:someoneElse' } }, { sessionBearer: 'T', principalId: 'u-pk-alice' }, DEPS(recorder().fn));
-  check('explicit different actor → NOT overwritten', (payload as any)?.act?.actor === 'did:key:someoneElse');
+  check('explicit different actor → OVERRIDDEN to principal (always-you, no impersonation)', (payload as any)?.act?.actor === 'u-pk-alice');
 }
 // 7. actor stamp: EXTERNAL target → NOT stamped
 {
