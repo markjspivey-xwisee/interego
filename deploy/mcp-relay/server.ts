@@ -93,7 +93,7 @@ import {
 } from './dpop.js';
 import { corsMiddleware } from './cors-allowlist.js';
 import { normalizeCssUrl, assertPublicPodUrl } from './url-rewrite.js';
-import { withAmepSession, principalIri } from './amep-session-bridge.js';
+import { withAmepSession, principalIri, stampAmepProof, type AmepSigner } from './amep-session-bridge.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
@@ -1065,6 +1065,40 @@ async function getDelegationSigner(): Promise<DelegationSigner> {
  * plug in to replace the relay-backed compliance signer).
  */
 const delegationVerifier: DelegationVerifier = makeWalletDelegationVerifier();
+
+// ── AMEP act signing / verification (genuine session-bound proofs) ──
+//
+// The OAuth session holds no key of its own, so the relay attests each
+// same-origin /amep act it mediates: it signs amepAuthPayload with its own
+// delegation key (the compliance wallet), and the AMEP engine verifies the
+// signature recovers to THIS relay's address. Only the relay can mint a
+// Verified proof; a placeholder / client-signed / content-mismatched proof
+// stays Unverified. This is the "delegated verification" model — the relay is
+// the authenticated gateway, submittedBy stays the session principal.
+const amepActSigner: AmepSigner = async (payload: string) => {
+  const signer = await getDelegationSigner();
+  const { signature, verificationMethod } = await signer(payload);
+  return { signature, verificationMethod };
+};
+// Verify against the relay's OWN wallet address — unforgeable by any client.
+const amepVerifyActProof = async (canonicalPayload: string, proof: Record<string, unknown>): Promise<boolean> => {
+  const proofValue = proof['proofValue'];
+  const verificationMethod = proof['verificationMethod'];
+  if (typeof proofValue !== 'string' || typeof verificationMethod !== 'string') return false;
+  const proofBlock = {
+    type: 'EcdsaSecp256k1Signature2019' as const,
+    created: typeof proof['created'] === 'string' ? proof['created'] as string : '',
+    proofPurpose: 'assertionMethod' as const,
+    verificationMethod,
+    proofValue,
+    // The verifier recovers the address from (payload, proofValue) and checks it
+    // equals signerAddress — pinned to THIS relay's wallet, so only a relay
+    // signature verifies.
+    signerAddress: _oauthStoreWallet.wallet.address,
+  };
+  try { return await delegationVerifier(canonicalPayload, proofBlock); }
+  catch { return false; }
+};
 
 // ── OAuth provider init (DCR-persistent) ────────────────────
 //
@@ -5323,7 +5357,7 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   if (!actionIri) throw new Error('invoke_affordance: action_iri is required');
   // AMEP same-origin session bridge (same as handleKernelAct): reuse the caller's
   // verified session for an act that targets the relay's own /amep.
-  const { fetch: invFetch, payload: invPayload } = withAmepSession(
+  const { fetch: invFetch, payload: invPayload0 } = withAmepSession(
     descriptorUrl,
     payload,
     {
@@ -5335,6 +5369,9 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
     // resolved hydra:target, envelope) passes the SSRF screen.
     { solidFetch: guardedInvokeFetch, publicBaseUrl: PUBLIC_BASE_URL },
   );
+  // Stamp a GENUINE relay-attestation proof onto a same-origin /amep act (→ the
+  // act verifies to integrityStatus: Verified). No-op for non-/amep targets.
+  const invPayload = await stampAmepProof(invPayload0, descriptorUrl, { signer: amepActSigner, publicBaseUrl: PUBLIC_BASE_URL });
   // Pass `recipientKeyPair` so `iep:canDecrypt` affordances return
   // plaintext to authorized recipients (the relay's session agent is in
   // the envelope's recipient set whenever it published or was added as
@@ -5501,8 +5538,9 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
   // AMEP same-origin session bridge: when this act targets the relay's own
   // /amep, reuse the caller's verified session (auto-forward the bearer + stamp
   // act.actor) so an OAuth user drives Compose/etc. without a pasted credential.
-  const { fetch: actFetch, payload: actPayload } = withAmepSession(
-    descriptorUrl ?? targetRaw ?? '',
+  const amepTarget = descriptorUrl ?? targetRaw ?? '';
+  const { fetch: actFetch, payload: actPayload0 } = withAmepSession(
+    amepTarget,
     normPayload,
     {
       sessionBearer: args['_session_bearer'] as string | undefined,
@@ -5512,6 +5550,8 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
     // guardedInvokeFetch: the kernel-act follow chain passes the SSRF screen.
     { solidFetch: guardedInvokeFetch, publicBaseUrl: PUBLIC_BASE_URL },
   );
+  // Genuine relay-attestation proof for a same-origin /amep act (→ Verified).
+  const actPayload = await stampAmepProof(actPayload0, amepTarget, { signer: amepActSigner, publicBaseUrl: PUBLIC_BASE_URL });
   const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], actPayload, {
     fetch: actFetch,
     recipientKeyPair: relayAgentKey,
@@ -9831,6 +9871,9 @@ const amepDeps: AmepDeps = {
   // default composer (a thin composition over the core HyperMarkdown renderer,
   // exported there so the binding is testable without booting this module).
   // No markdownFn override needed.
+  // Verify a relay-attestation proof → integrityStatus Verified (unforgeable by
+  // any client; pinned to the relay's own wallet address).
+  verifyActProof: amepVerifyActProof,
   log: (msg: string, extra?: unknown) => { if (extra !== undefined) console.log(msg, extra); else console.log(msg); },
 };
 mountAmep(app, amepDeps);

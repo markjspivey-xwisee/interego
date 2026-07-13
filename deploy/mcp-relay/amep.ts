@@ -38,6 +38,7 @@ import {
   renderHypermediaMarkdown,
   type HypermediaControl,
 } from '@interego/core';
+import { amepAuthPayload } from './amep-session-bridge.js';
 // The AMEP reference validator + its JSON-LD context, vendored verbatim (MIT,
 // same author). computeSemanticCid / computeRepresentationTag / validateDocument
 // are the SPEC's own functions, so our hashes and conformance verdict match the
@@ -101,6 +102,15 @@ export interface AmepDeps {
   publicBase: string;          // https://relay.interego.xwisee.com
   actSecret: string;           // AMEP_ACT_SECRET (operator bearer); '' disables it
   markdownFn?: (doc: unknown) => string; // optional presentation projection
+  /**
+   * Cryptographically verify an act's proof — recover the signer from
+   * (amepAuthPayload, proof.proofValue) and confirm it is the RELAY's own
+   * attestation key. Returns true only for a genuine relay-signed session act;
+   * a placeholder proof, a client-signed proof, or a proof over different
+   * content all return false (→ integrityStatus stays Unverified). Absent ⇒
+   * verification is skipped (v0 behavior: everything Unverified).
+   */
+  verifyActProof?: (canonicalPayload: string, proof: Record<string, unknown>) => Promise<boolean>;
   log: (msg: string, extra?: unknown) => void;
 }
 
@@ -879,6 +889,23 @@ async function buildAct(
   const resultHead = heads(deps.publicBase, slug, actId);
   const receiptUrl = receiptLookupUrl(deps, slug, actId);
 
+  // Cryptographic integrity: a genuine relay-attestation proof (from the OAuth
+  // session bridge) verifies to amep:Verified; a placeholder / client-signed /
+  // content-mismatched proof stays amep:Unverified. Fail-closed: any error →
+  // Unverified. Computed once over the act's identity+lineage+memory-hash
+  // binding (amepAuthPayload — the same bytes the relay signed).
+  let integrityStatus = 'amep:Unverified';
+  const proof = act['proof'];
+  if (deps.verifyActProof && proof && typeof proof === 'object' && !Array.isArray(proof)
+      && typeof (proof as Record<string, unknown>)['proofValue'] === 'string') {
+    try {
+      const canonical = amepAuthPayload(act, submitted['memory']);
+      if (await deps.verifyActProof(canonical, proof as Record<string, unknown>)) {
+        integrityStatus = 'amep:Verified';
+      }
+    } catch { /* fail-closed → Unverified */ }
+  }
+
   // Memory: required for every non-Ask act. Candidate acts must supply/keep
   // Candidate; Accept commits the accepted act's memory.
   let memory: Record<string, unknown> | null = null;
@@ -950,7 +977,7 @@ async function buildAct(
       '@type': ['amep:MemoryRecord', 'ieh:AgentMemory'],
       memoryKind: 'amep:Claim',
       governanceStatus: 'amep:Candidate',
-      integrityStatus: 'amep:Unverified',
+      integrityStatus,
       conformanceStatus: 'amep:Conformant',
       semantic: composedSemantic,
     };
@@ -980,7 +1007,7 @@ async function buildAct(
     // Force Candidate for candidate-producing acts (Fork from Committed → Candidate).
     if (CANDIDATE_ACTS.has(actType)) memory['governanceStatus'] = 'amep:Candidate';
     // integrityStatus is Unverified in v0 (we record but do not verify proofs).
-    memory['integrityStatus'] = 'amep:Unverified';
+    memory['integrityStatus'] = integrityStatus;
     if (!memory['conformanceStatus']) memory['conformanceStatus'] = 'amep:Conformant';
     // Authoritative semanticCid — RDFC-1.0 of the memory's semantic projection.
     try {

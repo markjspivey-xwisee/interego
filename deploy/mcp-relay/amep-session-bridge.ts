@@ -25,7 +25,86 @@
  * and the fetch/actor-stamp logic are unit-testable in isolation.
  */
 import yaml from 'js-yaml';
+import { createHash } from 'node:crypto';
 import type { FetchFn } from '@interego/core';
+
+/** Deterministic JSON with recursively sorted keys (stable across serialization). */
+function stableStringify(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
+  const keys = Object.keys(v as Record<string, unknown>).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
+}
+
+/**
+ * The canonical bytes an AMEP act's proof commits to — binding the act's
+ * IDENTITY + LINEAGE (actor, type, id, all head/branch/operand references,
+ * timestamp) and its CONTENT (a sha256 of the submitted memory), but NOT the
+ * proof itself. Computed identically by the relay when it signs and by the AMEP
+ * engine when it verifies, so a replay onto different content — or a different
+ * actor/head — no longer matches. Robust across YAML↔JSON round-trips (only
+ * scalars + one memory hash; sorted keys).
+ */
+export function amepAuthPayload(act: Record<string, unknown>, memory: unknown): string {
+  const memorySha = memory !== undefined && memory !== null
+    ? createHash('sha256').update(stableStringify(memory), 'utf8').digest('hex')
+    : null;
+  return stableStringify({
+    v: 'amep-act-proof/1',
+    actor: act['actor'] ?? null,
+    actType: act['actType'] ?? null,
+    id: act['@id'] ?? act['id'] ?? null,
+    expectedHead: act['expectedHead'] ?? null,
+    parentHead: act['parentHead'] ?? null,
+    branch: act['branch'] ?? null,
+    operands: act['operands'] ?? null,
+    operator: act['operator'] ?? null,
+    challengedAct: act['challengedAct'] ?? null,
+    acceptedAct: act['acceptedAct'] ?? null,
+    createdAt: act['createdAt'] ?? null,
+    memorySha,
+  });
+}
+
+/** Signer shape (the relay's delegation signer): signs a string, returns an
+ *  ECDSA signature + the did:ethr verificationMethod that recovers to it. */
+export type AmepSigner = (payload: string) => Promise<{ signature: string; verificationMethod: string }>;
+
+/**
+ * Stamp a GENUINE relay-attestation proof onto a same-origin /amep act. The
+ * relay signs {@link amepAuthPayload} with its delegation key — the OAuth session
+ * holds no key of its own, so this is the "delegated verification" model: the
+ * relay cryptographically attests that the authenticated session submitted this
+ * exact act. Only the relay's wallet can produce it (a client cannot forge a
+ * Verified proof); the AMEP engine re-derives the same payload and checks the
+ * signature recovers to the relay's address. No-op for non-/amep targets or
+ * when no signer is available (→ the act keeps whatever proof it had → Unverified).
+ */
+export async function stampAmepProof(
+  payload: unknown,
+  targetForActor: string,
+  deps: { signer?: AmepSigner; publicBaseUrl: string },
+): Promise<unknown> {
+  if (!deps.signer || !amepSameOriginUrl(targetForActor, deps.publicBaseUrl)) return payload;
+  let obj: unknown;
+  try { obj = typeof payload === 'string' ? yaml.load(payload) : payload; }
+  catch { return payload; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return payload;
+  const act = (obj as Record<string, unknown>)['act'];
+  if (!act || typeof act !== 'object' || Array.isArray(act)) return payload;
+  const actObj = act as Record<string, unknown>;
+  try {
+    const canonical = amepAuthPayload(actObj, (obj as Record<string, unknown>)['memory']);
+    const { signature, verificationMethod } = await deps.signer(canonical);
+    actObj['proof'] = {
+      '@type': 'iep:SignedAuthorship',
+      verificationMethod,
+      created: (actObj['createdAt'] as string) ?? new Date().toISOString(),
+      proofValue: signature,
+    };
+  } catch { /* signing failed → leave the act's existing proof → Unverified */ }
+  return obj;
+}
 
 /** True if `s` looks like an absolute IRI (has a URI scheme: did:, https:, urn:…). */
 export function isIriLike(s: string | undefined): boolean {

@@ -8,7 +8,7 @@
     "start": "node dist/server.js",
     "dev": "tsx server.ts",
     "test": "tsx tests/dpop.test.ts && tsx tests/federation-persistence.test.ts && tsx tests/oauth-token-persistence.test.ts && tsx tests/pgsl-shim-kernel-fusion.test.ts && tsx tests/relay-compliance-sign.test.ts && tsx tests/publish-defer.test.ts && tsx tests/interrogative-route.test.ts && tsx _note-view-test.ts && npm run test:amep",
-    "test:amep": "tsx _amep-seed-test.ts && tsx _amep-post-test.ts && tsx _amep-multihead-test.ts && tsx _amep-allacts-test.ts && tsx _amep-session-bridge-test.ts && tsx _amep-oauth-bridge-integration-test.ts && tsx _amep-hmd-binding-test.ts",
+    "test:amep": "tsx _amep-seed-test.ts && tsx _amep-post-test.ts && tsx _amep-multihead-test.ts && tsx _amep-allacts-test.ts && tsx _amep-session-bridge-test.ts && tsx _amep-oauth-bridge-integration-test.ts && tsx _amep-proof-test.ts && tsx _amep-hmd-binding-test.ts",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium"
   },
