@@ -250,11 +250,36 @@ export interface MintOptions {
  * mint([uri1, uri2], { kind: 'fragment' }) // urn:pgsl:fragment:<hex…>
  * ```
  */
+/**
+ * Deterministic JSON with recursively sorted keys — so an object atom's value
+ * is stable regardless of key insertion order. Two objects with the same
+ * content produce the same string (hence the same content-address).
+ */
+function stableStringify(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
+  const keys = Object.keys(v as Record<string, unknown>).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
+}
+
+/**
+ * Coerce arbitrary content into a lattice `Value` (string | number | boolean).
+ * A non-scalar (object/array) is canonicalized to a stable JSON STRING rather
+ * than left to `String(value)` — which collapses every object to
+ * `"[object Object]"`, colliding all object atoms onto ONE content-address and
+ * serializing as that useless literal. The caller round-trips it with
+ * JSON.parse.
+ */
+function toAtomValue(content: unknown): Value {
+  if (content !== null && typeof content === 'object') return stableStringify(content);
+  return content as Value;
+}
+
 export function mint(content: unknown, options?: MintOptions): MintResult {
   const kind = options?.kind ?? 'atom';
 
   if (kind === 'atom') {
-    const value = content as Value;
+    const value = toAtomValue(content);
     const adapter = getKernelLatticeAdapter();
     const minted = adapter.mint(value, options?.provenance ?? defaultProvenance());
     return {
