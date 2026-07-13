@@ -45,7 +45,7 @@ service, and federation peer discovery.
 The relay's hosted reference:
 
 ```
-https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp
+https://relay.interego.xwisee.com/mcp
 ```
 
 ## Per-client config
@@ -58,7 +58,7 @@ Add to `~/.claude.json`:
 {
   "mcpServers": {
     "interego": {
-      "url": "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp"
+      "url": "https://relay.interego.xwisee.com/mcp"
     }
   }
 }
@@ -93,7 +93,7 @@ globally:
 {
   "mcpServers": {
     "interego": {
-      "url": "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp"
+      "url": "https://relay.interego.xwisee.com/mcp"
     }
   }
 }
@@ -116,7 +116,7 @@ Edit `~/.hermes/config.toml`:
 ```toml
 [[mcp.servers]]
 name = "interego"
-url = "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp"
+url = "https://relay.interego.xwisee.com/mcp"
 ```
 
 Restart Hermes. OAuth flow opens in your default browser; Hermes
@@ -126,7 +126,7 @@ caches the token in its config dir.
 
 ```bash
 openclaw mcp add interego \
-  --url "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp"
+  --url "https://relay.interego.xwisee.com/mcp"
 ```
 
 ### ChatGPT (custom connectors) — web + mobile

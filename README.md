@@ -9,7 +9,7 @@ Drop the MCP relay into any agent that speaks MCP (Claude Code, Cursor, Codex, W
 {
   "mcpServers": {
     "interego": {
-      "url": "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp"
+      "url": "https://relay.interego.xwisee.com/mcp"
     }
   }
 }
@@ -27,14 +27,14 @@ The hosted relay is exposed as a remote MCP server, so GUI clients can mount it 
 
 1. Open Settings → Connectors → **Add custom connector**. (Available on ChatGPT Pro, Team, and Enterprise; exact menu label and location vary by plan and platform.)
 2. Name it whatever you like, e.g. `Interego`.
-3. URL: `https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp`
+3. URL: `https://relay.interego.xwisee.com/mcp`
 4. Save. On first use, ChatGPT opens a browser tab for OAuth — enroll a passkey or connect a wallet there, then return to the chat.
 5. The same connector then works in the ChatGPT web app and the ChatGPT mobile app (iOS / Android), because connector settings sync through your OpenAI account.
 
 **Claude.ai (web or mobile)**
 
 1. Open Settings → Connectors → **Add custom connector** (on some surfaces this appears as **Configure connector** in the conversation menu).
-2. URL: `https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp`
+2. URL: `https://relay.interego.xwisee.com/mcp`
 3. Save. The OAuth flow opens in your browser — enroll a passkey or connect a wallet on first use.
 4. The same connector then covers Claude.ai on the web and the Claude mobile app, because connector settings sync through your Anthropic account.
 
@@ -70,8 +70,8 @@ The underlying surface is a small categorical kernel — eight verbs: `mint`, `d
 | Run a live demo of multi-agent emergent coordination | [`demos/`](demos/README.md) — 25 end-to-end scenarios (24 + 25 are the dual-audience pilot demos) |
 | Understand the spec / category-theoretic foundations | [`spec/architecture.md`](spec/architecture.md) + [`docs/ARCHITECTURAL-FOUNDATIONS.md`](docs/ARCHITECTURAL-FOUNDATIONS.md) |
 | Run a SOC 2 / EU AI Act / NIST RMF audit against an Interego pod | [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) |
-| Set up Interego for a non-technical friend or family member | [The hosted front door](https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/) — they enroll a passkey or wallet directly (~30s, no command line), or their MCP client drives it on first call |
-| Browse the protocol primitives via web UI | [Identity Dashboard](https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/dashboard) + [PGSL Browser](https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io) |
+| Set up Interego for a non-technical friend or family member | [The hosted front door](https://identity.interego.xwisee.com/) — they enroll a passkey or wallet directly (~30s, no command line), or their MCP client drives it on first call |
+| Browse the protocol primitives via web UI | [Identity Dashboard](https://identity.interego.xwisee.com/dashboard) + [PGSL Browser](https://pgsl-browser.interego.xwisee.com) |
 
 ---
 
@@ -145,7 +145,7 @@ Two complementary deployment paths. Both are open-source; both federate; pick by
 
 | Path | What it is | Best for |
 |---|---|---|
-| **Hosted reference** ([interego-relay.eastus...](https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io)) | Publicly-hosted Azure deployment. OAuth-gated MCP at `/mcp` exposing **9 categorical substrate verbs** — the local stdio server's 8 (mint, dereference, compose, act, restrict, extend, promote, decompose) plus `reduce_chain` — alongside the **27 compatibility shims** for the named-tool surface (publish_context, discover_context, register_agent, invoke_affordance, etc.) and additional relay-only shims. The kernel verbs are the substrate's irreducible primitives; the shims are particular compositions of those primitives. Every response is JSON-LD with hydra:Operation affordances and conformsToShape pointers; SHACL shapes graph at `/.well-known/shacl-shapes`. The relay is a superset of the local stdio MCP server, not an identical surface. Per-user pods, claude.ai/ChatGPT custom-connector compatible. Operated by the maintainer as a reference instance. | **Evaluation without running your own infrastructure.** You still enroll an identity (passkey / wallet — 2 min via the [landing page](https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/)) and wire up an MCP client; what you skip is hosting the relay / pod / identity server yourself. See the [first-hour walkthrough](docs/FIRST-HOUR.md). Tier 3 substrate. Vertical applications are NOT bundled into this relay — they deploy independently per the [verticals doc](applications/README.md). |
+| **Hosted reference** ([interego-relay.eastus...](https://relay.interego.xwisee.com)) | Publicly-hosted Azure deployment. OAuth-gated MCP at `/mcp` exposing **9 categorical substrate verbs** — the local stdio server's 8 (mint, dereference, compose, act, restrict, extend, promote, decompose) plus `reduce_chain` — alongside the **27 compatibility shims** for the named-tool surface (publish_context, discover_context, register_agent, invoke_affordance, etc.) and additional relay-only shims. The kernel verbs are the substrate's irreducible primitives; the shims are particular compositions of those primitives. Every response is JSON-LD with hydra:Operation affordances and conformsToShape pointers; SHACL shapes graph at `/.well-known/shacl-shapes`. The relay is a superset of the local stdio MCP server, not an identical surface. Per-user pods, claude.ai/ChatGPT custom-connector compatible. Operated by the maintainer as a reference instance. | **Evaluation without running your own infrastructure.** You still enroll an identity (passkey / wallet — 2 min via the [landing page](https://identity.interego.xwisee.com/)) and wire up an MCP client; what you skip is hosting the relay / pod / identity server yourself. See the [first-hour walkthrough](docs/FIRST-HOUR.md). Tier 3 substrate. Vertical applications are NOT bundled into this relay — they deploy independently per the [verticals doc](applications/README.md). |
 | **Personal bridge** ([`examples/personal-bridge/`](examples/personal-bridge/)) | A small Node binary you run on your own infrastructure (laptop / Pi / NAS / Tailscale-exposed home server). Embedded relay, MCP at `/mcp` exposing core p2p tools (`publish_p2p`, `query_p2p`, `share_encrypted`, `query_my_inbox`), REST + admin UI. | **Self-hosting + local-first.** Your data on your network; one URL all your devices; sharing is per-publish (`share_with`) or per-bridge (mirror to public Nostr relays via `EXTERNAL_RELAYS`). Tier 5 substrate. Vertical bridges run alongside this generic bridge on different ports — see [`applications/`](applications/). |
 
 **They federate when you need it.** A user on the hosted relay can share with a personal-bridge user via cross-pod E2EE share (Tier 4) or via a common public Nostr relay (Tier 5 with `WebSocketRelayMirror`). Identity stays the same — your wallet's secp256k1 key is your identity on every surface.
@@ -417,7 +417,7 @@ const harnessTtl = loadOntology('harness');  // 982 lines, 810 triples
 Hit the deployed HTTP relay (any HTTP client works — no MCP, no SDK):
 
 ```bash
-curl -X POST https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/tool/discover_context \
+curl -X POST https://relay.interego.xwisee.com/tool/discover_context \
   -H "Content-Type: application/json" \
   -d '{"namespace": "cg"}'
 ```
@@ -428,9 +428,9 @@ Every MCP tool is exposed as a `POST /tool/{tool_name}` endpoint with a JSON bod
 
 Open one of the deployed web UIs in your browser — no install required:
 
-- **Landing page / enroll:** https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io — passkey / wallet / DID enrollment, friendly first-time-user surface
-- **Your dashboard:** https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/dashboard — your DID, registered credentials, pod inbox (requires you've enrolled first)
-- **PGSL Browser:** https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io
+- **Landing page / enroll:** https://identity.interego.xwisee.com — passkey / wallet / DID enrollment, friendly first-time-user surface
+- **Your dashboard:** https://identity.interego.xwisee.com/dashboard — your DID, registered credentials, pod inbox (requires you've enrolled first)
+- **PGSL Browser:** https://pgsl-browser.interego.xwisee.com
 
 ### 👶 I'm new — what's the actual first-hour experience?
 
