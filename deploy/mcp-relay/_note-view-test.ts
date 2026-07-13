@@ -58,5 +58,21 @@ check('two controls parsed', doc.controls.length === 2, String(doc.controls.leng
 check('authority closure: every control target is a fragment of the view URL', md.match(/^target: "([^"]+)"$/gm)!.every((l) => l.includes(`"${viewUrl}#control-`)));
 check('NO transport endpoint leaked (the descriptor hydra:targets never appear)', !md.includes('css.internal') && !md.includes('envelope.jose.json') && !md.includes('hydra/core#target'));
 
+// The exact graph shape `remember` builds: schema:text as a JSON-escaped
+// single-quoted literal with embedded newlines. Confirms the memory body
+// renders as multi-line prose (rung 1), not a mangled single line.
+const memBody = 'First line of the memory.\nSecond line with a "quote".\nThird line.';
+const rememberGraph = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix schema: <https://schema.org/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<urn:graph:memory:example-123> a ieh:AgentMemory, schema:NoteDigitalDocument ;
+  schema:name "A remembered note" ;
+  schema:text ${JSON.stringify(memBody)} ;
+  dct:created "2026-07-13T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .`;
+const memMd = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle, plaintextTurtle: rememberGraph });
+check('remember-shaped memory: title becomes the H1', memMd.includes('# A remembered note'));
+check('remember-shaped memory: multi-line body renders as prose (newlines survive)', memMd.includes('First line of the memory.') && memMd.includes('Second line with a "quote".') && memMd.includes('Third line.'));
+check('remember-shaped memory: still private + parses', /^state: "private"$/m.test(memMd) && parseHypermediaMarkdown(memMd).id === viewUrl);
+
 console.log(`\n${ok}/${ok + bad} note-view checks passed`);
 process.exit(bad === 0 ? 0 : 1);
