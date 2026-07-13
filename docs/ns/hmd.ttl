@@ -1,0 +1,184 @@
+@prefix hmd:     <https://relay.interego.xwisee.com/ns/maintainer/hmd#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix iep:     <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ══════════════════════════════════════════════════════════════
+#  HyperMarkdown Vocabulary (hmd) 0.1 — rehosted
+#
+#  The 0.1 term set VERBATIM (definitions unchanged), rehosted from the
+#  decommissioned Azure namespace onto the substrate's own generic
+#  ontology route, which dereferences with full content negotiation —
+#  including as a HyperMarkdown document of itself. The projection that
+#  emits hmd: terms is packages/core/src/kernel/hypermedia-markdown.ts;
+#  its discipline (authority-closed control targets, re-resolution at
+#  execution time) is a PROFILE of this vocabulary, not a change to it.
+# ══════════════════════════════════════════════════════════════
+
+<https://relay.interego.xwisee.com/ns/maintainer/hmd>
+  a owl:Ontology ;
+  dcterms:title "HyperMarkdown Vocabulary" ;
+  rdfs:label "HyperMarkdown Vocabulary (hmd) 0.1" ;
+  rdfs:comment "Terms for HyperMarkdown 0.1 — Markdown as a hypermedia media type: documents as graph resources, typed links as edges, semantic claims, validation shapes, provenance, policy, and controls as discoverable affordances. A domain vocabulary that ALIGNS with the Interego protocol layer (iep:) and W3C hypermedia/linked-data vocabularies via rdfs:seeAlso and skos:related; it does not subclass or extend them." ;
+  owl:versionInfo "0.1-draft" ;
+  dcterms:creator <mailto:mark.spivey@xwisee.com> ;
+  dcterms:modified "2026-07-13"^^xsd:date ;
+  dcterms:replaces <https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/u-pk-436c2247c0e0/ns/hmd> ,
+                   <https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/u-pk-436c2247c0e0/hmd> ;
+  skos:changeNote "Rehosted 2026-07: the prior namespace hosts (Azure Container Apps, both the gate and relay variants) are decommissioned and do not dereference. Term IRIs move to this namespace; definitions are unchanged." ;
+  rdfs:seeAlso <http://www.w3.org/ns/hydra/core#> ,
+               <http://www.w3.org/ns/dcat#> ,
+               <http://www.w3.org/ns/odrl/2/> ,
+               <http://www.w3.org/ns/prov#> ,
+               <http://www.w3.org/ns/shacl#> .
+
+# ---------------------------------------------------------------- classes
+
+hmd:Document a rdfs:Class, owl:Class ;
+  rdfs:label "Document" ;
+  rdfs:comment "A HyperMarkdown document viewed as a locally-editable representation of a distributed graph resource: prose, typed links, semantic blocks, and controls." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso <http://www.w3.org/ns/hydra/core#ApiDocumentation> .
+
+hmd:Control a rdfs:Class, owl:Class ;
+  rdfs:label "Control" ;
+  rdfs:comment "A hypermedia control: a declared, discoverable action or state transition available on a resource. Clients must not assume an action is available unless a corresponding control is present." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  skos:related iep:Affordance ;
+  rdfs:seeAlso <http://www.w3.org/ns/hydra/core#Operation> .
+
+hmd:Claim a rdfs:Class, owl:Class ;
+  rdfs:label "Claim" ;
+  rdfs:comment "An asserted statement (subject/predicate/object) that may carry confidence, source, and provenance; reifiable as an rdf:Statement." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso rdf:Statement .
+
+hmd:Template a rdfs:Class, owl:Class ;
+  rdfs:label "Template" ;
+  rdfs:comment "A parameterised link: an RFC 6570 URI template with variable-to-property mappings." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso <http://www.w3.org/ns/hydra/core#IriTemplate> .
+
+hmd:ApprovalRequest a rdfs:Class, owl:Class ;
+  rdfs:label "ApprovalRequest" ;
+  rdfs:comment "Input payload type expected by an approve control." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:ApprovedResource a rdfs:Class, owl:Class ;
+  rdfs:label "ApprovedResource" ;
+  rdfs:comment "Output payload type returned by an approve control." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:RejectionNotice a rdfs:Class, owl:Class ;
+  rdfs:label "RejectionNotice" ;
+  rdfs:comment "Input payload type expected by a reject control." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:RejectedResource a rdfs:Class, owl:Class ;
+  rdfs:label "RejectedResource" ;
+  rdfs:comment "Output payload type returned by a reject control." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:SymptomReport a rdfs:Class, owl:Class ;
+  rdfs:label "SymptomReport" ;
+  rdfs:comment "Input payload type for a report-symptom control." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:SymptomTimeline a rdfs:Class, owl:Class ;
+  rdfs:label "SymptomTimeline" ;
+  rdfs:comment "Output payload type returned by a report-symptom control." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+# ------------------------------------------------------------- properties
+
+hmd:control a rdf:Property, owl:ObjectProperty ;
+  rdfs:label "control" ;
+  rdfs:comment "Relates a document (or resource) to a control it exposes." ;
+  rdfs:domain hmd:Document ;
+  rdfs:range hmd:Control ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  skos:related iep:Affordance .
+
+hmd:claim a rdf:Property, owl:ObjectProperty ;
+  rdfs:label "claim" ;
+  rdfs:comment "Relates a document to a semantic claim it asserts." ;
+  rdfs:domain hmd:Document ;
+  rdfs:range hmd:Claim ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:template a rdf:Property, owl:ObjectProperty ;
+  rdfs:label "template" ;
+  rdfs:comment "Relates a document to a parameterised-link template it exposes." ;
+  rdfs:domain hmd:Document ;
+  rdfs:range hmd:Template ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:method a rdf:Property, owl:DatatypeProperty ;
+  rdfs:label "method" ;
+  rdfs:comment "The HTTP (or local) method a control is invoked with." ;
+  rdfs:domain hmd:Control ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso <http://www.w3.org/ns/hydra/core#method> .
+
+hmd:target a rdf:Property, owl:ObjectProperty ;
+  rdfs:label "target" ;
+  rdfs:comment "The URI a control is invoked against." ;
+  rdfs:domain hmd:Control ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:expects a rdf:Property, owl:ObjectProperty ;
+  rdfs:label "expects" ;
+  rdfs:comment "The expected input type of a control." ;
+  rdfs:domain hmd:Control ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso <http://www.w3.org/ns/hydra/core#expects> .
+
+hmd:returns a rdf:Property, owl:ObjectProperty ;
+  rdfs:label "returns" ;
+  rdfs:comment "The expected output type of a control." ;
+  rdfs:domain hmd:Control ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso <http://www.w3.org/ns/hydra/core#returns> .
+
+hmd:condition a rdf:Property ;
+  rdfs:label "condition" ;
+  rdfs:comment "A state precondition under which a control is available." ;
+  rdfs:domain hmd:Control ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:rel a rdf:Property ;
+  rdfs:label "rel" ;
+  rdfs:comment "The semantic action relationship a control realises." ;
+  rdfs:domain hmd:Control ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+# ------------------------------------------------- action relations (rels)
+
+hmd:approve a rdf:Property ;
+  rdfs:label "approve" ;
+  rdfs:comment "Approve the target resource, advancing its state." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  skos:related iep:Affordance .
+
+hmd:reject a rdf:Property ;
+  rdfs:label "reject" ;
+  rdfs:comment "Reject the target resource, advancing its state." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  skos:related iep:Affordance .
+
+hmd:reportSymptom a rdf:Property ;
+  rdfs:label "reportSymptom" ;
+  rdfs:comment "Submit a symptom report against the target resource." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  skos:related iep:Affordance .
+
+hmd:search a rdf:Property ;
+  rdfs:label "search" ;
+  rdfs:comment "A parameterised query relation for templated links." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso <http://www.w3.org/ns/hydra/core#search> ;
+  skos:related iep:Affordance .
