@@ -202,6 +202,20 @@ const SIBLING_DEPLOYMENT_ORIGINS = [
   'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-foxxi-scorm-player.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  // Live Railway deployment (*.interego.xwisee.com) — the current home; the
+  // Azure hosts above are inert legacy (that environment is paused). Without
+  // these, a browser front-end on an xwisee host reading a pod through the gate
+  // gets the gate's own FQDN as ACAO and the cross-origin read fails.
+  'https://interego.xwisee.com',
+  'https://relay.interego.xwisee.com',
+  'https://identity.interego.xwisee.com',
+  'https://dashboard.interego.xwisee.com',
+  'https://gate.interego.xwisee.com',
+  'https://pgsl-browser.interego.xwisee.com',
+  'https://foxxi-microsite.interego.xwisee.com',
+  'https://foxxi-dashboard.interego.xwisee.com',
+  'https://foxxi-scorm-player.interego.xwisee.com',
+  'https://foxxi-bridge.interego.xwisee.com',
 ];
 const BROWSER_MCP_CLIENT_ORIGINS = [
   'https://claude.ai',
@@ -237,7 +251,7 @@ function buildCorsAllowlist() {
 
 const CORS_ALLOWLIST = buildCorsAllowlist();
 const GATE_OWN_ORIGIN = normalizeOrigin(PUBLIC_BASE_URL)
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://gate.interego.xwisee.com';
 
 export function corsHeadersFor(originHeader) {
   const norm = normalizeOrigin(originHeader);

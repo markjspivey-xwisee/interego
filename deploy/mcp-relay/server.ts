@@ -9259,7 +9259,7 @@ app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
 // /ns carve-out), no auth. Serves the signed projection bytes, never rewrites
 // them. Verticals (agentic memory, Foxxi, Weft) are polygranular CONSUMERS of
 // this surface — the same holon in many hyperedges.
-const RELAY_NS_ROOT = `${(PUBLIC_BASE_URL || 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/+$/, '')}/ns`;
+const RELAY_NS_ROOT = `${(PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com').replace(/\/+$/, '')}/ns`;
 const NS_OWL_ONTOLOGY = 'http://www.w3.org/2002/07/owl#Ontology';
 
 /** Clean standalone Turtle from a stored `-graph.trig` (publish() wraps the
