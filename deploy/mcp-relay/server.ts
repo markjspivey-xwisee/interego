@@ -2815,8 +2815,41 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     });
   }
 
+  // Hand the HyperMarkdown artifact back INLINE — so a connector never needs an
+  // authenticated raw HTTP GET (georgio's 401 "Token not found"). Rendered from
+  // the PLAINTEXT graph we already hold + a minimal in-memory affordance set for
+  // the note's controls — NO pod fetch, so it works even on the deferred publish
+  // path (the descriptor isn't on the pod yet). viewUrl uses the DESCRIPTOR IRI —
+  // the ONE canonical render identity /render resolves (the graph IRI did not).
+  // Gated to note-like graphs so arbitrary ontologies aren't mislabeled as notes.
+  let renderedNote = '';
+  const graphContentStr = String(args.graph_content ?? '');
+  const isNoteLike = /\b(schema:text|schema:articleBody|dct:description|rdfs:comment|schema:name|dct:title|AgentMemory|NoteDigitalDocument)\b/.test(graphContentStr);
+  if (publishRelayBase && isNoteLike) {
+    try {
+      const IEP_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
+      const viewUrl = `${publishRelayBase}/render/${encodeURIComponent(descriptor.id as string)}`;
+      const enc = (result.encrypted ?? false);
+      // Minimal descriptor turtle carrying the note's real affordances (the same
+      // ones the persisted descriptor advertises) so its controls render inline.
+      const affTurtle = [
+        `@prefix iep: <${IEP_NS}> .`,
+        `@prefix hydra: <http://www.w3.org/ns/hydra/core#> .`,
+        `@prefix dcat: <http://www.w3.org/ns/dcat#> .`,
+        `<${descriptor.id}> a iep:ContextDescriptor ; iep:affordance ${enc ? '<#canDecrypt>, ' : ''}<#renderView> .`,
+        ...(enc ? [`<#canDecrypt> a iep:Affordance ; iep:action <${IEP_NS}canDecrypt> ; hydra:target <${viewUrl}> ; hydra:method "GET" .`] : []),
+        `<#renderView> a iep:Affordance ; iep:action <${IEP_NS}renderView> ; hydra:target <${viewUrl}> ; hydra:method "GET" ; dcat:mediaType "text/markdown; charset=UTF-8; variant=CommonMark" .`,
+      ].join('\n');
+      renderedNote = noteToHyperMarkdown({ viewUrl, authority: viewUrl, descriptorTurtle: affTurtle, plaintextTurtle: graphContentStr });
+    } catch { /* leave empty — the response is still complete without it */ }
+  }
+
   return JSON.stringify({
     published: true,
+    // The complete HyperMarkdown note, ready to DISPLAY INLINE (prose + fields +
+    // links + controls). No HTTP GET, no bearer needed — it is right here. This
+    // is the artifact; `view.url` below is only an optional live re-fetch.
+    ...(renderedNote ? { rendered: renderedNote } : {}),
     // 'pending' on the accept-then-publish path (the substrate-CSS chain
     // is running in the background; HEAD the descriptorUrl until 200 OR
     // call /publish/status with the descriptorUrl for a definitive read).
@@ -2856,23 +2889,20 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // (an earlier build leaked css.railway.internal here). Prefer this over the
     // urn:graph logical id when showing the note — everything is a URL.
     ...(publishRelayBase
-      ? (() => {
-          // Host-free identifier /render resolves via the caller's pod. Never
-          // the internal descriptorUrl (which carries css.railway.internal).
-          const viewId = (args.graph_iri as string)
-            || (Array.isArray(descriptor.describes) ? descriptor.describes[0] as string : undefined)
-            || (descriptor.id as string);
-          return {
-            view: {
-              url: `${publishRelayBase}/render/${encodeURIComponent(viewId)}`,
-              mediaType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
-              authenticated: true,
-              howTo: 'GET this URL with your bearer + `Accept: text/markdown` for the complete HyperMarkdown view'
-                + ((result.encrypted ?? false) ? ' (decrypted for you, the authorized agent).' : '.')
-                + ' This is the note\'s dereferenceable identity — use it, not the urn:graph.',
-            },
-          };
-        })()
+      ? {
+          view: {
+            // The DESCRIPTOR IRI — the ONE canonical render identity (matches the
+            // descriptor's iep:renderView affordance; /render resolves it). The
+            // graph IRI did not resolve. Host-free, so no internal pod host leaks.
+            url: `${publishRelayBase}/render/${encodeURIComponent(descriptor.id as string)}`,
+            mediaType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
+            authenticated: true,
+            howTo: renderedNote
+              ? 'The artifact is already in `rendered` above — display that. This URL is only an OPTIONAL authenticated re-fetch (bearer + Accept: text/markdown); for a pure MCP client, prefer `get_descriptor` on descriptorUrl, which decrypts through your session.'
+              : 'GET this URL with your bearer + `Accept: text/markdown` for the complete HyperMarkdown view'
+                + ((result.encrypted ?? false) ? ' (decrypted for you), or use `get_descriptor` on descriptorUrl through your session.' : '.'),
+          },
+        }
       : {}),
     // Audience-class echoed back so callers can confirm the branch
     // taken (default 'shared' is the back-compat path).
@@ -3046,33 +3076,22 @@ async function handleRemember(args: ToolArgs): Promise<string> {
   catch { return publishRaw; }
   if (published['error'] || published['published'] !== true) return publishRaw;
 
-  // Render the note as complete HyperMarkdown to return inline (we already hold
-  // the plaintext graph; fetch the descriptor for its affordances → controls).
-  const publishRelayBase = (PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
-  const viewUrl = `${publishRelayBase}/render/${encodeURIComponent(graphIri)}`;
-  let rendered = '';
-  try {
-    const descUrl = String(published['descriptorUrl'] ?? '');
-    const descResp = descUrl ? await solidFetch(descUrl, { headers: { Accept: 'text/turtle' } }) : null;
-    const descTurtle = descResp?.ok ? await descResp.text() : '';
-    const authority = publishableDescriptorUrl(descUrl, viewUrl);
-    rendered = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle: descTurtle, plaintextTurtle: graphContent });
-  } catch { /* rendered stays '' — the view URL still works */ }
-
+  // publish_context now renders the note inline (`rendered`) and returns the
+  // canonical descriptor-IRI `view` — reuse both (one code path, no duplicate
+  // render, no graph-IRI mismatch).
   return JSON.stringify({
     remembered: true,
     memory: graphIri,
-    // The note's dereferenceable HTTPS identity + how to fetch it live.
-    view: (published['view'] as Record<string, unknown>) ?? { url: viewUrl, mediaType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE, authenticated: true },
+    view: published['view'],
     visibility: published['visibility'],
     encrypted: published['encrypted'],
     // The GENUINE authorship proof (verifies to CryptographicallyVerified on read).
     authorship: published['authorship'],
     descriptorUrl: published['descriptorUrl'],
-    // The complete HyperMarkdown note, ready to display inline (prose + fields +
-    // links + controls). Also fetchable live at view.url as text/markdown.
-    rendered,
-    hint: 'Display `rendered` inline as Markdown. It is a signed, private note; anyone re-fetches it live at view.url (Accept: text/markdown). This is a plain memory — NOT an AMEP exchange.',
+    // The complete HyperMarkdown note, ready to display INLINE (prose + fields +
+    // links + controls). No HTTP GET, no bearer — it is right here.
+    rendered: published['rendered'] ?? '',
+    hint: 'Display `rendered` inline as Markdown — it IS the artifact (no fetch needed). Signed, private memory; NOT an AMEP exchange. To re-read later, get_descriptor on descriptorUrl decrypts through your session.',
   });
 }
 
