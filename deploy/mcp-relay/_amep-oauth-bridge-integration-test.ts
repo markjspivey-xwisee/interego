@@ -8,7 +8,7 @@
 //     -> Compose is server-computed -> 201, attributed to the OAuth user.
 // Run: tsx _amep-oauth-bridge-integration-test.ts
 import { mountAmep } from './amep.js';
-import { withAmepSession } from './amep-session-bridge.js';
+import { withAmepSession, principalIri } from './amep-session-bridge.js';
 // @ts-ignore
 import * as validator from './amep-vendor/validator.mjs';
 import { readFileSync } from 'node:fs';
@@ -17,8 +17,15 @@ import yaml from 'js-yaml';
 const amepContext = JSON.parse(readFileSync(fileURLToPath(new URL('./amep-vendor/context.jsonld', import.meta.url)), 'utf8'));
 
 const BASE = 'https://relay.interego.xwisee.com';
-const ALICE = 'did:key:z6MkAliceOAuthUser';
+// Realistic OAuth session shapes: userId is a BARE SLUG (this is exactly what
+// masked the original 422 — a DID-shaped test userId hid that a slug is not an
+// IRI). The IRI identity used as the AMEP actor comes from principalIri().
+const ALICE_USERID = 'u-pk-alice001';
+const ALICE_AGENT = 'did:web:identity.interego.xwisee.com:agents:chatgpt-u-pk-alice001';
+const ALICE_WEBID = 'https://identity.interego.xwisee.com/u-pk-alice001/profile/card#me';
+const ALICE = principalIri(ALICE_AGENT, ALICE_WEBID, ALICE_USERID); // the IRI amep + bridge agree on
 const ALICE_TOKEN = 'oauth-access-token-alice';
+const SLUG_TOKEN = 'oauth-token-that-introspects-to-a-bare-slug';
 
 // ── in-memory CSS + amep mount (same pattern as _amep-allacts-test.ts) ──
 const store = new Map<string, { body: string; etag: string }>();
@@ -39,7 +46,11 @@ const cssFetch = async (url: string, init: any = {}): Promise<any> => {
 const routes: Record<string, any> = {};
 const fakeApp: any = { get: (p: string, ...h: any[]) => { routes[`GET ${p}`] = h[h.length - 1]; }, post: (p: string, ...h: any[]) => { routes[`POST ${p}`] = h[h.length - 1]; } };
 // The mock introspect: ALICE_TOKEN → an mcp:write OAuth principal. Anything else → null.
-const introspect = (tok: string) => (tok === ALICE_TOKEN ? { userId: ALICE, scope: ['mcp:write'], clientId: 'chatgpt-client' } : null);
+// Mirrors the server's amep introspect wrapper: ALICE_TOKEN → the IRI principal;
+// SLUG_TOKEN → a raw bare-slug userId (simulates the pre-fix / mis-wired case).
+const introspect = (tok: string) => tok === ALICE_TOKEN ? { userId: ALICE, scope: ['mcp:write'], clientId: 'chatgpt-client' }
+  : tok === SLUG_TOKEN ? { userId: ALICE_USERID, scope: ['mcp:write'], clientId: 'chatgpt-client' }
+  : null;
 mountAmep(fakeApp, { solidFetch: cssFetch as any, withPodMutex: async (_k: string, fn: any) => fn(), introspect: introspect as any, cssUrl: 'http://css.local:3456/', maintainerPod: 'maintainer', publicBase: BASE, actSecret: 'unused-operator-secret-000000', log: () => {} });
 
 // ── fetch → in-memory /amep/acts handler adapter ─────────────
@@ -87,7 +98,7 @@ console.log('=== OAuth session bridge → real AMEP acts (in-process) ===');
 // 1. Ask as the OAuth user — no actor, no bearer pasted.
 const rAsk = await submitViaBridge({ '@id': AID('ask'), '@type': 'amep:ProtocolAct', actType: 'amep:Ask', createdAt: now, proof });
 check('1. Ask via bridge → 201 (bridge supplied bearer + actor)', rAsk.status === 201 && await conforms(rAsk.body), `(${rAsk.status}${rAsk.status >= 400 ? ' ' + rAsk.body.slice(0, 160) : ''})`);
-check('   bridge stamped act.actor = OAuth userId', rAsk.stampedActor === ALICE);
+check('   bridge stamped act.actor = an IRI identity (not the bare userId slug)', rAsk.stampedActor === ALICE && /^[a-z][a-z0-9+.-]*:/i.test(rAsk.stampedActor || ''));
 const hAsk = (yaml.load(rAsk.body) as any).head;
 
 // 2. Assert.
@@ -112,13 +123,24 @@ check('   composed body merged BOTH operand heads', /Ship Friday/.test(cDoc.memo
 const rNo = await submitViaBridge({ '@id': AID('noauth'), '@type': 'amep:ProtocolAct', actType: 'amep:Ask', createdAt: now, proof }, undefined, { bearer: undefined, principal: undefined });
 check('5. WITHOUT bridge (no bearer) → 401 (bridge is what authorizes)', rNo.status === 401, `(${rNo.status})`);
 
-// 6. SECURITY: user tries to stamp a DIFFERENT actor → bridge leaves it → amep 403 (no impersonation).
+// 6. SECURITY: user (or model) puts a DIFFERENT actor → bridge OVERRIDES it to the
+//    authenticated identity → 201 attributed to YOU (never impersonation, no 403 to reason about).
 const rForge = await submitViaBridge({ '@id': AID('forge'), '@type': 'amep:ProtocolAct', actType: 'amep:Ask', createdAt: now, proof }, undefined, { explicitActor: 'did:key:z6MkSomeoneElse' });
-check('6. forged actor != principal → 403 (bridge never rewrites a stated actor)', rForge.status === 403, `(${rForge.status})`);
+check('6. submitted different actor → overridden to you → 201 (always-you, no impersonation)',
+  rForge.status === 201, `(${rForge.status})`);
+check('   the bridge stamped actor = the authenticated identity (not the submitted DID)',
+  rForge.stampedActor === ALICE);
 
 // 7. SECURITY: a read-only-style token that introspect rejects → 401 (real token still enforced).
 const rBadTok = await submitViaBridge({ '@id': AID('badtok'), '@type': 'amep:ProtocolAct', actType: 'amep:Ask', createdAt: now, proof }, undefined, { bearer: 'not-a-real-token', principal: ALICE });
 check('7. unknown token forwarded → 401 (amep introspect still gates)', rBadTok.status === 401, `(${rBadTok.status})`);
+
+// 8. REGRESSION (the reported bug): a BARE-SLUG principal (actor === principal.id
+//    but not an IRI) → amep 422 "actor MUST be a node object with an IRI @id".
+//    principalIri() is what prevents this in prod; tests 1–4 prove the IRI path
+//    201s. This locks the fix so a future regression to the bare slug fails loudly.
+const rSlug = await submitViaBridge({ '@id': AID('slug'), '@type': 'amep:ProtocolAct', actType: 'amep:Ask', createdAt: now, proof }, undefined, { bearer: SLUG_TOKEN, principal: ALICE_USERID });
+check('8. bare-slug principal → 422 actor-not-an-IRI (why principalIri() is required)', rSlug.status === 422, `(${rSlug.status})`);
 
 console.log(`\n${ok}/${ok + bad} OAuth-bridge integration checks passed`);
 process.exit(bad === 0 ? 0 : 1);

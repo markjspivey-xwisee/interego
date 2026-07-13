@@ -27,6 +27,27 @@
 import yaml from 'js-yaml';
 import type { FetchFn } from '@interego/core';
 
+/** True if `s` looks like an absolute IRI (has a URI scheme: did:, https:, urn:…). */
+export function isIriLike(s: string | undefined): boolean {
+  return !!s && /^[a-z][a-z0-9+.-]*:/i.test(s);
+}
+
+/**
+ * The IRI that identifies an OAuth session as an AMEP `actor` / `submittedBy`.
+ * AMEP requires these to be absolute IRIs (they become node `@id`s), but the
+ * relay's `userId` is a bare slug (`u-pk-…`) — using it verbatim yields a 422
+ * "actor MUST be a node object with an IRI @id". Prefer the session agent DID
+ * when it is an IRI (did:web/did:key), else the user's WebID (always a URL).
+ * MUST be computed identically wherever the principal is set (amep's introspect
+ * AND the session-bridge actor stamp) so the actor-binding `act.actor ===
+ * principal.id` holds — both derive from the same token's extra, so they agree.
+ */
+export function principalIri(agentId?: string, ownerWebId?: string, userId?: string): string {
+  if (isIriLike(agentId)) return agentId as string;
+  if (isIriLike(ownerWebId)) return ownerWebId as string;
+  return agentId || userId || '';
+}
+
 /**
  * Returns the parsed URL iff `rawUrl` is on the relay's OWN origin and under
  * /amep/; otherwise null. Uses URL.origin (scheme + lowercased host + explicit
@@ -67,19 +88,21 @@ export function withAmepSession(
   const { sessionBearer, principalId, explicitAuth } = opts;
   const { solidFetch, publicBaseUrl } = deps;
 
-  // (a) Actor auto-stamp — same-origin /amep only, only when actor is absent. The
-  // OAuth path REQUIRES act.actor === principal.id and rejects an absent actor;
-  // the caller doesn't know their own DID, so the relay fills in the authenticated
-  // identity. A caller who explicitly set a DIFFERENT actor is left as-is → amep
-  // returns its clear 403 (we never silently rewrite a stated actor).
+  // (a) Actor binding — same-origin /amep only. On the OAuth path amep REQUIRES
+  // act.actor === principal.id, so ANY other value (absent, a placeholder the
+  // model invented, or a different DID) is invalid and would only 403. Rather than
+  // make the caller think about a field they can't set correctly, we ALWAYS bind
+  // act.actor to the authenticated identity: an OAuth caller is always attributed
+  // to themselves — never anyone else (no impersonation), and never has to touch
+  // the field. This is not a silent downgrade: you could never be attributed as
+  // someone else either way; this just turns a confusing 403 into "it's you".
   let outPayload = payload;
   if (principalId && amepSameOriginUrl(targetForActor, publicBaseUrl)) {
     try {
       const obj = typeof payload === 'string' ? yaml.load(payload) : payload;
       if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
         const act = (obj as Record<string, unknown>)['act'];
-        if (act && typeof act === 'object' && !Array.isArray(act)
-            && !(act as Record<string, unknown>)['actor']) {
+        if (act && typeof act === 'object' && !Array.isArray(act)) {
           (act as Record<string, unknown>)['actor'] = principalId;
           outPayload = obj;
         }

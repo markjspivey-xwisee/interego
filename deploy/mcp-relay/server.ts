@@ -93,7 +93,7 @@ import {
 } from './dpop.js';
 import { corsMiddleware } from './cors-allowlist.js';
 import { normalizeCssUrl, assertPublicPodUrl } from './url-rewrite.js';
-import { withAmepSession } from './amep-session-bridge.js';
+import { withAmepSession, principalIri } from './amep-session-bridge.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
@@ -7449,7 +7449,10 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // Reserved + server-injected (stripped from wire input above), so a caller
       // cannot forge either. Bearer is attached ONLY to a same-origin /amep POST.
       if (authContext.accessToken) args._session_bearer = authContext.accessToken;
-      if (authContext.userId) args._session_principal = authContext.userId;
+      // The IRI form of the identity (agent DID / WebID), NOT the bare userId slug
+      // — amep needs an IRI actor. Same principalIri() amep's introspect uses, so
+      // the stamped act.actor === principal.id.
+      if (authContext.userId) args._session_principal = principalIri(authContext.agentId, authContext.ownerWebId, authContext.userId);
       // Thread the THIS-session agent identity through so handlers like
       // handleGetPodStatus can surface the per-surface agent that the
       // current OAuth token actually authorizes (chatgpt-<userId>,
@@ -9617,7 +9620,11 @@ const amepDeps: AmepDeps = {
   introspect: (token: string) => {
     const intro = oauthProvider.introspectAccessToken(token);
     if (!intro) return null;
-    return { userId: intro.userId, scope: intro.scope ?? [], clientId: intro.clientId };
+    // AMEP's actor / submittedBy must be an absolute IRI (they become @id nodes),
+    // but intro.userId is a bare slug (u-pk-…). Use an IRI identity (session agent
+    // DID, else WebID). The session bridge stamps act.actor with the SAME
+    // principalIri() from the same token, so the actor-binding still holds.
+    return { userId: principalIri(intro.agentId, intro.ownerWebId, intro.userId), scope: intro.scope ?? [], clientId: intro.clientId };
   },
   cssUrl: CSS_URL,
   maintainerPod: RELAY_MAINTAINER_POD_NAME || 'maintainer',

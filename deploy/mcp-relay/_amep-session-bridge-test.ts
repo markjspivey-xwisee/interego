@@ -1,7 +1,7 @@
 // Unit tests for the AMEP same-origin session bridge — the security-critical
 // gate that decides when the relay auto-forwards a caller's OAuth bearer to
 // POST /amep/acts and stamps act.actor. Run: tsx _amep-session-bridge-test.ts
-import { amepSameOriginUrl, withAmepSession } from './amep-session-bridge.js';
+import { amepSameOriginUrl, withAmepSession, principalIri, isIriLike } from './amep-session-bridge.js';
 import type { FetchFn } from '@interego/core';
 
 const BASE = 'https://relay.interego.xwisee.com';
@@ -21,6 +21,12 @@ check('userinfo@host still same origin (harmless, fetch ignores it)', !!amepSame
 check('unset base → null (fail closed)', amepSameOriginUrl(`${BASE}/amep/acts`, '') === null);
 check('malformed url → null', amepSameOriginUrl('::::not a url', BASE) === null);
 check('external host with base as path segment → null (no prefix bypass)', amepSameOriginUrl('https://relay.interego.xwisee.com.evil.com/amep/acts', BASE) === null);
+
+// ── principalIri: the AMEP actor IRI (never the bare userId slug) ──
+check('isIriLike: did:/https: true, bare slug false', isIriLike('did:web:x') && isIriLike('https://x/c#me') && !isIriLike('u-pk-a') && !isIriLike(undefined));
+check('principalIri: agent DID (IRI) preferred', principalIri('did:web:h:agents:chatgpt-u-pk-a', 'https://h/u-pk-a/card#me', 'u-pk-a') === 'did:web:h:agents:chatgpt-u-pk-a');
+check('principalIri: bare agent → WebID (IRI) fallback', principalIri('chatgpt-u-pk-a', 'https://h/u-pk-a/card#me', 'u-pk-a') === 'https://h/u-pk-a/card#me');
+check('principalIri: never returns a bare slug when an IRI exists', /^[a-z][a-z0-9+.-]*:/i.test(principalIri('chatgpt-u-pk-a', 'https://h/card#me', 'u-pk-a')));
 
 // ── withAmepSession: credential injection + actor stamp ──────
 // Recording fake solidFetch: captures (url, init) and returns a minimal response.
@@ -66,10 +72,11 @@ const authHdr = (init: any) => Object.entries(init?.headers ?? {}).find(([k]) =>
   const { payload } = withAmepSession(`${BASE}/amep/acts`, { act: { actType: 'amep:Compose' } }, { sessionBearer: 'T', principalId: 'u-pk-alice' }, DEPS(recorder().fn));
   check('actor absent → stamped to principal id', (payload as any)?.act?.actor === 'u-pk-alice');
 }
-// 6. actor stamp: caller set a DIFFERENT actor → left as-is (amep will 403, no silent rewrite)
+// 6. actor binding: caller set a DIFFERENT actor → OVERRIDDEN to principal
+//    (always-you; you can never be attributed as someone else, no 403 to reason about)
 {
   const { payload } = withAmepSession(`${BASE}/amep/acts`, { act: { actor: 'did:key:someoneElse' } }, { sessionBearer: 'T', principalId: 'u-pk-alice' }, DEPS(recorder().fn));
-  check('explicit different actor → NOT overwritten', (payload as any)?.act?.actor === 'did:key:someoneElse');
+  check('explicit different actor → OVERRIDDEN to principal (always-you, no impersonation)', (payload as any)?.act?.actor === 'u-pk-alice');
 }
 // 7. actor stamp: EXTERNAL target → NOT stamped
 {
