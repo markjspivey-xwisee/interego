@@ -9713,6 +9713,28 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', css: CSS_URL, tools: Object.keys(TOOLS).length, auth: 'bearer-token', x402: true });
 });
 
+// ── /hmd/echo — SAFE, side-effect-free test sink for the HMD viewer's POST action
+// loop. A signed-graph control can declare hydra:target <PUBLIC_BASE_URL/hmd/echo>
+// + hydra:method "POST"; render_hmd then marks it executable and the widget runs
+// the full form → payload-preview → confirm → Submit → invoke_affordance → result
+// loop against this endpoint, which just echoes the received payload + a receipt.
+// NO storage, NO mutation, NO auth (invoke_affordance does not attach the caller's
+// bearer to a non-/amep target), JSON-only, size-capped — so it can never be more
+// than a reflection. Purely a test target; it is NOT a substrate action.
+app.post('/hmd/echo', (req, res) => {
+  let received: unknown = req.body ?? {};
+  try {
+    const s = JSON.stringify(received);
+    if (s.length > 8192) received = { _note: 'payload omitted from echo (too large)', bytes: s.length };
+  } catch { received = { _note: 'payload not JSON-serializable' }; }
+  res.json({
+    ok: true,
+    sink: 'hmd-echo',
+    receipt: { id: `rcpt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, at: new Date().toISOString() },
+    received,
+  });
+});
+
 // ── /publish/status — deferred-publish status lookup ─────────
 //
 // publish_context returns synchronously with `status: 'pending'` once
