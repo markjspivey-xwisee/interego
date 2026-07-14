@@ -87,6 +87,12 @@ check('HMD_APP_HTML is a self-contained doc with the logic + tabs', HMD_APP_HTML
 check('HMD_APP_HTML: no inline onclick handlers (CSP-safe)', !HMD_APP_HTML.includes('onclick='));
 check('HMD_APP_HTML: no inline style="display attribute (CSP-safe)', !HMD_APP_HTML.includes('style="display'));
 check('HMD_APP_HTML: tabs wired via addEventListener (not inline)', HMD_APP_HTML.includes("addEventListener('click'"));
+// Hydration lifecycle: ChatGPT delivers structuredContent ASYNC via
+// openai:set_globals; the widget must listen for it (not only read toolOutput once)
+// and render an initial empty state so the mounted frame is never blank.
+check('HMD_APP_HTML: hydrates via the async openai:set_globals event', HMD_APP_HTML.includes('openai:set_globals') && HMD_APP_HTML.includes('function hydrate') && HMD_APP_HTML.includes('detail.globals'));
+check('HMD_APP_HTML: renders an initial state at boot (never blank)', HMD_APP_HTML.includes('DATA=readToolOutput(); render();'));
+check('HMD_APP_HTML: keeps the MCP Apps tool-result fallback path', HMD_APP_HTML.includes('ui/notifications/tool-result'));
 check('HMD_APP_HTML references no external origins (self-contained)', !/https?:\/\/(?!x\.example|markjspivey)/.test(HMD_APP_HTML.replace(/https:\/\/www\.w3\.org|http:\/\/www\.w3\.org/g, '')) || !/<script\s+src=|<link\s+href=|@import/i.test(HMD_APP_HTML));
 
 // ── render_hmd → widget structuredContent contract ──

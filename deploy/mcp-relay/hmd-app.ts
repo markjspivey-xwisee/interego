@@ -72,10 +72,21 @@ var DATA = null;
 function q(id){return document.getElementById(id)}
 // ── read the tool output (ChatGPT compat first, then MCP Apps bridge) ──
 function readToolOutput(){ try{ if(window.openai&&window.openai.toolOutput) return window.openai.toolOutput; }catch(e){} return null; }
+function hydrate(d){ if(d){ DATA=d; render(); } }
+// ChatGPT sets the tool output ASYNCHRONOUSLY — the iframe can mount before the
+// approval-gated structuredContent arrives — and signals it via the
+// openai:set_globals CustomEvent (event.detail.globals.toolOutput), NOT just a
+// synchronous window.openai.toolOutput. Listen for it (with a direct-global
+// fallback) and re-render whenever the output lands or changes.
+window.addEventListener('openai:set_globals',function(ev){
+  var g=(ev&&ev.detail&&ev.detail.globals)||{};
+  hydrate(g.toolOutput!=null?g.toolOutput:readToolOutput());
+},{passive:true});
 window.addEventListener('message',function(ev){
   if(ev.source!==window.parent) return;
   var m=ev.data; if(!m||typeof m!=='object') return;
-  if(m.method==='ui/notifications/tool-result'){ var d=(m.params&&m.params.structuredContent)||null; if(d){ DATA=d; render(); } }
+  // MCP Apps standard delivery (fallback path to the ChatGPT event above).
+  if(m.method==='ui/notifications/tool-result'){ hydrate((m.params&&m.params.structuredContent)||null); }
   else if(m.id!=null && PENDING[m.id]){ var p=PENDING[m.id]; delete PENDING[m.id]; if(m.error) p.reject(new Error(m.error.message||'tool error')); else p.resolve(m.result); }
 });
 // ── invoke a tool: prefer window.openai.callTool, else JSON-RPC postMessage ──
@@ -187,7 +198,10 @@ function prettyAction(iri){ var n=localName(iri).replace(/[-_]/g,' ').replace(/(
 // under a strict/nonce Content-Security-Policy) then render any initial output.
 (function(){
   ['enhanced','markdown','source'].forEach(function(t){ var b=q('tab-'+t); if(b) b.addEventListener('click',function(){ selectTab(t); }); });
-  var d=readToolOutput(); if(d){ DATA=d; render(); }
+  // Render immediately (a clean empty state if the output hasn't been delivered
+  // yet) so the frame is never blank; openai:set_globals / tool-result re-renders
+  // with the real document the moment it arrives.
+  DATA=readToolOutput(); render();
 })();
 `;
 

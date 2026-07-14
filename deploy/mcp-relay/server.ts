@@ -162,6 +162,18 @@ import { noteToHyperMarkdown, inlineRenderedForDescriptor } from './note-view.js
 // The generic HyperMarkdown MCP-App renderer (served as a ui:// resource).
 import { HMD_APP_HTML } from './hmd-app.js';
 
+// CONTENT-VERSIONED widget URI: hosts (ChatGPT) may cache the widget HTML by
+// resource URI, so a same-URI redeploy could serve a STALE widget. Deriving the URI
+// from a short hash of HMD_APP_HTML means every widget change yields a fresh URI —
+// the host can never serve an old bundle. Referenced identically by the render_hmd
+// tool's _meta.ui.resourceUri, ListResources, and ReadResource.
+function hmdShortHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+const HMD_WIDGET_URI = `ui://widget/hmd-${hmdShortHash(HMD_APP_HTML)}.html`;
+
 import type {
   ContextDescriptorData,
   FetchFn,
@@ -7237,8 +7249,8 @@ const TOOL_SCHEMAS = [
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Open in HyperMarkdown viewer', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     // MCP Apps: this tool's output mounts the generic HMD viewer widget
-    // (+ ChatGPT legacy outputTemplate alias).
-    _meta: { ui: { resourceUri: 'ui://widget/hmd.html' }, 'openai/outputTemplate': 'ui://widget/hmd.html' },
+    // (+ ChatGPT legacy outputTemplate alias). Content-versioned URI (cache-bust).
+    _meta: { ui: { resourceUri: HMD_WIDGET_URI }, 'openai/outputTemplate': HMD_WIDGET_URI },
   },
 ] as const;
 
@@ -7596,7 +7608,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // structuredContent, and it renders THAT document dynamically. There is no
       // per-note / per-vertical app — one renderer, any HyperMarkdown.
       {
-        uri: 'ui://widget/hmd.html',
+        uri: HMD_WIDGET_URI,
         name: 'HyperMarkdown viewer (MCP App)',
         description: 'Generic interactive viewer for ANY HyperMarkdown document. The render_hmd tool supplies the specific HMD (prose, typed links, :::control blocks with inline SHACL form fields); this one resource renders it and lets the user submit control actions via invoke_affordance. No content is hardcoded — it is driven entirely by the HMD passed in.',
         mimeType: 'text/html;profile=mcp-app',
@@ -7640,7 +7652,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
     // The generic HyperMarkdown viewer (MCP App UI). Static HTML, no content —
     // the render_hmd tool supplies the document at call time.
-    if (req.params.uri === 'ui://widget/hmd.html') {
+    if (req.params.uri === HMD_WIDGET_URI) {
       return {
         contents: [{
           uri: req.params.uri,
