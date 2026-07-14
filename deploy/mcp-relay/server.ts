@@ -3996,6 +3996,15 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
     profile = createOwnerProfile(ownerWebId, args.owner_name as string);
   }
 
+  // Idempotent add. If the agent is ALREADY in the registry we do NOT bail:
+  // a re-register is a credential REPAIR / delegation UPGRADE, not an error.
+  // We keep the existing entry and still (re)issue the signed credential +
+  // rewrite the registry below, so a half-written state — registry entry
+  // present but the signed delegation credential missing or unverifiable
+  // (e.g. the best-effort credential write during auto-registration in
+  // publish_context failed) — self-heals here without a destructive
+  // revoke/re-register. This IS the idempotent delegation-upgrade path.
+  let alreadyAuthorized = false;
   try {
     profile = addAuthorizedAgent(profile, {
       agentId,
@@ -4011,14 +4020,22 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
       encryptionPublicKey: relayAgentKey.publicKey,
     });
   } catch (err) {
-    return JSON.stringify({ error: (err as Error).message });
+    if (/already authorized/i.test((err as Error).message)) {
+      // Existing entry stays as-is; fall through to (re)issue the credential.
+      alreadyAuthorized = true;
+    } else {
+      return JSON.stringify({ error: (err as Error).message });
+    }
   }
 
   // Sign the credential with the relay's compliance wallet so
   // verify_agent can perform a cryptographic chain walk later.
   // Registry + credential target distinct CSS paths — run the two
   // PUTs concurrently.
-  const agent = profile.authorizedAgents.find(a => a.agentId === agentId)!;
+  const agent = profile.authorizedAgents.find(a => a.agentId === agentId);
+  if (!agent) {
+    return JSON.stringify({ error: `agent ${agentId} not present in registry after register` });
+  }
   const credentialAndWrite = (async () => {
     const signer = await getDelegationSigner();
     const cred = await createSignedDelegationCredential(
@@ -4037,7 +4054,10 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
   relayProfileCache.delete(podUrl);
 
   return JSON.stringify({
-    registered: true,
+    registered: !alreadyAuthorized,
+    // `repaired` signals an idempotent re-issue: the agent was already in the
+    // registry and this call (re)wrote its signed delegation credential.
+    repaired: alreadyAuthorized,
     agent: agentId,
     credential: credUrl,
     proof: credential.proof,
