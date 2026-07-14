@@ -1,5 +1,15 @@
 name: Emergent test suite
 
+# ┌─ STATUS: DISABLED (gh workflow disable) ─────────────────────────┐
+# │ Held off the nightly cron pending revival against Railway. The   │
+# │ endpoint defaults below now target Railway (relay.interego.      │
+# │ xwisee.com + gate.interego.xwisee.com, via the RELAY_PUBLIC_URL /│
+# │ CSS_GATE_PUBLIC_URL repo vars), so it is no longer a dead-Azure  │
+# │ landmine. Before re-enabling, confirm the required scenarios     │
+# │ actually pass against the live Railway pod — several have never  │
+# │ run there and could red the nightly run until validated.         │
+# └──────────────────────────────────────────────────────────────────┘
+#
 # Runs the substrate-adversarial harness in examples/emergent/ against
 # the live deployed CSS pod. Each scenario is its own .mjs script that
 # wallet-roots N agents in-process, publishes typed descriptors to the
@@ -8,7 +18,7 @@ name: Emergent test suite
 # etc.). No LLM calls — every scenario costs $0 in API spend.
 #
 # This workflow only RUNS the suite. It does NOT deploy anything.
-# Deploys happen in deploy-azure.yml.
+# Deploys happen via build-ghcr.yml -> Railway.
 #
 # Job shape
 #   - One matrix job per scenario, isolated by unique pod subpath
@@ -39,8 +49,8 @@ name: Emergent test suite
 
 on:
   schedule:
-    # 03:00 UTC daily. After the typical Azure deploy window so any
-    # deploy-azure run that morning has settled before we hit it.
+    # 03:00 UTC daily. Catches regressions in the deployed pod even
+    # when nobody pushed.
     - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
@@ -72,12 +82,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # The deployed CSS pod. Resolved from repository variables so an env
-  # recreation / region migration doesn't silently point at a dead FQDN.
-  # CSS_GATE_PUBLIC_URL wins if set; otherwise the URL is composed from
-  # AZURE_APPS_DOMAIN_SUFFIX. The literal fallback preserves prior
-  # behavior for repos that haven't seeded the variables yet.
-  CG_DEMO_POD_BASE: ${{ vars.CSS_GATE_PUBLIC_URL || format('https://interego-css-gate.{0}', vars.AZURE_APPS_DOMAIN_SUFFIX || 'livelysky-8b81abb0.eastus.azurecontainerapps.io') }}
+  # The deployed CSS gate (public Solid pod face). Resolved from the
+  # CSS_GATE_PUBLIC_URL repo var so a redeploy / region migration doesn't
+  # silently point at a dead FQDN; the literal fallback is the current
+  # Railway gate.
+  CG_DEMO_POD_BASE: ${{ vars.CSS_GATE_PUBLIC_URL || 'https://gate.interego.xwisee.com' }}
   # Unique tag baked into every scenario's pod subpath so parallel
   # runs (and re-runs of the same workflow) never collide on the
   # manifest at .well-known/context-graphs.
@@ -375,7 +384,7 @@ jobs:
       - name: Run round-trip self-test
         id: run
         env:
-          RELAY_URL: ${{ vars.RELAY_PUBLIC_URL || format('https://interego-relay.{0}', vars.AZURE_APPS_DOMAIN_SUFFIX || 'livelysky-8b81abb0.eastus.azurecontainerapps.io') }}
+          RELAY_URL: ${{ vars.RELAY_PUBLIC_URL || 'https://relay.interego.xwisee.com' }}
           RUN_TAG: ci-${{ env.RUN_TAG }}-publish-deref-roundtrip
         run: |
           mkdir -p logs
