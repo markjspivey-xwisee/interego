@@ -303,13 +303,16 @@ export async function followAffordance(
     headers['Authorization'] = options.authorization;
   }
 
-  // Some methods don't carry a body conventionally (GET / DELETE). We
-  // still serialize when a payload is supplied — the target server is
-  // the authority on what it accepts — but allow undefined-body invokes.
+  // GET/HEAD requests MUST NOT carry a body — the Fetch spec throws
+  // "Request with GET/HEAD method cannot have body", so omit it for safe methods
+  // regardless of any supplied payload (an HMD read-control invoked with the
+  // schema-required `{}` payload would otherwise fail before reaching the target).
+  // For body-bearing methods, serialize exactly once — a payload that is already a
+  // JSON string is sent as-is (see f-act-payload-double-encode); only an object is
+  // stringified.
+  const bodyless = method === 'GET';
   const hasPayload = payload !== undefined && payload !== null;
-  // Serialize exactly once — a payload that is already a JSON string is sent
-  // as-is (see f-act-payload-double-encode); only an object is stringified.
-  const body = hasPayload ? (typeof payload === 'string' ? payload : JSON.stringify(payload)) : undefined;
+  const body = (!bodyless && hasPayload) ? (typeof payload === 'string' ? payload : JSON.stringify(payload)) : undefined;
 
   const response = await withTransientRetry(async () => {
     const r = await fetchImpl(target, { method, headers, body });

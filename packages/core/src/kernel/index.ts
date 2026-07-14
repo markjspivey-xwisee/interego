@@ -1189,12 +1189,16 @@ export async function act(
       'Accept': affordance.mediaType ?? 'application/json, */*',
     };
     if (options?.authorization) headers['Authorization'] = options.authorization;
+    // GET/HEAD MUST NOT carry a body (the Fetch spec throws) — omit it for safe
+    // methods regardless of payload, so a read-control invoked with the
+    // schema-required `{}` doesn't fail before reaching the target.
+    const bodyless = affordance.method === 'GET';
     const hasPayload = payload !== undefined && payload !== null;
     // Serialize EXACTLY ONCE: a payload that is already a JSON string is sent
     // as-is, only an object is stringified — else an already-encoded payload is
     // double-encoded and a strict JSON body-parser rejects the quoted string
     // (f-act-payload-double-encode, which blocked POSTing to review_foxxi_record).
-    const body = hasPayload ? (typeof payload === 'string' ? payload : JSON.stringify(payload)) : undefined;
+    const body = (!bodyless && hasPayload) ? (typeof payload === 'string' ? payload : JSON.stringify(payload)) : undefined;
     const response = await withTransientRetry(async () => {
       const r = await fetchImpl(affordance.target, { method: affordance.method, headers, body });
       if (r.status >= 500) {
