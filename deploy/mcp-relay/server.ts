@@ -147,6 +147,7 @@ import {
   controlsFromAffordances,
   extractAffordancesFromTurtle,
   renderHypermediaMarkdown,
+  parseHypermediaMarkdown,
   negotiateRepresentation,
   HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
   HMD_PROFILE_IRI,
@@ -158,6 +159,8 @@ import {
 } from '@interego/ops';
 // Private-note HyperMarkdown projection (extracted for unit-testability; server.ts is self-starting).
 import { noteToHyperMarkdown, inlineRenderedForDescriptor } from './note-view.js';
+// The generic HyperMarkdown MCP-App renderer (served as a ui:// resource).
+import { HMD_APP_HTML } from './hmd-app.js';
 
 import type {
   ContextDescriptorData,
@@ -3515,6 +3518,45 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
   });
 }
 
+/**
+ * render_hmd — resolve a descriptor exactly like get_descriptor, then hand the
+ * PARSED HyperMarkdown to the generic viewer widget as structuredContent: title,
+ * state, prose body, controls (each with its inline SHACL fields), typed links,
+ * and authorship. The widget (ui://widget/hmd.html) is memory-free — this tool
+ * supplies the current document. Reuses handleGetDescriptor verbatim, so
+ * decryption, recipient gating, and authorship verification are identical and it
+ * exposes nothing get_descriptor doesn't already return to this caller.
+ */
+async function handleRenderHmd(args: ToolArgs): Promise<string> {
+  const a = args as Record<string, unknown>;
+  const url = typeof a['descriptor_url'] === 'string' ? (a['descriptor_url'] as string)
+    : (typeof a['url'] === 'string' ? (a['url'] as string) : '');
+  if (!url) return JSON.stringify({ error: 'render_hmd requires a descriptor_url' });
+  const gd = JSON.parse(await handleGetDescriptor({ url } as ToolArgs)) as Record<string, unknown>;
+  if (gd['error']) return JSON.stringify({ error: String(gd['error']) });
+  const rendered = typeof gd['rendered'] === 'string' ? (gd['rendered'] as string) : '';
+  let doc: ReturnType<typeof parseHypermediaMarkdown> | null = null;
+  if (rendered) { try { doc = parseHypermediaMarkdown(rendered); } catch { doc = null; } }
+  return JSON.stringify({
+    descriptorUrl: url,
+    hmd: rendered,
+    title: doc?.title ?? 'HyperMarkdown',
+    ...(doc?.state ? { state: doc.state } : {}),
+    body: doc?.body ?? '',
+    controls: (doc?.controls ?? []).map((c) => ({
+      id: c.id,
+      action: c.action,
+      method: c.method,
+      ...(c.expects ? { expects: c.expects } : {}),
+      ...(c.source ? { source: c.source } : {}),
+      ...(c.whenToUse ? { whenToUse: c.whenToUse } : {}),
+      ...(c.fields && c.fields.length > 0 ? { fields: c.fields } : {}),
+    })),
+    links: doc?.links ?? [],
+    authorship: gd['authorship'] ?? null,
+  });
+}
+
 // Per-user identity cache for the IDENTITY_URL/me lookup. The display
 // name + DID + webId + primary-agent-DID are stable for the duration of
 // an OAuth session (they change only on credential rotation / passport
@@ -5784,6 +5826,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   get_current_head: { description: 'Resolve the current chain head (descriptorUrl + content-CID) for a urn:graph:* on a pod — used as the read half of CAS supersession', handler: handleGetCurrentHead },
   discover_context: { description: 'Discover descriptors on a pod', handler: handleDiscoverContext },
   get_descriptor: { description: 'Fetch a descriptor\'s Turtle', handler: handleGetDescriptor },
+  render_hmd: { description: 'Open a note in the interactive HyperMarkdown viewer', handler: handleRenderHmd },
   get_pod_status: { description: 'Check pod status', handler: handleGetPodStatus },
   subscribe_to_pod: { description: 'Subscribe to pod notifications', handler: handleSubscribeToPod },
   register_agent: { description: 'Register an agent on a pod', handler: handleRegisterAgent },
@@ -7176,6 +7219,26 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: INVOKE_AFFORDANCE_OUTPUT,
     annotations: { title: 'Invoke a vertical affordance', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    // MCP Apps: app-visible so the HyperMarkdown viewer widget can call it via
+    // tools/call on Submit (+ ChatGPT legacy widget-accessible alias).
+    _meta: { ui: { visibility: ['model', 'app'] }, 'openai/widgetAccessible': true },
+  },
+  // ── HyperMarkdown interactive viewer (MCP App render tool) ──
+  {
+    name: 'render_hmd',
+    description: 'Open a signed HyperMarkdown note/graph in the interactive HyperMarkdown VIEWER — a generic in-chat MCP App. Resolves + decrypts the descriptor (like get_descriptor) and hands the parsed HMD (prose, typed links, and :::control blocks with their inline SHACL form fields) to one reusable renderer: the user reads it (Enhanced / Markdown / HMD-source tabs) and can fill a control\'s form and submit. Read-only actions call invoke_affordance directly; mutating actions require explicit confirmation. HMD stays Markdown — this only mounts its interactive view. Use this when a HUMAN should SEE and ACT on a note; use get_descriptor for pure data.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        descriptor_url: { type: 'string', description: 'URL of the Context Descriptor to open in the viewer (the same URL you would pass to get_descriptor).' },
+      },
+      required: ['descriptor_url'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Open in HyperMarkdown viewer', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    // MCP Apps: this tool's output mounts the generic HMD viewer widget
+    // (+ ChatGPT legacy outputTemplate alias).
+    _meta: { ui: { resourceUri: 'ui://widget/hmd.html' }, 'openai/outputTemplate': 'ui://widget/hmd.html' },
   },
 ] as const;
 
@@ -7521,12 +7584,24 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
 
   // ── Resources: doc:// URIs serve protocol documentation ────
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: DOC_RESOURCES.map(d => ({
-      uri: d.uri,
-      name: d.name,
-      description: d.description,
-      mimeType: d.mimeType,
-    })),
+    resources: [
+      ...DOC_RESOURCES.map(d => ({
+        uri: d.uri,
+        name: d.name,
+        description: d.description,
+        mimeType: d.mimeType,
+      })),
+      // The ONE generic HyperMarkdown viewer (MCP App). Memory-free + content-
+      // agnostic: the render_hmd tool feeds it a specific parsed HMD document as
+      // structuredContent, and it renders THAT document dynamically. There is no
+      // per-note / per-vertical app — one renderer, any HyperMarkdown.
+      {
+        uri: 'ui://widget/hmd.html',
+        name: 'HyperMarkdown viewer (MCP App)',
+        description: 'Generic interactive viewer for ANY HyperMarkdown document. The render_hmd tool supplies the specific HMD (prose, typed links, :::control blocks with inline SHACL form fields); this one resource renders it and lets the user submit control actions via invoke_affordance. No content is hardcoded — it is driven entirely by the HMD passed in.',
+        mimeType: 'text/html;profile=mcp-app',
+      },
+    ],
   }));
 
   // ── Resource templates: LIVE substrate objects, not files on disk ──
@@ -7552,6 +7627,11 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
   }));
 
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+    // The generic HyperMarkdown viewer (MCP App UI). Static HTML, no content —
+    // the render_hmd tool supplies the document at call time.
+    if (req.params.uri === 'ui://widget/hmd.html') {
+      return { contents: [{ uri: req.params.uri, mimeType: 'text/html;profile=mcp-app', text: HMD_APP_HTML }] };
+    }
     // Live substrate resource (resolved, not read off disk).
     const ns = /^interego:\/\/ns\/([^/]+)\/([^/?#]+)$/.exec(req.params.uri);
     if (ns) {

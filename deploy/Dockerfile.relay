@@ -97,6 +97,8 @@ COPY deploy/mcp-relay/reachability.ts ./
 COPY deploy/mcp-relay/amep.ts ./
 COPY deploy/mcp-relay/amep-session-bridge.ts ./
 COPY deploy/mcp-relay/note-view.ts ./
+COPY deploy/mcp-relay/hmd-app.ts ./
+COPY deploy/mcp-relay/hmd-app-logic.ts ./
 # AMEP reference validator + JSON-LD context, vendored verbatim. amep.ts loads
 # them by a path relative to the COMPILED module (dist/amep.js), so after tsc
 # they must sit at dist/amep-vendor/.
