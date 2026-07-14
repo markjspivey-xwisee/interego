@@ -13,6 +13,7 @@ import {
   controlsFromAffordances,
   extractAffordancesFromTurtle,
   renderHypermediaMarkdown,
+  HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
 } from '@interego/core';
 
 export interface NoteViewInput {
@@ -56,7 +57,10 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
   // so a client had to reconstruct these after verifying the signed graph.
   const payloadSource = primarySubject(input.plaintextTurtle) ?? 'urn:interego:signed-payload';
   const payloadControls = controlsFromAffordances(
-    extractAffordancesFromTurtle(input.plaintextTurtle, payloadSource),
+    // requireTarget:false — payload-declared HMD controls are authority-closed and
+    // carry NO hydra:target (the target is re-computed as <@id>#control-*). Without
+    // this they extract as zero and only the 2 descriptor controls project.
+    extractAffordancesFromTurtle(input.plaintextTurtle, payloadSource, { requireTarget: false }),
     undefined,
     payloadSource,
   );
@@ -71,9 +75,12 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
   // renderer's reserved control-fence (owner content is trusted, but the fence
   // guard is strict; a leading space keeps it valid CommonMark and inert).
   const safeText = text.split('\n').map((l) => (/^:::/.test(l) ? ` ${l}` : l)).join('\n');
+  // If the note's own text already opens with an ATX H1, use it as THE title —
+  // prepending `# ${title}` on top of it produced a duplicate H1 (georgio's
+  // progressive-enhancement demo, whose body is Markdown that starts with a heading).
+  const textOpensWithH1 = /^\s*#\s+\S/.test(safeText);
   const body = [
-    `# ${title.replace(/\s+/g, ' ')}`,
-    ``,
+    ...(textOpensWithH1 ? [] : [`# ${title.replace(/\s+/g, ' ')}`, ``]),
     ...(safeText ? [safeText, ``] : []),
     `_Private note — encrypted at rest; decrypted here for you, the authorized agent. Its controls and links are below; the note stays private._`,
   ].join('\n');
@@ -89,4 +96,77 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
     controls,
     body,
   });
+}
+
+/** True when a URL carries an `internal` DNS label — terminal `.internal` OR
+ *  mid-label `.internal.` (as Azure ACA synthesizes). Such a host must never
+ *  enter a store-and-forward projection's bytes. Mirrors the relay's invoke
+ *  guard (server.ts assertInvokeTargetAllowed). Unparseable → treated as unsafe. */
+function hasInternalHostLabel(u: string): boolean {
+  try { return new URL(u).hostname.toLowerCase().split('.').includes('internal'); }
+  catch { return true; }
+}
+
+/** Parse the publisher-advertised HOST-FREE render identity out of a persisted
+ *  descriptor: `... iep:action iep:renderView ; ... hydra:target <BASE/render/<id>>`
+ *  (emitted for every encrypted note; solid/client.ts). Only matches a target
+ *  under the relay's own /render/ base, so the internal envelope/canDecrypt
+ *  accessURL is structurally never selected as the view identity. */
+function renderTargetFromTurtle(turtle: string, base: string): string | undefined {
+  if (!base) return undefined;
+  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp(`hydra:target\\s+<(${esc}/render/[^>\\s]+)>`).exec(turtle);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * Leak-safe inline HyperMarkdown projection for a resolved descriptor — the
+ * verifiable, no-bearer re-fetch surface `get_descriptor` returns so a client
+ * never needs the bearer-gated `/render` round-trip (georgio: "returning the
+ * rendered projection from get_descriptor would make the fix independently
+ * verifiable"). Byte-shape-identical to publish_context's inline `rendered`.
+ *
+ * Returns null (→ caller omits the field) when the payload is NOT materialized
+ * (`plaintextTurtle` null — a non-recipient's `graph.content` is null, so E2EE
+ * is fail-closed here for free), is not note-like, or no HOST-FREE identity is
+ * available. NEVER embeds an internal pod host: it prefers the descriptor's own
+ * advertised host-free render target, and only falls back to the descriptor URL
+ * when that URL carries no `internal` DNS label.
+ */
+export function inlineRenderedForDescriptor(input: {
+  /** The (possibly internal-host) descriptor fetch URL. */
+  readonly descriptorUrl: string;
+  /** The persisted descriptor Turtle. */
+  readonly descriptorTurtle: string;
+  /** Decrypted (private) or plaintext (public) payload — null when unavailable. */
+  readonly plaintextTurtle: string | null;
+  /** PUBLIC_BASE_URL ('' in dev → localhost fallback). */
+  readonly publicBase: string;
+  /** PORT, for the dev localhost fallback. */
+  readonly port: number;
+}): { rendered: string; mediaType: string } | null {
+  const { descriptorUrl, descriptorTurtle, plaintextTurtle, publicBase, port } = input;
+  if (!plaintextTurtle) return null; // fail-closed: non-recipient / no key → no projection
+  // The same note-like gate publish_context uses — arbitrary ontologies are not notes.
+  if (!/\b(schema:text|schema:articleBody|dct:description|rdfs:comment|schema:name|dct:title|AgentMemory|NoteDigitalDocument)\b/.test(plaintextTurtle)) return null;
+  const base = (publicBase || `http://localhost:${port}`).replace(/\/+$/, '');
+  let viewUrl = renderTargetFromTurtle(descriptorTurtle, base);
+  let authority: string;
+  if (viewUrl) {
+    // Host-free render identity recovered (every encrypted note has one). Use it
+    // for BOTH @id and describedby, so an internal descriptor URL can never enter
+    // the projection — matches publish_context (authority = viewUrl).
+    authority = viewUrl;
+  } else {
+    // No advertised render target (public-note / legacy shape): only synthesize an
+    // identity from the descriptor URL when it has no `internal` DNS label; else
+    // skip rather than leak the pod host.
+    if (hasInternalHostLabel(descriptorUrl)) return null;
+    viewUrl = `${base}/render/${encodeURIComponent(descriptorUrl)}`;
+    authority = descriptorUrl;
+  }
+  try {
+    const rendered = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle, plaintextTurtle });
+    return { rendered, mediaType: HYPERMEDIA_MARKDOWN_MEDIA_TYPE };
+  } catch { return null; }
 }

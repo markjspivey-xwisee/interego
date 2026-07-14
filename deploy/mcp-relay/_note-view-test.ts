@@ -4,7 +4,7 @@
 // dereferenceable HTTPS identity, the note's own prose, its controls (from the
 // descriptor's affordances), describedby/alternate links, private state,
 // authority-closed control targets, and no transport endpoint in the bytes.
-import { noteToHyperMarkdown } from './note-view.js';
+import { noteToHyperMarkdown, inlineRenderedForDescriptor } from './note-view.js';
 import { parseHypermediaMarkdown, HYPERMEDIA_MARKDOWN_MEDIA_TYPE } from '@interego/core';
 
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
@@ -104,6 +104,93 @@ check('payload control input shape (expects) surfaced', pmMd.includes(`expects: 
   const ask = back.controls.find((c) => c.action === `${IEP}ask`);
   check('round-trips: ask control parses with its source', !!ask && ask.source === 'urn:graph:memory:with-controls');
   check('still authority-closed + no transport leak', !pmMd.includes('hydra/core#target'));
+}
+
+// ── georgio's live-projection bugs (fresh-publish smoke test) ──────────────────
+const HMD = 'https://markjspivey-xwisee.github.io/interego/ns/hmd#';
+
+// BUG X: authority-closed HMD controls carry NO hydra:target by design (the target
+// is re-computed as <@id>#control-*). The target-required extractor silently
+// dropped them, so georgio's three payload controls projected as ZERO — only the
+// 2 descriptor controls showed, with no error.
+const targetlessPayload = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix schema: <https://schema.org/> .
+@prefix iep: <${IEP}> .
+@prefix hmd: <${HMD}> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+<urn:graph:memory:tl> a ieh:AgentMemory ;
+  schema:name "Target-less controls" ;
+  schema:text "acknowledge / ask / correct — none carry a transport target." ;
+  hmd:control <#acknowledge>, <#ask>, <#propose-correction> .
+<#acknowledge> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}acknowledge> ; hydra:method "POST" .
+<#ask> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}ask> ; hydra:method "POST" ; hydra:expects <#AskShape> .
+<#propose-correction> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}proposeCorrection> ; hydra:method "POST" .`;
+const tlMd = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle, plaintextTurtle: targetlessPayload });
+check('BUG X: target-less payload controls PROJECT (were silently dropped)', tlMd.includes(`rel: "${IEP}acknowledge"`) && tlMd.includes(`rel: "${IEP}ask"`) && tlMd.includes(`rel: "${IEP}proposeCorrection"`));
+check('BUG X: all 5 controls present (2 descriptor + 3 target-less payload)', (tlMd.match(/:::control /g) || []).length === 5, String((tlMd.match(/:::control /g) || []).length));
+check('BUG X: still authority-closed — every control target is a fragment of the view URL, no transport leak', !tlMd.includes('hydra/core#target') && (tlMd.match(/^target: "([^"]+)"$/gm) || []).every((l) => l.includes(`"${viewUrl}#control-`)));
+
+// BUG Y: a control whose input shape is a RELATIVE fragment IRI (`#AskShape`) must
+// NOT throw (my PR #22 pushed expects through the throwing term-resolver), and the
+// emitted expects must be resolved absolute against the payload source.
+check('BUG Y: relative #AskShape expects does NOT throw + resolves absolute', tlMd.includes('expects: "urn:graph:memory:tl#AskShape"'), 'want urn:graph:memory:tl#AskShape');
+check('BUG Y: expects round-trips back on the parsed control', parseHypermediaMarkdown(tlMd).controls.some((c) => c.expects === 'urn:graph:memory:tl#AskShape'));
+
+// BUG Z: a note whose OWN text opens with an ATX H1 must render exactly one H1 —
+// prepending `# ${title}` on top of it produced a duplicate (georgio saw H1 x2).
+const h1Payload = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix schema: <https://schema.org/> .
+<urn:graph:memory:h1> a ieh:AgentMemory ;
+  schema:name "Progressive enhancement" ;
+  schema:text "# Progressive enhancement\\n\\nProse first, then front matter, then controls." .`;
+const zMd = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle, plaintextTurtle: h1Payload });
+check('BUG Z: note text opening with its own H1 yields exactly ONE H1 (no dup title)', (zMd.match(/^# /gm) || []).length === 1, String((zMd.match(/^# /gm) || []).length));
+check('BUG Z: a plain-prose note still gets the title H1', /^# Inline Markdown presentation preference$/m.test(md));
+
+// ── get_descriptor inline projection (inlineRenderedForDescriptor) ─────────────
+// The verifiable, no-bearer re-fetch surface. Must project payload controls AND
+// never leak the internal pod host that a normalized descriptor URL carries.
+const PUBLIC_BASE = 'https://relay.interego.xwisee.com';
+const DESC_ID = 'urn:graph:memory:georgio-progressive-enhancement-demo-20260714';
+const RENDER_TARGET = `${PUBLIC_BASE}/render/${encodeURIComponent(DESC_ID)}`;
+const INTERNAL_DESC_URL = 'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/context-graphs/desc-geo.ttl';
+// Persisted-descriptor shape: a host-free renderView target + a canDecrypt whose
+// hydra:target is the INTERNAL envelope accessURL (must never be picked as identity).
+const persistedDescriptor = `@prefix iep: <${IEP}> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+<> a iep:ContextDescriptor ; iep:describes <${DESC_ID}> ;
+  iep:affordance [ a iep:Affordance, hydra:Operation ; iep:action iep:canDecrypt ; hydra:target <https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/context-graphs/geo.envelope.jose.json> ; hydra:method "GET" ] ,
+    [ a iep:Affordance, hydra:Operation ; iep:action iep:renderView ; hydra:method "GET" ; hydra:target <${RENDER_TARGET}> ; dcat:mediaType "text/markdown; charset=UTF-8; variant=CommonMark" ] .`;
+const georgioPayload = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix schema: <https://schema.org/> .
+@prefix iep: <${IEP}> .
+@prefix hmd: <https://markjspivey-xwisee.github.io/interego/ns/hmd#> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+<${DESC_ID}> a ieh:AgentMemory, schema:NoteDigitalDocument ;
+  schema:name "Progressive enhancement" ;
+  schema:text "A claim you can acknowledge, ask about, or propose a correction to." ;
+  hmd:control <#acknowledge>, <#ask-question>, <#propose-correction> .
+<#acknowledge> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}acknowledge> ; hydra:method "POST" ; hydra:expects <${IEP}AcknowledgeInputShape> .
+<#ask-question> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}askQuestion> ; hydra:method "POST" ; hydra:expects <${IEP}AskQuestionInputShape> .
+<#propose-correction> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}proposeCorrection> ; hydra:method "POST" ; hydra:expects <${IEP}ProposeCorrectionInputShape> .`;
+
+const gd = inlineRenderedForDescriptor({ descriptorUrl: INTERNAL_DESC_URL, descriptorTurtle: persistedDescriptor, plaintextTurtle: georgioPayload, publicBase: PUBLIC_BASE, port: 8080 });
+check('get_descriptor: private note projects (non-null) with HMD media type', !!gd && gd.mediaType === HYPERMEDIA_MARKDOWN_MEDIA_TYPE);
+check('get_descriptor: all three payload controls project', !!gd && gd.rendered.includes(`rel: "${IEP}acknowledge"`) && gd.rendered.includes(`rel: "${IEP}askQuestion"`) && gd.rendered.includes(`rel: "${IEP}proposeCorrection"`));
+check('get_descriptor: input shapes surface', !!gd && gd.rendered.includes(`expects: "${IEP}AcknowledgeInputShape"`) && gd.rendered.includes(`expects: "${IEP}AskQuestionInputShape"`));
+check('get_descriptor: descriptor renderView control still projects', !!gd && gd.rendered.includes(`rel: "${IEP}renderView"`));
+check('get_descriptor: NO internal-host leak (envelope accessURL / .internal. host never enter)', !!gd && !gd.rendered.includes('.internal.') && !gd.rendered.includes('envelope'));
+check('get_descriptor: identity is the advertised HOST-FREE render target (not a urn, not internal)', !!gd && parseHypermediaMarkdown(gd.rendered).id === RENDER_TARGET);
+check('get_descriptor: authority closure — every control target is a fragment of the host-free identity', !!gd && (gd.rendered.match(/^target: "([^"]+)"$/gm) || []).every((l) => l.includes(`"${RENDER_TARGET}#control-`)));
+// Fail-closed + gate cases.
+check('get_descriptor: null payload → null (E2EE fail-closed for a non-recipient)', inlineRenderedForDescriptor({ descriptorUrl: INTERNAL_DESC_URL, descriptorTurtle: persistedDescriptor, plaintextTurtle: null, publicBase: PUBLIC_BASE, port: 8080 }) === null);
+check('get_descriptor: non-note-like payload → null', inlineRenderedForDescriptor({ descriptorUrl: PUBLIC_BASE + '/u/x.ttl', descriptorTurtle: persistedDescriptor, plaintextTurtle: '@prefix owl: <http://www.w3.org/2002/07/owl#> . <urn:x> a owl:Ontology .', publicBase: PUBLIC_BASE, port: 8080 }) === null);
+check('get_descriptor: internal descriptor URL + NO renderView target → null (leak-safe skip)', inlineRenderedForDescriptor({ descriptorUrl: INTERNAL_DESC_URL, descriptorTurtle: `@prefix iep: <${IEP}> . <> a iep:ContextDescriptor .`, plaintextTurtle: georgioPayload, publicBase: PUBLIC_BASE, port: 8080 }) === null);
+{
+  const pubDesc = `${PUBLIC_BASE}/u-pk-x/context-graphs/1.ttl`;
+  const gpub = inlineRenderedForDescriptor({ descriptorUrl: pubDesc, descriptorTurtle: `@prefix iep: <${IEP}> . <> a iep:ContextDescriptor .`, plaintextTurtle: georgioPayload, publicBase: PUBLIC_BASE, port: 8080 });
+  check('get_descriptor: public descriptor URL + no renderView target → non-null, host-free fallback identity', !!gpub && parseHypermediaMarkdown(gpub.rendered).id === `${PUBLIC_BASE}/render/${encodeURIComponent(pubDesc)}`);
 }
 
 console.log(`\n${ok}/${ok + bad} note-view checks passed`);

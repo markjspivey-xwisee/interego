@@ -66,6 +66,7 @@ const VALID_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 export function extractAffordancesFromTurtle(
   turtle: string,
   sourceDescriptor?: string,
+  opts?: { readonly requireTarget?: boolean },
 ): readonly Affordance[] {
   if (!turtle || turtle.trim().length === 0) return [];
 
@@ -86,19 +87,32 @@ export function extractAffordancesFromTurtle(
     }
   }
 
+  const requireTarget = opts?.requireTarget ?? true;
   const out: Affordance[] = [];
   const seen = new Set<string>();
   for (const [key, subject] of candidateMap) {
     const action = readIriValue(subject, CG_ACTION);
-    const target = readIriValue(subject, HYDRA_TARGET);
-    if (!action || !target) continue;
+    if (!action) continue;
+    let target = readIriValue(subject, HYDRA_TARGET);
+    if (!target) {
+      // Authority-closed control (e.g. an HMD :::control declared in a signed
+      // payload graph) carries NO hydra:target by design — its target IS its own
+      // fragment identity, which the projection re-computes as <@id>#control-*.
+      // Strict callers (dereference / the act follower) still require a real
+      // transport target; projection callers pass requireTarget:false to surface
+      // these controls rather than silently dropping them (the defect georgio hit).
+      if (requireTarget) continue;
+      target = key.startsWith('_:') ? action : key;
+    }
     const methodRaw = (readStringValue(subject, HYDRA_METHOD) ?? 'POST').toUpperCase();
     const method = (VALID_METHODS.has(methodRaw) ? methodRaw : 'POST') as Affordance['method'];
     const mediaType = readStringValue(subject, DCAT_MEDIA_TYPE);
     // Input/output contract — the SHACL input shape a caller validates against
     // (hydra:expects or iep:inputShape) + hydra:returns, as dereferenceable IRIs.
-    const expects = readIriValue(subject, HYDRA_EXPECTS) ?? readIriValue(subject, CG_INPUT_SHAPE);
-    const returns = readIriValue(subject, HYDRA_RETURNS);
+    // Bare-fragment refs (`#Shape`) are resolved against the source document base
+    // so the emitted reference is absolute, not relative to the render URL.
+    const expects = resolveFragment(readIriValue(subject, HYDRA_EXPECTS) ?? readIriValue(subject, CG_INPUT_SHAPE), sourceDescriptor);
+    const returns = resolveFragment(readIriValue(subject, HYDRA_RETURNS), sourceDescriptor);
 
     const dedup = `${action}${target}${method}`;
     if (seen.has(dedup)) continue;
@@ -118,6 +132,15 @@ export function extractAffordancesFromTurtle(
   }
 
   return out;
+}
+
+/** Resolve a bare-fragment IRI (`#Shape`) against a document base so an emitted
+ *  reference is absolute + dereferenceable; absolute / non-fragment values pass
+ *  through unchanged. Handles `urn:` / `did:` bases (the URL constructor can't). */
+function resolveFragment(iri: string | undefined, base?: string): string | undefined {
+  if (!iri) return undefined;
+  if (iri.startsWith('#') && base) return `${base.split('#')[0]}${iri}`;
+  return iri;
 }
 
 /** Local mutable view to allow incremental fill of the readonly Affordance shape. */
