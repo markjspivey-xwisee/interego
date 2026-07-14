@@ -2840,7 +2840,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         ...(enc ? [`<#canDecrypt> a iep:Affordance ; iep:action <${IEP_NS}canDecrypt> ; hydra:target <${viewUrl}> ; hydra:method "GET" .`] : []),
         `<#renderView> a iep:Affordance ; iep:action <${IEP_NS}renderView> ; hydra:target <${viewUrl}> ; hydra:method "GET" ; dcat:mediaType "text/markdown; charset=UTF-8; variant=CommonMark" .`,
       ].join('\n');
-      renderedNote = noteToHyperMarkdown({ viewUrl, authority: viewUrl, descriptorTurtle: affTurtle, plaintextTurtle: graphContentStr });
+      renderedNote = noteToHyperMarkdown({ viewUrl, authority: viewUrl, descriptorTurtle: affTurtle, plaintextTurtle: graphContentStr, graphIri: (descriptor.describes?.[0] as string | undefined) });
     } catch { /* leave empty — the response is still complete without it */ }
   }
 

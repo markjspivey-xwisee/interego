@@ -25,6 +25,11 @@ export interface NoteViewInput {
   readonly descriptorTurtle: string;
   /** The decrypted note graph (Turtle/TriG). */
   readonly plaintextTurtle: string;
+  /** The CANONICAL graph IRI (descriptor's iep:describes) — the stable provenance
+   *  base for payload controls + their relative shape refs. Supply it when the
+   *  descriptor turtle doesn't carry iep:describes (publish_context's synthesized
+   *  affordance turtle); otherwise it is derived from descriptorTurtle. */
+  readonly graphIri?: string;
 }
 
 /** First literal value of any of the given predicates (triple- or single-quoted). */
@@ -43,6 +48,31 @@ function primarySubject(turtle: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+/** The CANONICAL graph IRI the descriptor names via `iep:describes` — the stable
+ *  provenance identity, the SAME in the publish hand-back and a later re-fetch.
+ *  Prefer this over primarySubject: the relay re-mints the stored graph's own
+ *  subject on persist, so primarySubject differs between the authored payload and
+ *  the re-serialized stored copy (georgio saw the two projections disagree). */
+function describesFromTurtle(turtle: string): string | undefined {
+  const m = /iep:describes\s+<([^>]+)>/.exec(turtle);
+  return m ? m[1] : undefined;
+}
+
+/** Normalize note-body indentation introduced by a Turtle serializer re-writing a
+ *  multi-line literal on persist — ≥4 leading spaces make CommonMark render prose
+ *  as a code block, which happened on re-fetch but not on the publish hand-back.
+ *  First remove the common minimum indent (non-lossy for a uniform block indent),
+ *  then cap any residual leading run below the 4-space code-block threshold, so no
+ *  serializer style yields a spurious code block and both projections render the
+ *  same. Notes carry code as fenced ``` blocks (col 0), unaffected. */
+function dedent(s: string): string {
+  const lines = s.split('\n');
+  const nonBlank = lines.filter((l) => l.trim());
+  const min = nonBlank.length ? Math.min(...nonBlank.map((l) => /^[ \t]*/.exec(l)![0].length)) : 0;
+  const deMin = min ? lines.map((l) => l.slice(min)) : lines;
+  return deMin.map((l) => l.replace(/^[ \t]{4,}/, '   ')).join('\n');
+}
+
 export function noteToHyperMarkdown(input: NoteViewInput): string {
   // DESCRIPTOR-level controls (canDecrypt / renderView) — source = the signed
   // descriptor (the transport authority).
@@ -55,7 +85,15 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
   // propose-correction, with their SHACL input shapes) — source = the payload
   // graph itself. Previously dropped: the projection only read the descriptor,
   // so a client had to reconstruct these after verifying the signed graph.
-  const payloadSource = primarySubject(input.plaintextTurtle) ?? 'urn:interego:signed-payload';
+  // CANONICAL, stable provenance base: the graph IRI the descriptor names
+  // (iep:describes), explicit graphIri override for callers whose descriptor
+  // turtle doesn't carry it (publish_context's synthesized affordance turtle),
+  // then the payload's own subject as a last resort. This makes the publish
+  // hand-back and a get_descriptor re-fetch tag identical source/expects bases.
+  const payloadSource = input.graphIri
+    ?? describesFromTurtle(input.descriptorTurtle)
+    ?? primarySubject(input.plaintextTurtle)
+    ?? 'urn:interego:signed-payload';
   const payloadControls = controlsFromAffordances(
     // requireTarget:false — payload-declared HMD controls are authority-closed and
     // carry NO hydra:target (the target is re-computed as <@id>#control-*). Without
@@ -70,7 +108,10 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
   for (const c of [...descriptorControls, ...payloadControls]) byAction.set(c.action, c);
   const controls = [...byAction.values()];
   const title = pickLiteral(input.plaintextTurtle, 'dct:title|schema:name|rdfs:label|schema:headline') || 'Private note';
-  const text = pickLiteral(input.plaintextTurtle, 'schema:text|schema:articleBody|dct:description|rdfs:comment');
+  // Dedent: the stored graph is re-serialized on persist and its multi-line text
+  // literal comes back uniformly indented, which CommonMark renders as a code
+  // block on re-fetch (but not on the publish hand-back). Normalize both.
+  const text = dedent(pickLiteral(input.plaintextTurtle, 'schema:text|schema:articleBody|dct:description|rdfs:comment'));
   // Neutralize any leading ::: in the note text so it can't collide with the
   // renderer's reserved control-fence (owner content is trusted, but the fence
   // guard is strict; a leading space keeps it valid CommonMark and inert).
