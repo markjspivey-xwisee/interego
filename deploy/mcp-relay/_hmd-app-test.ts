@@ -10,7 +10,7 @@ import { noteToHyperMarkdown } from './note-view.js';
 import { parseHypermediaMarkdown } from '@interego/core';
 
 /* eslint-disable @typescript-eslint/no-implied-eval */
-const L = new Function(`${HMD_APP_LOGIC_JS}\nreturn {escapeHtml,sanitizeHref,safeMarkdown,classifyAction,inputModel,validateValue,collectPayload,localName,isRequired};`)() as {
+const L = new Function(`${HMD_APP_LOGIC_JS}\nreturn {escapeHtml,sanitizeHref,safeMarkdown,classifyAction,inputModel,validateValue,collectPayload,localName,isRequired,isHmdDoc,shouldRehydrate};`)() as {
   escapeHtml: (s: unknown) => string;
   sanitizeHref: (s: unknown) => string;
   safeMarkdown: (s: unknown) => string;
@@ -20,6 +20,8 @@ const L = new Function(`${HMD_APP_LOGIC_JS}\nreturn {escapeHtml,sanitizeHref,saf
   collectPayload: (fields: Array<Record<string, unknown>>, values: Record<string, unknown>) => Record<string, unknown>;
   localName: (iri: string) => string;
   isRequired: (f: Record<string, unknown>) => boolean;
+  isHmdDoc: (d: unknown) => boolean;
+  shouldRehydrate: (current: unknown, next: unknown) => boolean;
 };
 
 let ok = 0, bad = 0;
@@ -91,8 +93,21 @@ check('HMD_APP_HTML: tabs wired via addEventListener (not inline)', HMD_APP_HTML
 // openai:set_globals; the widget must listen for it (not only read toolOutput once)
 // and render an initial empty state so the mounted frame is never blank.
 check('HMD_APP_HTML: hydrates via the async openai:set_globals event', HMD_APP_HTML.includes('openai:set_globals') && HMD_APP_HTML.includes('function hydrate') && HMD_APP_HTML.includes('detail.globals'));
-check('HMD_APP_HTML: renders an initial state at boot (never blank)', HMD_APP_HTML.includes('DATA=readToolOutput(); render();'));
+check('HMD_APP_HTML: renders an initial state at boot (never blank)', HMD_APP_HTML.includes('DATA=null; render();') && HMD_APP_HTML.includes('hydrate(readToolOutput())'));
 check('HMD_APP_HTML: keeps the MCP Apps tool-result fallback path', HMD_APP_HTML.includes('ui/notifications/tool-result'));
+// Re-render guard: render() rebuilds the DOM, so a re-render on an unrelated globals
+// event / cloned payload / nested tool result would WIPE in-progress form input +
+// the confirm box. shouldRehydrate must gate that (georgio's interaction bug).
+{
+  const doc = { descriptorUrl: 'https://relay/desc.ttl', hmd: '# x', body: 'x', controls: [] };
+  check('isHmdDoc: accepts HMD-shaped, rejects invoke result / null', L.isHmdDoc(doc) && !L.isHmdDoc({ status: 'ok' }) && !L.isHmdDoc(null) && !L.isHmdDoc('x'));
+  check('shouldRehydrate: initial (null → HMD doc) = true', L.shouldRehydrate(null, doc) === true);
+  check('shouldRehydrate: cloned-identical payload = false (no DOM wipe)', L.shouldRehydrate(doc, { ...doc }) === false);
+  check('shouldRehydrate: a nested invoke_affordance result never replaces the doc', L.shouldRehydrate(doc, { status: 'ok', receipt: 1 }) === false);
+  check('shouldRehydrate: unrelated globals (no toolOutput handled upstream) — undefined next = false', L.shouldRehydrate(doc, undefined) === false);
+  check('shouldRehydrate: a genuinely changed document = true', L.shouldRehydrate(doc, { descriptorUrl: 'https://relay/other.ttl', hmd: '# y', controls: [] }) === true);
+}
+check('HMD_APP_HTML: set_globals ignores events without a toolOutput (no wipe)', HMD_APP_HTML.includes('g.toolOutput===undefined') && HMD_APP_HTML.includes('shouldRehydrate(DATA,d)'));
 check('HMD_APP_HTML references no external origins (self-contained)', !/https?:\/\/(?!x\.example|markjspivey)/.test(HMD_APP_HTML.replace(/https:\/\/www\.w3\.org|http:\/\/www\.w3\.org/g, '')) || !/<script\s+src=|<link\s+href=|@import/i.test(HMD_APP_HTML));
 
 // ── render_hmd → widget structuredContent contract ──

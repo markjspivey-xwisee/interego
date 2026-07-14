@@ -72,15 +72,18 @@ var DATA = null;
 function q(id){return document.getElementById(id)}
 // ── read the tool output (ChatGPT compat first, then MCP Apps bridge) ──
 function readToolOutput(){ try{ if(window.openai&&window.openai.toolOutput) return window.openai.toolOutput; }catch(e){} return null; }
-function hydrate(d){ if(d){ DATA=d; render(); } }
-// ChatGPT sets the tool output ASYNCHRONOUSLY — the iframe can mount before the
-// approval-gated structuredContent arrives — and signals it via the
-// openai:set_globals CustomEvent (event.detail.globals.toolOutput), NOT just a
-// synchronous window.openai.toolOutput. Listen for it (with a direct-global
-// fallback) and re-render whenever the output lands or changes.
+function hydrate(d){ if(shouldRehydrate(DATA,d)){ DATA=d; render(); } }
+// ChatGPT sets the tool output ASYNCHRONOUSLY (the iframe can mount before the
+// approval-gated structuredContent arrives) and signals it via the
+// openai:set_globals CustomEvent. But that event ALSO fires for theme / displayMode
+// / focus / etc. with NO toolOutput — so re-render ONLY when THIS event actually
+// delivers a toolOutput (matching the documented useOpenAiGlobal guard). Do NOT
+// fall back to the existing output here: that would rebuild the DOM on every theme
+// event and wipe the user's in-progress form input / confirm box / status.
 window.addEventListener('openai:set_globals',function(ev){
   var g=(ev&&ev.detail&&ev.detail.globals)||{};
-  hydrate(g.toolOutput!=null?g.toolOutput:readToolOutput());
+  if(g.toolOutput===undefined) return;
+  hydrate(g.toolOutput);
 },{passive:true});
 window.addEventListener('message',function(ev){
   if(ev.source!==window.parent) return;
@@ -198,10 +201,11 @@ function prettyAction(iri){ var n=localName(iri).replace(/[-_]/g,' ').replace(/(
 // under a strict/nonce Content-Security-Policy) then render any initial output.
 (function(){
   ['enhanced','markdown','source'].forEach(function(t){ var b=q('tab-'+t); if(b) b.addEventListener('click',function(){ selectTab(t); }); });
-  // Render immediately (a clean empty state if the output hasn't been delivered
-  // yet) so the frame is never blank; openai:set_globals / tool-result re-renders
-  // with the real document the moment it arrives.
-  DATA=readToolOutput(); render();
+  // Render an empty state immediately (so the frame is never blank), then hydrate
+  // if the output was already delivered synchronously; openai:set_globals /
+  // tool-result hydrate later. hydrate() is guarded (only re-renders on a new HMD
+  // document), so these paths never wipe in-progress UI state.
+  DATA=null; render(); hydrate(readToolOutput());
 })();
 `;
 
