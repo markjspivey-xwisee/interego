@@ -157,7 +157,7 @@ import {
   buildAccessChangeEvent,
 } from '@interego/ops';
 // Private-note HyperMarkdown projection (extracted for unit-testability; server.ts is self-starting).
-import { noteToHyperMarkdown } from './note-view.js';
+import { noteToHyperMarkdown, inlineRenderedForDescriptor } from './note-view.js';
 
 import type {
   ContextDescriptorData,
@@ -3490,10 +3490,27 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
     }
   }
 
+  // Inline HyperMarkdown projection — mirrors publish_context's `rendered`
+  // (server.ts:2818-2852) so the note's payload controls + input shapes are
+  // verifiable through the exact tool the connector uses, with NO bearer and no
+  // /render round-trip (georgio's renderView 401). Built ONLY from graph.content,
+  // which for a PRIVATE note is non-null ONLY when relayAgentKey was a recipient
+  // (decrypt at 3413-3417) — so a non-recipient's content:null yields no
+  // `rendered`, preserving E2EE fail-closed. Identity is derived leak-safely
+  // inside the helper (never the internal pod host). Not cached.
+  const inline = inlineRenderedForDescriptor({
+    descriptorUrl: url,
+    descriptorTurtle: turtle,
+    plaintextTurtle: graph?.content ?? null,
+    publicBase: PUBLIC_BASE_URL,
+    port: PORT,
+  });
+
   return JSON.stringify({
     url,
     turtle,
     ...(graph ? { graph } : {}),
+    ...(inline ? { rendered: inline.rendered, renderedMediaType: inline.mediaType } : {}),
     ...(authorship ? { authorship } : {}),
   });
 }
@@ -9692,7 +9709,7 @@ function publishableDescriptorUrl(descriptorUrl: string, graphIri: string): stri
 
 function nsMarkdown(iri: string, turtle: string, meta: { owner: string; slug: string; descriptorUrl: string; isOntology: boolean }): string {
   const descriptorUrl = publishableDescriptorUrl(meta.descriptorUrl, iri);
-  const controls = controlsFromAffordances(extractAffordancesFromTurtle(turtle, descriptorUrl));
+  const controls = controlsFromAffordances(extractAffordancesFromTurtle(turtle, descriptorUrl, { requireTarget: false }));
   // NOTE: no embedded Turtle. The signed source (which legitimately carries
   // hydra:target transport endpoints) is one conneg request away via the
   // rel="alternate" links — embedding it would put those endpoints into

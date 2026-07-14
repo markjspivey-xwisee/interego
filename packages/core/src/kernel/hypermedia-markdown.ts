@@ -116,6 +116,12 @@ export const HMD_PROJECTION_CONTEXT = Object.freeze({
   // authority/provenance distinction so a client sees which controls came with
   // the signed content vs the transport descriptor.
   source: { '@id': 'prov:wasDerivedFrom', '@type': '@id' },
+  // A control's input/output contract — the SHACL shape a caller validates its
+  // payload against (hydra:expects) + the response type (hydra:returns). Declared
+  // as terms so the `expects:`/`returns:` control-block keys map to real predicates
+  // instead of silently dropping under JSON-LD expansion.
+  expects: { '@id': 'hydra:expects', '@type': '@id' },
+  returns: { '@id': 'hydra:returns', '@type': '@id' },
 }) as Readonly<Record<string, unknown>>;
 
 // ── Input model ──────────────────────────────────────────────────────────────
@@ -465,9 +471,13 @@ export function renderHypermediaMarkdown(doc: HypermediaMarkdownDoc): string {
   if (doc.controls.length > 0) {
     const ids = controlBlockIds(doc.controls);
     doc.controls.forEach((c, i) => {
+      // The action IRI (rel) MUST resolve — that is the no-private-dialect
+      // guarantee, and rel drives invocation. expects/returns are @id-typed
+      // reference VALUES (SHACL shape / return type), not dialect keys: a relative
+      // `#Shape` legitimately resolves against the document base under JSON-LD, so
+      // they are emitted as-is and never forced through the throwing term resolver
+      // (doing so regressed every control whose input shape was a fragment IRI).
       expandHmdTerm(c.action, doc.extraContext);
-      if (c.expects) expandHmdTerm(c.expects, doc.extraContext);
-      if (c.returns) expandHmdTerm(c.returns, doc.extraContext);
       const b: string[] = [`:::control ${ids[i]}`];
       const ctypes = ['hmd:Control', 'hydra:Operation'];
       b.push(`type: [${ctypes.map(yamlScalar).join(', ')}]`);
