@@ -93,6 +93,12 @@ amta:honesty a owl:DatatypeProperty ;
     rdfs:domain amta:Attestation ;
     rdfs:range xsd:double .
 
+amta:clearance a owl:DatatypeProperty ;
+    rdfs:label "clearance" ;
+    rdfs:comment "A subject's clearance level on a monotone classification lattice (higher dominates). Read by the ABAC policy-decision point as a SHACL minInclusive constraint: a request is permitted only when the subject's amta:clearance meets or exceeds the resource's classification." ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range xsd:double .
+
 amta:relevance a owl:DatatypeProperty ;
     rdfs:label "relevance" ;
     rdfs:domain amta:Attestation ;
