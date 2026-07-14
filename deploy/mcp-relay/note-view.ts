@@ -35,10 +35,36 @@ function pickLiteral(turtle: string, preds: string): string {
   return single ? single[1]!.replace(/\\"/g, '"').replace(/\\n/g, '\n').trim() : '';
 }
 
+/** The subject IRI of the first typed statement (`<iri> a …` / `urn:… a …`) —
+ *  the payload graph's own identity, used to source-tag its controls. */
+function primarySubject(turtle: string): string | undefined {
+  const m = /(?:^|\n)\s*<([^>]+)>\s+a\s+/.exec(turtle) ?? /(?:^|\n)\s*((?:urn|did|https?):[^\s;]+)\s+a\s+/.exec(turtle);
+  return m ? m[1] : undefined;
+}
+
 export function noteToHyperMarkdown(input: NoteViewInput): string {
-  const controls = controlsFromAffordances(
+  // DESCRIPTOR-level controls (canDecrypt / renderView) — source = the signed
+  // descriptor (the transport authority).
+  const descriptorControls = controlsFromAffordances(
     extractAffordancesFromTurtle(input.descriptorTurtle, input.authority),
+    undefined,
+    input.authority,
   );
+  // PAYLOAD-level controls declared IN the signed graph (e.g. ask / acknowledge /
+  // propose-correction, with their SHACL input shapes) — source = the payload
+  // graph itself. Previously dropped: the projection only read the descriptor,
+  // so a client had to reconstruct these after verifying the signed graph.
+  const payloadSource = primarySubject(input.plaintextTurtle) ?? 'urn:interego:signed-payload';
+  const payloadControls = controlsFromAffordances(
+    extractAffordancesFromTurtle(input.plaintextTurtle, payloadSource),
+    undefined,
+    payloadSource,
+  );
+  // Merge; on an action collision the signed PAYLOAD control wins (authored,
+  // verified content outranks a transport-descriptor affordance).
+  const byAction = new Map<string, (typeof descriptorControls)[number]>();
+  for (const c of [...descriptorControls, ...payloadControls]) byAction.set(c.action, c);
+  const controls = [...byAction.values()];
   const title = pickLiteral(input.plaintextTurtle, 'dct:title|schema:name|rdfs:label|schema:headline') || 'Private note';
   const text = pickLiteral(input.plaintextTurtle, 'schema:text|schema:articleBody|dct:description|rdfs:comment');
   // Neutralize any leading ::: in the note text so it can't collide with the

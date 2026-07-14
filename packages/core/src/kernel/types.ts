@@ -87,6 +87,11 @@ export interface Affordance {
   readonly method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   /** `dcat:mediaType` of the response, when declared. */
   readonly mediaType?: string;
+  /** `hydra:expects` / `iep:inputShape` — the input contract (e.g. a SHACL
+   *  shape IRI) the affordance validates against, when declared. */
+  readonly expects?: string;
+  /** `hydra:returns` — the output type, when declared. */
+  readonly returns?: string;
   /**
    * The descriptor this affordance was read from. Empty when the
    * affordance was constructed directly (no source descriptor — e.g.

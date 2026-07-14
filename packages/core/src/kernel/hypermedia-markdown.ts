@@ -111,6 +111,11 @@ export const HMD_PROJECTION_CONTEXT = Object.freeze({
   whenToUse: { '@id': 'skos:scopeNote' },
   requires: { '@id': 'dct:requires', '@container': '@set' },
   target: { '@id': 'hmd:target', '@type': '@id' },
+  // The signed artifact a control was DECLARED IN — the descriptor (canDecrypt /
+  // renderView) vs the signed payload graph (its own controls). Preserves the
+  // authority/provenance distinction so a client sees which controls came with
+  // the signed content vs the transport descriptor.
+  source: { '@id': 'prov:wasDerivedFrom', '@type': '@id' },
 }) as Readonly<Record<string, unknown>>;
 
 // ── Input model ──────────────────────────────────────────────────────────────
@@ -156,6 +161,11 @@ export interface HypermediaControl {
    *  against the document's `state`; executors re-check LIVE state — the
    *  frontmatter snapshot is advisory rung-2 data, never an authz input. */
   readonly condition?: Readonly<Record<string, string>>;
+  /** The signed artifact this control was DECLARED IN → `prov:wasDerivedFrom`.
+   *  Distinguishes a control that ships in the signed PAYLOAD graph (authored,
+   *  verified content) from one on the transport DESCRIPTOR (canDecrypt /
+   *  renderView) — so a client need not reconstruct payload controls itself. */
+  readonly source?: string;
 }
 
 /** The document: identity + grounding + data + links + controls + prose. */
@@ -470,6 +480,7 @@ export function renderHypermediaMarkdown(doc: HypermediaMarkdownDoc): string {
       if (c.mediaType) b.push(`mediaType: ${yamlScalar(c.mediaType)}`);
       if (c.whenToUse) b.push(`whenToUse: ${yamlScalar(c.whenToUse)}`);
       if (c.requires && c.requires.length > 0) b.push(`requires: [${c.requires.map(yamlScalar).join(', ')}]`);
+      if (c.source) b.push(`source: ${yamlScalar(c.source)}`);
       if (c.condition) {
         const entries = Object.entries(c.condition).map(([k, v]) => `${k}: ${yamlScalar(v)}`);
         b.push(`condition: { ${entries.join(', ')} }`);
@@ -695,6 +706,7 @@ export function parseHypermediaMarkdown(md: string): HypermediaMarkdownDoc {
       else if (k === 'mediaType') c.mediaType = unquote(v);
       else if (k === 'whenToUse') c.whenToUse = unquote(v);
       else if (k === 'requires') c.requires = parseInlineList(v);
+      else if (k === 'source') c.source = unquote(v);
       else if (k === 'condition') { const cm = parseInlineMap(v); if (cm) c.condition = cm; }
       // `type:` is constant [hmd:Control, hydra:Operation] — not doc state.
     }
@@ -834,6 +846,7 @@ export function liftHypermediaMarkdown(md: string): readonly HmdTriple[] {
     if (c.mediaType) push(N, ex('mediaType'), c.mediaType, 'literal');
     if (c.whenToUse) push(N, ex('whenToUse'), c.whenToUse, 'literal');
     for (const r of c.requires ?? []) push(N, ex('requires'), r, 'literal');
+    if (c.source) push(N, ex('source'), c.source, 'iri');
     if (c.condition) {
       const b = `_:c${idx}cond`;
       push(N, ex('condition'), b, 'blank');
@@ -905,15 +918,24 @@ export function negotiateRepresentation(
 export function controlsFromAffordances(
   affordances: readonly Affordance[],
   guidance?: Readonly<Record<string, { whenToUse?: string; requires?: readonly string[] }>>,
+  /** The signed artifact these affordances were declared in — carried onto each
+   *  control as `source` (prov:wasDerivedFrom). Use it to tag payload-declared
+   *  controls distinctly from descriptor-declared ones. Falls back to the
+   *  affordance's own `fromDescriptor` when present. */
+  source?: string,
 ): HypermediaControl[] {
   return affordances.map((a) => {
     const g = guidance?.[a.action];
+    const src = source ?? a.fromDescriptor;
     return {
       action: a.action,
       ...(a.method ? { method: a.method } : {}),
       ...(a.mediaType ? { mediaType: a.mediaType } : {}),
+      ...(a.expects ? { expects: a.expects } : {}),
+      ...(a.returns ? { returns: a.returns } : {}),
       ...(g?.whenToUse ? { whenToUse: g.whenToUse } : {}),
       ...(g?.requires && g.requires.length > 0 ? { requires: g.requires } : {}),
+      ...(src ? { source: src } : {}),
       // a.target is deliberately NOT copied. See SECURITY INVARIANT.
     };
   });
