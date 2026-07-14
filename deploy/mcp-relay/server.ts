@@ -7600,6 +7600,17 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
         name: 'HyperMarkdown viewer (MCP App)',
         description: 'Generic interactive viewer for ANY HyperMarkdown document. The render_hmd tool supplies the specific HMD (prose, typed links, :::control blocks with inline SHACL form fields); this one resource renders it and lets the user submit control actions via invoke_affordance. No content is hardcoded — it is driven entirely by the HMD passed in.',
         mimeType: 'text/html;profile=mcp-app',
+        // MCP Apps widget metadata (required for ChatGPT app submission): an empty
+        // CSP — the widget is fully self-contained (inline HTML/CSS/JS, no external
+        // scripts/styles/fonts/images/fetch; the only cross-frame message is the
+        // tools/call postMessage to the trusted host) — and a unique app domain.
+        _meta: {
+          ui: {
+            csp: { connectDomains: [], resourceDomains: [], frameDomains: [] },
+            domain: (PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com'),
+          },
+          'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
+        },
       },
     ],
   }));
@@ -7630,7 +7641,20 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // The generic HyperMarkdown viewer (MCP App UI). Static HTML, no content —
     // the render_hmd tool supplies the document at call time.
     if (req.params.uri === 'ui://widget/hmd.html') {
-      return { contents: [{ uri: req.params.uri, mimeType: 'text/html;profile=mcp-app', text: HMD_APP_HTML }] };
+      return {
+        contents: [{
+          uri: req.params.uri,
+          mimeType: 'text/html;profile=mcp-app',
+          text: HMD_APP_HTML,
+          _meta: {
+            ui: {
+              csp: { connectDomains: [], resourceDomains: [], frameDomains: [] },
+              domain: (PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com'),
+            },
+            'openai/widgetCSP': { connect_domains: [], resource_domains: [] },
+          },
+        }],
+      };
     }
     // Live substrate resource (resolved, not read off disk).
     const ns = /^interego:\/\/ns\/([^/]+)\/([^/?#]+)$/.exec(req.params.uri);

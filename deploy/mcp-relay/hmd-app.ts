@@ -62,7 +62,7 @@ button.go:disabled{opacity:.55;cursor:default}
 .status{font-size:12.5px;margin-top:10px}
 .status.ok{color:var(--ok)}.status.err{color:var(--warn)}.status.muted{color:var(--muted)}
 .confirm{border:1px dashed var(--warn);border-radius:9px;padding:10px 12px;margin-top:10px;font-size:12.5px}
-.links{margin-top:20px;padding-top:14px;border-top:1px solid var(--line);font-size:12.5px}
+.links{display:none;margin-top:20px;padding-top:14px;border-top:1px solid var(--line);font-size:12.5px}
 .links a{color:var(--accent);margin-right:14px}
 .empty{color:var(--muted);font-size:13px}
 `;
@@ -183,9 +183,13 @@ function renderControl(c,d){
   return card;
 }
 function prettyAction(iri){ var n=localName(iri).replace(/[-_]/g,' ').replace(/([a-z])([A-Z])/g,'$1 $2'); return n.charAt(0).toUpperCase()+n.slice(1); }
-// boot
-(function(){ var d=readToolOutput(); if(d){ DATA=d; render(); } })();
+// boot — wire tabs via addEventListener (NO inline onclick, so the widget runs
+// under a strict/nonce Content-Security-Policy) then render any initial output.
+(function(){
+  ['enhanced','markdown','source'].forEach(function(t){ var b=q('tab-'+t); if(b) b.addEventListener('click',function(){ selectTab(t); }); });
+  var d=readToolOutput(); if(d){ DATA=d; render(); }
+})();
 `;
 
 /** The complete self-contained widget document served at `ui://widget/hmd.html`. */
-export const HMD_APP_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HyperMarkdown viewer</title><style>${STYLE}</style></head><body><div class="wrap"><header><h1 class="title" id="title">HyperMarkdown</h1><span class="prov" id="prov"></span></header><div class="tabs" role="tablist"><button class="tab" id="tab-enhanced" role="tab" aria-selected="true" onclick="selectTab('enhanced')">Enhanced</button><button class="tab" id="tab-markdown" role="tab" aria-selected="false" onclick="selectTab('markdown')">Markdown</button><button class="tab" id="tab-source" role="tab" aria-selected="false" onclick="selectTab('source')">HMD source</button></div><div class="pane on" id="pane-enhanced"></div><div class="pane" id="pane-markdown"></div><div class="pane" id="pane-source"></div><div class="links" id="links" style="display:none"></div></div><script>${HMD_APP_LOGIC_JS}\n${BOOT_JS}</script></body></html>`;
+export const HMD_APP_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HyperMarkdown viewer</title><style>${STYLE}</style></head><body><div class="wrap"><header><h1 class="title" id="title">HyperMarkdown</h1><span class="prov" id="prov"></span></header><div class="tabs" role="tablist"><button class="tab" id="tab-enhanced" role="tab" aria-selected="true">Enhanced</button><button class="tab" id="tab-markdown" role="tab" aria-selected="false">Markdown</button><button class="tab" id="tab-source" role="tab" aria-selected="false">HMD source</button></div><div class="pane on" id="pane-enhanced"></div><div class="pane" id="pane-markdown"></div><div class="pane" id="pane-source"></div><div class="links" id="links"></div></div><script>${HMD_APP_LOGIC_JS}\n${BOOT_JS}</script></body></html>`;
