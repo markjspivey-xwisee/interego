@@ -128,6 +128,22 @@ function validateValue(field, raw) {
   }
   return '';
 }
+// ── hydration guards — decide WHEN to re-render (render rebuilds the DOM) ──────
+// render() destroys in-progress form input / the confirm box / action status, so a
+// re-render must happen ONLY when the mounted DOCUMENT actually changes — never on
+// an unrelated openai:set_globals (theme/display/focus) event, a cloned-but-equal
+// payload (hosts may clone the object), or a nested invoke_affordance tool result.
+function isHmdDoc(d) {
+  return !!d && typeof d === 'object'
+    && typeof d.descriptorUrl === 'string'
+    && ('hmd' in d || 'body' in d || 'controls' in d);
+}
+function shouldRehydrate(current, next) {
+  if (!isHmdDoc(next)) return false; // non-HMD (e.g. an invoke_affordance result) never replaces the doc
+  if (current && current.descriptorUrl === next.descriptorUrl && current.hmd === next.hmd) return false; // unchanged
+  return true;
+}
+
 // Assemble the invoke_affordance payload from field values, keyed by each field's
 // property LOCAL NAME (the conventional form-field key). Empty optionals dropped.
 function collectPayload(fields, values) {
