@@ -158,7 +158,7 @@ import {
   buildAccessChangeEvent,
 } from '@interego/ops';
 // Private-note HyperMarkdown projection (extracted for unit-testability; server.ts is self-starting).
-import { noteToHyperMarkdown, inlineRenderedForDescriptor } from './note-view.js';
+import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls } from './note-view.js';
 // The generic HyperMarkdown MCP-App renderer (served as a ui:// resource).
 import { HMD_APP_HTML } from './hmd-app.js';
 
@@ -3555,15 +3555,9 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
     title: doc?.title ?? 'HyperMarkdown',
     ...(doc?.state ? { state: doc.state } : {}),
     body: doc?.body ?? '',
-    controls: (doc?.controls ?? []).map((c) => ({
-      id: c.id,
-      action: c.action,
-      method: c.method,
-      ...(c.expects ? { expects: c.expects } : {}),
-      ...(c.source ? { source: c.source } : {}),
-      ...(c.whenToUse ? { whenToUse: c.whenToUse } : {}),
-      ...(c.fields && c.fields.length > 0 ? { fields: c.fields } : {}),
-    })),
+    // Only the note's payload/vertical actions — descriptor transport affordances
+    // (canDecrypt / renderView) are filtered out of the interactive form set.
+    controls: viewerControls(doc?.controls ?? []),
     links: doc?.links ?? [],
     authorship: gd['authorship'] ?? null,
   });
