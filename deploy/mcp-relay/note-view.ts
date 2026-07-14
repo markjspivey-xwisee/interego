@@ -14,7 +14,36 @@ import {
   extractAffordancesFromTurtle,
   renderHypermediaMarkdown,
   HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
+  type HypermediaControl,
 } from '@interego/core';
+
+const IEP_NS_VIEW = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
+/** Descriptor-level TRANSPORT affordances — how the relay serves/decrypts the note,
+ *  NOT actions a human takes on it. Filtered from the interactive viewer's control
+ *  set (the raw HMD-source tab still shows them; the projection still carries them). */
+const VIEWER_TRANSPORT_ACTIONS: ReadonlySet<string> = new Set([
+  `${IEP_NS_VIEW}canDecrypt`,
+  `${IEP_NS_VIEW}renderView`,
+]);
+
+/** The controls the interactive HMD viewer should OFFER as forms: the note's
+ *  payload/vertical actions, with descriptor transport affordances dropped. Returns
+ *  the widget-facing shape (id/action/method + expects/source/whenToUse/fields). */
+export function viewerControls(
+  controls: readonly HypermediaControl[],
+): Array<Record<string, unknown>> {
+  return controls
+    .filter((c) => !VIEWER_TRANSPORT_ACTIONS.has(c.action))
+    .map((c) => ({
+      id: c.id,
+      action: c.action,
+      method: c.method,
+      ...(c.expects ? { expects: c.expects } : {}),
+      ...(c.source ? { source: c.source } : {}),
+      ...(c.whenToUse ? { whenToUse: c.whenToUse } : {}),
+      ...(c.fields && c.fields.length > 0 ? { fields: c.fields } : {}),
+    }));
+}
 
 export interface NoteViewInput {
   /** The note's dereferenceable HTTPS identity (this render URL). Fragment-free. */

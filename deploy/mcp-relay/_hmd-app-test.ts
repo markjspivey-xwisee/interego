@@ -6,7 +6,7 @@
 // HTML — we eval it here so there is one source of truth.
 import { HMD_APP_LOGIC_JS } from './hmd-app-logic.js';
 import { HMD_APP_HTML } from './hmd-app.js';
-import { noteToHyperMarkdown } from './note-view.js';
+import { noteToHyperMarkdown, viewerControls } from './note-view.js';
 import { parseHypermediaMarkdown } from '@interego/core';
 
 /* eslint-disable @typescript-eslint/no-implied-eval */
@@ -137,6 +137,11 @@ check('HMD_APP_HTML references no external origins (self-contained)', !/https?:\
   check('render_hmd shape: control carries inline fields (form is buildable)', !!askC?.fields && askC.fields[0]!.path === `${IEP}question` && askC.fields[0]!.name === 'Question');
   check('render_hmd shape: a POST action requires confirmation (mutate), never direct fire', L.classifyAction(askC!.action, askC!.method) === 'mutate');
   check('render_hmd shape: a required field validates + payload keys by local name', L.validateValue(askC!.fields![0]!, '') !== '' && 'question' in L.collectPayload(askC!.fields! as Array<Record<string, unknown>>, { question: 'hi' }));
+  // Descriptor transport affordances (canDecrypt/renderView) are filtered from the
+  // viewer's actionable controls; the note's payload/vertical actions remain.
+  const vc = viewerControls(doc.controls);
+  check('viewerControls: drops descriptor transport controls (renderView/canDecrypt)', !vc.some((c) => c['action'] === `${IEP}renderView` || c['action'] === `${IEP}canDecrypt`));
+  check('viewerControls: keeps the payload/vertical control (askQuestion) with its fields', vc.some((c) => c['action'] === `${IEP}askQuestion` && Array.isArray(c['fields'])));
 }
 
 console.log(`\n${ok}/${ok + bad} hmd-app checks passed`);
