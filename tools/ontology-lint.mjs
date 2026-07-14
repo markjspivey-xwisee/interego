@@ -108,6 +108,14 @@ function extractDefinedTerms(ttlPath, prefix) {
 
 // ── TS source scan ──────────────────────────────────────────
 
+// Test files use ILLUSTRATIVE, deliberately-fake namespace terms as fixtures
+// (iep:q, iep:verifyAndDelete, iep:AskInputShape, …) — they are NOT production
+// emissions and must never be linted as ontology drift. The `tests/` directory is
+// skipped below; this also skips co-located test files (foo.test.ts, foo.spec.ts,
+// and the relay's _*-test.ts convention), so a NEW test file can never re-break
+// this lint. Keep this in sync with the vitest/tsx test globs.
+const TEST_FILE_RE = /(?:\.(?:test|spec)|-test)\.[mc]?ts$/;
+
 function* walkFiles(dir) {
   const entries = readdirSync(dir);
   for (const entry of entries) {
@@ -116,7 +124,7 @@ function* walkFiles(dir) {
     const s = statSync(full);
     if (s.isDirectory()) {
       yield* walkFiles(full);
-    } else if (TS_EXTS.has(full.slice(full.lastIndexOf('.')))) {
+    } else if (TS_EXTS.has(full.slice(full.lastIndexOf('.'))) && !TEST_FILE_RE.test(entry)) {
       yield full;
     }
   }

@@ -277,6 +277,12 @@ iep:describes a owl:ObjectProperty ;
     rdfs:domain iep:ContextDescriptor ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
+iep:inputShape a owl:ObjectProperty ;
+    rdfs:label "input shape" ;
+    rdfs:comment "The SHACL NodeShape a caller validates its request payload against before invoking an affordance — a substrate-native synonym for hydra:expects. Consumers MAY read either predicate; the kernel treats iep:inputShape as an alias of hydra:expects when extracting an affordance's expected input." ;
+    rdfs:domain iep:Affordance ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
 iep:describedBy a owl:ObjectProperty ;
     rdfs:label "described by" ;
     rdfs:comment "Inverse of iep:describes — links a named graph back to its descriptor." ;
@@ -1074,6 +1080,10 @@ iep:canFetchPayload a iep:Affordance ;
 iep:canDecrypt a iep:Affordance ;
     rdfs:label "Can Decrypt" ;
     rdfs:comment "The declared graph payload is encrypted; clients whose X25519 key is in the envelope's recipient list can decrypt locally. The iep:encryptionAlgorithm on the dcat:Distribution tells clients which KDF / AEAD pair to use. Only present when the Distribution is encrypted.".
+
+iep:canRead a iep:Affordance ;
+    rdfs:label "Can Read" ;
+    rdfs:comment "The read (safe, side-effect-free) action over a resource. Used as the canonical action IRI by the ABAC policy-decision point when authorizing a GET/fetch of a descriptor or graph; the complement of the mutating affordances (iep:canPublish et al.). Carries no hydra:target of its own — it names the act being authorized, not a transport endpoint.".
 
 iep:renderView a iep:Affordance ;
     rdfs:label "Render View" ;
