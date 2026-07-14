@@ -190,7 +190,7 @@ describe('rung 4 — inline SHACL field schema (lift-only convenience)', () => {
     controls: [{
       action: `${IEP}ask`, method: 'POST' as const, expects: 'urn:g:mem#AskShape',
       fields: [
-        { path: `${IEP}question`, name: 'Question', description: 'What to ask', datatype: XSD_STRING, minCount: 1, maxCount: 1 },
+        { path: `${IEP}question`, name: 'Question', description: 'What to ask', datatype: XSD_STRING, minCount: 1, maxCount: 1, minLength: 3, maxLength: 280, pattern: '^[^\\n]+$' },
         { path: `${IEP}ctx`, datatype: XSD_STRING, minCount: 0 },
       ],
     }],
@@ -214,6 +214,9 @@ describe('rung 4 — inline SHACL field schema (lift-only convenience)', () => {
     expect(lifted.some(t => t.s === F0 && t.p === `${SH}name` && t.o === 'Question')).toBe(true);
     expect(lifted.some(t => t.s === F0 && t.p === `${SH}minCount` && t.o === '1')).toBe(true);
     expect(lifted.some(t => t.s === F0 && t.p === `${SH}maxCount` && t.o === '1')).toBe(true);
+    expect(lifted.some(t => t.s === F0 && t.p === `${SH}minLength` && t.o === '3')).toBe(true);
+    expect(lifted.some(t => t.s === F0 && t.p === `${SH}maxLength` && t.o === '280')).toBe(true);
+    expect(lifted.some(t => t.s === F0 && t.p === `${SH}pattern` && t.o === '^[^\\n]+$')).toBe(true);
   });
 
   it('malformed store-and-forward fields never throw and emit NO sh:property (guarded parse+lift)', () => {

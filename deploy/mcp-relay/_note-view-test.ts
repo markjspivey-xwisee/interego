@@ -244,11 +244,12 @@ const shapePayload = `@prefix ieh: <https://markjspivey-xwisee.github.io/intereg
 <urn:graph:memory:form> a ieh:AgentMemory ; schema:name "Form" ; schema:text "ask" ; hmd:control <#ask> .
 <#ask> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}ask> ; hydra:method "POST" ; hydra:expects <#AskShape> .
 <#AskShape> a sh:NodeShape ;
-  sh:property [ sh:path <${IEP}question> ; sh:name "Question" ; sh:description "What to ask" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ,
+  sh:property [ sh:path <${IEP}question> ; sh:name "Question" ; sh:description "What to ask" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 3 ; sh:maxLength 280 ; sh:pattern "^[^\\\\n]+$" ] ,
               [ sh:path <${IEP}ctx> ; sh:datatype xsd:string ; sh:minCount 0 ] .`;
 const sfMd = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle, plaintextTurtle: shapePayload, graphIri: 'urn:graph:memory:form' });
 check('residual #1: inline fields present (sh:property surfaced from the expects shape)', sfMd.includes('fields: [') && sfMd.includes(`"path":"${IEP}question"`));
 check('residual #1: field constraints carried (name/description/minCount/maxCount)', sfMd.includes('"name":"Question"') && sfMd.includes('"description":"What to ask"') && sfMd.includes('"minCount":1') && sfMd.includes('"maxCount":1'));
+check('residual #1b: string-length + pattern constraints carried (minLength/maxLength/pattern)', sfMd.includes('"minLength":3') && sfMd.includes('"maxLength":280') && sfMd.includes('"pattern":'));
 check('residual #1: expects reference STILL present (additive, not a replacement)', sfMd.includes(`expects: "urn:graph:memory:form#AskShape"`));
 {
   const back = parseHypermediaMarkdown(sfMd);
