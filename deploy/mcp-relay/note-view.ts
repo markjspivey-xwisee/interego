@@ -26,11 +26,15 @@ const VIEWER_TRANSPORT_ACTIONS: ReadonlySet<string> = new Set([
   `${IEP_NS_VIEW}renderView`,
 ]);
 
-/** The controls the interactive HMD viewer should OFFER as forms: the note's
- *  payload/vertical actions, with descriptor transport affordances dropped. Returns
- *  the widget-facing shape (id/action/method + expects/source/whenToUse/fields). */
+/** The controls the interactive HMD viewer should OFFER: the note's payload/vertical
+ *  actions, with descriptor transport affordances dropped. Each is marked
+ *  `executable` — true iff its action has a REAL hydra:target resolvable from the
+ *  signed descriptor or graph (so `invoke_affordance` can follow it). A control
+ *  with no target is DECLARATIVE (describes an interaction shape, no execution
+ *  endpoint): the viewer shows it read-only instead of firing a doomed submit. */
 export function viewerControls(
   controls: readonly HypermediaControl[],
+  executableActions?: ReadonlySet<string>,
 ): Array<Record<string, unknown>> {
   return controls
     .filter((c) => !VIEWER_TRANSPORT_ACTIONS.has(c.action))
@@ -42,6 +46,7 @@ export function viewerControls(
       ...(c.source ? { source: c.source } : {}),
       ...(c.whenToUse ? { whenToUse: c.whenToUse } : {}),
       ...(c.fields && c.fields.length > 0 ? { fields: c.fields } : {}),
+      executable: executableActions ? executableActions.has(c.action) : false,
     }));
 }
 

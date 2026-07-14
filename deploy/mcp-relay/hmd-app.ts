@@ -43,6 +43,8 @@ pre.src{white-space:pre-wrap;word-break:break-word;background:var(--card);border
 .control h3{margin:0 0 2px;font-size:14.5px;font-weight:650;display:flex;align-items:center;gap:8px}
 .badge{font-size:10.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:2px 7px;border-radius:6px;background:var(--chip);color:var(--muted)}
 .badge.mutate{color:var(--warn)}
+.badge.declarative{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.field input:disabled,.field textarea:disabled,.field select:disabled{opacity:.7;cursor:not-allowed}
 .control .when{color:var(--muted);font-size:12.5px;margin:0 0 10px}
 .field{margin:10px 0}
 .field label{display:block;font-size:12.5px;font-weight:600;margin-bottom:4px}
@@ -133,9 +135,15 @@ function render(){
 function mkpre(t){var p=el('pre','src');p.textContent=t;return p;}
 function renderControl(c,d){
   var card=el('div','control');
-  var kind=classifyAction(c.action,c.method);
+  // A control is EXECUTABLE only if the server resolved a real target for it
+  // (descriptor or signed graph). A DECLARATIVE control (authority-closed, no
+  // target) describes an interaction shape but has no execution endpoint — show it
+  // read-only instead of firing a doomed submit. The read/mutate split applies only
+  // to executable controls (and keys on method, never the author-controlled name).
+  var executable=(c&&c.executable===true);
+  var kind=executable?classifyAction(c.action,c.method):'declarative';
   var h=el('h3'); h.appendChild(document.createTextNode(prettyAction(c.action)));
-  var b=el('span','badge'+(kind==='mutate'?' mutate':'')); b.textContent=(kind==='mutate'?'writes':'reads'); h.appendChild(b);
+  var b=el('span','badge'+(kind==='mutate'?' mutate':'')+(kind==='declarative'?' declarative':'')); b.textContent=(kind==='declarative'?'declarative':(kind==='mutate'?'writes':'reads')); h.appendChild(b);
   card.appendChild(h);
   if(c.whenToUse){ card.appendChild(el('p','when',c.whenToUse)); }
   var fields=(c.fields||[]);
@@ -151,11 +159,17 @@ function renderControl(c,d){
     else if(m.kind==='boolean'){ inp=el('select'); [['','—'],['true','true'],['false','false']].forEach(function(o){var op=el('option',null,o[1]);op.value=o[0];inp.appendChild(op);}); }
     else { inp=el('input'); inp.type=(m.kind==='number'?'number':m.kind==='date'?'date':m.kind==='datetime-local'?'datetime-local':'text'); }
     if(f.maxLength && Number(f.maxLength)>0 && (inp.tagName==='INPUT'||inp.tagName==='TEXTAREA')) inp.maxLength=Number(f.maxLength);
+    if(!executable){ inp.disabled=true; }
     inp.setAttribute('data-key',key);
     var err=el('div','err');
     fw.appendChild(inp); fw.appendChild(err);
     card.appendChild(fw); inputs[key]={field:f,input:inp,wrap:fw,err:err};
   });
+  if(!executable){
+    // Declarative: informational only — no submit, no invoke_affordance.
+    card.appendChild(el('p','when','Declarative — describes an interaction (its input shape above) but declares no execution endpoint on this note, so it can’t be submitted from here.'));
+    return card;
+  }
   var actions=el('div','actions');
   var btn=el('button','go'+(kind==='mutate'?' secondary':'')); btn.textContent=(kind==='mutate'?'Review & '+prettyAction(c.action):prettyAction(c.action));
   var status=el('div','status muted');

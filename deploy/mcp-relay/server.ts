@@ -148,6 +148,7 @@ import {
   extractAffordancesFromTurtle,
   renderHypermediaMarkdown,
   parseHypermediaMarkdown,
+  AffordanceNotFoundError,
   negotiateRepresentation,
   HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
   HMD_PROFILE_IRI,
@@ -778,6 +779,17 @@ function assertInvokeTargetAllowed(url: string): void {
   try {
     if (PUBLIC_BASE_URL && u.origin === new URL(PUBLIC_BASE_URL).origin) return;
   } catch { /* ignore */ }
+  // LOOPBACK — the relay's OWN process + sidecars. assertPublicPodUrl (below)
+  // exempts `http://localhost` (it's not an IP literal), so screen it HERE, in the
+  // single egress guard every guardedInvokeFetch caller shares (descriptor follow,
+  // kernel_dereference/act, reduce-chain, the graph-affordance fallback). The CSS
+  // and PUBLIC_BASE_URL same-origin cases already returned above, so a legitimate
+  // dev PUBLIC_BASE_URL=localhost still works; any OTHER loopback is a relay-to-self
+  // SSRF and is rejected.
+  const hn = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (hn === 'localhost' || hn === '::1' || /^127\./.test(hn) || /^::ffff:127\./.test(hn)) {
+    throw new Error(`invoke: loopback host not allowed: ${u.hostname}`);
+  }
   // assertPublicPodUrl only rejects a TERMINAL `.internal` label, but
   // normalizeCssUrl can synthesize hosts with `.internal.` mid-label from
   // attacker-supplied legacy URLs (…-css.internal.<env>.azurecontainerapps.io).
@@ -794,6 +806,25 @@ const guardedInvokeFetch: FetchFn = async (url, init) => {
   assertInvokeTargetAllowed(target);
   return solidFetch(target, init);
 };
+
+/**
+ * Is `target` a real, safe HTTP(S) endpoint a graph-declared HMD control may point
+ * at? Keeps render_hmd's `executable` set IDENTICAL to what invoke_affordance can
+ * actually follow, so a control is never marked executable then rejected at submit:
+ *  - http(s) ONLY — a graph control can't route act() into urn:pgsl lattice verbs
+ *    or any non-HTTP scheme.
+ *  - through the SSRF egress guard assertInvokeTargetAllowed — the SINGLE authority
+ *    for internal/private/IMDS/`.internal`-label AND loopback (so this screen is
+ *    byte-identical to what guardedInvokeFetch enforces at follow time; render's
+ *    executable set can never diverge from invoke's followable set).
+ */
+function isFollowableTarget(target: unknown): boolean {
+  if (typeof target !== 'string' || !/^https?:\/\//i.test(target)) return false;
+  let normalized: string;
+  try { normalized = normalizeCssUrl(target); } catch { return false; }
+  try { assertInvokeTargetAllowed(normalized); } catch { return false; }
+  return true;
+}
 
 // AMEP same-origin session bridge (extracted to amep-session-bridge.ts so its
 // same-origin gate + fetch/actor-stamp logic are unit-testable without importing
@@ -3549,6 +3580,20 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
   const rendered = typeof gd['rendered'] === 'string' ? (gd['rendered'] as string) : '';
   let doc: ReturnType<typeof parseHypermediaMarkdown> | null = null;
   if (rendered) { try { doc = parseHypermediaMarkdown(rendered); } catch { doc = null; } }
+  // EXECUTABLE actions = those with a REAL hydra:target in the signed descriptor OR
+  // the (decrypted) graph — i.e. what invoke_affordance can actually follow (the
+  // relay re-resolves a payload control's graph target). extractAffordancesFromTurtle
+  // defaults to requireTarget:true, so target-less authority-closed controls are
+  // absent → the viewer marks them declarative (shape-only, no submit).
+  // An action is executable ONLY if it has a real target that invoke_affordance can
+  // actually follow — screened through isFollowableTarget (http(s), SSRF-safe, no
+  // loopback), the SAME screen the invoke fallback applies, so render's executable
+  // set never diverges from act's followable set (no doomed submits).
+  const executableActions = new Set<string>();
+  try { for (const a of extractAffordancesFromTurtle(typeof gd['turtle'] === 'string' ? (gd['turtle'] as string) : '', url)) { if (isFollowableTarget(a.target)) executableActions.add(a.action); } } catch { /* best-effort */ }
+  const gobj = gd['graph'] as Record<string, unknown> | undefined;
+  const gcontent = gobj && typeof gobj['content'] === 'string' ? (gobj['content'] as string) : '';
+  if (gcontent) { try { for (const a of extractAffordancesFromTurtle(gcontent, url)) { if (isFollowableTarget(a.target)) executableActions.add(a.action); } } catch { /* best-effort */ } }
   return JSON.stringify({
     descriptorUrl: url,
     hmd: rendered,
@@ -3556,8 +3601,9 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
     ...(doc?.state ? { state: doc.state } : {}),
     body: doc?.body ?? '',
     // Only the note's payload/vertical actions — descriptor transport affordances
-    // (canDecrypt / renderView) are filtered out of the interactive form set.
-    controls: viewerControls(doc?.controls ?? []),
+    // (canDecrypt / renderView) filtered out; each remaining control marked
+    // executable (has a real target) vs declarative (shape-only).
+    controls: viewerControls(doc?.controls ?? [], executableActions),
     links: doc?.links ?? [],
     authorship: gd['authorship'] ?? null,
   });
@@ -5461,16 +5507,62 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   // the envelope's recipient set whenever it published or was added as
   // a share target). Non-recipients fall through and see the raw
   // envelope as today.
-  const result = await kernelAct(
-    { descriptorUrl, actionIri },
-    invPayload,
-    {
-      fetch: invFetch,
-      recipientKeyPair: relayAgentKey,
-      ...(authorization ? { authorization } : {}),
-    },
-  );
+  const actOpts = {
+    fetch: invFetch,
+    recipientKeyPair: relayAgentKey,
+    ...(authorization ? { authorization } : {}),
+  };
+  let result;
+  try {
+    result = await kernelAct({ descriptorUrl, actionIri }, invPayload, actOpts);
+  } catch (e) {
+    // Descriptor didn't declare this action — it may be an authority-closed HMD
+    // payload control that carries its OWN hydra:target in the SIGNED GRAPH. Resolve
+    // it the SAME way render_hmd does (get_descriptor's recipient-decrypted graph),
+    // screen the target (isFollowableTarget → http(s), SSRF-safe, no loopback), and
+    // follow it as a pre-resolved affordance. A non-recipient (no graph.content), a
+    // target-less/declarative control, or an unfollowable target re-throws the
+    // original not-found. Descriptor affordances always WIN (tried first).
+    if (e instanceof AffordanceNotFoundError) {
+      const graphAff = await resolveGraphAffordanceForInvoke(descriptorUrl, actionIri);
+      if (graphAff) {
+        const r2 = await kernelAct(graphAff, invPayload, actOpts);
+        return JSON.stringify(r2);
+      }
+    }
+    throw e;
+  }
   return JSON.stringify(result);
+}
+
+/**
+ * Resolve an authority-closed payload control that declares its own hydra:target
+ * inside the SIGNED graph — used as invoke_affordance's fallback when the action
+ * isn't a descriptor affordance. Reuses handleGetDescriptor (IDENTICAL resolution
+ * to render_hmd's executable-set, so they never disagree): its graph.content is
+ * non-null ONLY for a recipient, so a non-recipient resolves nothing. Returns a
+ * pre-resolved affordance ONLY when the matching action carries a followable target.
+ */
+async function resolveGraphAffordanceForInvoke(
+  descriptorUrl: string,
+  actionIri: string,
+): Promise<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; mediaType?: string } | null> {
+  let gd: Record<string, unknown>;
+  try { gd = JSON.parse(await handleGetDescriptor({ url: descriptorUrl } as ToolArgs)) as Record<string, unknown>; }
+  catch { return null; }
+  const gobj = gd['graph'] as Record<string, unknown> | undefined;
+  const gcontent = gobj && typeof gobj['content'] === 'string' ? (gobj['content'] as string) : '';
+  if (!gcontent) return null; // non-recipient / no decrypted content → nothing to resolve
+  let aff: ReturnType<typeof extractAffordancesFromTurtle>[number] | undefined;
+  try { aff = extractAffordancesFromTurtle(gcontent, descriptorUrl).find((a) => a.action === actionIri); }
+  catch { return null; }
+  if (!aff || !aff.target || !isFollowableTarget(aff.target)) return null;
+  return {
+    action: aff.action,
+    target: normalizeCssUrl(aff.target),
+    method: aff.method,
+    ...(aff.mediaType ? { mediaType: aff.mediaType } : {}),
+  };
 }
 
 // ── Tool Registry ───────────────────────────────────────────

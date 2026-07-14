@@ -137,12 +137,19 @@ check('HMD_APP_HTML references no external origins (self-contained)', !/https?:\
   check('render_hmd shape: control carries inline fields (form is buildable)', !!askC?.fields && askC.fields[0]!.path === `${IEP}question` && askC.fields[0]!.name === 'Question');
   check('render_hmd shape: a POST action requires confirmation (mutate), never direct fire', L.classifyAction(askC!.action, askC!.method) === 'mutate');
   check('render_hmd shape: a required field validates + payload keys by local name', L.validateValue(askC!.fields![0]!, '') !== '' && 'question' in L.collectPayload(askC!.fields! as Array<Record<string, unknown>>, { question: 'hi' }));
-  // Descriptor transport affordances (canDecrypt/renderView) are filtered from the
-  // viewer's actionable controls; the note's payload/vertical actions remain.
+  // Descriptor transport affordances (canDecrypt/renderView) are filtered; remaining
+  // controls are marked executable (real target) vs declarative (shape-only).
   const vc = viewerControls(doc.controls);
   check('viewerControls: drops descriptor transport controls (renderView/canDecrypt)', !vc.some((c) => c['action'] === `${IEP}renderView` || c['action'] === `${IEP}canDecrypt`));
   check('viewerControls: keeps the payload/vertical control (askQuestion) with its fields', vc.some((c) => c['action'] === `${IEP}askQuestion` && Array.isArray(c['fields'])));
+  check('viewerControls: no executable set → all declarative (executable:false)', vc.every((c) => c['executable'] === false));
+  const vcExec = viewerControls(doc.controls, new Set([`${IEP}askQuestion`]));
+  check('viewerControls: marks a control executable when its action has a real target', vcExec.some((c) => c['action'] === `${IEP}askQuestion` && c['executable'] === true));
+  check('viewerControls: a control without a target stays declarative', vcExec.filter((c) => c['action'] !== `${IEP}askQuestion`).every((c) => c['executable'] === false));
 }
+// Widget: declarative controls are informational (no submit / no invoke_affordance);
+// only executable controls get the form + submit.
+check('HMD_APP_HTML: gates submit on c.executable (declarative controls are read-only)', HMD_APP_HTML.includes('c.executable===true') && HMD_APP_HTML.includes('Declarative'));
 
 console.log(`\n${ok}/${ok + bad} hmd-app checks passed`);
 process.exit(bad === 0 ? 0 : 1);
