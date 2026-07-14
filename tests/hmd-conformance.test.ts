@@ -181,3 +181,47 @@ describe('rung 4 — the control surface is complete and closed', () => {
     }
   });
 });
+
+describe('rung 4 — inline SHACL field schema (lift-only convenience)', () => {
+  const SH = 'http://www.w3.org/ns/shacl#';
+  const XSD_STRING = 'http://www.w3.org/2001/XMLSchema#string';
+  const withFields = {
+    ...nsDoc,
+    controls: [{
+      action: `${IEP}ask`, method: 'POST' as const, expects: 'urn:g:mem#AskShape',
+      fields: [
+        { path: `${IEP}question`, name: 'Question', description: 'What to ask', datatype: XSD_STRING, minCount: 1, maxCount: 1 },
+        { path: `${IEP}ctx`, datatype: XSD_STRING, minCount: 0 },
+      ],
+    }],
+  };
+
+  it('a fields-bearing control still parses under real js-yaml (rung 2 intact)', () => {
+    const md = renderHypermediaMarkdown(withFields);
+    const block = /^:::control ([\w-]+)\n([\s\S]*?)\n:::$/m.exec(md)!;
+    const obj = yaml.load(block[2]!) as Record<string, unknown>;
+    expect(Array.isArray(obj['fields'])).toBe(true);
+    expect((obj['fields'] as Array<Record<string, unknown>>)[0]!['path']).toBe(`${IEP}question`);
+  });
+
+  it('the LIFT is the RDF authority for control fields — emits sh:property/path/name/min/maxCount', () => {
+    const md = renderHypermediaMarkdown(withFields);
+    const lifted = liftHypermediaMarkdown(md);
+    const props = lifted.filter(t => t.p === `${SH}property`);
+    expect(props.length).toBe(2);
+    const F0 = props[0]!.o;
+    expect(lifted.some(t => t.s === F0 && t.p === `${SH}path` && t.o === `${IEP}question`)).toBe(true);
+    expect(lifted.some(t => t.s === F0 && t.p === `${SH}name` && t.o === 'Question')).toBe(true);
+    expect(lifted.some(t => t.s === F0 && t.p === `${SH}minCount` && t.o === '1')).toBe(true);
+    expect(lifted.some(t => t.s === F0 && t.p === `${SH}maxCount` && t.o === '1')).toBe(true);
+  });
+
+  it('malformed store-and-forward fields never throw and emit NO sh:property (guarded parse+lift)', () => {
+    const base = renderHypermediaMarkdown(withFields);
+    for (const bad of ['[null]', '[{}]', '[1]', '["x"]', '[{"path":123}]', '[{"name":"no path"}]']) {
+      const md = base.replace(/fields: \[.*\]/, `fields: ${bad}`);
+      expect(() => liftHypermediaMarkdown(md), bad).not.toThrow();
+      expect(liftHypermediaMarkdown(md).some(t => t.p === `${SH}property`), bad).toBe(false);
+    }
+  });
+});
