@@ -71,6 +71,27 @@ export interface Holon {
 // ── Affordance (the Peircean Third made operational) ─────────
 
 /**
+ * One field of a control's input contract — a `sh:property` constraint read from
+ * the SHACL NodeShape that `expects` points to, surfaced INLINE so a form-capable
+ * client can render the form without a second dereference. The `expects` IRI stays
+ * the canonical reference; this is an additive convenience projection of it.
+ */
+export interface ShapeField {
+  /** `sh:path` — the property this field constrains (IRI). */
+  readonly path: string;
+  /** `sh:name` — a human label for the field, when declared. */
+  readonly name?: string;
+  /** `sh:description` — help text, when declared. */
+  readonly description?: string;
+  /** `sh:datatype` — the value datatype (IRI), when declared. */
+  readonly datatype?: string;
+  /** `sh:minCount` — minimum cardinality, when declared. */
+  readonly minCount?: number;
+  /** `sh:maxCount` — maximum cardinality, when declared. */
+  readonly maxCount?: number;
+}
+
+/**
  * Structured form of a `iep:Affordance` block read from a descriptor's
  * representation. Carries everything `act` needs to follow the link.
  *
@@ -92,6 +113,10 @@ export interface Affordance {
   readonly expects?: string;
   /** `hydra:returns` — the output type, when declared. */
   readonly returns?: string;
+  /** The `expects` SHACL shape's `sh:property` field constraints, resolved inline
+   *  from the same graph the affordance was read from (when the shape is defined
+   *  there). Surfaced so a form client needs no second dereference. */
+  readonly fields?: readonly ShapeField[];
   /**
    * The descriptor this affordance was read from. Empty when the
    * affordance was constructed directly (no source descriptor — e.g.

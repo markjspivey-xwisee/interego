@@ -46,7 +46,7 @@
  * asserted in the tests workspace).
  */
 import { KERNEL_JSONLD_CONTEXT } from './hypermedia.js';
-import type { Affordance } from './types.js';
+import type { Affordance, ShapeField } from './types.js';
 
 // ── Media type + profile (RFC 7763/7764 + RFC 6906) ────────────────────────
 
@@ -159,6 +159,10 @@ export interface HypermediaControl {
   readonly expects?: string;
   /** `hydra:returns` output type (IRI/CURIE), when declared. */
   readonly returns?: string;
+  /** The `expects` shape's `sh:property` field constraints, surfaced INLINE (as
+   *  `sh:property` blank nodes on the control) so a form client renders the form
+   *  with no second dereference. Additive — `expects` stays the canonical ref. */
+  readonly fields?: readonly ShapeField[];
   /** Model-facing guidance → `skos:scopeNote`. */
   readonly whenToUse?: string;
   /** Preconditions a caller must satisfy → `dct:requires`. */
@@ -487,6 +491,16 @@ export function renderHypermediaMarkdown(doc: HypermediaMarkdownDoc): string {
       b.push(`target: ${yamlScalar(`${doc.id}#${ids[i]}`)}`);
       if (c.expects) b.push(`expects: ${yamlScalar(c.expects)}`);
       if (c.returns) b.push(`returns: ${yamlScalar(c.returns)}`);
+      // Inline field schema as a single-line JSON array (valid YAML flow, so the
+      // line parser reads it as one value and JSON.parse round-trips it exactly).
+      // DELIBERATELY lift-only: `fields` is rung-4 tooling JSON, consumed directly
+      // by a form client and lifted to sh:property via FIXED SHACL IRIs — it is
+      // intentionally NOT a JSON-LD `@context` term. Do NOT "fix" that by adding a
+      // single `fields` term: the object sub-keys (path/name/…) would still drop
+      // under expansion (half-broken), and generic sub-key terms would collide with
+      // the doc-level `fields` data map. The canonical, JSON-LD-expandable handle to
+      // the constraints is `expects` (the shape IRI); this is its inline convenience.
+      if (c.fields && c.fields.length > 0) b.push(`fields: ${JSON.stringify(c.fields)}`);
       if (c.mediaType) b.push(`mediaType: ${yamlScalar(c.mediaType)}`);
       if (c.whenToUse) b.push(`whenToUse: ${yamlScalar(c.whenToUse)}`);
       if (c.requires && c.requires.length > 0) b.push(`requires: [${c.requires.map(yamlScalar).join(', ')}]`);
@@ -713,6 +727,18 @@ export function parseHypermediaMarkdown(md: string): HypermediaMarkdownDoc {
       else if (k === 'target') target = unquote(v);
       else if (k === 'expects') c.expects = unquote(v);
       else if (k === 'returns') c.returns = unquote(v);
+      else if (k === 'fields') {
+        // Store-and-forward bytes are untrusted: keep ONLY well-formed field
+        // objects (a string `path`), matching the extractor's write-path guard —
+        // so a forged `fields: [null] / [{}] / [1]` can't reach the lift.
+        try {
+          const arr = JSON.parse(v);
+          if (Array.isArray(arr)) {
+            const clean = arr.filter((e) => e && typeof e === 'object' && typeof (e as { path?: unknown }).path === 'string' && (e as { path: string }).path.length > 0);
+            if (clean.length > 0) c.fields = clean as HypermediaControl['fields'];
+          }
+        } catch { /* malformed inline schema — drop, keep the canonical expects ref */ }
+      }
       else if (k === 'mediaType') c.mediaType = unquote(v);
       else if (k === 'whenToUse') c.whenToUse = unquote(v);
       else if (k === 'requires') c.requires = parseInlineList(v);
@@ -864,6 +890,26 @@ export function liftHypermediaMarkdown(md: string): readonly HmdTriple[] {
         push(b, ck === 'state' ? ex('state') : ex(ck), cv, 'literal');
       }
     }
+    // Inline field schema → sh:property blank nodes (fixed SHACL IRIs, no context
+    // term dependency for the sub-fields). Reconstructs the shape the `expects`
+    // IRI references, so the control's RDF carries the form contract directly.
+    // c.fields can arrive from PARSED store-and-forward bytes, so every element is
+    // validated at runtime — a malformed/hostile `fields: [null] / [{}] / [1]` must
+    // never emit an undefined/non-string triple object (which would corrupt RDF
+    // serialization or throw in the triple sort). Mirrors shapeFieldsFor's guard.
+    const SH = 'http://www.w3.org/ns/shacl#';
+    (c.fields ?? []).forEach((raw, fi) => {
+      const f = raw as unknown as Record<string, unknown> | null;
+      if (!f || typeof f !== 'object' || typeof f['path'] !== 'string' || f['path'].length === 0) return;
+      const F = `_:c${idx}f${fi}`;
+      push(N, `${SH}property`, F, 'blank');
+      push(F, `${SH}path`, f['path'], 'iri');
+      if (typeof f['datatype'] === 'string' && f['datatype']) push(F, `${SH}datatype`, f['datatype'], 'iri');
+      if (typeof f['name'] === 'string') push(F, `${SH}name`, f['name'], 'literal');
+      if (typeof f['description'] === 'string') push(F, `${SH}description`, f['description'], 'literal');
+      if (Number.isInteger(f['minCount'])) push(F, `${SH}minCount`, String(f['minCount']), 'literal');
+      if (Number.isInteger(f['maxCount'])) push(F, `${SH}maxCount`, String(f['maxCount']), 'literal');
+    });
   });
 
   return out.sort((a, b) => a.s.localeCompare(b.s) || a.p.localeCompare(b.p) || a.o.localeCompare(b.o));
@@ -943,6 +989,7 @@ export function controlsFromAffordances(
       ...(a.mediaType ? { mediaType: a.mediaType } : {}),
       ...(a.expects ? { expects: a.expects } : {}),
       ...(a.returns ? { returns: a.returns } : {}),
+      ...(a.fields && a.fields.length > 0 ? { fields: a.fields } : {}),
       ...(g?.whenToUse ? { whenToUse: g.whenToUse } : {}),
       ...(g?.requires && g.requires.length > 0 ? { requires: g.requires } : {}),
       ...(src ? { source: src } : {}),
