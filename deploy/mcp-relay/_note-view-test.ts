@@ -92,7 +92,10 @@ const payloadGraph = `@prefix ieh: <https://markjspivey-xwisee.github.io/intereg
 <#propose-correction> a iep:Affordance, hydra:Operation ;
   iep:action <${IEP}proposeCorrection> ; hydra:target <urn:graph:memory:with-controls#pc> ;
   hydra:method "POST" .`;
-const pmMd = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle, plaintextTurtle: payloadGraph });
+// graphIri = the payload's canonical graph IRI (in production the descriptor's
+// iep:describes; here the shared descriptorTurtle describes a different graph, so
+// pass it explicitly — exercising the override path).
+const pmMd = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle, plaintextTurtle: payloadGraph, graphIri: 'urn:graph:memory:with-controls' });
 check('payload controls PROJECTED: ask present (was dropped before)', pmMd.includes(`rel: "${IEP}ask"`));
 check('payload controls PROJECTED: proposeCorrection present', pmMd.includes(`rel: "${IEP}proposeCorrection"`));
 check('descriptor controls STILL present (canDecrypt/renderView)', pmMd.includes(`rel: "${IEP}canDecrypt"`) && pmMd.includes(`rel: "${IEP}renderView"`));
@@ -125,7 +128,7 @@ const targetlessPayload = `@prefix ieh: <https://markjspivey-xwisee.github.io/in
 <#acknowledge> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}acknowledge> ; hydra:method "POST" .
 <#ask> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}ask> ; hydra:method "POST" ; hydra:expects <#AskShape> .
 <#propose-correction> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}proposeCorrection> ; hydra:method "POST" .`;
-const tlMd = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle, plaintextTurtle: targetlessPayload });
+const tlMd = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle, plaintextTurtle: targetlessPayload, graphIri: 'urn:graph:memory:tl' });
 check('BUG X: target-less payload controls PROJECT (were silently dropped)', tlMd.includes(`rel: "${IEP}acknowledge"`) && tlMd.includes(`rel: "${IEP}ask"`) && tlMd.includes(`rel: "${IEP}proposeCorrection"`));
 check('BUG X: all 5 controls present (2 descriptor + 3 target-less payload)', (tlMd.match(/:::control /g) || []).length === 5, String((tlMd.match(/:::control /g) || []).length));
 check('BUG X: still authority-closed — every control target is a fragment of the view URL, no transport leak', !tlMd.includes('hydra/core#target') && (tlMd.match(/^target: "([^"]+)"$/gm) || []).every((l) => l.includes(`"${viewUrl}#control-`)));
@@ -192,6 +195,43 @@ check('get_descriptor: internal descriptor URL + NO renderView target → null (
   const gpub = inlineRenderedForDescriptor({ descriptorUrl: pubDesc, descriptorTurtle: `@prefix iep: <${IEP}> . <> a iep:ContextDescriptor .`, plaintextTurtle: georgioPayload, publicBase: PUBLIC_BASE, port: 8080 });
   check('get_descriptor: public descriptor URL + no renderView target → non-null, host-free fallback identity', !!gpub && parseHypermediaMarkdown(gpub.rendered).id === `${PUBLIC_BASE}/render/${encodeURIComponent(pubDesc)}`);
 }
+
+// ── georgio retest residuals: stable canonical provenance + body dedent ────────
+// #2: the control `source` + relative-shape base must be the CANONICAL graph IRI
+// (descriptor's iep:describes), IDENTICAL across the publish hand-back (authored
+// subject) and a re-fetch (relay-reminted subject) — georgio saw them disagree
+// (urn:memory:… vs urn:iep:…), neither equal to the named graph IRI.
+const CANON = 'urn:graph:memory:stable-canon-xyz';
+const descWithDescribes = `@prefix iep: <${IEP}> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+<https://relay/desc.ttl> a iep:ContextDescriptor ; iep:describes <${CANON}> ; iep:affordance <#renderView> .
+<#renderView> a iep:Affordance ; iep:action <${IEP}renderView> ; hydra:target <https://relay/render/x> ; hydra:method "GET" .`;
+const authoredPayload = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix schema: <https://schema.org/> .
+@prefix iep: <${IEP}> .
+@prefix hmd: <https://markjspivey-xwisee.github.io/interego/ns/hmd#> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+<urn:memory:authored-form> a ieh:AgentMemory ; schema:name "Stable" ; schema:text "x" ; hmd:control <#ask> .
+<#ask> a hmd:Control, iep:Affordance, hydra:Operation ; iep:action <${IEP}ask> ; hydra:method "POST" ; hydra:expects <#AskShape> .`;
+const remintedPayload = authoredPayload.replace(/urn:memory:authored-form/g, 'urn:iep:u-pk-x:1784000000000');
+const pubMd = noteToHyperMarkdown({ viewUrl: 'https://relay/render/x', authority: 'https://relay/desc.ttl', descriptorTurtle: descWithDescribes, plaintextTurtle: authoredPayload });
+const getMd = noteToHyperMarkdown({ viewUrl: 'https://relay/render/x', authority: 'https://relay/desc.ttl', descriptorTurtle: descWithDescribes, plaintextTurtle: remintedPayload });
+check('residual #2: control source is the CANONICAL describes IRI, not the payload subject', pubMd.includes(`source: "${CANON}"`) && !pubMd.includes('urn:memory:authored-form"'));
+check('residual #2: relative #AskShape resolves against the CANONICAL IRI', pubMd.includes(`expects: "${CANON}#AskShape"`));
+check('residual #2: publish hand-back + re-fetch tag IDENTICAL source/expects bases', getMd.includes(`source: "${CANON}"`) && getMd.includes(`expects: "${CANON}#AskShape"`) && !getMd.includes('urn:iep:u-pk-x'));
+const descNoDescribes = `@prefix iep: <${IEP}> . <https://relay/desc.ttl> a iep:ContextDescriptor .`;
+const ovMd = noteToHyperMarkdown({ viewUrl: 'https://relay/render/x', authority: 'https://relay/desc.ttl', descriptorTurtle: descNoDescribes, plaintextTurtle: authoredPayload, graphIri: CANON });
+check('residual #2: explicit graphIri override (publish_context) tags the canonical base', ovMd.includes(`source: "${CANON}"`) && ovMd.includes(`expects: "${CANON}#AskShape"`));
+
+// #3: a uniformly-indented stored text literal must NOT render as a CommonMark
+// code block on re-fetch (georgio: "    This signed…" became a code block).
+const indentedTextPayload = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix schema: <https://schema.org/> .
+<urn:graph:memory:z> a ieh:AgentMemory ; schema:name "Indented" ;
+  schema:text """    This signed note
+    spans two lines.""" .`;
+const idMd = noteToHyperMarkdown({ viewUrl: 'https://relay/render/x', authority: 'https://relay/desc.ttl', descriptorTurtle: descWithDescribes, plaintextTurtle: indentedTextPayload });
+check('residual #3: note prose present, dedented (no >=4-space code-block indent)', idMd.includes('This signed note') && idMd.includes('spans two lines') && !/\n {4,}This signed note/.test(idMd) && !/\n {4,}spans two lines/.test(idMd));
 
 console.log(`\n${ok}/${ok + bad} note-view checks passed`);
 process.exit(bad === 0 ? 0 : 1);
