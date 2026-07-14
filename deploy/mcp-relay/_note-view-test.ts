@@ -74,5 +74,37 @@ check('remember-shaped memory: title becomes the H1', memMd.includes('# A rememb
 check('remember-shaped memory: multi-line body renders as prose (newlines survive)', memMd.includes('First line of the memory.') && memMd.includes('Second line with a "quote".') && memMd.includes('Third line.'));
 check('remember-shaped memory: still private + parses', /^state: "private"$/m.test(memMd) && parseHypermediaMarkdown(memMd).id === viewUrl);
 
+// PAYLOAD-level controls declared in the signed graph must be projected too,
+// tagged with their source (signed-payload) distinct from descriptor controls
+// (canDecrypt/renderView). Regression for georgio's "signed payload controls are
+// not projected" gap.
+const payloadGraph = `@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix schema: <https://schema.org/> .
+@prefix iep: <${IEP}> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+<urn:graph:memory:with-controls> a ieh:AgentMemory ;
+  schema:name "Memory with payload controls" ;
+  schema:text "A claim you can ask about or propose a correction to." ;
+  iep:affordance <#ask>, <#propose-correction> .
+<#ask> a iep:Affordance, hydra:Operation ;
+  iep:action <${IEP}ask> ; hydra:target <urn:graph:memory:with-controls#ask> ;
+  hydra:method "POST" ; hydra:expects <${IEP}AskInputShape> .
+<#propose-correction> a iep:Affordance, hydra:Operation ;
+  iep:action <${IEP}proposeCorrection> ; hydra:target <urn:graph:memory:with-controls#pc> ;
+  hydra:method "POST" .`;
+const pmMd = noteToHyperMarkdown({ viewUrl, authority, descriptorTurtle, plaintextTurtle: payloadGraph });
+check('payload controls PROJECTED: ask present (was dropped before)', pmMd.includes(`rel: "${IEP}ask"`));
+check('payload controls PROJECTED: proposeCorrection present', pmMd.includes(`rel: "${IEP}proposeCorrection"`));
+check('descriptor controls STILL present (canDecrypt/renderView)', pmMd.includes(`rel: "${IEP}canDecrypt"`) && pmMd.includes(`rel: "${IEP}renderView"`));
+check('payload control carries source = the signed payload graph (authority distinction)', /source: "urn:graph:memory:with-controls"/.test(pmMd));
+check('descriptor control carries source = the signed descriptor', new RegExp(`source: "${authority.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}"`).test(pmMd));
+check('payload control input shape (expects) surfaced', pmMd.includes(`expects: "${IEP}AskInputShape"`));
+{
+  const back = parseHypermediaMarkdown(pmMd);
+  const ask = back.controls.find((c) => c.action === `${IEP}ask`);
+  check('round-trips: ask control parses with its source', !!ask && ask.source === 'urn:graph:memory:with-controls');
+  check('still authority-closed + no transport leak', !pmMd.includes('hydra/core#target'));
+}
+
 console.log(`\n${ok}/${ok + bad} note-view checks passed`);
 process.exit(bad === 0 ? 0 : 1);

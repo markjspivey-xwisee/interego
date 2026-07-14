@@ -45,6 +45,9 @@ const CG_ACTION = `${CG}action` as IRI;
 const HYDRA_TARGET = `${HYDRA}target` as IRI;
 const HYDRA_METHOD = `${HYDRA}method` as IRI;
 const DCAT_MEDIA_TYPE = `${DCAT}mediaType` as IRI;
+const HYDRA_EXPECTS = `${HYDRA}expects` as IRI;
+const HYDRA_RETURNS = `${HYDRA}returns` as IRI;
+const CG_INPUT_SHAPE = `${CG}inputShape` as IRI;
 
 const VALID_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -92,6 +95,10 @@ export function extractAffordancesFromTurtle(
     const methodRaw = (readStringValue(subject, HYDRA_METHOD) ?? 'POST').toUpperCase();
     const method = (VALID_METHODS.has(methodRaw) ? methodRaw : 'POST') as Affordance['method'];
     const mediaType = readStringValue(subject, DCAT_MEDIA_TYPE);
+    // Input/output contract — the SHACL input shape a caller validates against
+    // (hydra:expects or iep:inputShape) + hydra:returns, as dereferenceable IRIs.
+    const expects = readIriValue(subject, HYDRA_EXPECTS) ?? readIriValue(subject, CG_INPUT_SHAPE);
+    const returns = readIriValue(subject, HYDRA_RETURNS);
 
     const dedup = `${action}${target}${method}`;
     if (seen.has(dedup)) continue;
@@ -103,6 +110,8 @@ export function extractAffordancesFromTurtle(
       method,
     };
     if (mediaType) aff.mediaType = mediaType;
+    if (expects) aff.expects = expects;
+    if (returns) aff.returns = returns;
     if (sourceDescriptor) aff.fromDescriptor = sourceDescriptor;
     if (!key.startsWith('_:')) aff.subjectIri = key;
     out.push(aff);
