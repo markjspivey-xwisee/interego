@@ -38,6 +38,9 @@ const SH_PATH = `${SHACL}path` as IRI;
 const SH_DATATYPE = `${SHACL}datatype` as IRI;
 const SH_MIN_COUNT = `${SHACL}minCount` as IRI;
 const SH_MAX_COUNT = `${SHACL}maxCount` as IRI;
+const SH_MIN_LENGTH = `${SHACL}minLength` as IRI;
+const SH_MAX_LENGTH = `${SHACL}maxLength` as IRI;
+const SH_PATTERN = `${SHACL}pattern` as IRI;
 const SH_NAME = `${SHACL}name` as IRI;
 const SH_DESCRIPTION = `${SHACL}description` as IRI;
 
@@ -193,6 +196,9 @@ function shapeFieldsFor(
     const de = readStringValue(ps, SH_DESCRIPTION); if (de) f.description = de;
     const mn = Number(readStringValue(ps, SH_MIN_COUNT)); if (Number.isInteger(mn)) f.minCount = mn;
     const mx = Number(readStringValue(ps, SH_MAX_COUNT)); if (Number.isInteger(mx)) f.maxCount = mx;
+    const mnl = Number(readStringValue(ps, SH_MIN_LENGTH)); if (Number.isInteger(mnl)) f.minLength = mnl;
+    const mxl = Number(readStringValue(ps, SH_MAX_LENGTH)); if (Number.isInteger(mxl)) f.maxLength = mxl;
+    const pat = readStringValue(ps, SH_PATTERN); if (pat) f.pattern = pat;
     fields.push(f);
   }
   return fields.length ? fields : undefined;

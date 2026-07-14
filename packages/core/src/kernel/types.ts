@@ -89,6 +89,12 @@ export interface ShapeField {
   readonly minCount?: number;
   /** `sh:maxCount` — maximum cardinality, when declared. */
   readonly maxCount?: number;
+  /** `sh:minLength` — minimum string length, when declared. */
+  readonly minLength?: number;
+  /** `sh:maxLength` — maximum string length, when declared. */
+  readonly maxLength?: number;
+  /** `sh:pattern` — a regex the value must match, when declared. */
+  readonly pattern?: string;
 }
 
 /**
