@@ -7001,7 +7001,7 @@ const TOOL_SCHEMAS = [
         owner_name: { type: 'string', description: 'Owner display name' },
         label: { type: 'string', description: 'Human-readable label for this agent' },
         scope: { type: 'string', enum: ['ReadWrite', 'Read'], description: 'Authorization scope (default: ReadWrite)' },
-        tenant_admin: { type: 'boolean', description: 'Grant this agent the tenant-admin governance capability, folded into its SIGNED delegation VC (not the forgeable registry). Honored ONLY when pod_name is your own authenticated pod — a bare ReadWrite/pod-write delegate cannot self-grant. Lets a pod-delegated agent whose session wallet rotated act as tenant admin (ingest / assign / cohort analytics / enroll-others), audited as a distinct delegated-admin role.' },
+        tenant_admin: { type: 'boolean', description: 'Grant this agent the tenant-admin governance capability, folded into its SIGNED delegation VC (not the forgeable registry). Honored ONLY when pod_name is your own authenticated pod — a bare ReadWrite/pod-write delegate cannot self-grant. Lets a pod-delegated agent whose session wallet rotated act as tenant admin (ingest / assign / cohort analytics / enroll-others), audited as a distinct delegated-admin role. NOTE (intentional, by security policy): the capability lives ONLY in the signed VC, so a plain re-register / idempotent credential repair does NOT carry it forward — after a session-key ROTATION you must re-assert it by calling register_agent{tenant_admin:true} again. A rotated key must explicitly re-claim governance; it is never silently retained.' },
       },
       required: ['agent_id'],
     },

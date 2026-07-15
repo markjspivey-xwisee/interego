@@ -2264,7 +2264,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       // membership (fail-closed to the tenant pod alone if membership is unreadable).
       const tenantPod = (args.tenant_pod_url as string) || tenantPodUrl;
       const allowed = await tenantMemberPodBases(tenantPod);
-      learnerPods = learnerPods.filter(u => allowed.has(podBaseOf(u)));
+      // Scope a SUPPLIED learner_pod_urls list to tenant membership (F1 PII); when it
+      // is OMITTED, default to ALL tenant-member pods so a delegated-admin can run
+      // with tenant_pod_url alone (georgio: tenant_pod_url-only returned cohortSize=0
+      // because learnerPods started empty and was only ever filtered, never populated).
+      learnerPods = learnerPods.length
+        ? learnerPods.filter(u => allowed.has(podBaseOf(u)))
+        : Array.from(allowed);
       access = auditDelegatedAdmin(ctx.webId, 'foxxi.cohort_concept_intelligence', tenantPod);
     }
     const entries = await gatherCohortQA({

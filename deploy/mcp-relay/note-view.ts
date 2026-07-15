@@ -141,7 +141,11 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
   const byAction = new Map<string, (typeof descriptorControls)[number]>();
   for (const c of [...descriptorControls, ...payloadControls]) byAction.set(c.action, c);
   const controls = [...byAction.values()];
-  const title = pickLiteral(input.plaintextTurtle, 'dct:title|schema:name|rdfs:label|schema:headline') || 'Private note';
+  // Reflect the note's ACTUAL visibility (from the descriptor) in the projection.
+  // A PUBLIC note (iep:visibility "public" / iep:encrypted false) must NOT be
+  // labelled or stated as private/encrypted (georgio: public note mislabeled private).
+  const isPublic = /iep:visibility\s+"public"/.test(input.descriptorTurtle) || /iep:encrypted\s+false\b/.test(input.descriptorTurtle);
+  const title = pickLiteral(input.plaintextTurtle, 'dct:title|schema:name|rdfs:label|schema:headline') || (isPublic ? 'Note' : 'Private note');
   // Dedent: the stored graph is re-serialized on persist and its multi-line text
   // literal comes back uniformly indented, which CommonMark renders as a code
   // block on re-fetch (but not on the publish hand-back). Normalize both.
@@ -157,16 +161,18 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
   const body = [
     ...(textOpensWithH1 ? [] : [`# ${title.replace(/\s+/g, ' ')}`, ``]),
     ...(safeText ? [safeText, ``] : []),
-    `_Private note — encrypted at rest; decrypted here for you, the authorized agent. Its controls and links are below; the note stays private._`,
+    isPublic
+      ? `_Public note — plaintext, readable by anyone. Its controls and links are below._`
+      : `_Private note — encrypted at rest; decrypted here for you, the authorized agent. Its controls and links are below; the note stays private._`,
   ].join('\n');
   return renderHypermediaMarkdown({
     id: input.viewUrl,
     type: ['ieh:AgentMemory', 'hmd:Document'],
     descriptorUrl: input.authority,
-    state: 'private',
+    state: isPublic ? 'public' : 'private',
     links: [
       { label: 'Signed descriptor (authority)', href: input.authority, rel: 'describedby', type: 'text/turtle' },
-      { label: 'Turtle (decrypted)', href: `${input.viewUrl}?format=turtle`, rel: 'alternate', type: 'text/turtle' },
+      { label: isPublic ? 'Turtle' : 'Turtle (decrypted)', href: `${input.viewUrl}?format=turtle`, rel: 'alternate', type: 'text/turtle' },
     ],
     controls,
     body,
