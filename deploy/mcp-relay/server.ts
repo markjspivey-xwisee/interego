@@ -4723,8 +4723,14 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
 // — pass it verbatim as the `payload` of `act` on the target affordance.
 async function handleSignRequest(args: ToolArgs): Promise<string> {
   // Identity is SESSION-DERIVED (server-injected), never a caller argument.
-  const agentId = (args._session_agent_id as string | undefined)
-    ?? (args._session_agent_did as string | undefined);
+  // Emit the CANONICAL did:web DID (what register_agent / publish_context
+  // auto-registration key the on-pod credential + registry on). Preferring
+  // the bare slug (_session_agent_id) meant a did:web agent signed requests
+  // under the slug while its delegation credential lived under the DID, so
+  // Foxxi's exact-string delegation lookup 404'd. For a non-did:web principal
+  // the two session fields are identical, so this is a no-op.
+  const agentId = (args._session_agent_did as string | undefined)
+    ?? (args._session_agent_id as string | undefined);
   if (!agentId) {
     return JSON.stringify({ error: 'sign_request: no authenticated session identity — sign_request signs only for the bound caller (authenticate first).' });
   }
