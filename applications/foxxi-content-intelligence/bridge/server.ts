@@ -3834,7 +3834,13 @@ function delegatedAdminContext(agentDid: string): CallerContext {
   return { webId: agentDid, userId: 'delegated-admin:' + agentDid, role: 'delegated-admin', directReports: new Set() };
 }
 function auditDelegatedAdmin(agentDid: string, tool: string, tenantPod: string): AccessDecisionTrace {
-  const trace = emitAccessDecision({ ctx: delegatedAdminContext(agentDid), tool, decision: 'allow', appliedPolicies: ['delegated-admin@' + tenantPod] });
+  // Host-free pod identity for the audit policy string — NEVER the internal pod
+  // host. This trace is returned in the response and can be remembered into a
+  // PUBLIC note, so an internal host (css.railway.internal) here would leak into a
+  // public projection. The pod SLUG (u-pk-… / eth-… — already public in the gate
+  // URL) is the canonical, leak-safe identity.
+  const slug = tenantPod.match(/(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i)?.[0] ?? 'tenant';
+  const trace = emitAccessDecision({ ctx: delegatedAdminContext(agentDid), tool, decision: 'allow', appliedPolicies: ['delegated-admin@' + slug] });
   console.log('[foxxi][delegated-admin] ' + JSON.stringify(trace));
   return trace;
 }
