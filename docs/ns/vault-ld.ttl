@@ -1,0 +1,106 @@
+@prefix vldp:    <https://relay.interego.xwisee.com/ns/maintainer/vault-ld#> .
+@prefix vld:     <https://github.com/The-Knowledge-Graph-Guys/vault-ld#> .
+@prefix hmd:     <https://relay.interego.xwisee.com/ns/maintainer/hmd#> .
+@prefix iep:     <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix ieh:     <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix hydra:   <http://www.w3.org/ns/hydra/core#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh:      <http://www.w3.org/ns/shacl#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+
+# ══════════════════════════════════════════════════════════════
+#  Vault-LD conformance profile (vldp) 0.1
+#
+#  Vault-LD (github.com/The-Knowledge-Graph-Guys/vault-ld, v0.5, Apache-2.0) is a
+#  CONFORMANCE POINT on HyperMarkdown's progressive-enhancement spectrum, NOT a
+#  foreign format: rung 1 = the Markdown body, rung 2 = YAML-LD frontmatter, rung
+#  3 = shared @context + [[wiki-links]] lifting to RDF, rung 4 = authority-closed
+#  :::control affordances — which Vault-LD deliberately has NONE of. So HMD = Vault-LD
+#  + rung 4; a Vault-LD note is a control-free HMD document.
+#
+#  This graph is the profile expressed as DATA: the substrate's general Markdown-vault
+#  projection engine (@interego/mdvault) is parameterized by these knobs, and validates
+#  its output against vldp:ConformanceShape. Nothing in the engine names Vault-LD; a
+#  second dialect is a new profile + shape, no code change. Compliance is therefore a
+#  dereferenceable link + a passing SHACL check, not a hardcoded assertion.
+# ══════════════════════════════════════════════════════════════
+
+<https://relay.interego.xwisee.com/ns/maintainer/vault-ld>
+  a owl:Ontology , vldp:Profile ;
+  dcterms:title "Vault-LD conformance profile" ;
+  rdfs:label "Vault-LD conformance profile (vldp) 0.1 — rung-<=3 HyperMarkdown" ;
+  owl:versionInfo "0.1-draft" ;
+  dcterms:creator <mailto:mark.spivey@xwisee.com> ;
+  dcterms:modified "2026-07-15"^^xsd:date ;
+  dcterms:conformsTo <https://github.com/The-Knowledge-Graph-Guys/vault-ld> ;
+  rdfs:seeAlso <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:comment "A declarative projection profile that makes the general Markdown-vault engine conform to Vault-LD v0.5. Its knobs (below) select the rung ceiling, context-resolution, identity minting, link grammar, and placement predicate; its SHACL shape (vldp:ConformanceShape) verifies the rung-<=3 authority closure on the projected graph." ;
+  # ── the knobs (self-describing; the engine reads these) ──
+  vldp:maxRung 3 ;
+  vldp:contextSource "external" ;
+  vldp:forbidInlineContext true ;
+  vldp:identityStrategy "vault-ld-4.5" ;
+  vldp:linkGrammar "wiki" ;
+  vldp:placementPredicate vld:path ;
+  vldp:conformanceShape vldp:ConformanceShape .
+
+vldp:Profile a owl:Class ;
+  rdfs:label "Projection profile" ;
+  rdfs:comment "A named set of knobs (rung ceiling, context source, identity strategy, link grammar, placement predicate) + a conformance shape that make the general Markdown-vault projection engine behave as a specific dialect. Data, not code." .
+
+vldp:maxRung a owl:DatatypeProperty ;
+  rdfs:label "maximum rung" ;
+  rdfs:comment "The HyperMarkdown progressive-enhancement ceiling the profile permits. 3 = descriptive data only (no executable affordances); 4 = full HMD. Enforced by vldp:ConformanceShape." ;
+  rdfs:range xsd:integer .
+
+vldp:conformanceShape a owl:ObjectProperty ;
+  rdfs:label "conformance shape" ;
+  rdfs:comment "The SHACL NodeShape a projection's output must satisfy to conform to this profile." .
+
+# ── §6 conformance: the rung-<=3 AUTHORITY CLOSURE, as verifiable SHACL ──
+#
+#  The load-bearing, verifiable property: a Vault-LD graph is DESCRIPTIVE DATA and must
+#  carry no EXECUTION AUTHORITY. Any node typed as an operation/affordance/control, or
+#  any triple using an authority predicate, is a violation — regardless of how it got
+#  there (a hostile @context remapping an innocent key, a CURIE key, an @type alias).
+#  Deprecated cg:/cgh: read-aliases are covered by matching their canonical iep:/ieh:
+#  forms in the engine before this shape runs.
+
+vldp:ConformanceShape a sh:NodeShape ;
+  rdfs:label "Vault-LD rung-<=3 conformance shape" ;
+  rdfs:comment "Validates the rung-<=3 authority closure over a projected Vault-LD graph: no executable operation/affordance/control types, and no authority predicates." ;
+  # No node may be an executable operation / affordance / control (a targeted node has an
+  # rdf:type, so requiring 0 rdf:type makes every such node a violation).
+  sh:targetClass hydra:Operation ;
+  sh:targetClass iep:Affordance ;
+  sh:targetClass ieh:Affordance ;
+  sh:targetClass hmd:Control ;
+  sh:property [
+    sh:path rdf:type ;
+    sh:maxCount 0 ;
+    sh:message "Rung-<=3 violation: a Vault-LD graph must not type any node as hydra:Operation / iep:Affordance / ieh:Affordance / hmd:Control (that is rung-4 execution authority)." ;
+  ] .
+
+vldp:NoAuthorityPredicatesShape a sh:NodeShape ;
+  rdfs:label "no authority predicates" ;
+  rdfs:comment "No subject may carry an authority predicate (an operation target/method, a supported operation, an action, or an HMD control edge)." ;
+  sh:targetSubjectsOf hydra:target ;
+  sh:targetSubjectsOf hydra:method ;
+  sh:targetSubjectsOf hydra:operation ;
+  sh:targetSubjectsOf hydra:supportedOperation ;
+  sh:targetSubjectsOf iep:action ;
+  sh:targetSubjectsOf hmd:target ;
+  sh:targetSubjectsOf hmd:rel ;
+  sh:targetSubjectsOf hmd:control ;
+  sh:property [ sh:path hydra:target ;             sh:maxCount 0 ; sh:message "Rung-<=3 violation: hydra:target (execution authority)." ] ;
+  sh:property [ sh:path hydra:method ;             sh:maxCount 0 ; sh:message "Rung-<=3 violation: hydra:method." ] ;
+  sh:property [ sh:path hydra:operation ;          sh:maxCount 0 ; sh:message "Rung-<=3 violation: hydra:operation." ] ;
+  sh:property [ sh:path hydra:supportedOperation ; sh:maxCount 0 ; sh:message "Rung-<=3 violation: hydra:supportedOperation." ] ;
+  sh:property [ sh:path iep:action ;               sh:maxCount 0 ; sh:message "Rung-<=3 violation: iep:action." ] ;
+  sh:property [ sh:path hmd:target ;               sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:target." ] ;
+  sh:property [ sh:path hmd:rel ;                  sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:rel." ] ;
+  sh:property [ sh:path hmd:control ;              sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:control." ] .

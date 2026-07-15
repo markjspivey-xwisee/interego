@@ -1,0 +1,29 @@
+{
+  "name": "@interego/mdvault",
+  "version": "0.1.0",
+  "description": "General Markdown-vault -> linked-data projection engine over @interego/core. A directory of Markdown-with-YAML-LD-frontmatter notes projects to a graph; the projection is PROFILE-DRIVEN (context-resolution, identity-minting, link grammar, rung ceiling are knobs set by a declarative profile). Vault-LD is ONE profile (data), never a module here.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist/", "src/", "README.md"],
+  "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@interego/core": "*",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
