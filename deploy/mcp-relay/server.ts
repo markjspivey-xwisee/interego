@@ -159,6 +159,10 @@ import {
 import {
   buildAccessChangeEvent,
 } from '@interego/ops';
+// Vault-LD projection engine — a general Markdown-vault -> linked-data projection driven
+// by VAULT_LD_PROFILE (data). Served below as a FOLLOWABLE affordance (/vault/ingest),
+// discoverable via /ns/maintainer/vault-ld — not an MCP tool.
+import { ingestVault, VAULT_LD_PROFILE } from '@interego/mdvault';
 // Private-note HyperMarkdown projection (extracted for unit-testability; server.ts is self-starting).
 import { noteToHyperMarkdown, inlineRenderedForDescriptor, viewerControls } from './note-view.js';
 // The generic HyperMarkdown MCP-App renderer (served as a ui:// resource).
@@ -8444,6 +8448,61 @@ app.get('/.well-known/operations', (req, res) => {
     'hydra:totalItems': members.length,
     'hydra:member': members,
   });
+});
+
+// ── /vault/ingest — the Vault-LD projection affordance (emergent, not a tool) ──
+//
+// The followable target of vldp:IngestAffordance (declared in /ns/maintainer/vault-ld).
+// An agent dereferences that profile, discovers this operation, and POSTs a vault bundle
+// here; the general @interego/mdvault engine projects it under VAULT_LD_PROFILE. This is
+// a DISCOVERABLE affordance — deliberately NOT registered in the TOOLS/MCP surface.
+//
+// Pure projection: in-memory only (no pod write, no filesystem/network), so it is public
+// + rate-limited rather than auth-gated. Descriptive DATA only — an authority-looking note
+// (a rung-4 control smuggled via a hostile @context) is QUARANTINED, never lifted, so no
+// execution authority is ever imported into the returned graph.
+const vaultIngestLimiter = rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: true, legacyHeaders: false });
+app.post('/vault/ingest', vaultIngestLimiter, (req, res) => {
+  const body = (req.body ?? {}) as { notes?: Record<string, string>; contexts?: Record<string, string>; rootContextPath?: string };
+  const notes = body.notes ?? {};
+  const contexts = body.contexts ?? {};
+  // Bundle-level bounds beyond mdvault's per-note limits (DoS on a public compute route).
+  if (Object.keys(notes).length > 2000 || Object.keys(contexts).length > 500) {
+    res.status(413).type('application/json').json({ error: 'vault has too many notes/contexts', code: 413 });
+    return;
+  }
+  let total = 0;
+  for (const v of [...Object.values(notes), ...Object.values(contexts)]) total += typeof v === 'string' ? v.length : 0;
+  if (total > 8 * 1024 * 1024) {
+    res.status(413).type('application/json').json({ error: 'vault payload exceeds 8 MiB', code: 413 });
+    return;
+  }
+  try {
+    const bundle = typeof body.rootContextPath === 'string'
+      ? { notes, contexts, rootContextPath: body.rootContextPath }
+      : { notes, contexts };
+    const graph = ingestVault(bundle, VAULT_LD_PROFILE);
+    const quarantined = graph.notes.filter(n => n.quarantinedReason);
+    res.type('application/json').json({
+      profile: VAULT_LD_PROFILE.id,
+      conformsToShape: VAULT_LD_PROFILE.conformsToShape,
+      rungCeiling: VAULT_LD_PROFILE.maxRung,
+      triples: graph.triples,
+      notes: graph.notes,
+      // content addresses only — the caller already holds the source bytes.
+      atoms: graph.atoms.map(a => ({ iri: a.iri, path: a.path, kind: a.kind })),
+      diagnostics: graph.diagnostics,
+      conformance: {
+        conforms: quarantined.length === 0,
+        quarantined: quarantined.map(n => ({ path: n.path, reason: n.quarantinedReason })),
+      },
+      ...(graph.rootContextPath !== undefined ? { rootContextPath: graph.rootContextPath } : {}),
+    });
+  } catch (e) {
+    // A hard refusal (bad path, YAML attack, duplicate JSON key, oversized) — nothing lands.
+    const err = e as { code?: string; message?: string };
+    res.status(422).type('application/json').json({ error: err.message ?? String(e), code: err.code ?? 'ingest_error' });
+  }
 });
 
 // ── WebFinger (RFC 7033) + ActivityPub (W3C) discovery surface ──────

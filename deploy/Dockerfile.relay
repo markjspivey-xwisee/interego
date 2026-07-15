@@ -36,7 +36,7 @@ RUN npm run build
 # image boundaries).
 RUN mkdir -p /tarballs && \
     cd packages/core && npm pack --pack-destination /tarballs && cd /workspace && \
-    for pkg in pgsl solid abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions; do \
+    for pkg in pgsl solid abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions mdvault; do \
       cd packages/$pkg && npm pack --pack-destination /tarballs && cd /workspace ; \
     done
 
@@ -78,7 +78,8 @@ RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./packag
       /tarballs/interego-compliance-0.2.0.tgz \
       /tarballs/interego-privacy-0.2.0.tgz \
       /tarballs/interego-security-txt-0.2.0.tgz \
-      /tarballs/interego-ops-0.2.0.tgz
+      /tarballs/interego-ops-0.2.0.tgz \
+      /tarballs/interego-mdvault-0.1.0.tgz
 
 COPY deploy/mcp-relay/tsconfig.json ./
 COPY deploy/mcp-relay/server.ts ./

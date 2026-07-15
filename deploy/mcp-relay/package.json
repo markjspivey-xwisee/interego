@@ -1,7 +1,7 @@
 {
   "name": "@interego/mcp-relay",
   "version": "0.3.0",
-  "description": "Cloud-hosted MCP relay \u2014 HTTP/SSE bridge for remote AI agents to access Interego tools",
+  "description": "Cloud-hosted MCP relay — HTTP/SSE bridge for remote AI agents to access Interego tools",
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -26,7 +26,8 @@
     "js-yaml": "^4.1.0",
     "jsonld": "^8.3.3",
     "rdf-canonize": "^4.0.1",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "@interego/mdvault": "*"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
