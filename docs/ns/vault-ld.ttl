@@ -46,7 +46,25 @@
   vldp:identityStrategy "vault-ld-4.5" ;
   vldp:linkGrammar "wiki" ;
   vldp:placementPredicate vld:path ;
-  vldp:conformanceShape vldp:ConformanceShape .
+  vldp:conformanceShape vldp:ConformanceShape ;
+  iep:affordance vldp:IngestAffordance .
+
+# ── the EMERGENT affordance: project a vault (discoverable + followable) ──
+#
+#  Dereferencing this profile reveals a followable operation, NOT an MCP tool: POST a
+#  vault bundle to the target and the general engine projects it under this profile.
+#  Descriptive DATA only — authority-looking notes are quarantined (never lifted), so no
+#  execution authority is imported. NOTE: vldp:ConformanceShape validates a PROJECTED
+#  vault graph (the operation's output), never this profile document — so this affordance's
+#  own hydra:target/iep:action are not a self-violation.
+vldp:IngestAffordance
+  a iep:Affordance , hydra:Operation ;
+  rdfs:label "Ingest a Vault-LD vault" ;
+  rdfs:comment "POST { notes: {path->bytes}, contexts: {path->bytes}, rootContextPath? } to project a Markdown-with-YAML-LD-frontmatter vault into a rung-<=3 Vault-LD graph, with byte-exact content-addressed source atoms, flag-not-drop diagnostics, and a conformance report. In-memory only (no filesystem/network I/O)." ;
+  iep:action <urn:mdvault:action:vault-ld:ingest> ;
+  hydra:method "POST" ;
+  hydra:target <https://relay.interego.xwisee.com/vault/ingest> ;
+  hydra:returns vldp:IngestResult .
 
 vldp:Profile a owl:Class ;
   rdfs:label "Projection profile" ;
