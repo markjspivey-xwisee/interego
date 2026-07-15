@@ -5231,7 +5231,12 @@ app.post('/agent/scorm/submit', async (req, res) => {
         return { question: item.question, your: raw || null, correct: ok };
       });
       const score = correct / sco.assessment.length;
-      const passed = score >= play.masteryScore;
+      // masteryScore may be authored on either scale: a 0-1 fraction (the 0.7
+      // default / cmi5) or a 0-100 percentage (e.g. 80). Normalize the
+      // threshold by magnitude before comparing, so a percentage author does
+      // not make a perfect 0-1 score (1.0) fail against 80. No-op for [0,1].
+      const threshold = play.masteryScore > 1 ? play.masteryScore / 100 : play.masteryScore;
+      const passed = score >= threshold;
       update = { completion: 'completed', success: passed ? 'passed' : 'failed', scoreScaled: score };
       graded = { score: Number(score.toFixed(3)), correct, total: sco.assessment.length, passed, detail };
     }
