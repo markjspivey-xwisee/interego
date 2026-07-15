@@ -5006,7 +5006,7 @@ function buildAgentScormManifest(course: AgentScormCourse): string {
   <metadata><schema>ADL SCORM</schema><schemaversion>2004 4th Edition</schemaversion></metadata>
   <organizations default="ORG-${cs}">
     <organization identifier="ORG-${cs}"><title>${scormXmlEsc(course.title)}</title>
-      <imsss:sequencing><imsss:controlMode choice="true" flow="true"/><imsss:objectives><imsss:primaryObjective satisfiedByMeasure="true"><imsss:minNormalizedMeasure>${course.masteryScore}</imsss:minNormalizedMeasure></imsss:primaryObjective></imsss:objectives></imsss:sequencing>
+      <imsss:sequencing><imsss:controlMode choice="true" flow="true"/><imsss:objectives><imsss:primaryObjective satisfiedByMeasure="true"><imsss:minNormalizedMeasure>${course.masteryScore > 1 ? course.masteryScore / 100 : course.masteryScore}</imsss:minNormalizedMeasure></imsss:primaryObjective></imsss:objectives></imsss:sequencing>
 ${items}
     </organization>
   </organizations>
