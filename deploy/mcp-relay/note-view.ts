@@ -194,6 +194,16 @@ function renderTargetFromTurtle(turtle: string, base: string): string | undefine
   return m ? m[1] : undefined;
 }
 
+/** The descriptor's own HOST-FREE @id — a `urn:iep:<pod>:<ts>` minted at publish
+ *  time. Carries the pod SLUG (already public in the external gate URL) but NEVER
+ *  the internal pod HOST, so it is a leak-safe render identity for a PUBLIC note
+ *  whose only fetch URL is the internal host. Same shape /render/<id> already
+ *  resolves for encrypted notes (server.ts:2878 uses descriptor.id verbatim). */
+function descriptorUrnFromTurtle(turtle: string): string | undefined {
+  const m = /<(urn:[^>\s]+)>\s+a\s+iep:ContextDescriptor/.exec(turtle);
+  return m ? m[1] : undefined;
+}
+
 /**
  * Leak-safe inline HyperMarkdown projection for a resolved descriptor — the
  * verifiable, no-bearer re-fetch surface `get_descriptor` returns so a client
@@ -232,11 +242,23 @@ export function inlineRenderedForDescriptor(input: {
     // for BOTH @id and describedby, so an internal descriptor URL can never enter
     // the projection — matches publish_context (authority = viewUrl).
     authority = viewUrl;
+  } else if (hasInternalHostLabel(descriptorUrl)) {
+    // No advertised render target AND the only fetch URL carries an `internal` DNS
+    // label (a PUBLIC note persisted to an internal-host pod — encrypted notes get
+    // a host-free /render target, public ones did not). Rather than skip and hand
+    // back an empty projection (georgio's render_hmd-returns-empty defect),
+    // synthesize a HOST-FREE identity from the descriptor's own urn:iep: @id (pod
+    // slug only, never the internal host). This is the same host-free /render/<urn>
+    // shape encrypted notes advertise, and /render resolves the urn — so the public
+    // note projects while the internal host never enters the output. Skip only if
+    // no urn identity is derivable.
+    const urn = descriptorUrnFromTurtle(descriptorTurtle);
+    if (!urn) return null;
+    viewUrl = `${base}/render/${encodeURIComponent(urn)}`;
+    authority = urn;
   } else {
-    // No advertised render target (public-note / legacy shape): only synthesize an
-    // identity from the descriptor URL when it has no `internal` DNS label; else
-    // skip rather than leak the pod host.
-    if (hasInternalHostLabel(descriptorUrl)) return null;
+    // No advertised render target, but the descriptor URL is host-free: synthesize
+    // directly from it (the pre-existing public-note fallback).
     viewUrl = `${base}/render/${encodeURIComponent(descriptorUrl)}`;
     authority = descriptorUrl;
   }
