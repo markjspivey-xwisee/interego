@@ -11504,17 +11504,33 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // OAuth bearer: inject userId-derived defaults (existing behavior).
     // Signature auth: the recovered DID IS the identity — override
     // body.agent_id even if it was supplied (prevents spoofing).
+    // SECURITY (bug #2b): strip any client-forged session-authoritative fields
+    // before re-injecting them. The register_agent tenant_admin grant gate (and
+    // other session-derived logic) trusts _session_user_id; the REST path —
+    // unlike the MCP CallTool handler — does not otherwise sanitize these, so a
+    // caller could forge _session_user_id to grant governance on a pod it does
+    // not own. Strip here, then re-inject the server-authoritative value below.
+    for (const reserved of ['_session_bearer', '_session_principal', '_identity_token', '_session_agent_did', '_session_agent_id', '_session_user_id']) {
+      delete (req.body as Record<string, unknown>)[reserved];
+    }
     if (viaSignature) {
       req.body.agent_id = auth.recoveredDid;
       // For pod naming, derive from the address suffix so signed
       // agents land on their own pods.
       const addr = auth.recoveredDid!.slice('did:ethr:'.length).toLowerCase();
-      if (!req.body.pod_name) req.body.pod_name = `eth-${addr.slice(2, 14)}`;
+      const ownPod = `eth-${addr.slice(2, 14)}`;
+      if (!req.body.pod_name) req.body.pod_name = ownPod;
       if (!req.body.owner_webid) req.body.owner_webid = auth.recoveredDid;
+      // Server-authoritative: a signed caller owns exactly the pod its address
+      // derives — the only pod on which it may grant tenant-admin.
+      req.body._session_user_id = ownPod;
     } else {
       if (!req.body.agent_id) req.body.agent_id = auth.agentId;
       if (!req.body.owner_webid) req.body.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
       if (!req.body.pod_name) req.body.pod_name = auth.userId;
+      // Server-authoritative bearer identity — mirrors the MCP handler so the
+      // register_agent tenant_admin own-pod check works on the REST path too.
+      if (auth.userId) req.body._session_user_id = auth.userId;
     }
     // Auto-register the authenticated participant into the directory
     // (idempotent, fire-and-forget) — REST/signed path counterpart of
