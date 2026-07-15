@@ -797,9 +797,51 @@ export interface HmdTriple {
   readonly p: string;
   readonly o: string;
   readonly oKind: 'iri' | 'literal' | 'blank';
+  /** Optional literal datatype IRI (absent → xsd:string on serialization). */
+  readonly datatype?: string;
 }
 
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+const XSD = 'http://www.w3.org/2001/XMLSchema#';
+
+// ── GFM pipe tables → first-class HMD DATA (hmd:Table / hmd:Row / hmd:Cell) ──
+// Authors write ordinary GFM pipe tables in note prose; CommonMark has no table
+// grammar, so those bytes survive VERBATIM in `body` (parse keeps them, render
+// re-emits them) — the RAW / HMD-Source panes are unchanged. The LIFT is where a
+// table becomes first-class: it is DETECTED in the body and emitted as
+// hmd:Table/Row/Cell so the data is queryable/portable with NO re-authoring. The
+// grammar is byte-identical to the widget renderer
+// (deploy/mcp-relay/hmd-app-logic.ts splitRowCells / delimiterAligns / detectTable)
+// so the RDF and the Enhanced view can never disagree. The #table-* fragments are
+// RDF node ids, never control targets — the authority-closure model (which only
+// governs :::control blocks) is untouched.
+/** Split a pipe-table line into cell texts on UNescaped pipes not inside a code
+ *  span (`\|` → literal pipe; a backtick toggles a code span), dropping one
+ *  optional bordering pipe. Char codes: 124='|', 92='\\', 96=backtick. */
+function splitTableRow(row: string): string[] {
+  let s = row.replace(/^\s+|\s+$/g, '');
+  if (s.charCodeAt(0) === 124) s = s.slice(1);
+  if (s.charCodeAt(s.length - 1) === 124 && s.charCodeAt(s.length - 2) !== 92) s = s.slice(0, -1);
+  const cells: string[] = [];
+  let buf = '';
+  let code = false;
+  for (let i = 0; i < s.length; i++) {
+    const cc = s.charCodeAt(i);
+    if (cc === 92 && s.charCodeAt(i + 1) === 124) { buf += '|'; i++; continue; }
+    if (cc === 96) { code = !code; buf += s.charAt(i); continue; }
+    if (cc === 124 && !code) { cells.push(buf); buf = ''; continue; }
+    buf += s.charAt(i);
+  }
+  cells.push(buf);
+  return cells;
+}
+/** True iff `row` is a GFM delimiter row (has a `|`; every cell matches `:?-+:?`).
+ *  Requiring a pipe stops a bare `---` thematic break reading as a 1-col table. */
+function isTableDelimiterRow(row: string): boolean {
+  if (row.indexOf('|') < 0) return false;
+  const cells = splitTableRow(row);
+  return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c.replace(/^\s+|\s+$/g, '')));
+}
 
 /**
  * Deterministic RDF lift of an emitted document: frontmatter keys under the
@@ -815,8 +857,8 @@ export function liftHypermediaMarkdown(md: string): readonly HmdTriple[] {
   const out: HmdTriple[] = [];
   const D = doc.id;
   const ex = (t: string) => expandHmdTerm(t, doc.extraContext);
-  const push = (s: string, p: string, o: string, oKind: HmdTriple['oKind']) =>
-    out.push({ s, p, o, oKind });
+  const push = (s: string, p: string, o: string, oKind: HmdTriple['oKind'], datatype?: string) =>
+    out.push(datatype !== undefined ? { s, p, o, oKind, datatype } : { s, p, o, oKind });
 
   const types = Array.isArray(doc.type) ? doc.type : [doc.type];
   for (const t of types) push(D, RDF_TYPE, ex(t), 'iri');
@@ -864,6 +906,55 @@ export function liftHypermediaMarkdown(md: string): readonly HmdTriple[] {
     if (attrs['rel']) {
       const relIri = /^[a-z][\w.+-]*:/i.test(attrs['rel']) ? ex(attrs['rel']) : `http://www.iana.org/assignments/relation/${attrs['rel']}`;
       push(D, relIri, lm[2]!, 'iri');
+    }
+  }
+
+  // GFM pipe tables in the prose body → hmd:Table / hmd:Row / hmd:Cell (grammar
+  // byte-identical to the widget renderer). Existing notes lift with NO
+  // re-authoring. Fenced code is skipped; a table stops at a blank / pipe-less
+  // line. Tables are DATA: no rel/action edge from an in-cell link (that would
+  // side-door the control authority closure). Determinism: document order, then
+  // the whole triple set is sorted by (s,p,o) at the end of the lift as before.
+  {
+    const tblLines = doc.body.split('\n');
+    let inFence = false;
+    let tableNo = 0;
+    for (let li = 0; li < tblLines.length; li++) {
+      if (/^(?:`{3,}|~{3,})/.test(tblLines[li]!.trim())) { inFence = !inFence; continue; }
+      if (inFence) continue;
+      if (li + 1 >= tblLines.length || tblLines[li]!.indexOf('|') < 0) continue;
+      if (!isTableDelimiterRow(tblLines[li + 1]!)) continue;
+      const header = splitTableRow(tblLines[li]!).map((c) => c.replace(/^\s+|\s+$/g, ''));
+      if (header.length !== splitTableRow(tblLines[li + 1]!).length) continue;
+      const cols = header.length;
+      const dataRows: string[][] = [];
+      let dj = li + 2;
+      for (; dj < tblLines.length; dj++) {
+        const rl = tblLines[dj]!;
+        if (rl.trim() === '' || rl.indexOf('|') < 0 || /^(?:`{3,}|~{3,})/.test(rl.trim())) break;
+        const cs = splitTableRow(rl);
+        dataRows.push(Array.from({ length: cols }, (_, c) => (cs[c] ?? '').replace(/^\s+|\s+$/g, '')));
+      }
+      tableNo += 1;
+      const T = `${D}#table-${tableNo}`;
+      push(D, ex('hmd:table'), T, 'iri');
+      push(T, RDF_TYPE, ex('hmd:Table'), 'iri');
+      const rows = [{ cells: header, header: true }, ...dataRows.map((cells) => ({ cells, header: false }))];
+      rows.forEach((row, r) => {
+        const R = `${T}-row-${r}`;
+        push(T, ex('hmd:row'), R, 'iri');
+        push(R, RDF_TYPE, ex('hmd:Row'), 'iri');
+        push(R, ex('hmd:rowIndex'), String(r), 'literal', `${XSD}integer`);
+        if (row.header) push(R, ex('hmd:header'), 'true', 'literal', `${XSD}boolean`);
+        row.cells.forEach((text, c) => {
+          const CELL = `${R}-cell-${c}`;
+          push(R, ex('hmd:cell'), CELL, 'iri');
+          push(CELL, RDF_TYPE, ex('hmd:Cell'), 'iri');
+          push(CELL, ex('hmd:colIndex'), String(c), 'literal', `${XSD}integer`);
+          push(CELL, ex('hmd:cellText'), text, 'literal');
+        });
+      });
+      li = dj - 1; // resume after the consumed table
     }
   }
 
