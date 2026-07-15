@@ -34,7 +34,14 @@ import type {
   AdminCoverageEntry,
 } from '../dashboard-app/src/types.js';
 
-export type CallerRole = 'admin' | 'learning-engineer' | 'manager' | 'learner';
+export type CallerRole = 'admin' | 'delegated-admin' | 'learning-engineer' | 'manager' | 'learner';
+
+/** A delegated-admin is admin-equivalent for read/scoping filters, but is a
+ *  DISTINCT, attributable, revocable role in audit traces (never conflated
+ *  with the configured tenant owner). See bug #2b hardened delegated-admin. */
+export function isAdminEquivalent(role: CallerRole): boolean {
+  return role === 'admin' || role === 'delegated-admin';
+}
 
 export interface CallerContext {
   webId: string;
@@ -92,7 +99,7 @@ export function filterEnrollmentEvents(
   events: readonly AdminEvent[],
   ctx: CallerContext,
 ): AdminEvent[] {
-  if (ctx.role === 'admin' || ctx.role === 'learning-engineer') return [...events];
+  if (isAdminEquivalent(ctx.role) || ctx.role === 'learning-engineer') return [...events];
   return events.filter(e =>
     e.user_id === ctx.userId
     || ctx.directReports.has(e.user_id),
@@ -104,7 +111,7 @@ export function filterAuditEntries(
   ctx: CallerContext,
   args?: { targetUserIds?: readonly string[] },
 ): AdminAuditEntry[] {
-  if (ctx.role === 'admin' || ctx.role === 'learning-engineer') return [...audit];
+  if (isAdminEquivalent(ctx.role) || ctx.role === 'learning-engineer') return [...audit];
   const allowedActors = new Set<string>([ctx.userId, ...ctx.directReports]);
   const targetSet = args?.targetUserIds ? new Set(args.targetUserIds) : null;
   return audit.filter(e => {
@@ -122,7 +129,7 @@ export function filterPolicies(
   ctx: CallerContext,
   args: { learnerAudienceTags: readonly string[]; learnerGroupIds: readonly string[] },
 ): AdminPolicy[] {
-  if (ctx.role === 'admin' || ctx.role === 'learning-engineer') return [...policies];
+  if (isAdminEquivalent(ctx.role) || ctx.role === 'learning-engineer') return [...policies];
   // A learner/manager sees a policy iff it targets their audience-tag
   // group OR a group they're a member of. (The bridge's
   // discoverAssignedCourses already does this filtering implicitly;
@@ -137,7 +144,7 @@ export function filterUsers(
   users: readonly AdminUser[],
   ctx: CallerContext,
 ): AdminUser[] {
-  if (ctx.role === 'admin') return [...users];
+  if (isAdminEquivalent(ctx.role)) return [...users];
   // Manager sees self + direct reports; learner sees only self.
   const allowed = new Set<string>([ctx.userId, ...ctx.directReports]);
   return users.filter(u => allowed.has(u.user_id));
@@ -147,7 +154,7 @@ export function filterGroups(
   groups: readonly AdminGroup[],
   ctx: CallerContext,
 ): AdminGroup[] {
-  if (ctx.role === 'admin') return [...groups];
+  if (isAdminEquivalent(ctx.role)) return [...groups];
   // Non-admins see only groups they're members of.
   return groups
     .filter(g => g.member_ids.includes(ctx.userId))
@@ -174,7 +181,7 @@ export function filterConnections(
   ctx: CallerContext,
 ): AdminConnection[] {
   // Connector registry is admin-only.
-  if (ctx.role === 'admin') return [...connections];
+  if (isAdminEquivalent(ctx.role)) return [...connections];
   return [];
 }
 
@@ -183,7 +190,7 @@ export function filterCoverage(
   ctx: CallerContext,
 ): AdminCoverageEntry[] {
   // Coverage is aggregate over the tenant — admin-only.
-  if (ctx.role === 'admin' || ctx.role === 'learning-engineer') return [...coverage];
+  if (isAdminEquivalent(ctx.role) || ctx.role === 'learning-engineer') return [...coverage];
   return [];
 }
 

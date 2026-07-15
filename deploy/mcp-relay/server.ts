@@ -103,6 +103,7 @@ import {
   createDelegationCredential,
   createSignedAuthorship,
   createSignedDelegationCredential,
+  TENANT_ADMIN_CAPABILITY,
   createOwnerProfile,
   verifySignedAuthorship,
   type AuthorshipProof,
@@ -3991,6 +3992,23 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
   const ownerWebId = (args.owner_webid as string) as IRI;
   const agentId = (args.agent_id as string) as IRI;
 
+  // ── tenant-admin governance grant (own-pod-only, owner-authenticated) ──
+  // A governance capability is NOT a data-plane scope: it may be granted ONLY
+  // by the OAuth-authenticated owner of THIS pod (pod_name === the server-
+  // authoritative _session_user_id). A bare ReadWrite/pod-write delegate can
+  // never self-grant it, and no anonymous / API-key path can mint it.
+  const grantTenantAdmin = args.tenant_admin === true;
+  if (grantTenantAdmin) {
+    const sessionUser = (args._session_user_id as string | undefined) ?? '';
+    if (!sessionUser) {
+      return JSON.stringify({ error: 'tenant_admin grant refused: requires an authenticated pod-owner session — no anonymous / API-key grant of governance authority.' });
+    }
+    if (podName !== sessionUser) {
+      return JSON.stringify({ error: `tenant_admin grant refused: you may only grant it on YOUR OWN pod (pod_name must equal your authenticated userId "${sessionUser}"), not "${podName}".` });
+    }
+  }
+  const capabilities = grantTenantAdmin ? [TENANT_ADMIN_CAPABILITY] : undefined;
+
   let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
   if (!profile) {
     profile = createOwnerProfile(ownerWebId, args.owner_name as string);
@@ -4012,6 +4030,7 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
       label: args.label as string,
       isSoftwareAgent: true,
       scope: (args.scope as 'ReadWrite') ?? 'ReadWrite',
+      capabilities,
       validFrom: new Date().toISOString(),
       // The relay registers its own X25519 public key alongside the agent
       // so content encrypted to "this agent" lands decryptable here. Clients
@@ -4032,9 +4051,16 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
   // verify_agent can perform a cryptographic chain walk later.
   // Registry + credential target distinct CSS paths — run the two
   // PUTs concurrently.
-  const agent = profile.authorizedAgents.find(a => a.agentId === agentId);
+  let agent = profile.authorizedAgents.find(a => a.agentId === agentId);
   if (!agent) {
     return JSON.stringify({ error: `agent ${agentId} not present in registry after register` });
+  }
+  // Upgrade path: the registry Turtle carries no capabilities, so attach the
+  // grant to the in-memory agent before (re)signing the VC. This makes the
+  // signed credential at <pod>/credentials/<agent>.jsonld carry the token on
+  // BOTH the fresh and idempotent-re-register paths.
+  if (capabilities && capabilities.length && !capabilities.every(c => agent!.capabilities?.includes(c))) {
+    agent = { ...agent, capabilities: [...new Set([...(agent.capabilities ?? []), ...capabilities])] };
   }
   const credentialAndWrite = (async () => {
     const signer = await getDelegationSigner();
@@ -6975,6 +7001,7 @@ const TOOL_SCHEMAS = [
         owner_name: { type: 'string', description: 'Owner display name' },
         label: { type: 'string', description: 'Human-readable label for this agent' },
         scope: { type: 'string', enum: ['ReadWrite', 'Read'], description: 'Authorization scope (default: ReadWrite)' },
+        tenant_admin: { type: 'boolean', description: 'Grant this agent the tenant-admin governance capability, folded into its SIGNED delegation VC (not the forgeable registry). Honored ONLY when pod_name is your own authenticated pod — a bare ReadWrite/pod-write delegate cannot self-grant. Lets a pod-delegated agent whose session wallet rotated act as tenant admin (ingest / assign / cohort analytics / enroll-others), audited as a distinct delegated-admin role.' },
       },
       required: ['agent_id'],
     },
@@ -7905,7 +7932,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // fields. Strip any client-supplied values UNCONDITIONALLY — before the
     // authContext guard — so they can never be smuggled in via tools/call args in
     // open-mode or the legacy-API-key path (where the block below does not run).
-    for (const reserved of ['_session_bearer', '_session_principal', '_identity_token', '_session_agent_did', '_session_agent_id']) {
+    for (const reserved of ['_session_bearer', '_session_principal', '_identity_token', '_session_agent_did', '_session_agent_id', '_session_user_id']) {
       delete (args as Record<string, unknown>)[reserved];
     }
     // Inject identity from auth context so the authenticated user's default
@@ -7916,6 +7943,10 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       if (!args.agent_id) args.agent_id = authContext.agentId;
       if (!args.owner_webid && authContext.ownerWebId) args.owner_webid = authContext.ownerWebId;
       if (!args.pod_name && authContext.userId) args.pod_name = authContext.userId;
+      // Server-authoritative, non-forgeable (stripped from wire above). The
+      // tenant_admin grant gate compares pod_name against THIS, so only the
+      // OAuth-authenticated pod owner can grant governance on their own pod.
+      if (authContext.userId) args._session_user_id = authContext.userId;
       // Prefer the identity-server-authoritative podUrl over reconstructing
       // from userId. They're equivalent today (identity derives podUrl from
       // userId) but become different once preferred-pod overlays exist —

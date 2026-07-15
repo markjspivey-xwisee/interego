@@ -656,6 +656,16 @@ export interface AuthorizedAgentData {
   readonly isSoftwareAgent?: boolean;
   /** What this agent is allowed to do. */
   readonly scope: DelegationScope;
+  /**
+   * Explicit governance capability tokens granted BEYOND the coarse
+   * data-plane `scope`. Each (e.g. TENANT_ADMIN_CAPABILITY) is folded into
+   * the SIGNED delegation VC's credentialSubject.scope by
+   * createDelegationCredential, so it is signature-covered and cannot be
+   * forged by editing the plaintext on-pod agent registry
+   * (ownerProfileToTurtle never serializes it). Absent/empty == no
+   * governance authority — a pod-write scope must never silently confer it.
+   */
+  readonly capabilities?: readonly string[];
   /** ISO 8601 start of delegation validity. */
   readonly validFrom: string;
   /** ISO 8601 end of delegation validity (undefined = no expiry). */
