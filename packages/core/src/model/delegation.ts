@@ -101,6 +101,17 @@ export function removeAuthorizedAgent(
 // ── Delegation Credential ────────────────────────────────────
 
 /**
+ * Governance capability token carried INSIDE the signed delegation VC's
+ * credentialSubject.scope array. canonicalCredentialPayload covers `scope`,
+ * so the wallet signature makes this forge-proof against edits to the
+ * unsigned Turtle registry. Deliberately DISTINCT from the coarse ACL verbs
+ * (publish/discover/subscribe) — a pod-write grant never confers it. Single
+ * source of truth: imported by the relay (issuer) and the Foxxi bridge
+ * (verifier) so the token can never drift between the two.
+ */
+export const TENANT_ADMIN_CAPABILITY = 'cap:tenant-admin';
+
+/**
  * Create an AgentDelegationCredential (VC structure, unsigned).
  *
  * In production, this would be signed by the owner's key.
@@ -120,6 +131,15 @@ export function createDelegationCredential(
     case 'ReadOnly': scopes.push('discover', 'subscribe'); break;
     case 'PublishOnly': scopes.push('publish'); break;
     case 'DiscoverOnly': scopes.push('discover'); break;
+  }
+
+  // Governance capability tokens (e.g. TENANT_ADMIN_CAPABILITY) ride in the
+  // SIGNED scope array — canonicalCredentialPayload covers credentialSubject.
+  // scope, so they cannot be forged by editing the plaintext registry, and
+  // they stay distinct from the ACL verbs above. Round-trips already:
+  // canonical / jsonld / parse all treat scope as string[].
+  if (agent.capabilities) {
+    for (const cap of agent.capabilities) if (!scopes.includes(cap)) scopes.push(cap);
   }
 
   // Honour the agent's own `delegatedBy` so sub-delegation chains are

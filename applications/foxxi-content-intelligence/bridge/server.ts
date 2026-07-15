@@ -122,7 +122,7 @@ import { skillBundleToDescriptor, descriptorGraphToSkillMd } from '@interego/ski
 import { mintSessionToken } from '../src/auth.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
-import { makeWalletDelegationVerifier, parseTrig } from '@interego/core';
+import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import {
   buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
@@ -306,7 +306,9 @@ import { verifySessionToken, buildAddressMap, type SessionToken } from '../src/a
 import {
   resolveCallerContext,
   emitAccessDecision,
+  isAdminEquivalent,
   type CallerContext,
+  type AccessDecisionTrace,
 } from '../src/policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
@@ -954,7 +956,17 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
     if (!member) {
       const podChecked = (args.tenant_pod_url as string) || tenantPodUrl;
       const usedDefault = !(args.tenant_pod_url);
-      return { error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}` };
+      // Hardened delegated-admin fallback (bug #2b): a pod-delegated agent
+      // carrying the SIGNED tenant-admin capability anchored on podChecked may
+      // act as tenant admin even though its (rotated) wallet is not a directory
+      // member. verifyDelegatedTenantAdmin enforces H1-H3; role is the distinct,
+      // audited delegated-admin (H4).
+      const da = await verifyDelegatedTenantAdmin(args, podChecked);
+      if (da.ok) {
+        auditDelegatedAdmin(da.agentDid, 'foxxi.resolveCaller', podChecked);
+        return { ctx: delegatedAdminContext(da.agentDid), admin };
+      }
+      return { error: `auth: signer ${signedSigner} is not a member of the tenant at ${podChecked} (proof-of-possession).${usedDefault ? ` No tenant_pod_url was supplied, so the bridge checked its DEFAULT tenant — pass tenant_pod_url = your own pod to be checked against YOUR self-sovereign membership, and self-enroll first via foxxi.register_self_sovereign_learner.` : ` Self-enroll first via foxxi.register_self_sovereign_learner, then retry.`}${da.reason ? ` (delegated-admin fallback also declined: ${da.reason})` : ''}` };
     }
     const ctx = resolveCallerContext({
       callerWebId: member.webId,
@@ -2242,9 +2254,20 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { error: 'forbidden — cohort analytics are admin-only' };
+    if (!isAdminEquivalent(ctx.role)) return { error: 'forbidden — cohort analytics are admin-only' };
+    let learnerPods = (args.learner_pod_urls as string[]) ?? [];
+    if (ctx.role === 'delegated-admin') {
+      // F1: a delegated-admin may only aggregate Q&A from pods that are MEMBERS
+      // of the tenant it administers — never arbitrary victim pods. The capability
+      // is anchored on tenant_pod_url; the DATA is scoped to that tenant's
+      // membership (fail-closed to the tenant pod alone if membership is unreadable).
+      const tenantPod = (args.tenant_pod_url as string) || tenantPodUrl;
+      const allowed = await tenantMemberPodBases(tenantPod);
+      learnerPods = learnerPods.filter(u => allowed.has(podBaseOf(u)));
+      auditDelegatedAdmin(ctx.webId, 'foxxi.cohort_concept_intelligence', tenantPod);
+    }
     const entries = await gatherCohortQA({
-      learnerPodUrls: args.learner_pod_urls as string[],
+      learnerPodUrls: learnerPods,
       windowFrom: args.window_from as string | undefined,
       windowTo: args.window_to as string | undefined,
     });
@@ -3791,6 +3814,72 @@ async function verifyDelegatedCaller(body: unknown):
   // DELEGATED mode: the signer is the delegation ANCHOR — the delegator's key
   // (the pod owner), which is exactly what the ownership guard should check.
   return { ok: true, callerDid: rec.agentId, signer: rec.signer, payload: p };
+}
+
+// ── Hardened delegated-tenant-admin (bug #2b) ──────────────────────────────
+// A cryptographically pod-delegated agent may act as tenant admin ONLY when it
+// holds an EXPLICIT tenant-admin capability inside its SIGNED delegation VC
+// (H1), the delegation is anchored on the TENANT pod being administered (H2),
+// and the request signer is that VC's anchor key (H3). Audited as a DISTINCT
+// delegated-admin role (H4). A bare pod-write (ReadWrite) delegation is NOT
+// enough — the capability token is minted only by the pod owner via
+// register_agent{tenant_admin:true} and is signature-covered, so it cannot be
+// forged by editing the plaintext on-pod registry.
+function delegatedAdminContext(agentDid: string): CallerContext {
+  return { webId: agentDid, userId: 'delegated-admin:' + agentDid, role: 'delegated-admin', directReports: new Set() };
+}
+function auditDelegatedAdmin(agentDid: string, tool: string, tenantPod: string): AccessDecisionTrace {
+  const trace = emitAccessDecision({ ctx: delegatedAdminContext(agentDid), tool, decision: 'allow', appliedPolicies: ['delegated-admin@' + tenantPod] });
+  console.log('[foxxi][delegated-admin] ' + JSON.stringify(trace));
+  return trace;
+}
+// Pod base of a member web_id (`<pod>/profile/card#me`) or a pod URL, normalized
+// like samePod() — for F1 cohort-PII scoping.
+function podBaseOf(u?: string): string {
+  const stripped = String(u ?? '').replace(/#.*$/, '').replace(/\/profile\/.*$/, '/');
+  return canonicalPodUrl(stripped).replace(/\/+$/, '').toLowerCase();
+}
+// F1: the learner pod bases a delegated-admin of `tenantPod` may read. Fail-closed:
+// if the tenant's public membership can't be read, only the tenant pod itself is
+// allowed — never arbitrary victim pods.
+async function tenantMemberPodBases(tenantPod: string): Promise<Set<string>> {
+  const bases = new Set<string>([podBaseOf(tenantPod)]);
+  try {
+    const mem = await fetchSection(TENANT_TYPES.TenantMembership, { ...fetcherConfig(), podUrl: tenantPod } as never) as { users?: Array<{ web_id?: string }> } | null;
+    for (const m of mem?.users ?? []) if (m.web_id) bases.add(podBaseOf(m.web_id));
+  } catch { /* no readable membership → restrict to the tenant pod itself */ }
+  return bases;
+}
+// The H1+H2+H3 gate. Returns ok only for a CryptographicallyVerified delegation
+// on `tenantPod` whose SIGNED VC carries TENANT_ADMIN_CAPABILITY, is scoped to
+// that pod, and whose anchor key signed this request.
+async function verifyDelegatedTenantAdmin(args: Record<string, unknown>, tenantPod: string):
+  Promise<{ ok: true; agentDid: string; signer: string } | { ok: false; reason: string }> {
+  const rec = recoverSignedRequest(args);
+  if (!rec.ok) return { ok: false, reason: `no signed-request envelope (${rec.reason})` };
+  let del;
+  try {
+    del = await verifyAgentDelegation(rec.agentId as unknown as IRI, tenantPod as IRI, { verifier: makeWalletDelegationVerifier() });
+  } catch (err) {
+    return { ok: false, reason: `delegation verification failed on ${tenantPod}: ${(err as Error).message}` };
+  }
+  if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
+    return { ok: false, reason: `agent ${rec.agentId} has no cryptographically-verified delegation on ${tenantPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` };
+  }
+  const vc = await readDelegationCredential(tenantPod as IRI, rec.agentId as unknown as IRI).catch(() => null);
+  if (!vc) return { ok: false, reason: `no signed delegation credential for ${rec.agentId} on ${tenantPod}` };
+  const scope = Array.isArray(vc.credentialSubject?.scope) ? vc.credentialSubject.scope.map(String) : [];
+  if (!scope.includes(TENANT_ADMIN_CAPABILITY)) {
+    return { ok: false, reason: `delegation for ${rec.agentId} lacks the ${TENANT_ADMIN_CAPABILITY} capability — a pod-write delegation does not confer tenant-admin` };
+  }
+  if (!samePod(vc.credentialSubject?.pod as string | undefined, tenantPod)) {
+    return { ok: false, reason: `delegation for ${rec.agentId} is scoped to ${vc.credentialSubject?.pod}, not tenant pod ${tenantPod}` };
+  }
+  const anchor = vc.proof?.signerAddress;
+  if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
+    return { ok: false, reason: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''}` };
+  }
+  return { ok: true, agentDid: rec.agentId, signer: rec.signer };
 }
 
 // ── Agent-driven performance tracing (delegated auth) ──────────────────────

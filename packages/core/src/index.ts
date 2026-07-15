@@ -40,6 +40,7 @@ export {
   addAuthorizedAgent,
   removeAuthorizedAgent,
   createDelegationCredential,
+  TENANT_ADMIN_CAPABILITY,
   createSignedDelegationCredential,
   canonicalCredentialPayload,
   canonicalAuthorshipPayload,
