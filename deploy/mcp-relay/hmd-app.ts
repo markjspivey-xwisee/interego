@@ -38,6 +38,12 @@ h1.title{font-size:20px;font-weight:650;margin:0;letter-spacing:-.01em;text-wrap
 .prose code{background:var(--chip);padding:.1em .35em;border-radius:5px;font:.9em ui-monospace,SFMono-Regular,Menlo,monospace}
 .prose blockquote{margin:.6em 0;padding:.2em .9em;border-left:3px solid var(--line);color:var(--muted)}
 .prose a{color:var(--accent);text-underline-offset:2px}
+.prose table{border-collapse:collapse;margin:.75em 0;font-size:14px;display:block;max-width:100%;overflow-x:auto}
+.prose th,.prose td{border:1px solid var(--line);padding:6px 10px;text-align: left;vertical-align: top}
+.prose th{background:var(--card);font-weight:650}
+.prose th.hmd-al-c,.prose td.hmd-al-c{text-align: center}
+.prose th.hmd-al-r,.prose td.hmd-al-r{text-align: right}
+.prose th.hmd-al-l,.prose td.hmd-al-l{text-align: left}
 pre.src{white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0}
 .control{border:1px solid var(--line);background:var(--card);border-radius:12px;padding:14px 15px;margin:14px 0}
 .control h3{margin:0 0 2px;font-size:14.5px;font-weight:650;display:flex;align-items:center;gap:8px}

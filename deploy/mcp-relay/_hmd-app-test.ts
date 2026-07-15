@@ -54,6 +54,37 @@ check('safeMarkdown link label with markup is escaped', !L.safeMarkdown('[<img s
 const md3 = L.safeMarkdown('[Signed descriptor (authority)](https://x.example){rel="describedby" type="text/turtle"}');
 check('safeMarkdown consumes typed-link {rel/type} suffix (no visible braces in Enhanced)', md3.includes('>Signed descriptor (authority)</a>') && !md3.includes('{rel') && !md3.includes('type=&quot;') && md3.includes('rel="noopener noreferrer describedby"') && md3.includes('type="text/turtle"'));
 
+// ── HMD-native pipe tables (Enhanced view ONLY) ──
+// GFM pipe tables in note prose render as a real <table> in the Enhanced pane (the
+// Markdown / HMD-source panes keep the raw pipe text). Cells go through inline() so
+// links/bold/code work AND stay HTML-escaped; per-column alignment comes from the
+// delimiter row; pipes inside a code span or written as '\|' must not split a cell.
+// (1) basic table
+const t1 = L.safeMarkdown('| Name | Qty |\n| --- | --- |\n| Widget | 3 |\n| Gadget | 12 |');
+check('table: emits <table>/<thead>/<tbody> scaffold', t1.includes('<table>') && t1.includes('<thead>') && t1.includes('<tbody>'));
+check('table: header→<th>, data→<td>', t1.includes('<th>Name</th>') && t1.includes('<th>Qty</th>') && t1.includes('<td>Widget</td>') && t1.includes('<td>3</td>') && t1.includes('<td>Gadget</td>') && t1.includes('<td>12</td>'));
+check('table: no raw pipe/delimiter text leaks into Enhanced HTML', t1.indexOf('| ---') < 0 && t1.indexOf('| Name') < 0 && t1.indexOf('---') < 0);
+// (2) per-column alignment from the delimiter
+const t2 = L.safeMarkdown('| L | C | R |\n| :-- | :-: | --: |\n| a | b | c |');
+check('table: alignment classes from delimiter (:--, :-:, --:)', t2.includes('<th class="hmd-al-l">L</th>') && t2.includes('<th class="hmd-al-c">C</th>') && t2.includes('<th class="hmd-al-r">R</th>') && t2.includes('<td class="hmd-al-c">b</td>') && t2.includes('<td class="hmd-al-r">c</td>'));
+// (3) XSS cell + escaped pipe + code-span pipe + hostile link — all inert
+const t3 = L.safeMarkdown('| Payload | Note |\n| --- | --- |\n| <img src=x onerror=alert(1)> | a \\| b |\n| `x|y` | [go](javascript:alert(1)) |');
+check('table: hostile cell HTML-escaped (no live <img>)', !t3.includes('<img') && t3.includes('&lt;img'));
+check('table: escaped "\\|" is a literal pipe, does NOT add a column', t3.includes('<td>a | b</td>'));
+check('table: pipe inside a code span does NOT split the cell', t3.includes('<code>x|y</code>'));
+check('table: javascript: link inside a cell → inert (#)', t3.includes('href="#"') && !t3.toLowerCase().includes('href="javascript'));
+// bold + safe link still render per-cell (inline() runs on each cell)
+const t4 = L.safeMarkdown('| Spec | Link |\n|---|---|\n| **xAPI** | [docs](https://x.example) |');
+check('table: bold + safe https link render inside cells', t4.includes('<strong>xAPI</strong>') && t4.includes('href="https://x.example"'));
+// regression guards: a pipe line with NO delimiter, and a header/delimiter column
+// mismatch, must both stay prose (never a table) — no false positives, no re-authoring.
+check('table: pipe line without a delimiter row stays prose (no table)', !L.safeMarkdown('| just | pipes |\nand text').includes('<table>'));
+// A pipe table INSIDE a fenced code block must render as inert <pre>, never a live
+// <table> (Finding 3 — the lift skips fenced tables; the renderer must match).
+const tFenced = L.safeMarkdown('\x60\x60\x60\n| A | B |\n|---|---|\n| 1 | 2 |\n\x60\x60\x60');
+check('table: code-FENCED pipe table renders as inert <pre>, NOT a live <table>', tFenced.includes('<pre') && !tFenced.includes('<table'));
+check('table: header/delimiter column-count mismatch is NOT a table', !L.safeMarkdown('| a | b | c |\n| --- | --- |\n| 1 | 2 | 3 |').includes('<table>'));
+
 // ── action classification — ONLY GET (HTTP safe method) may skip confirmation.
 // The author-controlled action NAME is never a skip-confirm signal (a mutation can
 // be named askQuestion / verifyClaim), so every non-GET action → 'mutate' → confirm.

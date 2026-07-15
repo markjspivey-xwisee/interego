@@ -245,6 +245,38 @@ describe('hypermedia-markdown: SECURITY INVARIANT — authority closure', () => 
   });
 });
 
+describe('hypermedia-markdown: HMD-native tables (GFM pipe table → hmd:Table lift)', () => {
+  const tableMd = [
+    '---', '"@id": urn:x:tbl', 'descriptorUrl: https://x/d.ttl', '"@type": ieh:AgentMemory', '---',
+    '# Report', '',
+    '| Name | Qty |',
+    '|:---|---:|',
+    '| Widget | 3 |',
+    '| `a|b` | x \\| y |',
+    '',
+    '```',
+    '| fenced | table |',
+    '|---|---|',
+    '| skip | me |',
+    '```', '',
+  ].join('\n');
+  const tr = liftHypermediaMarkdown(tableMd);
+  const hasCell = (o: string) => tr.some(t => t.p.endsWith('cellText') && t.o === o);
+  it('emits hmd:Table/Row/Cell with hmd:cellText, xsd datatypes, IRI-fragment nodes', () => {
+    expect(tr.some(t => t.o.endsWith('#Table'))).toBe(true);
+    expect(hasCell('Widget')).toBe(true);
+    expect(hasCell('x | y')).toBe(true);   // escaped \| is one cell, decoded to a literal pipe
+    expect(hasCell('`a|b`')).toBe(true);   // pipe inside a code span does NOT split
+    expect(tr.some(t => t.p.endsWith('rowIndex') && t.datatype?.endsWith('integer'))).toBe(true);
+    expect(tr.some(t => t.p.endsWith('header') && t.o === 'true' && t.datatype?.endsWith('boolean'))).toBe(true);
+    expect(tr.some(t => t.o.includes('#table-1-row-1-cell-0') && t.oKind === 'iri')).toBe(true);
+  });
+  it('does NOT lift a fenced code-block table (fence-skip; matches the widget renderer)', () => {
+    expect(hasCell('skip')).toBe(false);
+    expect(tr.filter(t => t.o.endsWith('#Table')).length).toBe(1);
+  });
+});
+
 describe('hypermedia-markdown: deterministic lift', () => {
   it('lifts the control graph with dual-asserted rel/action and closed targets', () => {
     const md = renderHypermediaMarkdown(doc);

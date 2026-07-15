@@ -43,23 +43,43 @@ function sanitizeHref(h) {
 function safeMarkdown(md) {
   var text = escapeHtml(md == null ? '' : md);
   var lines = text.split('\n');
-  var out = [], para = [], list = null;
+  var out = [], para = [], list = null, fence = null;
   function flushPara() { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } }
   function flushList() { if (list) { out.push('<' + list.tag + '>' + list.items.map(function (i) { return '<li>' + inline(i) + '</li>'; }).join('') + '</' + list.tag + '>'); list = null; } }
+  function flushFence() { if (fence) { out.push('<pre class="src">' + fence.lines.join('\n') + '</pre>'); fence = null; } }
   for (var i = 0; i < lines.length; i++) {
     var ln = lines[i];
+    // Fenced code block (triple-backtick or ~~~ fence): its content is INERT <pre> and is
+    // never probed as a heading / list / table — a code-fenced pipe table must NOT render
+    // as a live <table> (Finding 3; mirrors the lift's fence skip). Already HTML-escaped.
+    var fo = /^\s*(\x60{3,}|~{3,})/.exec(ln);
+    if (fence) {
+      var fc = /^\s*(\x60{3,}|~{3,})\s*$/.exec(ln);
+      if (fc && fc[1].charAt(0) === fence.ch) flushFence();
+      else fence.lines.push(ln);
+      continue;
+    }
+    if (fo) { flushPara(); flushList(); fence = { ch: fo[1].charAt(0), lines: [] }; continue; }
     var h = /^(#{1,6})\s+(.*)$/.exec(ln);
     var ul = /^\s*[-*+]\s+(.*)$/.exec(ln);
     var ol = /^\s*\d+\.\s+(.*)$/.exec(ln);
     var bq = /^&gt;\s?(.*)$/.exec(ln); // '>' was escaped
+    // A GFM pipe table (header row + delimiter row + body) is an HMD-native block:
+    // detected here and rendered as a real <table>. Only PROBED when the line is not
+    // already a heading / list / quote, so those keep precedence and the probe is
+    // skipped for the common case. Existing notes need no re-authoring — the pipe
+    // syntax in the body is enough. (The Markdown / HMD-source panes use mkpre and
+    // still show the raw pipe text — georgio's constraint.)
+    var tbl = (!h && !ul && !ol && !bq) ? detectTable(lines, i) : null;
     if (h) { flushPara(); flushList(); var lvl = h[1].length; out.push('<h' + lvl + '>' + inline(h[2]) + '</h' + lvl + '>'); }
     else if (ul) { flushPara(); if (!list || list.tag !== 'ul') { flushList(); list = { tag: 'ul', items: [] }; } list.items.push(ul[1]); }
     else if (ol) { flushPara(); if (!list || list.tag !== 'ol') { flushList(); list = { tag: 'ol', items: [] }; } list.items.push(ol[1]); }
     else if (bq) { flushPara(); flushList(); out.push('<blockquote>' + inline(bq[1]) + '</blockquote>'); }
+    else if (tbl) { flushPara(); flushList(); out.push(renderTable(tbl.header, tbl.aligns, tbl.rows)); i = tbl.next - 1; }
     else if (ln.trim() === '') { flushPara(); flushList(); }
     else { flushList(); para.push(ln); }
   }
-  flushPara(); flushList();
+  flushPara(); flushList(); flushFence();
   return out.join('\n');
 }
 function inline(s) {
@@ -83,6 +103,74 @@ function inline(s) {
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
   return s;
+}
+
+// ── GFM pipe tables (HMD-native) — rendered as a real <table> in the Enhanced view.
+// Split a row into cells on UNescaped pipes that are NOT inside a code span: '\|' is a
+// literal pipe (no split) and a '|' between backticks does not split. One optional
+// leading/trailing pipe is dropped. (Char codes: 124='|', 92='\', 96=backtick — used
+// so a literal backtick can't terminate the host String.raw template.)
+function splitRowCells(row) {
+  var s = row.replace(/^\s+|\s+$/g, '');
+  if (s.charCodeAt(0) === 124) s = s.slice(1);
+  if (s.charCodeAt(s.length - 1) === 124 && s.charCodeAt(s.length - 2) !== 92) s = s.slice(0, -1);
+  var cells = [], buf = '', code = false;
+  for (var i = 0; i < s.length; i++) {
+    var cc = s.charCodeAt(i);
+    if (cc === 92 && s.charCodeAt(i + 1) === 124) { buf += '|'; i++; continue; } // '\|' → literal pipe, no split
+    if (cc === 96) { code = !code; buf += s.charAt(i); continue; }               // backtick toggles a code span
+    if (cc === 124 && !code) { cells.push(buf); buf = ''; continue; }            // '|' splits cells (outside code)
+    buf += s.charAt(i);
+  }
+  cells.push(buf);
+  return cells;
+}
+// '' | 'l' | 'r' | 'c' per column from the delimiter row, or null when the row is not a
+// valid delimiter (every cell must be ':?-+:?'; a leading/trailing ':' marks alignment).
+function delimiterAligns(row) {
+  var cells = splitRowCells(row);
+  if (!cells.length) return null;
+  var aligns = [];
+  for (var i = 0; i < cells.length; i++) {
+    var c = cells[i].replace(/^\s+|\s+$/g, '');
+    if (!/^:?-+:?$/.test(c)) return null;
+    var l = c.charAt(0) === ':', r = c.charAt(c.length - 1) === ':';
+    aligns.push(l && r ? 'c' : r ? 'r' : l ? 'l' : '');
+  }
+  return aligns;
+}
+// A table = a header row (must contain a pipe) + a delimiter row, then body rows until
+// a blank / pipe-less line. Header & delimiter column counts must match (GFM), else the
+// pair is treated as ordinary text (no re-authoring or false positives on '---').
+function detectTable(lines, i) {
+  if (lines[i].indexOf('|') < 0 || i + 1 >= lines.length) return null;
+  var aligns = delimiterAligns(lines[i + 1]);
+  if (!aligns) return null;
+  var header = splitRowCells(lines[i]);
+  if (header.length !== aligns.length) return null;
+  var rows = [], j = i + 2;
+  for (; j < lines.length; j++) {
+    if (lines[j].trim() === '' || lines[j].indexOf('|') < 0) break;
+    rows.push(splitRowCells(lines[j]));
+  }
+  return { header: header, aligns: aligns, rows: rows, next: j };
+}
+// Cells are already HTML-escaped (safeMarkdown escaped the whole doc up front), then run
+// through inline() so links/bold/code work while a hostile cell (<img onerror=…>, a
+// javascript: link, an injected '|') stays inert. The alignment class is a fixed
+// constant (hmd-al-l/c/r), never author input, so it is CSP-safe with no inline style.
+function renderTable(header, aligns, rows) {
+  function cls(a) { return a ? ' class="hmd-al-' + a + '"' : ''; }
+  function cell(tag, text, a) { return '<' + tag + cls(a) + '>' + inline(String(text == null ? '' : text).replace(/^\s+|\s+$/g, '')) + '</' + tag + '>'; }
+  var n = aligns.length, html = '<table><thead><tr>', c;
+  for (c = 0; c < n; c++) html += cell('th', header[c], aligns[c]);
+  html += '</tr></thead><tbody>';
+  for (var r = 0; r < rows.length; r++) {
+    html += '<tr>';
+    for (c = 0; c < n; c++) html += cell('td', rows[r][c], aligns[c]);
+    html += '</tr>';
+  }
+  return html + '</tbody></table>';
 }
 
 // ── action classification — the CONFIRMATION-SKIP signal ──────────────────────

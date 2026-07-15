@@ -6,6 +6,8 @@
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
 @prefix iep:     <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix sh:      <http://www.w3.org/ns/shacl#> .
+@prefix csvw:    <http://www.w3.org/ns/csvw#> .
 
 # ══════════════════════════════════════════════════════════════
 #  HyperMarkdown Vocabulary (hmd) 0.1 — rehosted
@@ -24,12 +26,13 @@
   dcterms:title "HyperMarkdown Vocabulary" ;
   rdfs:label "HyperMarkdown Vocabulary (hmd) 0.1" ;
   rdfs:comment "Terms for HyperMarkdown 0.1 — Markdown as a hypermedia media type: documents as graph resources, typed links as edges, semantic claims, validation shapes, provenance, policy, and controls as discoverable affordances. A domain vocabulary that ALIGNS with the Interego protocol layer (iep:) and W3C hypermedia/linked-data vocabularies via rdfs:seeAlso and skos:related; it does not subclass or extend them." ;
-  owl:versionInfo "0.1-draft" ;
+  owl:versionInfo "0.2-draft" ;
   dcterms:creator <mailto:mark.spivey@xwisee.com> ;
-  dcterms:modified "2026-07-13"^^xsd:date ;
+  dcterms:modified "2026-07-15"^^xsd:date ;
   dcterms:replaces <https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/u-pk-436c2247c0e0/ns/hmd> ,
                    <https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/u-pk-436c2247c0e0/hmd> ;
   skos:changeNote "Rehosted 2026-07: the prior namespace hosts (Azure Container Apps, both the gate and relay variants) are decommissioned and do not dereference. Term IRIs move to this namespace; definitions are unchanged." ;
+  skos:changeNote "0.2-draft (additive, backward compatible): tabular data as a first-class HyperMarkdown construct — hmd:Table / hmd:Row / hmd:Cell and their properties (hmd:table, hmd:row, hmd:cell, hmd:rowIndex, hmd:colIndex, hmd:header, hmd:cellText), constrained by hmd:TableShape / hmd:RowShape / hmd:CellShape. Tables are a rung-3/4 LIFT over a GFM pipe-table written in the CommonMark prose body; the wire syntax stays text/markdown; charset=UTF-8; variant=CommonMark (RFC 7764 names the SYNTAX flavor, and the raw pipe-table bytes remain valid CommonMark — a processor with no table extension reads them as inert paragraph text, which is rung 1 of the model). The table CAPABILITY is therefore advertised HERE, in this RFC 6906 profile vocabulary (already stamped on every document via dct:conformsTo + the Link: rel=profile header), NEVER by forking the media-type parameter to a GFM variant. A consumer that dereferences the profile discovers hmd:Table and knows a pipe table in the body lifts to queryable triples. Existing notes that already carry pipe tables in their prose require zero re-authoring: the lift detects the pipe table in the persisted body." ;
   rdfs:seeAlso <http://www.w3.org/ns/hydra/core#> ,
                <http://www.w3.org/ns/dcat#> ,
                <http://www.w3.org/ns/odrl/2/> ,
@@ -92,6 +95,37 @@ hmd:SymptomTimeline a rdfs:Class, owl:Class ;
   rdfs:label "SymptomTimeline" ;
   rdfs:comment "Output payload type returned by a report-symptom control." ;
   rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+# ---------------------------------------------------------- tabular data
+#
+# A GFM pipe table written in the CommonMark prose body is a FIRST-CLASS
+# HyperMarkdown construct: it stays valid CommonMark text on the wire (raw
+# and HMD-source views show the pipe/dash bytes unchanged) AND lifts to
+# queryable, portable RDF. The lift emits, in document order, one hmd:Table
+# per pipe table (attached to the document via hmd:table), an ordered hmd:Row
+# per line (hmd:rowIndex, the header row flagged hmd:header true), and an
+# ordered hmd:Cell per column (hmd:colIndex + hmd:cellText). Row/column
+# indices are 0-based and make the lift deterministic under the (s,p,o) sort.
+# Aligns with the W3C CSVW model (csvw:Table/Row/Cell) via rdfs:seeAlso; the
+# names are our own.
+
+hmd:Table a rdfs:Class, owl:Class ;
+  rdfs:label "Table" ;
+  rdfs:comment "Tabular data lifted from a GFM pipe table in a document's CommonMark body: an ordered set of hmd:Row, the first flagged as the header. DATA, not a control — carries no authority and no transport endpoint." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso csvw:Table .
+
+hmd:Row a rdfs:Class, owl:Class ;
+  rdfs:label "Row" ;
+  rdfs:comment "One row of an hmd:Table: an ordered set of hmd:Cell at a 0-based hmd:rowIndex. The header row carries hmd:header true; data rows omit it (or set it false)." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso csvw:Row .
+
+hmd:Cell a rdfs:Class, owl:Class ;
+  rdfs:label "Cell" ;
+  rdfs:comment "One cell of an hmd:Row: its text (hmd:cellText) at a 0-based hmd:colIndex. The text is the cell's CommonMark inline source verbatim; any inline markup or typed link inside it is rendered (and XSS-hardened) at view time, never lifted as a control edge." ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  rdfs:seeAlso csvw:Cell .
 
 # ------------------------------------------------------------- properties
 
@@ -156,6 +190,57 @@ hmd:rel a rdf:Property ;
   rdfs:domain hmd:Control ;
   rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
 
+# ------------------------------------------------ tabular-data properties
+
+hmd:table a rdf:Property, owl:ObjectProperty ;
+  rdfs:label "table" ;
+  rdfs:comment "Relates a document to a table lifted from a pipe table in its body." ;
+  rdfs:domain hmd:Document ;
+  rdfs:range hmd:Table ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:row a rdf:Property, owl:ObjectProperty ;
+  rdfs:label "row" ;
+  rdfs:comment "Relates a table to one of its rows. Row order is carried by hmd:rowIndex, not by statement order." ;
+  rdfs:domain hmd:Table ;
+  rdfs:range hmd:Row ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:cell a rdf:Property, owl:ObjectProperty ;
+  rdfs:label "cell" ;
+  rdfs:comment "Relates a row to one of its cells. Column order is carried by hmd:colIndex, not by statement order." ;
+  rdfs:domain hmd:Row ;
+  rdfs:range hmd:Cell ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:rowIndex a rdf:Property, owl:DatatypeProperty ;
+  rdfs:label "rowIndex" ;
+  rdfs:comment "The 0-based ordinal position of a row within its table (0 is the header row)." ;
+  rdfs:domain hmd:Row ;
+  rdfs:range xsd:integer ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:colIndex a rdf:Property, owl:DatatypeProperty ;
+  rdfs:label "colIndex" ;
+  rdfs:comment "The 0-based ordinal position of a cell within its row." ;
+  rdfs:domain hmd:Cell ;
+  rdfs:range xsd:integer ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:header a rdf:Property, owl:DatatypeProperty ;
+  rdfs:label "header" ;
+  rdfs:comment "True when a row is the table's header row. Absent (or false) on data rows." ;
+  rdfs:domain hmd:Row ;
+  rdfs:range xsd:boolean ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
+hmd:cellText a rdf:Property, owl:DatatypeProperty ;
+  rdfs:label "cellText" ;
+  rdfs:comment "The text content of a cell — the CommonMark inline source of the pipe-table cell, verbatim." ;
+  rdfs:domain hmd:Cell ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> .
+
 # ------------------------------------------------- action relations (rels)
 
 hmd:approve a rdf:Property ;
@@ -182,3 +267,65 @@ hmd:search a rdf:Property ;
   rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
   rdfs:seeAlso <http://www.w3.org/ns/hydra/core#search> ;
   skos:related iep:Affordance .
+
+# ------------------------------------------------------- validation shapes
+#
+# Minimal SHACL for the tabular-data lift. A table lifted from a well-formed
+# pipe table satisfies these by construction; the shapes let any consumer
+# validate a table it received from a store-and-forward channel (rows are
+# hmd:Row, cells carry text + a 0-based column index) without trusting the
+# producer. Tables are DATA, so these shapes constrain structure only — no
+# authority/target invariant applies (that is the control profile's concern).
+
+hmd:TableShape a sh:NodeShape ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  sh:targetClass hmd:Table ;
+  sh:property [
+    sh:path hmd:row ;
+    sh:class hmd:Row ;
+    sh:minCount 1 ;
+    sh:message "hmd:Table MUST have at least one hmd:Row."
+  ] .
+
+hmd:RowShape a sh:NodeShape ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  sh:targetClass hmd:Row ;
+  sh:property [
+    sh:path hmd:rowIndex ;
+    sh:datatype xsd:integer ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:message "hmd:Row MUST carry exactly one 0-based hmd:rowIndex."
+  ] ;
+  sh:property [
+    sh:path hmd:cell ;
+    sh:class hmd:Cell ;
+    sh:minCount 1 ;
+    sh:message "hmd:Row MUST have at least one hmd:Cell."
+  ] ;
+  sh:property [
+    sh:path hmd:header ;
+    sh:datatype xsd:boolean ;
+    sh:maxCount 1 ;
+    sh:message "hmd:header, when present, is a single xsd:boolean (true on the header row)."
+  ] .
+
+hmd:CellShape a sh:NodeShape ;
+  rdfs:isDefinedBy <https://relay.interego.xwisee.com/ns/maintainer/hmd> ;
+  sh:targetClass hmd:Cell ;
+  sh:property [
+    sh:path hmd:colIndex ;
+    sh:datatype xsd:integer ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:message "hmd:Cell MUST carry exactly one 0-based hmd:colIndex."
+  ] ;
+  sh:property [
+    sh:path hmd:cellText ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:message "hmd:Cell MUST carry exactly one hmd:cellText."
+  ] .
