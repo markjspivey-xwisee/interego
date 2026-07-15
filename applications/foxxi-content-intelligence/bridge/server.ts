@@ -2256,6 +2256,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const { ctx } = resolved;
     if (!isAdminEquivalent(ctx.role)) return { error: 'forbidden — cohort analytics are admin-only' };
     let learnerPods = (args.learner_pod_urls as string[]) ?? [];
+    let access: AccessDecisionTrace | undefined;
     if (ctx.role === 'delegated-admin') {
       // F1: a delegated-admin may only aggregate Q&A from pods that are MEMBERS
       // of the tenant it administers — never arbitrary victim pods. The capability
@@ -2264,14 +2265,18 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       const tenantPod = (args.tenant_pod_url as string) || tenantPodUrl;
       const allowed = await tenantMemberPodBases(tenantPod);
       learnerPods = learnerPods.filter(u => allowed.has(podBaseOf(u)));
-      auditDelegatedAdmin(ctx.webId, 'foxxi.cohort_concept_intelligence', tenantPod);
+      access = auditDelegatedAdmin(ctx.webId, 'foxxi.cohort_concept_intelligence', tenantPod);
     }
     const entries = await gatherCohortQA({
       learnerPodUrls: learnerPods,
       windowFrom: args.window_from as string | undefined,
       windowTo: args.window_to as string | undefined,
     });
-    return summarizeCohort(entries);
+    const summary = summarizeCohort(entries);
+    // Observability: surface the delegated-admin authorization trace/role in the
+    // RESPONSE so the caller sees HOW it was authorized (role, applied policy,
+    // timestamp) — not just that it succeeded. Absent for the configured-owner path.
+    return access ? { ...summary, access } : summary;
   },
 
   'foxxi.register_self_sovereign_learner': async (args) => {
