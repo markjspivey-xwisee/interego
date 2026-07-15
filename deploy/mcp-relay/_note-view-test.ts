@@ -201,9 +201,14 @@ check('get_descriptor: internal descriptor URL + NO renderView target → null (
   // Must now project (non-null) using the host-free /render/<urn> identity — the
   // internal host must never enter the output.
   const urnDesc = 'urn:iep:u-pk-33d42e6b33dc:1784088386171';
-  const internalPublic = `@prefix iep: <${IEP}> . <${urnDesc}> a iep:ContextDescriptor .`;
+  const internalPublic = `@prefix iep: <${IEP}> . <${urnDesc}> a iep:ContextDescriptor ; iep:visibility "public" ; iep:encrypted false .`;
   const ginternal = inlineRenderedForDescriptor({ descriptorUrl: INTERNAL_DESC_URL, descriptorTurtle: internalPublic, plaintextTurtle: georgioPayload, publicBase: PUBLIC_BASE, port: 8080 });
   check('get_descriptor: internal-host PUBLIC note + urn @id → non-null, host-free /render/<urn> identity (no internal leak)', !!ginternal && parseHypermediaMarkdown(ginternal.rendered).id === `${PUBLIC_BASE}/render/${encodeURIComponent(urnDesc)}` && !ginternal.rendered.includes('.internal.'));
+  // Visibility is projected from the descriptor: a PUBLIC note is state:"public",
+  // never labelled private / encrypted-at-rest (georgio: public mislabeled private).
+  check('get_descriptor: PUBLIC note projects state "public", no private/encrypted labels', !!ginternal && parseHypermediaMarkdown(ginternal.rendered).state === 'public' && !ginternal.rendered.includes('Private note') && !ginternal.rendered.includes('encrypted at rest'));
+  // A private (encrypted) note still projects state:"private".
+  check('get_descriptor: private note still projects state "private"', !!gd && parseHypermediaMarkdown(gd.rendered).state === 'private');
 }
 
 // ── georgio retest residuals: stable canonical provenance + body dedent ────────
