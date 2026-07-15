@@ -69,8 +69,16 @@ function inline(s) {
   // links [label](href) — label already HTML-escaped; href already escaped by the
   // whole-string escapeHtml above, so it is placed in the attribute WITHOUT a
   // second escape (double-escaping mangled ampersands); sanitizeHref keeps it safe.
-  s = s.replace(/\[([^\]]*)\]\(([^)\s]+)\)/g, function (_, label, href) {
-    return '<a href="' + sanitizeHref(href) + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+  // Consume the OPTIONAL typed-link attribute suffix {rel="..." type="..."} (already
+  // HTML-escaped here, so a quote is &quot;) so it does NOT render as visible braces
+  // text in the Enhanced view; surface rel/type as real <a> attributes instead. The
+  // brace syntax survives verbatim only in the raw Markdown / HMD-source tabs. (georgio.)
+  s = s.replace(/\[([^\]]*)\]\(([^)\s]+)\)(\{[^}]*\})?/g, function (_, label, href, attrs) {
+    var relM = attrs && /rel=(?:&quot;|")([^&"}]+)/.exec(attrs);
+    var typeM = attrs && /type=(?:&quot;|")([^&"}]+)/.exec(attrs);
+    var relAttr = 'noopener noreferrer' + (relM ? ' ' + relM[1] : '');
+    var typeAttr = typeM ? ' type="' + typeM[1] + '"' : '';
+    return '<a href="' + sanitizeHref(href) + '" target="_blank" rel="' + relAttr + '"' + typeAttr + '>' + label + '</a>';
   });
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');

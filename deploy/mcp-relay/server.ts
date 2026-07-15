@@ -3595,12 +3595,25 @@ async function handleRenderHmd(args: ToolArgs): Promise<string> {
   const gobj = gd['graph'] as Record<string, unknown> | undefined;
   const gcontent = gobj && typeof gobj['content'] === 'string' ? (gobj['content'] as string) : '';
   if (gcontent) { try { for (const a of extractAffordancesFromTurtle(gcontent, url)) { if (isFollowableTarget(a.target)) executableActions.add(a.action); } } catch { /* best-effort */ } }
+  // The projected body ALWAYS opens with the note's title as a leading `# H1`
+  // (noteToHyperMarkdown prepends it, or keeps the note's own opening H1). The
+  // widget ALSO renders `title` in its header, so the same title showed TWICE
+  // (georgio/Mark: duplicated text). Lift the title from that H1 when the
+  // frontmatter carries none, and strip the leading H1 from `body` so the header
+  // owns the title and `body` is the single canonical prose body.
+  let hmdTitle = doc?.title ?? '';
+  let hmdBody = doc?.body ?? '';
+  const leadH1 = /^\s*#\s+(.+?)\s*(?:\r?\n|$)/.exec(hmdBody);
+  if (leadH1) {
+    if (!hmdTitle) hmdTitle = leadH1[1]!;
+    hmdBody = hmdBody.slice(leadH1[0].length).replace(/^\r?\n/, '');
+  }
   return JSON.stringify({
     descriptorUrl: url,
     hmd: rendered,
-    title: doc?.title ?? 'HyperMarkdown',
+    title: hmdTitle || 'HyperMarkdown',
     ...(doc?.state ? { state: doc.state } : {}),
-    body: doc?.body ?? '',
+    body: hmdBody,
     // Only the note's payload/vertical actions — descriptor transport affordances
     // (canDecrypt / renderView) filtered out; each remaining control marked
     // executable (has a real target) vs declarative (shape-only).

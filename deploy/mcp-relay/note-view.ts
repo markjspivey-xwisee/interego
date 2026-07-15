@@ -24,6 +24,10 @@ const IEP_NS_VIEW = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const VIEWER_TRANSPORT_ACTIONS: ReadonlySet<string> = new Set([
   `${IEP_NS_VIEW}canDecrypt`,
   `${IEP_NS_VIEW}renderView`,
+  // canFetchPayload is how the relay serves the graph bytes — descriptor
+  // transport plumbing, not a human/learning action. Drop it from the viewer's
+  // control set (still present in raw HMD/authority data). (georgio.)
+  `${IEP_NS_VIEW}canFetchPayload`,
 ]);
 
 /** The controls the interactive HMD viewer should OFFER: the note's payload/vertical

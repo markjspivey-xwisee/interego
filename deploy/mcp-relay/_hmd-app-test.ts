@@ -51,6 +51,8 @@ const md2 = L.safeMarkdown('[click](javascript:alert(1)) and [ok](https://x.exam
 check('safeMarkdown link with javascript: href → inert (#)', md2.includes('href="#"') && !md2.toLowerCase().includes('href="javascript'));
 check('safeMarkdown link with https href preserved', md2.includes('href="https://x.example"'));
 check('safeMarkdown link label with markup is escaped', !L.safeMarkdown('[<img src=x onerror=alert(1)>](https://x)').includes('<img'));
+const md3 = L.safeMarkdown('[Signed descriptor (authority)](https://x.example){rel="describedby" type="text/turtle"}');
+check('safeMarkdown consumes typed-link {rel/type} suffix (no visible braces in Enhanced)', md3.includes('>Signed descriptor (authority)</a>') && !md3.includes('{rel') && !md3.includes('type=&quot;') && md3.includes('rel="noopener noreferrer describedby"') && md3.includes('type="text/turtle"'));
 
 // ── action classification — ONLY GET (HTTP safe method) may skip confirmation.
 // The author-controlled action NAME is never a skip-confirm signal (a mutation can
