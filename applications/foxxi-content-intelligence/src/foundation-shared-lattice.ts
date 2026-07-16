@@ -30,7 +30,35 @@ import { bridgeEncryptionKeypair } from './foundation-holon-altitude.js';
 interface AgentLattice { pgsl: PGSLInstance; podUrl: string; agentDid: string }
 const resident = new Map<string, AgentLattice>();   // label -> in-memory shared lattice
 const loadAttempted = new Set<string>();
+/**
+ * Labels whose pod copy EXISTS but this process could not read it (a 5xx, a
+ * network blip, a decrypt failure, no key). Such a label is FENCED: it may serve
+ * reads from whatever is in memory, but it must NEVER be persisted, because the
+ * in-memory instance is not a superset of what is on the pod.
+ *
+ * Without this the failure was silent and destructive, not merely lossy. getLattice
+ * latches loadAttempted BEFORE awaiting the read and swallows the error, so ONE
+ * blip leaves an EMPTY lattice resident for the whole process lifetime; the next
+ * compose then PUTs that empty node map over the real one with no precondition
+ * (promoteInstanceEncrypted sends no If-Match). One read blip plus one authored
+ * course silently destroys an agent's entire corpus — and the courses in it exist
+ * in no file in this repo.
+ */
+const unreadable = new Set<string>();
 const creating = new Map<string, Promise<PGSLInstance>>();   // per-label creation mutex
+
+/** Does the pod already hold a lattice for this pod url? Distinguishes "nothing
+ *  here yet" (safe to create + persist) from "something I could not read" (fence). */
+async function podCopyExists(podUrl: string, fetchFn: FetchFn): Promise<boolean> {
+  try {
+    const r = await fetchFn(latticeResourceUrl(podUrl), { headers: { Accept: 'application/json' } });
+    return r.ok;
+  } catch {
+    // Cannot even tell — assume it exists and fence. Refusing to write costs an
+    // ingest; writing over an unread corpus costs the corpus.
+    return true;
+  }
+}
 
 const provFor = (agentDid: string) => ({ wasAttributedTo: agentDid as IRI, generatedAtTime: new Date().toISOString() });
 
@@ -92,7 +120,15 @@ async function getLattice(podUrl: string, agentDid: string, label: string, fetch
         try {
           const loaded = await resolveLatticeFromPod(latticeResourceUrl(podUrl), kp, fetchFn as unknown as typeof fetch);
           if (loaded && loaded.nodes.size) pgsl = rebuildInstance(loaded.nodes, agentDid);
-        } catch { /* fresh */ }
+          // null is AMBIGUOUS: resolveLatticeFromPod returns null for "no lattice
+          // yet" (404) AND for "there is one but I could not read it" (500, network
+          // blip, decrypt failure). Those must not be treated alike — one is safe to
+          // write over, the other destroys an agent's corpus. Probe to tell them apart.
+          else if (await podCopyExists(podUrl, fetchFn)) unreadable.add(label);
+        } catch { unreadable.add(label); }
+      } else {
+        // No key: we cannot have read the pod copy, so we must never write over it.
+        unreadable.add(label);
       }
     }
     if (!pgsl) pgsl = createPGSL(provFor(agentDid));
@@ -240,6 +276,19 @@ export async function composeIntoSharedLattice(args: {
     // encrypted resource (AWAITED — this is now a canonical store, so we confirm
     // the write rather than fire-and-forget) + PUT the projected descriptor.
     let persisted = false; let persistError: string | undefined;
+    if (unreadable.has(args.label)) {
+      // FENCED: the pod holds a lattice this process failed to read, so what is in
+      // memory is not a superset of it. promoteInstanceEncrypted PUTs the WHOLE node
+      // map with no precondition, so persisting here would replace a corpus we never
+      // saw. Fail loudly and keep serving from memory instead.
+      persistError = `refusing to persist "${args.label}": its pod copy exists but could not be read by this process — writing would overwrite it`;
+      console.warn('[shared-lattice][persist]', persistError);
+      return {
+        holonUri, contentType: args.contentType, descriptorUrl: proj.descriptorUrl,
+        reusedNodes, newNodes: args.terms.length - reusedNodes,
+        stats: latticeStats(pgsl), projections, persisted: false, persistError,
+      };
+    }
     if (args.ephemeral) {
       // Nothing to confirm: this holon is reproduced from code on the next boot and
       // read back from the resident lattice, so the pod copy would be write-only.
