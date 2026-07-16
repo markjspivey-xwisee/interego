@@ -150,8 +150,28 @@ vldp:EntailmentAuthorityShape a sh:NodeShape ;
           }
         } UNION {
           $this ?p ?o .
-          ?p (<http://www.w3.org/2000/01/rdf-schema#subPropertyOf>|<http://www.w3.org/2002/07/owl#equivalentProperty>|<http://www.w3.org/2002/07/owl#sameAs>)* ?authp .
+          ?p (<http://www.w3.org/2000/01/rdf-schema#subPropertyOf>|<http://www.w3.org/2002/07/owl#equivalentProperty>|<http://www.w3.org/2002/07/owl#inverseOf>|<http://www.w3.org/2002/07/owl#sameAs>)* ?authp .
           VALUES ?authp {
+            <http://www.w3.org/ns/hydra/core#target>
+            <http://www.w3.org/ns/hydra/core#method>
+            <http://www.w3.org/ns/hydra/core#operation>
+            <http://www.w3.org/ns/hydra/core#supportedOperation>
+            <https://markjspivey-xwisee.github.io/interego/ns/iep#action>
+            <https://relay.interego.xwisee.com/ns/maintainer/hmd#target>
+            <https://relay.interego.xwisee.com/ns/maintainer/hmd#rel>
+            <https://relay.interego.xwisee.com/ns/maintainer/hmd#control>
+          }
+        } UNION {
+          # Construct-agnostic floor: RDFS/OWL entailment is IRI-conservative, so a conformant
+          # rung-<=3 graph MUST NOT NAME any authority IRI in any position (as object here;
+          # predicate/type covered above). This catches every authority-linking axiom
+          # (subClassOf / domain / range / inverseOf / onProperty / propertyChain / ...) at once.
+          $this ?anyp ?auth .
+          VALUES ?auth {
+            <http://www.w3.org/ns/hydra/core#Operation>
+            <https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance>
+            <https://markjspivey-xwisee.github.io/interego/ns/harness#Affordance>
+            <https://relay.interego.xwisee.com/ns/maintainer/hmd#Control>
             <http://www.w3.org/ns/hydra/core#target>
             <http://www.w3.org/ns/hydra/core#method>
             <http://www.w3.org/ns/hydra/core#operation>
