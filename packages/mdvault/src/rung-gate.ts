@@ -128,6 +128,7 @@ const INVERSE_OF = `${OWL}inverseOf`;
 const DOMAIN = `${RDFS}domain`;
 const RANGE = `${RDFS}range`;
 const ON_PROPERTY = `${OWL}onProperty`;
+const OWL_IMPORTS = `${OWL}imports`;
 
 /** Every authority IRI (predicates ∪ types), canonical — the construct-agnostic floor set. */
 const AUTHORITY_ALL: ReadonlySet<string> = new Set<string>([...AUTHORITY_PREDICATES, ...AUTHORITY_TYPES]);
@@ -215,6 +216,14 @@ export function noteAuthorityViolation(noteTriples: readonly TripleLike[], scree
       if ((t.p === SUB_PROPERTY_OF || t.p === EQUIVALENT_PROPERTY || t.p === INVERSE_OF || t.p === ON_PROPERTY || t.p === SAME_AS) && screen.taintedPredicates.has(o)) {
         reasons.push(`axiom links toward authority predicate ${o}`);
       }
+    }
+    // (d) owl:imports pulls in an UNSCREENED external TBox. The IRI-conservation floor is
+    //     scoped to the SUBMITTED graph + fixed runtime rules; an imported ontology could
+    //     name authority for a downstream import-reasoner even when the vault does not. A
+    //     rung-<=3 descriptive vault must be self-contained (Vault-LD composes @context, not
+    //     OWL imports), so an owl:imports directive is refused.
+    if (t.p === OWL_IMPORTS) {
+      reasons.push(`carries owl:imports ${t.o} (unscreened external ontology; rung-<=3 must be self-contained)`);
     }
   }
   return { violated: reasons.length > 0, reasons };

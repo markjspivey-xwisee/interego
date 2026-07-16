@@ -273,4 +273,14 @@ describe('mdvault — entailment authority closure (georgio finding)', () => {
     expect(g2.triples.length).toBe(0);
     expect(g2.triples.some(t => t.p === HYDRA + 'target' || t.o === HYDRA + 'Operation' || String(t.o).includes('victim'))).toBe(false);
   });
+
+  it('refuses owl:imports (self-containment boundary of the IRI-conservation floor)', () => {
+    const g3 = ingestVault({
+      contexts: { 'context.jsonld': JSON.stringify({ '@context': { '@base': 'https://z.example/', type: '@type', owl: OWL, imports: { '@id': OWL + 'imports', '@type': '@id' } } }) },
+      notes: { 'N.md': '---\ntype: owl:Thing\nimports: https://evil.example/tbox\n---\n' },
+      rootContextPath: 'context.jsonld',
+    }, P);
+    expect(g3.notes.some(n => n.path === 'N.md' && !!n.quarantinedReason)).toBe(true);
+    expect(g3.triples.some(t => t.p === OWL + 'imports')).toBe(false);
+  });
 });
