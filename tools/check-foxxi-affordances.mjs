@@ -61,6 +61,14 @@ const ALLOWLIST = [
   '/agent/credentials/affordance',
   // The SCORM affordance bundle descriptor.
   '/agent/scorm/affordances',
+  // Course read views (dereference, public + read-only). A course is DESCRIPTIVE
+  // content, so listing one or fetching it (as JSON, as the real imsmanifest.xml,
+  // or as HyperMarkdown) is not a capability — same category as the lattice read
+  // views above. Only launch/submit mutate an attempt and write a learner record,
+  // and those remain signed capability affordances; no read route can start or
+  // score an attempt.
+  '/agent/scorm/courses',
+  '/agent/scorm/course/:id',
 ];
 
 /** Normalize a route path so :param segments compare as a wildcard. */
