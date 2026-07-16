@@ -109,6 +109,7 @@ import {
   persistRecordedStatement,
   mergeStatementsById,
   loadScormCourse,
+  listScormCourses,
   NON_PROJECTABLE_LOCALNAMES,
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
@@ -5266,17 +5267,25 @@ async function hydrateAgentCourses(force = false): Promise<void> {
   courseHydrationInflight = (async () => {
     await Promise.all(MESH_PODS.map(async podUrl => {
       const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
+      const found: Array<AgentScormCourse | null> = [];
+      // BOTH durable sources, the same two launch falls back to. The lattice is
+      // canonical, but a lattice that failed to load once stays empty-resident for
+      // the process lifetime, so the pod's recorded courses are the honest backstop
+      // — a cold-boot blip must not make a course unaddressable until a redeploy.
       try {
         await ensureResident(podUrl, podUrl, label);
-        for (const a of latticeArtifacts(label, 'foxxi:Course')) {
-          const c = a.content as AgentScormCourse | null;
-          // A live authored course wins over the durable copy (same content, but
-          // the in-process one is what launch/submit are already holding).
-          if (c?.courseId && Array.isArray(c.scos) && !agentScormCourses.has(c.courseId)) {
-            agentScormCourses.set(c.courseId, c);
-          }
+        for (const a of latticeArtifacts(label, 'foxxi:Course')) found.push(a.content as AgentScormCourse | null);
+      } catch { /* lattice unreadable for this pod */ }
+      try {
+        for (const c of await listScormCourses({ podUrl })) found.push(c as unknown as AgentScormCourse);
+      } catch { /* pod unreachable */ }
+      for (const c of found) {
+        // A live authored course wins over the durable copy (same content, but
+        // the in-process one is what launch/submit are already holding).
+        if (c?.courseId && Array.isArray(c.scos) && !agentScormCourses.has(c.courseId)) {
+          agentScormCourses.set(c.courseId, c);
         }
-      } catch { /* this pod is unreachable; the others still hydrate */ }
+      }
     }));
     coursesHydratedAt = Date.now();
   })().finally(() => { courseHydrationInflight = null; });

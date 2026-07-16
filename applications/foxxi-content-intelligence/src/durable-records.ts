@@ -343,43 +343,61 @@ export interface LoadScormCourseArgs {
 /** Load an authored SCORM course from a pod by courseId. Returns the decoded
  *  course payload, or null if not found / unreadable. */
 export async function loadScormCourse(args: LoadScormCourseArgs): Promise<Record<string, unknown> | null> {
+  const entries = await discoverCourseEntries(args.podUrl, args.fetch);
+  const key = slug(args.courseId);
+  // Narrow to the one course's descriptor before decoding any of them.
+  const recs = entries.filter(e => e.descriptorUrl!.includes(`scorm-${key}`));
+  for (const e of recs) {
+    const course = await decodeCourseEntry(e, args.fetch);
+    if (course && String(course.courseId ?? '') === args.courseId) return course;
+  }
+  return null;
+}
+
+/** Every authored SCORM course durably recorded on a pod — the same discover +
+ *  decode path loadScormCourse uses, minus the courseId filter, so a CATALOG can
+ *  be rebuilt from durable state instead of being held in memory. Best-effort:
+ *  an entry that won't decode is skipped, never fatal. */
+export async function listScormCourses(args: { podUrl: string; fetch?: FetchFn }): Promise<Array<Record<string, unknown>>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const e of await discoverCourseEntries(args.podUrl, args.fetch)) {
+    const course = await decodeCourseEntry(e, args.fetch);
+    if (course && typeof course.courseId === 'string' && course.courseId) out.push(course);
+  }
+  return out;
+}
+
+/** Pod manifest entries that are SCORM-course records with a descriptor. */
+async function discoverCourseEntries(podUrl: string, fetchFn?: FetchFn): Promise<Array<ManifestEntry & { descriptorUrl: string }>> {
   let entries: ManifestEntry[];
   try {
-    entries = (await discover(
-      args.podUrl,
-      undefined,
-      args.fetch ? { fetch: args.fetch as never } : undefined,
-    )) as ManifestEntry[];
+    entries = (await discover(podUrl, undefined, fetchFn ? { fetch: fetchFn as never } : undefined)) as ManifestEntry[];
+  } catch {
+    return [];
+  }
+  return entries.filter((e): e is ManifestEntry & { descriptorUrl: string } =>
+    (e.conformsTo ?? []).some(c => localName(c) === SCORM_COURSE_LOCALNAME) && !!e.descriptorUrl);
+}
+
+/** Follow one course record: descriptor → graph → the base64 courseJson payload. */
+async function decodeCourseEntry(
+  e: ManifestEntry & { descriptorUrl: string },
+  fetchFn?: FetchFn,
+): Promise<Record<string, unknown> | null> {
+  const doFetch = (fetchFn ?? globalThis.fetch) as typeof globalThis.fetch;
+  try {
+    const descRes = await doFetch(e.descriptorUrl, { headers: { Accept: 'text/turtle' } });
+    if (!descRes.ok) return null;
+    const descTurtle = await descRes.text();
+    const gm = descTurtle.match(/hydra:target\s+<([^>]+)>/) ?? descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
+    const graphUrl = gm?.[1];
+    if (!graphUrl) return null;
+    const { content } = await fetchGraphContent(graphUrl, fetchFn ? { fetch: fetchFn as never } : undefined);
+    if (!content) return null;
+    const m = content.match(/<[^>]*#courseJson>\s+"([A-Za-z0-9+/=\s]+)"/);
+    if (!m) return null;
+    return JSON.parse(Buffer.from(m[1].replace(/\s+/g, ''), 'base64').toString('utf8')) as Record<string, unknown>;
   } catch {
     return null;
   }
-  const key = slug(args.courseId);
-  const recs = entries.filter(e =>
-    (e.conformsTo ?? []).some(c => localName(c) === SCORM_COURSE_LOCALNAME)
-    && !!e.descriptorUrl && e.descriptorUrl.includes(`scorm-${key}`));
-  const fetchFn = (args.fetch ?? globalThis.fetch) as typeof globalThis.fetch;
-  for (const e of recs) {
-    try {
-      if (!e.descriptorUrl) continue;
-      const descRes = await fetchFn(e.descriptorUrl, { headers: { Accept: 'text/turtle' } });
-      if (!descRes.ok) continue;
-      const descTurtle = await descRes.text();
-      const gm = descTurtle.match(/hydra:target\s+<([^>]+)>/) ?? descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
-      const graphUrl = gm?.[1];
-      if (!graphUrl) continue;
-      const { content } = await fetchGraphContent(
-        graphUrl,
-        args.fetch ? { fetch: args.fetch as never } : undefined,
-      );
-      if (!content) continue;
-      const m = content.match(/<[^>]*#courseJson>\s+"([A-Za-z0-9+/=\s]+)"/);
-      if (!m) continue;
-      const courseJson = Buffer.from(m[1].replace(/\s+/g, ''), 'base64').toString('utf8');
-      const course = JSON.parse(courseJson) as Record<string, unknown>;
-      if (String(course.courseId ?? '') === args.courseId) return course;
-    } catch {
-      continue;
-    }
-  }
-  return null;
 }
