@@ -27,7 +27,6 @@
  *   - IEEE 1484.20.1 RDCEO (proficiency level on competency assertions)
  */
 
-import { ed25519 } from '@noble/curves/ed25519';
 import {
   importDidKeyEd25519,
   type IssuerKeyPair,
