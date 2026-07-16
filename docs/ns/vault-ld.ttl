@@ -185,3 +185,17 @@ vldp:EntailmentAuthorityShape a sh:NodeShape ;
       }
     """ ;
   ] .
+
+# ── SCOPE of the authority closure (boundary made explicit) ──
+#
+#  The IRI-conservation floor + entailment closure are defined over the SUBMITTED vault
+#  graph plus the fixed trusted runtime rules. They EXCLUDE remote owl:imports and external
+#  / preloaded ontologies: formal RDFS/OWL semantics include built-in axiomatic vocabulary,
+#  and an imported TBox could name authority even when the submitted vault does not. So a
+#  rung-<=3 vault must be self-contained — owl:imports is refused. If import reasoning is
+#  ever added, every imported ontology MUST be authority-screened before it is trusted.
+vldp:NoExternalImportShape a sh:NodeShape ;
+  rdfs:label "no unscreened external import" ;
+  rdfs:comment "A rung-<=3 vault must be self-contained: owl:imports pulls in an external TBox the authority floor cannot screen, which could name authority for a downstream import-reasoner. Vault-LD composes local context.jsonld (@context), not OWL imports." ;
+  sh:targetSubjectsOf owl:imports ;
+  sh:property [ sh:path owl:imports ; sh:maxCount 0 ; sh:message "Rung-<=3 violation: owl:imports references an unscreened external ontology; a Vault-LD graph must be self-contained." ] .
