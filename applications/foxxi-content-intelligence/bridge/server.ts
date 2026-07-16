@@ -5265,7 +5265,13 @@ async function hydrateAgentCourses(force = false): Promise<void> {
   if (!force && Date.now() - coursesHydratedAt < COURSE_HYDRATE_TTL_MS) return;
   if (courseHydrationInflight) return courseHydrationInflight;  // concurrent reads share one pass
   courseHydrationInflight = (async () => {
-    await Promise.all(MESH_PODS.map(async podUrl => {
+    // SEQUENTIAL, deliberately. Loading these pods concurrently drove the
+    // single-replica CSS to fail the reads, and getLattice marks a label
+    // resident + load-attempted BEFORE awaiting the read — so one concurrent
+    // blip left every label empty-resident for the whole process lifetime and
+    // the catalog stayed empty until a redeploy. One pod at a time is slower and
+    // correct; a course catalog is not worth a thundering herd.
+    for (const podUrl of MESH_PODS) {
       const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
       const found: Array<AgentScormCourse | null> = [];
       // BOTH durable sources, the same two launch falls back to. The lattice is
@@ -5275,10 +5281,10 @@ async function hydrateAgentCourses(force = false): Promise<void> {
       try {
         await ensureResident(podUrl, podUrl, label);
         for (const a of latticeArtifacts(label, 'foxxi:Course')) found.push(a.content as AgentScormCourse | null);
-      } catch { /* lattice unreadable for this pod */ }
+      } catch (e) { console.warn(`[foxxi-bridge][courses] lattice read failed for ${label}: ${(e as Error).message}`); }
       try {
         for (const c of await listScormCourses({ podUrl })) found.push(c as unknown as AgentScormCourse);
-      } catch { /* pod unreachable */ }
+      } catch (e) { console.warn(`[foxxi-bridge][courses] pod records read failed for ${label}: ${(e as Error).message}`); }
       for (const c of found) {
         // A live authored course wins over the durable copy (same content, but
         // the in-process one is what launch/submit are already holding).
@@ -5286,8 +5292,11 @@ async function hydrateAgentCourses(force = false): Promise<void> {
           agentScormCourses.set(c.courseId, c);
         }
       }
-    }));
+    }
     coursesHydratedAt = Date.now();
+    // Say what was rebuilt. The first cut swallowed every failure, so an empty
+    // catalog was indistinguishable from a catalog that failed to load.
+    console.log(`[foxxi-bridge][courses] catalog holds ${agentScormCourses.size} course(s) after hydrating ${MESH_PODS.length} pod(s)`);
   })().finally(() => { courseHydrationInflight = null; });
   return courseHydrationInflight;
 }
