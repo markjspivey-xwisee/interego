@@ -122,3 +122,46 @@ vldp:NoAuthorityPredicatesShape a sh:NodeShape ;
   sh:property [ sh:path hmd:target ;               sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:target." ] ;
   sh:property [ sh:path hmd:rel ;                  sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:rel." ] ;
   sh:property [ sh:path hmd:control ;              sh:maxCount 0 ; sh:message "Rung-<=3 violation: hmd:control." ] .
+
+# ── ENTAILMENT closure (semantic-layer authority smuggling) ──
+#
+#  A direct check misses inference: `MyClass rdfs:subClassOf hydra:Operation` + `x a MyClass`
+#  ENTAILS `x a hydra:Operation`; likewise owl:equivalentClass, and rdfs:subPropertyOf /
+#  owl:equivalentProperty / owl:sameAs for predicates. So the rung-<=3 closure is closed under
+#  entailment: a class reaching an authority class, or a property reaching an authority
+#  predicate, is itself authority-bearing. (Reported by a second implementation; the engine
+#  enforces this by computing the closure and quarantining every axiom + dependent note.)
+vldp:EntailmentAuthorityShape a sh:NodeShape ;
+  rdfs:label "no entailed authority (subclass / equivalent / subproperty chains)" ;
+  rdfs:comment "Refuses any node whose rdf:type reaches an authority class, or which uses a predicate that reaches an authority predicate, through rdfs:subClassOf / owl:equivalentClass / rdfs:subPropertyOf / owl:equivalentProperty / owl:sameAs chains." ;
+  sh:sparql [
+    a sh:SPARQLConstraint ;
+    sh:message "Rung-<=3 violation: execution authority is reachable by RDFS/OWL entailment (a subclass / equivalent-class / subproperty chain to an operation/affordance/control/target/action term)." ;
+    sh:select """
+      SELECT $this WHERE {
+        {
+          $this <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?c .
+          ?c (<http://www.w3.org/2000/01/rdf-schema#subClassOf>|<http://www.w3.org/2002/07/owl#equivalentClass>|<http://www.w3.org/2002/07/owl#sameAs>)* ?auth .
+          VALUES ?auth {
+            <http://www.w3.org/ns/hydra/core#Operation>
+            <https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance>
+            <https://markjspivey-xwisee.github.io/interego/ns/harness#Affordance>
+            <https://relay.interego.xwisee.com/ns/maintainer/hmd#Control>
+          }
+        } UNION {
+          $this ?p ?o .
+          ?p (<http://www.w3.org/2000/01/rdf-schema#subPropertyOf>|<http://www.w3.org/2002/07/owl#equivalentProperty>|<http://www.w3.org/2002/07/owl#sameAs>)* ?authp .
+          VALUES ?authp {
+            <http://www.w3.org/ns/hydra/core#target>
+            <http://www.w3.org/ns/hydra/core#method>
+            <http://www.w3.org/ns/hydra/core#operation>
+            <http://www.w3.org/ns/hydra/core#supportedOperation>
+            <https://markjspivey-xwisee.github.io/interego/ns/iep#action>
+            <https://relay.interego.xwisee.com/ns/maintainer/hmd#target>
+            <https://relay.interego.xwisee.com/ns/maintainer/hmd#rel>
+            <https://relay.interego.xwisee.com/ns/maintainer/hmd#control>
+          }
+        }
+      }
+    """ ;
+  ] .

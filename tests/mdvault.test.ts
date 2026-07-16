@@ -189,3 +189,58 @@ describe('mdvault — A7 ambiguous wiki-link across contexts', () => {
     expect(gg.triples.some(t => t.p === 'https://root.example/related')).toBe(false);
   });
 });
+
+describe('mdvault — entailment authority closure (georgio finding)', () => {
+  // A rung-<=3 note must not smuggle authority via RDFS/OWL inference: a class that reaches
+  // an authority class through subClassOf/equivalentClass, or a property that reaches an
+  // authority predicate through subPropertyOf/equivalentProperty/sameAs, is authority-bearing.
+  const RDFS = 'http://www.w3.org/2000/01/rdf-schema#';
+  const OWL = 'http://www.w3.org/2002/07/owl#';
+  const RA = 'https://reasoning-attack.example/';
+  const ctx = JSON.stringify({ '@context': {
+    '@base': RA, type: '@type', owl: OWL, rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', rdfs: RDFS,
+    subClassOf: { '@id': RDFS + 'subClassOf', '@type': '@id' },
+    equivalentClass: { '@id': OWL + 'equivalentClass', '@type': '@id' },
+    subPropertyOf: { '@id': RDFS + 'subPropertyOf', '@type': '@id' },
+    equivalentProperty: { '@id': OWL + 'equivalentProperty', '@type': '@id' },
+    myTarget: { '@id': RA + 'SubpropertyTarget', '@type': '@id' },
+    myAction: { '@id': RA + 'EquivalentAction', '@type': '@id' },
+  } });
+  const attack: VaultBundle = {
+    contexts: { 'context.jsonld': ctx },
+    notes: {
+      'SubclassOperation.md': `---\ntype: owl:Class\nsubClassOf: ${HYDRA}Operation\n---\n`,
+      'EquivalentAffordance.md': `---\ntype: owl:Class\nequivalentClass: ${IEP}Affordance\n---\n`,
+      'SubpropertyTarget.md': `---\ntype: rdf:Property\nsubPropertyOf: ${HYDRA}target\n---\n`,
+      'EquivalentAction.md': `---\ntype: rdf:Property\nequivalentProperty: ${IEP}action\n---\n`,
+      'IndirectOperation.md': '---\ntype: "[[SubclassOperation]]"\n---\n',
+      'IndirectAffordance.md': '---\ntype: "[[EquivalentAffordance]]"\n---\n',
+      'IndirectTarget.md': '---\ntype: owl:Thing\nmyTarget: https://evil.example/run\n---\n',
+      'IndirectAction.md': '---\ntype: owl:Thing\nmyAction: urn:evil:run\n---\n',
+    },
+    rootContextPath: 'context.jsonld',
+  };
+  const ga = ingestVault(attack, P);
+
+  it('quarantines every axiom AND dependent note', () => {
+    for (const note of Object.keys(attack.notes)) {
+      expect(ga.notes.some(n => n.path === note && !!n.quarantinedReason)).toBe(true);
+    }
+  });
+  it('leaks no authority (predicate, type, evil value, or linking axiom) into the active graph', () => {
+    expect(ga.triples.length).toBe(0);
+    expect(ga.triples.some(t => t.p === HYDRA + 'target' || t.p === IEP + 'action')).toBe(false);
+    expect(ga.triples.some(t => t.o === HYDRA + 'Operation' || t.o === IEP + 'Affordance')).toBe(false);
+    expect(ga.triples.some(t => t.o === 'https://evil.example/run' || t.o === 'urn:evil:run')).toBe(false);
+    expect(ga.diagnostics.filter(d => d.code === 'rung.authority').length).toBeGreaterThanOrEqual(4);
+  });
+  it('expands a CURIE @id-value and catches it (secondary finding)', () => {
+    const g2 = ingestVault({
+      contexts: { 'context.jsonld': JSON.stringify({ '@context': { '@base': 'https://x.example/', type: '@type', owl: OWL, rdfs: RDFS, hydra: HYDRA, subClassOf: { '@id': RDFS + 'subClassOf', '@type': '@id' } } }) },
+      notes: { 'C.md': '---\ntype: owl:Class\nsubClassOf: hydra:Operation\n---\n', 'I.md': '---\ntype: "[[C]]"\n---\n' },
+      rootContextPath: 'context.jsonld',
+    }, P);
+    expect(g2.notes.some(n => n.path === 'C.md' && !!n.quarantinedReason)).toBe(true);
+    expect(g2.triples.some(t => t.o === 'hydra:Operation')).toBe(false); // never emitted compact
+  });
+});

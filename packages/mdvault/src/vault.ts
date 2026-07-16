@@ -22,6 +22,7 @@ import { parseContextDocument, composeContextForNote, indexContextsByFolder, typ
 import { mintSubjectIri } from './identity.js';
 import { WikiIndex, parseWikiLink } from './wiki.js';
 import { liftNote, keywordKeys, expandVaultTerm, type KeywordKeys } from './lift.js';
+import { computeGraphAuthority, noteAuthorityViolation } from './rung-gate.js';
 import { mintSourceAtom, recoverAtomBytes, type SourceAtom } from './atoms.js';
 import type { VaultProfile } from './profile.js';
 
@@ -154,15 +155,15 @@ export function ingestVault(bundle: VaultBundle, profile: VaultProfile): VaultGr
     pending.push({ path, frontmatter, context, keywords, subject });
   }
 
-  // ── pass 2: lift (resolve wiki-links, screen rung ceiling) ──
-  const triples: HmdTriple[] = [];
+  // ── pass 2: lift each note (resolve wiki-links). Authority is screened in pass 3. ──
+  interface Lifted { path: string; subject: string; triples: readonly HmdTriple[]; diags: readonly Diagnostic[]; }
+  const lifted: Lifted[] = [];
   for (const p of pending) {
     try {
       const r = liftNote({ notePath: p.path, frontmatter: p.frontmatter, context: p.context, subject: p.subject, wiki, profile, keywords: p.keywords });
-      triples.push(...r.triples);
-      for (const d of r.diagnostics) diagnostics.push(d);
-      noteRecords.push({ path: p.path, participates: true, subject: p.subject });
+      lifted.push({ path: p.path, subject: p.subject, triples: r.triples, diags: r.diagnostics });
     } catch (e) {
+      // A structural conformance failure (e.g. inline @context) — quarantine here.
       if (e instanceof VaultConformanceError) {
         noteRecords.push({ path: p.path, participates: false, subject: p.subject, quarantinedReason: e.message });
         diagnostics.push({ severity: 'refuse', code: e.code, message: e.message, where: p.path });
@@ -170,6 +171,33 @@ export function ingestVault(bundle: VaultBundle, profile: VaultProfile): VaultGr
         throw e;
       }
     }
+  }
+
+  // ── pass 3: GRAPH-LEVEL rung ceiling (entailment-closed authority) ──
+  // Compute the authority closure over EVERY lifted triple (so subClassOf / equivalentClass
+  // / subPropertyOf / equivalentProperty / sameAs chains that reach the authority set are
+  // seen across notes), then quarantine any note that carries authority directly, defines an
+  // authority-linking axiom, or uses a tainted class/predicate. Surviving notes are emitted.
+  const triples: HmdTriple[] = [];
+  const emit = (l: Lifted): void => {
+    triples.push(...l.triples);
+    for (const d of l.diags) diagnostics.push(d);
+    noteRecords.push({ path: l.path, participates: true, subject: l.subject });
+  };
+  if (profile.maxRung < 4) {
+    const screen = computeGraphAuthority(lifted.flatMap(l => l.triples as HmdTriple[]));
+    for (const l of lifted) {
+      const v = noteAuthorityViolation(l.triples, screen);
+      if (v.violated) {
+        const reason = `rung-${profile.maxRung} authority (${v.reasons[0]})`;
+        noteRecords.push({ path: l.path, participates: false, subject: l.subject, quarantinedReason: reason });
+        diagnostics.push({ severity: 'refuse', code: 'rung.authority', message: `note "${l.path}" breaches the rung-${profile.maxRung} ceiling: ${v.reasons.join('; ')}`, where: l.path });
+      } else {
+        emit(l);
+      }
+    }
+  } else {
+    for (const l of lifted) emit(l);
   }
 
   triples.sort(cmpTriple);

@@ -21,7 +21,6 @@ import type { HmdTriple } from '@interego/core';
 import type { Diagnostic } from './errors.js';
 import { VaultConformanceError } from './errors.js';
 import { assertSerializableIri, escapeTurtleLiteral } from './iri.js';
-import { screenAuthorityCeiling } from './rung-gate.js';
 import { parseWikiLink, type WikiIndex } from './wiki.js';
 import type { ComposedContext } from './context.js';
 import type { VaultProfile } from './profile.js';
@@ -130,8 +129,6 @@ export function liftNote(inputs: LiftInputs): LiftResult {
   const ctx = context.terms as Record<string, unknown>;
   const triples: HmdTriple[] = [];
   const diagnostics: Diagnostic[] = [];
-  const predicates: string[] = [];
-  const typeObjects: string[] = [];
 
   // Inline @context is forbidden for an external-context profile (Vault-LD §4).
   if (profile.forbidInlineContext) {
@@ -144,7 +141,6 @@ export function liftNote(inputs: LiftInputs): LiftResult {
 
   const pushIri = (p: string, o: string) => {
     triples.push({ s: subject, p: assertSerializableIri(p), o: assertSerializableIri(o), oKind: 'iri' });
-    predicates.push(p);
   };
   const pushLit = (p: string, lex: string, datatype?: string) => {
     // lex is escaped at serialization; store raw + validated datatype IRI.
@@ -152,7 +148,6 @@ export function liftNote(inputs: LiftInputs): LiftResult {
     triples.push(safeDt !== undefined
       ? { s: subject, p: assertSerializableIri(p), o: lex, oKind: 'literal', datatype: safeDt }
       : { s: subject, p: assertSerializableIri(p), o: lex, oKind: 'literal' });
-    predicates.push(p);
     void escapeTurtleLiteral; // literals are escaped by the serializer; escaper lives in iri.ts
   };
 
@@ -163,11 +158,11 @@ export function liftNote(inputs: LiftInputs): LiftResult {
       const wl = parseWikiLink(raw);
       if (wl) {
         const r = wiki.resolve(wl, notePath);
-        if (r.subject) { triples.push({ s: subject, p: RDF_TYPE, o: assertSerializableIri(r.subject), oKind: 'iri' }); typeObjects.push(r.subject); }
+        if (r.subject) triples.push({ s: subject, p: RDF_TYPE, o: assertSerializableIri(r.subject), oKind: 'iri' });
         else if (r.diagnostic) diagnostics.push(r.diagnostic);
       } else if (typeof raw === 'string') {
         const t = expandVaultTerm(raw, ctx);
-        if (t) { triples.push({ s: subject, p: RDF_TYPE, o: assertSerializableIri(t), oKind: 'iri' }); typeObjects.push(t); }
+        if (t) triples.push({ s: subject, p: RDF_TYPE, o: assertSerializableIri(t), oKind: 'iri' });
         else diagnostics.push({ severity: 'flag', code: 'unmapped-type', message: `@type "${raw}" does not resolve under the active context`, where: notePath });
       }
     }
@@ -188,8 +183,13 @@ export function liftNote(inputs: LiftInputs): LiftResult {
         const r = wiki.resolve(wl, notePath);
         if (r.subject) pushIri(predicate, r.subject);
         else if (r.diagnostic) diagnostics.push(r.diagnostic);
-      } else if (typing.coerceToId && typeof raw === 'string' && ABSOLUTE_IRI_RE.test(raw)) {
-        pushIri(predicate, raw); // @type:@id term with a literal absolute IRI value
+      } else if (typing.coerceToId && typeof raw === 'string') {
+        // @type:@id term: the value is an IRI reference. EXPAND it through the vault context
+        // (a CURIE like `hydra:Operation` must become its full IRI, not stay compact — else
+        // the authority closure would miss it). Reuse the same resolver as predicates/types.
+        const iri = expandVaultTerm(raw, ctx);
+        if (iri) pushIri(predicate, iri);
+        else diagnostics.push({ severity: 'flag', code: 'unmapped-object-value', message: `@id value "${raw}" for "${key}" does not resolve under the active context`, where: notePath });
       } else {
         const lit = inferLiteral(raw);
         if (lit) pushLit(predicate, lit.lex, typing.datatype ?? lit.datatype);
@@ -203,14 +203,9 @@ export function liftNote(inputs: LiftInputs): LiftResult {
     triples.push({ s: subject, p: profile.placementPredicate, o: notePath, oKind: 'literal' });
   }
 
-  // THE RUNG CEILING — screen the EXPANDED predicates + type objects (A8/E6/D7).
-  const gate = screenAuthorityCeiling(predicates, typeObjects, profile.maxRung);
-  if (!gate.ok) {
-    throw new VaultConformanceError(
-      'rung.authority',
-      `note "${notePath}" breaches the rung-${profile.maxRung} ceiling: ${gate.violations.map(v => `${v.kind} ${v.iri}`).join(', ')}`,
-    );
-  }
-
+  // NOTE: the rung-ceiling authority screen is now a GRAPH-LEVEL pass in vault.ts. It must
+  // see subClassOf / equivalentClass / subPropertyOf / equivalentProperty / sameAs axioms
+  // ACROSS notes to catch entailment-based authority smuggling (a class that reaches an
+  // authority class by inference), which a per-note check structurally cannot.
   return { triples, diagnostics };
 }

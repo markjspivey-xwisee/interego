@@ -100,3 +100,102 @@ export function screenAuthorityCeiling(
   }
   return { ok: violations.length === 0, violations };
 }
+
+// ── Entailment closure (georgio's finding: semantic-layer authority smuggling) ──
+//
+// A direct check screens rdf:type objects + predicates against the authority set, but an
+// RDFS/OWL-aware consumer can INFER authority from axioms that never place a forbidden IRI
+// directly: `MyClass rdfs:subClassOf hydra:Operation` + `x rdf:type MyClass` entails
+// `x rdf:type hydra:Operation`; likewise owl:equivalentClass, and rdfs:subPropertyOf /
+// owl:equivalentProperty / owl:sameAs for predicates. So the rung-<=3 closure must be closed
+// under entailment: a class/property that REACHES the authority set through those axioms is
+// itself authority-bearing, and any note that defines such an axiom OR uses a tainted term
+// is quarantined.
+const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+const RDFS = 'http://www.w3.org/2000/01/rdf-schema#';
+const OWL = 'http://www.w3.org/2002/07/owl#';
+const SUBCLASS_OF = `${RDFS}subClassOf`;
+const EQUIVALENT_CLASS = `${OWL}equivalentClass`;
+const SUB_PROPERTY_OF = `${RDFS}subPropertyOf`;
+const EQUIVALENT_PROPERTY = `${OWL}equivalentProperty`;
+const SAME_AS = `${OWL}sameAs`;
+
+export interface TripleLike {
+  readonly s: string;
+  readonly p: string;
+  readonly o: string;
+  readonly oKind: string;
+}
+
+export interface GraphAuthorityScreen {
+  /** classes that reach an authority TYPE via subClassOf/equivalentClass/sameAs. */
+  readonly taintedClasses: ReadonlySet<string>;
+  /** properties that reach an authority PREDICATE via subPropertyOf/equivalentProperty/sameAs. */
+  readonly taintedPredicates: ReadonlySet<string>;
+}
+
+/** Least fixed point: a source is tainted if its target is. */
+function closure(seed: Iterable<string>, edges: ReadonlyArray<readonly [string, string]>): Set<string> {
+  const tainted = new Set<string>(seed);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [s, t] of edges) {
+      if (tainted.has(t) && !tainted.has(s)) { tainted.add(s); changed = true; }
+    }
+  }
+  return tainted;
+}
+
+/** Compute the entailment-closed authority class + predicate sets over a whole graph. */
+export function computeGraphAuthority(triples: readonly TripleLike[]): GraphAuthorityScreen {
+  const classEdges: Array<readonly [string, string]> = [];
+  const predEdges: Array<readonly [string, string]> = [];
+  for (const t of triples) {
+    if (t.oKind !== 'iri') continue;
+    const s = canonicalizeAuthorityIri(t.s);
+    const o = canonicalizeAuthorityIri(t.o);
+    switch (t.p) {
+      case SUBCLASS_OF: classEdges.push([s, o]); break;                // s ⊑ o → s tainted if o
+      case EQUIVALENT_CLASS: classEdges.push([s, o], [o, s]); break;   // symmetric
+      case SUB_PROPERTY_OF: predEdges.push([s, o]); break;             // s ⊑ o → s tainted if o
+      case EQUIVALENT_PROPERTY: predEdges.push([s, o], [o, s]); break; // symmetric
+      case SAME_AS: classEdges.push([s, o], [o, s]); predEdges.push([s, o], [o, s]); break;
+      default: break;
+    }
+  }
+  return {
+    taintedClasses: closure([...AUTHORITY_TYPES], classEdges),
+    taintedPredicates: closure([...AUTHORITY_PREDICATES], predEdges),
+  };
+}
+
+export interface AuthorityViolation {
+  readonly violated: boolean;
+  readonly reasons: readonly string[];
+}
+
+/** Does a note's triples carry execution authority — directly, via an authority-linking
+ *  axiom, or via an entailment chain reaching the authority set? */
+export function noteAuthorityViolation(noteTriples: readonly TripleLike[], screen: GraphAuthorityScreen): AuthorityViolation {
+  const reasons: string[] = [];
+  for (const t of noteTriples) {
+    const p = canonicalizeAuthorityIri(t.p);
+    const o = canonicalizeAuthorityIri(t.o);
+    if (p === RDF_TYPE && t.oKind === 'iri' && screen.taintedClasses.has(o)) {
+      reasons.push(`rdf:type reaches authority class ${o}`);
+    }
+    if (screen.taintedPredicates.has(p)) {
+      reasons.push(`predicate reaches authority predicate ${p}`);
+    }
+    if (t.oKind === 'iri') {
+      if ((t.p === SUBCLASS_OF || t.p === EQUIVALENT_CLASS || t.p === SAME_AS) && screen.taintedClasses.has(o)) {
+        reasons.push(`axiom links a class to authority ${o}`);
+      }
+      if ((t.p === SUB_PROPERTY_OF || t.p === EQUIVALENT_PROPERTY || t.p === SAME_AS) && screen.taintedPredicates.has(o)) {
+        reasons.push(`axiom links a property to authority ${o}`);
+      }
+    }
+  }
+  return { violated: reasons.length > 0, reasons };
+}
