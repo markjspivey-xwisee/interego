@@ -68,8 +68,14 @@ function rebuildInstance(nodes: Map<IRI, PgslNode>, agentDid: string): PGSLInsta
 }
 
 /** Get the agent's resident shared lattice, loading it from the pod once (best-
- *  effort) on a cold miss, else starting fresh. */
-async function getLattice(podUrl: string, agentDid: string, label: string, fetchFn: FetchFn): Promise<PGSLInstance> {
+ *  effort) on a cold miss, else starting fresh.
+ *
+ *  `ephemeral` skips the pod load entirely — see composeIntoSharedLattice's
+ *  `ephemeral` flag. The pod resource is per-POD, not per-label, so loading it
+ *  into a second label's instance imports the FIRST label's nodes, and the next
+ *  persist writes the union back. Labels that never touch the pod cannot take
+ *  part in that. */
+async function getLattice(podUrl: string, agentDid: string, label: string, fetchFn: FetchFn, ephemeral = false): Promise<PGSLInstance> {
   const existing = resident.get(label);
   if (existing) return existing.pgsl;
   // Per-label creation mutex: concurrent callers (e.g. a fire-and-forget completion
@@ -79,7 +85,7 @@ async function getLattice(podUrl: string, agentDid: string, label: string, fetch
   if (inflight) return inflight;
   const p = (async (): Promise<PGSLInstance> => {
     let pgsl: PGSLInstance | undefined;
-    if (!loadAttempted.has(label)) {
+    if (!ephemeral && !loadAttempted.has(label)) {
       loadAttempted.add(label);
       const kp = bridgeEncryptionKeypair();
       if (kp) {
@@ -134,13 +140,30 @@ export async function composeIntoSharedLattice(args: {
    *  (cross-seat owner-decrypt) — preserves the recipients feature of the removed
    *  hand-authored record. */
   recipientPods?: readonly string[];
+  /** The artifact is DERIVED FROM CODE, so the pod is not its system of record —
+   *  neither read the pod copy on a cold miss nor write one back. Use this for a
+   *  projection that is regenerated deterministically at every boot and served
+   *  from the resident lattice (an ontology, a vocabulary): its durable copy is
+   *  write-only, and persisting it is not free.
+   *
+   *  The pod resource is per-POD, not per-label. Every label composing to the same
+   *  pod loads that ONE resource into its own instance and persists the union
+   *  back, so N code-derived labels sharing a pod ACCUMULATE each other's nodes
+   *  without bound. That is not hypothetical: the tenant pod reached 16,178 nodes
+   *  / 43 MB across 9 ontology labels until the pod server refused the PUT
+   *  ("Encrypted instance publish failed: 500"). Ephemeral labels never join that
+   *  union.
+   *
+   *  Only set this when the content is genuinely reproducible from code. An
+   *  authored course or a learner's record is NOT — it must persist. */
+  ephemeral?: boolean;
   fetch?: FetchFn;
 }): Promise<ComposeResult | null> {
   try {
     const kp = bridgeEncryptionKeypair();
     if (!kp || args.terms.length === 0) return null;
     const fetchFn = (args.fetch ?? (globalThis.fetch as unknown as FetchFn));
-    const pgsl = await getLattice(args.podUrl, args.agentDid, args.label, fetchFn);
+    const pgsl = await getLattice(args.podUrl, args.agentDid, args.label, fetchFn, args.ephemeral);
     const prov = provFor(args.agentDid);
     // Reuse measurement: which spine terms already existed BEFORE this ingest.
     const reusedNodes = args.terms.filter(t => pgsl.atoms.has(String(t))).length;
@@ -164,6 +187,15 @@ export async function composeIntoSharedLattice(args: {
     // encrypted resource (AWAITED — this is now a canonical store, so we confirm
     // the write rather than fire-and-forget) + PUT the projected descriptor.
     let persisted = false; let persistError: string | undefined;
+    if (args.ephemeral) {
+      // Nothing to confirm: this holon is reproduced from code on the next boot and
+      // read back from the resident lattice, so the pod copy would be write-only.
+      return {
+        holonUri, contentType: args.contentType, descriptorUrl: proj.descriptorUrl,
+        reusedNodes, newNodes: args.terms.length - reusedNodes,
+        stats: latticeStats(pgsl), projections, persisted: false,
+      };
+    }
     try {
       const recipients = [kp.publicKey];
       const ownerKey = await resolveAgentEncryptionKey(args.podUrl, { fetch: fetchFn }).catch(() => null);
