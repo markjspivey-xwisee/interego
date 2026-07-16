@@ -337,7 +337,7 @@ import {
   type ContextEnrollment, type DiscoveredDescriptor, type CallerVerification,
 } from '../src/context-chat.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
-import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
+import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd, vocabTriplesBySubject, FOXXI_VOCAB_DOC } from '../src/foxxi-vocab.js';
 import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd, ontologyIri as specOntologyIri, modelFromHolon as specModelFromHolon, type OntologyModel as SpecOntologyModel } from '../src/spec-ontology.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { COMPLIANCE_MODELS } from '../src/spec/compliance.model.js';
@@ -3197,12 +3197,21 @@ const app = createVerticalBridge({
       void (async () => {
         try {
           const turtle = renderVocabTurtle();
-          const terms = parseTrig(turtle).subjects.map(s => (typeof s.subject === 'string' ? String(s.subject) : '')).filter(Boolean);
+          // Triple granularity (graph -> subject -> triple), same as the spec
+          // ontologies. Feeding parseTrig(...).subjects gave the lattice ~78 opaque
+          // whole-urls each used ONCE (1.05x reuse — nothing to overlap), so its
+          // fragments were arbitrary prefixes. The vocab's own repetition
+          // (rdf:type / rdfs:label / rdfs:comment / rdfs:isDefinedBy on every term)
+          // is the reuse, and it only exists below the subject.
+          const groups = vocabTriplesBySubject();
+          // The vocab doc url stays on the flat spine: it is the term other
+          // artifacts join on.
+          const terms = [FOXXI_VOCAB_DOC];
           // ephemeral: the vocab is renderVocabTurtle() — regenerated from code each
           // boot and served from the resident lattice (readArtifact, falling back to
           // renderVocabTurtle), so its pod copy was write-only. See the ephemeral
           // JSDoc: it also kept this label in the tenant pod's accumulating union.
-          const sl = await composeIntoSharedLattice({ podUrl: tenantPodUrl, agentDid: tenantProfileDid, label: 'ns-foxxi', terms, content: { turtle }, contentType: 'spec:Ontology', projections: ['rdf'], ephemeral: true });
+          const sl = await composeIntoSharedLattice({ podUrl: tenantPodUrl, agentDid: tenantProfileDid, label: 'ns-foxxi', terms, termGroups: groups, content: { turtle }, contentType: 'spec:Ontology', projections: ['rdf'], ephemeral: true });
           if (sl?.holonUri) { foxxiVocabHolon = { label: 'ns-foxxi', holonUri: sl.holonUri }; console.log('[foxxi-bridge][foxxi-vocab] composed foxxi: into the lattice; /ns/foxxi now serves the holon projection'); }
         } catch (e) { console.warn('[foxxi-bridge][foxxi-vocab] compose skipped:', (e as Error).message); }
       })();

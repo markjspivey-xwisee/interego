@@ -187,6 +187,41 @@ export function renderVocabJsonLd(): Record<string, unknown> {
   };
 }
 
+/**
+ * The vocabulary as TRIPLES, grouped by subject — the same graph renderVocabTurtle
+ * prints, but as data the lattice can actually compose.
+ *
+ * Identifiers are ABSOLUTE URLS, never CURIEs: `rdfs:label` is a Turtle
+ * serialization artifact, and atomizing it would atomize the serialization rather
+ * than the thing it abbreviates.
+ *
+ * Grouped by subject (graph -> subject -> triple) so each ingest stays narrow —
+ * PGSL's ingest is ~O(n^2) in sequence length, so composing one holon from every
+ * triple at once is quadratic, not "more holonic".
+ */
+export function vocabTriplesBySubject(): Array<Array<readonly [string, string, string]>> {
+  const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', RDFS = 'http://www.w3.org/2000/01/rdf-schema#';
+  const DOC = FOXXI_VOCAB_DOC;
+  const groups: Array<Array<readonly [string, string, string]>> = [];
+  groups.push([
+    [DOC, RDF + 'type', `${FOXXI_NS}Vocabulary`],
+    [DOC, RDFS + 'label', 'Foxxi Content Intelligence — vocabulary'],
+    [DOC, RDFS + 'comment', 'Consolidated dereferenceable vocabulary for the Foxxi vertical. Composes the standards spec ontologies it emerges from (see rdfs:seeAlso).'],
+    ...COMPOSED_SPEC_ONTOLOGIES.map(o => [DOC, RDFS + 'seeAlso', o] as const),
+    [DOC, RDFS + 'isDefinedBy', DOC],
+  ]);
+  for (const t of FOXXI_TERMS) {
+    const s = `${FOXXI_NS}${t.name}`;
+    groups.push([
+      [s, RDF + 'type', `${FOXXI_NS}${t.kind}`],
+      [s, RDFS + 'label', t.label],
+      [s, RDFS + 'comment', t.definition],
+      [s, RDFS + 'isDefinedBy', DOC],
+    ]);
+  }
+  return groups;
+}
+
 /** The whole vocabulary as Turtle. */
 export function renderVocabTurtle(): string {
   const head = `@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
