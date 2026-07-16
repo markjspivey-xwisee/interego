@@ -50,6 +50,7 @@ import { MyActivityPanel } from './components/MyActivityPanel.js';
 import { MyForwardingPanel } from './components/MyForwardingPanel.js';
 import { AgentPerformancePanel } from './components/AgentPerformancePanel.js';
 import { PerformanceDemoSuitePanel } from './components/PerformanceDemoSuitePanel.js';
+import { AgentCoursesCard } from './components/AgentCoursesCard.js';
 import { Header, Card } from './components/common.js';
 import { loadSession, saveSession, clearSession, type FoxxiSession } from './auth/session.js';
 import { getTransport, resetTransportProbe } from './interego/client.js';
@@ -249,7 +250,12 @@ function ProfilesCollectionPage() {
 
 function CoursesPage({ session }: { session: FoxxiSession }) {
   void session;
-  return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><CatalogTab /></div>;
+  return (
+    <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20, display: 'grid', gap: 18 }}>
+      <CatalogTab />
+      <AgentCoursesCard />
+    </div>
+  );
 }
 
 function CourseDetailPage({ session }: { session: FoxxiSession }) {
