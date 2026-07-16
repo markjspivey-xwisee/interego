@@ -3199,7 +3199,11 @@ const app = createVerticalBridge({
         try {
           const turtle = renderVocabTurtle();
           const terms = parseTrig(turtle).subjects.map(s => (typeof s.subject === 'string' ? String(s.subject) : '')).filter(Boolean);
-          const sl = await composeIntoSharedLattice({ podUrl: tenantPodUrl, agentDid: tenantProfileDid, label: 'ns-foxxi', terms, content: { turtle }, contentType: 'spec:Ontology', projections: ['rdf'] });
+          // ephemeral: the vocab is renderVocabTurtle() — regenerated from code each
+          // boot and served from the resident lattice (readArtifact, falling back to
+          // renderVocabTurtle), so its pod copy was write-only. See the ephemeral
+          // JSDoc: it also kept this label in the tenant pod's accumulating union.
+          const sl = await composeIntoSharedLattice({ podUrl: tenantPodUrl, agentDid: tenantProfileDid, label: 'ns-foxxi', terms, content: { turtle }, contentType: 'spec:Ontology', projections: ['rdf'], ephemeral: true });
           if (sl?.holonUri) { foxxiVocabHolon = { label: 'ns-foxxi', holonUri: sl.holonUri }; console.log('[foxxi-bridge][foxxi-vocab] composed foxxi: into the lattice; /ns/foxxi now serves the holon projection'); }
         } catch (e) { console.warn('[foxxi-bridge][foxxi-vocab] compose skipped:', (e as Error).message); }
       })();

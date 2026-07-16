@@ -267,6 +267,12 @@ export async function composeSpecOntology(model: OntologyModel, opts: { podUrl: 
   const sl = await composeIntoSharedLattice({
     podUrl: opts.podUrl, agentDid: opts.agentDid, label,
     terms, content: { ontology: model }, contentType: 'spec:Ontology', projections: ['rdf'],
+    // The ontology IS this code's OntologyModel — recomposed identically every
+    // boot and served from the resident lattice (specModelFromHolon, with the
+    // model itself as fallback). Nothing dereferences its pod copy, and every
+    // ontology label composes to the SAME tenant pod, so persisting made them
+    // accumulate each other's nodes until the PUT 500'd at 43 MB.
+    ephemeral: true,
   });
   return { module: model.module, label, holonUri: sl?.holonUri, descriptorUrl: sl?.descriptorUrl };
 }
