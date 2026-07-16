@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Foxxi — agent-authored course</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="player.css" />
+<style>
+  /* This player renders SCOs the engine delivers — no slide iframe, so the
+     stage is prose + an assessment form rather than embedded content. */
+  #sco-body p { font-size: 15px; line-height: 1.65; margin: 0 0 14px; }
+  #course-links { font-size: 12px; }
+  #course-links a { color: var(--accent); }
+  .q { display: block; margin: 0 0 12px; }
+  .q .qtext { display: block; font-size: 14px; margin-bottom: 6px; }
+  .q input {
+    font: inherit; width: 100%; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: white; color: var(--text);
+  }
+  .q input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #assessment h4 { margin: 18px 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+  .gradenote { font-size: 12px; margin: 4px 0 0; }
+  .seq-note { font-size: 11px; margin-top: 12px; line-height: 1.5; }
+  .rollup { padding: 18px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); }
+  .rollup.pass { border-left: 3px solid var(--good); }
+  .rollup.fail { border-left: 3px solid var(--warn); }
+  .rollup-verdict { font-size: 20px; font-weight: 700; margin-bottom: 12px; }
+  .rollup.pass .rollup-verdict { color: var(--good); }
+  .rollup.fail .rollup-verdict { color: var(--warn); }
+  .rollup dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 14px; font-size: 13px; }
+  .rollup dt { color: var(--text-dim); }
+  .rollup dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .rollup code { font-size: 11px; word-break: break-all; }
+  .banner {
+    font-size: 12px; line-height: 1.55; color: var(--text-dim);
+    border-left: 2px solid var(--accent); padding: 8px 12px; margin: 0 0 16px;
+    background: var(--panel-2); border-radius: 0 4px 4px 0;
+  }
+</style>
+</head>
+<body>
+<header id="hdr">
+  <div class="brand">Foxxi <span class="dim">/ agent-authored course</span></div>
+  <div id="learner-chip"><span class="dim">deriving your identity…</span></div>
+</header>
+<main>
+  <aside id="toc"></aside>
+  <section id="stage">
+    <h1 id="course-title" style="font-size:15px;color:var(--text-dim);margin:0 0 2px;font-weight:600"></h1>
+    <div id="course-links" class="dim"></div>
+    <p class="banner">
+      This attempt runs on the bridge's real SCORM 2004 sequencing engine. This page holds
+      no answer key and no CMI data model — it renders what the engine delivers and signs
+      what you submit. The engine grades, sequences, and rolls up your outcome, so the
+      content cannot report its own result.
+    </p>
+    <div id="stage-body">
+      <h1 id="slide-title">Loading…</h1>
+      <div id="meta" class="dim"></div>
+      <div id="sco-body"></div>
+      <div id="assessment"></div>
+      <div id="controls">
+        <button id="btn-submit" class="primary" disabled>Continue →</button>
+      </div>
+    </div>
+    <div id="trace">
+      <div class="trace-head">signed-request trace · <span class="dim">live</span></div>
+      <ul id="trace-list"></ul>
+    </div>
+  </section>
+</main>
+<script type="module" src="agent.js"></script>
+</body>
+</html>
