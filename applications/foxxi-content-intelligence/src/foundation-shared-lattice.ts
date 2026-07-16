@@ -105,6 +105,18 @@ async function getLattice(podUrl: string, agentDid: string, label: string, fetch
 
 /** Interop surfaces a holon can be projected to. RDF is just ONE of them. */
 export type ProjectionKind = 'rdf' | 'vc' | 'activity';
+
+/**
+ * A composition, to any depth: a leaf value, or a node composed of children.
+ *
+ * Holons all the way down — and, deliberately, all the way FURTHER down later. A
+ * corpus can start at triple granularity and a leaf can be decomposed afterwards
+ * (a url into its segments, a literal into words or characters) without breaking
+ * anything that reads at the level above it: the sub-holon's uri is derived from
+ * its content, so refining what sits BENEATH a level leaves that level's identity
+ * intact. Granularity is a rung, not a lock-in.
+ */
+export type TermTree = string | readonly TermTree[];
 /** Prefix marking a lossless full-content atom (filtered out of dereference). */
 const ARTIFACT_SENTINEL = '__fxa__:';
 function isContentAtom(value: string): boolean { return value.startsWith(ARTIFACT_SENTINEL); }
@@ -140,6 +152,31 @@ export async function composeIntoSharedLattice(args: {
    *  (cross-seat owner-decrypt) — preserves the recipients feature of the removed
    *  hand-authored record. */
   recipientPods?: readonly string[];
+  /**
+   * Sub-compositions to compose this holon FROM, to ANY depth. A leaf is a value
+   * (atomized); a node is composed of its children and contributes its holon uri
+   * upward (ingest treats an existing node uri as a reference, not a value).
+   *
+   * This is what makes the lattice holonic rather than flat. `terms` is a flat
+   * spine: every item is an opaque atom, so overlap exists only where two
+   * artifacts share a WHOLE term. For an RDF artifact that is the wrong shape — a
+   * graph is subjects, a subject is triples, a triple is subject/predicate/object.
+   * Feeding an ontology's subject urls as flat `terms` measured 1.05x reuse (every
+   * atom used exactly once, so the overlap was destroyed before the lattice saw
+   * it); feeding its triples measures 82% of slots hitting an EXISTING atom,
+   * because rdf:type / rdfs:label / rdfs:isDefinedBy and every shared url collapse
+   * to ONE atom apiece across every triple and every ontology.
+   *
+   * KEEP EVERY LEVEL NARROW. ingest builds ~n^2/2 fragments over a sequence, so
+   * composing one holon out of 448 triples is not "more holonic", it is quadratic
+   * — it OOMs. Mirror the artifact's real hierarchy instead (graph -> subject ->
+   * triple), which keeps every ingest a handful of items wide.
+   *
+   * Granularity stays open by construction: a leaf here can later be decomposed
+   * BELOW this level (url segments, characters) without disturbing anything
+   * reading at this level — the holon uris above it do not change.
+   */
+  termGroups?: readonly TermTree[];
   /** The artifact is DERIVED FROM CODE, so the pod is not its system of record —
    *  neither read the pod copy on a cold miss nor write one back. Use this for a
    *  projection that is regenerated deterministically at every boot and served
@@ -165,13 +202,29 @@ export async function composeIntoSharedLattice(args: {
     const fetchFn = (args.fetch ?? (globalThis.fetch as unknown as FetchFn));
     const pgsl = await getLattice(args.podUrl, args.agentDid, args.label, fetchFn, args.ephemeral);
     const prov = provFor(args.agentDid);
-    // Reuse measurement: which spine terms already existed BEFORE this ingest.
-    const reusedNodes = args.terms.filter(t => pgsl.atoms.has(String(t))).length;
-    // The holon = reusable spine terms + a lossless content atom (sentinel-marked
-    // so dereference filters it out). PGSL is canonical: the exact artifact (ANY
-    // content type, not just RDF) is recoverable by resolving the content atom.
+    // Reuse measurement: which spine terms/atoms already existed BEFORE this
+    // ingest — counted over the groups too, since that is where the reuse lives.
+    const leaves: string[] = [];
+    const collect = (t: TermTree): void => { if (typeof t === 'string') leaves.push(t); else t.forEach(collect); };
+    (args.termGroups ?? []).forEach(collect);
+    const spine = [...args.terms, ...leaves];
+    const reusedNodes = spine.filter(t => pgsl.atoms.has(String(t))).length;
+    // Holonic, bottom-up: compose each sub-tree into its own holon and hand its uri
+    // upward. ingest() treats an existing node uri as a reference rather than a
+    // value, so sub-holons compose without being re-atomized. Depth is the caller's
+    // (a triple is a holon of 3; a subject is a holon of its triples), which is what
+    // keeps each ingest narrow — ingest is ~O(n^2) in the sequence length.
+    const composeTree = (t: TermTree): string => {
+      if (typeof t === 'string') return t;                       // leaf: a value ingest will atomize
+      const parts = t.map(composeTree);
+      return parts.length ? ingest(pgsl, parts, prov) : '';
+    };
+    const groupUris = (args.termGroups ?? []).map(composeTree).filter(Boolean);
+    // The holon = its sub-holons + reusable spine terms + a lossless content atom
+    // (sentinel-marked so dereference filters it out). PGSL is canonical: the exact
+    // artifact (ANY content type, not just RDF) is recoverable from the content atom.
     const contentAtom = `${ARTIFACT_SENTINEL}${JSON.stringify({ t: args.contentType, c: args.content })}`;
-    const holonUri = ingest(pgsl, [...args.terms, contentAtom], prov);
+    const holonUri = ingest(pgsl, [...groupUris, ...args.terms, contentAtom], prov);
     const node = pgsl.nodes.get(holonUri);
     if (!node) return null;
     const descriptorBase = `${args.podUrl.endsWith('/') ? args.podUrl : `${args.podUrl}/`}foxxi-lattice/`;

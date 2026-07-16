@@ -101,6 +101,85 @@ function prefixBlock(m: OntologyModel, extra: Record<string, string> = {}): stri
   return Object.entries(all).map(([p, iri]) => `@prefix ${p}: <${iri}> .`).join('\n');
 }
 
+/** A triple, as three ABSOLUTE identifiers (or a literal in object position).
+ *  Never a CURIE: `rdfs:label` is a Turtle serialization artifact, the identity is
+ *  the URL it abbreviates. Feeding abbreviations to the lattice would atomize the
+ *  serialization instead of the thing. */
+export type Triple = readonly [string, string, string];
+
+const A = STD_PREFIXES.rdf + 'type';
+const RDFS = STD_PREFIXES.rdfs, OWL = STD_PREFIXES.owl, SKOS = STD_PREFIXES.skos, DCT = STD_PREFIXES.dct;
+
+/** Expand a model token to an ABSOLUTE url (the module's own ns, a std prefix, or
+ *  an already-absolute url) — the inverse of the CURIE the Turtle projection prints. */
+function expandAbs(m: OntologyModel, token: string): string {
+  if (!token) return token;
+  if (/^https?:\/\//.test(token)) return token;
+  const curie = /^([a-z][\w-]*):(.+)$/i.exec(token);
+  if (curie) {
+    const base = ({ ...STD_PREFIXES, ...(m.prefixes ?? {}), [m.module]: ns(m) })[curie[1]!];
+    return base ? base + curie[2] : token;
+  }
+  return `${ns(m)}${token}`;
+}
+
+/**
+ * The ontology as TRIPLES — the same graph renderOwl prints, but as data.
+ *
+ * This is what the lattice should be fed. Ingesting the ontology as a flat list
+ * of its subject urls gives every atom exactly one occurrence (measured: 1.05x
+ * reuse across all six specs), so PGSL builds ~n^2/2 prefix fragments over a
+ * sequence with no shared structure — the overlap is destroyed BEFORE the lattice
+ * sees it. At triple granularity the same six specs reuse at 5.30x, because a
+ * spec is overwhelmingly repetition: rdfs:isDefinedBy 520x, rdfs:comment 511x,
+ * rdf:type 509x, rdfs:label 362x. Those become ONE atom each, shared by every
+ * triple and every ontology that mentions them.
+ *
+ * Composed HOLONICALLY by the caller: each triple is a holon of its three atoms,
+ * and the ontology is a holon of its triples. Granularity stays open — an atom
+ * here can later be decomposed further (url segments, characters) beneath these
+ * triples without disturbing anything reading at the triple level.
+ */
+export function ontologyTriples(m: OntologyModel): Triple[] {
+  const out: Triple[] = [];
+  const O = ontologyIri(m);
+  out.push([O, A, OWL + 'Ontology'], [O, DCT + 'title', m.title], [O, DCT + 'description', m.description],
+    [O, OWL + 'versionInfo', m.version], [O, RDFS + 'seeAlso', m.spec]);
+  if (m.derivedFrom) out.push([O, RDFS + 'comment', `Transcribed from the normative schema: ${m.derivedFrom}`]);
+  for (const i of m.imports ?? []) out.push([O, OWL + 'imports', /^https?:\/\//.test(i) ? i : `${NS_ROOT}${i}`]);
+  out.push([O, RDFS + 'isDefinedBy', O]);
+
+  for (const c of m.classes) {
+    const s = `${ns(m)}${c.name}`;
+    out.push([s, A, OWL + 'Class'], [s, RDFS + 'label', c.label], [s, RDFS + 'comment', c.comment]);
+    for (const sup of c.subClassOf ?? []) out.push([s, RDFS + 'subClassOf', expandAbs(m, sup)]);
+    out.push([s, RDFS + 'isDefinedBy', O]);
+  }
+  for (const p of m.properties) {
+    const s = `${ns(m)}${p.name}`;
+    out.push([s, A, OWL + (p.kind === 'object' ? 'ObjectProperty' : 'DatatypeProperty')]);
+    if (p.functional) out.push([s, A, OWL + 'FunctionalProperty']);
+    if (p.inverseFunctional) out.push([s, A, OWL + 'InverseFunctionalProperty']);
+    out.push([s, RDFS + 'label', p.label], [s, RDFS + 'comment', p.comment]);
+    if (p.domain) out.push([s, RDFS + 'domain', expandAbs(m, p.domain)]);
+    if (p.range) out.push([s, RDFS + 'range', expandAbs(m, p.range)]);
+    out.push([s, RDFS + 'isDefinedBy', O]);
+  }
+  for (const v of m.vocabularies ?? []) {
+    const vs = `${ns(m)}${v.name}`;
+    out.push([vs, A, SKOS + 'ConceptScheme'], [vs, RDFS + 'label', v.label ?? v.name]);
+    if (v.comment) out.push([vs, RDFS + 'comment', v.comment]);
+    out.push([vs, RDFS + 'isDefinedBy', O]);
+    for (const mem of v.members) {
+      const ms = `${ns(m)}${mem.name}`;
+      out.push([ms, A, SKOS + 'Concept'], [ms, SKOS + 'inScheme', vs], [ms, SKOS + 'prefLabel', mem.label]);
+      if (mem.comment) out.push([ms, SKOS + 'definition', mem.comment]);
+      out.push([ms, RDFS + 'isDefinedBy', O]);
+    }
+  }
+  return out;
+}
+
 // ── OWL projection ──────────────────────────────────────────────────────────
 export function renderOwl(m: OntologyModel): string {
   const lines: string[] = [prefixBlock(m), ''];
@@ -257,16 +336,28 @@ export interface ComposedOntology { module: string; label: string; holonUri?: st
  *  returns the holon refs when persisted. */
 export async function composeSpecOntology(model: OntologyModel, opts: { podUrl: string; agentDid: string }): Promise<ComposedOntology> {
   const label = `ns-${model.module}`;
-  const terms = [
-    ontologyIri(model),
-    ...model.classes.map(c => `${ns(model)}${c.name}`),
-    ...model.properties.map(p => `${ns(model)}${p.name}`),
-    ...(model.vocabularies ?? []).flatMap(v => v.members.map(mm => `${ns(model)}${mm.name}`)),
-  ];
+  // The ontology is a graph, so compose it AS a graph — mirroring RDF's own
+  // hierarchy: graph -> subject -> triple -> (subject, predicate, object).
+  //
+  // The previous flat list of subject urls gave every atom exactly one occurrence
+  // (1.05x reuse over all six specs), so PGSL built ~n^2/2 fragments over a
+  // sequence with nothing in common. Grouping by subject restores the real overlap
+  // (82% of triple slots hit an existing atom) AND keeps every ingest narrow:
+  // ~6 triples per subject, 3 terms per triple. Composing the ontology out of all
+  // ~450 triples in ONE ingest is not "more holonic" — it is quadratic, and OOMs.
+  const bySubject = new Map<string, Triple[]>();
+  for (const t of ontologyTriples(model)) {
+    const cur = bySubject.get(t[0]);
+    if (cur) cur.push(t); else bySubject.set(t[0], [t]);
+  }
+  const groups = [...bySubject.values()].map(ts => ts.map(t => [t[0], t[1], t[2]] as const));
+  // Keep the ontology url itself on the flat spine: it is the term other artifacts
+  // (and other ontologies' owl:imports) join on.
+  const terms = [ontologyIri(model)];
   if (!opts.podUrl) return { module: model.module, label };
   const sl = await composeIntoSharedLattice({
     podUrl: opts.podUrl, agentDid: opts.agentDid, label,
-    terms, content: { ontology: model }, contentType: 'spec:Ontology', projections: ['rdf'],
+    terms, termGroups: groups, content: { ontology: model }, contentType: 'spec:Ontology', projections: ['rdf'],
     // The ontology IS this code's OntologyModel — recomposed identically every
     // boot and served from the resident lattice (specModelFromHolon, with the
     // model itself as fallback). Nothing dereferences its pod copy, and every
