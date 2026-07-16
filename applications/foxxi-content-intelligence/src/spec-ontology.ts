@@ -364,6 +364,10 @@ export async function composeSpecOntology(model: OntologyModel, opts: { podUrl: 
     // ontology label composes to the SAME tenant pod, so persisting made them
     // accumulate each other's nodes until the PUT 500'd at 43 MB.
     ephemeral: true,
+    // Public: this ontology is already served in full at /ns/<module>. Marking it
+    // lets its nodes be dereferenced by hash without a label — see resolvePublicNode.
+    // Nothing here is private; every atom is a term of a published vocabulary.
+    publicLattice: true,
   });
   return { module: model.module, label, holonUri: sl?.holonUri, descriptorUrl: sl?.descriptorUrl };
 }

@@ -113,7 +113,7 @@ import {
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
-import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadCourseFromLattice, type ProjectionKind } from '../src/foundation-shared-lattice.js';
+import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadCourseFromLattice, resolvePublicNode, fragmentsReferencing, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, type AgentScormCourseLike } from '../src/course-graph.js';
 import { courseToSkillMd, skillMdToAgenticCourse } from '../src/course-skill-bridge.js';
@@ -3211,7 +3211,9 @@ const app = createVerticalBridge({
           // boot and served from the resident lattice (readArtifact, falling back to
           // renderVocabTurtle), so its pod copy was write-only. See the ephemeral
           // JSDoc: it also kept this label in the tenant pod's accumulating union.
-          const sl = await composeIntoSharedLattice({ podUrl: tenantPodUrl, agentDid: tenantProfileDid, label: 'ns-foxxi', terms, termGroups: groups, content: { turtle }, contentType: 'spec:Ontology', projections: ['rdf'], ephemeral: true });
+          // publicLattice: the vocab is served in full at /ns/foxxi, so its nodes are
+          // safe to dereference by hash without a label (see resolvePublicNode).
+          const sl = await composeIntoSharedLattice({ podUrl: tenantPodUrl, agentDid: tenantProfileDid, label: 'ns-foxxi', terms, termGroups: groups, content: { turtle }, contentType: 'spec:Ontology', projections: ['rdf'], ephemeral: true, publicLattice: true });
           if (sl?.holonUri) { foxxiVocabHolon = { label: 'ns-foxxi', holonUri: sl.holonUri }; console.log('[foxxi-bridge][foxxi-vocab] composed foxxi: into the lattice; /ns/foxxi now serves the holon projection'); }
         } catch (e) { console.warn('[foxxi-bridge][foxxi-vocab] compose skipped:', (e as Error).message); }
       })();
@@ -4080,6 +4082,55 @@ app.post('/agent/publish-encryption-key', async (req, res) => {
 //   GET /agent/lattice/:label            — COARSE: stats + namespaces present (a slice)
 //   GET /agent/lattice/:label/term?iri=  — FINE: where one IRI appears across the
 //        corpus + its syntagmatic (left/right) neighbors + usage + the projected RDF.
+// ── The label-free node resolver ──────────────────────────────────────────────
+// A PGSL node id (urn:pgsl:atom:<hash>) is a perfect DENOTATION — content-addressed,
+// deterministic, identical on every pod — but it resolves no CONNOTATION: every other
+// route here demands you already know the pod AND the label, i.e. supply out of band
+// precisely the knowledge the identifier should carry. That is what makes the id a
+// word rather than a term, and it is the gap that has to close BEFORE minting an id
+// as a url would be anything but a promise that 404s.
+//
+// So: resolve a node by hash alone, and answer with a description whose every edge is
+// a URL you can follow (items downward, appearsIn upward). Follow-your-nose over the
+// lattice, which the urn made impossible.
+//
+// PUBLIC lattices only (the code-derived ontologies already served in full at /ns/*).
+// A private node and an absent node are reported IDENTICALLY — 404, same body — so
+// this cannot be used to probe whether some content exists in an agent's corpus.
+// Registered BEFORE /agent/lattice/:label so 'atom'/'fragment' are never read as labels.
+const latticeNodeUrl = (base: string, kind: 'atom' | 'fragment', uri: string): string =>
+  `${base}/agent/lattice/${kind}/${String(uri).split(':').pop()}`;
+const nodeUrlFor = (base: string, uri: string): string =>
+  latticeNodeUrl(base, String(uri).includes(':atom:') ? 'atom' : 'fragment', uri);
+
+function serveLatticeNode(kind: 'atom' | 'fragment', req: import('express').Request, res: import('express').Response): void {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
+  const found = resolvePublicNode(kind, String(req.params.hash));
+  // Uniform 404: absent, private, or malformed are indistinguishable by design.
+  if (!found) { res.status(404).json({ error: 'no such node' }); return; }
+  const { label, node } = found;
+  const definedIn = `${base}/agent/lattice/${encodeURIComponent(label)}`;
+  const self = latticeNodeUrl(base, kind, String(node.uri));
+  const appearsIn = fragmentsReferencing(label, String(node.uri)).map(u => nodeUrlFor(base, u));
+  if (node.kind === 'Atom') {
+    // Upward only: an atom is composed of nothing. appearsIn IS the reuse, walkable.
+    res.json({ '@id': self, kind: 'Atom', level: 0, value: node.value, appearsIn, definedIn });
+    return;
+  }
+  res.json({
+    '@id': self, kind: 'Fragment', level: node.level,
+    // Downward: what this holon is composed OF, each a url you can follow.
+    items: node.items.map(u => nodeUrlFor(base, String(u))),
+    appearsIn, definedIn,
+    projections: `${definedIn}/holon?uri=${encodeURIComponent(String(node.uri))}`,
+  });
+}
+// Written out rather than looped: the CI affordance gate reads these paths as
+// literals, and a template-interpolated path is invisible to it.
+app.get('/agent/lattice/atom/:hash', (req, res) => serveLatticeNode('atom', req, res));
+app.get('/agent/lattice/fragment/:hash', (req, res) => serveLatticeNode('fragment', req, res));
+
 app.get('/agent/lattice/:label', (req, res) => {
   const v = latticeNamespaceView(req.params.label);
   if (!v.resident) { res.status(404).json({ ok: false, error: `no resident shared lattice for '${req.params.label}' — the agent must compose an artifact first (record-performance / scorm-author / issue-credential)` }); return; }
