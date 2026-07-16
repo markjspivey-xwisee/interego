@@ -369,6 +369,17 @@ async function handleTenants(req: Request, res: Response): Promise<void> {
 // receipt feed. ADMIN-only on mutations (learning-engineers are read-only
 // on forwarding, since it is an operator concern, not a per-cohort one).
 
+/**
+ * Express 5 types `req.params[k]` as `string | string[]`: a wildcard
+ * segment (`*splat`) decodes to an array. Every route in this file binds
+ * a single `:id` segment, which path-to-regexp always yields as a string,
+ * so narrow explicitly rather than assert.
+ */
+function routeParam(req: Request, name: string): string {
+  const v = req.params[name];
+  return Array.isArray(v) ? (v[0] ?? '') : (v ?? '');
+}
+
 function requireAdmin(req: Request, res: Response): boolean {
   if ((req as Request & { adminRole?: string }).adminRole !== 'admin') {
     res.status(403).json({ error: 'forwarding administration requires the admin role' });
@@ -395,7 +406,7 @@ function handleAddForwarding(req: Request, res: Response): void {
 function handleUpdateForwarding(req: Request, res: Response): void {
   if (!requireAdmin(req, res)) return;
   const b = (req.body ?? {}) as Record<string, unknown>;
-  const view = updateForwardingTarget(resolveAdminTenant(req), req.params.id!, {
+  const view = updateForwardingTarget(resolveAdminTenant(req), routeParam(req, 'id'), {
     label: b.label as string | undefined,
     endpoint: b.endpoint as string | undefined,
     credentials: b.credentials as string | undefined,
@@ -408,7 +419,7 @@ function handleUpdateForwarding(req: Request, res: Response): void {
 
 function handleDeleteForwarding(req: Request, res: Response): void {
   if (!requireAdmin(req, res)) return;
-  const ok = deleteForwardingTarget(resolveAdminTenant(req), req.params.id!);
+  const ok = deleteForwardingTarget(resolveAdminTenant(req), routeParam(req, 'id'));
   if (!ok) { res.status(404).json({ error: 'no such forwarding target' }); return; }
   res.status(204).end();
 }
@@ -421,8 +432,10 @@ async function handleRetryForwarding(req: Request, res: Response): Promise<void>
 }
 
 function handleDeadLetter(req: Request, res: Response): void {
-  const dl = deadLetterFor(resolveAdminTenant(req), req.params.id!);
-  res.json({ id: req.params.id, depth: dl.length, items: dl.slice(-50) });
+  // Narrow once and reuse, so the echoed id cannot diverge from the lookup key.
+  const id = routeParam(req, 'id');
+  const dl = deadLetterFor(resolveAdminTenant(req), id);
+  res.json({ id, depth: dl.length, items: dl.slice(-50) });
 }
 
 function handleInboundReceipts(req: Request, res: Response): void {
@@ -443,7 +456,7 @@ function handleAddCredential(req: Request, res: Response): void {
 
 function handleDeleteCredential(req: Request, res: Response): void {
   if (!requireAdmin(req, res)) return;
-  const ok = inboundCredentials.remove(req.params.id!);
+  const ok = inboundCredentials.remove(routeParam(req, 'id'));
   if (!ok) { res.status(404).json({ error: 'no such credential' }); return; }
   res.status(204).end();
 }

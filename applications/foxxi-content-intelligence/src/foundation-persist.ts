@@ -25,10 +25,9 @@ import {
   renderManifestEntry,
   descriptorSlug,
   type PGSLInstance,
-  type ManifestEntry,
   type Node as PgslNode,
 } from '@interego/pgsl';
-import type { IRI } from '@interego/core';
+import type { IRI, ManifestEntry } from '@interego/core';
 import type { EncryptionKeyPair } from '@interego/core';
 import type { FetchFn } from '@interego/core/http';
 

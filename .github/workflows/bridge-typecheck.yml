@@ -1,0 +1,59 @@
+name: Bridge Typecheck
+
+# The Foxxi bridge runs under tsx (transpile-only) — deploy/Dockerfile.foxxi-bridge
+# ends in `CMD ["npx","tsx", ... server.ts]` — so NOTHING typechecks it on the way
+# to production. A missing import is not a build failure there; it is a runtime
+# ReferenceError. That is not hypothetical: `latticeArtifacts is not defined`
+# shipped to production and was swallowed by a try/catch, which made a durable
+# course catalog silently report zero courses.
+#
+# tsc IS the only guard. This job is it.
+#
+# `npm run build` is required before tsc: the bridge tsconfig resolves @interego/*
+# through the workspace symlinks, so those packages' emitted .d.ts must exist for
+# the program to typecheck at all.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/**'
+      - 'applications/agentic-performance-practice/src/**'
+      - 'applications/lrs-adapter/src/**'
+      - 'packages/**'
+      - 'tsconfig.base.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/bridge-typecheck.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/**'
+      - 'applications/agentic-performance-practice/src/**'
+      - 'applications/lrs-adapter/src/**'
+      - 'packages/**'
+      - 'tsconfig.base.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/bridge-typecheck.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    name: "Foxxi bridge typecheck (tsx never typechecks it — this is the only guard)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install
+        run: npm ci
+      - name: Build @interego/* packages
+        # Not for the artifacts — for the .d.ts the bridge's tsconfig resolves.
+        run: npm run build
+      - name: Typecheck the bridge
+        run: npx tsc --noEmit -p applications/foxxi-content-intelligence/bridge/tsconfig.json

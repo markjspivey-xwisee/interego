@@ -175,7 +175,10 @@ export function manifestToAgenticCourse(args: ManifestToCourseArgs): ManifestCou
   // If there were no topic folders (single-SCO/flat), fall back to the course title as one concept.
   if (concepts.length === 0) {
     concepts.push({ id: slug(courseTitle), label: courseTitle, confidence: 1, tier: 1, is_free_standing: true, taught_in_slides: slides.map(s => s.id), total_freq: slides.length });
-    for (const s of slides) (s as { concept_ids: string[] }).concept_ids = [slug(courseTitle)];
+    // Replace the element rather than casting away readonly to mutate it: the array
+    // is local and mutable, only the element properties are readonly, and nothing
+    // aliases these slide objects yet.
+    slides.forEach((s, i) => { slides[i] = { ...s, concept_ids: [slug(courseTitle)] }; });
   }
 
   // Prereq edges (structural heuristic, conf 0.5): an activity that DECLARES imsss

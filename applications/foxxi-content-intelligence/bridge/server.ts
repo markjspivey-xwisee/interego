@@ -103,7 +103,6 @@ import {
   type CourseCompletionSubject,
 } from '../src/credentials.js';
 import { exportClr } from '../src/clr.js';
-import { issueBbsCompletionCredential, deriveCompletionPresentation, verifyCompletionPresentation } from '../src/bbs-credentials.js';
 import {
   readDurableRecordedStatements,
   persistRecordedStatement,
@@ -328,7 +327,7 @@ import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
 // composing Foxxi's own standards. + the shared in-flow performance-support primitive.
 import { proposeStandardsExtension, EXTEND_STANDARDS_GUIDANCE, type ExtensionKind as AgpExtensionKind } from '../../agentic-performance-practice/src/standards-extension.js';
 import { diagnose as diagnoseSituation, recommendInterventions } from '../src/performance-architecture.js';
-import { expandOutcomeCorpus, buildCalibrationProfile, composeCalibrationProfiles, federationView, calibrationReadout, type OutcomeSpec } from '../src/performance-calibration.js';
+import { expandOutcomeCorpus, buildCalibrationProfile, composeCalibrationProfiles, federationView, calibrationReadout, type OutcomeSpec, type CalibrationProfile } from '../src/performance-calibration.js';
 import { attachGuidanceServing, type GuidedAffordanceEntry as FoxxiGuidedEntry } from '../../_shared/guided-affordance/index.js';
 import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
 import type { DeliveryChannel } from '../src/content-channels.js';
@@ -3568,12 +3567,15 @@ app.post('/agent/issue-credential', async (req, res) => {
     });
     // Record the ISSUER's own act (expressive `credentialed` verb) into their lens +
     // pod — the issuing authority's work is first-class activity, not invisible.
-    const credentialedStatementId = emitAgentActivity({
+    // The VC's id is optional on the type; an activity statement whose object has
+    // no IRI is worse than no statement, so skip the emit rather than assert.
+    const credentialIri = result.vc.id;
+    const credentialedStatementId = credentialIri ? emitAgentActivity({
       actorDid: callerDid, verbIri: CREDENTIALED_VERB, verbDisplay: 'credentialed',
-      objectId: result.vc.id, objectName: `${competencyName} → ${recipientDid}`,
+      objectId: credentialIri, objectName: `${competencyName} → ${recipientDid}`,
       objectType: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#activities/credential',
       result: { completion: true, success: true },
-    });
+    }) : null;
     // Foundation-first (additive): compose the issuance into the issuer's shared lattice.
     const issuerPod = resolveSubjectPodUrl(callerDid);
     const sharedLattice = await composeIntoSharedLattice({
@@ -4372,7 +4374,10 @@ app.post('/agent/course/ask', async (req, res) => {
     // course intro slides when NO concept matched (retrievalKind='fallback'), so a
     // non-empty citedSlides does NOT mean the question was answered from the graph.
     // Report grounded ONLY on a true graph hit; surface retrievalKind for the UI.
-    const groundedOf = (r: { retrievalKind?: string; seedConcepts: unknown[] }): boolean =>
+    // readonly: this only READS seedConcepts, and callers pass a RetrievalContext
+    // whose array is readonly. Widening the parameter is the fix; casting at the
+    // call sites would just relitigate it twice.
+    const groundedOf = (r: { retrievalKind?: string; seedConcepts: readonly unknown[] }): boolean =>
       r.retrievalKind === 'graph' && r.seedConcepts.length > 0;
 
     if (!byok) {
@@ -4655,7 +4660,9 @@ app.post('/agent/calibration/merge', async (req, res) => {
       bySigner.set(source, specs);
     }
 
-    const orgProfiles = [];
+    // Annotated so the federation-promotion logic below is actually type-checked
+    // (an unannotated [] is an evolving any[], which silences every read of it).
+    const orgProfiles: CalibrationProfile[] = [];
     const contributors: Array<{ source: string; cells: number; samples: number }> = [];
     for (const [source, specs] of bySigner) {
       const profile = buildCalibrationProfile(expandOutcomeCorpus(specs), { assertThreshold, federationKThreshold });
@@ -4921,7 +4928,9 @@ app.post('/agent/record-course-completion', async (req, res) => {
     const statementIds: string[] = [];
     for (const stmt of trace) {
       const s = stmt as unknown as Record<string, unknown>;
-      const withId = { ...s, id: (typeof s.id === 'string' && s.id) ? s.id : randomUUID() };
+      // Object-spread drops the index signature (TS collapses this to `{ id: string }`),
+      // hiding the xAPI keys that are present at runtime — restore it explicitly.
+      const withId: Record<string, unknown> & { id: string } = { ...s, id: (typeof s.id === 'string' && s.id) ? s.id : randomUUID() };
       statementIds.push(storeStatementInternal(withId, lensTenantFor(label)));
       // Foundation-first: PGSL canonical — compose each cmi5 statement into the
       // learner's shared lattice (lossless), no hand-authored RDF.
