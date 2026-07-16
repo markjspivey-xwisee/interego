@@ -47,6 +47,57 @@ const loadAttempted = new Set<string>();
 const unreadable = new Set<string>();
 const creating = new Map<string, Promise<PGSLInstance>>();   // per-label creation mutex
 
+/**
+ * Labels whose lattice may be dereferenced NODE BY NODE, without auth and without
+ * being told the label. FAIL-CLOSED: a label is private until explicitly marked.
+ *
+ * Only content that is ALREADY published qualifies — the code-derived ontologies
+ * served at /ns/*. An agent's own lattice holds authored courses, learner records
+ * and credentials, and must never be node-addressable: a label-free lookup over
+ * every resident lattice would be a cross-tenant existence oracle, which is exactly
+ * what pgsl-store's addressing was designed to close.
+ */
+const publicLabels = new Set<string>();
+/** Mark a label's lattice as public — see publicLabels. Only for code-derived,
+ *  already-published content; never for an agent's own corpus. */
+export function markLatticePublic(label: string): void { publicLabels.add(label); }
+export function publicLatticeLabels(): string[] { return [...publicLabels]; }
+
+/**
+ * Resolve a PGSL node by its content hash WITHOUT being told which lattice holds it.
+ *
+ * This is the lookup an id-as-url needs and the substrate has never had. A node id
+ * (urn:pgsl:atom:<hash>) is a perfect DENOTATION — content-addressed, deterministic,
+ * identical everywhere — but it resolves no CONNOTATION: today you must already know
+ * the pod AND the label and pass the urn as a query param, i.e. supply out of band
+ * exactly the knowledge the identifier should have carried. That is the gap that
+ * makes the id a word rather than a term.
+ *
+ * PUBLIC lattices only, and a private node is reported IDENTICALLY to an absent one
+ * (both null -> 404), so this cannot answer "does this content exist somewhere".
+ */
+export function resolvePublicNode(kind: 'atom' | 'fragment', hash: string): { label: string; node: PgslNode } | null {
+  if (!/^[0-9a-f]{6,64}$/i.test(hash)) return null;
+  const uri = `urn:pgsl:${kind}:${hash}` as IRI;
+  for (const label of publicLabels) {
+    const node = resident.get(label)?.pgsl.nodes.get(uri);
+    if (node) return { label, node };
+  }
+  return null;
+}
+
+/** Fragments in a lattice that DIRECTLY reference a node — the "appears in" edge a
+ *  node's description needs so a reader can walk upward. */
+export function fragmentsReferencing(label: string, uri: string): string[] {
+  const a = resident.get(label);
+  if (!a) return [];
+  const out: string[] = [];
+  for (const [fUri, node] of a.pgsl.nodes) {
+    if (node.kind === 'Fragment' && node.items.includes(uri as IRI)) out.push(String(fUri));
+  }
+  return out;
+}
+
 /** Does the pod already hold a lattice for this pod url? Distinguishes "nothing
  *  here yet" (safe to create + persist) from "something I could not read" (fence). */
 async function podCopyExists(podUrl: string, fetchFn: FetchFn): Promise<boolean> {
@@ -230,11 +281,16 @@ export async function composeIntoSharedLattice(args: {
    *  Only set this when the content is genuinely reproducible from code. An
    *  authored course or a learner's record is NOT — it must persist. */
   ephemeral?: boolean;
+  /** This artifact is ALREADY published in full, so its lattice may be dereferenced
+   *  node-by-node without auth (see markLatticePublic). Only for code-derived public
+   *  content — never an agent's own corpus. */
+  publicLattice?: boolean;
   fetch?: FetchFn;
 }): Promise<ComposeResult | null> {
   try {
     const kp = bridgeEncryptionKeypair();
     if (!kp || args.terms.length === 0) return null;
+    if (args.publicLattice) markLatticePublic(args.label);
     const fetchFn = (args.fetch ?? (globalThis.fetch as unknown as FetchFn));
     const pgsl = await getLattice(args.podUrl, args.agentDid, args.label, fetchFn, args.ephemeral);
     const prov = provFor(args.agentDid);

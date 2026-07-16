@@ -43,6 +43,11 @@ const ALLOWLIST = [
   // Low-latency mesh push receiver (protocol-envelope only; projected on pull).
   '/agent/mesh-event',
   // Shared-lattice read views (foundation-first dereference).
+  // The label-free node resolver: a node id denotes but resolves no description
+  // unless something can answer for it by hash alone. Public lattices only, and a
+  // private node 404s exactly like an absent one.
+  '/agent/lattice/atom/:hash',
+  '/agent/lattice/fragment/:hash',
   '/agent/lattice/:label',
   '/agent/lattice/:label/term',
   '/agent/lattice/:label/holon',
