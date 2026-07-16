@@ -3237,8 +3237,10 @@ const app = createVerticalBridge({
     attachHypermediaRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       affordances: activeAffordances,
+      // The player moved to Railway; the old Azure host is paused, so the
+      // previous default handed every catalog course a launch link that 404s.
       scormPlayerBaseUrl: process.env.FOXXI_SCORM_PLAYER_BASE
-        ?? 'https://interego-foxxi-scorm-player.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+        ?? 'https://foxxi-scorm-player.interego.xwisee.com',
     });
 
     // Auth middleware: extract Authorization: Bearer <session-token> and
@@ -5234,7 +5236,9 @@ app.get('/agent/scorm/affordances', (_req, res) => {
 // Public + READ-ONLY on purpose: a course is descriptive content. Only launch /
 // submit mutate an attempt and write a learner's record, so those stay
 // signature-gated — the read surface can never start or score an attempt.
-const SCORM_PLAYER_BASE = (process.env.FOXXI_SCORM_PLAYER_URL ?? 'https://foxxi-scorm-player.interego.xwisee.com').replace(/\/$/, '');
+// Same env var the hypermedia layer's scormPlayerBaseUrl reads — one player, one
+// knob. Defaults to the live player.
+const SCORM_PLAYER_BASE = (process.env.FOXXI_SCORM_PLAYER_BASE ?? 'https://foxxi-scorm-player.interego.xwisee.com').replace(/\/$/, '');
 const scormCourseIri = (id: string): string => `urn:foxxi:course:${id}`;
 function scormPlayerLink(c: AgentScormCourse): string {
   return `${SCORM_PLAYER_BASE}/agent.html?course_id=${encodeURIComponent(c.courseId)}&author_did=${encodeURIComponent(c.authoredBy)}`;
