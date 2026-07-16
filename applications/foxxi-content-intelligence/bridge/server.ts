@@ -5240,6 +5240,64 @@ app.get('/agent/scorm/affordances', (_req, res) => {
 // knob. Defaults to the live player.
 const SCORM_PLAYER_BASE = (process.env.FOXXI_SCORM_PLAYER_BASE ?? 'https://foxxi-scorm-player.interego.xwisee.com').replace(/\/$/, '');
 const scormCourseIri = (id: string): string => `urn:foxxi:course:${id}`;
+
+/** Rebuild the course catalog from DURABLE state.
+ *
+ *  `agentScormCourses` is a cache, not a system of record: /agent/scorm/author
+ *  composes the full course losslessly into the author's PGSL lattice (durable,
+ *  pod-backed), and /agent/scorm/launch already falls back to that copy. The read
+ *  views had no such fallback, so a restart made an addressable course 404 until
+ *  someone re-authored it — the cache was silently acting as the source of truth.
+ *
+ *  This reads the same durable copy launch does, over the configured agent pods,
+ *  and refills the cache. No new store and no new write path: the durable copy
+ *  already existed, nothing was consulting it.
+ *
+ *  Pod-by-pod best-effort — one unreachable pod must not blank the catalog. The
+ *  agentDid argument only seeds a lattice instance's default provenance, and
+ *  composeIntoSharedLattice derives prov per call from its OWN agentDid, so
+ *  hydrating for reads cannot mis-attribute a later write. */
+const COURSE_HYDRATE_TTL_MS = Number(process.env.FOXXI_COURSE_HYDRATE_TTL_MS ?? 30_000);
+let coursesHydratedAt = 0;
+let courseHydrationInflight: Promise<void> | null = null;
+async function hydrateAgentCourses(force = false): Promise<void> {
+  if (!force && Date.now() - coursesHydratedAt < COURSE_HYDRATE_TTL_MS) return;
+  if (courseHydrationInflight) return courseHydrationInflight;  // concurrent reads share one pass
+  courseHydrationInflight = (async () => {
+    await Promise.all(MESH_PODS.map(async podUrl => {
+      const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
+      try {
+        await ensureResident(podUrl, podUrl, label);
+        for (const a of latticeArtifacts(label, 'foxxi:Course')) {
+          const c = a.content as AgentScormCourse | null;
+          // A live authored course wins over the durable copy (same content, but
+          // the in-process one is what launch/submit are already holding).
+          if (c?.courseId && Array.isArray(c.scos) && !agentScormCourses.has(c.courseId)) {
+            agentScormCourses.set(c.courseId, c);
+          }
+        }
+      } catch { /* this pod is unreachable; the others still hydrate */ }
+    }));
+    coursesHydratedAt = Date.now();
+  })().finally(() => { courseHydrationInflight = null; });
+  return courseHydrationInflight;
+}
+
+/** Resolve one course for a READ: cache → durable lattice. `author_did` points at
+ *  the author's pod directly (the launch links carry it); without it, fall back to
+ *  hydrating the configured pods. Mirrors how launch resolves, minus the auth. */
+async function resolveCourseForRead(courseId: string, authorDid?: string): Promise<AgentScormCourse | null> {
+  const cached = agentScormCourses.get(courseId);
+  if (cached) return cached;
+  if (authorDid) {
+    const pod = resolveSubjectPodUrl(authorDid);
+    const loaded = await loadCourseFromLattice(pod, authorDid, actorForPod(pod, MESH_ACTOR_LABELS), courseId).catch(() => null);
+    if (loaded) { const c = loaded as unknown as AgentScormCourse; agentScormCourses.set(courseId, c); return c; }
+  }
+  await hydrateAgentCourses();
+  return agentScormCourses.get(courseId) ?? null;
+}
+
 function scormPlayerLink(c: AgentScormCourse): string {
   return `${SCORM_PLAYER_BASE}/agent.html?course_id=${encodeURIComponent(c.courseId)}&author_did=${encodeURIComponent(c.authoredBy)}`;
 }
@@ -5299,14 +5357,15 @@ whenToUse: "Start a new attempt as yourself. sign_request -> act; the SN runtime
 :::
 `;
 }
-app.get('/agent/scorm/courses', (req, res) => {
+app.get('/agent/scorm/courses', async (req, res) => {
   const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
+  await hydrateAgentCourses();  // the Map is a cache; the lattice is the source
   res.json({ ok: true, count: agentScormCourses.size, courses: [...agentScormCourses.values()].map(c => publicCourseView(c, base)) });
 });
-app.get('/agent/scorm/course/:id', (req, res) => {
+app.get('/agent/scorm/course/:id', async (req, res) => {
   const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
-  const c = agentScormCourses.get(String(req.params.id));
-  if (!c) { res.status(404).json({ error: `no authored course "${req.params.id}" in the catalog` }); return; }
+  const c = await resolveCourseForRead(String(req.params.id), typeof req.query.author_did === 'string' ? req.query.author_did : undefined);
+  if (!c) { res.status(404).json({ error: `no authored course "${req.params.id}" on any configured agent pod — author it via /agent/scorm/author, or pass ?author_did=<did> to point at the author's pod` }); return; }
   const fmt = String(req.query.format ?? '').toLowerCase();
   if (fmt === 'manifest' || fmt === 'xml') { res.type('application/xml').send(buildAgentScormManifest(c)); return; }
   if (fmt === 'markdown' || fmt === 'hmd') {
