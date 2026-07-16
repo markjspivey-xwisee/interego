@@ -5220,6 +5220,99 @@ app.get('/agent/scorm/affordances', (_req, res) => {
   }));
 });
 
+// ── Course READ surface — an authored course finally has an ADDRESS ─────────
+//
+// Until now an agent-authored course had no GET: the only way to see one was to
+// LAUNCH an attempt. That is SCORM's nature (content is delivered through a
+// runtime, never addressed) and it is exactly why an authored course surfaced in
+// no GUI and had no link to hand anyone. These reads give a course a
+// dereferenceable identity in three projections of the SAME object:
+//   (default) JSON      — the catalog record any GUI can list/render
+//   ?format=manifest    — the REAL imsmanifest.xml the SN runtime parses
+//   ?format=markdown    — the course as HyperMarkdown: prose + typed links + an
+//                         authority-closed launch control. SCORM made readable.
+// Public + READ-ONLY on purpose: a course is descriptive content. Only launch /
+// submit mutate an attempt and write a learner's record, so those stay
+// signature-gated — the read surface can never start or score an attempt.
+const SCORM_PLAYER_BASE = (process.env.FOXXI_SCORM_PLAYER_URL ?? 'https://foxxi-scorm-player.interego.xwisee.com').replace(/\/$/, '');
+const scormCourseIri = (id: string): string => `urn:foxxi:course:${id}`;
+function scormPlayerLink(c: AgentScormCourse): string {
+  return `${SCORM_PLAYER_BASE}/agent.html?course_id=${encodeURIComponent(c.courseId)}&author_did=${encodeURIComponent(c.authoredBy)}`;
+}
+function publicCourseView(c: AgentScormCourse, base: string): Record<string, unknown> {
+  return {
+    courseId: c.courseId, title: c.title, masteryScore: c.masteryScore, authoredBy: c.authoredBy,
+    courseIri: scormCourseIri(c.courseId), scoCount: c.scos.length,
+    scos: c.scos.map(s => ({ id: s.id, title: s.title, body: s.body, assessmentCount: s.assessment?.length ?? 0 })),
+    href: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}`,
+    manifest: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}?format=manifest`,
+    hmd: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}?format=markdown`,
+    launch: { player: scormPlayerLink(c), affordance: 'urn:iep:action:foxxi:scorm-launch-signed', method: 'POST', target: `${base}/agent/scorm/launch` },
+  };
+}
+/** The course as HyperMarkdown — rung-1 prose per SCO, rung-3 typed links +
+ *  sequencing conditions, rung-4 authority-closed launch control (no target: the
+ *  live target is re-resolved from the signed affordance at execution time). */
+function courseToHmd(c: AgentScormCourse, base: string): string {
+  const id = `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}`;
+  const fm = [
+    '---',
+    `"@id": ${JSON.stringify(id)}`,
+    '"@type": ["scorm:Organization", "hmd:Document"]',
+    `title: ${JSON.stringify(c.title)}`,
+    `courseId: ${JSON.stringify(c.courseId)}`,
+    `courseIri: ${JSON.stringify(scormCourseIri(c.courseId))}`,
+    `masteryScore: ${c.masteryScore}`,
+    `authoredBy: ${JSON.stringify(c.authoredBy)}`,
+    `scoCount: ${c.scos.length}`,
+    '---',
+  ].join('\n');
+  const scos = c.scos.map((s, i) => {
+    const prev = i > 0 ? c.scos[i - 1] : undefined;
+    const gate = prev ? `\ncondition: ${JSON.stringify(`${prev.id} satisfied`)}\nrequires: <#${scormSlug(prev.id)}>\n` : '';
+    const qs = s.assessment?.length ? '\n\n' + s.assessment.map(q => `> **Assessment.** ${q.question}`).join('\n') : '';
+    return `## ${s.title}  {#${scormSlug(s.id)}}\n${gate}\n${s.body}${qs}`;
+  }).join('\n\n');
+  return `${fm}
+
+# ${c.title}
+
+A real SCORM 2004 course, authored by an agent and sequenced by the live SN runtime;
+mastery at ${c.masteryScore}. Read it here as prose — or launch a real attempt and be
+sequenced SCO by SCO, with the engine rolling up your outcome.
+
+- [Launch an attempt in the player](${scormPlayerLink(c)}){rel="scorm:launch" type="text/html"}
+- [imsmanifest.xml](${id}?format=manifest){rel="scorm:manifest" type="application/xml"}
+- [catalog record](${id}){rel="alternate" type="application/json"}
+
+${scos}
+
+:::control control-launch
+type: ["hmd:Control", "hydra:Operation"]
+rel: "urn:iep:action:foxxi:scorm-launch-signed"
+method: "POST"
+whenToUse: "Start a new attempt as yourself. sign_request -> act; the SN runtime delivers the first SCO, then POST /agent/scorm/submit { session_id, answers? } until done."
+:::
+`;
+}
+app.get('/agent/scorm/courses', (req, res) => {
+  const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
+  res.json({ ok: true, count: agentScormCourses.size, courses: [...agentScormCourses.values()].map(c => publicCourseView(c, base)) });
+});
+app.get('/agent/scorm/course/:id', (req, res) => {
+  const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
+  const c = agentScormCourses.get(String(req.params.id));
+  if (!c) { res.status(404).json({ error: `no authored course "${req.params.id}" in the catalog` }); return; }
+  const fmt = String(req.query.format ?? '').toLowerCase();
+  if (fmt === 'manifest' || fmt === 'xml') { res.type('application/xml').send(buildAgentScormManifest(c)); return; }
+  if (fmt === 'markdown' || fmt === 'hmd') {
+    res.type('text/markdown; charset=UTF-8; variant=CommonMark')
+      .setHeader('Link', `<https://relay.interego.xwisee.com/ns/maintainer/hmd>; rel="profile"`);
+    res.send(courseToHmd(c, base)); return;
+  }
+  res.json({ ok: true, ...publicCourseView(c, base) });
+});
+
 app.post('/agent/scorm/author', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
