@@ -243,4 +243,34 @@ describe('mdvault — entailment authority closure (georgio finding)', () => {
     expect(g2.notes.some(n => n.path === 'C.md' && !!n.quarantinedReason)).toBe(true);
     expect(g2.triples.some(t => t.o === 'hydra:Operation')).toBe(false); // never emitted compact
   });
+
+  // georgio round 2: inverseOf / domain / range / owl:Restriction(onProperty).
+  it('closes inverseOf / domain / range / restriction entailments', () => {
+    const RA = 'https://entailment2.example/';
+    const ctx2 = JSON.stringify({ '@context': {
+      '@base': RA, type: '@type', owl: OWL, rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', rdfs: RDFS,
+      inverseOf: { '@id': 'owl:inverseOf', '@type': '@id' }, domain: { '@id': 'rdfs:domain', '@type': '@id' }, range: { '@id': 'rdfs:range', '@type': '@id' },
+      subClassOf: { '@id': 'rdfs:subClassOf', '@type': '@id' }, onProperty: { '@id': 'owl:onProperty', '@type': '@id' }, someValuesFrom: { '@id': 'owl:someValuesFrom', '@type': '@id' },
+      invTarget: { '@id': RA + 'InverseTarget', '@type': '@id' }, ranOp: { '@id': RA + 'RangeOperationProperty', '@type': '@id' }, domOp: RA + 'DomainOperationProperty',
+    } });
+    const g2 = ingestVault({
+      contexts: { 'context.jsonld': ctx2 }, rootContextPath: 'context.jsonld',
+      notes: {
+        'InverseTarget.md': `---\ntype: rdf:Property\ninverseOf: ${HYDRA}target\n---\n`,
+        'InverseUse.md': '---\ntype: owl:Thing\ninvTarget: https://victim.example/resource\n---\n',
+        'DomainOperationProperty.md': `---\ntype: rdf:Property\ndomain: ${HYDRA}Operation\n---\n`,
+        'DomainUse.md': '---\ntype: owl:Thing\ndomOp: ordinary data\n---\n',
+        'RangeOperationProperty.md': `---\ntype: rdf:Property\nrange: ${HYDRA}Operation\n---\n`,
+        'RangeUse.md': `---\ntype: owl:Thing\nranOp: ${RA}RangeVictim\n---\n`,
+        'TargetRestriction.md': `---\ntype: owl:Class\nonProperty: ${HYDRA}target\nsomeValuesFrom: ${OWL}Thing\n---\n`,
+        'RestrictedClass.md': `---\ntype: owl:Class\nsubClassOf: ${RA}TargetRestriction\n---\n`,
+        'RestrictedInstance.md': '---\ntype: "[[RestrictedClass]]"\n---\n',
+      },
+    }, P);
+    for (const note of ['InverseTarget.md', 'InverseUse.md', 'DomainOperationProperty.md', 'DomainUse.md', 'RangeOperationProperty.md', 'RangeUse.md', 'TargetRestriction.md', 'RestrictedClass.md', 'RestrictedInstance.md']) {
+      expect(g2.notes.some(n => n.path === note && !!n.quarantinedReason)).toBe(true);
+    }
+    expect(g2.triples.length).toBe(0);
+    expect(g2.triples.some(t => t.p === HYDRA + 'target' || t.o === HYDRA + 'Operation' || String(t.o).includes('victim'))).toBe(false);
+  });
 });
