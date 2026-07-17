@@ -56,8 +56,9 @@ import type {
   PGSLInstance,
 } from '@interego/pgsl';
 import { createHash } from 'node:crypto';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
-const FOXXI = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FOXXI = FOXXI_NS;
 const FOXXI_BUNDLE_JSON = `${FOXXI}bundleJson` as IRI;
 const FOXXI_IS_DELETED = `${FOXXI}isDeleted` as IRI;
 const FOXXI_SUPERSEDED_AT = `${FOXXI}supersededAt` as IRI;

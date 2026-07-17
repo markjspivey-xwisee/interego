@@ -29,7 +29,14 @@ import { composeIntoSharedLattice, readArtifact } from './foundation-shared-latt
 
 /** The dereferenceable namespace root the bridge serves (conneg + HATEOAS). Kept
  *  identical to foxxi-vocab's host so every Foxxi ns IRI resolves the same way. */
-export const NS_ROOT = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/';
+// LIVE host, compile-time constant. See FOXXI_NS: an ontology iri is a promise that
+// it resolves to the ontology. This named the paused Azure host, so /ns/xapi and every
+// term under it identified something unfetchable. Never env-derived — dev and prod
+// would then mint different iris for the same ontology and split the corpus.
+export const NS_ROOT = 'https://foxxi-bridge.interego.xwisee.com/ns/';
+/** The retired Azure root — kept only to declare owl:sameAs; ids minted under it live
+ *  in signed content we must not rewrite. */
+export const NS_ROOT_LEGACY = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/';
 
 export interface OntClass { name: string; label: string; comment: string; subClassOf?: string[] }
 export interface OntProperty {

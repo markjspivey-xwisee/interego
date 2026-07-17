@@ -17,8 +17,28 @@
  * Layer: L3 vertical. No protocol-ontology change; a vertical vocabulary.
  */
 
-/** The one Foxxi namespace base. Every foxxi term is `${FOXXI_NS}<name>`. */
-export const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+/**
+ * The one Foxxi namespace base. Every foxxi term is `${FOXXI_NS}<name>`.
+ *
+ * This is the LIVE host, and that is the whole point: a term's identifier is a
+ * promise that it resolves to a description of itself. It pointed at the paused
+ * Azure host, so every id we minted — every xAPI activity type, every extension
+ * key, every vocabulary term — named something unfetchable. An identifier that
+ * cannot be dereferenced is a word, not a term.
+ *
+ * A COMPILE-TIME CONSTANT, never env-derived. If this came from the environment,
+ * dev and prod would mint DIFFERENT ids for the same term and split the corpus —
+ * a failure the old dead constant could not even have.
+ *
+ * The comment above claimed "the one" while 17 other modules re-declared this same
+ * string under 8 different names (FOXXI_VOCAB / FXA / FXS / FOXXI / ns / ...). They
+ * now import it. That duplication is why the host rot went unnoticed for so long.
+ */
+export const FOXXI_NS = 'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#';
+/** The retired Azure namespace. Kept ONLY to declare the equivalence: ids minted
+ *  under it are in signed content and xAPI object ids we must never rewrite, so the
+ *  vocabulary states owl:sameAs rather than pretending the old name never existed. */
+export const FOXXI_NS_LEGACY = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 /** The standards spec ontologies this vertical composes (dereferenceable at /ns/<module>).
  *  The foxxi vocabulary rdfs:seeAlso's them so the vertical declares the standards it
  *  emerges from — the emitted xAPI statements, SCORM manifests, and cmi5 sessions are
@@ -201,6 +221,7 @@ export function renderVocabJsonLd(): Record<string, unknown> {
  */
 export function vocabTriplesBySubject(): Array<Array<readonly [string, string, string]>> {
   const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', RDFS = 'http://www.w3.org/2000/01/rdf-schema#';
+  const OWL = 'http://www.w3.org/2002/07/owl#';
   const DOC = FOXXI_VOCAB_DOC;
   const groups: Array<Array<readonly [string, string, string]>> = [];
   groups.push([
@@ -208,6 +229,11 @@ export function vocabTriplesBySubject(): Array<Array<readonly [string, string, s
     [DOC, RDFS + 'label', 'Foxxi Content Intelligence — vocabulary'],
     [DOC, RDFS + 'comment', 'Consolidated dereferenceable vocabulary for the Foxxi vertical. Composes the standards spec ontologies it emerges from (see rdfs:seeAlso).'],
     ...COMPOSED_SPEC_ONTOLOGIES.map(o => [DOC, RDFS + 'seeAlso', o] as const),
+    // The retired Azure name, declared rather than disowned. Terms minted under it
+    // are in signed content and xAPI object ids we must never rewrite, so a reader
+    // holding an old iri is TOLD it denotes this same vocabulary instead of being
+    // left with a name that resolves to nothing.
+    [DOC, OWL + 'sameAs', FOXXI_NS_LEGACY.replace(/#$/, '')],
     [DOC, RDFS + 'isDefinedBy', DOC],
   ]);
   for (const t of FOXXI_TERMS) {
@@ -225,12 +251,14 @@ export function vocabTriplesBySubject(): Array<Array<readonly [string, string, s
 /** The whole vocabulary as Turtle. */
 export function renderVocabTurtle(): string {
   const head = `@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
 @prefix foxxi: <${FOXXI_NS}> .
 
 <${FOXXI_VOCAB_DOC}> a foxxi:Vocabulary ;
     rdfs:label "Foxxi Content Intelligence — vocabulary" ;
     rdfs:comment "Consolidated dereferenceable vocabulary for the Foxxi vertical. Composes the standards spec ontologies it emerges from (see rdfs:seeAlso)." ;
 ${COMPOSED_SPEC_ONTOLOGIES.map(o => `    rdfs:seeAlso <${o}> ;`).join('\n')}
+    owl:sameAs <${FOXXI_NS_LEGACY.replace(/#$/, '')}> ;
     rdfs:isDefinedBy <${FOXXI_VOCAB_DOC}> .
 `;
   const body = FOXXI_TERMS.map(t =>

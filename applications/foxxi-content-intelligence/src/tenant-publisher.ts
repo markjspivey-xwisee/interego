@@ -38,11 +38,12 @@ import {
 } from '@interego/core';
 import { attachDeterministicAddresses } from './auth.js';
 import { createHash } from 'node:crypto';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
 // ── Foxxi namespace IRIs (the canonical base — see foxxi-vocab.ts) ──
 
-const FXS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
-const FXA = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FXS = FOXXI_NS;
+const FXA = FOXXI_NS;
 
 export const TENANT_TYPES = {
   CourseCatalog: `${FXS}CourseCatalog` as IRI,

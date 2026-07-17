@@ -43,6 +43,7 @@ import type {
   PGSLInstance,
 } from '@interego/pgsl';
 import { createHash } from 'node:crypto';
+import { FOXXI_NS } from './foxxi-vocab.js';
 import {
   type StatementStore, type StoredStatement, type QueryFilter, type QueryResult,
   ConflictError, matchesFilter, paginate,
@@ -53,7 +54,7 @@ import {
 // owl:equivalentClass with tincan:Statement (the de-facto vocabulary
 // for xAPI). Either tag will discover; we use the foxxi: term so the
 // pod-side type IRI matches the rest of the vertical's vocabulary.
-const FOXXI = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FOXXI = FOXXI_NS;
 const TINCAN_STATEMENT_TYPE = 'http://adlnet.gov/expapi/Statement' as IRI;
 const FOXXI_STATEMENT_TYPE = `${FOXXI}LearningStatement` as IRI;
 const FOXXI_VOIDED_BY = `${FOXXI}voidedBy` as IRI;

@@ -35,13 +35,14 @@ import {
   type VerifiableCredentialJson,
 } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 import { CREDENTIAL_TYPES } from './credentials.js';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
 const CLR_CONTEXT = [
   'https://www.w3.org/ns/credentials/v2',
   'https://purl.imsglobal.org/spec/clr/v2p0/context-2.0.1.json',
 ] as const;
 
-const WALLET_TYPE = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#WalletEnvelope';
+const WALLET_TYPE = `${FOXXI_NS}WalletEnvelope`;
 
 export interface ClrEntry {
   credential: VerifiableCredentialJson;

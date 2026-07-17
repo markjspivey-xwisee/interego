@@ -56,9 +56,10 @@ import type {
   PublishResult,
 } from '@interego/solid';
 import { createHash } from 'node:crypto';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
-const FXA = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
-const FXS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FXA = FOXXI_NS;
+const FXS = FOXXI_NS;
 
 export const CREDENTIAL_TYPES = {
   CourseCompletionCredential: `${FXA}CourseCompletionCredential` as IRI,

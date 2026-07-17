@@ -19,6 +19,7 @@
  *   - IEEE 1484.12.1-2002 LOM (https://standards.ieee.org/ieee/1484.12.1/3032/)
  *   - SCORM 2004 4th Ed. Sequencing & Navigation (https://adlnet.gov/projects/scorm/)
  */
+import { FOXXI_NS } from './foxxi-vocab.js';
 
 export interface LomMetadata {
   /** §1 General */
@@ -210,7 +211,7 @@ export interface SequencingRule {
  */
 export function sequencingRulesToTurtle(packageSubject: string, rules: readonly SequencingRule[]): string {
   if (rules.length === 0) return '';
-  const FXS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+  const FXS = FOXXI_NS;
   const lines: string[] = [];
   for (const r of rules) {
     const ruleIri = `${packageSubject.replace(/^</, '').replace(/>$/, '')}#sequencing-${r.id}`;

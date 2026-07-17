@@ -45,6 +45,7 @@ import {
 } from '../../_shared/aggregate-privacy/index.js';
 import { createHash } from 'node:crypto';
 import type { FoxxiAgenticPayload } from './agentic-rag.js';
+import { FOXXI_NS } from './foxxi-vocab.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -60,7 +61,6 @@ export interface FoxxiConfig {
   readonly authoritativeSource: IRI;
 }
 
-const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 
 function sha256Hex(s: string): string {
   return createHash('sha256').update(s, 'utf8').digest('hex');

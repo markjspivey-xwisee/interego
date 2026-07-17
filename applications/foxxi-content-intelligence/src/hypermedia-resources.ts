@@ -30,6 +30,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { affordancesFor, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { deriveUserWallet } from './auth.js';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
 interface HypermediaConfig {
   selfBaseUrl: string;
@@ -286,7 +287,7 @@ function collectionEnvelope(args: {
   return {
     '@context': {
       hydra: 'http://www.w3.org/ns/hydra/core#',
-      foxxi: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#',
+      foxxi: FOXXI_NS,
     },
     '@type': 'hydra:Collection',
     '@id': args.selfUrl,
@@ -319,7 +320,7 @@ function itemEnvelope(args: {
   return {
     '@context': {
       hydra: 'http://www.w3.org/ns/hydra/core#',
-      foxxi: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#',
+      foxxi: FOXXI_NS,
     },
     '@id': args.selfUrl,
     ...resourceRest,

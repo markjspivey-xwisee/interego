@@ -1,3 +1,4 @@
+import { FOXXI_NS } from './foxxi-vocab.js';
 /**
  * Foxxi cmi5 statement emitter — full IEEE 9274.2.1 / cmi5 Profile
  * Specification statement suite.
@@ -185,7 +186,7 @@ export function buildCmi5Statement(input: Cmi5StatementInput): Cmi5Statement {
       // publisherId is NOT a cmi5-defined context extension — carry it under the
       // dereferenceable Foxxi namespace, not the cmi5 IRI prefix, so emitted
       // statements don't claim a cmi5 extension the cmi5 ontology doesn't define.
-      stmt.context.extensions['https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#publisherId'] = input.session.publisherId;
+      stmt.context.extensions[`${FOXXI_NS}publisherId`] = input.session.publisherId;
     }
   }
 
