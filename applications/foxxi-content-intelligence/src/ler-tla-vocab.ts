@@ -46,7 +46,7 @@
 
 // ── Namespace bases ──────────────────────────────────────────────────
 
-const BRIDGE = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const BRIDGE = 'https://foxxi-bridge.interego.xwisee.com';
 /** IEEE Learning & Employment Records namespace. */
 export const LER_NS = `${BRIDGE}/ns/ieee-ler#`;
 /** ADL Total Learning Architecture namespace. */

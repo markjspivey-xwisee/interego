@@ -1,3 +1,4 @@
+import { FOXXI_NS } from './foxxi-vocab.js';
 /**
  * Cross-tenant competency-framework alignment (demo #2).
  *
@@ -42,7 +43,7 @@ export interface FrameworkAlignment {
   declaredAt?: string;
 }
 
-export const ALIGNMENT_TYPE_IRI = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#CASEAlignment' as IRI;
+export const ALIGNMENT_TYPE_IRI = `${FOXXI_NS}CASEAlignment` as IRI;
 
 export interface SerializedAlignment {
   '@type': 'CFAssociation';

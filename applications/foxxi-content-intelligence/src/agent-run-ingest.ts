@@ -30,8 +30,9 @@ import {
   type AgentTrajectory, type TrajectoryStepInput,
 } from './agent-trajectory.js';
 import { PERFORMED_VERB, PERF_EXT } from './learner-record.js';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
-const FOXXI_VOCAB = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FOXXI_VOCAB = FOXXI_NS;
 
 /** Foxxi context-extension IRIs that tie a run to an evaluation cohort. */
 export const RUN_EXT = {

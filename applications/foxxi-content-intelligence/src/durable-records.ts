@@ -27,8 +27,9 @@ import type { ContextDescriptorData, IRI, ManifestEntry, FetchFn } from '@intere
 // encryption keypair + best-effort semantics (also used by credentials.ts).
 import { ingest, ingestWithProfile } from '@interego/pgsl';
 import { alsoPersistEncryptedHolon } from './foundation-holon-altitude.js';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
-const FXS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FXS = FOXXI_NS;
 export const RECORDED_PERFORMANCE_TYPE = `${FXS}RecordedPerformance` as IRI;
 export const SCORM_COURSE_TYPE = `${FXS}ScormCourse` as IRI;
 /** Local names the mesh projector skips (durable Foxxi artifacts, not

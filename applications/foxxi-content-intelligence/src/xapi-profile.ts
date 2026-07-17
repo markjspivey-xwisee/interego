@@ -1,3 +1,9 @@
+import { FOXXI_NS } from './foxxi-vocab.js';
+// Re-exported: xapi-instrumentation.ts has always imported FOXXI_NS from here, and
+// that stays true — but the string is DEFINED once, in foxxi-vocab.ts. This module
+// used to declare its own copy of it, which is how the namespace drifted onto a dead
+// host in 18 places without anyone noticing.
+export { FOXXI_NS } from './foxxi-vocab.js';
 /**
  * Foxxi xAPI Profile — proper xAPI Profile Specification (ADL 2017) shape.
  *
@@ -35,8 +41,7 @@
 // bridge serves the profile document at `<bridge>/xapi/profile`, so the
 // profile's `id` dereferences to itself. Its `templates/*`, `patterns/*`
 // and `v/*` children resolve under it (the bridge serves those too).
-export const FOXXI_PROFILE_ID = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/xapi/profile';
-export const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+export const FOXXI_PROFILE_ID = 'https://foxxi-bridge.interego.xwisee.com/xapi/profile';
 
 const ADL = 'http://adlnet.gov/expapi';
 const CMI5 = 'https://w3id.org/xapi/cmi5';

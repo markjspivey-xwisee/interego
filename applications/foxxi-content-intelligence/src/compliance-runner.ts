@@ -24,6 +24,7 @@ import {
   type Cmi5Session, type Cmi5Actor,
 } from './cmi5.js';
 import { validateXapiStatement, validateInstance } from './spec/index.js';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
 export interface ComplianceCheck { name: string; ok: boolean; spec: string; detail?: string; }
 export interface ComplianceReport {
@@ -44,7 +45,6 @@ function tally(suite: ComplianceReport['suite'], title: string, standard: string
 
 // ── xAPI 2.0 / IEEE 9274.1.1 LRS conformance ──────────────────────────────────
 
-const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 
 interface XapiOpts { baseUrl: string; token: string; webId: string; userId: string; ranAt: string; }
 

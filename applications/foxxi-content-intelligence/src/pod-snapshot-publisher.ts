@@ -55,8 +55,9 @@ import type {
 } from '@interego/pgsl';
 import { createHash } from 'node:crypto';
 import { bridgeDid, signAsBridge, withPublishLock } from './bridge-signer.js';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
-const FOXXI = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FOXXI = FOXXI_NS;
 const FOXXI_BUNDLE_JSON = `${FOXXI}bundleJson` as IRI;
 const FOXXI_VERSION = `${FOXXI}snapshotVersion` as IRI;
 

@@ -55,13 +55,14 @@ import type {
   PublishResult,
 } from '@interego/solid';
 import { createHash, randomUUID } from 'node:crypto';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
 // ── Foxxi vocabulary (composes the L1 iep:/pgsl: + ac:/amta: verticals) ──
 //
 // The Foxxi vertical's namespace IRIs. The vocabulary is published at
 // /ns/foxxi on the bridge and is dereferenceable.
 
-const FOXXI = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FOXXI = FOXXI_NS;
 const AC = 'https://markjspivey-xwisee.github.io/interego/ns/ac/v1#';
 const AMTA = 'https://markjspivey-xwisee.github.io/interego/ns/amta/v1#';
 

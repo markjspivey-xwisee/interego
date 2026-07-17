@@ -55,6 +55,7 @@ import {
 import { FederationOutcomeLoader, parseFederationPods } from './federation-outcome-loader.js';
 import { bridgeAuthor, signAsBridge, withPublishLock } from './bridge-signer.js';
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
+import { FOXXI_NS } from './foxxi-vocab.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -71,7 +72,7 @@ const JSONLD_CONTEXT = {
   prov: 'http://www.w3.org/ns/prov#',
   dct: 'http://purl.org/dc/terms/',
   hydra: 'http://www.w3.org/ns/hydra/core#',
-  foxxi: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#',
+  foxxi: FOXXI_NS,
 };
 
 /**

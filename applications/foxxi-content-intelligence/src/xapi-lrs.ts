@@ -1053,7 +1053,7 @@ function sendStatementsResponse(
 // ── /xapi/about ─────────────────────────────────────────────────────
 
 function handleAbout(req: Request, res: Response, config: XapiLrsConfig): void {
-  const ns = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+  const ns = FOXXI_NS;
   res.json({
     version: ABOUT_VERSIONS,
     extensions: {
@@ -1285,6 +1285,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 // ── xAPI Profile Server ─────────────────────────────────────────────
 
 import { buildFoxxiProfileDoc } from './xapi-profile.js';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
 let _profileCache: { url: string; doc: Record<string, unknown>; fetchedAt: number } | null = null;
 async function fetchExternalProfile(url: string): Promise<Record<string, unknown> | null> {

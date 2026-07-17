@@ -37,6 +37,7 @@
 
 import { exportClr, type ClrEnvelope } from './clr.js';
 import type { StoredStatement } from './statement-store.js';
+import { FOXXI_NS } from './foxxi-vocab.js';
 
 const ELR_CONTEXT = [
   'https://www.w3.org/ns/credentials/v2',
@@ -44,7 +45,7 @@ const ELR_CONTEXT = [
 ] as const;
 
 const ADL = 'http://adlnet.gov/expapi/verbs/';
-const FOXXI_VOCAB = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FOXXI_VOCAB = FOXXI_NS;
 /** Verbs that imply the subject demonstrated something (→ inferred competency). */
 const MASTERY_VERBS = new Set([`${ADL}passed`, `${ADL}completed`, `${ADL}mastered`]);
 /** The verb a `performed` production-work statement carries. */
