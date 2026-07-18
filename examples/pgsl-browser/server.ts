@@ -68,6 +68,7 @@ import {
   latticeStats,
   mintAtom,
   resolve as pgslResolve,
+  describeNode,
 } from '@interego/pgsl';
 import {
   buildSecurityTxtFromEnv,
@@ -854,109 +855,27 @@ app.get('/api/node/*', (req, res) => {
   const annotations = computeContainmentAnnotations(pgsl, nodeUri);
   const nodeHash = nodeUri.split(':').pop() ?? nodeUri;
 
-  // ── Identity ──────────────────────────────────────────
-  // Every node is uniquely addressed and fully dereferenceable
-
+  // ── Identity + Structure + Context + Paradigm ─────────
+  // The SHARED node-description model (@interego/pgsl describeNode). This handler
+  // used to compute all of this inline — ~100 lines the Foxxi bridge resolver then
+  // re-implemented as a poorer subset. The model now lives ONCE in the package; the
+  // browser supplies its own url scheme (hrefFor -> /node/<uri>) and grafts its own
+  // _controls / _constraints / _suggestions / _links below. maxNeighbors: 0 = the
+  // browser is a single small demo lattice, so it renders the full fan-out.
+  const desc = describeNode(pgsl, nodeUri, {
+    hrefFor: (u) => `/node/${encodeURIComponent(u)}`,
+    maxNeighbors: 0,
+  })!;
   const self = {
-    uri: nodeUri,
-    href: `/node/${encodeURIComponent(nodeUri)}`,
-    resolved,
-    kind: node.kind,
-    level: node.level,
-    hash: nodeHash,
-...(node.kind === 'Atom' ? { value: node.value } : {}),
-...(node.kind === 'Fragment' ? { height: node.height } : {}),
-    provenance: node.provenance,
+    uri: desc.uri, href: desc.href, resolved: desc.resolved, kind: desc.kind, level: desc.level, hash: desc.hash,
+...(desc.value !== undefined ? { value: desc.value } : {}),
+...(desc.height !== undefined ? { height: desc.height } : {}),
+    provenance: desc.provenance,
   };
-
-  // ── Structure ─────────────────────────────────────────
-  // Downward: what this node contains (items, constituents)
-
-  const structure: Record<string, any> = {};
-
-  if (node.kind === 'Fragment' && node.items) {
-    structure.items = node.items.map((itemUri, i) => {
-      const itemNode = pgsl.nodes.get(itemUri);
-      return {
-        uri: itemUri,
-        href: `/node/${encodeURIComponent(itemUri)}`,
-        resolved: pgslResolve(pgsl, itemUri),
-        kind: itemNode?.kind ?? 'unknown',
-        level: itemNode?.level ?? 0,
-        position: i,
-      };
-    });
-  }
-
-  if (node.kind === 'Fragment' && node.left) {
-    structure.leftConstituent = { uri: node.left, href: `/node/${encodeURIComponent(node.left)}`, resolved: pgslResolve(pgsl, node.left) };
-  }
-  if (node.kind === 'Fragment' && node.right) {
-    structure.rightConstituent = { uri: node.right, href: `/node/${encodeURIComponent(node.right)}`, resolved: pgslResolve(pgsl, node.right) };
-  }
-
-  // ── Context ───────────────────────────────────────────
-  // Upward: what contains this node, and positional context
-
-  const containers: any[] = [];
-  for (const [fUri, fNode] of pgsl.nodes) {
-    if (fNode.kind !== 'Fragment' || !fNode.items.includes(nodeUri)) continue;
-    const pos = fNode.items.indexOf(nodeUri);
-    containers.push({
-      uri: fUri,
-      href: `/node/${encodeURIComponent(fUri)}`,
-      resolved: pgslResolve(pgsl, fUri as IRI),
-      level: fNode.level,
-      position: pos,
-      totalItems: fNode.items.length,
-    });
-  }
-
-  // ── Paradigm: Source & Target Options ─────────────────
-  // For this node as a chain of 1: what can go before (source)
-  // and after (target) it in existing structures?
-  // These ARE the paradigm sets — computed from actual usage.
-
-  const sourceOptions: any[] = [];  // what appears before this node
-  const targetOptions: any[] = [];  // what appears after this node
-  const seenLeft = new Set<string>();
-  const seenRight = new Set<string>();
-
-  for (const c of containers) {
-    const cNode = pgsl.nodes.get(c.uri as IRI);
-    if (!cNode || cNode.kind !== 'Fragment') continue;
-    const pos = cNode.items.indexOf(nodeUri);
-    if (pos > 0) {
-      const lu = cNode.items[pos - 1]!;
-      if (!seenLeft.has(lu)) {
-        seenLeft.add(lu);
-        const lNode = pgsl.nodes.get(lu);
-        sourceOptions.push({
-          uri: lu,
-          href: `/node/${encodeURIComponent(lu)}`,
-          resolved: pgslResolve(pgsl, lu),
-          kind: lNode?.kind ?? 'unknown',
-          level: lNode?.level ?? 0,
-          context: { container: c.uri, containerResolved: c.resolved },
-        });
-      }
-    }
-    if (pos < cNode.items.length - 1) {
-      const ru = cNode.items[pos + 1]!;
-      if (!seenRight.has(ru)) {
-        seenRight.add(ru);
-        const rNode = pgsl.nodes.get(ru);
-        targetOptions.push({
-          uri: ru,
-          href: `/node/${encodeURIComponent(ru)}`,
-          resolved: pgslResolve(pgsl, ru),
-          kind: rNode?.kind ?? 'unknown',
-          level: rNode?.level ?? 0,
-          context: { container: c.uri, containerResolved: c.resolved },
-        });
-      }
-    }
-  }
+  const structure = desc._structure as Record<string, any>;
+  const containers = desc._context.containers as any[];
+  const sourceOptions = desc._paradigm.sourceOptions as any[];  // what appears before this node
+  const targetOptions = desc._paradigm.targetOptions as any[];  // what appears after this node
 
   // ── Constraints ───────────────────────────────────────
   // Active paradigm constraints that affect this node's position

@@ -76,27 +76,17 @@ export function publicLatticeLabels(): string[] { return [...publicLabels]; }
  * PUBLIC lattices only, and a private node is reported IDENTICALLY to an absent one
  * (both null -> 404), so this cannot answer "does this content exist somewhere".
  */
-export function resolvePublicNode(kind: 'atom' | 'fragment', hash: string): { label: string; node: PgslNode } | null {
+export function resolvePublicNode(kind: 'atom' | 'fragment', hash: string): { label: string; node: PgslNode; pgsl: PGSLInstance; uri: IRI } | null {
   if (!/^[0-9a-f]{6,64}$/i.test(hash)) return null;
   const uri = `urn:pgsl:${kind}:${hash}` as IRI;
   for (const label of publicLabels) {
-    const node = resident.get(label)?.pgsl.nodes.get(uri);
-    if (node) return { label, node };
+    const a = resident.get(label);
+    const node = a?.pgsl.nodes.get(uri);
+    if (a && node) return { label, node, pgsl: a.pgsl, uri };
   }
   return null;
 }
 
-/** Fragments in a lattice that DIRECTLY reference a node — the "appears in" edge a
- *  node's description needs so a reader can walk upward. */
-export function fragmentsReferencing(label: string, uri: string): string[] {
-  const a = resident.get(label);
-  if (!a) return [];
-  const out: string[] = [];
-  for (const [fUri, node] of a.pgsl.nodes) {
-    if (node.kind === 'Fragment' && node.items.includes(uri as IRI)) out.push(String(fUri));
-  }
-  return out;
-}
 
 /** Does the pod already hold a lattice for this pod url? Distinguishes "nothing
  *  here yet" (safe to create + persist) from "something I could not read" (fence). */
