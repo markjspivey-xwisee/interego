@@ -20,7 +20,7 @@
 import {
   createPGSL, ingest, resolve, ancestorFragments, projectHolon,
   projectHolonToCredential, projectHolonToActivity,
-  promoteInstanceEncrypted, resolveLatticeFromPod, latticeStats,
+  promoteInstanceEncryptedCAS, resolveLatticeFromPodDetailed, latticeStats,
   type PGSLInstance, type Node as PgslNode,
 } from '@interego/pgsl';
 import type { IRI, FetchFn } from '@interego/core';
@@ -29,20 +29,19 @@ import { bridgeEncryptionKeypair } from './foundation-holon-altitude.js';
 
 interface AgentLattice { pgsl: PGSLInstance; podUrl: string; agentDid: string }
 const resident = new Map<string, AgentLattice>();   // label -> in-memory shared lattice
-const loadAttempted = new Set<string>();
 /**
- * Labels whose pod copy EXISTS but this process could not read it (a 5xx, a
- * network blip, a decrypt failure, no key). Such a label is FENCED: it may serve
- * reads from whatever is in memory, but it must NEVER be persisted, because the
- * in-memory instance is not a superset of what is on the pod.
+ * Labels whose pod copy EXISTS but this process could not read it (a 5xx, a network
+ * blip, a decrypt failure, no key). Such a label is FENCED: it serves reads from
+ * whatever is in memory, but casPersist REFUSES to write it, because the in-memory
+ * instance is not known to be a superset of what is on the pod.
  *
- * Without this the failure was silent and destructive, not merely lossy. getLattice
- * latches loadAttempted BEFORE awaiting the read and swallows the error, so ONE
- * blip leaves an EMPTY lattice resident for the whole process lifetime; the next
- * compose then PUTs that empty node map over the real one with no precondition
- * (promoteInstanceEncrypted sends no If-Match). One read blip plus one authored
- * course silently destroys an agent's entire corpus — and the courses in it exist
- * in no file in this repo.
+ * PR #64 introduced this because the failure was silent and DESTRUCTIVE: getLattice
+ * used to latch a permanent load flag BEFORE awaiting the read and swallow the error,
+ * so one blip left an empty lattice resident for the whole process lifetime, and the
+ * next compose PUT that empty node map over the real corpus with no precondition —
+ * silently destroying courses that exist in no file in this repo. Now the write is a
+ * compare-and-swap (so it can't clobber) AND the fence stays as defense-in-depth, AND
+ * a fenced label is retried with backoff instead of latched forever.
  */
 const unreadable = new Set<string>();
 const creating = new Map<string, Promise<PGSLInstance>>();   // per-label creation mutex
@@ -88,17 +87,63 @@ export function resolvePublicNode(kind: 'atom' | 'fragment', hash: string): { la
 }
 
 
-/** Does the pod already hold a lattice for this pod url? Distinguishes "nothing
- *  here yet" (safe to create + persist) from "something I could not read" (fence). */
-async function podCopyExists(podUrl: string, fetchFn: FetchFn): Promise<boolean> {
-  try {
-    const r = await fetchFn(latticeResourceUrl(podUrl), { headers: { Accept: 'application/json' } });
-    return r.ok;
-  } catch {
-    // Cannot even tell — assume it exists and fence. Refusing to write costs an
-    // ingest; writing over an unread corpus costs the corpus.
-    return true;
-  }
+/**
+ * Optimistic-concurrency state, keyed by POD RESOURCE — never by label.
+ *
+ * The write target latticeResourceUrl(podUrl) is per-POD, and multiple labels can
+ * share it. So the etag, the write serialization, and the load-retry clock are all
+ * per-RESOURCE: a per-label etag would ping-pong forever between labels sharing a
+ * pod, because each write bumps the resource etag and invalidates the other's.
+ */
+interface PodState {
+  etag?: string;         // the resource's entity tag, for the next If-Match write
+  absent?: boolean;      // we last saw a 404 → create with If-None-Match: *
+  nextRetryAt?: number;  // a failed load is retried only after this (backoff)
+  retryStep?: number;
+}
+const podState = new Map<string, PodState>();              // resourceUrl -> state
+const podWriteTail = new Map<string, Promise<unknown>>();  // resourceUrl -> serialized write chain
+
+const RETRY_BASE_MS = Number(process.env.FOXXI_LATTICE_RETRY_BASE_MS ?? 30_000);
+const RETRY_MAX_MS = Number(process.env.FOXXI_LATTICE_RETRY_MAX_MS ?? 600_000);
+const CAS_MAX_ATTEMPTS = 4;
+
+function podS(url: string): PodState { let s = podState.get(url); if (!s) { s = {}; podState.set(url, s); } return s; }
+/** A failed load's retry is due once nextRetryAt passes (or was never set). */
+function retryDue(url: string): boolean { const t = podState.get(url)?.nextRetryAt; return t == null || Date.now() >= t; }
+/** Exponential backoff + jitter, so a down single-replica CSS sees at most one GET
+ *  per window per resource rather than a retry storm. */
+function scheduleRetry(url: string): void {
+  const s = podS(url);
+  const step = (s.retryStep ?? 0) + 1;
+  s.retryStep = step;
+  const backoff = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (step - 1));
+  s.nextRetryAt = Date.now() + backoff + Math.floor(Math.random() * 5000);
+}
+function clearRetry(url: string): void { const s = podS(url); s.nextRetryAt = undefined; s.retryStep = 0; }
+/** Serialize writes to ONE pod resource: read-etag -> If-Match PUT -> update-etag must
+ *  not interleave with another writer to the same resource (their etags would tear).
+ *  Runs regardless of the prior write's outcome. */
+function withPodWriteLock<T>(url: string, fn: () => Promise<T>): Promise<T> {
+  const prev = podWriteTail.get(url) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  podWriteTail.set(url, next.then(() => undefined, () => undefined));
+  return next;
+}
+
+/** Pod-wins ADDITIVE merge: base = the pod's nodes, then add only our in-memory nodes
+ *  whose uri is ABSENT from the pod. Content-addressed, so a shared uri means byte-
+ *  identical content; pod-wins keeps the pod's provenance for it. Rebuilds a fresh
+ *  instance (re-derives the value indexes + levels) and reseats resident. This is what
+ *  makes a 412 non-destructive: our nodes are UNIONED onto the current pod state, never
+ *  the pod state replaced by ours. */
+function mergeReseat(label: string, ours: PGSLInstance, podNodes: Map<IRI, PgslNode>, agentDid: string): PGSLInstance {
+  const merged = new Map<IRI, PgslNode>(podNodes);
+  for (const [u, n] of ours.nodes) if (!merged.has(u)) merged.set(u as IRI, n as PgslNode);
+  const inst = rebuildInstance(merged, agentDid);
+  const cur = resident.get(label);
+  if (cur) resident.set(label, { ...cur, pgsl: inst });
+  return inst;
 }
 
 const provFor = (agentDid: string) => ({ wasAttributedTo: agentDid as IRI, generatedAtTime: new Date().toISOString() });
@@ -146,30 +191,43 @@ function rebuildInstance(nodes: Map<IRI, PgslNode>, agentDid: string): PGSLInsta
  *  part in that. */
 async function getLattice(podUrl: string, agentDid: string, label: string, fetchFn: FetchFn, ephemeral = false): Promise<PGSLInstance> {
   const existing = resident.get(label);
-  if (existing) return existing.pgsl;
+  const resourceUrl = latticeResourceUrl(podUrl);
+  // Fast path: resident and not due for a fence-retry. (Was: return the moment a
+  // label was resident, which — with the pre-await loadAttempted latch — meant a
+  // failed load was NEVER retried for the process lifetime. Now a fenced label whose
+  // backoff has elapsed falls through and re-attempts the load.)
+  if (existing && !(unreadable.has(label) && retryDue(resourceUrl))) return existing.pgsl;
   // Per-label creation mutex: concurrent callers (e.g. a fire-and-forget completion
   // compose racing an awaited performance compose) MUST share ONE lattice instance,
   // else two cold creations clobber each other in `resident` and lose ingests.
   const inflight = creating.get(label);
   if (inflight) return inflight;
   const p = (async (): Promise<PGSLInstance> => {
-    let pgsl: PGSLInstance | undefined;
-    if (!ephemeral && !loadAttempted.has(label)) {
-      loadAttempted.add(label);
+    let pgsl: PGSLInstance | undefined = existing?.pgsl;
+    const shouldLoad = !ephemeral && (!existing || (unreadable.has(label) && retryDue(resourceUrl)));
+    if (shouldLoad) {
       const kp = bridgeEncryptionKeypair();
-      if (kp) {
-        try {
-          const loaded = await resolveLatticeFromPod(latticeResourceUrl(podUrl), kp, fetchFn as unknown as typeof fetch);
-          if (loaded && loaded.nodes.size) pgsl = rebuildInstance(loaded.nodes, agentDid);
-          // null is AMBIGUOUS: resolveLatticeFromPod returns null for "no lattice
-          // yet" (404) AND for "there is one but I could not read it" (500, network
-          // blip, decrypt failure). Those must not be treated alike — one is safe to
-          // write over, the other destroys an agent's corpus. Probe to tell them apart.
-          else if (await podCopyExists(podUrl, fetchFn)) unreadable.add(label);
-        } catch { unreadable.add(label); }
-      } else {
+      if (!kp) {
         // No key: we cannot have read the pod copy, so we must never write over it.
-        unreadable.add(label);
+        unreadable.add(label); scheduleRetry(resourceUrl);
+      } else {
+        const d = await resolveLatticeFromPodDetailed(resourceUrl, kp, fetchFn as unknown as typeof fetch);
+        if (d.status === 'ok') {
+          // Adopt the pod copy if we have no in-memory ingests; if we DO (we composed
+          // while fenced), keep ours — the write path's CAS will merge them onto the
+          // pod. Either way: record the etag, un-fence, clear the backoff.
+          if (!pgsl || pgsl.nodes.size === 0) pgsl = rebuildInstance(d.nodes!, agentDid);
+          const s = podS(resourceUrl); s.etag = d.etag; s.absent = false;
+          unreadable.delete(label); clearRetry(resourceUrl);
+        } else if (d.status === 'absent') {
+          // Genuinely nothing here — safe to create. The first write uses If-None-Match:*.
+          const s = podS(resourceUrl); s.etag = undefined; s.absent = true;
+          unreadable.delete(label); clearRetry(resourceUrl);
+        } else {
+          // Unreadable: a body exists we could not read. FENCE (serve from memory, do
+          // NOT persist) but schedule a retry so recovery doesn't need a redeploy.
+          unreadable.add(label); scheduleRetry(resourceUrl);
+        }
       }
     }
     if (!pgsl) pgsl = createPGSL(provFor(agentDid));
@@ -178,6 +236,50 @@ async function getLattice(podUrl: string, agentDid: string, label: string, fetch
   })();
   creating.set(label, p);
   try { return await p; } finally { creating.delete(label); }
+}
+
+/**
+ * Persist the resident lattice for `label` with optimistic concurrency: serialized
+ * per pod resource, CAS with If-Match / If-None-Match, and on a 412 reload + pod-wins
+ * merge + retry. The fence stays as defense-in-depth: if a (re)load is UNREADABLE we
+ * REFUSE rather than risk overwriting a corpus we never saw (PR #64 closed that
+ * silent-destruction path). This replaces the unconditional last-writer-wins PUT.
+ */
+async function casPersist(a: {
+  label: string; resourceUrl: string; agentDid: string; holonUri: IRI;
+  recipients: string[]; kp: { publicKey: string }; fetchFn: FetchFn;
+}): Promise<{ ok: true; pgsl: PGSLInstance } | { ok: false; error: string }> {
+  const kpFull = bridgeEncryptionKeypair();
+  if (!kpFull) { unreadable.add(a.label); return { ok: false, error: `no encryption key — cannot read or write "${a.label}"` }; }
+  let instance = resident.get(a.label)!.pgsl;   // holds holonUri
+  const s = podS(a.resourceUrl);
+  const doFetch = a.fetchFn as unknown as typeof fetch;
+
+  // Establish a precondition. If the state is unknown (never loaded), read fresh so a
+  // blind create can't clobber an existing corpus.
+  if (s.etag === undefined && !s.absent) {
+    const d = await resolveLatticeFromPodDetailed(a.resourceUrl, kpFull, doFetch);
+    if (d.status === 'unreadable') { unreadable.add(a.label); return { ok: false, error: `refusing to persist "${a.label}": pod copy exists but is unreadable` }; }
+    if (d.status === 'absent') { s.absent = true; }
+    else { s.etag = d.etag; instance = mergeReseat(a.label, instance, d.nodes!, a.agentDid); }
+  }
+
+  for (let attempt = 0; attempt < CAS_MAX_ATTEMPTS; attempt++) {
+    const precond = s.etag ? { ifMatch: s.etag } : (s.absent ? { ifNoneMatch: '*' as const } : {});
+    const w = await promoteInstanceEncryptedCAS(instance, a.holonUri, a.resourceUrl, a.recipients, kpFull, doFetch, precond);
+    if (w.status === 'ok') { s.etag = w.etag; s.absent = false; unreadable.delete(a.label); return { ok: true, pgsl: instance }; }
+    if (w.status === 'conflict') {
+      // Someone wrote since we loaded. Reload; enforce the fence on every reload.
+      const d = await resolveLatticeFromPodDetailed(a.resourceUrl, kpFull, doFetch);
+      if (d.status === 'unreadable') { unreadable.add(a.label); return { ok: false, error: `refusing to persist "${a.label}": conflict-reload was unreadable` }; }
+      if (d.status === 'absent') { s.absent = true; s.etag = undefined; }   // deleted out from under us — recreate
+      else { s.absent = false; s.etag = d.etag; instance = mergeReseat(a.label, instance, d.nodes!, a.agentDid); }
+      continue;
+    }
+    // Transient error (5xx / network): brief backoff, then retry.
+    await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+  }
+  return { ok: false, error: `persist exhausted ${CAS_MAX_ATTEMPTS} attempts for "${a.label}"` };
 }
 
 /** Interop surfaces a holon can be projected to. RDF is just ONE of them. */
@@ -322,19 +424,6 @@ export async function composeIntoSharedLattice(args: {
     // encrypted resource (AWAITED — this is now a canonical store, so we confirm
     // the write rather than fire-and-forget) + PUT the projected descriptor.
     let persisted = false; let persistError: string | undefined;
-    if (unreadable.has(args.label)) {
-      // FENCED: the pod holds a lattice this process failed to read, so what is in
-      // memory is not a superset of it. promoteInstanceEncrypted PUTs the WHOLE node
-      // map with no precondition, so persisting here would replace a corpus we never
-      // saw. Fail loudly and keep serving from memory instead.
-      persistError = `refusing to persist "${args.label}": its pod copy exists but could not be read by this process — writing would overwrite it`;
-      console.warn('[shared-lattice][persist]', persistError);
-      return {
-        holonUri, contentType: args.contentType, descriptorUrl: proj.descriptorUrl,
-        reusedNodes, newNodes: args.terms.length - reusedNodes,
-        stats: latticeStats(pgsl), projections, persisted: false, persistError,
-      };
-    }
     if (args.ephemeral) {
       // Nothing to confirm: this holon is reproduced from code on the next boot and
       // read back from the resident lattice, so the pod copy would be write-only.
@@ -344,6 +433,7 @@ export async function composeIntoSharedLattice(args: {
         stats: latticeStats(pgsl), projections, persisted: false,
       };
     }
+    const resourceUrl = latticeResourceUrl(args.podUrl);
     try {
       const recipients = [kp.publicKey];
       const ownerKey = await resolveAgentEncryptionKey(args.podUrl, { fetch: fetchFn }).catch(() => null);
@@ -353,9 +443,24 @@ export async function composeIntoSharedLattice(args: {
         catch { /* skip an unresolvable cross-seat recipient — best-effort */ }
       }
       await ensureContainer(`${args.podUrl.endsWith('/') ? args.podUrl : `${args.podUrl}/`}foxxi-lattice/`, fetchFn);
-      await promoteInstanceEncrypted(pgsl, holonUri, latticeResourceUrl(args.podUrl), recipients, kp, fetchFn as unknown as typeof fetch);
+      // Compare-and-swap persist, serialized per resource. Non-clobbering: a concurrent
+      // writer yields a 412, and casPersist reloads + pod-wins-merges + retries rather
+      // than overwriting; an unreadable (re)load refuses (the fence). The reseat below
+      // adopts the exact instance the write settled on (post-merge), so resident is
+      // never left diverged from what is on the pod.
+      const outcome = await withPodWriteLock(resourceUrl, () =>
+        casPersist({ label: args.label, resourceUrl, agentDid: args.agentDid, holonUri, recipients, kp, fetchFn }));
+      if (outcome.ok) {
+        persisted = true;
+        const cur = resident.get(args.label);
+        if (cur) resident.set(args.label, { ...cur, pgsl: outcome.pgsl });
+      } else {
+        persistError = outcome.error;
+        console.warn('[shared-lattice][persist]', persistError);
+      }
+      // The descriptor is a deterministic PROJECTION of the holon (idempotent), so it
+      // is written best-effort and unconditionally — it never carries authorship.
       await fetchFn(proj.descriptorUrl, { method: 'PUT', headers: { 'Content-Type': 'text/turtle' }, body: proj.descriptorTurtle }).catch(() => undefined);
-      persisted = true;
     } catch (e) { persistError = (e as Error).message; console.warn('[shared-lattice][persist]', persistError); }
 
     return {

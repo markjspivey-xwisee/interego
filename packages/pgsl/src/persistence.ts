@@ -383,18 +383,104 @@ export async function resolveLatticeFromPod(
   recipientKeyPair: EncryptionKeyPair,
   fetchFn: typeof fetch,
 ): Promise<{ topUri: IRI; nodes: Map<IRI, Node> } | null> {
-  const r = await fetchFn(resourceUrl, { headers: { Accept: 'application/json' } });
-  if (!r.ok) return null;
+  // Thin wrapper over the detailed reader, preserving the historical shape (nodes
+  // or null) for existing callers (foundation-persist.ts, external consumers).
+  const d = await resolveLatticeFromPodDetailed(resourceUrl, recipientKeyPair, fetchFn);
+  return d.status === 'ok' ? { topUri: d.topUri!, nodes: d.nodes! } : null;
+}
+
+/** The outcome of a detailed lattice read — distinguishes the three cases the plain
+ *  reader collapsed to null, and carries the etag for optimistic concurrency. */
+export interface LatticeReadResult {
+  /** 'ok' = read + decrypted. 'absent' = 404 (nothing here; safe to create).
+   *  'unreadable' = a body existed but could not be read (non-2xx-non-404, or a
+   *  decrypt/parse failure) — a caller must NOT treat this as empty and overwrite it. */
+  readonly status: 'ok' | 'absent' | 'unreadable';
+  readonly topUri?: IRI;
+  readonly nodes?: Map<IRI, Node>;
+  /** The resource's entity tag, for a subsequent If-Match write. */
+  readonly etag?: string;
+}
+
+/**
+ * Resolve + decrypt a lattice slice, distinguishing 404 (absent) from a body that
+ * could not be read (unreadable). This is what the plain {@link resolveLatticeFromPod}
+ * flattened away — and the flattening is why a transient 5xx was indistinguishable
+ * from "no lattice yet", which (with an unconditional PUT) could overwrite a real
+ * corpus with an empty one. Also returns the etag so the writer can compare-and-swap.
+ */
+export async function resolveLatticeFromPodDetailed(
+  resourceUrl: string,
+  recipientKeyPair: EncryptionKeyPair,
+  fetchFn: typeof fetch,
+): Promise<LatticeReadResult> {
+  let r: Response;
+  try { r = await fetchFn(resourceUrl, { headers: { Accept: 'application/json' } }); }
+  catch { return { status: 'unreadable' }; }
+  if (r.status === 404) return { status: 'absent' };
+  if (!r.ok) return { status: 'unreadable' };
+  const etag = r.headers.get('etag') ?? undefined;
   let envelope: EncryptedEnvelope;
-  try { envelope = (await r.json()) as EncryptedEnvelope; } catch { return null; }
+  try { envelope = (await r.json()) as EncryptedEnvelope; } catch { return { status: 'unreadable', etag }; }
   const plaintext = openEncryptedEnvelope(envelope, recipientKeyPair);
-  if (plaintext == null) return null;
+  if (plaintext == null) return { status: 'unreadable', etag };  // a body WAS returned but we can't decrypt it
   try {
     const payload = JSON.parse(plaintext) as EncryptedLatticeSlice;
-    return { topUri: payload.topUri, nodes: new Map(Object.entries(payload.nodes)) as Map<IRI, Node> };
+    return { status: 'ok', topUri: payload.topUri, nodes: new Map(Object.entries(payload.nodes)) as Map<IRI, Node>, etag };
   } catch {
-    return null;
+    return { status: 'unreadable', etag };
   }
+}
+
+/** The outcome of a compare-and-swap write. */
+export interface CasWriteResult {
+  /** 'ok' = written. 'conflict' = the precondition failed (412) — someone wrote since
+   *  we loaded; the caller must reload + merge + retry. 'error' = other failure. */
+  readonly status: 'ok' | 'conflict' | 'error';
+  /** The resource's etag AFTER a successful write (fetched via HEAD — the pod's PUT
+   *  response carries no etag). Undefined on conflict/error. */
+  readonly etag?: string;
+  readonly httpStatus: number;
+}
+
+/**
+ * Promote the entire instance with a PRECONDITION — optimistic concurrency.
+ *
+ * Same encrypted payload as {@link promoteInstanceEncrypted}, but sends If-Match
+ * (update) or If-None-Match: * (create) so a concurrent writer cannot be silently
+ * clobbered: on a precondition failure the pod returns 412 and this returns
+ * status 'conflict' rather than swallowing it (the plain promote treats 412 as
+ * success). On success it HEAD-refreshes the new etag, because the pod's PUT
+ * response (201/205) carries none.
+ */
+export async function promoteInstanceEncryptedCAS(
+  pgsl: PGSLInstance,
+  topUri: IRI,
+  resourceUrl: string,
+  recipientPublicKeys: readonly string[],
+  senderKeyPair: EncryptionKeyPair,
+  fetchFn: typeof fetch,
+  precondition: { ifMatch?: string; ifNoneMatch?: '*' },
+): Promise<CasWriteResult> {
+  const top = pgsl.nodes.get(topUri);
+  if (!top) throw new Error(`Node not found: ${topUri}`);
+  const payload: EncryptedLatticeSlice = { topUri, nodes: Object.fromEntries(pgsl.nodes) as Record<string, Node> };
+  const envelope = createEncryptedEnvelope(JSON.stringify(payload), recipientPublicKeys, senderKeyPair);
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (precondition.ifMatch) headers['If-Match'] = precondition.ifMatch;
+  else if (precondition.ifNoneMatch) headers['If-None-Match'] = precondition.ifNoneMatch;
+
+  let r: Response;
+  try { r = await fetchFn(resourceUrl, { method: 'PUT', headers, body: JSON.stringify(envelope) }); }
+  catch { return { status: 'error', httpStatus: 0 }; }
+  if (r.status === 412) return { status: 'conflict', httpStatus: 412 };
+  if (!r.ok) return { status: 'error', httpStatus: r.status };
+  // Success: the PUT carries no etag, so HEAD to capture the new one for the next CAS.
+  let etag: string | undefined;
+  try { const h = await fetchFn(resourceUrl, { method: 'HEAD', headers: { Accept: 'application/json' } }); etag = h.headers.get('etag') ?? undefined; }
+  catch { /* etag stays undefined; the next write will re-read it */ }
+  return { status: 'ok', etag, httpStatus: r.status };
 }
 
 /** Promote a node to tier 3 — pin to IPFS, return CID. */
