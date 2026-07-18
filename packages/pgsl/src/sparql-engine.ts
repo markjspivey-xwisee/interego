@@ -335,11 +335,30 @@ export function parseSparql(queryString: string): SparqlQuery {
   const bind: Array<{ variable: string; value: string }> = [];
 
   function parsePatterns(block: string): SparqlPattern[] {
+    /** Split a WHERE block into triple statements on '.', ignoring a '.' inside an
+     *  IRI ref <…> or a string literal — so a dotted https IRI is not shredded. */
+    function splitTriples(s: string): string[] {
+      const out: string[] = [];
+      let buf = '', inIri = false, quote = '';
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i]!;
+        if (quote) { buf += c; if (c === quote) quote = ''; continue; }
+        if (inIri) { buf += c; if (c === '>') inIri = false; continue; }
+        if (c === '<') { inIri = true; buf += c; continue; }
+        if (c === '"' || c === "'") { quote = c; buf += c; continue; }
+        if (c === '.') { out.push(buf); buf = ''; continue; }
+        buf += c;
+      }
+      if (buf.trim()) out.push(buf);
+      return out;
+    }
     const patterns: SparqlPattern[] = [];
     // Normalize: remove comments, collapse whitespace
     const clean = block.replace(/#[^\n]*/g, '').replace(/\s+/g, ' ').trim();
-    // Split on ' . ' (triple terminator), handling semicolons
-    const statements = clean.split(/\s*\.\s*/).filter(s => s.trim().length > 0);
+    // Split on the triple terminator '.', but NOT a '.' inside an IRI ref (<…>) or a
+    // string literal ("…"/'…'). PGSL node ids are now https URLs whose host contains
+    // dots (relay.interego.xwisee.com), so a naive split on every '.' shreds the IRI.
+    const statements = splitTriples(clean).filter(s => s.trim().length > 0);
 
     for (const stmt of statements) {
       // Skip FILTER, BIND, OPTIONAL, UNION

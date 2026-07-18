@@ -10,7 +10,7 @@
  */
 
 import type { IRI, ContextDescriptorData } from '@interego/core';
-import { toTurtle } from '@interego/core';
+import { toTurtle, isPgslNodeId, pgslNodeKind } from '@interego/core';
 import type { PGSLInstance, Value } from './types.js';
 import type { CoherenceCertificate } from './coherence.js';
 import type { PersistenceRegistry } from './persistence.js';
@@ -472,14 +472,14 @@ export function writeBackTriples(
     try {
       const { subject, predicate, object } = triple;
 
-      // Case 1: atom value mutation — skip (immutable)
-      if (predicate === pgslIri('value') && subject.startsWith('urn:pgsl:atom:')) {
+      // Case 1: atom value mutation — skip (immutable). Dual-read (URL or legacy urn).
+      if (predicate === pgslIri('value') && pgslNodeKind(subject) === 'atom') {
         // Atoms are immutable; skip silently
         continue;
       }
 
       // Case 2: add item to fragment
-      if (predicate === pgslIri('item') && subject.startsWith('urn:pgsl:fragment:')) {
+      if (predicate === pgslIri('item') && pgslNodeKind(subject) === 'fragment') {
         // Interpret as: create a new chain that extends this fragment's content
         // We extract the object (should be an atom URI) and ingest
         const objectValue = extractValue(object);
@@ -487,7 +487,7 @@ export function writeBackTriples(
           ingest(pgsl, [objectValue]);
           pgslMutations++;
           triplesAdded++;
-        } else if (object.startsWith('urn:pgsl:')) {
+        } else if (isPgslNodeId(object)) {
           // Object is already a PGSL URI — ingest as-is
           ingest(pgsl, [object as IRI]);
           pgslMutations++;

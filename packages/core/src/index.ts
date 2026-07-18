@@ -715,6 +715,13 @@ export {
   setKernelLatticeAdapter,
   getKernelLatticeAdapter,
   fallbackLatticeAdapter,
+  PGSL_ID_AUTHORITY,
+  LEGACY_PGSL_PREFIX,
+  mintNodeId,
+  isPgslNodeId,
+  pgslNodeKind,
+  pgslNodeHash,
+  toCanonicalNodeId,
 } from './lattice/index.js';
 export type {
   LatticeAdapter,
@@ -725,4 +732,5 @@ export type {
   AdapterPromoteResult,
   AdapterDecomposeResult,
   AdapterResolveResult,
+  PgslNodeKind,
 } from './lattice/index.js';

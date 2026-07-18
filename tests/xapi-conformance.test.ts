@@ -112,7 +112,7 @@ describe('Statement Ingestion', () => {
     const uri = ingestWithProfile(pgsl, 'xapi', basicStatement);
     expect(uri).toBeDefined();
     expect(typeof uri).toBe('string');
-    expect(uri).toContain('urn:pgsl:');
+    expect(uri).toContain('/ns/pgsl/');
   });
 
   it('actor becomes a single IFI atom (account homePage:name)', () => {
@@ -256,7 +256,7 @@ describe('Batch Ingestion', () => {
   it('batch ingests multiple statements and returns URIs', () => {
     const uris = batchIngestWithProfile(pgsl, 'xapi', [basicStatement, secondStatement, minimalStatement]);
     expect(uris).toHaveLength(3);
-    uris.forEach(uri => expect(uri).toContain('urn:pgsl:'));
+    uris.forEach(uri => expect(uri).toContain('/ns/pgsl/'));
   });
 
   it('batch produces correct lattice stats', () => {

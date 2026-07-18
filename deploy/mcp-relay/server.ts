@@ -10246,7 +10246,7 @@ async function handleResolveLinkedData(args: ToolArgs): Promise<string> {
 // 4 path segments, so no collision with the 3-segment /ns/:owner/:slug below.
 app.options('/ns/pgsl/:kind/:hash', (_req, res) => { res.status(204).end(); });
 app.get('/ns/pgsl/:kind/:hash', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS (ACAO:*) is applied by corsMiddleware's /ns/* public linked-data carve-out.
   const kind = String(req.params.kind);
   const hash = String(req.params.hash);
   // Validate before redirecting — no open redirect: the target host is fixed

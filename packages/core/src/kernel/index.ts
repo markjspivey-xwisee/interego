@@ -47,6 +47,7 @@ import {
 
 import { getKernelLatticeAdapter } from '../lattice/adapter.js';
 import type { LatticeProvenance, LatticeValue, LatticeLevel } from '../lattice/adapter.js';
+import { isPgslNodeId } from '../lattice/node-id.js';
 
 // Backwards-compatible type aliases so existing kernel exports keep their
 // historical shape (`Value`, `Level`, `NodeProvenance`) even though the
@@ -702,7 +703,7 @@ export async function dereference(iri: string, options?: DereferenceOptions): Pr
   // minted/promoted holons that don't actually resolve. The substrate's
   // hypermedia contract is that any affordance the kernel surfaces is
   // callable — this closes the contract for the lattice URI scheme.
-  if (iri.startsWith('urn:pgsl:')) {
+  if (isPgslNodeId(iri)) {
     return dereferenceLatticeNode(iri as IRI);
   }
 
@@ -1175,7 +1176,7 @@ export async function act(
     // urn:pgsl:* targets route through the lattice adapter, not HTTP.
     // Closes the affordance contract for the kernel-verb actions that
     // dereferenceLatticeNode advertises on resolved lattice holons.
-    if (affordance.target.startsWith('urn:pgsl:')) {
+    if (isPgslNodeId(affordance.target)) {
       return actOnLatticeNode(affordance, payload);
     }
     const fetchImpl = options?.fetch ?? getDefaultFetch();

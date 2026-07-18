@@ -17,7 +17,7 @@
  */
 
 import type { IRI, EncryptionKeyPair } from '@interego/core';
-import { encryptFacetValue, decryptFacetValue } from '@interego/core';
+import { encryptFacetValue, decryptFacetValue, mintNodeId, isPgslNodeId } from '@interego/core';
 import type {
   Value,
   Level,
@@ -51,7 +51,7 @@ function contentHash(input: string): string {
  */
 function atomUri(value: Value): IRI {
   const hash = contentHash(`atom:${String(value)}`);
-  return `urn:pgsl:atom:${hash.slice(0, 40)}` as IRI;
+  return mintNodeId('atom', hash.slice(0, 40)) as IRI;
 }
 
 /**
@@ -61,7 +61,7 @@ function atomUri(value: Value): IRI {
  */
 function fragmentUri(items: readonly IRI[], level: Level): IRI {
   const hash = contentHash(`fragment:L${level}:${items.join('|')}`);
-  return `urn:pgsl:fragment:${hash.slice(0, 40)}` as IRI;
+  return mintNodeId('fragment', hash.slice(0, 40)) as IRI;
 }
 
 /**
@@ -455,8 +455,11 @@ export function ingest(
 
   // Step 1: Ensure all items are atom URIs
   const atomUris: IRI[] = sequence.map(item => {
-    if (typeof item === 'string' && (item as string).startsWith('urn:pgsl:')) {
-      // Already a PGSL URI
+    // Recognise an existing node reference by SCHEME (the URL scheme OR the legacy
+    // urn), NEVER by local-map membership: a remote/forward reference to a node not
+    // yet resident here must pass through as a reference, not be atomized as a literal
+    // value string (that would silently poison the lattice). isPgslNodeId dual-reads.
+    if (isPgslNodeId(item)) {
       return item as IRI;
     }
     return mintAtom(pgsl, item, prov);

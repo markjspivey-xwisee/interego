@@ -135,7 +135,7 @@ describe('SDK', () => {
     const { createPGSL, embedInPGSL, resolve: pgslResolve, latticeStats } = await import('@interego/pgsl');
     const pgsl = createPGSL({ wasAttributedTo: 'urn:agent:test', generatedAtTime: new Date().toISOString() });
     const uri = embedInPGSL(pgsl, 'Hello world from the SDK');
-    expect(uri).toContain('urn:pgsl:fragment');
+    expect(uri).toContain('/ns/pgsl/fragment');
 
     const resolved = pgslResolve(pgsl, uri);
     expect(resolved).toBe('Hello world from the SDK');

@@ -499,7 +499,7 @@ describe('Homoiconic Metagraph', () => {
 
   it('generateMetagraph produces a lattice URI', () => {
     const meta = generateMetagraph(pgsl);
-    expect(meta.latticeUri).toMatch(/^urn:pgsl:metagraph:/);
+    expect(meta.latticeUri).toContain('/ns/pgsl/metagraph/');
   });
 
   it('ingestMetagraph adds meta-atoms to the lattice', () => {

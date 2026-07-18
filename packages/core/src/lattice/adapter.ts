@@ -30,6 +30,7 @@
 
 import { createHash } from 'node:crypto';
 import type { IRI } from '../model/types.js';
+import { mintNodeId } from './node-id.js';
 
 /** A scalar value the lattice can address by content. */
 export type LatticeValue = string | number | boolean;
@@ -119,7 +120,7 @@ function sha256Hex(input: string): string {
  */
 function fallbackAtomUri(value: LatticeValue): IRI {
   const hash = sha256Hex(`atom:${String(value)}`);
-  return `urn:pgsl:atom:${hash.slice(0, 40)}` as IRI;
+  return mintNodeId('atom', hash.slice(0, 40)) as IRI;
 }
 
 /**
@@ -129,7 +130,7 @@ function fallbackAtomUri(value: LatticeValue): IRI {
  */
 function fallbackFragmentUri(items: readonly IRI[], level: LatticeLevel): IRI {
   const hash = sha256Hex(`fragment:L${level}:${items.join('|')}`);
-  return `urn:pgsl:fragment:${hash.slice(0, 40)}` as IRI;
+  return mintNodeId('fragment', hash.slice(0, 40)) as IRI;
 }
 
 /**
