@@ -69,7 +69,7 @@ beforeEach(() => {
 describe('Atoms', () => {
   it('mints an atom with canonical URI', () => {
     const uri = mintAtom(pgsl, 'hello');
-    expect(uri).toContain('urn:pgsl:atom:');
+    expect(uri).toContain('/ns/pgsl/atom/');
     expect(pgsl.nodes.get(uri)?.kind).toBe('Atom');
   });
 

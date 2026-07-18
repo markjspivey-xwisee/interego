@@ -27,33 +27,19 @@
 import type { IRI } from '@interego/core';
 import type { PGSLInstance, Node, ContainmentAnnotation } from './types.js';
 import { resolve, computeContainmentAnnotations } from './lattice.js';
+import { PGSL_ID_AUTHORITY, toCanonicalNodeId } from '@interego/core';
+
+export { PGSL_ID_AUTHORITY };
 
 /**
- * The canonical naming AUTHORITY for a PGSL node identifier — the substrate relay,
- * which operates a route (GET /ns/pgsl/<kind>/<hash>) that RESOLVES a node id to its
- * description (302 to a public-lattice resolver, the w3id.org / PURL pattern). A
- * compile-time constant, NEVER env-derived: a mutable authority would mint different
- * ids for the same content in dev vs prod and split the federation-overlap corpus.
- * The relay is a NAMING authority (like w3id.org / purl.org), not the location of a
- * data copy, so the id stays location-independent.
- */
-export const PGSL_ID_AUTHORITY = 'https://relay.interego.xwisee.com/ns/pgsl' as const;
-
-/**
- * Derive a location-INDEPENDENT canonical URL identity from a node uri.
- * `urn:pgsl:<kind>:<hash>` -> `${PGSL_ID_AUTHORITY}/<kind>/<hash>`.
- *
- * The internal node id stays the urn (a content-address / federation-overlap key that
- * must NOT be re-identified — the fragment hash cascades over item uris, so re-scheming
- * would split the corpus); this DERIVES a stable, RESOLVING URL form of it. Same content
- * yields the same canonical on every pod (pure, location-independent), and the canonical
- * actually resolves at its authority (the relay route redirects to a public resolver) —
- * so a node both DENOTES (this URL) and RESOLVES TO CONNOTATION (following it). Idempotent:
- * an already-https or unrecognized id is returned unchanged, so re-deriving never double-wraps.
+ * The canonical URL identity of a node id. Now that the mint itself produces the URL
+ * scheme (`${PGSL_ID_AUTHORITY}/<kind>/<hash>`), this is a passthrough for a live node
+ * id and a LEGACY-urn converter (a corpus persisted before the mint swap still holds
+ * urns; this re-expresses them under the resolving authority). Deterministic +
+ * idempotent — kept as the stable public name callers already import.
  */
 export function pgslCanonicalUrl(uri: string): string {
-  const m = /^urn:pgsl:(atom|fragment|metagraph):(.+)$/.exec(uri);
-  return m ? `${PGSL_ID_AUTHORITY}/${m[1]}/${m[2]}` : uri;
+  return toCanonicalNodeId(uri);
 }
 
 /** A reference to another node — always carries the href so a reader can follow it. */

@@ -22,6 +22,7 @@
 
 import type { PGSLInstance } from './types.js';
 import { ingest, latticeStats } from './lattice.js';
+import { mintNodeId } from '@interego/core';
 import { createHash } from 'node:crypto';
 
 // ═════════════════════════════════════════════════════════════
@@ -772,10 +773,10 @@ export interface MetagraphDescriptor {
 export function generateMetagraph(pgsl: PGSLInstance): MetagraphDescriptor {
   const stats = latticeStats(pgsl);
 
-  const latticeUri = `urn:pgsl:metagraph:${createHash('sha256')
+  const latticeUri = mintNodeId('metagraph', createHash('sha256')
     .update(`metagraph:${pgsl.defaultProvenance.wasAttributedTo}:${stats.totalNodes}`)
     .digest('hex')
-    .slice(0, 24)}`;
+    .slice(0, 24));
 
   // Meta-atoms: facts about the lattice
   const metaAtoms: string[] = [

@@ -19,3 +19,13 @@ export {
   setKernelLatticeAdapter,
   getKernelLatticeAdapter,
 } from './adapter.js';
+export {
+  PGSL_ID_AUTHORITY,
+  LEGACY_PGSL_PREFIX,
+  mintNodeId,
+  isPgslNodeId,
+  pgslNodeKind,
+  pgslNodeHash,
+  toCanonicalNodeId,
+} from './node-id.js';
+export type { PgslNodeKind } from './node-id.js';
