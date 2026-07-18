@@ -24,6 +24,7 @@ import {
   type PGSLInstance, type Node as PgslNode,
 } from '@interego/pgsl';
 import type { IRI, FetchFn } from '@interego/core';
+import { mintNodeId } from '@interego/core';
 import { resolveAgentEncryptionKey } from '@interego/solid';
 import { bridgeEncryptionKeypair } from './foundation-holon-altitude.js';
 
@@ -77,11 +78,16 @@ export function publicLatticeLabels(): string[] { return [...publicLabels]; }
  */
 export function resolvePublicNode(kind: 'atom' | 'fragment', hash: string): { label: string; node: PgslNode; pgsl: PGSLInstance; uri: IRI } | null {
   if (!/^[0-9a-f]{6,64}$/i.test(hash)) return null;
-  const uri = `urn:pgsl:${kind}:${hash}` as IRI;
+  // Dual-read: nodes minted after the URL-scheme swap are keyed under the current
+  // authority; a corpus persisted before it still holds the legacy urn. Try both.
+  const candidates: IRI[] = [mintNodeId(kind, hash) as IRI, `urn:pgsl:${kind}:${hash}` as IRI];
   for (const label of publicLabels) {
     const a = resident.get(label);
-    const node = a?.pgsl.nodes.get(uri);
-    if (a && node) return { label, node, pgsl: a.pgsl, uri };
+    if (!a) continue;
+    for (const uri of candidates) {
+      const node = a.pgsl.nodes.get(uri);
+      if (node) return { label, node, pgsl: a.pgsl, uri };
+    }
   }
   return null;
 }

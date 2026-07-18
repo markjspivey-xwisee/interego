@@ -122,7 +122,7 @@ import { skillBundleToDescriptor, descriptorGraphToSkillMd } from '@interego/ski
 import { mintSessionToken } from '../src/auth.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
-import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY } from '@interego/core';
+import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import {
   buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
@@ -4099,9 +4099,11 @@ app.post('/agent/publish-encryption-key', async (req, res) => {
 // this cannot be used to probe whether some content exists in an agent's corpus.
 // Registered BEFORE /agent/lattice/:label so 'atom'/'fragment' are never read as labels.
 const latticeNodeUrl = (base: string, kind: 'atom' | 'fragment', uri: string): string =>
-  `${base}/agent/lattice/${kind}/${String(uri).split(':').pop()}`;
+  `${base}/agent/lattice/${kind}/${pgslNodeHash(String(uri)) ?? String(uri).split(/[:/]/).pop()}`;
+// Dual-read the kind/hash from either scheme (URL `…/atom/<hash>` or legacy urn
+// `urn:pgsl:atom:<hash>`) — pgslNodeKind/pgslNodeHash handle both.
 const nodeUrlFor = (base: string, uri: string): string =>
-  latticeNodeUrl(base, String(uri).includes(':atom:') ? 'atom' : 'fragment', uri);
+  latticeNodeUrl(base, pgslNodeKind(String(uri)) === 'atom' ? 'atom' : 'fragment', uri);
 
 // A heavily-reused atom (rdf:type appears in 168+ fragments here) would otherwise
 // produce an enormous description; cap the context/paradigm fan-out.
