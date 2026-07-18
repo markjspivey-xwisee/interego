@@ -322,6 +322,13 @@ const RELAY_INTROSPECTION_SECRET = process.env['RELAY_INTROSPECTION_SECRET'] ?? 
 // Must be set in production so the OAuth metadata advertises the correct
 // externally-reachable URL. Falls back to constructing from request host.
 const PUBLIC_BASE_URL = process.env['PUBLIC_BASE_URL'] ?? '';
+// The public PGSL node resolver(s) the canonical id authority redirects to. The
+// relay is the STABLE naming authority for a pgsl node id (relay/ns/pgsl/<kind>/
+// <hash>); the bytes are served by a public-lattice resolver (the Foxxi bridge's
+// label-free node resolver today). Config-driven so the substrate authority never
+// hardcodes a vertical host in code. The resolver is itself fail-closed (public
+// lattices only, uniform 404), so the relay stays a thin redirect (w3id.org style).
+const PGSL_NODE_RESOLVER = (process.env['PGSL_NODE_RESOLVER'] ?? 'https://foxxi-bridge.interego.xwisee.com/agent/lattice').replace(/\/+$/, '');
 // Operator bearer for POST /amep/acts (AMEP engine). Unset ⇒ operator path
 // disabled; OAuth bearers with mcp:write scope still work.
 const AMEP_ACT_SECRET = process.env['AMEP_ACT_SECRET'] ?? '';
@@ -10222,6 +10229,34 @@ async function handleResolveLinkedData(args: ToolArgs): Promise<string> {
   }
   return JSON.stringify({ iri: r.ontologyIri, contentType: 'text/turtle', isOntology: r.isOntology, content: r.turtle });
 }
+
+// ── /ns/pgsl/:kind/:hash — the canonical PGSL node identifier authority ───────
+//
+// A PGSL node id is content-addressed (urn:pgsl:<kind>:<hash>) — a perfect DENOTATION
+// (same content, same id on every pod) but not itself fetchable. describeNode /
+// projectHolon now publish a location-INDEPENDENT canonical URL for each node under
+// THIS authority: https://<relay>/ns/pgsl/<kind>/<hash>. This route makes that id
+// actually RESOLVE, so a node both denotes (the id) and resolves to connotation (its
+// description) — the standing "every id is a dereferenceable URL" principle.
+//
+// The relay is the STABLE naming authority; it does not hold lattices, so it 302s to
+// a public-lattice resolver (PGSL_NODE_RESOLVER, the Foxxi bridge today) — the
+// w3id.org / PURL pattern. That resolver is fail-closed (public lattices only,
+// private/absent both uniform-404), so this adds no cross-tenant existence oracle.
+// 4 path segments, so no collision with the 3-segment /ns/:owner/:slug below.
+app.options('/ns/pgsl/:kind/:hash', (_req, res) => { res.status(204).end(); });
+app.get('/ns/pgsl/:kind/:hash', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const kind = String(req.params.kind);
+  const hash = String(req.params.hash);
+  // Validate before redirecting — no open redirect: the target host is fixed
+  // (PGSL_NODE_RESOLVER) and only a known kind + hex hash reach it.
+  if (!['atom', 'fragment', 'metagraph'].includes(kind) || !/^[0-9a-f]{6,64}$/i.test(hash)) {
+    res.status(404).json({ error: 'no such pgsl node' });
+    return;
+  }
+  res.redirect(302, `${PGSL_NODE_RESOLVER}/${kind}/${encodeURIComponent(hash)}`);
+});
 
 app.options('/ns/:owner/:slug', (_req, res) => { res.status(204).end(); });
 app.get('/ns/:owner/:slug', async (req, res) => {
