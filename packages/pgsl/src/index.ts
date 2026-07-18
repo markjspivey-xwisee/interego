@@ -357,7 +357,9 @@ export {
   resolveHolonFromPod,
   promoteLatticeSliceEncrypted,
   promoteInstanceEncrypted,
+  promoteInstanceEncryptedCAS,
   resolveLatticeFromPod,
+  resolveLatticeFromPodDetailed,
   collectLatticeSlice,
   promoteToIpfs,
   promoteToChain,
@@ -371,6 +373,8 @@ export type {
   PersistenceRecord,
   ResolutionResult,
   PersistenceRegistry,
+  LatticeReadResult,
+  CasWriteResult,
 } from './persistence.js';
 // Projection engine (Stage 3) — holon → cg-RDF descriptor + manifest entry.
 // The manifest is a deterministic render of a lattice slice (not a pod scan).
