@@ -18,6 +18,11 @@ export {
   computeContainmentAnnotations,
   allContainmentAnnotations,
 } from './lattice.js';
+// The ONE node-description model — the pure self/structure/context/paradigm facets
+// both the pgsl-browser and the Foxxi bridge resolver render (each with its own href
+// scheme + controls). See describe.ts.
+export { describeNode } from './describe.js';
+export type { NodeDescription, NodeRef, DescribeNodeOptions } from './describe.js';
 export {
   fiber,
   maxLevel,

@@ -113,11 +113,11 @@ import {
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
-import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadCourseFromLattice, resolvePublicNode, fragmentsReferencing, type ProjectionKind } from '../src/foundation-shared-lattice.js';
+import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadCourseFromLattice, resolvePublicNode, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, type AgentScormCourseLike } from '../src/course-graph.js';
 import { courseToSkillMd, skillMdToAgenticCourse } from '../src/course-skill-bridge.js';
-import { routeInterrogatives } from '@interego/pgsl';
+import { routeInterrogatives, describeNode } from '@interego/pgsl';
 import { skillBundleToDescriptor, descriptorGraphToSkillMd } from '@interego/skills';
 import { mintSessionToken } from '../src/auth.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
@@ -4103,27 +4103,32 @@ const latticeNodeUrl = (base: string, kind: 'atom' | 'fragment', uri: string): s
 const nodeUrlFor = (base: string, uri: string): string =>
   latticeNodeUrl(base, String(uri).includes(':atom:') ? 'atom' : 'fragment', uri);
 
+// A heavily-reused atom (rdf:type appears in 168+ fragments here) would otherwise
+// produce an enormous description; cap the context/paradigm fan-out.
+const LATTICE_NODE_MAX_NEIGHBORS = 64;
+
 function serveLatticeNode(kind: 'atom' | 'fragment', req: import('express').Request, res: import('express').Response): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
   const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
   const found = resolvePublicNode(kind, String(req.params.hash));
   // Uniform 404: absent, private, or malformed are indistinguishable by design.
   if (!found) { res.status(404).json({ error: 'no such node' }); return; }
-  const { label, node } = found;
-  const definedIn = `${base}/agent/lattice/${encodeURIComponent(label)}`;
-  const self = latticeNodeUrl(base, kind, String(node.uri));
-  const appearsIn = fragmentsReferencing(label, String(node.uri)).map(u => nodeUrlFor(base, u));
-  if (node.kind === 'Atom') {
-    // Upward only: an atom is composed of nothing. appearsIn IS the reuse, walkable.
-    res.json({ '@id': self, kind: 'Atom', level: 0, value: node.value, appearsIn, definedIn });
-    return;
-  }
+  const { label, pgsl, uri } = found;
+  // The ONE shared node-description model (@interego/pgsl describeNode) — the same
+  // self/structure/context/paradigm the pgsl-browser renders. This resolver used to
+  // hand-roll a poorer {items, appearsIn} subset; now the model lives in the package
+  // and the bridge only supplies its own url scheme (hrefFor) + the public/oracle
+  // guard. _paradigm.sourceOptions/targetOptions ARE the source/target axis.
+  const desc = describeNode(pgsl, uri, {
+    hrefFor: (u) => nodeUrlFor(base, String(u)),
+    maxNeighbors: LATTICE_NODE_MAX_NEIGHBORS,
+  });
+  if (!desc) { res.status(404).json({ error: 'no such node' }); return; }
   res.json({
-    '@id': self, kind: 'Fragment', level: node.level,
-    // Downward: what this holon is composed OF, each a url you can follow.
-    items: node.items.map(u => nodeUrlFor(base, String(u))),
-    appearsIn, definedIn,
-    projections: `${definedIn}/holon?uri=${encodeURIComponent(String(node.uri))}`,
+    '@id': desc.href,
+    ...desc,
+    definedIn: `${base}/agent/lattice/${encodeURIComponent(label)}`,
+    projections: `${base}/agent/lattice/${encodeURIComponent(label)}/holon?uri=${encodeURIComponent(String(uri))}`,
   });
 }
 // Written out rather than looped: the CI affordance gate reads these paths as
