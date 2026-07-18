@@ -5,7 +5,7 @@
  * paradigm (source/target at a position, computed from usage).
  */
 import { describe, it, expect } from 'vitest';
-import { createPGSL, ingest, describeNode, type IRI } from '@interego/pgsl';
+import { createPGSL, ingest, describeNode, pgslCanonicalUrl, type IRI } from '@interego/pgsl';
 
 const prov = { wasAttributedTo: 'https://example.test/agent' as IRI, generatedAtTime: '2026-07-17T00:00:00Z' };
 const href = (u: IRI) => `/node/${encodeURIComponent(u)}`;
@@ -69,6 +69,28 @@ describe('describeNode', () => {
     // precedes her there. The paradigm reflects usage, so her source is foaf:knows —
     // it does not pretend she is "only a subject".
     expect(d._paradigm.sourceOptions.map(s => s.resolved)).toEqual([F + 'knows']);
+  });
+
+  it('every node carries a location-independent canonical URL identity', () => {
+    const { pgsl, tripleUris } = nineTripleLattice();
+    const d = describeNode(pgsl, tripleUris[0]! as IRI, { hrefFor: href })!;
+    // canonical is a URL (honors "every id is a URL"), derived deterministically from
+    // the urn, and DISTINCT from href (the location-dependent resolver link).
+    expect(d.canonical).toMatch(/^https:\/\//);
+    expect(d.canonical).toBe(pgslCanonicalUrl(String(d.uri)));
+    expect(d.canonical).not.toBe(d.href);
+    // Location-independent: derived purely from the content hash, no host of a copy.
+    expect(d.canonical).toContain(String(d.uri).split(':').pop());
+  });
+
+  it('pgslCanonicalUrl is deterministic + idempotent', () => {
+    const urn = 'urn:pgsl:atom:abc123' as string;
+    const once = pgslCanonicalUrl(urn);
+    expect(once).toMatch(/#atom-abc123$/);
+    // same input -> same output (federation overlap preserved across pods)
+    expect(pgslCanonicalUrl(urn)).toBe(once);
+    // idempotent: an already-canonical https id is unchanged (never double-wrapped)
+    expect(pgslCanonicalUrl(once)).toBe(once);
   });
 
   it('maxNeighbors caps the fan-out', () => {

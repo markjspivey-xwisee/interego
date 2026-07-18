@@ -27,6 +27,31 @@
 import type { IRI } from '@interego/core';
 import type { PGSLInstance, Node, ContainmentAnnotation } from './types.js';
 import { resolve, computeContainmentAnnotations } from './lattice.js';
+// The pgsl VOCABULARY namespace (pgsl:Atom, pgsl:value, …) — reused here as the
+// authority for node INSTANCE ids, so a class (`…/pgsl#Atom`) and an instance
+// (`…/pgsl#atom-<hash>`) live under one canonical, compile-time authority. Never
+// env-derived: a mutable authority would mint different ids for the same content in
+// dev vs prod and split the federation-overlap corpus.
+import { PGSL_NS } from './rdf.js';
+
+/**
+ * Derive a location-INDEPENDENT canonical URL identity from a node uri.
+ * `urn:pgsl:<kind>:<hash>` -> `${PGSL_NS}<kind>-<hash>`.
+ *
+ * The honest half of the dereferenceable-id principle we can ship WITHOUT a mint
+ * change: the internal node id stays the urn (a content-address / federation-overlap
+ * key that must NOT be re-identified — the fragment hash cascades over item uris, so
+ * re-scheming would split the corpus), and this DERIVES a stable URL form of it. Same
+ * content yields the same canonical on every pod (pure, location-independent). A
+ * node's specific DESCRIPTION is reached through the location-dependent resolver href
+ * a consumer already gets — so a node both DENOTES (canonical URL) and RESOLVES TO
+ * CONNOTATION (resolver href). Idempotent: an already-https or unrecognized id is
+ * returned unchanged, so re-deriving never double-wraps.
+ */
+export function pgslCanonicalUrl(uri: string): string {
+  const m = /^urn:pgsl:(atom|fragment|metagraph):(.+)$/.exec(uri);
+  return m ? `${PGSL_NS}${m[1]}-${m[2]}` : uri;
+}
 
 /** A reference to another node — always carries the href so a reader can follow it. */
 export interface NodeRef {
@@ -39,6 +64,10 @@ export interface NodeRef {
 
 export interface NodeDescription {
   readonly uri: IRI;
+  /** The node's location-INDEPENDENT canonical URL identity (see pgslCanonicalUrl):
+   *  a stable https id for federation/overlap, distinct from `href` (this consumer's
+   *  location-dependent resolver link, where the description is actually fetched). */
+  readonly canonical: string;
   readonly href: string;
   readonly resolved: string;
   readonly kind: Node['kind'];
@@ -127,7 +156,7 @@ export function describeNode(pgsl: PGSLInstance, uri: IRI, opts: DescribeNodeOpt
     .map(a => ({ ...a, parentResolved: resolve(pgsl, a.parentUri) }));
 
   return {
-    uri, href: hrefFor(uri), resolved: resolve(pgsl, uri),
+    uri, canonical: pgslCanonicalUrl(String(uri)), href: hrefFor(uri), resolved: resolve(pgsl, uri),
     kind: node.kind, level: node.level, hash: String(uri).split(':').pop() ?? String(uri),
     ...(node.kind === 'Atom' ? { value: node.value } : {}),
     ...(node.kind === 'Fragment' ? { height: node.height } : {}),

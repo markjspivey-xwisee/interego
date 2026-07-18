@@ -23,6 +23,7 @@ import type { ManifestEntry, HypermediaControl } from '@interego/core';
 import { renderHypermediaMarkdown } from '@interego/core';
 import type { Node, Fragment, PGSLInstance } from './types.js';
 import { nodeToTurtle, pgslTurtlePrefixes } from './rdf.js';
+import { pgslCanonicalUrl } from './describe.js';
 
 export const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#' as const;
 export const DCT_NS = 'http://purl.org/dc/terms/' as const;
@@ -158,6 +159,13 @@ export function projectHolon(
     // descriptor (default OFF keeps manifest-render / persist callers byte-identical).
     ...(opts.typedFacets ? typedFacetLines(node, opts.contentType) : []),
     `    iep:pgslUri <${pgslUri}> ;`,
+    // The urn above is the content-address / federation-overlap key (unchanged, so a
+    // published descriptor still overlaps identically across pods). iep:canonicalId is
+    // its location-INDEPENDENT URL form — a dereferenceable id under a stable authority,
+    // derived deterministically from the urn (same content -> same canonical everywhere).
+    // This is the "every id is a URL" principle honored at the published boundary,
+    // WITHOUT re-identifying the node (no fragment-hash cascade, no migration).
+    `    iep:canonicalId <${pgslCanonicalUrl(pgslUri)}> ;`,
     `    iep:pgslLevel "${pgslLevel}"^^xsd:nonNegativeInteger ;`,
     // Hypermedia link to the encrypted canonical holon resource — a reader
     // follows this rather than recomputing the resource path.
