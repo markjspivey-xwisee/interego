@@ -1710,7 +1710,7 @@ iep:pgslUri a owl:ObjectProperty ;
 
 iep:canonicalId a owl:ObjectProperty ;
     rdfs:label "canonical id"@en ;
-    rdfs:comment "The location-INDEPENDENT canonical URL form of a projected node's identity, derived deterministically from its iep:pgslUri (urn:pgsl:<kind>:<hash> -> pgsl:<kind>-<hash>). Same content yields the same canonicalId on every pod, so it preserves the federation-overlap property of the urn while being a dereferenceable URL — the identifier both denotes (this id) and, via the resolver link a consumer follows, resolves to the node's description. Additive to iep:pgslUri, which remains the internal content-address key (never re-identified)."@en ;
+    rdfs:comment "The location-INDEPENDENT canonical URL form of a projected node's identity, derived deterministically from its iep:pgslUri (urn:pgsl:<kind>:<hash> -> https://relay.interego.xwisee.com/ns/pgsl/<kind>/<hash>). Same content yields the same canonicalId on every pod, so it preserves the federation-overlap property of the urn while being a dereferenceable URL that actually RESOLVES at its authority (the relay redirects it to a public-lattice resolver, w3id.org-style) — the identifier both denotes (this id) and resolves to connotation (the node's description). Additive to iep:pgslUri, which remains the internal content-address key (never re-identified)."@en ;
     rdfs:range pgsl:Node ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 

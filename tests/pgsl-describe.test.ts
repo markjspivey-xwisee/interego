@@ -83,10 +83,12 @@ describe('describeNode', () => {
     expect(d.canonical).toContain(String(d.uri).split(':').pop());
   });
 
-  it('pgslCanonicalUrl is deterministic + idempotent', () => {
+  it('pgslCanonicalUrl is deterministic + idempotent + resolves at its authority', () => {
     const urn = 'urn:pgsl:atom:abc123' as string;
     const once = pgslCanonicalUrl(urn);
-    expect(once).toMatch(/#atom-abc123$/);
+    // path form under the relay id authority — a real resolvable resource, not a fragment
+    expect(once).toMatch(/\/ns\/pgsl\/atom\/abc123$/);
+    expect(once).toMatch(/^https:\/\//);
     // same input -> same output (federation overlap preserved across pods)
     expect(pgslCanonicalUrl(urn)).toBe(once);
     // idempotent: an already-canonical https id is unchanged (never double-wrapped)
