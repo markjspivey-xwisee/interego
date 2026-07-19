@@ -5474,6 +5474,59 @@ app.get('/agent/scorm/course/:id', async (req, res) => {
   res.json({ ok: true, ...publicCourseView(c, base) });
 });
 
+// POST /agent/publish-memory — author a job aid / quick reference as a DEREFERENCEABLE
+// memory. A job aid is a shared team reference, so it composes into a PUBLIC resident
+// lattice (its atoms are url-minted AND resolver-served): the memory and its terms are
+// dereferenceable URLs that resolve to their description — a TERM, not a word. This is
+// what /vault/ingest could not give (it returns an ephemeral graph of unresolvable
+// urns); here the memory lives in the same fabric the resolver serves.
+app.post('/agent/publish-memory', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const p = auth.payload;
+    const title = typeof p.title === 'string' ? p.title.trim() : '';
+    const bodyMd = typeof p.body === 'string' ? p.body.trim() : '';
+    const kind = p.kind === 'quick-reference' ? 'quick-reference' : 'job-aid';
+    if (!title || !bodyMd) { res.status(400).json({ error: 'title and body (markdown) are required' }); return; }
+    const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
+    const slug = (title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)) || 'memory';
+    const memoryIri = `${base}/memory/${slug}`;
+    const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', RDFS = 'http://www.w3.org/2000/01/rdf-schema#',
+      DCT = 'http://purl.org/dc/terms/', SKOS = 'http://www.w3.org/2004/02/skos/core#';
+    // Compose at triple granularity (like the ontologies), so the memory has real,
+    // reusable, dereferenceable atoms rather than one opaque blob.
+    const points = bodyMd.split('\n').map(l => l.replace(/^#{1,6}\s*/, '').replace(/^[-*]\s+/, '').trim())
+      .filter(l => l.length > 3).slice(0, 24);
+    const group: Array<readonly [string, string, string]> = [
+      [memoryIri, RDF + 'type', SKOS + 'Concept'],
+      [memoryIri, RDFS + 'label', title],
+      [memoryIri, DCT + 'creator', auth.callerDid],
+      [memoryIri, DCT + 'type', kind],
+      [memoryIri, RDFS + 'comment', bodyMd.slice(0, 800)],
+      ...points.map(pt => [memoryIri, SKOS + 'note', pt] as const),
+    ];
+    const pod = resolveSubjectPodUrl(auth.callerDid);
+    const label = `memory-${slug}`;
+    const sl = await composeIntoSharedLattice({
+      podUrl: pod, agentDid: auth.callerDid, label,
+      terms: [memoryIri], termGroups: [group],
+      content: { kind, title, body: bodyMd, author: auth.callerDid, memoryIri },
+      contentType: 'foxxi:Memory', projections: ['rdf'],
+      publicLattice: true,   // resolver-served → the memory's url atoms actually resolve
+    });
+    // The memory's own atom is a dereferenceable URL now; hand it back so a reader can
+    // follow it (via the relay authority) to this memory's description.
+    const d = dereferenceTerm(label, memoryIri);
+    res.json({
+      ok: true, kind, title, memoryIri, label,
+      holonUri: sl?.holonUri, persisted: sl?.persisted,
+      atom: d?.atomUri ?? null,   // e.g. https://relay.interego.xwisee.com/ns/pgsl/atom/<hash> — resolves
+      resolver: d?.atomUri ? `${base}/agent/lattice/atom/${String(d.atomUri).split('/').pop()}` : null,
+    });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+});
+
 app.post('/agent/scorm/author', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);

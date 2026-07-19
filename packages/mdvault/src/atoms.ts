@@ -12,10 +12,11 @@
  * lattice adapter wired to mint an atom; the scheme matches the substrate's pgsl:Atom URI.
  */
 import { createHash } from 'node:crypto';
+import { mintNodeId } from '@interego/core';
 import { VaultInputError } from './errors.js';
 
 export interface SourceAtom {
-  /** urn:pgsl:atom:<sha40> content address. */
+  /** The node's content-address, as a dereferenceable URL: ${PGSL_ID_AUTHORITY}/atom/<sha40>. */
   readonly iri: string;
   /** canonical bundle path this atom came from. */
   readonly path: string;
@@ -25,17 +26,24 @@ export interface SourceAtom {
   readonly bytes: string;
 }
 
-function contentAddress(bytes: string): string {
-  return `urn:pgsl:atom:${createHash('sha256').update(bytes, 'utf8').digest('hex').slice(0, 40)}`;
+/** The sha-40 content hash of the bytes — the scheme-independent identity. */
+function contentHash(bytes: string): string {
+  return createHash('sha256').update(bytes, 'utf8').digest('hex').slice(0, 40);
 }
 
 export function mintSourceAtom(path: string, kind: 'note' | 'context', bytes: string): SourceAtom {
-  return { iri: contentAddress(bytes), path, kind, bytes };
+  // Mint via the shared node-id scheme (a dereferenceable URL), not a bespoke urn.
+  // This was the last un-swapped mint site: mdvault emitted urn:pgsl:atom ids that
+  // denoted but did not resolve, so a "vault memory" was a word, not a term.
+  return { iri: mintNodeId('atom', contentHash(bytes)), path, kind, bytes };
 }
 
-/** Verify an atom's stored bytes against its content address and return them, or throw. */
+/** Verify an atom's stored bytes against its content address and return them, or throw.
+ *  Dual-read: a vault persisted before the URL swap has a legacy urn:pgsl:atom id; the
+ *  hash is identical across schemes, so accept either form of the same content. */
 export function recoverAtomBytes(atom: SourceAtom): string {
-  if (contentAddress(atom.bytes) !== atom.iri) {
+  const hash = contentHash(atom.bytes);
+  if (atom.iri !== mintNodeId('atom', hash) && atom.iri !== `urn:pgsl:atom:${hash}`) {
     throw new VaultInputError('atom.tamper', `content-address mismatch for "${atom.path}": stored bytes do not match the atom hash`);
   }
   return atom.bytes;
