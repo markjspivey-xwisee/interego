@@ -809,6 +809,33 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
   },
 
   {
+    action: 'urn:iep:action:foxxi:publish-memory-signed' as IRI,
+    toolName: 'foxxi.publish_memory',
+    title: 'Publish a job aid / quick reference as a dereferenceable memory',
+    description: 'Author a job aid or quick reference as yourself. It composes into a PUBLIC shared PGSL lattice at triple granularity, so the memory and its points become dereferenceable URL atoms that RESOLVE (via the relay id authority) to their description — a term, not a word. This is the shared-memory intervention: a job aid lives in the same fabric the resolver serves, unlike an ephemeral vault ingest. Externally routed: sign_request the args, then POST the envelope.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/publish-memory',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Publish a memory', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, title, body, kind?:"job-aid"|"quick-reference" }). body is Markdown.' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: {
+      description: 'The published memory + its dereferenceable atom URL. 400 on missing title/body; 401 on auth failure.',
+      properties: {
+        ok: { type: 'boolean' },
+        kind: { type: 'string' },
+        memoryIri: { type: 'string' },
+        atom: { type: 'string', description: 'The memory\'s dereferenceable URL atom (resolves via the relay id authority).' },
+        resolver: { type: 'string', description: 'The direct resolver link to the memory node\'s description.' },
+      },
+      required: ['ok'],
+    },
+  },
+  {
     action: 'urn:iep:action:foxxi:scorm-author-signed' as IRI,
     toolName: 'foxxi.scorm_author',
     title: 'Author a real conformant SCORM 2004 course as yourself',
