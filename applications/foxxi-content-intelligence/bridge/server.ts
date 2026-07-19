@@ -5569,40 +5569,134 @@ app.post('/agent/publish-memory', async (req, res) => {
       holonUri: sl?.holonUri, persisted: sl?.persisted,
       atom: d?.atomUri ?? null,   // e.g. https://relay.interego.xwisee.com/ns/pgsl/atom/<hash> — resolves
       resolver: d?.atomUri ? `${base}/agent/lattice/atom/${String(d.atomUri).split('/').pop()}` : null,
+      hmd: `${memoryIri}?format=markdown`,   // the memory as a followable HyperMarkdown doc
+      commons: `${base}/agent/memories`,     // discover every shared memory (HATEOAS)
+      inbox: `${base}/agent/memories?format=ldn`,  // the LDN pull-inbox other agents poll
     });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 
-// GET /memory/:slug — dereference the memory's OWN identity URL. Publishing already made
-// the memory's ATOM resolve, but the memoryIri (`<base>/memory/<slug>`) — the memory's
-// canonical id — still 404'd, i.e. it was a word while its atom was a term. This closes
-// that: the id now resolves to the memory's description, and the description links back
-// into the lattice via the resolving atom (so you can walk the fabric from the id).
-// Content-negotiated: the memory IS Markdown, so serve it verbatim when asked; else JSON.
+interface MemoryContent { kind?: string; title?: string; body?: string; author?: string; memoryIri?: string }
+const MEMORY_APPLIED_REL = 'urn:iep:action:foxxi:record-performance-signed';
+/** The atom's short content hash (the relay authority path segment), or null. */
+function atomHash(atomUri: string | null): string | null { return atomUri ? String(atomUri).split('/').pop() ?? null : null; }
+/** A memory's JSON description — id + dereferenceable atom + its HMD and node links.
+ *  One shape for the single-memory dereference and the commons discovery feed. */
+function memoryView(m: MemoryContent, base: string, atomUri: string | null): Record<string, unknown> {
+  const id = m.memoryIri ?? '';
+  const h = atomHash(atomUri);
+  return {
+    '@id': id, type: m.kind ?? 'job-aid', title: m.title ?? null, creator: m.author ?? null,
+    atom: atomUri,                                   // resolves via the relay id authority (302)
+    node: h ? `${base}/agent/lattice/atom/${h}` : null,   // the memory's lattice node, direct
+    hmd: id ? `${id}?format=markdown` : null,        // the memory as a followable HyperMarkdown doc
+  };
+}
+/** The memory as HyperMarkdown — the same rung-1 prose + rung-3 typed links + rung-4
+ *  authority-closed control the course projection uses (courseToHmd), so a job aid is a
+ *  first-class followable hypermedia object in the HMD viewer, not an opaque blob. The
+ *  control has NO target: the live target is re-resolved from the signed affordance. */
+function memoryToHmd(m: MemoryContent, base: string, atomUri: string | null): string {
+  const id = m.memoryIri ?? `${base}/memory/x`;
+  const kind = m.kind ?? 'job-aid';
+  const h = atomHash(atomUri);
+  const fm = [
+    '---',
+    `"@id": ${JSON.stringify(id)}`,
+    '"@type": ["skos:Concept", "hmd:Document"]',
+    `title: ${JSON.stringify(m.title ?? kind)}`,
+    `kind: ${JSON.stringify(kind)}`,
+    `creator: ${JSON.stringify(m.author ?? '')}`,
+    ...(atomUri ? [`atom: ${JSON.stringify(atomUri)}`] : []),
+    '---',
+  ].join('\n');
+  const links = [
+    ...(atomUri ? [`- [content-addressed id — resolves via the relay authority](${atomUri}){rel="canonical"}`] : []),
+    ...(h ? [`- [this memory as a lattice node](${base}/agent/lattice/atom/${h}){rel="foxxi:node" type="application/json"}`] : []),
+    `- [JSON description](${id}){rel="alternate" type="application/json"}`,
+    `- [discover other shared memories](${base}/agent/memories){rel="collection" type="application/json"}`,
+    ...(m.author ? [`- [author](${m.author}){rel="dct:creator"}`] : []),
+  ].join('\n');
+  return `${fm}
+
+# ${m.title ?? kind}
+
+A published ${kind} in the shared memory commons — not a PDF, not a dead urn. Its id and its
+atom are dereferenceable URLs that resolve to this description; read it here, or follow the
+links to walk it as linked data in the same fabric every agent shares.
+
+${links}
+
+${m.body ?? ''}
+
+:::control control-applied
+type: ["hmd:Control", "hydra:Operation"]
+rel: ${JSON.stringify(MEMORY_APPLIED_REL)}
+method: "POST"
+whenToUse: ${JSON.stringify(`You applied this ${kind} to a task. Record the outcome as yourself: sign_request -> POST /agent/record-performance { task_name, success, evidence } so the guidance you followed is linked to what you did with it.`)}
+:::
+`;
+}
+
+// GET /memory/:slug — dereference the memory's OWN identity URL. Publishing made the ATOM
+// resolve; this closes the last gap (the memoryIri itself 404'd = a word while its atom was
+// a term). Content-negotiated: `?format=markdown|hmd` or Accept: text/markdown renders the
+// memory as a FOLLOWABLE HyperMarkdown doc (typed links + an authority-closed control);
+// else JSON. Every representation advertises the commons LDN inbox for discovery.
 app.get('/memory/:slug', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
   const memoryIri = `${base}/memory/${String(req.params.slug)}`;
   await hydratePublicMemories();   // cold replica: the commons may not be resident yet
   const art = latticeArtifacts(MEMORY_LATTICE_LABEL, 'foxxi:Memory')
-    .find(a => (a.content as { memoryIri?: string } | null)?.memoryIri === memoryIri);
+    .find(a => (a.content as MemoryContent | null)?.memoryIri === memoryIri);
   if (!art) { res.status(404).json({ error: 'no such memory' }); return; }
-  const c = art.content as { kind?: string; title?: string; body?: string; author?: string };
+  const m = art.content as MemoryContent;
   const atomUri = dereferenceTerm(MEMORY_LATTICE_LABEL, memoryIri)?.atomUri ?? null;
-  if (/\btext\/(markdown|plain)\b/.test(String(req.headers.accept ?? '')) && c.body) {
-    res.type('text/markdown').send(c.body); return;
+  res.append('Link', `<${base}/agent/memories?format=ldn>; rel="http://www.w3.org/ns/ldp#inbox"`);
+  const fmt = String(req.query.format ?? '').toLowerCase();
+  const wantsHmd = fmt === 'markdown' || fmt === 'hmd' || /\btext\/markdown\b/.test(String(req.headers.accept ?? ''));
+  if (wantsHmd) {
+    res.append('Link', `<https://relay.interego.xwisee.com/ns/maintainer/hmd>; rel="profile"`);
+    res.type('text/markdown; charset=UTF-8; variant=CommonMark').send(memoryToHmd(m, base, atomUri)); return;
   }
-  res.json({
-    '@id': memoryIri,
-    type: c.kind ?? 'job-aid',
-    title: c.title,
-    creator: c.author,
-    body: c.body,
-    // The memory's own node, addressable by its content hash (the relay authority
-    // 302-redirects here); following it walks into the memory's lattice neighbourhood.
-    atom: atomUri,
-    node: atomUri ? `${base}/agent/lattice/atom/${String(atomUri).split('/').pop()}` : null,
-  });
+  res.json({ ...memoryView(m, base, atomUri), body: m.body });
+});
+
+// GET /agent/memories — DISCOVER the shared memory commons: every published job aid /
+// quick reference (whoever authored it) with its dereferenceable URL. This is the read
+// side of shared memory — how an agent finds guidance it was never handed the URL for.
+// `?format=ldn` projects an LDN pull-inbox (an as:Collection of as:Announce, one per
+// memory): an agent polls it to be "notified" of new guidance and follows object.url.
+// A read/discovery view (allowlisted infra, like the course + lattice read views), not a
+// mutating capability — publishing is the capability, discovery is HATEOAS.
+app.get('/agent/memories', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
+  await hydratePublicMemories();
+  const memories = latticeArtifacts(MEMORY_LATTICE_LABEL, 'foxxi:Memory')
+    .map(a => {
+      const m = a.content as MemoryContent;
+      const atomUri = m.memoryIri ? (dereferenceTerm(MEMORY_LATTICE_LABEL, m.memoryIri)?.atomUri ?? null) : null;
+      return memoryView(m, base, atomUri);
+    })
+    .filter(v => v['@id']);
+  const inbox = `${base}/agent/memories?format=ldn`;
+  res.append('Link', `<${inbox}>; rel="http://www.w3.org/ns/ldp#inbox"`);
+  const fmt = String(req.query.format ?? '').toLowerCase();
+  if (fmt === 'ldn' || /application\/ld\+json/.test(String(req.headers.accept ?? ''))) {
+    res.type('application/ld+json').json({
+      '@context': ['https://www.w3.org/ns/activitystreams', { hmd: 'https://relay.interego.xwisee.com/ns/maintainer/hmd#' }],
+      id: inbox, type: 'Collection', totalItems: memories.length,
+      items: memories.map(v => ({
+        type: 'Announce', actor: v.creator,
+        summary: `A ${v.type} was published to the shared memory commons.`,
+        object: { id: v['@id'], type: ['Document', 'hmd:Document'], name: v.title, url: [v['@id'], v.hmd, v.atom].filter(Boolean) },
+      })),
+    });
+    return;
+  }
+  res.json({ ok: true, count: memories.length, commons: `${base}/agent/memories`, inbox, memories });
 });
 
 app.post('/agent/scorm/author', async (req, res) => {
