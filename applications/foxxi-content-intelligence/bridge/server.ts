@@ -113,7 +113,7 @@ import {
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
-import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadCourseFromLattice, resolvePublicNode, type ProjectionKind } from '../src/foundation-shared-lattice.js';
+import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadCourseFromLattice, resolvePublicNode, markLatticePublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, type AgentScormCourseLike } from '../src/course-graph.js';
 import { courseToSkillMd, skillMdToAgenticCourse } from '../src/course-skill-bridge.js';
@@ -4109,10 +4109,19 @@ const nodeUrlFor = (base: string, uri: string): string =>
 // produce an enormous description; cap the context/paradigm fan-out.
 const LATTICE_NODE_MAX_NEIGHBORS = 64;
 
-function serveLatticeNode(kind: 'atom' | 'fragment', req: import('express').Request, res: import('express').Response): void {
+async function serveLatticeNode(kind: 'atom' | 'fragment', req: import('express').Request, res: import('express').Response): Promise<void> {
   res.setHeader('Access-Control-Allow-Origin', '*');
   const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
-  const found = resolvePublicNode(kind, String(req.params.hash));
+  let found = resolvePublicNode(kind, String(req.params.hash));
+  if (!found) {
+    // Cold replica after a restart: the public-memories commons isn't resident yet, so a
+    // durable memory would 404 until someone re-published it. Rehydrate once (best-effort,
+    // TTL-guarded) and retry — this is what makes a published memory survive a redeploy.
+    // Uniform-404 still holds: a private/absent node is never in the commons, so the retry
+    // can only surface an already-published node, never answer "does X exist privately".
+    await hydratePublicMemories();
+    found = resolvePublicNode(kind, String(req.params.hash));
+  }
   // Uniform 404: absent, private, or malformed are indistinguishable by design.
   if (!found) { res.status(404).json({ error: 'no such node' }); return; }
   const { label, pgsl, uri } = found;
@@ -4135,8 +4144,8 @@ function serveLatticeNode(kind: 'atom' | 'fragment', req: import('express').Requ
 }
 // Written out rather than looped: the CI affordance gate reads these paths as
 // literals, and a template-interpolated path is invisible to it.
-app.get('/agent/lattice/atom/:hash', (req, res) => serveLatticeNode('atom', req, res));
-app.get('/agent/lattice/fragment/:hash', (req, res) => serveLatticeNode('fragment', req, res));
+app.get('/agent/lattice/atom/:hash', (req, res) => { void serveLatticeNode('atom', req, res); });
+app.get('/agent/lattice/fragment/:hash', (req, res) => { void serveLatticeNode('fragment', req, res); });
 
 app.get('/agent/lattice/:label', (req, res) => {
   const v = latticeNamespaceView(req.params.label);
@@ -5474,12 +5483,46 @@ app.get('/agent/scorm/course/:id', async (req, res) => {
   res.json({ ok: true, ...publicCourseView(c, base) });
 });
 
+// A published memory is a SHARED TEAM COMMONS, not an agent's private corpus, so every
+// memory — whoever authors it — composes into ONE known pod under a DEDICATED resource
+// (`public-memories`, disjoint from any agent's `shared-lattice`). Two things follow that
+// the earlier per-author-pod version could not give:
+//   1. SAFE to mark public — the commons resource holds ONLY already-published memories,
+//      so node-addressing it can never leak a private course/credential atom (the cross-
+//      tenant existence oracle the design forbids). A per-agent pod's merged resource
+//      mixes private corpus, so marking its label public was a latent leak.
+//   2. DURABLE across restart — the commons lives at a FIXED address the resolver
+//      rehydrates on boot / on first miss, so a memory resolves for every process, not
+//      just the one that authored it. (Per-author pods were unknowable at boot.)
+const MEMORY_COMMONS_POD = (process.env.FOXXI_MEMORY_COMMONS_POD ?? tenantPodUrl);
+const MEMORY_LATTICE_LABEL = 'public-memories';
+const MEMORY_RESOURCE_NAME = 'public-memories';
+let memoriesHydratedAt = 0;
+let memoryHydrationInflight: Promise<void> | null = null;
+/** Rehydrate the public-memories commons from its durable pod resource and re-mark it
+ *  public. Mirrors hydrateAgentCourses: TTL-guarded, single-flight, best-effort — a
+ *  down pod must not throw on the resolve path. This is what makes a published memory
+ *  survive a redeploy instead of reverting to a dead link. */
+async function hydratePublicMemories(force = false): Promise<void> {
+  if (!MEMORY_COMMONS_POD) return;
+  if (!force && Date.now() - memoriesHydratedAt < COURSE_HYDRATE_TTL_MS) return;
+  if (memoryHydrationInflight) return memoryHydrationInflight;
+  memoryHydrationInflight = (async () => {
+    try {
+      await ensureResident(MEMORY_COMMONS_POD, MEMORY_COMMONS_POD, MEMORY_LATTICE_LABEL, undefined, MEMORY_RESOURCE_NAME);
+      markLatticePublic(MEMORY_LATTICE_LABEL);   // resident-again → resolver-served again
+      console.log(`[foxxi-bridge][memories] public-memories commons ${isResident(MEMORY_LATTICE_LABEL) ? 'resident' : 'empty'} after hydrate`);
+    } catch (e) { console.warn('[foxxi-bridge][memories] hydrate failed:', (e as Error).message); }
+    memoriesHydratedAt = Date.now();
+  })().finally(() => { memoryHydrationInflight = null; });
+  return memoryHydrationInflight;
+}
+
 // POST /agent/publish-memory — author a job aid / quick reference as a DEREFERENCEABLE
-// memory. A job aid is a shared team reference, so it composes into a PUBLIC resident
-// lattice (its atoms are url-minted AND resolver-served): the memory and its terms are
-// dereferenceable URLs that resolve to their description — a TERM, not a word. This is
-// what /vault/ingest could not give (it returns an ephemeral graph of unresolvable
-// urns); here the memory lives in the same fabric the resolver serves.
+// memory that lives in the shared commons above: its atoms are url-minted AND resolver-
+// served, so the memory and its terms are dereferenceable URLs that resolve to their
+// description — a TERM, not a word. This is what /vault/ingest could not give (it returns
+// an ephemeral graph of unresolvable urns the resolver never serves).
 app.post('/agent/publish-memory', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
@@ -5506,10 +5549,13 @@ app.post('/agent/publish-memory', async (req, res) => {
       [memoryIri, RDFS + 'comment', bodyMd.slice(0, 800)],
       ...points.map(pt => [memoryIri, SKOS + 'note', pt] as const),
     ];
-    const pod = resolveSubjectPodUrl(auth.callerDid);
-    const label = `memory-${slug}`;
+    // Compose into the shared commons (a fixed pod + dedicated public resource), NOT the
+    // author's private pod — so the memory is durable + safe to node-address. The author
+    // is still recorded as dct:creator above, so provenance survives the shared home.
+    const label = MEMORY_LATTICE_LABEL;
     const sl = await composeIntoSharedLattice({
-      podUrl: pod, agentDid: auth.callerDid, label,
+      podUrl: MEMORY_COMMONS_POD, agentDid: auth.callerDid, label,
+      resourceName: MEMORY_RESOURCE_NAME,
       terms: [memoryIri], termGroups: [group],
       content: { kind, title, body: bodyMd, author: auth.callerDid, memoryIri },
       contentType: 'foxxi:Memory', projections: ['rdf'],
@@ -5737,6 +5783,9 @@ app.listen(PORT, () => {
   console.log(`  Standards extension: http://localhost:${PORT}/agent/extend-standards  |  Guidance: http://localhost:${PORT}/guidance`);
   console.log(`  Audience: ${audience} (${activeAffordances.length} affordances active; FOXXI_AUDIENCE=learner|admin|both)`);
   void seedDemoContent();
+  // Warm the public-memories commons so a published memory resolves from the first
+  // request after a restart, not only after a lazy on-miss rehydrate.
+  void hydratePublicMemories(true).catch(e => console.warn('[foxxi-bridge][memories] boot warm:', (e as Error).message));
   // Agent-mesh projection: kick an initial cycle + schedule the poller.
   if (MESH_PODS.length > 0) {
     console.log(`[foxxi-bridge][mesh] virtualizing ${MESH_PODS.length} agent pod(s) every ${MESH_PROJECT_INTERVAL_MS}ms into per-agent lens:<agent> views (on-read, never written back to the agent pod); push at POST /agent/mesh-event`);

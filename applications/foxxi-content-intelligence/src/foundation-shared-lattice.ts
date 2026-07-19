@@ -28,7 +28,7 @@ import { mintNodeId } from '@interego/core';
 import { resolveAgentEncryptionKey } from '@interego/solid';
 import { bridgeEncryptionKeypair } from './foundation-holon-altitude.js';
 
-interface AgentLattice { pgsl: PGSLInstance; podUrl: string; agentDid: string }
+interface AgentLattice { pgsl: PGSLInstance; podUrl: string; agentDid: string; resourceUrl: string }
 const resident = new Map<string, AgentLattice>();   // label -> in-memory shared lattice
 /**
  * Labels whose pod copy EXISTS but this process could not read it (a 5xx, a network
@@ -155,9 +155,15 @@ function mergeReseat(label: string, ours: PGSLInstance, podNodes: Map<IRI, PgslN
 const provFor = (agentDid: string) => ({ wasAttributedTo: agentDid as IRI, generatedAtTime: new Date().toISOString() });
 
 /** The ONE canonical encrypted resource that holds the agent's whole shared lattice. */
-function latticeResourceUrl(podUrl: string): string {
+/** The canonical encrypted resource for a pod's lattice. `resourceName` selects WHICH
+ *  resource on the pod: the default `shared-lattice` holds the agent's own (private)
+ *  corpus, but a caller can route to a SEPARATE resource — e.g. a `public-memories`
+ *  commons whose every node is already-published, so its label may be marked public
+ *  without turning the private corpus into a node-addressable existence oracle. The
+ *  resource is per-(pod,name): distinct names never share a merged node map. */
+function latticeResourceUrl(podUrl: string, resourceName = 'shared-lattice'): string {
   const base = podUrl.endsWith('/') ? podUrl : `${podUrl}/`;
-  return `${base}foxxi-lattice/shared-lattice.holon.json`;
+  return `${base}foxxi-lattice/${resourceName}.holon.json`;
 }
 
 /** Idempotent LDP container create (CSS doesn't always auto-create the parent of a
@@ -195,9 +201,12 @@ function rebuildInstance(nodes: Map<IRI, PgslNode>, agentDid: string): PGSLInsta
  *  into a second label's instance imports the FIRST label's nodes, and the next
  *  persist writes the union back. Labels that never touch the pod cannot take
  *  part in that. */
-async function getLattice(podUrl: string, agentDid: string, label: string, fetchFn: FetchFn, ephemeral = false): Promise<PGSLInstance> {
+async function getLattice(podUrl: string, agentDid: string, label: string, fetchFn: FetchFn, ephemeral = false, resourceName?: string): Promise<PGSLInstance> {
   const existing = resident.get(label);
-  const resourceUrl = latticeResourceUrl(podUrl);
+  // A label is bound to ONE resource for the process lifetime; prefer the bound one so
+  // a caller that forgets resourceName on a later read can't re-point the label at the
+  // default (private) resource and cross-contaminate a dedicated public commons.
+  const resourceUrl = existing?.resourceUrl ?? latticeResourceUrl(podUrl, resourceName);
   // Fast path: resident and not due for a fence-retry. (Was: return the moment a
   // label was resident, which — with the pre-await loadAttempted latch — meant a
   // failed load was NEVER retried for the process lifetime. Now a fenced label whose
@@ -237,7 +246,7 @@ async function getLattice(podUrl: string, agentDid: string, label: string, fetch
       }
     }
     if (!pgsl) pgsl = createPGSL(provFor(agentDid));
-    resident.set(label, { pgsl, podUrl, agentDid });
+    resident.set(label, { pgsl, podUrl, agentDid, resourceUrl });
     return pgsl;
   })();
   creating.set(label, p);
@@ -383,6 +392,10 @@ export async function composeIntoSharedLattice(args: {
    *  node-by-node without auth (see markLatticePublic). Only for code-derived public
    *  content — never an agent's own corpus. */
   publicLattice?: boolean;
+  /** Route this compose to a NON-default pod resource (see latticeResourceUrl). A
+   *  dedicated resource keeps a public commons's node map disjoint from the agent's
+   *  private `shared-lattice` — required before a label can be marked public. */
+  resourceName?: string;
   fetch?: FetchFn;
 }): Promise<ComposeResult | null> {
   try {
@@ -390,7 +403,7 @@ export async function composeIntoSharedLattice(args: {
     if (!kp || args.terms.length === 0) return null;
     if (args.publicLattice) markLatticePublic(args.label);
     const fetchFn = (args.fetch ?? (globalThis.fetch as unknown as FetchFn));
-    const pgsl = await getLattice(args.podUrl, args.agentDid, args.label, fetchFn, args.ephemeral);
+    const pgsl = await getLattice(args.podUrl, args.agentDid, args.label, fetchFn, args.ephemeral, args.resourceName);
     const prov = provFor(args.agentDid);
     // Reuse measurement: which spine terms/atoms already existed BEFORE this
     // ingest — counted over the groups too, since that is where the reuse lives.
@@ -439,7 +452,7 @@ export async function composeIntoSharedLattice(args: {
         stats: latticeStats(pgsl), projections, persisted: false,
       };
     }
-    const resourceUrl = latticeResourceUrl(args.podUrl);
+    const resourceUrl = latticeResourceUrl(args.podUrl, args.resourceName);
     try {
       const recipients = [kp.publicKey];
       const ownerKey = await resolveAgentEncryptionKey(args.podUrl, { fetch: fetchFn }).catch(() => null);
@@ -671,8 +684,8 @@ export async function loadCourseFromLattice(podUrl: string, agentDid: string, la
 /** Best-effort: load an agent's lattice into residence (load-from-pod on a cold
  *  miss) so the read path can source statements from PGSL. Returns whether the
  *  resident lattice has any content. Never throws. */
-export async function ensureResident(podUrl: string, agentDid: string, label: string, fetchFn?: FetchFn): Promise<boolean> {
-  try { await getLattice(podUrl, agentDid, label, fetchFn ?? (globalThis.fetch as unknown as FetchFn)); } catch { /* best-effort */ }
+export async function ensureResident(podUrl: string, agentDid: string, label: string, fetchFn?: FetchFn, resourceName?: string): Promise<boolean> {
+  try { await getLattice(podUrl, agentDid, label, fetchFn ?? (globalThis.fetch as unknown as FetchFn), false, resourceName); } catch { /* best-effort */ }
   const a = resident.get(label);
   return !!a && a.pgsl.atoms.size > 0;
 }
