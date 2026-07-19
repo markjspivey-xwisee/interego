@@ -74,6 +74,11 @@ const ALLOWLIST = [
   // score an attempt.
   '/agent/scorm/courses',
   '/agent/scorm/course/:id',
+  // Shared-memory commons discovery feed (read-only). Listing published job aids /
+  // quick references — as JSON or as an LDN as:Collection pull-inbox (?format=ldn) —
+  // is DESCRIPTIVE, same category as the course + lattice read views. Publishing a
+  // memory is the capability (foxxi.publish_memory); discovering one is HATEOAS.
+  '/agent/memories',
 ];
 
 /** Normalize a route path so :param segments compare as a wildcard. */
