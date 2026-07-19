@@ -452,7 +452,12 @@ export async function composeIntoSharedLattice(args: {
         stats: latticeStats(pgsl), projections, persisted: false,
       };
     }
-    const resourceUrl = latticeResourceUrl(args.podUrl, args.resourceName);
+    // Persist to the SAME resource getLattice bound this label to — not a fresh compute
+    // from args.resourceName. Otherwise a later compose to a public label that omits
+    // resourceName would LOAD from the bound (public) resource but PERSIST to the private
+    // default, tearing the two apart. getLattice ran just above, so the label is resident
+    // with its bound resourceUrl; fall back to the computed one only if it somehow isn't.
+    const resourceUrl = resident.get(args.label)?.resourceUrl ?? latticeResourceUrl(args.podUrl, args.resourceName);
     try {
       const recipients = [kp.publicKey];
       const ownerKey = await resolveAgentEncryptionKey(args.podUrl, { fetch: fetchFn }).catch(() => null);
