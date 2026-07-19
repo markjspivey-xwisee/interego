@@ -5573,6 +5573,38 @@ app.post('/agent/publish-memory', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 
+// GET /memory/:slug — dereference the memory's OWN identity URL. Publishing already made
+// the memory's ATOM resolve, but the memoryIri (`<base>/memory/<slug>`) — the memory's
+// canonical id — still 404'd, i.e. it was a word while its atom was a term. This closes
+// that: the id now resolves to the memory's description, and the description links back
+// into the lattice via the resolving atom (so you can walk the fabric from the id).
+// Content-negotiated: the memory IS Markdown, so serve it verbatim when asked; else JSON.
+app.get('/memory/:slug', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
+  const memoryIri = `${base}/memory/${String(req.params.slug)}`;
+  await hydratePublicMemories();   // cold replica: the commons may not be resident yet
+  const art = latticeArtifacts(MEMORY_LATTICE_LABEL, 'foxxi:Memory')
+    .find(a => (a.content as { memoryIri?: string } | null)?.memoryIri === memoryIri);
+  if (!art) { res.status(404).json({ error: 'no such memory' }); return; }
+  const c = art.content as { kind?: string; title?: string; body?: string; author?: string };
+  const atomUri = dereferenceTerm(MEMORY_LATTICE_LABEL, memoryIri)?.atomUri ?? null;
+  if (/\btext\/(markdown|plain)\b/.test(String(req.headers.accept ?? '')) && c.body) {
+    res.type('text/markdown').send(c.body); return;
+  }
+  res.json({
+    '@id': memoryIri,
+    type: c.kind ?? 'job-aid',
+    title: c.title,
+    creator: c.author,
+    body: c.body,
+    // The memory's own node, addressable by its content hash (the relay authority
+    // 302-redirects here); following it walks into the memory's lattice neighbourhood.
+    atom: atomUri,
+    node: atomUri ? `${base}/agent/lattice/atom/${String(atomUri).split('/').pop()}` : null,
+  });
+});
+
 app.post('/agent/scorm/author', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
