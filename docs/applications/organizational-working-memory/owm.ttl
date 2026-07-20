@@ -1,0 +1,216 @@
+@prefix owm:  <https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#>.
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#>.
+@prefix owl:  <http://www.w3.org/2002/07/owl#>.
+@prefix prov: <http://www.w3.org/ns/prov#>.
+@prefix dct:  <http://purl.org/dc/terms/>.
+@prefix foaf: <http://xmlns.com/foaf/0.1/>.
+@prefix vann: <http://purl.org/vocab/vann/>.
+
+# ══════════════════════════════════════════════════════════════
+#  OWM — Organizational Working Memory 1.0 Ontology
+# ══════════════════════════════════════════════════════════════
+#
+#  The vertical vocabulary for an organization's shared working
+#  memory: the decisions, policies, projects, follow-ups, and
+#  knowledge notes an agent captures and later navigates. Records
+#  are published as Interego (iep:) typed context descriptors; the
+#  owm: terms below are the domain payload INSIDE those graphs.
+# ══════════════════════════════════════════════════════════════
+
+<https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#>
+    a owl:Ontology ;
+    owl:versionInfo "1.0" ;
+    dct:title "OWM — Organizational Working Memory 1.0 Ontology" ;
+    dct:description "Vertical vocabulary for an organization's shared working memory: the decisions, organizational policies, projects, follow-up action items, knowledge notes, and people an agent records and later retrieves. Payload terms carried inside Interego (iep:) typed context descriptors — the descriptor layer supplies identity, provenance, temporal validity, and access control; owm: supplies the organizational domain." ;
+    dct:creator [ a foaf:Organization ; foaf:name "Interego" ; foaf:homepage <https://markjspivey-xwisee.github.io/interego/> ] ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    vann:preferredNamespacePrefix "owm" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#" ;
+    rdfs:seeAlso <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+# ══════════════════════════════════════════════════════════════
+#  Classes
+# ══════════════════════════════════════════════════════════════
+
+owm:Decision a owl:Class ;
+    rdfs:label "Decision" ;
+    rdfs:comment "A recorded organizational decision: what was decided, by whom, and the rationale. The durable memory of a choice so later agents can retrieve the reasoning rather than re-litigate it." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#>.
+
+owm:FollowUp a owl:Class ;
+    rdfs:label "Follow-up" ;
+    rdfs:comment "A follow-up action item captured against a decision, project, or note — an open loop with an optional due date and owner that the working memory tracks to closure." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#>.
+
+owm:KnowledgeNote a owl:Class ;
+    rdfs:label "Knowledge note" ;
+    rdfs:comment "A captured unit of organizational knowledge — an observation, fact, or context worth remembering — attached to the subjects, project, or context it is about." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#>.
+
+owm:OrgPolicy a owl:Class ;
+    rdfs:label "Organizational policy" ;
+    rdfs:comment "A standing organizational policy: a typed, bodied rule the organization commits to, which agents consult at the point of work." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#>.
+
+owm:Person a owl:Class ;
+    rdfs:subClassOf prov:Agent ;
+    rdfs:label "Person" ;
+    rdfs:comment "A person referenced in organizational working memory — a decision maker, participant, watcher, or owner. Identified by a DID/WebID." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#>.
+
+owm:Project a owl:Class ;
+    rdfs:label "Project" ;
+    rdfs:comment "A project the organization is running — the unit that decisions, notes, follow-ups, and participants are scoped to." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Object properties (relate a record to a resource / agent)
+# ══════════════════════════════════════════════════════════════
+
+owm:about a owl:ObjectProperty ;
+    rdfs:label "about" ;
+    rdfs:comment "A subject (person, project, or arbitrary resource) that a knowledge note or record is about." .
+
+owm:agentDid a owl:ObjectProperty ;
+    rdfs:label "agent DID" ;
+    rdfs:comment "The decentralized identifier of the agent that authored or is bound to this record." .
+
+owm:concernsProject a owl:ObjectProperty ;
+    rdfs:range owm:Project ;
+    rdfs:label "concerns project" ;
+    rdfs:comment "The project this record concerns." .
+
+owm:contextOf a owl:ObjectProperty ;
+    rdfs:label "context of" ;
+    rdfs:comment "The broader context (situation, thread, or scope) a record belongs to." .
+
+owm:decidedBy a owl:ObjectProperty ;
+    rdfs:range owm:Person ;
+    rdfs:label "decided by" ;
+    rdfs:comment "The person who made a decision." .
+
+owm:decision a owl:ObjectProperty ;
+    rdfs:range owm:Decision ;
+    rdfs:label "decision" ;
+    rdfs:comment "Links a follow-up or note to the decision it derives from." .
+
+owm:followup a owl:ObjectProperty ;
+    rdfs:range owm:FollowUp ;
+    rdfs:label "follow-up" ;
+    rdfs:comment "Links a decision or note to a follow-up action item it spawned." .
+
+owm:objective a owl:ObjectProperty ;
+    rdfs:label "objective" ;
+    rdfs:comment "An objective a project or decision serves." .
+
+owm:participant a owl:ObjectProperty ;
+    rdfs:range owm:Person ;
+    rdfs:label "participant" ;
+    rdfs:comment "A person participating in the project or decision." .
+
+owm:person a owl:ObjectProperty ;
+    rdfs:range owm:Person ;
+    rdfs:label "person" ;
+    rdfs:comment "A person referenced by this record." .
+
+owm:policy a owl:ObjectProperty ;
+    rdfs:range owm:OrgPolicy ;
+    rdfs:label "policy" ;
+    rdfs:comment "An organizational policy this record invokes or is governed by." .
+
+owm:project a owl:ObjectProperty ;
+    rdfs:range owm:Project ;
+    rdfs:label "project" ;
+    rdfs:comment "The project this record is filed under." .
+
+owm:watcher a owl:ObjectProperty ;
+    rdfs:range owm:Person ;
+    rdfs:label "watcher" ;
+    rdfs:comment "An agent subscribed to updates on this record." .
+
+# ══════════════════════════════════════════════════════════════
+#  Datatype properties (literal payload)
+# ══════════════════════════════════════════════════════════════
+
+owm:alias a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "alias" ;
+    rdfs:comment "An alternative name a subject is also known by, for retrieval." .
+
+owm:capturedAt a owl:DatatypeProperty ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "captured at" ;
+    rdfs:comment "When a knowledge note or record was captured." .
+
+owm:desc a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "description" ;
+    rdfs:comment "A free-text description of the record." .
+
+owm:dueAt a owl:DatatypeProperty ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "due at" ;
+    rdfs:comment "The due date/time of a follow-up." .
+
+owm:note a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "note" ;
+    rdfs:comment "The text body of a knowledge note." .
+
+owm:organization a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "organization" ;
+    rdfs:comment "The name of the organization a record belongs to." .
+
+owm:policyBody a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "policy body" ;
+    rdfs:comment "The normative text of an organizational policy." .
+
+owm:policyType a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "policy type" ;
+    rdfs:comment "The category of an organizational policy (e.g. security, conduct, data-handling)." .
+
+owm:queuedAt a owl:DatatypeProperty ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "queued at" ;
+    rdfs:comment "When a follow-up was queued." .
+
+owm:rationale a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "rationale" ;
+    rdfs:comment "The reasoning recorded for a decision." .
+
+owm:recordedAt a owl:DatatypeProperty ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "recorded at" ;
+    rdfs:comment "When a decision or record was recorded." .
+
+owm:role a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "role" ;
+    rdfs:comment "The role a participant plays on a project or in a decision." .
+
+owm:scope a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "scope" ;
+    rdfs:comment "The working scope a record is filed under." .
+
+owm:status a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "status" ;
+    rdfs:comment "The lifecycle status of a follow-up or decision (e.g. open, closed, superseded)." .
+
+owm:tag a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "tag" ;
+    rdfs:comment "A retrieval tag applied to a record." .
+
+owm:upsertedAt a owl:DatatypeProperty ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "upserted at" ;
+    rdfs:comment "When a record was last created or updated." .

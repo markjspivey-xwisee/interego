@@ -1,0 +1,31 @@
+# Legacy "Context Graphs Harness" (cgh:) compatibility alias.
+#
+# The harness namespace was renamed from cgh: (/ns/cgh#) to the Interego
+# Harness (ieh:, /ns/harness#). No cgh.ttl was ever published, so IRIs the
+# kernel minted before the rename (e.g. cgh:Affordance, carried in the bytes of
+# already-signed descriptors) dereferenced to nothing. This file is retained
+# ONLY so those legacy IRIs resolve and map, term-for-term, onto their canonical
+# ieh: successors. Do NOT author new data against cgh:.
+#
+# Canonical ontology: docs/ns/harness.ttl (https://markjspivey-xwisee.github.io/interego/ns/harness#)
+@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/cgh#>.
+@prefix ieh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+@prefix owl:  <http://www.w3.org/2002/07/owl#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix dct:  <http://purl.org/dc/terms/>.
+
+<https://markjspivey-xwisee.github.io/interego/ns/cgh>
+    a owl:Ontology ;
+    owl:deprecated true ;
+    dct:title "Context Graphs Harness (deprecated) — legacy alias of the Interego Harness" ;
+    dct:description "Deprecated. Renamed to the Interego Harness (ieh:). Every cgh: term is owl:equivalentTo its ieh: successor; dereference https://markjspivey-xwisee.github.io/interego/ns/harness for the canonical ontology." ;
+    rdfs:seeAlso <https://markjspivey-xwisee.github.io/interego/ns/harness> ;
+    dct:isReplacedBy <https://markjspivey-xwisee.github.io/interego/ns/harness> .
+
+# ── Term-for-term equivalence: cgh:X ≡ ieh:X ─────────────────────────
+# The load-bearing term the kernel emitted into pre-rename descriptor bytes;
+# all other cgh: terms resolve via the shared base + this isReplacedBy pointer.
+cgh:Affordance a owl:Class ;
+    owl:equivalentClass ieh:Affordance ;
+    owl:deprecated true ;
+    rdfs:comment "Deprecated alias of ieh:Affordance. Retained so descriptors signed before the cgh:→ieh: rename still dereference; new data MUST use ieh:Affordance." .

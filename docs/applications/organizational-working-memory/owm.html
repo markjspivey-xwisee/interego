@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OWM — Organizational Working Memory 1.0 Ontology</title>
+<!-- RDF clients that follow their nose from a owm: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="owm.ttl" />
+<link rel="describedby" type="text/turtle" href="owm.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>OWM — Organizational Working Memory 1.0 Ontology <span class="mono ns">owm:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#</code> &middot; version 1.0 &middot; 35 terms.</p>
+  <p>Vertical vocabulary for an organization's shared working memory: the decisions, organizational policies, projects, follow-up action items, knowledge notes, and people an agent records and later retrieves. Payload terms carried inside Interego (iep:) typed context descriptors — the descriptor layer supplies identity, provenance, temporal validity, and access control; owm: supplies the organizational domain.</p>
+  <p><strong>Machine-readable form:</strong> <a href="owm.ttl" rel="alternate">owm.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>owm:about</code> = <code>https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#about</code>).</p>
+  <h2>Terms</h2>
+  <div id="about" class="term"><code>owm:about</code> <span class="kind">Object property</span><div class="c">A subject (person, project, or arbitrary resource) that a knowledge note or record is about.</div></div>
+  <div id="agentDid" class="term"><code>owm:agentDid</code> <span class="kind">Object property</span><div class="c">The decentralized identifier of the agent that authored or is bound to this record.</div></div>
+  <div id="alias" class="term"><code>owm:alias</code> <span class="kind">Datatype property</span><div class="c">An alternative name a subject is also known by, for retrieval.</div></div>
+  <div id="capturedAt" class="term"><code>owm:capturedAt</code> <span class="kind">Datatype property</span><div class="c">When a knowledge note or record was captured.</div></div>
+  <div id="concernsProject" class="term"><code>owm:concernsProject</code> <span class="kind">Object property</span><div class="c">The project this record concerns.</div></div>
+  <div id="contextOf" class="term"><code>owm:contextOf</code> <span class="kind">Object property</span><div class="c">The broader context (situation, thread, or scope) a record belongs to.</div></div>
+  <div id="decidedBy" class="term"><code>owm:decidedBy</code> <span class="kind">Object property</span><div class="c">The person who made a decision.</div></div>
+  <div id="decision" class="term"><code>owm:decision</code> <span class="kind">Object property</span><div class="c">Links a follow-up or note to the decision it derives from.</div></div>
+  <div id="Decision" class="term"><code>owm:Decision</code> <span class="kind">Class</span><div class="c">A recorded organizational decision: what was decided, by whom, and the rationale. The durable memory of a choice so later agents can retrieve the reasoning rather than re-litigate it.</div></div>
+  <div id="desc" class="term"><code>owm:desc</code> <span class="kind">Datatype property</span><div class="c">A free-text description of the record.</div></div>
+  <div id="dueAt" class="term"><code>owm:dueAt</code> <span class="kind">Datatype property</span><div class="c">The due date/time of a follow-up.</div></div>
+  <div id="followup" class="term"><code>owm:followup</code> <span class="kind">Object property</span><div class="c">Links a decision or note to a follow-up action item it spawned.</div></div>
+  <div id="FollowUp" class="term"><code>owm:FollowUp</code> <span class="kind">Class</span><div class="c">A follow-up action item captured against a decision, project, or note — an open loop with an optional due date and owner that the working memory tracks to closure.</div></div>
+  <div id="KnowledgeNote" class="term"><code>owm:KnowledgeNote</code> <span class="kind">Class</span><div class="c">A captured unit of organizational knowledge — an observation, fact, or context worth remembering — attached to the subjects, project, or context it is about.</div></div>
+  <div id="note" class="term"><code>owm:note</code> <span class="kind">Datatype property</span><div class="c">The text body of a knowledge note.</div></div>
+  <div id="objective" class="term"><code>owm:objective</code> <span class="kind">Object property</span><div class="c">An objective a project or decision serves.</div></div>
+  <div id="organization" class="term"><code>owm:organization</code> <span class="kind">Datatype property</span><div class="c">The name of the organization a record belongs to.</div></div>
+  <div id="OrgPolicy" class="term"><code>owm:OrgPolicy</code> <span class="kind">Class</span><div class="c">A standing organizational policy: a typed, bodied rule the organization commits to, which agents consult at the point of work.</div></div>
+  <div id="participant" class="term"><code>owm:participant</code> <span class="kind">Object property</span><div class="c">A person participating in the project or decision.</div></div>
+  <div id="person" class="term"><code>owm:person</code> <span class="kind">Object property</span><div class="c">A person referenced by this record.</div></div>
+  <div id="Person" class="term"><code>owm:Person</code> <span class="kind">Class</span><div class="c">A person referenced in organizational working memory — a decision maker, participant, watcher, or owner. Identified by a DID/WebID.</div></div>
+  <div id="policy" class="term"><code>owm:policy</code> <span class="kind">Object property</span><div class="c">An organizational policy this record invokes or is governed by.</div></div>
+  <div id="policyBody" class="term"><code>owm:policyBody</code> <span class="kind">Datatype property</span><div class="c">The normative text of an organizational policy.</div></div>
+  <div id="policyType" class="term"><code>owm:policyType</code> <span class="kind">Datatype property</span><div class="c">The category of an organizational policy (e.g. security, conduct, data-handling).</div></div>
+  <div id="project" class="term"><code>owm:project</code> <span class="kind">Object property</span><div class="c">The project this record is filed under.</div></div>
+  <div id="Project" class="term"><code>owm:Project</code> <span class="kind">Class</span><div class="c">A project the organization is running — the unit that decisions, notes, follow-ups, and participants are scoped to.</div></div>
+  <div id="queuedAt" class="term"><code>owm:queuedAt</code> <span class="kind">Datatype property</span><div class="c">When a follow-up was queued.</div></div>
+  <div id="rationale" class="term"><code>owm:rationale</code> <span class="kind">Datatype property</span><div class="c">The reasoning recorded for a decision.</div></div>
+  <div id="recordedAt" class="term"><code>owm:recordedAt</code> <span class="kind">Datatype property</span><div class="c">When a decision or record was recorded.</div></div>
+  <div id="role" class="term"><code>owm:role</code> <span class="kind">Datatype property</span><div class="c">The role a participant plays on a project or in a decision.</div></div>
+  <div id="scope" class="term"><code>owm:scope</code> <span class="kind">Datatype property</span><div class="c">The working scope a record is filed under.</div></div>
+  <div id="status" class="term"><code>owm:status</code> <span class="kind">Datatype property</span><div class="c">The lifecycle status of a follow-up or decision (e.g. open, closed, superseded).</div></div>
+  <div id="tag" class="term"><code>owm:tag</code> <span class="kind">Datatype property</span><div class="c">A retrieval tag applied to a record.</div></div>
+  <div id="upsertedAt" class="term"><code>owm:upsertedAt</code> <span class="kind">Datatype property</span><div class="c">When a record was last created or updated.</div></div>
+  <div id="watcher" class="term"><code>owm:watcher</code> <span class="kind">Object property</span><div class="c">An agent subscribed to updates on this record.</div></div>
+</body>
+</html>
