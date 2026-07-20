@@ -36,6 +36,7 @@
  */
 
 import { exportClr, type ClrEnvelope } from './clr.js';
+import { competencyIri } from './competency-identity.js';
 import type { StoredStatement } from './statement-store.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 
@@ -520,7 +521,7 @@ function buildCompetencies(
     }
 
     out.push({
-      id: `urn:foxxi:competency:${d.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)}`,
+      id: competencyIri(d.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)),
       label: hasPerf ? `Demonstrated: ${d.label}` : hasCred ? d.label : `Inferred: ${d.label}`,
       modalStatus,
       basis,

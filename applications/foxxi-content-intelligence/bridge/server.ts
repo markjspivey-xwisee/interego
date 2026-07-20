@@ -125,6 +125,7 @@ import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
+import { competencyIri, competencyIdOf } from '../src/competency-identity.js';
 import {
   buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
   type AgentTrajectory, type TrajectoryStepInput,
@@ -3089,6 +3090,40 @@ const app = createVerticalBridge({
     a.get('/ns/foxxi/term/:a/:b', (req, res) => sendTerm(`${req.params.a}/${req.params.b}`, res));
     a.get('/ns/foxxi/term/:a', (req, res) => sendTerm(req.params.a, res));
 
+    // A competency's canonical id is a dereferenceable URL now — this resolves it to the
+    // competency's definition (a skos:Concept / ler:CompetencyDefinition instance). VCs
+    // and performance align to this IRI via alignedSkills.targetCode; the id is a term,
+    // not a word. Content-negotiated JSON-LD (default) / Turtle.
+    a.get('/ns/foxxi/competency/:slug', (req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const slug = String(req.params.slug);
+      const id = competencyIri(slug);
+      const label = slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const lerBase = `${(process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '')}/ns/ieee-ler#`;
+      if ((req.headers.accept ?? '').includes('text/turtle')) {
+        res.type('text/turtle').send(
+`@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix ler:  <${lerBase}> .
+<${id}> a skos:Concept, ler:CompetencyDefinition ;
+    skos:prefLabel "${label}" ;
+    rdfs:label "${label}" ;
+    dct:identifier "${slug}" ;
+    rdfs:comment "A competency the Foxxi vertical credentials and aligns performance to; verifiable credentials align to this IRI via alignedSkills.targetCode." .`);
+      } else {
+        res.type('application/ld+json').send(JSON.stringify({
+          '@context': { skos: 'http://www.w3.org/2004/02/skos/core#', rdfs: 'http://www.w3.org/2000/01/rdf-schema#', dct: 'http://purl.org/dc/terms/', ler: lerBase },
+          '@id': id,
+          '@type': ['skos:Concept', 'ler:CompetencyDefinition'],
+          'skos:prefLabel': label,
+          'rdfs:label': label,
+          'dct:identifier': slug,
+          'rdfs:comment': 'A competency the Foxxi vertical credentials and aligns performance to; verifiable credentials align to this IRI via alignedSkills.targetCode.',
+        }, null, 2));
+      }
+    });
+
     // ── IEEE-LER + ADL-TLA emergent composable semantic layer ────────
     // Two scoped ontologies the bridge serves as dereferenceable linked
     // data — content-negotiated Turtle / JSON-LD. Every ler:/tla: term
@@ -3551,9 +3586,16 @@ app.post('/agent/issue-credential', async (req, res) => {
     if (!recipientDid) { res.status(400).json({ error: 'recipient_did required' }); return; }
     const competencyName = (typeof p.competency_name === 'string' && p.competency_name.trim()) ? p.competency_name.trim() : '';
     if (!competencyName) { res.status(400).json({ error: 'competency_name required' }); return; }
-    const competencyId = (typeof p.competency_id === 'string' && p.competency_id.trim())
-      ? p.competency_id.trim()
-      : `urn:foxxi:competency:${competencyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)}`;
+    // The competency's PUBLIC id is a dereferenceable URL (competencyIri). But the bare
+    // SLUG — not the URL — is what threads through the credential internals (courseId →
+    // achievement/credential urns + the pod descriptor FILENAME); a URL there would inject
+    // '/'+':' and break the on-pod path. So: slug for internals, URL for the public id +
+    // the alignment targetCode the VC points at. competencyIdOf dual-reads a caller who
+    // supplies either form.
+    const competencySlug = (typeof p.competency_id === 'string' && p.competency_id.trim())
+      ? (competencyIdOf(p.competency_id.trim()) ?? p.competency_id.trim())
+      : competencyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48);
+    const competencyId = competencyIri(competencySlug);
     const recipientPod = resolveSubjectPodUrl(recipientDid, typeof p.recipient_pod_url === 'string' ? p.recipient_pod_url : undefined);
     // Per-creator issuer identity: a stable did:key the platform custodies on the
     // creator's behalf, derived deterministically from their DID.
@@ -3561,7 +3603,7 @@ app.post('/agent/issue-credential', async (req, res) => {
     const subject: CourseCompletionSubject = {
       learnerDid: recipientDid,
       learnerName: typeof p.recipient_name === 'string' ? p.recipient_name : undefined,
-      courseId: competencyId,
+      courseId: competencySlug,
       courseTitle: competencyName,
       courseDescription: typeof p.achievement_description === 'string' ? p.achievement_description : undefined,
       criterionNarrative: (typeof p.criterion === 'string' && p.criterion)
@@ -3711,7 +3753,7 @@ app.post('/agent/verify-extension', async (req, res) => {
         const verifierPod = resolveSubjectPodUrl(auth.callerDid);
         const vh = await composeIntoSharedLattice({
           podUrl: verifierPod, agentDid: auth.callerDid, label: actorForPod(verifierPod, MESH_ACTOR_LABELS),
-          terms: [auth.callerDid, 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#verbs/verified', subjectDid, iri ?? `urn:foxxi:competency:${(name || 'extension').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`],
+          terms: [auth.callerDid, 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#verbs/verified', subjectDid, iri ?? competencyIri((name || 'extension').toLowerCase().replace(/[^a-z0-9]+/g, '-'))],
           content: { type: 'foxxi:Verification', verifier: auth.callerDid, subject: subjectDid, checks: { independentlyGraded, gradedScore, performanceRecorded, selfAttestedPerformance, shapeConformant }, evidence, ...(iri ? { iri, conformsTo } : {}) },
           contentType: 'foxxi:Verification', projections: ['rdf', 'vc', 'activity'],
         });
@@ -3758,7 +3800,7 @@ app.post('/agent/prove-competency', async (req, res) => {
     const score = typeof p.score === 'number' ? p.score : 0.9;
     const proficiency = (typeof p.proficiency === 'string' && PROFICIENCY.has(p.proficiency)) ? p.proficiency as 'Advanced' : 'Advanced';
     const courseId = competencyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    const competencyId = `urn:foxxi:competency:${courseId}`;
+    const competencyId = competencyIri(courseId);   // the alignment targetCode — a dereferenceable URL
     // The issuer is the credentialing authority — its per-creator BBS+ seed (same
     // derivation as issue-credential's per-creator issuer identity).
     const issued = await issueBbsCompletionCredential({

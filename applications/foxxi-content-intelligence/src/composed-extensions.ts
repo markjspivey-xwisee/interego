@@ -1,4 +1,17 @@
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { competencyIri, competencyIdOf, sameCompetency } from './competency-identity.js';
+
+/** Canonical competency key across schemes (urn↔URL) AND across id forms (a bare competency
+ *  id, or an achievement id `urn:foxxi:achievement:<tenant>:<courseId>` that embeds one).
+ *  Lets a learner's pre-migration (urn) and post-migration (URL) credentials for the SAME
+ *  competency roll up to ONE row instead of double-counting. */
+function competencyKeyOf(id: string): string {
+  const direct = competencyIdOf(id);
+  if (direct) return direct;
+  const m = /^urn:foxxi:achievement:[^:]+:(.+)$/.exec(id);
+  if (m) return competencyIdOf(m[1]!) ?? m[1]!;
+  return id;
+}
 /**
  * Foxxi composed extensions — every "valuable for the vertical" capability
  * from the next-moves brainstorm, implemented as composition over the
@@ -315,7 +328,7 @@ export function rankTutorsForCompetency(args: {
   for (const c of args.candidates) {
     let bestSpecialty: TutorAgentProfile['specialties'][number] | undefined;
     for (const s of c.specialties) {
-      if (s.competencyIri === args.requiredCompetencyIri) {
+      if (sameCompetency(s.competencyIri, args.requiredCompetencyIri)) {
         const levelValue = { Novice: 1, Beginner: 2, Intermediate: 3, Advanced: 4, Expert: 5 }[s.selfRatedLevel];
         if (levelValue >= requiredLevelValue) {
           bestSpecialty = s;
@@ -482,12 +495,14 @@ export async function buildManagerTeamView(args: {
           const clabel = subj.achievement?.name ?? subj.competency?.label;
           const cprof = subj.achievement?.proficiencyLevel ?? subj.competency?.proficiencyLevel;
           if (!cid) continue;
-          competencies.push({ id: cid, label: clabel, proficiency: cprof, issuedAt: typeof cred.validFrom === 'string' ? cred.validFrom : undefined });
+          // Canonicalize so the same competency across schemes/forms rolls up once.
+          const key = competencyKeyOf(cid);
+          competencies.push({ id: competencyIri(key), label: clabel, proficiency: cprof, issuedAt: typeof cred.validFrom === 'string' ? cred.validFrom : undefined });
           // Team roll-up.
-          let existing = teamMap.get(cid);
+          let existing = teamMap.get(key);
           if (!existing) {
             existing = { label: clabel, coveredBy: new Set(), highestLevelValue: 0, highestLevelLabel: '—' };
-            teamMap.set(cid, existing);
+            teamMap.set(key, existing);
           }
           existing.coveredBy.add(r.webId);
           const lv = LEVEL_VALUE[cprof ?? ''] ?? 0;
@@ -501,8 +516,8 @@ export async function buildManagerTeamView(args: {
     } catch { /* skip report */ }
   }
   const teamSkillCoverage: ManagerTeamCompetencyView['teamSkillCoverage'] = [];
-  for (const [cid, v] of teamMap.entries()) {
-    teamSkillCoverage.push({ competencyId: cid, competencyLabel: v.label, coveredBy: [...v.coveredBy], highestLevel: v.highestLevelLabel });
+  for (const [key, v] of teamMap.entries()) {
+    teamSkillCoverage.push({ competencyId: competencyIri(key), competencyLabel: v.label, coveredBy: [...v.coveredBy], highestLevel: v.highestLevelLabel });
   }
   teamSkillCoverage.sort((a, b) => b.coveredBy.length - a.coveredBy.length);
   return {
