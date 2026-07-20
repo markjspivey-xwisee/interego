@@ -153,8 +153,11 @@ export const SAMPLE_SKILL_MD = [
 // only scaffolds the three beats (A shares context → B finds the gap → A teaches)
 // and captures the verifiable artifacts. Requires an Anthropic key (BYOK).
 
-const ATOM_RE = /urn:pgsl:atom:[a-z0-9:.\-]+/gi;
-const atomsIn = (ttl: string): string[] => [...new Set((ttl.match(ATOM_RE) ?? []))];
+// An atom projects in two forms: the urn:pgsl:atom:<hash> id and its URL projection
+// (…/ns/pgsl/atom/<hash>). Match BOTH and key the overlap on the shared hash tail, so a
+// urn in one descriptor and its URL projection in the other resolve to the SAME atom.
+const ATOM_RE = /(?:urn:pgsl:atom:|\/ns\/pgsl\/atom\/)([a-z0-9:.\-]+)/gi;
+const atomsIn = (ttl: string): string[] => [...new Set([...ttl.matchAll(ATOM_RE)].map(m => m[1].toLowerCase()))];
 
 export interface MAEvent {
   agent: 'A' | 'B' | 'sys';

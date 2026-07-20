@@ -128,7 +128,7 @@ async function main(): Promise<void> {
   const pb = await post('/agent/record-performance', await signed(Bn, { task_name: 'Shared context B', success: true, quality: 1, activity_type: STD }));
   const sla = pa.b?.sharedLattice, slb = pb.b?.sharedLattice;
   check('two independent agents each compose a holon', pa.s === 200 && pb.s === 200 && !!sla?.holonUri && !!slb?.holonUri, `A=${String(sla?.holonUri ?? '').slice(0, 30)} B=${String(slb?.holonUri ?? '').slice(0, 30)}`);
-  const atomsOf = (t: string) => [...new Set((t.match(/urn:pgsl:atom:[a-z0-9:.-]+/gi) ?? []))];
+  const atomsOf = (t: string) => [...new Set([...t.matchAll(/(?:urn:pgsl:atom:|\/ns\/pgsl\/atom\/)([a-z0-9:.-]+)/gi)].map(m => m[1]))];
   let sharedAtoms: string[] = [];
   if (sla?.descriptorUrl && slb?.descriptorUrl) {
     const ta = await (await fetch(String(sla.descriptorUrl), { headers: { Accept: 'text/turtle' } })).text();

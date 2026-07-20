@@ -20,6 +20,7 @@
 
 import { storeStatementInternal } from './xapi-lrs.js';
 import { FOXXI_NS } from './xapi-profile.js';
+import { courseIri } from './course-identity.js';
 import { randomUUID } from 'node:crypto';
 
 const ADL = 'http://adlnet.gov/expapi';
@@ -60,7 +61,7 @@ const TOOL_VERBS: Record<string, VerbBinding> = {
   },
   'foxxi.consume_lesson': {
     verbId: `${ADL}/verbs/launched`, display: 'launched',
-    objectId: (a) => `urn:foxxi:course:${(a.args.course_id as string) ?? 'unknown'}`, objectType: `${ADL}/activities/course`,
+    objectId: (a) => courseIri((a.args.course_id as string) ?? 'unknown'), objectType: `${ADL}/activities/course`,
     objectName: (a) => (a.args.course_title as string) ?? (a.args.course_id as string),
   },
   'foxxi.ask_course_question': {
@@ -96,7 +97,7 @@ const TOOL_VERBS: Record<string, VerbBinding> = {
   },
   'foxxi.emit_cmi5_session': {
     verbId: `${ADL}/verbs/satisfied`, display: 'satisfied',
-    objectId: (a) => `urn:foxxi:course:${(a.args.course_id as string) ?? 'unknown'}`,
+    objectId: (a) => courseIri((a.args.course_id as string) ?? 'unknown'),
     objectType: `${ADL}/activities/course`,
   },
 };

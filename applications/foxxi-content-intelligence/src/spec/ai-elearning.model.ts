@@ -30,7 +30,7 @@
 import type { OntologyModel } from '../spec-ontology.js';
 
 const DID = '^did:(ethr|key|web|pkh):.+';
-const PGSL_ATOM = '^urn:pgsl:atom:.+';
+const PGSL_ATOM = '^(urn:pgsl:atom:|https?://[^/]+/ns/pgsl/atom/).+';
 
 export const AI_ELEARNING_MODEL: OntologyModel = {
   module: 'ai-elearning',

@@ -25,6 +25,7 @@ import {
 } from './cmi5.js';
 import { validateXapiStatement, validateInstance } from './spec/index.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { courseIri } from './course-identity.js';
 
 export interface ComplianceCheck { name: string; ok: boolean; spec: string; detail?: string; }
 export interface ComplianceReport {
@@ -313,7 +314,7 @@ export function runCmi5Conformance(ranAt: string): ComplianceReport {
   const checks: ComplianceCheck[] = [];
   const add = (name: string, ok: boolean, spec: string, detail = '') => checks.push({ name, ok, spec, ...(detail ? { detail } : {}) });
   const actor: Cmi5Actor = { account: { homePage: 'https://lms.example', name: 'learner-1' } };
-  const session: Cmi5Session = { registration: '11111111-1111-1111-1111-111111111111', auActivityId: 'urn:foxxi:au:1', courseActivityId: 'urn:foxxi:course:1', sessionId: 'sess-1', publisherId: 'pub-1', launchedAt: '2026-06-18T00:00:00.000Z' };
+  const session: Cmi5Session = { registration: '11111111-1111-1111-1111-111111111111', auActivityId: 'urn:foxxi:au:1', courseActivityId: courseIri('1'), sessionId: 'sess-1', publisherId: 'pub-1', launchedAt: '2026-06-18T00:00:00.000Z' };
   try {
     const verbs = ['launched', 'initialized', 'completed', 'passed', 'failed', 'abandoned', 'waived', 'terminated', 'satisfied'] as const;
     for (const v of verbs) {

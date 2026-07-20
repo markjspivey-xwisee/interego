@@ -10,6 +10,7 @@
  * target-free :::control blocks, describedby/alternate links to the authority).
  */
 import {
+  actionKey,
   controlsFromAffordances,
   extractAffordancesFromTurtle,
   renderHypermediaMarkdown,
@@ -40,6 +41,13 @@ export function viewerControls(
   controls: readonly HypermediaControl[],
   executableActions?: ReadonlySet<string>,
 ): Array<Record<string, unknown>> {
+  // Executability membership is scheme-independent: a control whose action is in URL
+  // form must still match a urn-form entry in executableActions (and vice versa), so
+  // key both the set entries and the lookup through actionKey. Behavior is identical
+  // for single-scheme inputs (raw membership still matches; actionKey only adds the twin).
+  const executableKeys = executableActions
+    ? new Set([...executableActions].map((a) => actionKey(a)))
+    : undefined;
   return controls
     .filter((c) => !VIEWER_TRANSPORT_ACTIONS.has(c.action))
     .map((c) => ({
@@ -50,7 +58,9 @@ export function viewerControls(
       ...(c.source ? { source: c.source } : {}),
       ...(c.whenToUse ? { whenToUse: c.whenToUse } : {}),
       ...(c.fields && c.fields.length > 0 ? { fields: c.fields } : {}),
-      executable: executableActions ? executableActions.has(c.action) : false,
+      executable: executableActions
+        ? executableActions.has(c.action) || executableKeys!.has(actionKey(c.action))
+        : false,
     }));
 }
 
@@ -143,7 +153,7 @@ export function noteToHyperMarkdown(input: NoteViewInput): string {
   // Merge; on an action collision the signed PAYLOAD control wins (authored,
   // verified content outranks a transport-descriptor affordance).
   const byAction = new Map<string, (typeof descriptorControls)[number]>();
-  for (const c of [...descriptorControls, ...payloadControls]) byAction.set(c.action, c);
+  for (const c of [...descriptorControls, ...payloadControls]) byAction.set(actionKey(c.action), c);
   const controls = [...byAction.values()];
   // Reflect the note's ACTUAL visibility (from the descriptor) in the projection.
   // A PUBLIC note (iep:visibility "public" / iep:encrypted false) must NOT be

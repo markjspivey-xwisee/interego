@@ -49,6 +49,7 @@ import type {
   IRI,
 } from '@interego/core';
 import type { FoxxiCourseContent } from './course-qa.js';
+import { courseIdOf } from './course-identity.js';
 
 // ─────────────────────────────────────────────────────────────────────
 //  Shapes
@@ -719,7 +720,7 @@ export function courseContentToAgenticCourse(c: FoxxiCourseContent, courseLabel:
     courseIri: c.courseIri,
     title: c.title,
     courseLabel: c.title.replace(/:.*/, '').trim(),
-    courseId: c.courseIri.split('/').pop()?.replace(/#.*/, '') ?? 'unknown',
+    courseId: courseIdOf(c.courseIri) ?? 'unknown',
     authoritativeSource: c.authoritativeSource,
     concepts,
     slides: slidesWithConcepts,

@@ -36,7 +36,10 @@ const params = {
 // Hand the SCORM RTE the session config so its auto-emissions on Commit /
 // Terminate carry the right actor + bridge + registration. The SCO would
 // see this via window.parent.API_1484_11 in the standard discovery chain.
-const COURSE_IRI = `urn:foxxi:course:${params.courseId}`;
+// The course's canonical id is a dereferenceable URL (matches the bridge's courseIri
+// mint), so the SCO's auto-emitted xAPI object.id lines up with the bridge's — no split
+// activity history across urn/URL for the same course.
+const COURSE_IRI = `${(params.bridge || 'https://foxxi-bridge.interego.xwisee.com').replace(/\/+$/, '')}/agent/scorm/course/${encodeURIComponent(params.courseId)}`;
 window.__foxxiPlayerConfig = {
   bearer: params.bearer,
   bridge: params.bridge,

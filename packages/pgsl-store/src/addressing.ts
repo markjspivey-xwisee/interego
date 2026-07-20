@@ -30,6 +30,7 @@
  */
 
 import { createHash, createHmac } from 'node:crypto';
+import { pgslNodeKind, pgslNodeHash } from '@interego/core';
 
 export type AtomValue = string | number | boolean;
 export type Sensitivity = 'public' | 'private';
@@ -54,11 +55,15 @@ function hmac40(key: string, input: string): string {
 }
 
 /**
- * Public atom address — bare hash, globally de-duplicated. Byte-identical to the
- * existing `@interego/pgsl` `atomUri` (`sha256("atom:" + String(value))[:40]`),
- * so public atoms remain wire-compatible with the current in-memory lattice. An
- * external party CAN recompute this — existence of PUBLIC content is not secret;
- * this is exactly the cross-agent structural-overlap primitive.
+ * Public atom address — bare hash, globally de-duplicated. The 40-hex hash is
+ * identical to `@interego/pgsl`'s `atomUri` (`sha256("atom:" + String(value))[:40]`),
+ * but atomUri now mints the dereferenceable URL id (`…/ns/pgsl/atom/<hash>`) while
+ * this emits the legacy `urn:pgsl:atom:<hash>`, so the two id STRINGS are no longer
+ * byte-identical — they differ only by scheme. The FDB node-address codec
+ * ({@link nodeAddrFromUrn}) strips the scheme, so both forms resolve to the same
+ * key and public atoms stay wire-compatible with the current lattice. An external
+ * party CAN recompute this — existence of PUBLIC content is not secret; this is
+ * exactly the cross-agent structural-overlap primitive.
  */
 export function publicAtomAddress(value: AtomValue): string {
   return ATOM_PREFIX + sha40('atom:' + String(value));
@@ -106,13 +111,19 @@ export function kindByte(kind: NodeKind): number {
   return kind === 'atom' ? KIND_ATOM : KIND_FRAGMENT;
 }
 
-/** Parse a `urn:pgsl:atom:<40hex>` / `urn:pgsl:fragment:<40hex>` into a NodeAddr. */
+/**
+ * Parse a PGSL node id into a NodeAddr. DUAL-READ: accepts BOTH the legacy
+ * `urn:pgsl:<kind>:<40hex>` and the current dereferenceable URL form
+ * `https://…/ns/pgsl/<kind>/<40hex>`. `pgslNodeKind`/`pgslNodeHash` extract the
+ * same <kind>/<hash> from either scheme, and the FDB codec strips the scheme, so
+ * both forms yield an identical 21-byte address.
+ */
 export function nodeAddrFromUrn(urn: string): NodeAddr {
-  let kind: NodeKind;
-  let hex: string;
-  if (urn.startsWith(ATOM_PREFIX)) { kind = 'atom'; hex = urn.slice(ATOM_PREFIX.length); }
-  else if (urn.startsWith(FRAGMENT_PREFIX)) { kind = 'fragment'; hex = urn.slice(FRAGMENT_PREFIX.length); }
-  else throw new Error(`not a pgsl node urn: ${urn}`);
+  const parsedKind = pgslNodeKind(urn);
+  const hex = pgslNodeHash(urn);
+  if (parsedKind === null || hex === null) throw new Error(`not a pgsl node urn: ${urn}`);
+  if (parsedKind !== 'atom' && parsedKind !== 'fragment') throw new Error(`unsupported pgsl node kind: ${urn}`);
+  const kind: NodeKind = parsedKind;
   if (!/^[0-9a-f]{40}$/.test(hex)) throw new Error(`malformed pgsl urn hash: ${urn}`);
   const hash = new Uint8Array(HASH_BYTES);
   for (let i = 0; i < HASH_BYTES; i++) hash[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);

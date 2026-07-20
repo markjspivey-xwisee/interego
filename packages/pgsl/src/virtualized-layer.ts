@@ -514,14 +514,31 @@ export function writeBackTriples(
       // Case 5: NEW triple with unknown subject — create PGSL content
       // Mint both subject and object as atoms, then create a chain:
       //   [subject-value, predicate-local-name, object-value]
-      const subjectValue = extractValue(subject) ?? subject;
-      const objectValue = extractValue(object) ?? stripLiteral(object);
+      // Guard: a subject/object that is ALREADY a PGSL node id (URL or legacy
+      // urn, any kind) is ingested as a REFERENCE (Case-2 pattern), never
+      // atomized — atomizing its id string would poison the lattice.
       const predicateLocal = localName(predicate);
-
-      mintAtom(pgsl, String(subjectValue));
       mintAtom(pgsl, predicateLocal);
-      mintAtom(pgsl, String(objectValue));
-      ingest(pgsl, [String(subjectValue), predicateLocal, String(objectValue)]);
+
+      let subjectItem: Value | IRI;
+      if (isPgslNodeId(subject)) {
+        ingest(pgsl, [subject as IRI]);
+        subjectItem = subject as IRI;
+      } else {
+        subjectItem = String(extractValue(subject) ?? subject);
+        mintAtom(pgsl, subjectItem);
+      }
+
+      let objectItem: Value | IRI;
+      if (isPgslNodeId(object)) {
+        ingest(pgsl, [object as IRI]);
+        objectItem = object as IRI;
+      } else {
+        objectItem = String(extractValue(object) ?? stripLiteral(object));
+        mintAtom(pgsl, objectItem);
+      }
+
+      ingest(pgsl, [subjectItem, predicateLocal, objectItem]);
       pgslMutations++;
       triplesAdded++;
     } catch (err: any) {
