@@ -42,7 +42,7 @@ const WEBID_REL = 'http://www.w3.org/ns/solid/terms#oidcIssuer';
  *
  * @example
  * ```ts
- * const result = await resolveWebFinger('acct:markj@interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io');
+ * const result = await resolveWebFinger('acct:markj@identity.interego.xwisee.com');
  * console.log(result.podUrl); // "https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/"
  * ```
  */

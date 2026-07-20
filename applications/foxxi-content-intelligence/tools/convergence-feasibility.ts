@@ -31,7 +31,7 @@
  */
 import { ethers } from 'ethers';
 
-const BRIDGE = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const BRIDGE = 'https://foxxi-bridge.interego.xwisee.com';
 const PAGES = 'https://markjspivey-xwisee.github.io/interego/ns';
 const enc = new TextEncoder();
 const sha = (s: string): string => ethers.sha256(enc.encode(s)).slice(2);

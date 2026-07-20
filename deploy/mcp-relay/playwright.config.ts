@@ -15,7 +15,7 @@ export default defineConfig({
   // Headless by default — passkey ceremony runs against a virtual
   // authenticator injected via CDP, no real user interaction needed.
   use: {
-    baseURL: process.env.BASE_URL ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+    baseURL: process.env.BASE_URL ?? 'https://relay.interego.xwisee.com',
     headless: true,
     trace: 'retain-on-failure',
   },

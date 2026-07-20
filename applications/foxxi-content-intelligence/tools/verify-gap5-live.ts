@@ -7,10 +7,10 @@
  */
 import { ethers } from 'ethers';
 
-const BRIDGE = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const GATE_ORIGIN = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const BRIDGE = 'https://foxxi-bridge.interego.xwisee.com';
+const GATE_ORIGIN = 'https://gate.interego.xwisee.com';
 const DEMO_SEED = 'foxxi-demo-acme-training-2026-05-17-v1';
-const ADMIN_WEB_ID = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/admin/profile/card#me';
+const ADMIN_WEB_ID = 'https://acme-id.interego.xwisee.com/users/admin/profile/card#me';
 const enc = new TextEncoder();
 
 let pass = 0, fail = 0;

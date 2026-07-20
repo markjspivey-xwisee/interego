@@ -22,7 +22,7 @@ export const BRIDGE_URL = (import.meta.env.VITE_FOXXI_BRIDGE_URL as string | und
 // /.well-known/did.json and per-user WebID profile cards at
 // /users/<slug>/profile/card . No synthetic .example domains — every
 // WebID below is a real, fetchable Turtle profile.
-const ID_BASE = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const ID_BASE = 'https://acme-id.interego.xwisee.com';
 const webIdFor = (slug: string) => `${ID_BASE}/users/${slug}/profile/card#me`;
 
 export const DEMO_IDENTITIES = {

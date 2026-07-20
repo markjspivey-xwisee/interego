@@ -4,7 +4,7 @@
  *
  * Run from context-graphs/: npx tsx applications/foxxi-content-intelligence/tools/verify-extend-live.ts
  */
-const BRIDGE = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const BRIDGE = 'https://foxxi-bridge.interego.xwisee.com';
 
 let pass = 0, fail = 0;
 const check = (n: string, c: boolean, d = ''): void => {

@@ -68,7 +68,7 @@ export async function runXapiConformance(opts: XapiOpts): Promise<ComplianceRepo
   const H = { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0', 'Authorization': `Bearer ${token}` } as Record<string, string>;
   const checks: ComplianceCheck[] = [];
   const add = (name: string, ok: boolean, spec: string, detail = '') => checks.push({ name, ok, spec, ...(detail ? { detail } : {}) });
-  const home = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  const home = 'https://acme-id.interego.xwisee.com';
 
   // §3.1 + §7.7 — /about
   try {
