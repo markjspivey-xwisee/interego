@@ -21,6 +21,7 @@
  */
 
 import type { CohortIntelligence } from './cohort-intel.js';
+import { competencyIdOf } from './competency-identity.js';
 import type { CourseConcept, CoursePrereqEdge } from '../dashboard-app/src/types.js';
 
 // ── A. A/B experiment design ─────────────────────────────────
@@ -319,10 +320,12 @@ export function frameworkGapAnalysis(args: {
   /** alignment edges: skill → concept developed by some slide. */
   alignments: ReadonlyArray<{ skillId: string; conceptId: string }>;
 }): FrameworkGapReport {
-  const alignedSkills = new Set(args.alignments.map(a => a.skillId));
+  // Canonicalize competency-scheme ids (urn↔URL) so a framework skill and its alignment
+  // don't miss each other across schemes; non-competency ids pass through unchanged.
+  const alignedSkills = new Set(args.alignments.map(a => competencyIdOf(a.skillId) ?? a.skillId));
   const alignedConcepts = new Set(args.alignments.map(a => a.conceptId));
   const competenciesWithout = args.frameworkSkills
-    .filter(s => !alignedSkills.has(s.id))
+    .filter(s => !alignedSkills.has(competencyIdOf(s.id) ?? s.id))
     .map(s => ({
       competencyId: s.id,
       competencyLabel: s.label,
