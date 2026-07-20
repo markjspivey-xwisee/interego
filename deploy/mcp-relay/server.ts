@@ -323,6 +323,14 @@ const RELAY_INTROSPECTION_SECRET = process.env['RELAY_INTROSPECTION_SECRET'] ?? 
 // Must be set in production so the OAuth metadata advertises the correct
 // externally-reachable URL. Falls back to constructing from request host.
 const PUBLIC_BASE_URL = process.env['PUBLIC_BASE_URL'] ?? '';
+/** A tool affordance's target is the relay's real, invokable per-tool endpoint — a
+ *  dereferenceable URL, not a `urn:iep:tool:<name>` sentinel. Matches the target
+ *  `/tools` + `/.well-known/operations` already advertise, so an agent can follow a
+ *  hypermedia nextStep and actually POST it (the sentinel urns were non-followable —
+ *  isFollowableTarget requires http(s) — so the round-trip was dead). Falls back to the
+ *  live relay host when PUBLIC_BASE_URL is unset (dev/stdio) rather than emitting a urn. */
+const toolTarget = (name: string): string =>
+  `${(PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com').replace(/\/$/, '')}/tool/${name}`;
 // The public PGSL node resolver(s) the canonical id authority redirects to. The
 // relay is the STABLE naming authority for a pgsl node id (relay/ns/pgsl/<kind>/
 // <hash>); the bytes are served by a public-lattice resolver (the Foxxi bridge's
@@ -5720,8 +5728,8 @@ async function handleKernelCompose(args: ToolArgs): Promise<string> {
     kind: 'compose',
     id: r.composed.id,
     nextSteps: [
-      { action: 'urn:iep:action:restrict', target: 'urn:iep:tool:restrict', method: 'POST' },
-      { action: 'urn:iep:action:publish',  target: 'urn:iep:tool:publish_context', method: 'POST' },
+      { action: 'urn:iep:action:restrict', target: toolTarget('restrict'), method: 'POST' },
+      { action: 'urn:iep:action:publish',  target: toolTarget('publish_context'), method: 'POST' },
     ],
   }));
 }
@@ -5824,8 +5832,8 @@ async function handleKernelRestrict(args: ToolArgs): Promise<string> {
     kind: 'restrict',
     id: r.restricted.id,
     nextSteps: [
-      { action: 'urn:iep:action:extend',  target: 'urn:iep:tool:extend',  method: 'POST' },
-      { action: 'urn:iep:action:publish', target: 'urn:iep:tool:publish_context', method: 'POST' },
+      { action: 'urn:iep:action:extend',  target: toolTarget('extend'),  method: 'POST' },
+      { action: 'urn:iep:action:publish', target: toolTarget('publish_context'), method: 'POST' },
     ],
   }));
 }
@@ -5838,8 +5846,8 @@ async function handleKernelExtend(args: ToolArgs): Promise<string> {
     kind: 'extend',
     id: r.extended.id,
     nextSteps: [
-      { action: 'urn:iep:action:restrict', target: 'urn:iep:tool:restrict', method: 'POST' },
-      { action: 'urn:iep:action:publish',  target: 'urn:iep:tool:publish_context', method: 'POST' },
+      { action: 'urn:iep:action:restrict', target: toolTarget('restrict'), method: 'POST' },
+      { action: 'urn:iep:action:publish',  target: toolTarget('publish_context'), method: 'POST' },
     ],
   }));
 }
@@ -8607,7 +8615,7 @@ function relayShimNextSteps(name: string, payload: Record<string, unknown>): Rea
     }
     case 'discover_context':
     case 'discover_all':
-      return [{ action: 'urn:iep:action:refine-search', target: 'urn:iep:tool:discover_context', method: 'POST' }];
+      return [{ action: 'urn:iep:action:refine-search', target: toolTarget('discover_context'), method: 'POST' }];
     case 'get_descriptor': {
       const url = pick('url');
       return url
@@ -8617,7 +8625,7 @@ function relayShimNextSteps(name: string, payload: Record<string, unknown>): Rea
     case 'register_agent': {
       const agentIri = pick('agentIri') ?? pick('agentId');
       const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [
-        { action: 'urn:iep:action:verify-agent', target: 'urn:iep:tool:verify_agent', method: 'POST' },
+        { action: 'urn:iep:action:verify-agent', target: toolTarget('verify_agent'), method: 'POST' },
       ];
       if (agentIri) steps.push({ action: 'urn:iep:action:revoke-agent', target: agentIri, method: 'DELETE' });
       return steps;
