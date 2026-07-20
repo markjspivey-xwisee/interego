@@ -16,7 +16,7 @@ import { type IRI, type ContextDescriptorData, type ContextFacetData } from '@in
 import { publish } from '@interego/solid';
 import type { PerformanceSituation, Diagnosis } from '../src/performance-architecture.js';
 
-const AGP = 'https://markjspivey-xwisee.github.io/interego/ns/agp#';
+const AGP = 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#';
 
 /** Deterministic, idempotent IRI (same inputs → same IRI), so repeat calls
  *  don't mint a new node each time. */
