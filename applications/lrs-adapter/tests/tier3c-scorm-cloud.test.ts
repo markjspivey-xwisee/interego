@@ -177,10 +177,10 @@ describe('Tier 3c — SCORM Cloud (proprietary LRS, xAPI 1.0.3)', () => {
       result: {
         response: narratives[0],
         extensions: {
-          'urn:iep:source-descriptor':   'urn:iep:synthesis:scorm-cloud-test',
-          'urn:iep:modal-status':        'Hypothetical',
-          'urn:iep:coherent-narratives': narratives,
-          'urn:iep:projection-lossy':    true,
+          'https://markjspivey-xwisee.github.io/interego/ns/iep#sourceDescriptor':   'urn:iep:synthesis:scorm-cloud-test',
+          'https://markjspivey-xwisee.github.io/interego/ns/iep#modalStatus':        'Hypothetical',
+          'https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives': narratives,
+          'https://markjspivey-xwisee.github.io/interego/ns/iep#projectionLossy':    true,
         },
       },
       timestamp: new Date().toISOString(),
@@ -203,9 +203,9 @@ describe('Tier 3c — SCORM Cloud (proprietary LRS, xAPI 1.0.3)', () => {
     const fetched = await get.json() as { result: { extensions: Record<string, unknown> } };
 
     // Extension passthrough is core xAPI behavior; SCORM Cloud preserves
-    expect(fetched.result.extensions['urn:iep:projection-lossy']).toBe(true);
-    expect(fetched.result.extensions['urn:iep:modal-status']).toBe('Hypothetical');
-    expect(fetched.result.extensions['urn:iep:coherent-narratives']).toEqual(narratives);
+    expect(fetched.result.extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#projectionLossy']).toBe(true);
+    expect(fetched.result.extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#modalStatus']).toBe('Hypothetical');
+    expect(fetched.result.extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives']).toEqual(narratives);
   });
 
   it('voiding (xAPI 1.0.3 §4.1.6.7): voided statement gets 404 on plain GET', { timeout: 30000 }, async (ctx) => {

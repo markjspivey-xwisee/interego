@@ -588,6 +588,22 @@ iep:modalStatus a owl:ObjectProperty ;
     rdfs:range iep:ModalStatusEnum ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
+iep:sourceDescriptor a owl:ObjectProperty ;
+    rdfs:label "source descriptor" ;
+    rdfs:comment "The dereferenceable descriptor a projected artifact was derived from (chain of custody). Used as an xAPI result.extensions key by the LRS projection." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:coherentNarratives a owl:DatatypeProperty ;
+    rdfs:label "coherent narratives" ;
+    rdfs:comment "The set of coherent source narratives a projection preserved (remainder beyond the one emitted in result.response)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
+iep:projectionLossy a owl:DatatypeProperty ;
+    rdfs:label "projection lossy" ;
+    rdfs:comment "True when a projection dropped information relative to its source." ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
 iep:epistemicConfidence a owl:DatatypeProperty ;
     rdfs:label "epistemic confidence" ;
     rdfs:comment "Confidence level in the assertion, from 0.0 (no confidence) to 1.0 (absolute certainty)." ;

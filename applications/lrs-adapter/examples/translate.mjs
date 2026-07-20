@@ -167,8 +167,8 @@ const projectedStatement = {
   result: {
     response: internalDescriptor.content,
     extensions: {
-      'urn:iep:source-descriptor': internalDescriptor.iri,
-      'urn:iep:modal-status': internalDescriptor.modalStatus,
+      'https://markjspivey-xwisee.github.io/interego/ns/iep#sourceDescriptor': internalDescriptor.iri,
+      'https://markjspivey-xwisee.github.io/interego/ns/iep#modalStatus': internalDescriptor.modalStatus,
     },
   },
   timestamp: internalDescriptor.timestamp,
@@ -257,11 +257,11 @@ const lossyStatement = {
   result: {
     response: synthesisDescriptor.emergentPattern + ' [Reading 1] ' + synthesisDescriptor.coherentNarratives[0],
     extensions: {
-      'urn:iep:source-descriptor':    synthesisDescriptor.iri,
-      'urn:iep:modal-status':         synthesisDescriptor.modalStatus,
-      'urn:iep:coherent-narratives':  synthesisDescriptor.coherentNarratives,
+      'https://markjspivey-xwisee.github.io/interego/ns/iep#sourceDescriptor':    synthesisDescriptor.iri,
+      'https://markjspivey-xwisee.github.io/interego/ns/iep#modalStatus':         synthesisDescriptor.modalStatus,
+      'https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives':  synthesisDescriptor.coherentNarratives,
       'urn:iep:supersedes-chain':     [synthesisDescriptor.supersedes],
-      'urn:iep:projection-lossy':     true,
+      'https://markjspivey-xwisee.github.io/interego/ns/iep#projectionLossy':     true,
     },
   },
   timestamp: synthesisDescriptor.timestamp,
@@ -278,7 +278,7 @@ turtleBlock('Audit record (loud about what was lost):', `
     lrs:projectedStatementId  "${lossyStatementId}" ;
     lrs:projectionLossy       true ;
     lrs:lossNote """Source descriptor had iep:modalStatus iep:Hypothetical — projected anyway at org's explicit request for dashboard purposes. Modal status preserved as result.extensions but xAPI consumers will read this as a committed claim unless they look at the extensions.""" ;
-    lrs:lossNote """Source descriptor had 3 coherent narratives. First narrative emitted in result.response; remaining 2 preserved in result.extensions[urn:iep:coherent-narratives]. Standard LRS dashboards will only show Reading 1.""" ;
+    lrs:lossNote """Source descriptor had 3 coherent narratives. First narrative emitted in result.response; remaining 2 preserved in result.extensions[https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives]. Standard LRS dashboards will only show Reading 1.""" ;
     lrs:lossNote """Source descriptor had iep:supersedes chain. Preserved in result.extensions[urn:iep:supersedes-chain] but xAPI's voiding mechanism is not equivalent.""" .`);
 
 console.log(`

@@ -238,15 +238,18 @@ export async function projectDescriptorToLrs(
     timestamp: nowIso(),
   };
 
+  // xAPI extension KEYS are dereferenceable predicate IRIs under the published iep:
+  // vocabulary now (…/ns/iep#<term>), not opaque urns — each GETs its definition.
+  const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
   const exts: Record<string, unknown> = {
-    'urn:iep:source-descriptor': args.descriptorIri,
-    'urn:iep:modal-status': args.modalStatus ?? 'Asserted',
+    [`${IEP}sourceDescriptor`]: args.descriptorIri,
+    [`${IEP}modalStatus`]: args.modalStatus ?? 'Asserted',
   };
 
   if (args.coherentNarratives && args.coherentNarratives.length > 1) {
-    exts['urn:iep:coherent-narratives'] = args.coherentNarratives;
-    exts['urn:iep:projection-lossy'] = true;
-    lossNotes.push(`Source had ${args.coherentNarratives.length} coherent narratives; first emitted in result.response, remainder in result.extensions[urn:iep:coherent-narratives]`);
+    exts[`${IEP}coherentNarratives`] = args.coherentNarratives;
+    exts[`${IEP}projectionLossy`] = true;
+    lossNotes.push(`Source had ${args.coherentNarratives.length} coherent narratives; first emitted in result.response, remainder in result.extensions[${IEP}coherentNarratives]`);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

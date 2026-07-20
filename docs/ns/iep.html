@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Interego Protocol (iep:) vocabulary</title>
+<!-- RDF clients that follow their nose from an iep: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="iep.ttl" />
+<link rel="describedby" type="text/turtle" href="iep.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 46rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.6rem; letter-spacing: -0.01em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .term { border-top: 1px solid #8884; padding: 0.6rem 0; }
+  .term code { font-weight: 600; }
+  .note { color: #6b7385; font-size: 0.92em; }
+</style>
+</head>
+<body>
+  <h1>Interego Protocol vocabulary <span class="mono" style="font-weight:400;color:#6b7385">iep:</span></h1>
+  <p>This is the namespace document for <code>https://markjspivey-xwisee.github.io/interego/ns/iep#</code> — the
+     Interego Protocol (L1) vocabulary: the classes and properties an agent uses to publish, compose, and reason
+     over context on the substrate. Terms are identified by hash IRIs under this base (e.g.
+     <code>iep:modalStatus</code> = <code>…/ns/iep#modalStatus</code>).</p>
+  <p><strong>Machine-readable form:</strong> <a href="iep.ttl" rel="alternate">iep.ttl</a> (Turtle) — the authoritative
+     source. This page is a human-readable projection of it.</p>
+
+  <h2>Selected terms</h2>
+  <div id="modalStatus" class="term"><code>iep:modalStatus</code> — the epistemic modality of an assertion
+     (<code>Asserted</code> vs <code>Hypothetical</code>). Used as an xAPI <code>result.extensions</code> key.</div>
+  <div id="coherentNarratives" class="term"><code>iep:coherentNarratives</code> — the set of coherent source
+     narratives a projection preserved.</div>
+  <div id="projectionLossy" class="term"><code>iep:projectionLossy</code> — <code>xsd:boolean</code>; true when a
+     projection dropped information relative to its source.</div>
+  <div id="sourceDescriptor" class="term"><code>iep:sourceDescriptor</code> — the dereferenceable descriptor a
+     projected artifact was derived from (chain of custody).</div>
+  <p class="note">The complete term set — with domains, ranges, and <code>iep:constructedFrom</code> provenance —
+     is in <a href="iep.ttl">iep.ttl</a>.</p>
+</body>
+</html>
