@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AMTA — Agent-Mediated Trust Attestation</title>
+<!-- RDF clients that follow their nose from a amta: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="amta.ttl" />
+<link rel="describedby" type="text/turtle" href="amta.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>AMTA — Agent-Mediated Trust Attestation <span class="mono ns">amta:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/amta#</code> &middot; 18 terms.</p>
+  <p>Multi-dimensional trust attestations: competence, honesty, relevance, recency. Each axis is rated ordinally; combined attestation is a vector usable in policy decisions. Stored as iep:TrustFacet specializations.</p>
+  <p><strong>Machine-readable form:</strong> <a href="amta.ttl" rel="alternate">amta.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>amta:Attestation</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/amta#Attestation</code>).</p>
+  <h2>Terms</h2>
+  <div id="Attestation" class="term"><code>amta:Attestation</code> <span class="kind">Class</span><div class="c">A multi-dimensional trust attestation by one agent (the attestor) about another agent or claim (the subject). Subclass of iep:TrustFacet; inherits trust-level + issuer semantics and adds per-axis ratings.</div></div>
+  <div id="attestedAt" class="term"><code>amta:attestedAt</code> <span class="kind">Datatype property</span></div>
+  <div id="attestor" class="term"><code>amta:attestor</code> <span class="kind">Object property</span></div>
+  <div id="attestsTo" class="term"><code>amta:attestsTo</code> <span class="kind">Object property</span><div class="c">The capability the attestation concerns — typically a tool, teaching package, or other artifact IRI. The attestation rates the subject's competence/honesty/etc. with respect to this capability.</div></div>
+  <div id="axis" class="term"><code>amta:axis</code> <span class="kind">Object property</span><div class="c">The trust axis this attestation rates (e.g. correctness, efficiency, safety, generality). Lets a single attestation declare which dimension its amta:rating applies to, rather than carrying every per-axis property.</div></div>
+  <div id="clearance" class="term"><code>amta:clearance</code> <span class="kind">Datatype property</span><div class="c">A subject's clearance level on a monotone classification lattice (higher dominates). Read by the ABAC policy-decision point as a SHACL minInclusive constraint: a request is permitted only when the subject's amta:clearance meets or exceeds the resource's classification.</div></div>
+  <div id="competence" class="term"><code>amta:competence</code> <span class="kind">Datatype property</span></div>
+  <div id="CompetenceRating" class="term"><code>amta:CompetenceRating</code> <span class="kind">Class</span><div class="c">Rating of the subject's ability to produce correct claims in the relevant domain. Ordinal 0.0 - 1.0. A lens on iep:SemioticFacet.epistemicConfidence filtered to the attestor's domain.</div></div>
+  <div id="fromExecution" class="term"><code>amta:fromExecution</code> <span class="kind">Object property</span><div class="c">The execution-evidence descriptor that grounds this attestation — the recorded tool execution / verified transfer the rating was derived from. Makes the attestation auditable rather than self-asserted.</div></div>
+  <div id="honesty" class="term"><code>amta:honesty</code> <span class="kind">Datatype property</span></div>
+  <div id="HonestyRating" class="term"><code>amta:HonestyRating</code> <span class="kind">Class</span><div class="c">Rating of the subject's faithful reporting. Specialization of iep:TrustFacet for a per-axis honesty signal.</div></div>
+  <div id="rating" class="term"><code>amta:rating</code> <span class="kind">Datatype property</span><div class="c">A single normalized rating value (0.0 - 1.0) for the axis named by amta:axis. Used when an attestation rates one axis at a time rather than carrying the full per-axis vector.</div></div>
+  <div id="recency" class="term"><code>amta:recency</code> <span class="kind">Datatype property</span></div>
+  <div id="RecencyRating" class="term"><code>amta:RecencyRating</code> <span class="kind">Class</span><div class="c">Rating derived from time-since-attestation. Constructed from iep:TemporalFacet.validFrom + an attestation's provenance timestamp.</div></div>
+  <div id="relevance" class="term"><code>amta:relevance</code> <span class="kind">Datatype property</span></div>
+  <div id="RelevanceRating" class="term"><code>amta:RelevanceRating</code> <span class="kind">Class</span><div class="c">Rating of whether the subject's expertise is germane to the specific claim being attested.</div></div>
+  <div id="Reputation" class="term"><code>amta:Reputation</code> <span class="kind">Class</span><div class="c">The aggregate of attestations an agent has received. Constructed at runtime from a set of amta:Attestation descriptors via statistical aggregation; see examples/reputation-aggregator.mjs for a reference realization.</div></div>
+  <div id="subject" class="term"><code>amta:subject</code> <span class="kind">Object property</span></div>
+</body>
+</html>

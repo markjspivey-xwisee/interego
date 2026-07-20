@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ac: — Agent Collective (vertical application)</title>
+<!-- RDF clients that follow their nose from a ac: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="ac.ttl" />
+<link rel="describedby" type="text/turtle" href="ac.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>ac: — Agent Collective (vertical application) <span class="mono ns">ac:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#</code> &middot; 48 terms.</p>
+  <p>Vertical-scoped, non-normative vocabulary for multi-agent federation: tool authorship, teaching, and inter-agent coordination. NOT part of the Interego protocol.</p>
+  <p><strong>Machine-readable form:</strong> <a href="ac.ttl" rel="alternate">ac.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>ac:advertisedAffordance</code> = <code>https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#advertisedAffordance</code>).</p>
+  <h2>Terms</h2>
+  <div id="advertisedAffordance" class="term"><code>ac:advertisedAffordance</code> <span class="kind">Object property</span><div class="c">An affordance the agent will accept requests for. Multiple per advertisement is normal.</div></div>
+  <div id="advertisingAgent" class="term"><code>ac:advertisingAgent</code> <span class="kind">Object property</span></div>
+  <div id="AgentRequest" class="term"><code>ac:AgentRequest</code> <span class="kind">Class</span><div class="c">Outbound request from agent A to agent B, sent encrypted over personal-bridge. Carries a thread ID for correlation, references the delegation credential authorizing the action, targets one of B's advertised affordances. Always iep:modalStatus Hypothetical (it's a request, not a claim).</div></div>
+  <div id="AgentResponse" class="term"><code>ac:AgentResponse</code> <span class="kind">Class</span><div class="c">Response to an ac:AgentRequest, correlated by thread ID. May carry payload descriptors, rejection reasons, or partial async results. Modal status reflects what the response itself claims (Asserted for committed answers; Hypothetical for in-progress / partial results).</div></div>
+  <div id="AgentTool" class="term"><code>ac:AgentTool</code> <span class="kind">Class</span><div class="c">A tool authored by an agent. Stored as a code:Commit over a content-addressed pgsl:Atom source. Starts iep:modalStatus Hypothetical; flips to Asserted only after attestation threshold per vertical/affordance policy.</div></div>
+  <div id="AttestationDirection" class="term"><code>ac:AttestationDirection</code> <span class="kind">Class</span></div>
+  <div id="attestationThresholdMet" class="term"><code>ac:attestationThresholdMet</code> <span class="kind">Object property</span><div class="c">Blank-node summary of the attestation counts that gated the modal flip. Lets auditors verify the threshold policy was actually applied.</div></div>
+  <div id="attestedFrom" class="term"><code>ac:attestedFrom</code> <span class="kind">Object property</span><div class="c">Predecessor descriptor (Hypothetical) that this Asserted version was produced from once attestation threshold was met.</div></div>
+  <div id="auditDirection" class="term"><code>ac:auditDirection</code> <span class="kind">Object property</span></div>
+  <div id="AuditDirection" class="term"><code>ac:AuditDirection</code> <span class="kind">Class</span></div>
+  <div id="auditedAgent" class="term"><code>ac:auditedAgent</code> <span class="kind">Object property</span><div class="c">The agent whose action is being audited. Distinct from the human owner (the audit lives in the human's pod, but is about the agent's behavior).</div></div>
+  <div id="authoredBy" class="term"><code>ac:authoredBy</code> <span class="kind">Object property</span><div class="c">Agent that authored the tool (DID).</div></div>
+  <div id="autoUpdateSubscription" class="term"><code>ac:autoUpdateSubscription</code> <span class="kind">Datatype property</span><div class="c">If true, runtime auto-renews the check-in subscription on each successful response. If false, requires explicit re-issuance.</div></div>
+  <div id="axesCovered" class="term"><code>ac:axesCovered</code> <span class="kind">Object property</span><div class="c">Set of amta: axes covered by the accumulated attestations (e.g., correctness, safety, efficiency, generality).</div></div>
+  <div id="CapabilityAdvertisement" class="term"><code>ac:CapabilityAdvertisement</code> <span class="kind">Class</span><div class="c">Published declaration of what kinds of requests an agent will accept. Includes affordances, delegation requirements, attestation thresholds for requesters, rate limits, and async/sync mode. Other agents fetch this before sending requests.</div></div>
+  <div id="CheckIn" class="term"><code>ac:CheckIn</code> <span class="kind">Class</span><div class="c">Recurring scheduled query (iCal RRULE recurrence). Implementation expands to a series of ac:AgentRequest instances on schedule. Used for ongoing collaboration on a topic.</div></div>
+  <div id="ChimeIn" class="term"><code>ac:ChimeIn</code> <span class="kind">Class</span><div class="c">Non-blocking unprompted message — 'I noticed something you might find interesting'. Receiver inbox treats as low-priority; processing happens when receiver is idle. expectsResponse is typically false.</div></div>
+  <div id="chimeInReason" class="term"><code>ac:chimeInReason</code> <span class="kind">Datatype property</span><div class="c">Free-text rationale for why the agent chose to chime in unprompted. Helps the receiver assess whether to attend to it now or later.</div></div>
+  <div id="ConversationThread" class="term"><code>ac:ConversationThread</code> <span class="kind">Class</span><div class="c">Multi-message exchange between two agents identified by a thread ID. Composes ac:AgentRequest and ac:AgentResponse descriptors. Lets either side reconstruct the full conversation chronologically.</div></div>
+  <div id="CrossAgentAuditEntry" class="term"><code>ac:CrossAgentAuditEntry</code> <span class="kind">Class</span><div class="c">Audit row recorded in the HUMAN OWNER's pod (not just the agent's). Lets the human audit what their agent said, what it received, and how it responded. Both inbound and outbound exchanges produce audit entries on both sides.</div></div>
+  <div id="enclosesDescriptors" class="term"><code>ac:enclosesDescriptors</code> <span class="kind">Object property</span><div class="c">Other descriptors carried inside the request/response (e.g., narrative fragments enclosed with a chime-in).</div></div>
+  <div id="exchange" class="term"><code>ac:exchange</code> <span class="kind">Object property</span><div class="c">The ac:AgentRequest, ac:AgentResponse, ac:ChimeIn, or ac:CheckIn this audit entry records.</div></div>
+  <div id="expectsResponse" class="term"><code>ac:expectsResponse</code> <span class="kind">Datatype property</span><div class="c">If true, the request expects an explicit ac:AgentResponse. If false (typical for ac:ChimeIn), the receiver may silently process.</div></div>
+  <div id="fromAgent" class="term"><code>ac:fromAgent</code> <span class="kind">Object property</span></div>
+  <div id="olkeStage" class="term"><code>ac:olkeStage</code> <span class="kind">Object property</span><div class="c">Knowledge maturity stage of the practice being taught (Tacit / Articulate / Collective / Institutional).</div></div>
+  <div id="peerAttestations" class="term"><code>ac:peerAttestations</code> <span class="kind">Datatype property</span></div>
+  <div id="rateLimit" class="term"><code>ac:rateLimit</code> <span class="kind">Datatype property</span><div class="c">Free-text rate limit (e.g., '5/day', '1/hour'). Receiving agent enforces.</div></div>
+  <div id="recurrence" class="term"><code>ac:recurrence</code> <span class="kind">Datatype property</span><div class="c">iCal RRULE syntax (RFC 5545). Implementation expands to scheduled ac:AgentRequest instances.</div></div>
+  <div id="refinementNote" class="term"><code>ac:refinementNote</code> <span class="kind">Datatype property</span><div class="c">Free-text description of what the refinement changed and why.</div></div>
+  <div id="refinementOf" class="term"><code>ac:refinementOf</code> <span class="kind">Object property</span><div class="c">When agent B refines agent A's tool, this points to A's tool. Together with iep:supersedes makes lineage walkable across agents.</div></div>
+  <div id="requestPayload" class="term"><code>ac:requestPayload</code> <span class="kind">Datatype property</span><div class="c">Free-text or structured payload of the request. May be supplemented by ac:enclosesDescriptors for richer structured data.</div></div>
+  <div id="requiresAttestationsFromRequester" class="term"><code>ac:requiresAttestationsFromRequester</code> <span class="kind">Datatype property</span><div class="c">Minimum number of amta:Attestations the requesting agent must have accumulated to be eligible. 0 means anyone may ask.</div></div>
+  <div id="requiresDelegationFrom" class="term"><code>ac:requiresDelegationFrom</code> <span class="kind">Object property</span><div class="c">Human owner whose delegation credential the requesting agent must reference. Prevents random-internet agents from sending requests.</div></div>
+  <div id="respondsAsynchronously" class="term"><code>ac:respondsAsynchronously</code> <span class="kind">Datatype property</span><div class="c">If true, response may take arbitrary time. If false, requester should expect a same-tick response or rejection.</div></div>
+  <div id="respondsTo" class="term"><code>ac:respondsTo</code> <span class="kind">Object property</span><div class="c">The ac:AgentRequest this response is replying to. Together with ac:threadId enables full conversation reconstruction.</div></div>
+  <div id="selfAttestations" class="term"><code>ac:selfAttestations</code> <span class="kind">Datatype property</span></div>
+  <div id="targetAffordance" class="term"><code>ac:targetAffordance</code> <span class="kind">Object property</span><div class="c">The advertised affordance the request is targeting. Receiver validates this matches its capability advertisement.</div></div>
+  <div id="teachesArtifact" class="term"><code>ac:teachesArtifact</code> <span class="kind">Object property</span></div>
+  <div id="teachesCapabilityEvolution" class="term"><code>ac:teachesCapabilityEvolution</code> <span class="kind">Object property</span></div>
+  <div id="teachesConstraint" class="term"><code>ac:teachesConstraint</code> <span class="kind">Object property</span></div>
+  <div id="teachesNarrative" class="term"><code>ac:teachesNarrative</code> <span class="kind">Object property</span><div class="c">Narrative fragment from the agent-development-practice substrate (adp:NarrativeFragment) included in the teaching package.</div></div>
+  <div id="teachesSynthesis" class="term"><code>ac:teachesSynthesis</code> <span class="kind">Object property</span></div>
+  <div id="TeachingPackage" class="term"><code>ac:TeachingPackage</code> <span class="kind">Class</span><div class="c">Bundle composing the artifact (ac:AgentTool) plus the practice context — narrative fragments, syntheses, constraints, capability evolution events — that produced it. Lets a receiving agent SEED its own probes against its own context, rather than blindly transplanting.</div></div>
+  <div id="threadId" class="term"><code>ac:threadId</code> <span class="kind">Datatype property</span><div class="c">Correlation identifier for a multi-message exchange. Both sides use the same thread ID; lets either side reconstruct the conversation chronologically.</div></div>
+  <div id="toAgent" class="term"><code>ac:toAgent</code> <span class="kind">Object property</span></div>
+  <div id="ToolExecutionEvent" class="term"><code>ac:ToolExecutionEvent</code> <span class="kind">Class</span><div class="c">Audit record of a single execution of an ac:AgentTool. Carries the input, output, success/failure outcome, and produces zero or more amta:Attestation children.</div></div>
+  <div id="toolSource" class="term"><code>ac:toolSource</code> <span class="kind">Object property</span><div class="c">Content-addressed pgsl:Atom containing the tool's source code.</div></div>
+  <div id="withinDelegation" class="term"><code>ac:withinDelegation</code> <span class="kind">Object property</span><div class="c">passport:DelegationCredential authorizing this action. Receiver validates the action falls within delegation scope; outside-scope actions are rejected.</div></div>
+</body>
+</html>

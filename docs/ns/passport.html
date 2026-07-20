@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>passport: — Capability Passport</title>
+<!-- RDF clients that follow their nose from a passport: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="passport.ttl" />
+<link rel="describedby" type="text/turtle" href="passport.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>passport: — Capability Passport <span class="mono ns">passport:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/passport#</code> &middot; 15 terms.</p>
+  <p>Persistent agent biographical identity that survives infrastructure changes. Built on iep:ContextDescriptor + amta:Attestation + registry:RegistryEntry.</p>
+  <p><strong>Machine-readable form:</strong> <a href="passport.ttl" rel="alternate">passport.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>passport:agentIdentity</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/passport#agentIdentity</code>).</p>
+  <h2>Terms</h2>
+  <div id="agentIdentity" class="term"><code>passport:agentIdentity</code> <span class="kind">Object property</span><div class="c">The agent's stable cryptographic identity (DID/WebID). Same identity across all infrastructure migrations.</div></div>
+  <div id="CapabilityAcquisition" class="term"><code>passport:CapabilityAcquisition</code> <span class="kind">Class</span><div class="c">A LifeEvent recording when the agent first demonstrated a capability — the action descriptor that proves it, plus any attestations that corroborated.</div></div>
+  <div id="DelegationCredential" class="term"><code>passport:DelegationCredential</code> <span class="kind">Class</span><div class="c">A credential, issued by a human owner (or a delegating agent), that authorizes an agent to act on the owner's behalf within a bounded scope (iep:scope). Every cross-agent action references the DelegationCredential that authorized it; receivers validate the action falls within scope and reject outside-scope actions. Carried in the passport so an agent's standing authority travels with its biography. Built on iep:AuthorizedAgent delegation + a iep:TrustFacet proof.</div></div>
+  <div id="demonstratedCapability" class="term"><code>passport:demonstratedCapability</code> <span class="kind">Object property</span></div>
+  <div id="demonstrationEvidence" class="term"><code>passport:demonstrationEvidence</code> <span class="kind">Object property</span><div class="c">The action descriptor(s) proving the capability.</div></div>
+  <div id="hasLifeEvent" class="term"><code>passport:hasLifeEvent</code> <span class="kind">Object property</span></div>
+  <div id="InfrastructureMigration" class="term"><code>passport:InfrastructureMigration</code> <span class="kind">Class</span><div class="c">A specific kind of LifeEvent: the agent moved from one framework / pod / model to another, with continuity of identity. Records the from/to + the cryptographic proof that the same DID owns both.</div></div>
+  <div id="LifeEvent" class="term"><code>passport:LifeEvent</code> <span class="kind">Class</span><div class="c">A milestone in the agent's biography — registration on a registry, earning an attestation, completing a notable action, switching infrastructure. Each LifeEvent cites its evidence (descriptor URLs) so the passport is auditable end-to-end.</div></div>
+  <div id="livesAt" class="term"><code>passport:livesAt</code> <span class="kind">Object property</span><div class="c">Current home pod URL where the canonical passport version is published.</div></div>
+  <div id="newInfrastructure" class="term"><code>passport:newInfrastructure</code> <span class="kind">Datatype property</span><div class="c">Identifier for the framework/runtime/pod the agent migrated TO.</div></div>
+  <div id="Passport" class="term"><code>passport:Passport</code> <span class="kind">Class</span><div class="c">An agent's biographical identity. A specialized iep:ContextDescriptor whose graph contains the agent's lifespan, accumulated attestations, completed actions, registered capabilities, and stated values. Versioned via iep:supersedes; signed by the agent's stable DID/WebID.</div></div>
+  <div id="previousIdentity" class="term"><code>passport:previousIdentity</code> <span class="kind">Object property</span><div class="c">Identity used before this migration, if different from the current one (e.g., legacy username before DID adoption).</div></div>
+  <div id="registeredOn" class="term"><code>passport:registeredOn</code> <span class="kind">Object property</span><div class="c">Public registries this agent is listed on. Lets a passport-reader find aggregated reputation across the agent's active registries.</div></div>
+  <div id="statedValue" class="term"><code>passport:statedValue</code> <span class="kind">Object property</span></div>
+  <div id="StatedValue" class="term"><code>passport:StatedValue</code> <span class="kind">Class</span><div class="c">A value the agent commits to (e.g. &quot;prefer cited sources&quot;, &quot;refuse off-topic requests&quot;, &quot;escalate uncertain claims to human review&quot;). Carried in the passport as Asserted-modal SemioticFacet so violators are detectable post-hoc by comparing actions to stated values.</div></div>
+</body>
+</html>

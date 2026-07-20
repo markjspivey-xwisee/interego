@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CTS — Compositional Tuple Store</title>
+<!-- RDF clients that follow their nose from a cts: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="cts.ttl" />
+<link rel="describedby" type="text/turtle" href="cts.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>CTS — Compositional Tuple Store <span class="mono ns">cts:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/cts#</code> &middot; 21 terms.</p>
+  <p>Usage-based linguistic substrate. Records utterances as tuples (positions × fillers × context); infers patterns as statistical regularities; lets interoperability emerge without a pre-specified schema. Underlies PGSL at the substrate layer and iep:ParadigmSet / iep:SyntagmaticPattern at the grammar layer.</p>
+  <p><strong>Machine-readable form:</strong> <a href="cts.ttl" rel="alternate">cts.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>cts:CharacterAtom</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/cts#CharacterAtom</code>).</p>
+  <h2>Terms</h2>
+  <div id="CharacterAtom" class="term"><code>cts:CharacterAtom</code> <span class="kind">Class</span><div class="c">An atomic glyph holon — a single character at the smallest granularity. Identity is content-addressed (urn:pgsl:atom:&lt;sha256-of-character&gt;). Two distinct occurrences of 'm' across all tuples share one CharacterAtom IRI.</div></div>
+  <div id="Context" class="term"><code>cts:Context</code> <span class="kind">Class</span><div class="c">The surrounding environment of a tuple — time, place, agents present, prior tuples, task being performed. Realized as a iep:ContextDescriptor that accompanies the tuple.</div></div>
+  <div id="Emergence" class="term"><code>cts:Emergence</code> <span class="kind">Class</span><div class="c">The phenomenon by which interoperability between agents arises without explicit schema agreement. Two agents using the same tuples converge on compatible patterns; the emergence is the quantitative observation that their patterns align over time. Constructed from sets of cts:Pattern via cross-agent comparison.</div></div>
+  <div id="Filler" class="term"><code>cts:Filler</code> <span class="kind">Class</span><div class="c">A value occupying a position in a tuple. Can be a pgsl:Atom, a iep:ContextDescriptor, a WebID, or any IRI-addressable entity.</div></div>
+  <div id="hasFiller" class="term"><code>cts:hasFiller</code> <span class="kind">Object property</span></div>
+  <div id="hasPosition" class="term"><code>cts:hasPosition</code> <span class="kind">Object property</span></div>
+  <div id="inducesPattern" class="term"><code>cts:inducesPattern</code> <span class="kind">Object property</span><div class="c">Relates a set of tuples to the pattern they collectively evidence. Inverse of pattern membership.</div></div>
+  <div id="length" class="term"><code>cts:length</code> <span class="kind">Datatype property</span><div class="c">Number of constituent atoms / characters in the occurrence. Together with cts:offset uniquely locates the inclusion morphism within the containing tuple.</div></div>
+  <div id="next" class="term"><code>cts:next</code> <span class="kind">Object property</span><div class="c">Hydra-style link relation pointing to the immediately-following position in the same tuple. Absent on the last position. Lets an agent walk a tuple's positions without numerical indexing — the same pattern as following a paginated collection.</div></div>
+  <div id="ngram" class="term"><code>cts:ngram</code> <span class="kind">Object property</span><div class="c">The canonical n-gram resource being instantiated by this occurrence. Multiple Occurrences across different containing tuples may share the same cts:ngram value — that is the substructure-sharing relation made explicit.</div></div>
+  <div id="NGram" class="term"><code>cts:NGram</code> <span class="kind">Class</span><div class="c">A canonical, deduplicated sequence of CharacterAtoms (or higher-level fillers). Identity is content-addressed: two tuples containing the same bigram literally share the NGram IRI. The vocabulary of NGrams is the generating set of the BPE-as-colimit construction.</div></div>
+  <div id="Occurrence" class="term"><code>cts:Occurrence</code> <span class="kind">Class</span><div class="c">A typed morphism recording that a specific NGram appears in a specific containing tuple at a specific offset. Conceptually a hyperedge (NGram, ContainingTuple, offset, length). Querying 'what tokens share substructure with X' is a SPARQL join through this class — substructure sharing is graph topology, not algorithm.</div></div>
+  <div id="offset" class="term"><code>cts:offset</code> <span class="kind">Datatype property</span><div class="c">Zero-based starting position of the n-gram within the containing tuple.</div></div>
+  <div id="ParadigmSet" class="term"><code>cts:ParadigmSet</code> <span class="kind">Class</span><div class="c">The distribution of fillers observed at a given position across all tuples. Used to infer the class of fillers valid at that position (i.e. the paradigm) — cf. Saussure's paradigmatic axis.</div></div>
+  <div id="Pattern" class="term"><code>cts:Pattern</code> <span class="kind">Class</span><div class="c">A statistical regularity across tuples — e.g. 'position 1 is almost always filled by a hela:Actor' or 'position 3 and position 5 correlate'. Learned from observed tuples, not declared.</div></div>
+  <div id="Position" class="term"><code>cts:Position</code> <span class="kind">Class</span><div class="c">A slot in a tuple where a filler may appear. Positions are ordered and typed by the paradigm set of fillers admissible there. A structural coordinate in a pgsl:Fragment.</div></div>
+  <div id="previous" class="term"><code>cts:previous</code> <span class="kind">Object property</span><div class="c">Inverse of cts:next; absent on the first position.</div></div>
+  <div id="Tuple" class="term"><code>cts:Tuple</code> <span class="kind">Class</span><div class="c">A single usage record: a sequence of positions, each filled by a specific filler, observed in a specific context. Realized as a pgsl:Fragment — the atomic unit of the CTS.</div></div>
+  <div id="usedIn" class="term"><code>cts:usedIn</code> <span class="kind">Object property</span></div>
+  <div id="within" class="term"><code>cts:within</code> <span class="kind">Object property</span><div class="c">The tuple this occurrence lives inside. Structurally: a parent in the holon hierarchy. The Janus-flip is observable here — the NGram is a whole over its CharacterAtoms AND a part within this containing tuple via the Occurrence.</div></div>
+  <div id="withinTuple" class="term"><code>cts:withinTuple</code> <span class="kind">Object property</span><div class="c">The tuple this position belongs to. Structurally: the parent in the holon hierarchy. Inverse of cts:hasPosition.</div></div>
+</body>
+</html>

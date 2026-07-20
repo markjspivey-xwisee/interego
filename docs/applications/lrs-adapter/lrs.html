@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>lrs: — LRS Adapter (vertical application)</title>
+<!-- RDF clients that follow their nose from a lrs: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="lrs.ttl" />
+<link rel="describedby" type="text/turtle" href="lrs.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>lrs: — LRS Adapter (vertical application) <span class="mono ns">lrs:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/applications/lrs-adapter/lrs#</code> &middot; 18 terms.</p>
+  <p>Vertical-scoped, non-normative vocabulary for lossy two-way translation between xAPI Statements and Interego Context Descriptors. NOT part of the Interego protocol.</p>
+  <p><strong>Machine-readable form:</strong> <a href="lrs.ttl" rel="alternate">lrs.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>lrs:authMethod</code> = <code>https://markjspivey-xwisee.github.io/interego/applications/lrs-adapter/lrs#authMethod</code>).</p>
+  <h2>Terms</h2>
+  <div id="authMethod" class="term"><code>lrs:authMethod</code> <span class="kind">Datatype property</span><div class="c">Authentication method used to call the LRS (basic / oauth2 / apikey / signed-statements).</div></div>
+  <div id="endpointUrl" class="term"><code>lrs:endpointUrl</code> <span class="kind">Datatype property</span><div class="c">Base URL of the LRS xAPI endpoint.</div></div>
+  <div id="ingestedDescriptor" class="term"><code>lrs:ingestedDescriptor</code> <span class="kind">Object property</span><div class="c">The iep:ContextDescriptor produced by ingesting an xAPI Statement.</div></div>
+  <div id="ingestedFromEndpoint" class="term"><code>lrs:ingestedFromEndpoint</code> <span class="kind">Object property</span><div class="c">The LRS endpoint a Statement was ingested from.</div></div>
+  <div id="lossNote" class="term"><code>lrs:lossNote</code> <span class="kind">Datatype property</span><div class="c">Free-text description of what information was dropped in translation. Multiple notes per projection / ingestion are normal.</div></div>
+  <div id="LRSEndpoint" class="term"><code>lrs:LRSEndpoint</code> <span class="kind">Class</span><div class="c">A target Learning Record Store. Records the URL, xAPI version, and authentication method.</div></div>
+  <div id="projectedDescriptor" class="term"><code>lrs:projectedDescriptor</code> <span class="kind">Object property</span><div class="c">The iep:ContextDescriptor that was projected to a Statement.</div></div>
+  <div id="projectedStatementId" class="term"><code>lrs:projectedStatementId</code> <span class="kind">Datatype property</span><div class="c">The xAPI Statement UUID assigned by the LRS (or generated locally if the LRS echoed it back).</div></div>
+  <div id="projectedToEndpoint" class="term"><code>lrs:projectedToEndpoint</code> <span class="kind">Object property</span><div class="c">The LRS endpoint the Statement was projected to.</div></div>
+  <div id="projectionLossy" class="term"><code>lrs:projectionLossy</code> <span class="kind">Datatype property</span><div class="c">Boolean — whether information was lost in translation. Defaults true; xAPI's Statement shape cannot represent modal status, supersedes chains, or multi-narrative composition.</div></div>
+  <div id="sourceStatementId" class="term"><code>lrs:sourceStatementId</code> <span class="kind">Datatype property</span><div class="c">The xAPI Statement UUID at the source LRS — preserved so the descriptor can be traced back.</div></div>
+  <div id="StatementIngestion" class="term"><code>lrs:StatementIngestion</code> <span class="kind">Class</span><div class="c">Audit record that a iep:ContextDescriptor was created from a particular xAPI Statement ingested from an LRS. Captures the source statement ID and any normalization applied.</div></div>
+  <div id="StatementProjection" class="term"><code>lrs:StatementProjection</code> <span class="kind">Class</span><div class="c">Audit record that a iep:ContextDescriptor was projected to a particular LRS as an xAPI Statement. Captures what was preserved and what was lost.</div></div>
+  <div id="xapiContext" class="term"><code>lrs:xapiContext</code> <span class="kind">Datatype property</span><div class="c">Original xAPI context block as JSON literal. Preserved on ingested descriptors; projection back uses it verbatim.</div></div>
+  <div id="xapiResult" class="term"><code>lrs:xapiResult</code> <span class="kind">Datatype property</span><div class="c">Original xAPI result block as JSON literal. Preserved on ingested descriptors; projection back uses it verbatim.</div></div>
+  <div id="xapiSkipReason" class="term"><code>lrs:xapiSkipReason</code> <span class="kind">Datatype property</span><div class="c">Reason a descriptor was NOT projected to xAPI (typically: modal status was Hypothetical or Counterfactual). Used for audit trails of what was withheld from the LRS.</div></div>
+  <div id="xapiVerb" class="term"><code>lrs:xapiVerb</code> <span class="kind">Datatype property</span><div class="c">Original xAPI verb IRI (e.g., http://adlnet.gov/expapi/verbs/completed). Preserved on ingested descriptors so round-trip projection reconstructs the verb faithfully.</div></div>
+  <div id="xapiVersion" class="term"><code>lrs:xapiVersion</code> <span class="kind">Datatype property</span><div class="c">xAPI specification version supported by the endpoint (e.g., &quot;1.0.3&quot;, &quot;2.0.0&quot;).</div></div>
+</body>
+</html>

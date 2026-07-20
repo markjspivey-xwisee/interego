@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EU AI Act mapping ontology</title>
+<!-- RDF clients that follow their nose from a eu-ai-act: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="eu-ai-act.ttl" />
+<link rel="describedby" type="text/turtle" href="eu-ai-act.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>EU AI Act mapping ontology <span class="mono ns">eu-ai-act:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act#</code> &middot; 18 terms.</p>
+  <p>L3 mapping of Interego context primitives to EU AI Act articles. v1 covers Articles 6, 9, 10, 12, 13, 14, 15, 50.</p>
+  <p><strong>Machine-readable form:</strong> <a href="eu-ai-act.ttl" rel="alternate">eu-ai-act.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>eu-ai-act:AccuracyAttestation</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act#AccuracyAttestation</code>).</p>
+  <h2>Terms</h2>
+  <div id="AccuracyAttestation" class="term"><code>eu-ai-act:AccuracyAttestation</code> <span class="kind">Class</span><div class="c">Attests measured accuracy/robustness/cybersecurity properties of an AI system per Article 15. Issuer is the conformity assessment body.</div></div>
+  <div id="appliesToSystem" class="term"><code>eu-ai-act:appliesToSystem</code> <span class="kind">Object property</span><div class="c">Links a regulatory annotation to the AI system descriptor it concerns.</div></div>
+  <div id="Article12" class="term"><code>eu-ai-act:Article12</code> <span class="kind">Individual</span><div class="c">Citable IRI for EU AI Act Article 12 (automatic, lifetime logging ensuring traceability of functioning). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:LoggedAction.</div></div>
+  <div id="Article15" class="term"><code>eu-ai-act:Article15</code> <span class="kind">Individual</span><div class="c">Citable IRI for EU AI Act Article 15 (appropriate accuracy, robustness and cybersecurity over the lifecycle). Used as a dct:conformsTo control target in compliance evidence; realized structurally by eu-ai-act:AccuracyAttestation.</div></div>
+  <div id="Article50Disclosure" class="term"><code>eu-ai-act:Article50Disclosure</code> <span class="kind">Class</span><div class="c">End-user-facing disclosure: this content was produced by an AI system, this image is synthetic, this chatbot is not a human, etc. Each customer-facing AI interaction descriptor SHOULD carry one.</div></div>
+  <div id="articleReference" class="term"><code>eu-ai-act:articleReference</code> <span class="kind">Datatype property</span><div class="c">Free-text article + paragraph reference, e.g. 'Art 14(4)(a)' for granular pinning.</div></div>
+  <div id="assessedAt" class="term"><code>eu-ai-act:assessedAt</code> <span class="kind">Datatype property</span></div>
+  <div id="ConformityAssessment" class="term"><code>eu-ai-act:ConformityAssessment</code> <span class="kind">Class</span><div class="c">The output of a Title III Chapter 5 conformity assessment procedure. Cites all underlying attestations (DataGovernance, Accuracy, RiskManagement) via prov:wasDerivedFrom. The composed certificate descriptor IS the assessment.</div></div>
+  <div id="DataGovernanceAttestation" class="term"><code>eu-ai-act:DataGovernanceAttestation</code> <span class="kind">Class</span><div class="c">Attests that training/validation/testing datasets meet Article 10 quality criteria (relevance, representativeness, freedom from errors, statistical properties). Issuer typically a data steward.</div></div>
+  <div id="hasHumanReviewer" class="term"><code>eu-ai-act:hasHumanReviewer</code> <span class="kind">Object property</span></div>
+  <div id="HighRiskSystem" class="term"><code>eu-ai-act:HighRiskSystem</code> <span class="kind">Individual</span><div class="c">Annex III categories: biometrics, critical infrastructure, education, employment, essential services, law enforcement, migration, justice + democratic processes.</div></div>
+  <div id="HumanOversightCheckpoint" class="term"><code>eu-ai-act:HumanOversightCheckpoint</code> <span class="kind">Class</span><div class="c">A descriptor recording that a human reviewed an AI action prior to consequential effect. Carries the reviewer's identity (AgentFacet), decision (SemioticFacet modal: Asserted=approved, Counterfactual=rejected), and timestamp. Required for high-risk system actions per Article 14.</div></div>
+  <div id="LimitedRiskSystem" class="term"><code>eu-ai-act:LimitedRiskSystem</code> <span class="kind">Individual</span></div>
+  <div id="LoggedAction" class="term"><code>eu-ai-act:LoggedAction</code> <span class="kind">Class</span><div class="c">An action descriptor that satisfies Article 12 record-keeping: includes attributed agent, timestamp, input + output references, model identifier, and a tamper-evident anchor (iep:supersedes chain + ZK or blockchain anchor).</div></div>
+  <div id="MinimalRiskSystem" class="term"><code>eu-ai-act:MinimalRiskSystem</code> <span class="kind">Individual</span></div>
+  <div id="RiskClassification" class="term"><code>eu-ai-act:RiskClassification</code> <span class="kind">Class</span><div class="c">Classifies an AI system's risk tier per Article 6: prohibited / high-risk / limited-risk / minimal-risk. Attaches as a semiotic facet on a iep:ContextDescriptor that describes a system or action. Drives which other Articles' obligations apply.</div></div>
+  <div id="RiskManagementRecord" class="term"><code>eu-ai-act:RiskManagementRecord</code> <span class="kind">Class</span><div class="c">Records the establishment and operation of a continuous, iterative risk management system. Each record cites prior versions via iep:supersedes; the chain IS the audit trail.</div></div>
+  <div id="TransparencyDisclosure" class="term"><code>eu-ai-act:TransparencyDisclosure</code> <span class="kind">Class</span><div class="c">Records that the deployer was provided with the instructions, capabilities, limitations, and accuracy expectations of the AI system at deployment time.</div></div>
+</body>
+</html>

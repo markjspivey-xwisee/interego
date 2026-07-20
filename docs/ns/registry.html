@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>registry: — Public Agent Attestation Registry</title>
+<!-- RDF clients that follow their nose from a registry: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="registry.ttl" />
+<link rel="describedby" type="text/turtle" href="registry.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>registry: — Public Agent Attestation Registry <span class="mono ns">registry:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/registry#</code> &middot; 15 terms.</p>
+  <p>L2 pattern for federated public agent registries. Multiple registries co-exist and cross-cite. Reputation aggregates from amta:Attestation across all registries an agent is listed in.</p>
+  <p><strong>Machine-readable form:</strong> <a href="registry.ttl" rel="alternate">registry.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>registry:agentIdentity</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/registry#agentIdentity</code>).</p>
+  <h2>Terms</h2>
+  <div id="agentIdentity" class="term"><code>registry:agentIdentity</code> <span class="kind">Object property</span><div class="c">The agent's canonical identifier (DID or WebID).</div></div>
+  <div id="agentPod" class="term"><code>registry:agentPod</code> <span class="kind">Object property</span><div class="c">The agent's home pod URL — where its descriptors live.</div></div>
+  <div id="aggregatedScore" class="term"><code>registry:aggregatedScore</code> <span class="kind">Datatype property</span><div class="c">The aggregated numeric reputation score [0.0, 1.0].</div></div>
+  <div id="CapabilityDeclaration" class="term"><code>registry:CapabilityDeclaration</code> <span class="kind">Class</span><div class="c">An agent's claim that it offers a specific capability (typically a iep:Affordance class). Declared by the agent itself; trust comes from attestations, not from the declaration.</div></div>
+  <div id="citesRegistry" class="term"><code>registry:citesRegistry</code> <span class="kind">Object property</span><div class="c">This registry recognizes another registry as authoritative for some agents/capabilities.</div></div>
+  <div id="contributingAttestations" class="term"><code>registry:contributingAttestations</code> <span class="kind">Object property</span><div class="c">The amta:Attestation descriptors that contributed to this snapshot.</div></div>
+  <div id="CrossRegistryCitation" class="term"><code>registry:CrossRegistryCitation</code> <span class="kind">Class</span><div class="c">A registry entry that references an agent's listing on another registry. Lets reputation flow across registries without requiring a single source of truth.</div></div>
+  <div id="currentReputation" class="term"><code>registry:currentReputation</code> <span class="kind">Object property</span><div class="c">Current aggregated reputation snapshot for this entry.</div></div>
+  <div id="declaresCapability" class="term"><code>registry:declaresCapability</code> <span class="kind">Object property</span><div class="c">A capability the agent claims to offer.</div></div>
+  <div id="hasEntry" class="term"><code>registry:hasEntry</code> <span class="kind">Object property</span><div class="c">Lists an agent's entry in this registry.</div></div>
+  <div id="Registry" class="term"><code>registry:Registry</code> <span class="kind">Class</span><div class="c">A public, federated index of agents. Constructed as a iep:ContextDescriptor whose graph holds RegistryEntry instances. Registries are themselves discoverable via iep:FederationFacet so other registries can cite them.</div></div>
+  <div id="registryDescription" class="term"><code>registry:registryDescription</code> <span class="kind">Datatype property</span><div class="c">Human-readable purpose of this registry (e.g. 'Code-quality reviewers', 'Research peer reviewers').</div></div>
+  <div id="RegistryEntry" class="term"><code>registry:RegistryEntry</code> <span class="kind">Class</span><div class="c">One agent's listing within a registry. Carries the agent's identity (DID/WebID), pod URL, declared capability set, and current aggregated reputation snapshot.</div></div>
+  <div id="registryPolicy" class="term"><code>registry:registryPolicy</code> <span class="kind">Object property</span><div class="c">Policies governing who can register, what capabilities are valid, how reputation is aggregated. Concretized as iep:AccessControlPolicy descriptors.</div></div>
+  <div id="ReputationSnapshot" class="term"><code>registry:ReputationSnapshot</code> <span class="kind">Class</span><div class="c">Aggregated trust attestations for an agent at a moment in time. Computed across all amta:Attestation descriptors describing the agent, optionally weighted by issuer reputation, recency, and registry-specific policies. Snapshot is verifiable: every contributing attestation is cited via prov:wasDerivedFrom.</div></div>
+</body>
+</html>

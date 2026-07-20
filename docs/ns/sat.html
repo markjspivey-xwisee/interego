@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SAT — Semiotic Agent Topos</title>
+<!-- RDF clients that follow their nose from a sat: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="sat.ttl" />
+<link rel="describedby" type="text/turtle" href="sat.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>SAT — Semiotic Agent Topos <span class="mono ns">sat:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/sat#</code> &middot; 16 terms.</p>
+  <p>Topos-theoretic model of agents as participants in a semiotic field. The Semiotic Field Functor Σ maps situations to possibility-spaces of meaning; every iep:SemioticFacet is a projection of Σ onto a specific context graph. Complements Peircean triadic semiotics with sheaf structure and endofunctor semiosis.</p>
+  <p><strong>Machine-readable form:</strong> <a href="sat.ttl" rel="alternate">sat.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>sat:appliesTo</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/sat#appliesTo</code>).</p>
+  <h2>Terms</h2>
+  <div id="appliesTo" class="term"><code>sat:appliesTo</code> <span class="kind">Object property</span></div>
+  <div id="dampedBy" class="term"><code>sat:dampedBy</code> <span class="kind">Object property</span><div class="c">Identifies an intervention type that, if applied, would suppress the disposition's actualization without claiming to address its underlying conditions. The honest framing: damping buys time, not resolution.</div></div>
+  <div id="Disposition" class="term"><code>sat:Disposition</code> <span class="kind">Class</span><div class="c">A typed tendency — what a system is currently disposed to do under its present constraints. Distinct from a prediction: a disposition is a structured affordance for next-state action that may or may not actualize. Subject to sat:weakSignal (what surfaces it early), sat:shiftedBy (what alters it), and sat:dampedBy (what suppresses it).</div></div>
+  <div id="dispositionalConfidence" class="term"><code>sat:dispositionalConfidence</code> <span class="kind">Datatype property</span><div class="c">Confidence in [0.0, 1.0] that the system is currently disposed as claimed. NOT a probability of actualization; a confidence in the disposition's existence. Pair with iep:modalStatus = Hypothetical for honest semiotics: dispositions are assertions about latent tendency, not about future state.</div></div>
+  <div id="EmergentMeaning" class="term"><code>sat:EmergentMeaning</code> <span class="kind">Class</span><div class="c">Meaning arising from multi-agent semiosis; sheafification of interpretant assignments. Constructed from a set of sat:Interpretant over a sat:SemioticField via categorical colimit.</div></div>
+  <div id="hasDisposition" class="term"><code>sat:hasDisposition</code> <span class="kind">Object property</span><div class="c">Attaches a typed disposition to the situation a descriptor describes. A descriptor may carry multiple sat:hasDisposition values — they are not mutually exclusive (a system can be disposed to multiple courses simultaneously, with different probabilities or under different sub-conditions).</div></div>
+  <div id="Interpretant" class="term"><code>sat:Interpretant</code> <span class="kind">Class</span><div class="c">Peircean interpretant — the agent's instantiated meaning-assignment. Every iep:SemioticFacet IS an interpretant (the facet carries the modal status + confidence that realize the interpretant for a specific sign).</div></div>
+  <div id="Object" class="term"><code>sat:Object</code> <span class="kind">Class</span><div class="c">The thing the sign is about — external referent. Primitive (external to the category of iep: descriptors); in a context graph this is typically the named-graph IRI (iep:describes target).</div></div>
+  <div id="possibleInterpretants" class="term"><code>sat:possibleInterpretants</code> <span class="kind">Object property</span></div>
+  <div id="Semiosis" class="term"><code>sat:Semiosis</code> <span class="kind">Class</span><div class="c">The process of interpretation itself — endofunctor iterating triadic sign relations until a stable interpretant emerges. Constructed by iterating sat:SemioticFieldFunctor over sat:Interpretant.</div></div>
+  <div id="SemioticField" class="term"><code>sat:SemioticField</code> <span class="kind">Class</span><div class="c">The output of Σ(situation) — the space of meaning-making possibilities available in a given context.</div></div>
+  <div id="SemioticFieldFunctor" class="term"><code>sat:SemioticFieldFunctor</code> <span class="kind">Class</span><div class="c">The functor Σ : Situations → SemioticFields that defines the semiotic topos. Projection of Σ onto a specific graph yields a iep:SemioticFacet.</div></div>
+  <div id="shiftedBy" class="term"><code>sat:shiftedBy</code> <span class="kind">Object property</span><div class="c">Identifies an intervention type that, if applied, would alter the disposition. Distinct from a 'fix': the disposition isn't broken; it can be redirected. Used for amplify/dampen routing in Cynefin-Complex domains.</div></div>
+  <div id="Sign" class="term"><code>sat:Sign</code> <span class="kind">Class</span><div class="c">Peircean representamen — the signal that gets interpreted. Every iep:ContextDescriptor IS a sign (graph = representamen, object = referent, facets = interpretant).</div></div>
+  <div id="Situation" class="term"><code>sat:Situation</code> <span class="kind">Class</span><div class="c">A context in which meaning-making occurs. Inputs to Σ; each situation has a Semiotic Field of possible interpretations, actions, and meaning assignments.</div></div>
+  <div id="weakSignal" class="term"><code>sat:weakSignal</code> <span class="kind">Object property</span><div class="c">Links a disposition to a descriptor that, if observed, would surface the disposition early — before it actualizes. Snowden's 'dispositional shift' detection mechanism. The signal need not be predictive on its own — its semiotic work is to make a latent tendency legible.</div></div>
+</body>
+</html>

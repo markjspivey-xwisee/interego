@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>code: — Source code domain ontology</title>
+<!-- RDF clients that follow their nose from a code: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="code.ttl" />
+<link rel="describedby" type="text/turtle" href="code.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>code: — Source code domain ontology <span class="mono ns">code:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/code#</code> &middot; 25 terms.</p>
+  <p>L3 domain ontology for source-code artifacts. Every class is grounded in L1 (iep:/pgsl:) or a W3C vocabulary. Demonstrates that a non-trivial software domain can be expressed compositionally on top of the Interego protocol without new primitives.</p>
+  <p><strong>Machine-readable form:</strong> <a href="code.ttl" rel="alternate">code.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>code:authoredBy</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/code#authoredBy</code>).</p>
+  <h2>Terms</h2>
+  <div id="authoredBy" class="term"><code>code:authoredBy</code> <span class="kind">Object property</span><div class="c">The agent who authored a commit. Specialises prov:wasAttributedTo for the code domain.</div></div>
+  <div id="Branch" class="term"><code>code:Branch</code> <span class="kind">Class</span><div class="c">A named line of commits. A branch IS a paradigmatic selection over the space of possible commit sequences for a repository — the other branches are the paradigm alternatives.</div></div>
+  <div id="branchName" class="term"><code>code:branchName</code> <span class="kind">Datatype property</span></div>
+  <div id="buildOutcome" class="term"><code>code:buildOutcome</code> <span class="kind">Datatype property</span><div class="c">The terminal state of a build: success | failure | cancelled.</div></div>
+  <div id="BuildResult" class="term"><code>code:BuildResult</code> <span class="kind">Class</span><div class="c">Outcome of a build (pass/fail, artifact produced, logs). An attestation: who vouches for this outcome (trust facet) + when the build activity ran (provenance facet).</div></div>
+  <div id="Commit" class="term"><code>code:Commit</code> <span class="kind">Class</span><div class="c">A single commit — one granular unit in a commit sequence. Modeled as pgsl:Fragment (granular unit in a sequence lattice) since commit chains are naturally syntagmatic; parent/child relations are pgsl:pullback-compatible.</div></div>
+  <div id="commitMessage" class="term"><code>code:commitMessage</code> <span class="kind">Datatype property</span></div>
+  <div id="commitSha" class="term"><code>code:commitSha</code> <span class="kind">Datatype property</span></div>
+  <div id="Defect" class="term"><code>code:Defect</code> <span class="kind">Class</span><div class="c">A reported bug or flaw. Constructed from a semiotic facet whose interpretant is 'this artifact is buggy' with severity + epistemic confidence. Modal state tracks whether the defect is Asserted (confirmed), Hypothetical (suspected), or Counterfactual (refuted).</div></div>
+  <div id="linesAdded" class="term"><code>code:linesAdded</code> <span class="kind">Datatype property</span></div>
+  <div id="linesRemoved" class="term"><code>code:linesRemoved</code> <span class="kind">Datatype property</span></div>
+  <div id="onRepository" class="term"><code>code:onRepository</code> <span class="kind">Object property</span><div class="c">The repository a PR / commit / branch belongs to.</div></div>
+  <div id="parentCommit" class="term"><code>code:parentCommit</code> <span class="kind">Object property</span><div class="c">The immediate ancestor of a commit in the syntagmatic chain. A commit may have multiple parents (merge commits).</div></div>
+  <div id="PullRequest" class="term"><code>code:PullRequest</code> <span class="kind">Class</span><div class="c">A change proposal. Extends iep:ContextDescriptor directly because a PR is inherently a typed context that carries temporal (opened/merged), provenance (author), agent (reviewers), semiotic (open/closed/merged modal), trust (required approvals), and federation (which repo + pod) facets.</div></div>
+  <div id="reportedIn" class="term"><code>code:reportedIn</code> <span class="kind">Object property</span><div class="c">The commit or pull request in which a defect was identified.</div></div>
+  <div id="Repository" class="term"><code>code:Repository</code> <span class="kind">Class</span><div class="c">A source-code repository. Extends dcat:Dataset with the protocol's federation model (each repo surfaces as a typed, federated dataset with commits as its primary records).</div></div>
+  <div id="Review" class="term"><code>code:Review</code> <span class="kind">Class</span><div class="c">A review of a pull request. Constructed from a semiotic facet (the verdict + modal state + confidence) and a provenance facet (who reviewed, when). Composes with other reviews via the meet (most-conservative) on the modal lattice.</div></div>
+  <div id="reviewedBy" class="term"><code>code:reviewedBy</code> <span class="kind">Object property</span><div class="c">Associates a pull request with a code review. Multiple reviews per PR compose via the modal lattice.</div></div>
+  <div id="ReviewVerdict" class="term"><code>code:ReviewVerdict</code> <span class="kind">Class</span><div class="c">The modal-typed conclusion of a code review: Approved (Asserted the PR is mergeable), ChangesRequested (Counterfactual — in current form NOT mergeable), or Commented (Hypothetical — observations without gate).</div></div>
+  <div id="severity" class="term"><code>code:severity</code> <span class="kind">Object property</span><div class="c">The severity level of a reported defect.</div></div>
+  <div id="Severity" class="term"><code>code:Severity</code> <span class="kind">Class</span><div class="c">A defect severity ranking (Critical &gt; High &gt; Medium &gt; Low). Primitive enumeration — the values themselves are the unit of meaning, no further decomposition needed at this layer.</div></div>
+  <div id="targetsBranch" class="term"><code>code:targetsBranch</code> <span class="kind">Object property</span><div class="c">The branch a pull request proposes to merge into.</div></div>
+  <div id="testedArtifact" class="term"><code>code:testedArtifact</code> <span class="kind">Object property</span><div class="c">The commit or PR that a test run executed against.</div></div>
+  <div id="TestRun" class="term"><code>code:TestRun</code> <span class="kind">Class</span><div class="c">An execution of a test suite against a commit or PR. A prov:Activity whose outputs include build results + test outcomes. Provenance facet on descriptors carries start/end times + invoking agent.</div></div>
+  <div id="verdict" class="term"><code>code:verdict</code> <span class="kind">Object property</span><div class="c">The modal-typed conclusion of a review.</div></div>
+</body>
+</html>
