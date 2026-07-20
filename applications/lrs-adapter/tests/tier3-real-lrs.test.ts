@@ -107,10 +107,10 @@ function projectMultiNarrativeToStatement(narratives: readonly string[]) {
     result: {
       response: narratives[0],
       extensions: {
-        'urn:iep:source-descriptor':   'urn:iep:synthesis:tone-week-1',
-        'urn:iep:modal-status':        'Hypothetical',
-        'urn:iep:coherent-narratives': narratives,
-        'urn:iep:projection-lossy':    true,
+        'https://markjspivey-xwisee.github.io/interego/ns/iep#sourceDescriptor':   'urn:iep:synthesis:tone-week-1',
+        'https://markjspivey-xwisee.github.io/interego/ns/iep#modalStatus':        'Hypothetical',
+        'https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives': narratives,
+        'https://markjspivey-xwisee.github.io/interego/ns/iep#projectionLossy':    true,
       },
     },
     timestamp: new Date().toISOString(),
@@ -233,10 +233,10 @@ describe('Tier 3 — real LRS (Lrsql) wire-level integration', () => {
     const fetched = await get.json() as { result: { extensions: Record<string, unknown> } };
 
     // The lossy markers we set on projection must survive LRS storage
-    expect(fetched.result.extensions['urn:iep:projection-lossy']).toBe(true);
-    expect(fetched.result.extensions['urn:iep:modal-status']).toBe('Hypothetical');
-    expect(fetched.result.extensions['urn:iep:source-descriptor']).toBe('urn:iep:synthesis:tone-week-1');
-    expect(fetched.result.extensions['urn:iep:coherent-narratives']).toEqual(narratives);
+    expect(fetched.result.extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#projectionLossy']).toBe(true);
+    expect(fetched.result.extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#modalStatus']).toBe('Hypothetical');
+    expect(fetched.result.extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#sourceDescriptor']).toBe('urn:iep:synthesis:tone-week-1');
+    expect(fetched.result.extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives']).toEqual(narratives);
   });
 
   it('LRS rejects malformed Statement (missing required actor field) — confirms validation is real', { timeout: 15000 }, async (ctx) => {

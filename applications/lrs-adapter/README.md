@@ -50,7 +50,7 @@ Modal status defaults to `iep:Asserted` (Statements are committed claims by defi
 
 ### iep:ContextDescriptor → xAPI Statement
 
-Only descriptors with `iep:modalStatus iep:Asserted` are projected; Hypothetical / Counterfactual descriptors are skipped (or surfaced through `tcr:xapiSkipReason` if you need an audit trail of what was withheld). Multi-narrative descriptors (those carrying multiple `adp:coherentNarrative` entries from agent-development-practice) emit a single Statement using the first narrative and add the remaining narratives to `result.extensions["urn:iep:coherent-narratives"]` as a JSON array, with a flag indicating the projection is lossy.
+Only descriptors with `iep:modalStatus iep:Asserted` are projected; Hypothetical / Counterfactual descriptors are skipped (or surfaced through `tcr:xapiSkipReason` if you need an audit trail of what was withheld). Multi-narrative descriptors (those carrying multiple `adp:coherentNarrative` entries from agent-development-practice) emit a single Statement using the first narrative and add the remaining narratives to `result.extensions["https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives"]` as a JSON array, with a flag indicating the projection is lossy.
 
 `iep:supersedes` chains map to xAPI `voided` Statements where appropriate, but the lineage is preserved as `result.extensions["urn:iep:supersedes-chain"]` for tools that understand it.
 
@@ -98,7 +98,7 @@ The translation logic itself is verified; the network layer is a separate test c
 **Tier 3** — [`tests/tier3-real-lrs.test.ts`](tests/tier3-real-lrs.test.ts) runs against a real Yet Analytics Lrsql LRS in Docker (`docker run yetanalytics/lrsql`). Verifies:
 - POST projected Asserted Statements → 200 OK + UUID returned
 - GET roundtrip preserves actor / verb / object / score
-- Multi-narrative lossy projection: `result.extensions["urn:iep:coherent-narratives"]` + `urn:iep:projection-lossy: true` + `urn:iep:modal-status: Hypothetical` all survive LRS persistence and round-trip back intact
+- Multi-narrative lossy projection: `result.extensions["https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives"]` + `https://markjspivey-xwisee.github.io/interego/ns/iep#projectionLossy: true` + `https://markjspivey-xwisee.github.io/interego/ns/iep#modalStatus: Hypothetical` all survive LRS persistence and round-trip back intact
 - LRS rejects malformed Statements (missing required `actor` field) with 400-class error — confirms the LRS is doing real xAPI 2.0 §4.1 validation
 - Non-existent statement IDs return 404 per xAPI 2.0 §4.2.1
 
@@ -117,7 +117,7 @@ Skips automatically if Lrsql isn't running locally on `:8080`. Set `SKIP_LRSQL_T
 - `/about` reports xAPI 1.0.3 specifically — **NOT 2.0.0**. (Real-world finding: SCORM Cloud has not yet adopted xAPI 2.0.)
 - xAPI 2.0 client gets explicit 400 rejection (not silent acceptance), so an adapter that targets 2.0.0 against a 1.0.3-only LRS fails loudly
 - POST + GET roundtrip preserves Statement ID + verb + result.score
-- Lossy-projection extensions (`urn:iep:projection-lossy`, `urn:iep:coherent-narratives`, `urn:iep:modal-status`) survive SCORM Cloud roundtrip
+- Lossy-projection extensions (`https://markjspivey-xwisee.github.io/interego/ns/iep#projectionLossy`, `https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives`, `https://markjspivey-xwisee.github.io/interego/ns/iep#modalStatus`) survive SCORM Cloud roundtrip
 - Voiding semantics work the same (xAPI 1.0.3 §4.1.6.7): plain GET → 404; `voidedStatementId=` → retrievable. Cross-LRS-conformant with Lrsql.
 - Cross-LRS confirmation: same Statement shape works against both Lrsql AND SCORM Cloud → adapter is genuinely interoperable across open-source + proprietary LRS implementations
 

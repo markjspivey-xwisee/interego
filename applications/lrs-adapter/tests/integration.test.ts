@@ -102,7 +102,7 @@ function projectDescriptor(
     lossNotes.push('Source descriptor was Hypothetical; projected per caller request; xAPI consumers may treat as committed unless they read extensions');
   }
   if (options.coherentNarratives && options.coherentNarratives.length > 1) {
-    lossNotes.push(`Source had ${options.coherentNarratives.length} coherent narratives; first emitted in result.response, remainder in result.extensions[urn:iep:coherent-narratives]`);
+    lossNotes.push(`Source had ${options.coherentNarratives.length} coherent narratives; first emitted in result.response, remainder in result.extensions[https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives]`);
   }
 
   const statement: XapiStatement = {

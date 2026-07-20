@@ -285,8 +285,8 @@ describe('Tier 8 — lrs-adapter production end-to-end', () => {
       const stored = await lrs.getStatement(result.statementId!);
       expect(stored).not.toBeNull();
       const extensions = (stored as Record<string, { extensions: Record<string, unknown> }>).result.extensions;
-      expect(extensions['urn:iep:coherent-narratives']).toEqual(narratives);
-      expect(extensions['urn:iep:projection-lossy']).toBe(true);
+      expect(extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives']).toEqual(narratives);
+      expect(extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#projectionLossy']).toBe(true);
     } finally {
       await cleanup();
     }
