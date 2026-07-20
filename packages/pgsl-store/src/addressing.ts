@@ -30,7 +30,6 @@
  */
 
 import { createHash, createHmac } from 'node:crypto';
-import { pgslNodeKind, pgslNodeHash } from '@interego/core';
 
 export type AtomValue = string | number | boolean;
 export type Sensitivity = 'public' | 'private';
@@ -114,17 +113,23 @@ export function kindByte(kind: NodeKind): number {
 /**
  * Parse a PGSL node id into a NodeAddr. DUAL-READ: accepts BOTH the legacy
  * `urn:pgsl:<kind>:<40hex>` and the current dereferenceable URL form
- * `https://…/ns/pgsl/<kind>/<40hex>`. `pgslNodeKind`/`pgslNodeHash` extract the
- * same <kind>/<hash> from either scheme, and the FDB codec strips the scheme, so
- * both forms yield an identical 21-byte address.
+ * `https://…/ns/pgsl/<kind>/<40hex>`. The FDB codec strips the scheme, so both
+ * forms yield an identical 21-byte address. Parsed inline (no @interego/core
+ * import) to keep this a pure `node:crypto`-only module — it is loaded by the
+ * CSS-over-PGSL harness in an isolated module context.
  */
 export function nodeAddrFromUrn(urn: string): NodeAddr {
-  const parsedKind = pgslNodeKind(urn);
-  const hex = pgslNodeHash(urn);
-  if (parsedKind === null || hex === null) throw new Error(`not a pgsl node urn: ${urn}`);
-  if (parsedKind !== 'atom' && parsedKind !== 'fragment') throw new Error(`unsupported pgsl node kind: ${urn}`);
-  const kind: NodeKind = parsedKind;
-  if (!/^[0-9a-f]{40}$/.test(hex)) throw new Error(`malformed pgsl urn hash: ${urn}`);
+  let kind: NodeKind | null = null;
+  let hex: string | null = null;
+  if (urn.startsWith(ATOM_PREFIX)) { kind = 'atom'; hex = urn.slice(ATOM_PREFIX.length); }
+  else if (urn.startsWith(FRAGMENT_PREFIX)) { kind = 'fragment'; hex = urn.slice(FRAGMENT_PREFIX.length); }
+  else {
+    const m = /\/ns\/pgsl\/(atom|fragment)\/([0-9a-fA-F]{40})\b/.exec(urn);
+    if (m) { kind = m[1]!.toLowerCase() as NodeKind; hex = m[2]!; }
+  }
+  if (kind === null || hex === null) throw new Error(`not a pgsl node id: ${urn}`);
+  hex = hex.toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(hex)) throw new Error(`malformed pgsl node hash: ${urn}`);
   const hash = new Uint8Array(HASH_BYTES);
   for (let i = 0; i < HASH_BYTES; i++) hash[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   return { kind, hash };
