@@ -126,6 +126,7 @@ import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslN
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
 import { competencyIri, competencyIdOf } from '../src/competency-identity.js';
+import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import {
   buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
   type AgentTrajectory, type TrajectoryStepInput,
@@ -3123,6 +3124,34 @@ const app = createVerticalBridge({
         }, null, 2));
       }
     });
+
+    // ── /ns/foxxi/activity/<category>[/<instance>] ───────────────────
+    // The naming authority for xAPI Activity object.ids the instrumentation
+    // emits (xapi-instrumentation.ts). An activity id was a bare urn that
+    // resolved nothing; now it is a URL under the bridge that GETs its xAPI
+    // Activity Definition, per the xAPI recommendation that an Activity id
+    // dereference to its Definition. Only the KNOWN categories resolve (a
+    // fixed map, no open surface); an unknown category is an honest 404.
+    const activityHandler = (req: import('express').Request, res: import('express').Response): void => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const category = String(req.params.category ?? '');
+      const instance = req.params.instance !== undefined ? String(req.params.instance) : undefined;
+      const def = ACTIVITY_DEFINITIONS[category];
+      if (!def) { res.status(404).json({ error: `no such activity category: ${category}` }); return; }
+      const id = activityIri(category, instance);
+      // The xAPI Activity object (Statement §4.1.4.1) — GET an Activity id → its Definition.
+      res.type('application/json').send(JSON.stringify({
+        objectType: 'Activity',
+        id,
+        definition: {
+          type: def.type,
+          name: { 'en-US': def.name },
+          description: { 'en-US': def.description },
+        },
+      }, null, 2));
+    };
+    a.get('/ns/foxxi/activity/:category', activityHandler);
+    a.get('/ns/foxxi/activity/:category/:instance', activityHandler);
 
     // ── IEEE-LER + ADL-TLA emergent composable semantic layer ────────
     // Two scoped ontologies the bridge serves as dereferenceable linked

@@ -62,4 +62,4 @@ jobs:
       # else resolvePublicNode becomes a cross-tenant existence oracle. Network-free
       # (fake pod + test seed), so it runs here rather than in the pod-touching suite.
       - name: Guard the public-memory commons isolation invariant + action-identity dual-read
-        run: npx vitest run applications/foxxi-content-intelligence/tests/public-memory-commons.test.ts tests/action-identity.test.ts tests/competency-identity.test.ts
+        run: npx vitest run applications/foxxi-content-intelligence/tests/public-memory-commons.test.ts tests/action-identity.test.ts tests/competency-identity.test.ts tests/activity-identity.test.ts

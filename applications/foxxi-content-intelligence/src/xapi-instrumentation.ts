@@ -21,6 +21,7 @@
 import { storeStatementInternal } from './xapi-lrs.js';
 import { FOXXI_NS } from './xapi-profile.js';
 import { courseIri } from './course-identity.js';
+import { activityIri } from './activity-identity.js';
 import { randomUUID } from 'node:crypto';
 
 const ADL = 'http://adlnet.gov/expapi';
@@ -57,7 +58,7 @@ interface VerbBinding {
 const TOOL_VERBS: Record<string, VerbBinding> = {
   'foxxi.discover_assigned_courses': {
     verbId: `${ADL}/verbs/experienced`, display: 'experienced',
-    objectId: () => 'urn:foxxi:catalog:assignments', objectType: `${ADL}/activities/course`, objectName: () => 'Assigned courses',
+    objectId: () => activityIri('assignments-catalog'), objectType: `${ADL}/activities/course`, objectName: () => 'Assigned courses',
   },
   'foxxi.consume_lesson': {
     verbId: `${ADL}/verbs/launched`, display: 'launched',
@@ -66,33 +67,33 @@ const TOOL_VERBS: Record<string, VerbBinding> = {
   },
   'foxxi.ask_course_question': {
     verbId: `${FOXXI_NS}verbs/asked`, display: 'asked',
-    objectId: (a) => `urn:foxxi:question:${(a.args.course_iri as string) ?? 'unknown'}`,
+    objectId: (a) => activityIri('question', (a.args.course_iri as string) ?? 'unknown'),
     objectType: `${FOXXI_NS}activities/concept-graph-node`,
   },
   'foxxi.ask_course_question_agentic': {
     verbId: `${FOXXI_NS}verbs/asked`, display: 'asked',
-    objectId: (a) => `urn:foxxi:question:agentic:${(a.args.course_id as string) ?? 'unknown'}`,
+    objectId: (a) => activityIri('question-agentic', (a.args.course_id as string) ?? 'unknown'),
     objectType: `${FOXXI_NS}activities/concept-graph-node`,
   },
   'foxxi.retrieve_course_context': {
     verbId: `${FOXXI_NS}verbs/retrieved`, display: 'retrieved',
-    objectId: (a) => `urn:foxxi:retrieval:${(a.args.course_id as string) ?? 'unknown'}`,
+    objectId: (a) => activityIri('retrieval', (a.args.course_id as string) ?? 'unknown'),
     objectType: `${FOXXI_NS}activities/concept-graph-node`,
   },
   'foxxi.issue_completion_credential': {
     verbId: `${FOXXI_NS}verbs/credentialed`, display: 'credentialed',
-    objectId: (a) => `urn:foxxi:credential:${(a.args.course_id as string) ?? 'unknown'}`,
+    objectId: (a) => activityIri('credential', (a.args.course_id as string) ?? 'unknown'),
     objectType: `${FOXXI_NS}activities/credential`,
     objectName: (a) => `Course completion credential for ${(a.args.course_title as string) ?? 'course'}`,
   },
   'foxxi.export_clr': {
     verbId: `${FOXXI_NS}verbs/wallet-exported`, display: 'wallet-exported',
-    objectId: (a) => `urn:foxxi:wallet:clr:${(a.args.learner_did as string) ?? 'unknown'}`,
+    objectId: (a) => activityIri('wallet-clr', (a.args.learner_did as string) ?? 'unknown'),
     objectType: `${FOXXI_NS}activities/credential`,
   },
   'foxxi.declare_framework_alignment': {
     verbId: `${FOXXI_NS}verbs/framework-aligned`, display: 'framework-aligned',
-    objectId: (a) => `urn:foxxi:framework-alignment:${(a.args.own_item_iri as string) ?? 'unknown'}`,
+    objectId: (a) => activityIri('framework-alignment', (a.args.own_item_iri as string) ?? 'unknown'),
     objectType: `${FOXXI_NS}activities/framework`,
   },
   'foxxi.emit_cmi5_session': {
