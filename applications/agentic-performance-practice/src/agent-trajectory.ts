@@ -47,7 +47,7 @@ import {
 // else here depends only on @interego/* substrate.
 import { PERFORMED_VERB, PERF_EXT } from '../../foxxi-content-intelligence/src/learner-record.js';
 
-const FOXXI_VOCAB = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FOXXI_VOCAB = 'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#';
 
 /** The poly-granular zoom axis (the PGSL principle). */
 export type TrajectoryGranularity = 'task' | 'subtask' | 'tool-call';

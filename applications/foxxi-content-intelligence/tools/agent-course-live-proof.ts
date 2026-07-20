@@ -8,7 +8,7 @@
  */
 import { ethers } from 'ethers';
 
-const BRIDGE = process.env.FOXXI_BRIDGE_URL ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const BRIDGE = process.env.FOXXI_BRIDGE_URL ?? 'https://foxxi-bridge.interego.xwisee.com';
 const enc = new TextEncoder();
 const sha = (s: string): string => ethers.sha256(enc.encode(s)).slice(2);
 let pass = 0, fail = 0;

@@ -14,7 +14,7 @@
 import { ethers } from 'ethers';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
-  ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://foxxi-bridge.interego.xwisee.com';
 const STD_EXT_IRI = 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#StandardsExtension';
 const enc = new TextEncoder();
 const sha256Hex = (s: string): string => ethers.sha256(enc.encode(s)).slice(2);

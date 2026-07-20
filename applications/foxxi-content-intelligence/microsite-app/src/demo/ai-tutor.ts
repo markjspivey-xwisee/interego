@@ -27,10 +27,10 @@ import { deriveUserWallet, mintSessionToken } from '../session-token.js';
 
 const SUBSTRATE_BRIDGE =
   (import.meta.env.VITE_INTEREGO_BRIDGE_URL as string | undefined) ??
-  'https://interego-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  'https://bridge.interego.xwisee.com';
 const SUBSTRATE_MICROSITE =
   (import.meta.env.VITE_INTEREGO_MICROSITE_URL as string | undefined) ??
-  'https://interego-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  'https://microsite.interego.xwisee.com';
 const NS = `${FOXXI_BRIDGE}/ns/ai-elearning#`;
 const MODEL = 'claude-opus-4-8';
 

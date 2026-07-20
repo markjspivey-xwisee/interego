@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
-const BRIDGE='https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const BRIDGE='https://foxxi-bridge.interego.xwisee.com';
 const SEED='foxxi-demo-acme-training-2026-05-17-v1';
-const ADMIN_WEB='https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/admin/profile/card#me';
+const ADMIN_WEB='https://acme-id.interego.xwisee.com/users/admin/profile/card#me';
 const enc=new TextEncoder();
 const w=new ethers.Wallet(ethers.hexlify(ethers.getBytes(ethers.sha256(enc.encode(`${SEED}:u-admin`)))));
 const now=new Date();

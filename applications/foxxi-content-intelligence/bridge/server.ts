@@ -127,6 +127,7 @@ import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
 import { competencyIri, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
+import { FOXXI_NS } from '../src/foxxi-vocab.js';
 import {
   buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
   type AgentTrajectory, type TrajectoryStepInput,
@@ -595,7 +596,7 @@ const OWL_ONTOLOGY_IRI = 'http://www.w3.org/2002/07/owl#Ontology';
  *  resolves at `${NS_POD_ROOT}/<owner>/<slug>` (relay-origin) with #terms in-doc;
  *  the bridge's own /ns/pod/* 302-redirects there. */
 const RELAY_NS_BASE = `${(process.env.INTEREGO_RELAY_URL
-  ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/+$/, '')}/ns`;
+  ?? 'https://relay.interego.xwisee.com').replace(/\/+$/, '')}/ns`;
 const NS_POD_ROOT = RELAY_NS_BASE;
 
 /** The css-gate origin (the only public-resolvable pod host) — a userId slug
@@ -1476,7 +1477,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
           // task_name — the skill the caller explicitly named).
           type: (typeof args.activity_type === 'string' && args.activity_type.trim())
             ? args.activity_type.trim()
-            : 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#ProductionTask',
+            : `${FOXXI_NS}ProductionTask`,
         },
       },
       result: {
@@ -1503,7 +1504,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const perfLabel = actorForPod(perfPod, MESH_ACTOR_LABELS);
     const perfActivityType = (typeof args.activity_type === 'string' && args.activity_type.trim())
       ? args.activity_type.trim()
-      : 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#ProductionTask';
+      : `${FOXXI_NS}ProductionTask`;
     const statementId = storeStatementInternal(statement, lensTenantFor(perfLabel));
     const withId = { ...statement, id: statementId };
     // DURABLY persist to the performer's OWN pod as a foxxi:RecordedPerformance
@@ -3656,7 +3657,7 @@ app.post('/agent/issue-credential', async (req, res) => {
     const credentialedStatementId = credentialIri ? emitAgentActivity({
       actorDid: callerDid, verbIri: CREDENTIALED_VERB, verbDisplay: 'credentialed',
       objectId: credentialIri, objectName: `${competencyName} → ${recipientDid}`,
-      objectType: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#activities/credential',
+      objectType: `${FOXXI_NS}activities/credential`,
       result: { completion: true, success: true },
     }) : null;
     // Foundation-first (additive): compose the issuance into the issuer's shared lattice.
@@ -3782,7 +3783,7 @@ app.post('/agent/verify-extension', async (req, res) => {
         const verifierPod = resolveSubjectPodUrl(auth.callerDid);
         const vh = await composeIntoSharedLattice({
           podUrl: verifierPod, agentDid: auth.callerDid, label: actorForPod(verifierPod, MESH_ACTOR_LABELS),
-          terms: [auth.callerDid, 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#verbs/verified', subjectDid, iri ?? competencyIri((name || 'extension').toLowerCase().replace(/[^a-z0-9]+/g, '-'))],
+          terms: [auth.callerDid, `${FOXXI_NS}verbs/verified`, subjectDid, iri ?? competencyIri((name || 'extension').toLowerCase().replace(/[^a-z0-9]+/g, '-'))],
           content: { type: 'foxxi:Verification', verifier: auth.callerDid, subject: subjectDid, checks: { independentlyGraded, gradedScore, performanceRecorded, selfAttestedPerformance, shapeConformant }, evidence, ...(iri ? { iri, conformsTo } : {}) },
           contentType: 'foxxi:Verification', projections: ['rdf', 'vc', 'activity'],
         });
@@ -4869,7 +4870,7 @@ app.get('/compliance/xapi/run', async (_req, res) => {
   try {
     const ranAt = new Date().toISOString();
     const baseUrl = process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${process.env.PORT ?? 6080}`;
-    const webId = process.env.FOXXI_TEST_WEBID ?? 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/jliu/profile/card#me';
+    const webId = process.env.FOXXI_TEST_WEBID ?? 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
     const userId = process.env.FOXXI_TEST_USERID ?? 'u-joshua';
     const token = await mintSessionToken({ webId, userId, ttlMs: 10 * 60 * 1000 });
     res.json({ ok: true, report: await runXapiConformance({ baseUrl, token, webId, userId, ranAt }) });
@@ -4906,7 +4907,7 @@ app.post('/agent/record-performance', async (req, res) => {
       : `urn:foxxi:task:${taskName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)}`;
     const activityType = (typeof p.activity_type === 'string' && p.activity_type.trim())
       ? p.activity_type.trim()
-      : 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#ProductionTask';
+      : `${FOXXI_NS}ProductionTask`;
     const quality = typeof p.quality === 'number' ? p.quality : undefined;
     const statement: Record<string, unknown> = {
       id: randomUUID(),

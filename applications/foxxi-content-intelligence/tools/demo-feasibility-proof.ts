@@ -16,7 +16,7 @@
 import { ethers } from 'ethers';
 import { writeFileSync } from 'node:fs';
 
-const BRIDGE = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const BRIDGE = 'https://foxxi-bridge.interego.xwisee.com';
 const enc = new TextEncoder();
 const sha256Hex = (s: string): string => ethers.sha256(enc.encode(s)).slice(2);
 
