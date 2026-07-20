@@ -48,6 +48,7 @@ import type {
   IRI,
 } from '@interego/core';
 import { tenantIdOf, type TenantId } from './tenant-context.js';
+import { courseIdOf } from './course-identity.js';
 import { _publishedCourses, _publishedJobAids } from './content-delivery.js';
 import { listStoredStatements } from './xapi-lrs.js';
 import { flattenCourse } from './content-package.js';
@@ -605,8 +606,8 @@ function isLearnerStatement(stmt: Record<string, unknown>, learner: string): boo
 function engagementEnrollments(courses: FoxxiAgenticCourse[], activity: ContextActivity[]): ContextEnrollment[] {
   return courses.map(c => {
     const lessonIds = new Set(c.slides.map(s => s.id));
-    const touched = activity.filter(a => a.objectId === c.courseId || lessonIds.has(a.objectId));
-    const courseSatisfied = activity.some(a => a.verb === 'satisfied' && a.objectId === c.courseId);
+    const touched = activity.filter(a => courseIdOf(a.objectId) === c.courseId || lessonIds.has(a.objectId));
+    const courseSatisfied = activity.some(a => a.verb === 'satisfied' && courseIdOf(a.objectId) === c.courseId);
     const allLessonsDone = lessonIds.size > 0 && [...lessonIds].every(lid =>
       activity.some(a => a.objectId === lid && (a.verb === 'completed' || a.verb === 'passed')));
     const status: ContextEnrollment['status'] =

@@ -14,6 +14,7 @@
  * and the catalog turns a bag of endpoints into a learnable capability surface.
  */
 import type { Express, Request, Response } from 'express';
+import { sameAction } from '@interego/core';
 
 export interface NextAffordanceHint {
   /** iep:action IRI of the suggested next affordance. */
@@ -88,7 +89,8 @@ export function attachGuidanceServing(app: Express, mountPath: string, entries: 
   });
   app.get(`${mount}/:tool`, (req: Request, res: Response) => {
     cors(res);
-    const e = entries.find(x => x.toolName === req.params.tool || x.action === req.params.tool);
+    const tool = String(req.params.tool);
+    const e = entries.find(x => x.toolName === tool || sameAction(x.action, tool));
     res.type('application/ld+json').json(e
       ? { '@type': 'PerformanceSupport', affordance: e.action, tool: e.toolName, guidance: e.guidance }
       : { '@type': 'PerformanceSupport', tool: req.params.tool, note: 'No guidance registered for this tool on this surface.', catalog: `${mount}` });

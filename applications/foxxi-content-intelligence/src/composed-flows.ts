@@ -38,6 +38,7 @@ import {
 } from '../../_shared/vc-jwt/index.js';
 import { createHash } from 'node:crypto';
 import { buildPassedSessionTrace, type Cmi5Statement } from './cmi5.js';
+import { courseIri } from './course-identity.js';
 import { CREDENTIAL_TYPES } from './credentials.js';
 
 // ── Demo #4: competency-gated launch ─────────────────────────
@@ -152,7 +153,7 @@ export async function launchAuWithPrereqCheck(args: {
     session: {
       registration: args.registration,
       auActivityId: args.auActivityId,
-      courseActivityId: `urn:foxxi:course:${args.courseId}`,
+      courseActivityId: courseIri(args.courseId),
     },
     scoreScaled: 1.0,
     masteryScore: 0.7,

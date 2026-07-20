@@ -27,7 +27,7 @@
 import type { IRI } from '@interego/core';
 import type { PGSLInstance, Node, ContainmentAnnotation } from './types.js';
 import { resolve, computeContainmentAnnotations } from './lattice.js';
-import { PGSL_ID_AUTHORITY, toCanonicalNodeId } from '@interego/core';
+import { PGSL_ID_AUTHORITY, toCanonicalNodeId, pgslNodeHash } from '@interego/core';
 
 export { PGSL_ID_AUTHORITY };
 
@@ -146,7 +146,7 @@ export function describeNode(pgsl: PGSLInstance, uri: IRI, opts: DescribeNodeOpt
 
   return {
     uri, canonical: pgslCanonicalUrl(String(uri)), href: hrefFor(uri), resolved: resolve(pgsl, uri),
-    kind: node.kind, level: node.level, hash: String(uri).split(':').pop() ?? String(uri),
+    kind: node.kind, level: node.level, hash: pgslNodeHash(String(uri)) ?? (String(uri).split(':').pop() ?? String(uri)),
     ...(node.kind === 'Atom' ? { value: node.value } : {}),
     ...(node.kind === 'Fragment' ? { height: node.height } : {}),
     provenance: node.provenance,

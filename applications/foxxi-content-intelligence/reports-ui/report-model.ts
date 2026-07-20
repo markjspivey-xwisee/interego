@@ -7,6 +7,8 @@
  * normalized shapes the views render.
  */
 
+import { courseIdOf } from '../src/course-identity.js';
+
 export interface Counted { id: string; label: string; count: number }
 
 export interface LrsAnalytics {
@@ -91,9 +93,10 @@ export function lmsFromStatements(statements: StatementLike[]): LmsCompletions {
     if (!LMS_VERBS.has(verb)) continue;
     const id = String(s.object?.id ?? '');
     if (!id) continue;
+    const key = courseIdOf(id) ?? id;
     const title = s.object?.definition?.name?.en ?? tail(id);
-    let c = byCourse.get(id);
-    if (!c) { c = { course: id, title, launched: 0, completed: 0, passed: 0, failed: 0, passRate: null, avgScore: null, _scoreSum: 0, _scoreN: 0 }; byCourse.set(id, c); }
+    let c = byCourse.get(key);
+    if (!c) { c = { course: key, title, launched: 0, completed: 0, passed: 0, failed: 0, passRate: null, avgScore: null, _scoreSum: 0, _scoreN: 0 }; byCourse.set(key, c); }
     if (verb === 'launched' || verb === 'initialized') c.launched++;
     else if (verb === 'completed') { c.completed++; totalCompleted++; }
     else if (verb === 'passed') { c.passed++; totalPassed++; }
