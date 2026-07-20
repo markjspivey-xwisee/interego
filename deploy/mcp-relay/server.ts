@@ -154,6 +154,7 @@ import {
   HYPERMEDIA_MARKDOWN_MEDIA_TYPE,
   HMD_PROFILE_IRI,
   HMD_PROFILE_LINK_HEADER,
+  sameAction,
   type ShaclResult,
 } from '@interego/core';
 import {
@@ -5630,7 +5631,7 @@ async function resolveGraphAffordanceForInvoke(
   const gcontent = gobj && typeof gobj['content'] === 'string' ? (gobj['content'] as string) : '';
   if (!gcontent) return null; // non-recipient / no decrypted content → nothing to resolve
   let aff: ReturnType<typeof extractAffordancesFromTurtle>[number] | undefined;
-  try { aff = extractAffordancesFromTurtle(gcontent, descriptorUrl).find((a) => a.action === actionIri); }
+  try { aff = extractAffordancesFromTurtle(gcontent, descriptorUrl).find((a) => sameAction(a.action, actionIri)); }
   catch { return null; }
   if (!aff || !aff.target || !isFollowableTarget(aff.target)) return null;
   return {
@@ -10256,6 +10257,28 @@ app.get('/ns/pgsl/:kind/:hash', (req, res) => {
     return;
   }
   res.redirect(302, `${PGSL_NODE_RESOLVER}/${kind}/${encodeURIComponent(hash)}`);
+});
+
+// The naming authority for iep:action identifiers. An action's canonical id is
+// https://relay.interego.xwisee.com/ns/iep/action/<vertical>/<verb>; it 302-redirects to
+// the vertical's affordance manifest, where that action is defined (matchable by iep:action).
+// This is what makes an action id a dereferenceable URL — a term, not a word. Fixed
+// vertical→host map (env-overridable), so there is no open redirect.
+const IEP_ACTION_VERTICALS: Record<string, string> = (() => {
+  const base: Record<string, string> = {
+    foxxi: 'https://foxxi-bridge.interego.xwisee.com',
+  };
+  try { Object.assign(base, JSON.parse(process.env.IEP_ACTION_VERTICALS ?? '{}')); } catch { /* keep defaults */ }
+  return base;
+})();
+app.get('/ns/iep/action/:vertical/:verb', (req, res) => {
+  // CORS (ACAO:*) via the /ns/* public linked-data carve-out.
+  const vertical = String(req.params.vertical);
+  const verb = String(req.params.verb);
+  const host = IEP_ACTION_VERTICALS[vertical];
+  // Validate before redirecting — fixed host map + a conservative verb charset (no open redirect).
+  if (!host || !/^[a-z0-9][a-z0-9-]*$/i.test(verb)) { res.status(404).json({ error: 'no such action' }); return; }
+  res.redirect(302, `${host}/affordances`);
 });
 
 app.options('/ns/:owner/:slug', (_req, res) => { res.status(204).end(); });

@@ -133,6 +133,7 @@ import { openEncryptedEnvelope } from '../crypto/encryption.js';
 import { CG, IEH } from '../rdf/namespaces.js';
 
 import { extractAffordancesFromTurtle } from './affordance-extraction.js';
+import { sameAction } from './action-identity.js';
 
 import type {
   Affordance,
@@ -1134,13 +1135,14 @@ async function actOnLatticeNode(
     body: JSON.stringify(body),
     affordance,
   });
-  if (affordance.action === 'urn:iep:action:kernel:dereference') {
+  // Dual-read: a descriptor may present the kernel verb as a dereferenceable URL now.
+  if (sameAction(affordance.action, 'urn:iep:action:kernel:dereference')) {
     return ok(dereferenceLatticeNode(target));
   }
-  if (affordance.action === 'urn:iep:action:kernel:decompose') {
+  if (sameAction(affordance.action, 'urn:iep:action:kernel:decompose')) {
     return ok(decompose(target));
   }
-  if (affordance.action === 'urn:iep:action:kernel:promote') {
+  if (sameAction(affordance.action, 'urn:iep:action:kernel:promote')) {
     const items = payload && typeof payload === 'object' && Array.isArray((payload as { items?: unknown }).items)
       ? (payload as { items: readonly (LatticeValue | IRI)[] }).items
       : null;

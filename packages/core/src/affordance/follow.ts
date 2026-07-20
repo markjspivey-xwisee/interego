@@ -50,6 +50,7 @@ import {
   readStringValue,
 } from '../rdf/turtle-parser.js';
 import { CG, IEH, CGH_LEGACY, HYDRA, DCAT } from '../rdf/namespaces.js';
+import { sameAction, actionUrl, actionUrn } from '../kernel/action-identity.js';
 
 // ── Error types ──────────────────────────────────────────────
 
@@ -224,7 +225,9 @@ export async function followAffordance(
     const action = readIriValue(c, CG_ACTION);
     if (action) {
       available.push(action);
-      if (action === actionIri) {
+      // Dual-read: a descriptor may carry the action as a dereferenceable URL while the
+      // caller selected by the legacy urn (or vice versa). sameAction treats them as equal.
+      if (sameAction(action, actionIri)) {
         match = c;
         break;
       }
@@ -239,14 +242,18 @@ export async function followAffordance(
   // the affordance's full property list — up to the next top-level
   // `.` (Turtle triple terminator) after the anchor.
   if (!match) {
-    const sliced = extractAffordanceSlice(descriptorBody, actionIri);
-    if (sliced) {
+    // Try the caller's anchor, then the alternate scheme form (URL ↔ urn), so a urn-
+    // selecting caller can still slice a URL-form descriptor and vice versa.
+    const anchors = [actionIri, actionUrl(actionIri), actionUrn(actionIri)].filter((v, i, a) => a.indexOf(v) === i);
+    for (const anchor of anchors) {
+      const sliced = extractAffordanceSlice(descriptorBody, anchor);
+      if (!sliced) continue;
       try {
         const subDoc = parseTrig(sliced);
         for (const typeIri of AFFORDANCE_TYPE_IRIS) {
           for (const s of findSubjectsOfType(subDoc, typeIri)) {
             const action = readIriValue(s, CG_ACTION);
-            if (action === actionIri) {
+            if (action && sameAction(action, actionIri)) {
               match = s;
               if (!available.includes(action)) available.push(action);
               break;
@@ -255,8 +262,9 @@ export async function followAffordance(
           if (match) break;
         }
       } catch {
-        // Slice also malformed — fall through to the not-found error.
+        // Slice malformed — try the next anchor / fall through to the not-found error.
       }
+      if (match) break;
     }
   }
   if (!match) {

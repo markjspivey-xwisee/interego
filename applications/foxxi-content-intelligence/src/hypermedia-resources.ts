@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { affordancesFor, type Affordance } from '../../_shared/affordance-mcp/index.js';
+import { actionKey } from '@interego/core';
 import { deriveUserWallet } from './auth.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 
@@ -251,7 +252,7 @@ function buildLookup(): {
 
 function bridgeAffordanceToLink(a: Affordance, baseUrl: string): Record<string, unknown> {
   return {
-    rel: a.action.split(':').pop(),
+    rel: actionKey(a.action).split('/').pop(),   // the short verb, from either urn or URL form
     href: a.targetTemplate.replace('{base}', baseUrl),
     method: a.method,
     title: a.title,
