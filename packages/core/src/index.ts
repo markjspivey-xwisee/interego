@@ -723,6 +723,15 @@ export {
   pgslNodeHash,
   toCanonicalNodeId,
 } from './lattice/index.js';
+// Action identity — a dereferenceable URL scheme for iep:action IRIs, with dual-read.
+export {
+  IEP_ACTION_AUTHORITY,
+  isActionIri,
+  actionKey,
+  actionUrl,
+  actionUrn,
+  sameAction,
+} from './kernel/action-identity.js';
 export type {
   LatticeAdapter,
   LatticeValue,

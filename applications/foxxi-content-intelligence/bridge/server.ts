@@ -122,7 +122,7 @@ import { skillBundleToDescriptor, descriptorGraphToSkillMd } from '@interego/ski
 import { mintSessionToken } from '../src/auth.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
-import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash } from '@interego/core';
+import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
 import {
@@ -5464,7 +5464,7 @@ function publicCourseView(c: AgentScormCourse, base: string): Record<string, unk
     href: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}`,
     manifest: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}?format=manifest`,
     hmd: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}?format=markdown`,
-    launch: { player: scormPlayerLink(c), affordance: 'urn:iep:action:foxxi:scorm-launch-signed', method: 'POST', target: `${base}/agent/scorm/launch` },
+    launch: { player: scormPlayerLink(c), affordance: actionUrl('urn:iep:action:foxxi:scorm-launch-signed'), method: 'POST', target: `${base}/agent/scorm/launch` },
   };
 }
 /** The course as HyperMarkdown — rung-1 prose per SCO, rung-3 typed links +
@@ -5506,7 +5506,7 @@ ${scos}
 
 :::control control-launch
 type: ["hmd:Control", "hydra:Operation"]
-rel: "urn:iep:action:foxxi:scorm-launch-signed"
+rel: "${actionUrl('urn:iep:action:foxxi:scorm-launch-signed')}"
 method: "POST"
 whenToUse: "Start a new attempt as yourself. sign_request -> act; the SN runtime delivers the first SCO, then POST /agent/scorm/submit { session_id, answers? } until done."
 :::
@@ -5625,7 +5625,7 @@ app.post('/agent/publish-memory', async (req, res) => {
 });
 
 interface MemoryContent { kind?: string; title?: string; body?: string; author?: string; memoryIri?: string }
-const MEMORY_APPLIED_REL = 'urn:iep:action:foxxi:record-performance-signed';
+const MEMORY_APPLIED_REL = actionUrl('urn:iep:action:foxxi:record-performance-signed');
 /** The atom's short content hash (the relay authority path segment), or null. */
 function atomHash(atomUri: string | null): string | null { return atomUri ? String(atomUri).split('/').pop() ?? null : null; }
 /** A memory's JSON description — id + dereferenceable atom + its HMD and node links.

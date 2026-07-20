@@ -20,6 +20,7 @@
 import type {
   IRI,
 } from '@interego/core';
+import { actionUrl } from '@interego/core';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -379,10 +380,14 @@ export function affordanceToMcpToolSchema(affordance: Affordance): McpToolSchema
  */
 export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string): string {
   const target = affordance.targetTemplate.replace('{base}', deploymentUrl);
+  // The action's canonical identity is a dereferenceable URL now. Emit the URL form as the
+  // affordance subject + iep:action; the affordance-follow resolver dual-reads (sameAction),
+  // so a caller selecting by the legacy urn still matches — no Turtle alias needed.
+  const actionIri = actionUrl(affordance.action);
 
-  const inputClassIri = `${affordance.action}-input`;
+  const propBase = actionIri;
   const inputProps = affordance.inputs.map((input, i) => {
-    const propIri = `<${affordance.action}-prop-${input.name}>`;
+    const propIri = `<${propBase}-prop-${input.name}>`;
     return `        [
             a hydra:SupportedProperty ;
             hydra:property ${propIri} ;
@@ -391,8 +396,8 @@ export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string
         ]${i < affordance.inputs.length - 1 ? '' : ''}`;
   }).join(' ,\n');
 
-  return `<${affordance.action}> a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
-    iep:action <${affordance.action}> ;
+  return `<${actionIri}> a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
+    iep:action <${actionIri}> ;
     hydra:method "${affordance.method}" ;
     hydra:title "${escapeLit(affordance.title)}" ;
     rdfs:comment "${escapeLit(affordance.description)}" ;
@@ -425,7 +430,7 @@ export function affordancesManifestTurtle(
   const manifestBlock = `<${manifestIri}> a hydra:Collection ;
     rdfs:label "${escapeLit(options?.verticalLabel ?? 'Vertical capability manifest')}" ;
     ${options?.rdfsComment ? `rdfs:comment "${escapeLit(options.rdfsComment)}" ;` : ''}
-${affordances.map(a => `    iep:affordance <${a.action}>`).join(' ;\n')} .`;
+${affordances.map(a => `    iep:affordance <${actionUrl(a.action)}>`).join(' ;\n')} .`;
 
   const blocks = affordances.map(a => affordanceToTurtle(a, deploymentUrl)).join('\n\n');
 
