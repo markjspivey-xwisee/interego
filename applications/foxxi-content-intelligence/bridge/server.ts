@@ -124,6 +124,7 @@ import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConf
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
+import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
 import {
   buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
   type AgentTrajectory, type TrajectoryStepInput,
@@ -1939,7 +1940,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         sessionId: args.registration as string,
         publisherId: tenantProfileDid,
         auActivityId: args.au_activity_id as string,
-        courseActivityId: `urn:foxxi:course:${args.course_id as string}`,
+        courseActivityId: courseIri(args.course_id as string),
       },
       scoreScaled: (args.score_scaled as number) ?? 1.0,
       masteryScore: (args.mastery_score as number) ?? 0.7,
@@ -4336,8 +4337,8 @@ app.post('/agent/course/analyze', async (req, res) => {
     // 2) Build the course concept/slide graph ONCE; patch the IRI once we know the id.
     const built0 = manifestToAgenticCourse({ manifestXml, fileList, fileText, courseIri: 'urn:foxxi:course:pending', authoritativeSource: 'urn:foxxi:course:pending' });
     const realLabel = courseLabelFor(built0.structure.courseId);
-    const courseIri = `urn:foxxi:course:${realLabel}`;
-    const course = { ...built0.course, courseIri, authoritativeSource: courseIri };
+    const courseIriUrl = courseIri(realLabel);
+    const course = { ...built0.course, courseIri: courseIriUrl, authoritativeSource: courseIriUrl };
 
     // 3) Compose the course KG into its OWN per-course pod segment (matching the
     //    <origin>/<label>/ convention the interrogate handler rehydrates from, so the
@@ -4389,8 +4390,8 @@ app.post('/agent/course/analyze-authored', async (req, res) => {
     }
 
     const realLabel = courseLabelFor(courseId);
-    const courseIri = `urn:foxxi:course:${realLabel}`;
-    const built = agentScormToAgenticCourse(course, { courseIri, authoritativeSource: courseIri });
+    const courseIriUrl = courseIri(realLabel);
+    const built = agentScormToAgenticCourse(course, { courseIri: courseIriUrl, authoritativeSource: courseIriUrl });
     const authorRaw = String(course.authoredBy || authorDid || '');
     // did:ethr addresses are case-insensitive; normalize to the lowercase convention.
     const author = /^did:ethr:0x[0-9a-fA-F]{40}$/.test(authorRaw) ? authorRaw.toLowerCase() : (authorRaw || 'a Foxxi agent');
@@ -4645,7 +4646,7 @@ app.post('/agent/course/propose-successor', async (req, res) => {
       const label = courseLabelFor(typeof req.body?.label === 'string' && req.body.label ? req.body.label : `successor-${course.courseId ?? 'course'}`);
       const coursePodUrl = `${new URL(tenantPodUrl).origin}/${label}/`;
       const terms = [
-        `urn:foxxi:course:${course.courseId ?? 'course'}`,
+        courseIri(course.courseId ?? 'course'),
         ...(supersedesUri ? [supersedesUri] : []),      // share the original holon's term → links them in the lattice
         ...perConcept.map(p => `urn:foxxi:concept:${p.concept.id}`),
       ];
@@ -4993,7 +4994,7 @@ app.post('/agent/record-course-completion', async (req, res) => {
     const subjectPod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const label = actorForPod(subjectPod, MESH_ACTOR_LABELS);
     const registration = (typeof p.registration === 'string' && p.registration) ? p.registration : randomUUID();
-    const courseActivityId = `urn:foxxi:course:${courseId}`;
+    const courseActivityId = courseIri(courseId);
     const trace = buildPassedSessionTrace({
       actor: { name: callerDid, account: { homePage: String(authoritativeSource), name: callerDid } },
       session: { registration, sessionId: registration, publisherId: String(tenantProfileDid), auActivityId: courseActivityId, courseActivityId },
@@ -5265,7 +5266,7 @@ function emitAgentActivity(args: {
 
 function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: boolean, score: number): string[] {
   const ADL = 'http://adlnet.gov/expapi/verbs/';
-  const courseObj = { objectType: 'Activity', id: `urn:foxxi:course:${course.courseId}`, definition: { name: { en: course.title }, type: 'http://adlnet.gov/expapi/activities/course' } };
+  const courseObj = { objectType: 'Activity', id: courseIri(course.courseId), definition: { name: { en: course.title }, type: 'http://adlnet.gov/expapi/activities/course' } };
   const base = (verb: string, name: string, result: Record<string, unknown>): Record<string, unknown> => ({
     id: randomUUID(), version: '2.0.0',
     actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: play.learnerDid } },
@@ -5329,7 +5330,10 @@ app.get('/agent/scorm/affordances', (_req, res) => {
 // Same env var the hypermedia layer's scormPlayerBaseUrl reads — one player, one
 // knob. Defaults to the live player.
 const SCORM_PLAYER_BASE = (process.env.FOXXI_SCORM_PLAYER_BASE ?? 'https://foxxi-scorm-player.interego.xwisee.com').replace(/\/$/, '');
-const scormCourseIri = (id: string): string => `urn:foxxi:course:${id}`;
+// The course's canonical identity is a dereferenceable URL now (see course-identity.ts);
+// this local alias keeps the call sites terse. Dual-read (courseIdOf/sameCourse) accepts
+// the legacy urn:foxxi:course:<id> everywhere a course id is consumed.
+const scormCourseIri = courseIri;
 
 /** Rebuild the course catalog from DURABLE state.
  *
@@ -5380,6 +5384,8 @@ async function hydrateAgentCourses(force = false): Promise<void> {
         if (c?.courseId && Array.isArray(c.scos) && !agentScormCourses.has(c.courseId)) {
           agentScormCourses.set(c.courseId, c);
         }
+        // Feed the course→author registry so bare course URLs resolve by id alone.
+        if (c?.courseId && c.authoredBy && !courseAuthors.has(c.courseId)) courseAuthors.set(c.courseId, c.authoredBy);
       }
     }
     coursesHydratedAt = Date.now();
@@ -5390,17 +5396,59 @@ async function hydrateAgentCourses(force = false): Promise<void> {
   return courseHydrationInflight;
 }
 
-/** Resolve one course for a READ: cache → durable lattice. `author_did` points at
- *  the author's pod directly (the launch links carry it); without it, fall back to
- *  hydrating the configured pods. Mirrors how launch resolves, minus the auth. */
+// ── Durable course→author registry ──────────────────────────────────────────────
+// A course's canonical id is a dereferenceable URL now (courseIri → …/agent/scorm/course/
+// <id>). For that bare URL to RESOLVE by id alone — even for an author whose pod is not in
+// the MESH catalog — the read path must know which pod holds the course. This index records
+// courseId → authoredBy at author time (and from MESH hydration), best-effort persisted to
+// the tenant pod so it survives a restart; if the pod write is unavailable it degrades to
+// in-memory + MESH hydration (the id still resolves within the process, same honest caveat
+// the memory commons started from).
+const courseAuthors = new Map<string, string>();   // courseId → authoredBy DID
+const COURSE_AUTHORS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/course-authors.json` : '';
+let courseAuthorsDirty = false;
+async function persistCourseAuthors(): Promise<void> {
+  if (!COURSE_AUTHORS_RESOURCE || !courseAuthorsDirty) return;
+  courseAuthorsDirty = false;
+  const f = globalThis.fetch as typeof fetch;
+  const container = COURSE_AUTHORS_RESOURCE.replace(/[^/]+$/, '');
+  try {
+    await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+    await f(COURSE_AUTHORS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(courseAuthors)) });
+  } catch { courseAuthorsDirty = true; /* retry on the next record */ }
+}
+async function loadCourseAuthors(): Promise<void> {
+  if (!COURSE_AUTHORS_RESOURCE) return;
+  try {
+    const r = await (globalThis.fetch as typeof fetch)(COURSE_AUTHORS_RESOURCE, { headers: { Accept: 'application/json' } });
+    if (!r.ok) return;
+    const j = await r.json() as Record<string, unknown>;
+    for (const [k, v] of Object.entries(j)) if (typeof v === 'string' && !courseAuthors.has(k)) courseAuthors.set(k, v);
+    console.log(`[foxxi-bridge][courses] course→author registry holds ${courseAuthors.size} entr(y|ies) after boot`);
+  } catch { /* best-effort */ }
+}
+function recordCourseAuthor(courseId: string, authorDid: string): void {
+  if (!courseId || !authorDid || courseAuthors.get(courseId) === authorDid) return;
+  courseAuthors.set(courseId, authorDid);
+  courseAuthorsDirty = true;
+  void persistCourseAuthors();
+}
+
+/** Resolve one course for a READ: cache → author_did → registry → MESH hydration. The
+ *  bare dereferenceable course URL carries no author_did, so the registry is what lets it
+ *  resolve for a non-catalog author. Mirrors how launch resolves, minus the auth. */
 async function resolveCourseForRead(courseId: string, authorDid?: string): Promise<AgentScormCourse | null> {
   const cached = agentScormCourses.get(courseId);
   if (cached) return cached;
-  if (authorDid) {
-    const pod = resolveSubjectPodUrl(authorDid);
-    const loaded = await loadCourseFromLattice(pod, authorDid, actorForPod(pod, MESH_ACTOR_LABELS), courseId).catch(() => null);
-    if (loaded) { const c = loaded as unknown as AgentScormCourse; agentScormCourses.set(courseId, c); return c; }
-  }
+  const tryPod = async (did: string): Promise<AgentScormCourse | null> => {
+    const pod = resolveSubjectPodUrl(did);
+    const loaded = await loadCourseFromLattice(pod, did, actorForPod(pod, MESH_ACTOR_LABELS), courseId).catch(() => null);
+    if (loaded) { const c = loaded as unknown as AgentScormCourse; agentScormCourses.set(courseId, c); recordCourseAuthor(courseId, c.authoredBy || did); return c; }
+    return null;
+  };
+  if (authorDid) { const c = await tryPod(authorDid); if (c) return c; }
+  const known = courseAuthors.get(courseId);       // the durable registry — resolve by id alone
+  if (known && known !== authorDid) { const c = await tryPod(known); if (c) return c; }
   await hydrateAgentCourses();
   return agentScormCourses.get(courseId) ?? null;
 }
@@ -5725,11 +5773,14 @@ app.post('/agent/scorm/author', async (req, res) => {
     catch (e) { res.status(400).json({ error: `generated SCORM manifest did not parse on the SN runtime: ${(e as Error).message}` }); return; }
     agentScormCourses.set(course.courseId, course);
     const authorPod = resolveSubjectPodUrl(auth.callerDid, typeof auth.payload.subject_pod_url === 'string' ? auth.payload.subject_pod_url : undefined);
-    const courseIri = `urn:foxxi:course:${course.courseId}`;
+    // Register the course's author so its dereferenceable id (courseIri) resolves by URL
+    // alone on any later process — even for a non-catalog author (see resolveCourseForRead).
+    recordCourseAuthor(course.courseId, auth.callerDid);
+    const courseIriUrl = courseIri(course.courseId);
     // Record the AUTHOR's own work as first-class activity (expressive verb).
     const authoredStatementId = emitAgentActivity({
       actorDid: auth.callerDid, verbIri: AUTHORED_VERB, verbDisplay: 'authored',
-      objectId: courseIri, objectName: course.title,
+      objectId: courseIriUrl, objectName: course.title,
       objectType: 'http://adlnet.gov/expapi/activities/course', result: { completion: true },
     });
     // Foundation-first: PGSL canonical — compose the authoring into the author's
@@ -5737,7 +5788,7 @@ app.post('/agent/scorm/author', async (req, res) => {
     // the lattice, cross-restart + cross-agent), no hand-authored RDF.
     const sharedLattice = await composeIntoSharedLattice({
       podUrl: authorPod, agentDid: auth.callerDid, label: actorForPod(authorPod, MESH_ACTOR_LABELS),
-      terms: [auth.callerDid, AUTHORED_VERB, courseIri],
+      terms: [auth.callerDid, AUTHORED_VERB, courseIriUrl],
       content: course as unknown as Record<string, unknown>,
       contentType: 'foxxi:Course', projections: ['rdf', 'vc', 'activity'],
     });
@@ -5912,6 +5963,8 @@ app.listen(PORT, () => {
   // Warm the public-memories commons so a published memory resolves from the first
   // request after a restart, not only after a lazy on-miss rehydrate.
   void hydratePublicMemories(true).catch(e => console.warn('[foxxi-bridge][memories] boot warm:', (e as Error).message));
+  // Load the durable course→author registry so a bare course URL resolves after a restart.
+  void loadCourseAuthors().catch(e => console.warn('[foxxi-bridge][courses] registry boot load:', (e as Error).message));
   // Agent-mesh projection: kick an initial cycle + schedule the poller.
   if (MESH_PODS.length > 0) {
     console.log(`[foxxi-bridge][mesh] virtualizing ${MESH_PODS.length} agent pod(s) every ${MESH_PROJECT_INTERVAL_MS}ms into per-agent lens:<agent> views (on-read, never written back to the agent pod); push at POST /agent/mesh-event`);
