@@ -142,13 +142,18 @@ export interface IssueCompletionArgs {
  * Build the unsigned VC JSON. Public so callers can review/inspect
  * before signing (the substrate's signOrThrow pattern).
  */
-export function buildCourseCompletionVc(args: IssueCompletionArgs, issuerDid: string): VerifiableCredentialJson {
+export function buildCourseCompletionVc(args: IssueCompletionArgs, issuerDid: string, credentialIdOverride?: string): VerifiableCredentialJson {
   const now = new Date();
   const validFrom = args.subject.validFrom ?? now.toISOString();
   const achievementId = args.subject.achievementId
     ?? `urn:foxxi:achievement:${slugTenant(args.tenantProfileDid)}:${args.subject.courseId}`;
 
-  const credentialId = `urn:foxxi:credential:${slugTenant(args.tenantProfileDid)}:${args.subject.courseId}:${args.subject.learnerDid.replace(/[^a-zA-Z0-9]/g, '-')}:${now.getTime()}`;
+  // The VC id is a dereferenceable URL: its OWN on-pod descriptor location, computed by
+  // the issuer before signing (credentialIdOverride). GET it → this credential. A term,
+  // not a word — no separate resolver/index needed. Falls back to the legacy urn when the
+  // caller can't precompute the location (e.g. buildVc used standalone).
+  const credentialId = credentialIdOverride
+    ?? `urn:foxxi:credential:${slugTenant(args.tenantProfileDid)}:${args.subject.courseId}:${args.subject.learnerDid.replace(/[^a-zA-Z0-9]/g, '-')}:${now.getTime()}`;
 
   const subject: Record<string, unknown> = {
     id: args.subject.learnerDid,
@@ -216,7 +221,26 @@ export async function issueCourseCompletionCredential(
   },
 ): Promise<{ vc: VerifiableCredentialJson; publishResult: PublishResult }> {
   const issuer = await deriveTenantIssuer(args.issuerSeed);
-  const unsigned = buildCourseCompletionVc(args, issuer.did);
+
+  // Shape-driven, per-agent placement resolved FIRST (was after signing): where THIS
+  // learner stores credentials (the CourseCompletionCredential shape) from their OWN Solid
+  // Type Index via hypermedia; default foxxi-wallet/ when unself-described (non-breaking).
+  // We resolve it up front so the VC id can be its own dereferenceable descriptor location.
+  const placement = await resolveStorageForShape(
+    args.learnerPodUrl,
+    CREDENTIAL_TYPES.CourseCompletionCredential,
+    { fetch: args.fetch, defaultContainer: 'foxxi-wallet/' },
+  );
+  const containerPath = placement.target.startsWith(placement.podRoot)
+    ? placement.target.slice(placement.podRoot.length)
+    : 'foxxi-wallet/';
+  const stamp = Date.now();
+  const slug = `cred-${args.subject.courseId}-${slugDid(args.subject.learnerDid)}-${stamp}`;
+  // The exact on-pod URL publish() will write to (podRoot + containerPath + slug.ttl) —
+  // used AS the VC id so the credential's id GETs the credential itself. A term, not a word.
+  const descriptorUrl = `${placement.podRoot}${containerPath}${slug}.ttl`;
+
+  const unsigned = buildCourseCompletionVc(args, issuer.did, descriptorUrl);
   const signed = issueDataIntegrityProof(unsigned, issuer);
 
   // Sanity-check round-trip: verify our own signature so a misconfigured
@@ -226,9 +250,8 @@ export async function issueCourseCompletionCredential(
     throw new Error(`issued credential failed self-verification: ${verify.reason}`);
   }
 
-  // Publish to learner pod as a foxxi credential descriptor.
-  const graphIri = `urn:foxxi:wallet:${slugTenant(args.tenantProfileDid)}:${args.subject.courseId}:${slugDid(args.subject.learnerDid)}:${Date.now()}` as IRI;
-  const slug = `cred-${args.subject.courseId}-${slugDid(args.subject.learnerDid)}-${Date.now()}`;
+  // Publish to learner pod as a foxxi credential descriptor (same slug → the id resolves).
+  const graphIri = `urn:foxxi:wallet:${slugTenant(args.tenantProfileDid)}:${args.subject.courseId}:${slugDid(args.subject.learnerDid)}:${stamp}` as IRI;
   const descriptor = credentialDescriptorFor({
     graphIri,
     issuerDid: issuer.did,
@@ -236,20 +259,6 @@ export async function issueCourseCompletionCredential(
     derivedFrom: (args.subject.derivedFromExperiences ?? []).map(x => x as IRI),
   });
   const graphContent = wrapCredentialAsGraph(graphIri, signed);
-
-  // Shape-driven, per-agent placement: resolve where THIS learner stores
-  // credentials (the CourseCompletionCredential shape) from their OWN Solid Type
-  // Index via hypermedia. Default to foxxi-wallet/ (prior behavior) when the
-  // learner hasn't self-described — non-breaking. johnny may store credentials
-  // somewhere different than boozer; the issuer references only the shape.
-  const placement = await resolveStorageForShape(
-    args.learnerPodUrl,
-    CREDENTIAL_TYPES.CourseCompletionCredential,
-    { fetch: args.fetch, defaultContainer: 'foxxi-wallet/' },
-  );
-  const containerPath = placement.target.startsWith(placement.podRoot)
-    ? placement.target.slice(placement.podRoot.length)
-    : 'foxxi-wallet/';
 
   const publishResult = await publish(descriptor, graphContent, placement.podRoot, {
     fetch: args.fetch,
