@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Interego 1.0 Cross-Layer Alignment Ontology</title>
+<!-- RDF clients that follow their nose from a align: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="alignment.ttl" />
+<link rel="describedby" type="text/turtle" href="alignment.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>Interego 1.0 Cross-Layer Alignment Ontology <span class="mono ns">align:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/alignment#</code> &middot; version 1.0 &middot; 35 terms.</p>
+  <p>Cross-layer alignment ontology that ties together the three Interego ontologies (iep:, pgsl:, ieh:) and their external W3C alignments (PROV-O, Hydra, ODRL, ACL, VC, DCAT, OWL-Time). Importing this ontology gives you the full picture: typed context descriptors ABOUT lattice content WRAPPED BY agent harness machinery, all grounded in standard W3C vocabularies. The alignment is declarative — every cross-layer relationship is an OWL axiom annotated with the design rationale.</p>
+  <p><strong>Machine-readable form:</strong> <a href="alignment.ttl" rel="alternate">alignment.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>align:affordanceOn</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/alignment#affordanceOn</code>).</p>
+  <h2>Terms</h2>
+  <div id="affordanceOn" class="term"><code>align:affordanceOn</code> <span class="kind">Object property</span><div class="c">Alias for ieh:affordanceTarget, emphasizing that affordances are directed at a specific PGSL node. Use this when the emphasis is on navigation ('what can I do from HERE?'), ieh:affordanceTarget when the emphasis is on the affordance itself.</div></div>
+  <div id="answersInterrogative" class="term"><code>align:answersInterrogative</code> <span class="kind">Object property</span><div class="c">Declares that instances of the subject class can serve as grounding data for responses to the object interrogative type. Used to map lower-layer technical classes to the user-facing ie: interrogative grammar. Multi-valued in both directions: a class can answer multiple interrogatives, and an interrogative can be answered from multiple classes.</div></div>
+  <div id="ArbitratedCompositionPattern" class="term"><code>align:ArbitratedCompositionPattern</code> <span class="kind">Concept</span><div class="c">Pattern: two or more Executor agents produce conflicting ContextDescriptors for the same subject → an Arbiter AAT reads both, evaluates coherence → produces a iep:ComposedDescriptor using the override operator, with the Arbiter's policy decision attached as provenance.</div></div>
+  <div id="AuditedPublicationPattern" class="term"><code>align:AuditedPublicationPattern</code> <span class="kind">Concept</span><div class="c">Pattern: an Archivist AAT promotes a PGSL fragment from local tier to pod tier → the promotion produces a ieh:ProvTrace → the trace references the specific fragment (prov:used) and the new location (prov:generated) → the promotion is only allowed if the policy engine permits it for the Archivist's AAT.</div></div>
+  <div id="confidenceToTrust" class="term"><code>align:confidenceToTrust</code> <span class="kind">Object property</span><div class="c">Links a runtime evaluation to the iep:TrustFacet it materializes. The harness's numeric confidence (ieh:confidence) projects onto iep:epistemicConfidence, and the ieh:ConfidenceLevel projects onto a iep:TrustLevel via this relation.</div></div>
+  <div id="contextLattice" class="term"><code>align:contextLattice</code> <span class="kind">Object property</span><div class="c">The PGSL Lattice a DecoratorContext is part of. Functional — a context is always from one lattice.</div></div>
+  <div id="contextNode" class="term"><code>align:contextNode</code> <span class="kind">Object property</span><div class="c">The PGSL node at the center of a DecoratorContext. Functional — each context is for exactly one node.</div></div>
+  <div id="deprecatedAt" class="term"><code>align:deprecatedAt</code> <span class="kind">Datatype property</span></div>
+  <div id="DeprecationMarker" class="term"><code>align:DeprecationMarker</code> <span class="kind">Class</span><div class="c">Attaches to a term descriptor to signal it has been deprecated. Carries the replacement term IRI (if any), the deprecation date, and the version after which the term is removed. Modal status is Counterfactual on the term's claim of being currently-valid.</div></div>
+  <div id="describesAtom" class="term"><code>align:describesAtom</code> <span class="kind">Object property</span><div class="c">Specialization of iep:describes for individual PGSL atoms. Useful for attaching fine-grained trust / temporal / semiotic facets to specific atoms without wrapping them in a fragment.</div></div>
+  <div id="describesFragment" class="term"><code>align:describesFragment</code> <span class="kind">Object property</span><div class="c">Specialization of iep:describes for the case where the described graph's content is a PGSL fragment. Declared as a subPropertyOf so any iep:describes query automatically includes fragment-level descriptions.</div></div>
+  <div id="describesLattice" class="term"><code>align:describesLattice</code> <span class="kind">Object property</span><div class="c">Specialization of iep:describes for an entire pgsl:Lattice instance. Used when a context descriptor applies to ALL content in the lattice (e.g. a pod-wide provenance statement).</div></div>
+  <div id="evaluatedNode" class="term"><code>align:evaluatedNode</code> <span class="kind">Object property</span><div class="c">A runtime evaluation references the PGSL node whose retrieval/answer was scored. Subproperty of prov:used so the evaluation's PROV inputs are discoverable.</div></div>
+  <div id="FederatedObservationPattern" class="term"><code>align:FederatedObservationPattern</code> <span class="kind">Concept</span><div class="c">Pattern: multiple agents in different pods each produce ObservationSections over the same logical subject → their observations are unioned via iep:union composition → coherence between agents is computed from the intersection of their observed atoms → a Decision is produced only when coherence ≥ threshold.</div></div>
+  <div id="hasMapping" class="term"><code>align:hasMapping</code> <span class="kind">Object property</span></div>
+  <div id="IntegrationPattern" class="term"><code>align:IntegrationPattern</code> <span class="kind">Class</span><div class="c">A SKOS concept scheme of canonical integration patterns across the three layers. Each pattern names a standard way of using iep:, pgsl:, and ieh: together to achieve a common outcome.</div></div>
+  <div id="mappingRelation" class="term"><code>align:mappingRelation</code> <span class="kind">Object property</span><div class="c">owl:equivalentClass | rdfs:subClassOf | skos:closeMatch | skos:relatedMatch | align:Renamed | align:Narrowed | align:Widened</div></div>
+  <div id="NamespaceBridge" class="term"><code>align:NamespaceBridge</code> <span class="kind">Class</span><div class="c">A first-class descriptor that documents an alignment between two namespaces (or two versions of one namespace). Carries source + target prefixes, the per-term mapping, and a confidence/exact-match flag per pair. Bridges are themselves linked data — versionable, citable, queryable.</div></div>
+  <div id="observedAtom" class="term"><code>align:observedAtom</code> <span class="kind">Object property</span><div class="c">An ObservationSection references the specific PGSL atoms it observed. Declared as subPropertyOf prov:used so standard PROV tooling can walk from a decision back to the atoms that grounded it.</div></div>
+  <div id="policyDecisionToAccessControl" class="term"><code>align:policyDecisionToAccessControl</code> <span class="kind">Object property</span><div class="c">Links a ieh:PolicyDecision to the iep:AccessControlFacet it authorizes. A granted policy decision materializes as an authorization triple in the AccessControlFacet.</div></div>
+  <div id="policyToAclAuthorization" class="term"><code>align:policyToAclAuthorization</code> <span class="kind">Object property</span><div class="c">Projection from a harness PolicyRule to a W3C Web Access Control Authorization. Not an equivalence — ACL is flat (agent × mode × resource), while ODRL/cgh policy rules can carry conditions and obligations.</div></div>
+  <div id="produces" class="term"><code>align:produces</code> <span class="kind">Object property</span><div class="c">A harness activity (e.g. RuntimeEval, Decision, PolicyDecision) can produce a ContextDescriptor as its output. The produced descriptor then describes the subject entity with whatever facets the harness computed.</div></div>
+  <div id="removalVersion" class="term"><code>align:removalVersion</code> <span class="kind">Datatype property</span></div>
+  <div id="replacementTerm" class="term"><code>align:replacementTerm</code> <span class="kind">Object property</span></div>
+  <div id="sourceNamespace" class="term"><code>align:sourceNamespace</code> <span class="kind">Object property</span></div>
+  <div id="sourceTerm" class="term"><code>align:sourceTerm</code> <span class="kind">Object property</span></div>
+  <div id="targetNamespace" class="term"><code>align:targetNamespace</code> <span class="kind">Object property</span></div>
+  <div id="targetTerm" class="term"><code>align:targetTerm</code> <span class="kind">Object property</span></div>
+  <div id="temporalIntervalOf" class="term"><code>align:temporalIntervalOf</code> <span class="kind">Object property</span><div class="c">Links a iep:TemporalFacet to the underlying OWL-Time ProperInterval. Use this when you need to reason temporally with standard OWL-Time axioms (before, after, during, etc.).</div></div>
+  <div id="TermMapping" class="term"><code>align:TermMapping</code> <span class="kind">Class</span><div class="c">A single mapping between a source term and a target term, with a relation (owl:equivalentClass / rdfs:subClassOf / skos:closeMatch / skos:relatedMatch). Encoded as a node in the bridge's graph.</div></div>
+  <div id="TracedAnswerPattern" class="term"><code>align:TracedAnswerPattern</code> <span class="kind">Concept</span><div class="c">Pattern: agent asks a question → harness runs retrieval over PGSL → runtime eval scores the answer → a ieh:ProvTrace records everything → the trace is materialized as a iep:ProvenanceFacet on the answer's ContextDescriptor → the descriptor is published. Every link from the final answer back to the source atoms is walkable via PROV-O.</div></div>
+  <div id="traceToProvenance" class="term"><code>align:traceToProvenance</code> <span class="kind">Object property</span><div class="c">Links a ieh:ProvTrace to the iep:ProvenanceFacet that records it in a context descriptor. Since ProvTrace is already a prov:Activity, this is a re-materialization of the trace as a first-class provenance facet on the affected entity.</div></div>
+  <div id="TrustedRetrievalPattern" class="term"><code>align:TrustedRetrievalPattern</code> <span class="kind">Concept</span><div class="c">Pattern: retrieval returns candidate PGSL atoms → each atom is filtered by the iep:TrustFacet of the ContextDescriptor that describes it → only atoms with trust level ≥ required threshold are passed to the answer pipeline → the runtime eval's confidence is capped by the minimum trust across used atoms.</div></div>
+  <div id="trustFromCredential" class="term"><code>align:trustFromCredential</code> <span class="kind">Object property</span><div class="c">A iep:TrustFacet can be backed by a W3C Verifiable Credential. This alignment just restates iep:verifiableCredential with a clearer name for cross-layer use.</div></div>
+  <div id="VersionMigration" class="term"><code>align:VersionMigration</code> <span class="kind">Class</span><div class="c">A specialized bridge between two versions of the SAME namespace (e.g. iep:1.0 → iep:2.0). Carries per-term added / removed / renamed / narrowed / widened classifications so consumers can detect breaking changes.</div></div>
+</body>
+</html>

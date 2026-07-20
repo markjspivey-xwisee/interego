@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NIST AI Risk Management Framework mapping ontology</title>
+<!-- RDF clients that follow their nose from a nist-rmf: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="nist-rmf.ttl" />
+<link rel="describedby" type="text/turtle" href="nist-rmf.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>NIST AI Risk Management Framework mapping ontology <span class="mono ns">nist-rmf:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/nist-rmf#</code> &middot; 19 terms.</p>
+  <p>L3 mapping of Interego context primitives to NIST AI RMF (AI 100-1) four functions: Govern / Map / Measure / Manage.</p>
+  <p><strong>Machine-readable form:</strong> <a href="nist-rmf.ttl" rel="alternate">nist-rmf.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>nist-rmf:contributesTo</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/nist-rmf#contributesTo</code>).</p>
+  <h2>Terms</h2>
+  <div id="contributesTo" class="term"><code>nist-rmf:contributesTo</code> <span class="kind">Object property</span><div class="c">Links an evidence descriptor to one or more category IRIs. Many-to-many: one record can satisfy multiple categories, one category needs multiple records.</div></div>
+  <div id="evidenceLevel" class="term"><code>nist-rmf:evidenceLevel</code> <span class="kind">Datatype property</span><div class="c">How strong this evidence is: 'asserted' / 'measured' / 'audited' / 'externally-attested'.</div></div>
+  <div id="EvidenceRecord" class="term"><code>nist-rmf:EvidenceRecord</code> <span class="kind">Class</span><div class="c">A descriptor that contributes evidence toward one or more RMF function categories. Carries nist-rmf:contributesTo links to the specific category IRIs (e.g., nist-rmf:Map.1.2). Compliance reports aggregate evidence per category.</div></div>
+  <div id="functionContext" class="term"><code>nist-rmf:functionContext</code> <span class="kind">Object property</span><div class="c">The function (Govern/Map/Measure/Manage) under which this evidence applies.</div></div>
+  <div id="Govern" class="term"><code>nist-rmf:Govern</code> <span class="kind">Class</span><div class="c">Policies, processes, accountability structures, oversight cultures. Categories: Govern.1 (policies), Govern.2 (accountability), Govern.3 (workforce diversity), Govern.4 (commitment), Govern.5 (engagement), Govern.6 (third-party risk).</div></div>
+  <div id="Govern.1.1" class="term"><code>nist-rmf:Govern.1.1</code> <span class="kind">Individual</span></div>
+  <div id="Govern.1.4" class="term"><code>nist-rmf:Govern.1.4</code> <span class="kind">Individual</span></div>
+  <div id="Govern.2.1" class="term"><code>nist-rmf:Govern.2.1</code> <span class="kind">Individual</span></div>
+  <div id="Manage" class="term"><code>nist-rmf:Manage</code> <span class="kind">Class</span><div class="c">Risk response: prioritize, treat, monitor. Categories: Manage.1 (priority), Manage.2 (treatment), Manage.3 (third-party risks), Manage.4 (monitoring + improvement).</div></div>
+  <div id="Manage.1.2" class="term"><code>nist-rmf:Manage.1.2</code> <span class="kind">Individual</span></div>
+  <div id="Manage.4.1" class="term"><code>nist-rmf:Manage.4.1</code> <span class="kind">Individual</span><div class="c">Continuous monitoring (Manage.4.1) is satisfied by AMTA attestations + Interego's federation surface — every action is queryable, attestations accumulate, anomalies surface via SPARQL filters.</div></div>
+  <div id="Map" class="term"><code>nist-rmf:Map</code> <span class="kind">Class</span><div class="c">Context establishment and risk identification. Categories: Map.1 (context), Map.2 (categorization), Map.3 (capabilities and limits), Map.4 (impacts), Map.5 (risks).</div></div>
+  <div id="Map.1.1" class="term"><code>nist-rmf:Map.1.1</code> <span class="kind">Individual</span><div class="c">Context establishment is partly the FederationFacet itself: where the system runs, who's authorized, how it syncs.</div></div>
+  <div id="Map.1.2" class="term"><code>nist-rmf:Map.1.2</code> <span class="kind">Individual</span></div>
+  <div id="Map.4.1" class="term"><code>nist-rmf:Map.4.1</code> <span class="kind">Individual</span></div>
+  <div id="Measure" class="term"><code>nist-rmf:Measure</code> <span class="kind">Class</span><div class="c">Quantitative + qualitative assessment of identified risks. Categories: Measure.1 (methods), Measure.2 (quantitative), Measure.3 (effectiveness), Measure.4 (feedback).</div></div>
+  <div id="Measure.1.1" class="term"><code>nist-rmf:Measure.1.1</code> <span class="kind">Individual</span></div>
+  <div id="Measure.2.7" class="term"><code>nist-rmf:Measure.2.7</code> <span class="kind">Individual</span></div>
+  <div id="MG" class="term"><code>nist-rmf:MG</code> <span class="kind">Individual</span><div class="c">NIST AI RMF short code for the MANAGE function. Citable IRI used in compliance evidence (e.g. nist-rmf:MG-1.1). Equivalent in scope to nist-rmf:Manage.</div></div>
+</body>
+</html>

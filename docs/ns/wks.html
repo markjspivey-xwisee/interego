@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WKS — Weak-Signal vocabulary</title>
+<!-- RDF clients that follow their nose from a wks: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="wks.ttl" />
+<link rel="describedby" type="text/turtle" href="wks.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>WKS — Weak-Signal vocabulary <span class="mono ns">wks:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/wks#</code> &middot; 11 terms.</p>
+  <p>Typed weak signals for complexity-aware sensemaking. Aggregation is structural (SPARQL through wks:about); reinforcement is automatic; dispositions are candidate explanations, not proofs.</p>
+  <p><strong>Machine-readable form:</strong> <a href="wks.ttl" rel="alternate">wks.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>wks:about</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/wks#about</code>).</p>
+  <h2>Terms</h2>
+  <div id="about" class="term"><code>wks:about</code> <span class="kind">Object property</span><div class="c">The phenomenon, system, situation, or other descriptor the weak signal points at. The structural matching key for cross-observer reinforcement: two wks:WeakSignal descriptors with the same wks:about value count as independent observations of the same potential disposition.</div></div>
+  <div id="candidateDisposition" class="term"><code>wks:candidateDisposition</code> <span class="kind">Object property</span><div class="c">Optional link to a sat:Disposition that, if the signal is real, the system might be exhibiting. NOT a claim that the disposition is present — a candidate explanation worth probing. Pair with iep:modalStatus = Hypothetical.</div></div>
+  <div id="hasNarrativeEvidence" class="term"><code>wks:hasNarrativeEvidence</code> <span class="kind">Object property</span><div class="c">Links the weak signal to one or more micro-narratives that motivate it. Multiple cardinality permitted — an observer may anchor a single signal in several distinct observations.</div></div>
+  <div id="NarrativeEvidence" class="term"><code>wks:NarrativeEvidence</code> <span class="kind">Class</span><div class="c">A free-form micro-narrative that anchors a wks:WeakSignal. Not a fact-claim — a description of what was observed in observer's own words. Stored as content-addressed pgsl:Atom so two observers producing identical narratives collide on IRI (structural reinforcement at the description layer).</div></div>
+  <div id="observedBy" class="term"><code>wks:observedBy</code> <span class="kind">Object property</span><div class="c">The agent or human who observed the signal. Required for cross-observer reinforcement counting (multiple signals from one observer count as one).</div></div>
+  <div id="Reinforcement" class="term"><code>wks:Reinforcement</code> <span class="kind">Class</span><div class="c">A computed measure of how many independent observers have published wks:WeakSignal descriptors with the same wks:about subject. A summary descriptor that supersedes-chains older counts as new signals arrive. NOT an aggregation of opinions — a count of independent observations.</div></div>
+  <div id="reinforcementCount" class="term"><code>wks:reinforcementCount</code> <span class="kind">Datatype property</span><div class="c">Number of independent observers (distinct wks:observedBy values) who published wks:WeakSignal descriptors with the same wks:about. A reinforcement of 1 is just an observation; ≥2 is a candidate weak signal worth probing; ≥N (per the slice's Cynefin domain) may justify amplification.</div></div>
+  <div id="reinforcementWindow" class="term"><code>wks:reinforcementWindow</code> <span class="kind">Datatype property</span><div class="c">ISO-8601 duration over which the reinforcement count was computed. Required to interpret the count: 5 observers in an hour means something different from 5 in a year.</div></div>
+  <div id="reinforces" class="term"><code>wks:reinforces</code> <span class="kind">Object property</span><div class="c">Optional explicit link from one weak signal to another it reinforces. Usually unnecessary — two signals with the same wks:about subject reinforce each other structurally. Use only when an observer wants to attribute interpretation lineage.</div></div>
+  <div id="reinforcesAbout" class="term"><code>wks:reinforcesAbout</code> <span class="kind">Object property</span><div class="c">The wks:about subject this reinforcement count was computed for.</div></div>
+  <div id="WeakSignal" class="term"><code>wks:WeakSignal</code> <span class="kind">Class</span><div class="c">A subtle observation that, on its own, does not justify a strong claim — but in aggregate across multiple independent observers, surfaces a latent disposition. Always Hypothetical (the observer asserts WAS-OBSERVED, not WHAT-IT-MEANS). Subtype of iep:ContextDescriptor; the descriptor's modal status MUST be Hypothetical.</div></div>
+</body>
+</html>

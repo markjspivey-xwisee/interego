@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HyperMarkdown Vocabulary</title>
+<!-- RDF clients that follow their nose from a hmd: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="hmd.ttl" />
+<link rel="describedby" type="text/turtle" href="hmd.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>HyperMarkdown Vocabulary <span class="mono ns">hmd:</span></h1>
+  <p class="sub">Namespace <code>https://relay.interego.xwisee.com/ns/maintainer/hmd#</code> &middot; version 0.2-draft &middot; 36 terms.</p>
+  <p>Terms for HyperMarkdown 0.1 — Markdown as a hypermedia media type: documents as graph resources, typed links as edges, semantic claims, validation shapes, provenance, policy, and controls as discoverable affordances. A domain vocabulary that ALIGNS with the Interego protocol layer (iep:) and W3C hypermedia/linked-data vocabularies via rdfs:seeAlso and skos:related; it does not subclass or extend them.</p>
+  <p><strong>Machine-readable form:</strong> <a href="hmd.ttl" rel="alternate">hmd.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>hmd:ApprovalRequest</code> = <code>https://relay.interego.xwisee.com/ns/maintainer/hmd#ApprovalRequest</code>).</p>
+  <h2>Terms</h2>
+  <div id="ApprovalRequest" class="term"><code>hmd:ApprovalRequest</code> <span class="kind">Class</span><div class="c">Input payload type expected by an approve control.</div></div>
+  <div id="approve" class="term"><code>hmd:approve</code> <span class="kind">Property</span><div class="c">Approve the target resource, advancing its state.</div></div>
+  <div id="ApprovedResource" class="term"><code>hmd:ApprovedResource</code> <span class="kind">Class</span><div class="c">Output payload type returned by an approve control.</div></div>
+  <div id="cell" class="term"><code>hmd:cell</code> <span class="kind">Object property</span><div class="c">Relates a row to one of its cells. Column order is carried by hmd:colIndex, not by statement order.</div></div>
+  <div id="Cell" class="term"><code>hmd:Cell</code> <span class="kind">Class</span><div class="c">One cell of an hmd:Row: its text (hmd:cellText) at a 0-based hmd:colIndex. The text is the cell's CommonMark inline source verbatim; any inline markup or typed link inside it is rendered (and XSS-hardened) at view time, never lifted as a control edge.</div></div>
+  <div id="CellShape" class="term"><code>hmd:CellShape</code> <span class="kind">Shape</span></div>
+  <div id="cellText" class="term"><code>hmd:cellText</code> <span class="kind">Datatype property</span><div class="c">The text content of a cell — the CommonMark inline source of the pipe-table cell, verbatim.</div></div>
+  <div id="claim" class="term"><code>hmd:claim</code> <span class="kind">Object property</span><div class="c">Relates a document to a semantic claim it asserts.</div></div>
+  <div id="Claim" class="term"><code>hmd:Claim</code> <span class="kind">Class</span><div class="c">An asserted statement (subject/predicate/object) that may carry confidence, source, and provenance; reifiable as an rdf:Statement.</div></div>
+  <div id="colIndex" class="term"><code>hmd:colIndex</code> <span class="kind">Datatype property</span><div class="c">The 0-based ordinal position of a cell within its row.</div></div>
+  <div id="condition" class="term"><code>hmd:condition</code> <span class="kind">Property</span><div class="c">A state precondition under which a control is available.</div></div>
+  <div id="control" class="term"><code>hmd:control</code> <span class="kind">Object property</span><div class="c">Relates a document (or resource) to a control it exposes.</div></div>
+  <div id="Control" class="term"><code>hmd:Control</code> <span class="kind">Class</span><div class="c">A hypermedia control: a declared, discoverable action or state transition available on a resource. Clients must not assume an action is available unless a corresponding control is present.</div></div>
+  <div id="Document" class="term"><code>hmd:Document</code> <span class="kind">Class</span><div class="c">A HyperMarkdown document viewed as a locally-editable representation of a distributed graph resource: prose, typed links, semantic blocks, and controls.</div></div>
+  <div id="expects" class="term"><code>hmd:expects</code> <span class="kind">Object property</span><div class="c">The expected input type of a control.</div></div>
+  <div id="header" class="term"><code>hmd:header</code> <span class="kind">Datatype property</span><div class="c">True when a row is the table's header row. Absent (or false) on data rows.</div></div>
+  <div id="method" class="term"><code>hmd:method</code> <span class="kind">Datatype property</span><div class="c">The HTTP (or local) method a control is invoked with.</div></div>
+  <div id="reject" class="term"><code>hmd:reject</code> <span class="kind">Property</span><div class="c">Reject the target resource, advancing its state.</div></div>
+  <div id="RejectedResource" class="term"><code>hmd:RejectedResource</code> <span class="kind">Class</span><div class="c">Output payload type returned by a reject control.</div></div>
+  <div id="RejectionNotice" class="term"><code>hmd:RejectionNotice</code> <span class="kind">Class</span><div class="c">Input payload type expected by a reject control.</div></div>
+  <div id="rel" class="term"><code>hmd:rel</code> <span class="kind">Property</span><div class="c">The semantic action relationship a control realises.</div></div>
+  <div id="reportSymptom" class="term"><code>hmd:reportSymptom</code> <span class="kind">Property</span><div class="c">Submit a symptom report against the target resource.</div></div>
+  <div id="returns" class="term"><code>hmd:returns</code> <span class="kind">Object property</span><div class="c">The expected output type of a control.</div></div>
+  <div id="row" class="term"><code>hmd:row</code> <span class="kind">Object property</span><div class="c">Relates a table to one of its rows. Row order is carried by hmd:rowIndex, not by statement order.</div></div>
+  <div id="Row" class="term"><code>hmd:Row</code> <span class="kind">Class</span><div class="c">One row of an hmd:Table: an ordered set of hmd:Cell at a 0-based hmd:rowIndex. The header row carries hmd:header true; data rows omit it (or set it false).</div></div>
+  <div id="rowIndex" class="term"><code>hmd:rowIndex</code> <span class="kind">Datatype property</span><div class="c">The 0-based ordinal position of a row within its table (0 is the header row).</div></div>
+  <div id="RowShape" class="term"><code>hmd:RowShape</code> <span class="kind">Shape</span></div>
+  <div id="search" class="term"><code>hmd:search</code> <span class="kind">Property</span><div class="c">A parameterised query relation for templated links.</div></div>
+  <div id="SymptomReport" class="term"><code>hmd:SymptomReport</code> <span class="kind">Class</span><div class="c">Input payload type for a report-symptom control.</div></div>
+  <div id="SymptomTimeline" class="term"><code>hmd:SymptomTimeline</code> <span class="kind">Class</span><div class="c">Output payload type returned by a report-symptom control.</div></div>
+  <div id="table" class="term"><code>hmd:table</code> <span class="kind">Object property</span><div class="c">Relates a document to a table lifted from a pipe table in its body.</div></div>
+  <div id="Table" class="term"><code>hmd:Table</code> <span class="kind">Class</span><div class="c">Tabular data lifted from a GFM pipe table in a document's CommonMark body: an ordered set of hmd:Row, the first flagged as the header. DATA, not a control — carries no authority and no transport endpoint.</div></div>
+  <div id="TableShape" class="term"><code>hmd:TableShape</code> <span class="kind">Shape</span></div>
+  <div id="target" class="term"><code>hmd:target</code> <span class="kind">Object property</span><div class="c">The URI a control is invoked against.</div></div>
+  <div id="template" class="term"><code>hmd:template</code> <span class="kind">Object property</span><div class="c">Relates a document to a parameterised-link template it exposes.</div></div>
+  <div id="Template" class="term"><code>hmd:Template</code> <span class="kind">Class</span><div class="c">A parameterised link: an RFC 6570 URI template with variable-to-property mappings.</div></div>
+</body>
+</html>

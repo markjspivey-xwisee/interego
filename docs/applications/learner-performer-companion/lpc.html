@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>lpc: — Learner / Performer Companion (vertical application)</title>
+<!-- RDF clients that follow their nose from a lpc: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="lpc.ttl" />
+<link rel="describedby" type="text/turtle" href="lpc.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>lpc: — Learner / Performer Companion (vertical application) <span class="mono ns">lpc:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#</code> &middot; 30 terms.</p>
+  <p>Vertical-scoped, non-normative vocabulary for human learners / workers managing their own portable wallet of credentials, learning history, training content, and performance records. NOT part of the Interego protocol.</p>
+  <p><strong>Machine-readable form:</strong> <a href="lpc.ttl" rel="alternate">lpc.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>lpc:answeredQuestion</code> = <code>https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#answeredQuestion</code>).</p>
+  <h2>Terms</h2>
+  <div id="answeredQuestion" class="term"><code>lpc:answeredQuestion</code> <span class="kind">Datatype property</span><div class="c">The user question this cited response is answering. Stored verbatim so the response stays interpretable when re-read later.</div></div>
+  <div id="assistantAttribution" class="term"><code>lpc:assistantAttribution</code> <span class="kind">Object property</span><div class="c">DID of the Interego-grounded assistant that produced this response. Distinct from the user's DID — the response is the assistant's claim about the user's data, not the user's own claim.</div></div>
+  <div id="authoritativeSource" class="term"><code>lpc:authoritativeSource</code> <span class="kind">Object property</span><div class="c">Issuer / publisher of the training content. Treated as authoritative for citation purposes.</div></div>
+  <div id="basedOnStatement" class="term"><code>lpc:basedOnStatement</code> <span class="kind">Object property</span><div class="c">IRI of the source xAPI Statement (typically a urn:iep:lrs-statement:* form produced by lrs-adapter ingest).</div></div>
+  <div id="CitedResponse" class="term"><code>lpc:CitedResponse</code> <span class="kind">Class</span><div class="c">An assistant chat response that cites grounding fragments (training content, credentials, performance records). Stored as a descriptor so the citation chain is auditable. The user can click through any citation to the source descriptor.</div></div>
+  <div id="citesDescriptor" class="term"><code>lpc:citesDescriptor</code> <span class="kind">Object property</span><div class="c">Cited a whole descriptor (credential, performance record, learning experience) rather than a fragment.</div></div>
+  <div id="citesFragment" class="term"><code>lpc:citesFragment</code> <span class="kind">Object property</span><div class="c">PGSL atom or descriptor that grounds part of this response. Multiple per response is normal.</div></div>
+  <div id="contentFormat" class="term"><code>lpc:contentFormat</code> <span class="kind">Object property</span></div>
+  <div id="ContentFormat" class="term"><code>lpc:ContentFormat</code> <span class="kind">Class</span></div>
+  <div id="contentStandard" class="term"><code>lpc:contentStandard</code> <span class="kind">Datatype property</span><div class="c">Higher-level standard the content conforms to (e.g., 'TLA-LAP', 'SCORM-2004-3', 'cmi5-1.0').</div></div>
+  <div id="Credential" class="term"><code>lpc:Credential</code> <span class="kind">Class</span><div class="c">A verifiable credential / Open Badge 3.0 / IMS CLR 2.0 assertion / IEEE LERS recognition record. Carries the underlying VC proof block plus verification status. Issuer attribution lives in iep:TrustFacet.issuer.</div></div>
+  <div id="credentialFormat" class="term"><code>lpc:credentialFormat</code> <span class="kind">Object property</span></div>
+  <div id="CredentialFormat" class="term"><code>lpc:CredentialFormat</code> <span class="kind">Class</span><div class="c">Enumerated credential format. Each named individual identifies one of the standards-side recognition formats this vertical can hold.</div></div>
+  <div id="credentialFramework" class="term"><code>lpc:credentialFramework</code> <span class="kind">Datatype property</span><div class="c">Version string of the underlying recognition format (e.g., 'OB-3.0', 'VC-2.0', 'CLR-2.0', 'LERS-WG-draft-2026').</div></div>
+  <div id="DevelopmentPlan" class="term"><code>lpc:DevelopmentPlan</code> <span class="kind">Class</span><div class="c">User-side plan composing performance records + training-content KG + credential wallet. ALWAYS iep:modalStatus Hypothetical — the assistant suggests, the user (and possibly their manager) decide. Tracks olke: knowledge maturity progression of the planned skill areas.</div></div>
+  <div id="flagsCapability" class="term"><code>lpc:flagsCapability</code> <span class="kind">Object property</span><div class="c">Capability area the performance record commented on (positive or negative). Used by the assistant to cross-link review feedback to relevant training content.</div></div>
+  <div id="groundingFragment" class="term"><code>lpc:groundingFragment</code> <span class="kind">Object property</span><div class="c">Content-addressed PGSL atom containing the verbatim passage. Citation = quoting this atom with its IRI.</div></div>
+  <div id="LearnerWallet" class="term"><code>lpc:LearnerWallet</code> <span class="kind">Class</span><div class="c">Top-level container linking the user's credentials, learning history, training content, and performance records. Lives in the user's own pod; portable across employers.</div></div>
+  <div id="LearningExperience" class="term"><code>lpc:LearningExperience</code> <span class="kind">Class</span><div class="c">User-side record derived from an xAPI Statement. Created by ingesting Statements via applications/lrs-adapter/. Cross-links to the training content engaged with and any credential earned.</div></div>
+  <div id="learningObjective" class="term"><code>lpc:learningObjective</code> <span class="kind">Object property</span><div class="c">Cross-link from training content to one of its learning objectives.</div></div>
+  <div id="LearningObjective" class="term"><code>lpc:LearningObjective</code> <span class="kind">Class</span><div class="c">A specific objective / lesson / passage inside training content. Carries the grounding fragment (PGSL atom) the assistant cites.</div></div>
+  <div id="PerformanceRecord" class="term"><code>lpc:PerformanceRecord</code> <span class="kind">Class</span><div class="c">A review / rating / feedback record. Provenance attributes it to the issuer (manager, peer, self). Lives in the user's pod with full iep:TrustFacet.</div></div>
+  <div id="relatesToContent" class="term"><code>lpc:relatesToContent</code> <span class="kind">Object property</span><div class="c">Cross-link from a learning experience to the lpc:TrainingContent / lpc:LearningObjective that was engaged with.</div></div>
+  <div id="relatesToCredential" class="term"><code>lpc:relatesToCredential</code> <span class="kind">Object property</span><div class="c">Cross-link from a learning experience to a lpc:Credential it earned (when applicable).</div></div>
+  <div id="reviewType" class="term"><code>lpc:reviewType</code> <span class="kind">Object property</span></div>
+  <div id="ReviewType" class="term"><code>lpc:ReviewType</code> <span class="kind">Class</span></div>
+  <div id="TrainingContent" class="term"><code>lpc:TrainingContent</code> <span class="kind">Class</span><div class="c">Authoritative training material (course / module / lesson) ingested as a knowledge graph for grounded RAG. Source of citations the assistant returns.</div></div>
+  <div id="vcProof" class="term"><code>lpc:vcProof</code> <span class="kind">Datatype property</span><div class="c">JSON-encoded VC proof block (proofValue + proofPurpose + verificationMethod). Stored verbatim so verification is reproducible.</div></div>
+  <div id="verificationStatus" class="term"><code>lpc:verificationStatus</code> <span class="kind">Object property</span></div>
+  <div id="VerificationStatus" class="term"><code>lpc:VerificationStatus</code> <span class="kind">Class</span><div class="c">Outcome of cryptographic verification of a credential's proof block.</div></div>
+</body>
+</html>

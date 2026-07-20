@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SOC 2 Trust Services Criteria mapping ontology</title>
+<!-- RDF clients that follow their nose from a soc2: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="soc2.ttl" />
+<link rel="describedby" type="text/turtle" href="soc2.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>SOC 2 Trust Services Criteria mapping ontology <span class="mono ns">soc2:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/soc2#</code> &middot; 60 terms.</p>
+  <p>L3 mapping of Interego context primitives to AICPA SOC 2 TSC. Covers five categories with selected controls; extensible.</p>
+  <p><strong>Machine-readable form:</strong> <a href="soc2.ttl" rel="alternate">soc2.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>soc2:accessAction</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/soc2#accessAction</code>).</p>
+  <h2>Terms</h2>
+  <div id="accessAction" class="term"><code>soc2:accessAction</code> <span class="kind">Datatype property</span><div class="c">One of granted | revoked | modified.</div></div>
+  <div id="AccessChangeEvent" class="term"><code>soc2:AccessChangeEvent</code> <span class="kind">Class</span><div class="c">Records grant / revoke / modify of access for a principal on a system. Maps to CC6.1, CC6.2, CC6.3.</div></div>
+  <div id="affectedComponent" class="term"><code>soc2:affectedComponent</code> <span class="kind">Datatype property</span><div class="c">System component impacted by an incident.</div></div>
+  <div id="auditPeriodEnd" class="term"><code>soc2:auditPeriodEnd</code> <span class="kind">Datatype property</span></div>
+  <div id="auditPeriodStart" class="term"><code>soc2:auditPeriodStart</code> <span class="kind">Datatype property</span></div>
+  <div id="Availability" class="term"><code>soc2:Availability</code> <span class="kind">Class</span><div class="c">Systems available for operation + use as committed or agreed.</div></div>
+  <div id="C1.1" class="term"><code>soc2:C1.1</code> <span class="kind">Individual</span></div>
+  <div id="C1.2" class="term"><code>soc2:C1.2</code> <span class="kind">Individual</span><div class="c">Confidential information disposal (C1.2) is satisfied by iep:supersedes + key rotation; the OLD encrypted descriptor remains but the content key is irrecoverable.</div></div>
+  <div id="CC1.1" class="term"><code>soc2:CC1.1</code> <span class="kind">Individual</span></div>
+  <div id="CC2.1" class="term"><code>soc2:CC2.1</code> <span class="kind">Individual</span></div>
+  <div id="CC2.2" class="term"><code>soc2:CC2.2</code> <span class="kind">Individual</span></div>
+  <div id="CC3.1" class="term"><code>soc2:CC3.1</code> <span class="kind">Individual</span></div>
+  <div id="CC4.1" class="term"><code>soc2:CC4.1</code> <span class="kind">Individual</span></div>
+  <div id="CC5.1" class="term"><code>soc2:CC5.1</code> <span class="kind">Individual</span></div>
+  <div id="CC6.1" class="term"><code>soc2:CC6.1</code> <span class="kind">Individual</span><div class="c">Logical access controls (CC6.1) are satisfied by Interego's AccessControlFacet + ABAC policies + DID-based authentication. Evidence: every access decision is itself a descriptor on the pod.</div></div>
+  <div id="CC6.2" class="term"><code>soc2:CC6.2</code> <span class="kind">Individual</span></div>
+  <div id="CC6.3" class="term"><code>soc2:CC6.3</code> <span class="kind">Individual</span></div>
+  <div id="CC6.7" class="term"><code>soc2:CC6.7</code> <span class="kind">Individual</span></div>
+  <div id="CC6.8" class="term"><code>soc2:CC6.8</code> <span class="kind">Individual</span></div>
+  <div id="CC7.1" class="term"><code>soc2:CC7.1</code> <span class="kind">Individual</span></div>
+  <div id="CC7.2" class="term"><code>soc2:CC7.2</code> <span class="kind">Individual</span><div class="c">Anomaly monitoring (CC7.2) walks the federation's provenance graph; deviation from established attestation patterns flags for review.</div></div>
+  <div id="CC7.3" class="term"><code>soc2:CC7.3</code> <span class="kind">Individual</span></div>
+  <div id="CC7.4" class="term"><code>soc2:CC7.4</code> <span class="kind">Individual</span></div>
+  <div id="CC7.5" class="term"><code>soc2:CC7.5</code> <span class="kind">Individual</span></div>
+  <div id="CC8.1" class="term"><code>soc2:CC8.1</code> <span class="kind">Individual</span></div>
+  <div id="CC9.2" class="term"><code>soc2:CC9.2</code> <span class="kind">Individual</span></div>
+  <div id="commitSha" class="term"><code>soc2:commitSha</code> <span class="kind">Datatype property</span></div>
+  <div id="component" class="term"><code>soc2:component</code> <span class="kind">Datatype property</span><div class="c">System component a deploy or incident event refers to (e.g., 'relay', 'identity', 'all').</div></div>
+  <div id="Confidentiality" class="term"><code>soc2:Confidentiality</code> <span class="kind">Class</span><div class="c">Information designated as confidential is protected as committed or agreed.</div></div>
+  <div id="ControlEvidence" class="term"><code>soc2:ControlEvidence</code> <span class="kind">Class</span><div class="c">An action descriptor that constitutes evidence for one or more SOC 2 controls. Carries soc2:satisfiesControl links to specific control IRIs. Auditors query for evidence per control across the audit period.</div></div>
+  <div id="DeployEvent" class="term"><code>soc2:DeployEvent</code> <span class="kind">Class</span><div class="c">Records that a specific commit was deployed to a specific component in a specific environment by a specific principal. Maps to CC8.1.</div></div>
+  <div id="detectedAt" class="term"><code>soc2:detectedAt</code> <span class="kind">Datatype property</span></div>
+  <div id="detectionSource" class="term"><code>soc2:detectionSource</code> <span class="kind">Datatype property</span><div class="c">How the incident was detected (alert name, customer report, manual observation).</div></div>
+  <div id="environment" class="term"><code>soc2:environment</code> <span class="kind">Datatype property</span></div>
+  <div id="finding" class="term"><code>soc2:finding</code> <span class="kind">Datatype property</span><div class="c">Free-text finding from a quarterly review.</div></div>
+  <div id="findingCount" class="term"><code>soc2:findingCount</code> <span class="kind">Datatype property</span></div>
+  <div id="IncidentEvent" class="term"><code>soc2:IncidentEvent</code> <span class="kind">Class</span><div class="c">Records a Sev-1..Sev-4 incident with severity, status, summary, affected components. Maps to CC7.3 (open/contained) → CC7.4, CC7.5 (resolved).</div></div>
+  <div id="incidentSeverity" class="term"><code>soc2:incidentSeverity</code> <span class="kind">Datatype property</span><div class="c">One of sev-1 | sev-2 | sev-3 | sev-4.</div></div>
+  <div id="incidentStatus" class="term"><code>soc2:incidentStatus</code> <span class="kind">Datatype property</span><div class="c">One of open | contained | resolved.</div></div>
+  <div id="justification" class="term"><code>soc2:justification</code> <span class="kind">Datatype property</span></div>
+  <div id="KeyRotationEvent" class="term"><code>soc2:KeyRotationEvent</code> <span class="kind">Class</span><div class="c">Records rotation of a signing or encryption key. Carries retired + new addresses. Maps to CC6.7.</div></div>
+  <div id="newKeyAddress" class="term"><code>soc2:newKeyAddress</code> <span class="kind">Datatype property</span></div>
+  <div id="P1.1" class="term"><code>soc2:P1.1</code> <span class="kind">Individual</span></div>
+  <div id="P3.1" class="term"><code>soc2:P3.1</code> <span class="kind">Individual</span></div>
+  <div id="P5.1" class="term"><code>soc2:P5.1</code> <span class="kind">Individual</span></div>
+  <div id="principal" class="term"><code>soc2:principal</code> <span class="kind">Datatype property</span><div class="c">DID or identifier of the principal whose access changed.</div></div>
+  <div id="Privacy" class="term"><code>soc2:Privacy</code> <span class="kind">Class</span><div class="c">Personal information is collected, used, retained, disclosed, disposed per the entity's privacy notice + criteria.</div></div>
+  <div id="ProcessingIntegrity" class="term"><code>soc2:ProcessingIntegrity</code> <span class="kind">Class</span><div class="c">System processing is complete, accurate, timely, authorized.</div></div>
+  <div id="QuarterlyReviewEvent" class="term"><code>soc2:QuarterlyReviewEvent</code> <span class="kind">Class</span><div class="c">Records completion of a recurring quarterly review (access / change / risk / vendor / monitoring). Maps to the controls relevant to the review kind.</div></div>
+  <div id="retiredKeyAddress" class="term"><code>soc2:retiredKeyAddress</code> <span class="kind">Datatype property</span></div>
+  <div id="reviewKind" class="term"><code>soc2:reviewKind</code> <span class="kind">Datatype property</span><div class="c">One of access | change | risk | vendor | monitoring.</div></div>
+  <div id="reviewQuarter" class="term"><code>soc2:reviewQuarter</code> <span class="kind">Datatype property</span><div class="c">Quarter identifier (e.g., 2026-Q2).</div></div>
+  <div id="rollbackPlan" class="term"><code>soc2:rollbackPlan</code> <span class="kind">Datatype property</span></div>
+  <div id="rotationReason" class="term"><code>soc2:rotationReason</code> <span class="kind">Datatype property</span><div class="c">One of scheduled | compromise-response | other.</div></div>
+  <div id="satisfiesControl" class="term"><code>soc2:satisfiesControl</code> <span class="kind">Object property</span><div class="c">Links an evidence record to one or more SOC 2 control IRIs. Many-to-many.</div></div>
+  <div id="scope" class="term"><code>soc2:scope</code> <span class="kind">Datatype property</span><div class="c">Role / permission scope granted, revoked, or modified.</div></div>
+  <div id="Security" class="term"><code>soc2:Security</code> <span class="kind">Class</span><div class="c">TSC Common Criteria (CC). Always required in a SOC 2 report. Covers logical/physical access, system operations, change management, risk mitigation.</div></div>
+  <div id="summary" class="term"><code>soc2:summary</code> <span class="kind">Datatype property</span></div>
+  <div id="system" class="term"><code>soc2:system</code> <span class="kind">Datatype property</span><div class="c">Target system on which the access change occurred (e.g., azure, github, npm).</div></div>
+  <div id="trustServicesCategory" class="term"><code>soc2:trustServicesCategory</code> <span class="kind">Object property</span><div class="c">Which TSC category the evidence is for (Security / Availability / etc.).</div></div>
+</body>
+</html>

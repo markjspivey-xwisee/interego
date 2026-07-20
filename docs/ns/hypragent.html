@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HyprAgent — Agent Machinery for HyprCat Federation</title>
+<!-- RDF clients that follow their nose from a hypragent: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="hypragent.ttl" />
+<link rel="describedby" type="text/turtle" href="hypragent.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>HyprAgent — Agent Machinery for HyprCat Federation <span class="mono ns">hypragent:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/hypragent#</code> &middot; 12 terms.</p>
+  <p>Agent-side ontology matching HyprCat's data-catalog side. Models cross-world delegation, affordance consumption/production, and dispatch-time policy evaluation. Aligns with ieh:Affordance + iep:AuthorizedAgent + prov:SoftwareAgent; extends them with federation-native semantics so an agent that crosses hyprcat:Worlds carries its authorization visibly.</p>
+  <p><strong>Machine-readable form:</strong> <a href="hypragent.ttl" rel="alternate">hypragent.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>hypragent:actsOnBehalfOf</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/hypragent#actsOnBehalfOf</code>).</p>
+  <h2>Terms</h2>
+  <div id="actsOnBehalfOf" class="term"><code>hypragent:actsOnBehalfOf</code> <span class="kind">Object property</span><div class="c">The hypragent:Principal this agent ultimately represents. Chains through hypragent:DelegationChain. Equivalent to prov:actedOnBehalfOf but typed to HyprAgent semantics.</div></div>
+  <div id="Agent" class="term"><code>hypragent:Agent</code> <span class="kind">Class</span><div class="c">A software agent participating in HyprCat federation. Every HyprAgent has (a) a stable DID identity, (b) an X25519 encryption keypair registered on at least one pod, (c) a hyprcat:world membership, (d) an optional set of hypragent:consumable / hypragent:producible affordances it is registered to handle. HyprAgents are the actors that invoke HyprCat affordances.</div></div>
+  <div id="Capability" class="term"><code>hypragent:Capability</code> <span class="kind">Class</span><div class="c">A capability an agent is registered to handle — consuming or producing a particular class of affordance. Enables hyprcat:FederatedCatalog queries like 'list agents that can iep:canDecrypt a iep:EncryptedGraphEnvelope'. A hypragent:Agent typed with hypragent:canDecryptEnvelope can be dispatched against encrypted distributions; agents without the capability are filtered out at routing time.</div></div>
+  <div id="consumable" class="term"><code>hypragent:consumable</code> <span class="kind">Object property</span><div class="c">A class of affordance this agent is registered to consume (e.g. hypragent:canDecryptEnvelope). Catalog clients filter for agents with matching consumables when routing requests.</div></div>
+  <div id="delegationChain" class="term"><code>hypragent:delegationChain</code> <span class="kind">Object property</span><div class="c">Ordered list of Verifiable Credentials proving authority from Principal down to the current actor. Evaluated at dispatch time.</div></div>
+  <div id="DelegationChain" class="term"><code>hypragent:DelegationChain</code> <span class="kind">Class</span><div class="c">The sequence of W3C Verifiable Credentials that prove authority from a Principal through zero or more delegating HyprAgents down to the current actor. Consumed at dispatch time by a policy engine (ieh:PolicyDecision) to answer 'does this actor have authority to invoke this affordance?'. Every link in the chain is a iep:delegationCredential.</div></div>
+  <div id="Dispatch" class="term"><code>hypragent:Dispatch</code> <span class="kind">Class</span><div class="c">A single recorded invocation of a hyprcat:FederatedDistribution by a hypragent:Agent. Carries the delegation chain that was evaluated, the policy decision result, and a provenance trail tying input ports to output ports. Gives federation auditability end-to-end.</div></div>
+  <div id="dispatchedOn" class="term"><code>hypragent:dispatchedOn</code> <span class="kind">Object property</span><div class="c">The hyprcat:FederatedDistribution this dispatch activity invoked. Domain/range ties dispatch records to the specific catalog entry they acted against.</div></div>
+  <div id="policyDecision" class="term"><code>hypragent:policyDecision</code> <span class="kind">Object property</span><div class="c">The ieh:PolicyDecision that authorized (or blocked) this dispatch. Gives an audit trail from 'what was attempted' -&gt; 'which policy evaluated' -&gt; 'what rule matched'.</div></div>
+  <div id="Principal" class="term"><code>hypragent:Principal</code> <span class="kind">Class</span><div class="c">The human (or organizational) entity an agent ultimately acts on behalf of. A delegation chain roots in a Principal and flows through zero or more intermediate HyprAgents to the acting agent. For Interego, the Principal is typically the pod owner's WebID.</div></div>
+  <div id="producible" class="term"><code>hypragent:producible</code> <span class="kind">Object property</span><div class="c">A class of affordance this agent is registered to produce (e.g. hypragent:canPublishContext). Declares write-side capabilities for catalog routing.</div></div>
+  <div id="WorldCrossing" class="term"><code>hypragent:WorldCrossing</code> <span class="kind">Class</span><div class="c">A hypragent:Dispatch where the actor's hyprcat:world differs from the target resource's hyprcat:world. These get extra scrutiny from policy engines because they represent trust-boundary traversals (e.g. an AgentWorld bot reading a UserWorld pod resource). Logged + policy-evaluated; often require explicit cross-world delegation credentials.</div></div>
+</body>
+</html>

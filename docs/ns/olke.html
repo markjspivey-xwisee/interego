@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OLKE — Organizational Learning &amp; Knowledge Evolution</title>
+<!-- RDF clients that follow their nose from a olke: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="olke.ttl" />
+<link rel="describedby" type="text/turtle" href="olke.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>OLKE — Organizational Learning &amp; Knowledge Evolution <span class="mono ns">olke:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/olke#</code> &middot; 7 terms.</p>
+  <p>Stages and transitions by which knowledge evolves within an organization: tacit -&gt; articulate -&gt; collective -&gt; institutional. Annotates iep:ContextDescriptor with the current stage + allows tracking of stage transitions.</p>
+  <p><strong>Machine-readable form:</strong> <a href="olke.ttl" rel="alternate">olke.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>olke:fromStage</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/olke#fromStage</code>).</p>
+  <h2>Terms</h2>
+  <div id="fromStage" class="term"><code>olke:fromStage</code> <span class="kind">Object property</span></div>
+  <div id="KnowledgeStage" class="term"><code>olke:KnowledgeStage</code> <span class="kind">Class</span><div class="c">Abstract parent of the four canonical OLKE stages. A stage is a classification on iep:ContextDescriptor (carried via olke:stage); knowledge stages are epistemic lenses over descriptors.</div></div>
+  <div id="promotedBy" class="term"><code>olke:promotedBy</code> <span class="kind">Object property</span></div>
+  <div id="stage" class="term"><code>olke:stage</code> <span class="kind">Object property</span></div>
+  <div id="toStage" class="term"><code>olke:toStage</code> <span class="kind">Object property</span></div>
+  <div id="Transition" class="term"><code>olke:Transition</code> <span class="kind">Class</span><div class="c">A recorded transition of a iep:ContextDescriptor from one olke:KnowledgeStage to another. Realized as a iep:ContextDescriptor with iep:supersedes pointing at the prior stage's descriptor, and PROV attribution to the promoting agent.</div></div>
+  <div id="transitionAt" class="term"><code>olke:transitionAt</code> <span class="kind">Datatype property</span></div>
+</body>
+</html>

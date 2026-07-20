@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vault-LD conformance profile</title>
+<!-- RDF clients that follow their nose from a vault-ld: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="vault-ld.ttl" />
+<link rel="describedby" type="text/turtle" href="vault-ld.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>Vault-LD conformance profile <span class="mono ns">vault-ld:</span></h1>
+  <p class="sub">Namespace <code>https://relay.interego.xwisee.com/ns/maintainer/vault-ld#</code> &middot; version 0.1-draft &middot; 7 terms.</p>
+  <p>A declarative projection profile that makes the general Markdown-vault engine conform to Vault-LD v0.5. Its knobs (below) select the rung ceiling, context-resolution, identity minting, link grammar, and placement predicate; its SHACL shape (vldp:ConformanceShape) verifies the rung-&lt;=3 authority closure on the projected graph.</p>
+  <p><strong>Machine-readable form:</strong> <a href="vault-ld.ttl" rel="alternate">vault-ld.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>vault-ld:conformanceShape</code> = <code>https://relay.interego.xwisee.com/ns/maintainer/vault-ld#conformanceShape</code>).</p>
+  <h2>Terms</h2>
+  <div id="conformanceShape" class="term"><code>vault-ld:conformanceShape</code> <span class="kind">Object property</span><div class="c">The SHACL NodeShape a projection's output must satisfy to conform to this profile.</div></div>
+  <div id="ConformanceShape" class="term"><code>vault-ld:ConformanceShape</code> <span class="kind">Shape</span><div class="c">Validates the rung-&lt;=3 authority closure over a projected Vault-LD graph: no executable operation/affordance/control types, and no authority predicates.</div></div>
+  <div id="EntailmentAuthorityShape" class="term"><code>vault-ld:EntailmentAuthorityShape</code> <span class="kind">Shape</span><div class="c">Refuses any node whose rdf:type reaches an authority class, or which uses a predicate that reaches an authority predicate, through rdfs:subClassOf / owl:equivalentClass / rdfs:subPropertyOf / owl:equivalentProperty / owl:sameAs chains.</div></div>
+  <div id="maxRung" class="term"><code>vault-ld:maxRung</code> <span class="kind">Datatype property</span><div class="c">The HyperMarkdown progressive-enhancement ceiling the profile permits. 3 = descriptive data only (no executable affordances); 4 = full HMD. Enforced by vldp:ConformanceShape.</div></div>
+  <div id="NoAuthorityPredicatesShape" class="term"><code>vault-ld:NoAuthorityPredicatesShape</code> <span class="kind">Shape</span><div class="c">No subject may carry an authority predicate (an operation target/method, a supported operation, an action, or an HMD control edge).</div></div>
+  <div id="NoExternalImportShape" class="term"><code>vault-ld:NoExternalImportShape</code> <span class="kind">Shape</span><div class="c">A rung-&lt;=3 vault must be self-contained: owl:imports pulls in an external TBox the authority floor cannot screen, which could name authority for a downstream import-reasoner. Vault-LD composes local context.jsonld (@context), not OWL imports.</div></div>
+  <div id="Profile" class="term"><code>vault-ld:Profile</code> <span class="kind">Class</span><div class="c">A named set of knobs (rung ceiling, context source, identity strategy, link grammar, placement predicate) + a conformance shape that make the general Markdown-vault projection engine behave as a specific dialect. Data, not code.</div></div>
+</body>
+</html>

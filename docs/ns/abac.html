@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>abac: — ABAC evaluation pattern</title>
+<!-- RDF clients that follow their nose from a abac: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="abac.ttl" />
+<link rel="describedby" type="text/turtle" href="abac.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>abac: — ABAC evaluation pattern <span class="mono ns">abac:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/abac#</code> &middot; 15 terms.</p>
+  <p>L2 pattern ontology for attribute-based access-control evaluation on top of iep:AccessControlPolicy descriptors. Specifies evaluator, attribute resolver, decision cache, and audit record as constructions over L1 primitives.</p>
+  <p><strong>Machine-readable form:</strong> <a href="abac.ttl" rel="alternate">abac.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>abac:Allowed</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/abac#Allowed</code>).</p>
+  <h2>Terms</h2>
+  <div id="Allowed" class="term"><code>abac:Allowed</code> <span class="kind">Individual</span><div class="c">Evaluation result: the governed action MAY proceed. Possibly with duties.</div></div>
+  <div id="AttributeResolver" class="term"><code>abac:AttributeResolver</code> <span class="kind">Class</span><div class="c">Builds the subject's attribute graph by aggregating facets from: the subject's own descriptor(s), peer-issued attestations cited via provenance, and any trust attestations (e.g. amta:TrustAttestation) reachable from the subject. A natural transformation from a subject IRI to an attribute graph, grounded in the facet lattice.</div></div>
+  <div id="cacheValidUntil" class="term"><code>abac:cacheValidUntil</code> <span class="kind">Datatype property</span><div class="c">Upper bound on when this decision's cached form remains valid. After this instant, re-evaluation is required.</div></div>
+  <div id="decisionAt" class="term"><code>abac:decisionAt</code> <span class="kind">Datatype property</span><div class="c">Instant of the decision. Enables cache validity reasoning.</div></div>
+  <div id="DecisionCache" class="term"><code>abac:DecisionCache</code> <span class="kind">Class</span><div class="c">Short-circuits repeat evaluations. A cached decision is stored as a iep:TrustFacet-shaped attestation — the issuer is the evaluator, the validity window is explicit, and the attestation is verifiable. A stale cache entry therefore becomes a verifiable stale attestation rather than silent drift.</div></div>
+  <div id="Denied" class="term"><code>abac:Denied</code> <span class="kind">Individual</span><div class="c">Evaluation result: the governed action MUST NOT proceed.</div></div>
+  <div id="evaluatedPolicy" class="term"><code>abac:evaluatedPolicy</code> <span class="kind">Object property</span><div class="c">The iep:AccessControlPolicy that an evaluation record evaluated.</div></div>
+  <div id="EvaluationRecord" class="term"><code>abac:EvaluationRecord</code> <span class="kind">Class</span><div class="c">An auditable record of one policy evaluation: inputs, decision, duties, matched policies, timestamp. As a iep:ContextDescriptor it composes with the rest of the system (you can publish it, cite it, validate it, query it) — the audit trail IS linked data.</div></div>
+  <div id="Evaluator" class="term"><code>abac:Evaluator</code> <span class="kind">Class</span><div class="c">A stateless function that maps (policy, subject, resource, environment) to a decision. Constructed from a policy descriptor + a context — both L1 primitives — so this class is the pattern-level naming of a computation grounded in L1.</div></div>
+  <div id="Indeterminate" class="term"><code>abac:Indeterminate</code> <span class="kind">Individual</span><div class="c">Evaluation result: insufficient attribute information to decide. Under the open-world assumption at the federation layer, indeterminate is distinct from denied.</div></div>
+  <div id="matchedRule" class="term"><code>abac:matchedRule</code> <span class="kind">Object property</span><div class="c">A policy rule that matched during evaluation; used in composed (multi-policy) decisions for traceability.</div></div>
+  <div id="Policy" class="term"><code>abac:Policy</code> <span class="kind">Class</span><div class="c">The pattern-level name for an attribute-based access-control policy. Structurally identical to the L1 iep:AccessControlPolicy (a first-class context descriptor carrying a SHACL predicate, a governed action, a deontic mode, and optional duties); declared here so verticals can type a policy graph in the abac: vocabulary while remaining a iep:AccessControlPolicy for every L1 reader.</div></div>
+  <div id="PolicyContext" class="term"><code>abac:PolicyContext</code> <span class="kind">Class</span><div class="c">The ambient state for one policy evaluation: the subject's attribute graph, the resource being accessed, the environmental facets (time, federation origin, etc.), and any pre-resolved attestations. Constructed from the seven L1 facets of the invoking request.</div></div>
+  <div id="resolvedAttributes" class="term"><code>abac:resolvedAttributes</code> <span class="kind">Object property</span><div class="c">The attribute graph resolved for one evaluation, as a set of facet IRIs.</div></div>
+  <div id="verdict" class="term"><code>abac:verdict</code> <span class="kind">Object property</span><div class="c">The decision: abac:Allowed, abac:Denied, or abac:Indeterminate.</div></div>
+</body>
+</html>

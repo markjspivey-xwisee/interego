@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>adp: — Agent Development Practice (vertical application)</title>
+<!-- RDF clients that follow their nose from a adp: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. -->
+<link rel="alternate" type="text/turtle" href="adp.ttl" />
+<link rel="describedby" type="text/turtle" href="adp.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>adp: — Agent Development Practice (vertical application) <span class="mono ns">adp:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#</code> &middot; 38 terms.</p>
+  <p>Vertical-scoped, non-normative vocabulary for complexity-informed agent development. NOT part of the Interego protocol. Composes iep:, abac:, passport:, olke:, amta:, registry:.</p>
+  <p><strong>Machine-readable form:</strong> <a href="adp.ttl" rel="alternate">adp.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>adp:amplificationTrigger</code> = <code>https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#amplificationTrigger</code>).</p>
+  <h2>Terms</h2>
+  <div id="amplificationTrigger" class="term"><code>adp:amplificationTrigger</code> <span class="kind">Datatype property</span><div class="c">Narrative pattern that, if observed, increases this probe variant's deployment. Stated up-front so amplification is not retconned.</div></div>
+  <div id="amplifyProbe" class="term"><code>adp:amplifyProbe</code> <span class="kind">Object property</span><div class="c">Probe whose deployment is being increased by this evolution step. Provisional.</div></div>
+  <div id="appliesTo" class="term"><code>adp:appliesTo</code> <span class="kind">Object property</span><div class="c">Links a constraint to the capability it bounds.</div></div>
+  <div id="basedOnSynthesis" class="term"><code>adp:basedOnSynthesis</code> <span class="kind">Object property</span><div class="c">Links an evolution step or constraint to the synthesis it was informed by.</div></div>
+  <div id="boundary" class="term"><code>adp:boundary</code> <span class="kind">Datatype property</span><div class="c">Free-text description of the boundary the agent must operate within. Observable + enforceable; does not specify HOW the agent achieves it.</div></div>
+  <div id="capability" class="term"><code>adp:capability</code> <span class="kind">Object property</span><div class="c">Links a capability-evolution event or rubric criterion to the capability space it concerns.</div></div>
+  <div id="Capability" class="term"><code>adp:Capability</code> <span class="kind">Class</span><div class="c">An open-ended capability SPACE — not a target threshold. Mastery is recognized through emerging behavior patterns in narrative observations, not threshold-crossing on metrics. The Cynefin domain (adp:cynefinDomain) determines which governance pattern is appropriate.</div></div>
+  <div id="CapabilityEvolution" class="term"><code>adp:CapabilityEvolution</code> <span class="kind">Class</span><div class="c">Recognition of an emergent capability pattern in an agent's behavior. NOT a promotion or certification. Carries explicit-decision-not-made clauses that travel with the agent across deployments, so receiving organizations see what was AND was not claimed.</div></div>
+  <div id="coherentNarrative" class="term"><code>adp:coherentNarrative</code> <span class="kind">Datatype property</span><div class="c">An equally-coherent reading of the synthesis. Multiple per synthesis is the norm; the synthesis preserves them rather than picking one.</div></div>
+  <div id="constraint" class="term"><code>adp:constraint</code> <span class="kind">Object property</span><div class="c">Links a capability or probe to the constraints it operates within.</div></div>
+  <div id="Constraint" class="term"><code>adp:Constraint</code> <span class="kind">Class</span><div class="c">Governance via boundary, not via prescription. A constraint says 'the agent must not X' or 'must operate within Y'. Observable + enforceable; does not specify HOW the agent achieves the boundary. Refined from synthesis cycles, not declared up-front.</div></div>
+  <div id="contextSignifier" class="term"><code>adp:contextSignifier</code> <span class="kind">Datatype property</span><div class="c">A SenseMaker-style descriptive tag for the situation the agent encountered. Multiple per fragment.</div></div>
+  <div id="cynefinDomain" class="term"><code>adp:cynefinDomain</code> <span class="kind">Object property</span><div class="c">Identifies which Cynefin domain a capability space, probe, or situation lives in. Determines which governance pattern is appropriate.</div></div>
+  <div id="CynefinDomain" class="term"><code>adp:CynefinDomain</code> <span class="kind">Class</span><div class="c">Enumerated value identifying which Cynefin domain a situation lives in. Determines the governance pattern. Per Snowden, choosing the wrong pattern for the wrong domain is itself a failure mode.</div></div>
+  <div id="dampeningTrigger" class="term"><code>adp:dampeningTrigger</code> <span class="kind">Datatype property</span><div class="c">Narrative pattern that, if observed, decreases this probe variant's deployment. Stated up-front so dampening is not retconned.</div></div>
+  <div id="dampenProbe" class="term"><code>adp:dampenProbe</code> <span class="kind">Object property</span><div class="c">Probe whose deployment is being decreased by this evolution step. Provisional.</div></div>
+  <div id="emergedFrom" class="term"><code>adp:emergedFrom</code> <span class="kind">Object property</span><div class="c">Links a constraint or capability-evolution event to the synthesis cycles that produced it.</div></div>
+  <div id="emergentPattern" class="term"><code>adp:emergentPattern</code> <span class="kind">Datatype property</span><div class="c">Description of a pattern surfaced by the synthesis. Hypothetical; preserved alongside alternative coherent narratives, not declared as root cause.</div></div>
+  <div id="emergentSignifier" class="term"><code>adp:emergentSignifier</code> <span class="kind">Datatype property</span><div class="c">A SenseMaker-style descriptive tag for what emerged from the agent's response. Used to find patterns across fragments.</div></div>
+  <div id="EvolutionStep" class="term"><code>adp:EvolutionStep</code> <span class="kind">Class</span><div class="c">Operator decision to amplify some probes and dampen others, based on a synthesis. Carries an explicit-decision-not-made statement to prevent the decision from being read as a 'fix' or 'answer'. The decision is provisional and re-examinable; carries a next-revisit time.</div></div>
+  <div id="evolutionType" class="term"><code>adp:evolutionType</code> <span class="kind">Object property</span><div class="c">Classifies a capability-evolution event.</div></div>
+  <div id="EvolutionType" class="term"><code>adp:EvolutionType</code> <span class="kind">Class</span><div class="c">Enumerated value classifying a capability-evolution event.</div></div>
+  <div id="exitsConstraint" class="term"><code>adp:exitsConstraint</code> <span class="kind">Datatype property</span><div class="c">Free-text description of conditions under which the constraint is relaxed (e.g., user explicitly waives the requirement). Constraints are not absolute; they have explicit exits.</div></div>
+  <div id="explicitDecisionNotMade" class="term"><code>adp:explicitDecisionNotMade</code> <span class="kind">Datatype property</span><div class="c">Free-text statement of what the operator is NOT claiming with this decision. Counter-cultural and intentional — forces the operator to write down what is being left open, so future readers (humans or agents) do not read amplification as 'fix' or recognition as 'certification'. Travels with the agent across deployments.</div></div>
+  <div id="fragmentsConsidered" class="term"><code>adp:fragmentsConsidered</code> <span class="kind">Object property</span><div class="c">Links a synthesis to the narrative fragments it composes.</div></div>
+  <div id="hypothesis" class="term"><code>adp:hypothesis</code> <span class="kind">Datatype property</span><div class="c">Free-text statement of what the probe is exploring. Always Hypothetical — explicitly NOT a claim about cause-effect.</div></div>
+  <div id="NarrativeFragment" class="term"><code>adp:NarrativeFragment</code> <span class="kind">Class</span><div class="c">A qualitative observation: situation signifiers + agent response + emergent signifiers. ALWAYS recorded with iep:modalStatus Hypothetical — we are recording an observation, not asserting causation. Multiple fragments compose into a synthesis.</div></div>
+  <div id="nextRevisitAt" class="term"><code>adp:nextRevisitAt</code> <span class="kind">Datatype property</span><div class="c">Time at which an evolution decision must be re-examined. Encodes the provisional nature of every amplification / dampening choice.</div></div>
+  <div id="olkeStage" class="term"><code>adp:olkeStage</code> <span class="kind">Object property</span><div class="c">Knowledge maturity stage from olke: (Tacit / Articulate / Collective / Institutional). A capability-evolution event records what stage the practice has reached.</div></div>
+  <div id="probe" class="term"><code>adp:probe</code> <span class="kind">Object property</span><div class="c">Links a narrative fragment or synthesis to the adp:Probe whose hypothesis it is observing.</div></div>
+  <div id="Probe" class="term"><code>adp:Probe</code> <span class="kind">Class</span><div class="c">A small parallel experiment. Carries a Hypothetical hypothesis, a variant (prompt / tools / model), explicit amplification + dampening triggers, and a time-bound. Many probes run concurrently; many fail; a few amplify. Never has iep:modalStatus Asserted.</div></div>
+  <div id="response" class="term"><code>adp:response</code> <span class="kind">Datatype property</span><div class="c">Narrative description of what the agent did and what followed. Qualitative; not a score.</div></div>
+  <div id="rubricCriterion" class="term"><code>adp:rubricCriterion</code> <span class="kind">Object property</span><div class="c">Links a capability to the rubric criteria that guide attention during sensemaking. Multiple per capability.</div></div>
+  <div id="RubricCriterion" class="term"><code>adp:RubricCriterion</code> <span class="kind">Class</span><div class="c">A guide for what we care about — NOT a pass/fail threshold. Used during sensemaking to direct attention; never used as a binary acceptance test.</div></div>
+  <div id="Signifier" class="term"><code>adp:Signifier</code> <span class="kind">Class</span><div class="c">Short tag emerging from a narrative — used later to find patterns across many fragments. A signifier is descriptive, not evaluative; it labels what is present, not whether it is good or bad.</div></div>
+  <div id="Synthesis" class="term"><code>adp:Synthesis</code> <span class="kind">Class</span><div class="c">Composed view of many narrative fragments via iep:union. Surfaces recurring signifier patterns; PRESERVES MULTIPLE COHERENT NARRATIVES rather than declaring one root cause. iep:modalStatus stays Hypothetical.</div></div>
+  <div id="timeBound" class="term"><code>adp:timeBound</code> <span class="kind">Datatype property</span><div class="c">When to revisit the probe regardless of triggers. Prevents indefinite probes.</div></div>
+  <div id="variant" class="term"><code>adp:variant</code> <span class="kind">Datatype property</span><div class="c">Identifies the concrete variant being probed (prompt scaffold version, tool inventory, model class, etc.).</div></div>
+</body>
+</html>
