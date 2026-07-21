@@ -38,7 +38,7 @@ describe('xAPI activity identity — urn → dereferenceable URL', () => {
   });
 
   it('every emitted category has a served Definition (mint ⇄ resolver coherence)', () => {
-    for (const category of ['assignments-catalog', 'question', 'question-agentic', 'retrieval', 'credential', 'wallet-clr', 'framework-alignment']) {
+    for (const category of ['assignments-catalog', 'question', 'question-agentic', 'retrieval', 'credential', 'wallet-clr', 'framework-alignment', 'task']) {
       expect(ACTIVITY_DEFINITIONS[category]).toBeDefined();
       expect(ACTIVITY_DEFINITIONS[category]!.type).toMatch(/^https?:\/\//);
     }

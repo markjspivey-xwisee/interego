@@ -45,6 +45,7 @@ export const ACTIVITY_DEFINITIONS: Record<string, { type: string; name: string; 
   'credential': { type: `${FOXXI_NS}activities/credential`, name: 'Course completion credential', description: 'Issuance of a course-completion verifiable credential.' },
   'wallet-clr': { type: `${FOXXI_NS}activities/credential`, name: 'CLR wallet export', description: 'Export of a learner Comprehensive Learner Record.' },
   'framework-alignment': { type: `${FOXXI_NS}activities/framework`, name: 'Framework alignment', description: 'A declared alignment of an item to an external competency framework.' },
+  'task': { type: `${FOXXI_NS}ProductionTask`, name: 'Production task', description: 'A unit of on-the-job production work recorded as an xAPI performed statement into a performer lens.' },
 };
 
 /** Mint an activity's canonical identity: a dereferenceable URL under the authority. `instance`
