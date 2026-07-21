@@ -25,8 +25,8 @@ import {
 } from '../src/agent-trajectory.ts';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
-  ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const OBSERVER_WEB_ID = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/jliu/profile/card#me';
+  ?? 'https://foxxi-bridge.interego.xwisee.com';
+const OBSERVER_WEB_ID = 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
 const OBSERVER_USER_ID = 'u-joshua';
 const AGENT_DID = 'did:key:z6MkFoxxiTrajectoryAgentExampleV1';
 const AGENT_NAME = 'Foxxi Research Agent v1';

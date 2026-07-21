@@ -23,8 +23,8 @@
 import { mintSessionToken } from '../src/auth.ts';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
-  ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const OBSERVER_WEB_ID = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/jliu/profile/card#me';
+  ?? 'https://foxxi-bridge.interego.xwisee.com';
+const OBSERVER_WEB_ID = 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
 const OBSERVER_USER_ID = 'u-joshua';
 
 // The agent team under consultation (matches the dashboard's demo team).

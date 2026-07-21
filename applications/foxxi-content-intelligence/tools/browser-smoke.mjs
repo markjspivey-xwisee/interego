@@ -16,9 +16,9 @@
 import { chromium } from 'playwright';
 import { mintSessionToken } from '../src/auth.ts';
 
-const PLAYER = 'https://interego-foxxi-scorm-player.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const BRIDGE = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const WEB_ID = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/jliu/profile/card#me';
+const PLAYER = 'https://foxxi-scorm-player.interego.xwisee.com';
+const BRIDGE = 'https://foxxi-bridge.interego.xwisee.com';
+const WEB_ID = 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
 const USER_ID = 'u-joshua';
 const NAME = 'Joshua Liu';
 
@@ -110,7 +110,7 @@ await browser2.close();
 console.log('\n=== Case 4: deep-link routes (SPA fallback via nginx) ===');
 const browser4 = await chromium.launch({ headless: true });
 const ctx4 = await browser4.newContext();
-const DASHBOARD_BASE = 'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const DASHBOARD_BASE = 'https://foxxi-dashboard.interego.xwisee.com';
 const deepLinks = [
   '/login',
   '/me',
@@ -155,7 +155,7 @@ await browser4.close();
 // Launch, intercept the new tab, verify its URL has a bearer + the
 // player's POSTs succeed.
 console.log('\n=== Case 3: dashboard → ▶ Launch end-to-end ===');
-const DASHBOARD = 'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const DASHBOARD = 'https://foxxi-dashboard.interego.xwisee.com';
 const browser3 = await chromium.launch({ headless: true });
 const ctx3 = await browser3.newContext();
 const page3 = await ctx3.newPage();
