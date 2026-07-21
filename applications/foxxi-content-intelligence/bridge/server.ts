@@ -1454,7 +1454,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!taskName || !taskName.trim()) return { error: 'task_name is required' };
     if (typeof args.success !== 'boolean') return { error: 'success (boolean) is required' };
     const taskId = (args.task_id as string)
-      || `urn:foxxi:task:${taskName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)}`;
+      || activityIri('task', taskName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
     const actorKind: 'human' | 'agent' = (args.actor_kind as string) === 'agent' ? 'agent' : 'human';
     const quality = typeof args.quality === 'number' ? args.quality : undefined;
     // The performer is the xAPI actor; the authenticated caller is the
@@ -4904,7 +4904,7 @@ app.post('/agent/record-performance', async (req, res) => {
     const label = actorForPod(subjectPod, MESH_ACTOR_LABELS);
     const taskId = (typeof p.task_id === 'string' && p.task_id.trim())
       ? p.task_id.trim()
-      : `urn:foxxi:task:${taskName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)}`;
+      : activityIri('task', taskName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
     const activityType = (typeof p.activity_type === 'string' && p.activity_type.trim())
       ? p.activity_type.trim()
       : `${FOXXI_NS}ProductionTask`;
