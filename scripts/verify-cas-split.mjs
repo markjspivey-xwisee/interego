@@ -18,7 +18,7 @@
 
 import { generateKeyPairSync, createHash, randomBytes, sign as nodeSign } from 'node:crypto';
 
-const RELAY = 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const RELAY = 'https://relay.interego.xwisee.com';
 const REDIRECT_URI = 'http://localhost:9999/cb';
 const CLIENT_NAME = 'verify-cas-split';
 

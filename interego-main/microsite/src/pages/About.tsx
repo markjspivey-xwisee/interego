@@ -50,7 +50,7 @@ export function About({ onNavigate }: { onNavigate: (r: Route) => void }) {
         <ResourceCard
           title="The Foxxi vertical"
           body="The worked exemplar — full stack deployed on Azure, every conformance surface projected over the substrate."
-          href="https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io"
+          href="https://foxxi-microsite.interego.xwisee.com"
           linkLabel="interego-foxxi-microsite ↗"
         />
         <ResourceCard

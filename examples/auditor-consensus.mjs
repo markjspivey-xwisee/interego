@@ -12,7 +12,7 @@
 // the federation surfaces the disagreement as first-class data, NOT
 // as a failure mode hidden in logs.
 
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://gate.interego.xwisee.com/markj/';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 const AUDIT_SHAPE = `${POD}schemas/audit-result-v1.ttl`;
 const CONSENSUS_LENS = 'urn:agent:auditor-consensus:v1';

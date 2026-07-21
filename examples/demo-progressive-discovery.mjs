@@ -20,8 +20,8 @@ import { POD, fetchText, putText, MANIFEST_URL } from './_lib.mjs';
 
 console.log('=== Progressive discovery — all 7 tiers ===\n');
 
-const POD_B = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/u-pk-0a7f04106a54/';
-const IDENTITY = 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const POD_B = 'https://gate.interego.xwisee.com/u-pk-0a7f04106a54/';
+const IDENTITY = 'https://identity.interego.xwisee.com';
 
 // ── T0: raw pod URL ────────────────────────────────────────
 console.log('── T0 — Raw pod URL');
@@ -33,14 +33,14 @@ console.log(`   pod URL:    ${resultT0.podUrl ?? '(none)'}\n`);
 
 // ── T1: did:web ────────────────────────────────────────────
 console.log('── T1 — DID-Web');
-const didResult = await resolveIdentifier('did:web:interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io');
+const didResult = await resolveIdentifier('did:web:identity.interego.xwisee.com');
 console.log(`   kind:       ${didResult.kind}`);
 console.log(`   tiers hit:  ${didResult.tiersHit.join(', ') || '(none — identity server is not a DID-Web host)'}`);
 console.log(`   trace T1:   ${didResult.trace?.T1 ?? 'not tried'}\n`);
 
 // ── T2: WebFinger ──────────────────────────────────────────
 console.log('── T2 — WebFinger');
-const acctResult = await resolveIdentifier('acct:demo@interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io');
+const acctResult = await resolveIdentifier('acct:demo@identity.interego.xwisee.com');
 console.log(`   kind:       ${acctResult.kind}`);
 console.log(`   tiers hit:  ${acctResult.tiersHit.join(', ') || '(none — demo account not in WebFinger)'}`);
 console.log(`   trace T2:   ${acctResult.trace?.T2 ?? 'not tried'}\n`);

@@ -23,7 +23,7 @@
 // v4 auditing v3 auditing originals is isomorphic at every level,
 // but in practice 2-3 levels suffice for stability verification.
 
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://gate.interego.xwisee.com/markj/';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 const AUDIT_SHAPE = `${POD}schemas/audit-result-v1.ttl`;
 const META_AUDITOR_LENS = 'urn:agent:auditor:v4-meta';

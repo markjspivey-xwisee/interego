@@ -9,7 +9,7 @@
 // resolved via HTTP. This one proves the trust machinery
 // actually traverses the boundary.
 
-const CSS = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const CSS = 'https://gate.interego.xwisee.com';
 const POD_A = `${CSS}/markj/`;
 const POD_B = `${CSS}/u-pk-0a7f04106a54/`;
 const AUDIT_SHAPE = `${POD_A}schemas/audit-result-v1.ttl`;

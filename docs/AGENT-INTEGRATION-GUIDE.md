@@ -35,7 +35,7 @@ Stdio (local):
 HTTP (Streamable, remote, OAuth-gated, for browser/cloud agents):
 
 ```
-https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp
+https://relay.interego.xwisee.com/mcp
 ```
 
 `/mcp` is the MCP Streamable HTTP transport — a single endpoint that carries requests, responses, and server-initiated notifications (with an internal SSE channel for streaming). For clients that don't yet speak Streamable HTTP, the legacy `/sse` endpoint on the same host remains available as a fallback.

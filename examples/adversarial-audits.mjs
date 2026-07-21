@@ -13,7 +13,7 @@
 // If v4 misses any of these after publishing, the trust guarantees
 // are cosmetic. If v4 catches all three, the guarantees are real.
 
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://gate.interego.xwisee.com/markj/';
 const AUDIT_SHAPE = `${POD}schemas/audit-result-v1.ttl`;
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 

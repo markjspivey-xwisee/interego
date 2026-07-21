@@ -17,7 +17,7 @@
 // Quorum, weighting, override rules are SHACL-expressible; here kept
 // simple (plurality).
 
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://gate.interego.xwisee.com/markj/';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 
 async function fetchText(url) {

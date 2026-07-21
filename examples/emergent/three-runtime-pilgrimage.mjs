@@ -60,7 +60,7 @@ import {
 
 // ── configuration ────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://gate.interego.xwisee.com';
 const PILGRIMAGE_DATE = process.env.PILGRIMAGE_DATE ?? '2026-06-01';
 const POD_ROOT = `${CSS}/demos/emergent-three-runtime-pilgrimage-${PILGRIMAGE_DATE}/`;
 

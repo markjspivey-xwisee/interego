@@ -17,7 +17,7 @@
 
 import { createWallet, signDescriptor, verifyDescriptorSignature } from '../dist/index.js';
 
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://gate.interego.xwisee.com/markj/';
 const T1_SHAPE = `${POD}schemas/erc8004-attestation-t1-v1.ttl`;
 
 async function fetchText(url) {

@@ -26,10 +26,10 @@ import { makePanel, runGovernanceRound, type GovEvent, type RoundResult } from '
 
 const FOXXI_URL =
   (import.meta.env.VITE_FOXXI_MICROSITE_URL as string | undefined) ??
-  'https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  'https://foxxi-microsite.interego.xwisee.com';
 const FOXXI_BRIDGE_URL =
   (import.meta.env.VITE_FOXXI_BRIDGE_URL as string | undefined) ??
-  'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  'https://foxxi-bridge.interego.xwisee.com';
 
 export type EpKind =
   | 'discover' | 'coin' | 'measure' | 'fuse' | 'propose' | 'vote' | 'tally' | 'ratify'

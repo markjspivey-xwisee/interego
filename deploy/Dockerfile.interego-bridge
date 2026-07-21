@@ -67,5 +67,5 @@ EXPOSE 6050
 ENV PORT=6050
 ENV NODE_NO_WARNINGS=1
 ENV INTEREGO_DEFAULT_AGENT_DID=did:web:interego-demo
-ENV BRIDGE_DEPLOYMENT_URL=https://interego-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io
+ENV BRIDGE_DEPLOYMENT_URL=https://bridge.interego.xwisee.com
 CMD ["npx", "tsx", "demos/interego-bridge/server.ts"]

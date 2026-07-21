@@ -8,7 +8,7 @@
 // scores for identical inputs. Divergence between independent
 // auditors = a signal the federation should look at more closely.
 
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://gate.interego.xwisee.com/markj/';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 const AUDIT_SHAPE = `${POD}schemas/audit-result-v1.ttl`;
 const ALT_LENS = 'urn:agent:auditor:v4-alt-strict';
