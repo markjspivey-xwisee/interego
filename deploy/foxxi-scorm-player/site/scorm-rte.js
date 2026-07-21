@@ -33,7 +33,7 @@
 (function installRte() {
   const ADL = 'http://adlnet.gov/expapi';
   const CMI5_CAT = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
-  const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+  const FOXXI_NS = 'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#';
 
   // ── CMI 2004 store ──
   const cmi2004 = {
@@ -256,7 +256,7 @@
       objectType: 'Agent',
       name: learnerName || cfg.learnerName || 'Anonymous',
       account: {
-        homePage: cfg.identityServer || 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+        homePage: cfg.identityServer || 'https://acme-id.interego.xwisee.com',
         name: learnerId || cfg.learnerDid || 'anonymous',
       },
     };

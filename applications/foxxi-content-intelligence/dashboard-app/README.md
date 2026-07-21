@@ -45,7 +45,7 @@ The transport status is shown as a pill in the top-right header
 # 1. Start the Foxxi bridge (in another terminal):
 cd ../bridge
 PORT=6080 \
-  FOXXI_TENANT_POD_URL=https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/ \
+  FOXXI_TENANT_POD_URL=https://gate.interego.xwisee.com/foxxi/ \
   FOXXI_AUTHORITATIVE_SOURCE=did:web:acme-training.example \
   FOXXI_AUDIENCE=both \
   FOXXI_DASHBOARD_ORIGIN=http://localhost:5173 \
@@ -88,7 +88,7 @@ node -e "const{Wallet}=require('ethers');const w=Wallet.createRandom();console.l
   (the local CSS accepts anonymous writes).
 - **Deployed CSS** — writes are gated by `css-gate`. The URL must be the
   **gate's** URL (e.g.
-  `https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/`),
+  `https://gate.interego.xwisee.com/foxxi/`),
   not the raw CSS URL, and `FOXXI_POD_WRITE_SECRET` must be set to the bearer
   the gate expects. Reads still pass through the gate anonymously.
 

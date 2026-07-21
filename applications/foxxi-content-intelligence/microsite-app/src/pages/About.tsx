@@ -52,7 +52,7 @@ export function About({ onTry, onHome }: { onTry: (role: 'learner' | 'admin' | '
       <Section title="What the try-it-now demo actually does">
         <p>
           Every button in the try-it-now flow makes a real signed POST to the live bridge at
-          <code> https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp</code>.
+          <code> https://foxxi-bridge.interego.xwisee.com/mcp</code>.
           The bridge:
         </p>
         <ol style={{ paddingLeft: 22, lineHeight: 1.6 }}>
@@ -70,7 +70,7 @@ export function About({ onTry, onHome }: { onTry: (role: 'learner' | 'admin' | '
 
       <Section title="Where to go next">
         <p>
-          The <a href="https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io">full
+          The <a href="https://foxxi-dashboard.interego.xwisee.com">full
           dashboard</a> is the production-grade surface for the same affordances. The
           {' '}<a href="https://github.com/markjspivey-xwisee/interego">source repo</a> has every
           conformance claim wired to code. The

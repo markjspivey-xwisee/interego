@@ -39,7 +39,7 @@ export function AiTutor({ onHome }: { onHome: () => void }) {
         <strong> attested</strong>, the confidence is a <strong>committed range proof</strong>. Then the profile&rsquo;s shapes
         <strong> reject</strong> the self-asserted version and <strong>accept</strong> the verifiable one — and the signed
         xAPI statement is stored in the LRS and read back. The vocabulary itself was{' '}
-        <a href={result?.substrateDemo ?? 'https://interego-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io/profile'} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>emergently ratified on the substrate</a>.
+        <a href={result?.substrateDemo ?? 'https://microsite.interego.xwisee.com/profile'} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>emergently ratified on the substrate</a>.
       </p>
 
       <div style={{ ...card, marginTop: 18 }}>

@@ -26,7 +26,7 @@ const url = new URL(location.href);
 const params = {
   bearer: url.searchParams.get('bearer') || '',
   code: url.searchParams.get('code') || '',
-  bridge: url.searchParams.get('bridge') || 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  bridge: url.searchParams.get('bridge') || 'https://foxxi-bridge.interego.xwisee.com',
   learnerDid: url.searchParams.get('learner_did') || 'urn:anonymous:player',
   learnerName: url.searchParams.get('learner_name') || 'Anonymous Learner',
   courseId: url.searchParams.get('course_id') || 'golf-explained',
@@ -49,7 +49,7 @@ window.__foxxiPlayerConfig = {
   courseId: params.courseId,
   courseIri: COURSE_IRI,
   courseTitle: 'Golf Explained',
-  identityServer: 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  identityServer: 'https://acme-id.interego.xwisee.com',
   onEmit: (stmt, ok, status, errMsg) => {
     const v = stmt?.verb?.display?.en || stmt?.verb?.id?.split('/').pop();
     if (ok) logTrace(`<span class="verb">scorm:${v}</span> → CMI commit→xAPI`);
@@ -82,7 +82,7 @@ const SLIDES = [
 
 // ── xAPI emission ──────────────────────────────────────────────────
 
-const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FOXXI_NS = 'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#';
 const ADL = 'http://adlnet.gov/expapi/';
 const CMI5_CAT = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
 // COURSE_IRI is declared at the top of the file (line 35) — reused here
@@ -97,7 +97,7 @@ function actor() {
     objectType: 'Agent',
     name: params.learnerName,
     account: {
-      homePage: 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+      homePage: 'https://acme-id.interego.xwisee.com',
       name: params.learnerDid,
     },
   };

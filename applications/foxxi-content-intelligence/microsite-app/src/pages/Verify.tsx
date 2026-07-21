@@ -32,7 +32,7 @@ export function Verify({ onHome }: { onHome: () => void }) {
     try {
       const r = await callBridge({
         tool: 'foxxi.export_clr',
-        args: { learner_did: learnerDid, learner_pod_url: 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/' },
+        args: { learner_did: learnerDid, learner_pod_url: 'https://gate.interego.xwisee.com/foxxi/' },
         identity: 'joshua', // verifier acts as the learner for the demo (learner authorized the export)
       });
       setClr(r.result);

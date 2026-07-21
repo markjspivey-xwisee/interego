@@ -196,7 +196,7 @@ function SiteFooter() {
         </div>
       </div>
       <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-        <a href="https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io">Full dashboard</a>
+        <a href="https://foxxi-dashboard.interego.xwisee.com">Full dashboard</a>
         <a href="https://github.com/markjspivey-xwisee/interego">Source</a>
       </div>
     </footer>

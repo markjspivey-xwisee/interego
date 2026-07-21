@@ -19,7 +19,7 @@ export function Dpia({ onHome }: { onHome: () => void }) {
     try {
       const r = await callBridge({
         tool: 'foxxi.generate_dpia',
-        args: { learner_did: learnerDid, learner_pod_url: 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/' },
+        args: { learner_did: learnerDid, learner_pod_url: 'https://gate.interego.xwisee.com/foxxi/' },
         identity: 'jordan',
       });
       if ((r.result as { error?: string })?.error) {
