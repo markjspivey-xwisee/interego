@@ -6,7 +6,7 @@
 @prefix sec:    <https://w3id.org/security#> .
 @prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct:    <http://purl.org/dc/terms/> .
-@prefix fxd:    <https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi-demo#> .
+@prefix fxd:    <https://acme-id.interego.xwisee.com/ns/foxxi-demo#> .
 
 <>
     a foaf:PersonalProfileDocument ;
@@ -26,13 +26,13 @@
     schema:worksFor [
       a schema:Organization ;
       schema:name "Acme Training Co (demo tenant)" ;
-      schema:identifier "did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io"
+      schema:identifier "did:web:acme-id.interego.xwisee.com"
     ] ;
     schema:department "People Ops" ;
-    foaf:mbox  <mailto:admin@interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io> ;
-    pim:storage  <https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/acme/users/admin/> ;
-    solid:account  <https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/admin/> ;
-    solid:oidcIssuer  <https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/> ;
+    foaf:mbox  <mailto:admin@acme-id.interego.xwisee.com> ;
+    pim:storage  <https://gate.interego.xwisee.com/acme/users/admin/> ;
+    solid:account  <https://acme-id.interego.xwisee.com/users/admin/> ;
+    solid:oidcIssuer  <https://identity.interego.xwisee.com/> ;
     fxd:audienceTag  "all-employees", "managers", "admin" ;
     fxd:userId  "u-admin" ;
     fxd:walletAddress  "0xaDCCaDA1ee7E944096016919D401E27f5A9ccC80" ;
