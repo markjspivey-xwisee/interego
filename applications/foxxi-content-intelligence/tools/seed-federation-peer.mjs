@@ -19,7 +19,7 @@ import { Wallet } from 'ethers';
 import { createHash } from 'node:crypto';
 
 const PEER_POD = process.env.PEER_POD_URL
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/federation-peer/';
+  ?? 'https://gate.interego.xwisee.com/foxxi/federation-peer/';
 const PEER_AUTHORITATIVE_SOURCE = process.env.PEER_AUTHORITATIVE_SOURCE
   ?? 'did:web:peer-academy.example';
 

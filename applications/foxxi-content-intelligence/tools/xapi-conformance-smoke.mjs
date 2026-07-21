@@ -24,9 +24,9 @@ import { mintSessionToken } from '../src/auth.ts';
 import { runXapiConformance } from '../src/compliance-runner.ts';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
-  ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://foxxi-bridge.interego.xwisee.com';
 const WEB_ID = process.env.FOXXI_TEST_WEBID
-  ?? 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/jliu/profile/card#me';
+  ?? 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
 const USER_ID = process.env.FOXXI_TEST_USERID ?? 'u-joshua';
 
 const token = await mintSessionToken({ userId: USER_ID, webId: WEB_ID, ttlMs: 30 * 60 * 1000 });

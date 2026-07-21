@@ -14,9 +14,9 @@ import { chromium } from 'playwright';
 import { mintSessionToken } from '../src/auth.ts';
 
 const DASH = process.env.FOXXI_DASHBOARD_URL
-  ?? 'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const WEB_ID = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/jliu/profile/card#me';
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/';
+  ?? 'https://foxxi-dashboard.interego.xwisee.com';
+const WEB_ID = 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
+const POD = 'https://gate.interego.xwisee.com/foxxi/';
 
 let pass = 0, fail = 0;
 const check = (label, cond, detail) => {

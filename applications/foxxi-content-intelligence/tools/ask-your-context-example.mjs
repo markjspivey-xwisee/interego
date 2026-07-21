@@ -27,8 +27,8 @@ import { mintSessionToken } from '../src/auth.ts';
 import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
-  ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const CSS = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://foxxi-bridge.interego.xwisee.com';
+const CSS = 'https://gate.interego.xwisee.com';
 const WEB_ID = `${CSS.replace('interego-css', 'interego-acme-id')}/users/jliu/profile/card#me`;
 // The learner is a real Interego user — a Foxxi user *is* an Interego
 // user — so progress / assignment questions can be token-bound to them.

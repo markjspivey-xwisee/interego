@@ -37,7 +37,7 @@ if (!KEY || KEY.trim().length === 0) {
   process.exit(0);
 }
 
-const BRIDGE = (process.env.CI_OUTCOME_BRIDGE_URL || 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+const BRIDGE = (process.env.CI_OUTCOME_BRIDGE_URL || 'https://foxxi-bridge.interego.xwisee.com').replace(/\/$/, '');
 const REVISION = process.env.CI_OUTCOME_REVISION || 'unknown';
 const VERDICT = (process.env.CI_OUTCOME_VERDICT || 'closed').trim();
 const CAUSE = (process.env.CI_OUTCOME_CAUSE || 'knowledgeSkill').trim();

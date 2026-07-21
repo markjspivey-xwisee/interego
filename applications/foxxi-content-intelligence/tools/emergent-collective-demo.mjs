@@ -52,8 +52,8 @@ async function signPayload(wallet, payload) {
 }
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
-  ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const CSS = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://foxxi-bridge.interego.xwisee.com';
+const CSS = 'https://gate.interego.xwisee.com';
 const PEER_POD = `${CSS}/foxxi/federation-peer/`;
 
 let pass = 0, fail = 0;

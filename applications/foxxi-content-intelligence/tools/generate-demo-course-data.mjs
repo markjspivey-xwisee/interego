@@ -23,7 +23,7 @@ mkdirSync(outDir, { recursive: true });
 // hosting the DID document at /.well-known/did.json and per-user WebID
 // profile cards at /users/<slug>/profile/card . No synthetic .example
 // domains: every URL below resolves over HTTPS against a live service.
-const ID_HOST = 'interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const ID_HOST = 'acme-id.interego.xwisee.com';
 const TENANT_DID = `did:web:${ID_HOST}`;
 const ID_BASE = `https://${ID_HOST}`;
 function webId(slug) { return `${ID_BASE}/users/${slug}/profile/card#me`; }
@@ -517,7 +517,7 @@ const connections = [
 const adminPayload = {
   meta: {
     tenant: 'Acme Training Co (demo)',
-    tenant_pod: 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/',
+    tenant_pod: 'https://gate.interego.xwisee.com/foxxi/',
     tenant_did: TENANT_DID,
     tenant_did_document_url: `${ID_BASE}/.well-known/did.json`,
     admin_user_web_id: users[0].web_id,

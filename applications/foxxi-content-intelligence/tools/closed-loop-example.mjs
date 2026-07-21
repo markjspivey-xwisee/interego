@@ -43,8 +43,8 @@ async function signOutcome(payload) {
 }
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
-  ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const WEB_ID = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/jliu/profile/card#me';
+  ?? 'https://foxxi-bridge.interego.xwisee.com';
+const WEB_ID = 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
 const LEARNER = 'did:web:acme#rep-sam';
 
 let pass = 0, fail = 0;

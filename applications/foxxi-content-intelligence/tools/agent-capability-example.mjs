@@ -25,11 +25,11 @@
 import { mintSessionToken } from '../src/auth.ts';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
-  ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://foxxi-bridge.interego.xwisee.com';
 
 // The observer/operator — a directory user whose token attests the
 // agent's work (record_performance records the observer in provenance).
-const OBSERVER_WEB_ID = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/jliu/profile/card#me';
+const OBSERVER_WEB_ID = 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
 const OBSERVER_USER_ID = 'u-joshua';
 
 // The AI agent whose capability record we are building.
