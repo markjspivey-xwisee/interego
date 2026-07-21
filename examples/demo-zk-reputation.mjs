@@ -29,7 +29,7 @@
 
 import { proveConfidenceAboveThreshold, verifyConfidenceProof } from '../dist/crypto/zk/proofs.js';
 
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://gate.interego.xwisee.com/markj/';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 const ZK_SHAPE = `${POD}schemas/zk-reputation-proof-v1.ttl`;
 

@@ -67,7 +67,7 @@ import {
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://gate.interego.xwisee.com';
 const SCENARIO_DATE = process.env.SYBIL_SWARM_DATE ?? '2026-06-01';
 const POD = `${CSS}/demos/emergent-sybil-swarm-attestation-${SCENARIO_DATE}/`;
 

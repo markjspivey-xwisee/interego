@@ -24,7 +24,7 @@
 // Exits 0 on all-pass, non-zero on any failure.
 
 const IDENTITY_BASE = process.env.IDENTITY_BASE
-  ?? 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://identity.interego.xwisee.com';
 
 let failed = 0;
 function ok(msg)   { console.log(`  ✓ ${msg}`); }

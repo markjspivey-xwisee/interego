@@ -18,8 +18,8 @@
 
 import { createHash } from 'node:crypto';
 
-const RELAY = (process.env.CG_RELAY_URL ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
-const GATE  = (process.env.CG_GATE_URL  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+const RELAY = (process.env.CG_RELAY_URL ?? 'https://relay.interego.xwisee.com').replace(/\/$/, '');
+const GATE  = (process.env.CG_GATE_URL  ?? 'https://gate.interego.xwisee.com').replace(/\/$/, '');
 
 export function relayUrl() { return RELAY; }
 export function gateUrl()  { return GATE; }

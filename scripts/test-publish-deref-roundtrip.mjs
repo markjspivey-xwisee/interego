@@ -90,7 +90,7 @@
 import { generateKeyPairSync, createHash, randomBytes, sign as nodeSign } from 'node:crypto';
 
 const RELAY = process.env.RELAY_URL
-  ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://relay.interego.xwisee.com';
 const REDIRECT_URI = 'http://localhost:9999/cb';
 const CLIENT_NAME = 'publish-deref-roundtrip-test';
 const SCOPE = 'mcp';

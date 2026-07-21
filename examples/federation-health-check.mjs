@@ -18,9 +18,9 @@
 
 import { ethers } from 'ethers';
 
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
-const POD_B = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/u-pk-0a7f04106a54/';
-const IDENTITY = 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const POD = 'https://gate.interego.xwisee.com/markj/';
+const POD_B = 'https://gate.interego.xwisee.com/u-pk-0a7f04106a54/';
+const IDENTITY = 'https://identity.interego.xwisee.com';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 const AUDIT_SHAPE = `${POD}schemas/audit-result-v1.ttl`;
 const ERC_T1_SHAPE = `${POD}schemas/erc8004-attestation-t1-v1.ttl`;

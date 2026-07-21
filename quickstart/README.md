@@ -23,7 +23,7 @@ Two equally valid choices:
 **A. Hosted reference pod** — fastest evaluation, zero infrastructure.
    The maintainer runs an Azure CSS instance for evaluation. You'll
    write to a sub-container under your assigned user prefix:
-   `https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/u-pk-<your-id>/`
+   `https://gate.interego.xwisee.com/u-pk-<your-id>/`
 
 **B. Your own Solid pod** — production path. Any CSS-compatible pod
    works. The bridge writes to `<pod>/context-graphs/`.

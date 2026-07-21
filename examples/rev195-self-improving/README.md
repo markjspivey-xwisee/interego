@@ -2,7 +2,7 @@
 
 The comprehensive demo of the [harness-engineering](https://openai.com/index/harness-engineering/) + [recursive-self-improvement](https://www.anthropic.com/institute/recursive-self-improvement) + "I write loops" theses over the Interego rev-195 substrate.
 
-Two entry points: a single-agent loop (`one.mjs`) and a multi-agent collective (`collective.mjs`). Both exercise every rev-195 primitive — substrate-native trajectory recording, the OODA decision functor, calibration-driven replan, SSE-driven wake, A2A teaching, and (in collective mode) a judge + reduce_chain replayable verdict — against the live deployed relay at `https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io`.
+Two entry points: a single-agent loop (`one.mjs`) and a multi-agent collective (`collective.mjs`). Both exercise every rev-195 primitive — substrate-native trajectory recording, the OODA decision functor, calibration-driven replan, SSE-driven wake, A2A teaching, and (in collective mode) a judge + reduce_chain replayable verdict — against the live deployed relay at `https://relay.interego.xwisee.com`.
 
 **No API key required.** The Claude calls go through your local Claude Code OAuth session via `@anthropic-ai/claude-agent-sdk`.
 
@@ -137,12 +137,12 @@ Five tests pin the contract (see `workspace/tests/modalDistribution.test.mjs`). 
 ```bash
 # 1. The agent's pod has fresh trajectory descriptors describing
 #    urn:graph:trajectory:<agentSlug>
-curl -s "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/tool/discover_context" \
+curl -s "https://relay.interego.xwisee.com/tool/discover_context" \
   -H "Content-Type: application/json" \
   -d '{"pod_url":"<from agent.did>","graph_iri":"urn:graph:trajectory:<agentSlug>","sort":"newest-first","limit":5}'
 
 # 2. The Foxxi calibration profile shows a fresh OutcomeRecord
-curl -s -X POST "https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/performance/calibration" \
+curl -s -X POST "https://foxxi-bridge.interego.xwisee.com/performance/calibration" \
   -H "Content-Type: application/json" -d '{}' | jq '.body.profile.totalSamples'
 
 # 3. (Collective) the teach descriptor lives on Foxxi's tenant pod

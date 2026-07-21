@@ -4,7 +4,7 @@
 @prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 
-@prefix wallet: <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/wallet#> .
+@prefix wallet: <https://foxxi-bridge.interego.xwisee.com/ns/legacy/wallet#> .
 @prefix iep:     <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
 #################################################################
@@ -16,7 +16,7 @@
 #  pattern; no new credential or crypto primitives.              #
 #################################################################
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/wallet> a owl:Ontology ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/wallet> a owl:Ontology ;
     dcterms:title "Foxxi learner-wallet patterns" ;
     dcterms:issued "2026-05-17"^^xsd:date ;
     owl:versionInfo "0.1.0" .

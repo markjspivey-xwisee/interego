@@ -14,9 +14,9 @@ interface Demo {
   liveOk?: boolean;
 }
 
-const FOXXI_SITE = 'https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const FOXXI_BRIDGE = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const FOXXI_DASHBOARD = 'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const FOXXI_SITE = 'https://foxxi-microsite.interego.xwisee.com';
+const FOXXI_BRIDGE = 'https://foxxi-bridge.interego.xwisee.com';
+const FOXXI_DASHBOARD = 'https://foxxi-dashboard.interego.xwisee.com';
 
 const DEMOS: Demo[] = [
   // Substrate demos

@@ -85,7 +85,7 @@ import {
 
 // ── Configuration ─────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://gate.interego.xwisee.com';
 const SCENARIO_DATE = process.env.BRC_DATE ?? new Date().toISOString().slice(0, 10);
 const SCENARIO_POD = `${CSS}/demos/emergent-belief-revision-cascade-${SCENARIO_DATE}/`;
 const MANIFEST_URL = `${SCENARIO_POD}.well-known/context-graphs`;

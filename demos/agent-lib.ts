@@ -43,7 +43,7 @@ const REPO_ROOT = join(import.meta.dirname ?? '', '..');
 // expects the default, not a broken double-slash URL).
 export const AZURE_CSS_BASE =
   process.env.AZURE_CSS_BASE
-  || 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  || 'https://gate.interego.xwisee.com';
 
 export const DEMO_POD_OWNER = process.env.DEMO_POD_OWNER || 'u-pk-6e3bc2f9723c';
 

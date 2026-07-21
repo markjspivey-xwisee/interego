@@ -18,7 +18,7 @@
 // score. A future agent filters `conformsTo = erc8004-attestation-v1`
 // and orders by epistemicConfidence to rank agents.
 
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://gate.interego.xwisee.com/markj/';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 const ERC8004_SHAPE = `${POD}schemas/erc8004-attestation-v1.ttl`;
 const AUDIT_SHAPE = `${POD}schemas/audit-result-v1.ttl`;

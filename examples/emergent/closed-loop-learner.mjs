@@ -72,7 +72,7 @@ import {
 
 // ── config ───────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://gate.interego.xwisee.com';
 // RUN_DATE seeds the pod subpath. If a previous run on the same date
 // crashed mid-manifest-write, CSS's file backend can be left with an
 // orphan .meta file referencing a missing $.ttl body — every subsequent

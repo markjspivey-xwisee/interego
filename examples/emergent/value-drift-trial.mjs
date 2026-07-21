@@ -79,7 +79,7 @@ import {
 
 // ── configuration ────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://gate.interego.xwisee.com';
 const TRIAL_DATE = process.env.VALUE_DRIFT_DATE ?? new Date().toISOString().slice(0, 10);
 const POD = `${CSS}/demos/emergent-value-drift-trial-${TRIAL_DATE}/`;
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;

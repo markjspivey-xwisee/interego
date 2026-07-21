@@ -26,7 +26,7 @@
 import { ethers } from 'ethers';
 import { pinToIpfs, computeCid } from '../dist/crypto/ipfs.js';
 
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://gate.interego.xwisee.com/markj/';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 const T1_SHAPE = `${POD}schemas/erc8004-attestation-t1-v1.ttl`;
 const T2_SHAPE = `${POD}schemas/erc8004-attestation-t2-v1.ttl`;

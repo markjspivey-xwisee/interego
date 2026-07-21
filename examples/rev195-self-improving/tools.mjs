@@ -12,8 +12,8 @@
 
 import { createHash } from 'node:crypto';
 
-const RELAY = (process.env.CG_RELAY_URL ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
-const FOXXI = (process.env.FOXXI_BRIDGE_URL ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+const RELAY = (process.env.CG_RELAY_URL ?? 'https://relay.interego.xwisee.com').replace(/\/$/, '');
+const FOXXI = (process.env.FOXXI_BRIDGE_URL ?? 'https://foxxi-bridge.interego.xwisee.com').replace(/\/$/, '');
 
 /**
  * Record one trajectory step for the calling agent.
@@ -163,7 +163,7 @@ export function agentSlug(agentId) {
 
 export function podUrlForAgent(agentId) {
   // Each demo agent gets its own demo pod under the gate.
-  const gate = process.env.CG_GATE_URL ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  const gate = process.env.CG_GATE_URL ?? 'https://gate.interego.xwisee.com';
   return `${gate.replace(/\/$/, '')}/rev195-${agentSlug(agentId)}/`;
 }
 

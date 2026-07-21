@@ -19,7 +19,7 @@ today on mobile and where the rough edges are.
 
 Identical to desktop:
 
-1. Open `https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/` in mobile Safari / Chrome.
+1. Open `https://identity.interego.xwisee.com/` in mobile Safari / Chrome.
 2. Tap **Passkey** (or **Wallet** if you have a mobile wallet like MetaMask Mobile / Coinbase Wallet).
 3. iOS Face ID / Android biometrics handles the WebAuthn ceremony. Your passkey lives in iCloud Keychain or Google Password Manager — synced across your devices.
 4. Visit `/dashboard` to see your DID + inbox.

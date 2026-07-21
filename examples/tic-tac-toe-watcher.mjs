@@ -83,7 +83,7 @@ import {
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://gate.interego.xwisee.com';
 const TOURNAMENT_DATE = process.env.TICTAC_DATE ?? '2026-05-31';
 const TOURNAMENT_POD = `${CSS}/demos/tic-tac-toe-${TOURNAMENT_DATE}/`;
 const MODEL = process.env.TICTAC_MODEL ?? 'claude-sonnet-4-6';
@@ -96,7 +96,7 @@ const POLL_INTERVAL_MS = Number(process.env.TICTAC_POLL_MS ?? 30_000);
 // safety net for any case where the SSE link drops (network blips,
 // relay restarts, etc.) — the two paths are belt-and-suspenders.
 const RELAY_URL = (process.env.CG_RELAY_URL ?? process.env.MCP_RELAY_URL
-  ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+  ?? 'https://relay.interego.xwisee.com').replace(/\/$/, '');
 const SSE_ENABLED = process.env.TICTAC_SSE_DISABLED !== '1';
 
 const TOURNAMENT_NS = `urn:demo:tic-tac-toe:${TOURNAMENT_DATE}`;

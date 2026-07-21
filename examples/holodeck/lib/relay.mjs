@@ -15,11 +15,11 @@ import { createHash } from 'node:crypto';
 
 export function relayUrl() {
   return (process.env.CG_RELAY_URL
-    ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+    ?? 'https://relay.interego.xwisee.com').replace(/\/$/, '');
 }
 export function gateUrl() {
   return (process.env.CG_GATE_URL
-    ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+    ?? 'https://gate.interego.xwisee.com').replace(/\/$/, '');
 }
 
 function agentSlug(did) {

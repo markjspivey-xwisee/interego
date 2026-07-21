@@ -12,12 +12,12 @@
 @prefix cnt:     <http://www.w3.org/2011/content#> .
 @prefix xapi:    <https://w3id.org/xapi/ontology#> .
 
-@prefix fxs:     <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/scorm#> .
-@prefix fxk:     <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/knowledge#> .
-@prefix fxa:     <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/activity#> .
-@prefix fxsh:    <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/shapes#> .
+@prefix fxs:     <https://foxxi-bridge.interego.xwisee.com/ns/legacy/scorm#> .
+@prefix fxk:     <https://foxxi-bridge.interego.xwisee.com/ns/legacy/knowledge#> .
+@prefix fxa:     <https://foxxi-bridge.interego.xwisee.com/ns/legacy/activity#> .
+@prefix fxsh:    <https://foxxi-bridge.interego.xwisee.com/ns/legacy/shapes#> .
 
-@prefix ex:      <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/> .
+@prefix ex:      <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/> .
 
 #################################################################
 #  Foxxi Content Graph Vocabulary — v0.1                        #
@@ -42,13 +42,13 @@
 #  Ontology declarations                                        #
 #################################################################
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/scorm> a owl:Ontology ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/scorm> a owl:Ontology ;
     dcterms:title "Foxxi Structural Vocabulary for eLearning Packages" ;
-    dcterms:creator <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/id/markj/profile#me> ;
+    dcterms:creator <https://foxxi-bridge.interego.xwisee.com/ns/legacy/id/markj/profile#me> ;
     dcterms:issued "2026-04-29"^^xsd:date ;
     dcterms:modified "2026-04-29"^^xsd:date ;
     owl:versionInfo "0.2.0" ;
-    owl:priorVersion <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/scorm/0.1.0> ;
+    owl:priorVersion <https://foxxi-bridge.interego.xwisee.com/ns/legacy/scorm/0.1.0> ;
     rdfs:comment """Deterministic structural rendering of SCORM 1.2, SCORM 2004, 
         cmi5, xAPI, and AICC packages as RDF. Emitted directly by the parser 
         without LLM involvement.
@@ -64,13 +64,13 @@
           - Added fxsh:EmbedsAssetReferentialShape: fxs:embedsAsset targets
             must be typed as fxs:Asset""" .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/knowledge> a owl:Ontology ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/knowledge> a owl:Ontology ;
     dcterms:title "Foxxi Semantic Vocabulary for Extracted Knowledge" ;
-    dcterms:creator <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/id/markj/profile#me> ;
+    dcterms:creator <https://foxxi-bridge.interego.xwisee.com/ns/legacy/id/markj/profile#me> ;
     dcterms:issued "2026-04-29"^^xsd:date ;
     dcterms:modified "2026-04-29"^^xsd:date ;
     owl:versionInfo "0.2.0" ;
-    owl:priorVersion <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/knowledge/0.1.0> ;
+    owl:priorVersion <https://foxxi-bridge.interego.xwisee.com/ns/legacy/knowledge/0.1.0> ;
     rdfs:comment """Concepts, claims, pedagogical relations, and Peircean 
         sign/object/interpretant decomposition extracted from structural 
         content. Produced by SHACL-validated enrichment passes.
@@ -82,9 +82,9 @@
           - fxsh:ConceptShape now warns when isFreeStanding is false but no
             morphological head is recorded""" .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/activity> a owl:Ontology ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/activity> a owl:Ontology ;
     dcterms:title "Foxxi Behavioral Vocabulary for Consumption and Extraction" ;
-    dcterms:creator <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/id/markj/profile#me> ;
+    dcterms:creator <https://foxxi-bridge.interego.xwisee.com/ns/legacy/id/markj/profile#me> ;
     dcterms:issued "2026-04-29"^^xsd:date ;
     owl:versionInfo "0.2.0" ;
     rdfs:comment """Extends xAPI to capture AI-agent learner traces, 
@@ -916,9 +916,9 @@ fxsh:PrerequisiteAcyclicShape a sh:NodeShape ;
     sh:targetClass fxk:Concept ;
     sh:sparql [
         sh:message "fxk:prerequisiteOf must be acyclic — a Concept cannot be a prerequisite of itself, directly or transitively." ;
-        sh:prefixes <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/shapes> ;
+        sh:prefixes <https://foxxi-bridge.interego.xwisee.com/ns/legacy/shapes> ;
         sh:select """
-            PREFIX fxk: <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/knowledge#>
+            PREFIX fxk: <https://foxxi-bridge.interego.xwisee.com/ns/legacy/knowledge#>
             SELECT $this
             WHERE {
                 $this fxk:prerequisiteOf+ $this .
@@ -983,172 +983,172 @@ fxsh:NamedGraphShape a sh:NodeShape ;
 
 # ===== Example A: Storyline SCORM 1.2 package ==========================
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python> a fxs:Package ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python> a fxs:Package ;
     dcterms:title "Introduction to Python" ;
     dcterms:creator "Foxxi Education Team" ;
     fxs:standardConformance fxs:SCORM_1_2 ;
     fxs:authoredWith fxs:ArticulateStoryline ;
-    fxs:hasOrganization <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/org/main> ;
-    fxs:defaultOrganization <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/org/main> ;
+    fxs:hasOrganization <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/org/main> ;
+    fxs:defaultOrganization <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/org/main> ;
     fxs:identifiedBy "INTRO-PYTHON-2026-01" ;
-    prov:wasGeneratedBy <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/parser/foxxi-scorm-core/0.1.0> .
+    prov:wasGeneratedBy <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/parser/foxxi-scorm-core/0.1.0> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/org/main> a fxs:Organization ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/org/main> a fxs:Organization ;
     dcterms:title "Introduction to Python — Main Track" ;
     fxs:identifiedBy "ORG-MAIN" ;
-    fxs:hasItem <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/1>, 
-                <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/2>, 
-                <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/3> .
+    fxs:hasItem <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/1>, 
+                <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/2>, 
+                <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/3> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/1> a fxs:Item ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/1> a fxs:Item ;
     dcterms:title "Module 1: Getting Started" ;
     fxs:identifiedBy "ITEM-1" ;
     fxs:sequenceIndex 0 ;
-    fxs:hasResource <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/intro> .
+    fxs:hasResource <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/intro> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/2> a fxs:Item ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/2> a fxs:Item ;
     dcterms:title "Module 2: Variables and Expressions" ;
     fxs:identifiedBy "ITEM-2" ;
     fxs:sequenceIndex 1 ;
-    fxs:hasResource <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/vars> .
+    fxs:hasResource <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/vars> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/intro> a fxs:SCO ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/intro> a fxs:SCO ;
     dcterms:title "Welcome and Setup" ;
     fxs:identifiedBy "RES-INTRO" ;
     fxs:fileLocator "intro-python.zip!/lessons/1/index.html" ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python> .
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/vars> a fxs:SCO ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/vars> a fxs:SCO ;
     dcterms:title "Variables and Expressions" ;
     fxs:identifiedBy "RES-VARS" ;
     fxs:fileLocator "intro-python.zip!/lessons/2/index.html" ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python> .
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/3> a fxs:Item ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/3> a fxs:Item ;
     dcterms:title "Module 3: Data Types" ;
     fxs:identifiedBy "ITEM-3" ;
     fxs:sequenceIndex 2 ;
-    fxs:hasChild <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/3.1>, 
-                 <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/3.2> .
+    fxs:hasChild <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/3.1>, 
+                 <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/3.2> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/3.1> a fxs:Item ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/3.1> a fxs:Item ;
     dcterms:title "Numbers, Strings, Booleans" ;
     fxs:identifiedBy "ITEM-3-1" ;
     fxs:sequenceIndex 0 ;
-    fxs:hasResource <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/lesson-3-1> .
+    fxs:hasResource <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/lesson-3-1> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/lesson-3-1> a fxs:SCO ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/lesson-3-1> a fxs:SCO ;
     dcterms:title "Primitive Types" ;
     fxs:identifiedBy "RES-LESSON-3-1" ;
     fxs:fileLocator "intro-python.zip!/lessons/3.1/index.html" ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python> .
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/3.2> a fxs:Item ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/3.2> a fxs:Item ;
     dcterms:title "Mutable vs Immutable Types" ;
     fxs:identifiedBy "ITEM-3-2" ;
     fxs:sequenceIndex 1 ;
-    fxs:hasResource <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/lesson-3-2>,
-                    <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
+    fxs:hasResource <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/lesson-3-2>,
+                    <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/lesson-3-2> a fxs:SCO ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/lesson-3-2> a fxs:SCO ;
     dcterms:title "Golf Explained.2: Mutability" ;
     fxs:identifiedBy "RES-LESSON-3-2" ;
     fxs:fileLocator "intro-python.zip!/lessons/3.2/index.html" ;
     fxs:duration "PT8M"^^xsd:duration ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python> .
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/quiz-3-2> a fxs:Interaction, fxs:SCO ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/quiz-3-2> a fxs:Interaction, fxs:SCO ;
     dcterms:title "Quiz 3.2: Mutability Check" ;
     fxs:identifiedBy "RES-QUIZ-3-2" ;
     fxs:interactionType fxs:MultipleChoice ;
     fxs:fileLocator "intro-python.zip!/lessons/3.2/quiz.json#q1" ;
     fxs:correctResponsePattern "c" ;
     fxs:masteryScore 0.8 ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python> .
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python> .
 
 
 # ===== Example B: Peircean decomposition of the quiz item ==============
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-mutability> a fxk:Concept ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-mutability> a fxk:Concept ;
     skos:prefLabel "Mutability in Python" ;
     skos:definition "The property of an object permitting in-place modification after creation." ;
-    fxk:taughtIn <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/3.2> ;
+    fxk:taughtIn <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/3.2> ;
     fxk:extractionConfidence 0.94 ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/lesson-3-2> ;
-    prov:wasGeneratedBy <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/extractor/foxxi-olke/0.1.0> .
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/lesson-3-2> ;
+    prov:wasGeneratedBy <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/extractor/foxxi-olke/0.1.0> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-mutable-type> a fxk:Concept ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-mutable-type> a fxk:Concept ;
     skos:prefLabel "Mutable Type" ;
-    fxk:prerequisiteOf <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-mutability> ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/lesson-3-2> .
+    fxk:prerequisiteOf <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-mutability> ;
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/lesson-3-2> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-list> a fxk:Concept ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-list> a fxk:Concept ;
     skos:prefLabel "Python list" ;
-    fxk:exemplifies <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-mutable-type> ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/lesson-3-2> .
+    fxk:exemplifies <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-mutable-type> ;
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/lesson-3-2> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-tuple> a fxk:Concept ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-tuple> a fxk:Concept ;
     skos:prefLabel "Python tuple" ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/lesson-3-2> .
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/lesson-3-2> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/claim/list-is-mutable> a fxk:Claim ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/claim/list-is-mutable> a fxk:Claim ;
     skos:prefLabel "Python lists are mutable." ;
-    fxk:supportedBy <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-list>, <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-mutability> ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
+    fxk:supportedBy <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-list>, <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-mutability> ;
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/claim/tuple-is-immutable> a fxk:Claim ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/claim/tuple-is-immutable> a fxk:Claim ;
     skos:prefLabel "Python tuples are immutable." ;
-    fxk:supportedBy <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-tuple>, <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-mutability> ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
+    fxk:supportedBy <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-tuple>, <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-mutability> ;
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
 
 # The AssessmentItem is the OLKE/Peircean decomposition of the quiz.
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/assess/quiz-3-2-q1> a fxk:AssessmentItem ;
-    fxk:assesses <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-mutability> ;
-    fxk:hasSign <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/sign/quiz-3-2-q1> ;
-    fxk:hasObject <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/claim/list-is-mutable> ;
-    fxk:hasInterpretant <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/interp/quiz-3-2-q1-feedback> ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/assess/quiz-3-2-q1> a fxk:AssessmentItem ;
+    fxk:assesses <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-mutability> ;
+    fxk:hasSign <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/sign/quiz-3-2-q1> ;
+    fxk:hasObject <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/claim/list-is-mutable> ;
+    fxk:hasInterpretant <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/interp/quiz-3-2-q1-feedback> ;
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/sign/quiz-3-2-q1> a fxk:Sign ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/sign/quiz-3-2-q1> a fxk:Sign ;
     rdfs:label "Quiz item: 'Which is mutable? a) tuple b) string c) list d) frozenset'" ;
-    fxk:denotes <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/claim/list-is-mutable> ;
-    fxk:isInterpretedAs <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/interp/quiz-3-2-q1-feedback> ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
+    fxk:denotes <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/claim/list-is-mutable> ;
+    fxk:isInterpretedAs <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/interp/quiz-3-2-q1-feedback> ;
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/interp/quiz-3-2-q1-feedback> a fxk:Interpretant ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/interp/quiz-3-2-q1-feedback> a fxk:Interpretant ;
     rdfs:label "Lists can be modified after creation; the others cannot." ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/quiz-3-2> .
 
 
 # ===== Example C: Agent consumption trace ==============================
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/agent/foxxi-learner-001> a fxa:AgentLearner ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/agent/foxxi-learner-001> a fxa:AgentLearner ;
     foaf:name "Foxxi Learner Agent 001" ;
-    fxa:representedBy <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/id/agents/learner-001#me> ;
-    fxa:operatedBy <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/id/markj/profile#me> .
+    fxa:representedBy <https://foxxi-bridge.interego.xwisee.com/ns/legacy/id/agents/learner-001#me> ;
+    fxa:operatedBy <https://foxxi-bridge.interego.xwisee.com/ns/legacy/id/markj/profile#me> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/trace/learner-001/2026-04-29/item-3-2> a fxa:ConsumptionTrace ;
-    prov:wasAssociatedWith <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/agent/foxxi-learner-001> ;
-    fxa:traversed <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/item/3.2> ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/trace/learner-001/2026-04-29/item-3-2> a fxa:ConsumptionTrace ;
+    prov:wasAssociatedWith <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/agent/foxxi-learner-001> ;
+    fxa:traversed <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/item/3.2> ;
     fxa:traceStart "2026-04-29T14:12:03Z"^^xsd:dateTime ;
     fxa:traceEnd "2026-04-29T14:21:48Z"^^xsd:dateTime ;
-    fxa:emittedStatement <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/xapi/stmt/8c2f1e6a-...> .
+    fxa:emittedStatement <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/xapi/stmt/8c2f1e6a-...> .
 
 # Extraction event closes the loop: this concept was generated from
 # this resource during this consumption trace.
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/extraction/concept/python-mutability/v1> a fxa:ExtractionEvent ;
-    prov:generated <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-mutability> ;
-    prov:used <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/intro-python/res/lesson-3-2> ;
-    fxa:duringConsumption <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/trace/learner-001/2026-04-29/item-3-2> ;
-    prov:wasAssociatedWith <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/extractor/foxxi-olke/0.1.0> ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/extraction/concept/python-mutability/v1> a fxa:ExtractionEvent ;
+    prov:generated <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-mutability> ;
+    prov:used <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/intro-python/res/lesson-3-2> ;
+    fxa:duringConsumption <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/trace/learner-001/2026-04-29/item-3-2> ;
+    prov:wasAssociatedWith <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/extractor/foxxi-olke/0.1.0> ;
     prov:atTime "2026-04-29T14:21:50Z"^^xsd:dateTime .
 
 # When the agent answered the quiz correctly, that produces a
 # confirming signal for the concept extraction's quality.
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/signal/concept/python-mutability/2026-04-29> a fxa:CompetencySignal ;
-    fxa:signalsFor <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-mutability> ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/signal/concept/python-mutability/2026-04-29> a fxa:CompetencySignal ;
+    fxa:signalsFor <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-mutability> ;
     fxa:competencySignal fxa:Confirming ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/trace/learner-001/2026-04-29/item-3-2> .
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/trace/learner-001/2026-04-29/item-3-2> .
 
 
 # ===== Example D: Cross-source contradiction ===========================
@@ -1156,40 +1156,40 @@ fxsh:NamedGraphShape a sh:NodeShape ;
 # A second package — perhaps an outdated tutorial — claims something
 # inconsistent. The federation surfaces this contradiction.
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/legacy-python> a fxs:Package ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/legacy-python> a fxs:Package ;
     dcterms:title "Python Basics (Legacy)" ;
     fxs:standardConformance fxs:SCORM_1_2 ;
     fxs:authoredWith fxs:Captivate ;
     fxs:identifiedBy "LEGACY-PYTHON-2018" ;
-    fxs:hasOrganization <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/legacy-python/org/main> ;
-    fxs:defaultOrganization <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/legacy-python/org/main> .
+    fxs:hasOrganization <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/legacy-python/org/main> ;
+    fxs:defaultOrganization <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/legacy-python/org/main> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/legacy-python/org/main> a fxs:Organization ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/legacy-python/org/main> a fxs:Organization ;
     dcterms:title "Python Basics — Legacy Track" ;
     fxs:identifiedBy "LEGACY-ORG-MAIN" ;
-    fxs:hasItem <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/legacy-python/item/tuples> .
+    fxs:hasItem <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/legacy-python/item/tuples> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/legacy-python/item/tuples> a fxs:Item ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/legacy-python/item/tuples> a fxs:Item ;
     dcterms:title "Tuples (Legacy)" ;
     fxs:identifiedBy "LEGACY-ITEM-TUPLES" ;
     fxs:sequenceIndex 0 ;
-    fxs:hasResource <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/legacy-python/res/lesson-tuples> .
+    fxs:hasResource <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/legacy-python/res/lesson-tuples> .
 
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/legacy-python/res/lesson-tuples> a fxs:SCO ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/legacy-python/res/lesson-tuples> a fxs:SCO ;
     dcterms:title "Working with Tuples" ;
     fxs:identifiedBy "LEGACY-RES-TUPLES" ;
     fxs:fileLocator "legacy-python.zip!/tuples/index.html" ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/legacy-python> .
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/legacy-python> .
 
 # An incorrect claim from the legacy source.
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/claim/tuples-can-be-modified> a fxk:Claim ;
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/claim/tuples-can-be-modified> a fxk:Claim ;
     skos:prefLabel "Python tuples can be modified after creation." ;
-    fxk:supportedBy <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/concept/python-tuple> ;
-    prov:wasDerivedFrom <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/pkg/legacy-python/res/lesson-tuples> ;
+    fxk:supportedBy <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/concept/python-tuple> ;
+    prov:wasDerivedFrom <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/pkg/legacy-python/res/lesson-tuples> ;
     fxk:extractionConfidence 0.71 .
 
 # The contradiction edge — symmetric, surfaces in both directions.
-<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/claim/tuples-can-be-modified> fxk:contradicts <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/example/claim/tuple-is-immutable> .
+<https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/claim/tuples-can-be-modified> fxk:contradicts <https://foxxi-bridge.interego.xwisee.com/ns/legacy/example/claim/tuple-is-immutable> .
 
 # An MCP consumer querying for "what can I tell the learner about tuples?"
 # can detect this contradiction and surface both sources with provenance,

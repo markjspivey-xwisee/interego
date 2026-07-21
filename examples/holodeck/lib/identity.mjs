@@ -28,7 +28,7 @@ function ensureIdentitiesDir() {
 }
 
 export function podUrlForDid(did) {
-  const gate = (process.env.CG_GATE_URL ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+  const gate = (process.env.CG_GATE_URL ?? 'https://gate.interego.xwisee.com').replace(/\/$/, '');
   const m = did.match(/0x([0-9a-fA-F]+)/);
   const slug = m && m[1]
     ? m[1].slice(-12).toLowerCase()

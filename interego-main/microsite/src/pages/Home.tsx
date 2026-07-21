@@ -97,7 +97,7 @@ export function Home({ onNavigate }: { onNavigate: (r: Route) => void }) {
             flip captures the moment evidence becomes claimable knowledge.
           </>}
           actionLabel="Live multi-agent emergence →"
-          href="https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io/emergent"
+          href="https://foxxi-microsite.interego.xwisee.com/emergent"
         />
         <ShowcaseCard
           title="Real cross-pod federation"
@@ -108,7 +108,7 @@ export function Home({ onNavigate }: { onNavigate: (r: Route) => void }) {
             not a special-purpose API.
           </>}
           actionLabel="See the federated calibration →"
-          href="https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/performance/calibration"
+          href="https://foxxi-bridge.interego.xwisee.com/performance/calibration"
         />
         <ShowcaseCard
           title="Verticals overview"

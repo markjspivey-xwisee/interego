@@ -129,11 +129,11 @@ ENV NODE_NO_WARNINGS=1
 #  CSS URL), and FOXXI_POD_WRITE_SECRET MUST be set to match the gate's
 #  WRITE_SECRET — otherwise every bridge-originated write 401s at the gate.
 # ────────────────────────────────────────────────────────────
-ENV FOXXI_TENANT_POD_URL=https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/
-ENV FOXXI_AUTHORITATIVE_SOURCE=did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io
+ENV FOXXI_TENANT_POD_URL=https://gate.interego.xwisee.com/foxxi/
+ENV FOXXI_AUTHORITATIVE_SOURCE=did:web:acme-id.interego.xwisee.com
 ENV FOXXI_AUDIENCE=both
-ENV BRIDGE_DEPLOYMENT_URL=https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io
-ENV FOXXI_DASHBOARD_ORIGIN=https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io
+ENV BRIDGE_DEPLOYMENT_URL=https://foxxi-bridge.interego.xwisee.com
+ENV FOXXI_DASHBOARD_ORIGIN=https://foxxi-dashboard.interego.xwisee.com
 
 # Bearer token presented to css-gate on every pod write. MUST be overridden
 # at deploy time with the value matching the gate container's WRITE_SECRET;
