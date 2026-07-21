@@ -4,32 +4,32 @@
     "https://w3id.org/security/multikey/v1",
     "https://w3id.org/security/suites/ed25519-2020/v1"
   ],
-  "id": "did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io",
+  "id": "did:web:acme-id.interego.xwisee.com",
   "alsoKnownAs": [
-    "https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/",
+    "https://acme-id.interego.xwisee.com/",
     "urn:tenant:acme-training-co"
   ],
   "verificationMethod": [
     {
-      "id": "did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io#issuer",
+      "id": "did:web:acme-id.interego.xwisee.com#issuer",
       "type": "Ed25519VerificationKey2020",
-      "controller": "did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io",
+      "controller": "did:web:acme-id.interego.xwisee.com",
       "publicKeyHex": "aa9fa257456716f1a3a5daa9d53aeb8db3ba5b0fca73215485761e3dc5d3b6ce"
     }
   ],
   "assertionMethod": [
-    "did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io#issuer"
+    "did:web:acme-id.interego.xwisee.com#issuer"
   ],
   "service": [
     {
-      "id": "did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io#tenantPod",
+      "id": "did:web:acme-id.interego.xwisee.com#tenantPod",
       "type": "TenantPod",
-      "serviceEndpoint": "https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/acme/"
+      "serviceEndpoint": "https://gate.interego.xwisee.com/acme/"
     },
     {
-      "id": "did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io#foxxiBridge",
+      "id": "did:web:acme-id.interego.xwisee.com#foxxiBridge",
       "type": "FoxxiVerticalBridge",
-      "serviceEndpoint": "https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io"
+      "serviceEndpoint": "https://foxxi-bridge.interego.xwisee.com"
     }
   ]
 }
