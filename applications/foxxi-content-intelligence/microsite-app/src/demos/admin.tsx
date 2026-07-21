@@ -3,7 +3,7 @@ import { callBridge, DEMO_IDENTITIES } from '../bridge-client.js';
 import type { DemoStep } from '../components/DemoCard.js';
 
 const JOSHUA = DEMO_IDENTITIES.joshua;
-const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/';
+const POD = 'https://gate.interego.xwisee.com/foxxi/';
 
 export const adminSteps: DemoStep[] = [
   {

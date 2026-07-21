@@ -37,7 +37,7 @@ const label: React.CSSProperties = {
 // CSS itself is internal-only; browser code reaches the pod through the
 // public css-gate. Override at build time via VITE_CSS_POD_URL.
 const CSS_BASE = (import.meta.env.VITE_CSS_POD_URL as string | undefined)
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://gate.interego.xwisee.com';
 const TENANT_POD = `${CSS_BASE}/foxxi/`;
 const PEER_POD = `${CSS_BASE}/foxxi/federation-peer/`;
 

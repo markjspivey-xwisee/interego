@@ -801,7 +801,7 @@ function Closing({ onHome, onEmergent }: { onHome: () => void; onEmergent: () =>
         </button>
         <a href={`${REPO}/CONFORMANCE.md`} target="_blank" rel="noreferrer">LRS / LMS conformance →</a>
         <a href={`${REPO}/PERFORMANCE-ARCHITECTURE.md`} target="_blank" rel="noreferrer">Performance Architecture →</a>
-        <a href="https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io" target="_blank" rel="noreferrer">Operational dashboard →</a>
+        <a href="https://foxxi-dashboard.interego.xwisee.com" target="_blank" rel="noreferrer">Operational dashboard →</a>
         <button onClick={onHome} style={{ ...chip, cursor: 'pointer' }}>← back to the site</button>
       </div>
     </div>

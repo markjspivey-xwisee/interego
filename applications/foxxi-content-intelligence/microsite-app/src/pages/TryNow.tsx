@@ -71,7 +71,7 @@ export function TryNow({ initialRole, onAbout, onHome }: {
             VC issuance via eddsa-jcs-2022 → BBS+ selective-disclosure derivation → standards-conformant payloads, end to end.
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <a href="https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io" style={{
+            <a href="https://foxxi-dashboard.interego.xwisee.com" style={{
               padding: '10px 18px', background: 'var(--accent)', color: 'var(--panel)',
               borderRadius: 4, fontFamily: "'JetBrains Mono', monospace",
               fontSize: 12, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 600,

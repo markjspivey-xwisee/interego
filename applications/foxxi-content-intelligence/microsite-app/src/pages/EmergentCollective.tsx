@@ -41,7 +41,7 @@ function verdictOf(exemplary: string, observed: string, newObserved: string, tra
 // CSS itself is internal-only; browser code reaches the pod through the
 // public css-gate. Override at build time via VITE_CSS_POD_URL.
 const CSS_POD = (import.meta.env.VITE_CSS_POD_URL as string | undefined)
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://gate.interego.xwisee.com';
 const PEER_POD = `${CSS_POD}/foxxi/federation-peer/`;
 const ASSERT_THRESHOLD = 12;
 const AGENT_NAMES = ['Scout', 'Probe', 'Ranger', 'Atlas', 'Nova'] as const;

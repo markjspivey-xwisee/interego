@@ -25,7 +25,7 @@ export * from './hypermedia-core.js';
 /** Foxxi bridge entry point — the one URL the dashboard must know. */
 const ENTRY_URL_DEFAULT =
   (import.meta.env.VITE_FOXXI_BRIDGE_URL as string | undefined
-    ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io')
+    ?? 'https://foxxi-bridge.interego.xwisee.com')
   + '/api/foxxi/v1';
 
 /**

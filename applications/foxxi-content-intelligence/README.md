@@ -142,14 +142,14 @@ Per [`applications/README.md`](../README.md):
 | **Channel transport** — `POST /content/deliver` actually sends: a real per-channel webhook (Slack / email / SMS HTTP API, `FOXXI_TRANSPORT_<CHANNEL>`), or the Interego-native publish — a `document` delivery becomes a discoverable `foxxi:DeliveredContent` Context Descriptor on the pod | shipped — [`src/content-transport.ts`](src/content-transport.ts) |
 | **Content forms** — content is text in whatever form the situation calls for: plain, markdown, static HTML hypertext, or dynamic interactive hypermedia (a self-contained HTML artifact — collapsible sections + an inline self-check). `chooseForm()` picks per channel / kind / audience; no media generated | shipped — [`src/content-forms.ts`](src/content-forms.ts) |
 | **Browser dashboard** | shipped — [`dashboard-app/`](dashboard-app/) (Vite + React, auto-probes the bridge, falls back to sample mode) |
-| Live deployment | shipped — bridge + css-gate run as Azure Container Apps; see [`deploy/foxxi-bridge/`](../../deploy/foxxi-bridge/) and [`deploy/css-gate/`](../../deploy/css-gate/). Bridge: `https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io`. Tenant pod path: `/foxxi/`. |
+| Live deployment | shipped — bridge + css-gate run as Azure Container Apps; see [`deploy/foxxi-bridge/`](../../deploy/foxxi-bridge/) and [`deploy/css-gate/`](../../deploy/css-gate/). Bridge: `https://foxxi-bridge.interego.xwisee.com`. Tenant pod path: `/foxxi/`. |
 
 ## Run the bridge locally
 
 ```bash
 cd applications/foxxi-content-intelligence/bridge
 PORT=6080 \
-  FOXXI_TENANT_POD_URL=https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/ \
+  FOXXI_TENANT_POD_URL=https://gate.interego.xwisee.com/foxxi/ \
   FOXXI_AUTHORITATIVE_SOURCE=did:web:acme-training.example \
   FOXXI_AUDIENCE=both \
   FOXXI_DASHBOARD_ORIGIN=http://localhost:5173 \
@@ -163,7 +163,7 @@ PORT=6080 \
 | Var | What it does |
 |---|---|
 | `PORT` | Port the bridge HTTP server binds to. |
-| `FOXXI_TENANT_POD_URL` | Pod base the bridge reads and writes against. Must end in the tenant slug — the deployed tenant pod is `/foxxi/`. Against a local CSS use `http://localhost:3000/foxxi/`; against the deployed substrate use the **css-gate** URL (`https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/`), not the raw CSS URL. |
+| `FOXXI_TENANT_POD_URL` | Pod base the bridge reads and writes against. Must end in the tenant slug — the deployed tenant pod is `/foxxi/`. Against a local CSS use `http://localhost:3000/foxxi/`; against the deployed substrate use the **css-gate** URL (`https://gate.interego.xwisee.com/foxxi/`), not the raw CSS URL. |
 | `FOXXI_AUTHORITATIVE_SOURCE` | `did:web:` (or other) identifier the bridge stamps on tenant-authored descriptors so federated readers can resolve attribution. |
 | `FOXXI_AUDIENCE` | Which audience slice the bridge serves (`learner`, `admin`, or `both`). |
 | `FOXXI_DASHBOARD_ORIGIN` | Origin the bridge allows through CORS for the dashboard's `fetch` calls. |

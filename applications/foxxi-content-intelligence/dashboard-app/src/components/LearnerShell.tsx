@@ -199,8 +199,8 @@ export function LearnerShell({ session }: { session: FoxxiSession }) {
 // Hydra IriTemplate discovered on each enrollment via the hypermedia
 // profile fetch. The dashboard never constructs player URLs from scratch
 // when the bridge is reachable.
-const SCORM_PLAYER_BASE_FALLBACK = 'https://interego-foxxi-scorm-player.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const BRIDGE_BASE_FALLBACK = import.meta.env.VITE_FOXXI_BRIDGE_URL ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const SCORM_PLAYER_BASE_FALLBACK = 'https://foxxi-scorm-player.interego.xwisee.com';
+const BRIDGE_BASE_FALLBACK = import.meta.env.VITE_FOXXI_BRIDGE_URL ?? 'https://foxxi-bridge.interego.xwisee.com';
 
 async function buildPlayerUrlFromGroup(group: CourseGroup, session: { webId: string; name: string; bearerToken: string }): Promise<string> {
   // Prefer the server-emitted `launch` Hydra IriTemplate on the first
