@@ -344,6 +344,8 @@ import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd, vocabTriplesBySubject, FOXXI_VOCAB_DOC } from '../src/foxxi-vocab.js';
 import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd, ontologyIri as specOntologyIri, modelFromHolon as specModelFromHolon, type OntologyModel as SpecOntologyModel } from '../src/spec-ontology.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
+import { LER_MODEL, OB3_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
+import { validateAgainstShape as validateAgainstShapeRaw } from '../src/spec-ontology.js';
 import { COMPLIANCE_MODELS } from '../src/spec/compliance.model.js';
 import { composeSpecOntology as composeComplianceOntology } from '../src/spec-ontology.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
@@ -3195,6 +3197,44 @@ const app = createVerticalBridge({
       a.get(`${path}/term/:a/:b`, (req, res) => sendSemTerm(`${req.params.a}/${req.params.b}`, res));
       a.get(`${path}/term/:a`, (req, res) => sendSemTerm(req.params.a, res));
     }
+
+    // ── IEEE-LER + Open Badges 3.0 SHACL shapes + validators ──────────
+    // The /ns/ieee-ler + /ns/adl-tla GETs above serve the OWL vocab; these add
+    // the machine-checkable SHACL layer over it (composing the SAME spec-ontology
+    // engine that powers /ns/xapi/validate). A competency assertion produced by
+    // the ELR rollup, and an OB3.0 credential, can now be POSTed for a pass/fail
+    // with a cited sh:NodeShape IRI — conformance is verified, not merely asserted.
+    const readInstance = (req: import('express').Request): Record<string, unknown> => {
+      const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
+      return (body.instance && typeof body.instance === 'object') ? body.instance as Record<string, unknown> : body;
+    };
+    a.get('/ns/ieee-ler/shapes', (_req, res) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.type('text/turtle').send(renderSpecShacl(LER_MODEL)); });
+    a.post('/ns/ieee-ler/validate', (req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const r = validateLerInstance(readInstance(req));
+      res.json({ ok: true, module: 'ieee-ler', conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
+    });
+    // ADL-TLA competency assertions share the same shape (tla:Assertion ≡ ler:CompetencyAssertion).
+    a.get('/ns/adl-tla/shapes', (_req, res) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.type('text/turtle').send(renderSpecShacl(LER_MODEL)); });
+    a.post('/ns/adl-tla/validate', (req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const r = validateLerInstance(readInstance(req));
+      res.json({ ok: true, module: 'adl-tla', conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
+    });
+    // Open Badges 3.0 / W3C VC credential shape + validator (explicit shape:
+    // a VC's `type` is an array, so route directly rather than by declared type).
+    a.get('/ns/ob3', (req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const acc = req.headers.accept ?? '';
+      if (acc.includes('text/turtle')) res.type('text/turtle').send(renderSpecOwl(OB3_MODEL));
+      else res.type('application/ld+json').send(JSON.stringify(renderSpecJsonLd(OB3_MODEL), null, 2));
+    });
+    a.get('/ns/ob3/shapes', (_req, res) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.type('text/turtle').send(renderSpecShacl(OB3_MODEL)); });
+    a.post('/ns/ob3/validate', (req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const r = validateAgainstShapeRaw(OB3_MODEL, 'OpenBadgeCredentialShape', readInstance(req));
+      res.json({ ok: true, module: 'ob3', conforms: r.results.length === 0, results: r.results, shapesIri: r.shapesIri });
+    });
 
     // ── Standards spec ontologies (xAPI 2.0, SCORM CAM/SN/RTE, cmi5) ──
     // EMERGENT, not hosted files: each is a single-source model composed into the
