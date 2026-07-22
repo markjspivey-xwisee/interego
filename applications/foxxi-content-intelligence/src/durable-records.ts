@@ -28,6 +28,7 @@ import type { ContextDescriptorData, IRI, ManifestEntry, FetchFn } from '@intere
 import { ingest, ingestWithProfile } from '@interego/pgsl';
 import { alsoPersistEncryptedHolon } from './foundation-holon-altitude.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { validateStatement } from './xapi-validate.js';
 
 const FXS = FOXXI_NS;
 export const RECORDED_PERFORMANCE_TYPE = `${FXS}RecordedPerformance` as IRI;
@@ -105,6 +106,10 @@ function redactStatementForPublic(stmt: Record<string, unknown>): Record<string,
 export async function persistRecordedStatement(args: PersistRecordArgs): Promise<string> {
   const stmtId = String((args.statement as { id?: unknown }).id ?? '');
   if (!stmtId) throw new Error('persistRecordedStatement: statement.id is required');
+  // No emit path may durably persist a non-conformant xAPI Statement to the pod
+  // system-of-record (defense-in-depth alongside the LRS + handler gates).
+  const vErrs = validateStatement(args.statement);
+  if (vErrs.length) throw new Error(`persistRecordedStatement: refusing non-conformant statement — ${vErrs.slice(0, 3).join('; ')}`);
   const key = slug(stmtId);
   const now = new Date().toISOString();
   const hasRecipients = !!(args.recipientPods && args.recipientPods.length);

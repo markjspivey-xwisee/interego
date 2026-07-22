@@ -133,8 +133,9 @@ export interface ElrCompetency {
   /** Which evidence class this competency rests on (strongest available). */
   basis: CompetencyBasis;
   framework?: string;
-  /** RDF type — this node IS a ler:CompetencyAssertion (validatable against the
-   *  published /ns/ieee-ler shape). */
+  /** RDF type — this node IS a ler:CompetencyAssertion. Stamped as BOTH @type (so a
+   *  standard SHACL processor selects the targetClass) and assertionType (back-compat). */
+  '@type': string;
   assertionType: string;
   /** A distinct per-assertion IRI (subject+competency) — so two learners' assertions
    *  about the same competency are NOT the same node. */
@@ -188,6 +189,8 @@ export interface ElrRawDataLocation {
 export interface EnterpriseLearnerRecord {
   '@context': readonly string[];
   type: readonly string[];
+  /** RDF type IRIs — so a standard SHACL processor selects the ler:EnterpriseLearnerRecord targetClass. */
+  '@type': readonly string[];
   id: string;
   conformsTo: string;
   /** human learner/performer OR AI agent. The data shape is identical. */
@@ -309,6 +312,7 @@ export async function assembleEnterpriseLearnerRecord(
   return {
     '@context': ELR_CONTEXT,
     type: ['VerifiablePresentation', 'EnterpriseLearnerRecord'],
+    '@type': [`${LER_NS}EnterpriseLearnerRecord`],
     // Dereferenceable URL id (everything-is-a-URL): the subject's own pod is the
     // authoritative home of the record, so the ELR is a fragment on it.
     id: `${config.learnerPodUrl.replace(/\/+$/, '')}/#enterprise-learner-record`,
@@ -582,6 +586,7 @@ function buildCompetencies(
       basis,
       framework: d.framework,
       // A real ler:CompetencyAssertion node — validatable against /ns/ieee-ler.
+      '@type': `${LER_NS}CompetencyAssertion`,
       assertionType: `${LER_NS}CompetencyAssertion`,
       // A distinct per-assertion IRI (subject pod + competency slug) so two subjects'
       // assertions about the same competency are different nodes; subject is the learner.

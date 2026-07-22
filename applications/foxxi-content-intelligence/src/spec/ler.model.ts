@@ -12,7 +12,8 @@
  * actually carry, so a real assembled record conforms; each shape's targetClass
  * is the published ler:/ob3: class the instance declares.
  */
-import { type OntologyModel, validateAgainstShape, shapesIri, type ValidationResult } from '../spec-ontology.js';
+import { type OntologyModel, shapesIri, type ValidationResult } from '../spec-ontology.js';
+import { validateInstanceWith } from './index.js';
 
 // ── IEEE-LER: competency assertion + evidence ───────────────────────────────
 export const LER_MODEL: OntologyModel = {
@@ -50,7 +51,7 @@ export const LER_MODEL: OntologyModel = {
         { path: 'id', minCount: 1, nodeKind: 'IRI', comment: 'A dereferenceable record id.' },
         { path: 'conformsTo', minCount: 1, comment: 'The P2997 data model it conforms to.' },
         { path: 'subjectKind', minCount: 1, in: ['human', 'agent'], comment: 'human learner/performer or AI agent.' },
-        { path: 'learner.did', minCount: 1, comment: 'The subject identity (DID).' },
+        { path: 'learner.did', minCount: 1, nodeKind: 'IRI', comment: 'The subject identity (a dereferenceable DID/URL).' },
         { path: 'organizationPath', minCount: 1, comment: 'P2997 organisation path.' },
         { path: 'provenance.rawDataLocations', minCount: 1, comment: 'P2997 raw-data-location indications — where each class of raw data lives.' },
       ],
@@ -60,12 +61,12 @@ export const LER_MODEL: OntologyModel = {
       label: 'Competency Assertion shape',
       comment: 'A well-formed IEEE-LER competency assertion: ABOUT a subject and a competency, at a dereferenceable proficiency level, with a confidence in 0..1, produced by a named roll-up rule, backed by at least one dereferenceable evidence IRI.',
       constraints: [
-        { path: 'subject', minCount: 1, comment: 'The subject the assertion is about (a subjectless assertion is not a standalone claim).' },
+        { path: 'subject', minCount: 1, nodeKind: 'IRI', comment: 'The subject the assertion is about — a dereferenceable id (DID/URL), not a bare literal.' },
         { path: 'aboutCompetency', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'ler:aboutCompetency — the competency definition IRI.' },
         { path: 'proficiencyLevel', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'ler:atProficiency — a dereferenceable proficiency-level IRI.' },
-        { path: 'confidence', minCount: 1, maxCount: 1, datatype: 'xsd:decimal', minInclusive: 0, maxInclusive: 1, comment: 'tla:confidence in [0,1].' },
+        { path: 'confidence', minCount: 1, maxCount: 1, datatype: 'xsd:decimal', minInclusive: 0, maxInclusive: 1, comment: 'ler:successConfidence — a Wilson-lower-bound success confidence in [0,1] (a non-negative sub-range of tla:confidence [-1,1]).' },
         { path: 'rolledUpBy', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'The tla:RollupRule IRI that produced this assertion.' },
-        { path: 'assertingAgent', minCount: 1, comment: 'iep:assertingAgent — the asserting agent id.' },
+        { path: 'assertingAgent', minCount: 1, nodeKind: 'IRI', comment: 'iep:assertingAgent — a dereferenceable agent id (DID/URL).' },
         { path: 'evidence', minCount: 1, nodeKind: 'IRI', comment: 'ler:supportedByEvidence — at least one dereferenceable evidence IRI.' },
         { path: 'basis', minCount: 1, in: ['performance', 'credential', 'inferred'], comment: 'The evidence class.' },
         { path: 'modalStatus', minCount: 1, in: ['Asserted', 'Hypothetical'], comment: 'The modal status.' },
@@ -159,16 +160,10 @@ export const CLR_MODEL: OntologyModel = {
   ],
 };
 
-/** Validate an instance against the LER competency-assertion / evidence shapes,
- *  routing by declared type; defaults to CompetencyAssertion (the common case). */
+/** Validate an LER instance — DATA-DRIVEN via the generic type-dispatching engine
+ *  (which reads @type / assertionType / type, array-aware, exact local-name match to a
+ *  targetClass). A new assertion format is a pure OntologyModel data entry, no code edit. */
 export function validateLerInstance(instance: Record<string, unknown>): ValidationResult {
-  const raw = instance['@type'] ?? instance.assertionType ?? instance.type ?? '';
-  // EXACT declared-class local-name routing (not a substring test): 'CredentialEvidence'
-  // must NOT route to the id-only EvidenceShape and thereby skip every assertion check.
-  const localNames = (Array.isArray(raw) ? raw : [raw]).map(t => String(t).split(/[#/]/).pop());
-  const shape = localNames.includes('EnterpriseLearnerRecord') ? 'EnterpriseLearnerRecordShape'
-    : localNames.includes('Evidence') ? 'EvidenceShape'
-      : 'CompetencyAssertionShape';
-  const r = validateAgainstShape(LER_MODEL, shape, instance);
+  const r = validateInstanceWith(LER_MODEL, instance);
   return { conforms: r.results.length === 0, results: r.results, shapesIri: shapesIri(LER_MODEL) };
 }

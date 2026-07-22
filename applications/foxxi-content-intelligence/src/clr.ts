@@ -34,7 +34,8 @@ import {
   verifyDataIntegrityProof,
   type VerifiableCredentialJson,
 } from '../../_shared/vc-jwt/data-integrity-jcs.js';
-import { CREDENTIAL_TYPES } from './credentials.js';
+import { CREDENTIAL_TYPES, deriveTenantIssuer } from './credentials.js';
+import { issueDataIntegrityProof } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 
 const CLR_CONTEXT = [
@@ -55,6 +56,18 @@ export interface ClrEnvelope {
   '@context': readonly string[];
   type: readonly string[];
   id: string;
+  /** CLR 2.0 issuer (the tenant did:key) — present when signed. */
+  issuer?: string;
+  /** CLR 2.0 / W3C VC issuance time. */
+  validFrom?: string;
+  /** CLR 2.0 ClrSubject: the holder + the bundled verifiable credentials. */
+  credentialSubject?: {
+    id: string;
+    type: readonly string[];
+    verifiableCredential: Array<Record<string, unknown>>;
+  };
+  /** W3C Data Integrity proof — present when an issuerSeed was supplied. */
+  proof?: Record<string, unknown>;
   holderDid: string;
   exportedAt: string;
   credentialEntries: ClrEntry[];
@@ -72,6 +85,10 @@ export interface FetchClrConfig {
   /** Learner's DID — appears in the envelope's holderDid + cross-checked against each credential's credentialSubject.id. */
   learnerDid: string;
   fetch?: typeof globalThis.fetch;
+  /** When supplied, the CLR envelope is signed with an eddsa-jcs-2022 Data Integrity
+   *  proof by the tenant issuer derived from this seed — making it a real signed CLR 2.0
+   *  VC. Omitted for read-only aggregation (structurally correct but unsigned). */
+  issuerSeed?: string;
 }
 
 /**
@@ -161,15 +178,40 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
     issuers: Array.from(new Set(dedupedEntries.map(e => e.credential.issuer).filter(Boolean))),
   };
 
-  return {
+  // CLR 2.0 ClrSubject — the holder + the bundled verifiable credentials (the
+  // canonical W3C-VC shape), alongside the (retained) rich credentialEntries view.
+  const credentialSubject = {
+    id: config.learnerDid,
+    type: ['ClrSubject'] as const,
+    verifiableCredential: dedupedEntries.map(e => e.credential as unknown as Record<string, unknown>),
+  };
+  // Dereferenceable id on the holder's own pod (everything-is-a-URL), not a urn.
+  const clrId = `${config.learnerPodUrl.replace(/\/+$/, '')}/#clr`;
+  const base: ClrEnvelope = {
     '@context': CLR_CONTEXT,
     type: ['VerifiableCredential', 'ClrCredential', WALLET_TYPE],
-    id: `urn:foxxi:clr:${slugDid(config.learnerDid)}:${Date.now()}`,
+    id: clrId,
+    validFrom: exportedAt,
     holderDid: config.learnerDid,
     exportedAt,
+    credentialSubject,
     credentialEntries: dedupedEntries,
     summary,
   };
+  // Sign as the tenant issuer when a seed is supplied → a real signed CLR 2.0 VC.
+  if (config.issuerSeed) {
+    try {
+      const issuer = await deriveTenantIssuer(config.issuerSeed);
+      const unsigned = { ...base, issuer: issuer.did } as unknown as Parameters<typeof issueDataIntegrityProof>[0];
+      const signed = issueDataIntegrityProof(unsigned, issuer) as unknown as ClrEnvelope;
+      return signed;
+    } catch (err) {
+      // Best-effort: an unsigned-but-structurally-correct CLR is still returned.
+      // eslint-disable-next-line no-console
+      console.warn('[exportClr] signing failed, returning unsigned CLR:', (err as Error).message);
+    }
+  }
+  return base;
 }
 
 // ── Helpers ───────────────────────────────────────────────────

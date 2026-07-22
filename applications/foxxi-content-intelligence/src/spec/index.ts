@@ -95,7 +95,7 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
   // array like ['VerifiableCredential','OpenBadgeCredential']). Map each to its local
   // name so credential validation routes to the right shape instead of stringifying
   // the array to one unmatchable token.
-  const rawType = instance['@type'] ?? instance.objectType ?? instance.type ?? '';
+  const rawType = instance['@type'] ?? instance.assertionType ?? instance.objectType ?? instance.type ?? '';
   const declaredNames = (Array.isArray(rawType) ? rawType : [rawType])
     .map(t => String(t).split(/[#/]/).pop()).filter((s): s is string => !!s);
   // Subclass-aware: a shape whose targetClass is an ANCESTOR of a declared class
