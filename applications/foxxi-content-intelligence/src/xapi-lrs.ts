@@ -122,10 +122,20 @@ export interface XapiLrsConfig {
 
 export type XapiStatementRecord = StoredStatement;
 
+/** The LRS's own identity as statement authority (xAPI 2.0 §4.1.9) for
+ *  internally-emitted statements. homePage is an https IRL in prod. */
+const INTERNAL_LRS_AUTHORITY = { homePage: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080', name: 'foxxi-lrs' };
 export function storeStatementInternal(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT): string {
-  const id = (typeof stmt.id === 'string' && isUuid(stmt.id)) ? stmt.id : randomUUID();
-  const stored = new Date().toISOString();
-  const rec: StoredStatement = { id, statement: { ...stmt, id, stored }, stored, voided: false };
+  // Author + structurally validate on the internal emission path too, exactly as
+  // the inbound POST /xapi/statements path does — so an internally-stored statement
+  // carries an LRS authority (§4.1.9) and is checked against the xAPI shape. A
+  // non-conformant internal emission is logged (not dropped) so no system flow breaks
+  // while the non-conformance is surfaced.
+  const enriched = ensureStatementFields(stmt, INTERNAL_LRS_AUTHORITY);
+  const id = enriched.id as string;
+  const errs = validateStatement(enriched);
+  if (errs.length > 0) console.warn(`[storeStatementInternal] non-conformant statement ${id}:`, errs.slice(0, 3).join('; '));
+  const rec: StoredStatement = { id, statement: enriched, stored: enriched.stored as string, voided: false };
   void statementStores.for(tenant).put(rec).catch(err => {
     // eslint-disable-next-line no-console
     console.warn('[storeStatementInternal]', (err as Error).message);
