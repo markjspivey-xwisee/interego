@@ -154,7 +154,10 @@ function validateIfis(a: Record<string, unknown>, label: string, e: Errs): numbe
   let count = 0;
   if ('mbox' in a) {
     count++;
-    if (typeof a.mbox !== 'string' || !/^mailto:.+@.+/.test(a.mbox)) {
+    // mbox MUST be a valid mailto IRI (§4.1.2.1) — reuse the same isIri() the other IFIs
+    // use, plus a whitespace-forbidding mailto shape (RFC 3987 IRIs have no raw whitespace;
+    // the old unanchored /^mailto:.+@.+/ let spaces/newlines through).
+    if (typeof a.mbox !== 'string' || !isIri(a.mbox) || !/^mailto:[^\s@]+@[^\s@]+$/.test(a.mbox)) {
       e.add(`${label}.mbox must be a "mailto:" IRI`);
     }
   }

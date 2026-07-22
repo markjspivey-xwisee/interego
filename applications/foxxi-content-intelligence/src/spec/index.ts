@@ -97,16 +97,33 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
   // the array to one unmatchable token.
   const rawType = instance['@type'] ?? instance.assertionType ?? instance.objectType ?? instance.type ?? '';
   const declaredNames = (Array.isArray(rawType) ? rawType : [rawType])
-    .map(t => String(t).split(/[#/]/).pop()).filter((s): s is string => !!s);
-  // Subclass-aware: a shape whose targetClass is an ANCESTOR of a declared class
-  // also applies. Walk the model's subClassOf chain.
+    .map(t => String(t).split(/[#/:]/).pop()).filter((s): s is string => !!s);
+  // Subclass- AND equivalence-aware: a shape applies to a declared class if its
+  // targetClass is an ANCESTOR (subClassOf chain) OR an owl:equivalentClass of it.
+  // Equivalence is symmetric, so we follow BOTH a class's own equivalentClass targets
+  // and any class that names this one as its equivalent — e.g. an instance typed
+  // tla:Assertion routes to CompetencyAssertionShape (CompetencyAssertion owl:equivalentClass
+  // tla:Assertion) instead of falling back to every shape and drawing spurious violations.
+  // Colon-aware so a CURIE (tla:Assertion) yields its local name, not the whole token —
+  // an absolute IRI's fragment still wins because the delimiters after the scheme colon
+  // are `/` and `#`. This is what lets the reverse equivalentClass scan match.
+  const localName = (t: string): string => t.split(/[#/:]/).pop()!;
+  const equivalentsOf = (name: string): string[] => {
+    const out: string[] = [];
+    for (const e of (m.classes.find(c => c.name === name)?.equivalentClass ?? [])) out.push(localName(e));
+    for (const c of m.classes) if ((c.equivalentClass ?? []).some(e => localName(e) === name)) out.push(c.name);
+    return out;
+  };
   const ancestorsOf = (cls: string): Set<string> => {
     const seen = new Set<string>([cls]); const stack = [cls];
     while (stack.length) {
       const cur = stack.pop()!;
       for (const p of (m.classes.find(c => c.name === cur)?.subClassOf ?? [])) {
-        const base = p.split(/[#/]/).pop()!;
+        const base = localName(p);
         if (!seen.has(base)) { seen.add(base); stack.push(base); }
+      }
+      for (const eq of equivalentsOf(cur)) {
+        if (!seen.has(eq)) { seen.add(eq); stack.push(eq); }
       }
     }
     return seen;

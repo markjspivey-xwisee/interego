@@ -187,9 +187,17 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
   };
   // Dereferenceable id on the holder's own pod (everything-is-a-URL), not a urn.
   const clrId = `${config.learnerPodUrl.replace(/\/+$/, '')}/#clr`;
+  // Fail-closed VC typing: a Verifiable Credential is only verifiable if it carries a
+  // Data Integrity proof. An unsigned aggregate that claimed `VerifiableCredential` /
+  // `ClrCredential` would be a forgeable, unverifiable assertion — so the standard VC
+  // types are applied ONLY to the proof-bearing object (and the proof commits to that
+  // exact type array). Unsigned aggregation gets a foxxi aggregation type instead,
+  // which correctly FAILS the published ClrCredentialShape (it is not a VC).
+  const VC_TYPE = ['VerifiableCredential', 'ClrCredential', WALLET_TYPE];
+  const AGGREGATE_TYPE = [`${FOXXI_NS}ClrAggregation`, WALLET_TYPE];
   const base: ClrEnvelope = {
     '@context': CLR_CONTEXT,
-    type: ['VerifiableCredential', 'ClrCredential', WALLET_TYPE],
+    type: AGGREGATE_TYPE,
     id: clrId,
     validFrom: exportedAt,
     holderDid: config.learnerDid,
@@ -202,13 +210,17 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
   if (config.issuerSeed) {
     try {
       const issuer = await deriveTenantIssuer(config.issuerSeed);
-      const unsigned = { ...base, issuer: issuer.did } as unknown as Parameters<typeof issueDataIntegrityProof>[0];
+      const unsigned = { ...base, type: VC_TYPE, issuer: issuer.did } as unknown as Parameters<typeof issueDataIntegrityProof>[0];
       const signed = issueDataIntegrityProof(unsigned, issuer) as unknown as ClrEnvelope;
-      return signed;
-    } catch (err) {
-      // Best-effort: an unsigned-but-structurally-correct CLR is still returned.
+      // Keep the VC typing ONLY if a proof was actually attached (fail-closed).
+      if (signed && (signed as { proof?: unknown }).proof) return signed;
       // eslint-disable-next-line no-console
-      console.warn('[exportClr] signing failed, returning unsigned CLR:', (err as Error).message);
+      console.warn('[exportClr] signing produced no proof; returning unsigned aggregate CLR');
+    } catch (err) {
+      // Best-effort: an unsigned-but-structurally-correct aggregate CLR is still returned
+      // — but WITHOUT the VerifiableCredential typing it has not earned.
+      // eslint-disable-next-line no-console
+      console.warn('[exportClr] signing failed, returning unsigned aggregate CLR:', (err as Error).message);
     }
   }
   return base;
