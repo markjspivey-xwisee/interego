@@ -106,11 +106,23 @@ export async function persistRecordedStatement(args: PersistRecordArgs): Promise
   const stmtId = String((args.statement as { id?: unknown }).id ?? '');
   if (!stmtId) throw new Error('persistRecordedStatement: statement.id is required');
   const key = slug(stmtId);
-  const graphIri = `urn:foxxi:record:${key}` as IRI;
   const now = new Date().toISOString();
+  const hasRecipients = !!(args.recipientPods && args.recipientPods.length);
+
+  // Resolve placement FIRST so the record's ids are dereferenceable pod URLs — the
+  // exact URLs publish() writes to — not a bare urn:foxxi:record: (everything-is-a-URL).
+  // Shape-driven: where does THIS agent store performance records? default foxxi-records/.
+  const place = await resolveStorageForShape(args.podUrl, RECORDED_PERFORMANCE_TYPE, { fetch: args.fetch, defaultContainer: 'foxxi-records/' });
+  const containerPath = place.target.startsWith(place.podRoot) ? place.target.slice(place.podRoot.length) : 'foxxi-records/';
+  const container = place.podRoot + (containerPath.endsWith('/') ? containerPath : `${containerPath}/`);
+  // publish() lands the descriptor at <container><slug>.ttl and the graph at
+  // <container><slug>-graph.trig (plaintext) / .envelope.jose.json (encrypted).
+  const graphDocUrl = `${container}rec-${key}-graph.${hasRecipients ? 'envelope.jose.json' : 'trig'}`;
+  const graphIri = `${graphDocUrl}#record` as IRI;
+  const descriptorId = `${container}rec-${key}.ttl#descriptor` as IRI;
 
   const descriptor: ContextDescriptorData = {
-    id: `${graphIri}#descriptor` as IRI,
+    id: descriptorId,
     describes: [graphIri],
     conformsTo: [RECORDED_PERFORMANCE_TYPE],
     facets: [
@@ -124,7 +136,6 @@ export async function persistRecordedStatement(args: PersistRecordArgs): Promise
   // When the canonical content is encrypted to specific recipients, the public
   // cleartext record is REDACTED to structural metadata only (option A); the
   // full statement is preserved in the encrypted holon below.
-  const hasRecipients = !!(args.recipientPods && args.recipientPods.length);
   const publicStatement = hasRecipients ? redactStatementForPublic(args.statement) : args.statement;
   const json = JSON.stringify(publicStatement);
   const b64 = Buffer.from(json, 'utf8').toString('base64');
@@ -134,10 +145,6 @@ export async function persistRecordedStatement(args: PersistRecordArgs): Promise
     <${FXS}statementJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
 
-  // Shape-driven placement: where does THIS agent store performance records
-  // (RecordedPerformance shape)? Read their own Type Index; default foxxi-records/.
-  const place = await resolveStorageForShape(args.podUrl, RECORDED_PERFORMANCE_TYPE, { fetch: args.fetch, defaultContainer: 'foxxi-records/' });
-  const containerPath = place.target.startsWith(place.podRoot) ? place.target.slice(place.podRoot.length) : 'foxxi-records/';
   await publish(descriptor, graphContent, place.podRoot, {
     fetch: args.fetch,
     containerPath,
@@ -160,7 +167,7 @@ export async function persistRecordedStatement(args: PersistRecordArgs): Promise
     },
   });
 
-  return `${graphIri}#descriptor`;
+  return descriptorId;
 }
 
 export interface ReadRecordsArgs {
