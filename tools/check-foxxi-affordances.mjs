@@ -79,6 +79,13 @@ const ALLOWLIST = [
   // is DESCRIPTIVE, same category as the course + lattice read views. Publishing a
   // memory is the capability (foxxi.publish_memory); discovering one is HATEOAS.
   '/agent/memories',
+  // Dynamic per-agent affordance projection (read-only). Computes the agent's
+  // reachable affordance set from their REAL learner record — the "teach it"
+  // affordance EMERGES only when the published roll-up rule asserts a competency
+  // at Proficient+. DESCRIPTIVE (projecting a discoverable capability record);
+  // the affordances it names (record-performance, register-tutor) are themselves
+  // the signed capabilities. Same read-view category as the lattice/course views.
+  '/agent/:did/affordances',
 ];
 
 /** Normalize a route path so :param segments compare as a wildcard. */
