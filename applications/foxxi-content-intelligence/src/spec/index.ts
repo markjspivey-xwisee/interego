@@ -7,7 +7,7 @@
  * validates a statement/manifest it is validating against this composed, dereferenceable
  * ontology, and every result cites a sh:NodeShape IRI under <bridge>/ns/<module>/shapes.
  */
-import { type OntologyModel, validateAgainstShape, shapesIri, composeSpecOntology, type ValidationResult, type ComposedOntology } from '../spec-ontology.js';
+import { type OntologyModel, validateAgainstShape, shapesIri, composeSpecOntology, ns, type ValidationResult, type ComposedOntology } from '../spec-ontology.js';
 import { validateStatement } from '../xapi-validate.js';
 import { XAPI_MODEL } from './xapi.model.js';
 import { CMI5_MODEL } from './cmi5.model.js';
@@ -96,18 +96,25 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
   // name so credential validation routes to the right shape instead of stringifying
   // the array to one unmatchable token.
   const rawType = instance['@type'] ?? instance.assertionType ?? instance.objectType ?? instance.type ?? '';
-  const declaredNames = (Array.isArray(rawType) ? rawType : [rawType])
-    .map(t => String(t).split(/[#/:]/).pop()).filter((s): s is string => !!s);
-  // Subclass- AND equivalence-aware: a shape applies to a declared class if its
-  // targetClass is an ANCESTOR (subClassOf chain) OR an owl:equivalentClass of it.
-  // Equivalence is symmetric, so we follow BOTH a class's own equivalentClass targets
-  // and any class that names this one as its equivalent — e.g. an instance typed
-  // tla:Assertion routes to CompetencyAssertionShape (CompetencyAssertion owl:equivalentClass
-  // tla:Assertion) instead of falling back to every shape and drawing spurious violations.
-  // Colon-aware so a CURIE (tla:Assertion) yields its local name, not the whole token —
-  // an absolute IRI's fragment still wins because the delimiters after the scheme colon
-  // are `/` and `#`. This is what lets the reverse equivalentClass scan match.
+  const rawTypes = (Array.isArray(rawType) ? rawType : [rawType]).map(String).filter(Boolean);
+  const isAbs = (t: string): boolean => /^https?:\/\//.test(t);
+  // Colon-aware local name so a CURIE (tla:Assertion) yields 'Assertion'; an absolute IRI's
+  // fragment still wins because the delimiters after the scheme colon are `/` and `#`.
   const localName = (t: string): string => t.split(/[#/:]/).pop()!;
+  // Absolute IRI form of a class token within this module (bare name → module ns; CURIE →
+  // its declared prefix; absolute → itself) — lets routing compare by AUTHORITY, not just
+  // the trailing segment.
+  const prefixes: Record<string, string> = { ...(m.prefixes ?? {}), [m.module]: ns(m) };
+  const absOf = (token: string): string => {
+    if (isAbs(token)) return token;
+    const cur = /^([a-z][\w-]*):(.+)$/i.exec(token);
+    if (cur) { const base = prefixes[cur[1]!]; return base ? base + cur[2] : token; }
+    return ns(m) + token;
+  };
+  // Subclass- AND equivalence-aware local routing: a shape applies to a declared LOCAL name
+  // if its targetClass is an ANCESTOR (subClassOf) OR an owl:equivalentClass of it. Equivalence
+  // is symmetric (both a class's own targets AND any class naming it). Used for bare/CURIE
+  // @types where the authority is unavailable.
   const equivalentsOf = (name: string): string[] => {
     const out: string[] = [];
     for (const e of (m.classes.find(c => c.name === name)?.equivalentClass ?? [])) out.push(localName(e));
@@ -128,9 +135,24 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
     }
     return seen;
   };
-  const applicable = new Set<string>();
-  for (const d of declaredNames) for (const a of ancestorsOf(d)) applicable.add(a);
-  const matched = declaredNames.length ? m.shapes.filter(s => applicable.has(s.targetClass)) : [];
+  // The absolute IRIs a shape answers to: its targetClass IRI + each owl:equivalentClass IRI
+  // (both directions). An absolute @type routes to a shape ONLY on an exact IRI match, so a
+  // foreign-namespace type sharing a local name (https://evil.example/x#Assertion) never
+  // collides onto a Foxxi/TLA shape — everything-is-a-URL: the authority is load-bearing.
+  const shapeAbsIdentities = (targetClass: string): Set<string> => {
+    const ids = new Set<string>([absOf(targetClass)]);
+    for (const e of (m.classes.find(c => c.name === targetClass)?.equivalentClass ?? [])) ids.add(absOf(e));
+    for (const c of m.classes) if ((c.equivalentClass ?? []).some(e => localName(e) === targetClass)) ids.add(absOf(c.name));
+    return ids;
+  };
+  const declaredLocal = rawTypes.filter(t => !isAbs(t)).map(localName);
+  const declaredAbs = rawTypes.filter(isAbs);
+  const declaredNames = rawTypes.map(localName); // for the no-vacuous-pass decision below
+  const applicableLocal = new Set<string>();
+  for (const d of declaredLocal) for (const a of ancestorsOf(d)) applicableLocal.add(a);
+  const matched = rawTypes.length ? m.shapes.filter(s =>
+    applicableLocal.has(s.targetClass) || declaredAbs.some(rt => shapeAbsIdentities(s.targetClass).has(rt)),
+  ) : [];
   // No vacuous pass: an instance that declares a type matching no shape is checked
   // against ALL the model's shapes (so a bogus/absent type cannot skip validation);
   // an untyped instance falls back to the model's primary shape.

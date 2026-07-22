@@ -3365,7 +3365,12 @@ const app = createVerticalBridge({
             // the JCS suite; we surface presence without over-claiming a JCS verification.
             proofInfo = { present: true, cryptosuite: 'bbs-2023', verified: null, reason: 'bbs-2023 selective-disclosure proof — verify via the BBS presentation verifier, not the eddsa-jcs-2022 suite' };
           } else {
-            const v = verifyDataIntegrityProof(instance as unknown as VerifiableCredentialJson);
+            // Defense-in-depth: verifyDataIntegrityProof is contracted not to throw, but an
+            // unauthenticated /validate endpoint must NEVER 500 (a leaked stack trace exposes
+            // server paths) — so any unexpected throw on adversarial input degrades to verified:false.
+            let v: { verified: boolean; reason?: string; issuerDid?: string };
+            try { v = verifyDataIntegrityProof(instance as unknown as VerifiableCredentialJson); }
+            catch (e) { v = { verified: false, reason: `proof verification error: ${(e as Error).message}` }; }
             proofInfo = { present: true, cryptosuite: proof.cryptosuite ?? proof.type, verified: v.verified, reason: v.reason, ...(v.issuerDid ? { issuerDid: v.issuerDid } : {}) };
           }
           out.proof = proofInfo;

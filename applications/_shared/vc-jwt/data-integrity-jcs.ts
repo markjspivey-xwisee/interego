@@ -69,7 +69,11 @@ export function canonicalizeJcs(value: unknown): string {
   }
   if (typeof value === 'object') {
     const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort(jcsKeyCompare);
+    // JCS operates on JSON, which has no `undefined` — an undefined-valued key is not
+    // representable and JSON.stringify simply omits it. Do the same, rather than throwing:
+    // otherwise any object carrying an optional-but-unset field (e.g. a CLR entry's
+    // verifierReason:undefined) makes signing/canonicalization crash.
+    const keys = Object.keys(obj).filter(k => obj[k] !== undefined).sort(jcsKeyCompare);
     const parts = keys.map(k => jcsString(k) + ':' + canonicalizeJcs(obj[k]));
     return '{' + parts.join(',') + '}';
   }
@@ -206,6 +210,12 @@ export function verifyDataIntegrityProof(signed: VerifiableCredentialJson): Veri
   }
   if (!signed.proof.proofValue?.startsWith('z')) {
     return { verified: false, reason: 'proofValue must be multibase base58btc (starts with z)' };
+  }
+  // verificationMethod MUST be a string before we .split() it — a proof that omits it
+  // (or sends a non-string) must fail closed, NOT throw (a thrown error escaping to an
+  // unauthenticated /validate handler is a 500 that leaks the server stack trace).
+  if (typeof signed.proof.verificationMethod !== 'string') {
+    return { verified: false, reason: 'proof.verificationMethod is required and must be a string' };
   }
 
   let signatureBytes: Uint8Array;

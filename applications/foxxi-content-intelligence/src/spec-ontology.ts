@@ -62,6 +62,7 @@ export interface ShapeConstraint {
   in?: string[];          // sh:in enumeration (literal values)
   minInclusive?: number; maxInclusive?: number;
   hasValue?: string | number | boolean;  // sh:hasValue — at least one value must equal this
+  firstValue?: string;    // the FIRST value in the list must equal this (ordered @context, VC-DM 2.0 §4.1)
 }
 export interface OntShape {
   name: string; targetClass: string; label?: string; comment?: string;
@@ -236,6 +237,41 @@ export function renderOwl(m: OntologyModel): string {
   return lines.join('\n') + '\n';
 }
 
+/**
+ * Map a constraint's JSON path to a machine-checkable SHACL property path so the
+ * PUBLISHED shape is as strong as the validator (no more demoting nested constraints
+ * to free-text comments). Returns:
+ *   - a Turtle path expression (a single predicate, or an sh:sequence `( a b c )`), or
+ *   - null when the path has no RDF property-path form at all (a JSON-LD keyword like
+ *     `@context`, which is consumed before the RDF graph exists, or a non-leaf keyword).
+ * A JSON-LD keyword segment maps to its RDF term: `type`→rdf:type; a trailing `id` is
+ * dropped (a value constraint like sh:nodeKind on the parent path expresses "the node
+ * reached here is IRI-identified", i.e. its id is an IRI).
+ */
+function shaclPath(m: OntologyModel, path: string): string | null {
+  if (path.startsWith('@')) return null;
+  const segs = path.split('.');
+  const mapped: string[] = [];
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i]!;
+    const isLeaf = i === segs.length - 1;
+    if (seg === 'type') { mapped.push('rdf:type'); continue; }
+    if (seg === 'id') {
+      // A NESTED trailing `.id` (credentialSubject.id) is dropped: a value constraint on
+      // the parent path (e.g. sh:nodeKind sh:IRI) means "the node reached there is
+      // IRI-identified". A STANDALONE `id` (the focus node's own identifier) is kept as a
+      // conventional predicate so its constraints (nodeKind/pattern) stay machine-checkable.
+      if (isLeaf && segs.length > 1) continue;
+      if (isLeaf) { mapped.push(expand(m, seg)); continue; }
+      return null; // interior id has no predicate-path form
+    }
+    if (seg.startsWith('@')) return null;
+    mapped.push(expand(m, seg));
+  }
+  if (mapped.length === 0) return null;
+  return mapped.length === 1 ? mapped[0]! : `( ${mapped.join(' ')} )`;
+}
+
 // ── SHACL projection ──────────────────────────────────────────────────────────
 export function renderShacl(m: OntologyModel): string {
   const lines: string[] = [prefixBlock(m, { shapes: `${shapesIri(m)}#` }), ''];
@@ -246,15 +282,16 @@ export function renderShacl(m: OntologyModel): string {
     if (s.label) parts.push(`    rdfs:label "${esc(s.label)}" ;`);
     if (s.comment) parts.push(`    rdfs:comment "${esc(s.comment)}" ;`);
     if (s.closed) parts.push(`    sh:closed true ;`);
-    // A constraint whose path is a JSON-LD keyword (@context) or a nested JSON path
-    // (credentialSubject.id) has no single dereferenceable RDF predicate — emitting
-    // `sh:path <module>:credentialSubject.id` would publish a phantom IRI. Those are
-    // documented as JSON-shape requirements on the node shape (the validator still
-    // enforces them via jsonPath ?? path). Flat single-predicate paths are unchanged.
+    // Each constraint publishes a machine-checkable sh:property. A flat path is one
+    // predicate; a nested path (credentialSubject.achievement.name) becomes an sh:sequence
+    // path; a trailing `.id` becomes a nodeKind on the parent. Only a path with NO RDF
+    // property-path form at all (a JSON-LD keyword like @context, consumed before the RDF
+    // graph exists) is documented as a JSON-shape requirement — the validator still enforces
+    // it via jsonPath ?? path. This keeps the published shape as strong as the validator.
     const jsonShapeReqs: string[] = [];
     for (const c of s.constraints) {
-      const rdfClean = !c.path.includes('.') && !c.path.startsWith('@');
-      if (!rdfClean) {
+      const pathExpr = shaclPath(m, c.path);
+      if (pathExpr === null) {
         const bits: string[] = [];
         if (c.datatype) bits.push(`datatype ${c.datatype}`);
         if (c.nodeKind) bits.push(`nodeKind ${c.nodeKind}`);
@@ -265,10 +302,11 @@ export function renderShacl(m: OntologyModel): string {
         if (c.minInclusive != null) bits.push(`minInclusive ${c.minInclusive}`);
         if (c.maxInclusive != null) bits.push(`maxInclusive ${c.maxInclusive}`);
         if (c.hasValue !== undefined) bits.push(`hasValue ${JSON.stringify(c.hasValue)}`);
+        if (c.firstValue !== undefined) bits.push(`firstValue ${JSON.stringify(c.firstValue)}`);
         jsonShapeReqs.push(`${c.path}${bits.length ? ` (${bits.join(', ')})` : ''}${c.comment ? ` — ${c.comment}` : ''}`);
         continue;
       }
-      const inner: string[] = [`sh:path ${expand(m, c.path)}`];
+      const inner: string[] = [`sh:path ${pathExpr}`];
       if (c.datatype) inner.push(`sh:datatype ${c.datatype}`);
       if (c.class) inner.push(`sh:class ${expand(m, c.class)}`);
       if (c.nodeKind) inner.push(`sh:nodeKind sh:${c.nodeKind}`);
@@ -282,7 +320,7 @@ export function renderShacl(m: OntologyModel): string {
       if (c.comment) inner.push(`rdfs:comment "${esc(c.comment)}"`);
       parts.push(`    sh:property [ ${inner.join(' ; ')} ] ;`);
     }
-    if (jsonShapeReqs.length) parts.push(`    rdfs:comment "${esc('JSON-shape requirements (validator-enforced; not expressible as a single dereferenceable RDF property path): ' + jsonShapeReqs.join('; '))}" ;`);
+    if (jsonShapeReqs.length) parts.push(`    rdfs:comment "${esc('JSON-LD-keyword requirements (validator-enforced; @context et al. are consumed before the RDF graph exists, so they have no SHACL property path): ' + jsonShapeReqs.join('; '))}" ;`);
     if (s.exactlyOneOf) {
       const branches = s.exactlyOneOf.paths.map(p => `[ sh:path ${expand(m, p)} ; sh:minCount 1 ]`).join(' ');
       parts.push(`    sh:xone ( ${branches} ) ;${s.exactlyOneOf.comment ? ` # ${s.exactlyOneOf.comment}` : ''}`);
@@ -363,6 +401,9 @@ export function validateAgainstShape(m: OntologyModel, shapeName: string, instan
     if (c.minCount != null && arr.length < c.minCount) results.push({ path: c.path, message: `expected at least ${c.minCount} value(s)`, sourceShape, severity: 'Violation' });
     if (c.maxCount != null && arr.length > c.maxCount) results.push({ path: c.path, message: `expected at most ${c.maxCount} value(s)`, value: v, sourceShape, severity: 'Violation' });
     if (c.hasValue !== undefined && !arr.some(item => item === c.hasValue)) results.push({ path: c.path, message: `must include the value ${String(c.hasValue)}`, sourceShape, severity: 'Violation' });
+    // firstValue (sh:hasValue is order-blind): the FIRST value must equal this — VC-DM 2.0
+    // §4.1 requires the credentials-v2 @context to be the first entry, not merely present.
+    if (c.firstValue !== undefined && arr[0] !== c.firstValue) results.push({ path: c.path, message: `the first value must be ${String(c.firstValue)}`, value: arr[0], sourceShape, severity: 'Violation' });
     for (const item of arr) {
       const viol = (message: string): void => { results.push({ path: c.path, message, value: item, sourceShape, severity: 'Violation' }); };
       if (c.datatype && XSD_STR.has(c.datatype) && typeof item !== 'string') viol(`expected a string (${c.datatype})`);
@@ -373,6 +414,22 @@ export function validateAgainstShape(m: OntologyModel, shapeName: string, instan
       if (c.datatype === 'rdf:langString' && !(typeof item === 'string' || (typeof item === 'object' && item !== null))) viol('expected a language-tagged string or language map');
       if (c.nodeKind === 'IRI' && !(typeof item === 'string' && IRI_RE.test(item))) viol('expected an IRI');
       if (c.nodeKind === 'Literal' && (item === null || typeof item === 'object')) viol('expected a literal, not an IRI/blank node');
+      // sh:class — the published shapes assert it, so the engine must enforce it or the
+      // dereferenceable shape and this validator disagree (a bare literal `course` passed).
+      // A class instance can only be a node (an object, or an IRI reference), never a plain
+      // literal; when the node carries an explicit type it must match the class local-name.
+      if (c.class) {
+        const isNode = (typeof item === 'object' && item !== null) || (typeof item === 'string' && IRI_RE.test(item));
+        if (!isNode) viol(`expected a node (an object or IRI reference) that is an instance of ${c.class}, not a bare literal`);
+        else if (typeof item === 'object' && item !== null) {
+          const t = (item as Record<string, unknown>)['@type'] ?? (item as Record<string, unknown>).type ?? (item as Record<string, unknown>).objectType;
+          if (t !== undefined) {
+            const want = c.class.split(/[#/:]/).pop();
+            const got = (Array.isArray(t) ? t : [t]).map(x => String(x).split(/[#/:]/).pop());
+            if (!got.includes(want)) viol(`node @type ${JSON.stringify(t)} is not an instance of ${c.class}`);
+          }
+        }
+      }
       if (c.pattern && typeof item === 'string' && !new RegExp(c.pattern).test(item)) viol(`does not match pattern ${c.pattern}`);
       if (c.in && !c.in.includes(String(item))) viol(`not in the allowed vocabulary {${c.in.join(', ')}}`);
       if (c.minInclusive != null && typeof item === 'number' && item < c.minInclusive) viol(`must be ≥ ${c.minInclusive}`);

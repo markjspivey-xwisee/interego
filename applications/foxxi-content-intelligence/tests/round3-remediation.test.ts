@@ -13,11 +13,14 @@ const COMPLETED = 'http://adlnet.gov/expapi/verbs/completed';
 describe('round-3 remediation — LER/credential shapes', () => {
   it('renderShacl emits NO phantom sh:path for @context / dotted paths', () => {
     const sh = renderShacl(OB3_MODEL);
-    // @context and nested paths must NOT be published as ob3:<phantom> predicates.
+    // Phantom dotted/keyword predicates must NOT be published.
     expect(sh).not.toContain('sh:path ob3:@context');
     expect(sh).not.toContain('sh:path ob3:credentialSubject.id');
-    // They must appear as documented JSON-shape requirements instead.
-    expect(sh).toContain('JSON-shape requirements');
+    // @context (a JSON-LD keyword, consumed before the RDF graph) is documented.
+    expect(sh).toContain('JSON-LD-keyword requirements');
+    // Nested paths are now MACHINE-CHECKABLE SHACL (as strong as the validator), not comments:
+    expect(sh).toContain('sh:path ob3:credentialSubject'); // credentialSubject.id → parent path + nodeKind IRI
+    expect(sh).toContain('sh:path ( ob3:proof rdf:type )'); // proof.type → sh:sequence path
   });
 
   it('OB3 rejects a credential missing the VC-DM 2.0 @context (hasValue)', () => {
