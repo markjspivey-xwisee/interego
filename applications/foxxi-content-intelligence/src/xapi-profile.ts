@@ -130,20 +130,22 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/launched`,
     prefLabel: { en: 'launched' },
-    definition: { en: 'cmi5 launch — start of a course session. Required at the head of a course-session pattern.' },
+    definition: { en: 'cmi5/SCORM launch — start of a course OR lesson (AU) session. The cmi5 context category is the ENFORCED determining discriminator; registration is recommended (a cmi5 session carries it; a generic course-launch affordance may not).' },
     verb: `${ADL}/verbs/launched`,
-    objectActivityType: `${ADL}/activities/course`,
+    objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`],
     contextCategoryActivityType: [`${CMI5}/context/categories/cmi5`],
     rules: [
-      { location: 'context.contextActivities.category[*].id', any: [`${CMI5}/context/categories/cmi5`] },
-      { location: 'context.registration', presence: 'included' },
+      // Enforced determining property (present, not just value-checked-when-present): a
+      // launched MUST carry the cmi5 context category — every launched emitter adds it.
+      { location: 'context.contextActivities.category[*].id', presence: 'included', any: [`${CMI5}/context/categories/cmi5`] },
+      { location: 'context.registration', presence: 'recommended' },
     ],
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/initialized`,
     prefLabel: { en: 'initialized' },
     verb: `${ADL}/verbs/initialized`,
-    objectActivityType: `${ADL}/activities/course`,
+    objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`],
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/slide-viewed`,
@@ -155,6 +157,17 @@ const templates = [
       { location: 'context.extensions["' + FOXXI_NS + 'slideId"]', presence: 'included' },
       { location: 'context.contextActivities.parent[*].definition.type', any: [`${ADL}/activities/course`] },
     ],
+  },
+  {
+    // A learner/agent experienced a course catalog or a performance-support artifact —
+    // the generic affordance-instrumentation (discover_assigned_courses → experienced+course)
+    // and the content-delivery job-aid/deliver paths (experienced+performance). Selected by
+    // objectActivityType; no slide-specific rules (those belong to slide-viewed).
+    id: `${FOXXI_PROFILE_ID}/templates/experienced-activity`,
+    prefLabel: { en: 'experienced (course / performance-support)' },
+    definition: { en: 'A course-catalog experience or a performance-support artifact was experienced. Determining property: verb=experienced + objectActivityType (course | performance).' },
+    verb: `${ADL}/verbs/experienced`,
+    objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/performance`],
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/scene-completed`,
@@ -187,7 +200,7 @@ const templates = [
     id: `${FOXXI_PROFILE_ID}/templates/terminated`,
     prefLabel: { en: 'terminated' },
     verb: `${ADL}/verbs/terminated`,
-    objectActivityType: `${ADL}/activities/course`,
+    objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`],
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/asked`,
@@ -365,15 +378,38 @@ const templates = [
   // Profile spec §5.2: a Statement carrying a declared Verb MUST conform to at least
   // one Statement Template. Every verb the write path emits therefore needs a template
   // so "declared vocabulary == enforceable vocabulary" holds.
-  { id: `${FOXXI_PROFILE_ID}/templates/satisfied`, prefLabel: { en: 'satisfied' }, definition: { en: 'cmi5 moveOn condition met.' }, verb: `${ADLW3}/satisfied`, objectActivityType: `${ADL}/activities/course` },
-  { id: `${FOXXI_PROFILE_ID}/templates/abandoned`, prefLabel: { en: 'abandoned' }, definition: { en: 'cmi5 session ended unexpectedly.' }, verb: `${ADLW3}/abandoned`, objectActivityType: `${ADL}/activities/course` },
-  { id: `${FOXXI_PROFILE_ID}/templates/waived`, prefLabel: { en: 'waived' }, definition: { en: 'cmi5 requirement waived by an administrator.' }, verb: `${ADLW3}/waived`, objectActivityType: `${ADL}/activities/course` },
-  { id: `${FOXXI_PROFILE_ID}/templates/authored`, prefLabel: { en: 'authored' }, definition: { en: 'An agent authored a learning artifact (course / profile fragment / standards extension).' }, verb: `${FOXXI_NS}verbs/authored` },
+  // cmi5-defined verbs apply to a course OR a lesson/AU (the cmi5 module emits them
+  // lesson-typed; the emit_cmi5_session affordance course-typed).
+  { id: `${FOXXI_PROFILE_ID}/templates/satisfied`, prefLabel: { en: 'satisfied' }, definition: { en: 'cmi5 moveOn condition met.' }, verb: `${ADLW3}/satisfied`, objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] },
+  { id: `${FOXXI_PROFILE_ID}/templates/abandoned`, prefLabel: { en: 'abandoned' }, definition: { en: 'cmi5 session ended unexpectedly.' }, verb: `${ADLW3}/abandoned`, objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] },
+  { id: `${FOXXI_PROFILE_ID}/templates/waived`, prefLabel: { en: 'waived' }, definition: { en: 'cmi5 requirement waived by an administrator.' }, verb: `${ADLW3}/waived`, objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] },
+  // authored/asserted carry an enforced discriminator so a bare statement of the verb is NOT
+  // vacuously conformant: an authored statement must name what was authored (object.id); an
+  // asserted statement carries the substrate descriptor it settled.
+  { id: `${FOXXI_PROFILE_ID}/templates/authored`, prefLabel: { en: 'authored' }, definition: { en: 'An agent authored a learning artifact (course / profile fragment / standards extension). Must name the authored object.' }, verb: `${FOXXI_NS}verbs/authored`, rules: [{ location: 'object.id', presence: 'included' }] },
   { id: `${FOXXI_PROFILE_ID}/templates/wallet-exported`, prefLabel: { en: 'wallet-exported' }, definition: { en: 'A learner exported a CLR 2.0 envelope from their pod.' }, verb: `${FOXXI_NS}verbs/wallet-exported`, objectActivityType: `${FOXXI_NS}activities/credential` },
   { id: `${FOXXI_PROFILE_ID}/templates/framework-aligned`, prefLabel: { en: 'framework-aligned' }, definition: { en: 'An admin declared a CASE 1.0 cross-tenant alignment.' }, verb: `${FOXXI_NS}verbs/framework-aligned`, objectActivityType: `${FOXXI_NS}activities/framework` },
-  { id: `${FOXXI_PROFILE_ID}/templates/policy-decided`, prefLabel: { en: 'policy-decided' }, definition: { en: 'An ABAC policy returned an access decision.' }, verb: `${FOXXI_NS}verbs/policy-decided`, rules: [{ location: 'context.extensions["' + FOXXI_NS + 'policyId"]', presence: 'recommended' }] },
-  { id: `${FOXXI_PROFILE_ID}/templates/asserted`, prefLabel: { en: 'asserted' }, definition: { en: 'An agent asserted a settled context descriptor (modal status Asserted).' }, verb: `${FOXXI_NS}verbs/asserted` },
+  { id: `${FOXXI_PROFILE_ID}/templates/policy-decided`, prefLabel: { en: 'policy-decided' }, definition: { en: 'An ABAC policy returned an access decision. Must cite the policy descriptor IRI.' }, verb: `${FOXXI_NS}verbs/policy-decided`, rules: [{ location: 'context.extensions["' + FOXXI_NS + 'policyId"]', presence: 'included' }] },
+  { id: `${FOXXI_PROFILE_ID}/templates/asserted`, prefLabel: { en: 'asserted' }, definition: { en: 'An agent asserted a settled context descriptor (modal status Asserted).' }, verb: `${FOXXI_NS}verbs/asserted`, rules: [{ location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' }] },
+  // ── Additional performed / voided legs the real emitters produce ────────────────
+  // record_external_agent_run (agent-run-ingest) emits a task-level `performed` with object
+  // type ProductionTask + contextKind=production + actorKind=agent, but NO substrateDescriptorIri
+  // (it is an ingested external run, not a substrate descriptor). Discriminate on contextKind.
+  { id: `${FOXXI_PROFILE_ID}/templates/performed-production`, prefLabel: { en: 'performed (production run)' }, definition: { en: 'An agent performed a unit of production work recorded as an external run (no substrate descriptor). Discriminated by contextKind=production + actorKind=agent.' }, verb: `${FOXXI_NS}performed`, rules: [{ location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included' }, { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', any: ['agent'] }] },
+  // A plain xAPI voiding (a StatementRef with no Foxxi substrate cross-link) — the standard
+  // §4.1.7 voiding the bridge's own conformance self-test emits, distinct from voided-descriptor.
+  { id: `${FOXXI_PROFILE_ID}/templates/voided-statement`, prefLabel: { en: 'voided (statement)' }, definition: { en: 'A standard xAPI voiding statement targeting a StatementRef (xAPI §4.1.7). No Foxxi substrate cross-link required.' }, verb: `${ADL}/verbs/voided`, rules: [{ location: 'object.objectType', presence: 'included', any: ['StatementRef'] }] },
 ];
+
+/** True when EVERY profile template for this verb pins a specific objectActivityType — i.e.
+ *  the verb is only conformant on a fixed object activity type. A projector that supplies the
+ *  object's OWN domain conformsTo (the mesh projector) must not coin such a verb from a loose
+ *  source token, because the resulting statement would match no template. Data-driven from the
+ *  templates, so it stays correct as the profile evolves. */
+export function verbRequiresObjectType(verbIri: string): boolean {
+  const ts = templates.filter(t => (t as { verb?: string }).verb === verbIri);
+  return ts.length > 0 && ts.every(t => (t as { objectActivityType?: unknown }).objectActivityType != null);
+}
 
 // ── Patterns ────────────────────────────────────────────────────────
 // Pattern operators (xAPI Profile §6.3):
@@ -581,10 +617,15 @@ export function validateAgainstProfileTemplates(stmt: Record<string, unknown>): 
   const verb = (stmt.verb as { id?: string } | undefined)?.id ?? '';
   const objType = (stmt.object as { definition?: { type?: string } } | undefined)?.definition?.type;
   const verbDeclared = verbs.some(v => v.id === verb);
-  // A template is SELECTED by its determining properties (verb + objectActivityType).
+  // A template is SELECTED by its determining properties (verb + objectActivityType). A
+  // template's objectActivityType may be a single IRI OR a list (a lifecycle verb like
+  // launched/terminated/satisfied applies to BOTH a SCORM course AND a cmi5 lesson/AU) —
+  // matching any listed type selects it.
+  const oatMatches = (oat: string | string[] | undefined): boolean =>
+    !oat || (Array.isArray(oat) ? oat.includes(objType as string) : oat === objType);
   const matched = templates.filter(t =>
     (t as { verb?: string }).verb === verb &&
-    (!(t as { objectActivityType?: string }).objectActivityType || (t as { objectActivityType?: string }).objectActivityType === objType));
+    oatMatches((t as { objectActivityType?: string | string[] }).objectActivityType));
   // Compute each matched template's rule violations independently.
   const violationsFor = (t: typeof matched[number]): ProfileTemplateResult['violations'] => {
     const out: ProfileTemplateResult['violations'] = [];

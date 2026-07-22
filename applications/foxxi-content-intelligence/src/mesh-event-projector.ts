@@ -34,6 +34,7 @@
 
 import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { verbRequiresObjectType } from './xapi-profile.js';
 import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
 import type { TrajectoryStepInput, TrajectoryModalStatus } from './agent-trajectory.js';
 
@@ -154,20 +155,30 @@ function resolveVerb(entry: MeshDiscoverEntry, mode: ReturnType<typeof modalMode
   if (mode.voided) return { id: ADL_VOIDED, display: { en: 'voided' } };
   const raw = entry.verb?.trim();
   if (raw) {
-    const id = /^(https?:|urn:)/i.test(raw)
+    const external = /^(https?:|urn:)/i.test(raw);
+    const id = external
       ? raw
       : `${FOXXI_NS}verbs/${raw.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase()}`;
-    return { id, display: { en: humanLabel(id) } };
+    // A bare source token that slugs onto a Foxxi-profile verb whose templates ALL pin a
+    // specific objectActivityType (e.g. 'scene completed' → scene-completed, which needs an
+    // activities/scene object) would be non-conformant here — the mesh object is the
+    // descriptor's OWN domain conformsTo, not that pinned type. Don't coin it; fall through to
+    // the modal-derived structural verb instead. External IRIs (out of our profile) relay as-is.
+    if (external || !verbRequiresObjectType(id)) return { id, display: { en: humanLabel(id) } };
   }
   switch (mode.stepVerb) {
     case 'intended':   return { id: INTENDED_VERB, display: { en: 'intended' } };
     case 'considered': return { id: CONSIDERED_VERB, display: { en: 'considered' } };
     case 'asserted':
-    // A settled (Asserted) production descriptor projects as the canonical MOM
-    // Level-1 outcome verb `completed` — NOT the coined non-MOM foxxi#performed.
-    // (PERFORMED_VERB stays a dual-read alias on the ELR side for pre-migration
-    // statements; the ELR splits production vs training on contextKind.)
-    default:           return { id: 'http://adlnet.gov/expapi/verbs/completed', display: { en: 'completed' } };
+    // A settled (Asserted) descriptor projects as the canonical MOM Level-1 OUTCOME verb,
+    // keyed on the envelope's own outcome: success===false → `failed`, else `completed`
+    // (mirroring record_performance's momOutcomeVerb). Emitting `completed` for a failed
+    // outcome was both an ADL-TLA MOM semantic error AND non-conformant against our own
+    // profile (production-performance-completed requires result.success≠false). NOT a
+    // fabricated domain verb — what was done stays in the object's conformsTo.
+    default:           return entry.success === false
+      ? { id: 'http://adlnet.gov/expapi/verbs/failed', display: { en: 'failed' } }
+      : { id: 'http://adlnet.gov/expapi/verbs/completed', display: { en: 'completed' } };
   }
 }
 
