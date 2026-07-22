@@ -3497,6 +3497,68 @@ app.get('/agent/review-record/affordance', (_req, res) => {
   );
 });
 
+// GET /agent/:did/affordances — an agent's DYNAMIC affordance set, computed from
+// their REAL learner record. The "teach it" affordance EMERGES here, server-side,
+// only when the published roll-up rule asserts a competency at Proficient+ via
+// performance — a function of the verified record, not a client decision. This is
+// where "self-skilling produces a new capability" becomes a real server fact.
+// Public capability projection (agent-capability records are discoverable).
+app.get('/agent/:did/affordances', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const subjectDid = decodeURIComponent(String(req.params.did || ''));
+    if (!/^did:/.test(subjectDid)) { res.status(400).json({ ok: false, error: 'path param :did must be a did:' }); return; }
+    const subjectPodUrl = resolveSubjectPodUrl(subjectDid, typeof req.query.subject_pod_url === 'string' ? req.query.subject_pod_url : undefined);
+    const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
+    await ensureResident(subjectPodUrl, subjectDid, subjectLabel);
+    const statements = mergeStatementsById(
+      [...latticeStatements(subjectLabel), ...await listStoredStatements(lensTenantFor(subjectLabel))],
+      await readDurableRecordedStatements({ podUrl: subjectPodUrl }),
+    );
+    const elr = await assembleEnterpriseLearnerRecord({
+      learnerDid: subjectDid, learnerPodUrl: subjectPodUrl, subjectKind: 'agent',
+      tenantDid: tenantProfileDid, lrsEndpoint: bridgeBaseUrl, statements,
+    });
+    const TEACH_MIN_RANK = 4; // Proficient (Dreyfus rank 4) — the emergence threshold.
+    // Base affordances — always reachable (the full manifest is at /affordances).
+    const base = [
+      { key: 'record-performance', title: 'Record a performance', emergent: false, action: actionUrl('urn:iep:action:foxxi:record-performance-signed' as IRI), target: `${bridgeBaseUrl}/agent/record-performance`, gate: 'always available' },
+      { key: 'find-tutor', title: 'Find a tutor for a competency', emergent: false, action: actionUrl('urn:iep:action:foxxi:find-tutor-for-competency' as IRI), target: `${bridgeBaseUrl}/foxxi/find_tutor_for_competency`, gate: 'always available' },
+    ];
+    // EMERGENT — one "teach it" affordance per competency the REAL rollup asserts
+    // at Proficient+ via performance. Gated on the record; you become registerable
+    // as a tutor (and surfaced by rankTutorsForCompetency) BECAUSE the record shows it.
+    const emergent = elr.competencies
+      .filter(c => c.basis === 'performance' && c.modalStatus === 'Asserted' && (c.proficiencyRank ?? 0) >= TEACH_MIN_RANK)
+      .map(c => ({
+        key: `teach:${c.id}`,
+        title: `Teach: ${c.label.replace(/^Demonstrated:\s*/, '')}`,
+        emergent: true,
+        action: actionUrl('urn:iep:action:foxxi:register-tutor-agent' as IRI),
+        target: `${bridgeBaseUrl}/foxxi/register_tutor_agent`,
+        competency: c.id,
+        atProficiency: c.proficiencyLevel,
+        confidence: c.confidence,
+        rolledUpBy: c.rolledUpBy,
+        gate: `emerged at ${c.proficiencyLabel} (rank ${c.proficiencyRank}, confidence ${c.confidence}) — the record now surfaces you via rankTutorsForCompetency`,
+      }));
+    res.json({
+      ok: true,
+      subject: subjectDid,
+      record: {
+        competencyCount: elr.summary.competencyCount,
+        performanceVerifiedCompetencies: elr.summary.performanceVerifiedCompetencies,
+        assertedCompetencies: elr.summary.assertedCompetencies,
+      },
+      affordances: [...base, ...emergent],
+      emergentCount: emergent.length,
+      note: 'Emergent affordances are gated server-side on the published tla:PerformanceProficiencyRollupRule over this agent\'s real record — not decided by any client.',
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
+});
+
 app.post('/agent/review-record', async (req, res) => {
   try {
     // Recover the rev-196 signature (pure), then bind identity in one of two modes:
