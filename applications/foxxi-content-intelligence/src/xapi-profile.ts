@@ -97,6 +97,7 @@ const activityTypes = [
   // ENVELOPE act when the publisher declared no type. Foxxi never enumerates an
   // application's activity types.
   { id: `${FOXXI_NS}AssertedContext`, prefLabel: { en: 'Asserted Context' }, definition: { en: 'A context-descriptor assertion whose payload type the publisher did not declare — the domain-agnostic fallback object type.' } },
+  { id: `${FOXXI_NS}ProductionTask`, prefLabel: { en: 'Production Task' }, definition: { en: 'A unit of on-the-job production work recorded as an xAPI performance (the IEEE P2997 employment-history leg). The generic object type when the publisher declared no domain type; the ELR competency then keys off the task name.' } },
 ] as const;
 
 const extensions = [
@@ -277,6 +278,35 @@ const templates = [
       { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
     ],
   },
+
+  // ── Production-performance outcome templates (ADL / MOM Level 1) ─────
+  // A record_performance call projects the on-the-job outcome as a canonical MOM
+  // verb — `completed` (success) or `failed` — never a coined verb. Domain-
+  // agnostic: object.definition.type is the work's own conformsTo (or the
+  // ProductionTask fallback). Marked by contextKind=production so the ELR reads
+  // it as the IEEE P2997 employment leg, distinct from a course `completed`.
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/production-performance-completed`,
+    prefLabel: { en: 'production-performance (completed)' },
+    definition: { en: 'A successful unit of on-the-job production work. MOM Level 1 `completed`; the domain of the work is carried by the object type. Marked contextKind=production; carries the observer + actorKind.' },
+    verb: `${ADL}/verbs/completed`,
+    rules: [
+      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', any: ['production'] },
+      { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'included' },
+      { location: 'result.success', any: [true] },
+    ],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/production-performance-failed`,
+    prefLabel: { en: 'production-performance (failed)' },
+    definition: { en: 'An unsuccessful unit of on-the-job production work. MOM Level 1 `failed`; the domain is carried by the object type. Marked contextKind=production.' },
+    verb: `${ADL}/verbs/failed`,
+    rules: [
+      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', any: ['production'] },
+      { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'included' },
+      { location: 'result.success', any: [false] },
+    ],
+  },
 ];
 
 // ── Patterns ────────────────────────────────────────────────────────
@@ -398,7 +428,7 @@ export interface ProfileSpec {
   id: string;
   prefLabel: Record<string, string>;
   definition: Record<string, string>;
-  author: { type: string; name: string };
+  author: { type: string; name: string; url?: string };
   generatedAt: string;
   /** Already type-tagged concept objects (Verb / ActivityType / ContextExtension / …). */
   concepts: Array<Record<string, unknown>>;
@@ -440,7 +470,7 @@ export function buildFoxxiProfileDoc(versionInfo: { generatedAt: string }): Reco
       en: `xAPI Profile (ADL Profile Spec 2017) for the Foxxi Content Intelligence vertical on the Interego substrate. Defines the verbs, activity types, statement templates, and patterns Foxxi emits when projecting substrate context-descriptor activity to xAPI Statements. Conformance: cmi5 + xAPI 2.0 core verbs, plus Foxxi-specific extensions for concept-graph retrieval, ABAC policy decisions, and affordance instrumentation.`,
     },
     seeAlso: 'https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/CONFORMANCE.md',
-    author: { type: 'Organization', name: 'Acme Training Co (demo tenant)' },
+    author: { type: 'Organization', name: 'Interego — Foxxi Content Intelligence', url: new URL(FOXXI_PROFILE_ID).origin },
     generatedAt: versionInfo.generatedAt,
     concepts: [
       ...verbs.map(v => ({ ...v, type: 'Verb' })),

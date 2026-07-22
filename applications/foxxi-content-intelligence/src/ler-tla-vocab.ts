@@ -442,7 +442,7 @@ const TLA_TERMS: readonly SemTerm[] = [
   {
     family: 'tla', name: 'MasterObjectModel', kind: 'Class', construction: 'composed',
     label: 'Master Object Model',
-    definition: 'TLA\'s xAPI profile (https://w3id.org/xapi/tla): 49 verbs across five conformance levels, 11 activity types, three learner-state machines, and a set of context extensions. Every MOM record is an xAPI Statement.',
+    definition: 'TLA\'s xAPI profile (https://w3id.org/xapi/tla): the MOM verb set (organised in this vocabulary into five thematic levels — our own pedagogical grouping, not ADL-numbered conformance tiers), 11 activity types, three learner-state machines, and a set of context extensions. Every MOM record is an xAPI Statement.',
     source: 'ADL Master Object Model (MOM_Spec.md)',
     subClassOf: ['iep:ContextDescriptor'],
     constructedFrom: ['hela:Statement', 'hela:Verb'],
@@ -607,6 +607,123 @@ const MOM_EXTENSIONS: readonly MomConcept[] = [
 
 const MOM_CONCEPTS: readonly MomConcept[] = [...MOM_VERBS, ...MOM_ACTIVITY_TYPES, ...MOM_EXTENSIONS];
 
+// ── Performance proficiency: a published scale + a published roll-up rule ──
+//
+// CaSS proficiency levels are framework-scoped (there is no fixed global band
+// set), so we publish ONE real, dereferenceable proficiency framework for
+// Foxxi production performance — the Dreyfus five-stage model of skill
+// acquisition (Dreyfus & Dreyfus, 1980) — as tla:Level / ler:ProficiencyLevel
+// individuals, plus the tla:RollupRule that maps performance evidence to a
+// level with a confidence. Every ELR competency assertion cites BOTH a level
+// IRI and the rule IRI, so proficiency is never a bare hardcoded band and the
+// record can be audited back to the rule that produced it.
+
+export const PERF_FRAMEWORK_IRI = `${TLA_NS}PerformanceProficiencyFramework`;
+export const PERF_ROLLUP_RULE_IRI = `${TLA_NS}PerformanceProficiencyRollupRule`;
+
+export interface ProficiencyLevelDef { name: string; rank: number; label: string; comment: string; }
+/** The Dreyfus five-stage skill-acquisition scale, published as level individuals. */
+export const PROFICIENCY_LEVELS: readonly ProficiencyLevelDef[] = [
+  { name: 'Novice',           rank: 1, label: 'Novice',            comment: 'Rule-bound, relies on instruction. Inferred from training completion only — not yet demonstrated in production.' },
+  { name: 'AdvancedBeginner', rank: 2, label: 'Advanced Beginner', comment: 'Has demonstrated the competency in production at least once with an asserted successful outcome; limited situational judgment.' },
+  { name: 'Competent',        rank: 3, label: 'Competent',         comment: 'Consistent successful production performance over a meaningful sample; plans deliberately and handles the typical case.' },
+  { name: 'Proficient',       rank: 4, label: 'Proficient',        comment: 'Reliable, high-quality production performance across many executions; perceives situations holistically.' },
+  { name: 'Expert',           rank: 5, label: 'Expert',            comment: 'Sustained, near-flawless, high-quality production performance at scale; fluid, intuitive mastery.' },
+] as const;
+
+export function proficiencyLevelIri(name: string): string { return `${TLA_NS}Level${name}`; }
+export function proficiencyLevelByName(name: string): ProficiencyLevelDef | undefined {
+  return PROFICIENCY_LEVELS.find(l => l.name === name);
+}
+
+export interface RollupInput {
+  basis: 'performance' | 'credential' | 'inferred';
+  /** Performance executions carrying an asserted outcome (success true or false). */
+  executions: number;
+  successes: number;
+  /** Mean of scored outcome qualities in 0..1, if any were scored. */
+  avgQuality?: number;
+  credentialCount?: number;
+}
+export interface RollupResult {
+  levelName: string; levelLabel: string; levelIri: string; rank: number;
+  /** 0..1 — Wilson score interval lower bound on the success rate. */
+  confidence: number;
+  ruleIri: string;
+}
+
+/** Wilson score interval lower bound for k successes in n trials at 95% (z=1.96).
+ *  A principled confidence in a success rate that grows with the sample size —
+ *  small n is penalised, so one lucky success is not high confidence. */
+function wilsonLower(k: number, n: number): number {
+  if (n <= 0) return 0;
+  const z = 1.96, p = k / n;
+  const den = 1 + (z * z) / n;
+  const centre = p + (z * z) / (2 * n);
+  const margin = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * n)) / n);
+  return Math.max(0, Math.min(1, (centre - margin) / den));
+}
+function round3(n: number): number { return Math.round(n * 1000) / 1000; }
+
+/** Evaluate the published tla:PerformanceProficiencyRollupRule against evidence. */
+export function evaluateProficiency(input: RollupInput): RollupResult {
+  const { basis, executions, successes } = input;
+  const q = input.avgQuality;
+  const rate = executions > 0 ? successes / executions : 0;
+  let name = 'Novice';
+  if (basis === 'performance') {
+    if (executions >= 12 && rate >= 0.9 && (q === undefined || q >= 0.85)) name = 'Expert';
+    else if (executions >= 6 && rate >= 0.8 && (q === undefined || q >= 0.7)) name = 'Proficient';
+    else if (executions >= 3 && rate >= 0.66) name = 'Competent';
+    else if (successes >= 1) name = 'AdvancedBeginner';
+    else name = 'Novice';
+  } else if (basis === 'credential') {
+    name = 'Competent'; // a verified credential attests demonstrated competence
+  } else {
+    name = 'Novice';    // training-inferred only
+  }
+  const def = proficiencyLevelByName(name)!;
+  const confidence = basis === 'performance'
+    ? round3(wilsonLower(successes, executions))
+    : basis === 'credential'
+      ? round3(Math.min(0.9, 0.6 + 0.1 * (input.credentialCount ?? 1)))
+      : 0.2;
+  return { levelName: name, levelLabel: def.label, levelIri: proficiencyLevelIri(name), rank: def.rank, confidence, ruleIri: PERF_ROLLUP_RULE_IRI };
+}
+
+/** The human-readable rule expression published as tla:rollupRule. */
+export const PERF_ROLLUP_RULE_TEXT =
+  'Given production performance evidence (n executions carrying an asserted outcome, k successes, mean scored quality q in 0..1): ' +
+  'Expert if n>=12 and k/n>=0.90 and (q undefined or q>=0.85); Proficient if n>=6 and k/n>=0.80 and (q undefined or q>=0.70); ' +
+  'Competent if n>=3 and k/n>=0.66; Advanced Beginner if k>=1; else Novice. ' +
+  'A verified credential with no production evidence maps to Competent; training completion only maps to Novice (Hypothetical). ' +
+  'Confidence is the Wilson score interval lower bound (z=1.96) on k/n.';
+
+function renderProficiencyTurtle(): string {
+  const fw = `tla:PerformanceProficiencyFramework a tla:CompetencyFramework , skos:ConceptScheme ;
+    rdfs:label "Foxxi Production-Performance Proficiency Framework" ;
+    rdfs:comment "A published proficiency scale for on-the-job production performance, using the Dreyfus five-stage model of skill acquisition. The tla:Level individuals below are the dereferenceable scale an ELR competency assertion is measured against (ler:atProficiency)." ;
+    dct:source "Dreyfus, S.E. & Dreyfus, H.L. (1980) — A Five-Stage Model of the Mental Activities Involved in Directed Skill Acquisition" ;
+    ler:construction "minted" ;
+    rdfs:isDefinedBy <${TLA_DOC}> .`;
+  const levels = PROFICIENCY_LEVELS.map(l =>
+    `tla:Level${l.name} a tla:Level , ler:ProficiencyLevel , skos:Concept ;
+    rdfs:label "${esc(l.label)}" ;
+    rdfs:comment "${esc(l.comment)}" ;
+    skos:inScheme tla:PerformanceProficiencyFramework ;
+    skos:notation "${l.rank}" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <${TLA_DOC}> .`).join('\n\n');
+  const rule = `tla:PerformanceProficiencyRollupRule a tla:RollupRule ;
+    rdfs:label "Production-performance proficiency roll-up rule" ;
+    rdfs:comment "Maps a subject's production-performance evidence to a proficiency level in the Foxxi Production-Performance Proficiency Framework, with a confidence. Cited by every performance-basis ler:CompetencyAssertion the ELR emits." ;
+    tla:rollupRule "${esc(PERF_ROLLUP_RULE_TEXT)}" ;
+    skos:inScheme tla:PerformanceProficiencyFramework ;
+    ler:construction "minted" ;
+    rdfs:isDefinedBy <${TLA_DOC}> .`;
+  return `${fw}\n\n${levels}\n\n${rule}`;
+}
+
 // ── Indexes + public accessors ───────────────────────────────────────
 
 const ALL_TERMS: readonly SemTerm[] = [...LER_TERMS, ...TLA_TERMS];
@@ -622,6 +739,9 @@ export function declaredSemIris(): string[] {
     ...LER_TERMS.map(t => `${LER_NS}${t.name}`),
     ...TLA_TERMS.map(t => `${TLA_NS}${t.name}`),
     ...MOM_CONCEPTS.map(c => `${TLA_NS}${c.name}`),
+    PERF_FRAMEWORK_IRI,
+    ...PROFICIENCY_LEVELS.map(l => proficiencyLevelIri(l.name)),
+    PERF_ROLLUP_RULE_IRI,
   ];
 }
 
@@ -711,14 +831,14 @@ function renderOntologyTurtle(family: 'ler' | 'tla'): string {
     rdfs:isDefinedBy <${LER_DOC}> .\n\n`;
   }
   out += terms.map(renderTermTurtle).join('\n\n');
-  if (family === 'tla') out += '\n\n' + renderMomTurtle();
+  if (family === 'tla') out += '\n\n' + renderMomTurtle() + '\n\n' + renderProficiencyTurtle();
   return out + '\n';
 }
 
 function renderMomTurtle(): string {
   const scheme = `tla:MOMVerbScheme a skos:ConceptScheme ;
     rdfs:label "ADL MOM verb scheme" ;
-    rdfs:comment "The 49 Master Object Model xAPI verbs, grouped into five conformance-level collections." ;
+    rdfs:comment "The ${MOM_VERBS.length} Master Object Model xAPI verbs. Grouped here into five thematic levels — this project's own pedagogical organisation over the ADL MOM verb set (completion, session lifecycle, competency assertion, adaptive paths, career), NOT ADL-defined numbered conformance levels. Each verb skos:exactMatch-es its canonical registry IRI." ;
     rdfs:isDefinedBy <${TLA_DOC}> .`;
   const levels = [1, 2, 3, 4, 5].map(lvl =>
     `tla:MOMLevel${lvl} a skos:Collection ;
@@ -800,6 +920,26 @@ export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, u
         isDefinedBy: doc,
       });
     }
+    // The published proficiency framework + levels + roll-up rule.
+    nodes.push({
+      '@id': PERF_FRAMEWORK_IRI, '@type': ['tla:CompetencyFramework', 'skos:ConceptScheme'],
+      label: 'Foxxi Production-Performance Proficiency Framework',
+      comment: 'A published proficiency scale (Dreyfus five-stage model) an ELR competency assertion is measured against.',
+      source: 'Dreyfus & Dreyfus (1980)', construction: 'minted', isDefinedBy: doc,
+    });
+    for (const l of PROFICIENCY_LEVELS) {
+      nodes.push({
+        '@id': proficiencyLevelIri(l.name), '@type': ['tla:Level', 'ler:ProficiencyLevel', 'skos:Concept'],
+        label: l.label, comment: l.comment, construction: 'concept',
+        'skos:inScheme': PERF_FRAMEWORK_IRI, 'skos:notation': String(l.rank), isDefinedBy: doc,
+      });
+    }
+    nodes.push({
+      '@id': PERF_ROLLUP_RULE_IRI, '@type': 'tla:RollupRule',
+      label: 'Production-performance proficiency roll-up rule',
+      comment: 'Maps production-performance evidence to a proficiency level with a Wilson-lower-bound confidence; cited by every performance-basis ler:CompetencyAssertion.',
+      'tla:rollupRule': PERF_ROLLUP_RULE_TEXT, construction: 'minted', isDefinedBy: doc,
+    });
   }
   return {
     '@context': JSONLD_CONTEXT,

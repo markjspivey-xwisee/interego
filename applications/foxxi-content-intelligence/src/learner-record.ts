@@ -39,6 +39,7 @@ import { exportClr, type ClrEnvelope } from './clr.js';
 import { competencyIri } from './competency-identity.js';
 import type { StoredStatement } from './statement-store.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { evaluateProficiency, LER_NS } from './ler-tla-vocab.js';
 
 const ELR_CONTEXT = [
   'https://www.w3.org/ns/credentials/v2',
@@ -132,8 +133,23 @@ export interface ElrCompetency {
   /** Which evidence class this competency rests on (strongest available). */
   basis: CompetencyBasis;
   framework?: string;
-  proficiencyLevel?: string;
-  /** IRIs/ids of the experiences, performance records, or credential. */
+  /** RDF type — this node IS a ler:CompetencyAssertion (validatable against the
+   *  published /ns/ieee-ler shape). */
+  assertionType: string;
+  /** ler:aboutCompetency — the dereferenceable competency definition IRI. */
+  aboutCompetency: string;
+  /** ler:atProficiency — a dereferenceable tla:Level / ler:ProficiencyLevel IRI
+   *  drawn from the published proficiency framework (never a bare band string). */
+  proficiencyLevel: string;
+  proficiencyLabel: string;
+  proficiencyRank: number;
+  /** tla:confidence — Wilson-lower-bound confidence in the success rate, 0..1. */
+  confidence: number;
+  /** The published tla:RollupRule IRI that produced level + confidence. */
+  rolledUpBy: string;
+  /** iep:assertingAgent — the tenant/bridge issuer making this assertion. */
+  assertingAgent: string;
+  /** ler:supportedByEvidence — dereferenceable evidence IRIs. Alias of `evidence`. */
   evidence: string[];
   /** Quantified evidence across classes. */
   evidenceSummary: {
@@ -236,8 +252,7 @@ export async function assembleEnterpriseLearnerRecord(
     // no double-count and no envelope-class competency inferred from it.
     const objType = (s.object as { definition?: { type?: string } } | undefined)?.definition?.type;
     if (isCredentialEnvelope(objType)) continue;
-    const verb = s.verb as { id?: string; display?: Record<string, string> } | undefined;
-    if (verb?.id === PERFORMED_VERB) {
+    if (isProductionPerformance(s)) {
       performanceRecords.push(projectPerformance(rec, config.lrsEndpoint));
     } else {
       experiences.push(projectExperience(rec, config.lrsEndpoint));
@@ -247,7 +262,7 @@ export async function assembleEnterpriseLearnerRecord(
   // 3. Competencies — merge three provenance-distinct sources, keyed by a
   //    normalised label so performance evidence can supersede a weaker
   //    training inference for the same competency.
-  const competencies = buildCompetencies(clr, experiences, performanceRecords);
+  const competencies = buildCompetencies(clr, experiences, performanceRecords, config.tenantDid);
 
   // 4. Credentials projection.
   const credentials: ElrCredential[] = (clr?.credentialEntries ?? []).map(e => {
@@ -288,7 +303,9 @@ export async function assembleEnterpriseLearnerRecord(
   return {
     '@context': ELR_CONTEXT,
     type: ['VerifiablePresentation', 'EnterpriseLearnerRecord'],
-    id: `urn:foxxi:elr:${slugDid(config.learnerDid)}:${Date.now()}`,
+    // Dereferenceable URL id (everything-is-a-URL): the subject's own pod is the
+    // authoritative home of the record, so the ELR is a fragment on it.
+    id: `${config.learnerPodUrl.replace(/\/+$/, '')}/#enterprise-learner-record`,
     conformsTo: 'IEEE P2997 — Enterprise Learner Record (data model, Part 1)',
     subjectKind,
     learner: { did: config.learnerDid, name: config.learnerName },
@@ -344,6 +361,19 @@ function projectExperience(rec: StoredStatement, lrsEndpoint: string): ElrExperi
     modalStatus: 'Asserted',
     rawDataLocation: rawDataLocationFor(rec, lrsEndpoint),
   };
+}
+
+/** Is this statement an on-the-job PRODUCTION performance (the P2997 employment
+ *  leg), rather than a learning experience? Keys on the `contextKind=production`
+ *  extension the record_performance handler stamps — so it works with a MOM
+ *  outcome verb (completed/passed/mastered/scored) — and dual-reads the legacy
+ *  `foxxi#performed` verb for statements written before the MOM-verb migration. */
+const CONTEXT_KIND_EXT = PERF_EXT.contextKind;
+function isProductionPerformance(s: StoredStatement['statement']): boolean {
+  const ext = (s.context as { extensions?: Record<string, unknown> } | undefined)?.extensions ?? {};
+  if (ext[CONTEXT_KIND_EXT] === 'production') return true;
+  const verb = s.verb as { id?: string } | undefined;
+  return verb?.id === PERFORMED_VERB;
 }
 
 function projectPerformance(rec: StoredStatement, lrsEndpoint: string): ElrPerformanceRecord {
@@ -445,6 +475,7 @@ function buildCompetencies(
   clr: ClrEnvelope | null,
   experiences: readonly ElrExperience[],
   performance: readonly ElrPerformanceRecord[],
+  assertingAgentDid: string,
 ): ElrCompetency[] {
   const drafts = new Map<string, CompetencyDraft>();
   const draft = (label: string): CompetencyDraft => {
@@ -477,7 +508,9 @@ function buildCompetencies(
     if (!MASTERY_VERBS.has(exp.verb)) continue;
     const label = exp.activityName ?? exp.activityId.split(/[#/]/).pop() ?? exp.activityId;
     if (!label) continue;
-    draft(label).trainingEvidence.push(exp.id);
+    // Evidence is the DEREFERENCEABLE raw-data location (pod descriptor / LRS URL),
+    // not the bare statement UUID — so ler:supportedByEvidence resolves.
+    draft(label).trainingEvidence.push(exp.rawDataLocation);
   }
 
   // Performance-verified competencies — production `performed` records. The skill
@@ -492,7 +525,7 @@ function buildCompetencies(
     const domainTyped = isDomainActivityType(p.taskType);
     if (!domainTyped && p.success === undefined) continue;
     const d = draft(domainTyped ? typeLocalName(p.taskType!) : p.taskName);
-    d.performanceEvidence.push(p.id);
+    d.performanceEvidence.push(p.rawDataLocation);
     if (p.success === true) d.performanceSuccess += 1;
     if (p.success !== undefined) d.performanceAssessed += 1;
     if (typeof p.quality === 'number') { d.performanceQualitySum += p.quality; d.performanceQualityCount += 1; }
@@ -520,13 +553,36 @@ function buildCompetencies(
       supersedes = `training-inferred competency — superseded by ${d.performanceSuccess}/${d.performanceAssessed} successful production executions`;
     }
 
+    // Run the PUBLISHED roll-up rule (tla:PerformanceProficiencyRollupRule): map
+    // the evidence to a dereferenceable proficiency level + a Wilson-lower-bound
+    // confidence. No hardcoded band, no "1 success = top level" — the level and
+    // the confidence together carry the sample-size honesty.
+    const prof = evaluateProficiency({
+      basis,
+      executions: d.performanceAssessed,
+      successes: d.performanceSuccess,
+      avgQuality,
+      credentialCount: d.credentialEvidence.length,
+    });
+    const competencyDefIri = competencyIri(d.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
+    const evidence = [...new Set([...d.performanceEvidence, ...d.credentialEvidence, ...d.trainingEvidence])];
+
     out.push({
-      id: competencyIri(d.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)),
+      id: competencyDefIri,
       label: hasPerf ? `Demonstrated: ${d.label}` : hasCred ? d.label : `Inferred: ${d.label}`,
       modalStatus,
       basis,
       framework: d.framework,
-      evidence: [...new Set([...d.performanceEvidence, ...d.credentialEvidence, ...d.trainingEvidence])],
+      // A real ler:CompetencyAssertion node — validatable against /ns/ieee-ler.
+      assertionType: `${LER_NS}CompetencyAssertion`,
+      aboutCompetency: competencyDefIri,
+      proficiencyLevel: prof.levelIri,
+      proficiencyLabel: prof.levelLabel,
+      proficiencyRank: prof.rank,
+      confidence: prof.confidence,
+      rolledUpBy: prof.ruleIri,
+      assertingAgent: assertingAgentDid,
+      evidence,
       evidenceSummary: {
         trainingCompletions: d.trainingEvidence.length,
         performanceExecutions: perfExec,
@@ -544,6 +600,3 @@ function pickLang(m: Record<string, string> | undefined): string | undefined {
   return m['en'] ?? m['en-US'] ?? Object.values(m)[0];
 }
 function round2(n: number): number { return Math.round(n * 100) / 100; }
-function slugDid(did: string): string {
-  return did.replace(/^https?:\/\//, '').replace(/[^a-zA-Z0-9]+/g, '-').slice(0, 80);
-}
