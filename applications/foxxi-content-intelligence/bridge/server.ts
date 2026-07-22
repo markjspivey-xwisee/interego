@@ -2179,20 +2179,61 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!issuerKeySeed) {
       return { error: 'bridge is not configured to issue credentials — FOXXI_ISSUER_KEY_SEED is unset' };
     }
+    // DERIVE the proficiency from the subject's REAL learner record — never accept a
+    // caller-asserted level (the old default 'Intermediate' let an agent claim any
+    // proficiency). You can only prove a competency you have actually demonstrated.
+    const provePod = resolveSubjectPodUrl(learnerDid, (args.subject_pod_url ?? args.learner_pod_url) as string | undefined);
+    const proveLabel = actorForPod(provePod, MESH_ACTOR_LABELS);
+    await ensureResident(provePod, learnerDid, proveLabel);
+    const proveStmts = mergeStatementsById(
+      [...latticeStatements(proveLabel), ...await listStoredStatements(lensTenantFor(proveLabel))],
+      await readDurableRecordedStatements({ podUrl: provePod }),
+    );
+    const proveElr = await assembleEnterpriseLearnerRecord({
+      learnerDid, learnerPodUrl: provePod, subjectKind: 'agent',
+      tenantDid: tenantProfileDid, lrsEndpoint: bridgeBaseUrl, statements: proveStmts,
+    });
+    const wantSlug = String(args.competency_name ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const held = proveElr.competencies.find(c => {
+      const label = c.label.replace(/^(Demonstrated|Inferred):\s*/i, '').toLowerCase();
+      return label.replace(/[^a-z0-9]+/g, '-') === wantSlug || String(c.aboutCompetency ?? '').toLowerCase().includes(wantSlug);
+    });
+    if (!held) {
+      return { error: `no competency matching "${args.competency_name}" is asserted in ${learnerDid}'s record — you can only prove a demonstrated competency, not a claimed one` };
+    }
+    // Dreyfus level (the published framework) → the BBS credential's proficiency scale.
+    const DREYFUS_TO_CRED: Record<string, 'Novice' | 'Beginner' | 'Intermediate' | 'Advanced' | 'Expert'> =
+      { 'Novice': 'Novice', 'Advanced Beginner': 'Beginner', 'Competent': 'Intermediate', 'Proficient': 'Advanced', 'Expert': 'Expert' };
+    const derivedLevel = DREYFUS_TO_CRED[held.proficiencyLabel] ?? 'Novice';
+    const derivedScore = typeof held.confidence === 'number' ? held.confidence
+      : (held.evidenceSummary?.performanceSuccessRate ?? 1.0);
     const proof = await proveCompetency({
       learnerDid,
       learnerName: args.learner_name as string | undefined,
       competencyName: args.competency_name as string,
       courseId: args.course_id as string | undefined,
-      scoreScaled: args.score_scaled as number | undefined,
-      proficiencyLevel: args.proficiency_level as 'Novice' | 'Beginner' | 'Intermediate' | 'Advanced' | 'Expert' | undefined,
+      // Derived from the record, not the caller.
+      scoreScaled: derivedScore,
+      proficiencyLevel: derivedLevel,
       tenantProfileName,
       issuerSeed: issuerKeySeed,
       revealPaths: args.reveal_paths as string[] | undefined,
       presentationContext: args.presentation_context as string | undefined,
     });
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.prove_competency', decision: 'allow', appliedPolicies: [ctx.role === 'admin' ? 'admin-full-access' : 'learner-self'] });
-    return { ...proof, accessDecision: trace };
+    return {
+      ...proof,
+      // The proof's proficiency came from the real rollup, not the caller — cite it.
+      derivedFromRecord: {
+        proficiency: held.proficiencyLabel,
+        credentialLevel: derivedLevel,
+        confidence: held.confidence,
+        atProficiency: held.proficiencyLevel,
+        rolledUpBy: held.rolledUpBy,
+        aboutCompetency: held.aboutCompetency,
+      },
+      accessDecision: trace,
+    };
   },
 
   'foxxi.launch_au_with_prereq_check': async (args) => {
