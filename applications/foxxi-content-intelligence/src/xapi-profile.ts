@@ -56,6 +56,7 @@ const verbs = [
   { id: `${ADL}/verbs/launched`,    prefLabel: { en: 'launched' },    definition: { en: 'cmi5 launch verb — the LMS launched an AU / course' } },
   { id: `${ADL}/verbs/initialized`, prefLabel: { en: 'initialized' }, definition: { en: 'cmi5 initialized verb — AU declared initialization' } },
   { id: `${ADL}/verbs/experienced`, prefLabel: { en: 'experienced' }, definition: { en: 'xAPI core verb — learner experienced (viewed / interacted with) an Activity. Used for slide views.' } },
+  { id: `${ADL}/verbs/interacted`,  prefLabel: { en: 'interacted' },  definition: { en: 'xAPI core verb — learner interacted with an interaction Activity (e.g. asked the Context Companion a question via POST /content/ask).' } },
   { id: `${ADL}/verbs/completed`,   prefLabel: { en: 'completed' },   definition: { en: 'cmi5 completed verb — learner reached the end of the AU' } },
   { id: `${ADL}/verbs/passed`,      prefLabel: { en: 'passed' },      definition: { en: 'cmi5 passed verb — score met or exceeded mastery threshold' } },
   { id: `${ADL}/verbs/failed`,      prefLabel: { en: 'failed' },      definition: { en: 'cmi5 failed verb — score fell below mastery threshold' } },
@@ -168,6 +169,15 @@ const templates = [
     definition: { en: 'A course-catalog experience or a performance-support artifact was experienced. Determining property: verb=experienced + objectActivityType (course | performance).' },
     verb: `${ADL}/verbs/experienced`,
     objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/performance`],
+  },
+  {
+    // The Context Companion (POST /content/ask) records an `interacted` with an interaction
+    // activity. Determining property: verb=interacted + objectActivityType=interaction.
+    id: `${FOXXI_PROFILE_ID}/templates/interacted`,
+    prefLabel: { en: 'interacted' },
+    definition: { en: 'A learner interacted with an interaction activity (the Context Companion Q&A). contextKind is a performance-support interaction.' },
+    verb: `${ADL}/verbs/interacted`,
+    objectActivityType: `${ADL}/activities/interaction`,
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/scene-completed`,
@@ -314,7 +324,7 @@ const templates = [
       // REQUIRED discriminator (present, any value): keeps this from being a universal
       // acceptor while covering every contextKind the emitters use (production/training/
       // performance-support). Value is NOT pinned — mesh projects training/support work too.
-      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included' },
+      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included', any: ['production', 'training', 'performance-support'] },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'recommended' },
       { location: 'result.success', presence: 'recommended', any: [true] },
     ],
@@ -325,7 +335,7 @@ const templates = [
     definition: { en: 'An unsuccessful unit of contextualized performance work. MOM Level 1 `failed`. Requires a contextKind be PRESENT (any value) so the whole `failed` verb is not vacuously conformant, while covering production/training/performance-support. A bare `failed` with an unknown object type and no contextKind is correctly non-conformant.' },
     verb: `${ADL}/verbs/failed`,
     rules: [
-      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included' },
+      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included', any: ['production', 'training', 'performance-support'] },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'recommended' },
       { location: 'result.success', presence: 'recommended', any: [false] },
     ],
@@ -386,7 +396,7 @@ const templates = [
   // authored/asserted carry an enforced discriminator so a bare statement of the verb is NOT
   // vacuously conformant: an authored statement must name what was authored (object.id); an
   // asserted statement carries the substrate descriptor it settled.
-  { id: `${FOXXI_PROFILE_ID}/templates/authored`, prefLabel: { en: 'authored' }, definition: { en: 'An agent authored a learning artifact (course / profile fragment / standards extension). Must name the authored object.' }, verb: `${FOXXI_NS}verbs/authored`, rules: [{ location: 'object.id', presence: 'included' }] },
+  { id: `${FOXXI_PROFILE_ID}/templates/authored`, prefLabel: { en: 'authored' }, definition: { en: 'An agent authored a learning artifact (course / profile fragment / standards extension). Must TYPE the authored object (object.definition.type) — object.id alone is trivially present on every xAPI Activity, so the type is the real discriminator the emitter supplies.' }, verb: `${FOXXI_NS}verbs/authored`, rules: [{ location: 'object.definition.type', presence: 'included' }] },
   { id: `${FOXXI_PROFILE_ID}/templates/wallet-exported`, prefLabel: { en: 'wallet-exported' }, definition: { en: 'A learner exported a CLR 2.0 envelope from their pod.' }, verb: `${FOXXI_NS}verbs/wallet-exported`, objectActivityType: `${FOXXI_NS}activities/credential` },
   { id: `${FOXXI_PROFILE_ID}/templates/framework-aligned`, prefLabel: { en: 'framework-aligned' }, definition: { en: 'An admin declared a CASE 1.0 cross-tenant alignment.' }, verb: `${FOXXI_NS}verbs/framework-aligned`, objectActivityType: `${FOXXI_NS}activities/framework` },
   { id: `${FOXXI_PROFILE_ID}/templates/policy-decided`, prefLabel: { en: 'policy-decided' }, definition: { en: 'An ABAC policy returned an access decision. Must cite the policy descriptor IRI.' }, verb: `${FOXXI_NS}verbs/policy-decided`, rules: [{ location: 'context.extensions["' + FOXXI_NS + 'policyId"]', presence: 'included' }] },
@@ -395,7 +405,7 @@ const templates = [
   // record_external_agent_run (agent-run-ingest) emits a task-level `performed` with object
   // type ProductionTask + contextKind=production + actorKind=agent, but NO substrateDescriptorIri
   // (it is an ingested external run, not a substrate descriptor). Discriminate on contextKind.
-  { id: `${FOXXI_PROFILE_ID}/templates/performed-production`, prefLabel: { en: 'performed (production run)' }, definition: { en: 'An agent performed a unit of production work recorded as an external run (no substrate descriptor). Discriminated by contextKind=production + actorKind=agent.' }, verb: `${FOXXI_NS}performed`, rules: [{ location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included' }, { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', any: ['agent'] }] },
+  { id: `${FOXXI_PROFILE_ID}/templates/performed-production`, prefLabel: { en: 'performed (production run)' }, definition: { en: 'An agent performed a unit of production work recorded as an external run (no substrate descriptor). Discriminated by contextKind=production + actorKind=agent.' }, verb: `${FOXXI_NS}performed`, rules: [{ location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included', any: ['production', 'training', 'performance-support'] }, { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', any: ['agent'] }] },
   // A plain xAPI voiding (a StatementRef with no Foxxi substrate cross-link) — the standard
   // §4.1.7 voiding the bridge's own conformance self-test emits, distinct from voided-descriptor.
   { id: `${FOXXI_PROFILE_ID}/templates/voided-statement`, prefLabel: { en: 'voided (statement)' }, definition: { en: 'A standard xAPI voiding statement targeting a StatementRef (xAPI §4.1.7). No Foxxi substrate cross-link required.' }, verb: `${ADL}/verbs/voided`, rules: [{ location: 'object.objectType', presence: 'included', any: ['StatementRef'] }] },

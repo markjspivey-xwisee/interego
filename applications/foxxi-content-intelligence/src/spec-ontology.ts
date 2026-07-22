@@ -103,6 +103,10 @@ export function slugLocal(name: string): string {
   if (/^[-.]/.test(s)) s = '_' + s;               // PN_LOCAL must not start with '-' or '.'
   return s.replace(/-+$/, '') || 'term';
 }
+/** A vocabulary member's IRI local part, SCOPED by its scheme so two members with the same enum
+ *  value in DIFFERENT schemes (cmi5 moveon category vs moveon extension; two empty-string cmi
+ *  values) do not collapse onto one IRI carrying contradictory definitions. */
+const memberLocal = (schemeName: string, memberName: string): string => `${slugLocal(schemeName)}-${slugLocal(memberName)}`;
 
 /** Expand a class/range token: a curie (`prov:Agent`) stays; a bare `Name` becomes a module term. */
 function expand(m: OntologyModel, token: string): string {
@@ -199,7 +203,7 @@ export function ontologyTriples(m: OntologyModel): Triple[] {
     if (v.comment) out.push([vs, RDFS + 'comment', v.comment]);
     out.push([vs, RDFS + 'isDefinedBy', O]);
     for (const mem of v.members) {
-      const ms = `${ns(m)}${slugLocal(mem.name)}`;
+      const ms = `${ns(m)}${memberLocal(v.name, mem.name)}`;
       out.push([ms, A, SKOS + 'Concept'], [ms, SKOS + 'inScheme', vs], [ms, SKOS + 'prefLabel', mem.label]);
       if (mem.comment) out.push([ms, SKOS + 'definition', mem.comment]);
       out.push([ms, RDFS + 'isDefinedBy', O]);
@@ -244,7 +248,7 @@ export function renderOwl(m: OntologyModel): string {
   for (const v of m.vocabularies ?? []) {
     lines.push(`${m.module}:${slugLocal(v.name)} a skos:ConceptScheme ;\n    rdfs:label "${esc(v.label ?? v.name)}" ;${v.comment ? `\n    rdfs:comment "${esc(v.comment)}" ;` : ''}\n    rdfs:isDefinedBy <${ontologyIri(m)}> .`, '');
     for (const mem of v.members) {
-      lines.push(`${m.module}:${slugLocal(mem.name)} a skos:Concept ;\n    skos:inScheme ${m.module}:${slugLocal(v.name)} ;\n    skos:prefLabel "${esc(mem.label)}" ;${mem.comment ? `\n    skos:definition "${esc(mem.comment)}" ;` : ''}\n    rdfs:isDefinedBy <${ontologyIri(m)}> .`, '');
+      lines.push(`${m.module}:${memberLocal(v.name, mem.name)} a skos:Concept ;\n    skos:inScheme ${m.module}:${slugLocal(v.name)} ;\n    skos:prefLabel "${esc(mem.label)}" ;${mem.comment ? `\n    skos:definition "${esc(mem.comment)}" ;` : ''}\n    rdfs:isDefinedBy <${ontologyIri(m)}> .`, '');
     }
   }
   return lines.join('\n') + '\n';
@@ -350,14 +354,26 @@ export function renderShacl(m: OntologyModel): string {
 
 // ── JSON-LD projection (HATEOAS) ───────────────────────────────────────────────
 export function renderJsonLd(m: OntologyModel): Record<string, unknown> {
+  // A FLAT @graph of every node (the ontology + its classes/properties/vocab concepts). The
+  // previous shape put classes/properties under bare top-level keys that are NOT in @context,
+  // so JSON-LD 1.1 expansion DROPPED them — the doc yielded zero class/property triples. In a
+  // @graph they all expand to real triples, matching the OWL/SHACL Turtle projection.
+  const graph: Array<Record<string, unknown>> = [
+    {
+      '@id': ontologyIri(m), '@type': 'owl:Ontology',
+      'dct:title': m.title, 'dct:description': m.description, 'owl:versionInfo': m.version,
+      'rdfs:seeAlso': { '@id': m.spec },
+    },
+    ...m.classes.map(c => ({ '@id': `${m.module}:${c.name}`, '@type': 'owl:Class', 'rdfs:label': c.label, 'rdfs:comment': c.comment, ...(c.subClassOf?.length ? { 'rdfs:subClassOf': c.subClassOf.map(s => ({ '@id': expand(m, s).replace(/^<|>$/g, '') })) } : {}), ...(c.equivalentClass?.length ? { 'owl:equivalentClass': c.equivalentClass.map(e => ({ '@id': expand(m, e).replace(/^<|>$/g, '') })) } : {}) })),
+    ...m.properties.map(p => ({ '@id': `${m.module}:${p.name}`, '@type': p.kind === 'object' ? 'owl:ObjectProperty' : 'owl:DatatypeProperty', 'rdfs:label': p.label, 'rdfs:comment': p.comment, ...(p.domain ? { 'rdfs:domain': { '@id': expand(m, p.domain).replace(/^<|>$/g, '') } } : {}), ...(p.range ? { 'rdfs:range': { '@id': expand(m, p.range).replace(/^<|>$/g, '') } } : {}) })),
+    ...(m.vocabularies ?? []).flatMap(v => [
+      { '@id': `${m.module}:${slugLocal(v.name)}`, '@type': 'skos:ConceptScheme', 'rdfs:label': v.label ?? v.name },
+      ...v.members.map(mem => ({ '@id': `${m.module}:${memberLocal(v.name, mem.name)}`, '@type': 'skos:Concept', 'skos:inScheme': { '@id': `${m.module}:${slugLocal(v.name)}` }, 'skos:prefLabel': mem.label, ...(mem.comment ? { 'skos:definition': mem.comment } : {}) })),
+    ]),
+  ];
   return {
     '@context': { ...STD_PREFIXES, ...(m.prefixes ?? {}), [m.module]: ns(m) },
-    '@id': ontologyIri(m),
-    '@type': 'owl:Ontology',
-    'dct:title': m.title, 'dct:description': m.description, 'owl:versionInfo': m.version,
-    'rdfs:seeAlso': { '@id': m.spec },
-    classes: m.classes.map(c => ({ '@id': `${m.module}:${c.name}`, '@type': 'owl:Class', 'rdfs:label': c.label, 'rdfs:comment': c.comment, 'rdfs:subClassOf': (c.subClassOf ?? []).map(s => ({ '@id': expand(m, s).replace(/^<|>$/g, '') })) })),
-    properties: m.properties.map(p => ({ '@id': `${m.module}:${p.name}`, '@type': p.kind === 'object' ? 'owl:ObjectProperty' : 'owl:DatatypeProperty', 'rdfs:label': p.label, 'rdfs:comment': p.comment, ...(p.domain ? { 'rdfs:domain': p.domain } : {}), ...(p.range ? { 'rdfs:range': p.range } : {}) })),
+    '@graph': graph,
     _links: {
       self: { href: ontologyIri(m) },
       owl: { href: ontologyIri(m), type: 'text/turtle' },

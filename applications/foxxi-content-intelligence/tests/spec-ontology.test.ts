@@ -20,7 +20,9 @@ describe('xAPI ontology OWL projection', () => {
   });
   it('emits the interactionType SKOS vocabulary', () => {
     expect(ttl).toContain('xapi:InteractionType a skos:ConceptScheme');
-    expect(ttl).toContain('xapi:choice a skos:Concept');
+    // Member IRIs are scheme-scoped (InteractionType-choice) so members from different
+    // schemes with the same enum value do not collide onto one IRI.
+    expect(ttl).toContain('xapi:InteractionType-choice a skos:Concept');
   });
 });
 
@@ -38,7 +40,9 @@ describe('xAPI ontology SHACL projection', () => {
 describe('renderJsonLd', () => {
   it('carries HATEOAS _links incl shapes + validate', () => {
     const j = renderJsonLd(XAPI_MODEL) as any;
-    expect(j['@id']).toBe(ontologyIri(XAPI_MODEL));
+    // Nodes live in a flat @graph (so JSON-LD expansion yields real class/property triples).
+    expect(j['@graph'][0]['@id']).toBe(ontologyIri(XAPI_MODEL));
+    expect(j['@graph'].some((n: any) => n['@type'] === 'owl:Class')).toBe(true);
     expect(j._links.shapes.href).toBe(shapesIri(XAPI_MODEL));
     expect(j._links.validate.method).toBe('POST');
   });

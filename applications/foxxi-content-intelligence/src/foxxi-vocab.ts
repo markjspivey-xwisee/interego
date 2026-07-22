@@ -261,8 +261,15 @@ ${COMPOSED_SPEC_ONTOLOGIES.map(o => `    rdfs:seeAlso <${o}> ;`).join('\n')}
     owl:sameAs <${FOXXI_NS_LEGACY.replace(/#$/, '')}> ;
     rdfs:isDefinedBy <${FOXXI_VOCAB_DOC}> .
 `;
+  // A Foxxi term's local name is PATH-STRUCTURED (verbs/scene-completed, activities/scene) —
+  // the '/' is a valid IRI char but ILLEGAL in a Turtle prefixed name, so `foxxi:verbs/x` made
+  // the whole document unparseable. Emit such terms as a FULL angle-bracket IRI, which preserves
+  // the term's real identity (the verb IRI IS <ns>verbs/scene-completed and must dereference to
+  // itself) while being valid Turtle. Simple names still use the compact CURIE.
+  const termRef = (name: string): string =>
+    /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(name) ? `foxxi:${name}` : `<${FOXXI_NS}${name}>`;
   const body = FOXXI_TERMS.map(t =>
-    `foxxi:${t.name} a foxxi:${t.kind} ;
+    `${termRef(t.name)} a foxxi:${t.kind} ;
     rdfs:label "${esc(t.label)}" ;
     rdfs:comment "${esc(t.definition)}" ;
     rdfs:isDefinedBy <${FOXXI_VOCAB_DOC}> .`,

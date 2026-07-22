@@ -236,7 +236,9 @@ export const SCORM_SN_MODEL: OntologyModel = {
       ],
     },
     {
-      name: 'RollupAction', label: 'Rollup Actions', comment: 'The action vocabulary applied to a parent by a rollup rule (rollupActionType).',
+      // Named RollupActionValues (not RollupAction) so the SKOS ConceptScheme IRI does not
+      // collide with the owl:Class scorm-sn:RollupAction (one IRI cannot be both).
+      name: 'RollupActionValues', label: 'Rollup Actions', comment: 'The action vocabulary applied to a parent by a rollup rule (rollupActionType).',
       members: [
         { name: 'satisfied', label: 'satisfied' },
         { name: 'notSatisfied', label: 'notSatisfied' },
