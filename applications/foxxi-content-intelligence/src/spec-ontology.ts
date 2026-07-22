@@ -38,7 +38,7 @@ export const NS_ROOT = 'https://foxxi-bridge.interego.xwisee.com/ns/';
  *  in signed content we must not rewrite. */
 export const NS_ROOT_LEGACY = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/';
 
-export interface OntClass { name: string; label: string; comment: string; subClassOf?: string[] }
+export interface OntClass { name: string; label: string; comment: string; subClassOf?: string[]; equivalentClass?: string[] }
 export interface OntProperty {
   name: string; label: string; comment: string;
   kind: 'object' | 'datatype';
@@ -49,6 +49,11 @@ export interface OntVocabMember { name: string; label: string; comment?: string 
 export interface OntVocab { name: string; label?: string; comment?: string; members: OntVocabMember[] }
 export interface ShapeConstraint {
   path: string; comment?: string;
+  // The JSON key the validator traverses (dotted, array-flattening), when it differs
+  // from the RDF `path`. Defaults to `path`. Lets a constraint's published RDF predicate
+  // stay decoupled from the JSON shape it checks — e.g. a JSON-LD-keyword path (@context)
+  // or a nested path (credentialSubject.id) that has no single dereferenceable predicate.
+  jsonPath?: string;
   datatype?: string;      // e.g. xsd:dateTime
   class?: string;         // sh:class IRI (curie or #name within this module)
   nodeKind?: 'IRI' | 'Literal' | 'IRIOrLiteral' | 'BlankNodeOrIRI';
@@ -161,6 +166,7 @@ export function ontologyTriples(m: OntologyModel): Triple[] {
     const s = `${ns(m)}${c.name}`;
     out.push([s, A, OWL + 'Class'], [s, RDFS + 'label', c.label], [s, RDFS + 'comment', c.comment]);
     for (const sup of c.subClassOf ?? []) out.push([s, RDFS + 'subClassOf', expandAbs(m, sup)]);
+    for (const eq of c.equivalentClass ?? []) out.push([s, OWL + 'equivalentClass', expandAbs(m, eq)]);
     out.push([s, RDFS + 'isDefinedBy', O]);
   }
   for (const p of m.properties) {
@@ -207,6 +213,7 @@ export function renderOwl(m: OntologyModel): string {
       `    rdfs:label "${esc(c.label)}" ;`,
       `    rdfs:comment "${esc(c.comment)}" ;`];
     for (const s of c.subClassOf ?? []) parts.push(`    rdfs:subClassOf ${expand(m, s)} ;`);
+    for (const eq of c.equivalentClass ?? []) parts.push(`    owl:equivalentClass ${expand(m, eq)} ;`);
     parts.push(`    rdfs:isDefinedBy <${ontologyIri(m)}> .`);
     lines.push(parts.join('\n'), '');
   }
@@ -239,7 +246,28 @@ export function renderShacl(m: OntologyModel): string {
     if (s.label) parts.push(`    rdfs:label "${esc(s.label)}" ;`);
     if (s.comment) parts.push(`    rdfs:comment "${esc(s.comment)}" ;`);
     if (s.closed) parts.push(`    sh:closed true ;`);
+    // A constraint whose path is a JSON-LD keyword (@context) or a nested JSON path
+    // (credentialSubject.id) has no single dereferenceable RDF predicate — emitting
+    // `sh:path <module>:credentialSubject.id` would publish a phantom IRI. Those are
+    // documented as JSON-shape requirements on the node shape (the validator still
+    // enforces them via jsonPath ?? path). Flat single-predicate paths are unchanged.
+    const jsonShapeReqs: string[] = [];
     for (const c of s.constraints) {
+      const rdfClean = !c.path.includes('.') && !c.path.startsWith('@');
+      if (!rdfClean) {
+        const bits: string[] = [];
+        if (c.datatype) bits.push(`datatype ${c.datatype}`);
+        if (c.nodeKind) bits.push(`nodeKind ${c.nodeKind}`);
+        if (c.minCount != null) bits.push(`minCount ${c.minCount}`);
+        if (c.maxCount != null) bits.push(`maxCount ${c.maxCount}`);
+        if (c.pattern) bits.push(`pattern ${c.pattern}`);
+        if (c.in) bits.push(`in {${c.in.join(', ')}}`);
+        if (c.minInclusive != null) bits.push(`minInclusive ${c.minInclusive}`);
+        if (c.maxInclusive != null) bits.push(`maxInclusive ${c.maxInclusive}`);
+        if (c.hasValue !== undefined) bits.push(`hasValue ${JSON.stringify(c.hasValue)}`);
+        jsonShapeReqs.push(`${c.path}${bits.length ? ` (${bits.join(', ')})` : ''}${c.comment ? ` — ${c.comment}` : ''}`);
+        continue;
+      }
       const inner: string[] = [`sh:path ${expand(m, c.path)}`];
       if (c.datatype) inner.push(`sh:datatype ${c.datatype}`);
       if (c.class) inner.push(`sh:class ${expand(m, c.class)}`);
@@ -254,6 +282,7 @@ export function renderShacl(m: OntologyModel): string {
       if (c.comment) inner.push(`rdfs:comment "${esc(c.comment)}"`);
       parts.push(`    sh:property [ ${inner.join(' ; ')} ] ;`);
     }
+    if (jsonShapeReqs.length) parts.push(`    rdfs:comment "${esc('JSON-shape requirements (validator-enforced; not expressible as a single dereferenceable RDF property path): ' + jsonShapeReqs.join('; '))}" ;`);
     if (s.exactlyOneOf) {
       const branches = s.exactlyOneOf.paths.map(p => `[ sh:path ${expand(m, p)} ; sh:minCount 1 ]`).join(' ');
       parts.push(`    sh:xone ( ${branches} ) ;${s.exactlyOneOf.comment ? ` # ${s.exactlyOneOf.comment}` : ''}`);
@@ -328,7 +357,7 @@ export function validateAgainstShape(m: OntologyModel, shapeName: string, instan
   const results: ValidationResult['results'] = [];
   if (!shape) return { conforms: true, results, shapesIri: shapesIri(m) };
   for (const c of shape.constraints) {
-    const v = pick(instance, c.path);
+    const v = pick(instance, c.jsonPath ?? c.path);
     const present = v !== undefined && v !== null;
     const arr = Array.isArray(v) ? v : present ? [v] : [];
     if (c.minCount != null && arr.length < c.minCount) results.push({ path: c.path, message: `expected at least ${c.minCount} value(s)`, sourceShape, severity: 'Violation' });

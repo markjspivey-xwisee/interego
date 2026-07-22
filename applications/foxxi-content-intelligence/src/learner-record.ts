@@ -192,7 +192,10 @@ export interface EnterpriseLearnerRecord {
   /** RDF type IRIs — so a standard SHACL processor selects the ler:EnterpriseLearnerRecord targetClass. */
   '@type': readonly string[];
   id: string;
+  /** The dereferenceable IEEE P2997 spec IRI (the value the ELR shape asserts via sh:hasValue). */
   conformsTo: string;
+  /** Human-readable label for conformsTo (the spec IRI carries the machine identity). */
+  conformsToLabel?: string;
   /** human learner/performer OR AI agent. The data shape is identical. */
   subjectKind: ElrSubjectKind;
   learner: { did: string; name?: string };
@@ -316,7 +319,11 @@ export async function assembleEnterpriseLearnerRecord(
     // Dereferenceable URL id (everything-is-a-URL): the subject's own pod is the
     // authoritative home of the record, so the ELR is a fragment on it.
     id: `${config.learnerPodUrl.replace(/\/+$/, '')}/#enterprise-learner-record`,
-    conformsTo: 'IEEE P2997 — Enterprise Learner Record (data model, Part 1)',
+    // Dereferenceable spec IRI (everything-is-a-URL) — the same value the published
+    // EnterpriseLearnerRecordShape asserts via sh:hasValue, so the assembled record
+    // conforms to its own shape. Human label kept alongside.
+    conformsTo: 'https://standards.ieee.org/ieee/2997/',
+    conformsToLabel: 'IEEE P2997 — Enterprise Learner Record (data model, Part 1)',
     subjectKind,
     learner: { did: config.learnerDid, name: config.learnerName },
     assembledAt: new Date().toISOString(),

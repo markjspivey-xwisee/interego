@@ -28,7 +28,7 @@ export const LER_MODEL: OntologyModel = {
   },
   classes: [
     { name: 'EnterpriseLearnerRecord', label: 'Enterprise Learner Record', comment: 'The IEEE P2997 aggregate record of one subject: its conformsTo, subject identity, organisation path, competencies, and provenance raw-data-location indications.' },
-    { name: 'CompetencyAssertion', label: 'Competency Assertion', comment: 'A claim that a subject holds a competency at a proficiency level, with a confidence, backed by dereferenceable evidence, produced by a published roll-up rule.' },
+    { name: 'CompetencyAssertion', label: 'Competency Assertion', comment: 'A claim that a subject holds a competency at a proficiency level, with a confidence, backed by dereferenceable evidence, produced by a published roll-up rule.', equivalentClass: ['tla:Assertion'] },
     { name: 'Evidence', label: 'Evidence', comment: 'A dereferenceable artifact presented in support of a competency assertion.' },
   ],
   properties: [
@@ -48,8 +48,8 @@ export const LER_MODEL: OntologyModel = {
       label: 'Enterprise Learner Record shape',
       comment: 'A well-formed IEEE P2997 ELR: a dereferenceable id, a conformsTo, a subject kind + learner identity, an organisation path, and provenance raw-data-location indications (the P2997 hallmark).',
       constraints: [
-        { path: 'id', minCount: 1, nodeKind: 'IRI', comment: 'A dereferenceable record id.' },
-        { path: 'conformsTo', minCount: 1, comment: 'The P2997 data model it conforms to.' },
+        { path: 'id', minCount: 1, nodeKind: 'IRI', pattern: '^https?://', comment: 'A dereferenceable https record id.' },
+        { path: 'conformsTo', minCount: 1, hasValue: 'https://standards.ieee.org/ieee/2997/', comment: 'Must cite the dereferenceable IEEE P2997 spec IRI.' },
         { path: 'subjectKind', minCount: 1, in: ['human', 'agent'], comment: 'human learner/performer or AI agent.' },
         { path: 'learner.did', minCount: 1, nodeKind: 'IRI', comment: 'The subject identity (a dereferenceable DID/URL).' },
         { path: 'organizationPath', minCount: 1, comment: 'P2997 organisation path.' },
@@ -62,12 +62,12 @@ export const LER_MODEL: OntologyModel = {
       comment: 'A well-formed IEEE-LER competency assertion: ABOUT a subject and a competency, at a dereferenceable proficiency level, with a confidence in 0..1, produced by a named roll-up rule, backed by at least one dereferenceable evidence IRI.',
       constraints: [
         { path: 'subject', minCount: 1, nodeKind: 'IRI', comment: 'The subject the assertion is about — a dereferenceable id (DID/URL), not a bare literal.' },
-        { path: 'aboutCompetency', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'ler:aboutCompetency — the competency definition IRI.' },
-        { path: 'proficiencyLevel', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'ler:atProficiency — a dereferenceable proficiency-level IRI.' },
-        { path: 'confidence', minCount: 1, maxCount: 1, datatype: 'xsd:decimal', minInclusive: 0, maxInclusive: 1, comment: 'ler:successConfidence — a Wilson-lower-bound success confidence in [0,1] (a non-negative sub-range of tla:confidence [-1,1]).' },
-        { path: 'rolledUpBy', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'The tla:RollupRule IRI that produced this assertion.' },
+        { path: 'aboutCompetency', minCount: 1, maxCount: 1, nodeKind: 'IRI', pattern: '^https?://', comment: 'ler:aboutCompetency — a dereferenceable https competency definition IRI.' },
+        { path: 'proficiencyLevel', minCount: 1, maxCount: 1, nodeKind: 'IRI', pattern: '^https?://', comment: 'ler:atProficiency — a dereferenceable https proficiency-level IRI.' },
+        { path: 'confidence', minCount: 1, maxCount: 1, datatype: 'xsd:double', minInclusive: 0, maxInclusive: 1, comment: 'ler:successConfidence — a Wilson-lower-bound success confidence in [0,1] (a non-negative sub-range of tla:confidence [-1,1]); a JSON float → xsd:double.' },
+        { path: 'rolledUpBy', minCount: 1, maxCount: 1, nodeKind: 'IRI', pattern: '^https?://', comment: 'The dereferenceable https tla:RollupRule IRI that produced this assertion.' },
         { path: 'assertingAgent', minCount: 1, nodeKind: 'IRI', comment: 'iep:assertingAgent — a dereferenceable agent id (DID/URL).' },
-        { path: 'evidence', minCount: 1, nodeKind: 'IRI', comment: 'ler:supportedByEvidence — at least one dereferenceable evidence IRI.' },
+        { path: 'evidence', minCount: 1, nodeKind: 'IRI', pattern: '^https?://', comment: 'ler:supportedByEvidence — at least one dereferenceable https evidence IRI.' },
         { path: 'basis', minCount: 1, in: ['performance', 'credential', 'inferred'], comment: 'The evidence class.' },
         { path: 'modalStatus', minCount: 1, in: ['Asserted', 'Hypothetical'], comment: 'The modal status.' },
       ],
@@ -106,7 +106,7 @@ export const OB3_MODEL: OntologyModel = {
       label: 'Open Badge Credential shape',
       comment: 'A well-formed OB3.0 VC: a @context, a type INCLUDING VerifiableCredential + OpenBadgeCredential, an issuer, a credentialSubject with an IRI id and a typed+named achievement, a validFrom, and a typed proof.',
       constraints: [
-        { path: '@context', minCount: 1, comment: 'The VC/OB3 JSON-LD contexts.' },
+        { path: '@context', minCount: 1, hasValue: 'https://www.w3.org/ns/credentials/v2', comment: 'The @context MUST include the W3C VC-DM 2.0 context.' },
         { path: 'type', hasValue: 'VerifiableCredential', comment: 'type MUST include VerifiableCredential.' },
         { path: 'type', hasValue: 'OpenBadgeCredential', comment: 'type MUST include OpenBadgeCredential.' },
         { path: 'issuer', minCount: 1, comment: 'The issuer (IRI or Profile object).' },
@@ -150,7 +150,7 @@ export const CLR_MODEL: OntologyModel = {
       label: 'CLR Credential shape',
       comment: 'A well-formed CLR 2.0 VC: @context, type INCLUDING VerifiableCredential + ClrCredential, a credentialSubject with an IRI id, and a typed proof.',
       constraints: [
-        { path: '@context', minCount: 1, comment: 'The VC/CLR JSON-LD contexts.' },
+        { path: '@context', minCount: 1, hasValue: 'https://www.w3.org/ns/credentials/v2', comment: 'The @context MUST include the W3C VC-DM 2.0 context.' },
         { path: 'type', hasValue: 'VerifiableCredential', comment: 'type MUST include VerifiableCredential.' },
         { path: 'type', hasValue: 'ClrCredential', comment: 'type MUST include ClrCredential.' },
         { path: 'credentialSubject.id', minCount: 1, nodeKind: 'IRI', comment: 'The holder id (IRI).' },

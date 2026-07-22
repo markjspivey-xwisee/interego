@@ -295,25 +295,21 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/production-performance-completed`,
     prefLabel: { en: 'production-performance (completed)' },
-    definition: { en: 'A successful unit of on-the-job production work. MOM Level 1 `completed`; scoped by object activity type foxxi:ProductionTask so it does not over-match course completions. Marked contextKind=production; carries the observer + actorKind.' },
+    definition: { en: 'A successful unit of on-the-job production work. MOM Level 1 `completed`; object activity type is the work\'s own domain conformsTo (or the ProductionTask fallback), so this template does NOT pin an object type — it discriminates on contextKind=production. actorKind is recommended so a plain course completion (which matches this and the course `completed` template) also satisfies at least one.' },
     verb: `${ADL}/verbs/completed`,
-    objectActivityType: `${FOXXI_NS}ProductionTask`,
     rules: [
       { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', any: ['production'] },
-      { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'included' },
-      { location: 'result.success', any: [true] },
+      { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'recommended' },
     ],
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/production-performance-failed`,
     prefLabel: { en: 'production-performance (failed)' },
-    definition: { en: 'An unsuccessful unit of on-the-job production work. MOM Level 1 `failed`; scoped by object activity type foxxi:ProductionTask. Marked contextKind=production.' },
+    definition: { en: 'An unsuccessful unit of work (production OR a course/AU fail). MOM Level 1 `failed`; no pinned object type — a course/lesson fail and a production fail both satisfy it (actorKind recommended, contextKind checked only when present).' },
     verb: `${ADL}/verbs/failed`,
-    objectActivityType: `${FOXXI_NS}ProductionTask`,
     rules: [
       { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', any: ['production'] },
-      { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'included' },
-      { location: 'result.success', any: [false] },
+      { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'recommended' },
     ],
   },
 
@@ -541,22 +537,30 @@ export function validateAgainstProfileTemplates(stmt: Record<string, unknown>): 
   const matched = templates.filter(t =>
     (t as { verb?: string }).verb === verb &&
     (!(t as { objectActivityType?: string }).objectActivityType || (t as { objectActivityType?: string }).objectActivityType === objType));
-  const violations: ProfileTemplateResult['violations'] = [];
-  for (const t of matched) {
+  // Compute each matched template's rule violations independently.
+  const violationsFor = (t: typeof matched[number]): ProfileTemplateResult['violations'] => {
+    const out: ProfileTemplateResult['violations'] = [];
     for (const rule of (((t as { rules?: TemplateRule[] }).rules) ?? [])) {
       const vals = resolveLocation(stmt, rule.location);
       const present = vals.length > 0 && vals.some(v => v !== undefined && v !== null);
-      if (rule.presence === 'included' && !present) violations.push({ template: t.id, location: rule.location, message: 'required location is absent' });
-      if (rule.presence === 'excluded' && present) violations.push({ template: t.id, location: rule.location, message: 'location must be absent' });
-      if (rule.any && present && !vals.some(v => rule.any!.includes(v))) violations.push({ template: t.id, location: rule.location, message: `no value in {${rule.any.map(String).join(', ')}}` });
-      if (rule.all && present && !vals.every(v => rule.all!.includes(v))) violations.push({ template: t.id, location: rule.location, message: `a value is not in {${rule.all.map(String).join(', ')}}` });
+      if (rule.presence === 'included' && !present) out.push({ template: t.id, location: rule.location, message: 'required location is absent' });
+      if (rule.presence === 'excluded' && present) out.push({ template: t.id, location: rule.location, message: 'location must be absent' });
+      if (rule.any && present && !vals.some(v => rule.any!.includes(v))) out.push({ template: t.id, location: rule.location, message: `no value in {${rule.any.map(String).join(', ')}}` });
+      if (rule.all && present && !vals.every(v => rule.all!.includes(v))) out.push({ template: t.id, location: rule.location, message: `a value is not in {${rule.all.map(String).join(', ')}}` });
     }
+    return out;
+  };
+  const perTemplate = matched.map(t => ({ id: t.id, violations: violationsFor(t) }));
+  // A Statement FOLLOWS the profile if it fully satisfies AT LEAST ONE matched template
+  // (xAPI Profile spec §5 — overlapping templates for the same verb are OR-ed, not AND-ed).
+  const anySatisfied = perTemplate.some(pt => pt.violations.length === 0);
+  let violations: ProfileTemplateResult['violations'] = [];
+  if (matched.length > 0 && !anySatisfied) {
+    // Report the closest template (fewest rule violations).
+    violations = perTemplate.reduce((a, b) => b.violations.length < a.violations.length ? b : a).violations;
   }
-  // xAPI Profile spec §5.2: a Statement carrying a Verb that IS a Determining Property
-  // of this Profile MUST conform to at least one Statement Template. Matching zero
-  // templates (e.g. a declared verb with a mismatched/absent object activity type) is a
-  // nonconformance — NOT a vacuous pass. This closes the "declared verb, wrong object
-  // type → conforms:true" evasion.
+  // §5.2: a Statement carrying a declared Verb that matches NO template at all is a
+  // nonconformance (not a vacuous pass).
   if (verbDeclared && matched.length === 0) {
     violations.push({
       template: `${FOXXI_PROFILE_ID}#statement-template-conformance`,

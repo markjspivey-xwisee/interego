@@ -346,6 +346,7 @@ import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonL
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
 import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
+import { verifyDataIntegrityProof, type VerifiableCredentialJson } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 /** Credential-format models registered as DATA (not bespoke handlers): the generic
  *  /ns/<module> loop mounts GET/shapes/validate/term + composes them into the lattice,
  *  so a new credential format is a data entry. */
@@ -3348,7 +3349,29 @@ const app = createVerticalBridge({
         const instance = (body.instance && typeof body.instance === 'object') ? body.instance as Record<string, unknown> : body;
         const r = compliance ? validateInstanceWith(liveModel(moduleName, model), instance) : validateInstance(moduleName, instance);
         if (!r) { res.status(404).json({ ok: false, error: `no validator for ${moduleName}` }); return; }
-        res.json({ ok: true, module: moduleName, ontology: specOntologyIri(model), conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
+        const out: Record<string, unknown> = { ok: true, module: moduleName, ontology: specOntologyIri(model), conforms: r.conforms, results: r.results, shapesIri: r.shapesIri };
+        // Credential formats (OB3/CLR) are Verifiable Credentials: a SHACL pass only
+        // proves the SHAPE is well-formed ("proof.type is present"), NOT that the
+        // embedded signature is authentic. Cryptographically verify the Data Integrity
+        // proof and report it separately so `conforms:true` is never mistaken for a
+        // verified credential. Fail-closed: an absent/forged proof → verified:false.
+        if (moduleName in CREDENTIAL_MODELS) {
+          const proof = (instance as { proof?: { cryptosuite?: string; type?: string } }).proof;
+          let proofInfo: Record<string, unknown>;
+          if (!proof) {
+            proofInfo = { present: false, verified: false, reason: 'no Data Integrity proof embedded — an unsigned credential is not verifiable' };
+          } else if (proof.cryptosuite === 'bbs-2023') {
+            // BBS+ selective-disclosure proofs verify against a derived presentation, not
+            // the JCS suite; we surface presence without over-claiming a JCS verification.
+            proofInfo = { present: true, cryptosuite: 'bbs-2023', verified: null, reason: 'bbs-2023 selective-disclosure proof — verify via the BBS presentation verifier, not the eddsa-jcs-2022 suite' };
+          } else {
+            const v = verifyDataIntegrityProof(instance as unknown as VerifiableCredentialJson);
+            proofInfo = { present: true, cryptosuite: proof.cryptosuite ?? proof.type, verified: v.verified, reason: v.reason, ...(v.issuerDid ? { issuerDid: v.issuerDid } : {}) };
+          }
+          out.proof = proofInfo;
+          out.verified = r.conforms && proofInfo.verified === true;
+        }
+        res.json(out);
       });
       a.get(`/ns/${moduleName}/term/:name`, (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -3386,6 +3409,16 @@ const app = createVerticalBridge({
       void Promise.allSettled(Object.values(COMPLIANCE_MODELS).map(m => composeComplianceOntology(m, { podUrl: tenantPodUrl, agentDid: tenantProfileDid })))
         .then(rs => { let n = 0; for (const r of rs) if (r.status === 'fulfilled' && r.value?.holonUri) { specHolons.set(r.value.module, { label: r.value.label, holonUri: r.value.holonUri }); n++; } console.log(`[foxxi-bridge][compliance-ontology] composed ${n}/${rs.length} compliance ontologies into the lattice`); })
         .catch(e => console.warn('[foxxi-bridge][compliance-ontology] compose skipped:', (e as Error).message));
+      // Compose the credential + IEEE-LER/ADL-TLA SHACL shape models into the lattice too,
+      // exactly like the spec + compliance ontologies (#composable): the OB3, CLR and
+      // IEEE-LER/ADL-TLA conformance shapes become first-class PGSL holons, so validating a
+      // credential or a competency assertion is coherence over the shared graph — not a
+      // detached, non-emergent code rule. For OB3/CLR (registered in NS_MODELS) this also
+      // makes /ns/ob3 + /ns/clr project from the composed holon (specHolons → liveModel),
+      // uniform with /ns/xapi. Best-effort; identical read-back means serving is unchanged.
+      void Promise.allSettled([LER_MODEL, OB3_MODEL, CLR_MODEL].map(m => composeComplianceOntology(m as unknown as SpecOntologyModel, { podUrl: tenantPodUrl, agentDid: tenantProfileDid })))
+        .then(rs => { let n = 0; for (const r of rs) if (r.status === 'fulfilled' && r.value?.holonUri) { specHolons.set(r.value.module, { label: r.value.label, holonUri: r.value.holonUri }); n++; } console.log(`[foxxi-bridge][credential-ontology] composed ${n}/${rs.length} credential/LER shape ontologies into the lattice`); })
+        .catch(e => console.warn('[foxxi-bridge][credential-ontology] compose skipped:', (e as Error).message));
       // Foundation-first for foxxi: itself — compose its own vocab into the PGSL
       // lattice (term IRIs → content-addressed atoms; the vocab a lossless holon) so
       // /ns/foxxi serves the holon projection instead of the hardcoded array. The
@@ -3645,7 +3678,7 @@ app.post('/agent/review-record', async (req, res) => {
     if (!rec.ok) {
       res.status(401).json({
         error: `agent signature required: ${rec.reason}`,
-        hint: 'POST a rev-196 signed envelope { _signature, _signed_payload: JSON.stringify({ ...args, agent_id, timestamp }) }. Wallet-holding agents sign locally; relay-mediated agents get the envelope from the relay `sign_request` tool, then act the published iep:Affordance urn:interego:foxxi:capability:review_foxxi_record.',
+        hint: `POST a rev-196 signed envelope { _signature, _signed_payload: JSON.stringify({ ...args, agent_id, timestamp }) }. Wallet-holding agents sign locally; relay-mediated agents get the envelope from the relay \`sign_request\` tool, then act the published iep:Affordance dereferenceable at ${bridgeBaseUrl}/agent/review-record/affordance.`,
       });
       return;
     }
@@ -4695,7 +4728,10 @@ app.post('/agent/course/ask', async (req, res) => {
     const learnerActivity = typeof req.body?.learnerActivity === 'string' ? req.body.learnerActivity.trim() : '';
     const byok = typeof req.body?.llm_api_key === 'string' ? req.body.llm_api_key.trim() : '';
     const history = Array.isArray(req.body?.history) ? req.body.history : undefined;
-    const learnerDid = typeof req.body?.learnerDid === 'string' ? req.body.learnerDid : 'urn:foxxi:demo:asker';
+    // Everything-is-a-URL: the anonymous-asker fallback identity is a dereferenceable
+    // bridge URL, not a bare urn — it resolves to a description of the unauthenticated
+    // demo asker rather than denoting an unfetchable thing.
+    const learnerDid = typeof req.body?.learnerDid === 'string' ? req.body.learnerDid : `${bridgeBaseUrl}/agents/anonymous-asker`;
 
     // Role framing — the answer stays GROUNDED in the course KG; the role only sets
     // the lens (who is asking, and about whose performance).
