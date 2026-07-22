@@ -571,10 +571,12 @@ const TLA_TERMS: readonly SemTerm[] = [
 
 // ── MOM concept scheme — verbs, activity types, context extensions ──
 //
-// The 49 MOM verbs are not classes; they are SKOS concepts in the
-// `tla:MOMVerbScheme`, grouped into five `skos:Collection` conformance
-// levels. Importing them as a concept scheme — rather than a class
-// hierarchy — is the correct modelling per the research finding.
+// The MOM verbs are not classes; they are SKOS concepts in the
+// `tla:MOMVerbScheme`, grouped into five `skos:Collection` THEMATIC levels
+// (this project's own grouping over the ADL MOM verb set — not ADL-defined
+// numbered conformance tiers). Importing them as a concept scheme — rather
+// than a class hierarchy — is the correct modelling per the research finding.
+// (The exact count is MOM_VERBS.length, rendered dynamically below.)
 
 interface MomConcept { name: string; label: string; scheme: 'verb' | 'activityType' | 'extension'; level?: number; }
 
@@ -819,7 +821,7 @@ function renderOntologyTurtle(family: 'ler' | 'tla'): string {
   out += `<${doc}> a owl:Ontology ;
     rdfs:label "${esc(title)}" ;
     rdfs:comment "${esc(blurb)}" ;
-    owl:imports <${PREFIXES.cg}> .\n\n`;
+    owl:imports <${PREFIXES.iep}> .\n\n`;
   // The annotation property that carries the emergent-composable facet.
   // Defined once, in the IEEE-LER ontology; the ADL-TLA ontology reuses
   // it (a dereferencing client follows it back here) — the two ontologies
@@ -838,7 +840,7 @@ function renderOntologyTurtle(family: 'ler' | 'tla'): string {
 function renderMomTurtle(): string {
   const scheme = `tla:MOMVerbScheme a skos:ConceptScheme ;
     rdfs:label "ADL MOM verb scheme" ;
-    rdfs:comment "The ${MOM_VERBS.length} Master Object Model xAPI verbs. Grouped here into five thematic levels — this project's own pedagogical organisation over the ADL MOM verb set (completion, session lifecycle, competency assertion, adaptive paths, career), NOT ADL-defined numbered conformance levels. Each verb skos:exactMatch-es its canonical registry IRI." ;
+    rdfs:comment "The ${MOM_VERBS.length} Master Object Model xAPI verbs. Grouped here into five thematic levels — this project's own pedagogical organisation over the ADL MOM verb set (completion, session lifecycle, competency assertion, adaptive paths, career), NOT ADL-defined numbered conformance levels. Each verb skos:closeMatch-es its counterpart in the ADL TLA profile namespace." ;
     rdfs:isDefinedBy <${TLA_DOC}> .`;
   const levels = [1, 2, 3, 4, 5].map(lvl =>
     `tla:MOMLevel${lvl} a skos:Collection ;
@@ -851,12 +853,12 @@ function renderMomTurtle(): string {
     lines.push(`    ler:construction "concept" ;`);
     if (c.scheme === 'verb') {
       lines.push(`    skos:inScheme tla:MOMVerbScheme ;`);
-      lines.push(`    skos:exactMatch <https://w3id.org/xapi/tla/verbs/${c.label}> ;`);
+      lines.push(`    skos:closeMatch <https://w3id.org/xapi/tla/verbs/${c.label}> ;`);
       lines.push(`    skos:member tla:MOMLevel${c.level} ;`);
     } else if (c.scheme === 'activityType') {
-      lines.push(`    skos:exactMatch <https://w3id.org/xapi/tla/activity-types/${c.label}> ;`);
+      lines.push(`    skos:closeMatch <https://w3id.org/xapi/tla/activity-types/${c.label}> ;`);
     } else {
-      lines.push(`    skos:exactMatch <https://w3id.org/xapi/tla/extensions/${c.label}> ;`);
+      lines.push(`    skos:closeMatch <https://w3id.org/xapi/tla/extensions/${c.label}> ;`);
     }
     lines.push(`    rdfs:isDefinedBy <${TLA_DOC}> .`);
     return lines.join('\n');
@@ -868,7 +870,7 @@ function renderMomTurtle(): string {
 
 const JSONLD_CONTEXT: Record<string, unknown> = {
   rdfs: PREFIXES.rdfs, owl: PREFIXES.owl, skos: PREFIXES.skos, dct: PREFIXES.dct,
-  iep: PREFIXES.cg, prov: PREFIXES.prov, vc: PREFIXES.vc, amta: PREFIXES.amta,
+  iep: PREFIXES.iep, prov: PREFIXES.prov, vc: PREFIXES.vc, amta: PREFIXES.amta,
   hela: PREFIXES.hela, ler: LER_NS, tla: TLA_NS,
   label: 'rdfs:label', comment: 'rdfs:comment', source: 'dct:source',
   construction: 'ler:construction',
@@ -954,6 +956,10 @@ export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, u
     _links: {
       self: { href: doc },
       counterpart: { href: family === 'ler' ? TLA_DOC : LER_DOC },
+      // Follow-your-nose to the machine-checkable conformance layer that governs
+      // this ontology (the bridge mounts both for ieee-ler + adl-tla).
+      shapes: { href: `${doc}/shapes`, type: 'text/turtle' },
+      validate: { href: `${doc}/validate`, method: 'POST' },
     },
   };
 }
@@ -979,6 +985,26 @@ export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record
       construction: 'concept',
       isDefinedBy: doc,
       _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
+    };
+  }
+  // Published proficiency framework / levels / roll-up rule — resolve the per-term
+  // route to their real definitions (they were only in the doc-level render before).
+  if (family === 'tla') {
+    const lvl = PROFICIENCY_LEVELS.find(l => `Level${l.name}` === name);
+    if (lvl) return {
+      '@context': JSONLD_CONTEXT, '@id': `${ns}${name}`, '@type': ['tla:Level', 'ler:ProficiencyLevel', 'skos:Concept'],
+      label: lvl.label, comment: lvl.comment, 'skos:notation': String(lvl.rank), 'skos:inScheme': PERF_FRAMEWORK_IRI,
+      construction: 'concept', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc }, scheme: { href: PERF_FRAMEWORK_IRI } },
+    };
+    if (name === 'PerformanceProficiencyRollupRule') return {
+      '@context': JSONLD_CONTEXT, '@id': PERF_ROLLUP_RULE_IRI, '@type': 'tla:RollupRule',
+      label: 'Production-performance proficiency roll-up rule', 'tla:rollupRule': PERF_ROLLUP_RULE_TEXT,
+      construction: 'minted', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
+    };
+    if (name === 'PerformanceProficiencyFramework') return {
+      '@context': JSONLD_CONTEXT, '@id': PERF_FRAMEWORK_IRI, '@type': ['tla:CompetencyFramework', 'skos:ConceptScheme'],
+      label: 'Foxxi Production-Performance Proficiency Framework', source: 'Dreyfus & Dreyfus (1980)',
+      construction: 'minted', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
     };
   }
   // The bridge owns these namespaces — an unknown fragment never 404s; it
