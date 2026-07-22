@@ -244,9 +244,14 @@ export function renderOwl(m: OntologyModel): string {
  *   - a Turtle path expression (a single predicate, or an sh:sequence `( a b c )`), or
  *   - null when the path has no RDF property-path form at all (a JSON-LD keyword like
  *     `@context`, which is consumed before the RDF graph exists, or a non-leaf keyword).
- * A JSON-LD keyword segment maps to its RDF term: `type`→rdf:type; a trailing `id` is
- * dropped (a value constraint like sh:nodeKind on the parent path expresses "the node
- * reached here is IRI-identified", i.e. its id is an IRI).
+ * A trailing `id` is dropped (a value constraint like sh:nodeKind on the parent path
+ * expresses "the node reached here is IRI-identified", i.e. its id is an IRI). A `type`
+ * segment is treated as a PLAIN module predicate, NOT rdf:type: our validator checks the
+ * JSON `type` field by string membership/datatype (e.g. hasValue "VerifiableCredential",
+ * datatype xsd:string for a SCORM resource type="webcontent"), and mapping it to rdf:type
+ * would attach string-literal constraints to rdf:type (whose values are IRIs) — making the
+ * published shape unsatisfiable AND divergent from the validator. Keeping `type` as
+ * <module>:type mirrors exactly what the validator enforces (published == validator).
  */
 function shaclPath(m: OntologyModel, path: string): string | null {
   if (path.startsWith('@')) return null;
@@ -255,7 +260,6 @@ function shaclPath(m: OntologyModel, path: string): string | null {
   for (let i = 0; i < segs.length; i++) {
     const seg = segs[i]!;
     const isLeaf = i === segs.length - 1;
-    if (seg === 'type') { mapped.push('rdf:type'); continue; }
     if (seg === 'id') {
       // A NESTED trailing `.id` (credentialSubject.id) is dropped: a value constraint on
       // the parent path (e.g. sh:nodeKind sh:IRI) means "the node reached there is
@@ -416,19 +420,15 @@ export function validateAgainstShape(m: OntologyModel, shapeName: string, instan
       if (c.nodeKind === 'Literal' && (item === null || typeof item === 'object')) viol('expected a literal, not an IRI/blank node');
       // sh:class — the published shapes assert it, so the engine must enforce it or the
       // dereferenceable shape and this validator disagree (a bare literal `course` passed).
-      // A class instance can only be a node (an object, or an IRI reference), never a plain
-      // literal; when the node carries an explicit type it must match the class local-name.
+      // On raw (un-expanded) JSON we can soundly check only NODE-NESS: a class instance is a
+      // node (an object, or an IRI reference), never a plain literal. We deliberately do NOT
+      // compare a local @type name against the class name — that would be both case-sensitive
+      // and authority-blind (over-rejecting a course typed with the canonical xAPI activity
+      // IRI whose last segment is lowercase `course`, and false-accepting a foreign-namespace
+      // type sharing the local name). Node-ness is the safe, sound subset that closes the bug.
       if (c.class) {
         const isNode = (typeof item === 'object' && item !== null) || (typeof item === 'string' && IRI_RE.test(item));
         if (!isNode) viol(`expected a node (an object or IRI reference) that is an instance of ${c.class}, not a bare literal`);
-        else if (typeof item === 'object' && item !== null) {
-          const t = (item as Record<string, unknown>)['@type'] ?? (item as Record<string, unknown>).type ?? (item as Record<string, unknown>).objectType;
-          if (t !== undefined) {
-            const want = c.class.split(/[#/:]/).pop();
-            const got = (Array.isArray(t) ? t : [t]).map(x => String(x).split(/[#/:]/).pop());
-            if (!got.includes(want)) viol(`node @type ${JSON.stringify(t)} is not an instance of ${c.class}`);
-          }
-        }
       }
       if (c.pattern && typeof item === 'string' && !new RegExp(c.pattern).test(item)) viol(`does not match pattern ${c.pattern}`);
       if (c.in && !c.in.includes(String(item))) viol(`not in the allowed vocabulary {${c.in.join(', ')}}`);

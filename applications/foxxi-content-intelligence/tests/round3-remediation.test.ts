@@ -20,7 +20,7 @@ describe('round-3 remediation — LER/credential shapes', () => {
     expect(sh).toContain('JSON-LD-keyword requirements');
     // Nested paths are now MACHINE-CHECKABLE SHACL (as strong as the validator), not comments:
     expect(sh).toContain('sh:path ob3:credentialSubject'); // credentialSubject.id → parent path + nodeKind IRI
-    expect(sh).toContain('sh:path ( ob3:proof rdf:type )'); // proof.type → sh:sequence path
+    expect(sh).toContain('sh:path ( ob3:proof ob3:type )'); // proof.type → sh:sequence path (type is a plain predicate, not rdf:type — matches the JSON validator)
   });
 
   it('OB3 rejects a credential missing the VC-DM 2.0 @context (hasValue)', () => {

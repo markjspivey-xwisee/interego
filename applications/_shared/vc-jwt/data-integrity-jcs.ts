@@ -208,8 +208,11 @@ export function verifyDataIntegrityProof(signed: VerifiableCredentialJson): Veri
   if (signed.proof.cryptosuite !== 'eddsa-jcs-2022') {
     return { verified: false, reason: `unsupported cryptosuite: ${signed.proof.cryptosuite}` };
   }
-  if (!signed.proof.proofValue?.startsWith('z')) {
-    return { verified: false, reason: 'proofValue must be multibase base58btc (starts with z)' };
+  // proofValue MUST be a string before .startsWith — a number/boolean is non-nullish so
+  // optional chaining does NOT guard it, and `.startsWith` would throw (a raw throw from an
+  // unauthenticated /validate handler is a 500 that leaks the server stack trace).
+  if (typeof signed.proof.proofValue !== 'string' || !signed.proof.proofValue.startsWith('z')) {
+    return { verified: false, reason: 'proofValue must be a multibase base58btc string (starts with z)' };
   }
   // verificationMethod MUST be a string before we .split() it — a proof that omits it
   // (or sends a non-string) must fail closed, NOT throw (a thrown error escaping to an

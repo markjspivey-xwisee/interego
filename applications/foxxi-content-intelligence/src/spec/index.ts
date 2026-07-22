@@ -7,7 +7,7 @@
  * validates a statement/manifest it is validating against this composed, dereferenceable
  * ontology, and every result cites a sh:NodeShape IRI under <bridge>/ns/<module>/shapes.
  */
-import { type OntologyModel, validateAgainstShape, shapesIri, composeSpecOntology, ns, type ValidationResult, type ComposedOntology } from '../spec-ontology.js';
+import { type OntologyModel, validateAgainstShape, shapesIri, composeSpecOntology, ns, NS_ROOT, NS_ROOT_LEGACY, type ValidationResult, type ComposedOntology } from '../spec-ontology.js';
 import { validateStatement } from '../xapi-validate.js';
 import { XAPI_MODEL } from './xapi.model.js';
 import { CMI5_MODEL } from './cmi5.model.js';
@@ -146,7 +146,11 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
     return ids;
   };
   const declaredLocal = rawTypes.filter(t => !isAbs(t)).map(localName);
-  const declaredAbs = rawTypes.filter(isAbs);
+  // Canonicalize a legacy-Azure-host IRI to the live host: NS_ROOT_LEGACY is declared
+  // owl:sameAs NS_ROOT and ids minted under it live in signed content we must not rewrite,
+  // so a @type carrying the legacy host is the SAME term and must route identically.
+  const canonHost = (iri: string): string => iri.startsWith(NS_ROOT_LEGACY) ? NS_ROOT + iri.slice(NS_ROOT_LEGACY.length) : iri;
+  const declaredAbs = rawTypes.filter(isAbs).map(canonHost);
   const declaredNames = rawTypes.map(localName); // for the no-vacuous-pass decision below
   const applicableLocal = new Set<string>();
   for (const d of declaredLocal) for (const a of ancestorsOf(d)) applicableLocal.add(a);

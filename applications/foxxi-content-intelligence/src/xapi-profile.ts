@@ -294,30 +294,69 @@ const templates = [
   // it as the IEEE P2997 employment leg, distinct from a course `completed`.
   {
     id: `${FOXXI_PROFILE_ID}/templates/production-performance-completed`,
-    prefLabel: { en: 'production-performance (completed)' },
-    definition: { en: 'A successful unit of on-the-job production work. MOM Level 1 `completed`. Does NOT pin an object activity type (the work carries its own domain conformsTo); instead it discriminates by REQUIRING context.extensions contextKind=production. This keeps it from over-matching a plain course completion — a course `completed` (no contextKind) fails this template\'s presence rule and must satisfy the course `completed` template (result.completion) instead. actorKind is recommended.' },
+    prefLabel: { en: 'performance (completed)' },
+    definition: { en: 'A successful unit of contextualized performance work — production, training, or performance-support. MOM Level 1 `completed`. Does NOT pin an object activity type (the work carries its own domain conformsTo); instead it discriminates by REQUIRING a context.extensions contextKind be PRESENT (any of production/training/performance-support). This covers the record_performance + mesh-projected emitters (varying domain object types) without over-matching a bare course/lesson completion (which carries no contextKind and instead satisfies the course/lesson `completed` template). A completed with an unknown object type AND no contextKind matches nothing → correctly non-conformant.' },
     verb: `${ADL}/verbs/completed`,
     rules: [
-      // REQUIRED discriminator: without presence:'included' this rule is only value-checked
-      // when present, which made the template a universal acceptor that OR-swallowed the
-      // stricter course `completed` template (result.completion). It MUST be present AND
-      // equal to 'production'.
-      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included', any: ['production'] },
+      // REQUIRED discriminator (present, any value): keeps this from being a universal
+      // acceptor while covering every contextKind the emitters use (production/training/
+      // performance-support). Value is NOT pinned — mesh projects training/support work too.
+      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included' },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'recommended' },
-      // result.success is recommended (the emitter always sets it), but when present it
-      // MUST be true for a `completed` — the `any` check fires on present values, so a
-      // completed carrying success:false is rejected without hard-requiring the field.
       { location: 'result.success', presence: 'recommended', any: [true] },
     ],
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/production-performance-failed`,
-    prefLabel: { en: 'production-performance (failed)' },
-    definition: { en: 'An unsuccessful unit of on-the-job production work. MOM Level 1 `failed`. Like its `completed` sibling it REQUIRES contextKind=production (so the whole `failed` verb is not vacuously conformant) and result.success=false — a bare `failed` with neither is correctly non-conformant.' },
+    prefLabel: { en: 'performance (failed)' },
+    definition: { en: 'An unsuccessful unit of contextualized performance work. MOM Level 1 `failed`. Requires a contextKind be PRESENT (any value) so the whole `failed` verb is not vacuously conformant, while covering production/training/performance-support. A bare `failed` with an unknown object type and no contextKind is correctly non-conformant.' },
     verb: `${ADL}/verbs/failed`,
     rules: [
-      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included', any: ['production'] },
+      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included' },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'recommended' },
+      { location: 'result.success', presence: 'recommended', any: [false] },
+    ],
+  },
+  // ── Course / lesson (AU) outcome templates — the SCORM-runtime + cmi5 legs ──────
+  // These discriminate by objectActivityType (the xAPI-Profile determining property):
+  // SCORM emits course-typed completed/passed/FAILED (contextKind=training); cmi5 emits
+  // lesson-typed completed/passed/failed. Without these the bridge's own emitters would
+  // be non-conformant against its own profile (there was no `failed`/lesson template).
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/course-failed`,
+    prefLabel: { en: 'course-failed' },
+    definition: { en: 'A failed attempt at a course activity (SCORM runtime rollup). Selected by objectActivityType=course; result.success=false when present.' },
+    verb: `${ADL}/verbs/failed`,
+    objectActivityType: `${ADL}/activities/course`,
+    rules: [{ location: 'result.success', presence: 'recommended', any: [false] }],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/lesson-completed`,
+    prefLabel: { en: 'lesson-completed' },
+    definition: { en: 'A completed cmi5 Assignable Unit (lesson). Selected by objectActivityType=lesson; requires result.completion (cmi5 §9.3).' },
+    verb: `${ADL}/verbs/completed`,
+    objectActivityType: `${ADL}/activities/lesson`,
+    rules: [{ location: 'result.completion', presence: 'included' }],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/lesson-passed`,
+    prefLabel: { en: 'lesson-passed' },
+    definition: { en: 'A passed cmi5 Assignable Unit (lesson). Selected by objectActivityType=lesson; requires result.score.scaled (cmi5 §9.5).' },
+    verb: `${ADL}/verbs/passed`,
+    objectActivityType: `${ADL}/activities/lesson`,
+    rules: [
+      { location: 'result.score.scaled', presence: 'included' },
+      { location: 'result.success', presence: 'recommended', any: [true] },
+    ],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/lesson-failed`,
+    prefLabel: { en: 'lesson-failed' },
+    definition: { en: 'A failed cmi5 Assignable Unit (lesson). Selected by objectActivityType=lesson; requires result.score.scaled (cmi5 §9.5).' },
+    verb: `${ADL}/verbs/failed`,
+    objectActivityType: `${ADL}/activities/lesson`,
+    rules: [
+      { location: 'result.score.scaled', presence: 'included' },
       { location: 'result.success', presence: 'recommended', any: [false] },
     ],
   },

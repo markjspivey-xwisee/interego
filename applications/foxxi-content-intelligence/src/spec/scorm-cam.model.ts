@@ -86,11 +86,14 @@ export const SCORM_CAM_MODEL: OntologyModel = {
     },
     {
       name: 'TimeLimitAction', label: 'adlcp:timeLimitAction values', comment: 'The timeLimitAction element vocabulary (adlcp timeLimitActionType restriction).',
+      // NOTE: `name` is the term's IRI local part and MUST be a valid Turtle PN_LOCAL —
+      // no commas/spaces (those made GET /ns/scorm-cam emit unparseable Turtle). The real
+      // SCORM enum value (which DOES contain a comma) is preserved verbatim in `label`.
       members: [
-        { name: 'exit,message', label: 'exit,message', comment: 'Exit the SCO and display a message.' },
-        { name: 'exit,no message', label: 'exit,no message', comment: 'Exit the SCO without a message.' },
-        { name: 'continue,message', label: 'continue,message', comment: 'Continue and display a message.' },
-        { name: 'continue,no message', label: 'continue,no message', comment: 'Continue without a message.' },
+        { name: 'exit-message', label: 'exit,message', comment: 'Exit the SCO and display a message.' },
+        { name: 'exit-no-message', label: 'exit,no message', comment: 'Exit the SCO without a message.' },
+        { name: 'continue-message', label: 'continue,message', comment: 'Continue and display a message.' },
+        { name: 'continue-no-message', label: 'continue,no message', comment: 'Continue without a message.' },
       ],
     },
     {
