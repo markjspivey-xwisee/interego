@@ -609,6 +609,17 @@ const MOM_EXTENSIONS: readonly MomConcept[] = [
 
 const MOM_CONCEPTS: readonly MomConcept[] = [...MOM_VERBS, ...MOM_ACTIVITY_TYPES, ...MOM_EXTENSIONS];
 
+/** The canonical xAPI verb IRI a MOM verb skos:closeMatch-es. The cmi5-DEFINED verbs
+ *  (satisfied / abandoned / waived) live at w3id.org/xapi/adl/verbs — the SAME authority the
+ *  Foxxi xAPI profile declares and emits them at — so the two published surfaces agree; every
+ *  other MOM verb (completed/passed/failed/mastered/…) is an ADL core verb at adlnet.gov. */
+const CMI5_W3ID_VERBS = new Set(['satisfied', 'abandoned', 'waived']);
+function momVerbCloseMatch(label: string): string {
+  return CMI5_W3ID_VERBS.has(label)
+    ? `https://w3id.org/xapi/adl/verbs/${label}`
+    : `http://adlnet.gov/expapi/verbs/${label}`;
+}
+
 // ── Performance proficiency: a published scale + a published roll-up rule ──
 //
 // CaSS proficiency levels are framework-scoped (there is no fixed global band
@@ -853,7 +864,7 @@ function renderMomTurtle(): string {
     lines.push(`    ler:construction "concept" ;`);
     if (c.scheme === 'verb') {
       lines.push(`    skos:inScheme tla:MOMVerbScheme ;`);
-      lines.push(`    skos:closeMatch <http://adlnet.gov/expapi/verbs/${c.label}> ;`);
+      lines.push(`    skos:closeMatch <${momVerbCloseMatch(c.label)}> ;`);
       lines.push(`    skos:member tla:MOMLevel${c.level} ;`);
     } else if (c.scheme === 'activityType') {
       lines.push(`    skos:closeMatch <http://adlnet.gov/expapi/activities/${c.label}> ;`);
@@ -990,7 +1001,7 @@ export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record
     if (mom.scheme === 'verb') {
       node['skos:inScheme'] = { '@id': `${TLA_NS}MOMVerbScheme` };
       node['skos:member'] = { '@id': `${TLA_NS}MOMLevel${mom.level}` };
-      node['skos:closeMatch'] = { '@id': `http://adlnet.gov/expapi/verbs/${mom.label}` };
+      node['skos:closeMatch'] = { '@id': momVerbCloseMatch(mom.label) };
     } else if (mom.scheme === 'activityType') {
       node['skos:closeMatch'] = { '@id': `http://adlnet.gov/expapi/activities/${mom.label}` };
     } else {

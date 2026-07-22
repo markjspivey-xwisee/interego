@@ -127,9 +127,20 @@ export interface DataIntegrityProof {
   readonly proofValue: string;
 }
 
+/** VC-DM 2.0 §4.7: `issuer` is EITHER a string DID or an object `{ id, ... }` (the
+ *  normative Open Badges 3.0 Profile shape). Extract the DID for key binding either way. */
+export function issuerId(issuer: unknown): string {
+  if (typeof issuer === 'string') return issuer;
+  if (issuer && typeof issuer === 'object' && typeof (issuer as { id?: unknown }).id === 'string') return (issuer as { id: string }).id;
+  return '';
+}
+
 export interface VerifiableCredentialJson {
   readonly '@context': readonly string[];
   readonly type: readonly string[];
+  // Statically a DID string (what the bridge issues), but VC-DM 2.0 §4.7 also permits an
+  // object `{ id, ... }` (the OB3 Profile shape). External credentials arrive at verify() as
+  // untyped JSON, so the issuer→DID extraction goes through issuerId() to accept both forms.
   readonly issuer: string;
   readonly validFrom: string;
   readonly validUntil?: string;
@@ -161,8 +172,8 @@ export function issueDataIntegrityProof(
   if (unsigned.proof) {
     throw new Error('issueDataIntegrityProof: input must not already have a proof');
   }
-  if (unsigned.issuer !== issuer.did) {
-    throw new Error(`issuer.did (${issuer.did}) must match payload.issuer (${unsigned.issuer})`);
+  if (issuerId(unsigned.issuer) !== issuer.did) {
+    throw new Error(`issuer.did (${issuer.did}) must match payload.issuer (${issuerId(unsigned.issuer)})`);
   }
 
   const proofOptions = {
@@ -208,6 +219,12 @@ export function verifyDataIntegrityProof(signed: VerifiableCredentialJson): Veri
   if (signed.proof.cryptosuite !== 'eddsa-jcs-2022') {
     return { verified: false, reason: `unsupported cryptosuite: ${signed.proof.cryptosuite}` };
   }
+  // VC Data Integrity §4.3: the verifier MUST confirm the proof's purpose matches the
+  // expected verification relationship. A credential is an assertion, so proofPurpose must
+  // be assertionMethod — a proof minted for authentication must not verify as an assertion.
+  if (signed.proof.proofPurpose !== 'assertionMethod') {
+    return { verified: false, reason: `unexpected proofPurpose: ${String(signed.proof.proofPurpose)} (expected assertionMethod)` };
+  }
   // proofValue MUST be a string before .startsWith — a number/boolean is non-nullish so
   // optional chaining does NOT guard it, and `.startsWith` would throw (a raw throw from an
   // unauthenticated /validate handler is a 500 that leaks the server stack trace).
@@ -240,10 +257,10 @@ export function verifyDataIntegrityProof(signed: VerifiableCredentialJson): Veri
     return { verified: false, reason: `verificationMethod resolution failed: ${(e as Error).message}` };
   }
 
-  if (signed.issuer !== did) {
+  if (issuerId(signed.issuer) !== did) {
     return {
       verified: false,
-      reason: `issuer mismatch: VC issuer (${signed.issuer}) does not match resolved verificationMethod DID (${did})`,
+      reason: `issuer mismatch: VC issuer (${issuerId(signed.issuer)}) does not match resolved verificationMethod DID (${did})`,
     };
   }
 

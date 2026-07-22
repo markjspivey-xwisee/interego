@@ -91,6 +91,19 @@ export const ns = (m: OntologyModel): string => `${ontologyIri(m)}#`;
 export const shapesIri = (m: OntologyModel): string => `${ontologyIri(m)}/shapes`;
 const esc = (s: string): string => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 
+/** A Turtle-safe PN_LOCAL for a term's IRI local part. Vocabulary MEMBER names can be raw
+ *  spec enum values (e.g. the SCORM `exit,message` / `not attempted` / `-1` timeLimitAction
+ *  + cmi values), which contain commas, spaces, or a leading '-' — all illegal in a Turtle
+ *  prefixed name, so `${module}:${name}` produced UNPARSEABLE documents. Replace every illegal
+ *  run with '-' and repair a leading '-' (PN_LOCAL may not start with one). The real value is
+ *  preserved verbatim in the term's rdfs:label / skos:prefLabel; only the IRI is sanitized.
+ *  Idempotent on already-safe names. */
+export function slugLocal(name: string): string {
+  let s = String(name).replace(/[^A-Za-z0-9_.-]+/g, '-');
+  if (/^[-.]/.test(s)) s = '_' + s;               // PN_LOCAL must not start with '-' or '.'
+  return s.replace(/-+$/, '') || 'term';
+}
+
 /** Expand a class/range token: a curie (`prov:Agent`) stays; a bare `Name` becomes a module term. */
 function expand(m: OntologyModel, token: string): string {
   if (!token) return token;
@@ -181,12 +194,12 @@ export function ontologyTriples(m: OntologyModel): Triple[] {
     out.push([s, RDFS + 'isDefinedBy', O]);
   }
   for (const v of m.vocabularies ?? []) {
-    const vs = `${ns(m)}${v.name}`;
+    const vs = `${ns(m)}${slugLocal(v.name)}`;
     out.push([vs, A, SKOS + 'ConceptScheme'], [vs, RDFS + 'label', v.label ?? v.name]);
     if (v.comment) out.push([vs, RDFS + 'comment', v.comment]);
     out.push([vs, RDFS + 'isDefinedBy', O]);
     for (const mem of v.members) {
-      const ms = `${ns(m)}${mem.name}`;
+      const ms = `${ns(m)}${slugLocal(mem.name)}`;
       out.push([ms, A, SKOS + 'Concept'], [ms, SKOS + 'inScheme', vs], [ms, SKOS + 'prefLabel', mem.label]);
       if (mem.comment) out.push([ms, SKOS + 'definition', mem.comment]);
       out.push([ms, RDFS + 'isDefinedBy', O]);
@@ -229,9 +242,9 @@ export function renderOwl(m: OntologyModel): string {
     lines.push(parts.join('\n'), '');
   }
   for (const v of m.vocabularies ?? []) {
-    lines.push(`${m.module}:${v.name} a skos:ConceptScheme ;\n    rdfs:label "${esc(v.label ?? v.name)}" ;${v.comment ? `\n    rdfs:comment "${esc(v.comment)}" ;` : ''}\n    rdfs:isDefinedBy <${ontologyIri(m)}> .`, '');
+    lines.push(`${m.module}:${slugLocal(v.name)} a skos:ConceptScheme ;\n    rdfs:label "${esc(v.label ?? v.name)}" ;${v.comment ? `\n    rdfs:comment "${esc(v.comment)}" ;` : ''}\n    rdfs:isDefinedBy <${ontologyIri(m)}> .`, '');
     for (const mem of v.members) {
-      lines.push(`${m.module}:${mem.name} a skos:Concept ;\n    skos:inScheme ${m.module}:${v.name} ;\n    skos:prefLabel "${esc(mem.label)}" ;${mem.comment ? `\n    skos:definition "${esc(mem.comment)}" ;` : ''}\n    rdfs:isDefinedBy <${ontologyIri(m)}> .`, '');
+      lines.push(`${m.module}:${slugLocal(mem.name)} a skos:Concept ;\n    skos:inScheme ${m.module}:${slugLocal(v.name)} ;\n    skos:prefLabel "${esc(mem.label)}" ;${mem.comment ? `\n    skos:definition "${esc(mem.comment)}" ;` : ''}\n    rdfs:isDefinedBy <${ontologyIri(m)}> .`, '');
     }
   }
   return lines.join('\n') + '\n';
