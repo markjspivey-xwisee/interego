@@ -376,6 +376,15 @@ function momOutcomeVerb(success: boolean): { id: string; display: { en: string }
     ? { id: 'http://adlnet.gov/expapi/verbs/completed', display: { en: 'completed' } }
     : { id: 'http://adlnet.gov/expapi/verbs/failed', display: { en: 'failed' } };
 }
+/** Resolve a performance task to a valid xAPI Activity id that is ALSO a
+ *  dereferenceable URL: a caller-supplied http(s) id is used as-is; anything else
+ *  (a bare label, or a urn) is minted into a bridge activity URL. Guarantees
+ *  object.id is an IRI (xAPI §4.1.4.1) — never a non-IRI string. */
+function productionTaskIri(rawTaskId: unknown, taskName: string): string {
+  if (typeof rawTaskId === 'string' && /^https?:\/\//.test(rawTaskId.trim())) return rawTaskId.trim();
+  const slug = (typeof rawTaskId === 'string' && rawTaskId.trim() ? rawTaskId : taskName).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48);
+  return activityIri('task', slug);
+}
 const adminWebId = process.env.FOXXI_ADMIN_WEB_ID ?? '';
 const adminKeySeed = process.env.FOXXI_ADMIN_KEY_SEED ?? '';
 const issuerKeySeed = process.env.FOXXI_ISSUER_KEY_SEED ?? '';
@@ -1471,8 +1480,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const taskName = args.task_name as string;
     if (!taskName || !taskName.trim()) return { error: 'task_name is required' };
     if (typeof args.success !== 'boolean') return { error: 'success (boolean) is required' };
-    const taskId = (args.task_id as string)
-      || activityIri('task', taskName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
+    const taskId = productionTaskIri(args.task_id, taskName);
     const actorKind: 'human' | 'agent' = (args.actor_kind as string) === 'agent' ? 'agent' : 'human';
     const quality = typeof args.quality === 'number' ? args.quality : undefined;
     // The performer is the xAPI actor; the authenticated caller is the
@@ -5087,9 +5095,7 @@ app.post('/agent/record-performance', async (req, res) => {
     // the verified caller (recording for another agent would need their delegation).
     const subjectPod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const label = actorForPod(subjectPod, MESH_ACTOR_LABELS);
-    const taskId = (typeof p.task_id === 'string' && p.task_id.trim())
-      ? p.task_id.trim()
-      : activityIri('task', taskName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
+    const taskId = productionTaskIri(p.task_id, taskName);
     const activityType = (typeof p.activity_type === 'string' && p.activity_type.trim())
       ? p.activity_type.trim()
       : `${FOXXI_NS}ProductionTask`;

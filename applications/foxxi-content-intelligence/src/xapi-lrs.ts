@@ -134,7 +134,14 @@ export function storeStatementInternal(stmt: Record<string, unknown>, tenant: Te
   const enriched = ensureStatementFields(stmt, INTERNAL_LRS_AUTHORITY);
   const id = enriched.id as string;
   const errs = validateStatement(enriched);
-  if (errs.length > 0) console.warn(`[storeStatementInternal] non-conformant statement ${id}:`, errs.slice(0, 3).join('; '));
+  if (errs.length > 0) {
+    // ENFORCE (don't merely warn): a non-conformant statement is NOT stored, mirroring
+    // the inbound POST /xapi/statements 400 — so the LRS never holds a spec-violating
+    // statement. A loud error surfaces the offending emit path.
+    // eslint-disable-next-line no-console
+    console.error(`[storeStatementInternal] REJECTED non-conformant statement ${id} (not stored):`, errs.slice(0, 5).join('; '));
+    return id;
+  }
   const rec: StoredStatement = { id, statement: enriched, stored: enriched.stored as string, voided: false };
   void statementStores.for(tenant).put(rec).catch(err => {
     // eslint-disable-next-line no-console
@@ -1296,6 +1303,10 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 import { buildFoxxiProfileDoc } from './xapi-profile.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
+/** xAPI Profile Version objects MUST be immutable — a fixed authoring timestamp for
+ *  /v/1, NOT the live clock (which made generatedAtTime change on every fetch). A real
+ *  revision appends /v/2 with wasRevisionOf rather than mutating this. */
+const PROFILE_GENERATED_AT = '2026-07-22T00:00:00.000Z';
 
 let _profileCache: { url: string; doc: Record<string, unknown>; fetchedAt: number } | null = null;
 async function fetchExternalProfile(url: string): Promise<Record<string, unknown> | null> {
@@ -1328,7 +1339,7 @@ async function buildFoxxiXapiProfile(_config: XapiLrsConfig): Promise<Record<str
     const ext = await fetchExternalProfile(override);
     if (ext) return ext;
   }
-  return buildFoxxiProfileDoc({ generatedAt: nowIso() });
+  return buildFoxxiProfileDoc({ generatedAt: PROFILE_GENERATED_AT });
 }
 
 // ── Route attachment ────────────────────────────────────────────────
@@ -1373,7 +1384,7 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
   for (const kind of ['templates', 'patterns', 'v'] as const) {
     app.get(`/xapi/profile/${kind}/:name`, (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
-      const doc = buildFoxxiProfileDoc({ generatedAt: nowIso() });
+      const doc = buildFoxxiProfileDoc({ generatedAt: PROFILE_GENERATED_AT });
       const list = (kind === 'v' ? doc.versions : doc[kind]) as Array<Record<string, unknown>> | undefined;
       const suffix = `/${kind}/${req.params.name}`;
       const found = (list ?? []).find(x => typeof x.id === 'string' && (x.id as string).endsWith(suffix));

@@ -144,7 +144,9 @@ function validateAccount(v: unknown, label: string, e: Errs): void {
   const extra = extraKeys(v, ['homePage', 'name']);
   if (extra.length) e.add(`${label}.account has unexpected properties: ${extra.join(', ')}`);
   if (!isIri(v.homePage)) e.add(`${label}.account.homePage must be an IRI`);
-  if (typeof v.name !== 'string') e.add(`${label}.account.name must be a string`);
+  // An Account IFI's name must be a NON-EMPTY string — an empty name is not a
+  // usable inverse-functional identifier (§4.1.2.1).
+  if (typeof v.name !== 'string' || v.name.length === 0) e.add(`${label}.account.name must be a non-empty string`);
 }
 
 /** Count + validate the inverse-functional identifiers on an actor object. */

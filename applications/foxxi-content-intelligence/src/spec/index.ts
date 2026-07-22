@@ -8,6 +8,7 @@
  * ontology, and every result cites a sh:NodeShape IRI under <bridge>/ns/<module>/shapes.
  */
 import { type OntologyModel, validateAgainstShape, shapesIri, composeSpecOntology, type ValidationResult, type ComposedOntology } from '../spec-ontology.js';
+import { validateStatement } from '../xapi-validate.js';
 import { XAPI_MODEL } from './xapi.model.js';
 import { CMI5_MODEL } from './cmi5.model.js';
 import { SCORM_CAM_MODEL } from './scorm-cam.model.js';
@@ -64,6 +65,13 @@ export function validateXapiStatement(stmt: Record<string, unknown>): Validation
   }
   for (const att of (Array.isArray(stmt.attachments) ? stmt.attachments : []) as Array<Record<string, unknown>>) {
     out.push(...validateAgainstShape(m, 'AttachmentShape', att).results);
+  }
+  // Close the gap between this public SHACL oracle and the internal ingest gate:
+  // also run the structural validator the POST /xapi/statements path uses, so extra
+  // top-level properties, empty-IFI accounts, etc. (which the drill-based shapes do
+  // not catch) cannot pass here while being 400-rejected on ingest.
+  for (const e of validateStatement(stmt)) {
+    if (!out.some(r => r.message === e)) out.push({ path: 'statement', message: e, sourceShape: `${shapesIri(m)}#StatementShape`, severity: 'Violation' });
   }
   return { conforms: out.length === 0, results: out, shapesIri: shapesIri(m) };
 }

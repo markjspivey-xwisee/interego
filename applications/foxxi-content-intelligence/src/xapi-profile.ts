@@ -45,6 +45,10 @@ export const FOXXI_PROFILE_ID = 'https://foxxi-bridge.interego.xwisee.com/xapi/p
 
 const ADL = 'http://adlnet.gov/expapi';
 const CMI5 = 'https://w3id.org/xapi/cmi5';
+// The cmi5-defined verbs satisfied/abandoned/waived are canonically at
+// https://w3id.org/xapi/adl/verbs/* — the SAME IRIs the cmi5 emitters use. Declaring
+// them here (not at adlnet.gov) keeps the profile's concept set == what the LRS stores.
+const ADLW3 = 'https://w3id.org/xapi/adl/verbs';
 
 // ── Concepts ────────────────────────────────────────────────────────
 
@@ -55,10 +59,10 @@ const verbs = [
   { id: `${ADL}/verbs/completed`,   prefLabel: { en: 'completed' },   definition: { en: 'cmi5 completed verb — learner reached the end of the AU' } },
   { id: `${ADL}/verbs/passed`,      prefLabel: { en: 'passed' },      definition: { en: 'cmi5 passed verb — score met or exceeded mastery threshold' } },
   { id: `${ADL}/verbs/failed`,      prefLabel: { en: 'failed' },      definition: { en: 'cmi5 failed verb — score fell below mastery threshold' } },
-  { id: `${ADL}/verbs/satisfied`,   prefLabel: { en: 'satisfied' },   definition: { en: 'cmi5 satisfied verb — moveOn condition met (see cmi5 §11)' } },
+  { id: `${ADLW3}/satisfied`,       prefLabel: { en: 'satisfied' },   definition: { en: 'cmi5 satisfied verb — moveOn condition met (see cmi5 §11)' } },
   { id: `${ADL}/verbs/terminated`,  prefLabel: { en: 'terminated' },  definition: { en: 'cmi5 terminated verb — session ended cleanly' } },
-  { id: `${ADL}/verbs/abandoned`,   prefLabel: { en: 'abandoned' },   definition: { en: 'cmi5 abandoned verb — session ended unexpectedly (session_timeout, browser close)' } },
-  { id: `${ADL}/verbs/waived`,      prefLabel: { en: 'waived' },      definition: { en: 'cmi5 waived verb — administrator excused the requirement' } },
+  { id: `${ADLW3}/abandoned`,       prefLabel: { en: 'abandoned' },   definition: { en: 'cmi5 abandoned verb — session ended unexpectedly (session_timeout, browser close)' } },
+  { id: `${ADLW3}/waived`,          prefLabel: { en: 'waived' },      definition: { en: 'cmi5 waived verb — administrator excused the requirement' } },
   { id: `${ADL}/verbs/voided`,      prefLabel: { en: 'voided' },      definition: { en: 'xAPI voiding verb — annuls a prior Statement' } },
   // Foxxi extensions
   { id: `${FOXXI_NS}verbs/scene-completed`,    prefLabel: { en: 'scene-completed' },    definition: { en: 'Foxxi extension — every slide in a course scene has been viewed' } },
