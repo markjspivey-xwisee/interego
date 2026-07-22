@@ -45,6 +45,10 @@ export const FOXXI_PROFILE_ID = 'https://foxxi-bridge.interego.xwisee.com/xapi/p
 
 const ADL = 'http://adlnet.gov/expapi';
 const CMI5 = 'https://w3id.org/xapi/cmi5';
+// The cmi5-defined verbs satisfied/abandoned/waived are canonically at
+// https://w3id.org/xapi/adl/verbs/* — the SAME IRIs the cmi5 emitters use. Declaring
+// them here (not at adlnet.gov) keeps the profile's concept set == what the LRS stores.
+const ADLW3 = 'https://w3id.org/xapi/adl/verbs';
 
 // ── Concepts ────────────────────────────────────────────────────────
 
@@ -55,10 +59,10 @@ const verbs = [
   { id: `${ADL}/verbs/completed`,   prefLabel: { en: 'completed' },   definition: { en: 'cmi5 completed verb — learner reached the end of the AU' } },
   { id: `${ADL}/verbs/passed`,      prefLabel: { en: 'passed' },      definition: { en: 'cmi5 passed verb — score met or exceeded mastery threshold' } },
   { id: `${ADL}/verbs/failed`,      prefLabel: { en: 'failed' },      definition: { en: 'cmi5 failed verb — score fell below mastery threshold' } },
-  { id: `${ADL}/verbs/satisfied`,   prefLabel: { en: 'satisfied' },   definition: { en: 'cmi5 satisfied verb — moveOn condition met (see cmi5 §11)' } },
+  { id: `${ADLW3}/satisfied`,       prefLabel: { en: 'satisfied' },   definition: { en: 'cmi5 satisfied verb — moveOn condition met (see cmi5 §11)' } },
   { id: `${ADL}/verbs/terminated`,  prefLabel: { en: 'terminated' },  definition: { en: 'cmi5 terminated verb — session ended cleanly' } },
-  { id: `${ADL}/verbs/abandoned`,   prefLabel: { en: 'abandoned' },   definition: { en: 'cmi5 abandoned verb — session ended unexpectedly (session_timeout, browser close)' } },
-  { id: `${ADL}/verbs/waived`,      prefLabel: { en: 'waived' },      definition: { en: 'cmi5 waived verb — administrator excused the requirement' } },
+  { id: `${ADLW3}/abandoned`,       prefLabel: { en: 'abandoned' },   definition: { en: 'cmi5 abandoned verb — session ended unexpectedly (session_timeout, browser close)' } },
+  { id: `${ADLW3}/waived`,          prefLabel: { en: 'waived' },      definition: { en: 'cmi5 waived verb — administrator excused the requirement' } },
   { id: `${ADL}/verbs/voided`,      prefLabel: { en: 'voided' },      definition: { en: 'xAPI voiding verb — annuls a prior Statement' } },
   // Foxxi extensions
   { id: `${FOXXI_NS}verbs/scene-completed`,    prefLabel: { en: 'scene-completed' },    definition: { en: 'Foxxi extension — every slide in a course scene has been viewed' } },
@@ -288,8 +292,9 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/production-performance-completed`,
     prefLabel: { en: 'production-performance (completed)' },
-    definition: { en: 'A successful unit of on-the-job production work. MOM Level 1 `completed`; the domain of the work is carried by the object type. Marked contextKind=production; carries the observer + actorKind.' },
+    definition: { en: 'A successful unit of on-the-job production work. MOM Level 1 `completed`; scoped by object activity type foxxi:ProductionTask so it does not over-match course completions. Marked contextKind=production; carries the observer + actorKind.' },
     verb: `${ADL}/verbs/completed`,
+    objectActivityType: `${FOXXI_NS}ProductionTask`,
     rules: [
       { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', any: ['production'] },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'included' },
@@ -299,8 +304,9 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/production-performance-failed`,
     prefLabel: { en: 'production-performance (failed)' },
-    definition: { en: 'An unsuccessful unit of on-the-job production work. MOM Level 1 `failed`; the domain is carried by the object type. Marked contextKind=production.' },
+    definition: { en: 'An unsuccessful unit of on-the-job production work. MOM Level 1 `failed`; scoped by object activity type foxxi:ProductionTask. Marked contextKind=production.' },
     verb: `${ADL}/verbs/failed`,
+    objectActivityType: `${FOXXI_NS}ProductionTask`,
     rules: [
       { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', any: ['production'] },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'included' },
@@ -499,14 +505,23 @@ function resolveLocation(root: unknown, location: string): unknown[] {
 
 export interface ProfileTemplateResult {
   verb: string;
+  /** Is the statement's verb a declared concept of this profile? */
+  verbDeclared: boolean;
+  /** Did any statement template apply (verb-matched)? If false, `conforms` is not meaningful. */
+  applicable: boolean;
   matchedTemplates: string[];
   violations: Array<{ template: string; location: string; message: string }>;
 }
 
-/** Validate a statement against the Foxxi Profile's statement templates for its verb. */
+/** Validate a statement against the Foxxi Profile's statement templates for its verb.
+ *  Per xAPI Profile spec §5.2, a template is selected by its VERB; objectActivityType
+ *  (and contextCategory etc.) are DETERMINING PROPERTIES the statement must then match —
+ *  a mismatch is a nonconformance, not a reason to skip the template. */
 export function validateAgainstProfileTemplates(stmt: Record<string, unknown>): ProfileTemplateResult {
   const verb = (stmt.verb as { id?: string } | undefined)?.id ?? '';
   const objType = (stmt.object as { definition?: { type?: string } } | undefined)?.definition?.type;
+  const verbDeclared = verbs.some(v => v.id === verb);
+  // A template is SELECTED by its determining properties (verb + objectActivityType).
   const matched = templates.filter(t =>
     (t as { verb?: string }).verb === verb &&
     (!(t as { objectActivityType?: string }).objectActivityType || (t as { objectActivityType?: string }).objectActivityType === objType));
@@ -521,7 +536,19 @@ export function validateAgainstProfileTemplates(stmt: Record<string, unknown>): 
       if (rule.all && present && !vals.every(v => rule.all!.includes(v))) violations.push({ template: t.id, location: rule.location, message: `a value is not in {${rule.all.map(String).join(', ')}}` });
     }
   }
-  return { verb, matchedTemplates: matched.map(t => t.id), violations };
+  // xAPI Profile spec §5.2: a Statement carrying a Verb that IS a Determining Property
+  // of this Profile MUST conform to at least one Statement Template. Matching zero
+  // templates (e.g. a declared verb with a mismatched/absent object activity type) is a
+  // nonconformance — NOT a vacuous pass. This closes the "declared verb, wrong object
+  // type → conforms:true" evasion.
+  if (verbDeclared && matched.length === 0) {
+    violations.push({
+      template: `${FOXXI_PROFILE_ID}#statement-template-conformance`,
+      location: 'verb.id + object.definition.type',
+      message: `verb is a declared Profile concept but the statement matches no Statement Template (spec §5.2); object activity type = ${objType ?? '(absent)'}`,
+    });
+  }
+  return { verb, verbDeclared, applicable: matched.length > 0, matchedTemplates: matched.map(t => t.id), violations };
 }
 
 export function buildFoxxiProfileDoc(versionInfo: { generatedAt: string }): Record<string, unknown> {

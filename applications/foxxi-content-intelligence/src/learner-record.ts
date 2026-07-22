@@ -136,6 +136,12 @@ export interface ElrCompetency {
   /** RDF type — this node IS a ler:CompetencyAssertion (validatable against the
    *  published /ns/ieee-ler shape). */
   assertionType: string;
+  /** A distinct per-assertion IRI (subject+competency) — so two learners' assertions
+   *  about the same competency are NOT the same node. */
+  assertionId: string;
+  /** The SUBJECT the assertion is about (the learner/agent DID) — distinct from the
+   *  asserting agent. A subjectless assertion is not a standalone claim. */
+  subject: string;
   /** ler:aboutCompetency — the dereferenceable competency definition IRI. */
   aboutCompetency: string;
   /** ler:atProficiency — a dereferenceable tla:Level / ler:ProficiencyLevel IRI
@@ -262,7 +268,7 @@ export async function assembleEnterpriseLearnerRecord(
   // 3. Competencies — merge three provenance-distinct sources, keyed by a
   //    normalised label so performance evidence can supersede a weaker
   //    training inference for the same competency.
-  const competencies = buildCompetencies(clr, experiences, performanceRecords, config.tenantDid);
+  const competencies = buildCompetencies(clr, experiences, performanceRecords, config.tenantDid, config.learnerDid, config.learnerPodUrl);
 
   // 4. Credentials projection.
   const credentials: ElrCredential[] = (clr?.credentialEntries ?? []).map(e => {
@@ -476,6 +482,8 @@ function buildCompetencies(
   experiences: readonly ElrExperience[],
   performance: readonly ElrPerformanceRecord[],
   assertingAgentDid: string,
+  subjectDid: string,
+  subjectPodUrl: string,
 ): ElrCompetency[] {
   const drafts = new Map<string, CompetencyDraft>();
   const draft = (label: string): CompetencyDraft => {
@@ -575,6 +583,10 @@ function buildCompetencies(
       framework: d.framework,
       // A real ler:CompetencyAssertion node — validatable against /ns/ieee-ler.
       assertionType: `${LER_NS}CompetencyAssertion`,
+      // A distinct per-assertion IRI (subject pod + competency slug) so two subjects'
+      // assertions about the same competency are different nodes; subject is the learner.
+      assertionId: `${subjectPodUrl.replace(/\/+$/, '')}/#assertion-${d.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)}`,
+      subject: subjectDid,
       aboutCompetency: competencyDefIri,
       proficiencyLevel: prof.levelIri,
       proficiencyLabel: prof.levelLabel,

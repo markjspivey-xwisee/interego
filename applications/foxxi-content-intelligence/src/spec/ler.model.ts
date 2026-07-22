@@ -26,10 +26,12 @@ export const LER_MODEL: OntologyModel = {
     tla: 'https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#',
   },
   classes: [
+    { name: 'EnterpriseLearnerRecord', label: 'Enterprise Learner Record', comment: 'The IEEE P2997 aggregate record of one subject: its conformsTo, subject identity, organisation path, competencies, and provenance raw-data-location indications.' },
     { name: 'CompetencyAssertion', label: 'Competency Assertion', comment: 'A claim that a subject holds a competency at a proficiency level, with a confidence, backed by dereferenceable evidence, produced by a published roll-up rule.' },
     { name: 'Evidence', label: 'Evidence', comment: 'A dereferenceable artifact presented in support of a competency assertion.' },
   ],
   properties: [
+    { name: 'subject', label: 'subject', comment: 'The learner/agent the assertion is ABOUT (the record subject) — distinct from the asserting agent.', kind: 'object' },
     { name: 'aboutCompetency', label: 'about competency', comment: 'The competency definition IRI the assertion is about.', kind: 'object' },
     { name: 'proficiencyLevel', label: 'at proficiency', comment: 'The dereferenceable ler:ProficiencyLevel / tla:Level IRI claimed.', kind: 'object' },
     { name: 'confidence', label: 'confidence', comment: 'Confidence in the assertion, 0..1 (Wilson lower bound on the success rate).', kind: 'datatype' },
@@ -41,10 +43,24 @@ export const LER_MODEL: OntologyModel = {
   ],
   shapes: [
     {
+      name: 'EnterpriseLearnerRecordShape', targetClass: 'EnterpriseLearnerRecord',
+      label: 'Enterprise Learner Record shape',
+      comment: 'A well-formed IEEE P2997 ELR: a dereferenceable id, a conformsTo, a subject kind + learner identity, an organisation path, and provenance raw-data-location indications (the P2997 hallmark).',
+      constraints: [
+        { path: 'id', minCount: 1, nodeKind: 'IRI', comment: 'A dereferenceable record id.' },
+        { path: 'conformsTo', minCount: 1, comment: 'The P2997 data model it conforms to.' },
+        { path: 'subjectKind', minCount: 1, in: ['human', 'agent'], comment: 'human learner/performer or AI agent.' },
+        { path: 'learner.did', minCount: 1, comment: 'The subject identity (DID).' },
+        { path: 'organizationPath', minCount: 1, comment: 'P2997 organisation path.' },
+        { path: 'provenance.rawDataLocations', minCount: 1, comment: 'P2997 raw-data-location indications — where each class of raw data lives.' },
+      ],
+    },
+    {
       name: 'CompetencyAssertionShape', targetClass: 'CompetencyAssertion',
       label: 'Competency Assertion shape',
-      comment: 'A well-formed IEEE-LER competency assertion: about a competency, at a dereferenceable proficiency level, with a confidence in 0..1, produced by a named roll-up rule, backed by at least one dereferenceable evidence IRI.',
+      comment: 'A well-formed IEEE-LER competency assertion: ABOUT a subject and a competency, at a dereferenceable proficiency level, with a confidence in 0..1, produced by a named roll-up rule, backed by at least one dereferenceable evidence IRI.',
       constraints: [
+        { path: 'subject', minCount: 1, comment: 'The subject the assertion is about (a subjectless assertion is not a standalone claim).' },
         { path: 'aboutCompetency', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'ler:aboutCompetency — the competency definition IRI.' },
         { path: 'proficiencyLevel', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'ler:atProficiency — a dereferenceable proficiency-level IRI.' },
         { path: 'confidence', minCount: 1, maxCount: 1, datatype: 'xsd:decimal', minInclusive: 0, maxInclusive: 1, comment: 'tla:confidence in [0,1].' },
@@ -76,6 +92,7 @@ export const OB3_MODEL: OntologyModel = {
   prefixes: { ob3: 'https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json#' },
   classes: [
     { name: 'OpenBadgeCredential', label: 'Open Badge Credential', comment: 'A W3C Verifiable Credential (Open Badges 3.0) whose credentialSubject carries an achievement.' },
+    { name: 'Achievement', label: 'Achievement', comment: 'The OB3.0 achievement the badge attests (type + name required).' },
   ],
   properties: [
     { name: 'issuer', label: 'issuer', comment: 'The credential issuer.', kind: 'object' },
@@ -86,13 +103,57 @@ export const OB3_MODEL: OntologyModel = {
     {
       name: 'OpenBadgeCredentialShape', targetClass: 'OpenBadgeCredential',
       label: 'Open Badge Credential shape',
-      comment: 'A well-formed OB3.0 VC: a type array including VerifiableCredential, an issuer, a credentialSubject with an id, an issuance date, and a proof.',
+      comment: 'A well-formed OB3.0 VC: a @context, a type INCLUDING VerifiableCredential + OpenBadgeCredential, an issuer, a credentialSubject with an IRI id and a typed+named achievement, a validFrom, and a typed proof.',
       constraints: [
-        { path: 'type', minCount: 1, comment: 'Must include VerifiableCredential + OpenBadgeCredential.' },
-        { path: 'issuer', minCount: 1, comment: 'The issuer (IRI or object).' },
-        { path: 'credentialSubject.id', minCount: 1, nodeKind: 'IRI', comment: 'The holder id.' },
-        { path: 'credentialSubject.achievement', minCount: 1, comment: 'The achievement the badge attests.' },
-        { path: 'proof', minCount: 1, comment: 'A cryptographic proof.' },
+        { path: '@context', minCount: 1, comment: 'The VC/OB3 JSON-LD contexts.' },
+        { path: 'type', hasValue: 'VerifiableCredential', comment: 'type MUST include VerifiableCredential.' },
+        { path: 'type', hasValue: 'OpenBadgeCredential', comment: 'type MUST include OpenBadgeCredential.' },
+        { path: 'issuer', minCount: 1, comment: 'The issuer (IRI or Profile object).' },
+        { path: 'validFrom', minCount: 1, comment: 'OB3.0 requires validFrom.' },
+        { path: 'credentialSubject.id', minCount: 1, nodeKind: 'IRI', comment: 'The holder id (IRI).' },
+        { path: 'credentialSubject.achievement.type', minCount: 1, comment: 'The achievement type.' },
+        { path: 'credentialSubject.achievement.name', minCount: 1, comment: 'The achievement name.' },
+        { path: 'proof.type', minCount: 1, comment: 'A typed cryptographic proof.' },
+      ],
+    },
+    {
+      name: 'AchievementShape', targetClass: 'Achievement',
+      label: 'Achievement shape',
+      comment: 'An OB3.0 achievement: a type and a human-readable name.',
+      constraints: [
+        { path: 'type', minCount: 1, comment: 'The achievement type.' },
+        { path: 'name', minCount: 1, comment: 'The achievement name.' },
+      ],
+    },
+  ],
+};
+
+// ── Comprehensive Learner Record 2.0 credential shape ───────────────────────
+export const CLR_MODEL: OntologyModel = {
+  module: 'clr',
+  title: 'Comprehensive Learner Record 2.0 credential SHACL shapes',
+  description: 'SHACL shapes for a 1EdTech CLR 2.0 / W3C Verifiable Credential bundling achievement credentials. Registered as DATA — a second credential format needs no new engine.',
+  version: '1.0.0',
+  spec: 'https://www.imsglobal.org/spec/clr/v2p0/',
+  prefixes: { clr: 'https://purl.imsglobal.org/spec/clr/v2p0/context-2.0.1.json#' },
+  classes: [
+    { name: 'ClrCredential', label: 'CLR Credential', comment: 'A W3C VC (CLR 2.0) whose credentialSubject (a ClrSubject) bundles verifiable credentials.' },
+  ],
+  properties: [
+    { name: 'credentialSubject', label: 'credential subject', comment: 'The ClrSubject — holder id + verifiableCredential[].', kind: 'object' },
+    { name: 'proof', label: 'proof', comment: 'The cryptographic proof.', kind: 'object' },
+  ],
+  shapes: [
+    {
+      name: 'ClrCredentialShape', targetClass: 'ClrCredential',
+      label: 'CLR Credential shape',
+      comment: 'A well-formed CLR 2.0 VC: @context, type INCLUDING VerifiableCredential + ClrCredential, a credentialSubject with an IRI id, and a typed proof.',
+      constraints: [
+        { path: '@context', minCount: 1, comment: 'The VC/CLR JSON-LD contexts.' },
+        { path: 'type', hasValue: 'VerifiableCredential', comment: 'type MUST include VerifiableCredential.' },
+        { path: 'type', hasValue: 'ClrCredential', comment: 'type MUST include ClrCredential.' },
+        { path: 'credentialSubject.id', minCount: 1, nodeKind: 'IRI', comment: 'The holder id (IRI).' },
+        { path: 'proof.type', minCount: 1, comment: 'A typed cryptographic proof.' },
       ],
     },
   ],
@@ -101,8 +162,13 @@ export const OB3_MODEL: OntologyModel = {
 /** Validate an instance against the LER competency-assertion / evidence shapes,
  *  routing by declared type; defaults to CompetencyAssertion (the common case). */
 export function validateLerInstance(instance: Record<string, unknown>): ValidationResult {
-  const declared = String((instance['@type'] ?? instance.assertionType ?? instance.type ?? '')).toLowerCase();
-  const shape = declared.includes('evidence') ? 'EvidenceShape' : 'CompetencyAssertionShape';
+  const raw = instance['@type'] ?? instance.assertionType ?? instance.type ?? '';
+  // EXACT declared-class local-name routing (not a substring test): 'CredentialEvidence'
+  // must NOT route to the id-only EvidenceShape and thereby skip every assertion check.
+  const localNames = (Array.isArray(raw) ? raw : [raw]).map(t => String(t).split(/[#/]/).pop());
+  const shape = localNames.includes('EnterpriseLearnerRecord') ? 'EnterpriseLearnerRecordShape'
+    : localNames.includes('Evidence') ? 'EvidenceShape'
+      : 'CompetencyAssertionShape';
   const r = validateAgainstShape(LER_MODEL, shape, instance);
   return { conforms: r.results.length === 0, results: r.results, shapesIri: shapesIri(LER_MODEL) };
 }

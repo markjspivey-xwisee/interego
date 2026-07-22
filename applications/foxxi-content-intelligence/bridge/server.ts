@@ -344,9 +344,12 @@ import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd, vocabTriplesBySubject, FOXXI_VOCAB_DOC } from '../src/foxxi-vocab.js';
 import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd, ontologyIri as specOntologyIri, modelFromHolon as specModelFromHolon, type OntologyModel as SpecOntologyModel } from '../src/spec-ontology.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
-import { LER_MODEL, OB3_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
+import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
 import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
-import { validateAgainstShape as validateAgainstShapeRaw } from '../src/spec-ontology.js';
+/** Credential-format models registered as DATA (not bespoke handlers): the generic
+ *  /ns/<module> loop mounts GET/shapes/validate/term + composes them into the lattice,
+ *  so a new credential format is a data entry. */
+const CREDENTIAL_MODELS: Record<string, SpecOntologyModel> = { ob3: OB3_MODEL as SpecOntologyModel, clr: CLR_MODEL as SpecOntologyModel };
 import { COMPLIANCE_MODELS } from '../src/spec/compliance.model.js';
 import { composeSpecOntology as composeComplianceOntology } from '../src/spec-ontology.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
@@ -375,6 +378,15 @@ function momOutcomeVerb(success: boolean): { id: string; display: { en: string }
   return success
     ? { id: 'http://adlnet.gov/expapi/verbs/completed', display: { en: 'completed' } }
     : { id: 'http://adlnet.gov/expapi/verbs/failed', display: { en: 'failed' } };
+}
+/** Resolve a performance task to a valid xAPI Activity id that is ALSO a
+ *  dereferenceable URL: a caller-supplied http(s) id is used as-is; anything else
+ *  (a bare label, or a urn) is minted into a bridge activity URL. Guarantees
+ *  object.id is an IRI (xAPI §4.1.4.1) — never a non-IRI string. */
+function productionTaskIri(rawTaskId: unknown, taskName: string): string {
+  if (typeof rawTaskId === 'string' && /^https?:\/\//.test(rawTaskId.trim())) return rawTaskId.trim();
+  const slug = (typeof rawTaskId === 'string' && rawTaskId.trim() ? rawTaskId : taskName).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48);
+  return activityIri('task', slug);
 }
 const adminWebId = process.env.FOXXI_ADMIN_WEB_ID ?? '';
 const adminKeySeed = process.env.FOXXI_ADMIN_KEY_SEED ?? '';
@@ -1471,8 +1483,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const taskName = args.task_name as string;
     if (!taskName || !taskName.trim()) return { error: 'task_name is required' };
     if (typeof args.success !== 'boolean') return { error: 'success (boolean) is required' };
-    const taskId = (args.task_id as string)
-      || activityIri('task', taskName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
+    const taskId = productionTaskIri(args.task_id, taskName);
     const actorKind: 'human' | 'agent' = (args.actor_kind as string) === 'agent' ? 'agent' : 'human';
     const quality = typeof args.quality === 'number' ? args.quality : undefined;
     // The performer is the xAPI actor; the authenticated caller is the
@@ -3263,27 +3274,28 @@ const app = createVerticalBridge({
       const r = validateLerInstance(readInstance(req));
       res.json({ ok: true, module: 'adl-tla', conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
     });
-    // Open Badges 3.0 / W3C VC credential shape + validator (explicit shape:
-    // a VC's `type` is an array, so route directly rather than by declared type).
-    a.get('/ns/ob3', (req, res) => {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      const acc = req.headers.accept ?? '';
-      if (acc.includes('text/turtle')) res.type('text/turtle').send(renderSpecOwl(OB3_MODEL));
-      else res.type('application/ld+json').send(JSON.stringify(renderSpecJsonLd(OB3_MODEL), null, 2));
-    });
-    a.get('/ns/ob3/shapes', (_req, res) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.type('text/turtle').send(renderSpecShacl(OB3_MODEL)); });
-    a.post('/ns/ob3/validate', (req, res) => {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      const r = validateAgainstShapeRaw(OB3_MODEL, 'OpenBadgeCredentialShape', readInstance(req));
-      res.json({ ok: true, module: 'ob3', conforms: r.results.length === 0, results: r.results, shapesIri: r.shapesIri });
-    });
+    // Open Badges 3.0 + CLR 2.0 credential formats are now registered as DATA in
+    // CREDENTIAL_MODELS and auto-mounted by the generic /ns/<module> loop below
+    // (GET/shapes/validate/term), validated through the type-dispatching
+    // validateInstanceWith — a new credential format is a data entry, not new routes.
     // xAPI Profile statement-template conformance (Profile spec §5): does a
     // statement satisfy the rules of its verb's declared StatementTemplate? Makes
     // "profile-conformant" verifiable, not just declared.
     a.post('/xapi/profile/validate', (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       const r = validateAgainstProfileTemplates(readInstance(req));
-      res.json({ ok: true, profile: xapiProfileUrl, verb: r.verb, matchedTemplates: r.matchedTemplates, conforms: r.violations.length === 0, violations: r.violations });
+      // conforms is only meaningful when a template applied. An unknown or
+      // template-less verb is reported honestly, never as a bare conforms:true.
+      const verdict = !r.verbDeclared ? 'unknown-verb'
+        : !r.applicable ? 'no-applicable-template'
+          : (r.violations.length === 0 ? 'conformant' : 'non-conformant');
+      res.json({
+        ok: true, profile: xapiProfileUrl, verb: r.verb,
+        verbDeclared: r.verbDeclared, applicable: r.applicable, verdict,
+        matchedTemplates: r.matchedTemplates,
+        conforms: r.applicable && r.violations.length === 0,
+        violations: r.violations,
+      });
     });
 
     // ── Standards spec ontologies (xAPI 2.0, SCORM CAM/SN/RTE, cmi5) ──
@@ -3309,6 +3321,9 @@ const app = createVerticalBridge({
     const NS_MODELS: Record<string, { model: SpecOntologyModel; compliance: boolean }> = {};
     for (const [k, v] of Object.entries(SPEC_MODELS)) NS_MODELS[k] = { model: v as SpecOntologyModel, compliance: false };
     for (const [k, v] of Object.entries(COMPLIANCE_MODELS)) NS_MODELS[k] = { model: v as SpecOntologyModel, compliance: true };
+    // Credential formats (OB3, CLR) — data-driven, validated via validateInstanceWith
+    // (type-dispatch, now array-aware) exactly like the compliance models.
+    for (const [k, v] of Object.entries(CREDENTIAL_MODELS)) NS_MODELS[k] = { model: v, compliance: true };
     for (const [moduleName, { model, compliance }] of Object.entries(NS_MODELS)) {
       a.get(`/ns/${moduleName}`, (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -5076,9 +5091,7 @@ app.post('/agent/record-performance', async (req, res) => {
     // the verified caller (recording for another agent would need their delegation).
     const subjectPod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const label = actorForPod(subjectPod, MESH_ACTOR_LABELS);
-    const taskId = (typeof p.task_id === 'string' && p.task_id.trim())
-      ? p.task_id.trim()
-      : activityIri('task', taskName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
+    const taskId = productionTaskIri(p.task_id, taskName);
     const activityType = (typeof p.activity_type === 'string' && p.activity_type.trim())
       ? p.activity_type.trim()
       : `${FOXXI_NS}ProductionTask`;
