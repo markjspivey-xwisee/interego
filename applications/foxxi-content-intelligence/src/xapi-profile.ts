@@ -201,7 +201,10 @@ const templates = [
     prefLabel: { en: 'retrieval-trace' },
     verb: `${FOXXI_NS}verbs/retrieved`,
     objectActivityType: `${FOXXI_NS}activities/concept-graph-node`,
-    rules: [{ location: 'context.extensions["' + FOXXI_NS + 'conceptIds"]', presence: 'included' }],
+    // conceptIds is RECOMMENDED (not required): the generic affordance-instrumentation
+    // envelope cannot always supply the retrieved node ids, so a retrieval trace
+    // without them is still conformant.
+    rules: [{ location: 'context.extensions["' + FOXXI_NS + 'conceptIds"]', presence: 'recommended' }],
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/enrolled`,
@@ -313,6 +316,19 @@ const templates = [
       { location: 'result.success', any: [false] },
     ],
   },
+
+  // ── Templates for the remaining declared+emitted verbs ──────────────
+  // Profile spec §5.2: a Statement carrying a declared Verb MUST conform to at least
+  // one Statement Template. Every verb the write path emits therefore needs a template
+  // so "declared vocabulary == enforceable vocabulary" holds.
+  { id: `${FOXXI_PROFILE_ID}/templates/satisfied`, prefLabel: { en: 'satisfied' }, definition: { en: 'cmi5 moveOn condition met.' }, verb: `${ADLW3}/satisfied`, objectActivityType: `${ADL}/activities/course` },
+  { id: `${FOXXI_PROFILE_ID}/templates/abandoned`, prefLabel: { en: 'abandoned' }, definition: { en: 'cmi5 session ended unexpectedly.' }, verb: `${ADLW3}/abandoned`, objectActivityType: `${ADL}/activities/course` },
+  { id: `${FOXXI_PROFILE_ID}/templates/waived`, prefLabel: { en: 'waived' }, definition: { en: 'cmi5 requirement waived by an administrator.' }, verb: `${ADLW3}/waived`, objectActivityType: `${ADL}/activities/course` },
+  { id: `${FOXXI_PROFILE_ID}/templates/authored`, prefLabel: { en: 'authored' }, definition: { en: 'An agent authored a learning artifact (course / profile fragment / standards extension).' }, verb: `${FOXXI_NS}verbs/authored` },
+  { id: `${FOXXI_PROFILE_ID}/templates/wallet-exported`, prefLabel: { en: 'wallet-exported' }, definition: { en: 'A learner exported a CLR 2.0 envelope from their pod.' }, verb: `${FOXXI_NS}verbs/wallet-exported`, objectActivityType: `${FOXXI_NS}activities/credential` },
+  { id: `${FOXXI_PROFILE_ID}/templates/framework-aligned`, prefLabel: { en: 'framework-aligned' }, definition: { en: 'An admin declared a CASE 1.0 cross-tenant alignment.' }, verb: `${FOXXI_NS}verbs/framework-aligned`, objectActivityType: `${FOXXI_NS}activities/framework` },
+  { id: `${FOXXI_PROFILE_ID}/templates/policy-decided`, prefLabel: { en: 'policy-decided' }, definition: { en: 'An ABAC policy returned an access decision.' }, verb: `${FOXXI_NS}verbs/policy-decided`, rules: [{ location: 'context.extensions["' + FOXXI_NS + 'policyId"]', presence: 'recommended' }] },
+  { id: `${FOXXI_PROFILE_ID}/templates/asserted`, prefLabel: { en: 'asserted' }, definition: { en: 'An agent asserted a settled context descriptor (modal status Asserted).' }, verb: `${FOXXI_NS}verbs/asserted` },
 ];
 
 // ── Patterns ────────────────────────────────────────────────────────

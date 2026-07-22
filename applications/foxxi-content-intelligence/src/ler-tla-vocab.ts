@@ -853,12 +853,12 @@ function renderMomTurtle(): string {
     lines.push(`    ler:construction "concept" ;`);
     if (c.scheme === 'verb') {
       lines.push(`    skos:inScheme tla:MOMVerbScheme ;`);
-      lines.push(`    skos:closeMatch <https://w3id.org/xapi/tla/verbs/${c.label}> ;`);
+      lines.push(`    skos:closeMatch <http://adlnet.gov/expapi/verbs/${c.label}> ;`);
       lines.push(`    skos:member tla:MOMLevel${c.level} ;`);
     } else if (c.scheme === 'activityType') {
-      lines.push(`    skos:closeMatch <https://w3id.org/xapi/tla/activity-types/${c.label}> ;`);
+      lines.push(`    skos:closeMatch <http://adlnet.gov/expapi/activities/${c.label}> ;`);
     } else {
-      lines.push(`    skos:closeMatch <https://w3id.org/xapi/tla/extensions/${c.label}> ;`);
+      lines.push(`    skos:closeMatch <http://adlnet.gov/expapi/extensions/${c.label}> ;`);
     }
     lines.push(`    rdfs:isDefinedBy <${TLA_DOC}> .`);
     return lines.join('\n');
@@ -977,15 +977,27 @@ export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record
   if (t) return { '@context': JSONLD_CONTEXT, ...termJsonLd(t) };
   const mom = family === 'tla' ? MOM_CONCEPTS.find(c => c.name === name) : undefined;
   if (mom) {
-    return {
+    // Parity with the doc-level Turtle: carry scheme membership + closeMatch so the
+    // per-term dereference a follow-your-nose client lands on is not a bare concept.
+    const node: Record<string, unknown> = {
       '@context': JSONLD_CONTEXT,
       '@id': `${ns}${name}`,
       '@type': 'skos:Concept',
       label: mom.label,
       construction: 'concept',
       isDefinedBy: doc,
-      _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
     };
+    if (mom.scheme === 'verb') {
+      node['skos:inScheme'] = { '@id': `${TLA_NS}MOMVerbScheme` };
+      node['skos:member'] = { '@id': `${TLA_NS}MOMLevel${mom.level}` };
+      node['skos:closeMatch'] = { '@id': `http://adlnet.gov/expapi/verbs/${mom.label}` };
+    } else if (mom.scheme === 'activityType') {
+      node['skos:closeMatch'] = { '@id': `http://adlnet.gov/expapi/activities/${mom.label}` };
+    } else {
+      node['skos:closeMatch'] = { '@id': `http://adlnet.gov/expapi/extensions/${mom.label}` };
+    }
+    node._links = { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } };
+    return node;
   }
   // Published proficiency framework / levels / roll-up rule — resolve the per-term
   // route to their real definitions (they were only in the doc-level render before).

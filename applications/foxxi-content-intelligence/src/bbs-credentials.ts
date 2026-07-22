@@ -109,6 +109,9 @@ export async function issueBbsCompletionCredential(args: {
         id: `urn:foxxi:achievement:${args.subject.courseId}`,
         type: ['Achievement'],
         name: args.subject.courseTitle,
+        // OB3 requires description + criteria on the achievement.
+        description: `Demonstrated competency: ${args.subject.courseTitle}.`,
+        criteria: { narrative: `Awarded on demonstrated performance of ${args.subject.courseTitle} at proficiency ${args.subject.proficiencyLevel}.` },
         proficiencyLevel: args.subject.proficiencyLevel,
         alignment: args.subject.alignedSkills.map(s => ({
           type: ['Alignment'],
@@ -148,6 +151,20 @@ export async function issueBbsCompletionCredential(args: {
   // Sanity self-check.
   const ok = await bbsVerify({ signature, messages, publicKey: issuer.publicKey });
   if (!ok) throw new Error('issued BBS+ credential failed self-verify');
+
+  // Embed the BBS+ signature as an inline bbs-2023 Data Integrity proof so the
+  // credential self-carries proof.type (W3C VC / OB3-conformant) instead of the
+  // signature being detached. Still selective-disclosure-derivable from the message
+  // list (the proof is NOT part of the signed message set). proofValue is the
+  // signature as multibase base64url ('u').
+  (credential as Record<string, unknown>).proof = {
+    type: 'DataIntegrityProof',
+    cryptosuite: 'bbs-2023',
+    created: now,
+    verificationMethod: `${issuerDid}#bbs`,
+    proofPurpose: 'assertionMethod',
+    proofValue: 'u' + Buffer.from(signature).toString('base64url'),
+  };
 
   return {
     credential,

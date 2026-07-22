@@ -385,15 +385,17 @@ export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string
   // so a caller selecting by the legacy urn still matches — no Turtle alias needed.
   const actionIri = actionUrl(affordance.action);
 
-  const propBase = actionIri;
-  const inputProps = affordance.inputs.map((input, i) => {
-    const propIri = `<${propBase}-prop-${input.name}>`;
+  // hydra:property is an INLINE blank-node rdf:Property carrying the field's name —
+  // NOT a minted <action>-prop-<name> IRI under the action authority that nothing
+  // serves (those were 100% non-resolvable). A blank node has no IRI to 404, and the
+  // property definition (name + comment) travels with the SupportedProperty.
+  const inputProps = affordance.inputs.map((input) => {
     return `        [
             a hydra:SupportedProperty ;
-            hydra:property ${propIri} ;
+            hydra:property [ a rdf:Property ; rdfs:label "${escapeLit(input.name)}" ] ;
             hydra:required ${input.required ? 'true' : 'false'} ;
             rdfs:comment "${escapeLit(input.description)}"
-        ]${i < affordance.inputs.length - 1 ? '' : ''}`;
+        ]`;
   }).join(' ,\n');
 
   return `<${actionIri}> a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;
@@ -425,6 +427,7 @@ export function affordancesManifestTurtle(
 @prefix ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
 @prefix dcat:  <http://www.w3.org/ns/dcat#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .`;
 
   const manifestBlock = `<${manifestIri}> a hydra:Collection ;

@@ -1406,6 +1406,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const envelope = await exportClr({
       learnerPodUrl,
       learnerDid: requestedLearnerDid,
+      ...(issuerKeySeed ? { issuerSeed: issuerKeySeed } : {}),
     });
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.export_clr', decision: 'allow', appliedPolicies: [ctx.role === 'admin' ? 'admin-full-access' : 'learner-self'] });
     return { ...envelope, accessDecision: trace };
@@ -1486,6 +1487,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const taskId = productionTaskIri(args.task_id, taskName);
     const actorKind: 'human' | 'agent' = (args.actor_kind as string) === 'agent' ? 'agent' : 'human';
     const quality = typeof args.quality === 'number' ? args.quality : undefined;
+    // result.score.scaled MUST be in [-1,1] (xAPI §4.1.5.1). Reject a bad quality
+    // BEFORE it reaches the durable pod / shared lattice / forwarded LRS sinks.
+    if (quality !== undefined && (quality < -1 || quality > 1)) return { error: 'quality (result.score.scaled) must be in [-1,1]' };
     // The performer is the xAPI actor; the authenticated caller is the
     // attesting observer (provenance). Any authenticated caller may
     // record a performance event — the observer is on the record.
@@ -2045,6 +2049,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const envelope = await exportClr({
       learnerPodUrl: (args.learner_pod_url as string) || tenantPodUrl,
       learnerDid: requestedLearnerDid,
+      ...(issuerKeySeed ? { issuerSeed: issuerKeySeed } : {}),
     });
     return envelopeToClr1(envelope);
   },
@@ -3265,14 +3270,14 @@ const app = createVerticalBridge({
     a.post('/ns/ieee-ler/validate', (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       const r = validateLerInstance(readInstance(req));
-      res.json({ ok: true, module: 'ieee-ler', conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
+      res.json({ ok: true, module: 'ieee-ler', ontology: `${bridgeBaseUrl}/ns/ieee-ler`, conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
     });
     // ADL-TLA competency assertions share the same shape (tla:Assertion ≡ ler:CompetencyAssertion).
     a.get('/ns/adl-tla/shapes', (_req, res) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.type('text/turtle').send(renderSpecShacl(LER_MODEL)); });
     a.post('/ns/adl-tla/validate', (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       const r = validateLerInstance(readInstance(req));
-      res.json({ ok: true, module: 'adl-tla', conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
+      res.json({ ok: true, module: 'adl-tla', ontology: `${bridgeBaseUrl}/ns/adl-tla`, conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
     });
     // Open Badges 3.0 + CLR 2.0 credential formats are now registered as DATA in
     // CREDENTIAL_MODELS and auto-mounted by the generic /ns/<module> loop below
@@ -3709,7 +3714,7 @@ app.post('/agent/review-record', async (req, res) => {
     });
     let clr: unknown;
     if (p.include_clr !== false) {
-      try { clr = await exportClr({ learnerPodUrl: subjectPodUrl, learnerDid: subjectDid }); }
+      try { clr = await exportClr({ learnerPodUrl: subjectPodUrl, learnerDid: subjectDid, ...(issuerKeySeed ? { issuerSeed: issuerKeySeed } : {}) }); }
       catch (err) { clr = { error: `wallet read failed: ${(err as Error).message}` }; }
     }
     res.json({
@@ -5096,6 +5101,7 @@ app.post('/agent/record-performance', async (req, res) => {
       ? p.activity_type.trim()
       : `${FOXXI_NS}ProductionTask`;
     const quality = typeof p.quality === 'number' ? p.quality : undefined;
+    if (quality !== undefined && (quality < -1 || quality > 1)) { res.status(400).json({ error: 'quality (result.score.scaled) must be in [-1,1]' }); return; }
     const outcomeVerb = momOutcomeVerb(p.success as boolean);
     const statement: Record<string, unknown> = {
       id: randomUUID(),

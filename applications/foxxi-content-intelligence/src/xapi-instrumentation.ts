@@ -25,6 +25,9 @@ import { activityIri } from './activity-identity.js';
 import { randomUUID } from 'node:crypto';
 
 const ADL = 'http://adlnet.gov/expapi';
+// cmi5-defined verbs (satisfied/abandoned/waived) are canonically at w3id — the SAME
+// IRIs the published profile declares, so the emitter and the concept set agree.
+const ADLW3 = 'https://w3id.org/xapi/adl/verbs';
 const CMI5_CAT = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
 
 interface CallerCtx {
@@ -97,7 +100,7 @@ const TOOL_VERBS: Record<string, VerbBinding> = {
     objectType: `${FOXXI_NS}activities/framework`,
   },
   'foxxi.emit_cmi5_session': {
-    verbId: `${ADL}/verbs/satisfied`, display: 'satisfied',
+    verbId: `${ADLW3}/satisfied`, display: 'satisfied',
     objectId: (a) => courseIri((a.args.course_id as string) ?? 'unknown'),
     objectType: `${ADL}/activities/course`,
   },
