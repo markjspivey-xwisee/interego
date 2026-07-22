@@ -106,7 +106,7 @@ export const OB3_MODEL: OntologyModel = {
       label: 'Open Badge Credential shape',
       comment: 'A well-formed OB3.0 VC: a @context, a type INCLUDING VerifiableCredential + OpenBadgeCredential, an issuer, a credentialSubject with an IRI id and a typed+named achievement, a validFrom, and a typed proof.',
       constraints: [
-        { path: '@context', minCount: 1, hasValue: 'https://www.w3.org/ns/credentials/v2', comment: 'The @context MUST include the W3C VC-DM 2.0 context.' },
+        { path: '@context', minCount: 1, firstValue: 'https://www.w3.org/ns/credentials/v2', comment: 'The @context MUST be present and its FIRST entry MUST be the W3C VC-DM 2.0 context (VC-DM 2.0 §4.1).' },
         { path: 'type', hasValue: 'VerifiableCredential', comment: 'type MUST include VerifiableCredential.' },
         { path: 'type', hasValue: 'OpenBadgeCredential', comment: 'type MUST include OpenBadgeCredential.' },
         { path: 'issuer', minCount: 1, comment: 'The issuer (IRI or Profile object).' },
@@ -150,7 +150,7 @@ export const CLR_MODEL: OntologyModel = {
       label: 'CLR Credential shape',
       comment: 'A well-formed CLR 2.0 VC: @context, type INCLUDING VerifiableCredential + ClrCredential, a credentialSubject with an IRI id, and a typed proof.',
       constraints: [
-        { path: '@context', minCount: 1, hasValue: 'https://www.w3.org/ns/credentials/v2', comment: 'The @context MUST include the W3C VC-DM 2.0 context.' },
+        { path: '@context', minCount: 1, firstValue: 'https://www.w3.org/ns/credentials/v2', comment: 'The @context MUST be present and its FIRST entry MUST be the W3C VC-DM 2.0 context (VC-DM 2.0 §4.1).' },
         { path: 'type', hasValue: 'VerifiableCredential', comment: 'type MUST include VerifiableCredential.' },
         { path: 'type', hasValue: 'ClrCredential', comment: 'type MUST include ClrCredential.' },
         { path: 'credentialSubject.id', minCount: 1, nodeKind: 'IRI', comment: 'The holder id (IRI).' },

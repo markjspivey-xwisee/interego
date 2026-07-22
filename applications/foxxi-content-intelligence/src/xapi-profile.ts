@@ -295,21 +295,30 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/production-performance-completed`,
     prefLabel: { en: 'production-performance (completed)' },
-    definition: { en: 'A successful unit of on-the-job production work. MOM Level 1 `completed`; object activity type is the work\'s own domain conformsTo (or the ProductionTask fallback), so this template does NOT pin an object type — it discriminates on contextKind=production. actorKind is recommended so a plain course completion (which matches this and the course `completed` template) also satisfies at least one.' },
+    definition: { en: 'A successful unit of on-the-job production work. MOM Level 1 `completed`. Does NOT pin an object activity type (the work carries its own domain conformsTo); instead it discriminates by REQUIRING context.extensions contextKind=production. This keeps it from over-matching a plain course completion — a course `completed` (no contextKind) fails this template\'s presence rule and must satisfy the course `completed` template (result.completion) instead. actorKind is recommended.' },
     verb: `${ADL}/verbs/completed`,
     rules: [
-      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', any: ['production'] },
+      // REQUIRED discriminator: without presence:'included' this rule is only value-checked
+      // when present, which made the template a universal acceptor that OR-swallowed the
+      // stricter course `completed` template (result.completion). It MUST be present AND
+      // equal to 'production'.
+      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included', any: ['production'] },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'recommended' },
+      // result.success is recommended (the emitter always sets it), but when present it
+      // MUST be true for a `completed` — the `any` check fires on present values, so a
+      // completed carrying success:false is rejected without hard-requiring the field.
+      { location: 'result.success', presence: 'recommended', any: [true] },
     ],
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/production-performance-failed`,
     prefLabel: { en: 'production-performance (failed)' },
-    definition: { en: 'An unsuccessful unit of work (production OR a course/AU fail). MOM Level 1 `failed`; no pinned object type — a course/lesson fail and a production fail both satisfy it (actorKind recommended, contextKind checked only when present).' },
+    definition: { en: 'An unsuccessful unit of on-the-job production work. MOM Level 1 `failed`. Like its `completed` sibling it REQUIRES contextKind=production (so the whole `failed` verb is not vacuously conformant) and result.success=false — a bare `failed` with neither is correctly non-conformant.' },
     verb: `${ADL}/verbs/failed`,
     rules: [
-      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', any: ['production'] },
+      { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included', any: ['production'] },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'recommended' },
+      { location: 'result.success', presence: 'recommended', any: [false] },
     ],
   },
 
