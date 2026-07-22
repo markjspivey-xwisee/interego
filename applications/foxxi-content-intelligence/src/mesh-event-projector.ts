@@ -163,7 +163,11 @@ function resolveVerb(entry: MeshDiscoverEntry, mode: ReturnType<typeof modalMode
     case 'intended':   return { id: INTENDED_VERB, display: { en: 'intended' } };
     case 'considered': return { id: CONSIDERED_VERB, display: { en: 'considered' } };
     case 'asserted':
-    default:           return { id: PERFORMED_VERB, display: { en: 'performed' } };
+    // A settled (Asserted) production descriptor projects as the canonical MOM
+    // Level-1 outcome verb `completed` — NOT the coined non-MOM foxxi#performed.
+    // (PERFORMED_VERB stays a dual-read alias on the ELR side for pre-migration
+    // statements; the ELR splits production vs training on contextKind.)
+    default:           return { id: 'http://adlnet.gov/expapi/verbs/completed', display: { en: 'completed' } };
   }
 }
 
