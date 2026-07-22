@@ -91,10 +91,15 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
   // Route to the shape whose targetClass matches the instance's declared type
   // (@type / objectType / type) — running EVERY shape against one flat instance would
   // produce spurious cross-class violations. Fall back to the first shape if untyped.
-  const declared = String((instance['@type'] ?? instance.objectType ?? instance.type ?? '')).split(/[#/]/).pop();
-  // Subclass-aware: a shape whose targetClass is an ANCESTOR of the declared class
-  // also applies (e.g. an AccessChangeEvent instance is validated by the
-  // OperationalEvidenceEvent shape). Walk the model's subClassOf chain.
+  // The declared type may be a single value OR an array (a W3C VC carries a `type`
+  // array like ['VerifiableCredential','OpenBadgeCredential']). Map each to its local
+  // name so credential validation routes to the right shape instead of stringifying
+  // the array to one unmatchable token.
+  const rawType = instance['@type'] ?? instance.objectType ?? instance.type ?? '';
+  const declaredNames = (Array.isArray(rawType) ? rawType : [rawType])
+    .map(t => String(t).split(/[#/]/).pop()).filter((s): s is string => !!s);
+  // Subclass-aware: a shape whose targetClass is an ANCESTOR of a declared class
+  // also applies. Walk the model's subClassOf chain.
   const ancestorsOf = (cls: string): Set<string> => {
     const seen = new Set<string>([cls]); const stack = [cls];
     while (stack.length) {
@@ -106,9 +111,13 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
     }
     return seen;
   };
-  const applicable = declared ? ancestorsOf(declared) : new Set<string>();
-  const matched = declared ? m.shapes.filter(s => applicable.has(s.targetClass)) : [];
-  const shapes = matched.length ? matched : (declared ? [] : m.shapes.slice(0, 1));
+  const applicable = new Set<string>();
+  for (const d of declaredNames) for (const a of ancestorsOf(d)) applicable.add(a);
+  const matched = declaredNames.length ? m.shapes.filter(s => applicable.has(s.targetClass)) : [];
+  // No vacuous pass: an instance that declares a type matching no shape is checked
+  // against ALL the model's shapes (so a bogus/absent type cannot skip validation);
+  // an untyped instance falls back to the model's primary shape.
+  const shapes = matched.length ? matched : (declaredNames.length ? m.shapes : m.shapes.slice(0, 1));
   const out: ValidationResult['results'] = [];
   for (const s of shapes) out.push(...validateAgainstShape(m, s.name, instance).results);
   return { conforms: out.length === 0, results: out, shapesIri: shapesIri(m) };

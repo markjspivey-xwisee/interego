@@ -56,6 +56,7 @@ export interface ShapeConstraint {
   pattern?: string;       // regex (string form)
   in?: string[];          // sh:in enumeration (literal values)
   minInclusive?: number; maxInclusive?: number;
+  hasValue?: string | number | boolean;  // sh:hasValue — at least one value must equal this
 }
 export interface OntShape {
   name: string; targetClass: string; label?: string; comment?: string;
@@ -249,6 +250,7 @@ export function renderShacl(m: OntologyModel): string {
       if (c.in) inner.push(`sh:in ( ${c.in.map(x => `"${esc(x)}"`).join(' ')} )`);
       if (c.minInclusive != null) inner.push(`sh:minInclusive ${c.minInclusive}`);
       if (c.maxInclusive != null) inner.push(`sh:maxInclusive ${c.maxInclusive}`);
+      if (c.hasValue !== undefined) inner.push(typeof c.hasValue === 'string' ? `sh:hasValue "${esc(c.hasValue)}"` : `sh:hasValue ${String(c.hasValue)}`);
       if (c.comment) inner.push(`rdfs:comment "${esc(c.comment)}"`);
       parts.push(`    sh:property [ ${inner.join(' ; ')} ] ;`);
     }
@@ -331,6 +333,7 @@ export function validateAgainstShape(m: OntologyModel, shapeName: string, instan
     const arr = Array.isArray(v) ? v : present ? [v] : [];
     if (c.minCount != null && arr.length < c.minCount) results.push({ path: c.path, message: `expected at least ${c.minCount} value(s)`, sourceShape, severity: 'Violation' });
     if (c.maxCount != null && arr.length > c.maxCount) results.push({ path: c.path, message: `expected at most ${c.maxCount} value(s)`, value: v, sourceShape, severity: 'Violation' });
+    if (c.hasValue !== undefined && !arr.some(item => item === c.hasValue)) results.push({ path: c.path, message: `must include the value ${String(c.hasValue)}`, sourceShape, severity: 'Violation' });
     for (const item of arr) {
       const viol = (message: string): void => { results.push({ path: c.path, message, value: item, sourceShape, severity: 'Violation' }); };
       if (c.datatype && XSD_STR.has(c.datatype) && typeof item !== 'string') viol(`expected a string (${c.datatype})`);
