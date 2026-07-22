@@ -295,9 +295,28 @@ const DATETIME_RE = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\
 const DURATION_RE = /^P(?:\d+(?:\.\d+)?Y)?(?:\d+(?:\.\d+)?M)?(?:\d+(?:\.\d+)?W)?(?:\d+(?:\.\d+)?D)?(?:T(?:\d+(?:\.\d+)?H)?(?:\d+(?:\.\d+)?M)?(?:\d+(?:\.\d+)?S)?)?$/;
 
 function pick(instance: Record<string, unknown>, path: string): unknown {
-  // path is a module curie like xapi:actor → property key 'actor'; support bare too.
-  const key = path.includes(':') ? path.split(':')[1] : path;
-  return instance[key];
+  // A path is a dotted property chain; the FIRST segment may carry a module curie
+  // prefix (xapi:actor → actor). Descend the chain, flattening across arrays so a
+  // nested path (credentialSubject.id) or a path through a list resolves — not just
+  // a single flat key. General to every model; no per-format branch.
+  const segs = path.split('.');
+  segs[0] = segs[0]!.includes(':') ? segs[0]!.split(':')[1]! : segs[0]!;
+  let cur: unknown = instance;
+  for (const seg of segs) {
+    if (cur === null || cur === undefined) return undefined;
+    if (Array.isArray(cur)) {
+      const next: unknown[] = [];
+      for (const el of cur) {
+        if (el && typeof el === 'object') { const v = (el as Record<string, unknown>)[seg]; if (v !== undefined) next.push(v); }
+      }
+      cur = next;
+    } else if (typeof cur === 'object') {
+      cur = (cur as Record<string, unknown>)[seg];
+    } else {
+      return undefined;
+    }
+  }
+  return cur;
 }
 
 /** Validate a JS instance against ONE shape's constraints (citing the shape IRI). */

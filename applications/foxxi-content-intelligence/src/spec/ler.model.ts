@@ -101,8 +101,11 @@ export const OB3_MODEL: OntologyModel = {
 /** Validate an instance against the LER competency-assertion / evidence shapes,
  *  routing by declared type; defaults to CompetencyAssertion (the common case). */
 export function validateLerInstance(instance: Record<string, unknown>): ValidationResult {
-  const declared = String((instance['@type'] ?? instance.assertionType ?? instance.type ?? '')).toLowerCase();
-  const shape = declared.includes('evidence') ? 'EvidenceShape' : 'CompetencyAssertionShape';
+  const raw = instance['@type'] ?? instance.assertionType ?? instance.type ?? '';
+  // EXACT declared-class local-name routing (not a substring test): 'CredentialEvidence'
+  // must NOT route to the id-only EvidenceShape and thereby skip every assertion check.
+  const localNames = (Array.isArray(raw) ? raw : [raw]).map(t => String(t).split(/[#/]/).pop());
+  const shape = localNames.includes('Evidence') ? 'EvidenceShape' : 'CompetencyAssertionShape';
   const r = validateAgainstShape(LER_MODEL, shape, instance);
   return { conforms: r.results.length === 0, results: r.results, shapesIri: shapesIri(LER_MODEL) };
 }

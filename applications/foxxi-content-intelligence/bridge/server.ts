@@ -3283,7 +3283,18 @@ const app = createVerticalBridge({
     a.post('/xapi/profile/validate', (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       const r = validateAgainstProfileTemplates(readInstance(req));
-      res.json({ ok: true, profile: xapiProfileUrl, verb: r.verb, matchedTemplates: r.matchedTemplates, conforms: r.violations.length === 0, violations: r.violations });
+      // conforms is only meaningful when a template applied. An unknown or
+      // template-less verb is reported honestly, never as a bare conforms:true.
+      const verdict = !r.verbDeclared ? 'unknown-verb'
+        : !r.applicable ? 'no-applicable-template'
+          : (r.violations.length === 0 ? 'conformant' : 'non-conformant');
+      res.json({
+        ok: true, profile: xapiProfileUrl, verb: r.verb,
+        verbDeclared: r.verbDeclared, applicable: r.applicable, verdict,
+        matchedTemplates: r.matchedTemplates,
+        conforms: r.applicable && r.violations.length === 0,
+        violations: r.violations,
+      });
     });
 
     // ── Standards spec ontologies (xAPI 2.0, SCORM CAM/SN/RTE, cmi5) ──
