@@ -345,6 +345,7 @@ import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd, vocabTriplesByS
 import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd, ontologyIri as specOntologyIri, modelFromHolon as specModelFromHolon, type OntologyModel as SpecOntologyModel } from '../src/spec-ontology.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
+import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
 import { validateAgainstShape as validateAgainstShapeRaw } from '../src/spec-ontology.js';
 import { COMPLIANCE_MODELS } from '../src/spec/compliance.model.js';
 import { composeSpecOntology as composeComplianceOntology } from '../src/spec-ontology.js';
@@ -3275,6 +3276,14 @@ const app = createVerticalBridge({
       res.setHeader('Access-Control-Allow-Origin', '*');
       const r = validateAgainstShapeRaw(OB3_MODEL, 'OpenBadgeCredentialShape', readInstance(req));
       res.json({ ok: true, module: 'ob3', conforms: r.results.length === 0, results: r.results, shapesIri: r.shapesIri });
+    });
+    // xAPI Profile statement-template conformance (Profile spec §5): does a
+    // statement satisfy the rules of its verb's declared StatementTemplate? Makes
+    // "profile-conformant" verifiable, not just declared.
+    a.post('/xapi/profile/validate', (req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const r = validateAgainstProfileTemplates(readInstance(req));
+      res.json({ ok: true, profile: xapiProfileUrl, verb: r.verb, matchedTemplates: r.matchedTemplates, conforms: r.violations.length === 0, violations: r.violations });
     });
 
     // ── Standards spec ontologies (xAPI 2.0, SCORM CAM/SN/RTE, cmi5) ──
