@@ -787,6 +787,16 @@ function ttlRef(ref: string): string {
   return ref; // already prefixed (iep:, prov:, ler:, tla:, skos:, vc:, amta:, hela:)
 }
 
+/** A term as a Turtle CURIE when its local name is a valid PN_LOCAL, else a FULL angle-bracket
+ *  IRI. MOM activityType/extension concept names are PATH-STRUCTURED (activity-type/completed,
+ *  extension/…) — the '/' is a legal IRI char but ILLEGAL in a prefixed name, so `tla:x/y` made
+ *  the whole /ns/adl-tla document unparseable. The full IRI preserves the term's identity. */
+function termCurie(family: string, name: string): string {
+  if (/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(name)) return `${family}:${name}`;
+  const base = PREFIXES[family];
+  return base ? `<${base}${name}>` : `${family}:${name}`;
+}
+
 function prefixHeader(): string {
   return Object.entries(PREFIXES)
     .map(([p, iri]) => `@prefix ${p}: <${iri}> .`)
@@ -794,7 +804,7 @@ function prefixHeader(): string {
 }
 
 function renderTermTurtle(t: SemTerm): string {
-  const self = `${t.family}:${t.name}`;
+  const self = termCurie(t.family, t.name);
   const lines: string[] = [];
   const rdfType = t.kind === 'Class' ? 'owl:Class'
     : t.kind === 'ObjectProperty' ? 'owl:ObjectProperty'
@@ -853,19 +863,22 @@ function renderMomTurtle(): string {
     rdfs:label "ADL MOM verb scheme" ;
     rdfs:comment "The ${MOM_VERBS.length} Master Object Model xAPI verbs. Grouped here into five thematic levels — this project's own pedagogical organisation over the ADL MOM verb set (completion, session lifecycle, competency assertion, adaptive paths, career), NOT ADL-defined numbered conformance levels. Each verb skos:closeMatch-es its counterpart in the ADL TLA profile namespace." ;
     rdfs:isDefinedBy <${TLA_DOC}> .`;
+  // skos:member relates a Collection TO its members (domain skos:Collection), so the level
+  // Collection carries its verbs — NOT each verb pointing back at the level (which was inverted).
   const levels = [1, 2, 3, 4, 5].map(lvl =>
     `tla:MOMLevel${lvl} a skos:Collection ;
     rdfs:label "${esc(MOM_LEVEL_LABEL[lvl]!)}" ;
-    skos:inScheme tla:MOMVerbScheme .`,
+    skos:inScheme tla:MOMVerbScheme ;
+${MOM_CONCEPTS.filter(c => c.scheme === 'verb' && c.level === lvl).map(c => `    skos:member ${termCurie('tla', c.name)} ;`).join('\n')}
+    rdfs:isDefinedBy <${TLA_DOC}> .`,
   ).join('\n\n');
   const concepts = MOM_CONCEPTS.map(c => {
-    const lines = [`tla:${c.name} a skos:Concept ;`];
+    const lines = [`${termCurie('tla', c.name)} a skos:Concept ;`];
     lines.push(`    rdfs:label "${esc(c.label)}" ;`);
     lines.push(`    ler:construction "concept" ;`);
     if (c.scheme === 'verb') {
       lines.push(`    skos:inScheme tla:MOMVerbScheme ;`);
       lines.push(`    skos:closeMatch <${momVerbCloseMatch(c.label)}> ;`);
-      lines.push(`    skos:member tla:MOMLevel${c.level} ;`);
     } else if (c.scheme === 'activityType') {
       lines.push(`    skos:closeMatch <http://adlnet.gov/expapi/activities/${c.label}> ;`);
     } else {
@@ -1000,7 +1013,9 @@ export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record
     };
     if (mom.scheme === 'verb') {
       node['skos:inScheme'] = { '@id': `${TLA_NS}MOMVerbScheme` };
-      node['skos:member'] = { '@id': `${TLA_NS}MOMLevel${mom.level}` };
+      // The level Collection carries skos:member (Collection→member); from the verb's own node
+      // we express the inverse membership via the collection reference, not a backwards skos:member.
+      node['tla:inLevel'] = { '@id': `${TLA_NS}MOMLevel${mom.level}` };
       node['skos:closeMatch'] = { '@id': momVerbCloseMatch(mom.label) };
     } else if (mom.scheme === 'activityType') {
       node['skos:closeMatch'] = { '@id': `http://adlnet.gov/expapi/activities/${mom.label}` };

@@ -814,7 +814,9 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
             },
           },
           result: { response: question, success: answer.grounded },
-          context: { extensions: { [`${base}/ns/foxxi#contextKind`]: 'context-chat' } },
+          // A Context Companion Q&A is performance-support (the declared contextKind vocabulary
+          // is production | training | performance-support — 'context-chat' was off-vocabulary).
+          context: { extensions: { [`${base}/ns/foxxi#contextKind`]: 'performance-support' } },
           timestamp: new Date().toISOString(),
         }, tenant);
         instrumented = true;

@@ -3356,9 +3356,21 @@ const app = createVerticalBridge({
         // proof and report it separately so `conforms:true` is never mistaken for a
         // verified credential. Fail-closed: an absent/forged proof → verified:false.
         if (moduleName in CREDENTIAL_MODELS) {
-          const proof = (instance as { proof?: { cryptosuite?: string; type?: string } }).proof;
+          const rawProof = (instance as { proof?: unknown }).proof;
+          // VC-DM 2.0 §4.7: `proof` may be a single object OR a SET (array) of proofs. For an
+          // array, verify each and treat the credential as verified when at least one eddsa-jcs-2022
+          // proof verifies (the assertion is backed by a valid signature). Pick the first proof for
+          // single-object reporting below.
+          const proof = (Array.isArray(rawProof) ? rawProof[0] : rawProof) as { cryptosuite?: string; type?: string } | undefined;
           let proofInfo: Record<string, unknown>;
-          if (!proof) {
+          if (Array.isArray(rawProof) && rawProof.length > 0) {
+            const results = rawProof.map(p => {
+              try { return verifyDataIntegrityProof({ ...(instance as Record<string, unknown>), proof: p } as unknown as VerifiableCredentialJson); }
+              catch (e) { return { verified: false, reason: `proof verification error: ${(e as Error).message}` }; }
+            });
+            const ok = results.find(r => r.verified);
+            proofInfo = { present: true, count: rawProof.length, verified: !!ok, reason: ok ? undefined : (results[0]?.reason ?? 'no proof in the set verified'), ...(ok && 'issuerDid' in ok && ok.issuerDid ? { issuerDid: ok.issuerDid } : {}) };
+          } else if (!proof) {
             proofInfo = { present: false, verified: false, reason: 'no Data Integrity proof embedded — an unsigned credential is not verifiable' };
           } else if (proof.cryptosuite === 'bbs-2023') {
             // BBS+ selective-disclosure proofs verify against a derived presentation, not

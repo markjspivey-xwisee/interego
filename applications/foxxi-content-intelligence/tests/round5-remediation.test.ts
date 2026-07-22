@@ -100,7 +100,8 @@ describe('round-5 — scorm-cam OWL has no illegal comma/space prefixed names', 
     const owl = renderOwl(SCORM_CAM_MODEL);
     expect(owl).not.toMatch(/scorm-cam:exit,message/);
     expect(owl).not.toMatch(/scorm-cam:continue,no message/);
-    expect(owl).toContain('scorm-cam:exit-message');
+    // Member IRIs are scheme-scoped (TimeLimitAction-exit-message) + slugged (valid PN_LOCAL).
+    expect(owl).toContain('scorm-cam:TimeLimitAction-exit-message');
     expect(owl).toContain('"exit,message"'); // the real value survives as the label
   });
 });
