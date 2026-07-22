@@ -614,10 +614,16 @@ const MOM_CONCEPTS: readonly MomConcept[] = [...MOM_VERBS, ...MOM_ACTIVITY_TYPES
  *  Foxxi xAPI profile declares and emits them at — so the two published surfaces agree; every
  *  other MOM verb (completed/passed/failed/mastered/…) is an ADL core verb at adlnet.gov. */
 const CMI5_W3ID_VERBS = new Set(['satisfied', 'abandoned', 'waived']);
-function momVerbCloseMatch(label: string): string {
-  return CMI5_W3ID_VERBS.has(label)
-    ? `https://w3id.org/xapi/adl/verbs/${label}`
-    : `http://adlnet.gov/expapi/verbs/${label}`;
+// The MOM verbs that ACTUALLY have a registered counterpart at http://adlnet.gov/expapi/verbs/.
+// The remaining MOM verbs (certified, asserted, inferred, recruited, …) are coined by THIS
+// project — they have NO ADL-registered IRI, so emitting skos:closeMatch to a fabricated
+// adlnet.gov/expapi/verbs/<label> asserted an alignment to a URL that 404s (a dressed-404 +
+// everything-is-a-URL violation). Those get NO closeMatch.
+const ADL_CORE_VERBS = new Set(['completed', 'passed', 'failed', 'launched', 'initialized', 'attended', 'experienced', 'suspended', 'resumed', 'terminated', 'mastered', 'registered', 'voided', 'scored']);
+function momVerbCloseMatch(label: string): string | null {
+  if (CMI5_W3ID_VERBS.has(label)) return `https://w3id.org/xapi/adl/verbs/${label}`;
+  if (ADL_CORE_VERBS.has(label)) return `http://adlnet.gov/expapi/verbs/${label}`;
+  return null;
 }
 
 // ── Performance proficiency: a published scale + a published roll-up rule ──
@@ -860,8 +866,8 @@ function renderOntologyTurtle(family: 'ler' | 'tla'): string {
 
 function renderMomTurtle(): string {
   const scheme = `tla:MOMVerbScheme a skos:ConceptScheme ;
-    rdfs:label "ADL MOM verb scheme" ;
-    rdfs:comment "The ${MOM_VERBS.length} Master Object Model xAPI verbs. Grouped here into five thematic levels — this project's own pedagogical organisation over the ADL MOM verb set (completion, session lifecycle, competency assertion, adaptive paths, career), NOT ADL-defined numbered conformance levels. Each verb skos:closeMatch-es its counterpart in the ADL TLA profile namespace." ;
+    rdfs:label "MOM performance verb scheme" ;
+    rdfs:comment "The ${MOM_VERBS.length} Master Object Model performance verbs, grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb carries skos:closeMatch ONLY when it has a genuinely registered counterpart — the ADL core verbs at adlnet.gov/expapi/verbs and the cmi5 verbs at w3id.org/xapi/adl/verbs; the remaining verbs are coined by this project and assert no external alignment (no closeMatch to a non-existent IRI)." ;
     rdfs:isDefinedBy <${TLA_DOC}> .`;
   // skos:member relates a Collection TO its members (domain skos:Collection), so the level
   // Collection carries its verbs — NOT each verb pointing back at the level (which was inverted).
@@ -878,12 +884,14 @@ ${MOM_CONCEPTS.filter(c => c.scheme === 'verb' && c.level === lvl).map(c => `   
     lines.push(`    ler:construction "concept" ;`);
     if (c.scheme === 'verb') {
       lines.push(`    skos:inScheme tla:MOMVerbScheme ;`);
-      lines.push(`    skos:closeMatch <${momVerbCloseMatch(c.label)}> ;`);
-    } else if (c.scheme === 'activityType') {
-      lines.push(`    skos:closeMatch <http://adlnet.gov/expapi/activities/${c.label}> ;`);
-    } else {
-      lines.push(`    skos:closeMatch <http://adlnet.gov/expapi/extensions/${c.label}> ;`);
+      const cm = momVerbCloseMatch(c.label);
+      // Only emit closeMatch to a REGISTERED counterpart — a coined MOM verb asserts no alignment
+      // (never a closeMatch to a fabricated adlnet.gov IRI that 404s).
+      if (cm) lines.push(`    skos:closeMatch <${cm}> ;`);
     }
+    // activityType / extension MOM concepts are project-coined (activity_cluster, job_duty_gig,
+    // career_state, …) — they have no reliably-registered adlnet.gov counterpart, so no
+    // fabricated skos:closeMatch is asserted for them either.
     lines.push(`    rdfs:isDefinedBy <${TLA_DOC}> .`);
     return lines.join('\n');
   }).join('\n\n');
@@ -937,14 +945,36 @@ export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, u
   const doc = family === 'ler' ? LER_DOC : TLA_DOC;
   const nodes = terms.map(termJsonLd);
   if (family === 'tla') {
-    for (const c of MOM_CONCEPTS) {
+    // Faithful to the Turtle projection of the SAME URL: the MOM verb scheme + its five level
+    // Collections (with members), and each concept's inScheme / closeMatch / inLevel. Dropping
+    // these made the default application/ld+json graph materially unequal to the Turtle graph.
+    nodes.push({
+      '@id': `${TLA_NS}MOMVerbScheme`, '@type': 'skos:ConceptScheme',
+      label: 'MOM performance verb scheme', construction: 'concept', isDefinedBy: doc,
+    });
+    for (const lvl of [1, 2, 3, 4, 5]) {
       nodes.push({
+        '@id': `${TLA_NS}MOMLevel${lvl}`, '@type': 'skos:Collection',
+        label: MOM_LEVEL_LABEL[lvl]!, 'skos:inScheme': { '@id': `${TLA_NS}MOMVerbScheme` },
+        'skos:member': MOM_CONCEPTS.filter(c => c.scheme === 'verb' && c.level === lvl).map(c => ({ '@id': `${TLA_NS}${c.name}` })),
+        isDefinedBy: doc,
+      });
+    }
+    for (const c of MOM_CONCEPTS) {
+      const node: Record<string, unknown> = {
         '@id': `${TLA_NS}${c.name}`,
         '@type': 'skos:Concept',
         label: c.label,
         construction: 'concept',
         isDefinedBy: doc,
-      });
+      };
+      if (c.scheme === 'verb') {
+        node['skos:inScheme'] = { '@id': `${TLA_NS}MOMVerbScheme` };
+        node['tla:inLevel'] = { '@id': `${TLA_NS}MOMLevel${c.level}` };
+        const cm = momVerbCloseMatch(c.label);
+        if (cm) node['skos:closeMatch'] = { '@id': cm };
+      }
+      nodes.push(node);
     }
     // The published proficiency framework + levels + roll-up rule.
     nodes.push({
@@ -1016,7 +1046,7 @@ export function renderSemOntologyTurtle(family: 'ler' | 'tla'): string {
 }
 
 /** A single term as a JSON-LD resource with HATEOAS `_links`. */
-export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record<string, unknown> {
+export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record<string, unknown> | null {
   const doc = family === 'ler' ? LER_DOC : TLA_DOC;
   const ns = family === 'ler' ? LER_NS : TLA_NS;
   const t = lookupSemTerm(family, name);
@@ -1038,12 +1068,11 @@ export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record
       // The level Collection carries skos:member (Collection→member); from the verb's own node
       // we express the inverse membership via the collection reference, not a backwards skos:member.
       node['tla:inLevel'] = { '@id': `${TLA_NS}MOMLevel${mom.level}` };
-      node['skos:closeMatch'] = { '@id': momVerbCloseMatch(mom.label) };
-    } else if (mom.scheme === 'activityType') {
-      node['skos:closeMatch'] = { '@id': `http://adlnet.gov/expapi/activities/${mom.label}` };
-    } else {
-      node['skos:closeMatch'] = { '@id': `http://adlnet.gov/expapi/extensions/${mom.label}` };
+      // Only a registered counterpart gets a closeMatch (no alignment to a fabricated 404 IRI).
+      const cm = momVerbCloseMatch(mom.label);
+      if (cm) node['skos:closeMatch'] = { '@id': cm };
     }
+    // activityType / extension MOM concepts are project-coined — no fabricated adlnet.gov closeMatch.
     node._links = { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } };
     return node;
   }
@@ -1067,15 +1096,8 @@ export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record
       construction: 'minted', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
     };
   }
-  // The bridge owns these namespaces — an unknown fragment never 404s; it
-  // resolves to a minimal record pointing back at the ontology.
-  return {
-    '@context': JSONLD_CONTEXT,
-    '@id': `${ns}${name}`,
-    '@type': 'rdfs:Resource',
-    label: name,
-    comment: 'A term in this ontology with no expanded definition on record — see the ontology index.',
-    isDefinedBy: doc,
-    _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
-  };
+  // Unknown fragment → null so the route 404s. Owning the namespace is not a licence to
+  // fabricate an rdfs:Resource for any string (that returned HTTP 200 for IRIs that resolve to
+  // nothing and injected false triples, contradicting the generic /ns/<m>/term routes).
+  return null;
 }

@@ -3171,7 +3171,9 @@ const app = createVerticalBridge({
     // param (path-to-regexp version-portable).
     const sendTerm = (name: string, res: import('express').Response): void => {
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.type('application/ld+json').send(JSON.stringify(renderTermJsonLd(name), null, 2));
+      const term = renderTermJsonLd(name);
+      if (!term) { res.status(404).type('application/ld+json').json({ '@id': `${FOXXI_NS}${name}`, error: 'no such term in the Foxxi vocabulary', vocabulary: FOXXI_VOCAB_DOC }); return; }
+      res.type('application/ld+json').send(JSON.stringify(term, null, 2));
     };
     a.get('/ns/foxxi/term/:a/:b', (req, res) => sendTerm(`${req.params.a}/${req.params.b}`, res));
     a.get('/ns/foxxi/term/:a', (req, res) => sendTerm(req.params.a, res));
@@ -3257,7 +3259,9 @@ const app = createVerticalBridge({
       });
       const sendSemTerm = (name: string, res: import('express').Response): void => {
         res.setHeader('Access-Control-Allow-Origin', '*');
-        res.type('application/ld+json').send(JSON.stringify(renderSemTermJsonLd(fam, name), null, 2));
+        const term = renderSemTermJsonLd(fam, name);
+        if (!term) { res.status(404).type('application/ld+json').json({ '@id': `${bridgeBaseUrl}/ns/${fam === 'ler' ? 'ieee-ler' : 'adl-tla'}#${name}`, error: 'no such term in this ontology' }); return; }
+        res.type('application/ld+json').send(JSON.stringify(term, null, 2));
       };
       a.get(`${path}/term/:a/:b`, (req, res) => sendSemTerm(`${req.params.a}/${req.params.b}`, res));
       a.get(`${path}/term/:a`, (req, res) => sendSemTerm(req.params.a, res));
@@ -3356,7 +3360,12 @@ const app = createVerticalBridge({
         res.setHeader('Access-Control-Allow-Origin', '*');
         const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
         const instance = (body.instance && typeof body.instance === 'object') ? body.instance as Record<string, unknown> : body;
-        const r = compliance ? validateInstanceWith(liveModel(moduleName, model), instance) : validateInstance(moduleName, instance);
+        // Never 500: a pathological instance (e.g. adversarial deep nesting that overflows a
+        // validator's recursion) must degrade to a clean 422, not an uncaught error on this
+        // unauthenticated endpoint.
+        let r: ReturnType<typeof validateInstance>;
+        try { r = compliance ? validateInstanceWith(liveModel(moduleName, model), instance) : validateInstance(moduleName, instance); }
+        catch (e) { res.status(422).json({ ok: false, module: moduleName, error: 'instance could not be validated (too large or malformed)', reason: (e as Error).message }); return; }
         if (!r) { res.status(404).json({ ok: false, error: `no validator for ${moduleName}` }); return; }
         const out: Record<string, unknown> = { ok: true, module: moduleName, ontology: specOntologyIri(model), conforms: r.conforms, results: r.results, shapesIri: r.shapesIri };
         // Credential formats (OB3/CLR) are Verifiable Credentials: a SHACL pass only
@@ -3392,10 +3401,12 @@ const app = createVerticalBridge({
             proofInfo = { present: true, count: rawProof.length, verifiedProofs: capped.length, verified: !!ok, reason: ok ? undefined : (firstReason ?? 'no proof in the set verified'), ...(rawProof.length > PROOF_SET_MAX ? { note: `only the first ${PROOF_SET_MAX} proofs were verified` } : {}), ...(ok && ok.issuerDid ? { issuerDid: ok.issuerDid } : {}) };
           } else if (!proof) {
             proofInfo = { present: false, verified: false, reason: 'no Data Integrity proof embedded — an unsigned credential is not verifiable' };
-          } else if (proof.cryptosuite === 'bbs-2023') {
-            // BBS+ selective-disclosure proofs verify against a derived presentation, not
-            // the JCS suite; we surface presence without over-claiming a JCS verification.
-            proofInfo = { present: true, cryptosuite: 'bbs-2023', verified: null, reason: 'bbs-2023 selective-disclosure proof — verify via the BBS presentation verifier, not the eddsa-jcs-2022 suite' };
+          } else if (typeof proof.cryptosuite === 'string' && proof.cryptosuite.startsWith('bbs')) {
+            // BBS+ selective-disclosure proofs verify against a derived presentation, not the JCS
+            // suite; we surface presence without over-claiming a JCS verification. (Our BBS proof
+            // carries a Foxxi-namespaced cryptosuite id, NOT the W3C 'bbs-2023' — it is not
+            // vc-di-bbs conformant — so we never assert vc-di-bbs verification here.)
+            proofInfo = { present: true, cryptosuite: proof.cryptosuite, verified: null, reason: 'BBS selective-disclosure proof — verify via the BBS presentation verifier, not the eddsa-jcs-2022 suite' };
           } else {
             // Defense-in-depth: verifyDataIntegrityProof is contracted not to throw, but an
             // unauthenticated /validate endpoint must NEVER 500 (a leaked stack trace exposes
@@ -6252,6 +6263,14 @@ app.post('/agent/scorm/submit', async (req, res) => {
 app.post('/agent/mesh-event', (req, res) => {
   try {
     const b = (req.body ?? {}) as Record<string, unknown>;
+    // AUTH: a mesh event lands an attacker-controllable outcome (Asserted/success/score) into an
+    // agent's calibration-feeding lens, so it must be SIGNED — an anonymous caller could otherwise
+    // inject fabricated outcomes attributable to any named agent. Require a rev-196 signed envelope;
+    // reject an unsigned or invalid one. (mergeSignedEnvelope merges the recovered payload into b.)
+    let signer: string | null;
+    try { signer = mergeSignedEnvelope(b); }
+    catch { res.status(401).json({ ok: false, error: 'mesh-event requires a valid signed-request envelope' }); return; }
+    if (!signer) { res.status(401).json({ ok: false, error: 'mesh-event requires a signed-request envelope ({ _signature, _signed_payload })' }); return; }
     const originPod = String(b.originPod ?? b.pod ?? '');
     const describes = Array.isArray(b.describes)
       ? (b.describes as string[])
@@ -6285,8 +6304,9 @@ app.post('/agent/mesh-event', (req, res) => {
     if (!ev) { res.json({ ok: true, projected: false, reason: 'descriptor lacks a projectable envelope' }); return; }
     landMeshEvent(ev);
     res.json({ ok: true, projected: true, mode: ev.mode, agent: ev.agent, statementId: ev.statement.id, tenant: lensTenantFor(ev.agent) });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message });
+  } catch {
+    // Never leak the internal error message (it can carry stack/path detail) from this endpoint.
+    res.status(500).json({ ok: false, error: 'mesh-event projection failed' });
   }
 });
 

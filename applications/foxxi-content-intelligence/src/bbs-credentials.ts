@@ -152,14 +152,16 @@ export async function issueBbsCompletionCredential(args: {
   const ok = await bbsVerify({ signature, messages, publicKey: issuer.publicKey });
   if (!ok) throw new Error('issued BBS+ credential failed self-verify');
 
-  // Embed the BBS+ signature as an inline bbs-2023 Data Integrity proof so the
-  // credential self-carries proof.type (W3C VC / OB3-conformant) instead of the
-  // signature being detached. Still selective-disclosure-derivable from the message
-  // list (the proof is NOT part of the signed message set). proofValue is the
-  // signature as multibase base64url ('u').
+  // Embed the BBS+ signature as an inline Data Integrity proof so the credential self-carries
+  // proof.type (still selective-disclosure-derivable from the message list). The cryptosuite is
+  // deliberately NOT labelled 'bbs-2023': the W3C vc-di-bbs 'bbs-2023' base proof is a multibase
+  // CBOR of [bbsSignature, bbsHeader, publicKey, hmacKey, mandatoryPointers] over rdfc-canonicalized
+  // N-Quads. This is a raw BBS signature over a bespoke dot-path message flatten — a DIFFERENT
+  // scheme — so it carries a Foxxi-namespaced cryptosuite id to avoid FALSELY claiming vc-di-bbs
+  // conformance to a verifier. proofValue is the raw signature as multibase base64url ('u').
   (credential as Record<string, unknown>).proof = {
     type: 'DataIntegrityProof',
-    cryptosuite: 'bbs-2023',
+    cryptosuite: 'bbs-flatten-foxxi-2024',
     created: now,
     verificationMethod: `${issuerDid}#bbs`,
     proofPurpose: 'assertionMethod',
