@@ -517,19 +517,23 @@ export async function composeSpecOntology(model: OntologyModel, opts: { podUrl: 
 }
 
 /** A single class/property term as a JSON-LD resource with HATEOAS links. */
-export function renderTermJsonLd(m: OntologyModel, name: string): Record<string, unknown> {
+/** Dereference ONE term by its IRI local name. Resolves a class, a property, a vocabulary
+ *  ConceptScheme, OR a scheme-scoped SKOS Concept member — returning the term's REAL type +
+ *  labels (a member is a skos:Concept with prefLabel/inScheme/definition, not a fabricated
+ *  rdfs:Resource). Returns null for an UNKNOWN name so the caller can 404 rather than fabricate
+ *  a 200 for a term that does not exist (an IRI in this namespace that resolves to nothing). */
+export function renderTermJsonLd(m: OntologyModel, name: string): Record<string, unknown> | null {
+  const base = { '@context': { ...STD_PREFIXES, [m.module]: ns(m) }, 'rdfs:isDefinedBy': { '@id': ontologyIri(m) }, _links: { ontology: { href: ontologyIri(m) }, shapes: { href: shapesIri(m) }, spec: { href: m.spec } } };
   const cls = m.classes.find(c => c.name === name);
+  if (cls) return { ...base, '@id': `${ns(m)}${name}`, '@type': 'owl:Class', 'rdfs:label': cls.label, 'rdfs:comment': cls.comment };
   const prop = m.properties.find(p => p.name === name);
-  const t = cls ?? prop;
-  const type = cls ? 'owl:Class' : prop ? (prop.kind === 'object' ? 'owl:ObjectProperty' : 'owl:DatatypeProperty') : 'rdfs:Resource';
-  return {
-    '@context': { ...STD_PREFIXES, [m.module]: ns(m) },
-    '@id': `${ns(m)}${name}`, '@type': type,
-    'rdfs:label': t?.label ?? name,
-    'rdfs:comment': t?.comment ?? `A term in ${m.title}.`,
-    'rdfs:isDefinedBy': { '@id': ontologyIri(m) },
-    _links: { ontology: { href: ontologyIri(m) }, shapes: { href: shapesIri(m) }, spec: { href: m.spec } },
-  };
+  if (prop) return { ...base, '@id': `${ns(m)}${name}`, '@type': prop.kind === 'object' ? 'owl:ObjectProperty' : 'owl:DatatypeProperty', 'rdfs:label': prop.label, 'rdfs:comment': prop.comment };
+  for (const v of m.vocabularies ?? []) {
+    if (slugLocal(v.name) === name) return { ...base, '@id': `${ns(m)}${name}`, '@type': 'skos:ConceptScheme', 'rdfs:label': v.label ?? v.name, ...(v.comment ? { 'rdfs:comment': v.comment } : {}) };
+    const mem = v.members.find(mm => memberLocal(v.name, mm.name) === name);
+    if (mem) return { ...base, '@id': `${ns(m)}${name}`, '@type': 'skos:Concept', 'skos:prefLabel': mem.label, 'skos:inScheme': { '@id': `${ns(m)}${slugLocal(v.name)}` }, ...(mem.comment ? { 'skos:definition': mem.comment } : {}) };
+  }
+  return null;
 }
 
 /** A minimal human-readable HTML view (content negotiation: Accept: text/html). */

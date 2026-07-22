@@ -967,16 +967,22 @@ export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, u
       'tla:rollupRule': PERF_ROLLUP_RULE_TEXT, construction: 'minted', isDefinedBy: doc,
     });
   }
+  // A flat @graph (ontology node + all term nodes) so JSON-LD expansion yields real triples.
+  // The prior bare `terms` key was NOT in @context and there was no @vocab/@graph, so
+  // expansion DROPPED the whole vocabulary (the default application/ld+json projection served
+  // an empty graph). Term nodes' label/comment are context aliases and expand inside @graph.
   return {
     '@context': JSONLD_CONTEXT,
-    '@id': doc,
-    '@type': 'owl:Ontology',
-    label: family === 'ler'
-      ? 'IEEE Learning & Employment Records — emergent composable ontology'
-      : 'ADL Total Learning Architecture — emergent composable ontology',
-    comment: 'Modelled as compositions over the Interego substrate — minted terms are genuinely new; composed / view / role terms carry iep:constructedFrom triples naming the primitives they emerge from.',
-    termCount: nodes.length,
-    terms: nodes,
+    '@graph': [
+      {
+        '@id': doc, '@type': 'owl:Ontology',
+        label: family === 'ler'
+          ? 'IEEE Learning & Employment Records — emergent composable ontology'
+          : 'ADL Total Learning Architecture — emergent composable ontology',
+        comment: 'Modelled as compositions over the Interego substrate — minted terms are genuinely new; composed / view / role terms carry iep:constructedFrom triples naming the primitives they emerge from.',
+      },
+      ...nodes,
+    ],
     _links: {
       self: { href: doc },
       counterpart: { href: family === 'ler' ? TLA_DOC : LER_DOC },
@@ -986,6 +992,22 @@ export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, u
       validate: { href: `${doc}/validate`, method: 'POST' },
     },
   };
+}
+
+/** A minimal human-readable HTML view (content negotiation: Accept: text/html). */
+export function renderSemOntologyHtml(family: 'ler' | 'tla'): string {
+  const doc = family === 'ler' ? LER_DOC : TLA_DOC;
+  const title = family === 'ler' ? 'IEEE Learning & Employment Records' : 'ADL Total Learning Architecture';
+  const esch = (s: string): string => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const terms = ALL_TERMS.filter(t => t.family === family);
+  const rows = terms.map(t => `<tr><td><a href="${doc}/term/${esch(t.name)}"><code>${esch(t.name)}</code></a></td><td>${esch(t.kind)}</td><td>${esch(t.label)}</td></tr>`).join('');
+  return `<!doctype html><meta charset="utf-8"><title>${esch(title)}</title>`
+    + `<body style="font-family:system-ui;max-width:60rem;margin:2rem auto;line-height:1.5">`
+    + `<h1>${esch(title)} — emergent composable ontology</h1>`
+    + `<p>Also available as <a href="${doc}" type="text/turtle">Turtle</a>, JSON-LD (Accept: application/ld+json), `
+    + `and <a href="${doc}/shapes">SHACL shapes</a>.</p>`
+    + `<table border="1" cellpadding="6" style="border-collapse:collapse"><thead><tr><th>term</th><th>kind</th><th>label</th></tr></thead><tbody>${rows}</tbody></table>`
+    + `</body>`;
 }
 
 /** A whole ontology as Turtle. */

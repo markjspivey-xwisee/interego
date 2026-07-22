@@ -183,22 +183,28 @@ const JSONLD_CONTEXT = {
 
 /** The whole vocabulary as a JSON-LD document. */
 export function renderVocabJsonLd(): Record<string, unknown> {
+  // A flat @graph of the vocabulary node + every term node, so JSON-LD 1.1 expansion yields
+  // real triples. The previous shape put term nodes under a bare `terms` key that is NOT in
+  // @context (and there is no @vocab), so expansion silently DROPPED the entire vocabulary —
+  // a machine content-negotiating application/ld+json got an empty graph. (label/comment/
+  // isDefinedBy ARE context aliases, so the nodes expand once they live in @graph.)
   return {
     '@context': JSONLD_CONTEXT,
-    '@id': FOXXI_VOCAB_DOC,
-    '@type': 'foxxi:Vocabulary',
-    label: 'Foxxi Content Intelligence — vocabulary',
-    comment: 'The consolidated, dereferenceable vocabulary for the Foxxi Content Intelligence vertical: xAPI verbs + activity types, descriptor types, and context extensions. Every term IRI resolves here.',
-    termCount: FOXXI_TERMS.length,
-    terms: FOXXI_TERMS.map(t => ({
-      '@id': `${FOXXI_NS}${t.name}`,
-      '@type': `foxxi:${t.kind}`,
-      label: t.label,
-      comment: t.definition,
-      isDefinedBy: FOXXI_VOCAB_DOC,
-      _links: { self: { href: `${FOXXI_VOCAB_DOC}/term/${t.name}` } },
-    })),
-    'rdfs:seeAlso': COMPOSED_SPEC_ONTOLOGIES.map(o => ({ '@id': o })),
+    '@graph': [
+      {
+        '@id': FOXXI_VOCAB_DOC, '@type': 'foxxi:Vocabulary',
+        label: 'Foxxi Content Intelligence — vocabulary',
+        comment: 'The consolidated, dereferenceable vocabulary for the Foxxi Content Intelligence vertical: xAPI verbs + activity types, descriptor types, and context extensions. Every term IRI resolves here.',
+        'rdfs:seeAlso': COMPOSED_SPEC_ONTOLOGIES.map(o => ({ '@id': o })),
+      },
+      ...FOXXI_TERMS.map(t => ({
+        '@id': `${FOXXI_NS}${t.name}`,
+        '@type': `foxxi:${t.kind}`,
+        label: t.label,
+        comment: t.definition,
+        isDefinedBy: FOXXI_VOCAB_DOC,
+      })),
+    ],
     _links: {
       self: { href: FOXXI_VOCAB_DOC },
       xapiProfile: { href: FOXXI_VOCAB_DOC.replace('/ns/foxxi', '/xapi/profile') },
@@ -275,6 +281,20 @@ ${COMPOSED_SPEC_ONTOLOGIES.map(o => `    rdfs:seeAlso <${o}> ;`).join('\n')}
     rdfs:isDefinedBy <${FOXXI_VOCAB_DOC}> .`,
   ).join('\n\n');
   return `${head}\n${body}\n`;
+}
+
+/** A minimal human-readable HTML view (content negotiation: Accept: text/html). */
+export function renderVocabHtml(): string {
+  const esch = (s: string): string => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const rows = FOXXI_TERMS.map(t =>
+    `<tr><td><a href="${FOXXI_VOCAB_DOC}/term/${esch(t.name)}"><code>${esch(t.name)}</code></a></td><td>${esch(t.kind)}</td><td>${esch(t.label)}</td><td>${esch(t.definition)}</td></tr>`).join('');
+  return `<!doctype html><meta charset="utf-8"><title>Foxxi vocabulary</title>`
+    + `<body style="font-family:system-ui;max-width:60rem;margin:2rem auto;line-height:1.5">`
+    + `<h1>Foxxi Content Intelligence — vocabulary</h1>`
+    + `<p>Dereferenceable vocabulary (${FOXXI_TERMS.length} terms). Also available as `
+    + `<a href="${FOXXI_VOCAB_DOC}" type="text/turtle">Turtle</a> and JSON-LD (Accept: application/ld+json).</p>`
+    + `<table border="1" cellpadding="6" style="border-collapse:collapse"><thead><tr><th>term</th><th>kind</th><th>label</th><th>definition</th></tr></thead><tbody>${rows}</tbody></table>`
+    + `</body>`;
 }
 
 /** A single term as a JSON-LD resource, with HATEOAS `_links`. */

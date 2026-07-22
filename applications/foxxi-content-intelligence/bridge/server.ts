@@ -341,7 +341,7 @@ import {
   type ContextEnrollment, type DiscoveredDescriptor, type CallerVerification,
 } from '../src/context-chat.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
-import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd, vocabTriplesBySubject, FOXXI_VOCAB_DOC } from '../src/foxxi-vocab.js';
+import { renderVocabJsonLd, renderVocabTurtle, renderVocabHtml, renderTermJsonLd, vocabTriplesBySubject, FOXXI_VOCAB_DOC } from '../src/foxxi-vocab.js';
 import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd, ontologyIri as specOntologyIri, modelFromHolon as specModelFromHolon, type OntologyModel as SpecOntologyModel } from '../src/spec-ontology.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
@@ -353,7 +353,7 @@ import { verifyDataIntegrityProof, type VerifiableCredentialJson } from '../../_
 const CREDENTIAL_MODELS: Record<string, SpecOntologyModel> = { ob3: OB3_MODEL as SpecOntologyModel, clr: CLR_MODEL as SpecOntologyModel };
 import { COMPLIANCE_MODELS } from '../src/spec/compliance.model.js';
 import { composeSpecOntology as composeComplianceOntology } from '../src/spec-ontology.js';
-import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
+import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemOntologyHtml, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
 import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
 import { attachOauthTokenRoute } from '../src/xapi-oauth.js';
@@ -3157,8 +3157,11 @@ const app = createVerticalBridge({
       const projected = foxxiVocabHolon
         ? (readArtifact(foxxiVocabHolon.label, foxxiVocabHolon.holonUri)?.content as { turtle?: string } | undefined)?.turtle
         : undefined;
-      if ((req.headers.accept ?? '').includes('text/turtle')) {
+      const acc = req.headers.accept ?? '';
+      if (acc.includes('text/turtle')) {
         res.type('text/turtle').send(projected ?? renderVocabTurtle());
+      } else if (acc.includes('text/html')) {
+        res.type('text/html').send(renderVocabHtml());
       } else {
         res.type('application/ld+json').send(JSON.stringify(renderVocabJsonLd(), null, 2));
       }
@@ -3243,8 +3246,11 @@ const app = createVerticalBridge({
     for (const [path, fam] of [['/ns/ieee-ler', 'ler'], ['/ns/adl-tla', 'tla']] as const) {
       a.get(path, (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
-        if ((req.headers.accept ?? '').includes('text/turtle')) {
+        const acc = req.headers.accept ?? '';
+        if (acc.includes('text/turtle')) {
           res.type('text/turtle').send(renderSemOntologyTurtle(fam));
+        } else if (acc.includes('text/html')) {
+          res.type('text/html').send(renderSemOntologyHtml(fam));
         } else {
           res.type('application/ld+json').send(JSON.stringify(renderSemOntologyJsonLd(fam), null, 2));
         }
@@ -3273,8 +3279,11 @@ const app = createVerticalBridge({
       const r = validateLerInstance(readInstance(req));
       res.json({ ok: true, module: 'ieee-ler', ontology: `${bridgeBaseUrl}/ns/ieee-ler`, conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
     });
-    // ADL-TLA competency assertions share the same shape (tla:Assertion ≡ ler:CompetencyAssertion).
-    a.get('/ns/adl-tla/shapes', (_req, res) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.type('text/turtle').send(renderSpecShacl(LER_MODEL)); });
+    // ADL-TLA competency assertions share the SAME shape (tla:Assertion ≡ ler:CompetencyAssertion),
+    // so /ns/adl-tla/shapes is not a distinct document — it 302-redirects to the CANONICAL
+    // /ns/ieee-ler/shapes (whose subjects self-describe under that URL) rather than serving a copy
+    // whose own dereferenced URL never appears in its graph.
+    a.get('/ns/adl-tla/shapes', (_req, res) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.redirect(302, `${bridgeBaseUrl}/ns/ieee-ler/shapes`); });
     a.post('/ns/adl-tla/validate', (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       const r = validateLerInstance(readInstance(req));
@@ -3364,12 +3373,23 @@ const app = createVerticalBridge({
           const proof = (Array.isArray(rawProof) ? rawProof[0] : rawProof) as { cryptosuite?: string; type?: string } | undefined;
           let proofInfo: Record<string, unknown>;
           if (Array.isArray(rawProof) && rawProof.length > 0) {
-            const results = rawProof.map(p => {
-              try { return verifyDataIntegrityProof({ ...(instance as Record<string, unknown>), proof: p } as unknown as VerifiableCredentialJson); }
-              catch (e) { return { verified: false, reason: `proof verification error: ${(e as Error).message}` }; }
-            });
-            const ok = results.find(r => r.verified);
-            proofInfo = { present: true, count: rawProof.length, verified: !!ok, reason: ok ? undefined : (results[0]?.reason ?? 'no proof in the set verified'), ...(ok && 'issuerDid' in ok && ok.issuerDid ? { issuerDid: ok.issuerDid } : {}) };
+            // Cap the number of proofs actually verified: each element triggers one synchronous
+            // ed25519.verify, and this endpoint is UNAUTHENTICATED — an attacker-supplied array of
+            // thousands of proofs would be an availability DoS (CPU-bound, blocking the event loop).
+            // A real VC carries a small proof set; verify at most PROOF_SET_MAX and short-circuit on
+            // the first success so a valid credential still verifies cheaply.
+            const PROOF_SET_MAX = 8;
+            const capped = rawProof.slice(0, PROOF_SET_MAX);
+            let ok: { verified: boolean; reason?: string; issuerDid?: string } | undefined;
+            let firstReason: string | undefined;
+            for (const p of capped) {
+              let r: { verified: boolean; reason?: string; issuerDid?: string };
+              try { r = verifyDataIntegrityProof({ ...(instance as Record<string, unknown>), proof: p } as unknown as VerifiableCredentialJson); }
+              catch (e) { r = { verified: false, reason: `proof verification error: ${(e as Error).message}` }; }
+              if (firstReason === undefined) firstReason = r.reason;
+              if (r.verified) { ok = r; break; }
+            }
+            proofInfo = { present: true, count: rawProof.length, verifiedProofs: capped.length, verified: !!ok, reason: ok ? undefined : (firstReason ?? 'no proof in the set verified'), ...(rawProof.length > PROOF_SET_MAX ? { note: `only the first ${PROOF_SET_MAX} proofs were verified` } : {}), ...(ok && ok.issuerDid ? { issuerDid: ok.issuerDid } : {}) };
           } else if (!proof) {
             proofInfo = { present: false, verified: false, reason: 'no Data Integrity proof embedded — an unsigned credential is not verifiable' };
           } else if (proof.cryptosuite === 'bbs-2023') {
@@ -3392,7 +3412,10 @@ const app = createVerticalBridge({
       });
       a.get(`/ns/${moduleName}/term/:name`, (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
-        res.type('application/ld+json').send(JSON.stringify(renderSpecTermJsonLd(liveModel(moduleName, model), req.params.name), null, 2));
+        const term = renderSpecTermJsonLd(liveModel(moduleName, model), req.params.name);
+        // 404 an unknown term rather than fabricate a 200 for an IRI that resolves to nothing.
+        if (!term) { res.status(404).type('application/ld+json').json({ '@id': `${specOntologyIri(model)}#${req.params.name}`, error: 'no such term in this ontology', ontology: specOntologyIri(model) }); return; }
+        res.type('application/ld+json').send(JSON.stringify(term, null, 2));
       });
     }
 
@@ -6275,6 +6298,17 @@ const FOXXI_GUIDANCE: FoxxiGuidedEntry[] = [
   { action: 'urn:iep:action:foxxi:extend-standards', toolName: 'foxxi.extend_standards', guidance: EXTEND_STANDARDS_GUIDANCE },
 ];
 attachGuidanceServing(app, '/guidance', FOXXI_GUIDANCE);
+
+// Terminal JSON error handler: a malformed request body makes body-parser throw a SyntaxError
+// whose default Express rendering leaks the stack trace + absolute /app/node_modules server paths
+// to unauthenticated callers. Return a clean, minimal 400 (or 500) with no internals. Registered
+// LAST so it catches errors from every preceding route/middleware.
+app.use((err: unknown, _req: import('express').Request, res: import('express').Response, next: import('express').NextFunction) => {
+  if (!err) { next(); return; }
+  if (res.headersSent) { next(err); return; }
+  const status = (err as { status?: number; statusCode?: number }).status ?? (err as { statusCode?: number }).statusCode ?? ((err as { type?: string }).type === 'entity.parse.failed' || err instanceof SyntaxError ? 400 : 500);
+  res.status(status).json({ ok: false, error: status === 400 ? 'invalid request body (malformed JSON)' : 'internal error' });
+});
 
 app.listen(PORT, () => {
   console.log(`foxxi-content-intelligence bridge on http://localhost:${PORT}`);
