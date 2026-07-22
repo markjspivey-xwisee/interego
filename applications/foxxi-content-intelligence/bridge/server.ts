@@ -358,6 +358,21 @@ import type {
 
 const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
 const authoritativeSource = (process.env.FOXXI_AUTHORITATIVE_SOURCE ?? 'did:web:foxxi.example') as IRI;
+/** The bridge's own public base URL (an https IRL in prod) — used as the xAPI
+ *  Account IFI homePage (xAPI requires an IRL, not a did: URI) and to link the
+ *  published xAPI Profile as a contextActivities.category. */
+const bridgeBaseUrl = process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080';
+const xapiProfileUrl = `${bridgeBaseUrl}/xapi/profile`;
+/** MOM-conformant outcome verb for a production performance (ADL / MOM Level 1
+ *  Completion & Certification): a successful unit of work is `completed`, an
+ *  unsuccessful one `failed`. The verb is a canonical, dereferenceable ADL/MOM
+ *  verb; the DOMAIN of the work stays in object.definition.type (the transplant
+ *  test), never coined into the verb. */
+function momOutcomeVerb(success: boolean): { id: string; display: { en: string } } {
+  return success
+    ? { id: 'http://adlnet.gov/expapi/verbs/completed', display: { en: 'completed' } }
+    : { id: 'http://adlnet.gov/expapi/verbs/failed', display: { en: 'failed' } };
+}
 const adminWebId = process.env.FOXXI_ADMIN_WEB_ID ?? '';
 const adminKeySeed = process.env.FOXXI_ADMIN_KEY_SEED ?? '';
 const issuerKeySeed = process.env.FOXXI_ISSUER_KEY_SEED ?? '';
@@ -1460,11 +1475,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // The performer is the xAPI actor; the authenticated caller is the
     // attesting observer (provenance). Any authenticated caller may
     // record a performance event — the observer is on the record.
+    const outcomeVerb = momOutcomeVerb(args.success as boolean);
     const statement: Record<string, unknown> = {
       id: randomUUID(),
       version: '2.0.0',
-      actor: { objectType: 'Agent', account: { homePage: authoritativeSource, name: performerDid } },
-      verb: { id: PERFORMED_VERB, display: { en: 'performed' } },
+      actor: { objectType: 'Agent', account: { homePage: bridgeBaseUrl, name: performerDid } },
+      verb: outcomeVerb,
       object: {
         objectType: 'Activity',
         id: taskId,
@@ -1486,6 +1502,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         ...(args.duration_iso ? { duration: args.duration_iso as string } : {}),
       },
       context: {
+        // A per-performance registration + the published xAPI Profile as a
+        // category, so every statement references the profile it conforms to.
+        registration: randomUUID(),
+        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }] },
         extensions: {
           [PERF_EXT.observedBy]: ctx.webId,
           [PERF_EXT.contextKind]: 'production',
@@ -1522,7 +1542,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }
     void composeIntoSharedLattice({
       podUrl: perfPod, agentDid: performerDid, label: perfLabel,
-      terms: [performerDid, PERFORMED_VERB, perfActivityType, taskId],
+      terms: [performerDid, outcomeVerb.id, perfActivityType, taskId],
       content: withId, contentType: 'xapi:Statement',
       ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
       projections: ['rdf', 'vc', 'activity'],
@@ -3750,7 +3770,9 @@ app.post('/agent/verify-extension', async (req, res) => {
 
     // 3. Domain-typed performance with asserted success on the subject's own pod.
     const perf = statements.map(stmtOf).find(st =>
-      String(st.verb?.id ?? '') === PERFORMED_VERB &&
+      // A successful production performance now carries the MOM `completed` verb;
+      // dual-read the legacy foxxi#performed verb for pre-migration records.
+      (String(st.verb?.id ?? '') === PERFORMED_VERB || String(st.verb?.id ?? '').endsWith('/completed')) &&
       String(st.object?.definition?.type ?? '').endsWith('agp#StandardsExtension') &&
       st.result?.success === true);
     const performanceRecorded = !!perf;
@@ -4909,23 +4931,28 @@ app.post('/agent/record-performance', async (req, res) => {
       ? p.activity_type.trim()
       : `${FOXXI_NS}ProductionTask`;
     const quality = typeof p.quality === 'number' ? p.quality : undefined;
+    const outcomeVerb = momOutcomeVerb(p.success as boolean);
     const statement: Record<string, unknown> = {
       id: randomUUID(),
       version: '2.0.0',
-      actor: { objectType: 'Agent', account: { homePage: authoritativeSource, name: callerDid } },
-      verb: { id: PERFORMED_VERB, display: { en: 'performed' } },
+      actor: { objectType: 'Agent', account: { homePage: bridgeBaseUrl, name: callerDid } },
+      verb: outcomeVerb,
       object: { objectType: 'Activity', id: taskId, definition: { name: { en: taskName }, type: activityType } },
       result: {
         success: p.success,
         ...(quality !== undefined ? { score: { scaled: quality } } : {}),
         ...(typeof p.duration_iso === 'string' ? { duration: p.duration_iso } : {}),
       },
-      context: { extensions: {
-        [PERF_EXT.observedBy]: callerDid,
-        [PERF_EXT.contextKind]: 'production',
-        [PERF_EXT.actorKind]: (p.actor_kind === 'human' ? 'human' : 'agent'),
-        ...(typeof p.cost_usd === 'number' ? { [PERF_EXT.costUsd]: p.cost_usd } : {}),
-      } },
+      context: {
+        registration: randomUUID(),
+        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }] },
+        extensions: {
+          [PERF_EXT.observedBy]: callerDid,
+          [PERF_EXT.contextKind]: 'production',
+          [PERF_EXT.actorKind]: (p.actor_kind === 'human' ? 'human' : 'agent'),
+          ...(typeof p.cost_usd === 'number' ? { [PERF_EXT.costUsd]: p.cost_usd } : {}),
+        },
+      },
       timestamp: new Date().toISOString(),
     };
     const statementId = storeStatementInternal(statement, lensTenantFor(label));
@@ -4957,7 +4984,7 @@ app.post('/agent/record-performance', async (req, res) => {
     // record); cross-seat recipients are wrapped into the encrypted lattice.
     const sharedLattice = await composeIntoSharedLattice({
       podUrl: subjectPod, agentDid: callerDid, label,
-      terms: [callerDid, PERFORMED_VERB, activityType, taskId],
+      terms: [callerDid, outcomeVerb.id, activityType, taskId],
       content: { ...statement, id: statementId }, contentType: 'xapi:Statement',
       ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
       projections: ['rdf', 'vc', 'activity'],
