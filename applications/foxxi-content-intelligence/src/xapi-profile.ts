@@ -462,6 +462,68 @@ export function buildProfileDoc(spec: ProfileSpec): Record<string, unknown> {
  *  + agent-performance patterns) rather than re-mint them. */
 export const FOXXI_PROFILE_PARTS = { verbs, activityTypes, extensions, templates, patterns } as const;
 
+// ── Statement-template conformance (xAPI Profile spec §5) ───────────
+// Given a statement whose verb is a profile concept, match it against that
+// verb's declared StatementTemplate(s) and check the template's rules
+// (presence:included/excluded, any, all). This makes "profile-conformant" a
+// VERIFIED property, not just a declared one — the custom verbs the write path
+// emits are held to the rules the published profile declares for them.
+
+interface TemplateRule { location: string; presence?: string; any?: unknown[]; all?: unknown[]; none?: unknown[]; }
+
+/** Resolve an xAPI Profile rule `location` (a JSONPath subset: dot segments,
+ *  ["quoted keys"], and [*] over arrays) to the array of values it selects. */
+function resolveLocation(root: unknown, location: string): unknown[] {
+  const tokens: string[] = [];
+  const re = /\[\s*(?:"([^"]*)"|'([^']*)'|(\*))\s*\]|([^.[\]]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(location)) !== null) {
+    if (m[1] !== undefined) tokens.push(m[1]);
+    else if (m[2] !== undefined) tokens.push(m[2]);
+    else if (m[3] !== undefined) tokens.push('*');
+    else if (m[4] !== undefined) tokens.push(m[4].trim());
+  }
+  let cur: unknown[] = [root];
+  for (const tok of tokens) {
+    const next: unknown[] = [];
+    for (const c of cur) {
+      if (c === null || c === undefined || typeof c !== 'object') continue;
+      if (tok === '*') { if (Array.isArray(c)) next.push(...c); continue; }
+      if (Array.isArray(c)) { for (const item of c) { const v = (item as Record<string, unknown>)?.[tok]; if (v !== undefined) next.push(v); } }
+      else { const v = (c as Record<string, unknown>)[tok]; if (v !== undefined) next.push(v); }
+    }
+    cur = next;
+  }
+  return cur;
+}
+
+export interface ProfileTemplateResult {
+  verb: string;
+  matchedTemplates: string[];
+  violations: Array<{ template: string; location: string; message: string }>;
+}
+
+/** Validate a statement against the Foxxi Profile's statement templates for its verb. */
+export function validateAgainstProfileTemplates(stmt: Record<string, unknown>): ProfileTemplateResult {
+  const verb = (stmt.verb as { id?: string } | undefined)?.id ?? '';
+  const objType = (stmt.object as { definition?: { type?: string } } | undefined)?.definition?.type;
+  const matched = templates.filter(t =>
+    (t as { verb?: string }).verb === verb &&
+    (!(t as { objectActivityType?: string }).objectActivityType || (t as { objectActivityType?: string }).objectActivityType === objType));
+  const violations: ProfileTemplateResult['violations'] = [];
+  for (const t of matched) {
+    for (const rule of (((t as { rules?: TemplateRule[] }).rules) ?? [])) {
+      const vals = resolveLocation(stmt, rule.location);
+      const present = vals.length > 0 && vals.some(v => v !== undefined && v !== null);
+      if (rule.presence === 'included' && !present) violations.push({ template: t.id, location: rule.location, message: 'required location is absent' });
+      if (rule.presence === 'excluded' && present) violations.push({ template: t.id, location: rule.location, message: 'location must be absent' });
+      if (rule.any && present && !vals.some(v => rule.any!.includes(v))) violations.push({ template: t.id, location: rule.location, message: `no value in {${rule.any.map(String).join(', ')}}` });
+      if (rule.all && present && !vals.every(v => rule.all!.includes(v))) violations.push({ template: t.id, location: rule.location, message: `a value is not in {${rule.all.map(String).join(', ')}}` });
+    }
+  }
+  return { verb, matchedTemplates: matched.map(t => t.id), violations };
+}
+
 export function buildFoxxiProfileDoc(versionInfo: { generatedAt: string }): Record<string, unknown> {
   return buildProfileDoc({
     id: FOXXI_PROFILE_ID,
