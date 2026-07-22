@@ -133,9 +133,12 @@ const templates = [
     prefLabel: { en: 'launched' },
     definition: { en: 'cmi5/SCORM launch — start of a course OR lesson (AU) session. The cmi5 context category is the ENFORCED determining discriminator; registration is recommended (a cmi5 session carries it; a generic course-launch affordance may not).' },
     verb: `${ADL}/verbs/launched`,
-    objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`],
+    // NB: objectActivityType is a SINGLE IRI per the xAPI Profile spec — a verb that applies to
+    // BOTH a course and a lesson/AU is not pinned here; the object type is enforced by an
+    // object.definition.type rule (rules MAY carry multiple `any` values, unlike objectActivityType).
     contextCategoryActivityType: [`${CMI5}/context/categories/cmi5`],
     rules: [
+      { location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] },
       // Enforced determining property (present, not just value-checked-when-present): a
       // launched MUST carry the cmi5 context category — every launched emitter adds it.
       { location: 'context.contextActivities.category[*].id', presence: 'included', any: [`${CMI5}/context/categories/cmi5`] },
@@ -146,7 +149,7 @@ const templates = [
     id: `${FOXXI_PROFILE_ID}/templates/initialized`,
     prefLabel: { en: 'initialized' },
     verb: `${ADL}/verbs/initialized`,
-    objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`],
+    rules: [{ location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] }],
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/slide-viewed`,
@@ -166,9 +169,9 @@ const templates = [
     // objectActivityType; no slide-specific rules (those belong to slide-viewed).
     id: `${FOXXI_PROFILE_ID}/templates/experienced-activity`,
     prefLabel: { en: 'experienced (course / performance-support)' },
-    definition: { en: 'A course-catalog experience or a performance-support artifact was experienced. Determining property: verb=experienced + objectActivityType (course | performance).' },
+    definition: { en: 'A course-catalog experience or a performance-support artifact was experienced. Object type is a course OR a performance activity — enforced by an object.definition.type rule (objectActivityType stays a single IRI per spec).' },
     verb: `${ADL}/verbs/experienced`,
-    objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/performance`],
+    rules: [{ location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/performance`] }],
   },
   {
     // The Context Companion (POST /content/ask) records an `interacted` with an interaction
@@ -210,7 +213,7 @@ const templates = [
     id: `${FOXXI_PROFILE_ID}/templates/terminated`,
     prefLabel: { en: 'terminated' },
     verb: `${ADL}/verbs/terminated`,
-    objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`],
+    rules: [{ location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] }],
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/asked`,
@@ -390,9 +393,10 @@ const templates = [
   // so "declared vocabulary == enforceable vocabulary" holds.
   // cmi5-defined verbs apply to a course OR a lesson/AU (the cmi5 module emits them
   // lesson-typed; the emit_cmi5_session affordance course-typed).
-  { id: `${FOXXI_PROFILE_ID}/templates/satisfied`, prefLabel: { en: 'satisfied' }, definition: { en: 'cmi5 moveOn condition met.' }, verb: `${ADLW3}/satisfied`, objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] },
-  { id: `${FOXXI_PROFILE_ID}/templates/abandoned`, prefLabel: { en: 'abandoned' }, definition: { en: 'cmi5 session ended unexpectedly.' }, verb: `${ADLW3}/abandoned`, objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] },
-  { id: `${FOXXI_PROFILE_ID}/templates/waived`, prefLabel: { en: 'waived' }, definition: { en: 'cmi5 requirement waived by an administrator.' }, verb: `${ADLW3}/waived`, objectActivityType: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] },
+  // objectActivityType stays a single IRI per spec; the course-OR-lesson object is enforced by a rule.
+  { id: `${FOXXI_PROFILE_ID}/templates/satisfied`, prefLabel: { en: 'satisfied' }, definition: { en: 'cmi5 moveOn condition met.' }, verb: `${ADLW3}/satisfied`, rules: [{ location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] }] },
+  { id: `${FOXXI_PROFILE_ID}/templates/abandoned`, prefLabel: { en: 'abandoned' }, definition: { en: 'cmi5 session ended unexpectedly.' }, verb: `${ADLW3}/abandoned`, rules: [{ location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] }] },
+  { id: `${FOXXI_PROFILE_ID}/templates/waived`, prefLabel: { en: 'waived' }, definition: { en: 'cmi5 requirement waived by an administrator.' }, verb: `${ADLW3}/waived`, rules: [{ location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] }] },
   // authored/asserted carry an enforced discriminator so a bare statement of the verb is NOT
   // vacuously conformant: an authored statement must name what was authored (object.id); an
   // asserted statement carries the substrate descriptor it settled.

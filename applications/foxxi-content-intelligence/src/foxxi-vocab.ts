@@ -297,24 +297,14 @@ export function renderVocabHtml(): string {
     + `</body>`;
 }
 
-/** A single term as a JSON-LD resource, with HATEOAS `_links`. */
-export function renderTermJsonLd(name: string): Record<string, unknown> {
+/** A single term as a JSON-LD resource, with HATEOAS `_links`. Returns null for an UNKNOWN
+ *  fragment so the route 404s — fabricating a foxxi:Term stub for any string returned HTTP 200
+ *  for IRIs that resolve to nothing and injected false triples (an unknown term is not a real
+ *  vocabulary member; owning the namespace is not a licence to invent members on demand). */
+export function renderTermJsonLd(name: string): Record<string, unknown> | null {
   const t = lookupTerm(name);
   const id = `${FOXXI_NS}${name}`;
-  if (!t) {
-    // Unknown fragment — still acknowledged: the bridge owns this
-    // namespace, so a foxxi-namespaced IRI never 404s; it resolves to a
-    // minimal record pointing back at the vocabulary.
-    return {
-      '@context': JSONLD_CONTEXT,
-      '@id': id,
-      '@type': 'foxxi:Term',
-      label: name,
-      comment: 'A term in the Foxxi vocabulary. No expanded definition is on record — see the vocabulary index.',
-      isDefinedBy: FOXXI_VOCAB_DOC,
-      _links: { self: { href: `${FOXXI_VOCAB_DOC}/term/${name}` }, vocabulary: { href: FOXXI_VOCAB_DOC } },
-    };
-  }
+  if (!t) return null;
   return {
     '@context': JSONLD_CONTEXT,
     '@id': id,

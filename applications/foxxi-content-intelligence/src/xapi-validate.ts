@@ -101,16 +101,21 @@ class Errs {
  * value is set to null", with the sole exception of values inside an
  * `extensions` object. Walk the whole tree; skip `extensions` subtrees.
  */
-function findNulls(value: unknown, path: string, out: string[]): void {
+function findNulls(value: unknown, path: string, out: string[], depth = 0): void {
+  // Bound the recursion: a real xAPI statement is shallow, but an unauthenticated caller could
+  // POST deeply-nested JSON and blow the call stack — an uncaught RangeError becomes an HTTP 500
+  // (and a trivial DoS) on /ns/xapi/validate + /xapi/statements. Past a sane depth, stop
+  // descending (the structural shape validators already cap what a statement may contain).
+  if (depth > 64) return;
   if (value === null) { out.push(path || '(root)'); return; }
   if (Array.isArray(value)) {
-    value.forEach((v, i) => findNulls(v, `${path}[${i}]`, out));
+    value.forEach((v, i) => findNulls(v, `${path}[${i}]`, out, depth + 1));
     return;
   }
   if (isObject(value)) {
     for (const [k, v] of Object.entries(value)) {
       if (k === 'extensions') continue; // extension values MAY be null
-      findNulls(v, path ? `${path}.${k}` : k, out);
+      findNulls(v, path ? `${path}.${k}` : k, out, depth + 1);
     }
   }
 }

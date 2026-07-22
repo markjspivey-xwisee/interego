@@ -184,7 +184,14 @@ export function issueDataIntegrityProof(
     proofPurpose: 'assertionMethod' as const,
   };
 
-  const proofHash = sha256(new TextEncoder().encode(canonicalizeJcs(proofOptions)));
+  // vc-di-eddsa "Proof Configuration" (eddsa-jcs-2022): the proof config that is hashed MUST
+  // carry the SECURED DOCUMENT's @context (proofConfig.@context := unsecuredDocument.@context)
+  // before JCS canonicalization. Omitting it made a spec-conformant verifier (e.g.
+  // @digitalbazaar/eddsa-jcs-2022) reconstruct a DIFFERENT proofConfigHash and reject our
+  // credentials. The @context is bound only for the HASH — the stored proof block does not
+  // carry it (a verifier re-binds the document @context, exactly as we do below).
+  const proofConfig = { '@context': unsigned['@context'], ...proofOptions };
+  const proofHash = sha256(new TextEncoder().encode(canonicalizeJcs(proofConfig)));
   const credentialHash = sha256(new TextEncoder().encode(canonicalizeJcs(unsigned)));
 
   const dataToSign = new Uint8Array(proofHash.length + credentialHash.length);
@@ -231,6 +238,13 @@ export function verifyDataIntegrityProof(signed: VerifiableCredentialJson): Veri
   if (typeof signed.proof.proofValue !== 'string' || !signed.proof.proofValue.startsWith('z')) {
     return { verified: false, reason: 'proofValue must be a multibase base58btc string (starts with z)' };
   }
+  // BOUND the length BEFORE base58Decode (which is O(n^2)). A base58btc-encoded Ed25519
+  // signature is 64 bytes → ~88 chars (+ the 'z' multibase prefix). An unbounded proofValue
+  // let an unauthenticated caller trigger a multi-second quadratic decode on the event loop
+  // (a single-request DoS). Anything materially longer than a real signature cannot be one.
+  if (signed.proof.proofValue.length > 128) {
+    return { verified: false, reason: 'proofValue too long to be an Ed25519 signature' };
+  }
   // verificationMethod MUST be a string before we .split() it — a proof that omits it
   // (or sends a non-string) must fail closed, NOT throw (a thrown error escaping to an
   // unauthenticated /validate handler is a 500 that leaks the server stack trace).
@@ -264,10 +278,14 @@ export function verifyDataIntegrityProof(signed: VerifiableCredentialJson): Veri
     };
   }
 
-  // Reconstruct the signed data: proofHash || credentialHash
+  // Reconstruct the signed data: proofHash || credentialHash. The proof config that is hashed
+  // re-binds the secured document's @context (proofConfig.@context := document.@context) per the
+  // eddsa-jcs-2022 Proof Configuration algorithm — the stored proof block itself carries no
+  // @context, so we add it here exactly as issuance (and any conformant verifier) does.
   const { proof, ...unsignedDoc } = signed;
   const { proofValue: _v, ...proofOptions } = proof;
-  const proofHash = sha256(new TextEncoder().encode(canonicalizeJcs(proofOptions)));
+  const proofConfig = { '@context': unsignedDoc['@context'], ...proofOptions };
+  const proofHash = sha256(new TextEncoder().encode(canonicalizeJcs(proofConfig)));
   const credentialHash = sha256(new TextEncoder().encode(canonicalizeJcs(unsignedDoc)));
 
   const dataToVerify = new Uint8Array(proofHash.length + credentialHash.length);

@@ -587,17 +587,32 @@ export function attachOneRosterRoutes(app: Express, config: OrConfig): void {
     });
   });
 
-  app.get('/ims/oneroster/v1p2/users', (req, res) => {
+  // OneRoster 1.2 REST binding requires OAuth2 Bearer on ALL service endpoints. These GETs
+  // return roster PII (names, emails, employee IDs, enrollments) and were previously ANONYMOUS.
+  // Gate every read on the same operator auth the write path (/import) uses — an unauthenticated
+  // caller must not be able to enumerate a tenant's roster.
+  const rosterAuth = (req: Request, res: Response): boolean => {
+    if (!callerIsOperator(req, config)) {
+      res.status(401).json({ error: 'OneRoster access requires an authenticated operator session (OAuth2 Bearer / operator token)' });
+      return false;
+    }
+    return true;
+  };
+
+  app.get('/ims/oneroster/v1p2/users', (req: Request, res: Response) => {
+    if (!rosterAuth(req, res)) return;
     res.json({ users: paginate(tenantOrUsers(tenantOf(req)), req) });
   });
 
-  app.get('/ims/oneroster/v1p2/users/:sourcedId', (req, res) => {
+  app.get('/ims/oneroster/v1p2/users/:sourcedId', (req: Request, res: Response) => {
+    if (!rosterAuth(req, res)) return;
     const u = tenantOrUsers(tenantOf(req)).find(x => x.sourcedId === req.params.sourcedId);
     if (!u) { res.status(404).json({ error: 'user not found' }); return; }
     res.json({ user: u });
   });
 
-  app.get('/ims/oneroster/v1p2/orgs', (req, res) => {
+  app.get('/ims/oneroster/v1p2/orgs', (req: Request, res: Response) => {
+    if (!rosterAuth(req, res)) return;
     const admin = safeAdmin();
     const base: OrOrg[] = admin ? [{
       sourcedId: ORG_SOURCED_ID,
@@ -612,13 +627,15 @@ export function attachOneRosterRoutes(app: Express, config: OrConfig): void {
     res.json({ orgs: paginate(mergeById(base, importedFor(tenantOf(req)).orgs, o => o.sourcedId), req) });
   });
 
-  app.get('/ims/oneroster/v1p2/courses', (req, res) => {
+  app.get('/ims/oneroster/v1p2/courses', (req: Request, res: Response) => {
+    if (!rosterAuth(req, res)) return;
     const admin = safeAdmin();
     const base = admin ? adminCourses(admin) : [];
     res.json({ courses: paginate(mergeById(base, importedFor(tenantOf(req)).courses, c => c.sourcedId), req) });
   });
 
-  app.get('/ims/oneroster/v1p2/courses/:sourcedId', (req, res) => {
+  app.get('/ims/oneroster/v1p2/courses/:sourcedId', (req: Request, res: Response) => {
+    if (!rosterAuth(req, res)) return;
     const admin = safeAdmin();
     const base = admin ? adminCourses(admin) : [];
     const all = mergeById(base, importedFor(tenantOf(req)).courses, c => c.sourcedId);
@@ -627,13 +644,15 @@ export function attachOneRosterRoutes(app: Express, config: OrConfig): void {
     res.json({ course });
   });
 
-  app.get('/ims/oneroster/v1p2/classes', (req, res) => {
+  app.get('/ims/oneroster/v1p2/classes', (req: Request, res: Response) => {
+    if (!rosterAuth(req, res)) return;
     const admin = safeAdmin();
     const base = admin ? admin.groups.map(g => toOrClass(g, ORG_SOURCED_ID)) : [];
     res.json({ classes: paginate(mergeById(base, importedFor(tenantOf(req)).classes, c => c.sourcedId), req) });
   });
 
-  app.get('/ims/oneroster/v1p2/enrollments', (req, res) => {
+  app.get('/ims/oneroster/v1p2/enrollments', (req: Request, res: Response) => {
+    if (!rosterAuth(req, res)) return;
     const admin = safeAdmin();
     const base: OrEnrollment[] = [];
     if (admin) {
