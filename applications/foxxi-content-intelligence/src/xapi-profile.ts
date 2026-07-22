@@ -421,6 +421,14 @@ export function verbRequiresObjectType(verbIri: string): boolean {
   return ts.length > 0 && ts.every(t => (t as { objectActivityType?: unknown }).objectActivityType != null);
 }
 
+/** True when the verb IRI is a DECLARED concept of this profile. A projector that STORES a
+ *  statement into the LRS must only coin declared verbs, or the "every emitted verb is a
+ *  declared, enforceable profile concept" invariant breaks (the LRS would hold a statement its
+ *  own profile rejects). Undeclared source verbs are mapped to a structural modal verb instead. */
+export function verbIsDeclared(verbIri: string): boolean {
+  return verbs.some(v => v.id === verbIri);
+}
+
 // ── Patterns ────────────────────────────────────────────────────────
 // Pattern operators (xAPI Profile §6.3):
 //   sequence   — ordered list, each member fires in order

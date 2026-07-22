@@ -34,7 +34,7 @@
 
 import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
-import { verbRequiresObjectType } from './xapi-profile.js';
+import { verbRequiresObjectType, verbIsDeclared } from './xapi-profile.js';
 import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
 import type { TrajectoryStepInput, TrajectoryModalStatus } from './agent-trajectory.js';
 
@@ -159,12 +159,14 @@ function resolveVerb(entry: MeshDiscoverEntry, mode: ReturnType<typeof modalMode
     const id = external
       ? raw
       : `${FOXXI_NS}verbs/${raw.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase()}`;
-    // A bare source token that slugs onto a Foxxi-profile verb whose templates ALL pin a
-    // specific objectActivityType (e.g. 'scene completed' → scene-completed, which needs an
-    // activities/scene object) would be non-conformant here — the mesh object is the
-    // descriptor's OWN domain conformsTo, not that pinned type. Don't coin it; fall through to
-    // the modal-derived structural verb instead. External IRIs (out of our profile) relay as-is.
-    if (external || !verbRequiresObjectType(id)) return { id, display: { en: humanLabel(id) } };
+    // A source-supplied verb is relayed+STORED only if it is a DECLARED profile concept whose
+    // templates the mesh object (its OWN domain conformsTo) can satisfy — i.e. declared AND not
+    // pinned to a fixed objectActivityType. An UNDECLARED verb (a coined foxxi:verbs/x the profile
+    // never declared, or an arbitrary external IRI) must NOT be stored: it would break the
+    // "every stored verb is a declared, enforceable profile concept" invariant and leave the LRS
+    // holding a statement its own profile rejects. In that case we fall through to the structural
+    // modal verb (completed/failed/intended/considered) — the honest, in-profile projection.
+    if (verbIsDeclared(id) && !verbRequiresObjectType(id)) return { id, display: { en: humanLabel(id) } };
   }
   switch (mode.stepVerb) {
     case 'intended':   return { id: INTENDED_VERB, display: { en: 'intended' } };

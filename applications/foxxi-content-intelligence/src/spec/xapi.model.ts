@@ -8,13 +8,20 @@
  */
 import type { OntologyModel } from '../spec-ontology.js';
 
-const UUID = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+// Case-insensitive hex (RFC 4122/9562) — this is the pattern the StatementShape `id` constraint
+// uses under the case-SENSITIVE SHACL engine, so the char class must carry both cases or a
+// spec-valid uppercase-hex UUID is false-rejected while the LRS ingest ('i' flag) accepts it.
+const UUID = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
 /** Canonical xAPI vocabularies + lexical patterns — the SINGLE SOURCE the runtime
  *  LRS validator (xapi-validate.ts) consumes AND the published SHACL shapes render
  *  from, so what gates a statement on write is the same thing the ontology declares.
  *  (UUID matched case-insensitively per the LRS's accepted behavior.) */
 export const XAPI_INTERACTION_TYPES = ['true-false', 'choice', 'fill-in', 'long-fill-in', 'matching', 'performance', 'sequencing', 'likert', 'numeric', 'other'] as const;
-export const XAPI_PATTERNS = { uuid: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', version: '^(1\\.0(\\.\\d+)?|2\\.0(\\.\\d+)?)$' } as const;
+// UUID hex is case-INSENSITIVE per RFC 4122/9562 — the char class carries BOTH cases so the
+// pattern matches identically whether an engine applies the 'i' flag (the LRS ingest validator)
+// or not (the SHACL `new RegExp(pattern)` engine). Previously `[0-9a-f]` + an 'i'-only-on-ingest
+// mismatch made the SHACL oracle false-reject a spec-valid uppercase-hex UUID the LRS accepted.
+export const XAPI_PATTERNS = { uuid: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', version: '^(1\\.0(\\.\\d+)?|2\\.0(\\.\\d+)?)$' } as const;
 const VERSION = '^(1\\.0(\\.\\d+)?|2\\.0(\\.\\d+)?)$';
 // RFC 3339 dateTime (T/t/space separator; optional fractional seconds; offset or Z).
 const TIMESTAMP = '^\\d{4}-\\d{2}-\\d{2}[Tt ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:\\d{2})?$';
