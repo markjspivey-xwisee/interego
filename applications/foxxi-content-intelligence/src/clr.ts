@@ -24,7 +24,7 @@ import {
   discover,
   fetchGraphContent,
 } from '@interego/solid';
-import { assertSafeFetchTarget } from './ssrf-guard.js';
+import { assertSafeFetchTarget, safeFetch } from './ssrf-guard.js';
 import type {
   ManifestEntry,
 } from '@interego/core';
@@ -234,8 +234,7 @@ async function fetchCredential(entry: ManifestEntry, config: FetchClrConfig): Pr
   const fetchFn = (config.fetch ?? globalThis.fetch) as typeof globalThis.fetch;
   // Second-hop SSRF guard: descriptorUrl (from a discovered manifest) + hydra:target (from
   // the fetched descriptor) are attacker-influenceable pod content.
-  await assertSafeFetchTarget(entry.descriptorUrl);
-  const descRes = await fetchFn(entry.descriptorUrl, { headers: { Accept: 'text/turtle' } });
+  const descRes = await safeFetch(entry.descriptorUrl, { headers: { Accept: 'text/turtle' } }, fetchFn as never); // 2nd-hop SSRF + redirect-safe
   if (!descRes.ok) {
     throw new Error(`fetch descriptor ${entry.descriptorUrl}: ${descRes.status} ${descRes.statusText}`);
   }

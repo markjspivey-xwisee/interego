@@ -1,6 +1,6 @@
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { iesc } from './turtle-escape.js';
-import { assertSafeFetchTarget } from "./ssrf-guard.js";
+import { assertSafeFetchTarget, safeFetch } from "./ssrf-guard.js";
 import { competencyIri, competencyIdOf, sameCompetency } from './competency-identity.js';
 
 /** Canonical competency key across schemes (urn↔URL) AND across id forms (a bare competency
@@ -534,8 +534,7 @@ export async function buildManagerTeamView(args: {
 
 async function fetchVcFromEntry(descriptorUrl: string, fetchFn: FetchFn): Promise<Record<string, unknown> | null> {
   try {
-    await assertSafeFetchTarget(descriptorUrl); // 2nd-hop SSRF
-    const r = await fetchFn(descriptorUrl, { headers: { Accept: 'text/turtle' } });
+    const r = await safeFetch(descriptorUrl, { headers: { Accept: 'text/turtle' } }, fetchFn as never); // 2nd-hop SSRF + redirect-safe
     if (!r.ok) return null;
     const ttl = await r.text();
     const m = ttl.match(/hydra:target\s+<([^>]+)>/);
@@ -702,19 +701,21 @@ export async function backupTenantPod(args: {
   fetch?: FetchFn;
 }): Promise<TenantBackup> {
   const fetchFn = args.fetch ?? globalThis.fetch;
+  // Guard the pod host BEFORE any fetch (manifest included) — parity with the
+  // sibling readers (round-26 defense-in-depth; podUrl is admin-pinned here).
+  await assertSafeFetchTarget(args.podUrl); // SSRF: caller pod fetched via discover()
   // Pull manifest first for record-keeping.
   let manifestText = '';
   try {
-    const mr = await fetchFn(`${args.podUrl.replace(/\/$/, '')}/.well-known/context-graphs`);
+    const mr = await safeFetch(`${args.podUrl.replace(/\/$/, '')}/.well-known/context-graphs`, {}, fetchFn as never);
     if (mr.ok) manifestText = await mr.text();
   } catch { /* */ }
 
-  await assertSafeFetchTarget(args.podUrl); // SSRF: caller pod fetched via discover()
   const entries = await discover(args.podUrl, undefined, args.fetch ? { fetch: args.fetch as never } : undefined);
   const backed: TenantBackupEntry[] = [];
   for (const e of entries) {
     try {
-      const dr = await fetchFn(e.descriptorUrl, { headers: { Accept: 'text/turtle' } });
+      const dr = await safeFetch(e.descriptorUrl, { headers: { Accept: 'text/turtle' } }, fetchFn as never); // 2nd-hop SSRF + redirect-safe
       const dt = dr.ok ? await dr.text() : '';
       let graphContent: string | undefined;
       let encrypted = false;

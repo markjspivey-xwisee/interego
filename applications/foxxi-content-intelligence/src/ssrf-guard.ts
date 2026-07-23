@@ -133,3 +133,39 @@ export function safePublicUrlOrUndefined(rawUrl: string): string | undefined {
   if (isPrivateHostname(u.hostname.toLowerCase())) return undefined;
   return rawUrl;
 }
+
+type MinimalFetch = (url: string, init?: { headers?: Record<string, string>; method?: string; redirect?: 'manual' | 'follow' | 'error' }) => Promise<{
+  ok: boolean; status: number; statusText: string; headers: { get(n: string): string | null }; text(): Promise<string>; json(): Promise<unknown>;
+}>;
+
+/**
+ * SSRF-safe fetch. assertSafeFetchTarget alone validates only the INITIAL URL —
+ * the default fetch then transparently follows a 3xx redirect to a NEW host,
+ * which is never re-validated, so a public pod that passes the guard can 302 to
+ * an internal address and the bridge follows it (round-26 redirect-bypass). This
+ * wrapper guards EVERY hop: it disables automatic redirects (redirect:'manual')
+ * and re-runs assertSafeFetchTarget on each Location before following, bounded to
+ * `maxRedirects`. Use it wherever a caller-influenced URL is fetched.
+ */
+export async function safeFetch(
+  url: string,
+  init: { headers?: Record<string, string>; method?: string } = {},
+  fetchFn?: MinimalFetch,
+  maxRedirects = 3,
+): Promise<Awaited<ReturnType<MinimalFetch>>> {
+  const doFetch = (fetchFn ?? (globalThis.fetch as unknown as MinimalFetch));
+  let target = url;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    await assertSafeFetchTarget(target);
+    const resp = await doFetch(target, { ...init, redirect: 'manual' });
+    if (resp.status >= 300 && resp.status < 400) {
+      const loc = resp.headers.get('location');
+      if (!loc) return resp;
+      try { target = new URL(loc, target).toString(); }
+      catch { throw new Error('redirect Location is not a valid URL (SSRF guard)'); }
+      continue;
+    }
+    return resp;
+  }
+  throw new Error('too many redirects (SSRF guard)');
+}

@@ -321,6 +321,9 @@ interface AgsLineItem {
   platformLineItemUrl?: string;
 }
 const lineItemStore = new Map<TenantId, Map<string, AgsLineItem>>();
+/** Per-tenant line-item cap — bounds the debounced pod snapshot so a runaway
+ *  writer cannot grow the persisted store without limit (round-26 DoS guard). */
+const AGS_LINEITEM_MAX = 5000;
 function lineItemsFor(t: TenantId): Map<string, AgsLineItem> {
   let m = lineItemStore.get(t);
   if (!m) { m = new Map(); lineItemStore.set(t, m); }
@@ -779,15 +782,22 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
 
   app.post('/lti/ags/lineitems', (req, res) => { void (async () => {
-    // AGS line-item CRUD: resolve the tenant via trustedTenantOf (NOT the raw caller-supplied
-    // ?tenant_pod_url) — an unauthenticated caller is pinned to the default tenant and can never
-    // read/write ANOTHER tenant's line items (matching the NRPS producer's auth pinning).
+    // AGS line-item WRITE: operator-only. trustedTenantOf pins an anonymous caller
+    // to the default tenant (no cross-tenant selection) but does NOT require the
+    // caller be authenticated to WRITE — so an anonymous caller could create/relabel/
+    // DELETE the default tenant's gradebook + drive the debounced pod snapshot as a
+    // storage DoS (round-26). Gate every mutation on callerIsOperator (like NRPS).
+    if (!callerIsOperator(req, config)) { res.status(401).json({ error: 'AGS line-item writes require operator authorization' }); return; }
     const tenant = trustedTenantOf(req, config);
     const b = (req.body ?? {}) as Record<string, unknown>;
     const label = typeof b.label === 'string' ? b.label : '';
     const scoreMaximum = Number(b.scoreMaximum);
     if (!label || !Number.isFinite(scoreMaximum) || scoreMaximum <= 0) {
       res.status(400).json({ error: 'label (non-empty string) and scoreMaximum (positive number) are required' });
+      return;
+    }
+    if (lineItemsFor(tenant).size >= AGS_LINEITEM_MAX) {
+      res.status(429).json({ error: `line-item store full (${AGS_LINEITEM_MAX}) for this tenant` });
       return;
     }
     const li: AgsLineItem = {
@@ -842,9 +852,10 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   });
 
   app.put('/lti/ags/lineitems/:id', (req, res) => {
-    // AGS line-item CRUD: resolve the tenant via trustedTenantOf (NOT the raw caller-supplied
-    // ?tenant_pod_url) — an unauthenticated caller is pinned to the default tenant and can never
-    // read/write ANOTHER tenant's line items (matching the NRPS producer's auth pinning).
+    // AGS line-item WRITE: operator-only (see POST). trustedTenantOf pins the tenant
+    // but does not authenticate a writer — an anon relabel/rescale of the default
+    // gradebook was possible (round-26).
+    if (!callerIsOperator(req, config)) { res.status(401).json({ error: 'AGS line-item writes require operator authorization' }); return; }
     const tenant = trustedTenantOf(req, config);
     const li = lineItemsFor(tenant).get(String(req.params.id ?? ''));
     if (!li) { res.status(404).json({ error: 'line item not found' }); return; }
@@ -861,9 +872,9 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   });
 
   app.delete('/lti/ags/lineitems/:id', (req, res) => {
-    // AGS line-item CRUD: resolve the tenant via trustedTenantOf (NOT the raw caller-supplied
-    // ?tenant_pod_url) — an unauthenticated caller is pinned to the default tenant and can never
-    // read/write ANOTHER tenant's line items (matching the NRPS producer's auth pinning).
+    // AGS line-item WRITE (DELETE): operator-only (see POST). An anon DELETE of the
+    // default gradebook's columns was possible (round-26).
+    if (!callerIsOperator(req, config)) { res.status(401).json({ error: 'AGS line-item writes require operator authorization' }); return; }
     const tenant = trustedTenantOf(req, config);
     const existed = lineItemsFor(tenant).delete(String(req.params.id ?? ''));
     if (!existed) { res.status(404).json({ error: 'line item not found' }); return; }
