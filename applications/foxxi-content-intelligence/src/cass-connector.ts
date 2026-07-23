@@ -22,6 +22,7 @@
  */
 
 import type { CaseDocument } from './case-exporter.js';
+import { safeFetch } from './ssrf-guard.js';
 
 export interface CassConfig {
   /** CaSS server base URL (e.g. https://cass.example.org). */
@@ -42,10 +43,12 @@ export async function pushFrameworkToCass(framework: CaseDocument, config: CassC
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (config.bearer) headers['Authorization'] = `Bearer ${config.bearer}`;
   try {
-    const r = await fetchFn(`${config.endpoint.replace(/\/$/, '')}/api/framework`, {
+    // safeFetch guards the caller-supplied CaSS endpoint (no allowlist) + refuses a
+    // redirect on this POST (round-28 SSRF hardening; admin-gated but still caller-URL).
+    const r = await safeFetch(`${config.endpoint.replace(/\/$/, '')}/api/framework`, {
       method: 'POST', headers,
       body: JSON.stringify(framework),
-    });
+    }, fetchFn as never);
     if (!r.ok) return { status: 'failed', error: `CaSS POST /api/framework: ${r.status} ${r.statusText}` };
     const body = await r.json().catch(() => ({})) as { id?: string; uri?: string };
     return { status: 'created', frameworkUrl: body.uri ?? body.id ?? `${config.endpoint}/api/framework/${framework.identifier}` };
@@ -82,10 +85,10 @@ export async function pushAssertionToCass(assertion: CassAssertion, config: Cass
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (config.bearer) headers['Authorization'] = `Bearer ${config.bearer}`;
   try {
-    const r = await fetchFn(`${config.endpoint.replace(/\/$/, '')}/api/assertion`, {
+    const r = await safeFetch(`${config.endpoint.replace(/\/$/, '')}/api/assertion`, {
       method: 'POST', headers,
       body: JSON.stringify(assertion),
-    });
+    }, fetchFn as never);
     if (!r.ok) return { status: 'failed', error: `CaSS POST /api/assertion: ${r.status} ${r.statusText}` };
     const body = await r.json().catch(() => ({})) as { id?: string; uri?: string };
     return { status: 'asserted', assertionUrl: body.uri ?? body.id };

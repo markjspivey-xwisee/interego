@@ -39,7 +39,7 @@ import type {
   EncryptionKeyPair,
 } from '@interego/core';
 import { TENANT_TYPES, deriveAdminKeyPair } from './tenant-publisher.js';
-import { assertSafeFetchTarget } from './ssrf-guard.js';
+import { assertSafeFetchTarget, safeFetch, guardedFetchFn } from './ssrf-guard.js';
 
 // ── Cache ─────────────────────────────────────────────────────
 
@@ -123,7 +123,9 @@ async function findEntry(
   // self-sovereign paths (autoFetchAdmin/autoFetchCourse/register/publish/ingest), so
   // guard it here once rather than at every caller. Blocks internal-host discover().
   await assertSafeFetchTarget(config.podUrl);
-  const entries = await discover(config.podUrl, undefined, config.fetch ? { fetch: config.fetch as never } : undefined);
+  // guardedFetchFn re-guards the manifest hop AND any redirect (discover follows 3xx
+  // otherwise → a public pod can 302 its manifest to an internal host).
+  const entries = await discover(config.podUrl, undefined, { fetch: guardedFetchFn(config.fetch ?? globalThis.fetch) as never });
   // Match by the type's LOCAL NAME (the `#…` suffix), not the full IRI,
   // so the tenant directory still resolves after a namespace migration —
   // pod data published under a legacy foxxi namespace stays readable.
@@ -154,11 +156,9 @@ async function fetchBundleJson(
   // SECOND-ORDER SSRF guard: descriptorUrl comes from the FETCHED manifest and graphUrl
   // from the FETCHED descriptor's hydra:target — both are attacker-influenceable pod
   // content, so a malicious pod could redirect these hops at an internal host even when
-  // the top-level podUrl was public. Guard each hop before the fetch.
-  await assertSafeFetchTarget(entry.descriptorUrl);
-  const descRes = await fetchFn(entry.descriptorUrl, {
-    headers: { 'Accept': 'text/turtle' },
-  });
+  // the top-level podUrl was public. safeFetch / guardedFetchFn re-guard EVERY hop
+  // (incl. redirects), not just the initial URL (round-28).
+  const descRes = await safeFetch(entry.descriptorUrl, { headers: { 'Accept': 'text/turtle' } }, fetchFn as never);
   if (!descRes.ok) {
     throw new Error(`Failed to fetch descriptor ${entry.descriptorUrl}: ${descRes.status} ${descRes.statusText}`);
   }
@@ -167,11 +167,10 @@ async function fetchBundleJson(
   if (!graphUrl) {
     throw new Error(`Descriptor ${entry.descriptorUrl} has no hydra:target / dcat:accessURL on its iep:affordance block`);
   }
-  await assertSafeFetchTarget(graphUrl);
 
   const adminKeyPair = resolveAdminKeyPair(config);
   const { content, encrypted } = await fetchGraphContent(graphUrl, {
-    ...(config.fetch ? { fetch: config.fetch as never } : {}),
+    fetch: guardedFetchFn(fetchFn) as never,
     ...(adminKeyPair ? { recipientKeyPair: adminKeyPair } : {}),
   });
   if (!content && encrypted) {
@@ -360,7 +359,7 @@ export async function fetchCoursePackage(
   // entries — pick the one whose graph IRI matches this courseId. The
   // graph IRI follows the slug convention `course:<courseId>`.
   await assertSafeFetchTarget(config.podUrl); // caller-supplied pod (autoFetchCourse et al.)
-  const entries = await discover(config.podUrl, undefined, config.fetch ? { fetch: config.fetch as never } : undefined);
+  const entries = await discover(config.podUrl, undefined, { fetch: guardedFetchFn(config.fetch ?? globalThis.fetch) as never }); // re-guard manifest hop + redirects
   const matching = entries.filter(e =>
     // Local-name match — resilient to a namespace migration (see findEntry).
     (e.conformsTo ?? []).some(c => c.split(/[#/]/).pop() === 'CoursePackageBundle')

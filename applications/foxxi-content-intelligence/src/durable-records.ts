@@ -19,7 +19,7 @@
  * double-count, no bogus competency keyed off the envelope type).
  */
 import { publish, discover, fetchGraphContent, resolveStorageForShape } from '@interego/solid';
-import { assertSafeFetchTarget, safeFetch } from "./ssrf-guard.js";
+import { assertSafeFetchTarget, safeFetch, guardedFetchFn } from "./ssrf-guard.js";
 import type { ContextDescriptorData, IRI, ManifestEntry, FetchFn } from '@interego/core';
 // Foundation-first (additive): also persist an encrypted canonical PGSL holon +
 // a projected descriptor alongside the authoritative RDF record, so agents get
@@ -197,7 +197,7 @@ export async function readDurableRecordedStatements(args: ReadRecordsArgs): Prom
     entries = (await discover(
       args.podUrl,
       undefined,
-      args.fetch ? { fetch: args.fetch as never } : undefined,
+      { fetch: guardedFetchFn(args.fetch) as never }, // re-guard manifest hop + redirects
     )) as ManifestEntry[];
   } catch {
     return [];
@@ -217,10 +217,9 @@ export async function readDurableRecordedStatements(args: ReadRecordsArgs): Prom
       const gm = descTurtle.match(/hydra:target\s+<([^>]+)>/) ?? descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
       const graphUrl = gm?.[1];
       if (!graphUrl) continue;
-      await assertSafeFetchTarget(graphUrl); // 2nd-hop SSRF
       const { content } = await fetchGraphContent(
         graphUrl,
-        args.fetch ? { fetch: args.fetch as never } : undefined,
+        { fetch: guardedFetchFn(args.fetch) as never }, // graph hop: re-guard + redirect-safe
       );
       if (!content) continue;
       const m = content.match(/<[^>]*#statementJson>\s+"([A-Za-z0-9+/=\s]+)"/);
@@ -389,7 +388,7 @@ async function discoverCourseEntries(podUrl: string, fetchFn?: FetchFn): Promise
   let entries: ManifestEntry[];
   try {
     await assertSafeFetchTarget(podUrl); // 1st-hop SSRF: caller-supplied pod fetched via discover() (reachable unauth via analyze-authored → loadScormCourse)
-    entries = (await discover(podUrl, undefined, fetchFn ? { fetch: fetchFn as never } : undefined)) as ManifestEntry[];
+    entries = (await discover(podUrl, undefined, { fetch: guardedFetchFn(fetchFn) as never })) as ManifestEntry[]; // re-guard manifest hop + redirects
   } catch {
     return [];
   }
@@ -412,8 +411,7 @@ async function decodeCourseEntry(
     const gm = descTurtle.match(/hydra:target\s+<([^>]+)>/) ?? descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
     const graphUrl = gm?.[1];
     if (!graphUrl) return null;
-    await assertSafeFetchTarget(graphUrl); // 3rd-hop SSRF
-    const { content } = await fetchGraphContent(graphUrl, fetchFn ? { fetch: fetchFn as never } : undefined);
+    const { content } = await fetchGraphContent(graphUrl, { fetch: guardedFetchFn(fetchFn) as never }); // graph hop: re-guard + redirect-safe
     if (!content) return null;
     const m = content.match(/<[^>]*#courseJson>\s+"([A-Za-z0-9+/=\s]+)"/);
     if (!m) return null;

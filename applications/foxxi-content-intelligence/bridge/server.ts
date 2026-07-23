@@ -2198,7 +2198,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       return { error: 'forbidden — non-admins can only export their own CLR' };
     }
     const envelope = await exportClr({
-      learnerPodUrl: safePublicUrlOrUndefined((args.learner_pod_url as string) || '') ?? tenantPodUrl,
+      // Bind the pod to the LEARNER's own derived pod (origin + segment). Was
+      // safePublicUrlOrUndefined(learner_pod_url) verbatim — no DNS, no single-segment
+      // collapse, no identity binding — so a signed caller made the bridge discover()
+      // an ARBITRARY public URL (SSRF primitive + the redirect-bypass trigger). selfBoundPod
+      // matches the export_clr twin (round-28).
+      learnerPodUrl: selfBoundPod(requestedLearnerDid, (args.learner_pod_url as string) || undefined),
       learnerDid: requestedLearnerDid,
       ...(issuerKeySeed ? { issuerSeed: issuerKeySeed } : {}),
     });
@@ -4197,6 +4202,23 @@ app.post('/agent/issue-credential', async (req, res) => {
     // honored verbatim and decoupled from recipient_did, so any wallet could plant a signed
     // credential descriptor + graph + encrypted holon into an arbitrary victim's pod.
     const recipientPod = selfBoundPod(recipientDid, typeof p.recipient_pod_url === 'string' ? p.recipient_pod_url : undefined);
+    // AUTHZ (round-28): issuing writes a descriptor + graph + encrypted holon into the
+    // RECIPIENT's pod with the master pod-write secret (recipientPod is on the tenant
+    // origin). Binding the write to recipient_did — not the caller — let ANY signed
+    // wallet plant an unsolicited "issued" credential into an arbitrary agent's pod.
+    // Allow only self-issuance (recipient resolves to the caller's own pod) OR an
+    // operator (admin / learning-engineer). Cross-agent credentialing otherwise goes
+    // through the admin issue_completion_credential tool.
+    const callerOwnPod = resolveSubjectPodUrl(callerDid);
+    const selfIssue = actorForPod(recipientPod, MESH_ACTOR_LABELS) === actorForPod(callerOwnPod, MESH_ACTOR_LABELS)
+      && (() => { try { return new URL(recipientPod).origin === new URL(callerOwnPod).origin; } catch { return false; } })();
+    if (!selfIssue) {
+      const authz = await resolveCaller(req.body as Record<string, unknown>);
+      if ('error' in authz || !isAdminEquivalent(authz.ctx.role)) {
+        res.status(403).json({ error: 'cross-agent credential issuance requires an operator (admin / learning-engineer) — you may issue a credential only into your OWN pod. To credential another agent, use the admin issue_completion_credential tool.' });
+        return;
+      }
+    }
     // Per-creator issuer identity: a stable did:key the platform custodies on the
     // creator's behalf, derived deterministically from their DID.
     const creatorIssuerSeed = `${issuerKeySeed}:creator:${callerDid}`;

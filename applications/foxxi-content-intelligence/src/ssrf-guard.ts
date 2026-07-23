@@ -134,9 +134,8 @@ export function safePublicUrlOrUndefined(rawUrl: string): string | undefined {
   return rawUrl;
 }
 
-type MinimalFetch = (url: string, init?: { headers?: Record<string, string>; method?: string; redirect?: 'manual' | 'follow' | 'error' }) => Promise<{
-  ok: boolean; status: number; statusText: string; headers: { get(n: string): string | null }; text(): Promise<string>; json(): Promise<unknown>;
-}>;
+type FetchResp = { ok: boolean; status: number; statusText: string; headers: { get(n: string): string | null }; text(): Promise<string>; json(): Promise<unknown> };
+type MinimalFetch = (url: string, init?: Record<string, unknown>) => Promise<FetchResp>;
 
 /**
  * SSRF-safe fetch. assertSafeFetchTarget alone validates only the INITIAL URL —
@@ -145,15 +144,19 @@ type MinimalFetch = (url: string, init?: { headers?: Record<string, string>; met
  * an internal address and the bridge follows it (round-26 redirect-bypass). This
  * wrapper guards EVERY hop: it disables automatic redirects (redirect:'manual')
  * and re-runs assertSafeFetchTarget on each Location before following, bounded to
- * `maxRedirects`. Use it wherever a caller-influenced URL is fetched.
+ * `maxRedirects`. A redirect on a NON-GET request is refused outright (never
+ * replay a mutating body/credentials to a new host). Use it wherever a
+ * caller-influenced URL is fetched. Any extra init fields (body, etc.) pass
+ * through unchanged.
  */
 export async function safeFetch(
   url: string,
-  init: { headers?: Record<string, string>; method?: string } = {},
+  init: Record<string, unknown> = {},
   fetchFn?: MinimalFetch,
   maxRedirects = 3,
-): Promise<Awaited<ReturnType<MinimalFetch>>> {
+): Promise<FetchResp> {
   const doFetch = (fetchFn ?? (globalThis.fetch as unknown as MinimalFetch));
+  const method = String((init.method as string) ?? 'GET').toUpperCase();
   let target = url;
   for (let hop = 0; hop <= maxRedirects; hop++) {
     await assertSafeFetchTarget(target);
@@ -161,6 +164,7 @@ export async function safeFetch(
     if (resp.status >= 300 && resp.status < 400) {
       const loc = resp.headers.get('location');
       if (!loc) return resp;
+      if (method !== 'GET' && method !== 'HEAD') throw new Error(`refusing to follow a redirect on a ${method} request (SSRF guard)`);
       try { target = new URL(loc, target).toString(); }
       catch { throw new Error('redirect Location is not a valid URL (SSRF guard)'); }
       continue;
@@ -168,4 +172,18 @@ export async function safeFetch(
     return resp;
   }
   throw new Error('too many redirects (SSRF guard)');
+}
+
+/**
+ * Wrap a base fetch into an SSRF-safe FetchFn — every call re-guards the target
+ * and every redirect hop (via safeFetch). Pass the result as the `fetch` option
+ * to substrate readers (discover / fetchGraphContent) so the MANIFEST hop and the
+ * GRAPH hop are guarded too, not just the descriptor hop (round-28: the round-27
+ * safeFetch sweep covered only the descriptor fetch — the choke point is the
+ * fetchFn handed to the walker). The base fetch is only invoked on a
+ * target already proven public, so this never blocks a legitimate public pod.
+ */
+export function guardedFetchFn<F>(base?: F): F {
+  const b = (base as unknown as MinimalFetch) ?? (globalThis.fetch as unknown as MinimalFetch);
+  return (((url: string, init?: Record<string, unknown>) => safeFetch(url, init ?? {}, b)) as unknown) as F;
 }
