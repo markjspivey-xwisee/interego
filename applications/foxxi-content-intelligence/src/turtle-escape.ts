@@ -29,3 +29,13 @@ export function tesc(s: string): string {
 export function iesc(s: string): string {
   return String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
 }
+
+/** True iff `s` is a syntactically safe ABSOLUTE IRI — a scheme (did:/urn:/https:
+ *  …) followed only by characters legal in an IRIREF (no angle brackets, quotes,
+ *  whitespace or control chars). Use to VALIDATE-and-reject a caller-supplied
+ *  identifier at a boundary where it will be serialized into `<...>` positions by
+ *  a downstream serializer we don't control (e.g. the descriptor/facet writer) —
+ *  escaping is not always possible there, so reject a malformed IRI up front. */
+export function isSafeIri(s: unknown): s is string {
+  return typeof s === 'string' && s.length <= 2048 && /^[a-z][a-z0-9+.-]*:[^\x00-\x20<>"{}|^`\\]+$/i.test(s);
+}

@@ -107,7 +107,10 @@ const LOM_NS = 'http://ltsc.ieee.org/xsd/LOMv1.0#';
  */
 export function lomToTurtle(subject: string, lom: LomMetadata): string {
   const lines: string[] = [];
-  const sub = `<${subject}>`;
+  // iesc the subject IRI — this builder parses a caller-uploaded LOM manifest; a crafted
+  // subject IRI must not break out of <...>. (Currently unwired, but hardened so a future
+  // handler wiring doesn't reintroduce the injection class.)
+  const sub = `<${iesc(subject)}>`;
 
   // §1 General
   if (lom.general) {

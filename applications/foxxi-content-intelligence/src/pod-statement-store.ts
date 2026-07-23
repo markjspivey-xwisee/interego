@@ -44,6 +44,7 @@ import type {
 } from '@interego/pgsl';
 import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { tesc, iesc } from './turtle-escape.js';
 import {
   type StatementStore, type StoredStatement, type QueryFilter, type QueryResult,
   ConflictError, matchesFilter, paginate,
@@ -145,7 +146,7 @@ function buildStatementGraph(args: {
   authoritativeSource: IRI;
 }): string {
   const { rec, payloadAtom, authoritativeSource } = args;
-  const graphIri = `urn:foxxi:statement:${rec.id}`;
+  const graphIri = iesc(`urn:foxxi:statement:${rec.id}`);
   const json = JSON.stringify(rec.statement);
   const b64 = Buffer.from(json, 'utf8').toString('base64');
   const hash = sha256Hex(json);
@@ -164,15 +165,17 @@ function buildStatementGraph(args: {
   lines.push(`  a <${FOXXI_STATEMENT_TYPE}>, <${TINCAN_STATEMENT_TYPE}> ;`);
   lines.push(`  prov:wasAttributedTo <${authoritativeSource}> ;`);
   lines.push(`  pgsl:hasAtom <${payloadAtom}> ;`);
-  lines.push(`  dct:identifier "xapi-statement:${rec.id}" ;`);
-  lines.push(`  foxxi:storedAt "${rec.stored}"^^xsd:dateTime ;`);
-  if (verbId) lines.push(`  foxxi:xapiVerb <${verbId}> ;`);
-  if (objectId) lines.push(`  foxxi:xapiObject <${objectId}> ;`);
-  if (registration) lines.push(`  foxxi:registration "${registration}" ;`);
+  lines.push(`  dct:identifier "xapi-statement:${tesc(rec.id)}" ;`);
+  lines.push(`  foxxi:storedAt "${tesc(rec.stored)}"^^xsd:dateTime ;`);
+  // verb.id + object.id come from the caller's xAPI statement → iesc so a crafted verb/object
+  // IRI cannot break out of <...> and inject triples into the published statement graph.
+  if (verbId) lines.push(`  foxxi:xapiVerb <${iesc(verbId)}> ;`);
+  if (objectId) lines.push(`  foxxi:xapiObject <${iesc(objectId)}> ;`);
+  if (registration) lines.push(`  foxxi:registration "${tesc(registration)}" ;`);
   if (rec.voided) {
     lines.push(`  foxxi:isVoided "true"^^xsd:boolean ;`);
     if (rec.voidingStatementId) {
-      lines.push(`  <${FOXXI_VOIDED_BY}> <urn:foxxi:statement:${rec.voidingStatementId}> ;`);
+      lines.push(`  <${FOXXI_VOIDED_BY}> <${iesc(`urn:foxxi:statement:${rec.voidingStatementId}`)}> ;`);
     }
   }
   lines.push(`  foxxi:contentHash "sha256:${hash}" ;`);

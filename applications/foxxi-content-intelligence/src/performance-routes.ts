@@ -56,6 +56,7 @@ import { FederationOutcomeLoader, parseFederationPods } from './federation-outco
 import { bridgeAuthor, signAsBridge, withPublishLock } from './bridge-signer.js';
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { isSafeIri } from './turtle-escape.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -167,7 +168,11 @@ function bad(res: Response, msg: string): void {
 function asPerformer(v: unknown, fallback?: Performer): Performer | undefined {
   if (v && typeof v === 'object') {
     const o = v as Record<string, unknown>;
-    if (typeof o.id === 'string' && (o.kind === 'human' || o.kind === 'agent')) {
+    // The performer id becomes the author.id → prov:wasGeneratedBy / assertingAgent /
+    // TrustFacet issuer, which the descriptor serializer emits inside <...> IRI positions
+    // we cannot escape at that layer. REJECT a malformed id (angle brackets / quotes /
+    // whitespace) up front so a caller cannot inject triples into the published pod graph.
+    if (isSafeIri(o.id) && (o.kind === 'human' || o.kind === 'agent')) {
       return { id: o.id, kind: o.kind, ...(typeof o.role === 'string' ? { role: o.role } : {}) };
     }
   }
@@ -298,8 +303,28 @@ export function attachPerformanceRoutes(app: Express, config: {
   verifyDelegatedCaller?: (body: unknown) => Promise<
     { ok: true; callerDid: string; payload: Record<string, unknown> }
     | { ok: false; status: number; error: string }>;
+  /** Per-IP rate limiter for the UNAUTHENTICATED pod-write endpoints
+   *  (/performance/plan, /agent/attest). Each such call PUTs a descriptor + graph +
+   *  a fresh content-addressed atom to the tenant pod with the bridge's own write
+   *  credential, so without a bound an anonymous caller is a storage-exhaustion DoS.
+   *  When absent, no limit is applied (test/self-host posture). */
+  checkWriteRateLimit?: (clientIp: string) => { ok: boolean; retryAfterSeconds?: number };
 }): void {
   const base = config.selfBaseUrl.replace(/\/+$/, '');
+  const clientIpOf = (req: Request): string =>
+    (String(req.headers['x-forwarded-for'] ?? '').split(',')[0]?.trim())
+    || req.socket?.remoteAddress || 'unknown';
+  // Gate an unauthenticated pod-write endpoint on the per-IP limiter (fail-open when
+  // no limiter is wired). Returns true when the request may proceed.
+  const writeRateOk = (req: Request, res: Response): boolean => {
+    if (!config.checkWriteRateLimit) return true;
+    const rl = config.checkWriteRateLimit(clientIpOf(req));
+    if (!rl.ok) {
+      res.status(429).json({ error: 'rate limit exceeded for unauthenticated pod-write — retry shortly, or authenticate a signed request', retryAfterSeconds: rl.retryAfterSeconds });
+      return false;
+    }
+    return true;
+  };
   const podConfigured = !!config.publishConfig?.podUrl;
   const publishConfig = config.publishConfig;
 
@@ -550,6 +575,7 @@ export function attachPerformanceRoutes(app: Express, config: {
   // descriptor, read the calibration profile).
   app.post('/performance/plan', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    if (!writeRateOk(req, res)) return; // unauthenticated pod-write — per-IP bounded
     const body = (req.body ?? {}) as Record<string, unknown>;
     const situation = coerceSituation(body.situation);
     if (typeof situation === 'string') { bad(res, situation); return; }
@@ -796,6 +822,7 @@ export function attachPerformanceRoutes(app: Express, config: {
   // accrue durable history across runs instead of being ephemeral.
   app.post('/agent/attest', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    if (!writeRateOk(req, res)) return; // unauthenticated pod-write — per-IP bounded
     const b = (req.body ?? {}) as Record<string, unknown>;
     const name = typeof b.name === 'string' ? b.name : null;
     const did = typeof b.did === 'string' ? b.did : null;
@@ -1034,12 +1061,19 @@ export function attachPerformanceRoutes(app: Express, config: {
     }
     const performer = asPerformer(body.performer);
     if (!performer) { bad(res, 'performer must be { id, kind: "human"|"agent" }'); return; }
-    const resolved = personalize(course, performer, {
-      ...(Array.isArray(body.masteredCompetencyPoints) ? { masteredCompetencyPoints: body.masteredCompetencyPoints as string[] } : {}),
-      ...(typeof body.dispositionPreference === 'string' ? { dispositionPreference: body.dispositionPreference } : {}),
-    });
-    const rendering = forAudience(resolved, course.authoredBy);
-    res.json({ resolved, rendering });
+    // A syntagm that is an array of SHAPE-invalid entries passes the Array.isArray check
+    // but throws inside personalize()/forAudience(); catch it as a 400 rather than a 500
+    // (an unauthenticated endpoint must never surface a stack/path via the terminal handler).
+    try {
+      const resolved = personalize(course, performer, {
+        ...(Array.isArray(body.masteredCompetencyPoints) ? { masteredCompetencyPoints: body.masteredCompetencyPoints as string[] } : {}),
+        ...(typeof body.dispositionPreference === 'string' ? { dispositionPreference: body.dispositionPreference } : {}),
+      });
+      const rendering = forAudience(resolved, course.authoredBy);
+      res.json({ resolved, rendering });
+    } catch (e) {
+      bad(res, `could not personalize the course — malformed course structure: ${(e as Error).message}`);
+    }
   });
 
   // ── GET /knowledge — self-describing knowledge index. ─────────────

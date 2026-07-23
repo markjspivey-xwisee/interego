@@ -39,6 +39,7 @@ import type {
   EncryptionKeyPair,
 } from '@interego/core';
 import { TENANT_TYPES, deriveAdminKeyPair } from './tenant-publisher.js';
+import { assertSafeFetchTarget } from './ssrf-guard.js';
 
 // ── Cache ─────────────────────────────────────────────────────
 
@@ -118,6 +119,10 @@ async function findEntry(
   config: TenantFetchConfig,
   typeIri: IRI,
 ): Promise<ManifestEntry | null> {
+  // SSRF guard at the shared fetch layer: config.podUrl is caller-supplied on many
+  // self-sovereign paths (autoFetchAdmin/autoFetchCourse/register/publish/ingest), so
+  // guard it here once rather than at every caller. Blocks internal-host discover().
+  await assertSafeFetchTarget(config.podUrl);
   const entries = await discover(config.podUrl, undefined, config.fetch ? { fetch: config.fetch as never } : undefined);
   // Match by the type's LOCAL NAME (the `#…` suffix), not the full IRI,
   // so the tenant directory still resolves after a namespace migration —
@@ -146,6 +151,11 @@ async function fetchBundleJson(
   // descriptor Turtle to find its iep:affordance / hydra:target — never
   // reconstruct the URL by filename convention.
   const fetchFn = (config.fetch ?? globalThis.fetch) as typeof globalThis.fetch;
+  // SECOND-ORDER SSRF guard: descriptorUrl comes from the FETCHED manifest and graphUrl
+  // from the FETCHED descriptor's hydra:target — both are attacker-influenceable pod
+  // content, so a malicious pod could redirect these hops at an internal host even when
+  // the top-level podUrl was public. Guard each hop before the fetch.
+  await assertSafeFetchTarget(entry.descriptorUrl);
   const descRes = await fetchFn(entry.descriptorUrl, {
     headers: { 'Accept': 'text/turtle' },
   });
@@ -157,6 +167,7 @@ async function fetchBundleJson(
   if (!graphUrl) {
     throw new Error(`Descriptor ${entry.descriptorUrl} has no hydra:target / dcat:accessURL on its iep:affordance block`);
   }
+  await assertSafeFetchTarget(graphUrl);
 
   const adminKeyPair = resolveAdminKeyPair(config);
   const { content, encrypted } = await fetchGraphContent(graphUrl, {
@@ -348,6 +359,7 @@ export async function fetchCoursePackage(
   // For courses we need to discover among multiple CoursePackageBundle
   // entries — pick the one whose graph IRI matches this courseId. The
   // graph IRI follows the slug convention `course:<courseId>`.
+  await assertSafeFetchTarget(config.podUrl); // caller-supplied pod (autoFetchCourse et al.)
   const entries = await discover(config.podUrl, undefined, config.fetch ? { fetch: config.fetch as never } : undefined);
   const matching = entries.filter(e =>
     // Local-name match — resilient to a namespace migration (see findEntry).

@@ -85,7 +85,7 @@ export function generateCmi5Xml(course: Course, auUrl: (lessonId: string) => str
     m.lessons.push(fl);
   }
   const auXml = (fl: FlatLesson): string =>
-    `    <au id="${xml(fl.lesson.id)}" moveOn="${course.moveOn}">\n` +
+    `    <au id="${xml(fl.lesson.id)}" moveOn="${xml(String(course.moveOn ?? ''))}">\n` +
     `      <title><langstring lang="en-US">${xml(fl.lesson.title)}</langstring></title>\n` +
     `      <description><langstring lang="en-US">${xml(fl.lesson.competency)}</langstring></description>\n` +
     `      <url>${xml(auUrl(fl.lesson.id))}</url>\n` +
