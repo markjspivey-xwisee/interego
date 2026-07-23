@@ -778,6 +778,15 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
         asker.id = v.webId;
       }
 
+      // PII scoping (round-51): only a VERIFIED caller (the gated progress/assignments path,
+      // bound to self or an admin-chosen learner above) may drive subject-scoped assembly.
+      // Every ungated, published-content intent (catalog/concept/general) must assemble
+      // against 'anonymous' — otherwise contextSummary.enrollments / .activityStatements
+      // (lines below) echo an attacker-NAMED victim's assignment-roster + LRS activity counts
+      // (an unauthenticated existence + engagement-volume oracle over arbitrary WebIDs/DIDs).
+      // Content answers are over published content, so they are unaffected by this reset.
+      if (!callerRole) learner = 'anonymous';
+
       // LLM key precedence: per-request BYOK > the bridge's env key.
       const byok = typeof b.llm_api_key === 'string' ? b.llm_api_key.trim() : '';
       const llm: LlmConfig = byok
