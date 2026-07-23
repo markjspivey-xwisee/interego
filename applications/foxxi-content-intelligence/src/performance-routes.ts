@@ -57,6 +57,7 @@ import { bridgeAuthor, signAsBridge, withPublishLock } from './bridge-signer.js'
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { isSafeIri } from './turtle-escape.js';
+import { sendServerError } from './http-errors.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -585,7 +586,7 @@ export function attachPerformanceRoutes(app: Express, config: {
           diagnosis, plan, scaffold, calibration,
           note: "Classification attributed to your verified delegation. diagnosis.regimeSource is the provenance — supply trajectories to DERIVE the regime from signal (the honest, calibratable path); asserted/gap-intent carry no calibration authority. Compose your situation descriptor + the regime-appropriate intervention on your OWN pod from this.",
         });
-      } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+      } catch (err) { sendServerError(res, err, 'performance-plan'); }
     });
   }
 

@@ -45,6 +45,7 @@ import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
 import { tenantOrUsers, type OrUser } from './oneroster.js';
 import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { safeFetch } from './ssrf-guard.js';
+import { sendServerError } from './http-errors.js';
 import { listCmi5Courses } from './cmi5-lms.js';
 import {
   withTransientRetry,
@@ -649,7 +650,7 @@ export function attachLti13Routes(app: Express, config: Lti13Config): void {
     const redirect = new URL(config.dashboardUrl);
     redirect.searchParams.set('lti_ticket', ticketJson);
     res.redirect(302, redirect.toString());
-  })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
+  })().catch(err => { sendServerError(res, err, 'lti13'); }); });
 
   // (4) Deep Linking 2.0 — content-item selection round-trip.
   //
@@ -751,7 +752,11 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
 <input type="hidden" name="JWT" value="${htmlEscape(responseJwt)}">
 <noscript><button type="submit">Return to your LMS</button></noscript>
 </form></body></html>`);
-  })().catch(err => { res.status(500).type('html').send(htmlEscape((err as Error).message)); }); });
+  })().catch(err => {
+    // eslint-disable-next-line no-console
+    console.error('[foxxi:lti13:deep-link-return]', err instanceof Error ? (err.stack ?? err.message) : err);
+    res.status(500).type('html').send('<!doctype html><html><body><p>Internal error handling the LTI deep-link return.</p></body></html>');
+  }); });
 
   // (5) AGS line-item management (IMS-LTI-AGS-2). The Tool keeps a
   // per-tenant line-item registry; create/read/update/delete operate on
@@ -781,7 +786,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
     }
     res.type('application/vnd.ims.lis.v2.lineitemcontainer+json')
       .send(JSON.stringify([...lineItemsFor(tenant).values()].map(li => publicLineItem(li, config.selfBaseUrl))));
-  })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
+  })().catch(err => { sendServerError(res, err, 'lti13'); }); });
 
   app.post('/lti/ags/lineitems', (req, res) => { void (async () => {
     // AGS line-item WRITE: operator-only. trustedTenantOf pins an anonymous caller
@@ -841,7 +846,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
     ltiPodDirty();
     res.status(201).type('application/vnd.ims.lis.v2.lineitem+json')
       .send(JSON.stringify({ ...publicLineItem(li, config.selfBaseUrl), ...(platformSync ? { platformSync } : {}) }));
-  })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
+  })().catch(err => { sendServerError(res, err, 'lti13'); }); });
 
   app.get('/lti/ags/lineitems/:id', (req, res) => {
     // AGS line-item READ (single): operator-only (see the collection GET; round-38).
@@ -909,7 +914,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
       body: JSON.stringify(score),
     });
     res.status(scorePost.status).json({ ok: scorePost.ok, status: scorePost.status });
-  })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
+  })().catch(err => { sendServerError(res, err, 'lti13'); }); });
 
   // (7) NRPS — Names and Role Provisioning Service 2.0 (IMS-LTI-NRPS-2).
   //
@@ -957,5 +962,5 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
       context: { id: 'foxxi-tenant', label: 'foxxi', title: 'Foxxi tenant roster' },
       members,
     }));
-  })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
+  })().catch(err => { sendServerError(res, err, 'lti13'); }); });
 }

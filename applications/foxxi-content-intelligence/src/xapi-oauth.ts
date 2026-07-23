@@ -25,7 +25,7 @@
  */
 
 import type { Express, Request, Response } from 'express';
-import { createHash, sign as cryptoSign, createPrivateKey } from 'node:crypto';
+import { createHash, sign as cryptoSign, verify as cryptoVerify, createPrivateKey, createPublicKey, type KeyObject } from 'node:crypto';
 
 interface OauthConfig {
   selfBaseUrl: string;
@@ -77,16 +77,33 @@ function derToJose(der: Buffer): Buffer {
  *
  * Returns the decoded claims on success, null on failure.
  */
-export function verifyOauthBearer(jwt: string, _publicKeyPem: string | undefined): Record<string, unknown> | null {
-  // Minimal verification: decode header + payload, check exp.
-  // Full signature verification is done downstream by partner-eng SDKs
-  // hitting our JWKS; the LRS just checks expiry + scope so the token
-  // can't be replayed past lifetime. For a higher trust deployment,
-  // run the full ES256 verify against the LTI keypair.
+/** Derive the ES256 public key used to verify our OAuth bearers from the signing
+ *  private-key PEM (FOXXI_LTI_PRIVATE_KEY_PEM). Returns null when no key is configured
+ *  — the LRS then rejects all OAuth bearers (fail-closed; none can have been minted). */
+export function oauthPublicKeyFrom(privateKeyPem: string | undefined): KeyObject | null {
+  if (!privateKeyPem) return null;
+  try { return createPublicKey(createPrivateKey({ key: privateKeyPem.replace(/\\n/g, '\n'), format: 'pem' })); }
+  catch { return null; }
+}
+
+export function verifyOauthBearer(jwt: string, publicKey: KeyObject | null | undefined): Record<string, unknown> | null {
+  // Real ES256 verification (round-47). A prior version checked ONLY exp, so any
+  // well-formed JWT with a future exp authenticated — a forgeable bearer the LRS auth
+  // gate then trusted. Now: reject alg=none / anything unsigned, verify the signature
+  // against the LTI keypair's public key (ieee-p1363 = the raw r||s JOSE format our
+  // minter emits), then check expiry. No key configured → reject (fail-closed).
   try {
+    if (!publicKey) return null;
     const parts = jwt.split('.');
     if (parts.length !== 3) return null;
-    const payload = JSON.parse(Buffer.from(parts[1]!.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')) as Record<string, unknown>;
+    const [h, p, sig] = parts as [string, string, string];
+    const header = JSON.parse(Buffer.from(h.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')) as { alg?: string };
+    if (header.alg !== 'ES256') return null;
+    const joseSig = Buffer.from(sig.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    if (joseSig.length !== 64) return null;
+    const ok = cryptoVerify('sha256', Buffer.from(`${h}.${p}`), { key: publicKey, dsaEncoding: 'ieee-p1363' }, joseSig);
+    if (!ok) return null;
+    const payload = JSON.parse(Buffer.from(p.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')) as Record<string, unknown>;
     const exp = Number(payload.exp);
     if (!Number.isFinite(exp) || exp * 1000 < Date.now()) return null;
     return payload;

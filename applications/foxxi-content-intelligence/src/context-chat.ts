@@ -53,6 +53,7 @@ import { courseIdOf } from './course-identity.js';
 import { _publishedCourses, _publishedJobAids } from './content-delivery.js';
 import { listStoredStatements } from './xapi-lrs.js';
 import { flattenCourse } from './content-package.js';
+import { sendServerError } from './http-errors.js';
 import type { Course } from './emergent-content.js';
 import {
   askAgenticRag, retrieveCourseContext, buildGraphContext,
@@ -803,7 +804,7 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
       try {
         context = await assembleNetworkedContext(learner, tenant, config, scope);
       } catch (e) {
-        res.status(500).json({ error: `could not assemble networked context: ${(e as Error).message}` });
+        sendServerError(res, e, 'assemble-networked-context');
         return;
       }
       const answer = await answerContextQuestion({ asker, question, context, llm });
@@ -870,7 +871,7 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
             : 'Answered from the substrate\'s assignment / LRS surfaces.'),
       });
     })().catch((e: unknown) => {
-      if (!res.headersSent) res.status(500).json({ error: (e as Error).message });
+      if (!res.headersSent) sendServerError(res, e, 'content-ask');
     });
   });
 }

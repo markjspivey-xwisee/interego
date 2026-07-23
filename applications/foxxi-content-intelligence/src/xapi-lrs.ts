@@ -65,6 +65,9 @@ import {
 import type {
   IRI,
 } from '@interego/core';
+import { verifySessionToken, buildAddressMap, attachDeterministicAddresses } from './auth.js';
+import { verifyOauthBearer } from './xapi-oauth.js';
+import type { KeyObject } from 'node:crypto';
 
 void _unusedTypeAnchor;
 
@@ -108,6 +111,15 @@ export interface XapiLrsConfig {
   /** Optional: resolve a Bearer token to its tenant (e.g. a cmi5
    *  auth-token minted by a launch). Returns null for unknown tokens. */
   bearerTenantResolver?: (token: string) => TenantId | null;
+  /** Optional: the published tenant directory (user_id + web_id), used to VERIFY
+   *  wallet-signed Foxxi session tokens presented as Bearer auth. Directory users get a
+   *  deterministic wallet (the same derivation mintSessionToken uses), so a token minted
+   *  for a known user_id verifies. Without this, session-token Bearers cannot authenticate
+   *  and (with no cmi5/OAuth match) are rejected — closing the "any Bearer" hole. */
+  sessionUsers?: () => ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>;
+  /** Optional: ES256 public key (derived from FOXXI_LTI_PRIVATE_KEY_PEM) used to verify
+   *  OAuth client-credentials bearers. Null → OAuth bearers are rejected (fail-closed). */
+  oauthPublicKey?: KeyObject | null;
   /** Optional: invoked after each Statement is stored, with its tenant.
    *  The cmi5 LMS uses this to watch for moveOn satisfaction. */
   onStatementStored?: (statement: Record<string, unknown>, tenant: TenantId) => void;
@@ -327,11 +339,49 @@ function makeAuthGate(config: XapiLrsConfig) {
     }
     const bearer = bearerToken(authHeader);
     if (bearer) {
-      r.xapiAuth = { kind: 'bearer', token: bearer };
-      // A cmi5 launch's auth-token resolves to the launch's tenant;
-      // any other Bearer token falls back to the default tenant.
-      r.xapiTenant = config.bearerTenantResolver?.(bearer) ?? DEFAULT_TENANT;
-      return next();
+      // A Bearer must resolve to a VERIFIED identity (round-47). Previously ANY non-empty
+      // Bearer fell through to DEFAULT_TENANT, so a junk token could read every learner's
+      // PII and POST forged statements — the LRS gate is the sole authenticator (mounted
+      // above all other middleware). Try each real credential type; reject if none verify.
+
+      // 1. cmi5 launch auth-token → its launch tenant (recognized, minted by a launch).
+      const cmi5Tenant = config.bearerTenantResolver?.(bearer);
+      if (cmi5Tenant) {
+        r.xapiAuth = { kind: 'bearer', token: bearer };
+        r.xapiTenant = cmi5Tenant;
+        return next();
+      }
+
+      // 2. Wallet-signed Foxxi session token → verify signature + directory binding.
+      const users = config.sessionUsers?.();
+      if (users && users.length) {
+        const addressMap = buildAddressMap(attachDeterministicAddresses(
+          users as ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }> as Array<{ user_id: string; web_id: string; wallet_address?: string }>,
+        ));
+        const verified = verifySessionToken(bearer, addressMap);
+        if (verified.ok) {
+          r.xapiAuth = { kind: 'bearer', principal: verified.callerDid, token: bearer };
+          r.xapiTenant = DEFAULT_TENANT;
+          return next();
+        }
+      }
+
+      // 3. OAuth client-credentials bearer → real ES256 signature verification.
+      if (config.oauthPublicKey) {
+        const claims = verifyOauthBearer(bearer, config.oauthPublicKey);
+        if (claims) {
+          r.xapiAuth = { kind: 'bearer', principal: typeof claims.sub === 'string' ? claims.sub : 'oauth-client', token: bearer };
+          r.xapiTenant = DEFAULT_TENANT;
+          return next();
+        }
+      }
+
+      // 4. Unverifiable bearer → 401.
+      res.status(401).setHeader('WWW-Authenticate', 'Bearer realm="foxxi-lrs"').json({
+        error: 'invalid_token',
+        detail: 'Bearer token could not be verified — present a cmi5 launch token, a wallet-signed Foxxi session token, or an OAuth client-credentials token.',
+      });
+      return;
     }
     res.status(401).setHeader('WWW-Authenticate', 'Basic realm="foxxi-lrs", Bearer realm="foxxi-lrs"').json({
       error: 'authentication required',
