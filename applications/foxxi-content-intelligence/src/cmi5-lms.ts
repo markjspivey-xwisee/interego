@@ -200,9 +200,16 @@ const rollupEmitted = new Map<string, Set<string>>();
 /** Per tenant|course|learner — the (stable) registration for course-level statements. */
 const courseEnrollmentReg = new Map<string, string>();
 
+/** Cap the per-tenant cmi5 course registry — an unauth POST /content/publish-course loop with a
+ *  fresh course id each time would otherwise grow it without limit into an OOM (round-42). Evict
+ *  oldest past the cap; TenantPartition itself caps the number of tenants. */
+const CMI5_COURSES_MAX = 5000;
+
 /** Register a cmi5 course structure (from a parsed cmi5.xml). */
 export function registerCmi5Course(tenant: TenantId, course: Cmi5Course): void {
-  courseRegistry.for(tenant).set(course.id, course);
+  const m = courseRegistry.for(tenant);
+  if (m.size >= CMI5_COURSES_MAX && !m.has(course.id)) { const oldest = m.keys().next().value; if (oldest !== undefined) m.delete(oldest); }
+  m.set(course.id, course);
 }
 
 export function getCmi5Course(tenant: TenantId, courseId: string): Cmi5Course | undefined {

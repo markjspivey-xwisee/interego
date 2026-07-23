@@ -1907,6 +1907,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const key = teamKey(agentDids);
     const list = performanceProbes.get(key) ?? [];
     list.push(probe);
+    // Cap BOTH dimensions (round-42): the per-team probe list (unbounded pushes) + the number of
+    // distinct team keys (any-signed-wallet loops distinct teams) — else unbounded memory.
+    if (list.length > 1000) list.shift();
+    if (performanceProbes.size >= 5000 && !performanceProbes.has(key)) { const oldest = performanceProbes.keys().next().value; if (oldest !== undefined) performanceProbes.delete(oldest); }
     performanceProbes.set(key, list);
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.run_performance_probe', decision: 'allow', appliedPolicies: ['agent-performance-consultant'] });
     return {
@@ -5873,6 +5877,12 @@ app.post('/agent/forwarding/targets', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:iep:action:foxxi:set-forwarding-targets-signed.' }); return; }
+    // Rate-limit: grows the per-wallet _hydrated set + forwarding-target map + a pod PUT
+    // (round-42; the sibling /agent/credentials was rate-limited, this wasn't).
+    const xffF = req.headers['x-forwarded-for'];
+    const ipF = typeof xffF === 'string' ? xffF.split(',').at(-1)!.trim() : Array.isArray(xffF) ? xffF.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rlF = checkAgenticRateLimit(ipF);
+    if (!rlF.ok) { res.status(429).json({ error: `rate limit — retry in ${rlF.retryAfterSeconds}s` }); return; }
     const callerDid = auth.callerDid;
     const p = auth.payload as { targets?: unknown; delete?: unknown };
     // Owner = verified caller (DID -> own pod -> own lens). No subject_pod_url:
@@ -5987,7 +5997,11 @@ const SCORM_COURSES_MAX = 5000;
 function seatScormCourse(course: AgentScormCourse): void {
   if (agentScormCourses.size >= SCORM_COURSES_MAX && !agentScormCourses.has(course.courseId)) {
     const oldest = agentScormCourses.keys().next().value;
-    if (oldest !== undefined) { agentScormCourses.delete(oldest); courseAuthors.delete(oldest); }
+    // Evict ONLY the bounded content cache — NOT the ownership registry. Deleting
+    // courseAuthors[oldest] here let an attacker flood the cache to evict a victim's
+    // ownership entry then re-author their courseId (round-42 lock defeat). Ownership is
+    // its own (higher-capped + durable-monotonic) registry; see recordCourseAuthor.
+    if (oldest !== undefined) agentScormCourses.delete(oldest);
   }
   agentScormCourses.set(course.courseId, course);
 }
@@ -6207,7 +6221,11 @@ async function hydrateAgentCourses(force = false): Promise<void> {
 // the tenant pod so it survives a restart; if the pod write is unavailable it degrades to
 // in-memory + MESH hydration (the id still resolves within the process, same honest caveat
 // the memory commons started from).
-const courseAuthors = new Map<string, string>();   // courseId → authoredBy DID
+const courseAuthors = new Map<string, string>();   // courseId → authoredBy DID (first-writer-wins ownership)
+/** Ownership registry cap — decoupled from + much higher than the content cache
+ *  (SCORM_COURSES_MAX) so content-cache pressure can't evict an owner (round-42). Tiny
+ *  entries (courseId → did); the durable course-authors.json is the monotonic backstop. */
+const COURSE_AUTHORS_MAX = 200_000;
 const COURSE_AUTHORS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/course-authors.json` : '';
 let courseAuthorsDirty = false;
 async function persistCourseAuthors(): Promise<void> {
@@ -6216,8 +6234,14 @@ async function persistCourseAuthors(): Promise<void> {
   const f = globalThis.fetch as typeof fetch;
   const container = COURSE_AUTHORS_RESOURCE.replace(/[^/]+$/, '');
   try {
+    // MONOTONIC durable ownership (round-42): merge with the existing file, EXISTING-WINS, so a
+    // courseId owner that was evicted from the in-memory map is never clobbered by a full
+    // overwrite (which would let a later re-author re-establish attacker ownership durably).
+    let durable: Record<string, string> = {};
+    try { const r = await f(COURSE_AUTHORS_RESOURCE, { headers: { Accept: 'application/json' } }); if (r.ok) durable = (await r.json()) as Record<string, string>; } catch { /* none yet */ }
+    const merged: Record<string, string> = { ...Object.fromEntries(courseAuthors), ...durable }; // durable (first-writer) wins any conflict
     await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
-    await f(COURSE_AUTHORS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(courseAuthors)) });
+    await f(COURSE_AUTHORS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) });
   } catch { courseAuthorsDirty = true; /* retry on the next record */ }
 }
 async function loadCourseAuthors(): Promise<void> {
@@ -6231,7 +6255,11 @@ async function loadCourseAuthors(): Promise<void> {
   } catch { /* best-effort */ }
 }
 function recordCourseAuthor(courseId: string, authorDid: string): void {
-  if (!courseId || !authorDid || courseAuthors.get(courseId) === authorDid) return;
+  // FIRST-WRITER-WINS (round-42): a courseId's author is set ONCE and never reassigned — a
+  // later /agent/scorm/author or a read-hydrate from a DIFFERENT agent's pod must not steal
+  // attribution (content-substitution + attribution-takeover). Only an unowned courseId is set.
+  if (!courseId || !authorDid || courseAuthors.has(courseId)) return;
+  if (courseAuthors.size >= COURSE_AUTHORS_MAX) { const oldest = courseAuthors.keys().next().value; if (oldest !== undefined) courseAuthors.delete(oldest); }
   courseAuthors.set(courseId, authorDid);
   courseAuthorsDirty = true;
   void persistCourseAuthors();
@@ -6249,9 +6277,13 @@ async function resolveCourseForRead(courseId: string, authorDid?: string): Promi
     if (loaded) { const c = loaded as unknown as AgentScormCourse; seatScormCourse(c); recordCourseAuthor(courseId, c.authoredBy || did); return c; }
     return null;
   };
-  if (authorDid) { const c = await tryPod(authorDid); if (c) return c; }
-  const known = courseAuthors.get(courseId);       // the durable registry — resolve by id alone
-  if (known && known !== authorDid) { const c = await tryPod(known); if (c) return c; }
+  // OWNER-FIRST (round-42): an already-owned courseId's authoritative content lives ONLY on its
+  // first author's pod. A caller-supplied author_did naming a DIFFERENT pod must NOT seat spoofed
+  // content under it (cache-poisoning + attribution takeover). Resolve the owner FIRST; only an
+  // UNOWNED courseId falls back to the caller's author_did (which then becomes first-writer).
+  const known = courseAuthors.get(courseId);
+  if (known) { const c = await tryPod(known); if (c) return c; }
+  else if (authorDid) { const c = await tryPod(authorDid); if (c) return c; }
   await hydrateAgentCourses();
   return agentScormCourses.get(courseId) ?? null;
 }
@@ -6590,6 +6622,9 @@ app.post('/agent/scorm/author', async (req, res) => {
     // so a wallet re-authoring another agent's courseId would overwrite the content AND
     // reassign courseAuthors → attacker (content-substitution + attribution takeover served
     // to every launcher). Refuse to re-author a courseId already owned by a different agent.
+    // Restore the DURABLE owner on a memory miss (round-42): otherwise a cache-eviction flood
+    // could drop the owner from memory and let the lock pass. The durable file is monotonic.
+    if (!courseAuthors.has(course.courseId)) await loadCourseAuthors();
     const priorAuthor = courseAuthors.get(course.courseId);
     if (priorAuthor && priorAuthor !== auth.callerDid) {
       res.status(409).json({ error: `courseId '${course.courseId}' is already authored by another agent — course ids are first-author-locked; choose a different courseId` });
@@ -6635,17 +6670,28 @@ app.post('/agent/scorm/launch', async (req, res) => {
     // pod; default to the caller's own pod (a self-authored course).
     let course = agentScormCourses.get(courseId);
     if (!course) {
-      const authorDid = (typeof p.author_did === 'string' && p.author_did) ? p.author_did : callerDid;
-      const rawCoursePod = (typeof p.course_pod === 'string' && p.course_pod) ? p.course_pod : '';
-      const coursePod = (rawCoursePod && safePublicUrlOrUndefined(rawCoursePod))
-        || resolveSubjectPodUrl(authorDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
-      // SSRF: coursePod is fetched by loadScormCourse->discover() (not lattice-guarded).
-      try { await assertSafeFetchTarget(coursePod); } catch { res.status(400).json({ error: 'course_pod rejected: not a public host' }); return; }
-      // Foundation-first: load the full course from the author's PGSL lattice
-      // (canonical); fall back to the legacy hand-authored RDF for old courses.
-      const fromLattice = await loadCourseFromLattice(coursePod, authorDid, actorForPod(coursePod, MESH_ACTOR_LABELS), courseId).catch(() => null);
-      const loaded = fromLattice ?? await loadScormCourse({ podUrl: coursePod, courseId }).catch(() => null);
-      if (loaded) { course = loaded as unknown as AgentScormCourse; seatScormCourse(course); }
+      // OWNER-FIRST (round-42 blocker): if courseId is already owned by a DIFFERENT agent, the
+      // authoritative content lives ONLY on the owner's pod — a caller-supplied course_pod naming
+      // the attacker's own pod must NOT seat spoofed content under the victim's courseId (served
+      // to every learner). Load from the owner; ignore the caller override. Restore the durable
+      // owner on a memory miss (monotonic file).
+      if (!courseAuthors.has(courseId)) await loadCourseAuthors();
+      const owner = courseAuthors.get(courseId);
+      if (owner && owner !== callerDid) {
+        course = (await resolveCourseForRead(courseId, owner)) ?? undefined;
+      } else {
+        const authorDid = (typeof p.author_did === 'string' && p.author_did) ? p.author_did : callerDid;
+        const rawCoursePod = (typeof p.course_pod === 'string' && p.course_pod) ? p.course_pod : '';
+        const coursePod = (rawCoursePod && safePublicUrlOrUndefined(rawCoursePod))
+          || resolveSubjectPodUrl(authorDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+        // SSRF: coursePod is fetched by loadScormCourse->discover() (not lattice-guarded).
+        try { await assertSafeFetchTarget(coursePod); } catch { res.status(400).json({ error: 'course_pod rejected: not a public host' }); return; }
+        // Foundation-first: load the full course from the author's PGSL lattice
+        // (canonical); fall back to the legacy hand-authored RDF for old courses.
+        const fromLattice = await loadCourseFromLattice(coursePod, authorDid, actorForPod(coursePod, MESH_ACTOR_LABELS), courseId).catch(() => null);
+        const loaded = fromLattice ?? await loadScormCourse({ podUrl: coursePod, courseId }).catch(() => null);
+        if (loaded) { course = loaded as unknown as AgentScormCourse; seatScormCourse(course); recordCourseAuthor(courseId, course.authoredBy || authorDid); }
+      }
     }
     if (!course) { res.status(404).json({ error: `no authored SCORM course '${courseId}' found in the catalog or on the author's pod — author it via /agent/scorm/author, or pass author_did/course_pod` }); return; }
     let tree;

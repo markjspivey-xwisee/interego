@@ -175,6 +175,12 @@ export class EvaluationRegistry {
   ): Result<EvaluationCandidate> {
     const state = this.evaluations.get(evaluationId);
     if (!state) return { error: `no evaluation ${evaluationId}` };
+    // OWNER LOCK (round-42): only the agent that OPENED the evaluation may accept/decline
+    // candidates. Without this, any tenant co-member could self-accept its own candidate into a
+    // rival's evaluation and decline the rival's — a caller-keyed-identity privilege escalation.
+    if (decidedBy !== state.evaluation.openedBy) {
+      return { error: `only the evaluation opener (${state.evaluation.openedBy}) may decide candidates` };
+    }
     const candidate = state.candidates.find(c => c.candidateId === candidateId);
     if (!candidate) return { error: `no candidate ${candidateId}` };
     if (candidate.status !== 'requested') {

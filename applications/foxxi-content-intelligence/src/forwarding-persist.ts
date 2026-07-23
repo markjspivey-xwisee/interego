@@ -76,7 +76,9 @@ export async function loadForwardingConfig(args: {
   bridgeKp: EncryptionKeyPair;
   fetch?: FetchFn;
 }): Promise<ForwardingConfigBlob | null> {
-  const fetchFn = args.fetch ?? (globalThis.fetch as unknown as FetchFn);
+  // guardedFetchFn re-guards the config READ on the caller-derived ownerPod (round-42; its write
+  // sibling was already guarded) — a 302 to internal on the GET is otherwise followed.
+  const fetchFn = guardedFetchFn(args.fetch ?? (globalThis.fetch as unknown as FetchFn)) as FetchFn;
   try {
     const r = await fetchFn(configUrl(args.ownerPod), { headers: { Accept: 'application/json' } });
     if (!r.ok) return null;

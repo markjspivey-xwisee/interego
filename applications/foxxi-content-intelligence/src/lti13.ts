@@ -887,6 +887,10 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   // to the platform's lineitem/<id>/scores URL with a Tool-signed JWT
   // (client_credentials grant against the platform's auth_token_url).
   app.post('/lti/ags/scores', (req, res) => { void (async () => {
+    // AGS score POST — operator-only (round-42). This posts a grade to the platform with the
+    // bridge's Tool-signed token; unauthenticated it was a cross-user grade-injection forgery
+    // into an external system of record. Matches the line-item write + NRPS gates.
+    if (!callerIsOperator(req, config)) { res.status(401).json({ error: 'AGS score submission requires operator authorization' }); return; }
     const { lineItemUrl, score } = req.body as { lineItemUrl?: string; score?: Record<string, unknown> };
     if (!lineItemUrl || !score) { res.status(400).json({ error: 'lineItemUrl + score required' }); return; }
     const platform = platforms[0];
