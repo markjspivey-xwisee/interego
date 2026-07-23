@@ -48,6 +48,26 @@ const resident = new Map<string, AgentLattice>();   // label -> in-memory shared
 const unreadable = new Set<string>();
 const creating = new Map<string, Promise<PGSLInstance>>();   // per-label creation mutex
 
+/** Cap the module-level `resident` cache (label → full in-memory PGSLInstance). label is
+ *  actorForPod(selfBoundPod(callerDid)) = eth-<12hex> per did:ethr wallet, so a wallet-cycling
+ *  attacker (e.g. unauth GET /agent/:did/affordances with fresh DIDs) would seat one full-corpus
+ *  lattice per wallet without limit → OOM (round-40; round-39 capped TenantPartition but missed
+ *  this parallel per-wallet cache). Evict the oldest NON-PUBLIC resident label (+ its podState /
+ *  unreadable entries); public labels (ns-foxxi / spec-ontology / public-memories) are never
+ *  evicted since they must stay dereferenceable. */
+const RESIDENT_MAX = 20_000;
+function evictResidentIfOverCap(): void {
+  if (resident.size <= RESIDENT_MAX) return;
+  for (const label of resident.keys()) {
+    if (publicLabels.has(label)) continue;
+    const ent = resident.get(label);
+    resident.delete(label);
+    if (ent?.resourceUrl) podState.delete(ent.resourceUrl);
+    unreadable.delete(label);
+    return;
+  }
+}
+
 /**
  * Labels whose lattice may be dereferenced NODE BY NODE, without auth and without
  * being told the label. FAIL-CLOSED: a label is private until explicitly marked.
@@ -264,6 +284,7 @@ async function getLattice(podUrl: string, agentDid: string, label: string, fetch
     }
     if (!pgsl) pgsl = createPGSL(provFor(agentDid));
     resident.set(label, { pgsl, podUrl, agentDid, resourceUrl });
+    evictResidentIfOverCap(); // bound the per-wallet resident cache (round-40)
     return pgsl;
   })();
   creating.set(label, p);
