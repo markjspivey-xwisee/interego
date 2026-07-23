@@ -57,6 +57,7 @@ import type {
 } from '@interego/solid';
 import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { tesc, iesc } from './turtle-escape.js';
 
 const FXA = FOXXI_NS;
 const FXS = FOXXI_NS;
@@ -334,15 +335,8 @@ function wrapCredentialAsGraph(graphIri: IRI, signed: VerifiableCredentialJson):
   // the issuer's did:key matches what the descriptor advertised.
   const json = JSON.stringify(signed);
   const b64 = Buffer.from(json, 'utf8').toString('base64');
-  // Turtle-escape the identifier literal (defence in depth — the id derives from a
-  // caller-influenced courseId; a stray " / newline would otherwise break out of the
-  // literal and inject triples into the published credential graph).
-  const tesc = (s: string): string =>
-    String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
-  // Percent-encode any char illegal in a Turtle IRIREF (<...>) — angle brackets, quotes,
-  // braces, pipe, caret, backtick, whitespace, controls — so a caller-influenced graph IRI
-  // (built from courseId) can never break out of <...> and inject triples/relations.
-  const iesc = (s: string): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
+  // tesc (Turtle literal) + iesc (IRIREF) are shared from ./turtle-escape so the escaping
+  // cannot drift between the credential-graph sink and the other pod publishers.
   return `<${iesc(graphIri)}> a <${CREDENTIAL_TYPES.CourseCompletionCredential}> ;
     <http://www.w3.org/ns/prov#wasAttributedTo> <${iesc(signed.issuer)}> ;
     <http://purl.org/dc/terms/identifier> "${tesc(signed.id ?? '')}" ;

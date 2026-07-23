@@ -35,6 +35,7 @@ import {
   publish,
 } from '@interego/solid';
 import { verifyMessage } from 'ethers';
+import { tesc, iesc } from './turtle-escape.js';
 import type {
   AccessControlFacetData,
   AgentFacetData,
@@ -144,11 +145,17 @@ export function verifySignature(args: {
   const message = `sha256:${contentHash(args.payloadJson)}`;
   try {
     const recovered = verifyMessage(message, args.signature);
+    const rec = recovered.toLowerCase().replace(/^0x/, '');
     const did = args.agentDid.toLowerCase();
-    const addrMatch = did.match(/0x[0-9a-f]{40}/);
-    if (!addrMatch) return { verified: false, recoveredAddress: recovered, signedMessage: message };
+    // The agentDid must CANONICALLY denote the recovered key — an ANCHORED (^…$) match on a
+    // recognized method whose identifier is EXACTLY the recovered address. A prior substring
+    // test (`did.match(/0x[40hex]/)`) accepted any agentDid that merely CONTAINED the address,
+    // so an attacker wrapped arbitrary trailing text (e.g. injected Turtle) around their own
+    // address and still earned verified:true — laundering attacker-chosen identity/attribution
+    // text into a CryptographicallyVerified record.
+    const m = /^did:(?:key|ethr|pkh:eip155:\d+):(?:0x)?([0-9a-f]{40})$/.exec(did);
     return {
-      verified: recovered.toLowerCase() === addrMatch[0],
+      verified: !!m && m[1] === rec,
       recoveredAddress: recovered,
       signedMessage: message,
     };
@@ -190,16 +197,20 @@ function buildEntityGraph(args: {
   lines.push(`@prefix foxxi: <${FOXXI}> .`);
   lines.push(`@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .`);
   lines.push(``);
-  lines.push(`<${args.entityIri}>`);
-  lines.push(`  a <${args.typeIri}> ;`);
-  lines.push(`  prov:wasAttributedTo <${args.authoritativeSource}> ;`);
-  if (args.authoredBy) lines.push(`  prov:wasGeneratedBy <${args.authoredBy}> ;`);
-  lines.push(`  pgsl:hasAtom <${args.payloadAtom}> ;`);
+  // iesc every <IRI> and tesc every "literal": authoredBy (author.id) + agentSignature
+  // are raw caller strings, and the other IRIs may embed caller-derived slugs — an
+  // unescaped '>' / '"' here injected attacker triples into the pod graph (and could
+  // stamp them CryptographicallyVerified). hash is hex + b64 is base64 (both inert).
+  lines.push(`<${iesc(args.entityIri)}>`);
+  lines.push(`  a <${iesc(args.typeIri)}> ;`);
+  lines.push(`  prov:wasAttributedTo <${iesc(args.authoritativeSource)}> ;`);
+  if (args.authoredBy) lines.push(`  prov:wasGeneratedBy <${iesc(args.authoredBy)}> ;`);
+  lines.push(`  pgsl:hasAtom <${iesc(args.payloadAtom)}> ;`);
   lines.push(`  dct:identifier "sha256:${hash}" ;`);
   lines.push(`  foxxi:bundleJson "${b64}"^^xsd:base64Binary ;`);
   lines.push(`  foxxi:payloadByteLength "${json.length}"^^xsd:integer${args.agentSignature ? ' ;' : ' .'}`);
   if (args.agentSignature) {
-    lines.push(`  foxxi:agentSignature "${args.agentSignature}" .`);
+    lines.push(`  foxxi:agentSignature "${tesc(args.agentSignature)}" .`);
   }
   return lines.join('\n');
 }

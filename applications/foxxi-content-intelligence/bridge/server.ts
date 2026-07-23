@@ -701,9 +701,17 @@ function ontologyHtml(ontologyIri: string, turtle: string, meta: { owner: string
 }
 
 async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdminPayload | null> {
-  const podUrl = (args.tenant_pod_url as string) || tenantPodUrl;
+  // SSRF/DoS choke point: this directory fetch runs on essentially every foxxi.* tool
+  // call, BEFORE any auth, and issues ~8 concurrent server-side discover() requests to the
+  // pod. The pod is the RAW caller `tenant_pod_url`, so an unauthenticated caller could point
+  // it at an internal host (css.railway.internal) or a filtered private IP — reaching the
+  // internal network + holding sockets (blind SSRF + resource-exhaustion DoS). Drop a private
+  // literal (fall back to the configured tenant) and DNS-resolve-guard the rest before fetching.
+  const raw = (args.tenant_pod_url as string) || tenantPodUrl;
+  const podUrl = safePublicUrlOrUndefined(raw) ?? tenantPodUrl;
   if (!podUrl) return null;
   try {
+    await assertSafeFetchTarget(podUrl);
     // The bridge's own configured tenant is CLOSED by fiat — never let a public
     // membership overlay on it authorize (fail-closed even if its encrypted
     // directory is currently stale/undecryptable).
@@ -1493,7 +1501,20 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
-    const performerDid = (args.actor_did as string) || ctx.webId;
+    // Bind the performer to the AUTHENTICATED caller. A caller-supplied actor_did for
+    // ANOTHER agent is honored ONLY for a privileged operator — otherwise an attacker who
+    // self-enrolls into their own self-sovereign tenant (→ a member) could set
+    // actor_did=<victim> and land a fabricated performance-verified `completed` statement
+    // in the VICTIM's global lens (lensTenantFor keys on the performer's pod), poisoning
+    // the victim's competency rollup + the shared calibration lattice. Matches the hardened
+    // /agent/record-performance twin (actor=callerDid) and the content-delivery/context-chat
+    // authorizeInstrumentation rule (signer must equal the claimed identity).
+    const requestedActor = (args.actor_did as string | undefined)?.trim();
+    const isPrivilegedObserver = ctx.role === 'admin' || ctx.role === 'learning-engineer' || ctx.role === 'delegated-admin';
+    if (requestedActor && requestedActor !== ctx.webId && !isPrivilegedObserver) {
+      return { error: 'recording a performance for another agent requires an operator role (admin / learning-engineer) or that agent\'s delegation; omit actor_did to record for yourself' };
+    }
+    const performerDid = requestedActor || ctx.webId;
     const taskName = args.task_name as string;
     if (!taskName || !taskName.trim()) return { error: 'task_name is required' };
     if (typeof args.success !== 'boolean') return { error: 'success (boolean) is required' };
@@ -4348,6 +4369,10 @@ async function verifyDelegatedTenantAdmin(args: Record<string, unknown>, tenantP
   if (!rec.ok) return { ok: false, reason: `no signed-request envelope (${rec.reason})` };
   let del;
   try {
+    // SSRF guard before the pre-authorization delegation fetch — the 4th delegation-fetch
+    // site (matching the review-record / issue-credential / verifyDelegatedCaller sites); the
+    // tenantPod here is the raw caller tenant_pod_url.
+    await assertSafeFetchTarget(tenantPod);
     del = await verifyAgentDelegation(rec.agentId as unknown as IRI, tenantPod as IRI, { verifier: makeWalletDelegationVerifier() });
   } catch (err) {
     return { ok: false, reason: `delegation verification failed on ${tenantPod}: ${(err as Error).message}` };

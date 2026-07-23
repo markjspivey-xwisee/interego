@@ -32,6 +32,7 @@ import type {
   IRI,
 } from '@interego/core';
 import type { ChannelRendering, DeliveryChannel } from './content-channels.js';
+import { tesc } from './turtle-escape.js';
 
 export interface ChannelWebhook {
   /** The endpoint to POST the rendered payload to. */
@@ -145,16 +146,7 @@ export async function deliverThroughChannel(args: {
 function xmlStr(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-
-/** Escape a value for a Turtle STRING_LITERAL_QUOTE. An XML escaper is NOT enough
- *  here — Turtle requires backslash and control chars (newline / CR / tab) be
- *  escaped, or a value with a raw newline produces an unparseable published graph
- *  (and a `"` would break out of the literal). */
-function tesc(s: string): string {
-  return String(s)
-    .replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
-}
+// tesc (Turtle literal escaper) is shared from ./turtle-escape so it cannot drift between sinks.
 
 /**
  * Publish a rendered delivery as a `foxxi:DeliveredContent` Context
