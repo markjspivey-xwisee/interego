@@ -193,7 +193,9 @@ const LER_TERMS: readonly SemTerm[] = [
     constructedFrom: ['ler:EnterpriseLearnerRecord', 'iep:CompositionOperator'],
     // closeMatch (NOT exactMatch): a Transcript is a PROJECTION over the ELR, closely related to
     // — but not identical with — a CLR 2.0 credential, so we do not assert strict identity.
-    closeMatch: ['https://purl.imsglobal.org/spec/clr/v2p0/ClrCredential'],
+    // Target the CANONICAL, dereferenceable 1EdTech vocab IRI (the /spec/clr/v2p0/ClrCredential
+    // path 404s; the class IRI the CLR 2.0 JSON-LD context resolves to is vc/clr/vocab.html#…).
+    closeMatch: ['https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential'],
   },
 
   // ── Attestations + evidence (composed over the attestation primitive)
@@ -231,7 +233,9 @@ const LER_TERMS: readonly SemTerm[] = [
     constructedFrom: ['vc:VerifiableCredential', 'iep:verifiableCredential'],
     // closeMatch (NOT exactMatch): OB3 OpenBadgeCredential is a SUBTYPE of this broader Credential
     // class, not identical to it — so a strict identity claim would be wrong.
-    closeMatch: ['https://purl.imsglobal.org/spec/ob/v3p0/OpenBadgeCredential'],
+    // Target the CANONICAL, dereferenceable 1EdTech vocab IRI (the /spec/ob/v3p0/OpenBadgeCredential
+    // path 404s; the class IRI the OB 3.0 JSON-LD context resolves to is vc/ob/vocab.html#…).
+    closeMatch: ['https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential'],
   },
   {
     family: 'ler', name: 'Endorsement', kind: 'Class', construction: 'composed',
@@ -842,15 +846,28 @@ function renderTermTurtle(t: SemTerm): string {
   return lines.join('\n');
 }
 
+// Ontology-level title + comment, shared verbatim by the Turtle and the
+// JSON-LD renderers so the two projections of the SAME URL carry an IDENTICAL
+// rdfs:label / rdfs:comment (content-negotiation faithfulness).
+function ontologyMeta(family: 'ler' | 'tla'): { title: string; blurb: string } {
+  return family === 'ler'
+    ? {
+        title: 'IEEE Learning & Employment Records — emergent composable ontology',
+        blurb: 'An OWL vocabulary for the IEEE LER family (P2997 Enterprise Learner Record, 1484.20.1 RCD, 1484.20.3 SCD, 1484.2 LER Ecosystems), modelled as compositions over the Interego substrate: most concepts are aggregations, views or roles over the substrate\'s attestation, event-record, resource-descriptor and aggregation primitives, not new classes.',
+      }
+    : {
+        title: 'ADL Total Learning Architecture — emergent composable ontology',
+        blurb: 'An OWL vocabulary for the ADL TLA (the four data pillars, the Master Object Model, the CaSS competency model, the federated LRS tiers and the learner-state machines), modelled as compositions over the Interego substrate. The three LRS tiers and the learner-state machines are rendered as views, not stores.',
+      };
+}
+
+// The MOM verb ConceptScheme comment, shared by both projections.
+const MOM_SCHEME_COMMENT = `The ${MOM_VERBS.length} Master Object Model performance verbs, grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb carries skos:closeMatch ONLY when it has a genuinely registered counterpart — the ADL core verbs at adlnet.gov/expapi/verbs and the cmi5 verbs at w3id.org/xapi/adl/verbs; the remaining verbs are coined by this project and assert no external alignment (no closeMatch to a non-existent IRI).`;
+
 function renderOntologyTurtle(family: 'ler' | 'tla'): string {
   const terms = family === 'ler' ? LER_TERMS : TLA_TERMS;
   const doc = family === 'ler' ? LER_DOC : TLA_DOC;
-  const title = family === 'ler'
-    ? 'IEEE Learning & Employment Records — emergent composable ontology'
-    : 'ADL Total Learning Architecture — emergent composable ontology';
-  const blurb = family === 'ler'
-    ? 'An OWL vocabulary for the IEEE LER family (P2997 Enterprise Learner Record, 1484.20.1 RCD, 1484.20.3 SCD, 1484.2 LER Ecosystems), modelled as compositions over the Interego substrate: most concepts are aggregations, views or roles over the substrate\'s attestation, event-record, resource-descriptor and aggregation primitives, not new classes.'
-    : 'An OWL vocabulary for the ADL TLA (the four data pillars, the Master Object Model, the CaSS competency model, the federated LRS tiers and the learner-state machines), modelled as compositions over the Interego substrate. The three LRS tiers and the learner-state machines are rendered as views, not stores.';
+  const { title, blurb } = ontologyMeta(family);
   let out = prefixHeader() + '\n';
   out += `<${doc}> a owl:Ontology ;
     rdfs:label "${esc(title)}" ;
@@ -874,7 +891,7 @@ function renderOntologyTurtle(family: 'ler' | 'tla'): string {
 function renderMomTurtle(): string {
   const scheme = `tla:MOMVerbScheme a skos:ConceptScheme ;
     rdfs:label "MOM performance verb scheme" ;
-    rdfs:comment "The ${MOM_VERBS.length} Master Object Model performance verbs, grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb carries skos:closeMatch ONLY when it has a genuinely registered counterpart — the ADL core verbs at adlnet.gov/expapi/verbs and the cmi5 verbs at w3id.org/xapi/adl/verbs; the remaining verbs are coined by this project and assert no external alignment (no closeMatch to a non-existent IRI)." ;
+    rdfs:comment "${esc(MOM_SCHEME_COMMENT)}" ;
     rdfs:isDefinedBy <${TLA_DOC}> .`;
   // skos:member relates a Collection TO its members (domain skos:Collection), so the level
   // Collection carries its verbs — NOT each verb pointing back at the level (which was inverted).
@@ -923,6 +940,8 @@ const JSONLD_CONTEXT: Record<string, unknown> = {
   inScheme: { '@id': 'skos:inScheme', '@type': '@id' },
   constructedFrom: { '@id': 'iep:constructedFrom', '@type': '@id' },
   isDefinedBy: { '@id': 'rdfs:isDefinedBy', '@type': '@id' },
+  imports: { '@id': 'owl:imports', '@type': '@id' },
+  member: { '@id': 'skos:member', '@type': '@id' },
 };
 
 function jsonldExpand(ref: string): string {
@@ -967,7 +986,7 @@ export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, u
     // these made the default application/ld+json graph materially unequal to the Turtle graph.
     nodes.push({
       '@id': `${TLA_NS}MOMVerbScheme`, '@type': 'skos:ConceptScheme',
-      label: 'MOM performance verb scheme', construction: 'concept', isDefinedBy: doc,
+      label: 'MOM performance verb scheme', comment: MOM_SCHEME_COMMENT, isDefinedBy: doc,
     });
     for (const lvl of [1, 2, 3, 4, 5]) {
       nodes.push({
@@ -987,7 +1006,9 @@ export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, u
       };
       if (c.scheme === 'verb') {
         node['skos:inScheme'] = { '@id': `${TLA_NS}MOMVerbScheme` };
-        node['tla:inLevel'] = { '@id': `${TLA_NS}MOMLevel${c.level}` };
+        // Level membership is carried by the level Collection's skos:member (Collection→verb,
+        // matching the Turtle). Do NOT also emit a verb→level `tla:inLevel` here: that predicate
+        // is undefined + absent from the Turtle, so it made the JSON-LD graph unequal to the Turtle.
         const cm = momVerbCloseMatch(c.label);
         if (cm) node['skos:closeMatch'] = { '@id': cm };
       }
@@ -1018,18 +1039,30 @@ export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, u
   // The prior bare `terms` key was NOT in @context and there was no @vocab/@graph, so
   // expansion DROPPED the whole vocabulary (the default application/ld+json projection served
   // an empty graph). Term nodes' label/comment are context aliases and expand inside @graph.
+  // Ontology node — IDENTICAL label/comment/imports to the Turtle projection
+  // (ontologyMeta), so content negotiation returns a triple-faithful graph.
+  const meta = ontologyMeta(family);
+  const ontologyNode: Record<string, unknown> = {
+    '@id': doc, '@type': 'owl:Ontology',
+    label: meta.title,
+    comment: meta.blurb,
+    imports: PREFIXES.iep,
+  };
+  const graph: Array<Record<string, unknown>> = [ontologyNode];
+  // The construction annotation property is declared once (in ieee-ler), exactly
+  // as the Turtle does — the ADL-TLA ontology reuses it by dereference.
+  if (family === 'ler') {
+    graph.push({
+      '@id': `${LER_NS}construction`, '@type': 'owl:AnnotationProperty',
+      label: 'construction',
+      comment: 'How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value).',
+      isDefinedBy: LER_DOC,
+    });
+  }
+  graph.push(...nodes);
   return {
     '@context': JSONLD_CONTEXT,
-    '@graph': [
-      {
-        '@id': doc, '@type': 'owl:Ontology',
-        label: family === 'ler'
-          ? 'IEEE Learning & Employment Records — emergent composable ontology'
-          : 'ADL Total Learning Architecture — emergent composable ontology',
-        comment: 'Modelled as compositions over the Interego substrate — minted terms are genuinely new; composed / view / role terms carry iep:constructedFrom triples naming the primitives they emerge from.',
-      },
-      ...nodes,
-    ],
+    '@graph': graph,
     _links: {
       self: { href: doc },
       counterpart: { href: family === 'ler' ? TLA_DOC : LER_DOC },
@@ -1082,9 +1115,8 @@ export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record
     };
     if (mom.scheme === 'verb') {
       node['skos:inScheme'] = { '@id': `${TLA_NS}MOMVerbScheme` };
-      // The level Collection carries skos:member (Collection→member); from the verb's own node
-      // we express the inverse membership via the collection reference, not a backwards skos:member.
-      node['tla:inLevel'] = { '@id': `${TLA_NS}MOMLevel${mom.level}` };
+      // Level membership lives on the level Collection (skos:member); the doc-level graph carries
+      // it. No verb→level `tla:inLevel` (undefined predicate, absent from the Turtle projection).
       // Only a registered counterpart gets a closeMatch (no alignment to a fabricated 404 IRI).
       const cm = momVerbCloseMatch(mom.label);
       if (cm) node['skos:closeMatch'] = { '@id': cm };

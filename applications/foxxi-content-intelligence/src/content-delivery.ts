@@ -27,7 +27,8 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
-import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
+import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
+import { trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { registerCmi5Course } from './cmi5-lms.js';
 import { parseCmi5Course } from './cmi5-course.js';
 import type { Course } from './emergent-content.js';
@@ -44,7 +45,7 @@ import {
 
 const EXPERIENCED = 'http://adlnet.gov/expapi/verbs/experienced';
 
-export interface ContentDeliveryConfig {
+export interface ContentDeliveryConfig extends OperatorAuthConfig {
   selfBaseUrl: string;
   /** The authoritative source — the xAPI Agent account homePage. */
   authoritativeSource: string;
@@ -52,6 +53,13 @@ export interface ContentDeliveryConfig {
    *  internal statement store). When absent, job-aid views are not
    *  instrumented. */
   emitStatement?: (statement: Record<string, unknown>, tenant: TenantId) => void;
+  /** Authorize instrumenting an xAPI statement attributed to `learner`.
+   *  MUST return false for an anonymous caller — otherwise anyone can inject
+   *  an LRS record attributed to any agent identity (attribution forgery that
+   *  can poison proficiency rollups). Returns true only for a verified
+   *  operator or a signer who proved control of the learner DID. When absent,
+   *  no delivery is instrumented (fail-closed). */
+  authorizeInstrumentation?: (req: Request, learner: string) => boolean;
   /** Channel transport — when set, `POST /content/deliver` actually
    *  sends: a per-channel webhook, or the Interego-native pod-descriptor
    *  publish. Absent → the rendering is produced + recorded, not sent. */
@@ -123,7 +131,11 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       res.status(400).json({ error: 'a "course" object (from POST /content/compose-course) is required' });
       return;
     }
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    // trustedTenantOf pins an anonymous caller to DEFAULT_TENANT — a raw
+    // ?tenant_pod_url let an unauthenticated caller register a course into
+    // ANY named tenant's registry (cross-tenant write). Only a verified
+    // operator may target another tenant.
+    const tenant = trustedTenantOf(req, config);
     const publishId = `pub-${randomUUID().slice(0, 12)}`;
     const flat = flattenCourse(course);
     if (flat.length === 0) { res.status(400).json({ error: 'the course has no lessons to publish' }); return; }
@@ -204,7 +216,8 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       res.status(400).json({ error: 'competencyPoint and body (strings) are required' });
       return;
     }
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    // Pin an anonymous caller to DEFAULT_TENANT (no cross-tenant write).
+    const tenant = trustedTenantOf(req, config);
     const id = `aid-${randomUUID().slice(0, 12)}`;
     const aid: PublishedJobAid = {
       id,
@@ -227,7 +240,11 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
     const aid = jobAids.get(String(req.params.id ?? ''));
     if (!aid) { res.status(404).type('html').send('<p>No such job aid.</p>'); return; }
     const learner = req.query.learner as string | undefined;
-    if (learner && config.emitStatement) {
+    // Only instrument (write an LRS statement attributed to `learner`) when
+    // the caller is authorized to speak for that learner — otherwise an
+    // anonymous ?learner=<victim> forges attribution into the LRS. Unauthorized
+    // callers still get the job-aid HTML; the view just isn't recorded.
+    if (learner && config.emitStatement && (config.authorizeInstrumentation?.(req, learner) ?? false)) {
       config.emitStatement({
         actor: { objectType: 'Agent', account: { homePage: config.authoritativeSource, name: learner } },
         verb: { id: EXPERIENCED, display: { 'en-US': 'experienced' } },
@@ -263,7 +280,9 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
     // Resolve the content unit — an explicit unit, a published job aid,
     // or a lesson of a published course.
     let unit: ContentUnit | undefined;
-    let tenant: TenantId = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    // Pin an anonymous caller to DEFAULT_TENANT (no cross-tenant write); a
+    // jobAidId/publishId path below overrides with the artifact's own tenant.
+    let tenant: TenantId = trustedTenantOf(req, config);
     let objectId = `${base}/content/delivered`;
     if (typeof b.jobAidId === 'string') {
       const aid = jobAids.get(b.jobAidId);
@@ -329,7 +348,10 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
     }
 
     let instrumented = false;
-    if (learner && config.emitStatement) {
+    // Only instrument when the caller is authorized to speak for `learner`
+    // (verified operator or a signer who proved control of the learner DID) —
+    // never attribute an LRS statement to an unauthenticated caller-named actor.
+    if (learner && config.emitStatement && (config.authorizeInstrumentation?.(req, learner) ?? false)) {
       config.emitStatement({
         actor: { objectType: 'Agent', account: { homePage: config.authoritativeSource, name: learner } },
         verb: { id: EXPERIENCED, display: { 'en-US': 'experienced' } },

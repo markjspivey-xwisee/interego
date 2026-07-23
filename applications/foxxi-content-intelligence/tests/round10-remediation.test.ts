@@ -37,10 +37,12 @@ describe('round-10 — profile Concepts/Templates/Patterns carry type + inScheme
 describe('round-10 — IEEE-LER uses closeMatch (not exactMatch) to IMS credential types', () => {
   it('the Transcript/Credential alignments to OB3/CLR are skos:closeMatch', () => {
     const ttl = renderSemOntologyTurtle('ler');
-    expect(ttl).toMatch(/skos:closeMatch <https:\/\/purl\.imsglobal\.org\/spec\/clr\/v2p0\/ClrCredential>/);
-    expect(ttl).toMatch(/skos:closeMatch <https:\/\/purl\.imsglobal\.org\/spec\/ob\/v3p0\/OpenBadgeCredential>/);
-    // No exactMatch (strict identity) to those 404-ing IRIs.
-    expect(ttl).not.toMatch(/skos:exactMatch <https:\/\/purl\.imsglobal\.org\/spec\/(ob|clr)/);
+    // Round-11 corrected the targets to the CANONICAL, dereferenceable vocab.html class IRIs
+    // (the /spec/{ob/v3p0,clr/v2p0}/… paths 404). closeMatch (not exactMatch) still holds.
+    expect(ttl).toMatch(/skos:closeMatch <https:\/\/purl\.imsglobal\.org\/spec\/vc\/clr\/vocab\.html#ClrCredential>/);
+    expect(ttl).toMatch(/skos:closeMatch <https:\/\/purl\.imsglobal\.org\/spec\/vc\/ob\/vocab\.html#OpenBadgeCredential>/);
+    // No exactMatch (strict identity) to the IMS credential types.
+    expect(ttl).not.toMatch(/skos:exactMatch <https:\/\/purl\.imsglobal\.org\/spec\/(vc\/)?(ob|clr)/);
   });
 });
 
