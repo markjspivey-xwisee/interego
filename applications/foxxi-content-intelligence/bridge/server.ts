@@ -5868,15 +5868,16 @@ app.post('/agent/forwarding/targets', async (req, res) => {
     await hydrateOwnerForwarding(ownerTenant, ownerPod);
     let mutated = false;
     if (Array.isArray(p.targets)) {
-      for (const t of p.targets as Array<Record<string, unknown>>) {
+      // Per-request cap: bound how many targets one POST can add (round-36 DoS).
+      for (const t of (p.targets as Array<Record<string, unknown>>).slice(0, 100)) {
         if (!t || typeof t.endpoint !== 'string' || typeof t.credentials !== 'string' || !t.credentials.includes(':')) continue;
-        addForwardingTarget(ownerTenant, {
+        const added = addForwardingTarget(ownerTenant, {
           endpoint: t.endpoint, credentials: t.credentials,
           label: typeof t.label === 'string' ? t.label : undefined,
           version: typeof t.version === 'string' ? t.version : undefined,
           enabled: typeof t.enabled === 'boolean' ? t.enabled : undefined,
         });
-        mutated = true;
+        if (added) mutated = true; // null → per-tenant target cap reached, target rejected
       }
     }
     if (Array.isArray(p.delete)) {
@@ -5955,6 +5956,10 @@ interface AgentScormCourse { courseId: string; title: string; masteryScore: numb
 interface ScormPlay { seq: SeqSession; courseId: string; learnerDid: string; lens: TenantId; masteryScore: number; course: AgentScormCourse; }
 const agentScormCourses = new Map<string, AgentScormCourse>();
 const agentScormPlays = new Map<string, ScormPlay>();   // in-process per the SN engine's own session model
+/** Bound the in-process SCORM-play map — a signed/delegated caller can /agent/scorm/launch
+ *  repeatedly without /submit (a play is deleted only on done:true), growing it unbounded
+ *  (each entry holds a full course + SN tree) into an OOM (round-36). Evict oldest past the cap. */
+const SCORM_PLAYS_MAX = 5000;
 
 function scormXmlEsc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function scormSlug(s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x'; }
@@ -6602,6 +6607,7 @@ app.post('/agent/scorm/launch', async (req, res) => {
     const seq = createSession(tenantIdOf(`scorm:${callerDid}`), tree);
     const nav = processNavigation(seq, 'start');
     if (!nav.ok || !nav.delivered) { res.status(409).json({ error: `SCORM start failed: ${nav.exception ?? nav.message ?? 'no SCO delivered'}` }); return; }
+    if (agentScormPlays.size >= SCORM_PLAYS_MAX) { const oldest = agentScormPlays.keys().next().value; if (oldest !== undefined) agentScormPlays.delete(oldest); }
     agentScormPlays.set(seq.id, { seq, courseId, learnerDid: callerDid, lens, masteryScore: course.masteryScore, course });
     res.json({ ok: true, sessionId: seq.id, launchedBy: callerDid, course: { id: courseId, title: course.title }, sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)), sequencingEnded: !!nav.sequencingEnded, instruction: 'Read the SCO; for an assessment SCO answer the questions; then POST /agent/scorm/submit { session_id, answers? }. Repeat until done:true.' });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
@@ -6689,6 +6695,13 @@ app.post('/agent/mesh-event', (req, res) => {
     try { signer = mergeSignedEnvelope(b); }
     catch { res.status(401).json({ ok: false, error: 'mesh-event requires a valid signed-request envelope' }); return; }
     if (!signer) { res.status(401).json({ ok: false, error: 'mesh-event requires a signed-request envelope ({ _signature, _signed_payload })' }); return; }
+    // Rate-limit: each event lands a fresh id into the (now-capped) statement store +
+    // calibration lens; a fresh wallet looping distinct-id envelopes is a write-DoS
+    // vector, so bound throughput per-IP (round-36; the store cap bounds memory).
+    const xffME = req.headers['x-forwarded-for'];
+    const ipME = typeof xffME === 'string' ? xffME.split(',').at(-1)!.trim() : Array.isArray(xffME) ? xffME.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rlME = checkAgenticRateLimit(ipME);
+    if (!rlME.ok) { res.status(429).json({ ok: false, error: `rate limit — retry in ${rlME.retryAfterSeconds}s` }); return; }
     const originPod = String(b.originPod ?? b.pod ?? '');
     const describes = Array.isArray(b.describes)
       ? (b.describes as string[])

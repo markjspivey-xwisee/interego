@@ -328,10 +328,14 @@ export async function persistScormCourse(args: PersistScormCourseArgs): Promise<
 `;
   // Shape-driven placement: where does THIS author store SCORM courses
   // (ScormCourse shape)? Read their own Type Index; default foxxi-courses/.
-  const place = await resolveStorageForShape(args.podUrl, SCORM_COURSE_TYPE, { fetch: args.fetch, defaultContainer: 'foxxi-courses/' });
+  // WRITE-path redirect guard (round-36, pre-emptive — currently no live caller, but
+  // the write twin of persistRecordedStatement): wrap args.fetch so the shape read +
+  // publish() PUT re-guard every hop and the PUT refuses a redirect.
+  const wfetch = guardedFetchFn(args.fetch) as typeof args.fetch;
+  const place = await resolveStorageForShape(args.podUrl, SCORM_COURSE_TYPE, { fetch: wfetch, defaultContainer: 'foxxi-courses/' });
   const containerPath = place.target.startsWith(place.podRoot) ? place.target.slice(place.podRoot.length) : 'foxxi-courses/';
   await publish(descriptor, graphContent, place.podRoot, {
-    fetch: args.fetch,
+    fetch: wfetch,
     containerPath,
     descriptorSlug: `scorm-${key}`,
     graphSlug: `scorm-${key}-graph`,
@@ -344,7 +348,7 @@ export async function persistScormCourse(args: PersistScormCourseArgs): Promise<
     agentDid: args.authorDid,
     shapeClass: SCORM_COURSE_TYPE,
     defaultContainer: 'foxxi-courses/',
-    fetch: args.fetch,
+    fetch: wfetch,
     build: (pgsl, prov) => {
       const title = String((args.course as { title?: unknown }).title ?? '');
       const chain = [args.courseId, ...title.split(/\s+/).filter(Boolean)];

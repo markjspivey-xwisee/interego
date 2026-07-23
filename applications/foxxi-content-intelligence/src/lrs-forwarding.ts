@@ -171,13 +171,20 @@ export function listForwardingTargets(tenant: TenantId): ForwardingTargetView[] 
   return [...targetsByTenant.for(tenant).values()].map(viewOf);
 }
 
+/** Bound the per-tenant forwarding-target map — a signed wallet POSTing many distinct
+ *  endpoint+credential pairs would otherwise grow it unbounded (each add also drives a
+ *  pod PUT) into a memory + amplified-write DoS (round-36). A NEW target past the cap is
+ *  rejected; updating an existing one always succeeds. */
+const FORWARDING_TARGETS_MAX = 200;
+
 export function addForwardingTarget(tenant: TenantId, input: {
   label?: string; endpoint: string; credentials: string; version?: string; enabled?: boolean;
-}): ForwardingTargetView {
+}): ForwardingTargetView | null {
   const endpoint = input.endpoint.replace(/\/$/, '');
   const id = stableTargetId(endpoint, input.credentials);
   const map = targetsByTenant.for(tenant);
   const existing = map.get(id);
+  if (!existing && map.size >= FORWARDING_TARGETS_MAX) return null; // cap reached — reject a NEW target
   const st: TargetState = existing ?? { target: {
     id, label: '', endpoint, credentials: input.credentials, version: '2.0.0',
     enabled: true, createdAt: new Date().toISOString(),

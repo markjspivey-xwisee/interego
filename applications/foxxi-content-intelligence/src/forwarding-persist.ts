@@ -51,11 +51,13 @@ export async function persistForwardingConfig(args: {
   bridgeKp: EncryptionKeyPair;
   fetch?: FetchFn;
 }): Promise<void> {
-  const fetchFn = args.fetch ?? (globalThis.fetch as unknown as FetchFn);
+  // guardedFetchFn wraps once: the key GET AND the config PUT (ownerPod is a caller
+  // WebID origin) re-guard every redirect hop; the PUT (non-GET) refuses to follow a
+  // 3xx to an internal host (round-36 write-path sibling).
+  const fetchFn = guardedFetchFn(args.fetch ?? (globalThis.fetch as unknown as FetchFn)) as FetchFn;
   const recipients = [args.bridgeKp.publicKey];
   try {
-    // Re-guard the <ownerPod>/keys/encryption.json GET + any redirect hop (round-30).
-    const ownerKey = await resolveAgentEncryptionKey(args.ownerPod, { fetch: guardedFetchFn(fetchFn) as typeof fetchFn });
+    const ownerKey = await resolveAgentEncryptionKey(args.ownerPod, { fetch: fetchFn });
     if (ownerKey && ownerKey !== args.bridgeKp.publicKey) recipients.push(ownerKey);
   } catch { /* owner hasn't published a key — bridge-only recipient is fine */ }
   const envelope = createEncryptedEnvelope(JSON.stringify(args.blob), recipients, args.bridgeKp);

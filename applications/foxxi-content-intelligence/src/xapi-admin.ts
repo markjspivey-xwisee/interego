@@ -400,6 +400,7 @@ function handleAddForwarding(req: Request, res: Response): void {
   const view = addForwardingTarget(resolveAdminTenant(req), {
     label: b.label, endpoint: b.endpoint, credentials: b.credentials, version: b.version, enabled: b.enabled,
   });
+  if (!view) { res.status(429).json({ error: 'forwarding-target limit reached for this tenant' }); return; }
   res.status(201).json(view);
 }
 

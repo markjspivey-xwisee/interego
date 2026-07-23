@@ -428,7 +428,12 @@ export async function composeIntoSharedLattice(args: {
     const kp = bridgeEncryptionKeypair();
     if (!kp || args.terms.length === 0) return null;
     if (args.publicLattice) markLatticePublic(args.label);
-    const fetchFn = (args.fetch ?? (globalThis.fetch as unknown as FetchFn));
+    // guardedFetchFn wraps the fetch ONCE here so EVERY write in this function
+    // re-guards its target + refuses a redirect on the PUT — not only casPersist
+    // (which re-wraps defensively) but also ensureContainer's PUT and the descriptor
+    // PUT below, which previously ran on the raw redirect-following fetch (round-36:
+    // a WebID-derived perfPod on an attacker host could 302 those writes to internal).
+    const fetchFn = guardedFetchFn(args.fetch ?? (globalThis.fetch as unknown as FetchFn)) as FetchFn;
     const pgsl = await getLattice(args.podUrl, args.agentDid, args.label, fetchFn, args.ephemeral, args.resourceName);
     const prov = provFor(args.agentDid);
     // Reuse measurement: which spine terms/atoms already existed BEFORE this
