@@ -388,8 +388,16 @@ class InboundCredentialRegistry {
     return cred;
   }
 
-  add(input: { principal: string; secret: string; tenant?: string; label?: string }): InboundCredentialView {
+  /** Cap the in-memory inbound-credential store (holds PLAINTEXT secrets) so a signed
+   *  wallet POSTing a huge credentials[] cannot grow it without limit into an OOM +
+   *  secret-heap-bloat (round-38 blocker). A NEW principal past the cap is rejected;
+   *  updating an existing one always succeeds. */
+  private static readonly MAX = 10_000;
+
+  add(input: { principal: string; secret: string; tenant?: string; label?: string }): InboundCredentialView | null {
     const tenant = tenantIdOf(input.tenant);
+    const id = 'cred-' + Buffer.from(`${input.principal}:${tenant}`).toString('base64url').slice(0, 24);
+    if (!this.meta.has(id) && this.meta.size >= InboundCredentialRegistry.MAX) return null; // registry cap reached
     const cred = this.put(input.principal, input.secret, tenant, input.label?.trim() || input.principal);
     return this.view(cred);
   }
