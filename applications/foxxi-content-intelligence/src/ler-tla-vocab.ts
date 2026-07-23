@@ -93,8 +93,10 @@ export interface SemTerm {
   range?: string;
   /** Cross-standard `owl:equivalentClass` targets (prefixed or absolute). */
   equivalentClass?: readonly string[];
-  /** `skos:exactMatch` / `skos:closeMatch` to external published standards. */
+  /** `skos:exactMatch` (strict identity) to external published standards. */
   exactMatch?: readonly string[];
+  /** `skos:closeMatch` (close, non-identical alignment) to external published standards. */
+  closeMatch?: readonly string[];
   /** Substrate primitives a composed/view/role term emerges from. */
   constructedFrom?: readonly string[];
   /** For `Concept` terms — the ConceptScheme it is `skos:inScheme`. */
@@ -189,7 +191,9 @@ const LER_TERMS: readonly SemTerm[] = [
     definition: 'The learner\'s permanent academic record — courses, dates, grades, degrees. A projection (query view) over the verified record entries of an Enterprise Learner Record, optionally re-packaged as a Comprehensive Learner Record credential.',
     source: 'IEEE P2997; 1EdTech CLR 2.0',
     constructedFrom: ['ler:EnterpriseLearnerRecord', 'iep:CompositionOperator'],
-    exactMatch: ['https://purl.imsglobal.org/spec/clr/v2p0/ClrCredential'],
+    // closeMatch (NOT exactMatch): a Transcript is a PROJECTION over the ELR, closely related to
+    // — but not identical with — a CLR 2.0 credential, so we do not assert strict identity.
+    closeMatch: ['https://purl.imsglobal.org/spec/clr/v2p0/ClrCredential'],
   },
 
   // ── Attestations + evidence (composed over the attestation primitive)
@@ -225,7 +229,9 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'IEEE P2997; IEEE 1484.2-2024 (an LER IS a Verifiable Credential)',
     subClassOf: ['vc:VerifiableCredential', 'amta:Attestation'],
     constructedFrom: ['vc:VerifiableCredential', 'iep:verifiableCredential'],
-    exactMatch: ['https://purl.imsglobal.org/spec/ob/v3p0/OpenBadgeCredential'],
+    // closeMatch (NOT exactMatch): OB3 OpenBadgeCredential is a SUBTYPE of this broader Credential
+    // class, not identical to it — so a strict identity claim would be wrong.
+    closeMatch: ['https://purl.imsglobal.org/spec/ob/v3p0/OpenBadgeCredential'],
   },
   {
     family: 'ler', name: 'Endorsement', kind: 'Class', construction: 'composed',
@@ -828,6 +834,7 @@ function renderTermTurtle(t: SemTerm): string {
   if (t.range) lines.push(`    rdfs:range ${ttlRef(t.range)} ;`);
   for (const eq of t.equivalentClass ?? []) lines.push(`    owl:equivalentClass ${ttlRef(eq)} ;`);
   for (const xm of t.exactMatch ?? []) lines.push(`    skos:exactMatch ${ttlRef(xm)} ;`);
+  for (const cm of t.closeMatch ?? []) lines.push(`    skos:closeMatch ${ttlRef(cm)} ;`);
   // A composed / view / role term names the substrate primitives it
   // emerges from — the "emergent composable" claim, in RDF.
   for (const cf of t.constructedFrom ?? []) lines.push(`    iep:constructedFrom ${ttlRef(cf)} ;`);
@@ -909,6 +916,11 @@ const JSONLD_CONTEXT: Record<string, unknown> = {
   subClassOf: { '@id': 'rdfs:subClassOf', '@type': '@id' },
   equivalentClass: { '@id': 'owl:equivalentClass', '@type': '@id' },
   exactMatch: { '@id': 'skos:exactMatch', '@type': '@id' },
+  closeMatch: { '@id': 'skos:closeMatch', '@type': '@id' },
+  domain: { '@id': 'rdfs:domain', '@type': '@id' },
+  range: { '@id': 'rdfs:range', '@type': '@id' },
+  subPropertyOf: { '@id': 'rdfs:subPropertyOf', '@type': '@id' },
+  inScheme: { '@id': 'skos:inScheme', '@type': '@id' },
   constructedFrom: { '@id': 'iep:constructedFrom', '@type': '@id' },
   isDefinedBy: { '@id': 'rdfs:isDefinedBy', '@type': '@id' },
 };
@@ -934,6 +946,11 @@ function termJsonLd(t: SemTerm): Record<string, unknown> {
   if (t.subClassOf) node.subClassOf = t.subClassOf.map(jsonldExpand);
   if (t.equivalentClass) node.equivalentClass = t.equivalentClass.map(jsonldExpand);
   if (t.exactMatch) node.exactMatch = [...t.exactMatch];
+  if (t.closeMatch) node.closeMatch = [...t.closeMatch];
+  // Faithful to the Turtle projection: property terms carry domain/range/subPropertyOf too.
+  if (t.domain) node.domain = jsonldExpand(t.domain);
+  if (t.range) node.range = jsonldExpand(t.range);
+  if (t.subPropertyOf) node.subPropertyOf = t.subPropertyOf.map(jsonldExpand);
   if (t.constructedFrom) node.constructedFrom = t.constructedFrom.map(jsonldExpand);
   node._links = { self: { href: `${doc}/term/${t.name}` }, ontology: { href: doc } };
   return node;

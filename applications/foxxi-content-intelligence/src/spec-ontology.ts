@@ -358,17 +358,22 @@ export function renderJsonLd(m: OntologyModel): Record<string, unknown> {
   // previous shape put classes/properties under bare top-level keys that are NOT in @context,
   // so JSON-LD 1.1 expansion DROPPED them — the doc yielded zero class/property triples. In a
   // @graph they all expand to real triples, matching the OWL/SHACL Turtle projection.
+  // Faithful to the OWL/SHACL Turtle projection: carry rdfs:isDefinedBy on every node and
+  // owl:imports on the ontology, so a content-negotiated JSON-LD expands to the SAME graph.
+  const def = { '@id': ontologyIri(m) };
   const graph: Array<Record<string, unknown>> = [
     {
       '@id': ontologyIri(m), '@type': 'owl:Ontology',
       'dct:title': m.title, 'dct:description': m.description, 'owl:versionInfo': m.version,
       'rdfs:seeAlso': { '@id': m.spec },
+      ...(m.imports?.length ? { 'owl:imports': m.imports.map(i => ({ '@id': /^https?:\/\//.test(i) ? i : `${NS_ROOT}${i}` })) } : {}),
+      'rdfs:isDefinedBy': def,
     },
-    ...m.classes.map(c => ({ '@id': `${m.module}:${c.name}`, '@type': 'owl:Class', 'rdfs:label': c.label, 'rdfs:comment': c.comment, ...(c.subClassOf?.length ? { 'rdfs:subClassOf': c.subClassOf.map(s => ({ '@id': expand(m, s).replace(/^<|>$/g, '') })) } : {}), ...(c.equivalentClass?.length ? { 'owl:equivalentClass': c.equivalentClass.map(e => ({ '@id': expand(m, e).replace(/^<|>$/g, '') })) } : {}) })),
-    ...m.properties.map(p => ({ '@id': `${m.module}:${p.name}`, '@type': p.kind === 'object' ? 'owl:ObjectProperty' : 'owl:DatatypeProperty', 'rdfs:label': p.label, 'rdfs:comment': p.comment, ...(p.domain ? { 'rdfs:domain': { '@id': expand(m, p.domain).replace(/^<|>$/g, '') } } : {}), ...(p.range ? { 'rdfs:range': { '@id': expand(m, p.range).replace(/^<|>$/g, '') } } : {}) })),
+    ...m.classes.map(c => ({ '@id': `${m.module}:${c.name}`, '@type': 'owl:Class', 'rdfs:label': c.label, 'rdfs:comment': c.comment, ...(c.subClassOf?.length ? { 'rdfs:subClassOf': c.subClassOf.map(s => ({ '@id': expand(m, s).replace(/^<|>$/g, '') })) } : {}), ...(c.equivalentClass?.length ? { 'owl:equivalentClass': c.equivalentClass.map(e => ({ '@id': expand(m, e).replace(/^<|>$/g, '') })) } : {}), 'rdfs:isDefinedBy': def })),
+    ...m.properties.map(p => ({ '@id': `${m.module}:${p.name}`, '@type': p.kind === 'object' ? 'owl:ObjectProperty' : 'owl:DatatypeProperty', 'rdfs:label': p.label, 'rdfs:comment': p.comment, ...(p.domain ? { 'rdfs:domain': { '@id': expand(m, p.domain).replace(/^<|>$/g, '') } } : {}), ...(p.range ? { 'rdfs:range': { '@id': expand(m, p.range).replace(/^<|>$/g, '') } } : {}), 'rdfs:isDefinedBy': def })),
     ...(m.vocabularies ?? []).flatMap(v => [
-      { '@id': `${m.module}:${slugLocal(v.name)}`, '@type': 'skos:ConceptScheme', 'rdfs:label': v.label ?? v.name },
-      ...v.members.map(mem => ({ '@id': `${m.module}:${memberLocal(v.name, mem.name)}`, '@type': 'skos:Concept', 'skos:inScheme': { '@id': `${m.module}:${slugLocal(v.name)}` }, 'skos:prefLabel': mem.label, ...(mem.comment ? { 'skos:definition': mem.comment } : {}) })),
+      { '@id': `${m.module}:${slugLocal(v.name)}`, '@type': 'skos:ConceptScheme', 'rdfs:label': v.label ?? v.name, ...(v.comment ? { 'rdfs:comment': v.comment } : {}), 'rdfs:isDefinedBy': def },
+      ...v.members.map(mem => ({ '@id': `${m.module}:${memberLocal(v.name, mem.name)}`, '@type': 'skos:Concept', 'skos:inScheme': { '@id': `${m.module}:${slugLocal(v.name)}` }, 'skos:prefLabel': mem.label, ...(mem.comment ? { 'skos:definition': mem.comment } : {}), 'rdfs:isDefinedBy': def })),
     ]),
   ];
   return {
