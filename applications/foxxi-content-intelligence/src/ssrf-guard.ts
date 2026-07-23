@@ -1,14 +1,16 @@
 /**
  * SSRF guard for caller-supplied URLs the bridge fetches server-side.
  *
- * Several endpoints resolve a subject/pod/platform URL from caller input and
- * then HTTP-GET it (delegation verification, credential reads, LTI consumer
- * mode). Without a guard those are blind SSRF primitives — reach an internal
- * service or the cloud metadata endpoint (169.254.169.254), and the error/
- * timing difference is an oracle. This module rejects any target whose host is
- * a loopback / link-local / private / unspecified address, both as an IP
- * literal AND after DNS resolution (defeating a public hostname that resolves
- * to a private IP). Only http(s) is allowed.
+ * Several endpoints resolve a subject/pod/platform/target URL from caller input
+ * and then HTTP-GET/POST it (directory + course fetch, delegation verification,
+ * credential reads, second-hop descriptor/graph fetches, LTI + LRS forwarding).
+ * Without a guard those are blind SSRF primitives — reach an internal service or
+ * the cloud metadata endpoint (169.254.169.254), and the error/timing difference
+ * is an oracle (plus a socket-holding DoS). This module rejects any target whose
+ * host is a loopback / link-local / private / unspecified address — as an IP
+ * literal (IPv4 dotted/decimal/hex, IPv6 including IPv4-mapped/compat/NAT64) AND
+ * after DNS resolution (defeating a public hostname that resolves to a private
+ * IP). Only http(s) is allowed.
  *
  * NB: without connection-level address pinning a TOCTOU DNS rebind between the
  * lookup here and the actual fetch remains a theoretical residual; blocking the
@@ -17,19 +19,8 @@
 
 import { lookup } from 'node:dns/promises';
 
-/** True iff a hostname is a loopback/link-local/private/unspecified literal
- *  (IPv4 or IPv6) or a local name. Synchronous — literal inspection only. */
-export function isPrivateHostname(host: string): boolean {
-  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
-  if (h === '' || h === 'localhost' || h.endsWith('.localhost')) return true;
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (v4) return isPrivateIpv4(Number(v4[1]), Number(v4[2]), Number(v4[3]), Number(v4[4]));
-  if (h.includes(':')) return isPrivateIpv6(h);
-  return false;
-}
-
 function isPrivateIpv4(a: number, b: number, _c: number, _d: number): boolean {
-  if ([a, b].some(n => !Number.isInteger(n) || n < 0 || n > 255)) return true; // malformed → treat as unsafe
+  if ([a, b, _c, _d].some(n => !Number.isInteger(n) || n < 0 || n > 255)) return true; // malformed → unsafe
   if (a === 0 || a === 127 || a === 10) return true;          // this-network / loopback / private
   if (a === 169 && b === 254) return true;                    // link-local incl. 169.254.169.254 metadata
   if (a === 172 && b >= 16 && b <= 31) return true;           // private
@@ -39,13 +30,65 @@ function isPrivateIpv4(a: number, b: number, _c: number, _d: number): boolean {
   return false;
 }
 
-function isPrivateIpv6(h: string): boolean {
-  if (h === '::1' || h === '::') return true;                 // loopback / unspecified
-  if (h.startsWith('fe80:')) return true;                     // link-local
-  if (h.startsWith('fc') || h.startsWith('fd')) return true;  // unique local fc00::/7
-  // IPv4-mapped (::ffff:127.0.0.1) — check the embedded v4.
-  const mapped = /::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/i.exec(h);
-  if (mapped) return isPrivateIpv4(Number(mapped[1]), Number(mapped[2]), Number(mapped[3]), Number(mapped[4]));
+/** Expand an IPv6 literal (already bracket-stripped) to eight 16-bit groups, or
+ *  null if it is not a valid IPv6 address. Handles `::` compression and a trailing
+ *  embedded dotted-IPv4 (::ffff:1.2.3.4). */
+function expandIpv6(h: string): number[] | null {
+  let s = h;
+  // A trailing embedded dotted-decimal IPv4 (mapped / compat / NAT64) → fold into two hex groups.
+  const dotted = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  if (dotted) {
+    const q = [Number(dotted[2]), Number(dotted[3]), Number(dotted[4]), Number(dotted[5])];
+    if (q.some(n => n > 255)) return null;
+    s = dotted[1] + (((q[0] << 8) | q[1]).toString(16)) + ':' + (((q[2] << 8) | q[3]).toString(16));
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 ? (halves[1] ? halves[1].split(':') : []) : [];
+  let groups: number[];
+  if (halves.length === 1) {
+    if (head.length !== 8) return null;
+    groups = head.map(x => parseInt(x, 16));
+  } else {
+    const missing = 8 - head.length - tail.length;
+    if (missing < 1) return null;
+    groups = [...head.map(x => parseInt(x || '0', 16)), ...Array(missing).fill(0), ...tail.map(x => parseInt(x || '0', 16))];
+  }
+  if (groups.length !== 8 || groups.some(g => !Number.isInteger(g) || g < 0 || g > 0xffff)) return null;
+  return groups;
+}
+
+function isPrivateIpv6(hRaw: string): boolean {
+  const h = hRaw.toLowerCase();
+  const g = expandIpv6(h);
+  if (!g) return true;                                        // unparseable IPv6 literal → treat as unsafe
+  if (g.slice(0, 7).every(x => x === 0)) return g[7] === 0 || g[7] === 1; // :: (unspecified) / ::1 (loopback)
+  if ((g[0]! & 0xffc0) === 0xfe80) return true;               // fe80::/10 link-local
+  if ((g[0]! & 0xfe00) === 0xfc00) return true;               // fc00::/7 unique-local
+  if ((g[0]! & 0xff00) === 0xff00) return true;               // ff00::/8 multicast
+  // IPv4-mapped ::ffff:x:x, IPv4-compatible ::x:x, NAT64 64:ff9b::x:x — the last
+  // 32 bits are an embedded IPv4 that a dual-stack socket connects to.
+  const mapped = g.slice(0, 5).every(x => x === 0) && g[5] === 0xffff;
+  const compat = g.slice(0, 6).every(x => x === 0);
+  const nat64 = g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every(x => x === 0);
+  if (mapped || compat || nat64) {
+    return isPrivateIpv4((g[6]! >> 8) & 0xff, g[6]! & 0xff, (g[7]! >> 8) & 0xff, g[7]! & 0xff);
+  }
+  return false;
+}
+
+/** True iff a hostname is a loopback/link-local/private/unspecified literal
+ *  (IPv4 dotted, or IPv6 incl. IPv4-mapped/compat/NAT64) or a local name.
+ *  Synchronous — literal inspection only. The WHATWG URL parser normalizes
+ *  integer/hex IPv4 (2130706433, 0x7f000001) to dotted form, so those arrive here
+ *  already dotted. */
+export function isPrivateHostname(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  if (h === '' || h === 'localhost' || h.endsWith('.localhost')) return true;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (v4) return isPrivateIpv4(Number(v4[1]), Number(v4[2]), Number(v4[3]), Number(v4[4]));
+  if (h.includes(':')) return isPrivateIpv6(h);
   return false;
 }
 
@@ -61,11 +104,13 @@ export async function assertSafeFetchTarget(rawUrl: string): Promise<void> {
   if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('target URL scheme must be http(s)');
   const host = u.hostname.toLowerCase();
   if (isPrivateHostname(host)) throw new Error('target host is private/loopback/link-local');
-  // If it is not an IP literal, resolve it and reject if any address is private.
-  const isIpLiteral = /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':');
+  // A bracketed IPv6 literal (or a dotted-IPv4 literal) is its own address — already
+  // classified above; there is nothing to resolve. Only a DNS NAME needs a lookup.
+  const bare = host.replace(/^\[|\]$/g, '');
+  const isIpLiteral = /^\d{1,3}(\.\d{1,3}){3}$/.test(bare) || bare.includes(':');
   if (!isIpLiteral) {
     let addrs: Array<{ address: string }>;
-    try { addrs = await lookup(host, { all: true }); }
+    try { addrs = await lookup(bare, { all: true }); }
     catch { throw new Error('target host does not resolve'); }
     for (const a of addrs) {
       if (isPrivateHostname(a.address)) throw new Error('target host resolves to a private/loopback/link-local address');

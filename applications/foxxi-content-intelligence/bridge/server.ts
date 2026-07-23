@@ -740,7 +740,10 @@ function courseIdFrom(args: Record<string, unknown>): string {
 }
 
 async function autoFetchCourse(args: Record<string, unknown>, courseId: string): Promise<FoxxiAgenticPayload | null> {
-  const podUrl = (args.tenant_pod_url as string) || tenantPodUrl;
+  // Same SSRF choke point as autoFetchAdmin (twin): drop a private-literal caller pod
+  // (→ configured tenant); the tenant-fetcher layer additionally DNS-guards every hop.
+  const raw = (args.tenant_pod_url as string) || tenantPodUrl;
+  const podUrl = safePublicUrlOrUndefined(raw) ?? tenantPodUrl;
   if (!podUrl) return null;
   try {
     return await fetchCoursePackage(courseId, { ...fetcherConfig(), podUrl }) as FoxxiAgenticPayload;
@@ -1572,7 +1575,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // flat env-tenant partition (the legacy outlier; the delegated /agent/record-
     // performance already writes to the lens). This closes the write/read mismatch
     // that made assemble_learner_record return all-zeros for a self-sovereign learner.
-    const perfPod = resolveSubjectPodUrl(performerDid, (args.subject_pod_url ?? args.learner_pod_url ?? args.tenant_pod_url) as string | undefined);
+    // Bind the LENS/lattice routing to performerDid's OWN derived pod. A caller-supplied
+    // subject_pod_url override is honored ONLY for a privileged operator — otherwise it was
+    // a second forgery channel: a non-privileged caller who omits actor_did (performer=self,
+    // passing the actor guard above) but sets subject_pod_url=<victim's pod> would land a
+    // self-authored MOM completed/failed statement into lens:<victim> + the victim's shared
+    // calibration lattice, poisoning the victim's ELR performanceCount / successRate — the
+    // exact harm the actor_did guard targeted, reached via the routing arg instead.
+    const perfPodOverride = isPrivilegedObserver
+      ? (args.subject_pod_url ?? args.learner_pod_url ?? args.tenant_pod_url) as string | undefined
+      : undefined;
+    const perfPod = resolveSubjectPodUrl(performerDid, perfPodOverride);
     const perfLabel = actorForPod(perfPod, MESH_ACTOR_LABELS);
     const perfActivityType = (typeof args.activity_type === 'string' && args.activity_type.trim())
       ? args.activity_type.trim()
@@ -3081,6 +3094,14 @@ const app = createVerticalBridge({
     // POST /performance/plan, /content/compose-course, /content/personalize.
     attachPerformanceRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
+      // Per-IP bound on the UNAUTHENTICATED pod-write endpoints (/performance/plan,
+      // /agent/attest) — each call PUTs a descriptor+graph+atom to the tenant pod with
+      // the bridge's write credential, so cap it against storage-exhaustion (reuses the
+      // same per-IP limiter the agentic-ask path uses).
+      checkWriteRateLimit: (clientIp) => {
+        const rl = checkAgenticRateLimit(clientIp);
+        return rl.ok ? { ok: true } : { ok: false, retryAfterSeconds: rl.retryAfterSeconds };
+      },
       // Delegated-auth verifier → exposes the SIGNED, followable
       // contextualize-and-plan affordance so a mesh agent (one that can only
       // act on discovered affordances, not raw-POST) classifies a situation AS

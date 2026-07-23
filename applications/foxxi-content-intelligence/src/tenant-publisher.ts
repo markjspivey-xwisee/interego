@@ -21,6 +21,7 @@
 import {
   publish,
 } from '@interego/solid';
+import { iesc } from './turtle-escape.js';
 import type {
   ContextDescriptorData,
   IRI,
@@ -132,8 +133,10 @@ function buildSectionGraph(args: {
   // with JSON.stringify output. base64 sidesteps escape issues entirely.
   const json = JSON.stringify(args.payload);
   const b64 = Buffer.from(json, 'utf8').toString('base64');
-  return `<${args.graphIri}> a <${args.typeIri}> ;
-    <http://www.w3.org/ns/prov#wasAttributedTo> <${args.authoritativeSource}> ;
+  // iesc the IRIs (defence in depth — graphIri/authoritativeSource are server/config-minted
+  // today, but this is the same sink class every other publisher was hardened for).
+  return `<${iesc(args.graphIri)}> a <${iesc(args.typeIri)}> ;
+    <http://www.w3.org/ns/prov#wasAttributedTo> <${iesc(args.authoritativeSource)}> ;
     <http://purl.org/dc/terms/identifier> "len:${json.length}" ;
     <${BUNDLE_JSON_PRED}> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
