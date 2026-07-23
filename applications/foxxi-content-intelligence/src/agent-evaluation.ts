@@ -113,6 +113,17 @@ export class EvaluationRegistry {
   private readonly evaluations = new Map<string, EvaluationState>();
   private seq = 0;
 
+  // Bounds against caller-keyed-identity DoS (round-45): open_agent_evaluation is
+  // reachable by any signed wallet, so the evaluations Map, each cohort's candidate
+  // list, and each candidate's run list are all attacker-growable. Evaluations and
+  // runs evict oldest (ids are monotonic timestamps / durable LRS evidence — the
+  // in-memory copy is a cache). Candidate ids are derived from `candidates.length`,
+  // so that list REJECTS past the cap rather than evicting — evicting would let a
+  // later insert reuse an id and defeat the owner/decision locks keyed on it.
+  private static readonly EVALUATIONS_MAX = 100_000;
+  private static readonly CANDIDATES_MAX = 10_000;
+  private static readonly RUNS_MAX = 10_000;
+
   /** Open a new evaluation cohort. */
   open(input: OpenEvaluationInput): AgentEvaluation {
     const id = `urn:foxxi:evaluation:${Date.now()}-${this.seq++}`;
@@ -129,6 +140,10 @@ export class EvaluationRegistry {
       openedBy: input.openedBy,
       openedAt: new Date().toISOString(),
     };
+    if (this.evaluations.size >= EvaluationRegistry.EVALUATIONS_MAX) {
+      const oldest = this.evaluations.keys().next().value;
+      if (oldest !== undefined) this.evaluations.delete(oldest);
+    }
     this.evaluations.set(id, { evaluation, candidates: [] });
     return evaluation;
   }
@@ -146,6 +161,9 @@ export class EvaluationRegistry {
       c => c.agentDid === input.agentDid && c.status !== 'declined' && c.status !== 'withdrawn',
     );
     if (existing) return { error: `agent ${input.agentDid} is already a candidate (${existing.status})` };
+    if (state.candidates.length >= EvaluationRegistry.CANDIDATES_MAX) {
+      return { error: `evaluation ${evaluationId} has reached its candidate limit` };
+    }
     const candidate: EvaluationCandidate = {
       candidateId: `${evaluationId}:candidate-${state.candidates.length}`,
       agentDid: input.agentDid,
@@ -201,6 +219,7 @@ export class EvaluationRegistry {
     if (candidate.status !== 'accepted') {
       return { error: `candidate ${candidateId} is ${candidate.status} — accept it before recording runs` };
     }
+    if (candidate.runs.length >= EvaluationRegistry.RUNS_MAX) candidate.runs.shift();
     candidate.runs.push(run);
     return candidate;
   }
