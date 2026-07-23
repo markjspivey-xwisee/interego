@@ -49,6 +49,12 @@ interface CacheEntry<T> {
 }
 
 const TTL_MS = 60_000;
+// Bounded (round-52): the key includes the RAW caller-supplied podUrl, and setCached runs
+// pre-auth (autoFetchAdmin) even for pods that fail to resolve — so an unauthenticated caller
+// looping distinct public podUrls (distinct paths / wildcard subdomains all pass the SSRF
+// host guard) would grow this Map without limit → OOM. Cap it: on insert past the cap, sweep
+// expired entries first (60s TTL means a flood is mostly stale), then evict oldest by insertion.
+const CACHE_MAX = 2000;
 const cache = new Map<string, CacheEntry<unknown>>();
 
 function cacheKey(podUrl: string, authoritativeSource: IRI, kind: string): string {
@@ -66,6 +72,14 @@ function getCached<T>(key: string): T | null {
 }
 
 function setCached<T>(key: string, value: T): void {
+  if (cache.size >= CACHE_MAX && !cache.has(key)) {
+    const now = Date.now();
+    for (const [k, e] of cache) { if (now > e.expiresAt) cache.delete(k); }
+    if (cache.size >= CACHE_MAX) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
+  }
   cache.set(key, { value, expiresAt: Date.now() + TTL_MS });
 }
 

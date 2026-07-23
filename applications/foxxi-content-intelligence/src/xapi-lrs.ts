@@ -65,7 +65,7 @@ import {
 import type {
   IRI,
 } from '@interego/core';
-import { verifySessionToken, buildAddressMap, isPublicDemoWallet } from './auth.js';
+import { verifySessionToken, trustedAddressMap } from './auth.js';
 import { verifyOauthBearer } from './xapi-oauth.js';
 import type { KeyObject } from 'node:crypto';
 
@@ -355,18 +355,15 @@ function makeAuthGate(config: XapiLrsConfig) {
       // 2. Wallet-signed Foxxi session token → verify signature + directory binding.
       const users = config.sessionUsers?.();
       if (users && users.length) {
-        // Build the address map from EXPLICIT, NON-PUBLIC-DEMO-SEED wallets only (round-49 +
-        // round-51). Deriving a wallet for directory users who lack one uses the PUBLIC demo
-        // seed, so anyone could forge those users' tokens and reach DEFAULT_TENANT — the very
-        // forgery this gate exists to stop. buildAddressMap already skips entries without a
-        // wallet_address; we ALSO drop any explicit wallet that equals the public-demo-seed
-        // derivation (a publisher may bake those in when FOXXI_WALLET_SEED is unset — they are
-        // just as forgeable as a missing one). A caller must present a token whose signer is a
-        // directory user's REAL published wallet, or the secret-seeded conformance self-test
-        // identity (whose wallet is derived from the secret CONFORMANCE_SEED, not the demo one).
-        const trusted = (users as ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>)
-          .filter(u => !!u.wallet_address && !isPublicDemoWallet(u.user_id, u.wallet_address));
-        const addressMap = buildAddressMap(trusted);
+        // Trust only EXPLICIT, NON-PUBLIC-DEMO-SEED wallets (round-49 + round-51 + round-52).
+        // trustedAddressMap is the one shared constructor every session-token gate uses: it
+        // skips users without a wallet_address AND drops any wallet equal to the public-demo-
+        // seed derivation (forgeable by anyone knowing the public seed + user_id — a publisher
+        // bakes those in when FOXXI_WALLET_SEED is unset). The secret-seeded conformance
+        // self-test identity survives (its wallet derives from CONFORMANCE_SEED, not the demo one).
+        const addressMap = trustedAddressMap(
+          users as ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>,
+        );
         const verified = verifySessionToken(bearer, addressMap);
         if (verified.ok) {
           r.xapiAuth = { kind: 'bearer', principal: verified.callerDid, token: bearer };

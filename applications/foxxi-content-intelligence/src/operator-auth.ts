@@ -23,7 +23,7 @@
  */
 
 import type { Request } from 'express';
-import { verifySessionToken, buildAddressMap } from './auth.js';
+import { verifySessionToken, trustedAddressMap } from './auth.js';
 import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
 
 export interface OperatorAuthConfig {
@@ -46,7 +46,7 @@ export function callerIsOperator(req: Request, cfg: OperatorAuthConfig): boolean
   if (!token || !cfg.loadUsers) return false;
   let users: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>;
   try { users = cfg.loadUsers(); } catch { return false; }
-  const verified = verifySessionToken(token, buildAddressMap(users));
+  const verified = verifySessionToken(token, trustedAddressMap(users));
   if (!verified.ok) return false;
   const adminWebId = cfg.adminWebId ?? '';
   const le = cfg.learningEngineerWebIds ?? new Set<string>();

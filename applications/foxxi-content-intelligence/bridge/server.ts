@@ -321,7 +321,7 @@ import {
   calibrateMasteryThreshold,
   frameworkGapAnalysis,
 } from '../src/learning-engineering.js';
-import { verifySessionToken, buildAddressMap, type SessionToken } from '../src/auth.js';
+import { verifySessionToken, trustedAddressMap, type SessionToken } from '../src/auth.js';
 import {
   resolveCallerContext,
   emitAccessDecision,
@@ -1102,7 +1102,7 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
   const admin = await autoFetchAdmin(args);
   if (!admin) return { error: 'tenant pod is not seeded or cannot be decrypted; auth resolution requires the directory' };
 
-  const addressMap = buildAddressMap(admin.users ?? []);
+  const addressMap = trustedAddressMap(admin.users ?? []);
 
   // PRIVILEGE SCOPING (round-30 blocker): the admin / learning-engineer roles are
   // granted purely on a web_id STRING match against adminWebId / learningEngineerWebIds.
@@ -3163,7 +3163,7 @@ const instrumentedHandlers = Object.fromEntries(
               // an anonymous caller forge an xAPI statement attributed to any victim.
               // Only a cryptographically-verified token sets the actor; otherwise the
               // call is attributed to 'anonymous' (callerActor's unset-webId path).
-              const addressMap = buildAddressMap(directoryUsersCache as unknown as Parameters<typeof buildAddressMap>[0]);
+              const addressMap = trustedAddressMap(directoryUsersCache as unknown as Parameters<typeof trustedAddressMap>[0]);
               const verified = verifySessionToken(bearerToken, addressMap);
               if (verified.ok) {
                 callerCtx.webId = verified.callerDid;
@@ -3456,7 +3456,7 @@ const app = createVerticalBridge({
         if (!token) return { ok: false, reason: 'Pass Authorization: Bearer <session-token>.' };
         const admin = await autoFetchAdmin({});
         if (!admin) return { ok: false, reason: 'the tenant directory is unavailable for verification.' };
-        const addressMap = buildAddressMap(admin.users ?? []);
+        const addressMap = trustedAddressMap(admin.users ?? []);
         const verified = verifySessionToken(token, addressMap);
         if (!verified.ok) return { ok: false, reason: `the token was rejected (${verified.reason}).` };
         const ctx = resolveCallerContext({

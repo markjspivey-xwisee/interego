@@ -217,6 +217,23 @@ export function buildAddressMap(
 }
 
 /**
+ * The address map EVERY session-token trust boundary must build (round-52). It is
+ * buildAddressMap MINUS any user whose wallet is the PUBLIC-demo-seed derivation — those
+ * are forgeable by anyone who knows the public seed + user_id, so admitting one lets a
+ * caller forge a token for that identity (admin/LE/operator escalation or learner
+ * impersonation). Round-51 filtered ONLY the LRS gate inline; making this the single shared
+ * constructor closes the whole class (resolveCaller, callerIsOperator, the LRS-admin gate,
+ * the context-chat verifier, affordance attribution) so no sink re-introduces the forgery.
+ * A user with a REAL (non-demo-seed) wallet_address — e.g. a secret-seeded self-test
+ * identity or a self-sovereign published key — is unaffected.
+ */
+export function trustedAddressMap(
+  users: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>,
+): Map<string, { webId: string; userId: string }> {
+  return buildAddressMap(users.filter(u => !!u.wallet_address && !isPublicDemoWallet(u.user_id, u.wallet_address)));
+}
+
+/**
  * Convenience: derive every user's wallet address from the demo seed and
  * inject `wallet_address` into the user records. Called by the publisher
  * before sending the directory to the pod so the bridge has the address
