@@ -193,6 +193,7 @@ export interface ReadRecordsArgs {
 export async function readDurableRecordedStatements(args: ReadRecordsArgs): Promise<Record<string, unknown>[]> {
   let entries: ManifestEntry[];
   try {
+    await assertSafeFetchTarget(args.podUrl); // 1st-hop SSRF: caller-supplied pod fetched via discover()
     entries = (await discover(
       args.podUrl,
       undefined,
@@ -388,6 +389,7 @@ export async function listScormCourses(args: { podUrl: string; fetch?: FetchFn }
 async function discoverCourseEntries(podUrl: string, fetchFn?: FetchFn): Promise<Array<ManifestEntry & { descriptorUrl: string }>> {
   let entries: ManifestEntry[];
   try {
+    await assertSafeFetchTarget(podUrl); // 1st-hop SSRF: caller-supplied pod fetched via discover() (reachable unauth via analyze-authored → loadScormCourse)
     entries = (await discover(podUrl, undefined, fetchFn ? { fetch: fetchFn as never } : undefined)) as ManifestEntry[];
   } catch {
     return [];
@@ -403,13 +405,14 @@ async function decodeCourseEntry(
 ): Promise<Record<string, unknown> | null> {
   const doFetch = (fetchFn ?? globalThis.fetch) as typeof globalThis.fetch;
   try {
+    await assertSafeFetchTarget(e.descriptorUrl); // 2nd-hop SSRF: descriptorUrl comes from the (attacker-controllable) pod manifest
     const descRes = await doFetch(e.descriptorUrl, { headers: { Accept: 'text/turtle' } });
     if (!descRes.ok) return null;
     const descTurtle = await descRes.text();
     const gm = descTurtle.match(/hydra:target\s+<([^>]+)>/) ?? descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
     const graphUrl = gm?.[1];
     if (!graphUrl) return null;
-    await assertSafeFetchTarget(graphUrl); // 2nd-hop SSRF
+    await assertSafeFetchTarget(graphUrl); // 3rd-hop SSRF
     const { content } = await fetchGraphContent(graphUrl, fetchFn ? { fetch: fetchFn as never } : undefined);
     if (!content) return null;
     const m = content.match(/<[^>]*#courseJson>\s+"([A-Za-z0-9+/=\s]+)"/);

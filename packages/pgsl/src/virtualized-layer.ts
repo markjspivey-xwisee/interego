@@ -10,6 +10,7 @@
  */
 
 import type { IRI, ContextDescriptorData } from '@interego/core';
+import { escapeTurtleLiteral } from '@interego/core';
 import { toTurtle, isPgslNodeId, pgslNodeKind } from '@interego/core';
 import type { PGSLInstance, Value } from './types.js';
 import type { CoherenceCertificate } from './coherence.js';
@@ -68,8 +69,12 @@ function pgslIri(local: string): string {
 }
 
 function lit(value: string | number, datatype?: string): string {
-  if (datatype) return `"${value}"^^${datatype}`;
-  return `"${value}"`;
+  // A string value is a free-form literal — escape it so a caller-derived value
+  // (e.g. an agent label) with a `"` / newline cannot break out of the literal
+  // and inject triples. Numbers (and xsd-typed values) are structurally safe.
+  const v = typeof value === 'string' ? escapeTurtleLiteral(value) : value;
+  if (datatype) return `"${v}"^^${datatype}`;
+  return `"${v}"`;
 }
 
 function xsdLit(value: string | number, type: string): string {

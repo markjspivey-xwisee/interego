@@ -63,6 +63,13 @@ const publicLabels = new Set<string>();
  *  already-published content; never for an agent's own corpus. */
 export function markLatticePublic(label: string): void { publicLabels.add(label); }
 export function publicLatticeLabels(): string[] { return [...publicLabels]; }
+/** True only for a label explicitly marked public (ns-foxxi, spec-ontology,
+ *  public-memories). The unauthenticated /agent/lattice/:label{,/term,/holon,
+ *  /interrogate} dereference routes MUST gate on this — a per-agent record
+ *  lattice (record-performance / scorm-author / issue-credential, holding xAPI
+ *  statements + learner PII) is never public and must not be served or
+ *  self-rehydrated to an anonymous caller. */
+export function isLabelPublic(label: string): boolean { return publicLabels.has(label); }
 
 /**
  * Resolve a PGSL node by its content hash WITHOUT being told which lattice holds it.
