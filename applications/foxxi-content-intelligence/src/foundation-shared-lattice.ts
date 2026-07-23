@@ -240,7 +240,10 @@ async function getLattice(podUrl: string, agentDid: string, label: string, fetch
         // loadCourseFromLattice / getLattice read path, incl. a public host that resolves
         // to an internal IP. A throw fences the label (unreadable) rather than 500ing.
         await assertSafeFetchTarget(resourceUrl);
-        const d = await resolveLatticeFromPodDetailed(resourceUrl, kp, fetchFn as unknown as typeof fetch);
+        // guardedFetchFn re-guards resourceUrl AND every redirect hop — resolveLatticeFromPodDetailed
+        // otherwise reads the (caller-influenced) pod with a raw redirect-following fetch, so a public
+        // host could 302 the lattice read to an internal address (round-32, live-confirmed unauth).
+        const d = await resolveLatticeFromPodDetailed(resourceUrl, kp, guardedFetchFn(fetchFn) as unknown as typeof fetch);
         if (d.status === 'ok') {
           // Adopt the pod copy if we have no in-memory ingests; if we DO (we composed
           // while fenced), keep ours — the write path's CAS will merge them onto the
