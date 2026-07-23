@@ -22,6 +22,7 @@ import { deriveEncryptionKeyPair, type EncryptionKeyPair } from '@interego/core'
 import type { IRI, FetchFn } from '@interego/core';
 import { createPGSL } from '@interego/pgsl';
 import { resolveAgentEncryptionKey } from '@interego/solid';
+import { guardedFetchFn } from './ssrf-guard.js';
 import { persistEncryptedHolonProjection } from './foundation-persist.js';
 import { registerFoxxiIngestionProfiles } from './pgsl-ingestion-profiles.js';
 import { createHash } from 'node:crypto';
@@ -88,7 +89,11 @@ export async function alsoPersistEncryptedHolon(
     // its own operations. Best-effort — if the owner hasn't published an
     // encryption key, fall back to bridge-only (non-breaking).
     const recipients = [kp.publicKey];
-    const ownerKey = await resolveAgentEncryptionKey(opts.podUrl, { fetch: opts.fetch });
+    // guardedFetchFn re-guards the <pod>/keys/encryption.json GET + every redirect hop —
+    // a caller-supplied recipient pod could otherwise 302 the key read to an internal
+    // host (round-30 recipient-key redirect SSRF).
+    const guardedFetch = guardedFetchFn(opts.fetch) as typeof opts.fetch;
+    const ownerKey = await resolveAgentEncryptionKey(opts.podUrl, { fetch: guardedFetch });
     if (ownerKey && ownerKey !== kp.publicKey) recipients.push(ownerKey);
     // Additional cross-seat recipients — resolve each pod's DURABLE published
     // key and wrap to it too; skip any that don't resolve (non-breaking). This
@@ -96,7 +101,7 @@ export async function alsoPersistEncryptedHolon(
     // keys/encryption.json, not the session keys publish_context's share_with uses.
     for (const pod of opts.additionalRecipientPods ?? []) {
       try {
-        const k = await resolveAgentEncryptionKey(pod, { fetch: opts.fetch });
+        const k = await resolveAgentEncryptionKey(pod, { fetch: guardedFetch });
         if (k && !recipients.includes(k)) recipients.push(k);
       } catch { /* skip an unresolvable recipient — best-effort */ }
     }

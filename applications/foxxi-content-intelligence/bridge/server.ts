@@ -1067,6 +1067,18 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
 
   const addressMap = buildAddressMap(admin.users ?? []);
 
+  // PRIVILEGE SCOPING (round-30 blocker): the admin / learning-engineer roles are
+  // granted purely on a web_id STRING match against adminWebId / learningEngineerWebIds.
+  // A SELF-SOVEREIGN tenant publishes a PUBLIC membership whose web_id is
+  // caller-declared (register_self_sovereign_learner), so a caller could self-declare
+  // web_id = adminWebId in their OWN pod's membership and then authenticate against it
+  // to be resolved as global admin. Those roles are CONFIGURED-tenant-only — when the
+  // resolved tenant is not the configured tenant, grant no privileged role (the
+  // self-sovereign owner still gets learner + ownership-gated self access).
+  const grantsPrivilegedRoles = samePod((args.tenant_pod_url as string) || tenantPodUrl, tenantPodUrl);
+  const roleAdminWebId = grantsPrivilegedRoles ? adminWebId : '';
+  const roleLeWebIds = grantsPrivilegedRoles ? learningEngineerWebIds : new Set<string>();
+
   if (signedSigner) {
     // Proof-of-possession: the recovered REAL signer address must be a member of
     // the tenant directory (its wallet_address). No demo seed involved — this is
@@ -1093,8 +1105,8 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
       callerWebId: member.webId,
       callerUserId: member.userId,
       users: admin.users as unknown as Parameters<typeof resolveCallerContext>[0]['users'],
-      adminWebId,
-      learningEngineerWebIds,
+      adminWebId: roleAdminWebId,
+      learningEngineerWebIds: roleLeWebIds,
     });
     return { ctx, admin };
   }
@@ -1119,8 +1131,8 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
     callerWebId: verified.callerDid,
     callerUserId: verified.callerUserId,
     users: admin.users as unknown as Parameters<typeof resolveCallerContext>[0]['users'],
-    adminWebId,
-    learningEngineerWebIds,
+    adminWebId: roleAdminWebId,
+    learningEngineerWebIds: roleLeWebIds,
   });
   return { ctx, admin };
 }
@@ -2581,7 +2593,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       if (Array.isArray(mem?.users)) members = mem.users.filter(Boolean);
     } catch { /* none published yet */ }
     const learnerId = (p.learner_id as string) || (args.learner_id as string) || `u-eth-${signer.slice(2, 14).toLowerCase()}`;
-    const webId = (p.learner_pod_url as string) || (args.learner_pod_url as string) || `${podUrl.replace(/\/+$/, '')}/profile/card#me`;
+    // web_id is published in a PUBLIC self-sovereign membership AND drives role
+    // resolution downstream, so constrain it to the caller's OWN pod (same origin +
+    // under the pod path). A caller-declared foreign/reserved web_id (e.g. the admin's
+    // WebID) would otherwise be planted here — round-30 escalation; defense-in-depth
+    // with the configured-tenant role gate in resolveCaller.
+    const webIdRaw = (p.learner_pod_url as string) || (args.learner_pod_url as string) || '';
+    const webIdUnderPod = (() => {
+      try { const w = new URL(webIdRaw); const pu = new URL(podUrl); return w.origin === pu.origin && w.pathname.startsWith(pu.pathname.replace(/\/+$/, '')); }
+      catch { return false; }
+    })();
+    const webId = (webIdRaw && webIdUnderPod) ? webIdRaw : `${podUrl.replace(/\/+$/, '')}/profile/card#me`;
     // A self-sovereign learner declares their OWN audience (their pod = their
     // tenant); this is what lets discover match a tag-keyed assignment policy.
     const audienceTags = Array.isArray(p.audience_tags) ? (p.audience_tags as unknown[]).map(String)

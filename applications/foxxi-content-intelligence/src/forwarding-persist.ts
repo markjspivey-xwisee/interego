@@ -19,6 +19,7 @@ import {
   type EncryptionKeyPair, type FetchFn,
 } from '@interego/core';
 import { resolveAgentEncryptionKey } from '@interego/solid';
+import { guardedFetchFn } from './ssrf-guard.js';
 
 /** Resource holding an owner's encrypted forwarding config, on their own pod. */
 const CONFIG_RESOURCE = 'foxxi-forwarding-config.json';
@@ -53,7 +54,8 @@ export async function persistForwardingConfig(args: {
   const fetchFn = args.fetch ?? (globalThis.fetch as unknown as FetchFn);
   const recipients = [args.bridgeKp.publicKey];
   try {
-    const ownerKey = await resolveAgentEncryptionKey(args.ownerPod, { fetch: fetchFn });
+    // Re-guard the <ownerPod>/keys/encryption.json GET + any redirect hop (round-30).
+    const ownerKey = await resolveAgentEncryptionKey(args.ownerPod, { fetch: guardedFetchFn(fetchFn) as typeof fetchFn });
     if (ownerKey && ownerKey !== args.bridgeKp.publicKey) recipients.push(ownerKey);
   } catch { /* owner hasn't published a key — bridge-only recipient is fine */ }
   const envelope = createEncryptedEnvelope(JSON.stringify(args.blob), recipients, args.bridgeKp);

@@ -27,7 +27,7 @@ import type { IRI, FetchFn } from '@interego/core';
 import { mintNodeId } from '@interego/core';
 import { resolveAgentEncryptionKey } from '@interego/solid';
 import { bridgeEncryptionKeypair } from './foundation-holon-altitude.js';
-import { assertSafeFetchTarget } from './ssrf-guard.js';
+import { assertSafeFetchTarget, guardedFetchFn } from './ssrf-guard.js';
 
 interface AgentLattice { pgsl: PGSLInstance; podUrl: string; agentDid: string; resourceUrl: string }
 const resident = new Map<string, AgentLattice>();   // label -> in-memory shared lattice
@@ -478,10 +478,16 @@ export async function composeIntoSharedLattice(args: {
     const resourceUrl = resident.get(args.label)?.resourceUrl ?? latticeResourceUrl(args.podUrl, args.resourceName);
     try {
       const recipients = [kp.publicKey];
-      const ownerKey = await resolveAgentEncryptionKey(args.podUrl, { fetch: fetchFn }).catch(() => null);
+      // resolveAgentEncryptionKey GETs <pod>/keys/encryption.json. A recipient pod is
+      // caller-supplied (record-performance recipients[]); the initial host is guarded at
+      // the route, but the key GET must ALSO re-guard every redirect hop or a public
+      // recipient host can 302 the key read to an internal address (round-30). guardedFetchFn
+      // wraps the fetch so the target + every redirect is re-guarded.
+      const guardedFetch = guardedFetchFn(fetchFn) as typeof fetchFn;
+      const ownerKey = await resolveAgentEncryptionKey(args.podUrl, { fetch: guardedFetch }).catch(() => null);
       if (ownerKey && ownerKey !== kp.publicKey) recipients.push(ownerKey);
       for (const pod of args.recipientPods ?? []) {
-        try { const k = await resolveAgentEncryptionKey(pod, { fetch: fetchFn }); if (k && !recipients.includes(k)) recipients.push(k); }
+        try { const k = await resolveAgentEncryptionKey(pod, { fetch: guardedFetch }); if (k && !recipients.includes(k)) recipients.push(k); }
         catch { /* skip an unresolvable cross-seat recipient — best-effort */ }
       }
       await ensureContainer(`${args.podUrl.endsWith('/') ? args.podUrl : `${args.podUrl}/`}foxxi-lattice/`, fetchFn);
