@@ -59,6 +59,20 @@ export function deriveUserWallet(userId: string, seed: string = DEFAULT_DEMO_SEE
 }
 
 /**
+ * True when `walletAddress` is the wallet the PUBLIC demo seed derives for `userId`.
+ * Such a wallet is forgeable by anyone (the seed is public), so a trust boundary must
+ * never accept a session token signed by it — even if a directory publisher baked it in
+ * as an explicit `wallet_address`. Keeps `DEFAULT_DEMO_SEED` encapsulated here.
+ */
+export function isPublicDemoWallet(userId: string, walletAddress: string): boolean {
+  try {
+    return walletAddress.toLowerCase() === deriveUserWallet(userId, DEFAULT_DEMO_SEED).address.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Canonical message the user signs. Including `sub`, `iat`, `exp`, and
  * `nonce` binds the signature to a specific subject + time window so a
  * replayed signature can't be reused for a different user or beyond expiry.

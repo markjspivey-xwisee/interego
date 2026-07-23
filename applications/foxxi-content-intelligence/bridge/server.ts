@@ -436,8 +436,13 @@ let directoryUsersCache: ReadonlyArray<{ user_id: string; web_id: string; wallet
 // callers can't derive the wallet, so they still get 401. FOXXI_CONFORMANCE_SEED pins the
 // seed (stable across restarts/replicas); absent it, a per-process random keeps a single
 // instance self-consistent.
-const CONFORMANCE_WEBID = process.env.FOXXI_TEST_WEBID ?? 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
-const CONFORMANCE_USERID = process.env.FOXXI_TEST_USERID ?? 'u-joshua';
+// Default to a RESERVED SYNTHETIC self-test WebID, not a real-looking learner (round-51
+// defense-in-depth). The conformance self-test identity is a permanently-valid LRS identity;
+// pointing its default at the bridge's own well-known self-test URI means that even under a
+// weakened/guessed CONFORMANCE_SEED it can only ever impersonate a synthetic non-user, never a
+// real directory learner. Runner + gate both read this constant, so conformance stays self-consistent.
+const CONFORMANCE_WEBID = process.env.FOXXI_TEST_WEBID ?? 'https://foxxi-bridge.interego.xwisee.com/.well-known/conformance-self-test#agent';
+const CONFORMANCE_USERID = process.env.FOXXI_TEST_USERID ?? 'foxxi-conformance-self-test';
 const CONFORMANCE_SEED = process.env.FOXXI_CONFORMANCE_SEED ?? randomBytes(24).toString('hex');
 const conformanceSelfIdentity = {
   user_id: CONFORMANCE_USERID,
