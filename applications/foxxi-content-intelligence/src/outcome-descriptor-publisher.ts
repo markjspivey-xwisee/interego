@@ -529,7 +529,7 @@ export async function publishParticipationClaimDescriptor(
 ): Promise<PublishedDescriptor & { trust: ResolvedTrust }> {
   return publishFoxxiEntity({
     config,
-    slugPrefix: `participation-${payload.name.toLowerCase()}-${payload.address.slice(2, 12).toLowerCase()}`,
+    slugPrefix: `participation-${slugify(payload.name)}-${payload.address.slice(2, 12).toLowerCase()}`,
     foxxiType: `${FOXXI}ParticipationClaim` as IRI,
     payload: {
       name: payload.name,

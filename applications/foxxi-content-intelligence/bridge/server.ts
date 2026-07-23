@@ -1454,7 +1454,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
     const requestedLearnerDid = (args.learner_did as string) || ctx.webId;
-    const subjectKind: 'human' | 'agent' = (args.actor_kind as string) === 'agent' ? 'agent' : 'human';
+    // Fail-closed classification: 'agent' (public) ONLY for an explicit wallet-DID subject;
+    // a human learner (directory WebId) can never be downgraded to the public path by a
+    // forged actor_kind='agent'. Otherwise the human-privacy gate below is bypassable.
+    const subjectKind: 'human' | 'agent' =
+      ((args.actor_kind as string) === 'agent' && /^did:(ethr|web|key|pkh):/.test(requestedLearnerDid)) ? 'agent' : 'human';
     // Human records are private (self/admin only). Agent capability
     // records are discoverable — like the public agent registry — so any
     // authenticated caller may assemble one.
@@ -2729,9 +2733,18 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   },
 
   'foxxi.discover_framework_registry': async (args) => {
-    return discoverFrameworkRegistry({
-      podUrls: args.pod_urls as string[],
-    });
+    // SSRF: pod_urls are fetched via discover() and this is the only network-touching MCP
+    // handler with no resolveCaller (unauthenticated at POST /mcp + the direct route). Keep
+    // only PUBLIC hosts that also resolve to a public address — drop any internal/literal
+    // target so a caller cannot reach the internal network or hold sockets against it.
+    const raw = Array.isArray(args.pod_urls) ? (args.pod_urls as string[]) : [];
+    const podUrls: string[] = [];
+    for (const u of raw) {
+      const safe = typeof u === 'string' ? safePublicUrlOrUndefined(u) : undefined;
+      if (!safe) continue;
+      try { await assertSafeFetchTarget(safe); podUrls.push(safe); } catch { /* drop internal target */ }
+    }
+    return discoverFrameworkRegistry({ podUrls });
   },
 
   'foxxi.register_tutor_agent': async (args) => {
@@ -3888,7 +3901,10 @@ app.post('/agent/review-record', async (req, res) => {
       // DELEGATED: verify the agent's on-pod delegation + that the request signer
       // is its anchor key. verifyAgentDelegation reads the signed VC from the
       // agent's pod, checks registry membership/revocation, and walks the chain.
-      const delegationPod = resolveSubjectPodUrl(rec.agentId, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+      // The delegation VC is read from the AGENT'S OWN derived pod — NEVER a caller-supplied
+  // subject_pod_url. Honoring the override let a caller point the delegation-source read at
+  // an attacker-controlled pod (delegation-source confusion) AND was an unguarded SSRF sink.
+  const delegationPod = resolveSubjectPodUrl(rec.agentId);
       let del;
       try {
         // SSRF guard before the pre-authorization delegation fetch (see verifyDelegatedCaller).
@@ -3918,7 +3934,13 @@ app.post('/agent/review-record', async (req, res) => {
     // Virtualize over the SUBJECT'S OWN pod + their own lens view.
     const subjectPodUrl = resolveSubjectPodUrl(subjectDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
-    const subjectKind: 'human' | 'agent' = (p.actor_kind as string) === 'human' ? 'human' : 'agent';
+    // Classify FAIL-CLOSED: default to 'human' (private) and treat the subject as an 'agent'
+    // (public capability record) ONLY when the caller explicitly says so AND the subject is a
+    // WALLET DID (did:ethr/web/key/pkh) — a human learner is a directory WebId, so it can never
+    // be downgraded to the public 'agent' path by an omitted/forged actor_kind. (The prior
+    // `=== 'human' ? 'human' : 'agent'` defaulted to the PUBLIC class — fail-open PII disclosure.)
+    const subjectKind: 'human' | 'agent' =
+      ((p.actor_kind as string) === 'agent' && /^did:(ethr|web|key|pkh):/.test(subjectDid)) ? 'agent' : 'human';
     // PII gate — matches the MCP foxxi.assemble_learner_record twin: a HUMAN learner's full
     // ELR + exported CLR (credentials, competencies, performance) is private, so a signed
     // caller may review a human record ONLY when it is their OWN. Without this the delegated
@@ -4021,7 +4043,10 @@ app.post('/agent/issue-credential', async (req, res) => {
     if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
       callerDid = `did:ethr:${rec.signer}`;
     } else {
-      const delegationPod = resolveSubjectPodUrl(rec.agentId, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+      // The delegation VC is read from the AGENT'S OWN derived pod — NEVER a caller-supplied
+  // subject_pod_url. Honoring the override let a caller point the delegation-source read at
+  // an attacker-controlled pod (delegation-source confusion) AND was an unguarded SSRF sink.
+  const delegationPod = resolveSubjectPodUrl(rec.agentId);
       let del;
       try {
         // SSRF guard before the pre-authorization delegation fetch (see verifyDelegatedCaller).
@@ -4348,7 +4373,10 @@ async function verifyDelegatedCaller(body: unknown):
     // DIRECT mode: the signer IS the actor.
     return { ok: true, callerDid: `did:ethr:${rec.signer}`, signer: rec.signer, payload: p };
   }
-  const delegationPod = resolveSubjectPodUrl(rec.agentId, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+  // The delegation VC is read from the AGENT'S OWN derived pod — NEVER a caller-supplied
+  // subject_pod_url. Honoring the override let a caller point the delegation-source read at
+  // an attacker-controlled pod (delegation-source confusion) AND was an unguarded SSRF sink.
+  const delegationPod = resolveSubjectPodUrl(rec.agentId);
   let del;
   try {
     // SSRF guard: this pod is fetched BEFORE authorization succeeds. Reject a target that
@@ -4492,7 +4520,11 @@ app.post('/agent/void-credential', async (req, res) => {
     const callerDid = auth.callerDid; const p = auth.payload;
     const descriptorUrl = typeof p.descriptor_url === 'string' ? p.descriptor_url.trim() : '';
     if (!descriptorUrl) { res.status(400).json({ error: 'descriptor_url required (a CLR entry sourceDescriptor under your own pod)' }); return; }
-    const pod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // selfBoundPod binds the delete target + the ownership check to the caller's OWN pod.
+    // resolveSubjectPodUrl honored a caller subject_pod_url, so podSeg was derived from the
+    // ATTACKER-chosen pod — making the "descriptor must be under YOUR pod" check (below) key
+    // off that same attacker pod, letting any signed wallet DELETE another agent's credentials.
+    const pod = selfBoundPod(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const origin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
     const podSeg = (() => { try { return new URL(pod).pathname.split('/').filter(Boolean)[0] ?? ''; } catch { return ''; } })();
     let descPath: string;
@@ -4589,9 +4621,11 @@ app.post('/agent/publish-encryption-key', async (req, res) => {
     const p = auth.payload;
     const publicKey = typeof p.public_key === 'string' ? p.public_key.trim() : '';
     if (!publicKey) { res.status(400).json({ error: 'public_key (base64 X25519) required' }); return; }
-    // Self-sovereign: you publish YOUR OWN key to YOUR OWN pod. The private key
-    // never leaves you; only the public key is written.
-    const subjectPod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // Self-sovereign: you publish YOUR OWN key to YOUR OWN pod. selfBoundPod binds the
+    // write target to the caller's own pod — resolveSubjectPodUrl would have honored a
+    // caller subject_pod_url naming a VICTIM's pod, letting any signed wallet OVERWRITE
+    // another agent's X25519 key (key substitution → decrypt their future encrypted content).
+    const subjectPod = selfBoundPod(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     // The bridge's globalThis.fetch is patched to carry the pod-write bearer for
     // tenant-origin writes, so this PUT to <pod>/keys/encryption.json is authed.
     const { url } = await publishAgentEncryptionKey(subjectPod, publicKey, {
@@ -4908,11 +4942,14 @@ app.post('/agent/course/analyze-authored', async (req, res) => {
     // Resolve the agent-authored course: in-memory cache → author's PGSL lattice → legacy pod RDF.
     let course = agentScormCourses.get(courseId) as AgentScormCourseLike | undefined;
     if (!course && authorDid) {
-      // SSRF: /agent/course/analyze-authored is UNAUTHENTICATED and course_pod is fetched.
-      // Drop a private/loopback/link-local literal (→ derive from authorDid); the lattice
-      // fetch layer additionally DNS-guards. A caller cannot steer the fetch at an internal host.
+      // SSRF: /agent/course/analyze-authored is UNAUTHENTICATED and course_pod is fetched by
+      // BOTH loadCourseFromLattice (lattice-guarded) AND the loadScormCourse fallback (whose
+      // discover() is NOT lattice-guarded). Drop a private literal AND DNS-resolve-guard the
+      // host — a public hostname that resolves to an internal IP was reaching the internal
+      // network via the loadScormCourse->discover() path (LIVE 12-35s socket-hold).
       const rawCoursePod = (typeof req.body?.course_pod === 'string' && req.body.course_pod) ? req.body.course_pod : '';
       const coursePod = (rawCoursePod && safePublicUrlOrUndefined(rawCoursePod)) || resolveSubjectPodUrl(authorDid);
+      try { await assertSafeFetchTarget(coursePod); } catch { res.status(400).json({ ok: false, error: 'course_pod rejected: not a public host' }); return; }
       const fromLattice = await loadCourseFromLattice(coursePod, authorDid, actorForPod(coursePod, MESH_ACTOR_LABELS), courseId).catch(() => null);
       const loaded = fromLattice ?? await loadScormCourse({ podUrl: coursePod, courseId }).catch(() => null);
       if (loaded) course = loaded as unknown as AgentScormCourseLike;
@@ -5401,12 +5438,19 @@ app.post('/agent/record-performance', async (req, res) => {
     // or DIDs, each resolved to a pod whose DURABLE keys/encryption.json is also
     // wrapped — so named agents (e.g. maintainer + boozer) can owner-decrypt this
     // performance cross-seat. Unresolved recipients are skipped downstream.
-    const recipientPods: string[] = Array.isArray(p.recipients)
-      ? (p.recipients as unknown[])
-          .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-          .map(x => x.trim())
-          .map(x => /^https?:\/\//.test(x) ? x : resolveSubjectPodUrl(x))
+    // Recipient pods are fetched (their published encryption key wraps the encrypted holon),
+    // so SSRF-filter: keep only PUBLIC hosts that resolve public — a caller-supplied
+    // https://<internal> recipient was reaching the internal network otherwise.
+    const rawRecipients = Array.isArray(p.recipients)
+      ? (p.recipients as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map(x => x.trim())
       : [];
+    const recipientPods: string[] = [];
+    for (const x of rawRecipients) {
+      const podU = /^https?:\/\//.test(x) ? x : resolveSubjectPodUrl(x);
+      const safe = safePublicUrlOrUndefined(podU);
+      if (!safe) continue;
+      try { await assertSafeFetchTarget(safe); recipientPods.push(safe); } catch { /* drop internal recipient */ }
+    }
     // DURABLY persist as a foxxi:RecordedPerformance descriptor (the artifact
     // assemble_learner_record's durable read reads), so a cold in-memory lens no
     // longer surfaces zeros. Same fix as the MCP foxxi.record_performance path.
@@ -6357,9 +6401,11 @@ app.post('/agent/scorm/launch', async (req, res) => {
     let course = agentScormCourses.get(courseId);
     if (!course) {
       const authorDid = (typeof p.author_did === 'string' && p.author_did) ? p.author_did : callerDid;
-      const coursePod = (typeof p.course_pod === 'string' && p.course_pod)
-        ? p.course_pod
-        : resolveSubjectPodUrl(authorDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+      const rawCoursePod = (typeof p.course_pod === 'string' && p.course_pod) ? p.course_pod : '';
+      const coursePod = (rawCoursePod && safePublicUrlOrUndefined(rawCoursePod))
+        || resolveSubjectPodUrl(authorDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+      // SSRF: coursePod is fetched by loadScormCourse->discover() (not lattice-guarded).
+      try { await assertSafeFetchTarget(coursePod); } catch { res.status(400).json({ error: 'course_pod rejected: not a public host' }); return; }
       // Foundation-first: load the full course from the author's PGSL lattice
       // (canonical); fall back to the legacy hand-authored RDF for old courses.
       const fromLattice = await loadCourseFromLattice(coursePod, authorDid, actorForPod(coursePod, MESH_ACTOR_LABELS), courseId).catch(() => null);

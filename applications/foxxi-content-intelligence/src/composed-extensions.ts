@@ -1,5 +1,6 @@
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { iesc } from './turtle-escape.js';
+import { assertSafeFetchTarget } from "./ssrf-guard.js";
 import { competencyIri, competencyIdOf, sameCompetency } from './competency-identity.js';
 
 /** Canonical competency key across schemes (urn↔URL) AND across id forms (a bare competency
@@ -271,6 +272,7 @@ export async function discoverFrameworkRegistry(args: {
   const out: FrameworkRegistryEntry[] = [];
   for (const podUrl of args.podUrls) {
     try {
+      await assertSafeFetchTarget(podUrl); // SSRF: caller pod fetched via discover()
       const entries = await discover(podUrl, undefined, args.fetch ? { fetch: args.fetch as never } : undefined);
       for (const e of entries) {
         const ct = e.conformsTo ?? [];
@@ -482,6 +484,7 @@ export async function buildManagerTeamView(args: {
   const LEVEL_VALUE: Record<string, number> = { Novice: 1, Beginner: 2, Intermediate: 3, Advanced: 4, Expert: 5 };
   for (const r of args.reportPodUrls) {
     try {
+      await assertSafeFetchTarget(r.podUrl); // SSRF: caller pod fetched via discover()
       const entries = await discover(r.podUrl, undefined, args.fetch ? { fetch: args.fetch as never } : undefined);
       const credEntries = entries.filter(e =>
         (e.conformsTo ?? []).some(c => c.includes('CourseCompletionCredential') || c.includes('CompetencyAssertion')),
@@ -704,6 +707,7 @@ export async function backupTenantPod(args: {
     if (mr.ok) manifestText = await mr.text();
   } catch { /* */ }
 
+  await assertSafeFetchTarget(args.podUrl); // SSRF: caller pod fetched via discover()
   const entries = await discover(args.podUrl, undefined, args.fetch ? { fetch: args.fetch as never } : undefined);
   const backed: TenantBackupEntry[] = [];
   for (const e of entries) {
