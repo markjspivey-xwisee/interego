@@ -44,6 +44,7 @@ import { createHash, createHmac, randomUUID, createPrivateKey, createPublicKey, 
 import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
 import { tenantOrUsers, type OrUser } from './oneroster.js';
 import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
+import { safeFetch } from './ssrf-guard.js';
 import { listCmi5Courses } from './cmi5-lms.js';
 import {
   withTransientRetry,
@@ -770,7 +771,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
       if (!guard.ok) { res.status(400).json({ error: `platformLineItemsUrl rejected: ${guard.error}` }); return; }
       const tok = await platformToken(platform, AGS_SCOPE.lineItem, keys);
       if (!tok.ok) { res.status(tok.status).json({ error: tok.error }); return; }
-      const r = await fetch(guard.url, {
+      const r = await safeFetch(guard.url, {
         headers: { Accept: 'application/vnd.ims.lis.v2.lineitemcontainer+json', Authorization: `Bearer ${tok.token}` },
       });
       const text = await r.text();
@@ -824,7 +825,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
         if (!tok.ok) {
           platformSync = { ok: false, status: tok.status, error: tok.error };
         } else {
-          const r = await fetch(guard.url, {
+          const r = await safeFetch(guard.url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/vnd.ims.lis.v2.lineitem+json', Authorization: `Bearer ${tok.token}` },
             body: JSON.stringify(publicLineItem(li, config.selfBaseUrl)),
@@ -895,7 +896,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
     const tok = await platformToken(platform, AGS_SCOPE.score, keys);
     if (!tok.ok) { res.status(tok.status).json({ error: tok.error }); return; }
     const scoreUrl = `${guard.url.replace(/\/$/, '')}/scores`;
-    const scorePost = await fetch(scoreUrl, {
+    const scorePost = await safeFetch(scoreUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/vnd.ims.lis.v1.score+json',
@@ -924,7 +925,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
       if (!guard.ok) { res.status(400).json({ error: `members_url rejected: ${guard.error}` }); return; }
       const tok = await platformToken(platform, NRPS_SCOPE, keys);
       if (!tok.ok) { res.status(tok.status).json({ error: tok.error }); return; }
-      const r = await fetch(guard.url, {
+      const r = await safeFetch(guard.url, {
         headers: { Accept: 'application/vnd.ims.lti-nrps.v2.membershipcontainer+json', Authorization: `Bearer ${tok.token}` },
       });
       const text = await r.text();

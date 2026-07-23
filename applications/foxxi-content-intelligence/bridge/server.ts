@@ -364,7 +364,7 @@ import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
 import { attachOauthTokenRoute } from '../src/xapi-oauth.js';
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator } from '../src/operator-auth.js';
-import { assertSafeFetchTarget, safePublicUrlOrUndefined } from '../src/ssrf-guard.js';
+import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
 import type {
   IRI,
   ContextDescriptorData,
@@ -1094,7 +1094,15 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
       // act as tenant admin even though its (rotated) wallet is not a directory
       // member. verifyDelegatedTenantAdmin enforces H1-H3; role is the distinct,
       // audited delegated-admin (H4).
-      const da = await verifyDelegatedTenantAdmin(args, podChecked);
+      // SCOPE (round-32 blocker): grant the (admin-equivalent, isAdminEquivalent)
+      // delegated-admin role ONLY when the delegation is anchored on the CONFIGURED
+      // tenant. A self-sovereign pod's cap:tenant-admin is self-anchored by whoever
+      // owns that pod, so honoring it here made a delegated-admin of an ATTACKER's own
+      // pod a GLOBAL operator (upload_scorm_package / issue-credential write into the
+      // closed acme tenant / any pod). Same principle as the round-31 web_id role gate.
+      const da = grantsPrivilegedRoles
+        ? await verifyDelegatedTenantAdmin(args, podChecked)
+        : { ok: false as const, reason: 'delegated tenant-admin is honored only on the configured tenant pod — a self-sovereign pod delegation grants no global operator role' };
       if (da.ok) {
         auditDelegatedAdmin(da.agentDid, 'foxxi.resolveCaller', podChecked);
         return { ctx: delegatedAdminContext(da.agentDid), admin };
@@ -4032,7 +4040,7 @@ app.post('/agent/review-record', async (req, res) => {
       try {
         // SSRF guard before the pre-authorization delegation fetch (see verifyDelegatedCaller).
         await assertSafeFetchTarget(delegationPod);
-        del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier() });
+        del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
       } catch (err) {
         res.status(401).json({ error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` });
         return;
@@ -4041,7 +4049,7 @@ app.post('/agent/review-record', async (req, res) => {
         res.status(401).json({ error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` });
         return;
       }
-      const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI).catch(() => null);
+      const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
       const anchor = vc?.proof?.signerAddress;
       if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
         res.status(401).json({ error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''} — only the key that anchors the agent's delegation may sign for them` });
@@ -4174,7 +4182,7 @@ app.post('/agent/issue-credential', async (req, res) => {
       try {
         // SSRF guard before the pre-authorization delegation fetch (see verifyDelegatedCaller).
         await assertSafeFetchTarget(delegationPod);
-        del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier() });
+        del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
       } catch (err) {
         res.status(401).json({ error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` });
         return;
@@ -4183,7 +4191,7 @@ app.post('/agent/issue-credential', async (req, res) => {
         res.status(401).json({ error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` });
         return;
       }
-      const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI).catch(() => null);
+      const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
       const anchor = vc?.proof?.signerAddress;
       if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
         res.status(401).json({ error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''}` });
@@ -4526,14 +4534,14 @@ async function verifyDelegatedCaller(body: unknown):
     // resolves to a private/loopback/link-local address (defeats a public hostname pointing
     // at an internal IP; the literal case is already dropped by resolveSubjectPodUrl).
     await assertSafeFetchTarget(delegationPod);
-    del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier() });
+    del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
   } catch (err) {
     return { ok: false, status: 401, error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` };
   }
   if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
     return { ok: false, status: 401, error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` };
   }
-  const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI).catch(() => null);
+  const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
   const anchor = vc?.proof?.signerAddress;
   if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
     return { ok: false, status: 401, error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''}` };
@@ -4596,14 +4604,14 @@ async function verifyDelegatedTenantAdmin(args: Record<string, unknown>, tenantP
     // site (matching the review-record / issue-credential / verifyDelegatedCaller sites); the
     // tenantPod here is the raw caller tenant_pod_url.
     await assertSafeFetchTarget(tenantPod);
-    del = await verifyAgentDelegation(rec.agentId as unknown as IRI, tenantPod as IRI, { verifier: makeWalletDelegationVerifier() });
+    del = await verifyAgentDelegation(rec.agentId as unknown as IRI, tenantPod as IRI, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
   } catch (err) {
     return { ok: false, reason: `delegation verification failed on ${tenantPod}: ${(err as Error).message}` };
   }
   if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
     return { ok: false, reason: `agent ${rec.agentId} has no cryptographically-verified delegation on ${tenantPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` };
   }
-  const vc = await readDelegationCredential(tenantPod as IRI, rec.agentId as unknown as IRI).catch(() => null);
+  const vc = await readDelegationCredential(tenantPod as IRI, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
   if (!vc) return { ok: false, reason: `no signed delegation credential for ${rec.agentId} on ${tenantPod}` };
   const scope = Array.isArray(vc.credentialSubject?.scope) ? vc.credentialSubject.scope.map(String) : [];
   if (!scope.includes(TENANT_ADMIN_CAPABILITY)) {
@@ -4686,13 +4694,17 @@ app.post('/agent/void-credential', async (req, res) => {
     // Resolve the credential's graph (hydra:target / dcat:accessURL) so we delete it too.
     let graphOnOrigin: string | undefined;
     try {
-      const dt = await (await fetch(descOnOrigin, { headers: { Accept: 'text/turtle' } })).text();
+      // safeFetch re-guards the target + every redirect hop — the GET/DELETE run on the
+      // caller's bound pod origin, but a DELEGATED caller's WebID agent_id can put that
+      // origin on an attacker host that 302s to internal; the DELETE (non-GET) refuses to
+      // follow a redirect at all (round-32 SSRF + status-oracle).
+      const dt = await (await safeFetch(descOnOrigin, { headers: { Accept: 'text/turtle' } })).text();
       const gm = dt.match(/hydra:target\s+<([^>]+)>/) ?? dt.match(/dcat:accessURL\s+<([^>]+)>/);
       if (gm) { try { const gp = new URL(gm[1]).pathname; if (gp.startsWith(`/${podSeg}/`)) graphOnOrigin = `${origin}${gp}`; } catch { /* ignore */ } }
     } catch { /* descriptor may already be gone */ }
     const deletions: Record<string, number> = {};
     for (const u of [graphOnOrigin, descOnOrigin].filter(Boolean) as string[]) {
-      try { deletions[u.replace(origin, '')] = (await fetch(u, { method: 'DELETE' })).status; }
+      try { deletions[u.replace(origin, '')] = (await safeFetch(u, { method: 'DELETE' })).status; }
       catch { deletions[u.replace(origin, '')] = -1; }
     }
     // Rebuild the manifest from actual pod contents — the deleted credential is
