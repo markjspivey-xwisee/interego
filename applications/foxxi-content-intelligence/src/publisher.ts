@@ -46,6 +46,7 @@ import {
 import { createHash } from 'node:crypto';
 import type { FoxxiAgenticPayload } from './agentic-rag.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { tesc, iesc } from './turtle-escape.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -306,11 +307,11 @@ export async function publishAuthoringPolicy(args: {
   const ttl = `@prefix fxs: <${FOXXI_NS}scorm#> .
 @prefix abac: <https://markjspivey-xwisee.github.io/interego/abac#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-<${graphIri}> a abac:Policy ;
+<${iesc(graphIri)}> a abac:Policy ;
   dct:title "Foxxi authoring-tool / standard policy" ;
-  fxs:acceptedTools "${args.policy.acceptedTools.join(',')}" ;
-  fxs:acceptedStandards "${args.policy.acceptedStandards.join(',')}" ;
-  dct:issued "${args.policy.effectiveFrom}" .`;
+  fxs:acceptedTools "${tesc(args.policy.acceptedTools.join(','))}" ;
+  fxs:acceptedStandards "${tesc(args.policy.acceptedStandards.join(','))}" ;
+  dct:issued "${tesc(args.policy.effectiveFrom)}" .`;
 
   const built = ContextDescriptor.create(policyIri)
     .describes(graphIri)
@@ -350,13 +351,13 @@ export async function assignAudience(args: {
 
   const ttl = `@prefix fxs: <${FOXXI_NS}scorm#> .
 @prefix dct: <http://purl.org/dc/terms/> .
-<${graphIri}> a fxs:AudienceAssignment ;
-  fxs:course <${args.assignment.courseIri}> ;
-  fxs:audienceTag "${args.assignment.audienceTag}" ;
-  fxs:requirementType "${args.assignment.requirementType}" ;
-  fxs:trigger "${args.assignment.trigger}" ;
-  fxs:dueRelativeDays ${args.assignment.dueRelativeDays} ;
-  dct:issued "${now}" .`;
+<${iesc(graphIri)}> a fxs:AudienceAssignment ;
+  fxs:course <${iesc(args.assignment.courseIri)}> ;
+  fxs:audienceTag "${tesc(args.assignment.audienceTag)}" ;
+  fxs:requirementType "${tesc(args.assignment.requirementType)}" ;
+  fxs:trigger "${tesc(args.assignment.trigger)}" ;
+  fxs:dueRelativeDays ${Number(args.assignment.dueRelativeDays) || 0} ;
+  dct:issued "${tesc(now)}" .`;
 
   const built = ContextDescriptor.create(assignmentIri)
     .describes(graphIri)

@@ -20,6 +20,7 @@
  *   - SCORM 2004 4th Ed. Sequencing & Navigation (https://adlnet.gov/projects/scorm/)
  */
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { iesc } from './turtle-escape.js';
 
 export interface LomMetadata {
   /** §1 General */
@@ -165,7 +166,7 @@ export function lomToTurtle(subject: string, lom: LomMetadata): string {
   if (lom.relation) {
     for (const rel of lom.relation) {
       const idents = (rel.resource.identifier ?? []).map(i => `<${LOM_NS}identifier> [ <${LOM_NS}catalog> "${escape(i.catalog)}" ; <${LOM_NS}entry> "${escape(i.entry)}" ]`).join(' ; ');
-      lines.push(`${sub} <${LOM_NS}relation> [ <${LOM_NS}kind> "${rel.kind}" ${idents ? ' ; ' + idents : ''} ] .`);
+      lines.push(`${sub} <${LOM_NS}relation> [ <${LOM_NS}kind> "${escape(rel.kind)}" ${idents ? ' ; ' + idents : ''} ] .`);
     }
   }
 
@@ -214,12 +215,13 @@ export function sequencingRulesToTurtle(packageSubject: string, rules: readonly 
   const FXS = FOXXI_NS;
   const lines: string[] = [];
   for (const r of rules) {
-    const ruleIri = `${packageSubject.replace(/^</, '').replace(/>$/, '')}#sequencing-${r.id}`;
+    const ruleIri = iesc(`${packageSubject.replace(/^</, '').replace(/>$/, '')}#sequencing-${r.id}`);
+    const pkgIri = iesc(packageSubject.replace(/^</, '').replace(/>$/, ''));
     lines.push(`<${ruleIri}> a <${FXS}SequencingRule> ;`);
-    lines.push(`    <${FXS}sequencingType> "${r.ruleType}" ;`);
+    lines.push(`    <${FXS}sequencingType> "${escape(r.ruleType)}" ;`);
     lines.push(`    <${FXS}attachedToItem> "${escape(r.attachedToItem)}" ;`);
     lines.push(`    <${FXS}expression> """${r.expressionXml.replace(/"""/g, '\\"\\"\\"')}""" .`);
-    lines.push(`<${packageSubject.replace(/^</, '').replace(/>$/, '')}> <${FXS}hasSequencingRule> <${ruleIri}> .`);
+    lines.push(`<${pkgIri}> <${FXS}hasSequencingRule> <${ruleIri}> .`);
   }
   return lines.join('\n');
 }

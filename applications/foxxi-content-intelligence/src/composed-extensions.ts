@@ -1,4 +1,5 @@
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { iesc } from './turtle-escape.js';
 import { competencyIri, competencyIdOf, sameCompetency } from './competency-identity.js';
 
 /** Canonical competency key across schemes (urn↔URL) AND across id forms (a bare competency
@@ -104,8 +105,8 @@ export async function bootstrapTenant(
     ],
   };
   const b64 = Buffer.from(JSON.stringify(tenantMetadata), 'utf8').toString('base64');
-  const graph = `<${tenantGraphIri}> a <${FOXXI_NS}TenantMetadata> ;
-    <http://www.w3.org/ns/prov#wasAttributedTo> <${args.tenantDid}> ;
+  const graph = `<${iesc(tenantGraphIri)}> a <${FOXXI_NS}TenantMetadata> ;
+    <http://www.w3.org/ns/prov#wasAttributedTo> <${iesc(args.tenantDid)}> ;
     <${FOXXI_NS}bundleJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
   const result = await publish(desc, graph, args.podUrl, {
@@ -595,8 +596,8 @@ export async function uploadScormPackage(args: {
     status: 'queued',
   };
   const b64 = Buffer.from(JSON.stringify(meta), 'utf8').toString('base64');
-  const graph = `<${graphIri}> a <${FOXXI_NS}PackageUpload> ;
-    <http://www.w3.org/ns/prov#wasAttributedTo> <${args.uploaderDid}> ;
+  const graph = `<${iesc(graphIri)}> a <${FOXXI_NS}PackageUpload> ;
+    <http://www.w3.org/ns/prov#wasAttributedTo> <${iesc(args.uploaderDid)}> ;
     <${FOXXI_NS}bundleJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
   const result = await publish(descriptor, graph, args.tenantPodUrl, {

@@ -29,6 +29,7 @@ import { ingest, ingestWithProfile } from '@interego/pgsl';
 import { alsoPersistEncryptedHolon } from './foundation-holon-altitude.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { validateStatement } from './xapi-validate.js';
+import { tesc, iesc } from './turtle-escape.js';
 
 const FXS = FOXXI_NS;
 export const RECORDED_PERFORMANCE_TYPE = `${FXS}RecordedPerformance` as IRI;
@@ -144,9 +145,9 @@ export async function persistRecordedStatement(args: PersistRecordArgs): Promise
   const publicStatement = hasRecipients ? redactStatementForPublic(args.statement) : args.statement;
   const json = JSON.stringify(publicStatement);
   const b64 = Buffer.from(json, 'utf8').toString('base64');
-  const graphContent = `<${graphIri}> a <${RECORDED_PERFORMANCE_TYPE}> ;
-    <http://www.w3.org/ns/prov#wasAttributedTo> <${args.agentDid}> ;
-    <http://purl.org/dc/terms/identifier> "${stmtId}" ;
+  const graphContent = `<${iesc(graphIri)}> a <${RECORDED_PERFORMANCE_TYPE}> ;
+    <http://www.w3.org/ns/prov#wasAttributedTo> <${iesc(args.agentDid)}> ;
+    <http://purl.org/dc/terms/identifier> "${tesc(stmtId)}" ;
     <${FXS}statementJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
 
@@ -312,9 +313,9 @@ export async function persistScormCourse(args: PersistScormCourseArgs): Promise<
     ],
   };
   const b64 = Buffer.from(JSON.stringify(args.course), 'utf8').toString('base64');
-  const graphContent = `<${graphIri}> a <${SCORM_COURSE_TYPE}> ;
-    <http://www.w3.org/ns/prov#wasAttributedTo> <${args.authorDid}> ;
-    <http://purl.org/dc/terms/identifier> "${args.courseId}" ;
+  const graphContent = `<${iesc(graphIri)}> a <${SCORM_COURSE_TYPE}> ;
+    <http://www.w3.org/ns/prov#wasAttributedTo> <${iesc(args.authorDid)}> ;
+    <http://purl.org/dc/terms/identifier> "${tesc(args.courseId)}" ;
     <${FXS}courseJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
   // Shape-driven placement: where does THIS author store SCORM courses
