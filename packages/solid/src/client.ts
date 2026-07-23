@@ -43,6 +43,16 @@ import { AGENT_REGISTRY_PATH, CREDENTIALS_PATH } from './types.js';
 
 // ── Constants ───────────────────────────────────────────────
 
+/** Percent-encode any char illegal in a Turtle/TriG IRIREF (`<...>`). The named-graph
+ *  wrapper and the affordance/distribution block interpolate a graph IRI/URL that can derive
+ *  from caller-influenced identifiers; without this a `>` (or whitespace) breaks out of the
+ *  `<...>` term and injects triples into (or corrupts) the published pod document. The core
+ *  descriptor serializer already escapes its facet IRIs; these hand-built wrapper lines are
+ *  the remaining sink. A value with no illegal char is unchanged (valid IRIs round-trip). */
+function iescIri(value: string): string {
+  return String(value).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
+}
+
 const MANIFEST_PATH = '.well-known/context-graphs';
 
 // ── Per-pod in-process manifest mutex ───────────────────────
@@ -293,7 +303,7 @@ function wrapAsTriG(
   lines.push(descriptorBody);
   lines.push('');
   lines.push('# ── Named Graph Content ───────────────────────────');
-  lines.push(`<${graphIri}> {`);
+  lines.push(`<${iescIri(graphIri)}> {`);
   for (const line of graphBodyLines) {
     lines.push(line ? `    ${line}` : '');
   }
@@ -321,7 +331,7 @@ function manifestHeaderTurtle(podUrl: string): string {
   return [
     `# Interego Manifest — Hydra-aware, DPROD-aligned`,
     ``,
-    `<${manifestUrl}> a hydra:Collection, iep:DataProduct ;`,
+    `<${iescIri(manifestUrl)}> a hydra:Collection, iep:DataProduct ;`,
     `    hydra:manages [`,
     `        hydra:property iep:describes ;`,
     `        hydra:object iep:ManifestEntry`,
@@ -347,7 +357,7 @@ function manifestHeaderTurtle(podUrl: string): string {
     `    iep:outputPort [`,
     `        a dcat:Distribution ;`,
     `        dcat:mediaType "text/turtle" ;`,
-    `        dcat:accessURL <${manifestUrl}>`,
+    `        dcat:accessURL <${iescIri(manifestUrl)}>`,
     `    ] .`,
   ].join('\n');
 }
@@ -366,14 +376,14 @@ function manifestEntryTurtle(
   descriptorCid?: string,
 ): string {
   const lines: string[] = [];
-  lines.push(`<${descriptorUrl}> a iep:ManifestEntry ;`);
+  lines.push(`<${iescIri(descriptorUrl)}> a iep:ManifestEntry ;`);
 
   if (descriptorCid) {
     lines.push(`    iep:contentCid "${descriptorCid}" ;`);
   }
 
   for (const g of descriptor.describes) {
-    lines.push(`    iep:describes <${g}> ;`);
+    lines.push(`    iep:describes <${iescIri(g)}> ;`);
   }
 
   const facetTypes = [...new Set(descriptor.facets.map(f => f.type))];
@@ -391,7 +401,7 @@ function manifestEntryTurtle(
   // conformsTo (cleartext-mirrored)
   if (descriptor.conformsTo) {
     for (const c of descriptor.conformsTo) {
-      lines.push(`    dct:conformsTo <${c}> ;`);
+      lines.push(`    dct:conformsTo <${iescIri(c)}> ;`);
     }
   }
 
@@ -400,7 +410,7 @@ function manifestEntryTurtle(
   // each descriptor's TriG)
   if (descriptor.supersedes && descriptor.supersedes.length > 0) {
     for (const s of descriptor.supersedes) {
-      lines.push(`    iep:supersedes <${s}> ;`);
+      lines.push(`    iep:supersedes <${iescIri(s)}> ;`);
     }
   }
 
@@ -420,7 +430,7 @@ function manifestEntryTurtle(
     // can filter by author from the manifest alone (no descriptor fetch).
     // iep:issuer is already defined in docs/ns/cg.ttl as "the issuer of
     // the trust assertion (typically a DID)" — exactly what we need here.
-    lines.push(`    iep:issuer <${trustFacet.issuer}> ;`);
+    lines.push(`    iep:issuer <${iescIri(trustFacet.issuer)}> ;`);
   }
 
   // Replace trailing ; with .
@@ -785,17 +795,17 @@ function manifestEntryFromDescriptorTurtle(descriptorUrl: string, ttl: string): 
   const issuer = one('iep:issuer\\s+<([^>]+)>');
   const cid = one('iep:contentCid\\s+"([^"]+)"');
 
-  const lines: string[] = [`<${descriptorUrl}> a iep:ManifestEntry ;`];
+  const lines: string[] = [`<${iescIri(descriptorUrl)}> a iep:ManifestEntry ;`];
   if (cid) lines.push(`    iep:contentCid "${cid}" ;`);
-  for (const g of describes) lines.push(`    iep:describes <${g}> ;`);
+  for (const g of describes) lines.push(`    iep:describes <${iescIri(g)}> ;`);
   for (const ft of facetTypes) lines.push(`    iep:hasFacetType iep:${ft} ;`);
   if (validFrom) lines.push(`    iep:validFrom "${validFrom}"^^xsd:dateTime ;`);
   if (validUntil) lines.push(`    iep:validUntil "${validUntil}"^^xsd:dateTime ;`);
-  for (const c of conformsTo) lines.push(`    dct:conformsTo <${c}> ;`);
-  for (const s of supersedes) lines.push(`    iep:supersedes <${s}> ;`);
+  for (const c of conformsTo) lines.push(`    dct:conformsTo <${iescIri(c)}> ;`);
+  for (const s of supersedes) lines.push(`    iep:supersedes <${iescIri(s)}> ;`);
   if (modalStatus) lines.push(`    iep:modalStatus iep:${modalStatus} ;`);
   if (trustLevel) lines.push(`    iep:trustLevel iep:${trustLevel} ;`);
-  if (issuer) lines.push(`    iep:issuer <${issuer}> ;`);
+  if (issuer) lines.push(`    iep:issuer <${iescIri(issuer)}> ;`);
   lines[lines.length - 1] = lines[lines.length - 1]!.replace(/;\s*$/, '.');
   return lines.join('\n');
 }
@@ -2001,10 +2011,10 @@ function buildDistributionBlock(d: {
     `    a iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution ;`,
     `    iep:action ${actionIRI} ;`,
     `    hydra:method "GET" ;`,
-    `    hydra:target <${d.graphUrl}> ;`,
+    `    hydra:target <${iescIri(d.graphUrl)}> ;`,
     `    hydra:returns ${returnsClass} ;`,
     `    hydra:title "${d.encrypted ? 'Fetch encrypted graph envelope' : 'Fetch graph payload'}" ;`,
-    `    dcat:accessURL <${d.graphUrl}> ;`,
+    `    dcat:accessURL <${iescIri(d.graphUrl)}> ;`,
     `    dcat:mediaType "${d.graphContentType}" ;`,
     `    iep:encrypted ${d.encrypted ? 'true' : 'false'}`,
   ];

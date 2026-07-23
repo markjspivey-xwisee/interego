@@ -39,6 +39,7 @@ import {
 import { createHash } from 'node:crypto';
 import { buildPassedSessionTrace, type Cmi5Statement } from './cmi5.js';
 import { courseIri } from './course-identity.js';
+import { assertSafeFetchTarget } from "./ssrf-guard.js";
 import { CREDENTIAL_TYPES } from './credentials.js';
 
 // ── Demo #4: competency-gated launch ─────────────────────────
@@ -75,6 +76,7 @@ export async function checkLearnerPrereq(args: {
   fetch?: typeof globalThis.fetch;
 }): Promise<PrereqCheckResult> {
   const fetchFn = args.fetch ?? globalThis.fetch;
+  await assertSafeFetchTarget(args.learnerPodUrl); // SSRF: caller pod fetched via discover()
   const entries = await discover(args.learnerPodUrl, undefined, { fetch: fetchFn as never });
   const credEntries = entries.filter(e =>
     (e.conformsTo ?? []).includes(CREDENTIAL_TYPES.CourseCompletionCredential)
@@ -334,6 +336,7 @@ export async function composeAuditTrail(args: {
   fetch?: typeof globalThis.fetch;
 }): Promise<AuditChain> {
   const fetchFn = args.fetch ?? globalThis.fetch;
+  await assertSafeFetchTarget(args.learnerPodUrl); // SSRF: caller pod fetched via discover()
   const entries = await discover(args.learnerPodUrl, undefined, { fetch: fetchFn as never });
   // We grab everything with a Provenance facet OR any conformsTo tag —
   // anything else doesn't have a compliance chain anchor.

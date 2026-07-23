@@ -21,6 +21,7 @@ import {
   discover,
   fetchGraphContent,
 } from '@interego/solid';
+import { assertSafeFetchTarget } from './ssrf-guard.js';
 
 export interface CohortQAEntry {
   learnerDid: string;
@@ -101,6 +102,7 @@ export async function gatherCohortQA(args: {
 
   for (const podUrl of args.learnerPodUrls) {
     try {
+      await assertSafeFetchTarget(podUrl); // SSRF: caller pod fetched via discover()
       const entries = await discover(podUrl, undefined, { fetch: fetchFn as never });
       const qaEntries = entries.filter(e =>
         (e.conformsTo ?? []).some(c => c.includes('LearnerQuestionEvent') || c.includes('LearnerQA')),
