@@ -21,7 +21,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { listStoredStatements, statementStoreTenants } from './xapi-lrs.js';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { FOXXI_PROFILE_ID } from './xapi-profile.js';
-import { verifySessionToken, buildAddressMap } from './auth.js';
+import { verifySessionToken, trustedAddressMap } from './auth.js';
 import { PERF_EXT } from './learner-record.js';
 import {
   listForwardingTargets, addForwardingTarget, updateForwardingTarget,
@@ -55,7 +55,7 @@ function makeAdminGate(config: AdminConfig) {
     }
     // Full ECDSA verification against the published directory's
     // wallet_address map — not a forgeable sub-claim decode.
-    const verified = verifySessionToken(token, buildAddressMap(config.loadUsers?.() ?? []));
+    const verified = verifySessionToken(token, trustedAddressMap(config.loadUsers?.() ?? []));
     if (!verified.ok) {
       res.status(401).json({ error: `session token rejected: ${verified.reason}` });
       return;
