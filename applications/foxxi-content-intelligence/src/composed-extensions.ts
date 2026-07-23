@@ -534,11 +534,13 @@ export async function buildManagerTeamView(args: {
 
 async function fetchVcFromEntry(descriptorUrl: string, fetchFn: FetchFn): Promise<Record<string, unknown> | null> {
   try {
+    await assertSafeFetchTarget(descriptorUrl); // 2nd-hop SSRF
     const r = await fetchFn(descriptorUrl, { headers: { Accept: 'text/turtle' } });
     if (!r.ok) return null;
     const ttl = await r.text();
     const m = ttl.match(/hydra:target\s+<([^>]+)>/);
     if (!m) return null;
+    await assertSafeFetchTarget(m[1]!); // 2nd-hop SSRF
     const { content } = await fetchGraphContent(m[1]!, { fetch: fetchFn });
     if (!content) return null;
     const bm = content.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
@@ -719,6 +721,7 @@ export async function backupTenantPod(args: {
       const m = dt.match(/hydra:target\s+<([^>]+)>/);
       if (m) {
         try {
+          await assertSafeFetchTarget(m[1]!); // 2nd-hop SSRF
           const g = await fetchGraphContent(m[1]!, args.fetch ? { fetch: args.fetch as never } : undefined);
           encrypted = g.encrypted;
           if (g.content) graphContent = g.content;

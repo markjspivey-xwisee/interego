@@ -853,7 +853,19 @@ function resolveSubjectPodUrl(didOrWebId: string | undefined, explicit?: string)
   // right before each delegation/credential fetch.)
   if (explicit) {
     const safe = safePublicUrlOrUndefined(explicit);
-    if (safe) return safe;
+    if (safe) {
+      // Canonicalize to a SINGLE-SEGMENT pod root <origin>/<firstSeg>/ — a pod is exactly one
+      // segment under its origin. Returning a multi-segment override verbatim let a caller pass
+      // the selfBoundPod last-segment actor check (…/eth-victim/eth-CALLER/) while a first-segment
+      // consumer (void-credential's ownership check, the encryption-key write path) acted on a
+      // DIFFERENT segment (eth-victim) — a cross-agent write/delete. Collapsing to the first
+      // segment makes last==first, so the actor comparison and the consumers agree.
+      try {
+        const u = new URL(safe);
+        const seg = u.pathname.split('/').filter(Boolean)[0];
+        if (seg) return `${u.origin}/${seg}/`;
+      } catch { /* fall through to identity derivation below */ }
+    }
     // else: unsafe explicit target — ignore it and derive from the identity below.
   }
   const id = (didOrWebId ?? '').trim();
@@ -1293,7 +1305,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   },
 
   'foxxi.publish_authoring_policy': async (args) => {
+    // Writes an authoring policy graph to the tenant pod — require the tenant OWNER (a signed
+    // request whose signer owns the target pod). Was unauthenticated: any caller could write a
+    // forged policy into the closed (acme) tenant pod with the bridge's write bearer.
+    let policySigner: string | null;
+    try { policySigner = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
+    if (!policySigner) return { error: 'a signed request is required — an authoring policy is a tenant-owner pod write' };
     const config = configOrThrow(args);
+    const policyOwnerErr = await assertSelfSovereignOwner(config.tenantPodUrl, `did:ethr:${policySigner}`);
+    if (policyOwnerErr) return { error: policyOwnerErr };
     const policy: AuthoringPolicy = {
       acceptedTools: (args.accepted_tools as string[]) ?? [],
       acceptedStandards: (args.accepted_standards as string[]) ?? [],
@@ -2272,7 +2292,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // DERIVE the proficiency from the subject's REAL learner record — never accept a
     // caller-asserted level (the old default 'Intermediate' let an agent claim any
     // proficiency). You can only prove a competency you have actually demonstrated.
-    const provePod = resolveSubjectPodUrl(learnerDid, (args.subject_pod_url ?? args.learner_pod_url) as string | undefined);
+    // Bind the evidence READ to the learner's OWN pod — a subject_pod_url naming a VICTIM's
+    // pod let a caller assemble the ELR over the victim's statements and mint a tenant-signed
+    // BBS proof crediting themselves at the victim's proficiency. (For an admin, learnerDid may
+    // be any learner; selfBoundPod binds to THAT learner's own pod, which is the intended read.)
+    const provePod = selfBoundPod(learnerDid, (args.subject_pod_url ?? args.learner_pod_url) as string | undefined);
     const proveLabel = actorForPod(provePod, MESH_ACTOR_LABELS);
     await ensureResident(provePod, learnerDid, proveLabel);
     const proveStmts = mergeStatementsById(
@@ -2651,13 +2675,23 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   // ─── Wave-of-13 handlers ────────────────────────────────────────────
 
   'foxxi.bootstrap_tenant': async (args) => {
+    // Writes attacker-controllable TenantMetadata to pod_url — require a signed request whose
+    // signer OWNS that pod. Was unauthenticated: any caller could plant a forged TenantMetadata
+    // descriptor (arbitrary DID/slug/admin) into any pod with the bridge's write bearer.
+    let bootSigner: string | null;
+    try { bootSigner = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
+    if (!bootSigner) return { error: 'a signed request is required — bootstrap_tenant writes TenantMetadata to your pod' };
+    const bootPod = args.pod_url as string;
+    if (typeof bootPod !== 'string' || !bootPod) return { error: 'pod_url is required' };
+    const bootOwnerErr = await assertSelfSovereignOwner(bootPod, `did:ethr:${bootSigner}`);
+    if (bootOwnerErr) return { error: bootOwnerErr };
     return bootstrapTenant({
       tenantSlug: args.tenant_slug as string,
       tenantDid: args.tenant_did as string,
       tenantDisplayName: args.tenant_display_name as string,
       adminWebId: args.admin_web_id as string,
       adminName: args.admin_name as string,
-      podUrl: args.pod_url as string,
+      podUrl: bootPod,
     });
   },
 
@@ -4097,7 +4131,10 @@ app.post('/agent/issue-credential', async (req, res) => {
         : competencyName,
     );
     const competencyId = competencyIri(competencySlug);
-    const recipientPod = resolveSubjectPodUrl(recipientDid, typeof p.recipient_pod_url === 'string' ? p.recipient_pod_url : undefined);
+    // Bind the credential write to the RECIPIENT's OWN derived pod — recipient_pod_url was
+    // honored verbatim and decoupled from recipient_did, so any wallet could plant a signed
+    // credential descriptor + graph + encrypted holon into an arbitrary victim's pod.
+    const recipientPod = selfBoundPod(recipientDid, typeof p.recipient_pod_url === 'string' ? p.recipient_pod_url : undefined);
     // Per-creator issuer identity: a stable did:key the platform custodies on the
     // creator's behalf, derived deterministically from their DID.
     const creatorIssuerSeed = `${issuerKeySeed}:creator:${callerDid}`;
@@ -5517,7 +5554,7 @@ app.post('/agent/ingest-course', async (req, res) => {
     // did:ethr caller is eth-<wallet>, NOT their u-pk pod, so be explicit in the error.
     const podArg = (typeof p.subject_pod_url === 'string' && p.subject_pod_url) ? p.subject_pod_url
       : (typeof p.tenant_pod_url === 'string' && p.tenant_pod_url) ? p.tenant_pod_url : undefined;
-    const authorPod = resolveSubjectPodUrl(callerDid, podArg);
+    const authorPod = selfBoundPod(callerDid, podArg);
     // Ownership guard on the SIGNER (direct mode → the actor; delegated mode → the
     // delegation anchor = the pod owner's key). Stops a self-signed caller from
     // targeting someone else's self-sovereign pod. The configured tenant is exempt.
@@ -6364,7 +6401,10 @@ app.post('/agent/scorm/author', async (req, res) => {
     try { parseManifest(buildAgentScormManifest(course)); }
     catch (e) { res.status(400).json({ error: `generated SCORM manifest did not parse on the SN runtime: ${(e as Error).message}` }); return; }
     agentScormCourses.set(course.courseId, course);
-    const authorPod = resolveSubjectPodUrl(auth.callerDid, typeof auth.payload.subject_pod_url === 'string' ? auth.payload.subject_pod_url : undefined);
+    // selfBoundPod: the course is composed into the AUTHOR's OWN lattice — a subject_pod_url
+    // naming a victim's pod must NOT be honored (unlike ingest-course, this had no owner guard,
+    // so any wallet could decrypt-merge + PUT into a victim's canonical shared lattice).
+    const authorPod = selfBoundPod(auth.callerDid, typeof auth.payload.subject_pod_url === 'string' ? auth.payload.subject_pod_url : undefined);
     // Register the course's author so its dereferenceable id (courseIri) resolves by URL
     // alone on any later process — even for a non-catalog author (see resolveCourseForRead).
     recordCourseAuthor(course.courseId, auth.callerDid);

@@ -117,11 +117,13 @@ export async function gatherCohortQA(args: {
       for (const entry of inWindow) {
         try {
           // Fetch the graph + extract concept IDs from a bundleJson literal.
+          await assertSafeFetchTarget(entry.descriptorUrl); // 2nd-hop SSRF
           const ttlR = await fetchFn(entry.descriptorUrl, { headers: { Accept: 'text/turtle' } });
           if (!ttlR.ok) continue;
           const ttl = await ttlR.text();
           const tm = ttl.match(/hydra:target\s+<([^>]+)>/);
           if (!tm) continue;
+          await assertSafeFetchTarget(tm[1]!); // 2nd-hop SSRF
           const graph = await fetchGraphContent(tm[1]!, { fetch: fetchFn as never });
           if (!graph.content) continue;
           const bm = graph.content.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);

@@ -88,37 +88,39 @@ export type AnchorReceipt =
 
 // ── Serialization ────────────────────────────────────────────
 
+const _iesc = (s: string): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
+const _tesc = (s: string): string => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
 function anchorToTurtle(receipt: AnchorReceipt): string {
   const lines: string[] = [];
 
   switch (receipt.type) {
     case 'ipfs':
-      lines.push(`<${receipt.descriptorUrl}> iep:ipfsAnchor [`);
+      lines.push(`<${_iesc(receipt.descriptorUrl)}> iep:ipfsAnchor [`);
       lines.push(`    a iep:IpfsAnchor ;`);
-      lines.push(`    iep:cid "${receipt.cid}" ;`);
-      lines.push(`    iep:gatewayUrl <${receipt.gatewayUrl}> ;`);
-      lines.push(`    iep:contentHash "${receipt.contentHash}" ;`);
-      lines.push(`    iep:pinnedBy <${receipt.pinnedBy}> ;`);
+      lines.push(`    iep:cid "${_tesc(receipt.cid)}" ;`);
+      lines.push(`    iep:gatewayUrl <${_iesc(receipt.gatewayUrl)}> ;`);
+      lines.push(`    iep:contentHash "${_tesc(receipt.contentHash)}" ;`);
+      lines.push(`    iep:pinnedBy <${_iesc(receipt.pinnedBy)}> ;`);
       lines.push(`    iep:pinnedAt "${receipt.pinnedAt}"^^xsd:dateTime ;`);
-      lines.push(`    iep:provider "${receipt.provider}"`);
+      lines.push(`    iep:provider "${_tesc(receipt.provider)}"`);
       lines.push(`] .`);
       break;
 
     case 'signature':
-      lines.push(`<${receipt.descriptorUrl}> iep:signatureAnchor [`);
+      lines.push(`<${_iesc(receipt.descriptorUrl)}> iep:signatureAnchor [`);
       lines.push(`    a iep:SignatureAnchor ;`);
-      lines.push(`    iep:signerAddress "${receipt.signerAddress}" ;`);
-      lines.push(`    iep:contentHash "${receipt.contentHash}" ;`);
-      lines.push(`    iep:signature "${receipt.signature}" ;`);
+      lines.push(`    iep:signerAddress "${_tesc(receipt.signerAddress)}" ;`);
+      lines.push(`    iep:contentHash "${_tesc(receipt.contentHash)}" ;`);
+      lines.push(`    iep:signature "${_tesc(receipt.signature)}" ;`);
       lines.push(`    iep:signedAt "${receipt.signedAt}"^^xsd:dateTime ;`);
       lines.push(`    iep:chainId "${receipt.chainId}"^^xsd:integer`);
       lines.push(`] .`);
       break;
 
     case 'encryption':
-      lines.push(`<${receipt.descriptorUrl}> iep:encryptionAnchor [`);
+      lines.push(`<${_iesc(receipt.descriptorUrl)}> iep:encryptionAnchor [`);
       lines.push(`    a iep:EncryptionAnchor ;`);
-      lines.push(`    iep:algorithm "${receipt.algorithm}" ;`);
+      lines.push(`    iep:algorithm "${_tesc(receipt.algorithm)}" ;`);
       lines.push(`    iep:recipientCount "${receipt.recipientCount}"^^xsd:integer ;`);
       for (const fp of receipt.recipientFingerprints) {
         lines.push(`    iep:recipientFingerprint "${fp}" ;`);
@@ -128,21 +130,21 @@ function anchorToTurtle(receipt: AnchorReceipt): string {
       break;
 
     case 'pgsl':
-      lines.push(`<${receipt.descriptorUrl}> iep:pgslAnchor [`);
+      lines.push(`<${_iesc(receipt.descriptorUrl)}> iep:pgslAnchor [`);
       lines.push(`    a iep:PgslAnchor ;`);
       lines.push(`    iep:latticeRoot "${receipt.latticeRoot}" ;`);
       lines.push(`    iep:atomCount "${receipt.atomCount}"^^xsd:integer ;`);
       lines.push(`    iep:fragmentCount "${receipt.fragmentCount}"^^xsd:integer ;`);
-      lines.push(`    iep:topFragment <${receipt.topFragmentUri}> ;`);
+      lines.push(`    iep:topFragment <${_iesc(receipt.topFragmentUri)}> ;`);
       lines.push(`    iep:ingestedAt "${receipt.ingestedAt}"^^xsd:dateTime`);
       lines.push(`] .`);
       break;
 
     case 'activity':
-      lines.push(`<${receipt.target}> iep:activityAnchor [`);
+      lines.push(`<${_iesc(receipt.target)}> iep:activityAnchor [`);
       lines.push(`    a iep:ActivityAnchor ;`);
       lines.push(`    iep:tool "${receipt.tool}" ;`);
-      lines.push(`    iep:agent <${receipt.agent}> ;`);
+      lines.push(`    iep:agent <${_iesc(receipt.agent)}> ;`);
       lines.push(`    iep:outcome "${receipt.outcome}" ;`);
       lines.push(`    iep:timestamp "${receipt.timestamp}"^^xsd:dateTime`);
       if (receipt.metadata) {

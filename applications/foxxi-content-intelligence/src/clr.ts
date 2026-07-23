@@ -24,6 +24,7 @@ import {
   discover,
   fetchGraphContent,
 } from '@interego/solid';
+import { assertSafeFetchTarget } from './ssrf-guard.js';
 import type {
   ManifestEntry,
 } from '@interego/core';
@@ -230,6 +231,9 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
 
 async function fetchCredential(entry: ManifestEntry, config: FetchClrConfig): Promise<VerifiableCredentialJson> {
   const fetchFn = (config.fetch ?? globalThis.fetch) as typeof globalThis.fetch;
+  // Second-hop SSRF guard: descriptorUrl (from a discovered manifest) + hydra:target (from
+  // the fetched descriptor) are attacker-influenceable pod content.
+  await assertSafeFetchTarget(entry.descriptorUrl);
   const descRes = await fetchFn(entry.descriptorUrl, { headers: { Accept: 'text/turtle' } });
   if (!descRes.ok) {
     throw new Error(`fetch descriptor ${entry.descriptorUrl}: ${descRes.status} ${descRes.statusText}`);
@@ -239,6 +243,7 @@ async function fetchCredential(entry: ManifestEntry, config: FetchClrConfig): Pr
   if (!graphUrl) {
     throw new Error(`no hydra:target on ${entry.descriptorUrl}`);
   }
+  await assertSafeFetchTarget(graphUrl);
   const { content } = await fetchGraphContent(graphUrl, config.fetch ? { fetch: config.fetch as never } : undefined);
   if (!content) {
     throw new Error(`graph at ${graphUrl} returned empty or encrypted content`);

@@ -173,6 +173,11 @@ export function createDelegationCredential(
  */
 export function ownerProfileToTurtle(profile: OwnerProfileData): string {
   const lines: string[] = [];
+  // Escape caller-controlled IRIs (webId/agentId) + literals (name/label/pubkey) so a
+  // self-registering agent cannot break out of `<...>`/`"..."` and inject triples into the
+  // published agent-registry graph.
+  const escI = (s: string): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
+  const escL = (s: string): string => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
 
   lines.push('@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .');
   lines.push('@prefix foaf: <http://xmlns.com/foaf/0.1/> .');
@@ -180,9 +185,9 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
   lines.push('@prefix prov: <http://www.w3.org/ns/prov#> .');
   lines.push('');
 
-  lines.push(`<${profile.webId}> a foaf:Person ;`);
+  lines.push(`<${escI(profile.webId)}> a foaf:Person ;`);
   if (profile.name) {
-    lines.push(`    foaf:name "${profile.name}" ;`);
+    lines.push(`    foaf:name "${escL(profile.name)}" ;`);
   }
 
   const activeAgents = profile.authorizedAgents.filter(a => !a.revoked);
@@ -209,15 +214,15 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
   for (const agent of activeAgents) {
     const frag = `#agent-${encodeURIComponent(agent.agentId)}`;
     lines.push(`<${frag}> a iep:AuthorizedAgent ;`);
-    lines.push(`    iep:agentIdentity <${agent.agentId}> ;`);
-    lines.push(`    iep:delegatedBy <${profile.webId}> ;`);
+    lines.push(`    iep:agentIdentity <${escI(agent.agentId)}> ;`);
+    lines.push(`    iep:delegatedBy <${escI(profile.webId)}> ;`);
     lines.push(`    iep:scope iep:${agent.scope} ;`);
     lines.push(`    iep:validFrom "${agent.validFrom}"^^xsd:dateTime ;`);
     if (agent.validUntil) {
       lines.push(`    iep:validUntil "${agent.validUntil}"^^xsd:dateTime ;`);
     }
     if (agent.label) {
-      lines.push(`    foaf:name "${agent.label}" ;`);
+      lines.push(`    foaf:name "${escL(agent.label)}" ;`);
     }
     if (agent.isSoftwareAgent) {
       lines.push('    a prov:SoftwareAgent ;');
@@ -227,7 +232,7 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
       // (including non-RDF clients) can read it without parsing additional
       // vocabularies. iep:encryptionPublicKey is the relationship; the
       // algorithm is implicit X25519-XSalsa20-Poly1305 per the crypto layer.
-      lines.push(`    iep:encryptionPublicKey "${agent.encryptionPublicKey}" ;`);
+      lines.push(`    iep:encryptionPublicKey "${escL(agent.encryptionPublicKey)}" ;`);
     }
     if (agent.encryptionKeyHistory && agent.encryptionKeyHistory.length > 0) {
       // Pubkey rollover (Sec #12): each retired key is a pipe-delimited
