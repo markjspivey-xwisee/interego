@@ -148,6 +148,7 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/initialized`,
     prefLabel: { en: 'initialized' },
+    definition: { en: 'cmi5/SCORM initialization — an AU (course OR lesson) declared its session initialized. Object type is enforced by an object.definition.type rule.' },
     verb: `${ADL}/verbs/initialized`,
     rules: [{ location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] }],
   },
@@ -185,12 +186,14 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/scene-completed`,
     prefLabel: { en: 'scene-completed' },
+    definition: { en: 'Foxxi extension — every slide in a course scene has been viewed; the scene (a sub-theme grouping of slides) is complete.' },
     verb: `${FOXXI_NS}verbs/scene-completed`,
     objectActivityType: `${FOXXI_NS}activities/scene`,
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/completed`,
     prefLabel: { en: 'completed' },
+    definition: { en: 'cmi5/SCORM completion — the learner reached the end of the course. Carries result.completion; result.score.scaled is recommended.' },
     verb: `${ADL}/verbs/completed`,
     objectActivityType: `${ADL}/activities/course`,
     rules: [
@@ -201,6 +204,7 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/passed`,
     prefLabel: { en: 'passed' },
+    definition: { en: 'cmi5/SCORM pass — the score met or exceeded the mastery threshold. Carries result.success + result.score.scaled; the mastery threshold extension is recommended.' },
     verb: `${ADL}/verbs/passed`,
     objectActivityType: `${ADL}/activities/course`,
     rules: [
@@ -212,6 +216,7 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/terminated`,
     prefLabel: { en: 'terminated' },
+    definition: { en: 'cmi5/SCORM termination — an AU (course OR lesson) session ended cleanly. Object type is enforced by an object.definition.type rule.' },
     verb: `${ADL}/verbs/terminated`,
     rules: [{ location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] }],
   },
@@ -225,6 +230,7 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/retrieved`,
     prefLabel: { en: 'retrieval-trace' },
+    definition: { en: 'Foxxi extension — concept-graph retrieval traced a set of slides / concept nodes as evidence for an answer. conceptIds is recommended (the generic affordance envelope cannot always supply them).' },
     verb: `${FOXXI_NS}verbs/retrieved`,
     objectActivityType: `${FOXXI_NS}activities/concept-graph-node`,
     // conceptIds is RECOMMENDED (not required): the generic affordance-instrumentation
@@ -235,12 +241,14 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/enrolled`,
     prefLabel: { en: 'enrolled' },
+    definition: { en: 'Foxxi extension — the learner matched a tenant policy and was assigned (enrolled in) a course.' },
     verb: `${FOXXI_NS}verbs/enrolled`,
     objectActivityType: `${ADL}/activities/course`,
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/credentialed`,
     prefLabel: { en: 'credentialed' },
+    definition: { en: 'Foxxi extension — an Open Badges 3.0 / W3C Verifiable Credential was issued for the learner against a completed course / achieved competency.' },
     verb: `${FOXXI_NS}verbs/credentialed`,
     objectActivityType: `${FOXXI_NS}activities/credential`,
   },

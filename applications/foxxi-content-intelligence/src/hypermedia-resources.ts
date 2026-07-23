@@ -597,7 +597,11 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
   });
 
   // ── Policies ────────────────────────────────────────────────────
+  // Operator-gated: a policy discloses creator PII (created_by_name/user_id),
+  // the who-is-assigned-what-training map, and the group opaque ids that gate
+  // the /groups membership — the same PII/audit surface class as profiles.
   app.get('/api/foxxi/v1/policies', (req, res) => {
+    if (!requireOperator(req, res)) return;
     const admin = loadAdminPayload();
     const { offset, limit } = pagination(req);
     const items = admin.policies.slice(offset, offset + limit);
@@ -625,6 +629,7 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
     }));
   });
   app.get('/api/foxxi/v1/policies/:opaqueId', (req, res) => {
+    if (!requireOperator(req, res)) return;
     const admin = loadAdminPayload();
     const slug = lookup.policy.toSlug(req.params.opaqueId);
     if (!slug) { res.status(404).json({ error: 'policy not found' }); return; }
@@ -667,6 +672,10 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
     }));
   });
   app.get('/api/foxxi/v1/groups/:opaqueId', (req, res) => {
+    // Gate the item route too — the /groups collection is operator-gated, but
+    // an anonymous caller could otherwise walk the (public) policies collection
+    // to a group opaqueId and read its full membership here, defeating the gate.
+    if (!requireOperator(req, res)) return;
     const admin = loadAdminPayload();
     const slug = lookup.group.toSlug(req.params.opaqueId);
     if (!slug) { res.status(404).json({ error: 'group not found' }); return; }
@@ -734,7 +743,11 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
   });
 
   // ── Integrations ─────────────────────────────────────────────────
+  // Operator-gated: an integration discloses the tenant's IdP/HRIS/LMS topology
+  // (product, instance hostname, auth_method) — reconnaissance for an attacker
+  // (which SSO to phish, which back-office host to target).
   app.get('/api/foxxi/v1/integrations', (req, res) => {
+    if (!requireOperator(req, res)) return;
     const admin = loadAdminPayload();
     const { offset, limit } = pagination(req);
     const items = admin.connections.slice(offset, offset + limit);
@@ -758,6 +771,7 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
     }));
   });
   app.get('/api/foxxi/v1/integrations/:opaqueId', (req, res) => {
+    if (!requireOperator(req, res)) return;
     const admin = loadAdminPayload();
     const slug = lookup.integration.toSlug(req.params.opaqueId);
     if (!slug) { res.status(404).json({ error: 'integration not found' }); return; }

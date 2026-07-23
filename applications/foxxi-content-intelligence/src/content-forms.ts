@@ -85,7 +85,26 @@ export function renderInForm(unit: ContentUnit, form: ContentForm): FormRenderin
 // ── helpers ─────────────────────────────────────────────────────────
 
 function htmlEsc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Escape quotes too — these values are interpolated into HTML ATTRIBUTE
+  // contexts (data-a="…", href="…"), so a bare " or ' would break out of the
+  // attribute and inject event handlers. Over-escaping in text context is
+  // harmless (&quot; renders as ").
+  return s
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** Neutralize a caller-supplied href: only http(s)/mailto and relative URLs
+ *  are allowed through; javascript:/data:/vbscript: (and control-char-obfuscated
+ *  variants a browser would still execute) collapse to '#'. */
+function safeHref(s: string): string {
+  const t = s.trim();
+  // A browser ignores embedded whitespace/control chars when parsing the
+  // scheme, so strip them before testing (defeats "java\tscript:" bypasses).
+  const collapsed = t.replace(/[\x00-\x20]+/g, '');
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(collapsed);
+  if (scheme && !/^(https?|mailto)$/i.test(scheme[1])) return '#';
+  return t;
 }
 
 /** Split an assessment-item block ("question ::: answer") if it is one. */
@@ -152,7 +171,7 @@ function renderHtml(u: ContentUnit): string {
       + `<div>${a ? htmlEsc(a.question) : htmlEsc(b.text)}</div>`;
     parts.push(`<section class="block">${inner}</section>`);
   }
-  if (u.link) parts.push(`<p><a href="${htmlEsc(u.link)}">Full version</a></p>`);
+  if (u.link) parts.push(`<p><a href="${htmlEsc(safeHref(u.link))}">Full version</a></p>`);
   return htmlShell(u.title, parts.join('\n'));
 }
 
@@ -182,7 +201,7 @@ function renderInteractive(u: ContentUnit): string {
       );
     }
   });
-  if (u.link) parts.push(`<p><a href="${htmlEsc(u.link)}">Full version</a></p>`);
+  if (u.link) parts.push(`<p><a href="${htmlEsc(safeHref(u.link))}">Full version</a></p>`);
   const script = checkCount > 0
     ? `function chk(id){var el=document.getElementById(id),r=document.getElementById(id+'r');`
       + `var ok=el.value.trim().toLowerCase()===(el.dataset.a||'').toLowerCase();`

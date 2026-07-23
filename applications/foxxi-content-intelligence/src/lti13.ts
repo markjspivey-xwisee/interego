@@ -43,7 +43,7 @@ import express, { type Express, type Request, type Response } from 'express';
 import { createHash, createHmac, randomUUID, createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, verify as cryptoVerify } from 'node:crypto';
 import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
 import { tenantOrUsers, type OrUser } from './oneroster.js';
-import { trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
+import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { listCmi5Courses } from './cmi5-lms.js';
 import {
   withTransientRetry,
@@ -444,6 +444,51 @@ async function platformToken(
   return { ok: true, token: j.access_token };
 }
 
+// ── SSRF guard for consumer-mode fetches ────────────────────────────
+//
+// The NRPS/AGS *consumer* routes take a caller-supplied target URL
+// (?platformLineItemsUrl / ?members_url / body.lineItemUrl) and issue a
+// server-side fetch with the registered platform's OAuth bearer attached.
+// Without a guard that is a blind SSRF (fetch an internal/metadata host)
+// AND a token-exfiltration primitive (send the platform token to an
+// attacker host) the moment any platform is registered. Restrict the
+// target to the registered platform's own origin(s) and reject every
+// loopback/link-local/private literal.
+
+function isPrivateHostname(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  if (h === 'localhost' || h.endsWith('.localhost') || h === '' ) return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (m) {
+    const a = Number(m[1]), b = Number(m[2]);
+    if (a === 0 || a === 127 || a === 10) return true;
+    if (a === 169 && b === 254) return true;            // link-local incl. 169.254.169.254
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;  // CGNAT 100.64/10
+    return false;
+  }
+  if (h === '::1' || h === '::') return true;            // IPv6 loopback / unspecified
+  if (h.startsWith('fe80:')) return true;                // IPv6 link-local
+  if (h.startsWith('fc') || h.startsWith('fd')) return true; // IPv6 ULA fc00::/7
+  return false;
+}
+
+function platformFetchTargetOk(rawUrl: string, platform: PlatformRegistration):
+  { ok: true; url: string } | { ok: false; error: string } {
+  let u: URL;
+  try { u = new URL(rawUrl); } catch { return { ok: false, error: 'target URL is not a valid absolute URL' }; }
+  if (u.protocol !== 'https:') return { ok: false, error: 'target URL must be https' };
+  const host = u.hostname.toLowerCase();
+  if (isPrivateHostname(host)) return { ok: false, error: 'target host is private/loopback/link-local' };
+  const allowed = new Set<string>();
+  for (const s of [platform.issuer, platform.auth_token_url, platform.jwks_url, platform.auth_login_url]) {
+    if (typeof s === 'string' && s) { try { allowed.add(new URL(s).hostname.toLowerCase()); } catch { /* skip malformed */ } }
+  }
+  if (!allowed.has(host)) return { ok: false, error: `target host ${host} is not a registered platform origin` };
+  return { ok: true, url: u.toString() };
+}
+
 // ── Route attachment ────────────────────────────────────────────────
 
 export function attachLti13Routes(app: Express, config: Lti13Config): void {
@@ -718,9 +763,11 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
     if (platformUrl) {
       const platform = platforms[0];
       if (!platform) { res.status(400).json({ error: 'no LTI platforms registered' }); return; }
+      const guard = platformFetchTargetOk(platformUrl, platform);
+      if (!guard.ok) { res.status(400).json({ error: `platformLineItemsUrl rejected: ${guard.error}` }); return; }
       const tok = await platformToken(platform, AGS_SCOPE.lineItem, keys);
       if (!tok.ok) { res.status(tok.status).json({ error: tok.error }); return; }
-      const r = await fetch(platformUrl, {
+      const r = await fetch(guard.url, {
         headers: { Accept: 'application/vnd.ims.lis.v2.lineitemcontainer+json', Authorization: `Bearer ${tok.token}` },
       });
       const text = await r.text();
@@ -757,14 +804,17 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
     const platformUrl = typeof b.platformLineItemsUrl === 'string' ? b.platformLineItemsUrl : undefined;
     if (platformUrl) {
       const platform = platforms[0];
+      const guard = platform ? platformFetchTargetOk(platformUrl, platform) : { ok: false as const, error: 'no LTI platforms registered' };
       if (!platform) {
         platformSync = { ok: false, error: 'no LTI platforms registered' };
+      } else if (!guard.ok) {
+        platformSync = { ok: false, error: `platformLineItemsUrl rejected: ${guard.error}` };
       } else {
         const tok = await platformToken(platform, AGS_SCOPE.lineItem, keys);
         if (!tok.ok) {
           platformSync = { ok: false, status: tok.status, error: tok.error };
         } else {
-          const r = await fetch(platformUrl, {
+          const r = await fetch(guard.url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/vnd.ims.lis.v2.lineitem+json', Authorization: `Bearer ${tok.token}` },
             body: JSON.stringify(publicLineItem(li, config.selfBaseUrl)),
@@ -829,9 +879,11 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
     if (!lineItemUrl || !score) { res.status(400).json({ error: 'lineItemUrl + score required' }); return; }
     const platform = platforms[0];
     if (!platform) { res.status(400).json({ error: 'no LTI platforms registered' }); return; }
+    const guard = platformFetchTargetOk(lineItemUrl, platform);
+    if (!guard.ok) { res.status(400).json({ error: `lineItemUrl rejected: ${guard.error}` }); return; }
     const tok = await platformToken(platform, AGS_SCOPE.score, keys);
     if (!tok.ok) { res.status(tok.status).json({ error: tok.error }); return; }
-    const scoreUrl = `${lineItemUrl.replace(/\/$/, '')}/scores`;
+    const scoreUrl = `${guard.url.replace(/\/$/, '')}/scores`;
     const scorePost = await fetch(scoreUrl, {
       method: 'POST',
       headers: {
@@ -857,16 +909,28 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
     if (membersUrl) {
       const platform = platforms[0];
       if (!platform) { res.status(400).json({ error: 'no LTI platforms registered' }); return; }
+      const guard = platformFetchTargetOk(membersUrl, platform);
+      if (!guard.ok) { res.status(400).json({ error: `members_url rejected: ${guard.error}` }); return; }
       const tok = await platformToken(platform, NRPS_SCOPE, keys);
       if (!tok.ok) { res.status(tok.status).json({ error: tok.error }); return; }
-      const r = await fetch(membersUrl, {
+      const r = await fetch(guard.url, {
         headers: { Accept: 'application/vnd.ims.lti-nrps.v2.membershipcontainer+json', Authorization: `Bearer ${tok.token}` },
       });
       const text = await r.text();
       res.status(r.status).type('application/vnd.ims.lti-nrps.v2.membershipcontainer+json').send(text);
       return;
     }
-    // Producer-mode NRPS returns this tenant's full member roster (PII).
+    // Producer-mode NRPS returns this tenant's full member roster (PII:
+    // names/emails/employee-ids/roles) — the SAME roster source OneRoster
+    // /users gates. NRPS 2.0 itself mandates an OAuth2 bearer with the
+    // contextmembership.readonly scope, so gate this on the same operator
+    // auth the OneRoster read path uses. Without it an anonymous caller
+    // reads the default tenant's membership PII (the sibling of the gated
+    // OneRoster endpoint).
+    if (!callerIsOperator(req, config)) {
+      res.status(401).json({ error: 'NRPS membership requires an authenticated operator session (OAuth2 Bearer with contextmembership.readonly / operator token)' });
+      return;
+    }
     // Honor ?tenant_pod_url only for a verified operator; pin everyone else
     // to DEFAULT_TENANT so an anonymous caller can't read a victim tenant's
     // membership by naming it.

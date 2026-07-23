@@ -366,6 +366,10 @@ export function renderJsonLd(m: OntologyModel): Record<string, unknown> {
       '@id': ontologyIri(m), '@type': 'owl:Ontology',
       'dct:title': m.title, 'dct:description': m.description, 'owl:versionInfo': m.version,
       'rdfs:seeAlso': { '@id': m.spec },
+      // Faithful to the OWL/Turtle projection: carry the same normative-schema
+      // provenance comment the Turtle emits (was dropped from the JSON-LD, so a
+      // content-negotiated ld+json graph lost this ontology-level triple).
+      ...(m.derivedFrom ? { 'rdfs:comment': `Transcribed from the normative schema: ${m.derivedFrom}` } : {}),
       ...(m.imports?.length ? { 'owl:imports': m.imports.map(i => ({ '@id': /^https?:\/\//.test(i) ? i : `${NS_ROOT}${i}` })) } : {}),
       'rdfs:isDefinedBy': def,
     },

@@ -652,6 +652,12 @@ export interface ContextChatConfig {
    * Absent → the route is open (the self-contained-demo posture).
    */
   verifyCaller?: (token: string | undefined) => Promise<CallerVerification>;
+  /** Authorize instrumenting the ask attributed to `asker` (a claimed DID).
+   *  Returns true only for a verified operator or a signer who proved control
+   *  of the DID. When it returns false the ask is still recorded, but
+   *  attributed to 'anonymous' — never to the unproven claimed identity, so a
+   *  caller cannot forge an LRS `interacted` statement in a victim's name. */
+  authorizeInstrumentation?: (req: Request, asker: string) => boolean;
 }
 
 /** Assemble a learner's networked context from the substrate's surfaces. */
@@ -799,10 +805,18 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
       const answer = await answerContextQuestion({ asker, question, context, llm });
 
       // Instrument the ask into the LRS — the chat joins the trace graph.
+      // Attribute to the claimed asker.id ONLY when the caller is authorized
+      // to speak for it (verified operator, signed-self, or the identity the
+      // session token already bound above); otherwise attribute to 'anonymous'
+      // so a caller cannot forge an `interacted` statement in a victim's name.
       let instrumented = false;
+      const attributedActor =
+        (callerRole && learner === asker.id) || asker.id === 'anonymous'
+          || (config.authorizeInstrumentation?.(req, asker.id) ?? false)
+          ? asker.id : 'anonymous';
       if (config.emitStatement) {
         config.emitStatement({
-          actor: { objectType: 'Agent', account: { homePage: config.authoritativeSource, name: asker.id } },
+          actor: { objectType: 'Agent', account: { homePage: config.authoritativeSource, name: attributedActor } },
           verb: { id: INTERACTED, display: { 'en-US': 'interacted' } },
           object: {
             objectType: 'Activity',

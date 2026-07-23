@@ -35,9 +35,11 @@
  * now import it. That duplication is why the host rot went unnoticed for so long.
  */
 export const FOXXI_NS = 'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#';
-/** The retired Azure namespace. Kept ONLY to declare the equivalence: ids minted
- *  under it are in signed content and xAPI object ids we must never rewrite, so the
- *  vocabulary states owl:sameAs rather than pretending the old name never existed. */
+/** The retired Azure namespace. Retained for reference / legacy-IRI canonicalization
+ *  (ids minted under it live in signed content + xAPI object ids we must never rewrite).
+ *  It is NOT asserted as a published owl:sameAs: that Azure host is permanently paused,
+ *  so a machine-readable sameAs to it would be a dead link (violating everything-is-a-URL).
+ *  A reader holding a legacy IRI canonicalizes it in code, not via a dangling triple. */
 export const FOXXI_NS_LEGACY = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 /** The standards spec ontologies this vertical composes (dereferenceable at /ns/<module>).
  *  The foxxi vocabulary rdfs:seeAlso's them so the vertical declares the standards it
@@ -47,6 +49,12 @@ export const COMPOSED_SPEC_ONTOLOGIES = ['xapi', 'scorm-cam', 'scorm-sn', 'scorm
   .map(m => FOXXI_NS.replace('foxxi#', m));
 /** The vocabulary document IRI (strip the `#` — what a foxxi hash-IRI dereferences to). */
 export const FOXXI_VOCAB_DOC = FOXXI_NS.replace(/#$/, '');
+
+// The ontology-level rdfs:comment, shared verbatim by the Turtle, the triples
+// and the JSON-LD projections so all three carry an IDENTICAL comment (the
+// JSON-LD projection previously served a different string → content-negotiation
+// unfaithfulness).
+export const FOXXI_VOCAB_COMMENT = 'Consolidated dereferenceable vocabulary for the Foxxi vertical. Composes the standards spec ontologies it emerges from (see rdfs:seeAlso).';
 
 export type FoxxiTermKind = 'Verb' | 'ActivityType' | 'Type' | 'Extension';
 
@@ -194,8 +202,10 @@ export function renderVocabJsonLd(): Record<string, unknown> {
       {
         '@id': FOXXI_VOCAB_DOC, '@type': 'foxxi:Vocabulary',
         label: 'Foxxi Content Intelligence — vocabulary',
-        comment: 'The consolidated, dereferenceable vocabulary for the Foxxi Content Intelligence vertical: xAPI verbs + activity types, descriptor types, and context extensions. Every term IRI resolves here.',
+        // Identical comment string to the Turtle/triples projections (faithfulness).
+        comment: FOXXI_VOCAB_COMMENT,
         'rdfs:seeAlso': COMPOSED_SPEC_ONTOLOGIES.map(o => ({ '@id': o })),
+        isDefinedBy: FOXXI_VOCAB_DOC,
       },
       ...FOXXI_TERMS.map(t => ({
         '@id': `${FOXXI_NS}${t.name}`,
@@ -227,19 +237,13 @@ export function renderVocabJsonLd(): Record<string, unknown> {
  */
 export function vocabTriplesBySubject(): Array<Array<readonly [string, string, string]>> {
   const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', RDFS = 'http://www.w3.org/2000/01/rdf-schema#';
-  const OWL = 'http://www.w3.org/2002/07/owl#';
   const DOC = FOXXI_VOCAB_DOC;
   const groups: Array<Array<readonly [string, string, string]>> = [];
   groups.push([
     [DOC, RDF + 'type', `${FOXXI_NS}Vocabulary`],
     [DOC, RDFS + 'label', 'Foxxi Content Intelligence — vocabulary'],
-    [DOC, RDFS + 'comment', 'Consolidated dereferenceable vocabulary for the Foxxi vertical. Composes the standards spec ontologies it emerges from (see rdfs:seeAlso).'],
+    [DOC, RDFS + 'comment', FOXXI_VOCAB_COMMENT],
     ...COMPOSED_SPEC_ONTOLOGIES.map(o => [DOC, RDFS + 'seeAlso', o] as const),
-    // The retired Azure name, declared rather than disowned. Terms minted under it
-    // are in signed content and xAPI object ids we must never rewrite, so a reader
-    // holding an old iri is TOLD it denotes this same vocabulary instead of being
-    // left with a name that resolves to nothing.
-    [DOC, OWL + 'sameAs', FOXXI_NS_LEGACY.replace(/#$/, '')],
     [DOC, RDFS + 'isDefinedBy', DOC],
   ]);
   for (const t of FOXXI_TERMS) {
@@ -262,9 +266,8 @@ export function renderVocabTurtle(): string {
 
 <${FOXXI_VOCAB_DOC}> a foxxi:Vocabulary ;
     rdfs:label "Foxxi Content Intelligence — vocabulary" ;
-    rdfs:comment "Consolidated dereferenceable vocabulary for the Foxxi vertical. Composes the standards spec ontologies it emerges from (see rdfs:seeAlso)." ;
+    rdfs:comment "${esc(FOXXI_VOCAB_COMMENT)}" ;
 ${COMPOSED_SPEC_ONTOLOGIES.map(o => `    rdfs:seeAlso <${o}> ;`).join('\n')}
-    owl:sameAs <${FOXXI_NS_LEGACY.replace(/#$/, '')}> ;
     rdfs:isDefinedBy <${FOXXI_VOCAB_DOC}> .
 `;
   // A Foxxi term's local name is PATH-STRUCTURED (verbs/scene-completed, activities/scene) —

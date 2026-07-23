@@ -146,6 +146,16 @@ function xmlStr(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/** Escape a value for a Turtle STRING_LITERAL_QUOTE. An XML escaper is NOT enough
+ *  here — Turtle requires backslash and control chars (newline / CR / tab) be
+ *  escaped, or a value with a raw newline produces an unparseable published graph
+ *  (and a `"` would break out of the literal). */
+function tesc(s: string): string {
+  return String(s)
+    .replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+}
+
 /**
  * Publish a rendered delivery as a `foxxi:DeliveredContent` Context
  * Descriptor on the pod — the Interego-native transport. The graph
@@ -166,14 +176,17 @@ async function publishDeliveredContent(
   const typeIri = `${ns}DeliveredContent` as IRI;
   const now = new Date().toISOString();
   const b64 = Buffer.from(rendering.body, 'utf8').toString('base64');
+  // Turtle-escape EVERY interpolated string literal (title/recipient are caller-influenced;
+  // channel/mediaType/form are enum/renderer-produced today but escaped for defence in depth) —
+  // an XML escaper left backslash/newline unescaped, so a title with a newline broke the graph.
   const graph = `<${graphIri}> a <${typeIri}> ;
-    <http://purl.org/dc/terms/title> "${xmlStr(title)}" ;
+    <http://purl.org/dc/terms/title> "${tesc(title)}" ;
     <http://purl.org/dc/terms/created> "${now}"^^<http://www.w3.org/2001/XMLSchema#dateTime> ;
-    <http://purl.org/dc/terms/format> "${rendering.mediaType}" ;
+    <http://purl.org/dc/terms/format> "${tesc(rendering.mediaType)}" ;
     <http://www.w3.org/ns/prov#wasAttributedTo> <${config.authoritativeSource}> ;
-    <${ns}deliveryChannel> "${channel}" ;
-    <${ns}contentForm> "${rendering.form}" ;
-${recipient ? `    <${ns}recipient> "${xmlStr(recipient)}" ;\n` : ''}    <${ns}deliveredBody> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
+    <${ns}deliveryChannel> "${tesc(channel)}" ;
+    <${ns}contentForm> "${tesc(rendering.form)}" ;
+${recipient ? `    <${ns}recipient> "${tesc(recipient)}" ;\n` : ''}    <${ns}deliveredBody> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
   const descriptor: ContextDescriptorData = {
     id: `${graphIri}#descriptor` as IRI,

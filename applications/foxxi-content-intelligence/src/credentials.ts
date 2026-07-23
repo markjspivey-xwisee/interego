@@ -334,9 +334,14 @@ function wrapCredentialAsGraph(graphIri: IRI, signed: VerifiableCredentialJson):
   // the issuer's did:key matches what the descriptor advertised.
   const json = JSON.stringify(signed);
   const b64 = Buffer.from(json, 'utf8').toString('base64');
+  // Turtle-escape the identifier literal (defence in depth — the id derives from a
+  // caller-influenced courseId; a stray " / newline would otherwise break out of the
+  // literal and inject triples into the published credential graph).
+  const tesc = (s: string): string =>
+    String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
   return `<${graphIri}> a <${CREDENTIAL_TYPES.CourseCompletionCredential}> ;
     <http://www.w3.org/ns/prov#wasAttributedTo> <${signed.issuer}> ;
-    <http://purl.org/dc/terms/identifier> "${signed.id ?? ''}" ;
+    <http://purl.org/dc/terms/identifier> "${tesc(signed.id ?? '')}" ;
     <${FXS}bundleJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
 }

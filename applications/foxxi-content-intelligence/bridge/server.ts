@@ -3069,7 +3069,25 @@ const app = createVerticalBridge({
     attachContentDeliveryRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       authoritativeSource,
+      ...operatorAuth,
       emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
+      // Authorize instrumenting a statement attributed to `learner`: a
+      // verified operator (LRS admin) may instrument anyone; otherwise the
+      // caller must sign the request (rev-196 envelope) and the recovered
+      // address must match the claimed learner DID (self-instrumentation).
+      // An anonymous caller is refused — no forged LRS attribution.
+      authorizeInstrumentation: (req, learner) => {
+        if (callerIsOperator(req, operatorAuth)) return true;
+        const src = {
+          ...(req.query as Record<string, unknown>),
+          ...(req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {}),
+        };
+        const rec = recoverSignedRequest(src);
+        if (!rec.ok) return false;
+        const signer = rec.signer.toLowerCase().replace(/^0x/, '');
+        const claim = String(learner).toLowerCase();
+        return claim === `did:ethr:0x${signer}` || claim.includes(signer);
+      },
       // Channel transport — POST /content/deliver actually sends: a
       // configured per-channel webhook, else the Interego-native
       // pod-descriptor publish (the delivery becomes discoverable
@@ -3101,6 +3119,21 @@ const app = createVerticalBridge({
       // Scope 'interego' — pass through to everything composed into the
       // user's networked context, via the substrate's discover().
       discoverInteregoContext: () => fetchInteregoDescriptors(),
+      // Authorize attributing an instrumented ask to a claimed asker DID:
+      // operator, or a signer proving control of the DID. Unauthorized asks
+      // are still recorded, but attributed to 'anonymous' (no forged actor).
+      authorizeInstrumentation: (req, asker) => {
+        if (callerIsOperator(req, operatorAuth)) return true;
+        const src = {
+          ...(req.query as Record<string, unknown>),
+          ...(req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {}),
+        };
+        const rec = recoverSignedRequest(src);
+        if (!rec.ok) return false;
+        const signer = rec.signer.toLowerCase().replace(/^0x/, '');
+        const claim = String(asker).toLowerCase();
+        return claim === `did:ethr:0x${signer}` || claim.includes(signer);
+      },
       // Gate progress / assignment questions behind the same wallet-
       // signed session token the rest of the bridge verifies — a
       // learner's own record is PII; content questions stay open.
@@ -3916,9 +3949,17 @@ app.post('/agent/issue-credential', async (req, res) => {
     // '/'+':' and break the on-pod path. So: slug for internals, URL for the public id +
     // the alignment targetCode the VC points at. competencyIdOf dual-reads a caller who
     // supplies either form.
+    // Sanitize to a safe slug: competencyIdOf extracts a controlled segment from a
+    // urn:/URL competency_id, but when it returns null the RAW caller string was used
+    // verbatim — and it flows into the on-pod descriptor slug/path AND a hand-built
+    // Turtle literal (credentials.ts), so a '/'/'..'/quote/newline would perturb the
+    // write path or inject triples into the recipient's credential graph. Coerce any
+    // fallback to [a-z0-9-] (the same guard the /ns/foxxi/competency route uses).
+    const safeCompSlug = (s: string): string =>
+      s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'competency';
     const competencySlug = (typeof p.competency_id === 'string' && p.competency_id.trim())
-      ? (competencyIdOf(p.competency_id.trim()) ?? p.competency_id.trim())
-      : competencyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48);
+      ? (competencyIdOf(p.competency_id.trim()) ?? safeCompSlug(p.competency_id.trim()))
+      : safeCompSlug(competencyName);
     const competencyId = competencyIri(competencySlug);
     const recipientPod = resolveSubjectPodUrl(recipientDid, typeof p.recipient_pod_url === 'string' ? p.recipient_pod_url : undefined);
     // Per-creator issuer identity: a stable did:key the platform custodies on the
