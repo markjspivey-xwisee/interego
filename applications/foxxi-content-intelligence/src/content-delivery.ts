@@ -31,6 +31,7 @@ import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { registerCmi5Course } from './cmi5-lms.js';
 import { parseCmi5Course } from './cmi5-course.js';
+import { sendServerError } from './http-errors.js';
 import type { Course } from './emergent-content.js';
 import {
   flattenCourse, generateCmi5Xml, generateAuHtml, generateScormZip, auLessonView,
@@ -146,20 +147,20 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
 
     let cmi5Xml: string;
     try { cmi5Xml = generateCmi5Xml(course, auUrl); }
-    catch (e) { res.status(500).json({ error: `cmi5 generation failed: ${(e as Error).message}` }); return; }
+    catch (e) { sendServerError(res, e, 'cmi5-generation'); return; }
 
     // Parse it back (validates the generated XML round-trips) and register.
     try {
       const parsed = parseCmi5Course(cmi5Xml);
       registerCmi5Course(tenant, parsed);
     } catch (e) {
-      res.status(500).json({ error: `course registration failed: ${(e as Error).message}` });
+      sendServerError(res, e, 'cmi5-course-registration');
       return;
     }
 
     let scormZip: Buffer;
     try { scormZip = generateScormZip(course); }
-    catch (e) { res.status(500).json({ error: `SCORM package generation failed: ${(e as Error).message}` }); return; }
+    catch (e) { sendServerError(res, e, 'scorm-package-generation'); return; }
 
     const aus = flat.map((fl, i) => ({
       index: i, lessonId: fl.lesson.id, title: fl.lesson.title, competency: fl.lesson.competency,
@@ -343,7 +344,11 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
           },
         });
       } catch (e) {
-        transport = { mode: 'none', sent: false, detail: `transport error: ${(e as Error).message}` };
+        // Don't reflect the raw transport/fetch error (it can carry internal URLs or
+        // upstream text) into the caller-visible `detail`; log it, surface a generic note.
+        // eslint-disable-next-line no-console
+        console.error('[foxxi:content-deliver:transport]', e instanceof Error ? (e.stack ?? e.message) : e);
+        transport = { mode: 'none', sent: false, detail: 'transport error' };
       }
     }
 
@@ -381,7 +386,7 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
           : `Rendered for ${channel}. ${transport.detail}. Pass a learner DID to instrument the delivery.`,
     });
     })().catch((e: unknown) => {
-      if (!res.headersSent) res.status(500).json({ error: (e as Error).message });
+      if (!res.headersSent) sendServerError(res, e, 'content-deliver');
     });
   });
 }

@@ -134,6 +134,7 @@ import { courseToSkillMd, skillMdToAgenticCourse } from '../src/course-skill-bri
 import { routeInterrogatives, describeNode } from '@interego/pgsl';
 import { skillBundleToDescriptor, descriptorGraphToSkillMd } from '@interego/skills';
 import { mintSessionToken } from '../src/auth.js';
+import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl } from '@interego/core';
@@ -370,7 +371,7 @@ import { composeSpecOntology as composeComplianceOntology } from '../src/spec-on
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemOntologyHtml, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
 import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
-import { attachOauthTokenRoute } from '../src/xapi-oauth.js';
+import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js';
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
@@ -467,19 +468,6 @@ function checkAgenticRateLimit(clientIp: string): { ok: true; remaining: number 
     return { ok: false, resetAt: entry.resetAt, retryAfterSeconds: Math.ceil((entry.resetAt - now) / 1000) };
   }
   return { ok: true, remaining: RL_AGENTIC_MAX - entry.count };
-}
-
-// Uniform 500 responder (round-45). Echoing `(err as Error).message` to the client
-// leaks internal detail — CSS host names, pod URLs, file paths, upstream error text —
-// to unauthenticated and any-signed-wallet callers. Log the real error server-side for
-// operators; return a generic, non-disclosing body to the caller. Every route 500 goes
-// through here so no single sink re-introduces the leak (the sibling-hiding pattern).
-function sendServerError(res: { status: (code: number) => { json: (b: unknown) => void } }, err: unknown, context: string): void {
-  try {
-    // eslint-disable-next-line no-console
-    console.error(`[foxxi:500] ${context}:`, err instanceof Error ? (err.stack ?? err.message) : err);
-  } catch { /* logging must never throw into the error path */ }
-  res.status(500).json({ ok: false, error: 'internal error' });
 }
 
 function fetcherConfig() {
@@ -2126,6 +2114,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!evaluationId) return { error: 'evaluation_id is required' };
     const state = evaluationRegistry.get(evaluationId);
     if (!state) return { error: `no evaluation ${evaluationId}` };
+    // OWNER LOCK (round-47): read sibling of the round-42 decide() lock. A cohort's
+    // candidate roster (agent DIDs, teams, harnesses) is private to the opener — any
+    // other tenant-directory member calling get() would otherwise read a rival's
+    // evaluation. The appliedPolicies label below is only truthful once this runs.
+    if (state.evaluation.openedBy !== ctx.webId) {
+      return { error: `forbidden — only the evaluation opener (${state.evaluation.openedBy}) may read this cohort` };
+    }
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.get_agent_evaluation', decision: 'allow', appliedPolicies: ['agent-evaluation-owner'] });
     return {
       evaluation: state.evaluation,
@@ -2146,6 +2141,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!evaluationId) return { error: 'evaluation_id is required' };
     const state = evaluationRegistry.get(evaluationId);
     if (!state) return { error: `no evaluation ${evaluationId}` };
+    // OWNER LOCK (round-47): compare returns full run evidence (trajectories, cost,
+    // quality) across every accepted candidate — the most competitively sensitive read
+    // in the cohort. Restrict to the opener, mirroring get_agent_evaluation + decide().
+    if (state.evaluation.openedBy !== ctx.webId) {
+      return { error: `forbidden — only the evaluation opener (${state.evaluation.openedBy}) may compare this cohort` };
+    }
     const accepted = state.candidates.filter(c => c.status === 'accepted');
     if (accepted.length === 0) {
       return { error: 'no accepted candidates — request, accept, and record runs for at least two candidates first' };
@@ -2852,7 +2853,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         more: list.more,
       };
     } catch (err) {
-      return { error: (err as Error).message };
+      // eslint-disable-next-line no-console
+      console.error('[foxxi:scorm_cloud_pull]', err instanceof Error ? (err.stack ?? err.message) : err);
+      return { error: 'SCORM Cloud pull failed — see bridge logs' };
     }
   },
 
@@ -3227,6 +3230,12 @@ const app = createVerticalBridge({
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       // A cmi5 launch's auth-token resolves to the launch's tenant.
       bearerTenantResolver: cmi5BearerTenant,
+      // Verify wallet-signed Foxxi session-token Bearers against the published directory
+      // (round-47: the gate previously accepted ANY Bearer as DEFAULT_TENANT). Directory
+      // users get a deterministic wallet so a token minted for a known user_id verifies.
+      sessionUsers: () => directoryUsersCache,
+      // Verify OAuth client-credentials Bearers by real ES256 signature against the LTI key.
+      oauthPublicKey: oauthPublicKeyFrom(process.env.FOXXI_LTI_PRIVATE_KEY_PEM),
       // Per-user self-sovereign forwarding: a statement forwards to the
       // OWNER's lens targets, derived from the actor's identity. Only
       // recognizable self-sovereign identities map to an owner lens; generic
@@ -5063,13 +5072,13 @@ app.post('/agent/landing-tour', async (req, res) => {
   if (pin !== LANDING_PIN_SECRET) { res.status(403).json({ ok: false, error: 'invalid or missing pin' }); return; }
   if (req.body?.clear === true) {
     try { await writeLandingTour(null); res.json({ ok: true, cleared: true }); }
-    catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
+    catch (e) { sendServerError(res, e, 'route-handler'); }
     return;
   }
   const v = validateTourRun(req.body);
   if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
   try { await writeLandingTour(v.doc); res.json({ ok: true, pinned: true, eventCount: v.doc.eventCount, pinnedAt: v.doc.pinnedAt }); }
-  catch (e) { res.status(500).json({ ok: false, error: `failed to persist tour: ${(e as Error).message}` }); }
+  catch (e) { sendServerError(res, e, 'persist-tour'); }
 });
 
 // ── Course intelligence: parse a SCORM package, fingerprint the authoring tool,
@@ -5593,19 +5602,19 @@ app.get('/compliance/xapi/run', async (_req, res) => {
     const userId = process.env.FOXXI_TEST_USERID ?? 'u-joshua';
     const token = await mintSessionToken({ webId, userId, ttlMs: 10 * 60 * 1000 });
     res.json({ ok: true, report: await runXapiConformance({ baseUrl, token, webId, userId, ranAt }) });
-  } catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
+  } catch (e) { sendServerError(res, e, 'route-handler'); }
 });
 app.get('/compliance/scorm/run', (_req, res) => {
   try { res.json({ ok: true, report: runScormConformance(new Date().toISOString()) }); }
-  catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
+  catch (e) { sendServerError(res, e, 'route-handler'); }
 });
 app.get('/compliance/cmi5/run', (_req, res) => {
   try { res.json({ ok: true, report: runCmi5Conformance(new Date().toISOString()) }); }
-  catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
+  catch (e) { sendServerError(res, e, 'route-handler'); }
 });
 app.get('/compliance/cam/run', (_req, res) => {
   try { res.json({ ok: true, report: runCamConformance(new Date().toISOString()) }); }
-  catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
+  catch (e) { sendServerError(res, e, 'route-handler'); }
 });
 
 app.post('/agent/record-performance', async (req, res) => {
@@ -6724,7 +6733,7 @@ app.post('/agent/scorm/launch', async (req, res) => {
     if (!course) { res.status(404).json({ error: `no authored SCORM course '${courseId}' found in the catalog or on the author's pod — author it via /agent/scorm/author, or pass author_did/course_pod` }); return; }
     let tree;
     try { tree = parseManifest(buildAgentScormManifest(course)); }
-    catch (e) { res.status(500).json({ error: `manifest parse: ${(e as Error).message}` }); return; }
+    catch (e) { sendServerError(res, e, 'scorm-manifest-parse'); return; }
     // selfBoundPod: bind the play-session lens to the caller's OWN pod so a caller
     // cannot (via subject_pod_url at launch) route the SCORM outcome into a victim's lens.
     const subjectPod = selfBoundPod(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
