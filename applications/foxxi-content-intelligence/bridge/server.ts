@@ -19,7 +19,7 @@
  *   FOXXI_AUDIENCE=both      → expose both (default)
  */
 
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, createHash, randomBytes } from 'node:crypto';
 
 // ── Pod-write auth: attach Authorization: Bearer on writes that target
 // the configured tenant pod URL. The CSS deployment sits behind a
@@ -133,7 +133,7 @@ import { manifestToAgenticCourse, agentScormToAgenticCourse, type AgentScormCour
 import { courseToSkillMd, skillMdToAgenticCourse } from '../src/course-skill-bridge.js';
 import { routeInterrogatives, describeNode } from '@interego/pgsl';
 import { skillBundleToDescriptor, descriptorGraphToSkillMd } from '@interego/skills';
-import { mintSessionToken } from '../src/auth.js';
+import { mintSessionToken, deriveUserWallet } from '../src/auth.js';
 import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
@@ -426,6 +426,24 @@ const learningEngineerWebIds = new Set(
 // (operator-auth + the xapi-admin gate). Refreshed off autoFetchAdmin
 // (itself 60s-cached); empty until first load, then last-good retained.
 let directoryUsersCache: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }> = [];
+
+// The bridge's own xAPI conformance runner (/compliance/xapi/run) authenticates to its own
+// LRS with a wallet-signed session token. Since round-47 the LRS gate rejects any Bearer
+// that isn't a verified directory identity, so the self-test needs an identity the gate
+// trusts — WITHOUT making it publicly forgeable (the demo seed is public, and Railway's
+// directory is a clean slate that doesn't contain this persona). Mint + verify it under a
+// per-deployment SECRET seed shared in-process between the runner and the gate: external
+// callers can't derive the wallet, so they still get 401. FOXXI_CONFORMANCE_SEED pins the
+// seed (stable across restarts/replicas); absent it, a per-process random keeps a single
+// instance self-consistent.
+const CONFORMANCE_WEBID = process.env.FOXXI_TEST_WEBID ?? 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
+const CONFORMANCE_USERID = process.env.FOXXI_TEST_USERID ?? 'u-joshua';
+const CONFORMANCE_SEED = process.env.FOXXI_CONFORMANCE_SEED ?? randomBytes(24).toString('hex');
+const conformanceSelfIdentity = {
+  user_id: CONFORMANCE_USERID,
+  web_id: CONFORMANCE_WEBID,
+  wallet_address: deriveUserWallet(CONFORMANCE_USERID, CONFORMANCE_SEED).address,
+};
 
 if (!adminKeySeed) {
   console.warn('[foxxi-bridge] WARNING: FOXXI_ADMIN_KEY_SEED is unset — admin sections cannot be decrypted; learner queries will fail. Set FOXXI_ADMIN_KEY_SEED to the same seed used at publish time.');
@@ -3233,7 +3251,10 @@ const app = createVerticalBridge({
       // Verify wallet-signed Foxxi session-token Bearers against the published directory
       // (round-47: the gate previously accepted ANY Bearer as DEFAULT_TENANT). Directory
       // users get a deterministic wallet so a token minted for a known user_id verifies.
-      sessionUsers: () => directoryUsersCache,
+      // Append the bridge's own conformance self-test identity (secret-seeded, so only the
+      // in-process runner can mint it) so /compliance/xapi/run authenticates on a clean-slate
+      // deployment whose live directory doesn't carry the persona.
+      sessionUsers: () => [...directoryUsersCache, conformanceSelfIdentity],
       // Verify OAuth client-credentials Bearers by real ES256 signature against the LTI key.
       oauthPublicKey: oauthPublicKeyFrom(process.env.FOXXI_LTI_PRIVATE_KEY_PEM),
       // Per-user self-sovereign forwarding: a statement forwards to the
@@ -5598,9 +5619,12 @@ app.get('/compliance/xapi/run', async (_req, res) => {
   try {
     const ranAt = new Date().toISOString();
     const baseUrl = process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${process.env.PORT ?? 6080}`;
-    const webId = process.env.FOXXI_TEST_WEBID ?? 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me';
-    const userId = process.env.FOXXI_TEST_USERID ?? 'u-joshua';
-    const token = await mintSessionToken({ webId, userId, ttlMs: 10 * 60 * 1000 });
+    const webId = CONFORMANCE_WEBID;
+    const userId = CONFORMANCE_USERID;
+    // Mint under the same secret seed the LRS gate trusts for this self-test identity
+    // (round-47), so the runner's own writes/reads authenticate while external callers
+    // — who don't know the seed — cannot forge this identity.
+    const token = await mintSessionToken({ webId, userId, seed: CONFORMANCE_SEED, ttlMs: 10 * 60 * 1000 });
     res.json({ ok: true, report: await runXapiConformance({ baseUrl, token, webId, userId, ranAt }) });
   } catch (e) { sendServerError(res, e, 'route-handler'); }
 });
