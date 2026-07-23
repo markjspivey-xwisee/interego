@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { sign as cryptoSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
-import { mintSessionToken, verifySessionToken, buildAddressMap, attachDeterministicAddresses } from '../src/auth.js';
+import { mintSessionToken, verifySessionToken, buildAddressMap, attachDeterministicAddresses, deriveUserWallet } from '../src/auth.js';
 import { verifyOauthBearer, oauthPublicKeyFrom } from '../src/xapi-oauth.js';
 import { sendServerError } from '../src/http-errors.js';
 
@@ -35,6 +35,28 @@ describe('round-47 F1 — LRS Bearer requires a verified identity', () => {
     const verified = verifySessionToken(token, addressMap);
     expect(verified.ok).toBe(true);
     if (verified.ok) expect(verified.callerDid).toBe('https://id.acme-training.example/jliu/profile#me');
+  });
+
+  it('the secret-seeded conformance self-identity verifies for the runner but not for a public-seed forger', async () => {
+    // How the bridge wires its own /compliance/xapi/run self-test (round-47 hotfix): a
+    // per-deployment SECRET seed. The gate's identity entry carries the secret-seeded wallet;
+    // attachDeterministicAddresses preserves a pre-set wallet_address (only fills missing).
+    const SECRET = 'deployment-secret-seed-abc123';
+    const selfIdentity = {
+      user_id: 'u-joshua',
+      web_id: 'https://acme-id.interego.xwisee.com/users/jliu/profile/card#me',
+      wallet_address: deriveUserWallet('u-joshua', SECRET).address,
+    };
+    const addressMap = buildAddressMap(attachDeterministicAddresses([selfIdentity]));
+
+    // The runner mints under the SAME secret seed → verifies.
+    const good = await mintSessionToken({ userId: 'u-joshua', webId: selfIdentity.web_id, seed: SECRET });
+    expect(verifySessionToken(good, addressMap).ok).toBe(true);
+
+    // An external forger who only knows the PUBLIC default seed (and the persona's ids)
+    // cannot produce a token for this identity — the recovered address won't match.
+    const forged = await mintSessionToken({ userId: 'u-joshua', webId: selfIdentity.web_id });
+    expect(verifySessionToken(forged, addressMap).ok).toBe(false);
   });
 
   it('a junk / non-directory bearer does NOT verify (the hole is closed)', async () => {
