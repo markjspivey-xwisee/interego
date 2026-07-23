@@ -4432,6 +4432,19 @@ app.post('/agent/verify-extension', async (req, res) => {
     //    first, then lens + durable hand-authored RDF (legacy fallback).
     const subjectPodUrl = resolveSubjectPodUrl(subjectDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
+    // PII gate (round-49) — mirror the /agent/review-record + foxxi.assemble_learner_record
+    // twin: a HUMAN learner's graded score + xAPI evidence is private, so a signed caller may
+    // verify a human subject's record ONLY when it is their OWN. Fail-closed: default 'human'
+    // (private); 'agent' (public capability record) only when the caller explicitly says so AND
+    // the subject is a wallet DID. Without this the delegated path (any signed wallet, no
+    // directory membership) disclosed any subject's score + xAPI evidence to any caller.
+    const isSelf = subjectDid === auth.callerDid;
+    const subjectKind: 'human' | 'agent' =
+      ((p.actor_kind as string) === 'agent' && /^did:(ethr|web|key|pkh):/.test(subjectDid)) ? 'agent' : 'human';
+    if (subjectKind === 'human' && !isSelf) {
+      res.status(403).json({ error: 'forbidden — a human learner record is private; you may only verify your own (set subject_did to your own DID). Agent capability records are public.' });
+      return;
+    }
     await ensureResident(subjectPodUrl, subjectDid, subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
@@ -6485,6 +6498,20 @@ app.post('/agent/publish-memory', async (req, res) => {
     const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '');
     const slug = (title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)) || 'memory';
     const memoryIri = `${base}/memory/${slug}`;
+    // First-writer-wins lock (round-49) — memoryIri is derived from the caller-supplied title
+    // slug and composed into the ONE shared public commons. Without an owner check, a second
+    // wallet publishing a colliding slug would inject dct:creator / rdfs:comment / skos:note
+    // triples under a victim's memory URL (cross-agent attribution poisoning). Mirror the
+    // courseAuthors first-writer lock: the first author claims the slug; a different author is
+    // refused. Hydrate first so a cold replica sees the durable owner before deciding.
+    await hydratePublicMemories();
+    const existingMemory = latticeArtifacts(MEMORY_LATTICE_LABEL, 'foxxi:Memory')
+      .find(a => (a.content as MemoryContent | null)?.memoryIri === memoryIri);
+    const existingMemoryAuthor = existingMemory ? (existingMemory.content as MemoryContent).author : undefined;
+    if (existingMemoryAuthor && existingMemoryAuthor !== auth.callerDid) {
+      res.status(409).json({ error: `memory slug '${slug}' is already authored by another agent — first-author-locked; choose a different title` });
+      return;
+    }
     const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', RDFS = 'http://www.w3.org/2000/01/rdf-schema#',
       DCT = 'http://purl.org/dc/terms/', SKOS = 'http://www.w3.org/2004/02/skos/core#';
     // Compose at triple granularity (like the ontologies), so the memory has real,
@@ -6902,9 +6929,9 @@ app.post('/agent/mesh-event', (req, res) => {
     if (!ev) { res.json({ ok: true, projected: false, reason: 'descriptor lacks a projectable envelope' }); return; }
     landMeshEvent(ev);
     res.json({ ok: true, projected: true, mode: ev.mode, agent: ev.agent, statementId: ev.statement.id, tenant: lensTenantFor(ev.agent) });
-  } catch {
-    // Never leak the internal error message (it can carry stack/path detail) from this endpoint.
-    res.status(500).json({ ok: false, error: 'mesh-event projection failed' });
+  } catch (err) {
+    // Generic body (never leak stack/path detail) AND log server-side for operators (round-49).
+    sendServerError(res, err, 'mesh-event-projection');
   }
 });
 

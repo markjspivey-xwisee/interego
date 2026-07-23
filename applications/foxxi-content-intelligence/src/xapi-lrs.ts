@@ -65,7 +65,7 @@ import {
 import type {
   IRI,
 } from '@interego/core';
-import { verifySessionToken, buildAddressMap, attachDeterministicAddresses } from './auth.js';
+import { verifySessionToken, buildAddressMap } from './auth.js';
 import { verifyOauthBearer } from './xapi-oauth.js';
 import type { KeyObject } from 'node:crypto';
 
@@ -355,9 +355,16 @@ function makeAuthGate(config: XapiLrsConfig) {
       // 2. Wallet-signed Foxxi session token → verify signature + directory binding.
       const users = config.sessionUsers?.();
       if (users && users.length) {
-        const addressMap = buildAddressMap(attachDeterministicAddresses(
-          users as ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }> as Array<{ user_id: string; web_id: string; wallet_address?: string }>,
-        ));
+        // Build the address map from EXPLICIT wallet_address only (round-49). Deriving a
+        // deterministic wallet for directory users who lack one uses the PUBLIC demo seed, so
+        // anyone could forge those users' session tokens and reach DEFAULT_TENANT — the very
+        // forgery this gate exists to stop. A caller must present a token whose signer is a
+        // directory user's REAL published wallet (or the secret-seeded conformance self-test
+        // identity, which carries an explicit wallet_address). buildAddressMap already skips
+        // entries without wallet_address, so no public-seed identity enters the trusted set.
+        const addressMap = buildAddressMap(
+          users as ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>,
+        );
         const verified = verifySessionToken(bearer, addressMap);
         if (verified.ok) {
           r.xapiAuth = { kind: 'bearer', principal: verified.callerDid, token: bearer };
