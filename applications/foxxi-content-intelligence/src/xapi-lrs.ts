@@ -173,6 +173,22 @@ const agentProfileStores = new TenantPartition<Map<string, StoredDoc>>(() => new
 // multipart/mixed Statement requests — tenant-partitioned.
 const attachmentStores = new TenantPartition<Map<string, { data: Buffer; contentType: string }>>(() => new Map());
 
+// Per-tenant document/attachment stores are keyed by *caller-supplied* ids
+// (State stateId, Activity/Agent Profile profileId, attachment SHA-2). The auth
+// gate accepts any non-empty Bearer, so a junk bearer can PUT unlimited distinct
+// keys into a single tenant Map and exhaust memory (round-45: the doc/attachment
+// siblings the round-43 statement-store cap missed). Bound every such Map with an
+// evict-oldest set. Insertion order in a JS Map is stable, so keys().next() is the
+// oldest live entry — the same discipline the statement store and cmi5 registry use.
+const XAPI_DOC_STORE_MAX = 50_000;
+function cappedMapSet<V>(m: Map<string, V>, key: string, value: V, max = XAPI_DOC_STORE_MAX): void {
+  if (m.size >= max && !m.has(key)) {
+    const oldest = m.keys().next().value;
+    if (oldest !== undefined) m.delete(oldest);
+  }
+  m.set(key, value);
+}
+
 // ── Pod projection (foxxi:XapiTenantSnapshot) ────────────────────────
 // xAPI Activity State, Activity Profile, and Agent Profile documents
 // are snapshotted as one composite descriptor per tenant. Statements
@@ -672,7 +688,7 @@ function persistAttachmentData(
     const sha2 = typeof a.sha2 === 'string' ? a.sha2 : '';
     const part = parts.get(sha2);
     if (part) {
-      attachStore.set(sha2, {
+      cappedMapSet(attachStore, sha2, {
         data: part.body,
         contentType: typeof a.contentType === 'string' ? a.contentType : 'application/octet-stream',
       });
@@ -1258,7 +1274,7 @@ function handleDocResource(
     // change iff the content changes (correct concurrency semantics).
     const etagBody = typeof stored === 'string' ? stored : JSON.stringify(stored);
     const etag = `"${createHash('sha1').update(etagBody).digest('hex')}"`;
-    resourceStore.set(key, { content: stored, etag, updated: nowIso(), contentType: storedCt });
+    cappedMapSet(resourceStore, key, { content: stored, etag, updated: nowIso(), contentType: storedCt });
     xapiDocsPodDirty();
     res.setHeader('ETag', etag);
     res.status(204).end();

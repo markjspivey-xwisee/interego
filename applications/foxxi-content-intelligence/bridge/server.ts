@@ -469,6 +469,19 @@ function checkAgenticRateLimit(clientIp: string): { ok: true; remaining: number 
   return { ok: true, remaining: RL_AGENTIC_MAX - entry.count };
 }
 
+// Uniform 500 responder (round-45). Echoing `(err as Error).message` to the client
+// leaks internal detail — CSS host names, pod URLs, file paths, upstream error text —
+// to unauthenticated and any-signed-wallet callers. Log the real error server-side for
+// operators; return a generic, non-disclosing body to the caller. Every route 500 goes
+// through here so no single sink re-introduces the leak (the sibling-hiding pattern).
+function sendServerError(res: { status: (code: number) => { json: (b: unknown) => void } }, err: unknown, context: string): void {
+  try {
+    // eslint-disable-next-line no-console
+    console.error(`[foxxi:500] ${context}:`, err instanceof Error ? (err.stack ?? err.message) : err);
+  } catch { /* logging must never throw into the error path */ }
+  res.status(500).json({ ok: false, error: 'internal error' });
+}
+
 function fetcherConfig() {
   return {
     podUrl: tenantPodUrl,
@@ -2026,6 +2039,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   },
 
   'foxxi.open_agent_evaluation': async (args) => {
+    // Per-IP bound (round-45): opening a cohort grows the per-tenant EvaluationRegistry,
+    // reachable by any signed wallet. Cap the open rate per IP so a flood cannot churn the
+    // registry (the registry itself is also size-capped as defence-in-depth).
+    const evalIp = (args.__client_ip as string | undefined) ?? 'unknown';
+    const evalRl = checkAgenticRateLimit(evalIp);
+    if (!evalRl.ok) {
+      return {
+        error: `rate limit exceeded — too many open_agent_evaluation calls per IP. Retry in ${evalRl.retryAfterSeconds}s.`,
+        retryAfterSeconds: evalRl.retryAfterSeconds,
+      };
+    }
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
@@ -4016,7 +4040,7 @@ app.get('/agent/:did/affordances', async (req, res) => {
       note: 'Emergent affordances are gated server-side on the published tla:PerformanceProficiencyRollupRule over this agent\'s real record — not decided by any client.',
     });
   } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message });
+    sendServerError(res, err, 'route-handler');
   }
 });
 
@@ -4138,7 +4162,7 @@ app.post('/agent/review-record', async (req, res) => {
       ...(clr !== undefined ? { clr } : {}),
     });
   } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message });
+    sendServerError(res, err, 'route-handler');
   }
 });
 
@@ -4328,7 +4352,7 @@ app.post('/agent/issue-credential', async (req, res) => {
       vc: result.vc,
     });
   } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message });
+    sendServerError(res, err, 'route-handler');
   }
 });
 
@@ -4448,7 +4472,7 @@ app.post('/agent/verify-extension', async (req, res) => {
         ? `Independently verified from ${subjectDid}'s own pod: engine-graded course completion${gradedScore != null ? ` (score ${gradedScore})` : ''}${performanceRecorded ? ' + a domain-typed StandardsExtension performance' : ''}${name ? ` + the '${name}' extension conforms to the agp:StandardsExtension shape` : ''}.${selfAttestedPerformance ? ' NOTE: the performance OUTCOME is self-attested by the subject; the credentialing decision rests on the tamper-evident engine grading + shape conformance.' : ''}`
         : `Could NOT independently confirm an engine-graded completion for ${subjectDid} — do not credential on self-report alone.`,
     });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 // ── BBS+ selective disclosure (privacy-preserving credential presentation) ────
@@ -4500,7 +4524,7 @@ app.post('/agent/prove-competency', async (req, res) => {
       },
       note: 'BBS+ selective disclosure (W3C bbs-2023): the holder proves ONLY the revealed claims; the hidden fields (score, dates, name, id) are cryptographically withheld. A verifier confirms the issuer signed exactly the disclosed claims without learning the rest.',
     });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 app.post('/agent/verify-presentation', async (req, res) => {
@@ -4524,7 +4548,7 @@ app.post('/agent/verify-presentation', async (req, res) => {
         ? 'Verified: the BBS+ proof confirms the issuer signed a credential containing exactly these disclosed claims — the verifier learned nothing else.'
         : 'BBS+ proof did NOT verify.',
     });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 // Shared delegated-signature auth for agent-facing /agent/ endpoints — the answer
@@ -4735,7 +4759,7 @@ app.post('/agent/void-credential', async (req, res) => {
     try { const m = await rebuildManifestFromPod(pod, { fetch: guardedFetchFn(globalThis.fetch) as never }); manifest = { written: m.written, scanned: m.scanned }; }
     catch (e) { console.warn('[void-credential] manifest rebuild failed:', (e as Error).message); }
     res.json({ ok: true, voidedBy: callerDid, descriptor: descriptorUrl, deletions, manifest: manifest ?? 'rebuild-failed' });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 const RECORD_PERFORMANCE_AFFORDANCE: Affordance = {
@@ -4817,7 +4841,7 @@ app.post('/agent/publish-encryption-key', async (req, res) => {
     });
     res.json({ ok: true, published: url, owner: callerDid, algorithm: 'X25519-XSalsa20-Poly1305' });
   } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message });
+    sendServerError(res, err, 'route-handler');
   }
 });
 
@@ -5115,7 +5139,7 @@ app.post('/agent/course/analyze', async (req, res) => {
     }
     res.json({ ok: true, fingerprint, structure: built0.structure, course, courseKg });
   } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message });
+    sendServerError(res, err, 'route-handler');
   }
 });
 
@@ -5178,7 +5202,7 @@ app.post('/agent/course/analyze-authored', async (req, res) => {
       if (sl) courseKg = { label: realLabel, holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl, agentDid: tenantProfileDid, reusedNodes: sl.reusedNodes, newNodes: sl.newNodes, stats: sl.stats };
     }
     res.json({ ok: true, fingerprint, structure: built.structure, course: built.course, courseKg, authored: true });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 app.post('/agent/course/ask', async (req, res) => {
@@ -5238,7 +5262,7 @@ app.post('/agent/course/ask', async (req, res) => {
     const result = await askAgenticRag({ question: framedQuestion, learnerDid, primary: course, llmApiKey: byok, llmKeySource: 'per-request-byok', ...(history ? { history } : {}) });
     res.json({ ok: true, role, grounded: groundedOf(result.retrieval), retrievalKind: result.retrieval.retrievalKind, ...result });
   } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message });
+    sendServerError(res, err, 'route-handler');
   }
 });
 
@@ -5258,7 +5282,7 @@ app.post('/agent/course/skill', (req, res) => {
     };
     const { skillMd, name } = courseToSkillMd(course, prov);
     res.json({ ok: true, skillMd, name });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 app.post('/agent/course/analyze-skill', async (req, res) => {
@@ -5299,7 +5323,7 @@ app.post('/agent/course/analyze-skill', async (req, res) => {
       if (sl) courseKg = { label: realLabel, holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl, agentDid: tenantProfileDid, reusedNodes: sl.reusedNodes, newNodes: sl.newNodes, stats: sl.stats };
     }
     res.json({ ok: true, fingerprint, structure: built.structure, course: built.course, courseKg, fromSkill: true });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 // ── The STRICT SKILL.md ⇄ iep:Affordance translator ───────────────────────────
@@ -5330,7 +5354,7 @@ app.post('/agent/skill/affordance', (req, res) => {
       atomIris: Object.fromEntries(bundle.atomIris),
       validation: bundle.skillValidation,
     });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 // ── The Living Curriculum: a course proposes its own successor ─────────────────
@@ -5427,7 +5451,7 @@ app.post('/agent/course/propose-successor', async (req, res) => {
 
     res.json({ ok: true, courseId: course.courseId, supersedes: supersedesUri ?? null, summary, concepts: perConcept, successor,
       note: 'Each concept was routed through the work-regime engine, which refuses the universal content-gap frame: only the Knowable regime runs a gap analysis, and even then a performer who could perform under ideal conditions yields an environment/incentive cause, not a content gap. The successor is a real iep:supersedes holon composed into the PGSL lattice — dereference it alongside the original.' });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 // ── Federated calibration: a shared memory two rivals both trust ──────────────
@@ -5545,7 +5569,7 @@ app.post('/agent/calibration/merge', async (req, res) => {
       note: multiParty
         ? 'Each contribution is signed by a DISTINCT key (recovered, not asserted; same-key resubmissions collapse to one source). No raw record crossed a boundary — only aggregate cells above the minimum-aggregate (k-sample) suppression floor. A cell Hypothetical for each contributor alone is Asserted once pooled across distinct keys. The merged memory is a dereferenceable, interrogable PGSL holon no single key could assert alone. Note: signatures prove the contributing KEY, not that two keys are independent rival organizations.'
         : 'Single-contributor merge (one distinct signing key) — this is a self-only profile, NOT cross-source consensus. Pooled promotion across sources requires >= 2 distinct keys.' });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 // ── Public compliance runners — the engine behind the compliance microsite ────
@@ -5672,7 +5696,7 @@ app.post('/agent/record-performance', async (req, res) => {
     });
     res.json({ ok: true, recorded: true, statementId, performer: callerDid, taskId, taskName, activityType, success: p.success, durable: subjectPod, lensTenant: lensTenantFor(label), ...(sharedLattice ? { sharedLattice } : {}) });
   } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message });
+    sendServerError(res, err, 'route-handler');
   }
 });
 
@@ -5739,7 +5763,7 @@ app.post('/agent/ingest-course', async (req, res) => {
       conceptCount: result.agenticPayload.concepts.length, slideCount: result.agenticPayload.slides.length,
     });
   } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message });
+    sendServerError(res, err, 'route-handler');
   }
 });
 
@@ -5805,7 +5829,7 @@ app.post('/agent/record-course-completion', async (req, res) => {
     }
     res.json({ ok: true, completedBy: callerDid, courseId, courseActivityId, scoreScaled, masteryScore, passed: true, statementCount: statementIds.length, durable: subjectPod, lensTenant: lensTenantFor(label) });
   } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message });
+    sendServerError(res, err, 'route-handler');
   }
 });
 
@@ -5910,7 +5934,7 @@ app.post('/agent/forwarding/targets', async (req, res) => {
     }
     if (mutated) await persistOwnerForwarding(ownerTenant, ownerPod);
     res.json({ ok: true, owner: callerDid, ownerTenant, targets: listForwardingTargets(ownerTenant) });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 const INBOUND_CREDENTIALS_AFFORDANCE: Affordance = {
@@ -5969,7 +5993,7 @@ app.post('/agent/credentials', async (req, res) => {
     if (mutated) await persistOwnerForwarding(ownerTenant, ownerPod);
     const mine = inboundCredentials.list().filter(c => c.tenant === String(ownerTenant));
     res.json({ ok: true, owner: callerDid, ownerTenant, credentials: mine });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 // ── Agentic SCORM RTE (delegated auth) ─────────────────────────────────────
@@ -6281,6 +6305,10 @@ async function resolveCourseForRead(courseId: string, authorDid?: string): Promi
   // first author's pod. A caller-supplied author_did naming a DIFFERENT pod must NOT seat spoofed
   // content under it (cache-poisoning + attribution takeover). Resolve the owner FIRST; only an
   // UNOWNED courseId falls back to the caller's author_did (which then becomes first-writer).
+  // Restore the durable owner on a cache miss BEFORE deciding owner-first vs caller-fallback
+  // (round-45 parity with /author + /launch) — otherwise a fresh process with an un-hydrated
+  // courseAuthors map treats an owned course as unowned and first-writes the caller as author.
+  if (!courseAuthors.has(courseId)) await loadCourseAuthors();
   const known = courseAuthors.get(courseId);
   if (known) { const c = await tryPod(known); if (c) return c; }
   else if (authorDid) { const c = await tryPod(authorDid); if (c) return c; }
@@ -6462,7 +6490,7 @@ app.post('/agent/publish-memory', async (req, res) => {
       commons: `${base}/agent/memories`,     // discover every shared memory (HATEOAS)
       inbox: `${base}/agent/memories?format=ldn`,  // the LDN pull-inbox other agents poll
     });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 interface MemoryContent { kind?: string; title?: string; body?: string; author?: string; memoryIri?: string }
@@ -6655,7 +6683,7 @@ app.post('/agent/scorm/author', async (req, res) => {
       contentType: 'foxxi:Course', projections: ['rdf', 'vc', 'activity'],
     });
     res.json({ ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, courseIri, ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 app.post('/agent/scorm/launch', async (req, res) => {
@@ -6707,7 +6735,7 @@ app.post('/agent/scorm/launch', async (req, res) => {
     if (agentScormPlays.size >= SCORM_PLAYS_MAX) { const oldest = agentScormPlays.keys().next().value; if (oldest !== undefined) agentScormPlays.delete(oldest); }
     agentScormPlays.set(seq.id, { seq, courseId, learnerDid: callerDid, lens, masteryScore: course.masteryScore, course });
     res.json({ ok: true, sessionId: seq.id, launchedBy: callerDid, course: { id: courseId, title: course.title }, sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)), sequencingEnded: !!nav.sequencingEnded, instruction: 'Read the SCO; for an assessment SCO answer the questions; then POST /agent/scorm/submit { session_id, answers? }. Repeat until done:true.' });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 app.post('/agent/scorm/submit', async (req, res) => {
@@ -6769,7 +6797,7 @@ app.post('/agent/scorm/submit', async (req, res) => {
     const statementIds = emitScormCompletion(play, course, passed, score);
     agentScormPlays.delete(sessionId);
     res.json({ ok: true, done: true, ...(graded ? { graded } : {}), course: { id: play.courseId, title: course.title }, completed, passed, score: Number(score.toFixed(3)), recordedStatements: statementIds.length, lens: play.lens, note: 'The SCORM 2004 SN runtime rolled up this outcome from your committed SCO tracking — recorded to your ELR.' });
-  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+  } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 // PUSH path: a relay (or any observer) POSTs a single context-descriptor for
