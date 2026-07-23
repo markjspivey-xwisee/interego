@@ -21,7 +21,7 @@ import {
   discover,
   fetchGraphContent,
 } from '@interego/solid';
-import { assertSafeFetchTarget } from './ssrf-guard.js';
+import { assertSafeFetchTarget, safeFetch } from './ssrf-guard.js';
 
 export interface CohortQAEntry {
   learnerDid: string;
@@ -117,8 +117,7 @@ export async function gatherCohortQA(args: {
       for (const entry of inWindow) {
         try {
           // Fetch the graph + extract concept IDs from a bundleJson literal.
-          await assertSafeFetchTarget(entry.descriptorUrl); // 2nd-hop SSRF
-          const ttlR = await fetchFn(entry.descriptorUrl, { headers: { Accept: 'text/turtle' } });
+          const ttlR = await safeFetch(entry.descriptorUrl, { headers: { Accept: 'text/turtle' } }, fetchFn as never); // 2nd-hop SSRF + redirect-safe
           if (!ttlR.ok) continue;
           const ttl = await ttlR.text();
           const tm = ttl.match(/hydra:target\s+<([^>]+)>/);

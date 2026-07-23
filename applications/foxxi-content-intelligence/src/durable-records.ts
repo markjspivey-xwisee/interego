@@ -19,7 +19,7 @@
  * double-count, no bogus competency keyed off the envelope type).
  */
 import { publish, discover, fetchGraphContent, resolveStorageForShape } from '@interego/solid';
-import { assertSafeFetchTarget } from "./ssrf-guard.js";
+import { assertSafeFetchTarget, safeFetch } from "./ssrf-guard.js";
 import type { ContextDescriptorData, IRI, ManifestEntry, FetchFn } from '@interego/core';
 // Foundation-first (additive): also persist an encrypted canonical PGSL holon +
 // a projected descriptor alongside the authoritative RDF record, so agents get
@@ -211,8 +211,7 @@ export async function readDurableRecordedStatements(args: ReadRecordsArgs): Prom
   for (const e of recs) {
     try {
       if (!e.descriptorUrl) continue;
-      await assertSafeFetchTarget(e.descriptorUrl); // 2nd-hop SSRF
-      const descRes = await fetchFn(e.descriptorUrl, { headers: { Accept: 'text/turtle' } });
+      const descRes = await safeFetch(e.descriptorUrl, { headers: { Accept: 'text/turtle' } }, fetchFn as never); // 2nd-hop SSRF + redirect-safe (re-guards every hop)
       if (!descRes.ok) continue;
       const descTurtle = await descRes.text();
       const gm = descTurtle.match(/hydra:target\s+<([^>]+)>/) ?? descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
@@ -405,8 +404,9 @@ async function decodeCourseEntry(
 ): Promise<Record<string, unknown> | null> {
   const doFetch = (fetchFn ?? globalThis.fetch) as typeof globalThis.fetch;
   try {
-    await assertSafeFetchTarget(e.descriptorUrl); // 2nd-hop SSRF: descriptorUrl comes from the (attacker-controllable) pod manifest
-    const descRes = await doFetch(e.descriptorUrl, { headers: { Accept: 'text/turtle' } });
+    // 2nd-hop SSRF + redirect-safe: descriptorUrl comes from the (attacker-controllable)
+    // pod manifest; safeFetch re-guards the target AND every redirect hop.
+    const descRes = await safeFetch(e.descriptorUrl, { headers: { Accept: 'text/turtle' } }, doFetch as never);
     if (!descRes.ok) return null;
     const descTurtle = await descRes.text();
     const gm = descTurtle.match(/hydra:target\s+<([^>]+)>/) ?? descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);

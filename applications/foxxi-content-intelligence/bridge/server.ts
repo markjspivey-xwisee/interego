@@ -40,7 +40,12 @@ import { randomUUID, createHash } from 'node:crypto';
       const method = (init?.method ?? 'GET').toUpperCase();
       if (writeMethods.has(method) && tenantOrigin) {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
-        if (url && url.startsWith(tenantOrigin)) {
+        // EXACT origin match — NOT a string prefix. `url.startsWith(tenantOrigin)`
+        // matched `https://gate.interego.xwisee.com.<attacker-tld>/…` (the tenant
+        // origin is a prefix of it), leaking FOXXI_POD_WRITE_SECRET to an
+        // attacker-controlled host (round-26 blocker). Parse the origin and compare.
+        const sameOrigin = (() => { try { return new URL(url).origin === tenantOrigin; } catch { return false; } })();
+        if (url && sameOrigin) {
           const headers = new Headers(init?.headers ?? {});
           if (!headers.has('Authorization')) {
             headers.set('Authorization', `Bearer ${writeSecret}`);
@@ -936,7 +941,17 @@ function selfBoundPod(callerDid: string, explicit?: string): string {
   const derived = resolveSubjectPodUrl(callerDid);
   if (!explicit) return derived;
   const override = resolveSubjectPodUrl(callerDid, explicit);
-  return actorForPod(override, MESH_ACTOR_LABELS) === actorForPod(derived, MESH_ACTOR_LABELS) ? override : derived;
+  // The override is honored ONLY if it resolves to the SAME actor AND the SAME
+  // ORIGIN as the caller's derived pod. actorForPod compares only the last path
+  // segment, so without the origin check a cross-origin override
+  // (https://gate.interego.xwisee.com.<attacker>/eth-<caller12>/) shared the
+  // caller's own segment → honored → the server-side write went to the attacker
+  // host (SSRF) AND, combined with the prefix-matching write-bearer, leaked
+  // FOXXI_POD_WRITE_SECRET (round-26 blocker). Binding origin too means the
+  // override can only ever be the caller's own pod.
+  const sameActor = actorForPod(override, MESH_ACTOR_LABELS) === actorForPod(derived, MESH_ACTOR_LABELS);
+  const sameOrigin = (() => { try { return new URL(override).origin === new URL(derived).origin; } catch { return false; } })();
+  return (sameActor && sameOrigin) ? override : derived;
 }
 
 /** Land one projected mesh event into its agent's OWN derived-view tenant
@@ -2115,7 +2130,21 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.resolve_did': async (args) => {
     const did = args.did as string;
-    return resolveDid(did);
+    if (typeof did !== 'string' || !did) return { error: 'did required' };
+    // UNAUTH endpoint: a did:web host is decoded from the caller-supplied DID and
+    // fetched server-side (…/.well-known/did.json). Guard EVERY fetch resolveDid
+    // makes — assertSafeFetchTarget (DNS-resolving, blocks private/link-local) +
+    // redirect:'manual' (a 302 to an internal host is NOT followed) — else an
+    // unauthenticated caller gets an internal-host SSRF + socket-hold DoS oracle
+    // (round-26 blocker). did:key/did:ethr/did:pkh are computed (no fetch).
+    const guardedFetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const u = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      await assertSafeFetchTarget(u);
+      const resp = await (globalThis.fetch as typeof globalThis.fetch)(input, { ...init, redirect: 'manual' });
+      if (resp.status >= 300 && resp.status < 400) throw new Error('did:web resolution refused a redirect (SSRF guard)');
+      return resp;
+    }) as typeof globalThis.fetch;
+    return resolveDid(did, { fetch: guardedFetch });
   },
 
   'foxxi.query_experience_index': async (args) => {
@@ -2772,6 +2801,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    // Writes course content into the configured tenant pod — restrict to an
+    // authoring role. Was: any directory MEMBER of any role (e.g. a plain learner)
+    // could write a SCORM package into the acme tenant pod (round-26).
+    if (!isAdminEquivalent(ctx.role)) return { error: `forbidden — uploading a SCORM package to the tenant requires an admin / learning-engineer (caller role: ${ctx.role})` };
     return uploadScormPackage({
       tenantPodUrl: tenantPodUrl,
       zipBase64: args.zip_base64 as string,
@@ -4591,6 +4624,10 @@ app.post('/agent/void-credential', async (req, res) => {
     // ATTACKER-chosen pod — making the "descriptor must be under YOUR pod" check (below) key
     // off that same attacker pod, letting any signed wallet DELETE another agent's credentials.
     const pod = selfBoundPod(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // A DELEGATED caller's agentId (→ the derived pod) can be an internal WebID, so
+    // the server-side GET/DELETE below could hit an internal host. Guard the bound
+    // pod host (DNS-resolving) before any fetch (round-26 write-sink SSRF).
+    try { await assertSafeFetchTarget(pod); } catch { res.status(400).json({ error: 'your pod host is not a valid public target' }); return; }
     const origin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
     const podSeg = (() => { try { return new URL(pod).pathname.split('/').filter(Boolean)[0] ?? ''; } catch { return ''; } })();
     let descPath: string;
@@ -4692,6 +4729,9 @@ app.post('/agent/publish-encryption-key', async (req, res) => {
     // caller subject_pod_url naming a VICTIM's pod, letting any signed wallet OVERWRITE
     // another agent's X25519 key (key substitution → decrypt their future encrypted content).
     const subjectPod = selfBoundPod(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // A DELEGATED caller's agentId (→ derived pod) can be an internal WebID; guard
+    // the bound pod host before the server-side PUT (round-26 write-sink SSRF).
+    try { await assertSafeFetchTarget(subjectPod); } catch { res.status(400).json({ error: 'your pod host is not a valid public target' }); return; }
     // The bridge's globalThis.fetch is patched to carry the pod-write bearer for
     // tenant-origin writes, so this PUT to <pod>/keys/encryption.json is authed.
     const { url } = await publishAgentEncryptionKey(subjectPod, publicKey, {

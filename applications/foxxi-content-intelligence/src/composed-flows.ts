@@ -39,7 +39,7 @@ import {
 import { createHash } from 'node:crypto';
 import { buildPassedSessionTrace, type Cmi5Statement } from './cmi5.js';
 import { courseIri } from './course-identity.js';
-import { assertSafeFetchTarget } from "./ssrf-guard.js";
+import { assertSafeFetchTarget, safeFetch } from "./ssrf-guard.js";
 import { CREDENTIAL_TYPES } from './credentials.js';
 
 // ── Demo #4: competency-gated launch ─────────────────────────
@@ -392,8 +392,7 @@ function summarize(conformsTo: readonly string[]): string {
 async function fetchCredentialJson(descriptorUrl: string, fetchFn: typeof globalThis.fetch): Promise<VerifiableCredentialJson> {
   // Second-hop SSRF: descriptorUrl comes from a discovered (attacker-influenceable) manifest,
   // and the hydra:target from the fetched descriptor — guard both before fetching.
-  await assertSafeFetchTarget(descriptorUrl);
-  const r = await fetchFn(descriptorUrl, { headers: { Accept: 'text/turtle' } });
+  const r = await safeFetch(descriptorUrl, { headers: { Accept: 'text/turtle' } }, fetchFn as never); // 2nd-hop SSRF + redirect-safe
   if (!r.ok) throw new Error(`GET ${descriptorUrl}: ${r.status}`);
   const ttl = await r.text();
   const targetMatch = ttl.match(/hydra:target\s+<([^>]+)>/);

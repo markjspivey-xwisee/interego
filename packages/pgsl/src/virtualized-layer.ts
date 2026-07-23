@@ -77,6 +77,12 @@ function lit(value: string | number, datatype?: string): string {
   return `"${v}"`;
 }
 
+// IRIREF escaper for the subject/predicate/object-IRI positions in the Turtle /
+// SPARQL-CONSTRUCT serializers below — a subject/pod-url/agent-identity with `>`
+// would otherwise close the `<…>` and inject triples (the IRI-position sibling of
+// the lit() literal escaping above).
+const escIri = (s: unknown): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
+
 function xsdLit(value: string | number, type: string): string {
   return lit(value, `${XSD_NS}${type}`);
 }
@@ -382,7 +388,7 @@ export function executeSparqlProtocol(
       const p = binding.get('?p') ?? binding.get('?predicate');
       const o = binding.get('?o') ?? binding.get('?object');
       if (s && p && o) {
-        triples.push(`<${s}> <${p}> ${o.startsWith('"') ? o : `<${o}>`} .`);
+        triples.push(`<${escIri(s)}> <${escIri(p)}> ${o.startsWith('"') ? o : `<${escIri(o)}>`} .`);
       }
     }
 
@@ -673,14 +679,14 @@ export function systemToTurtle(state: SystemState): string {
     if (subjectTriples.length === 1) {
       const t = subjectTriples[0]!;
       const obj = formatTurtleObject(t.object);
-      lines.push(`<${t.subject}> <${t.predicate}> ${obj} .`);
+      lines.push(`<${escIri(t.subject)}> <${escIri(t.predicate)}> ${obj} .`);
     } else {
-      lines.push(`<${subject}>`);
+      lines.push(`<${escIri(subject)}>`);
       for (let i = 0; i < subjectTriples.length; i++) {
         const t = subjectTriples[i]!;
         const obj = formatTurtleObject(t.object);
         const term = i === subjectTriples.length - 1 ? ' .' : ' ;';
-        lines.push(`    <${t.predicate}> ${obj}${term}`);
+        lines.push(`    <${escIri(t.predicate)}> ${obj}${term}`);
       }
     }
     lines.push('');
@@ -695,12 +701,12 @@ function formatTurtleObject(obj: string): string {
     // Fix typed literals: "value"^^datatype → "value"^^<datatype>
     const typedMatch = obj.match(/^(".*?")\^\^(.+)$/);
     if (typedMatch && !typedMatch[2]!.startsWith('<')) {
-      return `${typedMatch[1]}^^<${typedMatch[2]}>`;
+      return `${typedMatch[1]}^^<${escIri(typedMatch[2])}>`;
     }
     return obj;
   }
   if (obj.startsWith('_:')) return obj;
-  return `<${obj}>`;
+  return `<${escIri(obj)}>`;
 }
 
 // ── 6. systemToJsonLd ─────────────────────────────────────────

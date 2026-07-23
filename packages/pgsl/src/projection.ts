@@ -20,10 +20,20 @@
  */
 import { createHash } from 'node:crypto';
 import type { ManifestEntry, HypermediaControl } from '@interego/core';
-import { renderHypermediaMarkdown } from '@interego/core';
+import { renderHypermediaMarkdown, escapeTurtleLiteral } from '@interego/core';
 import type { Node, Fragment, PGSLInstance } from './types.js';
 import { nodeToTurtle, pgslTurtlePrefixes } from './rdf.js';
 import { pgslCanonicalUrl } from './describe.js';
+
+// Turtle escaping for the hand-built descriptor/manifest serializers below. A
+// provenance IRI (node.provenance.wasAttributedTo) is caller-derived — the
+// DELEGATED /agent/publish-memory path returns the signed agent_id verbatim, so
+// a crafted id with `>` broke out of the `<…>` IRIREF and injected forged triples
+// into a descriptor served UNAUTH via the public commons (round-26, the 6th layer
+// of this class). escIri percent-encodes IRIREF-illegal chars; escPn keeps a
+// prefixed-name local to a safe PN_LOCAL subset; literals use escapeTurtleLiteral.
+const escIri = (s: unknown): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
+const escPn = (s: unknown): string => String(s).replace(/[^A-Za-z0-9_.-]/g, '');
 
 export const CG_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#' as const;
 export const DCT_NS = 'http://purl.org/dc/terms/' as const;
@@ -111,8 +121,8 @@ function contentTypeFrame(contentType: string): string {
  */
 function typedFacetLines(node: Node, contentType?: string): string[] {
   const p = node.provenance;
-  const agent = `<${p.wasAttributedTo}>`;
-  const when = `"${p.generatedAtTime}"^^xsd:dateTime`;
+  const agent = `<${escIri(p.wasAttributedTo)}>`;
+  const when = `"${escapeTurtleLiteral(p.generatedAtTime)}"^^xsd:dateTime`;
   const trustLevel = p.signature ? 'iep:CryptographicallyVerified' : 'iep:SelfAsserted';
   const frame = contentTypeFrame(contentType ?? 'unspecified');
   return [
@@ -125,7 +135,7 @@ function typedFacetLines(node: Node, contentType?: string): string[] {
     `        prov:wasAttributedTo ${agent} ;`,
     `        prov:generatedAtTime ${when} ] ;`,
     `    iep:hasFacet [ a iep:TrustFacet ; iep:trustLevel ${trustLevel} ] ;`,
-    `    iep:hasFacet [ a iep:SemioticFacet ; iep:interpretationFrame <${frame}> ] ;`,
+    `    iep:hasFacet [ a iep:SemioticFacet ; iep:interpretationFrame <${escIri(frame)}> ] ;`,
   ];
 }
 
@@ -152,31 +162,31 @@ export function projectHolon(
     `@prefix dct: <${DCT_NS}> .`,
     `@prefix hydra: <http://www.w3.org/ns/hydra/core#> .`,
     ``,
-    `<${descriptorUrl}> a iep:ContextDescriptor ;`,
-    `    iep:describes <${graphUri}> ;`,
+    `<${escIri(descriptorUrl)}> a iep:ContextDescriptor ;`,
+    `    iep:describes <${escIri(graphUri)}> ;`,
     `    iep:hasFacetType iep:Projection ;`,
     // Opt-in: additive typed facets so interrogative_route answers over this
     // descriptor (default OFF keeps manifest-render / persist callers byte-identical).
     ...(opts.typedFacets ? typedFacetLines(node, opts.contentType) : []),
-    `    iep:pgslUri <${pgslUri}> ;`,
+    `    iep:pgslUri <${escIri(pgslUri)}> ;`,
     // The urn above is the content-address / federation-overlap key (unchanged, so a
     // published descriptor still overlaps identically across pods). iep:canonicalId is
     // its location-INDEPENDENT URL form — a dereferenceable id under a stable authority,
     // derived deterministically from the urn (same content -> same canonical everywhere).
     // This is the "every id is a URL" principle honored at the published boundary,
     // WITHOUT re-identifying the node (no fragment-hash cascade, no migration).
-    `    iep:canonicalId <${pgslCanonicalUrl(pgslUri)}> ;`,
+    `    iep:canonicalId <${escIri(pgslCanonicalUrl(pgslUri))}> ;`,
     `    iep:pgslLevel "${pgslLevel}"^^xsd:nonNegativeInteger ;`,
     // Hypermedia link to the encrypted canonical holon resource — a reader
     // follows this rather than recomputing the resource path.
-    ...(encHolon ? [`    iep:encryptedHolon <${encHolon}> ;`] : []),
-    `    prov:wasAttributedTo <${node.provenance.wasAttributedTo}> .`,
+    ...(encHolon ? [`    iep:encryptedHolon <${escIri(encHolon)}> ;`] : []),
+    `    prov:wasAttributedTo <${escIri(node.provenance.wasAttributedTo)}> .`,
     ``,
     // Describe the encrypted resource + how to read it (followable affordance).
     ...(encHolon ? [
-      `<${encHolon}> a iep:EncryptedHolon ;`,
-      `    iep:ofDescriptor <${descriptorUrl}> ;`,
-      `    iep:pgslUri <${pgslUri}> ;`,
+      `<${escIri(encHolon)}> a iep:EncryptedHolon ;`,
+      `    iep:ofDescriptor <${escIri(descriptorUrl)}> ;`,
+      `    iep:pgslUri <${escIri(pgslUri)}> ;`,
       `    iep:encryptionAlgorithm "X25519-XSalsa20-Poly1305" ;`,
       `    iep:affordance [`,
       `        a hydra:Operation ;`,
@@ -236,18 +246,18 @@ export function projectLatticeSlice(
  * manifest, so `parseManifest` (in @interego/solid) reads it back losslessly.
  */
 export function renderManifestEntry(entry: ManifestEntry): string {
-  const lines: string[] = [`<${entry.descriptorUrl}> a iep:ManifestEntry ;`];
-  if (entry.cid) lines.push(`    iep:contentCid "${entry.cid}" ;`);
-  for (const g of entry.describes) lines.push(`    iep:describes <${g}> ;`);
-  for (const ft of [...new Set(entry.facetTypes)]) lines.push(`    iep:hasFacetType iep:${ft} ;`);
-  if (entry.validFrom) lines.push(`    iep:validFrom "${entry.validFrom}"^^xsd:dateTime ;`);
-  if (entry.validUntil) lines.push(`    iep:validUntil "${entry.validUntil}"^^xsd:dateTime ;`);
-  if (entry.conformsTo) for (const c of entry.conformsTo) lines.push(`    dct:conformsTo <${c}> ;`);
-  if (entry.supersedes) for (const s of entry.supersedes) lines.push(`    iep:supersedes <${s}> ;`);
-  if (entry.modalStatus) lines.push(`    iep:modalStatus iep:${entry.modalStatus} ;`);
-  if (entry.trustLevel) lines.push(`    iep:trustLevel iep:${entry.trustLevel} ;`);
-  if (entry.issuer) lines.push(`    iep:issuer <${entry.issuer}> ;`);
-  if (entry.pgslUri) lines.push(`    iep:pgslUri <${entry.pgslUri}> ;`);
+  const lines: string[] = [`<${escIri(entry.descriptorUrl)}> a iep:ManifestEntry ;`];
+  if (entry.cid) lines.push(`    iep:contentCid "${escapeTurtleLiteral(entry.cid)}" ;`);
+  for (const g of entry.describes) lines.push(`    iep:describes <${escIri(g)}> ;`);
+  for (const ft of [...new Set(entry.facetTypes)]) lines.push(`    iep:hasFacetType iep:${escPn(ft)} ;`);
+  if (entry.validFrom) lines.push(`    iep:validFrom "${escapeTurtleLiteral(entry.validFrom)}"^^xsd:dateTime ;`);
+  if (entry.validUntil) lines.push(`    iep:validUntil "${escapeTurtleLiteral(entry.validUntil)}"^^xsd:dateTime ;`);
+  if (entry.conformsTo) for (const c of entry.conformsTo) lines.push(`    dct:conformsTo <${escIri(c)}> ;`);
+  if (entry.supersedes) for (const s of entry.supersedes) lines.push(`    iep:supersedes <${escIri(s)}> ;`);
+  if (entry.modalStatus) lines.push(`    iep:modalStatus iep:${escPn(entry.modalStatus)} ;`);
+  if (entry.trustLevel) lines.push(`    iep:trustLevel iep:${escPn(entry.trustLevel)} ;`);
+  if (entry.issuer) lines.push(`    iep:issuer <${escIri(entry.issuer)}> ;`);
+  if (entry.pgslUri) lines.push(`    iep:pgslUri <${escIri(entry.pgslUri)}> ;`);
   if (entry.pgslLevel !== undefined) lines.push(`    iep:pgslLevel "${entry.pgslLevel}"^^xsd:nonNegativeInteger ;`);
   const last = lines.length - 1;
   lines[last] = lines[last]!.replace(/ ;$/, ' .');
