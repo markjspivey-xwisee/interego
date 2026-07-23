@@ -1294,8 +1294,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     try { signer = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
     const pod = (args.tenant_pod_url as string) || tenantPodUrl;
     if (!pod) return { error: 'tenant_pod_url required (or set FOXXI_TENANT_POD_URL)' };
-    // Only the self-sovereign tenant's OWNER may write to its catalog.
-    const ownerErr = await assertSelfSovereignOwner(pod, signer);
+    // Only the self-sovereign tenant's OWNER (or, for the configured tenant, an
+    // admin) may write to its catalog. assertSelfSovereignOwner short-circuits to
+    // authorized for the configured tenant, so — like bootstrap_tenant — calling
+    // it alone left an UNAUTHENTICATED write into the acme catalog (round-25).
+    const ownerErr = await assertTenantOwnerWrite(args, pod, signer);
     if (ownerErr) return { error: ownerErr };
     if (!args.parsed) {
       return {
@@ -1361,8 +1364,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     try { signer = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
     const pod = (args.tenant_pod_url as string) || tenantPodUrl;
     if (!pod) return { error: 'tenant_pod_url required (or set FOXXI_TENANT_POD_URL)' };
-    // Only the self-sovereign tenant's OWNER may publish assignment policies.
-    const assignOwnerErr = await assertSelfSovereignOwner(pod, signer);
+    // Only the self-sovereign tenant's OWNER (or, for the configured tenant, an
+    // admin) may publish assignment policies. Like ingest_content_package, calling
+    // assertSelfSovereignOwner alone left an UNAUTHENTICATED write into the acme
+    // TenantAssignments (the short-circuit authorizes the configured tenant) (round-25).
+    const assignOwnerErr = await assertTenantOwnerWrite(args, pod, signer);
     if (assignOwnerErr) return { error: assignOwnerErr };
     const courseIri = typeof args.course_iri === 'string' ? args.course_iri.trim() : '';
     const audienceTag = typeof args.audience_tag === 'string' ? args.audience_tag.trim() : '';
