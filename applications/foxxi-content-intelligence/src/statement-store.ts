@@ -149,6 +149,12 @@ function statementBodyEqual(a: Record<string, unknown>, b: Record<string, unknow
 
 export class InMemoryStatementStore implements StatementStore {
   private readonly store = new Map<string, StoredStatement>();
+  /** Bound the ephemeral (single-replica, lost-on-restart) in-memory store so an
+   *  any-signed-wallet writer (e.g. /agent/mesh-event with a fresh id per envelope)
+   *  cannot grow it without limit into an OOM (round-36). Evict oldest (insertion
+   *  order) past the cap — acceptable because this store is already non-durable; the
+   *  durable LRS is Pod/File-backed. */
+  private static readonly MAX = 50_000;
 
   async put(record: StoredStatement): Promise<void> {
     const prior = this.store.get(record.id);
@@ -160,6 +166,10 @@ export class InMemoryStatementStore implements StatementStore {
     // re-POSTs. Caller's idempotent re-POSTs return 200 / 204 without
     // mutating the stored body.
     if (prior) return;
+    if (this.store.size >= InMemoryStatementStore.MAX) {
+      const oldest = this.store.keys().next().value;
+      if (oldest !== undefined) this.store.delete(oldest);
+    }
     this.store.set(record.id, record);
   }
   async get(id: string): Promise<StoredStatement | null> { return this.store.get(id) ?? null; }

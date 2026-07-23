@@ -924,6 +924,14 @@ export function attachPerformanceRoutes(app: Express, config: {
       });
       return;
     }
+    // Replay guard (parity with /performance/outcome, round-36): verifySignature has no
+    // timestamp/nonce, so reject a re-POST of the EXACT signed teaching transfer — else
+    // a replay repeatedly pushLiveOutcome()s into the shared calibration profile (Sybil-
+    // amplification of the 'teaching'-source cell).
+    if (!noteOutcomeSig(teacherSignature)) {
+      res.json({ recorded: false, duplicate: true, note: 'this exact signed teaching transfer was already recorded — replay ignored (idempotent)' });
+      return;
+    }
     const tp = b.teachingPackage as Record<string, unknown> | undefined;
     if (!tp || typeof tp.iri !== 'string' || typeof tp.competency !== 'string') {
       bad(res, 'a "teachingPackage" reference { iri, artifactIri, competency, olkeStage } is required '
