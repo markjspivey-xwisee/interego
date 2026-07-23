@@ -358,6 +358,7 @@ import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
 import { attachOauthTokenRoute } from '../src/xapi-oauth.js';
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
+import { callerIsOperator } from '../src/operator-auth.js';
 import type {
   IRI,
   ContextDescriptorData,
@@ -3185,8 +3186,15 @@ const app = createVerticalBridge({
     a.get('/ns/foxxi/competency/:slug', (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       const slug = String(req.params.slug);
+      // A competency slug is a safe token — reject anything else BEFORE building Turtle/IRIs.
+      // Express URL-decodes the segment, so a raw slug could otherwise carry a quote / newline /
+      // backslash / '>' and INJECT arbitrary triples (or break the <IRI>) in the text/turtle branch.
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(slug)) { res.status(400).json({ error: 'invalid competency slug' }); return; }
       const id = competencyIri(slug);
-      const label = slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      // Defensive Turtle-string escaping on the interpolated label (belt-and-suspenders atop the
+      // charset validation above).
+      const tesc = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+      const label = slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); // plain; JSON.stringify escapes for JSON-LD, tesc() for Turtle
       const lerBase = `${(process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '')}/ns/ieee-ler#`;
       if ((req.headers.accept ?? '').includes('text/turtle')) {
         res.type('text/turtle').send(
@@ -3195,9 +3203,9 @@ const app = createVerticalBridge({
 @prefix dct:  <http://purl.org/dc/terms/> .
 @prefix ler:  <${lerBase}> .
 <${id}> a skos:Concept, ler:CompetencyDefinition ;
-    skos:prefLabel "${label}" ;
-    rdfs:label "${label}" ;
-    dct:identifier "${slug}" ;
+    skos:prefLabel "${tesc(label)}" ;
+    rdfs:label "${tesc(label)}" ;
+    dct:identifier "${tesc(slug)}" ;
     rdfs:comment "A competency the Foxxi vertical credentials and aligns performance to; verifiable credentials align to this IRI via alignedSkills.targetCode." .`);
       } else {
         res.type('application/ld+json').send(JSON.stringify({
@@ -3532,6 +3540,8 @@ const app = createVerticalBridge({
     attachHypermediaRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       affordances: activeAffordances,
+      // Gate the employee-directory + audit surfaces on operator auth (same check OneRoster uses).
+      isOperator: (req) => callerIsOperator(req, operatorAuth),
       // The player moved to Railway; the old Azure host is paused, so the
       // previous default handed every catalog course a launch link that 404s.
       scormPlayerBaseUrl: process.env.FOXXI_SCORM_PLAYER_BASE
@@ -3662,7 +3672,15 @@ app.get('/agent/:did/affordances', async (req, res) => {
   try {
     const subjectDid = decodeURIComponent(String(req.params.did || ''));
     if (!/^did:/.test(subjectDid)) { res.status(400).json({ ok: false, error: 'path param :did must be a did:' }); return; }
-    const subjectPodUrl = resolveSubjectPodUrl(subjectDid, typeof req.query.subject_pod_url === 'string' ? req.query.subject_pod_url : undefined);
+    // SSRF guard: this endpoint is UNAUTHENTICATED and does a server-side fetch of the resolved
+    // pod. Do NOT honor a caller-supplied ?subject_pod_url (it was returned verbatim → blind SSRF
+    // to 127.0.0.1 / 169.254.169.254 / internal hosts + a slow-fetch DoS). Derive the pod from
+    // the DID only, and assert it resolves to THIS tenant's own CSS origin — the only place a
+    // real agent pod lives — before fetching.
+    const subjectPodUrl = resolveSubjectPodUrl(subjectDid);
+    const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
+    const podOrigin = (() => { try { return new URL(subjectPodUrl).origin; } catch { return ''; } })();
+    if (!tenantOrigin || podOrigin !== tenantOrigin) { res.status(400).json({ ok: false, error: 'subject pod for this DID does not resolve to a known pod' }); return; }
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
     await ensureResident(subjectPodUrl, subjectDid, subjectLabel);
     const statements = mergeStatementsById(
@@ -6298,6 +6316,15 @@ app.post('/agent/mesh-event', (req, res) => {
     };
     if (!entry.descriptorUrl || !originPod) {
       res.status(400).json({ ok: false, error: 'descriptorUrl + originPod required' });
+      return;
+    }
+    // AUTHORIZATION (not just authentication): the projected statement is ATTRIBUTED to the agent
+    // of originPod (actorForPod), so the SIGNER must be that same agent — otherwise any wallet
+    // could sign an envelope with originPod set to a VICTIM's pod and land a fabricated outcome
+    // into the victim's calibration-feeding lens. Bind the attributed agent to the recovered signer.
+    const signerPod = resolveSubjectPodUrl(`did:ethr:${signer}`);
+    if (actorForPod(originPod, MESH_ACTOR_LABELS) !== actorForPod(signerPod, MESH_ACTOR_LABELS)) {
+      res.status(403).json({ ok: false, error: 'signer is not the agent of originPod — a mesh event may only be pushed for your own pod' });
       return;
     }
     const ev = projectMeshEntry(entry, originPod, MESH_ACTOR_LABELS);

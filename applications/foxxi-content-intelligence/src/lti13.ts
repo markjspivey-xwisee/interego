@@ -710,7 +710,10 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   // line-item container, and `platformLineItemsUrl` in a create body
   // mirrors the new line item onto the platform with a Tool-signed JWT.
   app.get('/lti/ags/lineitems', (req, res) => { void (async () => {
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    // AGS line-item CRUD: resolve the tenant via trustedTenantOf (NOT the raw caller-supplied
+    // ?tenant_pod_url) — an unauthenticated caller is pinned to the default tenant and can never
+    // read/write ANOTHER tenant's line items (matching the NRPS producer's auth pinning).
+    const tenant = trustedTenantOf(req, config);
     const platformUrl = req.query.platformLineItemsUrl as string | undefined;
     if (platformUrl) {
       const platform = platforms[0];
@@ -729,7 +732,10 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
 
   app.post('/lti/ags/lineitems', (req, res) => { void (async () => {
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    // AGS line-item CRUD: resolve the tenant via trustedTenantOf (NOT the raw caller-supplied
+    // ?tenant_pod_url) — an unauthenticated caller is pinned to the default tenant and can never
+    // read/write ANOTHER tenant's line items (matching the NRPS producer's auth pinning).
+    const tenant = trustedTenantOf(req, config);
     const b = (req.body ?? {}) as Record<string, unknown>;
     const label = typeof b.label === 'string' ? b.label : '';
     const scoreMaximum = Number(b.scoreMaximum);
@@ -776,14 +782,20 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
 
   app.get('/lti/ags/lineitems/:id', (req, res) => {
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    // AGS line-item CRUD: resolve the tenant via trustedTenantOf (NOT the raw caller-supplied
+    // ?tenant_pod_url) — an unauthenticated caller is pinned to the default tenant and can never
+    // read/write ANOTHER tenant's line items (matching the NRPS producer's auth pinning).
+    const tenant = trustedTenantOf(req, config);
     const li = lineItemsFor(tenant).get(String(req.params.id ?? ''));
     if (!li) { res.status(404).json({ error: 'line item not found' }); return; }
     res.type('application/vnd.ims.lis.v2.lineitem+json').send(JSON.stringify(publicLineItem(li, config.selfBaseUrl)));
   });
 
   app.put('/lti/ags/lineitems/:id', (req, res) => {
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    // AGS line-item CRUD: resolve the tenant via trustedTenantOf (NOT the raw caller-supplied
+    // ?tenant_pod_url) — an unauthenticated caller is pinned to the default tenant and can never
+    // read/write ANOTHER tenant's line items (matching the NRPS producer's auth pinning).
+    const tenant = trustedTenantOf(req, config);
     const li = lineItemsFor(tenant).get(String(req.params.id ?? ''));
     if (!li) { res.status(404).json({ error: 'line item not found' }); return; }
     const b = (req.body ?? {}) as Record<string, unknown>;
@@ -799,7 +811,10 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   });
 
   app.delete('/lti/ags/lineitems/:id', (req, res) => {
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    // AGS line-item CRUD: resolve the tenant via trustedTenantOf (NOT the raw caller-supplied
+    // ?tenant_pod_url) — an unauthenticated caller is pinned to the default tenant and can never
+    // read/write ANOTHER tenant's line items (matching the NRPS producer's auth pinning).
+    const tenant = trustedTenantOf(req, config);
     const existed = lineItemsFor(tenant).delete(String(req.params.id ?? ''));
     if (!existed) { res.status(404).json({ error: 'line item not found' }); return; }
     ltiPodDirty();

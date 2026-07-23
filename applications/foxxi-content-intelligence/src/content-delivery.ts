@@ -86,6 +86,14 @@ interface PublishedJobAid {
 
 const published = new Map<string, PublishedCourse>();
 const jobAids = new Map<string, PublishedJobAid>();
+// BOUNDED: publish-course / publish-job-aid are unauthenticated and each stores a full package
+// (cmi5 XML + SCORM zip), so cap the stores and evict the oldest — otherwise an attacker exhausts
+// memory. A real catalog is small.
+const CONTENT_STORE_MAX = 2000;
+function retainInMap<V>(m: Map<string, V>, id: string, v: V): void {
+  while (m.size >= CONTENT_STORE_MAX) { const oldest = m.keys().next().value; if (oldest === undefined) break; m.delete(oldest); }
+  m.set(id, v);
+}
 
 function jobAidHtml(aid: { competencyPoint: string; body: string; triggerContext: string }): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -146,7 +154,7 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       html: generateAuHtml(course.title, auLessonView(fl)),
       blocks: fl.fragments.map(f => ({ label: f.modality, text: f.body })),
     }));
-    published.set(publishId, { publishId, courseId: course.id, title: course.title, tenant, cmi5Xml, scormZip, course, aus });
+    retainInMap(published, publishId, { publishId, courseId: course.id, title: course.title, tenant, cmi5Xml, scormZip, course, aus });
 
     res.json({
       published: true,
@@ -206,7 +214,7 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       tenant,
       html: jobAidHtml({ competencyPoint: b.competencyPoint, body: b.body, triggerContext: typeof b.triggerContext === 'string' ? b.triggerContext : 'the point of work' }),
     };
-    jobAids.set(id, aid);
+    retainInMap(jobAids, id, aid);
     res.json({
       published: true, id,
       url: `${base}/content/job-aid/${id}`,

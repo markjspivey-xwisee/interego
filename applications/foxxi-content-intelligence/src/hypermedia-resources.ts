@@ -39,6 +39,11 @@ interface HypermediaConfig {
   /** SCORM player base URL — emitted as templated `launch` link on
    * playable enrollments + courses so the dashboard never hardcodes it. */
   scormPlayerBaseUrl?: string;
+  /** Operator authorization check. The directory/audit surfaces serve employee PII
+   *  (email, employee id, hire date, manager graph) + the security audit log, so they are
+   *  gated on this — an unauthenticated caller gets 401, not the roster. Defaults to
+   *  deny-all when omitted (fail closed). */
+  isOperator?: (req: Request) => boolean;
 }
 
 /** Courses whose payloads ship with a playable SCORM package. */
@@ -348,6 +353,13 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
   const base = `${config.selfBaseUrl}/api/foxxi/v1`;
   const lookup = buildLookup();
 
+  // Operator gate for PII/audit surfaces — fail closed (deny) when no check is configured.
+  const requireOperator = (req: Request, res: Response): boolean => {
+    if (config.isOperator?.(req)) return true;
+    res.status(401).json({ error: 'this resource requires an authenticated operator session (OAuth2 Bearer / operator token)' });
+    return false;
+  };
+
   // ── Root entry point ─────────────────────────────────────────────
   // Bootstrap URI — single request returns the navigable map of all
   // top-level collections + the full affordance set (every bridge tool,
@@ -438,6 +450,7 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
 
   // ── Profiles ─────────────────────────────────────────────────────
   app.get('/api/foxxi/v1/profiles', (req, res) => {
+    if (!requireOperator(req, res)) return;
     const admin = loadAdminPayload();
     const { offset, limit } = pagination(req);
     const items = admin.users.slice(offset, offset + limit);
@@ -461,6 +474,7 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
     }));
   });
   app.get('/api/foxxi/v1/profiles/:opaqueId', (req, res) => {
+    if (!requireOperator(req, res)) return;
     const admin = loadAdminPayload();
     const slug = lookup.user.toSlug(req.params.opaqueId);
     if (!slug) { res.status(404).json({ error: 'profile not found' }); return; }
@@ -628,6 +642,7 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
 
   // ── Groups ──────────────────────────────────────────────────────
   app.get('/api/foxxi/v1/groups', (req, res) => {
+    if (!requireOperator(req, res)) return;
     const admin = loadAdminPayload();
     const { offset, limit } = pagination(req);
     const items = admin.groups.slice(offset, offset + limit);
@@ -674,6 +689,7 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
 
   // ── Audit records ───────────────────────────────────────────────
   app.get('/api/foxxi/v1/audit-records', (req, res) => {
+    if (!requireOperator(req, res)) return;
     const admin = loadAdminPayload();
     const { offset, limit } = pagination(req);
     const items = admin.audit.slice(offset, offset + limit);
@@ -701,6 +717,7 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
     }));
   });
   app.get('/api/foxxi/v1/audit-records/:opaqueId', (req, res) => {
+    if (!requireOperator(req, res)) return;
     const admin = loadAdminPayload();
     const slug = lookup.audit.toSlug(req.params.opaqueId);
     if (!slug) { res.status(404).json({ error: 'audit record not found' }); return; }

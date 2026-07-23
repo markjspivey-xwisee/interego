@@ -564,6 +564,12 @@ export interface ProfileSpec {
 
 /** Build an xAPI Profile JSON-LD document from a spec. Pure. */
 export function buildProfileDoc(spec: ProfileSpec): Record<string, unknown> {
+  // xAPI Profile spec §5: every Concept, Statement Template, and Pattern MUST carry `type` and
+  // `inScheme` (the Profile version IRI it belongs to). The building-block arrays omit these
+  // (they are the shared internal shapes), so stamp them here on the PUBLISHED document.
+  const versionId = `${spec.id}/v/1`;
+  const withMeta = (arr: Array<Record<string, unknown>>, type: string): Array<Record<string, unknown>> =>
+    arr.map(x => ({ type: x.type ?? type, inScheme: x.inScheme ?? versionId, ...x }));
   return {
     '@context': 'https://w3id.org/xapi/profiles/context',
     id: spec.id,
@@ -572,11 +578,11 @@ export function buildProfileDoc(spec: ProfileSpec): Record<string, unknown> {
     prefLabel: spec.prefLabel,
     definition: spec.definition,
     ...(spec.seeAlso ? { seeAlso: spec.seeAlso } : {}),
-    versions: [{ id: `${spec.id}/v/1`, generatedAtTime: spec.generatedAt }],
+    versions: [{ id: versionId, generatedAtTime: spec.generatedAt }],
     author: spec.author,
-    concepts: spec.concepts,
-    templates: spec.templates,
-    patterns: spec.patterns,
+    concepts: withMeta(spec.concepts, 'Verb'),
+    templates: withMeta(spec.templates, 'StatementTemplate'),
+    patterns: withMeta(spec.patterns, 'Pattern'),
   };
 }
 

@@ -1025,8 +1025,20 @@ export function sessionView(session: SeqSession): Record<string, unknown> {
 
 // ── Route attachment ─────────────────────────────────────────────────
 
-/** In-memory sequencing sessions, keyed by session id. */
+/** In-memory sequencing sessions, keyed by session id. BOUNDED: /scorm/sequencing/session is
+ *  unauthenticated and each POST persists a new session into the pod snapshot, so without a cap an
+ *  attacker could exhaust memory + grow the pod snapshot unboundedly. Evict the oldest (insertion
+ *  order) past the cap — a real session set is small. */
+const SCORM_SESSIONS_MAX = 5000;
 const sessions = new Map<string, SeqSession>();
+function retainSession(id: string, s: SeqSession): void {
+  while (sessions.size >= SCORM_SESSIONS_MAX) {
+    const oldest = sessions.keys().next().value;
+    if (oldest === undefined) break;
+    sessions.delete(oldest);
+  }
+  sessions.set(id, s);
+}
 
 // ── Pod projection (foxxi:ScormTenantSnapshot) ───────────────────────
 // SCORM sessions are mutated extensively by navigate/commit calls; we
@@ -1088,7 +1100,7 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
     try { tree = parseManifest(xml); }
     catch (e) { res.status(400).json({ error: (e as Error).message }); return; }
     const session = createSession(tenant, tree);
-    sessions.set(session.id, session);
+    retainSession(session.id, session);
     scormPodDirty();
     res.status(200).json({
       created: true,
