@@ -250,13 +250,23 @@ export async function verifyCompletionPresentation(args: { presentation: Credent
     publicKey: args.presentation.issuerPublicKey,
     presentationHeader: args.presentation.presentationHeader,
   });
+  // Derive the disclosed claims from the cryptographically-VERIFIED `message` bytes
+  // (what the issuer's BBS+ signature actually commits to), NOT the holder-supplied
+  // `displayValue` wire field. displayValue is a THIRD, unbound input — trusting it let
+  // a holder (or a MITM) report claim values the issuer never signed (e.g. flip a signed
+  // proficiencyLevel=Beginner to =Expert while leaving the proven message bytes intact),
+  // defeating the core vc-di-bbs / OB3 selective-disclosure guarantee. Only disclose when
+  // the proof verified — a failed proof discloses nothing.
+  const dec = new TextDecoder();
   return {
     verified: ok,
     reason: ok ? undefined : 'BBS+ proof verification failed',
-    disclosed: args.presentation.disclosedMessages.map(d => {
-      const [path, ...rest] = d.displayValue.split('=');
-      return { path: path!, value: rest.join('=') };
-    }),
+    disclosed: ok
+      ? args.presentation.disclosedMessages.map(d => {
+          const [path, ...rest] = dec.decode(d.message).split('=');
+          return { path: path!, value: rest.join('=') };
+        })
+      : [],
   };
 }
 

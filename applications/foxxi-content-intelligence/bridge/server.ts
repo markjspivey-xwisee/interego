@@ -359,6 +359,7 @@ import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
 import { attachOauthTokenRoute } from '../src/xapi-oauth.js';
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator } from '../src/operator-auth.js';
+import { assertSafeFetchTarget, safePublicUrlOrUndefined } from '../src/ssrf-guard.js';
 import type {
   IRI,
   ContextDescriptorData,
@@ -833,7 +834,17 @@ function lensTenantFor(agent: string): TenantId { return ('lens:' + agent) as Te
  *  the same host as the tenant pod); falls back to the tenant pod only if
  *  nothing resolves. */
 function resolveSubjectPodUrl(didOrWebId: string | undefined, explicit?: string): string {
-  if (explicit) return explicit;
+  // SSRF choke point: an explicit caller-supplied pod URL is honored ONLY when it is a
+  // public http(s) target. A loopback/link-local/private literal (127.0.0.1, 169.254.169.254,
+  // 10.*, internal hosts) is IGNORED — we fall through to deriving the pod from the DID —
+  // so a caller cannot steer any server-side pod fetch at an internal address. (A public
+  // hostname that DNS-resolves to a private IP is additionally caught by assertSafeFetchTarget
+  // right before each delegation/credential fetch.)
+  if (explicit) {
+    const safe = safePublicUrlOrUndefined(explicit);
+    if (safe) return safe;
+    // else: unsafe explicit target — ignore it and derive from the identity below.
+  }
   const id = (didOrWebId ?? '').trim();
   if (!id) return tenantPodUrl;
   const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
@@ -2874,14 +2885,22 @@ const instrumentedHandlers = Object.fromEntries(
           const bearerToken = args.__caller_token as string | undefined;
           if (bearerToken) {
             try {
-              // Token is base64url-encoded JSON; decode without verifying
-              // for instrumentation purposes (the handler already verified).
-              const padded = bearerToken.replace(/-/g, '+').replace(/_/g, '/');
-              const decoded = JSON.parse(Buffer.from(padded, 'base64').toString('utf8')) as { sub?: string };
-              callerCtx.webId = decoded.sub;
-              callerCtx.role = decoded.sub && learningEngineerWebIds.has(decoded.sub) ? 'learning-engineer'
-                : (decoded.sub === adminWebId ? 'admin' : 'learner');
-            } catch { /* ignore */ }
+              // VERIFY the session token's signature against the published directory
+              // before trusting its `sub` as the actor. A bare base64 decode is
+              // forgeable — a caller can put any WebID in an UNSIGNED token, and this
+              // finally runs even when the handler REJECTED the token (it returned an
+              // error object rather than throwing), so decoding-without-verifying let
+              // an anonymous caller forge an xAPI statement attributed to any victim.
+              // Only a cryptographically-verified token sets the actor; otherwise the
+              // call is attributed to 'anonymous' (callerActor's unset-webId path).
+              const addressMap = buildAddressMap(directoryUsersCache as unknown as Parameters<typeof buildAddressMap>[0]);
+              const verified = verifySessionToken(bearerToken, addressMap);
+              if (verified.ok) {
+                callerCtx.webId = verified.callerDid;
+                callerCtx.role = learningEngineerWebIds.has(verified.callerDid) ? 'learning-engineer'
+                  : (verified.callerDid === adminWebId ? 'admin' : 'learner');
+              }
+            } catch { /* ignore — unverified → anonymous attribution */ }
           }
           emitAffordanceStatement({
             toolName: name,
@@ -3086,7 +3105,11 @@ const app = createVerticalBridge({
         if (!rec.ok) return false;
         const signer = rec.signer.toLowerCase().replace(/^0x/, '');
         const claim = String(learner).toLowerCase();
-        return claim === `did:ethr:0x${signer}` || claim.includes(signer);
+        // EXACT match to the canonical did:ethr form only — a substring test (claim.includes)
+        // let a signer attribute a statement to any padded/composite actor label containing
+        // their own address (e.g. "Chief Compliance Officer (did:ethr:0x<addr>)"), polluting the
+        // LRS actor namespace under a technically-authorized write.
+        return claim === `did:ethr:0x${signer}` || claim === `did:ethr:${signer}`;
       },
       // Channel transport — POST /content/deliver actually sends: a
       // configured per-channel webhook, else the Interego-native
@@ -3110,6 +3133,7 @@ const app = createVerticalBridge({
     attachContextChatRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       authoritativeSource,
+      ...operatorAuth,
       emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
       llmApiKey: (process.env.FOXXI_LLM_API_KEY ?? process.env.ANTHROPIC_API_KEY)?.trim(),
       checkLlmRateLimit: (clientIp) => {
@@ -3132,7 +3156,11 @@ const app = createVerticalBridge({
         if (!rec.ok) return false;
         const signer = rec.signer.toLowerCase().replace(/^0x/, '');
         const claim = String(asker).toLowerCase();
-        return claim === `did:ethr:0x${signer}` || claim.includes(signer);
+        // EXACT match to the canonical did:ethr form only — a substring test (claim.includes)
+        // let a signer attribute a statement to any padded/composite actor label containing
+        // their own address (e.g. "Chief Compliance Officer (did:ethr:0x<addr>)"), polluting the
+        // LRS actor namespace under a technically-authorized write.
+        return claim === `did:ethr:0x${signer}` || claim === `did:ethr:${signer}`;
       },
       // Gate progress / assignment questions behind the same wallet-
       // signed session token the rest of the bridge verifies — a
@@ -3799,6 +3827,8 @@ app.post('/agent/review-record', async (req, res) => {
       const delegationPod = resolveSubjectPodUrl(rec.agentId, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
       let del;
       try {
+        // SSRF guard before the pre-authorization delegation fetch (see verifyDelegatedCaller).
+        await assertSafeFetchTarget(delegationPod);
         del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier() });
       } catch (err) {
         res.status(401).json({ error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` });
@@ -3921,6 +3951,8 @@ app.post('/agent/issue-credential', async (req, res) => {
       const delegationPod = resolveSubjectPodUrl(rec.agentId, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
       let del;
       try {
+        // SSRF guard before the pre-authorization delegation fetch (see verifyDelegatedCaller).
+        await assertSafeFetchTarget(delegationPod);
         del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier() });
       } catch (err) {
         res.status(401).json({ error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` });
@@ -3957,9 +3989,15 @@ app.post('/agent/issue-credential', async (req, res) => {
     // fallback to [a-z0-9-] (the same guard the /ns/foxxi/competency route uses).
     const safeCompSlug = (s: string): string =>
       s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'competency';
-    const competencySlug = (typeof p.competency_id === 'string' && p.competency_id.trim())
-      ? (competencyIdOf(p.competency_id.trim()) ?? safeCompSlug(p.competency_id.trim()))
-      : safeCompSlug(competencyName);
+    // Sanitize the FINAL slug regardless of which branch produced it: competencyIdOf
+    // returns the segment after urn:foxxi:competency: VERBATIM (or a decodeURIComponent'd
+    // URL segment — %2F→'/', %22→'"'), so wrapping only the ?? fallback left the raw
+    // attacker substring flowing into the on-pod path + the hand-built credential Turtle IRI.
+    const competencySlug = safeCompSlug(
+      (typeof p.competency_id === 'string' && p.competency_id.trim())
+        ? (competencyIdOf(p.competency_id.trim()) ?? p.competency_id.trim())
+        : competencyName,
+    );
     const competencyId = competencyIri(competencySlug);
     const recipientPod = resolveSubjectPodUrl(recipientDid, typeof p.recipient_pod_url === 'string' ? p.recipient_pod_url : undefined);
     // Per-creator issuer identity: a stable did:key the platform custodies on the
@@ -4240,6 +4278,10 @@ async function verifyDelegatedCaller(body: unknown):
   const delegationPod = resolveSubjectPodUrl(rec.agentId, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
   let del;
   try {
+    // SSRF guard: this pod is fetched BEFORE authorization succeeds. Reject a target that
+    // resolves to a private/loopback/link-local address (defeats a public hostname pointing
+    // at an internal IP; the literal case is already dropped by resolveSubjectPodUrl).
+    await assertSafeFetchTarget(delegationPod);
     del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier() });
   } catch (err) {
     return { ok: false, status: 401, error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` };

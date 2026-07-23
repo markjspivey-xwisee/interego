@@ -728,11 +728,20 @@ export const PERF_ROLLUP_RULE_TEXT =
   'A verified credential with no production evidence maps to Competent; training completion only maps to Novice (Hypothetical). ' +
   'Confidence is the Wilson score interval lower bound (z=1.96) on k/n.';
 
+// Proficiency framework + roll-up-rule metadata — shared verbatim by the Turtle
+// and JSON-LD projections so the two serializations of /ns/adl-tla stay
+// triple-isomorphic (the Level/RollupRule nodes previously drifted between them).
+const PROF_FRAMEWORK_LABEL = 'Foxxi Production-Performance Proficiency Framework';
+const PROF_FRAMEWORK_COMMENT = 'A published proficiency scale for on-the-job production performance, using the Dreyfus five-stage model of skill acquisition. The tla:Level individuals below are the dereferenceable scale an ELR competency assertion is measured against (ler:atProficiency).';
+const PROF_FRAMEWORK_SOURCE = 'Dreyfus, S.E. & Dreyfus, H.L. (1980) — A Five-Stage Model of the Mental Activities Involved in Directed Skill Acquisition';
+const PROF_ROLLUP_LABEL = 'Production-performance proficiency roll-up rule';
+const PROF_ROLLUP_COMMENT = "Maps a subject's production-performance evidence to a proficiency level in the Foxxi Production-Performance Proficiency Framework, with a confidence. Cited by every performance-basis ler:CompetencyAssertion the ELR emits.";
+
 function renderProficiencyTurtle(): string {
   const fw = `tla:PerformanceProficiencyFramework a tla:CompetencyFramework , skos:ConceptScheme ;
-    rdfs:label "Foxxi Production-Performance Proficiency Framework" ;
-    rdfs:comment "A published proficiency scale for on-the-job production performance, using the Dreyfus five-stage model of skill acquisition. The tla:Level individuals below are the dereferenceable scale an ELR competency assertion is measured against (ler:atProficiency)." ;
-    dct:source "Dreyfus, S.E. & Dreyfus, H.L. (1980) — A Five-Stage Model of the Mental Activities Involved in Directed Skill Acquisition" ;
+    rdfs:label "${esc(PROF_FRAMEWORK_LABEL)}" ;
+    rdfs:comment "${esc(PROF_FRAMEWORK_COMMENT)}" ;
+    dct:source "${esc(PROF_FRAMEWORK_SOURCE)}" ;
     ler:construction "minted" ;
     rdfs:isDefinedBy <${TLA_DOC}> .`;
   const levels = PROFICIENCY_LEVELS.map(l =>
@@ -744,8 +753,8 @@ function renderProficiencyTurtle(): string {
     ler:construction "concept" ;
     rdfs:isDefinedBy <${TLA_DOC}> .`).join('\n\n');
   const rule = `tla:PerformanceProficiencyRollupRule a tla:RollupRule ;
-    rdfs:label "Production-performance proficiency roll-up rule" ;
-    rdfs:comment "Maps a subject's production-performance evidence to a proficiency level in the Foxxi Production-Performance Proficiency Framework, with a confidence. Cited by every performance-basis ler:CompetencyAssertion the ELR emits." ;
+    rdfs:label "${esc(PROF_ROLLUP_LABEL)}" ;
+    rdfs:comment "${esc(PROF_ROLLUP_COMMENT)}" ;
     tla:rollupRule "${esc(PERF_ROLLUP_RULE_TEXT)}" ;
     skos:inScheme tla:PerformanceProficiencyFramework ;
     ler:construction "minted" ;
@@ -1015,24 +1024,28 @@ export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, u
       nodes.push(node);
     }
     // The published proficiency framework + levels + roll-up rule.
+    // Shared metadata + {'@id':…} for skos:inScheme so these nodes are
+    // triple-isomorphic to renderProficiencyTurtle (a bare-string inScheme was
+    // coerced to an xsd:string LITERAL, not the framework IRI, under this context).
     nodes.push({
       '@id': PERF_FRAMEWORK_IRI, '@type': ['tla:CompetencyFramework', 'skos:ConceptScheme'],
-      label: 'Foxxi Production-Performance Proficiency Framework',
-      comment: 'A published proficiency scale (Dreyfus five-stage model) an ELR competency assertion is measured against.',
-      source: 'Dreyfus & Dreyfus (1980)', construction: 'minted', isDefinedBy: doc,
+      label: PROF_FRAMEWORK_LABEL,
+      comment: PROF_FRAMEWORK_COMMENT,
+      source: PROF_FRAMEWORK_SOURCE, construction: 'minted', isDefinedBy: doc,
     });
     for (const l of PROFICIENCY_LEVELS) {
       nodes.push({
         '@id': proficiencyLevelIri(l.name), '@type': ['tla:Level', 'ler:ProficiencyLevel', 'skos:Concept'],
         label: l.label, comment: l.comment, construction: 'concept',
-        'skos:inScheme': PERF_FRAMEWORK_IRI, 'skos:notation': String(l.rank), isDefinedBy: doc,
+        'skos:inScheme': { '@id': PERF_FRAMEWORK_IRI }, 'skos:notation': String(l.rank), isDefinedBy: doc,
       });
     }
     nodes.push({
       '@id': PERF_ROLLUP_RULE_IRI, '@type': 'tla:RollupRule',
-      label: 'Production-performance proficiency roll-up rule',
-      comment: 'Maps production-performance evidence to a proficiency level with a Wilson-lower-bound confidence; cited by every performance-basis ler:CompetencyAssertion.',
-      'tla:rollupRule': PERF_ROLLUP_RULE_TEXT, construction: 'minted', isDefinedBy: doc,
+      label: PROF_ROLLUP_LABEL,
+      comment: PROF_ROLLUP_COMMENT,
+      'tla:rollupRule': PERF_ROLLUP_RULE_TEXT,
+      'skos:inScheme': { '@id': PERF_FRAMEWORK_IRI }, construction: 'minted', isDefinedBy: doc,
     });
   }
   // A flat @graph (ontology node + all term nodes) so JSON-LD expansion yields real triples.
@@ -1131,17 +1144,18 @@ export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record
     const lvl = PROFICIENCY_LEVELS.find(l => `Level${l.name}` === name);
     if (lvl) return {
       '@context': JSONLD_CONTEXT, '@id': `${ns}${name}`, '@type': ['tla:Level', 'ler:ProficiencyLevel', 'skos:Concept'],
-      label: lvl.label, comment: lvl.comment, 'skos:notation': String(lvl.rank), 'skos:inScheme': PERF_FRAMEWORK_IRI,
+      label: lvl.label, comment: lvl.comment, 'skos:notation': String(lvl.rank), 'skos:inScheme': { '@id': PERF_FRAMEWORK_IRI },
       construction: 'concept', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc }, scheme: { href: PERF_FRAMEWORK_IRI } },
     };
     if (name === 'PerformanceProficiencyRollupRule') return {
       '@context': JSONLD_CONTEXT, '@id': PERF_ROLLUP_RULE_IRI, '@type': 'tla:RollupRule',
-      label: 'Production-performance proficiency roll-up rule', 'tla:rollupRule': PERF_ROLLUP_RULE_TEXT,
+      label: PROF_ROLLUP_LABEL, comment: PROF_ROLLUP_COMMENT, 'tla:rollupRule': PERF_ROLLUP_RULE_TEXT,
+      'skos:inScheme': { '@id': PERF_FRAMEWORK_IRI },
       construction: 'minted', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
     };
     if (name === 'PerformanceProficiencyFramework') return {
       '@context': JSONLD_CONTEXT, '@id': PERF_FRAMEWORK_IRI, '@type': ['tla:CompetencyFramework', 'skos:ConceptScheme'],
-      label: 'Foxxi Production-Performance Proficiency Framework', source: 'Dreyfus & Dreyfus (1980)',
+      label: PROF_FRAMEWORK_LABEL, comment: PROF_FRAMEWORK_COMMENT, source: PROF_FRAMEWORK_SOURCE,
       construction: 'minted', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
     };
   }
