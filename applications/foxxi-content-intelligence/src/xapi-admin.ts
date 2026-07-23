@@ -452,7 +452,9 @@ function handleAddCredential(req: Request, res: Response): void {
   if (!requireAdmin(req, res)) return;
   const b = (req.body ?? {}) as { principal?: string; secret?: string; tenant?: string; label?: string };
   if (!b.principal || !b.secret) { res.status(400).json({ error: 'principal and secret are required' }); return; }
-  res.status(201).json(inboundCredentials.add({ principal: b.principal, secret: b.secret, tenant: b.tenant, label: b.label }));
+  const view = inboundCredentials.add({ principal: b.principal, secret: b.secret, tenant: b.tenant, label: b.label });
+  if (!view) { res.status(429).json({ error: 'inbound-credential store is at capacity' }); return; }
+  res.status(201).json(view);
 }
 
 function handleDeleteCredential(req: Request, res: Response): void {

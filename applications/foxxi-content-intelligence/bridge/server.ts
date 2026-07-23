@@ -32,31 +32,40 @@ import { randomUUID, createHash } from 'node:crypto';
 {
   const writeSecret = process.env.FOXXI_POD_WRITE_SECRET;
   const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
-  if (writeSecret && tenantPodUrl) {
-    const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
-    const writeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-    const originalFetch = globalThis.fetch.bind(globalThis);
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const method = (init?.method ?? 'GET').toUpperCase();
-      if (writeMethods.has(method) && tenantOrigin) {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
-        // EXACT origin match — NOT a string prefix. `url.startsWith(tenantOrigin)`
-        // matched `https://gate.interego.xwisee.com.<attacker-tld>/…` (the tenant
-        // origin is a prefix of it), leaking FOXXI_POD_WRITE_SECRET to an
-        // attacker-controlled host (round-26 blocker). Parse the origin and compare.
-        const sameOrigin = (() => { try { return new URL(url).origin === tenantOrigin; } catch { return false; } })();
-        if (url && sameOrigin) {
-          const headers = new Headers(init?.headers ?? {});
-          if (!headers.has('Authorization')) {
-            headers.set('Authorization', `Bearer ${writeSecret}`);
-            return originalFetch(input, { ...init, headers });
-          }
+  const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
+  const writeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+  const originalFetch = globalThis.fetch.bind(globalThis);
+  // Installed UNCONDITIONALLY (not only when the write-secret is set) so the
+  // write-SSRF choke point below always applies.
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const isWrite = writeMethods.has(method);
+    // WRITE-SSRF CHOKE POINT (round-38): never transparently FOLLOW a 3xx on a write to
+    // a NEW host — force redirect:'manual' so a caller-influenced pod that 302/307s a
+    // PUT/DELETE to an internal address is not followed (the write helper sees a non-ok
+    // 3xx and fails). This covers the many per-site publish()/rebuildManifestFromPod/raw
+    // DELETE sinks over a caller pod in ONE place. Only override when the caller didn't
+    // set redirect (safeFetch/guardedFetchFn already set 'manual'). Pods (CSS) never 3xx
+    // a write, so this cannot break a legitimate write.
+    let init2 = init;
+    if (isWrite && (init === undefined || init.redirect === undefined)) init2 = { ...(init ?? {}), redirect: 'manual' };
+    // Attach the pod-write bearer ONLY on an EXACT tenant-origin write. `startsWith`
+    // matched `https://gate.interego.xwisee.com.<attacker-tld>/…` and leaked the secret
+    // (round-26 blocker), so parse + compare the origin.
+    if (isWrite && writeSecret && tenantOrigin) {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const sameOrigin = (() => { try { return new URL(url).origin === tenantOrigin; } catch { return false; } })();
+      if (url && sameOrigin) {
+        const headers = new Headers(init2?.headers ?? {});
+        if (!headers.has('Authorization')) {
+          headers.set('Authorization', `Bearer ${writeSecret}`);
+          return originalFetch(input, { ...init2, headers });
         }
       }
-      return originalFetch(input, init);
-    }) as typeof globalThis.fetch;
-    console.log(`[foxxi-bridge] pod-write auth installed (writes to ${tenantOrigin} carry Authorization header)`);
-  }
+    }
+    return originalFetch(input, init2);
+  }) as typeof globalThis.fetch;
+  console.log(`[foxxi-bridge] global write-fetch guard installed (redirect:manual on writes${writeSecret && tenantOrigin ? `; pod-write bearer on exact ${tenantOrigin} writes` : ''})`);
 }
 // Resilience: a thrown error / rejected promise on a request path (e.g. a pod
 // write that the handler didn't await inside its try/catch) must NEVER take the
@@ -2745,7 +2754,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     let descriptorUrl = '', graphUrl = '';
     try {
       const result = await publish(descriptor, ontologyTurtle, podUrl, {
-        fetch: globalThis.fetch,
+        fetch: guardedFetchFn(globalThis.fetch), // podUrl is caller-controlled — re-guard publish()'s read + write hops (round-38)
         containerPath: 'ontologies/',
         descriptorSlug: slug,
         graphSlug: `${slug}-graph`,
@@ -2786,6 +2795,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       adminWebId: args.admin_web_id as string,
       adminName: args.admin_name as string,
       podUrl: bootPod,
+      fetch: guardedFetchFn(globalThis.fetch) as never, // bootPod is caller-controlled — re-guard read + write hops (round-38)
     });
   },
 
@@ -4713,7 +4723,7 @@ app.post('/agent/void-credential', async (req, res) => {
     // simply absent (no ghost), written with ABSOLUTE urls via PUT (not PATCH,
     // which CSS re-serializes relative).
     let manifest: { written: number; scanned: number } | undefined;
-    try { const m = await rebuildManifestFromPod(pod); manifest = { written: m.written, scanned: m.scanned }; }
+    try { const m = await rebuildManifestFromPod(pod, { fetch: guardedFetchFn(globalThis.fetch) as never }); manifest = { written: m.written, scanned: m.scanned }; }
     catch (e) { console.warn('[void-credential] manifest rebuild failed:', (e as Error).message); }
     res.json({ ok: true, voidedBy: callerDid, descriptor: descriptorUrl, deletions, manifest: manifest ?? 'rebuild-failed' });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
@@ -5923,10 +5933,11 @@ app.post('/agent/credentials', async (req, res) => {
     await hydrateOwnerForwarding(ownerTenant, ownerPod);
     let mutated = false;
     if (Array.isArray(p.credentials)) {
-      for (const c of p.credentials as Array<Record<string, unknown>>) {
+      // Per-request cap (round-38): bound how many inbound credentials one POST can add.
+      for (const c of (p.credentials as Array<Record<string, unknown>>).slice(0, 100)) {
         if (!c || typeof c.principal !== 'string' || typeof c.secret !== 'string') continue;
-        inboundCredentials.add({ principal: c.principal, secret: c.secret, tenant: String(ownerTenant), label: typeof c.label === 'string' ? c.label : undefined });
-        mutated = true;
+        const added = inboundCredentials.add({ principal: c.principal, secret: c.secret, tenant: String(ownerTenant), label: typeof c.label === 'string' ? c.label : undefined });
+        if (added) mutated = true; // null → registry cap reached, credential rejected
       }
     }
     // Scope every read/revoke to THIS owner's tenant — never touch another user's credentials.
@@ -5955,6 +5966,10 @@ interface AgentScormSco { id: string; title: string; body: string; assessment?: 
 interface AgentScormCourse { courseId: string; title: string; masteryScore: number; scos: AgentScormSco[]; authoredBy: string; }
 interface ScormPlay { seq: SeqSession; courseId: string; learnerDid: string; lens: TenantId; masteryScore: number; course: AgentScormCourse; }
 const agentScormCourses = new Map<string, AgentScormCourse>();
+/** Cap the agent-authored SCORM course cache (+ its parallel courseAuthors map) — a signed
+ *  wallet looping /agent/scorm/author with distinct courseIds + large scos[] would otherwise
+ *  grow both maps without limit (round-38 DoS). Evict oldest past the cap. */
+const SCORM_COURSES_MAX = 5000;
 const agentScormPlays = new Map<string, ScormPlay>();   // in-process per the SN engine's own session model
 /** Bound the in-process SCORM-play map — a signed/delegated caller can /agent/scorm/launch
  *  repeatedly without /submit (a play is deleted only on done:true), growing it unbounded
@@ -6524,6 +6539,12 @@ app.post('/agent/scorm/author', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    // Rate-limit: authoring composes into a lattice + grows agentScormCourses/courseAuthors;
+    // a fresh wallet looping distinct courseIds is a write-DoS (round-38; caps bound memory).
+    const xffA = req.headers['x-forwarded-for'];
+    const ipA = typeof xffA === 'string' ? xffA.split(',').at(-1)!.trim() : Array.isArray(xffA) ? xffA.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rlA = checkAgenticRateLimit(ipA);
+    if (!rlA.ok) { res.status(429).json({ error: `rate limit — retry in ${rlA.retryAfterSeconds}s` }); return; }
     const c = auth.payload.course as Partial<AgentScormCourse> | undefined;
     if (!c || typeof c !== 'object' || !c.courseId || !Array.isArray(c.scos) || c.scos.length === 0) {
       res.status(400).json({ error: 'course { courseId, title, masteryScore?, scos:[{ id, title, body, assessment? }] } required' }); return;
@@ -6544,6 +6565,10 @@ app.post('/agent/scorm/author', async (req, res) => {
     };
     try { parseManifest(buildAgentScormManifest(course)); }
     catch (e) { res.status(400).json({ error: `generated SCORM manifest did not parse on the SN runtime: ${(e as Error).message}` }); return; }
+    if (agentScormCourses.size >= SCORM_COURSES_MAX && !agentScormCourses.has(course.courseId)) {
+      const oldest = agentScormCourses.keys().next().value;
+      if (oldest !== undefined) { agentScormCourses.delete(oldest); courseAuthors.delete(oldest); }
+    }
     agentScormCourses.set(course.courseId, course);
     // selfBoundPod: the course is composed into the AUTHOR's OWN lattice — a subject_pod_url
     // naming a victim's pod must NOT be honored (unlike ingest-course, this had no owner guard,

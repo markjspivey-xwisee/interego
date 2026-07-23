@@ -53,6 +53,11 @@ export function tenantIdOf(podUrlOrDid: string | undefined | null): TenantId {
  */
 export class TenantPartition<T> {
   private readonly byTenant = new Map<TenantId, T>();
+  /** Cap the number of distinct tenant partitions — each distinct signed wallet mints a
+   *  distinct lens:<eth-…> tenant, so an attacker cycling throwaway wallets would otherwise
+   *  create per-tenant stores without limit (round-38 DoS). Evict the oldest partition past
+   *  the cap (partitions are derived, rebuildable views; the durable data is the pod). */
+  private static readonly MAX = 20_000;
 
   constructor(private readonly factory: (tenant: TenantId) => T) {}
 
@@ -60,6 +65,10 @@ export class TenantPartition<T> {
   for(tenant: TenantId): T {
     let store = this.byTenant.get(tenant);
     if (store === undefined) {
+      if (this.byTenant.size >= TenantPartition.MAX) {
+        const oldest = this.byTenant.keys().next().value;
+        if (oldest !== undefined) this.byTenant.delete(oldest);
+      }
       store = this.factory(tenant);
       this.byTenant.set(tenant, store);
     }

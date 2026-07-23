@@ -759,9 +759,10 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   // line-item container, and `platformLineItemsUrl` in a create body
   // mirrors the new line item onto the platform with a Tool-signed JWT.
   app.get('/lti/ags/lineitems', (req, res) => { void (async () => {
-    // AGS line-item CRUD: resolve the tenant via trustedTenantOf (NOT the raw caller-supplied
-    // ?tenant_pod_url) — an unauthenticated caller is pinned to the default tenant and can never
-    // read/write ANOTHER tenant's line items (matching the NRPS producer's auth pinning).
+    // AGS line-item READ: operator-only, matching the NRPS producer roster GET (round-38).
+    // trustedTenantOf pins an anon caller to the default tenant, but the gradebook line-item
+    // container is still tenant-internal data an anonymous caller should not enumerate.
+    if (!callerIsOperator(req, config)) { res.status(401).json({ error: 'AGS line-item reads require operator authorization' }); return; }
     const tenant = trustedTenantOf(req, config);
     const platformUrl = req.query.platformLineItemsUrl as string | undefined;
     if (platformUrl) {
@@ -843,9 +844,8 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
   })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
 
   app.get('/lti/ags/lineitems/:id', (req, res) => {
-    // AGS line-item CRUD: resolve the tenant via trustedTenantOf (NOT the raw caller-supplied
-    // ?tenant_pod_url) — an unauthenticated caller is pinned to the default tenant and can never
-    // read/write ANOTHER tenant's line items (matching the NRPS producer's auth pinning).
+    // AGS line-item READ (single): operator-only (see the collection GET; round-38).
+    if (!callerIsOperator(req, config)) { res.status(401).json({ error: 'AGS line-item reads require operator authorization' }); return; }
     const tenant = trustedTenantOf(req, config);
     const li = lineItemsFor(tenant).get(String(req.params.id ?? ''));
     if (!li) { res.status(404).json({ error: 'line item not found' }); return; }
