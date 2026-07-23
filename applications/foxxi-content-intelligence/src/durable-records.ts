@@ -115,11 +115,17 @@ export async function persistRecordedStatement(args: PersistRecordArgs): Promise
   const key = slug(stmtId);
   const now = new Date().toISOString();
   const hasRecipients = !!(args.recipientPods && args.recipientPods.length);
+  // WRITE-path redirect guard (round-34): args.podUrl is the caller's bound pod, but a
+  // WebID-derived perfPod can be an attacker origin, and the shape-resolution READ + the
+  // publish() PUT ran on the raw fetch (redirect-following). guardedFetchFn re-guards every
+  // hop; the PUT (non-GET) refuses to follow a 3xx — closing the WRITE twin of the round-33
+  // read-path SSRF fix.
+  const wfetch = guardedFetchFn(args.fetch) as typeof args.fetch;
 
   // Resolve placement FIRST so the record's ids are dereferenceable pod URLs — the
   // exact URLs publish() writes to — not a bare urn:foxxi:record: (everything-is-a-URL).
   // Shape-driven: where does THIS agent store performance records? default foxxi-records/.
-  const place = await resolveStorageForShape(args.podUrl, RECORDED_PERFORMANCE_TYPE, { fetch: args.fetch, defaultContainer: 'foxxi-records/' });
+  const place = await resolveStorageForShape(args.podUrl, RECORDED_PERFORMANCE_TYPE, { fetch: wfetch, defaultContainer: 'foxxi-records/' });
   const containerPath = place.target.startsWith(place.podRoot) ? place.target.slice(place.podRoot.length) : 'foxxi-records/';
   const container = place.podRoot + (containerPath.endsWith('/') ? containerPath : `${containerPath}/`);
   // publish() lands the descriptor at <container><slug>.ttl and the graph at
@@ -153,7 +159,7 @@ export async function persistRecordedStatement(args: PersistRecordArgs): Promise
 `;
 
   await publish(descriptor, graphContent, place.podRoot, {
-    fetch: args.fetch,
+    fetch: wfetch,
     containerPath,
     descriptorSlug: `rec-${key}`,
     graphSlug: `rec-${key}-graph`,
@@ -166,7 +172,7 @@ export async function persistRecordedStatement(args: PersistRecordArgs): Promise
     agentDid: args.agentDid,
     shapeClass: RECORDED_PERFORMANCE_TYPE,
     defaultContainer: 'foxxi-records/',
-    fetch: args.fetch,
+    fetch: wfetch,
     ...(args.recipientPods && args.recipientPods.length ? { additionalRecipientPods: args.recipientPods } : {}),
     build: (pgsl, prov) => {
       try { return ingestWithProfile(pgsl, 'xapi', args.statement, prov); }
