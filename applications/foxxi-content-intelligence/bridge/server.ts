@@ -560,7 +560,11 @@ function publishConfigFor(podUrl: string, source: IRI): TenantPublishConfig {
   return {
     podUrl,
     authoritativeSource: source,
-    fetch: globalThis.fetch as unknown as TenantPublishConfig['fetch'],
+    // podUrl is caller-controlled on several paths (ingest_content_package /agent/ingest-course
+    // assign_audience …). The global write-fetch patch forces redirect:'manual' on WRITES, but
+    // publish()'s manifest GET is a READ that still follows a 302 → guardedFetchFn re-guards the
+    // read hops too (round-40 read-SSRF sibling of the write-choke-point).
+    fetch: guardedFetchFn(globalThis.fetch) as unknown as TenantPublishConfig['fetch'],
     adminWebId: `${podUrl.replace(/\/+$/, '')}/profile/card#me`,
     adminKeySeed,
     walletSeed,
@@ -2645,8 +2649,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       // from its pod), NOT the bridge's configured (acme) authoritativeSource —
       // otherwise a Weft learner's membership graph is mislabelled `…:acme:…`.
       authoritativeSource: ((p.tenant_did as string) || (args.tenant_did as string) || selfSovereignSourceFor(podUrl)) as IRI,
-      // The module-load fetch wrapper attaches the pod-write bearer for css-gate origins.
-      fetch: globalThis.fetch as unknown as TenantPublishConfig['fetch'],
+      // guardedFetchFn re-guards publish()'s manifest-GET read hop on the caller pod
+      // (the write patch only forces redirect:manual on writes) — round-40 read-SSRF.
+      fetch: guardedFetchFn(globalThis.fetch) as unknown as TenantPublishConfig['fetch'],
       adminWebId: webId,
       adminKeySeed,   // unused for a public section, but required by the config type
       walletSeed,
@@ -5926,6 +5931,12 @@ app.post('/agent/credentials', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:iep:action:foxxi:set-inbound-credentials-signed.' }); return; }
+    // Rate-limit: this writes into the (capped) plaintext-secret registry; bound throughput
+    // per-IP so secret-rotation churn can't be used to hammer the store (round-40).
+    const xffC = req.headers['x-forwarded-for'];
+    const ipC = typeof xffC === 'string' ? xffC.split(',').at(-1)!.trim() : Array.isArray(xffC) ? xffC.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rlC = checkAgenticRateLimit(ipC);
+    if (!rlC.ok) { res.status(429).json({ error: `rate limit — retry in ${rlC.retryAfterSeconds}s` }); return; }
     const callerDid = auth.callerDid;
     const p = auth.payload as { credentials?: unknown; revoke?: unknown };
     const ownerPod = resolveSubjectPodUrl(callerDid);
@@ -5970,6 +5981,16 @@ const agentScormCourses = new Map<string, AgentScormCourse>();
  *  wallet looping /agent/scorm/author with distinct courseIds + large scos[] would otherwise
  *  grow both maps without limit (round-38 DoS). Evict oldest past the cap. */
 const SCORM_COURSES_MAX = 5000;
+/** Shared CAPPED setter for agentScormCourses — the cap MUST be applied at EVERY set site
+ *  (author + resolveCourseForRead + hydrate), else a read/launch path re-inflates the map
+ *  past the cap (round-40). Evicts oldest (+ its courseAuthors entry) past the cap. */
+function seatScormCourse(course: AgentScormCourse): void {
+  if (agentScormCourses.size >= SCORM_COURSES_MAX && !agentScormCourses.has(course.courseId)) {
+    const oldest = agentScormCourses.keys().next().value;
+    if (oldest !== undefined) { agentScormCourses.delete(oldest); courseAuthors.delete(oldest); }
+  }
+  agentScormCourses.set(course.courseId, course);
+}
 const agentScormPlays = new Map<string, ScormPlay>();   // in-process per the SN engine's own session model
 /** Bound the in-process SCORM-play map — a signed/delegated caller can /agent/scorm/launch
  *  repeatedly without /submit (a play is deleted only on done:true), growing it unbounded
@@ -6164,7 +6185,7 @@ async function hydrateAgentCourses(force = false): Promise<void> {
         // A live authored course wins over the durable copy (same content, but
         // the in-process one is what launch/submit are already holding).
         if (c?.courseId && Array.isArray(c.scos) && !agentScormCourses.has(c.courseId)) {
-          agentScormCourses.set(c.courseId, c);
+          seatScormCourse(c);
         }
         // Feed the course→author registry so bare course URLs resolve by id alone.
         if (c?.courseId && c.authoredBy && !courseAuthors.has(c.courseId)) courseAuthors.set(c.courseId, c.authoredBy);
@@ -6225,7 +6246,7 @@ async function resolveCourseForRead(courseId: string, authorDid?: string): Promi
   const tryPod = async (did: string): Promise<AgentScormCourse | null> => {
     const pod = resolveSubjectPodUrl(did);
     const loaded = await loadCourseFromLattice(pod, did, actorForPod(pod, MESH_ACTOR_LABELS), courseId).catch(() => null);
-    if (loaded) { const c = loaded as unknown as AgentScormCourse; agentScormCourses.set(courseId, c); recordCourseAuthor(courseId, c.authoredBy || did); return c; }
+    if (loaded) { const c = loaded as unknown as AgentScormCourse; seatScormCourse(c); recordCourseAuthor(courseId, c.authoredBy || did); return c; }
     return null;
   };
   if (authorDid) { const c = await tryPod(authorDid); if (c) return c; }
@@ -6565,11 +6586,16 @@ app.post('/agent/scorm/author', async (req, res) => {
     };
     try { parseManifest(buildAgentScormManifest(course)); }
     catch (e) { res.status(400).json({ error: `generated SCORM manifest did not parse on the SN runtime: ${(e as Error).message}` }); return; }
-    if (agentScormCourses.size >= SCORM_COURSES_MAX && !agentScormCourses.has(course.courseId)) {
-      const oldest = agentScormCourses.keys().next().value;
-      if (oldest !== undefined) { agentScormCourses.delete(oldest); courseAuthors.delete(oldest); }
+    // FIRST-AUTHOR LOCK (round-40 blocker): the global course cache is keyed by courseId,
+    // so a wallet re-authoring another agent's courseId would overwrite the content AND
+    // reassign courseAuthors → attacker (content-substitution + attribution takeover served
+    // to every launcher). Refuse to re-author a courseId already owned by a different agent.
+    const priorAuthor = courseAuthors.get(course.courseId);
+    if (priorAuthor && priorAuthor !== auth.callerDid) {
+      res.status(409).json({ error: `courseId '${course.courseId}' is already authored by another agent — course ids are first-author-locked; choose a different courseId` });
+      return;
     }
-    agentScormCourses.set(course.courseId, course);
+    seatScormCourse(course); // capped set (round-39 cap now applied at EVERY set site via the shared setter)
     // selfBoundPod: the course is composed into the AUTHOR's OWN lattice — a subject_pod_url
     // naming a victim's pod must NOT be honored (unlike ingest-course, this had no owner guard,
     // so any wallet could decrypt-merge + PUT into a victim's canonical shared lattice).
@@ -6619,7 +6645,7 @@ app.post('/agent/scorm/launch', async (req, res) => {
       // (canonical); fall back to the legacy hand-authored RDF for old courses.
       const fromLattice = await loadCourseFromLattice(coursePod, authorDid, actorForPod(coursePod, MESH_ACTOR_LABELS), courseId).catch(() => null);
       const loaded = fromLattice ?? await loadScormCourse({ podUrl: coursePod, courseId }).catch(() => null);
-      if (loaded) { course = loaded as unknown as AgentScormCourse; agentScormCourses.set(courseId, course); }
+      if (loaded) { course = loaded as unknown as AgentScormCourse; seatScormCourse(course); }
     }
     if (!course) { res.status(404).json({ error: `no authored SCORM course '${courseId}' found in the catalog or on the author's pod — author it via /agent/scorm/author, or pass author_did/course_pod` }); return; }
     let tree;

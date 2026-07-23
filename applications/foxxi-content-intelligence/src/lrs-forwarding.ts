@@ -382,6 +382,13 @@ class InboundCredentialRegistry {
 
   private put(principal: string, secret: string, tenant: TenantId, label: string): InboundCredential {
     const id = 'cred-' + Buffer.from(`${principal}:${tenant}`).toString('base64url').slice(0, 24);
+    // The meta cap keys on id = base64(principal:tenant) (secret-INDEPENDENT), but liveMap keys
+    // on `${principal}:${secret}`, so rotating the secret for a FIXED principal overwrites the
+    // same meta id (cap never trips) while ADDING a fresh liveMap key each time — an unbounded
+    // plaintext-secret heap (round-40 blocker, the round-39 cap missed this). Drop the PRIOR
+    // secret's liveMap key on update so liveMap size == meta size (bounded by MAX).
+    const prior = this.meta.get(id);
+    if (prior) this.liveMap.delete(`${prior.principal}:${prior.secret}`);
     const cred: InboundCredential = { id, principal, secret, tenant, label, createdAt: new Date().toISOString() };
     this.meta.set(id, cred);
     this.liveMap.set(`${principal}:${secret}`, tenant);
