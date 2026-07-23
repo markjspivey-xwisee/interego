@@ -24,7 +24,7 @@ import {
   discover,
   fetchGraphContent,
 } from '@interego/solid';
-import { assertSafeFetchTarget, safeFetch } from './ssrf-guard.js';
+import { assertSafeFetchTarget, safeFetch, guardedFetchFn } from './ssrf-guard.js';
 import type {
   ManifestEntry,
 } from '@interego/core';
@@ -102,7 +102,7 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
   const entries = await discover(
     config.learnerPodUrl,
     undefined,
-    config.fetch ? { fetch: config.fetch as never } : undefined,
+    { fetch: guardedFetchFn(config.fetch) as never }, // re-guard manifest hop + redirects
   );
 
   // Match credential descriptors by local name — resilient to a foxxi
@@ -244,7 +244,7 @@ async function fetchCredential(entry: ManifestEntry, config: FetchClrConfig): Pr
     throw new Error(`no hydra:target on ${entry.descriptorUrl}`);
   }
   await assertSafeFetchTarget(graphUrl);
-  const { content } = await fetchGraphContent(graphUrl, config.fetch ? { fetch: config.fetch as never } : undefined);
+  const { content } = await fetchGraphContent(graphUrl, { fetch: guardedFetchFn(config.fetch) as never }); // graph hop: re-guard + redirect-safe
   if (!content) {
     throw new Error(`graph at ${graphUrl} returned empty or encrypted content`);
   }

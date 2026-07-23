@@ -30,7 +30,7 @@
  */
 
 import { withTransientRetry } from '@interego/solid';
-import { assertSafeFetchTarget } from './ssrf-guard.js';
+import { assertSafeFetchTarget, safeFetch } from './ssrf-guard.js';
 import { TenantPartition, DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
 import type { ForwardingConfigBlob, RawForwardingTarget, RawInboundCredential } from './forwarding-persist.js';
 
@@ -220,9 +220,12 @@ async function deliver(st: TargetState, stmt: Record<string, unknown>): Promise<
     // SSRF guard: a forwarding target endpoint can be registered by a self-sovereign
     // (non-operator) caller, so reject a private/loopback/link-local target before POSTing
     // statements to it (an internal endpoint would turn each forward into a blind SSRF).
-    await assertSafeFetchTarget(`${st.target.endpoint.replace(/\/$/, '')}/statements`);
+    const forwardUrl = `${st.target.endpoint.replace(/\/$/, '')}/statements`;
     const r = await withTransientRetry(async () => {
-      const resp = await fetch(`${st.target.endpoint.replace(/\/$/, '')}/statements`, {
+      // safeFetch re-guards the target AND refuses to follow a 3xx on this POST — a
+      // self-sovereign-registered endpoint that 30x'd the forward to an internal host
+      // would otherwise replay the body + Basic credentials there (round-28 SSRF POST).
+      const resp = await safeFetch(forwardUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -39,7 +39,7 @@ import {
 import { createHash } from 'node:crypto';
 import { buildPassedSessionTrace, type Cmi5Statement } from './cmi5.js';
 import { courseIri } from './course-identity.js';
-import { assertSafeFetchTarget, safeFetch } from "./ssrf-guard.js";
+import { assertSafeFetchTarget, safeFetch, guardedFetchFn } from "./ssrf-guard.js";
 import { CREDENTIAL_TYPES } from './credentials.js';
 
 // ── Demo #4: competency-gated launch ─────────────────────────
@@ -77,7 +77,7 @@ export async function checkLearnerPrereq(args: {
 }): Promise<PrereqCheckResult> {
   const fetchFn = args.fetch ?? globalThis.fetch;
   await assertSafeFetchTarget(args.learnerPodUrl); // SSRF: caller pod fetched via discover()
-  const entries = await discover(args.learnerPodUrl, undefined, { fetch: fetchFn as never });
+  const entries = await discover(args.learnerPodUrl, undefined, { fetch: guardedFetchFn(fetchFn) as never }); // re-guard manifest hop + redirects
   const credEntries = entries.filter(e =>
     (e.conformsTo ?? []).includes(CREDENTIAL_TYPES.CourseCompletionCredential)
     || (e.conformsTo ?? []).includes(CREDENTIAL_TYPES.CompetencyAssertion),
@@ -337,7 +337,7 @@ export async function composeAuditTrail(args: {
 }): Promise<AuditChain> {
   const fetchFn = args.fetch ?? globalThis.fetch;
   await assertSafeFetchTarget(args.learnerPodUrl); // SSRF: caller pod fetched via discover()
-  const entries = await discover(args.learnerPodUrl, undefined, { fetch: fetchFn as never });
+  const entries = await discover(args.learnerPodUrl, undefined, { fetch: guardedFetchFn(fetchFn) as never }); // re-guard manifest hop + redirects
   // We grab everything with a Provenance facet OR any conformsTo tag —
   // anything else doesn't have a compliance chain anchor.
   const relevant = entries.filter(e => (e.conformsTo ?? []).length > 0 || e.facetTypes.includes('Provenance'));
@@ -398,7 +398,7 @@ async function fetchCredentialJson(descriptorUrl: string, fetchFn: typeof global
   const targetMatch = ttl.match(/hydra:target\s+<([^>]+)>/);
   if (!targetMatch) throw new Error('no hydra:target');
   await assertSafeFetchTarget(targetMatch[1]!);
-  const { content } = await fetchGraphContent(targetMatch[1]!, { fetch: fetchFn as never });
+  const { content } = await fetchGraphContent(targetMatch[1]!, { fetch: guardedFetchFn(fetchFn) as never }); // graph hop: re-guard + redirect-safe
   if (!content) throw new Error('graph empty / encrypted');
   const m = content.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
   if (!m) throw new Error('no bundleJson literal');

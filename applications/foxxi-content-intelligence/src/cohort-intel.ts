@@ -21,7 +21,7 @@ import {
   discover,
   fetchGraphContent,
 } from '@interego/solid';
-import { assertSafeFetchTarget, safeFetch } from './ssrf-guard.js';
+import { assertSafeFetchTarget, safeFetch, guardedFetchFn } from './ssrf-guard.js';
 
 export interface CohortQAEntry {
   learnerDid: string;
@@ -103,7 +103,7 @@ export async function gatherCohortQA(args: {
   for (const podUrl of args.learnerPodUrls) {
     try {
       await assertSafeFetchTarget(podUrl); // SSRF: caller pod fetched via discover()
-      const entries = await discover(podUrl, undefined, { fetch: fetchFn as never });
+      const entries = await discover(podUrl, undefined, { fetch: guardedFetchFn(fetchFn) as never }); // re-guard manifest hop + redirects
       const qaEntries = entries.filter(e =>
         (e.conformsTo ?? []).some(c => c.includes('LearnerQuestionEvent') || c.includes('LearnerQA')),
       );
@@ -123,7 +123,7 @@ export async function gatherCohortQA(args: {
           const tm = ttl.match(/hydra:target\s+<([^>]+)>/);
           if (!tm) continue;
           await assertSafeFetchTarget(tm[1]!); // 2nd-hop SSRF
-          const graph = await fetchGraphContent(tm[1]!, { fetch: fetchFn as never });
+          const graph = await fetchGraphContent(tm[1]!, { fetch: guardedFetchFn(fetchFn) as never }); // graph hop: re-guard + redirect-safe
           if (!graph.content) continue;
           const bm = graph.content.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
           if (!bm) continue;
