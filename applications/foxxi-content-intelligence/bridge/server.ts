@@ -1501,6 +1501,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       tenantProfileName,
       issuerSeed: issuerKeySeed,
       learnerPodUrl,
+      fetch: guardedFetchFn(globalThis.fetch) as never, // WRITE-path redirect guard on the learner-pod PUT (round-34)
     });
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.issue_completion_credential', decision: 'allow', appliedPolicies: ['admin-full-access'] });
     return {
@@ -4270,6 +4271,7 @@ app.post('/agent/issue-credential', async (req, res) => {
     };
     const result = await issueCourseCompletionCredential({
       subject, tenantProfileDid, tenantProfileName, issuerSeed: creatorIssuerSeed, learnerPodUrl: recipientPod,
+      fetch: guardedFetchFn(globalThis.fetch) as never, // WRITE-path redirect guard on the recipient-pod PUT (round-34)
     });
     // Record the ISSUER's own act (expressive `credentialed` verb) into their lens +
     // pod — the issuing authority's work is first-class activity, not invisible.
@@ -4791,7 +4793,7 @@ app.post('/agent/publish-encryption-key', async (req, res) => {
     // The bridge's globalThis.fetch is patched to carry the pod-write bearer for
     // tenant-origin writes, so this PUT to <pod>/keys/encryption.json is authed.
     const { url } = await publishAgentEncryptionKey(subjectPod, publicKey, {
-      fetch: globalThis.fetch as any,
+      fetch: guardedFetchFn(globalThis.fetch) as any, // WRITE-path redirect guard: subjectPod is caller-bound; a WebID caller's attacker origin could 302 the PUT internal (round-34)
       publishedAt: new Date().toISOString(),
     });
     res.json({ ok: true, published: url, owner: callerDid, algorithm: 'X25519-XSalsa20-Poly1305' });

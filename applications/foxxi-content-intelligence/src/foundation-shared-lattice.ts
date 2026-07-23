@@ -285,7 +285,12 @@ async function casPersist(a: {
   if (!kpFull) { unreadable.add(a.label); return { ok: false, error: `no encryption key — cannot read or write "${a.label}"` }; }
   let instance = resident.get(a.label)!.pgsl;   // holds holonUri
   const s = podS(a.resourceUrl);
-  const doFetch = a.fetchFn as unknown as typeof fetch;
+  // WRITE-path redirect guard (round-34): the round-32 fix wrapped the READ path
+  // (getLattice) but casPersist's precondition read, conflict-reload, and the CAS PUT
+  // all ran on the raw fetchFn — so a caller-influenced pod (record_performance ->
+  // attacker-origin perfPod) could 302 the write to an internal host. guardedFetchFn
+  // re-guards every hop; the PUT (non-GET) additionally refuses to follow a redirect.
+  const doFetch = guardedFetchFn(a.fetchFn) as unknown as typeof fetch;
 
   // Establish a precondition. If the state is unknown (never loaded), read fresh so a
   // blind create can't clobber an existing corpus.

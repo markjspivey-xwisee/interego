@@ -422,6 +422,28 @@ export function attachPerformanceRoutes(app: Express, config: {
   setInterval(() => { void refreshFederationPeerProfile(); }, 60_000).unref?.();
 
   const liveOutcomes: OutcomeRecord[] = [];
+  // Bound the shared live-outcome array + reject exact replays. verifySignature
+  // (outcome-descriptor-publisher) carries NO timestamp/nonce, so a single signed
+  // outcome body could be POSTed N times to grow the shared calibration profile's
+  // totalSamples by N (Sybil-amplification) and the process array without bound
+  // (memory DoS) — round-34. A cap (evict oldest) + a seen-signature de-dup make the
+  // write idempotent per signed body; the per-IP write limiter bounds throughput.
+  const OUTCOME_MAX = 5000;
+  const seenOutcomeSigs = new Set<string>();
+  const pushLiveOutcome = (o: OutcomeRecord): void => {
+    liveOutcomes.push(o);
+    if (liveOutcomes.length > OUTCOME_MAX) liveOutcomes.shift();
+  };
+  /** returns true if this signature is NEW (record it); false if it is a replay. */
+  const noteOutcomeSig = (sig: string): boolean => {
+    if (seenOutcomeSigs.has(sig)) return false;
+    seenOutcomeSigs.add(sig);
+    if (seenOutcomeSigs.size > OUTCOME_MAX * 2) {
+      const oldest = seenOutcomeSigs.values().next().value as string | undefined;
+      if (oldest !== undefined) seenOutcomeSigs.delete(oldest);
+    }
+    return true;
+  };
   const calibrationProfiles = () => {
     const tenant = buildCalibrationProfile([...seedRecords, ...liveOutcomes]);
     const federated = composeCalibrationProfiles([tenant, federationView(cachedPeerProfile)]);
@@ -676,6 +698,7 @@ export function attachPerformanceRoutes(app: Express, config: {
   //   API.
   app.post('/performance/outcome', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    if (!writeRateOk(req, res)) return; // unauth-writable shared-calibration + pod write: bound throughput (round-34)
     const body = (req.body ?? {}) as Record<string, unknown>;
     const author = asPerformer(body.author);
     const signature = typeof body.signature === 'string' ? body.signature : undefined;
@@ -695,13 +718,20 @@ export function attachPerformanceRoutes(app: Express, config: {
       });
       return;
     }
+    // Replay guard: verifySignature has no timestamp/nonce, so reject a re-POST of
+    // the EXACT signed body (idempotent per signature) — a replay would otherwise
+    // multiply totalSamples in the shared calibration profile (round-34).
+    if (!noteOutcomeSig(signature)) {
+      res.json({ recorded: false, duplicate: true, note: 'this exact signed outcome was already recorded — replay ignored (idempotent)' });
+      return;
+    }
     // signedPayload is the EXACT bytes the agent signed; parse + validate it.
     let parsedPayload: unknown;
     try { parsedPayload = JSON.parse(signedPayload); }
     catch { bad(res, 'signedPayload must be valid JSON'); return; }
     const outcome = recordLiveOutcome(parsedPayload);
     if (typeof outcome === 'string') { bad(res, outcome); return; }
-    liveOutcomes.push(outcome);
+    pushLiveOutcome(outcome);
 
     const evidence = typeof (parsedPayload as Record<string, unknown>)?.evidence === 'string'
       ? (parsedPayload as Record<string, unknown>).evidence as string : undefined;
@@ -863,6 +893,7 @@ export function attachPerformanceRoutes(app: Express, config: {
 
   app.post('/agent/teach', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    if (!writeRateOk(req, res)) return; // pushes into the shared calibration array + writes descriptors (round-34)
     const b = (req.body ?? {}) as Record<string, unknown>;
     const teacher = asPerformer(b.teacher);
     const learner = asPerformer(b.learner);
@@ -926,7 +957,7 @@ export function attachPerformanceRoutes(app: Express, config: {
       // Cross-vertical upward causation: an A2A teaching outcome (which
       // itself composes agent-collective's ac:TeachingPackage) flows up
       // into the same calibration profile as human course completions.
-      if (outcome) liveOutcomes.push(outcome);
+      if (outcome) pushLiveOutcome(outcome);
 
       // Publish two real linked-data descriptors: the ac:TeachingPackage
       // (the transmissible capability itself) and the amta:Attestation
