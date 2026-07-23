@@ -54,9 +54,12 @@ describe('pgsl-store: fleet migration runner (S5 tooling — synthetic fleet, sa
     expect(report.migratedPods).toBe(2);
     expect(report.failedPods).toEqual([]);
 
-    // Byte-parity across the fleet (incl. the binary PNG).
+    // Byte-parity across the fleet (incl. the binary PNG). Compare contents, not the
+    // carrier type — readResource returns a Node Buffer, and vitest's toEqual treats a
+    // Buffer and a Uint8Array with identical bytes as unequal (constructor mismatch), so
+    // spread both sides to plain arrays (as the PNG assertion below already does).
     const a = await ldp.readResource('https://pod/alice/', 'ctx/a.ttl');
-    expect(enc.encode('ex:a ex:p "1" .\n')).toEqual(a!.bytes);
+    expect([...a!.bytes]).toEqual([...enc.encode('ex:a ex:p "1" .\n')]);
     const png = await ldp.readResource('https://pod/bob/', 'x.png');
     expect([...png!.bytes]).toEqual([137, 80, 78, 71, 0, 255]);
   });
