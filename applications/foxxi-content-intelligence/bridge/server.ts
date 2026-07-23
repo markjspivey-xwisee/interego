@@ -113,7 +113,7 @@ import {
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
-import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadCourseFromLattice, resolvePublicNode, markLatticePublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
+import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadCourseFromLattice, resolvePublicNode, markLatticePublic, isLabelPublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, type AgentScormCourseLike } from '../src/course-graph.js';
 import { courseToSkillMd, skillMdToAgenticCourse } from '../src/course-skill-bridge.js';
@@ -599,6 +599,29 @@ async function assertSelfSovereignOwner(podUrl: string, identity: string | null)
   });
   if (!isOwner) return `auth: ${identity} is not the owner of the self-sovereign tenant at ${podUrl} — only its owner may ingest / assign / enroll here.`;
   return null;
+}
+
+/** Gate a tenant-OWNER pod write (bootstrap_tenant / publish_authoring_policy).
+ *  assertSelfSovereignOwner intentionally SHORT-CIRCUITS to authorized for the
+ *  configured (acme) tenant, deferring to "its own admin gate" — but a handler
+ *  that only calls assertSelfSovereignOwner then has NO gate at all for the
+ *  configured tenant, so any signed wallet forges the acme write with the
+ *  bridge's privileged bearer (round-24 finding: the short-circuit defeated the
+ *  round-23 auth gate). So: for the configured tenant, require an ADMIN caller
+ *  (resolveCaller → role admin — the deferred-to gate, actually applied here);
+ *  for a self-sovereign tenant, require the PoP signer to be the tenant owner.
+ *  `args` still carries the {_signature,_signed_payload} envelope, which
+ *  resolveCaller re-recovers (mergeSignedEnvelope does not strip it). */
+async function assertTenantOwnerWrite(args: Record<string, unknown>, targetPod: string, signer: string | null): Promise<string | null> {
+  if (samePod(targetPod, tenantPodUrl)) {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved.error;
+    if (resolved.ctx.role !== 'admin') {
+      return `forbidden — writing to the configured tenant at ${targetPod} requires an admin caller (role: ${resolved.ctx.role}). A self-signed wallet cannot write tenant metadata / authoring policy into the closed tenant.`;
+    }
+    return null;
+  }
+  return assertSelfSovereignOwner(targetPod, signer ? `did:ethr:${signer}` : null);
 }
 
 /** Upsert an assignment policy (keyed by course_id + audience_group_id) into a
@@ -1271,8 +1294,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     try { signer = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
     const pod = (args.tenant_pod_url as string) || tenantPodUrl;
     if (!pod) return { error: 'tenant_pod_url required (or set FOXXI_TENANT_POD_URL)' };
-    // Only the self-sovereign tenant's OWNER may write to its catalog.
-    const ownerErr = await assertSelfSovereignOwner(pod, signer);
+    // Only the self-sovereign tenant's OWNER (or, for the configured tenant, an
+    // admin) may write to its catalog. assertSelfSovereignOwner short-circuits to
+    // authorized for the configured tenant, so — like bootstrap_tenant — calling
+    // it alone left an UNAUTHENTICATED write into the acme catalog (round-25).
+    const ownerErr = await assertTenantOwnerWrite(args, pod, signer);
     if (ownerErr) return { error: ownerErr };
     if (!args.parsed) {
       return {
@@ -1312,7 +1338,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     try { policySigner = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
     if (!policySigner) return { error: 'a signed request is required — an authoring policy is a tenant-owner pod write' };
     const config = configOrThrow(args);
-    const policyOwnerErr = await assertSelfSovereignOwner(config.tenantPodUrl, `did:ethr:${policySigner}`);
+    const policyOwnerErr = await assertTenantOwnerWrite(args, config.tenantPodUrl, policySigner);
     if (policyOwnerErr) return { error: policyOwnerErr };
     const policy: AuthoringPolicy = {
       acceptedTools: (args.accepted_tools as string[]) ?? [],
@@ -1338,8 +1364,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     try { signer = mergeSignedEnvelope(args); } catch (e) { return { error: (e as Error).message }; }
     const pod = (args.tenant_pod_url as string) || tenantPodUrl;
     if (!pod) return { error: 'tenant_pod_url required (or set FOXXI_TENANT_POD_URL)' };
-    // Only the self-sovereign tenant's OWNER may publish assignment policies.
-    const assignOwnerErr = await assertSelfSovereignOwner(pod, signer);
+    // Only the self-sovereign tenant's OWNER (or, for the configured tenant, an
+    // admin) may publish assignment policies. Like ingest_content_package, calling
+    // assertSelfSovereignOwner alone left an UNAUTHENTICATED write into the acme
+    // TenantAssignments (the short-circuit authorizes the configured tenant) (round-25).
+    const assignOwnerErr = await assertTenantOwnerWrite(args, pod, signer);
     if (assignOwnerErr) return { error: assignOwnerErr };
     const courseIri = typeof args.course_iri === 'string' ? args.course_iri.trim() : '';
     const audienceTag = typeof args.audience_tag === 'string' ? args.audience_tag.trim() : '';
@@ -2683,7 +2712,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!bootSigner) return { error: 'a signed request is required — bootstrap_tenant writes TenantMetadata to your pod' };
     const bootPod = args.pod_url as string;
     if (typeof bootPod !== 'string' || !bootPod) return { error: 'pod_url is required' };
-    const bootOwnerErr = await assertSelfSovereignOwner(bootPod, `did:ethr:${bootSigner}`);
+    const bootOwnerErr = await assertTenantOwnerWrite(args, bootPod, bootSigner);
     if (bootOwnerErr) return { error: bootOwnerErr };
     return bootstrapTenant({
       tenantSlug: args.tenant_slug as string,
@@ -4748,6 +4777,10 @@ app.get('/agent/lattice/atom/:hash', (req, res) => { void serveLatticeNode('atom
 app.get('/agent/lattice/fragment/:hash', (req, res) => { void serveLatticeNode('fragment', req, res); });
 
 app.get('/agent/lattice/:label', (req, res) => {
+  // Only PUBLIC lattices (ns-foxxi / spec-ontology / public-memories) are
+  // dereferenceable unauthenticated. A per-agent record lattice holds xAPI
+  // statements + learner PII and must never be served here (round-24 finding).
+  if (!isLabelPublic(req.params.label)) { res.status(404).json({ ok: false, error: `no public shared lattice for '${req.params.label}'` }); return; }
   const v = latticeNamespaceView(req.params.label);
   if (!v.resident) { res.status(404).json({ ok: false, error: `no resident shared lattice for '${req.params.label}' — the agent must compose an artifact first (record-performance / scorm-author / issue-credential)` }); return; }
   res.json({ ok: true, label: req.params.label, ...v });
@@ -4755,6 +4788,7 @@ app.get('/agent/lattice/:label', (req, res) => {
 app.get('/agent/lattice/:label/term', (req, res) => {
   const iri = typeof req.query.iri === 'string' ? req.query.iri : '';
   if (!iri) { res.status(400).json({ ok: false, error: 'iri query parameter required' }); return; }
+  if (!isLabelPublic(req.params.label)) { res.status(404).json({ ok: false, error: `no public shared lattice for '${req.params.label}'` }); return; } // unauth: public labels only (round-24)
   if (!isResident(req.params.label)) { res.status(404).json({ ok: false, error: 'no resident shared lattice for this agent' }); return; }
   const d = dereferenceTerm(req.params.label, iri);
   if (!d) { res.status(404).json({ ok: false, error: 'no resident shared lattice for this agent' }); return; }
@@ -4767,6 +4801,7 @@ app.get('/agent/lattice/:label/holon', (req, res) => {
   const holon = typeof req.query.uri === 'string' ? req.query.uri : '';
   const as = (typeof req.query.as === 'string' ? req.query.as : 'rdf') as ProjectionKind;
   if (!holon) { res.status(400).json({ ok: false, error: 'uri query parameter (holon URI) required' }); return; }
+  if (!isLabelPublic(req.params.label)) { res.status(404).json({ ok: false, error: `no public shared lattice for '${req.params.label}'` }); return; } // unauth: public labels only — never serve a private record artifact (round-24)
   if (!isResident(req.params.label)) { res.status(404).json({ ok: false, error: 'no resident shared lattice for this agent' }); return; }
   const artifact = readArtifact(req.params.label, holon);
   const projection = projectAs(req.params.label, holon, as);
@@ -4790,6 +4825,12 @@ app.get('/agent/lattice/:label/interrogate', async (req, res) => {
   const interrogatives = typeof req.query.interrogatives === 'string'
     ? req.query.interrogatives.split(',').map(s => s.trim()).filter(Boolean) : undefined;
   if (!holon) { res.status(400).json({ ok: false, error: 'uri query parameter (holon URI) required' }); return; }
+  // Gate on public BEFORE the rehydrate: the rehydrate below derives a pod URL
+  // from the label and pulls+decrypts that lattice with the bridge's own key, so
+  // an unauthenticated caller must not be able to name a private per-agent label
+  // and have the bridge fetch/decrypt/serve it (round-24 finding — live-verified
+  // read of another agent's raw xAPI statements). Public labels only.
+  if (!isLabelPublic(label)) { res.status(404).json({ ok: false, error: `no public shared lattice for '${label}'` }); return; }
   // Rehydrate from the pod if not resident in THIS replica (the lattice is encrypted
   // with the bridge's own key, so it can always decrypt its resource → replica/restart
   // independent). label encodes the pod segment; agent_did is optional (only used when

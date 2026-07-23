@@ -98,6 +98,7 @@ export interface FetchClrConfig {
  * descriptor (the substrate's standard publish() works for that).
  */
 export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
+  await assertSafeFetchTarget(config.learnerPodUrl); // 1st-hop SSRF: caller-supplied pod fetched via discover()
   const entries = await discover(
     config.learnerPodUrl,
     undefined,

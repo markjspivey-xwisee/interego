@@ -21,7 +21,17 @@ import type {
   Fragment,
   PGSLInstance,
 } from './types.js';
+import { escapeTurtleLiteral } from '@interego/core';
 import { pullbackSquare } from './category.js';
+
+// Turtle escaping for hand-built serialization. A PGSL atom value / provenance
+// IRI can be caller-derived (e.g. an /agent/publish-memory body flows into a
+// public-commons atom that is then served UNAUTHENTICATED as Turtle) — an
+// unescaped `"` / newline in a literal, or `>` in an IRIREF, breaks out and
+// injects forged triples (prov:wasAttributedTo attribution forgery). literals →
+// escapeTurtleLiteral (the shared @interego/core escaper); IRIREFs → escIri
+// (percent-encode the IRIREF-illegal chars per the Turtle grammar).
+const escIri = (s: unknown): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
 
 // ── PGSL Namespace ──────────────────────────────────────────
 
@@ -69,49 +79,51 @@ export function pgslTurtlePrefixes(): string {
 // ── Node → Turtle ───────────────────────────────────────────
 
 function atomToTurtle(atom: Atom): string {
+  // Only a string value is a free-form literal that must be escaped; number /
+  // boolean are typed and structurally safe.
   const valueStr = typeof atom.value === 'string'
-    ? `"${atom.value}"`
+    ? `"${escapeTurtleLiteral(atom.value)}"`
     : `"${atom.value}"^^xsd:${typeof atom.value === 'number' ? (Number.isInteger(atom.value) ? 'integer' : 'double') : 'boolean'}`;
 
   return [
-    `<${atom.uri}> a pgsl:Atom, prov:Entity ;`,
+    `<${escIri(atom.uri)}> a pgsl:Atom, prov:Entity ;`,
     `    pgsl:value ${valueStr} ;`,
     `    pgsl:level "0"^^xsd:nonNegativeInteger ;`,
-    `    prov:wasAttributedTo <${atom.provenance.wasAttributedTo}> ;`,
-    `    prov:generatedAtTime "${atom.provenance.generatedAtTime}"^^xsd:dateTime .`,
+    `    prov:wasAttributedTo <${escIri(atom.provenance.wasAttributedTo)}> ;`,
+    `    prov:generatedAtTime "${escapeTurtleLiteral(atom.provenance.generatedAtTime)}"^^xsd:dateTime .`,
   ].join('\n');
 }
 
 function fragmentToTurtle(fragment: Fragment, pgsl: PGSLInstance): string {
   const lines: string[] = [
-    `<${fragment.uri}> a pgsl:Fragment, prov:Entity ;`,
+    `<${escIri(fragment.uri)}> a pgsl:Fragment, prov:Entity ;`,
     `    pgsl:level "${fragment.level}"^^xsd:nonNegativeInteger ;`,
     `    pgsl:height "${fragment.height}"^^xsd:nonNegativeInteger ;`,
   ];
 
   // Items as an RDF list
-  lines.push(`    pgsl:itemList ( ${fragment.items.map(i => `<${i}>`).join(' ')} ) ;`);
+  lines.push(`    pgsl:itemList ( ${fragment.items.map(i => `<${escIri(i)}>`).join(' ')} ) ;`);
 
   // Individual item links (for SPARQL queryability)
   for (const item of fragment.items) {
-    lines.push(`    pgsl:item <${item}> ;`);
+    lines.push(`    pgsl:item <${escIri(item)}> ;`);
   }
 
   // Constituents (for level ≥ 2)
-  if (fragment.left) lines.push(`    pgsl:leftConstituent <${fragment.left}> ;`);
-  if (fragment.right) lines.push(`    pgsl:rightConstituent <${fragment.right}> ;`);
+  if (fragment.left) lines.push(`    pgsl:leftConstituent <${escIri(fragment.left)}> ;`);
+  if (fragment.right) lines.push(`    pgsl:rightConstituent <${escIri(fragment.right)}> ;`);
 
   // Pullback square (if applicable)
   const pb = pullbackSquare(pgsl, fragment.uri);
   if (pb) {
-    lines.push(`    pgsl:overlap <${pb.overlap}> ;`);
+    lines.push(`    pgsl:overlap <${escIri(pb.overlap)}> ;`);
   }
 
   // Provenance
-  lines.push(`    prov:wasAttributedTo <${fragment.provenance.wasAttributedTo}> ;`);
+  lines.push(`    prov:wasAttributedTo <${escIri(fragment.provenance.wasAttributedTo)}> ;`);
 
   // Close with generatedAtTime
-  lines.push(`    prov:generatedAtTime "${fragment.provenance.generatedAtTime}"^^xsd:dateTime .`);
+  lines.push(`    prov:generatedAtTime "${escapeTurtleLiteral(fragment.provenance.generatedAtTime)}"^^xsd:dateTime .`);
 
   return lines.join('\n');
 }
