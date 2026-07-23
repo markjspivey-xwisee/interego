@@ -62,7 +62,7 @@ function evictResidentIfOverCap(): void {
     if (publicLabels.has(label)) continue;
     const ent = resident.get(label);
     resident.delete(label);
-    if (ent?.resourceUrl) podState.delete(ent.resourceUrl);
+    if (ent?.resourceUrl) { podState.delete(ent.resourceUrl); podWriteTail.delete(ent.resourceUrl); } // round-42: podWriteTail is per-resourceUrl too
     unreadable.delete(label);
     return;
   }
@@ -161,6 +161,10 @@ function clearRetry(url: string): void { const s = podS(url); s.nextRetryAt = un
 function withPodWriteLock<T>(url: string, fn: () => Promise<T>): Promise<T> {
   const prev = podWriteTail.get(url) ?? Promise.resolve();
   const next = prev.then(fn, fn);
+  // Independent cap (round-42): resourceUrl is per-wallet on the compose-write path, so a
+  // wallet-cycling attacker grows podWriteTail without limit. Evict oldest past a bound (the
+  // resident eviction also cleans it for evicted labels; this backstops resourceUrls not seated).
+  if (podWriteTail.size >= 20_000 && !podWriteTail.has(url)) { const oldest = podWriteTail.keys().next().value; if (oldest !== undefined) podWriteTail.delete(oldest); }
   podWriteTail.set(url, next.then(() => undefined, () => undefined));
   return next;
 }

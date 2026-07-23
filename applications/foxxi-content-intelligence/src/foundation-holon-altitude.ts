@@ -114,7 +114,7 @@ export async function alsoPersistEncryptedHolon(
       holonUri,
       recipientPublicKeys: recipients,
       senderKeyPair: kp,
-      fetch: opts.fetch ?? (globalThis.fetch as unknown as FetchFn),
+      fetch: (guardedFetch ?? (globalThis.fetch as unknown as FetchFn)) as FetchFn, // re-guard the shape-read + write hops on the caller pod (round-42)
     });
     return r.holonResourceUrl;
   } catch {

@@ -103,10 +103,18 @@ let _hydrator: ForwardingHydrator | null = null;
 const _hydrated = new Set<TenantId>();
 export function registerForwardingHydrator(fn: ForwardingHydrator): void { _hydrator = fn; }
 /** Mark a tenant already hydrated (e.g. the affordance handler loaded it with a known pod). */
-export function markForwardingHydrated(tenant: TenantId): void { _hydrated.add(tenant); }
+/** Cap the per-tenant hydration-marker set — each distinct wallet mints a lens tenant, so a
+ *  wallet-cycling attacker grows _hydrated without limit (round-42). Evict oldest past the cap. */
+const HYDRATED_MAX = 20_000;
+function markHydratedCapped(tenant: TenantId): void {
+  if (_hydrated.has(tenant)) return;
+  if (_hydrated.size >= HYDRATED_MAX) { const oldest = _hydrated.values().next().value; if (oldest !== undefined) _hydrated.delete(oldest); }
+  _hydrated.add(tenant);
+}
+export function markForwardingHydrated(tenant: TenantId): void { markHydratedCapped(tenant); }
 export async function ensureForwardingHydrated(tenant: TenantId): Promise<void> {
   if (_hydrated.has(tenant)) return;
-  _hydrated.add(tenant); // mark first so a failed/slow load doesn't re-loop
+  markHydratedCapped(tenant); // mark first so a failed/slow load doesn't re-loop
   if (_hydrator) { try { await _hydrator(tenant); } catch { /* best-effort */ } }
 }
 
