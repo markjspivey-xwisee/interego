@@ -27,6 +27,7 @@ import type { IRI, FetchFn } from '@interego/core';
 import { mintNodeId } from '@interego/core';
 import { resolveAgentEncryptionKey } from '@interego/solid';
 import { bridgeEncryptionKeypair } from './foundation-holon-altitude.js';
+import { assertSafeFetchTarget } from './ssrf-guard.js';
 
 interface AgentLattice { pgsl: PGSLInstance; podUrl: string; agentDid: string; resourceUrl: string }
 const resident = new Map<string, AgentLattice>();   // label -> in-memory shared lattice
@@ -226,6 +227,12 @@ async function getLattice(podUrl: string, agentDid: string, label: string, fetch
         // No key: we cannot have read the pod copy, so we must never write over it.
         unreadable.add(label); scheduleRetry(resourceUrl);
       } else {
+        // SSRF guard at the shared lattice read-fetch primitive: resourceUrl derives from a
+        // caller-influenced podUrl (resolveSubjectPodUrl only did a sync literal check), so
+        // DNS-resolve-guard here before the fetch — covers every ensureResident /
+        // loadCourseFromLattice / getLattice read path, incl. a public host that resolves
+        // to an internal IP. A throw fences the label (unreadable) rather than 500ing.
+        await assertSafeFetchTarget(resourceUrl);
         const d = await resolveLatticeFromPodDetailed(resourceUrl, kp, fetchFn as unknown as typeof fetch);
         if (d.status === 'ok') {
           // Adopt the pod copy if we have no in-memory ingests; if we DO (we composed
@@ -399,6 +406,10 @@ export async function composeIntoSharedLattice(args: {
   fetch?: FetchFn;
 }): Promise<ComposeResult | null> {
   try {
+    // SSRF guard on the WRITE path (best-effort, never throws): args.podUrl is the
+    // compose/write target and can be caller-influenced; a getLattice cache-hit would
+    // otherwise skip the read-fetch guard and this function would PUT to an internal host.
+    await assertSafeFetchTarget(args.podUrl);
     const kp = bridgeEncryptionKeypair();
     if (!kp || args.terms.length === 0) return null;
     if (args.publicLattice) markLatticePublic(args.label);

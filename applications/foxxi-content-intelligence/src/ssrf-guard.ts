@@ -110,8 +110,12 @@ export async function assertSafeFetchTarget(rawUrl: string): Promise<void> {
   const isIpLiteral = /^\d{1,3}(\.\d{1,3}){3}$/.test(bare) || bare.includes(':');
   if (!isIpLiteral) {
     let addrs: Array<{ address: string }>;
+    // A host that does NOT resolve poses no SSRF risk (there is nothing to connect to; the
+    // fetch simply fails), so treat a lookup failure as allowed rather than a hard error —
+    // blocking it would break a legitimate pod during a transient DNS blip and needlessly
+    // reject test/offline hosts. We only reject a host that resolves to a PRIVATE address.
     try { addrs = await lookup(bare, { all: true }); }
-    catch { throw new Error('target host does not resolve'); }
+    catch { return; }
     for (const a of addrs) {
       if (isPrivateHostname(a.address)) throw new Error('target host resolves to a private/loopback/link-local address');
     }

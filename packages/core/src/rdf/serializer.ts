@@ -31,8 +31,30 @@ import {
 
 // ── Helpers ──────────────────────────────────────────────────
 
+// Escape a value so it cannot break out of its Turtle token. These are the
+// single point every IRI (`<...>`) and string literal (`"..."`) in a serialized
+// descriptor passes through, so a caller-influenced facet value (an agent id, a
+// label, an issuer, a hydra:target, an SCM variable) cannot inject arbitrary
+// triples/relations into the graph a pod publishes. A value with no illegal
+// character is returned unchanged, so valid data round-trips identically.
+function escIriBody(value: string): string {
+  // Percent-encode every char illegal in a Turtle IRIREF: angle brackets,
+  // quotes, braces, pipe, caret, backtick, backslash, whitespace/controls.
+  return String(value).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
+}
+function escLiteral(value: string): string {
+  return String(value)
+    .replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+}
+/** A quoted, escaped Turtle string literal (optionally language/datatype-tagged
+ *  by the caller appending `@lang`/`^^type`). Use for every inline `"${x}"`. */
+function q(value: string | number | boolean): string {
+  return `"${escLiteral(String(value))}"`;
+}
+
 function iri(value: string): string {
-  return `<${value}>`;
+  return `<${escIriBody(value)}>`;
 }
 
 function literal(value: string | number | boolean, datatype?: string): string {
@@ -58,9 +80,9 @@ function literal(value: string | number | boolean, datatype?: string): string {
       : `"${value}"^^xsd:double`;
   }
   if (datatype) {
-    return `"${value}"^^${datatype}`;
+    return `"${escLiteral(String(value))}"^^${datatype}`;
   }
-  return `"${value}"`;
+  return `"${escLiteral(String(value))}"`;
 }
 
 function dateTimeLit(dt: string): string {
@@ -80,7 +102,7 @@ function serializeTemporalFacet(f: TemporalFacetData): string {
   if (f.validFrom) props.push(`iep:validFrom ${dateTimeLit(f.validFrom)}`);
   if (f.validUntil) props.push(`iep:validUntil ${dateTimeLit(f.validUntil)}`);
   if (f.temporalResolution) {
-    props.push(`iep:temporalResolution "${f.temporalResolution}"^^xsd:duration`);
+    props.push(`iep:temporalResolution ${q(f.temporalResolution)}^^xsd:duration`);
   }
   if (f.temporalRelation) props.push(`iep:temporalRelation ${iri(f.temporalRelation)}`);
   return bnode(props);
@@ -130,7 +152,7 @@ function serializeAgentFacet(f: AgentFacetData): string {
       agentProps.push('a prov:Agent');
     }
     if (f.assertingAgent.label) {
-      agentProps.push(`rdfs:label "${f.assertingAgent.label}"`);
+      agentProps.push(`rdfs:label ${q(f.assertingAgent.label)}`);
     }
     if (f.assertingAgent.identity) {
       agentProps.push(`iep:agentIdentity ${iri(f.assertingAgent.identity)}`);
@@ -174,7 +196,7 @@ function serializeSemioticFacet(f: SemioticFacetData): string {
     // serialize as xsd:integer and fail the core-1.0 SHACL datatype shape.
     props.push(`iep:epistemicConfidence ${literal(f.epistemicConfidence, 'xsd:double')}`);
   }
-  if (f.languageTag) props.push(`iep:languageTag "${f.languageTag}"^^xsd:language`);
+  if (f.languageTag) props.push(`iep:languageTag ${q(f.languageTag)}^^xsd:language`);
   // Revocation Extension — Proposal B (spec/revocation.md). Each
   // condition emits as a nested blank node so federation readers can
   // evaluate the successor query without decrypting the payload.
@@ -204,10 +226,10 @@ function serializeTrustFacet(f: TrustFacetData): string {
 
   if (f.proof) {
     const proofProps: string[] = [
-      `iep:proofScheme "${f.proof.scheme}"`,
+      `iep:proofScheme ${q(f.proof.scheme)}`,
       `iep:proofUrl ${iri(f.proof.proofUrl)}`,
     ];
-    if (f.proof.signer) proofProps.push(`iep:proofSigner "${f.proof.signer}"`);
+    if (f.proof.signer) proofProps.push(`iep:proofSigner ${q(f.proof.signer)}`);
     props.push(`iep:proof ${bnode(proofProps)}`);
   }
 
@@ -226,7 +248,7 @@ function serializeFederationFacet(f: FederationFacetData): string {
   if (f.distribution) {
     const distProps: string[] = [
       'a dcat:Distribution',
-      `dcat:mediaType "${f.distribution.mediaType}"`,
+      `dcat:mediaType ${q(f.distribution.mediaType)}`,
       `dcat:accessURL ${iri(f.distribution.accessURL)}`,
     ];
     props.push(`dcat:distribution ${bnode(distProps)}`);
@@ -237,7 +259,7 @@ function serializeFederationFacet(f: FederationFacetData): string {
 
 function serializeCausalFacet(f: CausalFacetData): string {
   const props: string[] = ['a iep:CausalFacet'];
-  props.push(`iep:causalRole "${f.causalRole}"`);
+  props.push(`iep:causalRole ${q(f.causalRole)}`);
 
   if (f.causalModel) props.push(`iep:causalModel ${iri(f.causalModel)}`);
   if (f.parentObservation) props.push(`iep:parentObservation ${iri(f.parentObservation)}`);
@@ -250,8 +272,8 @@ function serializeCausalFacet(f: CausalFacetData): string {
     for (const iv of f.interventions) {
       const ivProps: string[] = [
         'a iep:Intervention',
-        `iep:intervenes "${iv.variable}"`,
-        `iep:interventionValue "${iv.value}"`,
+        `iep:intervenes ${q(iv.variable)}`,
+        `iep:interventionValue ${q(iv.value)}`,
       ];
       props.push(`iep:intervenes ${bnode(ivProps)}`);
     }
@@ -260,18 +282,18 @@ function serializeCausalFacet(f: CausalFacetData): string {
   // Serialize counterfactual query
   if (f.counterfactualQuery) {
     const cfProps: string[] = [
-      `iep:counterfactualTarget "${f.counterfactualQuery.target}"`,
+      `iep:counterfactualTarget ${q(f.counterfactualQuery.target)}`,
     ];
     const iv = f.counterfactualQuery.intervention;
     cfProps.push(`iep:intervenes ${bnode([
       'a iep:Intervention',
-      `iep:intervenes "${iv.variable}"`,
-      `iep:interventionValue "${iv.value}"`,
+      `iep:intervenes ${q(iv.variable)}`,
+      `iep:interventionValue ${q(iv.value)}`,
     ])}`);
     for (const [varName, value] of Object.entries(f.counterfactualQuery.evidence)) {
       cfProps.push(`iep:counterfactualEvidence ${bnode([
-        `iep:causalVariable "${varName}"`,
-        `iep:interventionValue "${value}"`,
+        `iep:causalVariable ${q(varName)}`,
+        `iep:interventionValue ${q(String(value))}`,
       ])}`);
     }
     props.push(`iep:counterfactualQuery ${bnode(cfProps)}`);
@@ -283,17 +305,17 @@ function serializeCausalFacet(f: CausalFacetData): string {
     const scmProps: string[] = [
       'a iep:StructuralCausalModel',
     ];
-    if (scm.label) scmProps.push(`rdfs:label "${scm.label}"`);
+    if (scm.label) scmProps.push(`rdfs:label ${q(scm.label)}`);
     for (const v of scm.variables) {
       const vProps: string[] = [
         'a iep:CausalVariable',
-        `rdfs:label "${v.name}"`,
+        `rdfs:label ${q(v.name)}`,
       ];
       if (v.exogenous) vProps.push(`iep:exogenous ${literal(true)}`);
-      if (v.mechanism) vProps.push(`iep:mechanism "${v.mechanism}"`);
+      if (v.mechanism) vProps.push(`iep:mechanism ${q(v.mechanism)}`);
       if (v.causes) {
         for (const c of v.causes) {
-          vProps.push(`iep:causes "${c}"`);
+          vProps.push(`iep:causes ${q(c)}`);
         }
       }
       scmProps.push(`iep:causalVariable ${bnode(vProps)}`);
@@ -301,10 +323,10 @@ function serializeCausalFacet(f: CausalFacetData): string {
     for (const e of scm.edges) {
       const eProps: string[] = [
         'a iep:CausalEdge',
-        `iep:causes "${e.from}" ;`,
-        `iep:effectOf "${e.to}"`,
+        `iep:causes ${q(e.from)} ;`,
+        `iep:effectOf ${q(e.to)}`,
       ];
-      if (e.mechanism) eProps.push(`iep:mechanism "${e.mechanism}"`);
+      if (e.mechanism) eProps.push(`iep:mechanism ${q(e.mechanism)}`);
       if (e.strength !== undefined) eProps.push(`iep:causalConfidence ${literal(e.strength)}`);
       scmProps.push(`iep:causalEdge ${bnode(eProps)}`);
     }
@@ -342,8 +364,8 @@ function serializeProjectionFacet(f: ProjectionFacetData): string {
         'a iep:VocabularyMapping',
         `iep:describes ${iri(m.source)}`,
         `iep:binding ${iri(m.target)}`,
-        `iep:mappingType "${m.mappingType}"`,
-        `iep:mappingRelationship "${m.relationship}"`,
+        `iep:mappingType ${q(m.mappingType)}`,
+        `iep:mappingRelationship ${q(m.relationship)}`,
       ];
       props.push(`iep:vocabularyMapping ${bnode(mProps)}`);
     }
@@ -504,9 +526,9 @@ function serializeTripleTerm(t: TripleTerm): string {
 }
 
 function serializeLiteral(lit: Literal): string {
-  if (lit.language) return `"${lit.value}"@${lit.language}`;
-  if (lit.datatype) return `"${lit.value}"^^<${lit.datatype}>`;
-  return `"${lit.value}"`;
+  if (lit.language) return `${q(lit.value)}@${lit.language}`;
+  if (lit.datatype) return `${q(lit.value)}^^<${escIriBody(lit.datatype)}>`;
+  return q(lit.value);
 }
 
 /**

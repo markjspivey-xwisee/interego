@@ -891,6 +891,19 @@ const MESH_ACTOR_LABELS: Record<string, string> = Object.fromEntries(
 );
 let meshProjectionRunning = false;
 
+/** Resolve a SELF-SOVEREIGN caller's OWN pod. An explicit subject_pod_url override is
+ *  honored ONLY when it resolves to the SAME actor label as the caller's derived pod —
+ *  so a self-record (record-performance / record-course-completion / scorm launch) cannot
+ *  be routed, via the pod arg, into a DIFFERENT agent's lens (which the ELR/competency
+ *  rollup reads). Without this, a caller whose ACTOR is correctly pinned to themselves
+ *  could still land the statement in a victim's lens by naming the victim's pod. */
+function selfBoundPod(callerDid: string, explicit?: string): string {
+  const derived = resolveSubjectPodUrl(callerDid);
+  if (!explicit) return derived;
+  const override = resolveSubjectPodUrl(callerDid, explicit);
+  return actorForPod(override, MESH_ACTOR_LABELS) === actorForPod(derived, MESH_ACTOR_LABELS) ? override : derived;
+}
+
 /** Land one projected mesh event into its agent's OWN derived-view tenant
  *  (`lens:<agent>`) — the PUSH path, single event, no batch contention. */
 function landMeshEvent(ev: ProjectedMeshEvent): void {
@@ -1634,6 +1647,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
     const agentDid = args.agent_did as string;
     if (!agentDid) return { error: 'agent_did is required' };
+    // Bind the trajectory actor to the authenticated caller unless privileged — else a
+    // caller could attribute a fabricated trajectory to another agent's DID/record.
+    if (agentDid !== ctx.webId && !(ctx.role === 'admin' || ctx.role === 'learning-engineer' || ctx.role === 'delegated-admin')) {
+      return { error: 'recording a trajectory for another agent requires an operator role (admin / learning-engineer) or that agent\'s delegation; set agent_did to your own DID to record for yourself' };
+    }
     const rawSteps = args.steps as Array<Record<string, unknown>> | undefined;
     if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
       return { error: 'steps (non-empty array) is required' };
@@ -1808,6 +1826,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const evaluationRegistry = evaluationRegistryByTenant.for(tenant);
     const agentDid = args.agent_did as string;
     if (!agentDid) return { error: 'agent_did is required' };
+    // Bind the run's actor to the authenticated caller unless privileged (no cross-agent forge).
+    if (agentDid !== ctx.webId && !(ctx.role === 'admin' || ctx.role === 'learning-engineer' || ctx.role === 'delegated-admin')) {
+      return { error: 'recording an external run for another agent requires an operator role (admin / learning-engineer) or that agent\'s delegation; set agent_did to your own DID' };
+    }
     const taskName = args.task_name as string;
     if (!taskName || !taskName.trim()) return { error: 'task_name is required' };
     if (typeof args.success !== 'boolean') return { error: 'success (boolean) is required' };
@@ -2094,7 +2116,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       return { error: 'forbidden — non-admins can only export their own CLR' };
     }
     const envelope = await exportClr({
-      learnerPodUrl: (args.learner_pod_url as string) || tenantPodUrl,
+      learnerPodUrl: safePublicUrlOrUndefined((args.learner_pod_url as string) || '') ?? tenantPodUrl,
       learnerDid: requestedLearnerDid,
       ...(issuerKeySeed ? { issuerSeed: issuerKeySeed } : {}),
     });
@@ -2310,7 +2332,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }
     return launchAuWithPrereqCheck({
       learnerDid,
-      learnerPodUrl: (args.learner_pod_url as string) || tenantPodUrl,
+      learnerPodUrl: safePublicUrlOrUndefined((args.learner_pod_url as string) || '') ?? tenantPodUrl,
       courseId: args.course_id as string,
       auActivityId: args.au_activity_id as string,
       registration: args.registration as string,
@@ -3897,6 +3919,15 @@ app.post('/agent/review-record', async (req, res) => {
     const subjectPodUrl = resolveSubjectPodUrl(subjectDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
     const subjectKind: 'human' | 'agent' = (p.actor_kind as string) === 'human' ? 'human' : 'agent';
+    // PII gate — matches the MCP foxxi.assemble_learner_record twin: a HUMAN learner's full
+    // ELR + exported CLR (credentials, competencies, performance) is private, so a signed
+    // caller may review a human record ONLY when it is their OWN. Without this the delegated
+    // path disclosed any human subject's record to any signed wallet. Agent capability
+    // records stay discoverable (public), as in the twin.
+    if (subjectKind === 'human' && !isSelf) {
+      res.status(403).json({ error: 'forbidden — a human learner record is private; you may only review your own (set subject_did to your own DID). Agent capability records are public.' });
+      return;
+    }
     // Union the in-memory lens with the subject's durable on-pod records (deduped
     // by id) — the pod is the system of record, the lens just a derived view.
     // Foundation-first: PGSL is the canonical read source. `source:'pgsl'` reads
@@ -4877,7 +4908,11 @@ app.post('/agent/course/analyze-authored', async (req, res) => {
     // Resolve the agent-authored course: in-memory cache → author's PGSL lattice → legacy pod RDF.
     let course = agentScormCourses.get(courseId) as AgentScormCourseLike | undefined;
     if (!course && authorDid) {
-      const coursePod = (typeof req.body?.course_pod === 'string' && req.body.course_pod) ? req.body.course_pod : resolveSubjectPodUrl(authorDid);
+      // SSRF: /agent/course/analyze-authored is UNAUTHENTICATED and course_pod is fetched.
+      // Drop a private/loopback/link-local literal (→ derive from authorDid); the lattice
+      // fetch layer additionally DNS-guards. A caller cannot steer the fetch at an internal host.
+      const rawCoursePod = (typeof req.body?.course_pod === 'string' && req.body.course_pod) ? req.body.course_pod : '';
+      const coursePod = (rawCoursePod && safePublicUrlOrUndefined(rawCoursePod)) || resolveSubjectPodUrl(authorDid);
       const fromLattice = await loadCourseFromLattice(coursePod, authorDid, actorForPod(coursePod, MESH_ACTOR_LABELS), courseId).catch(() => null);
       const loaded = fromLattice ?? await loadScormCourse({ podUrl: coursePod, courseId }).catch(() => null);
       if (loaded) course = loaded as unknown as AgentScormCourseLike;
@@ -5328,7 +5363,8 @@ app.post('/agent/record-performance', async (req, res) => {
     if (typeof p.success !== 'boolean') { res.status(400).json({ error: 'success (boolean) required' }); return; }
     // Self-sovereign: you record YOUR OWN performance — the performer + the lens are
     // the verified caller (recording for another agent would need their delegation).
-    const subjectPod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // selfBoundPod ignores a subject_pod_url that steers to a DIFFERENT actor's lens.
+    const subjectPod = selfBoundPod(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const label = actorForPod(subjectPod, MESH_ACTOR_LABELS);
     const taskId = productionTaskIri(p.task_id, taskName);
     const activityType = (typeof p.activity_type === 'string' && p.activity_type.trim())
@@ -5495,7 +5531,9 @@ app.post('/agent/record-course-completion', async (req, res) => {
     const scoreScaled = typeof p.score_scaled === 'number' ? p.score_scaled : 1.0;
     const masteryScore = typeof p.mastery_score === 'number' ? p.mastery_score : 0.7;
     if (scoreScaled < masteryScore) { res.status(400).json({ error: `score_scaled ${scoreScaled} is below mastery_score ${masteryScore} — not a passed completion` }); return; }
-    const subjectPod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // selfBoundPod: the lens binds to the caller's OWN pod; a subject_pod_url naming a
+    // DIFFERENT actor cannot route this self-authored completion into that actor's lens.
+    const subjectPod = selfBoundPod(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const label = actorForPod(subjectPod, MESH_ACTOR_LABELS);
     const registration = (typeof p.registration === 'string' && p.registration) ? p.registration : randomUUID();
     const courseActivityId = courseIri(courseId);
@@ -6079,6 +6117,12 @@ app.post('/agent/publish-memory', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    // Per-IP bound: each call composes into the ONE shared memory-commons lattice with the
+    // bridge's write credential, so an unthrottled wallet could bloat that shared resource.
+    const xffMem = req.headers['x-forwarded-for'];
+    const ipMem = typeof xffMem === 'string' ? xffMem.split(',').at(-1)!.trim() : Array.isArray(xffMem) ? xffMem.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rlMem = checkAgenticRateLimit(ipMem);
+    if (!rlMem.ok) { res.status(429).json({ error: 'rate limit exceeded for publish-memory', retryAfterSeconds: rlMem.retryAfterSeconds }); return; }
     const p = auth.payload;
     const title = typeof p.title === 'string' ? p.title.trim() : '';
     const bodyMd = typeof p.body === 'string' ? p.body.trim() : '';
@@ -6326,7 +6370,9 @@ app.post('/agent/scorm/launch', async (req, res) => {
     let tree;
     try { tree = parseManifest(buildAgentScormManifest(course)); }
     catch (e) { res.status(500).json({ error: `manifest parse: ${(e as Error).message}` }); return; }
-    const subjectPod = resolveSubjectPodUrl(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    // selfBoundPod: bind the play-session lens to the caller's OWN pod so a caller
+    // cannot (via subject_pod_url at launch) route the SCORM outcome into a victim's lens.
+    const subjectPod = selfBoundPod(callerDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const lens = lensTenantFor(actorForPod(subjectPod, MESH_ACTOR_LABELS));
     const seq = createSession(tenantIdOf(`scorm:${callerDid}`), tree);
     const nav = processNavigation(seq, 'start');
