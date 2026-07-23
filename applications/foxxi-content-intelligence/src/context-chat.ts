@@ -47,7 +47,8 @@ import type { Express, Request, Response } from 'express';
 import type {
   IRI,
 } from '@interego/core';
-import { tenantIdOf, type TenantId } from './tenant-context.js';
+import { type TenantId } from './tenant-context.js';
+import { trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { courseIdOf } from './course-identity.js';
 import { _publishedCourses, _publishedJobAids } from './content-delivery.js';
 import { listStoredStatements } from './xapi-lrs.js';
@@ -618,7 +619,7 @@ function engagementEnrollments(courses: FoxxiAgenticCourse[], activity: ContextA
   });
 }
 
-export interface ContextChatConfig {
+export interface ContextChatConfig extends OperatorAuthConfig {
   selfBaseUrl: string;
   /** The authoritative source — the xAPI Agent account homePage. */
   authoritativeSource: string;
@@ -741,7 +742,10 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
         id: (typeof askerIn.id === 'string' && askerIn.id) || learner,
         kind: askerIn.kind === 'agent' ? 'agent' : 'human',
       };
-      const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+      // Pin an unverified caller to DEFAULT_TENANT — a raw ?tenant_pod_url let a
+      // caller aim context assembly (published-course/job-aid/activity counts) at any
+      // named tenant. Only a verified operator may target another tenant.
+      const tenant = trustedTenantOf(req, config);
       const intent = classifyContextIntent(question);
       // Default: the whole Interego context. 'vertical' narrows to Foxxi.
       const scope: ContextScope = b.scope === 'vertical' ? 'vertical' : 'interego';
@@ -811,10 +815,14 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
       // so a caller cannot forge an `interacted` statement in a victim's name.
       let instrumented = false;
       const attributedActor =
-        (callerRole && learner === asker.id) || asker.id === 'anonymous'
+        (callerRole && learner === asker.id)
           || (config.authorizeInstrumentation?.(req, asker.id) ?? false)
           ? asker.id : 'anonymous';
-      if (config.emitStatement) {
+      // Only persist the instrumentation statement for an ATTRIBUTED (authorized) actor.
+      // An anonymous ask is NOT written: it carries no attributable trace value and was an
+      // unauthenticated, un-rate-limited storage-growth + LRS-forwarding amplification vector
+      // (the per-IP limiter is skipped entirely when no FOXXI_LLM_API_KEY is configured).
+      if (config.emitStatement && attributedActor !== 'anonymous') {
         config.emitStatement({
           actor: { objectType: 'Agent', account: { homePage: config.authoritativeSource, name: attributedActor } },
           verb: { id: INTERACTED, display: { 'en-US': 'interacted' } },

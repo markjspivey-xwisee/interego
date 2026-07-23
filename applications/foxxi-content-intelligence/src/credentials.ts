@@ -339,8 +339,12 @@ function wrapCredentialAsGraph(graphIri: IRI, signed: VerifiableCredentialJson):
   // literal and inject triples into the published credential graph).
   const tesc = (s: string): string =>
     String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
-  return `<${graphIri}> a <${CREDENTIAL_TYPES.CourseCompletionCredential}> ;
-    <http://www.w3.org/ns/prov#wasAttributedTo> <${signed.issuer}> ;
+  // Percent-encode any char illegal in a Turtle IRIREF (<...>) — angle brackets, quotes,
+  // braces, pipe, caret, backtick, whitespace, controls — so a caller-influenced graph IRI
+  // (built from courseId) can never break out of <...> and inject triples/relations.
+  const iesc = (s: string): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
+  return `<${iesc(graphIri)}> a <${CREDENTIAL_TYPES.CourseCompletionCredential}> ;
+    <http://www.w3.org/ns/prov#wasAttributedTo> <${iesc(signed.issuer)}> ;
     <http://purl.org/dc/terms/identifier> "${tesc(signed.id ?? '')}" ;
     <${FXS}bundleJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
