@@ -19,6 +19,7 @@
  * double-count, no bogus competency keyed off the envelope type).
  */
 import { publish, discover, fetchGraphContent, resolveStorageForShape } from '@interego/solid';
+import { assertSafeFetchTarget } from "./ssrf-guard.js";
 import type { ContextDescriptorData, IRI, ManifestEntry, FetchFn } from '@interego/core';
 // Foundation-first (additive): also persist an encrypted canonical PGSL holon +
 // a projected descriptor alongside the authoritative RDF record, so agents get
@@ -209,12 +210,14 @@ export async function readDurableRecordedStatements(args: ReadRecordsArgs): Prom
   for (const e of recs) {
     try {
       if (!e.descriptorUrl) continue;
+      await assertSafeFetchTarget(e.descriptorUrl); // 2nd-hop SSRF
       const descRes = await fetchFn(e.descriptorUrl, { headers: { Accept: 'text/turtle' } });
       if (!descRes.ok) continue;
       const descTurtle = await descRes.text();
       const gm = descTurtle.match(/hydra:target\s+<([^>]+)>/) ?? descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
       const graphUrl = gm?.[1];
       if (!graphUrl) continue;
+      await assertSafeFetchTarget(graphUrl); // 2nd-hop SSRF
       const { content } = await fetchGraphContent(
         graphUrl,
         args.fetch ? { fetch: args.fetch as never } : undefined,
@@ -406,6 +409,7 @@ async function decodeCourseEntry(
     const gm = descTurtle.match(/hydra:target\s+<([^>]+)>/) ?? descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
     const graphUrl = gm?.[1];
     if (!graphUrl) return null;
+    await assertSafeFetchTarget(graphUrl); // 2nd-hop SSRF
     const { content } = await fetchGraphContent(graphUrl, fetchFn ? { fetch: fetchFn as never } : undefined);
     if (!content) return null;
     const m = content.match(/<[^>]*#courseJson>\s+"([A-Za-z0-9+/=\s]+)"/);

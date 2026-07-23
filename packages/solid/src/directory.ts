@@ -27,7 +27,8 @@ export function podDirectoryToTurtle(directory: PodDirectoryData): string {
   const prefixes = turtlePrefixes(anyNicks ? ['iep', 'rdfs', 'foaf'] : ['iep', 'rdfs']);
   const lines: string[] = [prefixes, ''];
 
-  lines.push(`<${directory.id}> a iep:PodDirectory .`);
+  const _iesc = (s: string): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
+  lines.push(`<${_iesc(directory.id)}> a iep:PodDirectory .`);
 
   // Emit pod entries first, then any name hints at the bottom — keeps
   // the entry blocks tight and groups hint triples by subject (one block
@@ -38,10 +39,10 @@ export function podDirectoryToTurtle(directory: PodDirectoryData): string {
     const e = directory.entries[i]!;
     const bnode = `_:pod${i}`;
     lines.push('');
-    lines.push(`<${directory.id}> iep:hasPod ${bnode} .`);
-    lines.push(`${bnode} iep:podUrl <${e.podUrl}> .`);
+    lines.push(`<${_iesc(directory.id)}> iep:hasPod ${bnode} .`);
+    lines.push(`${bnode} iep:podUrl <${_iesc(e.podUrl)}> .`);
     if (e.owner) {
-      lines.push(`${bnode} iep:owner <${e.owner}> .`);
+      lines.push(`${bnode} iep:owner <${_iesc(e.owner)}> .`);
     }
     if (e.label) {
       lines.push(`${bnode} rdfs:label "${escapeTurtleLiteral(e.label)}" .`);
@@ -60,7 +61,7 @@ export function podDirectoryToTurtle(directory: PodDirectoryData): string {
     if (nicks.size === 0) continue;
     lines.push('');
     for (const n of nicks) {
-      lines.push(`<${owner}> foaf:nick "${escapeTurtleLiteral(n)}" .`);
+      lines.push(`<${_iesc(owner)}> foaf:nick "${escapeTurtleLiteral(n)}" .`);
     }
   }
 

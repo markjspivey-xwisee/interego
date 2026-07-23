@@ -390,11 +390,15 @@ function summarize(conformsTo: readonly string[]): string {
 }
 
 async function fetchCredentialJson(descriptorUrl: string, fetchFn: typeof globalThis.fetch): Promise<VerifiableCredentialJson> {
+  // Second-hop SSRF: descriptorUrl comes from a discovered (attacker-influenceable) manifest,
+  // and the hydra:target from the fetched descriptor — guard both before fetching.
+  await assertSafeFetchTarget(descriptorUrl);
   const r = await fetchFn(descriptorUrl, { headers: { Accept: 'text/turtle' } });
   if (!r.ok) throw new Error(`GET ${descriptorUrl}: ${r.status}`);
   const ttl = await r.text();
   const targetMatch = ttl.match(/hydra:target\s+<([^>]+)>/);
   if (!targetMatch) throw new Error('no hydra:target');
+  await assertSafeFetchTarget(targetMatch[1]!);
   const { content } = await fetchGraphContent(targetMatch[1]!, { fetch: fetchFn as never });
   if (!content) throw new Error('graph empty / encrypted');
   const m = content.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
