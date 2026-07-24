@@ -2026,6 +2026,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       if (!candidate) {
         return { error: `agent ${agentDid} is not a candidate of ${runInput.evaluationId} — request + accept enrollment first` };
       }
+      // Candidate ownership (round-55): the run is agentDid's performance (agentDid is forced
+      // to the caller's own DID above, unless operator). The explicit candidate_id path looks
+      // the slot up by id WITHOUT binding it to agentDid, so a caller could pass another agent's
+      // (guessable: `<evalId>:candidate-<n>`) candidate_id and inject runs into a rival's
+      // portfolio — compare_agent_evaluation would then read them as the rival's. The candidate
+      // the run lands in must belong to agentDid (findCandidateByAgent already guarantees this
+      // for the auto-resolve path); operators may still record on anyone's behalf.
+      if (candidate.agentDid !== agentDid
+        && !(ctx.role === 'admin' || ctx.role === 'learning-engineer' || ctx.role === 'delegated-admin')) {
+        return { error: `candidate ${candidate.candidateId} belongs to another agent — you may only record runs into your own candidacy (omit candidate_id to auto-resolve yours)` };
+      }
       const run: CandidateRun = {
         trajectory: ingested.trajectory,
         success: runInput.outcome.success,
