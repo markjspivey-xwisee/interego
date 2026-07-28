@@ -47,7 +47,7 @@ function renderCapability(c: Capability): Record<string, unknown> {
 }
 
 export const INTEREGO_AGENTS_PROFILE: InteropProfile = {
-  id: 'https://relay.interego.xwisee.com/ns/maintainer/agent-interop',
+  id: 'https://relay.interego.xwisee.com/ns/eth-8f3b8e939600/agent-interop',
   slug: 'interego-agents',
   protocolVersion: '1.0',
   conformanceStatus: 'verified', // our own shape; nothing external to conform to

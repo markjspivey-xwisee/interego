@@ -1,5 +1,5 @@
-@prefix a2ap:    <https://relay.interego.xwisee.com/ns/maintainer/a2a#> .
-@prefix iap:     <https://relay.interego.xwisee.com/ns/maintainer/agent-interop#> .
+@prefix a2ap:    <https://relay.interego.xwisee.com/ns/eth-8f3b8e939600/a2a#> .
+@prefix iap:     <https://relay.interego.xwisee.com/ns/eth-8f3b8e939600/agent-interop#> .
 @prefix iep:     <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix hydra:   <http://www.w3.org/ns/hydra/core#> .
 @prefix owl:     <http://www.w3.org/2002/07/owl#> .
