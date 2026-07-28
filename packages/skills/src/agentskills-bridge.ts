@@ -27,7 +27,7 @@
  * iep: / ieh: / dct: / hydra: / dcat: / pgsl: predicates only.
  */
 
-import { ContextDescriptor, sha256, escapeTurtleLiteral } from '@interego/core';
+import { ContextDescriptor, sha256, escapeTurtleLiteral, actionUrl } from '@interego/core';
 import type { IRI, ContextDescriptorData } from '@interego/core';
 import { parseSkillMd, emitSkillMd, type SkillValidationError } from './skill-md.js';
 
@@ -218,7 +218,17 @@ export function skillBundleToDescriptor(
     ? `    <${DCT_NS}hasPart> ${fileAtoms.map(f => `<${f.iri}>`).join(' , ')} ;\n`
     : '';
 
+  // The `iep:action` triple is what makes a translated SKILL.md an actually
+  // FOLLOWABLE affordance: follow.ts matches an affordance by `iep:action ==
+  // actionIri`, and extraction keys on the same predicate. Emitting the type
+  // triples without it produced a descriptor that looked like an affordance and
+  // could never be followed. Minted through actionUrl() so the id is a
+  // dereferenceable URL under the naming authority — never a `urn:` — which is
+  // also what an A2A AgentSkill.id projects from.
+  const skillActionIri = actionUrl(`urn:iep:action:skill:${fm.name}`);
+
   const skillSubject = `<${skillIri}> a <${CG_NS}Affordance> , <${CGH_NS}Affordance> , <${HYDRA_NS}Operation> , <${DCAT_NS}Distribution> ;
+    <${CG_NS}action> <${skillActionIri}> ;
     <${RDFS_NS}label> "${escapeLit(fm.name)}" ;
     <${RDFS_NS}comment> "${escapeLit(fm.description)}" ;
 ${licenseTriple}${compatTriple}${targetTriple}    <${DCT_NS}source> <${skillAtomIri}> ;

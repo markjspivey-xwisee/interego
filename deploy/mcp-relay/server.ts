@@ -4439,6 +4439,50 @@ function callerAgentId(args: ToolArgs): string | undefined {
   return args.agent_id as string | undefined;
 }
 
+/**
+ * The relay-injected, server-authoritative fields. A caller must NEVER be able to
+ * supply one from the wire: downstream gates treat them as proof of identity,
+ * ownership and governance.
+ *
+ * This list must be stripped UNCONDITIONALLY at the top of EVERY transport,
+ * before any auth branch. Historically /mcp did so but /tool/:name stripped only
+ * inside its authenticated branch and /messages never stripped at all — so a
+ * caller invoking a PUBLIC tool on those transports could smuggle in a forged
+ * _identity_token / _session_user_id / _session_agent_did and be believed.
+ */
+const RESERVED_WIRE_FIELDS = [
+  '_session_bearer', '_session_principal', '_identity_token',
+  '_session_agent_did', '_session_agent_id', '_session_user_id',
+] as const;
+
+function stripReservedWireFields(o: unknown): void {
+  if (!o || typeof o !== 'object') return;
+  for (const k of RESERVED_WIRE_FIELDS) delete (o as Record<string, unknown>)[k];
+}
+
+/**
+ * The caller's OWN pod, for OWNERSHIP decisions — derived only from
+ * server-authoritative sources.
+ *
+ * selfPodUrl() falls back to `args.pod_name`, which the injection sites only fill
+ * in WHEN ABSENT and is therefore caller-controlled. An ownership gate built on it
+ * compares an attacker-supplied value against an attacker-supplied value and always
+ * passes (e.g. read_inbox with pod_url=<victim> AND pod_name=<victim's slug>).
+ * `_session_user_id` and `_identity_token` are reserved + wire-stripped, so they
+ * cannot be forged; if neither is present the caller has no proven pod and every
+ * ownership check must FAIL CLOSED rather than fall back.
+ */
+async function callerOwnPod(args: ToolArgs): Promise<string | undefined> {
+  const sessionUserId = args._session_user_id as string | undefined;
+  if (sessionUserId) return `${CSS_URL}${sessionUserId}/`;
+  const identityToken = args._identity_token as string | undefined;
+  if (identityToken) {
+    const me = await fetchIdentityMe(identityToken);
+    if (me?.userId) return `${CSS_URL}${me.userId}/`;
+  }
+  return undefined;
+}
+
 async function selfPodUrl(args: ToolArgs): Promise<string | undefined> {
   const identityToken = args._identity_token as string | undefined;
   if (identityToken) {
@@ -4558,8 +4602,11 @@ async function handleListKnownPods(args: ToolArgs): Promise<string> {
   // which runs server-side against the unredacted store). Native channels
   // (ldn/activitypub/acct) are derived public addresses and stay visible.
   const NATIVE_CHANNELS = ['ldn', 'activitypub', 'acct'];
-  const callerPod = await selfPodUrl(args);
-  const callerDid = callerAgentId(args);
+  // Owner identity for redaction must be PROVEN: selfPodUrl()/args.agent_id are
+  // caller-supplied, so a forged value would unlock every agent's secrets.
+  const callerPod = await callerOwnPod(args);
+  const callerDid = (args._session_agent_did as string | undefined)
+    ?? (args._session_agent_id as string | undefined);
   const callerKey = callerPod ? canonicalPodKey(callerPod) : undefined;
   const redactedPods = pods.map(p => {
     const isOwner = (!!callerKey && canonicalPodKey(p.url) === callerKey)
@@ -4947,7 +4994,10 @@ async function handleSetReachability(args: ToolArgs): Promise<string> {
 
 async function handleReadInbox(args: ToolArgs): Promise<string> {
   const explicit = (args.pod_url ?? args.podUrl) as string | undefined;
-  const ownPod = await selfPodUrl(args);
+  // Ownership must be decided from a PROVEN pod (callerOwnPod), never from
+  // selfPodUrl(), which falls back to the caller-supplied pod_name — that would
+  // compare an attacker-controlled value against an attacker-controlled value.
+  const ownPod = await callerOwnPod(args);
   // OWNERSHIP GATE: an inbox holds an agent's PRIVATE agent-to-agent mail, and
   // the relay reads it with its own pod-write credential. `pod_url` is only
   // filled-in-when-absent by the injection sites, so a caller could pass another
@@ -8646,9 +8696,10 @@ app.get('/agents/:localPart/outbox', async (req, res) => {
 });
 
 app.post('/agents/:localPart/inbox', async (req, res) => {
-  await awaitFederationHydrateWithBudget(50);
-  const card = cardForLocalPart(req.params.localPart);
-  if (!card) { res.status(404).json({ error: 'unknown agent' }); return; }
+  // The signature gate runs BEFORE the agent lookup, deliberately: replying 404
+  // for an unknown localPart but 202 for a known one turns this route into an
+  // agent-enumeration oracle for anonymous callers. Unsigned requests are now
+  // refused identically whether or not the agent exists.
   // FAIL-CLOSED (was: accept anything). This route is unauthenticated and maps
   // the activity onto the agent's native LDN inbox, taking `actor` straight from
   // the request body — so ANY anonymous caller could write into ANY agent's inbox
@@ -8666,6 +8717,9 @@ app.post('/agents/:localPart/inbox', async (req, res) => {
       });
     return;
   }
+  await awaitFederationHydrateWithBudget(50);
+  const card = cardForLocalPart(req.params.localPart);
+  if (!card) { res.status(404).json({ error: 'unknown agent' }); return; }
   const act = (req.body ?? {}) as Record<string, any>;
   const obj = (act.object ?? {}) as Record<string, any>;
   const idSlug = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -11663,6 +11717,11 @@ const toolInvokeLimiter = rateLimit({
   legacyHeaders: false,
 });
 app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
+  // UNCONDITIONAL strip, before tool lookup and before any auth branch. The
+  // per-branch strip further down only ran for AUTHENTICATED callers, so a caller
+  // invoking a PUBLIC tool here could smuggle a forged _identity_token /
+  // _session_user_id / _session_agent_did straight into the handler.
+  stripReservedWireFields(req.body);
   const toolName = req.params.name as string;
   const tool = TOOLS[toolName] ?? dynamicTools.get(toolName);
   if (!tool) {
@@ -11742,6 +11801,9 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     }
     if (viaSignature) {
       req.body.agent_id = auth.recoveredDid;
+      // Server-authoritative attribution identity — without this, callerAgentId()
+      // falls through to the forgeable req.body.agent_id on THIS transport.
+      req.body._session_agent_did = auth.recoveredDid;
       // For pod naming, derive from the address suffix so signed
       // agents land on their own pods.
       const addr = auth.recoveredDid!.slice('did:ethr:'.length).toLowerCase();
@@ -11976,6 +12038,12 @@ const messagesLimiter = rateLimit({
   legacyHeaders: false,
 });
 app.post('/messages', messagesLimiter, async (req, res) => {
+  // UNCONDITIONAL strip — this transport previously never sanitized the reserved
+  // relay-injected fields at all, so any caller (authenticated or not) could
+  // supply a forged _session_user_id / _identity_token / _session_agent_did and
+  // have downstream gates treat it as proof of identity and pod ownership.
+  stripReservedWireFields(req.body?.params?.arguments);
+  stripReservedWireFields(req.body);
   const { method, params, id } = req.body;
 
   if (method === 'tools/list') {
