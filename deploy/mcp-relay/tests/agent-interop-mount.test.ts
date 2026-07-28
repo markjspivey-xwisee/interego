@@ -507,9 +507,14 @@ console.log("\n11. THE CARD'S PROMISE — an advertised capability is actually P
     invokeCapability: async ({ capability, caller, parts }) => {
       invoked.push(`${capability}|${caller}`);
       const verb = capability.split('/').pop() ?? '';
-      if (verb === 'publish_context') throw new Error(`capability "${verb}" writes on behalf of its caller`);
+      // A deliberate refusal is RETURNED — its reason is chosen for publication.
+      if (verb === 'publish_context') {
+        return { ok: false as const, reason: `capability "${verb}" writes on behalf of its caller` };
+      }
+      // An unexpected crash is THROWN — its message is internal and must not escape.
+      if (verb === 'new_verb') throw new Error('INTERNAL-DETAIL-a1b2c3 at /srv/relay/server.ts:9999');
       const text = parts.map(p => (p.kind === 'text' ? p.text ?? '' : '')).join('');
-      return { name: verb, parts: [{ kind: 'text' as const, text: text.toUpperCase() }] };
+      return { ok: true as const, output: { name: verb, parts: [{ kind: 'text' as const, text: text.toUpperCase() }] } };
     },
     log: () => {},
   });
@@ -545,6 +550,22 @@ console.log("\n11. THE CARD'S PROMISE — an advertised capability is actually P
     JSON.stringify(refused.task.history).includes('writes on behalf of its caller'),
     JSON.stringify(refused.task.history).slice(0, 120));
   check('...and a failed task produces no artifact', !(refused.task.artifacts ?? []).length);
+
+  // ★ A CRASH MUST NOT REACH THE CALLER. The first version echoed the thrown
+  // message, so a live run returned an internal "Cannot read properties of
+  // undefined" to an external peer — through a comment claiming it could not
+  // happen. Refusal-vs-crash is now a structural distinction, and this is the
+  // assertion that keeps it one.
+  AFFORDANCES.push({ action: 'https://relay.test/ns/iep/action/relay/new_verb', title: 'new_verb', comment: 'throws', vertical: 'relay', requiresAuth: false });
+  const crashed = await send('https://relay.test/ns/iep/action/relay/new_verb', 'x');
+  AFFORDANCES.pop();
+  check('an unexpected crash still FAILS the task cleanly',
+    crashed.task.status.state === 'TASK_STATE_FAILED', crashed.task.status.state);
+  const crashText = JSON.stringify(crashed.task);
+  check('...and NO internal detail reaches the caller',
+    !/INTERNAL-DETAIL-a1b2c3|server\.ts|:9999/.test(crashText), crashText.slice(0, 140));
+  check('...only a generic, caller-safe reason',
+    /could not be completed/i.test(crashText), crashText.slice(0, 140));
 
   // Naming nothing must stay exactly as before — this is additive.
   const plain = await send(undefined, 'x');

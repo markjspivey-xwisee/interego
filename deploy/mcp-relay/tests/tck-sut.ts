@@ -77,13 +77,16 @@ mountAgentInterop(app as any, {
   // what comes back is computed from what went in.
   invokeCapability: async ({ capability, parts }) => {
     const verb = capability.split('/').pop() ?? '';
-    if (verb === 'discover') throw new Error(`capability "${verb}" is not reachable through this interop surface`);
+    if (verb === 'discover') return { ok: false as const, reason: `capability "${verb}" is not reachable through this interop surface` };
     const text = parts.map(p => (p.kind === 'text' ? p.text ?? '' : JSON.stringify(p))).join(' ');
     const { createHash } = await import('node:crypto');
     return {
-      name: verb,
-      description: `Result of ${verb}`,
-      parts: [{ kind: 'text' as const, text: `sha256:${createHash('sha256').update(text).digest('hex')}` }],
+      ok: true as const,
+      output: {
+        name: verb,
+        description: `Result of ${verb}`,
+        parts: [{ kind: 'text' as const, text: `sha256:${createHash('sha256').update(text).digest('hex')}` }],
+      },
     };
   },
   log: () => {},

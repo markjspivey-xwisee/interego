@@ -10776,13 +10776,18 @@ mountAgentInterop(app, {
   // are the ones already served without a verified caller, so invoking one on behalf
   // of a verified peer grants no authority that peer did not already have.
   invokeCapability: async ({ capability, caller, parts }) => {
+    // Returning a refusal is how a reason becomes caller-safe: everything returned
+    // here is a message this relay chose to publish. Anything THROWN below is
+    // unexpected, and the mount replaces it with a generic message — a live run
+    // proved why, by echoing an internal "Cannot read properties of undefined" to
+    // an external peer when this contract still used exceptions for both.
     const verb = capability.split('/').pop() ?? '';
     const tool = TOOLS[verb] ?? dynamicTools.get(verb);
-    if (!tool) throw new Error(`unknown capability: ${verb}`);
+    if (!tool) return { ok: false as const, reason: `unknown capability: ${verb}` };
     if (AUTH_REQUIRED_TOOLS.has(verb) || WRITE_SIDE_TOOLS.has(verb)) {
-      throw new Error(
+      return { ok: false as const, reason:
         `capability "${verb}" writes on behalf of its caller and is not yet reachable through this interop surface; ` +
-        `invoke it directly at /tool/${verb} with a bearer token or a signed request`);
+        `invoke it directly at /tool/${verb} with a bearer token or a signed request` };
     }
     // Arguments come from a `data` part — structured input, not prose. Nothing from
     // the payload is trusted as identity; reserved wire fields are stripped exactly
@@ -10792,9 +10797,12 @@ mountAgentInterop(app, {
     stripReservedWireFields(args);
     const text = await tool.handler(args as never);
     return {
-      name: verb,
-      description: `Result of ${verb}`,
-      parts: [{ kind: 'text' as const, text: String(text) }],
+      ok: true as const,
+      output: {
+        name: verb,
+        description: `Result of ${verb}`,
+        parts: [{ kind: 'text' as const, text: String(text) }],
+      },
     };
   },
   log,
