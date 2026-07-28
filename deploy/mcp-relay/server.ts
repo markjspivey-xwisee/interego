@@ -10175,9 +10175,26 @@ app.get('/.well-known/shacl-shapes', (_req, res) => {
   res.type('text/turtle').send(getShaclShapesTurtle());
 });
 
-// Health check
+// Health check.
+//
+// `build` is the git sha baked into the image, and it is the only field here that
+// can distinguish one deployment from another. Without it this response was
+// byte-identical before and after every deploy, so nothing could verify that a
+// rollout had actually taken effect: Railway reports SUCCESS as soon as the
+// container binds a port (no healthcheckPath is configured), and during a rolling
+// replace the OLD container still answers. A deploy that repointed to a tag which
+// does not exist in the registry leaves the previous container serving and this
+// endpoint returning 200 — indistinguishable from success. Polling until
+// `build === <the tag you deployed>` is what makes the rollout falsifiable.
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', css: CSS_URL, tools: Object.keys(TOOLS).length, auth: 'bearer-token', x402: true });
+  res.json({
+    status: 'ok',
+    css: CSS_URL,
+    tools: Object.keys(TOOLS).length,
+    auth: 'bearer-token',
+    x402: true,
+    build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset',
+  });
 });
 
 // ── /hmd/echo — SAFE, side-effect-free test sink for the HMD viewer's POST action

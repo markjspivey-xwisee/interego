@@ -125,4 +125,11 @@ EXPOSE 8080
 ENV PORT=8080
 ENV CSS_URL=http://css:3456/
 
+# The commit this image was built from, surfaced at /health so a deploy can be
+# VERIFIED rather than assumed. Declared in the runtime stage on purpose: putting
+# it earlier would invalidate the build cache on every commit, and nothing before
+# this line depends on it. Defaults to "unset" for local builds that pass no arg.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
 CMD ["dist/server.js"]

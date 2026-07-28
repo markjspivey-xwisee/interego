@@ -1,0 +1,103 @@
+name: Deploy to Railway
+
+# The last mile, restored.
+#
+# `deploy-azure.yml` used to build AND deploy automatically on every push to master.
+# It was deleted when the stack moved off Azure (the registry it pushed to no longer
+# exists), and nothing replaced its deploy half. Since then the pipeline has been:
+# GitHub builds an image, pushes it to GHCR — and stops. Railway pins an immutable
+# sha tag and does not watch for new ones, so a merged, built, green commit could sit
+# indefinitely while production ran something older, with nothing reporting the gap.
+#
+# This is deliberately SEPARATE from build-ghcr.yml rather than a job inside it.
+# Building is safe and repeatable; deploying is neither. Keeping them apart means the
+# image can be built from any ref without that alone changing what production runs.
+#
+# REQUIRES ONE SECRET: RAILWAY_PROJECT_TOKEN — a Railway PROJECT token (Settings →
+# Tokens → project-scoped), NOT an account token. The name says which, because the
+# two use different HTTP headers and the wrong one fails as a 200 that deploys
+# nothing. Prefer minting a fresh token for CI over reusing a local one.
+#
+# All the real logic — and the reasons behind each guard — lives in
+# tools/railway-redeploy.mjs, so it can be run by hand identically.
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Railway service name (relay, foxxi-bridge, …)'
+        required: true
+        default: 'relay'
+      tag:
+        description: 'Image tag: the 40-hex commit sha built by build-ghcr.yml. Defaults to this ref.'
+        required: false
+        default: ''
+      verify_url:
+        description: 'Health URL polled until it reports the deployed sha. Blank = skip (not recommended).'
+        required: false
+        default: 'https://relay.interego.xwisee.com/health'
+
+# A second dispatch must QUEUE, never run alongside: re-triggering a deploy while one
+# is in flight SIGTERMs the healthy container, and the successors die before logging.
+# cancel-in-progress would do exactly that, so it stays false.
+concurrency:
+  group: railway-deploy-${{ inputs.service }}
+  cancel-in-progress: false
+
+# This job needs no GITHUB_TOKEN scope at all — it talks only to Railway.
+permissions: {}
+
+jobs:
+  deploy:
+    name: "Deploy ${{ inputs.service }} to Railway"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+
+      - name: Resolve the tag
+        id: t
+        env:
+          # Via env:, never inline in the script — a `${{ }}` interpolated straight
+          # into a shell command is expression injection, and a secret interpolated
+          # there lands on a process command line.
+          INPUT_TAG: ${{ inputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          TAG="${INPUT_TAG:-$SHA}"
+          case "$TAG" in
+            *[!0-9a-f]* | "" ) echo "tag must be 40 hex chars, got: $TAG" >&2; exit 1 ;;
+          esac
+          [ "${#TAG}" -eq 40 ] || { echo "tag must be 40 hex chars, got: $TAG" >&2; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Repointing to a tag that was never pushed does NOT fail loudly: Railway
+      # leaves the previous container serving, so /health keeps returning 200 and
+      # the rollout looks fine. Catch it before touching production.
+      - name: Verify the image exists in GHCR
+        env:
+          IMAGE: ghcr.io/markjspivey-xwisee/interego-${{ inputs.service }}
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          if ! docker buildx imagetools inspect "$IMAGE:$TAG" > /dev/null 2>&1; then
+            echo "::error::$IMAGE:$TAG is not in the registry. Run build-ghcr.yml for this commit first."
+            exit 1
+          fi
+          echo "$IMAGE:$TAG exists"
+
+      - name: Deploy
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+          SERVICE: ${{ inputs.service }}
+          TAG: ${{ steps.t.outputs.tag }}
+          VERIFY_URL: ${{ inputs.verify_url }}
+        run: |
+          if [ -z "$RAILWAY_PROJECT_TOKEN" ]; then
+            echo "::error::RAILWAY_PROJECT_TOKEN is not set. Add it as a repository secret (a Railway PROJECT token)."
+            exit 1
+          fi
+          ARGS="$SERVICE $TAG"
+          [ -n "$VERIFY_URL" ] && ARGS="$ARGS --verify-url $VERIFY_URL"
+          node tools/railway-redeploy.mjs $ARGS
