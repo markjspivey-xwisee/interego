@@ -95,7 +95,14 @@ jobs:
           push: true
           # Empty for images without a build_args field; docker/build-push-action
           # treats an empty build-args as none.
-          build-args: ${{ matrix.build_args }}
+          # GIT_SHA is appended to every image's build-args so the runtime can
+          # report which commit it is running (relay surfaces it at /health).
+          # That is what lets a deploy be VERIFIED instead of assumed — see
+          # tools/railway-redeploy.mjs. Dockerfiles that ignore the arg are
+          # unaffected; an unused ARG is not an error.
+          build-args: |
+            ${{ matrix.build_args }}
+            GIT_SHA=${{ github.sha }}
           # Immutable sha tag is what Railway pins to; :latest is for humans.
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}
