@@ -22,18 +22,45 @@ import type { ResolvedAffordance } from '@interego/core';
 import type { AgentIdentity, Capability, Engagement, EngagementState } from '../types.js';
 import type { InteropProfile } from '../profile.js';
 
-/** Engine state -> A2A TaskState. */
+/**
+ * Engine state -> A2A TaskState.
+ *
+ * These are PROTO ENUM NAMES, not lowercase words. A2A's data model is normatively
+ * defined by a protobuf schema, and the HTTP+JSON binding uses proto3's canonical
+ * JSON mapping, in which an enum value serialises as its declared name. So the wire
+ * value is `TASK_STATE_SUBMITTED`, never `submitted`.
+ *
+ * The first implementation emitted the lowercase words. It looked right, it read
+ * naturally, and every schema-validating test in the protocol's own conformance
+ * suite rejected it — one wrong token here failed the whole ListTasks family at
+ * once, because every response carrying a task carries a state. Guessing the shape
+ * of someone else's data model from how it reads in prose is exactly the mistake
+ * running their suite is for.
+ */
 const TO_A2A: Readonly<Record<EngagementState, string>> = {
-  submitted: 'submitted',
-  working: 'working',
-  'input-required': 'input-required',
-  completed: 'completed',
-  failed: 'failed',
-  cancelled: 'canceled',   // A2A spells it with one 'l'
-  rejected: 'rejected',
+  submitted: 'TASK_STATE_SUBMITTED',
+  working: 'TASK_STATE_WORKING',
+  'input-required': 'TASK_STATE_INPUT_REQUIRED',
+  completed: 'TASK_STATE_COMPLETED',
+  failed: 'TASK_STATE_FAILED',
+  cancelled: 'TASK_STATE_CANCELED',   // A2A spells it with one 'l'
+  rejected: 'TASK_STATE_REJECTED',
 };
 
+/**
+ * Inbound. Canonical proto names first; the lowercase words are kept as a tolerated
+ * alias because proto3 JSON permits them and because a client written against the
+ * spec's prose will send them. Postel's law applies inbound only — outbound is
+ * strictly canonical.
+ */
 const FROM_A2A: Readonly<Record<string, EngagementState>> = {
+  TASK_STATE_SUBMITTED: 'submitted',
+  TASK_STATE_WORKING: 'working',
+  TASK_STATE_INPUT_REQUIRED: 'input-required',
+  TASK_STATE_COMPLETED: 'completed',
+  TASK_STATE_FAILED: 'failed',
+  TASK_STATE_CANCELED: 'cancelled',
+  TASK_STATE_REJECTED: 'rejected',
   submitted: 'submitted',
   working: 'working',
   'input-required': 'input-required',
@@ -72,11 +99,36 @@ export const A2A_PROFILE: InteropProfile = {
   conformanceStatus: 'unverified',
   // A2A continues a task by sending a message that carries its id.
   continuationField: 'taskId',
-  // Registered media type preferred by the current patch release for this binding.
-  // The CARD's type is left as plain JSON deliberately — I have not verified that the
-  // preference extends to the discovery document, and the conformance suite is the
-  // thing that should settle it rather than a guess.
-  wireMediaType: 'application/a2a+json',
+  // Left unset — responses are plain `application/json`.
+  //
+  // This previously declared `application/a2a+json`, and the note here said the
+  // conformance suite should settle it rather than a guess. It did, against the
+  // guess: HTTP_JSON-SVC-001 requires the response Content-Type to be
+  // `application/json` for this binding.
+  //
+  // Worth recording that the SPECIFICATION ITSELF disagrees with its suite here —
+  // the §6 worked examples show `Content-Type: application/a2a+json` on HTTP+JSON
+  // exchanges, while the binding's own table says "application/json for requests and
+  // responses" and the suite enforces the table. Where a spec contradicts itself, the
+  // executable artifact is the one that can be checked, and our published definition
+  // of `conformanceStatus` names that suite specifically. Following the prose would
+  // mean claiming a conformance the measurement refuses.
+  //
+  // wireMediaType: undefined,
+
+  // A2A's data model is protobuf, and `SendMessage` returns a ONEOF of task-or-
+  // message. A oneof has no bare-object JSON encoding: it serialises as the chosen
+  // member, `{"task": {...}}`. `ListTasks` likewise wraps in `tasks`. But GET on the
+  // task resource returns the task itself, unwrapped — so this is genuinely
+  // per-operation, and returning one shape everywhere is wrong somewhere.
+  responseEnvelope: {
+    sendMessage: 'task',
+    listEngagements: 'tasks',
+  },
+
+  // A2A carries its version in a request header, and a server MUST refuse a version
+  // it does not implement rather than answer it anyway.
+  versionHeader: { name: 'A2A-Version', supported: ['1.0'] },
 
   card: {
     mediaType: 'application/json',
@@ -122,6 +174,12 @@ export const A2A_PROFILE: InteropProfile = {
         // an undeclared capability is the conformant behaviour — declaring false is
         // honest, not partial.
         capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false },
+        // REQUIRED card fields, and the conformance suite is right to insist: they
+        // are what tells a peer whether it can talk to this agent at all, before it
+        // spends a request finding out. Text in, text out — the substrate's parts
+        // are text and structured data, and structured data rides as JSON text.
+        defaultInputModes: ['text/plain', 'application/json'],
+        defaultOutputModes: ['text/plain', 'application/json'],
         skills: identity.capabilities.map(renderCapability),
         ...(Object.keys(securitySchemes).length ? { securitySchemes, security } : {}),
       };
@@ -144,14 +202,14 @@ export const A2A_PROFILE: InteropProfile = {
         action: `${base}/ns/iep/action/relay/get_task`,
         target: `${base}/a2a/v1/tasks/${encodeURIComponent(e.id)}`,
         method: 'GET',
-        mediaType: 'application/a2a+json',
+        mediaType: 'application/json',
       } as ResolvedAffordance];
       if (ctx.available.includes('cancel')) {
         out.push({
           action: `${base}/ns/iep/action/relay/cancel_task`,
           target: `${base}/a2a/v1/tasks/${encodeURIComponent(e.id)}:cancel`,
           method: 'POST',
-          mediaType: 'application/a2a+json',
+          mediaType: 'application/json',
         } as ResolvedAffordance);
       }
       if (ctx.available.includes('appendTurn')) {
@@ -159,7 +217,7 @@ export const A2A_PROFILE: InteropProfile = {
           action: `${base}/ns/iep/action/relay/send_message`,
           target: `${base}/a2a/v1/message:send`,
           method: 'POST',
-          mediaType: 'application/a2a+json',
+          mediaType: 'application/json',
         } as ResolvedAffordance);
       }
       return out;
@@ -167,16 +225,26 @@ export const A2A_PROFILE: InteropProfile = {
     render(e: Engagement): Record<string, unknown> {
       return {
         id: e.id,
+        // A2A groups related tasks under a contextId. When the client supplies none,
+        // the server generates one — so it is derived from the engagement rather
+        // than minted separately, which keeps it a dereferenceable URL like every
+        // other identifier here instead of introducing an opaque handle.
+        contextId: `${e.id}/context`,
         status: {
           state: TO_A2A[e.state],
           timestamp: e.updatedAt,
         },
         history: e.turns.map(t => ({
           messageId: t.foreignId ?? t.id,
-          role: t.role === 'requester' ? 'user' : 'agent',
+          // Proto enum names, as for TaskState above — `ROLE_USER`, not `user`.
+          role: t.role === 'requester' ? 'ROLE_USER' : 'ROLE_AGENT',
           parts: t.parts.map(renderPart),
         })),
-        ...(e.capability ? { skillId: e.capability } : {}),
+        // The Task schema is CLOSED (additionalProperties: false), so the capability
+        // this engagement invokes cannot ride as a top-level field however natural
+        // `skillId` reads. `metadata` is the schema's own extension point, and the
+        // value stays a dereferenceable action URL either way.
+        ...(e.capability ? { metadata: { skillId: e.capability } } : {}),
       };
     },
   },
@@ -188,13 +256,65 @@ export const A2A_PROFILE: InteropProfile = {
     { operation: 'cancelEngagement', method: 'POST', path: '/tasks/{id}:cancel' },
   ],
 
-  errors: {
-    unauthenticated: { status: 401, code: 'unauthenticated', message: 'Authentication required.' },
-    forbidden: { status: 403, code: 'permission_denied', message: 'Not permitted.' },
-    notFound: { status: 404, code: 'not_found', message: 'No such task.' },
-    badRequest: { status: 400, code: 'invalid_argument', message: 'The request was not valid.' },
-    unsupportedOperation: { status: 501, code: 'unimplemented', message: 'This capability is not implemented.' },
-    // Never echoes internal detail — the relay audit's error-leak class.
-    internal: { status: 500, code: 'internal', message: 'Internal error.' },
-  },
+  // ── Errors, in AIP-193 form ─────────────────────────────────────────────────
+  //
+  // A2A's error envelope is Google's AIP-193, so `code` is the NUMERIC
+  // google.rpc.Code — a client does int(error.code) and gets a TypeError on a
+  // string. The first implementation emitted the readable lowercase token
+  // ('not_found'), which is the same mistake as the lowercase task states: it reads
+  // like the right value and is the wrong wire type.
+  //
+  // `details` must carry a google.rpc.ErrorInfo identified by its @type URI, and its
+  // `domain` is the PROTOCOL'S, not ours. I first set it to the relay host, reasoning
+  // that a domain names whoever assigned the reason so a client could tell our
+  // NOT_FOUND from another hop's. Sound reasoning, wrong answer: the reason tokens
+  // are the protocol's vocabulary, so the namespace that qualifies them is the
+  // protocol's too. A per-deployment domain would make identical errors from two
+  // conformant servers look like different errors, which is the opposite of what an
+  // interop namespace is for.
+  // Two SEPARATE vocabularies live in one error, and conflating them is the trap.
+  // `status`/`code` are the canonical google.rpc status (NOT_FOUND / 5). `reason` is
+  // A2A's OWN error vocabulary (TASK_NOT_FOUND), and only errors the protocol has
+  // actually named have one. I first emitted the google.rpc name as the reason,
+  // which is well-formed and still wrong: it answers "what class of failure" where
+  // the protocol asked "which A2A error".
+  //
+  // So the ErrorInfo detail is emitted ONLY where a canonical A2A reason exists.
+  // Inventing a plausible reason for the others would be worse than omitting it — a
+  // client matching on reason would silently mis-handle a token no spec defines.
+  errors: (() => {
+    const DOMAIN = 'a2a-protocol.org';
+    // In AIP-193 `error.code` is the HTTP STATUS CODE, and `error.status` is the
+    // canonical google.rpc status NAME. Not the numeric google.rpc code, which is
+    // what I assumed — three plausible integers are in play (HTTP status, gRPC
+    // code, JSON-RPC code) and only one belongs in this field.
+    const e = (status: number, _grpcCode: number, name: string, message: string, reason?: string) => ({
+      status,
+      code: status,
+      message,
+      extra: {
+        status: name,
+        ...(reason ? {
+          details: [{
+            '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+            reason,
+            domain: DOMAIN,
+          }],
+        } : {}),
+      },
+    });
+    return {
+      unauthenticated: e(401, 16, 'UNAUTHENTICATED', 'Authentication required.'),
+      forbidden: e(403, 7, 'PERMISSION_DENIED', 'Not permitted.'),
+      notFound: e(404, 5, 'NOT_FOUND', 'No such task.', 'TASK_NOT_FOUND'),
+      badRequest: e(400, 3, 'INVALID_ARGUMENT', 'The request was not valid.'),
+      unsupportedVersion: e(400, 12, 'UNIMPLEMENTED', 'Unsupported protocol version.', 'VERSION_NOT_SUPPORTED'),
+      unsupportedMediaType: e(415, 3, 'INVALID_ARGUMENT', 'Unsupported content type.', 'CONTENT_TYPE_NOT_SUPPORTED'),
+      // 400, not the 501 that reads naturally for "not implemented": A2A binds
+      // UnsupportedOperationError to HTTP 400. The status is the protocol's call.
+      unsupportedOperation: e(400, 12, 'UNIMPLEMENTED', 'This capability is not implemented.', 'UNSUPPORTED_OPERATION'),
+      // Never echoes internal detail — the relay audit's error-leak class.
+      internal: e(500, 13, 'INTERNAL', 'Internal error.'),
+    };
+  })(),
 };

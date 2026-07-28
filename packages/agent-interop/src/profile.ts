@@ -39,10 +39,22 @@ export interface WireRoute {
 export interface ErrorSpec {
   /** HTTP status to return. */
   status: number;
-  /** The profile's own error code string. */
-  code: string;
+  /**
+   * The profile's own error code. A protocol modelled on google.rpc carries the
+   * NUMERIC canonical code (its clients parse this as an integer); others use their
+   * own string token. Typed as the union rather than coerced, because which one is
+   * correct is the profile's business, not the mount's.
+   */
+  code: string | number;
   /** Human-readable default. Never echoes internal detail. */
   message: string;
+  /**
+   * Extra members merged into the error object verbatim — for envelope formats that
+   * require more than code+message (a canonical status name, a machine-readable
+   * `details` array, a problem-type URI). The mount copies these without
+   * interpreting them, so an error format is declared rather than coded.
+   */
+  extra?: Record<string, unknown>;
 }
 
 /** The engine's error conditions. Every profile must name all of them. */
@@ -52,6 +64,13 @@ export type InteropErrorKind =
   | 'notFound'
   | 'badRequest'
   | 'unsupportedOperation'
+  // A protocol version the server does not implement, and a request media type it
+  // cannot accept. Separate kinds rather than flavours of badRequest because a
+  // protocol binds them to their own status codes and error identities — 415 for
+  // the media type, a named version error for the version — and a client is
+  // expected to act differently on each.
+  | 'unsupportedVersion'
+  | 'unsupportedMediaType'
   | 'internal';
 
 export interface CardProjection {
@@ -129,6 +148,31 @@ export interface InteropProfile {
    * declares it here; absent falls back to plain JSON.
    */
   wireMediaType?: string;
+  /**
+   * Per-operation response ENVELOPE: the member name the rendered engagement is
+   * nested under, for operations whose response is a wrapper rather than the
+   * resource itself. Absent for an operation means the resource is returned bare.
+   *
+   * This exists because a single profile can need BOTH shapes. A protocol defined
+   * by a protobuf schema will model "returns a task or a message" as a oneof, which
+   * has no bare-object JSON encoding — it serialises as `{"task": {...}}` — while
+   * the same protocol's GET on the task resource returns the task itself. Rendering
+   * one shape for every operation is wrong for one of them either way.
+   *
+   * Declared as DATA so the engine and the mount stay spec-blind: the mount reads a
+   * member name it never interprets, rather than learning that some protocol has a
+   * oneof.
+   */
+  responseEnvelope?: Partial<Record<InteropOperation, string>>;
+  /**
+   * The request header carrying the protocol version, and the versions this profile
+   * will serve. Declared as data so the mount enforces a version contract it never
+   * has to name: it compares a header value against a list.
+   *
+   * A server that silently serves a version it does not implement is worse than one
+   * that refuses: the client gets a response shaped by rules it is not following.
+   */
+  versionHeader?: { name: string; supported: string[] };
   card: CardProjection;
   lifecycle: LifecycleProjection;
   engagement: EngagementProjection;

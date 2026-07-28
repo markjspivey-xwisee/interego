@@ -134,7 +134,8 @@ check('the error body carries a code + message, not a stack',
 console.log('\n6. engagements are owner-scoped (possession of an id is not authority)');
 const okRes = mkRes();
 await send.handler({ headers: {}, query: {}, params: {}, body: { parts: [{ text: 'hello' }] } }, okRes);
-const created = okRes.body as any;
+// send nests under the profile's declared envelope member; unwrap to the resource.
+const created = ((okRes.body as any)?.task ?? okRes.body) as any;
 check('a verified caller can open one', okRes.statusCode === 200 && typeof created?.id === 'string');
 check('its id is a dereferenceable URL, never a urn', /^https:\/\/relay\.test\/engagements\//.test(created.id));
 const getRoute = wireRoutes.find(r => pstr(r.path) === '/a2a/v1/tasks/:id')!;
@@ -146,7 +147,7 @@ const theirsRes = mkRes();
 await getRoute.handler({ headers: {}, query: {}, params: { id: created.id }, body: {} }, theirsRes);
 check('another principal cannot read it', theirsRes.statusCode === 404);
 check('...and is told notFound, NOT forbidden (no existence oracle)',
-  (theirsRes.body as any)?.error?.code === 'not_found');
+  (theirsRes.body as any)?.error?.status === 'NOT_FOUND');
 const listRes = mkRes();
 const listRoute = wireRoutes.find(r => pstr(r.path) === '/a2a/v1/tasks')!;
 await listRoute.handler({ headers: {}, query: {}, params: {}, body: {} }, listRes);
@@ -227,7 +228,13 @@ console.log('\n7. the mount registers on REAL Express (route compilation is exer
       body: JSON.stringify({ parts: [{ text: 'hi' }] }),
     });
     check('the custom-method send route matches', opened.status === 200, String(opened.status));
-    const task: any = await opened.json();
+    // send NESTS the resource under the profile's declared envelope member; GET and
+    // cancel return it bare. Reading `.task` here is the assertion that the envelope
+    // is applied per-operation rather than everywhere.
+    const sent: any = await opened.json();
+    check('...and nests the resource under the profile-declared envelope member',
+      !!sent.task?.id && sent.id === undefined, JSON.stringify(sent).slice(0, 110));
+    const task: any = sent.task ?? sent;
 
     // The bug this section exists for: cancel is a CUSTOM METHOD with a literal
     // `:cancel` suffix, and the id must survive it intact.
@@ -235,8 +242,26 @@ console.log('\n7. the mount registers on REAL Express (route compilation is exer
     check('the custom-method cancel route matches', cancelled.status === 200, String(cancelled.status));
     const cbody: any = cancelled.status === 200 ? await cancelled.json() : {};
     check('...and cancels THAT engagement (id parsed out of the suffix)',
-      cbody.id === task.id && cbody.status?.state === 'canceled',
+      cbody.id === task.id && cbody.status?.state === 'TASK_STATE_CANCELED',
       JSON.stringify(cbody).slice(0, 120));
+    check('...and cancel returns the resource BARE (no envelope)',
+      cbody.task === undefined, JSON.stringify(cbody).slice(0, 90));
+
+    // A version this profile does not serve must be refused, not answered anyway.
+    const wrongVersion = await fetch(`${B}/a2a/v1/message:send`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'A2A-Version': '9.9' },
+      body: JSON.stringify({ parts: [{ text: 'hi' }] }),
+    });
+    check('an unsupported protocol version is refused, not served',
+      wrongVersion.status === 400, String(wrongVersion.status));
+
+    // A body in a media type we cannot parse is 415, distinguishable from 400.
+    const wrongType = await fetch(`${B}/a2a/v1/message:send`, {
+      method: 'POST', headers: { 'content-type': 'text/plain' }, body: 'hi',
+    });
+    check('an unparseable request media type is 415, not 400',
+      wrongType.status === 415, String(wrongType.status));
 
     srv.close();
   }
@@ -263,7 +288,9 @@ console.log('\n8. HYPERMEDIA — a representation carries its own followable nex
     body: JSON.stringify({ parts: [{ text: 'hi' }] }),
   });
   const link = open.headers.get('link') ?? '';
-  const task: any = await open.json();
+  // The envelope wraps the resource on send; the Link headers are on the RESPONSE,
+  // so hypermedia navigation is unaffected by the body shape either way.
+  const task: any = (await open.json() as any).task;
   check('an engagement response carries Link headers', link.length > 0);
   check('...including self + service-desc + describedby',
     link.includes('rel="self"') && link.includes('rel="service-desc"') && link.includes('rel="describedby"'));
@@ -282,7 +309,7 @@ console.log('\n8. HYPERMEDIA — a representation carries its own followable nex
     const followed = await fetch(m[1]!.replace('https://relay.test', B), { method: 'POST' });
     check('following the advertised affordance cancels it', followed.status === 200, String(followed.status));
     const done: any = followed.status === 200 ? await followed.json() : {};
-    check('...the same engagement', done.id === task.id);
+    check('...the same engagement', done.id === task.id, `${done.id} vs ${task.id}`);
     const doneLink = followed.headers.get('link') ?? '';
     // Terminal state: the engine's transition table says nothing further is legal,
     // so no next step may be advertised.
@@ -320,12 +347,14 @@ console.log('\n9. MULTI-TURN — a continuation appends, it does not fork a new 
   const B = `http://127.0.0.1:${(srv.address() as any).port}`;
   const J = { 'content-type': 'application/json' };
 
-  const first: any = await (await fetch(`${B}/a2a/v1/message:send`, {
+  // send wraps in the profile's envelope member; unwrap to the resource.
+  const un = (b: any) => b?.task ?? b;
+  const first: any = un(await (await fetch(`${B}/a2a/v1/message:send`, {
     method: 'POST', headers: J, body: JSON.stringify({ parts: [{ text: 'one' }] }),
-  })).json();
-  const cont: any = await (await fetch(`${B}/a2a/v1/message:send`, {
+  })).json());
+  const cont: any = un(await (await fetch(`${B}/a2a/v1/message:send`, {
     method: 'POST', headers: J, body: JSON.stringify({ taskId: first.id, parts: [{ text: 'two' }] }),
-  })).json();
+  })).json());
   check('a continuation returns the SAME engagement, not a new one', cont.id === first.id,
     `${first.id} vs ${cont.id}`);
   check('...with both turns recorded', (cont.history ?? []).length === 2, String((cont.history ?? []).length));
@@ -339,9 +368,9 @@ console.log('\n9. MULTI-TURN — a continuation appends, it does not fork a new 
   check('another principal cannot append to it', alien.status === 404, String(alien.status));
 
   // A send with no continuation ref still opens a fresh engagement.
-  const fresh: any = await (await fetch(`${B}/a2a/v1/message:send`, {
+  const fresh: any = un(await (await fetch(`${B}/a2a/v1/message:send`, {
     method: 'POST', headers: J, body: JSON.stringify({ parts: [{ text: 'new' }] }),
-  })).json();
+  })).json());
   check('a send with no ref still opens a NEW engagement', fresh.id !== first.id);
   srv.close();
 }

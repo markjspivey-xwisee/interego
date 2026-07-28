@@ -43,8 +43,10 @@ a2ap:Profile a owl:Ontology , iap:InteropProfile ;
     dcterms:conformsTo <https://a2a-protocol.org/> ;
     a2ap:protocolVersion "1.0" ;
     a2ap:binding "HTTP+JSON" ;
-    a2ap:wireMediaType "application/a2a+json" ;
+    a2ap:wireMediaType "application/json" ;
     a2ap:conformanceStatus "unverified" ;
+    a2ap:mustTierPassing 48 ;
+    a2ap:mustTierFailing 9 ;
     rdfs:seeAlso <https://relay.interego.xwisee.com/.well-known/agent-card.json> .
 
 a2ap:protocolVersion a owl:DatatypeProperty ;
@@ -61,6 +63,16 @@ a2ap:wireMediaType a owl:DatatypeProperty ;
     rdfs:label "wireMediaType" ;
     rdfs:comment "Registered media type for wire operation responses in this binding." ;
     rdfs:range xsd:string .
+
+a2ap:mustTierPassing a owl:DatatypeProperty ;
+    rdfs:label "mustTierPassing" ;
+    rdfs:comment "Count of MUST-level requirements the protocol's own conformance suite reports as PASSING for this binding, as measured in continuous integration. Published because \"unverified\" alone cannot distinguish an untested implementation from a nearly-conformant one, and a reader deserves to know which. CI enforces this number in BOTH directions: it fails on a regression below it, and fails when it is beaten without being updated, so a stale figure cannot quietly overstate or understate what the code does." ;
+    rdfs:range xsd:integer .
+
+a2ap:mustTierFailing a owl:DatatypeProperty ;
+    rdfs:label "mustTierFailing" ;
+    rdfs:comment "Count of MUST-level requirements still failing. Non-zero is why a2ap:conformanceStatus remains \"unverified\": the remaining gaps are task artifacts, message-shaped responses, push-notification error binding, and SSE streaming." ;
+    rdfs:range xsd:integer .
 
 a2ap:conformanceStatus a owl:DatatypeProperty ;
     rdfs:label "conformanceStatus" ;
