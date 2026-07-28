@@ -24,7 +24,8 @@
     "cors-allowlist.ts",
     "lazy-pod-init.ts",
     "compliance-sign.ts",
-    "amep.ts"
+    "amep.ts",
+    "agent-interop-mount.ts"
   ],
   "exclude": [
     "node_modules",

@@ -283,6 +283,7 @@ import { createLazyPodInit, POD_AWARE_TOOLS } from './lazy-pod-init.js';
 // audit-load-bearing "sign the bytes the pod actually persists, not
 // the locally-built body" contract has dedicated test coverage.
 import { fetchAndSignCanonicalTurtle } from './compliance-sign.js';
+import { mountAgentInterop } from './agent-interop-mount.js';
 import { mountAmep, seedRelease42, type AmepDeps } from './amep.js';
 
 // ── Config ──────────────────────────────────────────────────
@@ -10593,9 +10594,14 @@ app.get('/ns/pgsl/:kind/:hash', (req, res) => {
 // the vertical's affordance manifest, where that action is defined (matchable by iep:action).
 // This is what makes an action id a dereferenceable URL — a term, not a word. Fixed
 // vertical→host map (env-overridable), so there is no open redirect.
+// A value may carry a PATH, not just a host: the relay's own operations are
+// described by /.well-known/operations rather than a vertical's /affordances. That
+// makes the relay's own actions dereferenceable too, which is the precondition for
+// any interop projection whose capability ids must be real URLs rather than urns.
 const IEP_ACTION_VERTICALS: Record<string, string> = (() => {
   const base: Record<string, string> = {
-    foxxi: 'https://foxxi-bridge.interego.xwisee.com',
+    foxxi: 'https://foxxi-bridge.interego.xwisee.com/affordances',
+    relay: `${(PUBLIC_BASE_URL || '').replace(/\/$/, '')}/.well-known/operations`,
   };
   try { Object.assign(base, JSON.parse(process.env.IEP_ACTION_VERTICALS ?? '{}')); } catch { /* keep defaults */ }
   return base;
@@ -10604,10 +10610,17 @@ app.get('/ns/iep/action/:vertical/:verb', (req, res) => {
   // CORS (ACAO:*) via the /ns/* public linked-data carve-out.
   const vertical = String(req.params.vertical);
   const verb = String(req.params.verb);
-  const host = IEP_ACTION_VERTICALS[vertical];
-  // Validate before redirecting — fixed host map + a conservative verb charset (no open redirect).
-  if (!host || !/^[a-z0-9][a-z0-9-]*$/i.test(verb)) { res.status(404).json({ error: 'no such action' }); return; }
-  res.redirect(302, `${host}/affordances`);
+  const target = IEP_ACTION_VERTICALS[vertical];
+  // Validate before redirecting — fixed target map + a conservative verb charset
+  // (no open redirect). Underscores are allowed because substrate operation names
+  // use them (publish_context, get_descriptor, …); without this every relay action
+  // id 404s and the interop card would have to drop them all.
+  if (!target || !/^[a-z0-9][a-z0-9_-]*$/i.test(verb)) { res.status(404).json({ error: 'no such action' }); return; }
+  // Back-compat: a bare host (no path) keeps its historical /affordances target.
+  const dest = /^https?:\/\/[^/]+\/?$/.test(target)
+    ? `${target.replace(/\/$/, '')}/affordances`
+    : target;
+  res.redirect(302, dest);
 });
 
 app.options('/ns/:owner/:slug', (_req, res) => { res.status(204).end(); });
@@ -10680,6 +10693,53 @@ const amepDeps: AmepDeps = {
   log: (msg: string, extra?: unknown) => { if (extra !== undefined) console.log(msg, extra); else console.log(msg); },
 };
 mountAmep(app, amepDeps);
+
+// ── Agent interop: every registered profile, mounted from the registry ──────
+//
+// ONE call, beside the AMEP engine — the same L2-protocol-over-the-substrate
+// shape. It names no protocol: mountAgentInterop iterates the profile registry in
+// @interego/agent-interop, so adding a wire format is a data file there, not a
+// change here. Capabilities are PROJECTED from the live operations catalog, so the
+// card can only ever advertise what this relay actually serves.
+mountAgentInterop(app, {
+  publicBase: PUBLIC_BASE_URL || `http://localhost:${PORT}`,
+  agent: {
+    id: `${(PUBLIC_BASE_URL || '').replace(/\/$/, '')}/.well-known/operations`,
+    name: 'Interego Relay',
+    description: 'Composable, verifiable, federated context infrastructure. Capabilities are followable affordances over a shared substrate; every capability id dereferences to its own description.',
+  },
+  // Live projection — re-read per card render, never a build-time snapshot. The
+  // action id is minted as a dereferenceable URL under this relay's naming
+  // authority (the /ns/iep/action/relay/<verb> resolver above), NOT the legacy
+  // `urn:iep:action:<verb>` form: an interop card whose capability ids do not
+  // resolve is advertising words rather than terms.
+  affordances: () => {
+    const base = (PUBLIC_BASE_URL || '').replace(/\/$/, '');
+    return TOOL_SCHEMAS.map(t => ({
+      action: `${base}/ns/iep/action/relay/${t.name}`,
+      title: t.name,
+      comment: t.description,
+      vertical: 'relay',
+      requiresAuth: AUTH_REQUIRED_TOOLS.has(t.name),
+    }));
+  },
+  // Compose the relay's OWN verification — the interop surface gets no second,
+  // weaker notion of identity. Returns a principal only for a verified caller.
+  verifyCaller: async (req) => {
+    const auth = await verifyBearerToken(req.headers.authorization);
+    if (!auth.authenticated) return undefined;
+    return auth.agentId ?? (auth.userId ? `${IDENTITY_URL}/users/${auth.userId}/profile#me` : undefined);
+  },
+  auth: {
+    oauth2: {
+      metadataUrl: `${(PUBLIC_BASE_URL || '').replace(/\/$/, '')}/.well-known/oauth-authorization-server`,
+      pkceRequired: true,
+    },
+    bearer: true,
+  },
+  documentationUrl: `${(PUBLIC_BASE_URL || '').replace(/\/$/, '')}/.well-known/operations`,
+  log,
+});
 
 // ── /audit/* — compliance + lineage endpoints ──────────────
 //
