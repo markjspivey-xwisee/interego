@@ -18,6 +18,7 @@
  * are genuinely absent, which is the conformant way to not implement them.
  */
 
+import type { ResolvedAffordance } from '@interego/core';
 import type { AgentIdentity, Capability, Engagement, EngagementState } from '../types.js';
 import type { InteropProfile } from '../profile.js';
 
@@ -126,6 +127,36 @@ export const A2A_PROFILE: InteropProfile = {
   },
 
   engagement: {
+    // Followable next steps as real iep:Affordances. The A2A Task body is
+    // normatively fixed by a2a.proto (no invented top-level fields), so these ride
+    // as RFC 8288 Link headers rather than in-body — which is how a protocol with a
+    // closed body schema is still navigable without violating that schema.
+    affordances(e: Engagement, ctx: { serviceUrl: string; available: ReadonlyArray<string> }): ResolvedAffordance[] {
+      const base = ctx.serviceUrl.replace(/\/$/, '');
+      const out: ResolvedAffordance[] = [{
+        action: `${base}/ns/iep/action/relay/get_task`,
+        target: `${base}/a2a/v1/tasks/${encodeURIComponent(e.id)}`,
+        method: 'GET',
+        mediaType: 'application/a2a+json',
+      } as ResolvedAffordance];
+      if (ctx.available.includes('cancel')) {
+        out.push({
+          action: `${base}/ns/iep/action/relay/cancel_task`,
+          target: `${base}/a2a/v1/tasks/${encodeURIComponent(e.id)}:cancel`,
+          method: 'POST',
+          mediaType: 'application/a2a+json',
+        } as ResolvedAffordance);
+      }
+      if (ctx.available.includes('appendTurn')) {
+        out.push({
+          action: `${base}/ns/iep/action/relay/send_message`,
+          target: `${base}/a2a/v1/message:send`,
+          method: 'POST',
+          mediaType: 'application/a2a+json',
+        } as ResolvedAffordance);
+      }
+      return out;
+    },
     render(e: Engagement): Record<string, unknown> {
       return {
         id: e.id,

@@ -15,8 +15,10 @@
  * why it maps cleanly without inventing fields.
  */
 
+import type { ResolvedAffordance } from '@interego/core';
 import type { AgentIdentity, Capability, Engagement, EngagementState } from '../types.js';
 import type { InteropProfile } from '../profile.js';
+import { availableOperations } from '../engagement.js';
 
 const NAMES: Readonly<Record<EngagementState, string>> = {
   submitted: 'Requested',
@@ -77,7 +79,27 @@ export const INTEREGO_AGENTS_PROFILE: InteropProfile = {
   },
 
   engagement: {
-    render(e: Engagement): Record<string, unknown> {
+    // Our own shape, so the affordances ride IN-BODY as first-class
+    // iep:Affordances (the A2A profile must use Link headers instead, because its
+    // body schema is normatively closed). Same primitive either way.
+    affordances(e: Engagement, ctx: { serviceUrl: string; available: ReadonlyArray<string> }): ResolvedAffordance[] {
+      const base = ctx.serviceUrl.replace(/\/$/, '');
+      const out: ResolvedAffordance[] = [
+        { action: `${base}/ns/iep/action/relay/get_engagement`, target: `${base}/interego-agents/v1/engagements/${encodeURIComponent(e.id)}`, method: 'GET' } as ResolvedAffordance,
+      ];
+      if (ctx.available.includes('cancel')) {
+        out.push({ action: `${base}/ns/iep/action/relay/withdraw_engagement`, target: `${base}/interego-agents/v1/engagements/${encodeURIComponent(e.id)}:withdraw`, method: 'POST' } as ResolvedAffordance);
+      }
+      if (ctx.available.includes('appendTurn')) {
+        out.push({ action: `${base}/ns/iep/action/relay/add_turn`, target: `${base}/interego-agents/v1/engagements`, method: 'POST' } as ResolvedAffordance);
+      }
+      return out;
+    },
+    render(e: Engagement, ctx: { serviceUrl: string }): Record<string, unknown> {
+      const base = ctx.serviceUrl.replace(/\/$/, '');
+      // Derived from the ENGINE's transition table — never a second list here that
+      // could drift from what the engine will actually permit.
+      const available = availableOperations(e.state);
       return {
         '@id': e.id,
         '@type': 'iep:Engagement',
@@ -88,6 +110,16 @@ export const INTEREGO_AGENTS_PROFILE: InteropProfile = {
           'iep:role': t.role,
           ...(t.attributedTo ? { 'prov:wasAttributedTo': t.attributedTo } : {}),
         })),
+        // Followable next steps, in-body — a client navigates rather than
+        // reconstructing URLs from knowledge of this profile.
+        'iep:affordance': INTEREGO_AGENTS_PROFILE.engagement
+          .affordances(e, { serviceUrl: base, available })
+          .map(a => ({
+            '@type': 'iep:Affordance',
+            'iep:action': a.action,
+            'hydra:target': a.target,
+            'hydra:method': a.method,
+          })),
       };
     },
   },

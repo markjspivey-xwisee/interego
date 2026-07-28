@@ -68,6 +68,27 @@ const LEGAL: Readonly<Record<EngagementState, ReadonlySet<EngagementState>>> = {
   rejected: new Set<EngagementState>(),
 };
 
+/**
+ * What a caller may do with an engagement AS IT NOW STANDS.
+ *
+ * This is the hypermedia primitive: a representation should carry its own
+ * followable next steps rather than making the client reconstruct URLs from
+ * out-of-band knowledge of the protocol. The answer is DERIVED from the state
+ * machine above — not a hand-maintained second list that can drift from it — so a
+ * terminal engagement advertises nothing and can never advertise a step the engine
+ * would refuse.
+ *
+ * The engine returns engine-level operation names; each profile renders them into
+ * its own hypermedia vocabulary (link relations, typed controls, whatever it uses).
+ */
+export function availableOperations(state: EngagementState): ReadonlyArray<'appendTurn' | 'cancel' | 'read'> {
+  const ops: Array<'appendTurn' | 'cancel' | 'read'> = ['read'];
+  if (TERMINAL_STATES.has(state)) return ops;
+  ops.push('appendTurn');
+  if (LEGAL[state].has('cancelled')) ops.push('cancel');
+  return ops;
+}
+
 export class EngagementEngine {
   private readonly engagements = new Map<string, Engagement>();
   private readonly opts: Required<EngagementStoreOptions>;
