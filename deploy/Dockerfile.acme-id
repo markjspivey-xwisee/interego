@@ -30,6 +30,18 @@ RUN printf 'server {\n\
     add_header Cache-Control "public, max-age=300";\n\
   }\n\
 \n\
+  # The vocabulary the WebID profiles above cite. Extensionless like the cards,\n\
+  # and Turtle for the same reason. Every profile here asserts facts in this\n\
+  # namespace, and it used to 404 — a term that cannot be dereferenced to its own\n\
+  # definition is a word, not a term.\n\
+  location = /ns/foxxi-demo {\n\
+    default_type "text/turtle; charset=utf-8";\n\
+    add_header Access-Control-Allow-Origin "*" always;\n\
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;\n\
+    add_header Access-Control-Allow-Headers "Accept, Authorization, Content-Type" always;\n\
+    add_header Cache-Control "public, max-age=300";\n\
+  }\n\
+\n\
   # DID document is application/did+json.\n\
   location = /.well-known/did.json {\n\
     default_type "application/did+json; charset=utf-8";\n\
