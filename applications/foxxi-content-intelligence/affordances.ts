@@ -1679,9 +1679,9 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
       { name: 'registration_id', type: 'string', required: true, description: 'Caller-chosen UUID for this learner+course attempt.' },
       { name: 'course_id', type: 'string', required: true, description: 'SCORM Cloud course ID.' },
       { name: 'learner_id', type: 'string', required: true, description: 'Stable learner identifier (typically the WebID).' },
-      { name: 'learner_first_name', type: 'string', required: false, description: '' },
-      { name: 'learner_last_name', type: 'string', required: false, description: '' },
-      { name: 'learner_email', type: 'string', required: false, description: '' },
+      { name: 'learner_first_name', type: 'string', required: false, description: 'Given name of the learner, forwarded to the SCORM Cloud registration record.' },
+      { name: 'learner_last_name', type: 'string', required: false, description: 'Family name of the learner, forwarded to the SCORM Cloud registration record.' },
+      { name: 'learner_email', type: 'string', required: false, description: 'Email address of the learner; SCORM Cloud keys the registration on it.' },
     ],
   },
   {
@@ -1719,7 +1719,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/foxxi/schedule_spaced_repetition',
     annotations: { title: 'Schedule spaced-repetition reminders', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: 'learner_did', type: 'string', required: true, description: '' },
+      { name: 'learner_did', type: 'string', required: true, description: 'Learner DID (web_id pattern from the tenant identity service).' },
       { name: 'completed_concepts', type: 'array', required: true, description: 'Array of { conceptId, completedAt }.' },
       { name: 'prereq_edges', type: 'array', required: true, description: 'Array of { from, to } prereq edges from the course graph.' },
     ],
@@ -1746,9 +1746,9 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     annotations: { title: 'Register a tutor agent', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'agent_did', type: 'string', required: true, description: 'The tutor\'s DID.' },
-      { name: 'display_name', type: 'string', required: true, description: '' },
+      { name: 'display_name', type: 'string', required: true, description: 'Human-readable name for the tutor agent, shown wherever it is offered as a tutor.' },
       { name: 'specialties', type: 'array', required: true, description: 'Array of { frameworkIri, competencyIri, selfRatedLevel }.' },
-      { name: 'description', type: 'string', required: false, description: '' },
+      { name: 'description', type: 'string', required: false, description: 'What this tutor agent teaches and how, shown alongside its display name.' },
       { name: 'powered_by', type: 'string', required: false, description: 'e.g. claude-opus-4-7' },
       { name: 'contact_endpoint', type: 'string', required: false, description: 'MCP server URL where the tutor agent runs.' },
     ],
@@ -1762,7 +1762,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/foxxi/find_tutor_for_competency',
     annotations: { title: 'Find a tutor for a competency', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
-      { name: 'required_competency_iri', type: 'string', required: true, description: '' },
+      { name: 'required_competency_iri', type: 'string', required: true, description: 'Dereferenceable IRI of the competency a tutor must hold to be returned.' },
       { name: 'required_level', type: 'string', required: false, description: 'Novice | Beginner | Intermediate | Advanced | Expert' },
       { name: 'candidate_profiles', type: 'array', required: true, description: 'Array of TutorAgentProfile to rank.' },
       { name: 'countersign_counts', type: 'object', required: false, description: 'Map { agentDid: number } of independent countersigns per tutor.' },
@@ -1777,10 +1777,10 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/foxxi/generate_dpia',
     annotations: { title: 'Generate a DPIA', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: 'learner_did', type: 'string', required: true, description: '' },
-      { name: 'learner_pod_url', type: 'string', required: true, description: '' },
-      { name: 'window_from', type: 'string', required: false, description: '' },
-      { name: 'window_to', type: 'string', required: false, description: '' },
+      { name: 'learner_did', type: 'string', required: true, description: 'Learner DID (web_id pattern from the tenant identity service).' },
+      { name: 'learner_pod_url', type: 'string', required: true, description: 'Pod URL holding the learner records, scoped to the reporting window below.' },
+      { name: 'window_from', type: 'string', required: false, description: 'Start of the reporting window, ISO 8601 date-time, inclusive.' },
+      { name: 'window_to', type: 'string', required: false, description: 'End of the reporting window, ISO 8601 date-time, inclusive.' },
     ],
   },
   {
@@ -1792,7 +1792,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/foxxi/manager_team_view',
     annotations: { title: 'Build a manager team view', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: 'manager_web_id', type: 'string', required: true, description: '' },
+      { name: 'manager_web_id', type: 'string', required: true, description: 'WebID/DID of the manager whose direct reports are being viewed.' },
       { name: 'report_pods', type: 'array', required: true, description: 'Array of { webId, name?, podUrl }.' },
     ],
   },
@@ -1864,8 +1864,8 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/foxxi/le_analyze_learning_curve',
     annotations: { title: 'Analyze a learning curve', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
-      { name: 'concept_id', type: 'string', required: true, description: '' },
-      { name: 'concept_label', type: 'string', required: false, description: '' },
+      { name: 'concept_id', type: 'string', required: true, description: 'Stable identifier of the concept whose learning curve is analysed.' },
+      { name: 'concept_label', type: 'string', required: false, description: 'Human-readable label for that concept, echoed in the returned analysis.' },
       { name: 'attempts', type: 'array', required: true, description: 'Per-learner outcomes: array of { learnerId, attemptNumber, mastered }.' },
     ],
   },

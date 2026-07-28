@@ -231,14 +231,39 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
       conformsToShape: 'urn:iep:shape:VerticalBridgeEntryPoint',
       vertical: opts.verticalName,
       affordanceCount: opts.affordances.length,
+      // ★ AN AFFORDANCE A CLIENT CANNOT INVOKE IS NOT AN AFFORDANCE.
+      //
+      // This projection used to emit only action / toolName / method / target. So a
+      // peer discovering 89 capabilities learned the URL and the verb and NOTHING
+      // about what to send — no field names, no types, no idea which were required.
+      // The only way to call one was to already know, which is exactly the
+      // out-of-band knowledge hypermedia exists to remove. "Capabilities are
+      // followable affordances" was true of the link and false of the contract.
+      //
+      // Nothing here is invented. Every `Affordance` in the source already declares
+      // `title`, `description`, `inputs` (name/type/required/description) and
+      // `outputs`; the projection simply dropped them on the way to the wire.
+      // `expects` reuses `affordanceToMcpToolSchema`, the SAME derivation the MCP
+      // tool listing uses — so the JSON-RPC caller and the hypermedia caller are
+      // told the same thing by construction, and cannot drift apart.
       affordances: opts.affordances.map(a => ({
         '@type': ['iep:Affordance', 'ieh:Affordance', 'hydra:Operation'],
         action: a.action,
         toolName: a.toolName,
+        // What it does, for a reader deciding whether this is the capability they
+        // want — previously discoverable only by invoking it and seeing.
+        ...(a.title ? { title: a.title } : {}),
+        ...(a.description ? { description: a.description } : {}),
         method: a.method,
         target: a.targetTemplate.replace('{base}', deploymentUrl),
+        // What to send. hydra:expects is the standard predicate for it, and the
+        // value is a JSON Schema naming every field, its type, and whether it is
+        // required.
+        expects: affordanceToMcpToolSchema(a).inputSchema,
         ...(a.mediaType ? { mediaType: a.mediaType } : {}),
+        // What comes back, when the source says.
         ...(a.returns ? { returns: a.returns } : {}),
+        ...(a.outputs?.description ? { returnsDescription: a.outputs.description } : {}),
       })),
       mcpEndpoint: `${deploymentUrl}/mcp`,
       manifestEndpoint: `${deploymentUrl}/affordances`,
