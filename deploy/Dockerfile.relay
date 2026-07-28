@@ -79,7 +79,8 @@ RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./packag
       /tarballs/interego-privacy-0.2.0.tgz \
       /tarballs/interego-security-txt-0.2.0.tgz \
       /tarballs/interego-ops-0.2.0.tgz \
-      /tarballs/interego-mdvault-0.1.0.tgz
+      /tarballs/interego-mdvault-0.1.0.tgz \
+      /tarballs/interego-agent-interop-0.2.0.tgz
 
 COPY deploy/mcp-relay/tsconfig.json ./
 COPY deploy/mcp-relay/server.ts ./
