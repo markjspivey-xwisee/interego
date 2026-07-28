@@ -118,6 +118,7 @@ function sendEngagement(
   links.push(`<${base}${profile.card.wellKnownPath}>; rel="service-desc"`);
   links.push(`<${profile.id}>; rel="describedby"`);
   res.setHeader('Link', links.join(', '));
+  if (profile.wireMediaType) res.type(profile.wireMediaType);
   res.status(200).json(profile.engagement.render(engagement, { serviceUrl: base }));
 }
 
@@ -214,6 +215,7 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             const limit = Number.parseInt(String(req.query['limit'] ?? '50'), 10);
             const r = engine.list(caller, Number.isFinite(limit) ? limit : 50);
             if (isEngineError(r)) { sendErr(res, profile, r.error.kind); return; }
+            if (profile.wireMediaType) res.type(profile.wireMediaType);
             res.status(200).json({ tasks: r.value.map(e => profile.engagement.render(e, { serviceUrl: base })) });
             return;
           }

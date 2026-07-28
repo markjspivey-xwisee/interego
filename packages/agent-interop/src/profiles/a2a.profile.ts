@@ -72,6 +72,11 @@ export const A2A_PROFILE: InteropProfile = {
   conformanceStatus: 'unverified',
   // A2A continues a task by sending a message that carries its id.
   continuationField: 'taskId',
+  // Registered media type preferred by the current patch release for this binding.
+  // The CARD's type is left as plain JSON deliberately — I have not verified that the
+  // preference extends to the discovery document, and the conformance suite is the
+  // thing that should settle it rather than a guess.
+  wireMediaType: 'application/a2a+json',
 
   card: {
     mediaType: 'application/json',

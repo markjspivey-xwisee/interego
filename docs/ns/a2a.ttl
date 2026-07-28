@@ -1,0 +1,138 @@
+@prefix a2ap:    <https://relay.interego.xwisee.com/ns/maintainer/a2a#> .
+@prefix iap:     <https://relay.interego.xwisee.com/ns/maintainer/agent-interop#> .
+@prefix iep:     <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix hydra:   <http://www.w3.org/ns/hydra/core#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh:      <http://www.w3.org/ns/shacl#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+
+# ══════════════════════════════════════════════════════════════
+#  A2A conformance profile (a2ap) 0.1
+#
+#  A2A (Agent2Agent) is an open protocol governed by the Linux Foundation. It keeps
+#  its own name here: open standards are the explicit exception to the house rule
+#  against adopting a borrowed framework's name.
+#
+#  LAYERING. A2A is supported at the SUBSTRATE (relay) layer as a PROJECTION of the
+#  substrate's own agent surface — identity, published affordances, engagement
+#  records — exactly as RDF/LDP/Solid surfaces are projections of the foundation. It
+#  is NOT a vertical capability and NOT a higher-order composition: everything it
+#  needs already lives at the relay. The acceptance test is that no vertical contains
+#  a line of A2A code; a vertical becomes A2A-discoverable purely because its
+#  capabilities are already iep:Affordances.
+#
+#  THIS GRAPH IS THE PROFILE AS DATA. The engine (@interego/agent-interop) is
+#  SPEC-BLIND — a drift-guard test greps its source for protocol names, including in
+#  comments, and fails the build on a hit. A2A lives entirely in a profile data file
+#  plus this published description. A second wire format is another profile, not an
+#  engine change; a second profile already ships alongside this one so the claim is
+#  falsifiable rather than rhetorical.
+#
+#  ★ CONFORMANCE HONESTY. a2ap:conformanceStatus is "unverified" and the emitted card
+#  carries NO conformance claim of any kind. It flips ONLY when the protocol's own
+#  test suite passes in CI. A published shape that asserted conformance we had not
+#  demonstrated would be exactly the fake-compliance this substrate exists to avoid.
+# ══════════════════════════════════════════════════════════════
+
+a2ap:Profile a owl:Ontology , iap:InteropProfile ;
+    rdfs:label "A2A interop profile" ;
+    rdfs:comment "Declarative profile binding the substrate's spec-blind agent-interop engine to the A2A protocol: card field mapping, lifecycle state names, wire route table, error table, and the affordance projection for followable next steps." ;
+    dcterms:conformsTo <https://a2a-protocol.org/> ;
+    a2ap:protocolVersion "1.0" ;
+    a2ap:binding "HTTP+JSON" ;
+    a2ap:wireMediaType "application/a2a+json" ;
+    a2ap:conformanceStatus "unverified" ;
+    rdfs:seeAlso <https://relay.interego.xwisee.com/.well-known/agent-card.json> .
+
+a2ap:protocolVersion a owl:DatatypeProperty ;
+    rdfs:label "protocolVersion" ;
+    rdfs:comment "The MAJOR.MINOR protocol version this profile targets, as the protocol spells it. Distinct from the specification's own release version." ;
+    rdfs:range xsd:string .
+
+a2ap:binding a owl:DatatypeProperty ;
+    rdfs:label "binding" ;
+    rdfs:comment "The transport binding token this profile implements. Conformance is defined per-binding: satisfying the data model, the abstract operations and ONE binding is conformant. This profile implements the resource-oriented HTTP+JSON binding — chosen because it is the binding whose task is genuinely a resource at a URL, which is what makes followable navigation possible at all." ;
+    rdfs:range xsd:string .
+
+a2ap:wireMediaType a owl:DatatypeProperty ;
+    rdfs:label "wireMediaType" ;
+    rdfs:comment "Registered media type for wire operation responses in this binding." ;
+    rdfs:range xsd:string .
+
+a2ap:conformanceStatus a owl:DatatypeProperty ;
+    rdfs:label "conformanceStatus" ;
+    rdfs:comment "Either \"unverified\" or \"verified\". VERIFIED means the protocol's own conformance suite passes in continuous integration — not that the implementation was written against the specification. While unverified, no emitted document may carry a conformance claim." ;
+    rdfs:range xsd:string .
+
+# ── Declared capability posture ────────────────────────────────
+#
+# Optional protocol capabilities this profile does NOT implement are declared FALSE
+# and are genuinely absent. Refusing an undeclared capability is the conformant
+# behaviour, so declaring false is honest rather than partial — an implementation
+# that declared true and then failed would be the dishonest case.
+
+a2ap:streaming            a owl:DatatypeProperty ; rdfs:label "streaming" ;            rdfs:comment "Server-sent event streaming. NOT implemented; declared false." ; rdfs:range xsd:boolean .
+a2ap:pushNotifications    a owl:DatatypeProperty ; rdfs:label "pushNotifications" ;    rdfs:comment "Push notification configuration. NOT implemented; declared false." ; rdfs:range xsd:boolean .
+a2ap:stateTransitionHistory a owl:DatatypeProperty ; rdfs:label "stateTransitionHistory" ; rdfs:comment "Full state-transition history on a task. NOT implemented; declared false." ; rdfs:range xsd:boolean .
+
+# ══════════════════════════════════════════════════════════════
+#  Conformance shapes — the substrate's OWN invariants over an emitted card.
+#
+#  These are deliberately NOT a restatement of the protocol's schema (the protocol's
+#  proto is normative for that, and its own suite is what verifies it). They pin the
+#  properties the SUBSTRATE promises and that its principles require, so a card that
+#  drifted from them fails here even if it were still schema-valid.
+# ══════════════════════════════════════════════════════════════
+
+a2ap:CardShape a sh:NodeShape ;
+    rdfs:label "A2A card — substrate invariants" ;
+    rdfs:comment "Validates an emitted agent card against the substrate's own promises: every advertised capability is identified by a DEREFERENCEABLE URL, and the card makes no conformance claim while the profile is unverified." ;
+    sh:targetClass a2ap:AgentCard ;
+    sh:property [
+        sh:path a2ap:skillId ;
+        sh:nodeKind sh:IRI ;
+        sh:pattern "^https?://" ;
+        sh:message "Every advertised capability id MUST be a dereferenceable http(s) URL that resolves to the capability's own description. A urn:, a bare token or an opaque handle is a promise the substrate cannot keep — the projection DROPS such capabilities rather than advertising them."
+    ] ;
+    sh:property [
+        sh:path a2ap:conformanceClaim ;
+        sh:maxCount 0 ;
+        sh:message "A card MUST NOT carry a conformance claim while a2ap:conformanceStatus is \"unverified\"."
+    ] .
+
+a2ap:EngagementShape a sh:NodeShape ;
+    rdfs:label "engagement — substrate invariants" ;
+    rdfs:comment "Validates an engagement projection: its identifier dereferences, and a non-terminal engagement advertises its followable next steps." ;
+    sh:targetClass iep:Engagement ;
+    sh:property [
+        sh:path iep:state ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "An engagement MUST carry exactly one lifecycle state."
+    ] ;
+    sh:property [
+        sh:path iep:affordance ;
+        sh:node a2ap:AffordanceShape ;
+        sh:message "Advertised next steps MUST be well-formed affordances."
+    ] .
+
+a2ap:AffordanceShape a sh:NodeShape ;
+    rdfs:label "followable next step" ;
+    rdfs:comment "An advertised next step must be followable: a dereferenceable action identifier and a target the client can actually invoke. This exists because the first implementation advertised a target URL that did not correspond to any route — a capability that is announced but cannot be followed is worse than one that is absent." ;
+    sh:property [
+        sh:path iep:action ;
+        sh:nodeKind sh:IRI ;
+        sh:pattern "^https?://" ;
+        sh:minCount 1 ;
+        sh:message "An affordance's action MUST be a dereferenceable http(s) URL."
+    ] ;
+    sh:property [
+        sh:path hydra:target ;
+        sh:nodeKind sh:IRI ;
+        sh:pattern "^https?://" ;
+        sh:minCount 1 ;
+        sh:message "An affordance's target MUST be an absolute http(s) URL the client can follow without reconstructing it."
+    ] .
