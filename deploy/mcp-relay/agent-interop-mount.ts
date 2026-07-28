@@ -150,8 +150,25 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
         const { document, version, mediaType } = renderCard(profile, identityFor(capabilities));
         const etag = `"${version}"`;
         res.setHeader('Access-Control-Allow-Origin', '*');
+        // Without this, a BROWSER client gets the card body but cannot read a
+        // single one of the headers below: the CORS default exposes only a short
+        // safelist, and neither Link nor ETag is on it. The conditional-request
+        // path the ETag exists for, and the profile pointer the card is described
+        // by, were both invisible to exactly the client class that needs an
+        // unauthenticated discovery document in the first place.
+        res.setHeader('Access-Control-Expose-Headers', 'Link, ETag');
         res.setHeader('Cache-Control', 'public, max-age=60');
         res.setHeader('ETag', etag);
+        // The discovery document describes ITSELF. A peer that fetches the card
+        // can follow `describedby` to the published conformance profile — the
+        // graph stating which protocol version and binding this implements, and
+        // whether that conformance has actually been verified — instead of
+        // needing to know out-of-band that such a description exists. Set before
+        // the 304 return so a cached client keeps the pointer.
+        res.setHeader('Link', [
+          `<${base}${profile.card.wellKnownPath}>; rel="self"`,
+          `<${profile.id}>; rel="describedby"`,
+        ].join(', '));
         // The content-derived version IS the ETag, so a conditional request is
         // answered without re-serialising when capability has not changed.
         if (req.headers['if-none-match'] === etag) { res.status(304).end(); return; }
