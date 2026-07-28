@@ -157,13 +157,21 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
         const { document, version, mediaType } = renderCard(profile, identityFor(capabilities));
         const etag = `"${version}"`;
         res.setHeader('Access-Control-Allow-Origin', '*');
-        // Without this, a BROWSER client gets the card body but cannot read a
-        // single one of the headers below: the CORS default exposes only a short
-        // safelist, and neither Link nor ETag is on it. The conditional-request
-        // path the ETag exists for, and the profile pointer the card is described
-        // by, were both invisible to exactly the client class that needs an
-        // unauthenticated discovery document in the first place.
-        res.setHeader('Access-Control-Expose-Headers', 'Link, ETag');
+        // NOTE: `Access-Control-Expose-Headers` is deliberately NOT set here.
+        //
+        // It was, and it did nothing in production. A middleware in server.ts
+        // freezes every `access-control-*` header (to stop the MCP SDK's
+        // sub-routers re-opening the wildcard via their own `cors()` call), and
+        // that freeze makes setHeader a SILENT no-op for those names. This
+        // handler's version passed a test that boots the mount alone and was
+        // absent from the live response — caught only by curling production after
+        // deploying. Without it a browser reads the card body but not the `Link`
+        // header telling it where to go next.
+        //
+        // It now lives in cors-allowlist.ts, in the same public carve-out that
+        // decides these routes are world-readable — which is the right home for it
+        // anyway: whatever declares a document public should declare what a public
+        // reader may see.
         res.setHeader('Cache-Control', 'public, max-age=60');
         res.setHeader('ETag', etag);
         // The discovery document describes ITSELF. A peer that fetches the card

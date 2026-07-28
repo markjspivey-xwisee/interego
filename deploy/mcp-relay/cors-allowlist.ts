@@ -238,6 +238,24 @@ export function corsMiddleware(opts: CorsHeaderOptions = {}): (req: MinimalReq, 
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', DEFAULT_ALLOW_HEADERS);
+      // A public document is only as followable as its headers are readable.
+      //
+      // These routes are hypermedia: the response BODY is half the answer and the
+      // `Link` header is the other half — it carries `rel="describedby"` to the
+      // published profile and `rel="self"`. CORS exposes only a short safelist to
+      // cross-origin JavaScript, and neither Link nor ETag is on it, so without
+      // this a browser agent fetches a public discovery document and cannot see
+      // where to go next. The ETag matters for the same reason: it is served so
+      // clients can revalidate, which they cannot do with a value they can't read.
+      //
+      // ★ THIS MUST BE SET HERE, not in the route handler. A later middleware
+      // FREEZES every `access-control-*` header (server.ts, ~"FROZEN_CORS_HEADERS")
+      // to stop the MCP SDK's sub-routers re-opening the wildcard with their own
+      // `cors()` call. That freeze makes `setHeader` a SILENT NO-OP for these
+      // names — a route handler can set this and watch it vanish with no error.
+      // Which is exactly what happened: it was set in the agent-interop mount,
+      // passed a test that boots the mount alone, and was missing in production.
+      res.setHeader('Access-Control-Expose-Headers', 'Link, ETag');
       res.setHeader('Vary', 'Origin');
       next();
       return;

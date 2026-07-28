@@ -209,9 +209,20 @@ console.log('\n7. the mount registers on REAL Express (route compilation is exer
       describedBy === PROFILES.a2a.id, `${describedBy} vs ${PROFILES.a2a.id}`);
     check('the card advertises its own canonical self URL',
       /<[^>]*\/\.well-known\/agent-card\.json>;\s*rel="self"/.test(cardLink), cardLink.slice(0, 140));
-    const exposed = (card.headers.get('access-control-expose-headers') ?? '').toLowerCase();
-    check('a cross-origin client can actually READ those headers',
-      exposed.includes('link') && exposed.includes('etag'), exposed || '<unset>');
+    // Whether a cross-origin client can READ those headers is NOT decided here and
+    // must not be asserted here. server.ts freezes every access-control-* header, so
+    // a setHeader in this mount is a silent no-op in production — this test booting
+    // the mount alone would happily go green on a header the real relay drops. That
+    // exact false pass shipped once. The behaviour is owned and tested by
+    // tests/public-cors-carveout.test.ts, with the freeze in place.
+    //
+    // What IS this mount's job: not pretending otherwise. If someone re-adds the
+    // header here it will look fixed and be broken, so fail if it comes back.
+    check('the mount does NOT try to set a frozen CORS header (it would silently no-op)',
+      !src.split(String.fromCharCode(10))
+        .filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+        .some(l => /Access-Control-Expose-Headers/i.test(l)),
+      'set it in cors-allowlist.ts instead');
 
     // A 304 must not strip the pointer: a client that caches the card would
     // otherwise lose its route to the profile on every revalidation.
