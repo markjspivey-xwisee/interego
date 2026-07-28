@@ -123,6 +123,12 @@ export interface InteropProfile {
    * not just a conformance gap.
    */
   continuationField?: string;
+  /**
+   * Media type for WIRE operation responses (distinct from `card.mediaType`, which
+   * types the discovery document). A protocol with its own registered media type
+   * declares it here; absent falls back to plain JSON.
+   */
+  wireMediaType?: string;
   card: CardProjection;
   lifecycle: LifecycleProjection;
   engagement: EngagementProjection;

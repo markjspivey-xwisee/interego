@@ -30,6 +30,7 @@ const OWNED_NAMESPACES = {
   cg:          'docs/ns/iep.ttl',      // @deprecated alias of iep: (legacy "Context Graphs")
   cgh:         'docs/ns/harness.ttl',  // @deprecated alias of ieh:
   iprot:       'docs/ns/iep.ttl',      // tolerated synonym
+  a2ap:       'docs/ns/a2a.ttl',      // A2A interop profile (published conformance profile)
   pgsl:       'docs/ns/pgsl.ttl',
   ie:         'docs/ns/interego.ttl',
   align:      'docs/ns/alignment.ttl',
