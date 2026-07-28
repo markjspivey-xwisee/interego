@@ -9,7 +9,7 @@
  * rather than asserted.
  */
 export type {
-  Part, Turn, TurnRole, Engagement, EngagementState, Capability, AgentIdentity,
+  Part, Turn, TurnRole, Engagement, EngagementState, Capability, AgentIdentity, Output,
 } from './types.js';
 export { TERMINAL_STATES } from './types.js';
 export type {

@@ -71,6 +71,21 @@ mountAgentInterop(app as any, {
   affordances: () => AFFORDANCES as any,
   // Fixed principal — see the scoping note above.
   verifyCaller: async () => 'did:ethr:0x00000000000000000000000000000000000000A2',
+  // A real (if tiny) capability implementation, so the harness exercises the
+  // execute path rather than a stub: `mint` echoes a content-addressed digest of
+  // its input, `discover` refuses as write-side would. Nothing is fabricated —
+  // what comes back is computed from what went in.
+  invokeCapability: async ({ capability, parts }) => {
+    const verb = capability.split('/').pop() ?? '';
+    if (verb === 'discover') throw new Error(`capability "${verb}" is not reachable through this interop surface`);
+    const text = parts.map(p => (p.kind === 'text' ? p.text ?? '' : JSON.stringify(p))).join(' ');
+    const { createHash } = await import('node:crypto');
+    return {
+      name: verb,
+      description: `Result of ${verb}`,
+      parts: [{ kind: 'text' as const, text: `sha256:${createHash('sha256').update(text).digest('hex')}` }],
+    };
+  },
   log: () => {},
 });
 

@@ -493,6 +493,68 @@ console.log('\n10. ROUTE SHADOWING — only a DECLARED url may reach a handler')
   srv.close();
 }
 
+console.log("\n11. THE CARD'S PROMISE — an advertised capability is actually PERFORMED");
+{
+  const express = (await import('express')).default;
+  const a = express(); a.use(express.json());
+  const invoked: string[] = [];
+  mountAgentInterop(a as any, {
+    publicBase: 'https://relay.test',
+    agent: { id: 'https://relay.test/.well-known/operations', name: 'T', description: 't' },
+    affordances: () => AFFORDANCES,
+    verifyCaller: async () => 'did:ethr:0xAAA',
+    // A real implementation: the result is COMPUTED from the input, never canned.
+    invokeCapability: async ({ capability, caller, parts }) => {
+      invoked.push(`${capability}|${caller}`);
+      const verb = capability.split('/').pop() ?? '';
+      if (verb === 'publish_context') throw new Error(`capability "${verb}" writes on behalf of its caller`);
+      const text = parts.map(p => (p.kind === 'text' ? p.text ?? '' : '')).join('');
+      return { name: verb, parts: [{ kind: 'text' as const, text: text.toUpperCase() }] };
+    },
+    log: () => {},
+  });
+  const srv2 = a.listen(0);
+  await new Promise(r => srv2.once('listening', r));
+  const B2 = `http://127.0.0.1:${(srv2.address() as any).port}`;
+  const J2 = { 'content-type': 'application/json' };
+  const send = (skillId: string | undefined, text: string) => fetch(`${B2}/a2a/v1/message:send`, {
+    method: 'POST', headers: J2,
+    body: JSON.stringify({ message: { parts: [{ text }], ...(skillId ? { skillId } : {}) } }),
+  }).then(r => r.json() as any);
+
+  const done = await send('https://relay.test/ns/iep/action/relay/get_descriptor', 'hello');
+  check('a task naming a capability reaches a TERMINAL state, not submitted-forever',
+    done.task.status.state === 'TASK_STATE_COMPLETED', done.task.status.state);
+  check('...and carries an artifact', (done.task.artifacts ?? []).length === 1,
+    String((done.task.artifacts ?? []).length));
+  check('...whose content is DERIVED from the input, not canned',
+    done.task.artifacts?.[0]?.parts?.[0]?.text === 'HELLO',
+    JSON.stringify(done.task.artifacts?.[0]?.parts));
+  check('...with a dereferenceable artifact id, never an opaque handle',
+    /^https:\/\/relay\.test\/engagements\/.+\/outputs\/0$/.test(done.task.artifacts?.[0]?.artifactId ?? ''),
+    done.task.artifacts?.[0]?.artifactId);
+  check('the VERIFIED caller is what reaches the invoker (never the payload)',
+    invoked.some(i => i.endsWith('|did:ethr:0xAAA')), invoked.join(','));
+
+  // A refused capability is an outcome of the exchange, not a transport error: the
+  // peer asked a valid question and the answer is "that did not work".
+  const refused = await send('https://relay.test/ns/iep/action/relay/publish_context', 'x');
+  check('a refused capability FAILS the task rather than erroring the transport',
+    refused.task.status.state === 'TASK_STATE_FAILED', refused.task.status.state);
+  check('...and the reason is recorded ON the record, visible to the peer',
+    JSON.stringify(refused.task.history).includes('writes on behalf of its caller'),
+    JSON.stringify(refused.task.history).slice(0, 120));
+  check('...and a failed task produces no artifact', !(refused.task.artifacts ?? []).length);
+
+  // Naming nothing must stay exactly as before — this is additive.
+  const plain = await send(undefined, 'x');
+  check('a task naming NO capability is unchanged (submitted, no artifacts)',
+    plain.task.status.state === 'TASK_STATE_SUBMITTED' && !plain.task.artifacts,
+    plain.task.status.state);
+
+  srv2.close();
+}
+
 
 if (failures > 0) { console.error(`\n${failures} assertion(s) failed\n`); process.exit(1); }
 console.log('\nAll agent-interop mount gates hold.\n');

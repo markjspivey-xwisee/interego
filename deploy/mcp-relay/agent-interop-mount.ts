@@ -43,6 +43,29 @@ export interface AgentInteropDeps {
   auth?: { oauth2?: { metadataUrl: string; pkceRequired: boolean }; bearer?: boolean };
   provider?: { organization: string; url: string };
   documentationUrl?: string;
+  /**
+   * Actually PERFORM a capability the card advertises.
+   *
+   * ★ Without this the interop surface was a promise it could not keep: the card
+   * advertised 48 capabilities, a peer could ask for one, and the engagement sat in
+   * its opening state forever because the mount never transitioned it. Advertising
+   * what you cannot do is the failure this substrate exists to avoid.
+   *
+   * INJECTED rather than implemented here, and that is the security boundary. The
+   * relay's own dispatcher already carries the authorization rules — which
+   * capabilities need a verified caller, which are write-side, how identity is bound
+   * to authorship. Re-deciding any of that here would mean a second copy of an
+   * authorization policy, which is precisely how the audit's privilege bugs got in.
+   * The mount asks; the relay decides and refuses.
+   *
+   * `caller` is the VERIFIED principal, never anything from the payload.
+   * Resolves to the produced parts, or throws with a caller-safe reason.
+   */
+  invokeCapability?: (args: {
+    capability: string;
+    caller: string;
+    parts: ReadonlyArray<Part>;
+  }) => Promise<{ name?: string; description?: string; parts: Part[] }>;
   log: (msg: string) => void;
 }
 
@@ -389,7 +412,41 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
               ? engine.appendTurn({ id: ref, caller, role: 'requester', parts })
               : engine.open({ caller, parts, ...(capability ? { capability } : {}) });
             if (isEngineError(r)) { sendErr(res, profile, r.error.kind, r.error.detail); return; }
-            sendEngagement(res, profile, r.value, base, route.operation);
+
+            // ── Do the work, if a capability was named and we can perform it ──
+            //
+            // Synchronous on purpose for now: the engagement reaches a terminal
+            // state within the request, so a peer gets a real answer rather than a
+            // record it must poll. Streaming and long-running work are declared
+            // false on the card and refused at their routes, so nothing here
+            // pretends otherwise.
+            const eng = (r as { ok: true; value: typeof r.value }).value;
+            const cap = eng.capability;
+            if (cap && deps.invokeCapability) {
+              const began = engine.begin(eng.id, caller);
+              if (isEngineError(began)) { sendErr(res, profile, began.error.kind, began.error.detail); return; }
+              try {
+                const out = await deps.invokeCapability({ capability: cap, caller, parts });
+                const done = engine.complete({ id: eng.id, caller, outputs: [out] });
+                if (isEngineError(done)) { sendErr(res, profile, done.error.kind, done.error.detail); return; }
+                sendEngagement(res, profile, (done as { ok: true; value: typeof eng }).value, base, route.operation);
+                return;
+              } catch (err) {
+                // The failure is recorded ON the engagement and returned as a
+                // completed exchange, not as a transport error: the peer asked a
+                // valid question and the answer is "that did not work". Only the
+                // message the relay chose to surface is echoed — never an internal
+                // one (the audit's error-leak class).
+                const reason = (err as Error)?.message ?? 'capability invocation failed';
+                const failed = engine.fail({ id: eng.id, caller, reason });
+                if (isEngineError(failed)) { sendErr(res, profile, failed.error.kind); return; }
+                deps.log(`[agent-interop] capability ${cap} failed: ${reason}`);
+                sendEngagement(res, profile, (failed as { ok: true; value: typeof eng }).value, base, route.operation);
+                return;
+              }
+            }
+
+            sendEngagement(res, profile, eng, base, route.operation);
             return;
           }
 
