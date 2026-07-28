@@ -58,6 +58,29 @@ const AGENT_DID = (process.env.INTEREGO_DEFAULT_AGENT_DID ?? 'did:web:demo-agent
 if (!POD_URL) console.warn('INTEREGO_DEFAULT_POD_URL unset — descriptor publish/discover disabled; governance / pgsl / zk / attest still work.');
 const POD_URL_NN: string = POD_URL ?? '(pod not configured)';
 
+/**
+ * Refuse a pod-backed tool when no pod is configured — the way the WALLET path
+ * already does it.
+ *
+ * Without this, `POD_URL_NN` ("(pod not configured)") was handed to the publish /
+ * discover machinery as if it were a URL, and the caller got back a Node internal:
+ *   The "string" argument must be of type string or an instance of Buffer…
+ * A caller cannot act on that. They cannot even tell it is a CONFIGURATION problem
+ * rather than a bug in their request.
+ *
+ * The wallet guard one screen down already says exactly the right thing —
+ * "Bridge has no wallet — set BRIDGE_WALLET_KEY to enable signing" — so the fix is
+ * simply to be as honest about the pod as this file already is about the wallet.
+ */
+function requirePod(): string {
+  if (!POD_URL) {
+    throw new Error(
+      'Bridge has no pod — set INTEREGO_DEFAULT_POD_URL to enable descriptor publish/discover. '
+      + 'The governance, PGSL, ZK and attestation tools do not need one and work as-is.');
+  }
+  return POD_URL;
+}
+
 const PORT = parseInt(process.env.PORT ?? '6050', 10);
 const DEPLOYMENT_URL = process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`;
 
@@ -116,7 +139,7 @@ async function handlePublish(args: PublishArgs): Promise<Record<string, unknown>
   }
 
   const descriptor = builder.build();
-  const result = await publish(descriptor, args.graph_content, POD_URL_NN);
+  const result = await publish(descriptor, args.graph_content, requirePod());
 
   return {
     ok: true,
@@ -130,7 +153,7 @@ async function handlePublish(args: PublishArgs): Promise<Record<string, unknown>
 }
 
 async function handleDiscover(args: { describes_iri?: string; conforms_to_prefix?: string }): Promise<unknown> {
-  const entries = await discover(POD_URL_NN, undefined);
+  const entries = await discover(requirePod(), undefined);
   let filtered = args.describes_iri
     ? entries.filter(e => e.describes.some(d => d === args.describes_iri))
     : entries;
@@ -794,14 +817,53 @@ app.get('/affordances', (_req, res) => {
 `);
 });
 
+/**
+ * Which advertised tools this process can ACTUALLY run right now.
+ *
+ * The root document used to list all of them flat, with `pod: "(pod not
+ * configured)"` and `walletAddress: null` sitting alongside as facts a reader was
+ * left to correlate for themselves. So it advertised descriptor publishing with no
+ * pod to publish to, and signing with no key to sign with — a list of things this
+ * bridge would not do, which is the failure this substrate exists to avoid.
+ *
+ * Booting without a pod or wallet is DELIBERATE: the governance, PGSL, ZK and
+ * attestation demos are genuinely pod-free and work. The defect was never the
+ * degradation — it was not saying so.
+ */
+function toolAvailability(): {
+  available: string[];
+  unavailable: Array<{ tool: string; reason: string }>;
+} {
+  const needsPod = ['protocol.publish_descriptor', 'protocol.discover_descriptors', 'protocol.get_descriptor'];
+  const needsWallet = ['protocol.sign_message', 'protocol.merkle_attest'];
+  const available: string[] = [];
+  const unavailable: Array<{ tool: string; reason: string }> = [];
+  for (const name of Object.keys(tools)) {
+    if (!POD_URL && needsPod.includes(name)) {
+      unavailable.push({ tool: name, reason: 'no pod configured (INTEREGO_DEFAULT_POD_URL)' });
+    } else if (!wallet && needsWallet.includes(name)) {
+      unavailable.push({ tool: name, reason: 'no wallet configured (BRIDGE_WALLET_KEY)' });
+    } else {
+      available.push(name);
+    }
+  }
+  return { available, unavailable };
+}
+
 app.get('/', (_req, res) => {
+  const { available, unavailable } = toolAvailability();
   res.json({
     bridge: 'interego-bridge-demo',
     pod: POD_URL_NN,
     agent: AGENT_DID,
     walletAddress: wallet?.address ?? null,
-    toolCount: Object.keys(tools).length,
-    tools: Object.keys(tools),
+    // Counts describe what is RUNNABLE. `toolCount` previously counted the
+    // registry, which is not the same number when configuration is partial.
+    toolCount: available.length,
+    tools: available,
+    // Named, with the reason, so a caller learns the boundary by reading rather
+    // than by invoking and getting an error.
+    unavailableTools: unavailable,
     mcpEndpoint: `${DEPLOYMENT_URL}/mcp`,
   });
 });
