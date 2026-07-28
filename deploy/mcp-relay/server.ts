@@ -537,15 +537,40 @@ const AUTH_REQUIRED_TOOLS = new Set([
   // rebuild_manifest rewrites a pod's manifest index (non-destructive,
   // reconstructs from on-pod descriptors) — gate it behind auth.
   'rebuild_manifest',
+  // ── R3: state-MUTATING tools that ran anonymously ──────────────────
+  // This set is the ONLY runtime classifier. WRITE_SIDE_TOOLS lists some of
+  // these but is consulted only in the /mcp CallTool handler, so on
+  // /tool/:name and /messages they executed with no credential at all.
+  //
+  // discover_directory  — unbounded entries into the (uncapped) knownPods AND one
+  //   durable .jsonld PUT per entry into the relay's OWN service-account pod (the
+  //   one holding the OAuth client + token stores). Poisoned entries mint
+  //   ActivityPub actors and acct: handles ON THE RELAY'S OWN DOMAIN via
+  //   cardForLocalPart → /.well-known/webfinger, /agents/:localPart, outbox, inbox.
+  //   Survives restart.
+  // remove_pod — DELETEs another principal's federation record from that same pod:
+  //   their WebFinger, AP actor, outbox, inbox and notify_agent reachability all
+  //   vanish, durably. add_pod, its exact inverse, was already gated.
+  // subscribe_all / unsubscribe_from_pod — anonymous teardown of any live
+  //   subscription (silencing every SSE/webhook consumer) and anonymous outbound
+  //   WebSocket fan-out. The comment claiming CG_MAX_SUBSCRIPTIONS bounds this is
+  //   wrong: that constant does not exist in the relay, only in mcp-server.
+  // pgsl_ingest — arbitrary-pod relay-credentialed write (also own-pod-gated).
+  //
+  // PURE READS STAY PUBLIC by design: get_descriptor, dereference, discover_all,
+  // discover_context are called unauthenticated by live published artifacts, and
+  // R1 (own-pod-only decryption) + R4 (redirect-screening egress) already removed
+  // their teeth. Gating them would break those artifacts for no security gain.
+  'discover_directory', 'remove_pod', 'subscribe_all', 'unsubscribe_from_pod',
+  'pgsl_ingest',
 ]);
 
-// Tools that are public (read operations)
-const PUBLIC_TOOLS = new Set([
-  'discover_context', 'get_descriptor', 'get_pod_status',
-  'discover_all', 'list_known_pods',
-  'remove_pod', 'discover_directory',
-  'verify_agent',
-]);
+// NOTE: a `PUBLIC_TOOLS` set used to sit here and was DEAD CODE — never read by any
+// runtime path (one definition, one stale comment reference), while listing
+// remove_pod and discover_directory as "public (read operations)" when both mutate
+// durable state. Keeping a set that looks like a gate but is not is worse than
+// having none: it is why those two read as intentionally-public for so long.
+// Authorization is decided solely by AUTH_REQUIRED_TOOLS above.
 
 // Kernel verbs — the 8 substrate primitives. Every other entry in
 // TOOLS is a thin-facade compatibility shim that internally composes

@@ -86,7 +86,15 @@ function literal(value: string | number | boolean, datatype?: string): string {
 }
 
 function dateTimeLit(dt: string): string {
-  return `"${dt}"^^xsd:dateTime`;
+  // MUST route through escLiteral like every other emitter. isValidDateTime is
+  // `!isNaN(new Date(dt).getTime())`, and V8's legacy date parser treats a
+  // parenthesised suffix as a comment — so `Jan 1 2030 (<ANY PAYLOAD>)` validates
+  // and, unescaped here, closed the literal and injected arbitrary Turtle into both
+  // the descriptor AND the pod's single shared manifest. valid_from / valid_until
+  // are ordinary tool args (not reserved fields), so they arrive unmodified on
+  // every transport. Escaping is transparent to well-formed callers; tightening
+  // isValidDateTime itself is a separate, breaking change.
+  return `"${escLiteral(String(dt))}"^^xsd:dateTime`;
 }
 
 // ── Blank node emitter ───────────────────────────────────────

@@ -178,6 +178,11 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
   // published agent-registry graph.
   const escI = (s: string): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
   const escL = (s: string): string => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+  // A prefixed name (`iep:<local>`) cannot be escaped into safety — any character
+  // outside PN_LOCAL ends the name and starts new RDF. DelegationScope is a closed
+  // enum, so allow-list it and fail to the LEAST privilege on anything unrecognised.
+  const SCOPES = ['ReadWrite', 'ReadOnly', 'PublishOnly', 'DiscoverOnly'];
+  const safeScope = (s: string): string => (SCOPES.includes(String(s)) ? String(s) : 'DiscoverOnly');
 
   lines.push('@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .');
   lines.push('@prefix foaf: <http://xmlns.com/foaf/0.1/> .');
@@ -216,10 +221,16 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
     lines.push(`<${frag}> a iep:AuthorizedAgent ;`);
     lines.push(`    iep:agentIdentity <${escI(agent.agentId)}> ;`);
     lines.push(`    iep:delegatedBy <${escI(profile.webId)}> ;`);
-    lines.push(`    iep:scope iep:${agent.scope} ;`);
-    lines.push(`    iep:validFrom "${agent.validFrom}"^^xsd:dateTime ;`);
+    // PREFIXED-NAME position: `iep:${scope}` is not a literal, so escaping cannot
+    // save it — an arbitrary value ends the triple and appends attacker RDF, and a
+    // whole injected `<#agent-…>` stanza is accepted by parseOwnerProfile as
+    // genuine (runScopeGate then falls back to a registry-only, signature-free
+    // verification, making it write-eligible). DelegationScope is a closed enum, so
+    // ALLOW-LIST it; the `as 'ReadWrite'` cast at the call site is a runtime no-op.
+    lines.push(`    iep:scope iep:${safeScope(agent.scope)} ;`);
+    lines.push(`    iep:validFrom "${escL(agent.validFrom)}"^^xsd:dateTime ;`);
     if (agent.validUntil) {
-      lines.push(`    iep:validUntil "${agent.validUntil}"^^xsd:dateTime ;`);
+      lines.push(`    iep:validUntil "${escL(agent.validUntil)}"^^xsd:dateTime ;`);
     }
     if (agent.label) {
       lines.push(`    foaf:name "${escL(agent.label)}" ;`);
@@ -243,7 +254,7 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
       // to in-window retired keys.
       for (const h of agent.encryptionKeyHistory) {
         const safeLabel = (h.label ?? '').replace(/\|/g, '%7C').replace(/"/g, '\\"');
-        lines.push(`    iep:retiredEncryptionKey "${h.publicKey}|${h.createdAt}|${h.retiredAt}|${safeLabel}" ;`);
+        lines.push(`    iep:retiredEncryptionKey "${escL(h.publicKey)}|${escL(h.createdAt)}|${escL(h.retiredAt)}|${safeLabel}" ;`);
       }
     }
     // Close
