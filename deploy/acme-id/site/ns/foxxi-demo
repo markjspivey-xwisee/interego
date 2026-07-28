@@ -1,0 +1,52 @@
+@prefix fxd:     <https://acme-id.interego.xwisee.com/ns/foxxi-demo#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix foaf:    <http://xmlns.com/foaf/0.1/> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+# ══════════════════════════════════════════════════════════════
+#  Acme demo-tenant vocabulary (fxd:)
+#
+#  ★ THIS FILE EXISTS BECAUSE IT WAS ALREADY BEING CITED.
+#
+#  The three published WebID profiles under /users/*/profile/card each bind
+#  `@prefix fxd: <https://acme-id.interego.xwisee.com/ns/foxxi-demo#>` and use its
+#  terms to make claims about a person — their tenant user id, their wallet address,
+#  their audience tag. That namespace returned 404. So every one of those profiles
+#  asserted facts in a vocabulary that could not be looked up: a reader could parse
+#  the triples and had no way to learn what any predicate MEANT.
+#
+#  That is the everything-is-a-URL invariant failing in the place it matters most —
+#  inside identity documents, whose entire value is that a stranger can resolve what
+#  they say. A term that does not dereference is a word, not a term.
+#
+#  Nothing here is invented: the vocabulary defines exactly the three predicates the
+#  profiles already use, and no more. Adding a term nobody cites would be the same
+#  mistake pointing the other way.
+# ══════════════════════════════════════════════════════════════
+
+<https://acme-id.interego.xwisee.com/ns/foxxi-demo> a owl:Ontology ;
+    rdfs:label "Acme demo-tenant vocabulary" ;
+    rdfs:comment "Terms used by the WebID profiles this identity serves. A demo tenant of the Foxxi learning-and-development vertical; the terms describe a person's relationship to that tenant, not to Interego itself." ;
+    dcterms:publisher <did:web:acme-id.interego.xwisee.com> ;
+    rdfs:seeAlso <https://acme-id.interego.xwisee.com/.well-known/did.json> .
+
+fxd:userId a owl:DatatypeProperty ;
+    rdfs:label "userId" ;
+    rdfs:comment "The person's identifier WITHIN this tenant. Tenant-scoped and not globally unique — the globally meaningful identifier for the same person is the WebID this triple is asserted on, or their DID. Present so tenant-local records can be correlated to a resolvable identity rather than the other way round." ;
+    rdfs:domain foaf:Person ;
+    rdfs:range xsd:string .
+
+fxd:walletAddress a owl:DatatypeProperty ;
+    rdfs:label "walletAddress" ;
+    rdfs:comment "An Ethereum address this person controls, as a 0x-prefixed hex string. Declared so a verifier can check a signature made by this person against a key they published themselves. It is a CLAIM made by the profile, not proof of control — proof is a signature that recovers to this address." ;
+    rdfs:domain foaf:Person ;
+    rdfs:range xsd:string .
+
+fxd:audienceTag a owl:DatatypeProperty ;
+    rdfs:label "audienceTag" ;
+    rdfs:comment "A cohort label used by the vertical to route content and training to the right people (for example a role or a business unit). Descriptive, never an authorization: nothing may grant access on the strength of this value, because the profile that carries it is self-asserted." ;
+    rdfs:domain foaf:Person ;
+    rdfs:range xsd:string .

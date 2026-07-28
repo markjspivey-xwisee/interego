@@ -22,11 +22,6 @@
   ],
   "service": [
     {
-      "id": "did:web:acme-id.interego.xwisee.com#tenantPod",
-      "type": "TenantPod",
-      "serviceEndpoint": "https://gate.interego.xwisee.com/acme/"
-    },
-    {
       "id": "did:web:acme-id.interego.xwisee.com#foxxiBridge",
       "type": "FoxxiVerticalBridge",
       "serviceEndpoint": "https://foxxi-bridge.interego.xwisee.com"
