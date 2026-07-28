@@ -114,7 +114,7 @@ export interface InteropProfile {
   conformanceStatus: 'unverified' | 'verified';
   /**
    * The request-body member this wire format uses to CONTINUE an existing
-   * engagement rather than open a new one (A2A: `taskId`). Declared as data so the
+   * engagement rather than open a new one (e.g. a task/run id). Declared as data so the
    * spec-blind mount never names a protocol's field; absent means the format has no
    * multi-turn continuation and every send opens a new engagement.
    *
