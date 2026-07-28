@@ -822,10 +822,33 @@ function assertInvokeTargetAllowed(url: string): void {
   assertPublicPodUrl(url);
 }
 
+/**
+ * The egress choke point for every CALLER-SUPPLIED URL.
+ *
+ * Screening only the INITIAL url was not a guard: solidFetch calls fetch() with no
+ * `redirect` option, so undici follows up to 20 hops unscreened. A caller-controlled
+ * public host answering `302 Location: http://169.254.169.254/…` defeated the screen
+ * in one hop and reached link-local/IMDS and private ranges — the body then echoed
+ * back to the caller by dereference / act / invoke_affordance / reduce_chain.
+ *
+ * Follow redirects MANUALLY and re-screen EVERY hop (the same discipline
+ * amep-session-bridge.ts already uses with redirect:'manual'). Because this is the
+ * shared wrapper, fixing it here re-arms every existing guarded caller at once.
+ */
+const GUARDED_MAX_REDIRECTS = 5;
 const guardedInvokeFetch: FetchFn = async (url, init) => {
-  const target = normalizeCssUrl(url);
-  assertInvokeTargetAllowed(target);
-  return solidFetch(target, init);
+  let target = normalizeCssUrl(url);
+  for (let hop = 0; hop <= GUARDED_MAX_REDIRECTS; hop++) {
+    assertInvokeTargetAllowed(target);
+    const r = await solidFetch(target, { ...(init as Record<string, unknown>), redirect: 'manual' } as typeof init);
+    if (r.status < 300 || r.status >= 400) return r;
+    const loc = r.headers.get('location');
+    if (!loc) return r;
+    // Resolve relative Locations against the CURRENT hop, then re-screen on the
+    // next iteration — a relative redirect must not escape the guard either.
+    target = normalizeCssUrl(new URL(loc, target).toString());
+  }
+  throw new Error('invoke: too many redirects');
 };
 
 /**
@@ -929,11 +952,21 @@ function emitNotification(
   const hooks = notificationWebhooks.get(podUrl);
   if (hooks && hooks.size > 0) {
     for (const url of hooks) {
-      void fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/ld+json' },
-        body: JSON.stringify(event),
-      }).catch(err => log(`[notify/webhook] POST ${url} failed: ${(err as Error).message}`));
+      // Re-screen at DELIVERY, not just at registration (R4): the guard must hold
+      // even if a hostname re-resolves to a private address after it was registered
+      // (DNS rebinding), and this was a bare global fetch with no screen at all.
+      void (async () => {
+        try {
+          assertInvokeTargetAllowed(url);
+          await guardedInvokeFetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/ld+json' },
+            body: JSON.stringify(event),
+          } as Parameters<typeof guardedInvokeFetch>[1]);
+        } catch (err) {
+          log(`[notify/webhook] POST ${url} refused/failed: ${(err as Error).message}`);
+        }
+      })();
     }
   }
 
@@ -3434,7 +3467,7 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
       return JSON.stringify({ url, encrypted: false, mediaType: cached.mediaType, content: cached.content });
     }
     const { content, encrypted, mediaType } = await fetchGraphContent(url, {
-      fetch: solidFetch,
+      fetch: guardedInvokeFetch,   // caller-supplied URL: screen every redirect hop (R4)
       // Decrypt ONLY within the caller's proven own pod. get_descriptor needs no
       // credential, so passing relayAgentKey unconditionally made this an
       // unauthenticated oracle for every user's private plaintext.
@@ -3460,12 +3493,14 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
   if (cached && cached.expiresAt > Date.now() && !cached.encrypted) {
     turtle = cached.content;
   } else {
-    const resp = await solidFetch(url, {
+    const resp = await guardedInvokeFetch(url, {
       method: 'GET',
       headers: { 'Accept': 'text/turtle' },
     });
     if (!resp.ok) {
-      return JSON.stringify({ error: `${resp.status} ${resp.statusText}` });
+      // Do NOT echo upstream status/statusText for a caller-supplied URL — that is an
+      // internal port-scan oracle on an anonymous tool. Generic, non-discriminating.
+      return JSON.stringify({ error: 'descriptor could not be retrieved' });
     }
     turtle = await resp.text();
     cacheDescriptorBody(url, { content: turtle, mediaType: 'text/turtle', encrypted: false });
@@ -3482,7 +3517,7 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
   if (link) {
     try {
       const { content, encrypted } = await fetchGraphContent(link.accessURL, {
-        fetch: solidFetch,
+        fetch: guardedInvokeFetch,   // caller-supplied URL: screen every redirect hop (R4)
         // Same rule on the followed dcat:accessURL — this auto-follow was the
         // second half of the oracle (it returned the payload as `graph.content`).
         recipientKeyPair: await recipientKeyFor(args, link.accessURL),
@@ -3533,7 +3568,8 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
             const chainResult = await verifyAgentDelegation(
               parsedProof.issuer,
               inferredPodUrl,
-              { fetch: solidFetch, verifier: delegationVerifier },
+              // caller-derived pod URL (R4): screen every redirect hop
+              { fetch: guardedInvokeFetch, verifier: delegationVerifier },
             );
             if (chainResult.valid && chainResult.trustLevel === 'CryptographicallyVerified') {
               effective = 'CryptographicallyVerified';
@@ -3982,7 +4018,7 @@ async function handleSubscribeToPod(args: ToolArgs): Promise<string> {
       });
       log(`[notification] ${event.type} on ${event.resource}`);
     }, {
-      fetch: solidFetch,
+      fetch: guardedInvokeFetch,   // caller-chosen subscription target (R4)
       WebSocket: WebSocket as unknown as WebSocketConstructor,
     });
     subscriptions.set(podUrl, sub);
@@ -5122,7 +5158,7 @@ async function handleRemovePod(args: ToolArgs): Promise<string> {
 }
 
 async function handleDiscoverDirectory(args: ToolArgs): Promise<string> {
-  const directory = await fetchPodDirectory(args.directory_url as string, { fetch: solidFetch });
+  const directory = await fetchPodDirectory(args.directory_url as string, { fetch: guardedInvokeFetch });  // caller URL (R4)
   let added = 0;
   // discover_directory can fan out to many adds, so use the debounced
   // path to coalesce bursts for the same URL. Collect the per-entry
@@ -5666,12 +5702,15 @@ async function handleGetCurrentHead(args: ToolArgs): Promise<string> {
         return { descriptorUrl: h.descriptorUrl, cid: h.cid };
       }
       try {
-        const resp = await solidFetch(h.descriptorUrl, {
+        // Manifest heads derive from a caller-influenceable pod, so this is a
+        // caller-steered fetch: screen every hop (R4) and never echo the upstream
+        // status/statusText, which would make this an internal port-scan oracle.
+        const resp = await guardedInvokeFetch(h.descriptorUrl, {
           method: 'GET',
           headers: { 'Accept': 'text/turtle', 'Cache-Control': 'no-cache' },
         });
         if (!resp.ok) {
-          return { descriptorUrl: h.descriptorUrl, cid: null, error: `${resp.status} ${resp.statusText}` };
+          return { descriptorUrl: h.descriptorUrl, cid: null, error: 'head could not be retrieved' };
         }
         const turtle = await resp.text();
         return { descriptorUrl: h.descriptorUrl, cid: cryptoComputeCid(turtle) };
@@ -11399,7 +11438,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
       const podHint = auth.userId ? `${CSS_URL}${auth.userId}/` : undefined;
       const knownPodUrls = Array.from(knownPods.values()).map(e => e.url);
       const r = await kernelDereference(descriptorIri, {
-        fetch: solidFetch,
+        fetch: guardedInvokeFetch,   // caller-supplied descriptorIri (R4)
         decorateManifest: false,
         // Own-pod-only decryption (R1). This route previously decrypted ANY pod's
         // payload for any bearer holder; auth.userId is the token-verified
