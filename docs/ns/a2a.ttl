@@ -45,8 +45,8 @@ a2ap:Profile a owl:Ontology , iap:InteropProfile ;
     a2ap:binding "HTTP+JSON" ;
     a2ap:wireMediaType "application/json" ;
     a2ap:conformanceStatus "unverified" ;
-    a2ap:mustTierPassing 48 ;
-    a2ap:mustTierFailing 9 ;
+    a2ap:mustTierPassing 51 ;
+    a2ap:mustTierFailing 7 ;
     rdfs:seeAlso <https://relay.interego.xwisee.com/.well-known/agent-card.json> .
 
 a2ap:protocolVersion a owl:DatatypeProperty ;
@@ -71,7 +71,7 @@ a2ap:mustTierPassing a owl:DatatypeProperty ;
 
 a2ap:mustTierFailing a owl:DatatypeProperty ;
     rdfs:label "mustTierFailing" ;
-    rdfs:comment "Count of MUST-level requirements still failing. Non-zero is why a2ap:conformanceStatus remains \"unverified\": the remaining gaps are task artifacts, message-shaped responses, push-notification error binding, and SSE streaming." ;
+    rdfs:comment "Count of MUST-level requirements still failing. Non-zero is why a2ap:conformanceStatus remains \"unverified\": the remaining gaps are task artifacts (4), a message-shaped response, an inline-bytes content part, and SSE streaming." ;
     rdfs:range xsd:integer .
 
 a2ap:conformanceStatus a owl:DatatypeProperty ;

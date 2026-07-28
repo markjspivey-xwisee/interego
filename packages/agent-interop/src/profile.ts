@@ -118,6 +118,29 @@ export interface EngagementProjection {
   ): ResolvedAffordance[];
 }
 
+/**
+ * A route the profile KNOWS ABOUT and deliberately does not implement.
+ *
+ * There is a real difference between "that URL does not exist" and "that operation
+ * exists in this protocol and this agent does not offer it", and a bare 404 tells a
+ * client the first when the truth is the second — indistinguishable from a typo.
+ * Declaring the refusal is more honest than silence, and it is what the protocol's
+ * own error taxonomy is for.
+ *
+ * The ErrorSpec is INLINE rather than an `InteropErrorKind`, on purpose: a condition
+ * only one protocol names (a push-notification family it does not implement) must not
+ * become a concept in the shared engine. Declining is data.
+ *
+ * NOTE this is a refusal, never a stub. Nothing here pretends the capability exists.
+ */
+export interface DeclinedRoute {
+  method: 'GET' | 'POST' | 'DELETE';
+  /** Path template relative to the mount base; `{id}` and friends become captures. */
+  path: string;
+  /** What to answer with. */
+  error: ErrorSpec;
+}
+
 export interface InteropProfile {
   /** Stable profile id (a dereferenceable URL to its published description). */
   id: string;
@@ -142,6 +165,25 @@ export interface InteropProfile {
    * not just a conformance gap.
    */
   continuationField?: string;
+  /**
+   * The body member the request payload nests under, when this format wraps it —
+   * a protocol whose request is a schema'd envelope rather than the payload itself.
+   * Absent means the body IS the payload.
+   *
+   * The mount resolves EVERY declared body member through this — content parts and
+   * the continuation id alike — so it can never find one at a different level than
+   * the other. It previously did exactly that: parts were read from a hardcoded
+   * nested member while the continuation id was read from the top level, so a
+   * nesting protocol's continuations were invisible and every one silently forked a
+   * new engagement.
+   */
+  requestEnvelope?: string;
+  /**
+   * Operations this profile declares and this agent does not implement. Registered
+   * alongside the wire routes so they answer with the protocol's own error instead
+   * of falling through to a generic 404.
+   */
+  declinedRoutes?: DeclinedRoute[];
   /**
    * Media type for WIRE operation responses (distinct from `card.mediaType`, which
    * types the discovery document). A protocol with its own registered media type

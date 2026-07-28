@@ -37,9 +37,22 @@ const routes: Array<{ method: string; path: string | RegExp; handler: Handler }>
 /** A route path may be a string OR a RegExp (custom methods compile to RegExp). */
 const pstr = (p: string | RegExp): string => (typeof p === 'string' ? p : p.source);
 const isCard = (p: string | RegExp): boolean => pstr(p).includes('/.well-known/');
+/** Find a registered route by the URL it actually SERVES. A custom-method route is a
+ *  RegExp now, so string equality against the compiled form no longer locates it. */
+const routeFor = (rs: typeof routes, url: string) =>
+  rs.find(r => (typeof r.path === 'string' ? r.path === url : r.path.test(url)))!;
+/** Declined routes are refusals the profile registers for operations it does not
+ *  implement. They answer BEFORE auth because "this agent does not offer that" is
+ *  true for every caller and the card already declares the capability false. */
+const DECLINED_URLS = /pushNotificationConfigs|:stream\$/;
 const app: any = {
   get: (p: string | RegExp, h: Handler) => routes.push({ method: 'GET', path: p, handler: h }),
   post: (p: string | RegExp, h: Handler) => routes.push({ method: 'POST', path: p, handler: h }),
+  // The double must support every verb the mount can register. It lacked `delete`,
+  // and the mount CRASHED AT BOOT the first time a profile declared a DELETE route
+  // — the double earning its keep. A silent miss would have shipped a route that
+  // 404s exactly like the confusion it exists to remove.
+  delete: (p: string | RegExp, h: Handler) => routes.push({ method: 'DELETE', path: p, handler: h }),
 };
 
 function mkRes() {
@@ -114,8 +127,21 @@ check('a new capability changes it', c3.headers['etag'] !== etag1);
 AFFORDANCES.pop();
 
 console.log('\n4. every wire route demands a verified caller BEFORE the engine');
-const wireRoutes = routes.filter(r => !isCard(r.path));
+const allNonCard = routes.filter(r => !isCard(r.path));
+const wireRoutes = allNonCard.filter(r => !DECLINED_URLS.test(pstr(r.path)));
+const declinedRoutes = allNonCard.filter(r => DECLINED_URLS.test(pstr(r.path)));
+check('the profile registered declined routes for what it does not implement',
+  declinedRoutes.length >= 5, String(declinedRoutes.length));
 verifiedCaller = undefined;
+for (const r of declinedRoutes) {
+  const res = mkRes();
+  await r.handler({ headers: {}, query: {}, params: { id: 'x' }, body: {} }, res);
+  // 400, not 401: refusing an operation this agent does not offer does not depend on
+  // who is asking, and the card already publishes that capability as false.
+  check(`${r.method} ${pstr(r.path)} refuses as unimplemented, for anyone`,
+    res.statusCode === 400, `got ${res.statusCode}`);
+  check('  ...and never reaches the engine', !(res.body as any)?.id);
+}
 for (const r of wireRoutes) {
   const res = mkRes();
   await r.handler({ headers: {}, query: {}, params: { id: 'x' }, body: { parts: [{ text: 'hi' }] } }, res);
@@ -125,7 +151,7 @@ for (const r of wireRoutes) {
 console.log('\n5. errors render from the profile table — no internal detail');
 verifiedCaller = 'did:ethr:0xAAA';
 const badRes = mkRes();
-const send = wireRoutes.find(r => pstr(r.path) === '/a2a/v1/message:send')!;
+const send = routeFor(wireRoutes, '/a2a/v1/message:send');
 await send.handler({ headers: {}, query: {}, params: {}, body: {} }, badRes);
 check('a malformed body is a 400 from the profile table', badRes.statusCode === 400);
 check('the error body carries a code + message, not a stack',
@@ -385,6 +411,65 @@ console.log('\n9. MULTI-TURN — a continuation appends, it does not fork a new 
   check('a send with no ref still opens a NEW engagement', fresh.id !== first.id);
   srv.close();
 }
+
+console.log('\n10. ROUTE SHADOWING — only a DECLARED url may reach a handler');
+{
+  const express = (await import('express')).default;
+  const a = express(); a.use(express.json());
+  mountAgentInterop(a as any, {
+    publicBase: 'https://relay.test',
+    agent: { id: 'https://relay.test/.well-known/operations', name: 'T', description: 't' },
+    affordances: () => AFFORDANCES,
+    verifyCaller: async () => 'did:ethr:0xAAA',
+    log: () => {},
+  });
+  const srv = a.listen(0);
+  await new Promise(r => srv.once('listening', r));
+  const B = `http://127.0.0.1:${(srv.address() as any).port}`;
+  const J = { 'content-type': 'application/json' };
+  const body = JSON.stringify({ message: { parts: [{ text: 'probe' }] } });
+
+  // The defect: `/message:send` compiled to `^/a2a/v1/message([^/]+)$`, so EVERY
+  // `/a2a/v1/message<anything>` reached the state-mutating send handler and created
+  // a real, persisted engagement. Undeclared URLs mutating state.
+  const declared = await fetch(`${B}/a2a/v1/message:send`, { method: 'POST', headers: J, body });
+  check('the DECLARED custom-method url is served', declared.status === 200, String(declared.status));
+  for (const bad of ['messageZZZ', 'messages', 'message-send', 'messageX']) {
+    const r = await fetch(`${B}/a2a/v1/${bad}`, { method: 'POST', headers: J, body });
+    check(`/a2a/v1/${bad} cannot reach the send handler`, r.status === 404, String(r.status));
+  }
+
+  // Declared-but-unimplemented answers with the protocol's refusal, not a bare 404 —
+  // "no such URL" and "that operation exists and I do not offer it" are different facts.
+  const stream = await fetch(`${B}/a2a/v1/message:stream`, { method: 'POST', headers: J, body });
+  check('an unimplemented DECLARED operation refuses (not 404)', stream.status === 400, String(stream.status));
+  const sBody: any = await stream.json();
+  check('...and names itself in the protocol\'s own error vocabulary',
+    sBody?.error?.details?.[0]?.reason === 'UNSUPPORTED_OPERATION', JSON.stringify(sBody).slice(0, 120));
+  // The DELETE declined route is the per-CONFIG one, so it needs both ids.
+  const push = await fetch(`${B}/a2a/v1/tasks/t1/pushNotificationConfigs/c1`, { method: 'DELETE' });
+  check('a DELETE declined route registers and refuses', push.status === 400, String(push.status));
+
+  // MULTI-TURN AT THE REAL NESTING LEVEL. The continuation id lives INSIDE the
+  // request envelope. Reading it from the top level made every continuation fork a
+  // new engagement — and the old test passed because it sent the id where the code
+  // looked, confirming the implementation rather than the protocol.
+  const one: any = await (await fetch(`${B}/a2a/v1/message:send`, { method: 'POST', headers: J,
+    body: JSON.stringify({ message: { parts: [{ text: 'one' }], messageId: 'm1' } }) })).json();
+  const two: any = await (await fetch(`${B}/a2a/v1/message:send`, { method: 'POST', headers: J,
+    body: JSON.stringify({ message: { parts: [{ text: 'two' }], messageId: 'm2', taskId: one.task.id } }) })).json();
+  check('a continuation nested in the request envelope APPENDS, it does not fork',
+    two.task.id === one.task.id, `${one.task.id} vs ${two.task.id}`);
+  check('...and both turns are recorded', (two.task.history ?? []).length === 2,
+    String((two.task.history ?? []).length));
+  const ghost = await fetch(`${B}/a2a/v1/message:send`, { method: 'POST', headers: J,
+    body: JSON.stringify({ message: { parts: [{ text: 'x' }], taskId: 'https://relay.test/engagements/nope' } }) });
+  check('an unknown continuation id is notFound, NOT a silently-created new engagement',
+    ghost.status === 404, String(ghost.status));
+
+  srv.close();
+}
+
 
 if (failures > 0) { console.error(`\n${failures} assertion(s) failed\n`); process.exit(1); }
 console.log('\nAll agent-interop mount gates hold.\n');

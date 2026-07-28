@@ -60,11 +60,73 @@ function sendErr(res: Response, profile: InteropProfile, kind: InteropErrorKind,
   });
 }
 
-/** Extract content parts from a request body without trusting anything else in it.
- *  Unknown members are ignored rather than reflected. */
-function partsFrom(body: unknown): Part[] | null {
+/**
+ * Compile a profile path template into something Express can register.
+ *
+ * Three shapes appear in profile route tables:
+ *   `/tasks/{id}`         → a plain Express param, `/tasks/:id`
+ *   `/tasks/{id}:cancel`  → a CUSTOM METHOD: a literal `:cancel` after the id
+ *   `/message:send`       → a CUSTOM METHOD with no id at all
+ *
+ * ★ A LITERAL COLON IN A PATH IS NEVER A PARAMETER, and the two custom shapes fail
+ * in OPPOSITE ways when that is not handled — which is exactly why fixing the first
+ * left the second in place.
+ *
+ *   `/tasks/:id:cancel` makes path-to-regexp THROW at registration ("Missing text
+ *   before \"cancel\" param"), taking the relay down at boot. Loud. It got fixed.
+ *
+ *   `/message:send` does NOT throw. path-to-regexp reads `:send` as a PARAMETER
+ *   NAME and compiles `^/<base>/message([^/]+)$` — so `/message:stream`,
+ *   `/messageZZZ`, `/messages`, `/message%3Aanything` all reached the state-mutating
+ *   send handler and created real, persisted engagements. Undeclared URLs mutating
+ *   state, through a door that appears in no route table: the audit's own
+ *   unbounded-state class, arrived at from a direction nobody was watching.
+ *   Verified before fixing — `POST /<base>/messageZZZ` returned 200 and the
+ *   engagement showed up in ListTasks.
+ *
+ * The lesson is one this repo had already written down and I still missed: when
+ * fixing a class of defect, find EVERY instance of the sink pattern, not just the
+ * one that announced itself. A crash is a gift; the silent sibling is the bug.
+ *
+ * So any template whose last segment carries a literal `:verb` compiles WHOLE to an
+ * anchored RegExp — every literal escaped, `{id}` the only capture. Nothing but the
+ * declared URL can match. Shared by wire AND declined routes so the two can never
+ * disagree about what a path means.
+ */
+function compilePath(mountBase: string, template: string): string | RegExp {
+  const hasCustomVerb = /:[A-Za-z][A-Za-z0-9_-]*$/.test(template);
+  return hasCustomVerb
+    ? new RegExp(`^${(mountBase + template).split('{id}').map(escapeRe).join('([^/]+)')}$`)
+    : `${mountBase}${template.replace(/\{(\w+)\}/g, ':$1')}`;
+}
+
+/**
+ * The request PAYLOAD, unwrapped from whatever envelope the profile declares.
+ *
+ * ★ This is where a real correctness bug lived. The mount used to reach into a
+ * hardcoded `body.message` for parts, while reading the continuation id from the
+ * TOP level — two different answers to "where is the payload?" inside one handler.
+ * A protocol that nests its request (`{envelope:{parts, continuationId}}`) then
+ * had its parts found and its continuation id missed, so EVERY continuation opened
+ * a new engagement instead of appending. Multi-turn was broken for every real
+ * client, and the test that covered it passed because it sent the id at the level
+ * the implementation happened to read — a test confirming the code rather than the
+ * protocol.
+ *
+ * Both now resolve through the same declared member, so they cannot disagree again.
+ */
+function payloadOf(body: unknown, envelope: string | undefined): Record<string, unknown> {
   const b = (body ?? {}) as Record<string, unknown>;
-  const msg = (b['message'] ?? b) as Record<string, unknown>;
+  if (!envelope) return b;
+  const inner = b[envelope];
+  // Tolerate an unwrapped body: some clients post the payload directly.
+  return (inner && typeof inner === 'object' ? inner : b) as Record<string, unknown>;
+}
+
+/** Extract content parts from a request payload without trusting anything else in it.
+ *  Unknown members are ignored rather than reflected. */
+function partsFrom(body: unknown, envelope?: string): Part[] | null {
+  const msg = payloadOf(body, envelope);
   const raw = msg['parts'];
   if (!Array.isArray(raw) || raw.length === 0) return null;
   const parts: Part[] = [];
@@ -194,22 +256,44 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
       }
     });
 
-    // ── The wire routes, generated from the profile's own route table ────────
     const mountBase = `${'/'}${profile.slug}/v1`;
+
+    // ── Declared, and deliberately not implemented ───────────────────────────
+    //
+    // Registered FIRST so an unimplemented operation answers with the protocol's
+    // own refusal rather than falling through to a generic 404. "No such URL" and
+    // "that operation exists and this agent does not offer it" are different facts,
+    // and a client cannot tell the second from a typo when it is told the first.
+    //
+    // These are refusals, not stubs — nothing here pretends the capability exists,
+    // and the card still declares the capability false.
+    for (const declined of profile.declinedRoutes ?? []) {
+      const dPath = compilePath(mountBase, declined.path);
+      const refuse = (_req: Request, res: Response): void => {
+        res.status(declined.error.status).json({
+          error: {
+            ...(declined.error.extra ?? {}),
+            code: declined.error.code,
+            message: declined.error.message,
+          },
+        });
+      };
+      // Dispatch through a lookup rather than a chain, and FAIL LOUDLY if the host
+      // app cannot register the verb: a declined route that silently failed to
+      // register would 404 again, which is the exact confusion this removes.
+      const register = {
+        GET: app.get, POST: app.post,
+        DELETE: (app as unknown as { delete?: typeof app.get }).delete,
+      }[declined.method];
+      if (typeof register !== 'function') {
+        throw new Error(`[agent-interop] host app cannot register ${declined.method} (declined route ${declined.path})`);
+      }
+      register.call(app, dPath as never, refuse);
+    }
+
+    // ── The wire routes, generated from the profile's own route table ────────
     for (const route of profile.wire) {
-      // Path conversion. Two shapes appear in profile route tables:
-      //   `/tasks/{id}`         → a plain Express param, `/tasks/:id`
-      //   `/tasks/{id}:cancel`  → an AIP-style CUSTOM METHOD: a literal `:cancel`
-      //                           suffix after the id.
-      // The second CANNOT be expressed as `/tasks/:id:cancel` — path-to-regexp
-      // reads the suffix as a second parameter and THROWS at registration
-      // ("Missing text before \"cancel\" param"), which would take the relay down
-      // at boot rather than merely mis-route. So a custom-method route is compiled
-      // to an explicit RegExp, where the id is a capture group.
-      const custom = /\{id\}:([A-Za-z][A-Za-z0-9_-]*)$/.exec(route.path);
-      const path: string | RegExp = custom
-        ? new RegExp(`^${escapeRe(mountBase + route.path.slice(0, custom.index))}([^/]+):${custom[1]}$`)
-        : `${mountBase}${route.path.replace(/\{id\}/g, ':id')}`;
+      const path = compilePath(mountBase, route.path);
       const handler = async (req: Request, res: Response): Promise<void> => {
         try {
           // ── Protocol version, if this profile pins one ────────────────────
@@ -242,17 +326,21 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
           if (!caller) { sendErr(res, profile, 'unauthenticated'); return; }
 
           if (route.operation === 'sendMessage') {
-            const parts = partsFrom(req.body);
+            // ONE resolution of "where is the payload", used for everything below.
+            // Splitting it was the bug: parts came from the envelope, the
+            // continuation id from the top level, and they silently disagreed.
+            const payload = payloadOf(req.body, profile.requestEnvelope);
+            const parts = partsFrom(req.body, profile.requestEnvelope);
             if (!parts) { sendErr(res, profile, 'badRequest', 'at least one content part is required'); return; }
-            const capability = typeof (req.body ?? {}).skillId === 'string' ? (req.body as { skillId: string }).skillId : undefined;
-            // CONTINUATION vs NEW. The profile declares which body member carries an
-            // existing engagement's id; the mount never names a protocol's field. Without
-            // this every send called engine.open(), so continuing a conversation silently
+            const capability = typeof payload['skillId'] === 'string' ? payload['skillId'] : undefined;
+            // CONTINUATION vs NEW. The profile declares which member carries an existing
+            // engagement's id; the mount never names a protocol's field. Without this
+            // every send called engine.open(), so continuing a conversation silently
             // FORKED it into a second engagement. appendTurn is owner-scoped by the
             // engine, so a caller cannot append to someone else's engagement — a wrong or
             // guessed id is indistinguishable from a miss.
             const ref = profile.continuationField
-              ? (req.body ?? {})[profile.continuationField]
+              ? payload[profile.continuationField]
               : undefined;
             const r = typeof ref === 'string' && ref
               ? engine.appendTurn({ id: ref, caller, role: 'requester', parts })

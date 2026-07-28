@@ -99,6 +99,9 @@ export const A2A_PROFILE: InteropProfile = {
   conformanceStatus: 'unverified',
   // A2A continues a task by sending a message that carries its id.
   continuationField: 'taskId',
+  // A2A's SendMessageRequest wraps the payload: {message:{role,parts,messageId,taskId}}.
+  // taskId lives INSIDE that envelope, not beside it.
+  requestEnvelope: 'message',
   // Left unset — responses are plain `application/json`.
   //
   // This previously declared `application/a2a+json`, and the note here said the
@@ -248,6 +251,51 @@ export const A2A_PROFILE: InteropProfile = {
       };
     },
   },
+
+  // ── Declared, and deliberately NOT implemented ──────────────────────────────
+  //
+  // capabilities.streaming and capabilities.pushNotifications are false on the card,
+  // and these routes make that answer legible at the URL too. Before this they fell
+  // through to a generic 404, which says "no such URL" when the truth is "that
+  // operation exists in this protocol and this agent does not offer it" — a client
+  // cannot tell that from a typo.
+  //
+  // NOTHING HERE IS A STUB. Each route refuses, with the protocol's own error for
+  // refusing. Implementing streaming or push would mean implementing them.
+  declinedRoutes: [
+    {
+      method: 'POST', path: '/message:stream',
+      error: {
+        status: 400, code: 400, message: 'Streaming is not supported by this agent.',
+        extra: {
+          status: 'UNIMPLEMENTED',
+          details: [{
+            '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+            reason: 'UNSUPPORTED_OPERATION', domain: 'a2a-protocol.org',
+          }],
+        },
+      },
+    },
+    ...(['POST /tasks/{id}/pushNotificationConfigs',
+         'GET /tasks/{id}/pushNotificationConfigs',
+         'GET /tasks/{id}/pushNotificationConfigs/{configId}',
+         'DELETE /tasks/{id}/pushNotificationConfigs/{configId}'] as const).map(spec => {
+      const [method, path] = spec.split(' ') as ['GET' | 'POST' | 'DELETE', string];
+      return {
+        method, path,
+        error: {
+          status: 400, code: 400, message: 'Push notifications are not supported by this agent.',
+          extra: {
+            status: 'UNIMPLEMENTED',
+            details: [{
+              '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+              reason: 'PUSH_NOTIFICATION_NOT_SUPPORTED', domain: 'a2a-protocol.org',
+            }],
+          },
+        },
+      };
+    }),
+  ],
 
   wire: [
     { operation: 'sendMessage', method: 'POST', path: '/message:send' },
