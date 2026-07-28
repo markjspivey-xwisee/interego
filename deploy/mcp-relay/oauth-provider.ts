@@ -146,6 +146,8 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
    * Keyed by the authorization_code value the client sent. Entries are
    * cleaned up alongside the code itself.
    */
+  /** Cap for the unauthenticated-write codeDpopJkt map (see bindAuthorizationCodeDpop). */
+  private static readonly CODE_DPOP_MAX = 10_000;
   private codeDpopJkt = new Map<string, string>();
   /**
    * Per-refresh-token DPoP binding stash. Same mechanism as above but
@@ -256,7 +258,40 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     if (cfg.initialRefreshTokensBySha) {
       this.refreshTokensBySha = cfg.initialRefreshTokensBySha;
     }
+    // R9 — there was NO sweeper anywhere in this file: authCodes and
+    // pendingAuthorizations each carry an `expiresAt` that nothing ever read, so
+    // expired entries accumulated for the process lifetime (a slow-burn OOM that,
+    // at the 2 GiB relay floor, surfaces as opaque 502s with empty logs). Sweep
+    // them periodically. unref() so the timer never holds the process open.
+    this.sweepTimer = setInterval(() => this.sweepExpired(), InteregoOAuthProvider.SWEEP_INTERVAL_MS);
+    (this.sweepTimer as unknown as { unref?: () => void }).unref?.();
   }
+
+  private readonly sweepTimer: ReturnType<typeof setInterval>;
+  private static readonly SWEEP_INTERVAL_MS = 5 * 60_000;
+
+  /** Drop entries whose own `expiresAt` has passed. Safe by construction: an
+   *  expired authorization code or pending authorization is already unusable. */
+  private sweepExpired(): void {
+    const now = Date.now();
+    let dropped = 0;
+    for (const [k, v] of this.authCodes) {
+      if (v.expiresAt <= now) { this.authCodes.delete(k); this.codeDpopJkt.delete(k); dropped++; }
+    }
+    for (const [k, v] of this.pendingAuthorizations) {
+      if (v.expiresAt <= now) { this.pendingAuthorizations.delete(k); dropped++; }
+    }
+    for (const [k, v] of this.refreshTokens) {
+      if (v.expiresAt <= now) { this.refreshTokens.delete(k); this.refreshDpopJkt.delete(k); dropped++; }
+    }
+    if (dropped > 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[oauth] swept ${dropped} expired entr${dropped === 1 ? 'y' : 'ies'}`);
+    }
+  }
+
+  /** Stop the sweeper (tests / graceful shutdown). */
+  stopSweeper(): void { clearInterval(this.sweepTimer); }
 
   /** sha256(token).hex — same hash the persistence backend keys on. */
   private static sha256Hex(token: string): string {
@@ -270,6 +305,17 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
    * call can embed `cnf.jkt` in the minted access token.
    */
   bindAuthorizationCodeDpop(authorizationCode: string, jkt: string): void {
+    // R9 — this is written by the pre-authenticateClient /token middleware under ANY
+    // caller-supplied `code` string, i.e. FULLY UNAUTHENTICATED and before the code
+    // is validated. The only delete is on the SUCCESS path of
+    // exchangeAuthorizationCode, which a bogus code never reaches — so every
+    // attacker-supplied code leaked a permanent entry. Bound it: an authorization
+    // code is single-use and short-lived, so evicting the oldest is safe (a genuine
+    // flow redeems its code within seconds of binding it).
+    if (this.codeDpopJkt.size >= InteregoOAuthProvider.CODE_DPOP_MAX && !this.codeDpopJkt.has(authorizationCode)) {
+      const oldest = this.codeDpopJkt.keys().next().value;
+      if (oldest !== undefined) this.codeDpopJkt.delete(oldest);
+    }
     this.codeDpopJkt.set(authorizationCode, jkt);
   }
 

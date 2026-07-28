@@ -229,6 +229,26 @@ for (const t of ['get_descriptor', 'discover_all', 'discover_context']) {
 check('the dead PUBLIC_TOOLS set is deleted (it looked like a gate but was never read)',
   !/const PUBLIC_TOOLS = new Set/.test(SERVER));
 
+console.log('\n18. R7 — OAuth write-scope is enforced beyond /mcp');
+check('/identity-token requires write scope (it returns a STRONGER credential)',
+  /identity-token[\s\S]{0,1400}hasWriteOauthScope/.test(SERVER));
+check('the revoke route requires write scope',
+  /agents\/:agentIri\/revoke[\s\S]{0,1600}hasWriteOauthScope\(authInfo\.scopes\)/.test(SERVER));
+const scopeCalls = SERVER.match(/hasWriteOauthScope\(/g) ?? [];
+check('hasWriteOauthScope has >1 call site (was /mcp only)',
+  scopeCalls.length >= 4, `found ${scopeCalls.length}`);
+
+console.log('\n19. R9 — unbounded OAuth state is capped and swept');
+const OAUTH = readFileSync(join(here, '..', 'oauth-provider.ts'), 'utf8');
+check('the unauthenticated-write codeDpopJkt map is capped',
+  /CODE_DPOP_MAX/.test(OAUTH) && /bindAuthorizationCodeDpop[\s\S]{0,700}CODE_DPOP_MAX/.test(OAUTH));
+check('a periodic sweeper exists (there was none)',
+  /setInterval\(\(\) => this\.sweepExpired\(\)/.test(OAUTH));
+check('the sweeper honours the expiresAt fields nothing read',
+  /sweepExpired[\s\S]{0,900}this\.authCodes[\s\S]{0,400}this\.pendingAuthorizations/.test(OAUTH));
+check('the timer is unref\'d so it cannot hold the process open',
+  /unref\?\.\(\)/.test(OAUTH));
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed\n`);
   process.exit(1);
