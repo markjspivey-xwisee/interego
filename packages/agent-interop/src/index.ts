@@ -18,5 +18,6 @@ export type {
 } from './profile.js';
 export { EngagementEngine } from './engagement.js';
 export type { EngineResult, EngineError, EngagementStoreOptions } from './engagement.js';
+export { isEngineError } from './engagement.js';
 export { renderCard, cardVersion, capabilitiesFromAffordances } from './card.js';
 export { PROFILES, A2A_PROFILE, INTEREGO_AGENTS_PROFILE } from './profiles/index.js';

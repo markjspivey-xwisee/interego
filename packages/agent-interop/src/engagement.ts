@@ -42,6 +42,19 @@ const fail = (kind: EngineError['kind'], detail: string): EngineResult<never> =>
   ({ ok: false, error: { kind, detail } });
 
 /**
+ * Type guard for the error arm.
+ *
+ * Consumers compiled WITHOUT strictNullChecks (the relay is one) do not get
+ * discriminated-union narrowing from `if (!r.ok)`, so a plain property access on
+ * `r.error` fails to compile there. A user-defined guard narrows regardless of that
+ * setting — which keeps the engine usable from every consumer in the monorepo
+ * without either weakening this package's types or casting at each call site.
+ */
+export function isEngineError<T>(r: EngineResult<T>): r is { ok: false; error: EngineError } {
+  return r.ok === false;
+}
+
+/**
  * Legal transitions. The engine — not a profile — owns this, so a profile cannot
  * declare its way into an illegal state change (e.g. reviving a terminal record).
  */

@@ -1,0 +1,214 @@
+#!/usr/bin/env tsx
+/**
+ * agent-interop mount — surface + security regression test.
+ *
+ * This adds NEW public surface to the relay (a discovery card plus wire routes) on
+ * the heels of an audit that found six blockers, so the properties that audit taught
+ * are pinned here rather than assumed:
+ *
+ *   - the mount is REGISTRY-DRIVEN, not protocol-named (adding a format is data);
+ *   - every wire route demands a verified caller BEFORE touching the engine;
+ *   - errors render from the profile's error table — no internal detail escapes;
+ *   - the card is derived from LIVE affordances and cannot advertise a capability
+ *     the substrate does not serve, nor a non-dereferenceable (urn:) id;
+ *   - the card carries no conformance claim while the profile is unverified.
+ *
+ * Runs the real mount against a minimal Express double — no network, no pod.
+ *
+ * Run from deploy/mcp-relay/:  npx tsx tests/agent-interop-mount.test.ts
+ */
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { mountAgentInterop } from '../agent-interop-mount.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+let failures = 0;
+function check(name: string, cond: boolean, detail = ''): void {
+  if (cond) { console.log(`  ok   ${name}`); return; }
+  failures++; console.error(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`);
+}
+
+// ── Minimal Express double ────────────────────────────────────────────────
+type Handler = (req: any, res: any) => unknown;
+const routes: Array<{ method: string; path: string | RegExp; handler: Handler }> = [];
+/** A route path may be a string OR a RegExp (custom methods compile to RegExp). */
+const pstr = (p: string | RegExp): string => (typeof p === 'string' ? p : p.source);
+const isCard = (p: string | RegExp): boolean => pstr(p).includes('/.well-known/');
+const app: any = {
+  get: (p: string | RegExp, h: Handler) => routes.push({ method: 'GET', path: p, handler: h }),
+  post: (p: string | RegExp, h: Handler) => routes.push({ method: 'POST', path: p, handler: h }),
+};
+
+function mkRes() {
+  const r: any = {
+    statusCode: 200, body: undefined as any, headers: {} as Record<string, string>, ended: false,
+    status(c: number) { r.statusCode = c; return r; },
+    json(b: unknown) { r.body = b; return r; },
+    send(b: unknown) { r.body = b; return r; },
+    type() { return r; },
+    setHeader(k: string, v: string) { r.headers[k.toLowerCase()] = v; },
+    end() { r.ended = true; return r; },
+  };
+  return r;
+}
+
+const AFFORDANCES = [
+  { action: 'https://relay.test/ns/iep/action/relay/publish_context', title: 'publish_context', comment: 'Publish a descriptor.', vertical: 'relay', requiresAuth: true },
+  { action: 'https://relay.test/ns/iep/action/relay/get_descriptor', title: 'get_descriptor', comment: 'Read a descriptor.', vertical: 'relay', requiresAuth: false },
+  // Must be dropped: a urn is not dereferenceable.
+  { action: 'urn:iep:action:legacy', title: 'legacy', comment: 'legacy urn', vertical: 'relay' },
+];
+
+let verifiedCaller: string | undefined;
+mountAgentInterop(app, {
+  publicBase: 'https://relay.test',
+  agent: { id: 'https://relay.test/.well-known/operations', name: 'Test Relay', description: 'test' },
+  affordances: () => AFFORDANCES,
+  verifyCaller: async () => verifiedCaller,
+  auth: { oauth2: { metadataUrl: 'https://relay.test/.well-known/oauth-authorization-server', pkceRequired: true }, bearer: true },
+  log: () => {},
+});
+
+console.log('\n1. the mount is registry-driven, not protocol-named');
+const src = readFileSync(join(here, '..', 'agent-interop-mount.ts'), 'utf8');
+check('the mount module names no wire protocol', !/\ba2a\b/i.test(src));
+check('it iterates the profile registry', /Object\.values\(PROFILES\)/.test(src));
+check('routes come from each profile\'s own wire table', /for \(const route of profile\.wire\)/.test(src));
+// Two profiles ship, so both cards + both route sets must have appeared.
+const cardPaths = routes.filter(r => isCard(r.path)).map(r => pstr(r.path));
+check('every registered profile got its card path', cardPaths.length >= 2, cardPaths.join(','));
+check('every registered profile got 4 wire routes',
+  routes.filter(r => !isCard(r.path)).length >= 8,
+  String(routes.length));
+
+console.log('\n2. the card is a live projection, and only of things that dereference');
+const cardRoute = routes.find(r => pstr(r.path) === '/.well-known/agent-card.json')!;
+const cRes = mkRes();
+cardRoute.handler({ headers: {}, query: {}, params: {} }, cRes);
+const card = JSON.parse(cRes.body as string);
+const skillIds: string[] = (card.skills ?? []).map((s: any) => s.id);
+check('capabilities are projected from the live affordance set', skillIds.length === 2, String(skillIds.length));
+check('every advertised id is a dereferenceable URL', skillIds.every(i => /^https?:\/\//.test(i)));
+check('the urn-identified affordance is DROPPED, not advertised', !skillIds.some(i => i.startsWith('urn:')));
+check('unimplemented optional capabilities are declared false',
+  card.capabilities && card.capabilities.streaming === false && card.capabilities.pushNotifications === false);
+check('no conformance claim while the profile is unverified',
+  !/conformant|certified/i.test(JSON.stringify(card)));
+check('the card is CORS-public (discovery precedes authentication)',
+  cRes.headers['access-control-allow-origin'] === '*');
+check('an ETag is served for conditional fetches', typeof cRes.headers['etag'] === 'string');
+
+console.log('\n3. the ETag is content-derived (changes iff capability changes)');
+const etag1 = cRes.headers['etag'];
+const c2 = mkRes(); cardRoute.handler({ headers: {}, query: {}, params: {} }, c2);
+check('stable across identical renders', c2.headers['etag'] === etag1);
+const c304 = mkRes();
+cardRoute.handler({ headers: { 'if-none-match': etag1 }, query: {}, params: {} }, c304);
+check('a matching If-None-Match yields 304', c304.statusCode === 304);
+AFFORDANCES.push({ action: 'https://relay.test/ns/iep/action/relay/new_verb', title: 'new_verb', comment: 'added', vertical: 'relay', requiresAuth: false });
+const c3 = mkRes(); cardRoute.handler({ headers: {}, query: {}, params: {} }, c3);
+check('a new capability changes it', c3.headers['etag'] !== etag1);
+AFFORDANCES.pop();
+
+console.log('\n4. every wire route demands a verified caller BEFORE the engine');
+const wireRoutes = routes.filter(r => !isCard(r.path));
+verifiedCaller = undefined;
+for (const r of wireRoutes) {
+  const res = mkRes();
+  await r.handler({ headers: {}, query: {}, params: { id: 'x' }, body: { parts: [{ text: 'hi' }] } }, res);
+  check(`${r.method} ${pstr(r.path)} refuses an unverified caller`, res.statusCode === 401, `got ${res.statusCode}`);
+}
+
+console.log('\n5. errors render from the profile table — no internal detail');
+verifiedCaller = 'did:ethr:0xAAA';
+const badRes = mkRes();
+const send = wireRoutes.find(r => pstr(r.path) === '/a2a/v1/message:send')!;
+await send.handler({ headers: {}, query: {}, params: {}, body: {} }, badRes);
+check('a malformed body is a 400 from the profile table', badRes.statusCode === 400);
+check('the error body carries a code + message, not a stack',
+  !!(badRes.body as any)?.error?.code && !/stack|\bat \//i.test(JSON.stringify(badRes.body)));
+
+console.log('\n6. engagements are owner-scoped (possession of an id is not authority)');
+const okRes = mkRes();
+await send.handler({ headers: {}, query: {}, params: {}, body: { parts: [{ text: 'hello' }] } }, okRes);
+const created = okRes.body as any;
+check('a verified caller can open one', okRes.statusCode === 200 && typeof created?.id === 'string');
+check('its id is a dereferenceable URL, never a urn', /^https:\/\/relay\.test\/engagements\//.test(created.id));
+const getRoute = wireRoutes.find(r => pstr(r.path) === '/a2a/v1/tasks/:id')!;
+const mineRes = mkRes();
+await getRoute.handler({ headers: {}, query: {}, params: { id: created.id }, body: {} }, mineRes);
+check('the owner can read it back', mineRes.statusCode === 200);
+verifiedCaller = 'did:ethr:0xBBB';
+const theirsRes = mkRes();
+await getRoute.handler({ headers: {}, query: {}, params: { id: created.id }, body: {} }, theirsRes);
+check('another principal cannot read it', theirsRes.statusCode === 404);
+check('...and is told notFound, NOT forbidden (no existence oracle)',
+  (theirsRes.body as any)?.error?.code === 'not_found');
+const listRes = mkRes();
+const listRoute = wireRoutes.find(r => pstr(r.path) === '/a2a/v1/tasks')!;
+await listRoute.handler({ headers: {}, query: {}, params: {}, body: {} }, listRes);
+check('list returns only the caller\'s own', ((listRes.body as any)?.tasks ?? []).length === 0);
+
+
+// ── REAL Express boot ─────────────────────────────────────────────────────
+//
+// The double above is fine for handler logic, but it hid a real defect: the
+// custom-method path `/tasks/{id}:cancel` naively becomes `/tasks/:id:cancel`,
+// which path-to-regexp REJECTS AT REGISTRATION ("Missing text before \"cancel\"
+// param") — i.e. the relay would have crashed at boot, not mis-routed. A fake app
+// object never calls path-to-regexp, so only a real Express instance catches it.
+console.log('\n7. the mount registers on REAL Express (route compilation is exercised)');
+{
+  const express = (await import('express')).default;
+  const realApp = express();
+  realApp.use(express.json());
+  let booted = true;
+  try {
+    mountAgentInterop(realApp as any, {
+      publicBase: 'https://relay.test',
+      agent: { id: 'https://relay.test/.well-known/operations', name: 'T', description: 't' },
+      affordances: () => AFFORDANCES,
+      verifyCaller: async () => 'did:ethr:0xAAA',
+      log: () => {},
+    });
+  } catch (err) {
+    booted = false;
+    check('every profile route compiles under real Express', false, (err as Error).message);
+  }
+  if (booted) {
+    check('every profile route compiles under real Express', true);
+    const srv = realApp.listen(0);
+    await new Promise(r => srv.once('listening', r));
+    const port = (srv.address() as any).port;
+    const B = `http://127.0.0.1:${port}`;
+
+    const card = await fetch(`${B}/.well-known/agent-card.json`);
+    check('the card is served over HTTP', card.status === 200, String(card.status));
+    const cardBody: any = await card.json();
+    check('...with skills whose ids dereference',
+      Array.isArray(cardBody.skills) && cardBody.skills.every((s: any) => /^https?:\/\//.test(s.id)));
+
+    const opened = await fetch(`${B}/a2a/v1/message:send`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ parts: [{ text: 'hi' }] }),
+    });
+    check('the custom-method send route matches', opened.status === 200, String(opened.status));
+    const task: any = await opened.json();
+
+    // The bug this section exists for: cancel is a CUSTOM METHOD with a literal
+    // `:cancel` suffix, and the id must survive it intact.
+    const cancelled = await fetch(`${B}/a2a/v1/tasks/${encodeURIComponent(task.id)}:cancel`, { method: 'POST' });
+    check('the custom-method cancel route matches', cancelled.status === 200, String(cancelled.status));
+    const cbody: any = cancelled.status === 200 ? await cancelled.json() : {};
+    check('...and cancels THAT engagement (id parsed out of the suffix)',
+      cbody.id === task.id && cbody.status?.state === 'canceled',
+      JSON.stringify(cbody).slice(0, 120));
+
+    srv.close();
+  }
+}
+
+if (failures > 0) { console.error(`\n${failures} assertion(s) failed\n`); process.exit(1); }
+console.log('\nAll agent-interop mount gates hold.\n');

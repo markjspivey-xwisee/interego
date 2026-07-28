@@ -227,7 +227,14 @@ export function corsMiddleware(opts: CorsHeaderOptions = {}): (req: MinimalReq, 
     // reads. Set here (before the CORS-freeze wrapper) so it survives the SDK's
     // late wildcard-cors middleware. Runs ahead of the allowlist branch.
     const url = typeof req.url === 'string' ? req.url : '';
-    if (url.startsWith('/ns/')) {
+    // Agent-interop discovery documents get the same public carve-out as /ns/:
+    // an interop CARD that a peer cannot fetch cross-origin before it has
+    // authenticated is not discovery. The card exposes only what the substrate
+    // already publishes as followable affordances, and carries no credentials —
+    // the wire routes beneath it remain individually auth-gated.
+    if (url.startsWith('/ns/')
+      || url.startsWith('/.well-known/agent-card.json')
+      || url.startsWith('/.well-known/interego-agents.json')) {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', DEFAULT_ALLOW_HEADERS);
