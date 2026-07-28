@@ -104,6 +104,44 @@ check('the opt-in is env-gated, not the default',
 check('the old accept-anything TODO is gone',
   !/For now we accept \+ map the activity/.test(SERVER));
 
+console.log('\n7. the reserved-field strip is UNIVERSAL across all three transports');
+// /mcp always stripped; /tool stripped only inside its authenticated branch and
+// /messages never stripped — so a PUBLIC-tool call on those transports could
+// smuggle a forged _identity_token / _session_user_id and be believed.
+check('a shared stripReservedWireFields helper exists',
+  /function stripReservedWireFields\(o: unknown\)/.test(SERVER));
+check('RESERVED_WIRE_FIELDS is the single source of truth',
+  /const RESERVED_WIRE_FIELDS = \[/.test(SERVER));
+const stripCalls = SERVER.match(/stripReservedWireFields\(/g) ?? [];
+check('it is invoked at >= 3 sites (helper + /tool + /messages x2)',
+  stripCalls.length >= 4, `found ${stripCalls.length}`);
+check('/tool strips before the tool lookup (outside the auth branch)',
+  /app\.post\('\/tool\/:name'[\s\S]{0,400}stripReservedWireFields\(req\.body\)[\s\S]{0,200}const toolName/.test(SERVER));
+check('/messages strips its JSON-RPC arguments too',
+  /stripReservedWireFields\(req\.body\?\.params\?\.arguments\)/.test(SERVER));
+
+console.log('\n8. ownership decisions rest on a PROVEN pod, not a caller-supplied one');
+// selfPodUrl() falls back to args.pod_name (caller-controlled), so an ownership
+// gate built on it compares attacker input against attacker input.
+check('callerOwnPod() exists and is fail-closed',
+  /async function callerOwnPod\(args: ToolArgs\)/.test(SERVER));
+check('it uses only reserved, wire-stripped sources',
+  /callerOwnPod[\s\S]{0,700}_session_user_id[\s\S]{0,300}_identity_token/.test(SERVER));
+check('callerOwnPod never falls back to args.pod_name',
+  !/callerOwnPod[\s\S]{0,700}args\.pod_name/.test(SERVER));
+check('read_inbox ownership uses callerOwnPod, not selfPodUrl',
+  /handleReadInbox[\s\S]{0,800}const ownPod = await callerOwnPod\(args\)/.test(SERVER));
+check('channel redaction owner-check uses callerOwnPod',
+  /const callerPod = await callerOwnPod\(args\)/.test(SERVER));
+
+console.log('\n9. every transport injects the authoritative attribution identity');
+check('/tool signed branch injects _session_agent_did',
+  /req\.body\._session_agent_did = auth\.recoveredDid/.test(SERVER));
+
+console.log('\n10. the federated-inbox gate runs BEFORE the agent lookup (no enumeration oracle)');
+check('signature gate precedes cardForLocalPart',
+  /unsigned_delivery_rejected[\s\S]{0,600}cardForLocalPart\(req\.params\.localPart\)/.test(SERVER));
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed\n`);
   process.exit(1);
