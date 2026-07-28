@@ -1,0 +1,195 @@
+/**
+ * @module engagement
+ * @description The engine: a bounded, owner-scoped engagement store plus the
+ *              transition rules. Spec-blind — no wire protocol is named here.
+ *
+ * Security posture, learned from the relay audit rather than assumed:
+ *   - Every read and mutation is OWNER-SCOPED. An engagement id is guessable in
+ *     principle, so possession of an id is never authority (the audit's
+ *     broken-object-level-authorization class).
+ *   - Attribution is taken from the VERIFIED caller passed in by the mount, never
+ *     from anything in the request body (the forgeable-attribution class).
+ *   - The store is CAPPED with eviction. Any caller-reachable map that grows
+ *     without a bound is an OOM primitive (the unbounded-state class).
+ */
+
+import type { Engagement, EngagementState, Part, Turn, TurnRole } from './types.js';
+import { TERMINAL_STATES } from './types.js';
+
+export interface EngagementStoreOptions {
+  /** Hard cap on retained engagements. Oldest-first eviction past it. */
+  maxEngagements?: number;
+  /** Hard cap on turns per engagement. Oldest-first eviction past it. */
+  maxTurnsPerEngagement?: number;
+  /** Hard cap on parts per turn — rejected, not evicted (a turn is atomic). */
+  maxPartsPerTurn?: number;
+}
+
+const DEFAULTS = {
+  maxEngagements: 50_000,
+  maxTurnsPerEngagement: 1_000,
+  maxPartsPerTurn: 128,
+} as const;
+
+export type EngineResult<T> = { ok: true; value: T } | { ok: false; error: EngineError };
+
+export interface EngineError {
+  kind: 'unauthenticated' | 'forbidden' | 'notFound' | 'badRequest' | 'unsupportedOperation' | 'internal';
+  detail: string;
+}
+
+const fail = (kind: EngineError['kind'], detail: string): EngineResult<never> =>
+  ({ ok: false, error: { kind, detail } });
+
+/**
+ * Legal transitions. The engine — not a profile — owns this, so a profile cannot
+ * declare its way into an illegal state change (e.g. reviving a terminal record).
+ */
+const LEGAL: Readonly<Record<EngagementState, ReadonlySet<EngagementState>>> = {
+  submitted: new Set<EngagementState>(['working', 'input-required', 'completed', 'failed', 'cancelled', 'rejected']),
+  working: new Set<EngagementState>(['working', 'input-required', 'completed', 'failed', 'cancelled']),
+  'input-required': new Set<EngagementState>(['working', 'completed', 'failed', 'cancelled']),
+  completed: new Set<EngagementState>(),
+  failed: new Set<EngagementState>(),
+  cancelled: new Set<EngagementState>(),
+  rejected: new Set<EngagementState>(),
+};
+
+export class EngagementEngine {
+  private readonly engagements = new Map<string, Engagement>();
+  private readonly opts: Required<EngagementStoreOptions>;
+  private seq = 0;
+
+  constructor(
+    /** Absolute base URL used to mint dereferenceable ids. */
+    private readonly serviceUrl: string,
+    opts: EngagementStoreOptions = {},
+  ) {
+    this.opts = { ...DEFAULTS, ...opts };
+  }
+
+  /** Mint a dereferenceable engagement id — a URL that resolves to the record,
+   *  never a urn:. `now` is injected so ids stay deterministic under test. */
+  private mintId(now: number): string {
+    const base = this.serviceUrl.replace(/\/$/, '');
+    return `${base}/engagements/${now.toString(36)}-${(this.seq++).toString(36)}`;
+  }
+
+  private evictIfNeeded(): void {
+    if (this.engagements.size < this.opts.maxEngagements) return;
+    const oldest = this.engagements.keys().next().value;
+    if (oldest !== undefined) this.engagements.delete(oldest);
+  }
+
+  /** Open an engagement attributed to the VERIFIED caller. */
+  open(args: {
+    caller: string | undefined;
+    capability?: string;
+    parts: Part[];
+    now?: number;
+  }): EngineResult<Engagement> {
+    if (!args.caller) return fail('unauthenticated', 'a verified caller is required to open an engagement');
+    if (!Array.isArray(args.parts) || args.parts.length === 0) {
+      return fail('badRequest', 'at least one content part is required');
+    }
+    if (args.parts.length > this.opts.maxPartsPerTurn) {
+      return fail('badRequest', `too many parts (max ${this.opts.maxPartsPerTurn})`);
+    }
+    const now = args.now ?? Date.now();
+    const iso = new Date(now).toISOString();
+    const id = this.mintId(now);
+    const turn: Turn = {
+      id: `${id}/turns/0`,
+      role: 'requester',
+      parts: args.parts,
+      at: iso,
+      attributedTo: args.caller,
+    };
+    const engagement: Engagement = {
+      id,
+      state: 'submitted',
+      openedBy: args.caller,
+      ...(args.capability ? { capability: args.capability } : {}),
+      turns: [turn],
+      createdAt: iso,
+      updatedAt: iso,
+    };
+    this.evictIfNeeded();
+    this.engagements.set(id, engagement);
+    return { ok: true, value: engagement };
+  }
+
+  /** Owner-scoped read. Possession of an id is never authority. */
+  get(id: string, caller: string | undefined): EngineResult<Engagement> {
+    if (!caller) return fail('unauthenticated', 'a verified caller is required');
+    const e = this.engagements.get(id);
+    // Deliberately indistinguishable from a genuine miss: a distinct 403 would be
+    // an existence oracle over other principals' engagement ids.
+    if (!e || e.openedBy !== caller) return fail('notFound', 'no such engagement');
+    return { ok: true, value: e };
+  }
+
+  /** Owner-scoped list — only the caller's own engagements, newest first. */
+  list(caller: string | undefined, limit = 50): EngineResult<Engagement[]> {
+    if (!caller) return fail('unauthenticated', 'a verified caller is required');
+    const bounded = Math.max(1, Math.min(limit, 200));
+    const mine = [...this.engagements.values()].filter(e => e.openedBy === caller);
+    return { ok: true, value: mine.slice(-bounded).reverse() };
+  }
+
+  /** Append a turn. Owner-scoped; refuses once terminal. */
+  appendTurn(args: {
+    id: string;
+    caller: string | undefined;
+    role: TurnRole;
+    parts: Part[];
+    now?: number;
+  }): EngineResult<Engagement> {
+    const found = this.get(args.id, args.caller);
+    if (!found.ok) return found;
+    const e = found.value;
+    if (TERMINAL_STATES.has(e.state)) {
+      return fail('badRequest', `engagement is ${e.state} and accepts no further turns`);
+    }
+    if (args.parts.length > this.opts.maxPartsPerTurn) {
+      return fail('badRequest', `too many parts (max ${this.opts.maxPartsPerTurn})`);
+    }
+    const now = args.now ?? Date.now();
+    if (e.turns.length >= this.opts.maxTurnsPerEngagement) e.turns.shift();
+    e.turns.push({
+      id: `${e.id}/turns/${e.turns.length}`,
+      role: args.role,
+      parts: args.parts,
+      at: new Date(now).toISOString(),
+      ...(args.role === 'requester' && args.caller ? { attributedTo: args.caller } : {}),
+    });
+    e.updatedAt = new Date(now).toISOString();
+    return { ok: true, value: e };
+  }
+
+  /** Transition. The engine owns legality so a profile cannot declare around it. */
+  transition(args: {
+    id: string;
+    caller: string | undefined;
+    to: EngagementState;
+    now?: number;
+  }): EngineResult<Engagement> {
+    const found = this.get(args.id, args.caller);
+    if (!found.ok) return found;
+    const e = found.value;
+    if (!LEGAL[e.state].has(args.to)) {
+      return fail('badRequest', `illegal transition ${e.state} -> ${args.to}`);
+    }
+    e.state = args.to;
+    e.updatedAt = new Date(args.now ?? Date.now()).toISOString();
+    return { ok: true, value: e };
+  }
+
+  /** Cancel — the common terminal transition, owner-scoped. */
+  cancel(id: string, caller: string | undefined, now?: number): EngineResult<Engagement> {
+    return this.transition({ id, caller, to: 'cancelled', ...(now !== undefined ? { now } : {}) });
+  }
+
+  /** Test/inspection helper. */
+  size(): number { return this.engagements.size; }
+}
