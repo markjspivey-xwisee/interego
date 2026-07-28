@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mountAgentInterop } from '../agent-interop-mount.js';
+import { PROFILES } from '@interego/agent-interop';
 
 const here = dirname(fileURLToPath(import.meta.url));
 let failures = 0;
@@ -189,6 +190,37 @@ console.log('\n7. the mount registers on REAL Express (route compilation is exer
     const cardBody: any = await card.json();
     check('...with skills whose ids dereference',
       Array.isArray(cardBody.skills) && cardBody.skills.every((s: any) => /^https?:\/\//.test(s.id)));
+
+    // ── The discovery document must describe ITSELF ────────────────────────
+    //
+    // Asserting "a Link header is present" would pass on a header pointing at a
+    // typo. These assert the pointer's SHAPE and that CORS actually lets a
+    // browser read it — the card is the one CORS-open route, so a header the
+    // default CORS safelist hides is a header that does not exist for the client
+    // class discovery is for.
+    const cardLink = card.headers.get('link') ?? '';
+    const describedBy = /<([^>]+)>;\s*rel="describedby"/.exec(cardLink)?.[1];
+    check('the card advertises the profile that describes it',
+      !!describedBy, cardLink.slice(0, 140));
+    check('...as a dereferenceable http(s) URL, never a bare token',
+      /^https?:\/\//.test(describedBy ?? ''), String(describedBy));
+    check('...matching the id the profile itself declares',
+      describedBy === PROFILES.a2a.id, `${describedBy} vs ${PROFILES.a2a.id}`);
+    check('the card advertises its own canonical self URL',
+      /<[^>]*\/\.well-known\/agent-card\.json>;\s*rel="self"/.test(cardLink), cardLink.slice(0, 140));
+    const exposed = (card.headers.get('access-control-expose-headers') ?? '').toLowerCase();
+    check('a cross-origin client can actually READ those headers',
+      exposed.includes('link') && exposed.includes('etag'), exposed || '<unset>');
+
+    // A 304 must not strip the pointer: a client that caches the card would
+    // otherwise lose its route to the profile on every revalidation.
+    const revalidated = await fetch(`${B}/.well-known/agent-card.json`, {
+      headers: { 'if-none-match': card.headers.get('etag') ?? '' },
+    });
+    check('a conditional request is answered 304', revalidated.status === 304, String(revalidated.status));
+    check('...and the 304 STILL carries the describedby pointer',
+      (revalidated.headers.get('link') ?? '').includes('rel="describedby"'),
+      (revalidated.headers.get('link') ?? '<unset>').slice(0, 140));
 
     const opened = await fetch(`${B}/a2a/v1/message:send`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
