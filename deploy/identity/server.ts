@@ -1786,7 +1786,7 @@ const LANDING_HTML = `<!doctype html>
 <body>
 <h1>Persistent memory for AI agents</h1>
 <p class="tag">Owned by you, portable across runtimes, signed by construction. Drop the relay into any MCP-speaking agent.</p>
-<p class="muted" style="margin-top:-0.8em;margin-bottom:1.6em;font-size:0.88rem">Reference implementation, hosted on the maintainer's free Azure instance. Fine for evaluation; self-host before you depend on it.</p>
+<p class="muted" style="margin-top:-0.8em;margin-bottom:1.6em;font-size:0.88rem">Reference implementation on the maintainer's own hosting. Fine for evaluation; self-host before you depend on it.</p>
 
 <h2 style="margin-top:1.2em">60-second setup</h2>
 <p>Click the button to mint an anonymous, ephemeral pod + bearer token (no signup, reaped after 7 days). Paste the personalized config into your MCP client and the agent has working pod-rooted memory immediately. Want to keep it? Enroll a passkey or wallet at <code>/connect</code> using the same token as <code>addDeviceToken</code> and the pod becomes permanently yours.</p>
@@ -3869,10 +3869,46 @@ app.get('/wallet/status/:userId', async (req, res) => {
  * dashboard answers it with the four surfaces a non-developer
  * actually needs.
  */
+/**
+ * Where the RELAY lives, as told to a signed-in user.
+ *
+ * ★ THIS WAS DERIVED BY STRING SURGERY TUNED TO A HOSTNAME SCHEME WE NO LONGER USE.
+ * It read `BASE_URL.replace('-identity.', '-relay.')`, which was correct for the old
+ * Azure names (`interego-identity.<region>...` -> `interego-relay.<region>...`). On
+ * the current hosts (`identity.interego.xwisee.com`) that substring never occurs, so
+ * the replace was a NO-OP and relayBase silently became the IDENTITY host.
+ *
+ * Nothing errored. The dashboard simply told every signed-in user to point their MCP
+ * client at `https://identity.interego.xwisee.com/sse` — which 404s — and fetched the
+ * inbox from a host that does not serve one, rendering the 404's HTML into the card.
+ * The primary post-enrollment instruction has been wrong since the migration.
+ *
+ * So it is now explicit and configurable, it handles BOTH schemes, and the degenerate
+ * case is LOUD: resolving to our own origin means the derivation failed again, and a
+ * warning at least appears in the logs rather than in a user's MCP client.
+ */
+function resolveRelayBase(): string {
+  const explicit = process.env['RELAY_PUBLIC_URL'];
+  const derived = (explicit && explicit.trim())
+    ? explicit.trim()
+    : BASE_URL
+        // current scheme: identity.<zone> -> relay.<zone>
+        .replace(/^(https?:\/\/)identity\./i, '$1relay.')
+        // legacy scheme, kept so an older deployment still resolves
+        .replace('-identity.', '-relay.');
+  const out = derived.replace(/\/$/, '');
+  if (out === BASE_URL.replace(/\/$/, '')) {
+    console.error(
+      '[identity] relay base resolved to our OWN origin (%s). The dashboard will hand ' +
+      'users a dead MCP endpoint. Set RELAY_PUBLIC_URL.', out);
+  }
+  return out;
+}
+
 app.get('/dashboard', (_req, res) => {
   res.setHeader('Content-Type', 'text/html');
   res.setHeader('Cache-Control', 'public, max-age=300');
-  const relayBase = BASE_URL.replace('-identity.', '-relay.').replace(/\/$/, '');
+  const relayBase = resolveRelayBase();
   const identityBase = BASE_URL.replace(/\/$/, '');
   res.send(`<!DOCTYPE html>
 <html lang="en">
