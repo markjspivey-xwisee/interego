@@ -65,7 +65,10 @@ export interface AgentInteropDeps {
     capability: string;
     caller: string;
     parts: ReadonlyArray<Part>;
-  }) => Promise<{ name?: string; description?: string; parts: Part[] }>;
+  }) => Promise<
+    | { ok: true; output: { name?: string; description?: string; parts: Part[] } }
+    | { ok: false; reason: string }
+  >;
   log: (msg: string) => void;
 }
 
@@ -425,25 +428,43 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             if (cap && deps.invokeCapability) {
               const began = engine.begin(eng.id, caller);
               if (isEngineError(began)) { sendErr(res, profile, began.error.kind, began.error.detail); return; }
+              // ★ A DELIBERATE REFUSAL AND A CRASH ARE DIFFERENT FACTS, and only one
+              // of them is safe to repeat to a caller. The invoker RETURNS a refusal
+              // whose reason it has chosen to publish; anything THROWN is unexpected
+              // and its message is internal.
+              //
+              // This distinction is structural rather than disciplined because the
+              // first version relied on discipline and leaked immediately: it echoed
+              // `(err as Error).message` for every failure, so the first live run
+              // returned "Cannot read properties of undefined (reading 'endsWith')"
+              // to an external peer — an internal stack detail, through a comment
+              // that claimed this could not happen. The audit's error-leak class,
+              // reintroduced by the very code documenting it.
+              let outcome: { ok: true; output: { name?: string; description?: string; parts: Part[] } }
+                | { ok: false; reason: string };
               try {
-                const out = await deps.invokeCapability({ capability: cap, caller, parts });
-                const done = engine.complete({ id: eng.id, caller, outputs: [out] });
-                if (isEngineError(done)) { sendErr(res, profile, done.error.kind, done.error.detail); return; }
-                sendEngagement(res, profile, (done as { ok: true; value: typeof eng }).value, base, route.operation);
-                return;
+                outcome = await deps.invokeCapability({ capability: cap, caller, parts });
               } catch (err) {
-                // The failure is recorded ON the engagement and returned as a
-                // completed exchange, not as a transport error: the peer asked a
-                // valid question and the answer is "that did not work". Only the
-                // message the relay chose to surface is echoed — never an internal
-                // one (the audit's error-leak class).
-                const reason = (err as Error)?.message ?? 'capability invocation failed';
-                const failed = engine.fail({ id: eng.id, caller, reason });
+                // Logged in full for us; the caller gets nothing internal.
+                deps.log(`[agent-interop] capability ${cap} threw: ${(err as Error)?.message}`);
+                outcome = { ok: false, reason: 'the capability could not be completed' };
+              }
+              // Either way the outcome is recorded ON the engagement and returned as
+              // a completed exchange, not a transport error: the peer asked a valid
+              // question and the answer is "that did not work".
+              if (outcome.ok === false) {
+                const failed = engine.fail({ id: eng.id, caller, reason: (outcome as { reason: string }).reason });
                 if (isEngineError(failed)) { sendErr(res, profile, failed.error.kind); return; }
-                deps.log(`[agent-interop] capability ${cap} failed: ${reason}`);
                 sendEngagement(res, profile, (failed as { ok: true; value: typeof eng }).value, base, route.operation);
                 return;
               }
+              const done = engine.complete({
+                id: eng.id, caller,
+                outputs: [(outcome as { output: { name?: string; description?: string; parts: Part[] } }).output],
+              });
+              if (isEngineError(done)) { sendErr(res, profile, done.error.kind, done.error.detail); return; }
+              sendEngagement(res, profile, (done as { ok: true; value: typeof eng }).value, base, route.operation);
+              return;
             }
 
             sendEngagement(res, profile, eng, base, route.operation);
