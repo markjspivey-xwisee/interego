@@ -1,0 +1,66 @@
+name: Relay Tests
+
+# The relay's test suite guards the substrate's SECURITY BOUNDARY, and until now
+# nothing ran it except a human remembering to.
+#
+# The suite is where the adversarial-audit remediations live as executable
+# invariants: caller attribution cannot be forged from a request body, an
+# engagement id is not authority over the engagement, a caller cannot write
+# outside its own pod, reserved wire fields are stripped on every transport, the
+# publish scope gate refuses an agent that is not registered ReadWrite. Those are
+# not properties you re-derive by reading a diff — they are properties that hold
+# only while their tests keep passing.
+#
+# Adding this found a concrete instance of the problem it exists to prevent:
+# tests/publish-gates.test.ts (30 assertions over the publish scope gate) was
+# written, committed, and then silently left out of the `test` script, so it had
+# stopped running entirely while still looking like coverage.
+#
+# The suite is pure in-process — it boots Express on an ephemeral port and speaks
+# to itself. No network, no secrets, no live pod. That is what makes it safe to
+# run on every pull request from anyone.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'deploy/mcp-relay/**'
+      - 'packages/**'
+      - '.github/workflows/relay-tests.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'deploy/mcp-relay/**'
+      - 'packages/**'
+      - '.github/workflows/relay-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  relay-tests:
+    name: "Relay invariants (attribution, scope, engagement, publish gates)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+
+      # The relay imports workspace packages by their published names, so the
+      # leaf packages must be BUILT before the suite can resolve them — the same
+      # ordering the relay image build depends on.
+      - name: Install workspace
+        run: npm ci --ignore-scripts
+      - name: Build leaf packages
+        run: npm run build:leaves
+
+      # Typecheck first: tsx strips types without checking them, so a type error
+      # would otherwise sail through the whole suite unnoticed.
+      - name: Typecheck the relay
+        working-directory: deploy/mcp-relay
+        run: npx tsc --noEmit -p .
+
+      - name: Run relay test suite
+        working-directory: deploy/mcp-relay
+        run: npm test
