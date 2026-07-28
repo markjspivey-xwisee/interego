@@ -1978,3 +1978,64 @@ iep:NotificationShape a sh:NodeShape ;
         sh:minCount 0 ;
         sh:maxCount 1
     ] .
+
+# ── Agent interop: engagement records + card projection ──────────────
+#
+# The engine that emits these (@interego/agent-interop) is deliberately spec-blind:
+# an ENGAGEMENT is a durable, agent-attributed record of work requested of an agent,
+# carrying ordered turns. External agent-interop protocols (A2A and others) are
+# expressed as declarative PROFILES that project this same model onto their own wire
+# vocabulary, so these terms describe the substrate's own shape rather than any one
+# protocol's.
+
+iep:Engagement a owl:Class ;
+    rdfs:label "Engagement" ;
+    rdfs:comment "A durable, agent-attributed record of work requested of an agent. Carries an ordered sequence of turns (iep:turn), a lifecycle state (iep:state) and an owner. Its identifier is a dereferenceable URL that resolves to the record. Protocol-neutral: an external interop profile projects it onto that protocol's own task/job/exchange vocabulary." .
+
+iep:state a owl:DatatypeProperty ;
+    rdfs:label "state" ;
+    rdfs:comment "The lifecycle state of an iep:Engagement, in the substrate's own vocabulary (Requested, InProgress, AwaitingInput, Completed, Failed, Withdrawn, Declined). An interop profile maps these to its protocol's state names; the substrate owns transition legality so a profile cannot declare its way into reviving a terminal record." ;
+    rdfs:domain iep:Engagement ;
+    rdfs:range xsd:string .
+
+iep:turn a owl:ObjectProperty ;
+    rdfs:label "turn" ;
+    rdfs:comment "One ordered contribution to an iep:Engagement — a requester or responder utterance carrying content parts. Attribution (prov:wasAttributedTo) is derived from the verified caller, never from the request payload." ;
+    rdfs:domain iep:Engagement .
+
+iep:role a owl:DatatypeProperty ;
+    rdfs:label "role" ;
+    rdfs:comment "Which side of an engagement produced a turn: 'requester' or 'responder'. Derived from the verified caller identity, not client-asserted." ;
+    rdfs:range xsd:string .
+
+iep:updatedAt a owl:DatatypeProperty ;
+    rdfs:label "updatedAt" ;
+    rdfs:comment "Timestamp of the most recent state change or appended turn on an iep:Engagement." ;
+    rdfs:range xsd:dateTime .
+
+iep:Agent a owl:Class ;
+    rdfs:label "Agent" ;
+    rdfs:comment "A software agent addressable on the substrate: an identity, a service endpoint, and the set of affordances it offers. Projected into an interop protocol's agent-card document by a declarative profile; the projection is computed from published affordances rather than hand-authored, so a card can never advertise a capability the substrate cannot serve." .
+
+iep:serviceEndpoint a owl:DatatypeProperty ;
+    rdfs:label "serviceEndpoint" ;
+    rdfs:comment "The absolute base URL an iep:Agent is served from. Interop profiles render their own interface/endpoint blocks from it." ;
+    rdfs:domain iep:Agent ;
+    rdfs:range xsd:anyURI .
+
+iep:offers a owl:ObjectProperty ;
+    rdfs:label "offers" ;
+    rdfs:comment "An iep:Affordance an iep:Agent makes available. The affordance's iep:action URL is the capability identifier carried into every interop projection, so a projected skill id dereferences to its own description rather than being a minted opaque token." ;
+    rdfs:domain iep:Agent ;
+    rdfs:range iep:Affordance .
+
+iep:cardVersion a owl:DatatypeProperty ;
+    rdfs:label "cardVersion" ;
+    rdfs:comment "Content-derived version of an agent's projected card: a hash over the rendered document, so it changes exactly when the advertised capability set changes. Doubles as the HTTP ETag for the card resource." ;
+    rdfs:domain iep:Agent ;
+    rdfs:range xsd:string .
+
+iep:requiresVerifiedCaller a owl:DatatypeProperty ;
+    rdfs:label "requiresVerifiedCaller" ;
+    rdfs:comment "True when an affordance may only be invoked by a cryptographically verified caller (a signed request or an authenticated session), as opposed to being followable anonymously." ;
+    rdfs:range xsd:boolean .
