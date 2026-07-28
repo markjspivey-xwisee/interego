@@ -193,11 +193,28 @@ describe('engagement engine — owner scoping and bounds', () => {
 });
 
 describe('lifecycle + engagement projection', () => {
-  it('A2A spells cancelled with one l, and round-trips both spellings inbound', () => {
-    expect(A2A_PROFILE.lifecycle.name('cancelled')).toBe('canceled');
+  it('emits proto enum NAMES outbound, and tolerates the readable aliases inbound', () => {
+    // The wire value is the proto enum name. The lowercase word reads better and is
+    // what the first implementation emitted; the protocol's own suite rejected every
+    // response carrying one.
+    expect(A2A_PROFILE.lifecycle.name('cancelled')).toBe('TASK_STATE_CANCELED');
+    expect(A2A_PROFILE.lifecycle.name('submitted')).toBe('TASK_STATE_SUBMITTED');
+    expect(A2A_PROFILE.lifecycle.parse('TASK_STATE_CANCELED')).toBe('cancelled');
+    // Postel inbound: the lowercase words, and both spellings of cancel(l)ed.
     expect(A2A_PROFILE.lifecycle.parse('canceled')).toBe('cancelled');
     expect(A2A_PROFILE.lifecycle.parse('cancelled')).toBe('cancelled');
     expect(A2A_PROFILE.lifecycle.parse('nonsense')).toBeUndefined();
+  });
+
+  it('every engine error kind is named by every profile (no unmapped condition)', () => {
+    const KINDS = ['unauthenticated', 'forbidden', 'notFound', 'badRequest',
+      'unsupportedOperation', 'unsupportedVersion', 'unsupportedMediaType', 'internal'] as const;
+    for (const p of Object.values(PROFILES)) {
+      for (const k of KINDS) {
+        expect(p.errors[k], `${p.slug} is missing ${k}`).toBeTruthy();
+        expect(typeof p.errors[k].status).toBe('number');
+      }
+    }
   });
 
   it('parts emit a single discriminating member (no removed `kind` field)', () => {

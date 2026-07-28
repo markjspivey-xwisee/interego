@@ -1,0 +1,129 @@
+name: A2A Conformance (TCK)
+
+# Runs the A2A protocol's OWN conformance suite (a2a-tck) against a locally booted
+# SUT, at the MUST tier for the HTTP+JSON binding we implement.
+#
+# WHY THIS EXISTS. The published profile says `a2ap:conformanceStatus "unverified"`,
+# and defines VERIFIED narrowly: the protocol's own suite passes in CI — not that the
+# implementation was written against the specification. This job is what makes that
+# definition checkable instead of decorative. Nothing may flip that status except a
+# green run here.
+#
+# ★ THE FIRST RUN VINDICATED THE LABEL. An implementation written carefully against
+# the spec scored 26 passed / 27 failed. Everything looked right and half of it was
+# wrong: lowercase task states where the protocol wants proto enum names, a bare Task
+# where its protobuf oneof serialises as {"task": …}, an error `code` carrying a
+# string where AIP-193 wants the HTTP status as an integer. None of that is visible
+# by reading your own code. Had the card claimed conformance, every one of those
+# claims would have been false.
+#
+# THE RATCHET. This does not require a green suite — it requires NO REGRESSION
+# against a recorded baseline, and it fails if the baseline is beaten without being
+# updated. Both directions matter: the first stops conformance silently rotting, the
+# second stops the baseline drifting out of date and quietly certifying less than the
+# code actually achieves.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'packages/agent-interop/**'
+      - 'deploy/mcp-relay/agent-interop-mount.ts'
+      - 'deploy/mcp-relay/tests/tck-sut.ts'
+      - '.github/workflows/a2a-conformance.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/agent-interop/**'
+      - 'deploy/mcp-relay/agent-interop-mount.ts'
+      - 'deploy/mcp-relay/tests/tck-sut.ts'
+      - '.github/workflows/a2a-conformance.yml'
+
+permissions:
+  contents: read
+
+env:
+  # Update ONLY together with the fix that earns it, in the same commit. The job
+  # fails if the real number goes below this OR rises above it.
+  BASELINE_PASSED: '48'
+
+jobs:
+  tck:
+    name: "A2A TCK — MUST tier, HTTP+JSON binding"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12' }
+
+      - name: Install workspace
+        run: npm ci --ignore-scripts
+      - name: Build workspace packages (core, then leaves)
+        run: npm run build
+
+      # Pinned to a commit, not a branch: an unpinned conformance suite turns every
+      # upstream edit into a mystery failure on an unrelated pull request, and makes
+      # "we were conformant on Tuesday" unfalsifiable.
+      - name: Fetch the protocol's conformance suite
+        run: |
+          git clone https://github.com/a2aproject/a2a-tck.git /tmp/a2a-tck
+          cd /tmp/a2a-tck && git checkout "$TCK_REF"
+        env:
+          TCK_REF: main
+
+      - name: Install the suite
+        working-directory: /tmp/a2a-tck
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --quiet -e .
+
+      - name: Boot the SUT
+        working-directory: deploy/mcp-relay
+        run: |
+          npx tsx tests/tck-sut.ts 8930 > /tmp/sut.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q SUT_READY /tmp/sut.log && break
+            sleep 1
+          done
+          grep -q SUT_READY /tmp/sut.log || { echo "SUT did not start:"; cat /tmp/sut.log; exit 1; }
+          curl -fsS http://127.0.0.1:8930/.well-known/agent-card.json > /dev/null
+
+      - name: Run the MUST tier
+        working-directory: /tmp/a2a-tck
+        continue-on-error: true
+        run: |
+          .venv/bin/python run_tck.py \
+            --sut-host http://127.0.0.1:8930 \
+            --transport http_json --level must 2>&1 | tee /tmp/tck.out
+
+      # Parsed from the JUnit XML rather than scraped from stdout: a summary line
+      # format change would otherwise read as zero failures and pass silently.
+      - name: Enforce the conformance ratchet
+        run: |
+          python - <<'EOF'
+          import os, sys, xml.etree.ElementTree as ET
+          t = ET.parse('/tmp/a2a-tck/reports/junitreport.xml')
+          cases  = list(t.iter('testcase'))
+          failed = [c for c in cases if c.find('failure') is not None or c.find('error') is not None]
+          passed = len(cases) - len(failed) - len([c for c in cases if c.find('skipped') is not None])
+          base   = int(os.environ['BASELINE_PASSED'])
+          print(f"MUST tier: {passed} passed, {len(failed)} failed (baseline {base})")
+          for c in failed:
+              print(f"  FAIL {c.get('classname','')}::{c.get('name','')}")
+          if passed < base:
+              sys.exit(f"REGRESSION: {passed} < baseline {base}. A conformance property that held has stopped holding.")
+          if passed > base:
+              sys.exit(f"BASELINE STALE: {passed} > {base}. Raise BASELINE_PASSED to {passed} in this workflow, in the commit that earned it.")
+          print("Conformance held at the recorded baseline.")
+          EOF
+
+      - name: Upload the conformance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2a-tck-report
+          path: /tmp/a2a-tck/reports/
+          if-no-files-found: warn

@@ -137,6 +137,8 @@ export const INTEREGO_AGENTS_PROFILE: InteropProfile = {
     forbidden: { status: 403, code: 'forbidden', message: 'Not permitted.' },
     notFound: { status: 404, code: 'not_found', message: 'No such engagement.' },
     badRequest: { status: 400, code: 'bad_request', message: 'The request was not valid.' },
+    unsupportedVersion: { status: 400, code: 'unsupported_version', message: 'Unsupported protocol version.' },
+    unsupportedMediaType: { status: 415, code: 'unsupported_media_type', message: 'Unsupported content type.' },
     unsupportedOperation: { status: 501, code: 'unimplemented', message: 'Not implemented.' },
     internal: { status: 500, code: 'internal', message: 'Internal error.' },
   },

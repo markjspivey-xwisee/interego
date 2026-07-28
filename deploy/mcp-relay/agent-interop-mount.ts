@@ -22,7 +22,7 @@ import type { Express, Request, Response } from 'express';
 import {
   EngagementEngine, renderCard, capabilitiesFromAffordances, isEngineError, availableOperations,
   PROFILES,
-  type Capability, type InteropProfile, type InteropErrorKind, type Part,
+  type Capability, type InteropProfile, type InteropErrorKind, type InteropOperation, type Part,
 } from '@interego/agent-interop';
 
 export interface AgentInteropDeps {
@@ -55,7 +55,8 @@ function escapeRe(s: string): string {
 function sendErr(res: Response, profile: InteropProfile, kind: InteropErrorKind, detail?: string): void {
   const spec = profile.errors[kind];
   res.status(spec.status).json({
-    error: { code: spec.code, message: spec.message, ...(detail ? { detail } : {}) },
+    // `extra` first so a profile can never accidentally shadow code/message.
+    error: { ...(spec.extra ?? {}), code: spec.code, message: spec.message, ...(detail ? { detail } : {}) },
   });
 }
 
@@ -102,6 +103,7 @@ function engagementIdFrom(req: Request): string {
  */
 function sendEngagement(
   res: Response, profile: InteropProfile, engagement: Parameters<InteropProfile['engagement']['render']>[0], base: string,
+  operation?: InteropOperation,
 ): void {
   const available = availableOperations(engagement.state);
   const affordances = profile.engagement.affordances(engagement, { serviceUrl: base, available });
@@ -119,7 +121,12 @@ function sendEngagement(
   links.push(`<${profile.id}>; rel="describedby"`);
   res.setHeader('Link', links.join(', '));
   if (profile.wireMediaType) res.type(profile.wireMediaType);
-  res.status(200).json(profile.engagement.render(engagement, { serviceUrl: base }));
+  const body = profile.engagement.render(engagement, { serviceUrl: base });
+  // The profile may declare that THIS operation's response nests the resource under
+  // a member name rather than returning it bare. The member name is opaque here —
+  // the mount never learns why a given protocol wants one.
+  const envelope = operation ? profile.responseEnvelope?.[operation] : undefined;
+  res.status(200).json(envelope ? { [envelope]: body } : body);
 }
 
 export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
@@ -197,6 +204,32 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
         : `${mountBase}${route.path.replace(/\{id\}/g, ':id')}`;
       const handler = async (req: Request, res: Response): Promise<void> => {
         try {
+          // ── Protocol version, if this profile pins one ────────────────────
+          //
+          // Checked BEFORE authentication: a request in a version we do not speak
+          // is unanswerable regardless of who sent it, and answering it anyway
+          // hands the client a response shaped by rules it is not following. Both
+          // the header name and the accepted values come from profile data, so
+          // this enforces a version contract without naming a protocol.
+          const vh = profile.versionHeader;
+          if (vh) {
+            const got = req.headers[vh.name.toLowerCase()];
+            const v = Array.isArray(got) ? got[0] : got;
+            if (v && !vh.supported.includes(v)) {
+              sendErr(res, profile, 'unsupportedVersion'); return;
+            }
+          }
+
+          // ── Request media type ────────────────────────────────────────────
+          //
+          // A body sent as something we cannot parse is 415, not 400: the request
+          // may be perfectly valid in a format we do not accept, and a client that
+          // can retry in another encoding needs to be told which of the two it is.
+          const ctype = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+          if (route.method === 'POST' && ctype && !/^application\/(\w[\w.+-]*\+)?json$/.test(ctype)) {
+            sendErr(res, profile, 'unsupportedMediaType'); return;
+          }
+
           const caller = await deps.verifyCaller(req);
           if (!caller) { sendErr(res, profile, 'unauthenticated'); return; }
 
@@ -217,14 +250,14 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
               ? engine.appendTurn({ id: ref, caller, role: 'requester', parts })
               : engine.open({ caller, parts, ...(capability ? { capability } : {}) });
             if (isEngineError(r)) { sendErr(res, profile, r.error.kind, r.error.detail); return; }
-            sendEngagement(res, profile, r.value, base);
+            sendEngagement(res, profile, r.value, base, route.operation);
             return;
           }
 
           if (route.operation === 'getEngagement') {
             const r = engine.get(engagementIdFrom(req), caller);
             if (isEngineError(r)) { sendErr(res, profile, r.error.kind); return; }
-            sendEngagement(res, profile, r.value, base);
+            sendEngagement(res, profile, r.value, base, route.operation);
             return;
           }
 
@@ -233,14 +266,21 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             const r = engine.list(caller, Number.isFinite(limit) ? limit : 50);
             if (isEngineError(r)) { sendErr(res, profile, r.error.kind); return; }
             if (profile.wireMediaType) res.type(profile.wireMediaType);
-            res.status(200).json({ tasks: r.value.map(e => profile.engagement.render(e, { serviceUrl: base })) });
+            // The collection member name comes from the profile. This line used to
+            // hardcode one particular protocol's field name in a mount that is
+            // supposed to be spec-blind; the profile now declares it like every
+            // other wire-shape decision.
+            const member = profile.responseEnvelope?.[route.operation] ?? 'items';
+            res.status(200).json({
+              [member]: r.value.map(e => profile.engagement.render(e, { serviceUrl: base })),
+            });
             return;
           }
 
           if (route.operation === 'cancelEngagement') {
             const r = engine.cancel(engagementIdFrom(req), caller);
             if (isEngineError(r)) { sendErr(res, profile, r.error.kind); return; }
-            sendEngagement(res, profile, r.value, base);
+            sendEngagement(res, profile, r.value, base, route.operation);
             return;
           }
 
