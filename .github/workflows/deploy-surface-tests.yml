@@ -1,0 +1,83 @@
+name: Deploy Surface Tests
+
+# Runs the tests that guard the SUPPORTING services — css-gate, acme-id, the
+# protocol bridge. Everything outside deploy/mcp-relay/ and packages/.
+#
+# ★ WHY THIS EXISTS, AND IT IS NOT A FLATTERING REASON. Two tests were written the
+# same day this file was, to guard two live defects that a production audit had just
+# found — and NEITHER RAN ANYWHERE. relay-tests.yml gates on `deploy/mcp-relay/**`
+# and `packages/**`; nothing gated on `deploy/css-gate/**` or `deploy/acme-id/**`, so
+# both arrived orphaned. The pull requests carrying them showed "no checks reported"
+# and would have merged green on a technicality.
+#
+# That is the same failure as the one relay-tests.yml was created to fix — a
+# publish-gates test that had silently detached from its `test` script and stopped
+# running while still looking like coverage. Writing a test is not the same as
+# arranging for it to run, and the second half is the half that gets forgotten,
+# because a passing local run feels like completion.
+#
+# So: any service with a test gets a job here, and adding a service means adding it
+# to this file in the same change.
+#
+# All of these are pure in-process — no network, no secrets, no live service. Safe on
+# every pull request from anyone.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'deploy/css-gate/**'
+      - 'deploy/acme-id/**'
+      - 'demos/interego-bridge/**'
+      - '.github/workflows/deploy-surface-tests.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'deploy/css-gate/**'
+      - 'deploy/acme-id/**'
+      - 'demos/interego-bridge/**'
+      - '.github/workflows/deploy-surface-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  surface-tests:
+    name: "Deploy surfaces (gate CORS, identity documents)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+
+      # css-gate's server imports undici, and the bridge imports @interego/*, so
+      # nothing below runs without an installed + built workspace. This step used to
+      # sit after the first two tests, which failed them with ERR_MODULE_NOT_FOUND —
+      # caught by this workflow's own first run, which is the point of it.
+      - name: Install + build workspace
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+
+      # css-gate: the LDP control headers a cross-origin Solid client cannot work
+      # without, the write headers preflight must permit, and that a retired Azure
+      # origin is refused. Needs only the module — no install.
+      - name: css-gate — CORS + response-header invariants
+        run: node deploy/css-gate/cors-and-headers.test.mjs
+
+      # acme-id: every URL an identity document publishes must resolve, and every
+      # term a WebID profile asserts must be defined in the namespace it cites.
+      # Source-only, so it catches a dangling reference before it ships.
+      - name: acme-id — published references resolve
+        run: node deploy/acme-id/identity-documents.test.mjs
+
+      # The bridge BOOTS with production's exact configuration (no pod, no wallet)
+      # and is driven over its own MCP transport. A test that stubbed the config
+      # would prove nothing about the case that actually shipped broken.
+      #
+      # The first draft of this step was `tsc … || true` plus a console.log — a step
+      # that could not fail and therefore guarded nothing. A gate that cannot go red
+      # is worse than no gate, because it reports green.
+      - name: interego-bridge — advertises only what it can run
+        run: node demos/interego-bridge/availability.test.mjs
