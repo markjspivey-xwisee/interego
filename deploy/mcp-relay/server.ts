@@ -10755,6 +10755,48 @@ mountAgentInterop(app, {
     bearer: true,
   },
   documentationUrl: `${(PUBLIC_BASE_URL || '').replace(/\/$/, '')}/.well-known/operations`,
+  // ── PERFORM an advertised capability ──────────────────────────────────────
+  //
+  // The card advertises every relay tool. Until this existed, a peer could ask for
+  // one and the engagement stayed in its opening state forever — advertising work
+  // we would not do. This makes the interop surface able to keep its promise.
+  //
+  // ★ READ-SIDE ONLY, DELIBERATELY, AND THIS IS THE WHOLE SECURITY ARGUMENT.
+  // A write-side capability binds the CALLER'S identity to what it writes —
+  // descriptor authorship, pod scope, signed provenance — and the relay carries
+  // that logic in its own dispatcher, entangled with how a bearer or a signed
+  // envelope is verified. Reaching into `tool.handler` from here would run those
+  // handlers with an identity established by a DIFFERENT path from the one their
+  // authorship rules were written against. That is not a wiring gap; it is a second
+  // copy of an authorization policy, which is exactly how the audit's privilege
+  // findings arose. So: refuse write-side here, truthfully, and let it stay refused
+  // until the identity threading is designed rather than improvised.
+  //
+  // What remains is genuinely useful and genuinely safe: the read-side capabilities
+  // are the ones already served without a verified caller, so invoking one on behalf
+  // of a verified peer grants no authority that peer did not already have.
+  invokeCapability: async ({ capability, caller, parts }) => {
+    const verb = capability.split('/').pop() ?? '';
+    const tool = TOOLS[verb] ?? dynamicTools.get(verb);
+    if (!tool) throw new Error(`unknown capability: ${verb}`);
+    if (AUTH_REQUIRED_TOOLS.has(verb) || WRITE_SIDE_TOOLS.has(verb)) {
+      throw new Error(
+        `capability "${verb}" writes on behalf of its caller and is not yet reachable through this interop surface; ` +
+        `invoke it directly at /tool/${verb} with a bearer token or a signed request`);
+    }
+    // Arguments come from a `data` part — structured input, not prose. Nothing from
+    // the payload is trusted as identity; reserved wire fields are stripped exactly
+    // as the /tool path strips them, so an interop caller cannot smuggle one.
+    const dataPart = parts.find(p => p.kind === 'data');
+    const args = { ...((dataPart?.data ?? {}) as Record<string, unknown>) };
+    stripReservedWireFields(args);
+    const text = await tool.handler(args as never);
+    return {
+      name: verb,
+      description: `Result of ${verb}`,
+      parts: [{ kind: 'text' as const, text: String(text) }],
+    };
+  },
   log,
 });
 

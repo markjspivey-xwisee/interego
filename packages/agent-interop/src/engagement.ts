@@ -23,12 +23,15 @@ export interface EngagementStoreOptions {
   maxTurnsPerEngagement?: number;
   /** Hard cap on parts per turn — rejected, not evicted (a turn is atomic). */
   maxPartsPerTurn?: number;
+  /** Hard cap on outputs per engagement — rejected, not evicted. */
+  maxOutputsPerEngagement?: number;
 }
 
 const DEFAULTS = {
   maxEngagements: 50_000,
   maxTurnsPerEngagement: 1_000,
   maxPartsPerTurn: 128,
+  maxOutputsPerEngagement: 32,
 } as const;
 
 export type EngineResult<T> = { ok: true; value: T } | { ok: false; error: EngineError };
@@ -217,6 +220,73 @@ export class EngagementEngine {
     e.state = args.to;
     e.updatedAt = new Date(args.now ?? Date.now()).toISOString();
     return { ok: true, value: e };
+  }
+
+  /**
+   * Record work having STARTED. Owner-scoped like every other mutation.
+   *
+   * Separate from `complete` because a peer polling the record should be able to
+   * tell "accepted but not begun" from "running" — a distinction the lifecycle
+   * already models and nothing was using.
+   */
+  begin(id: string, caller: string | undefined, now?: number): EngineResult<Engagement> {
+    return this.transition({ id, caller, to: 'working', ...(now !== undefined ? { now } : {}) });
+  }
+
+  /**
+   * Record a produced result and finish. Owner-scoped.
+   *
+   * Outputs are CAPPED and each output's parts are capped, for the same reason
+   * turns are: any caller-reachable list that grows without a bound is an OOM
+   * primitive, and a capability that returns a large result is the obvious way to
+   * reach this one.
+   */
+  complete(args: {
+    id: string;
+    caller: string | undefined;
+    outputs?: Array<{ name?: string; description?: string; parts: Part[] }>;
+    now?: number;
+  }): EngineResult<Engagement> {
+    const found = this.get(args.id, args.caller);
+    if (!found.ok) return found;
+    const e = found.value;
+    const given = args.outputs ?? [];
+    if (given.length > this.opts.maxOutputsPerEngagement) {
+      return fail('badRequest', `too many outputs (max ${this.opts.maxOutputsPerEngagement})`);
+    }
+    for (const o of given) {
+      if (o.parts.length > this.opts.maxPartsPerTurn) {
+        return fail('badRequest', `too many parts in an output (max ${this.opts.maxPartsPerTurn})`);
+      }
+    }
+    const moved = this.transition({ id: args.id, caller: args.caller, to: 'completed', ...(args.now !== undefined ? { now: args.now } : {}) });
+    if (!moved.ok) return moved;
+    // Ids are dereferenceable URLs under the engagement — an output is addressable.
+    e.outputs = given.map((o, i) => ({
+      id: `${e.id}/outputs/${i}`,
+      ...(o.name ? { name: o.name } : {}),
+      ...(o.description ? { description: o.description } : {}),
+      parts: o.parts,
+    }));
+    return { ok: true, value: e };
+  }
+
+  /** Record that the work failed. Owner-scoped. The reason rides as a turn so it is
+   *  visible to a peer reading the record, not swallowed. */
+  fail(args: { id: string; caller: string | undefined; reason: string; now?: number }): EngineResult<Engagement> {
+    const found = this.get(args.id, args.caller);
+    if (!found.ok) return found;
+    const e = found.value;
+    const now = args.now ?? Date.now();
+    if (!TERMINAL_STATES.has(e.state)) {
+      e.turns.push({
+        id: `${e.id}/turns/${e.turns.length}`,
+        role: 'responder',
+        parts: [{ kind: 'text', text: args.reason }],
+        at: new Date(now).toISOString(),
+      });
+    }
+    return this.transition({ id: args.id, caller: args.caller, to: 'failed', now });
   }
 
   /** Cancel — the common terminal transition, owner-scoped. */

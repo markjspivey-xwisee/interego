@@ -237,6 +237,17 @@ export const A2A_PROFILE: InteropProfile = {
           state: TO_A2A[e.state],
           timestamp: e.updatedAt,
         },
+        // Produced results. The protocol calls them artifacts; the engine calls them
+        // outputs. Absent (not an empty array) until work has actually run — an empty
+        // array would assert "this produced nothing", which is a different claim.
+        ...(e.outputs && e.outputs.length ? {
+          artifacts: e.outputs.map(o => ({
+            artifactId: o.id,
+            ...(o.name ? { name: o.name } : {}),
+            ...(o.description ? { description: o.description } : {}),
+            parts: o.parts.map(renderPart),
+          })),
+        } : {}),
         history: e.turns.map(t => ({
           messageId: t.foreignId ?? t.id,
           // Proto enum names, as for TaskState above — `ROLE_USER`, not `user`.

@@ -74,10 +74,29 @@ export interface Engagement {
   /** The capability (an iep:Affordance action URL) this engagement exercises. */
   capability?: string;
   turns: Turn[];
+  /**
+   * What the engagement PRODUCED. Empty until the work actually runs.
+   *
+   * This exists because an engagement that can only ever be `submitted` is a
+   * promise the agent cannot keep: the card advertises capabilities, a peer asks
+   * for one, and the record sits unchanged forever. Outputs are how the engine
+   * represents a result, so a protocol that has a name for them has something real
+   * to project.
+   */
+  outputs?: Output[];
   createdAt: string;
   updatedAt: string;
   /** Free-form, profile-visible annotations. Never trusted for authorization. */
   meta?: Record<string, unknown>;
+}
+
+/** A produced result. `id` is a dereferenceable URL under the engagement, so an
+ *  output is addressable rather than an anonymous blob. */
+export interface Output {
+  id: string;
+  name?: string;
+  description?: string;
+  parts: Part[];
 }
 
 /** A capability the agent offers, in the engine's terms. Projected FROM an
