@@ -51,6 +51,15 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: '20' }
 
+      # css-gate's server imports undici, and the bridge imports @interego/*, so
+      # nothing below runs without an installed + built workspace. This step used to
+      # sit after the first two tests, which failed them with ERR_MODULE_NOT_FOUND —
+      # caught by this workflow's own first run, which is the point of it.
+      - name: Install + build workspace
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+
       # css-gate: the LDP control headers a cross-origin Solid client cannot work
       # without, the write headers preflight must permit, and that a retired Azure
       # origin is refused. Needs only the module — no install.
@@ -63,12 +72,12 @@ jobs:
       - name: acme-id — published references resolve
         run: node deploy/acme-id/identity-documents.test.mjs
 
-      # The bridge has no test yet; typecheck is the guard that exists. tsx strips
-      # types without checking them, so nothing else would catch a type error here.
-      - name: interego-bridge — parses and typechecks
-        run: |
-          npm ci --ignore-scripts
-          npm run build
-          npx tsc --noEmit --skipLibCheck --target ES2022 --module NodeNext \
-            --moduleResolution NodeNext demos/interego-bridge/server.ts 2>&1 | tail -20 || true
-          node --input-type=module -e "console.log('bridge module resolves')"
+      # The bridge BOOTS with production's exact configuration (no pod, no wallet)
+      # and is driven over its own MCP transport. A test that stubbed the config
+      # would prove nothing about the case that actually shipped broken.
+      #
+      # The first draft of this step was `tsc … || true` plus a console.log — a step
+      # that could not fail and therefore guarded nothing. A gate that cannot go red
+      # is worse than no gate, because it reports green.
+      - name: interego-bridge — advertises only what it can run
+        run: node demos/interego-bridge/availability.test.mjs
