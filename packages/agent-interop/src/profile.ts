@@ -19,6 +19,7 @@
  * code by nature; there is no honest way to make an HTTP listener into data.
  */
 
+import type { ResolvedAffordance } from '@interego/core';
 import type { AgentIdentity, Capability, Engagement, EngagementState } from './types.js';
 
 /** The operations the engine can serve. A profile names and routes them. */
@@ -77,6 +78,25 @@ export interface LifecycleProjection {
 export interface EngagementProjection {
   /** Render an engagement into the profile's document shape. */
   render(engagement: Engagement, ctx: { serviceUrl: string }): Record<string, unknown>;
+  /**
+   * The engagement's followable next steps as `iep:Affordance`s — the SUBSTRATE'S
+   * OWN hypermedia primitive, not a link shape invented here.
+   *
+   * This is what makes a representation hypermedia rather than merely
+   * resource-shaped: the client follows affordances instead of reconstructing URLs
+   * from out-of-band knowledge of the protocol. Reusing `Affordance` means these
+   * next steps carry the same `iep:action` / `hydra:target` / method / input-shape
+   * contract as every other capability in the substrate, and are renderable by the
+   * projections that already exist for it (HyperMarkdown controls, Turtle, the MCP
+   * tool schema) rather than needing a new renderer.
+   *
+   * The set is DERIVED from the engine's own transition table, so it can never
+   * advertise a step the engine would refuse, and a terminal engagement offers none.
+   */
+  affordances(
+    engagement: Engagement,
+    ctx: { serviceUrl: string; available: ReadonlyArray<'appendTurn' | 'cancel' | 'read'> },
+  ): ResolvedAffordance[];
 }
 
 export interface InteropProfile {

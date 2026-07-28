@@ -210,5 +210,66 @@ console.log('\n7. the mount registers on REAL Express (route compilation is exer
   }
 }
 
+
+console.log('\n8. HYPERMEDIA — a representation carries its own followable next steps');
+{
+  const express = (await import('express')).default;
+  const a = express(); a.use(express.json());
+  mountAgentInterop(a as any, {
+    publicBase: 'https://relay.test',
+    agent: { id: 'https://relay.test/.well-known/operations', name: 'T', description: 't' },
+    affordances: () => AFFORDANCES,
+    verifyCaller: async () => 'did:ethr:0xAAA',
+    log: () => {},
+  });
+  const srv = a.listen(0);
+  await new Promise(r => srv.once('listening', r));
+  const B = `http://127.0.0.1:${(srv.address() as any).port}`;
+
+  const open = await fetch(`${B}/a2a/v1/message:send`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ parts: [{ text: 'hi' }] }),
+  });
+  const link = open.headers.get('link') ?? '';
+  const task: any = await open.json();
+  check('an engagement response carries Link headers', link.length > 0);
+  check('...including self + service-desc + describedby',
+    link.includes('rel="self"') && link.includes('rel="service-desc"') && link.includes('rel="describedby"'));
+  // The client must be able to FOLLOW cancel, not construct it.
+  check('...and a cancel affordance while the engagement is live', link.includes(':cancel'));
+  check('the link relation is itself a dereferenceable action URL (not a bare token)',
+    /rel="https:\/\/relay\.test\/ns\/iep\/action\//.test(link));
+
+  // Follow the advertised cancel target rather than building a URL.
+  const m = /<([^>]+)>; rel="[^"]*cancel_task"/.exec(link);
+  check('the cancel target is advertised and followable', !!m, link.slice(0, 200));
+  if (m) {
+    // The advertised target is the canonical PUBLIC url (that is correct — an
+    // affordance must not advertise a loopback address); swap only the origin to
+    // reach the ephemeral test server.
+    const followed = await fetch(m[1]!.replace('https://relay.test', B), { method: 'POST' });
+    check('following the advertised affordance cancels it', followed.status === 200, String(followed.status));
+    const done: any = followed.status === 200 ? await followed.json() : {};
+    check('...the same engagement', done.id === task.id);
+    const doneLink = followed.headers.get('link') ?? '';
+    // Terminal state: the engine's transition table says nothing further is legal,
+    // so no next step may be advertised.
+    check('a TERMINAL engagement advertises no cancel (derived from the engine table)',
+      !doneLink.includes('cancel_task'), doneLink.slice(0, 160));
+  }
+
+  // The profile whose shape is ours carries them in-body too.
+  const io = await fetch(`${B}/interego-agents/v1/engagements`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ parts: [{ text: 'hi' }] }),
+  });
+  const iobody: any = await io.json();
+  check('our own profile carries affordances IN-BODY as iep:Affordance',
+    Array.isArray(iobody['iep:affordance']) && iobody['iep:affordance'].length > 0
+    && iobody['iep:affordance'][0]['@type'] === 'iep:Affordance'
+    && typeof iobody['iep:affordance'][0]['hydra:target'] === 'string');
+  srv.close();
+}
+
 if (failures > 0) { console.error(`\n${failures} assertion(s) failed\n`); process.exit(1); }
 console.log('\nAll agent-interop mount gates hold.\n');

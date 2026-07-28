@@ -20,7 +20,7 @@
 
 import type { Express, Request, Response } from 'express';
 import {
-  EngagementEngine, renderCard, capabilitiesFromAffordances, isEngineError,
+  EngagementEngine, renderCard, capabilitiesFromAffordances, isEngineError, availableOperations,
   PROFILES,
   type Capability, type InteropProfile, type InteropErrorKind, type Part,
 } from '@interego/agent-interop';
@@ -82,6 +82,43 @@ function partsFrom(body: unknown): Part[] | null {
 function engagementIdFrom(req: Request): string {
   const p = req.params as unknown as Record<string, string>;
   return decodeURIComponent(String(p['id'] ?? p['0'] ?? ''));
+}
+
+
+/**
+ * Emit the resource's followable next steps as RFC 8288 `Link` headers, and return
+ * the engagement body.
+ *
+ * A representation that makes the client RECONSTRUCT the cancel URL from knowledge
+ * of the protocol is resource-shaped but not hypermedia. The affordances come from
+ * the profile, which derives them from the ENGINE's transition table — so a terminal
+ * engagement advertises nothing, and nothing is advertised that the engine would
+ * refuse.
+ *
+ * Link headers rather than body fields because a protocol whose body schema is
+ * normatively closed (no invented top-level fields) can still be navigable this way
+ * without violating its own schema. Profiles whose shape is ours to define ALSO
+ * carry them in-body.
+ */
+function sendEngagement(
+  res: Response, profile: InteropProfile, engagement: Parameters<InteropProfile['engagement']['render']>[0], base: string,
+): void {
+  const available = availableOperations(engagement.state);
+  const affordances = profile.engagement.affordances(engagement, { serviceUrl: base, available });
+  const links = affordances.map(a => {
+    // `iep:action` travels as the extension link relation: the relation itself is a
+    // dereferenceable URL that resolves to the action's own description, rather than
+    // a bare token the client must already understand.
+    const rel = a.action;
+    const m = a.method && a.method !== 'GET' ? `; method="${a.method}"` : '';
+    const t = a.mediaType ? `; type="${a.mediaType}"` : '';
+    return `<${a.target}>; rel="${rel}"${m}${t}`;
+  });
+  links.push(`<${engagement.id}>; rel="self"`);
+  links.push(`<${base}${profile.card.wellKnownPath}>; rel="service-desc"`);
+  links.push(`<${profile.id}>; rel="describedby"`);
+  res.setHeader('Link', links.join(', '));
+  res.status(200).json(profile.engagement.render(engagement, { serviceUrl: base }));
 }
 
 export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
@@ -151,14 +188,14 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             const capability = typeof (req.body ?? {}).skillId === 'string' ? (req.body as { skillId: string }).skillId : undefined;
             const r = engine.open({ caller, parts, ...(capability ? { capability } : {}) });
             if (isEngineError(r)) { sendErr(res, profile, r.error.kind, r.error.detail); return; }
-            res.status(200).json(profile.engagement.render(r.value, { serviceUrl: base }));
+            sendEngagement(res, profile, r.value, base);
             return;
           }
 
           if (route.operation === 'getEngagement') {
             const r = engine.get(engagementIdFrom(req), caller);
             if (isEngineError(r)) { sendErr(res, profile, r.error.kind); return; }
-            res.status(200).json(profile.engagement.render(r.value, { serviceUrl: base }));
+            sendEngagement(res, profile, r.value, base);
             return;
           }
 
@@ -173,7 +210,7 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
           if (route.operation === 'cancelEngagement') {
             const r = engine.cancel(engagementIdFrom(req), caller);
             if (isEngineError(r)) { sendErr(res, profile, r.error.kind); return; }
-            res.status(200).json(profile.engagement.render(r.value, { serviceUrl: base }));
+            sendEngagement(res, profile, r.value, base);
             return;
           }
 
