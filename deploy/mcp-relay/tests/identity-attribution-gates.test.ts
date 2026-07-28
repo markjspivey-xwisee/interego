@@ -194,6 +194,28 @@ check('the upstream status/statusText port-scan oracle is closed',
 check('webhook DELIVERY re-screens (was a bare global fetch)',
   /Re-screen at DELIVERY[\s\S]{0,500}assertInvokeTargetAllowed\(url\)/.test(SERVER));
 
+console.log('\n16. R2 — relay-credentialed writes require a PROVEN own pod');
+// solidFetch is root-equivalent against the internal CSS origin, so any handler that
+// derived its write target from args.pod_name/pod_url was an "any caller writes any
+// pod" primitive.
+check('requireOwnPod() exists and is fail-closed on an unproven caller',
+  /async function requireOwnPod\(/.test(SERVER)
+  && /requireOwnPod[\s\S]{0,1400}authentication required/.test(SERVER));
+check('it compares canonical pod keys',
+  /requireOwnPod[\s\S]{0,1600}canonicalPodKey\(targetPodUrl\) !== canonicalPodKey\(own\)/.test(SERVER));
+for (const tool of ['register_agent', 'revoke_agent', 'publish_directory', 'rebuild_manifest', 'pgsl_ingest']) {
+  check(`${tool} is own-pod gated`,
+    new RegExp(`requireOwnPod\\(args, podUrl, '${tool}'\\)`).test(SERVER));
+}
+check('publish_context restricts the SELF-GRANT (not the publish) to the own pod',
+  /requireOwnPod\(args, podUrl, 'publish_context:self-grant'\)/.test(SERVER)
+  && /if \(!me && selfGrantOk\)/.test(SERVER));
+check('set_reachability derives its pod from callerOwnPod, not selfPodUrl',
+  /const podUrl = await callerOwnPod\(args\);/.test(SERVER));
+check('the cross-pod escape hatch is OFF by default and logs loudly',
+  /RELAY_ALLOW_CROSS_POD_WRITES === '1'/.test(SERVER)
+  && /\[SECURITY\] cross-pod \$\{tool\} ALLOWED/.test(SERVER));
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed\n`);
   process.exit(1);
