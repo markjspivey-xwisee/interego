@@ -467,6 +467,29 @@ console.log('\n10. ROUTE SHADOWING — only a DECLARED url may reach a handler')
   check('an unknown continuation id is notFound, NOT a silently-created new engagement',
     ghost.status === 404, String(ghost.status));
 
+  // ── Content parts are never silently discarded ──────────────────────────
+  //
+  // A part shape we do not accept used to vanish, and the caller was then told "at
+  // least one content part is required" — a different problem than the one that
+  // occurred, describing a request they had not sent.
+  const inlineBytes = await fetch(`${B}/a2a/v1/message:send`, {
+    method: 'POST', headers: J,
+    body: JSON.stringify({ message: { parts: [{ raw: 'dGNr', mediaType: 'application/x-thing' }] } }),
+  });
+  check('a request of only inline-bytes parts is refused', inlineBytes.status === 400,
+    String(inlineBytes.status));
+  const ibBody: any = await inlineBytes.json();
+  check('...with a reason naming the actual problem, not a wrong one',
+    /inline binary/i.test(String(ibBody?.error?.detail)), JSON.stringify(ibBody?.error?.detail));
+  check('...that tells the caller what to do instead (url part)',
+    /url part/i.test(String(ibBody?.error?.detail)), String(ibBody?.error?.detail).slice(0, 90));
+  const emptyParts = await fetch(`${B}/a2a/v1/message:send`, {
+    method: 'POST', headers: J, body: JSON.stringify({ message: { parts: [] } }),
+  });
+  const epBody: any = await emptyParts.json();
+  check('...and a genuinely empty parts array still says THAT',
+    /at least one content part/i.test(String(epBody?.error?.detail)), String(epBody?.error?.detail));
+
   srv.close();
 }
 

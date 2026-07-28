@@ -123,21 +123,62 @@ function payloadOf(body: unknown, envelope: string | undefined): Record<string, 
   return (inner && typeof inner === 'object' ? inner : b) as Record<string, unknown>;
 }
 
-/** Extract content parts from a request payload without trusting anything else in it.
- *  Unknown members are ignored rather than reflected. */
-function partsFrom(body: unknown, envelope?: string): Part[] | null {
+/**
+ * Extract content parts from a request payload without trusting anything else in it.
+ *
+ * ★ WHY THIS RETURNS A REASON, NOT JUST null. It used to drop any part shape it did
+ * not recognise and then, if nothing survived, report "at least one content part is
+ * required" — to a caller who had supplied several. Two failures at once: content
+ * silently discarded, and an error message describing a different problem than the
+ * one that occurred. A caller could not act on either.
+ *
+ * Inline binary is the case that exposed it. This substrate deliberately does NOT
+ * accept bytes in a message: `Part` says so at the type — raw bytes are written to a
+ * pod resource and referenced by URL, so inboxes stay small and bytes stay
+ * dereferenceable. That is the everything-is-a-URL commitment, and it is a genuine
+ * divergence from protocols that allow inline base64. The right answer to a
+ * divergence is to state it, not to swallow the part and blame the caller.
+ */
+type PartsResult =
+  | { ok: true; parts: Part[] }
+  | { ok: false; reason: string };
+
+/**
+ * Narrow the failure arm. The relay compiles WITHOUT strictNullChecks, so `if
+ * (!r.ok)` gives no discriminated-union narrowing here and a plain `.reason` access
+ * fails to compile — the same reason `isEngineError` exists in the engine package. A
+ * user-defined guard narrows regardless of that setting.
+ */
+function isPartsError(r: PartsResult): r is { ok: false; reason: string } {
+  return r.ok === false;
+}
+
+function partsFrom(body: unknown, envelope?: string): PartsResult {
   const msg = payloadOf(body, envelope);
   const raw = msg['parts'];
-  if (!Array.isArray(raw) || raw.length === 0) return null;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { ok: false, reason: 'at least one content part is required' };
+  }
   const parts: Part[] = [];
+  let sawInlineBytes = false;
   for (const p of raw) {
     if (!p || typeof p !== 'object') continue;
     const o = p as Record<string, unknown>;
     if (typeof o['text'] === 'string') parts.push({ kind: 'text', text: o['text'] });
     else if (o['data'] && typeof o['data'] === 'object') parts.push({ kind: 'data', data: o['data'] as Record<string, unknown> });
     else if (typeof o['url'] === 'string') parts.push({ kind: 'url', url: o['url'] });
+    // A base64 member is inline bytes. Recognised precisely so it can be REFUSED
+    // with its own reason rather than vanishing.
+    else if (typeof o['raw'] === 'string' || typeof o['bytes'] === 'string') sawInlineBytes = true;
   }
-  return parts.length ? parts : null;
+  if (parts.length) return { ok: true, parts };
+  if (sawInlineBytes) {
+    return {
+      ok: false,
+      reason: 'inline binary content is not accepted; write the bytes to a resource and send a url part referencing it',
+    };
+  }
+  return { ok: false, reason: 'no usable content part: expected one of text, data, or url' };
 }
 
 /** The engagement id, from either a named `:id` param or a RegExp capture group
@@ -330,8 +371,10 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             // Splitting it was the bug: parts came from the envelope, the
             // continuation id from the top level, and they silently disagreed.
             const payload = payloadOf(req.body, profile.requestEnvelope);
-            const parts = partsFrom(req.body, profile.requestEnvelope);
-            if (!parts) { sendErr(res, profile, 'badRequest', 'at least one content part is required'); return; }
+            const got = partsFrom(req.body, profile.requestEnvelope);
+            // The caller is told which of the several possible problems occurred.
+            if (isPartsError(got)) { sendErr(res, profile, 'badRequest', got.reason); return; }
+            const parts = (got as { ok: true; parts: Part[] }).parts;
             const capability = typeof payload['skillId'] === 'string' ? payload['skillId'] : undefined;
             // CONTINUATION vs NEW. The profile declares which member carries an existing
             // engagement's id; the mount never names a protocol's field. Without this
