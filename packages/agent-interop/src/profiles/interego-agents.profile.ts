@@ -51,6 +51,7 @@ export const INTEREGO_AGENTS_PROFILE: InteropProfile = {
   slug: 'interego-agents',
   protocolVersion: '1.0',
   conformanceStatus: 'verified', // our own shape; nothing external to conform to
+  continuationField: 'engagementId',
 
   card: {
     mediaType: 'application/ld+json',
