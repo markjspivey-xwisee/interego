@@ -173,6 +173,27 @@ console.log('\n13. R8 — the /tool OAuth branch injects the attribution identit
 check('OAuth branch sets _session_agent_did',
   /if \(auth\.agentId\) req\.body\._session_agent_did = auth\.agentId;/.test(SERVER));
 
+console.log('\n14. R4 — the egress guard screens EVERY redirect hop, not just the first URL');
+// solidFetch calls fetch() with no `redirect` option → undici follows up to 20 hops
+// unscreened, so `302 Location: http://169.254.169.254/…` defeated the guard in one hop.
+check('guardedInvokeFetch follows redirects manually',
+  /guardedInvokeFetch[\s\S]{0,900}redirect: 'manual'/.test(SERVER));
+check('it re-screens each hop inside the loop',
+  /for \(let hop = 0; hop <= GUARDED_MAX_REDIRECTS[\s\S]{0,200}assertInvokeTargetAllowed\(target\)/.test(SERVER));
+check('it bounds the hop count',
+  /GUARDED_MAX_REDIRECTS/.test(SERVER) && /too many redirects/.test(SERVER));
+check('relative Location values are resolved against the current hop',
+  /new URL\(loc, target\)/.test(SERVER));
+
+console.log('\n15. R4 — caller-supplied URLs no longer reach raw solidFetch');
+check('get_descriptor fetches through the guard',
+  /await guardedInvokeFetch\(url, \{/.test(SERVER));
+check('the upstream status/statusText port-scan oracle is closed',
+  !/error: `\$\{resp\.status\} \$\{resp\.statusText\}`/.test(SERVER)
+  && /descriptor could not be retrieved/.test(SERVER));
+check('webhook DELIVERY re-screens (was a bare global fetch)',
+  /Re-screen at DELIVERY[\s\S]{0,500}assertInvokeTargetAllowed\(url\)/.test(SERVER));
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed\n`);
   process.exit(1);
