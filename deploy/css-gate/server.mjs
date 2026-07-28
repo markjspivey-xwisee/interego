@@ -88,7 +88,7 @@ const PORT = Number(process.env.PORT ?? 8080);
 // default — a missing env var here would silently dial the legacy
 // public host that no longer resolves.
 if (!process.env.CSS_INTERNAL_URL) {
-  console.error('[css-gate] FATAL: CSS_INTERNAL_URL is required (expected internal FQDN, e.g. https://interego-css.internal.<env>.azurecontainerapps.io)');
+  console.error('[css-gate] FATAL: CSS_INTERNAL_URL is required (the upstream CSS on the private network, e.g. http://css.railway.internal:3456/)');
   process.exit(1);
 }
 const CSS_INTERNAL_URL = process.env.CSS_INTERNAL_URL;
@@ -185,23 +185,17 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 //     responses to off-list peers.
 
 const SIBLING_DEPLOYMENT_ORIGINS = [
-  'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  // NOTE: the Azure origins that used to live here were REMOVED. That environment is
+  // paused and its registry deleted, so they were dead config being reflected verbatim
+  // as Access-Control-Allow-Origin — and a DNS name nobody owns any more is a name
+  // somebody else can claim. An allowlist should only contain origins we still run.
   // CSS pod — internal FQDN only. The bare public-host origin was
   // removed when CSS became internal-only; browser writes now go
   // through interego-css-gate's public FQDN (listed below).
-  'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   // Foxxi vertical front-ends that read pods directly (linked-data / pod
   // browser, dashboard, SCORM player). Without these the gate denies their
   // browser origin (serves its own FQDN as ACAO) and the cross-origin pod
   // read fails with "failed to fetch".
-  'https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-scorm-player.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   // Live Railway deployment (*.interego.xwisee.com) — the current home; the
   // Azure hosts above are inert legacy (that environment is paused). Without
   // these, a browser front-end on an xwisee host reading a pod through the gate
@@ -271,7 +265,30 @@ export function corsHeadersFor(originHeader) {
     // ciphertext). `*` is accepted by null-origin no-credential requests too.
     'Access-Control-Allow-Origin': allowed ? norm : '*',
     'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE',
-    'Access-Control-Allow-Headers': 'Accept, Content-Type, Authorization',
+    // Solid/LDP clients send these. Without Slug and Link a browser cannot NAME or
+    // TYPE a resource it POSTs; without If-None-Match it cannot do a safe create;
+    // without DPoP it cannot use Solid-OIDC at all. A header absent from this list
+    // fails preflight, so the request is never sent and the failure surfaces to the
+    // developer as an opaque "failed to fetch".
+    'Access-Control-Allow-Headers':
+      'Accept, Content-Type, Authorization, Slug, Link, If-None-Match, If-Match, DPoP',
+    // ★ WITHOUT THIS, A CROSS-ORIGIN SOLID CLIENT IS BLIND TO EVERY LDP CONTROL.
+    //
+    // CORS exposes only a short safelist to cross-origin JavaScript, and none of the
+    // headers this gate exists to serve are on it. `Link` carries rel=type, rel=acl,
+    // rel=describedby and rel=storageDescription; `WAC-Allow` is how a client learns
+    // its permissions; `Location` is how it learns the URL of a resource it just
+    // created; `Accept-Post`/`Accept-Patch`/`Accept-Put` say what it may send. All of
+    // it was being sent and none of it could be read from another origin.
+    //
+    // This is the SAME defect that was fixed on the relay one increment earlier, and
+    // finding it here is the lesson repeating: fixing a class means grepping for
+    // every instance of the sink, not just the one that was reported. The relay got
+    // fixed; the gate — which serves far more hypermedia than the relay does — was
+    // never checked.
+    'Access-Control-Expose-Headers':
+      'Link, ETag, Accept-Post, Accept-Patch, Accept-Put, Location, WAC-Allow, '
+      + 'Last-Modified, Content-Type, Allow, Updates-Via',
     'Vary': 'Origin',
     // Deliberately no Access-Control-Allow-Credentials.
   };
@@ -601,6 +618,29 @@ function buildResponseHeaders(upstreamHeaders, corsHeaders) {
     // invalid per the CORS spec, so the browser rejects it ("failed to fetch").
     if (lower.startsWith('access-control-') || lower === 'vary') continue;
     out[lower] = value;
+  }
+  // ── The internal upstream host must not escape onto the public surface ──
+  //
+  // CSS builds its LDP control headers from the host IT is reached at, which is the
+  // private-network address (e.g. http://css.railway.internal:3456). Those values were
+  // being forwarded verbatim, so a public client received
+  //   link: <http://css.railway.internal:3456/...>; rel="acl"
+  // — a name that resolves nowhere off the private network, over plain http on an
+  // https page. Every identifier here is supposed to be dereferenceable; this was the
+  // one place the substrate published an address only it could reach.
+  //
+  // ONLY RESPONSE METADATA IS REWRITTEN, never a body. Descriptor bytes are signed and
+  // the internal host inside them is canonical — rewriting those would break the
+  // signature and is explicitly not what this does.
+  const publicOrigin = PUBLIC_BASE_URL;
+  const internalOrigin = CSS_INTERNAL_URL.replace(/\/+$/, '');
+  for (const h of ['link', 'location', 'content-location', 'updates-via']) {
+    const v = out[h];
+    if (typeof v === 'string' && v.includes(internalOrigin)) {
+      out[h] = v.split(internalOrigin).join(publicOrigin);
+    } else if (Array.isArray(v)) {
+      out[h] = v.map(x => (typeof x === 'string' ? x.split(internalOrigin).join(publicOrigin) : x));
+    }
   }
   // Layer the gate's canonical CORS over whatever upstream CSS returned —
   // now collision-free because the upstream CORS/Vary echo was skipped above.
