@@ -45,7 +45,7 @@ permissions:
 env:
   # Update ONLY together with the fix that earns it, in the same commit. The job
   # fails if the real number goes below this OR rises above it.
-  BASELINE_PASSED: '48'
+  BASELINE_PASSED: '51'
 
 jobs:
   tck:

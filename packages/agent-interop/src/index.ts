@@ -13,7 +13,7 @@ export type {
 } from './types.js';
 export { TERMINAL_STATES } from './types.js';
 export type {
-  InteropProfile, InteropOperation, InteropErrorKind, WireRoute, ErrorSpec,
+  InteropProfile, InteropOperation, InteropErrorKind, WireRoute, ErrorSpec, DeclinedRoute,
   CardProjection, LifecycleProjection, EngagementProjection,
 } from './profile.js';
 export { EngagementEngine } from './engagement.js';
