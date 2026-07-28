@@ -3435,7 +3435,10 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
     }
     const { content, encrypted, mediaType } = await fetchGraphContent(url, {
       fetch: solidFetch,
-      recipientKeyPair: relayAgentKey,
+      // Decrypt ONLY within the caller's proven own pod. get_descriptor needs no
+      // credential, so passing relayAgentKey unconditionally made this an
+      // unauthenticated oracle for every user's private plaintext.
+      recipientKeyPair: await recipientKeyFor(args, url),
     });
     if (content === null && encrypted) {
       return JSON.stringify({
@@ -3480,7 +3483,9 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
     try {
       const { content, encrypted } = await fetchGraphContent(link.accessURL, {
         fetch: solidFetch,
-        recipientKeyPair: relayAgentKey,
+        // Same rule on the followed dcat:accessURL — this auto-follow was the
+        // second half of the oracle (it returned the payload as `graph.content`).
+        recipientKeyPair: await recipientKeyFor(args, link.accessURL),
       });
       graph = { url: link.accessURL, mediaType: link.mediaType, encrypted, content };
     } catch { /* link present but fetch/decrypt failed; return descriptor only */ }
@@ -4481,6 +4486,32 @@ async function callerOwnPod(args: ToolArgs): Promise<string | undefined> {
     if (me?.userId) return `${CSS_URL}${me.userId}/`;
   }
   return undefined;
+}
+
+/**
+ * The decryption key to use when reading a descriptor at `targetUrl` — or
+ * undefined, meaning "do not decrypt".
+ *
+ * The substrate's confidentiality model is content-layer JOSE, not storage ACLs,
+ * and publish_context adds the RELAY's key as a recipient of every envelope
+ * (including visibility:'private'). So handing relayAgentKey to a decrypt on a
+ * CALLER-SUPPLIED url turns the relay into an oracle that returns any user's
+ * private plaintext — and the worst sink, get_descriptor, needs no credential at
+ * all. Only decrypt when the target lives under the caller's PROVEN own pod;
+ * otherwise the read degrades to `{ encrypted: true, content: null }`, which is
+ * exactly what resolveNsGraph already does correctly for the /ns surface.
+ *
+ * Fail-closed: no proven pod ⇒ no key ⇒ no plaintext.
+ */
+async function recipientKeyFor(args: ToolArgs, targetUrl: string | undefined): Promise<typeof relayAgentKey | undefined> {
+  if (!targetUrl) return undefined;
+  const own = await callerOwnPod(args);
+  if (!own) return undefined;
+  try {
+    return toInternalPodUrl(targetUrl).startsWith(toInternalPodUrl(own)) ? relayAgentKey : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function selfPodUrl(args: ToolArgs): Promise<string | undefined> {
@@ -5719,7 +5750,7 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   // envelope as today.
   const actOpts = {
     fetch: invFetch,
-    recipientKeyPair: relayAgentKey,
+    recipientKeyPair: await recipientKeyFor(args, descriptorUrl),
     ...(authorization ? { authorization } : {}),
   };
   let result;
@@ -5834,7 +5865,7 @@ async function handleKernelDereference(args: ToolArgs): Promise<string> {
     // follow chain applies (internal hosts / IMDS / private ranges rejected).
     fetch: guardedInvokeFetch,
     decorateManifest,
-    recipientKeyPair: relayAgentKey,
+    recipientKeyPair: await recipientKeyFor(args, iri),
     ...(podHint ? { podHint } : {}),
     ...(knownPodUrls.length > 0 ? { knownPods: knownPodUrls } : {}),
   });
@@ -5940,7 +5971,7 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
   const actPayload = await stampAmepProof(actPayload0, amepTarget, { signer: amepActSigner, publicBaseUrl: PUBLIC_BASE_URL });
   const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], actPayload, {
     fetch: actFetch,
-    recipientKeyPair: relayAgentKey,
+    recipientKeyPair: await recipientKeyFor(args, descriptorUrl),
     ...(authorization ? { authorization } : {}),
   });
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
@@ -6050,7 +6081,7 @@ async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
         // guardedInvokeFetch: reducer_iri is caller-supplied and its body is
         // interpreted — same SSRF screen as the follow chain.
         fetch: guardedInvokeFetch,
-        recipientKeyPair: relayAgentKey,
+        recipientKeyPair: await recipientKeyFor(args, reducerIri),
       });
       if (r.status === 'ok' && r.representation !== undefined) {
         const body = r.representation;
@@ -6081,7 +6112,7 @@ async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
         // guardedInvokeFetch: chain links start from a caller-supplied head
         // IRI and are echoed into the fold — screened like every invoke fetch.
         fetch: guardedInvokeFetch,
-        recipientKeyPair: relayAgentKey,
+        recipientKeyPair: await recipientKeyFor(args, iri),
       });
       if (r.status !== 'ok' || r.representation === undefined) return null;
       return r.representation;
@@ -8707,8 +8738,11 @@ app.post('/agents/:localPart/inbox', async (req, res) => {
   // is implemented, reject unsigned deliveries instead of laundering them into the
   // substrate. Set RELAY_FEDERATION_ACCEPT_UNSIGNED=1 to restore the old
   // accept-anything behavior for local federation testing only.
-  const hasHttpSignature = !!(req.headers['signature'] ?? req.headers['signature-input']);
-  if (!hasHttpSignature && process.env.RELAY_FEDERATION_ACCEPT_UNSIGNED !== '1') {
+  // A header-PRESENCE check is not a signature check: `-H 'Signature: x'` satisfied
+  // it, so the previous gate was bypassable in one curl flag. No RFC 9421
+  // verification exists anywhere in the tree yet, so the honest posture is to fail
+  // closed outright until it does — inbound federation is not yet a supported path.
+  if (process.env.RELAY_FEDERATION_ACCEPT_UNSIGNED !== '1') {
     res.status(401)
       .set('WWW-Authenticate', 'Signature realm="interego-relay"')
       .json({
@@ -11367,7 +11401,10 @@ app.get('/render/:descriptorIri', async (req, res) => {
       const r = await kernelDereference(descriptorIri, {
         fetch: solidFetch,
         decorateManifest: false,
-        recipientKeyPair: relayAgentKey,
+        // Own-pod-only decryption (R1). This route previously decrypted ANY pod's
+        // payload for any bearer holder; auth.userId is the token-verified
+        // identity, so pass it as the proven pod rather than the relay key.
+        recipientKeyPair: await recipientKeyFor({ _session_user_id: auth.userId } as ToolArgs, descriptorIri),
         ...(podHint ? { podHint } : {}),
         ...(knownPodUrls.length > 0 ? { knownPods: knownPodUrls } : {}),
       });
@@ -11820,6 +11857,12 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
       // Server-authoritative bearer identity — mirrors the MCP handler so the
       // register_agent tenant_admin own-pod check works on the REST path too.
       if (auth.userId) req.body._session_user_id = auth.userId;
+      // ...and the ATTRIBUTION identity. Without this, the strip above has just
+      // removed _session_agent_did and callerAgentId() falls through to
+      // req.body.agent_id — which the line above only fills in WHEN ABSENT, so a
+      // bearer caller could still act as anyone on this one branch. The signed
+      // branch, /messages and /mcp all set it; this branch was the odd one out.
+      if (auth.agentId) req.body._session_agent_did = auth.agentId;
     }
     // Auto-register the authenticated participant into the directory
     // (idempotent, fire-and-forget) — REST/signed path counterpart of
