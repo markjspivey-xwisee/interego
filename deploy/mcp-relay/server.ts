@@ -1954,7 +1954,7 @@ async function runScopeGate(
 async function handlePublishContext(args: ToolArgs): Promise<string> {
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
-  const agentId = (args.agent_id as string) ?? 'urn:agent:remote:unknown';
+  const agentId = callerAgentId(args) ?? 'urn:agent:remote:unknown';
   const ownerWebId = (args.owner_webid as string) ?? `https://id.example.com/${podName}/profile#me`;
   const descId = (args.descriptor_id as string ?? `urn:iep:${podName}:${Date.now()}`) as IRI;
   const now = new Date().toISOString();
@@ -3232,7 +3232,7 @@ async function handleRecordTrajectoryStep(args: ToolArgs): Promise<string> {
     && ['task', 'subtask', 'tool-call'].includes(args.granularity as string)
     ? (args.granularity as string)
     : 'tool-call';
-  const agentId = (args.agent_id as string) ?? 'urn:agent:remote:unknown';
+  const agentId = callerAgentId(args) ?? 'urn:agent:remote:unknown';
   const ownerWebId = (args.owner_webid as string) ?? '';
   const agentSlug = (agentId.match(/[^:/#]+$/)?.[0] ?? 'unknown').toLowerCase();
   const sessionId = typeof args.session_id === 'string' && args.session_id.length > 0
@@ -3344,8 +3344,9 @@ ${parentLine}${supersedesLine}${derivedLines}${resultBlock}    prov:wasAttribute
 // the next OODA decision rather than reasoning from scratch.
 async function handlePgslDecide(args: ToolArgs): Promise<string> {
   try {
-    const agentId = typeof args.agent_id === 'string' && args.agent_id.length > 0
-      ? args.agent_id
+    const claimed = callerAgentId(args);
+    const agentId = typeof claimed === 'string' && claimed.length > 0
+      ? claimed
       : 'urn:agent:remote:unknown';
     // The decision functor operates over the kernel's PGSL singleton —
     // the same lattice pgsl_ingest writes to, so observations reflect
@@ -4413,6 +4414,31 @@ function awaitFederationHydrateWithBudget(budgetMs: number): Promise<void> {
 //      identity follows when no overlay is set
 // Returns undefined when the bearer didn't yield either signal
 // (unauthenticated /mcp call with RELAY_MCP_API_KEY unset).
+/**
+ * The server-authoritative identity of the CALLER, for ATTRIBUTION.
+ *
+ * `args.agent_id` is caller-supplied and FORGEABLE: it is a legitimate TARGET
+ * parameter for tools like verify_agent / revoke_agent_access / register_agent,
+ * so it cannot simply be stripped at the wire. But it must never be read as an
+ * identity CLAIM — the injection sites only fill it in when absent, so a caller
+ * who passes one explicitly keeps their own value.
+ *
+ * Both authenticated entry points inject the reserved, wire-stripped
+ * `_session_agent_did`; whenever a session identity is present it WINS, so a
+ * caller cannot smuggle a different actor into an attribution. Only in fully
+ * unauthenticated (open / local-dev) mode — where no attribution is verifiable
+ * anyway — do we fall back to the caller's own value.
+ *
+ * Every attribution sink routes through this ONE helper rather than reading
+ * args.agent_id: a per-sink copy is how the next sibling survives.
+ */
+function callerAgentId(args: ToolArgs): string | undefined {
+  const session = (args._session_agent_did as string | undefined)
+    ?? (args._session_agent_id as string | undefined);
+  if (session) return session;
+  return args.agent_id as string | undefined;
+}
+
 async function selfPodUrl(args: ToolArgs): Promise<string | undefined> {
   const identityToken = args._identity_token as string | undefined;
   if (identityToken) {
@@ -4524,8 +4550,30 @@ async function handleListKnownPods(args: ToolArgs): Promise<string> {
     seen.add(key);
     return true;
   });
+  // SECRET REDACTION: a non-native channel value is a credential or PII — a
+  // discord/telegram webhook URL is a bearer secret in URL form, and email/sms
+  // are personal data. The directory is readable by every caller, so only the
+  // OWNER sees their own values; everyone else sees the channel TYPE (enough to
+  // know the agent is reachable that way, and enough for notify_agent fan-out,
+  // which runs server-side against the unredacted store). Native channels
+  // (ldn/activitypub/acct) are derived public addresses and stay visible.
+  const NATIVE_CHANNELS = ['ldn', 'activitypub', 'acct'];
+  const callerPod = await selfPodUrl(args);
+  const callerDid = callerAgentId(args);
+  const callerKey = callerPod ? canonicalPodKey(callerPod) : undefined;
+  const redactedPods = pods.map(p => {
+    const isOwner = (!!callerKey && canonicalPodKey(p.url) === callerKey)
+      || (!!callerDid && (p.did === callerDid || p.webId === callerDid));
+    if (isOwner || !Array.isArray(p.channels)) return p;
+    return {
+      ...p,
+      channels: p.channels.map(c => (NATIVE_CHANNELS.includes(c.type)
+        ? c
+        : { type: c.type, value: '[redacted — visible to the owning agent only]' })),
+    };
+  });
   return JSON.stringify({
-    pods,
+    pods: redactedPods,
     lastPersistedAt: federationLastPersistedAt ?? '<no mutations since startup>',
     lastHydratedAt: federationLastHydratedAt,
     hydrateSourceCount: federationHydrateSourceCount,
@@ -4708,7 +4756,9 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
   if (!summary || typeof summary !== 'string') return JSON.stringify({ delivered: false, error: 'notify_agent requires `summary`' });
   const targetPod = resolveTargetPodUrl(to);
   if (!targetPod) return JSON.stringify({ delivered: false, error: `could not resolve recipient "${to}" to a pod` });
-  const from = (args.agent_id as string) ?? 'urn:unknown';
+  // Server-authoritative sender (never the forgeable args.agent_id) — this is
+  // the AS2 `actor` the recipient sees and trusts.
+  const from = callerAgentId(args) ?? 'urn:unknown';
   const now = new Date().toISOString();
   const idSlug = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const input: NotificationInput = {
@@ -4848,7 +4898,14 @@ async function handleSetReachability(args: ToolArgs): Promise<string> {
   // Native channels (ldn/activitypub/acct) are managed automatically and
   // cannot be set here. Pod target = the caller's own pod.
   const podUrl = await selfPodUrl(args);
-  const did = (args.agent_id as string | undefined);
+  // IDENTITY-CLAIM FIX: this stamps `owner`/`did`/`webId` onto the caller's
+  // federation entry, and resolveTargetPodUrl() maps a DID to a pod by scanning
+  // those very fields. Reading the forgeable args.agent_id let an authenticated
+  // caller claim ANOTHER agent's DID on their own entry — poisoning the directory
+  // and, depending on knownPods iteration order, routing that agent's inbound
+  // notify_agent traffic to the claimant's pod (message interception). Use the
+  // server-authoritative session identity instead.
+  const did = callerAgentId(args);
   if (!podUrl || !did) return JSON.stringify({ error: 'set_reachability: could not resolve your identity/pod' });
   const raw = Array.isArray(args.channels) ? args.channels : [];
   const incoming: ReachChannel[] = [];
@@ -4890,7 +4947,25 @@ async function handleSetReachability(args: ToolArgs): Promise<string> {
 
 async function handleReadInbox(args: ToolArgs): Promise<string> {
   const explicit = (args.pod_url ?? args.podUrl) as string | undefined;
-  const podUrl = explicit ?? await selfPodUrl(args);
+  const ownPod = await selfPodUrl(args);
+  // OWNERSHIP GATE: an inbox holds an agent's PRIVATE agent-to-agent mail, and
+  // the relay reads it with its own pod-write credential. `pod_url` is only
+  // filled-in-when-absent by the injection sites, so a caller could pass another
+  // agent's pod explicitly and read their inbox. An explicit pod_url is honored
+  // ONLY when it is the caller's own pod (same canonical pod key — the gate-host
+  // and internal-host forms of one pod must compare equal).
+  if (explicit && ownPod && canonicalPodKey(explicit) !== canonicalPodKey(ownPod)) {
+    return JSON.stringify({
+      error: 'read_inbox: forbidden — you may only read your own inbox',
+      detail: 'Omit pod_url to read the inbox of the authenticated caller.',
+    });
+  }
+  // No derivable identity + an explicit target = an unauthenticated read of
+  // someone else's mail. Refuse rather than fall through to the relay credential.
+  if (explicit && !ownPod) {
+    return JSON.stringify({ error: 'read_inbox: forbidden — authenticate to read an inbox' });
+  }
+  const podUrl = explicit ?? ownPod;
   if (!podUrl) return JSON.stringify({ error: 'read_inbox: no pod_url and could not derive your own pod' });
   const limit = typeof args.limit === 'number' ? args.limit : 50;
   const items = await readAgentInbox(toInternalPodUrl(podUrl), solidFetch, limit);
@@ -5339,7 +5414,7 @@ async function handlePgslIngest(args: ToolArgs): Promise<string> {
     const podName = (args.pod_name as string) ?? 'default';
     const podUrl = `${CSS_URL}${podName}/`;
     const ownerWebId = (args.owner_webid as string) ?? `https://id.example.com/${podName}/profile#me`;
-    const agentId = (args.agent_id as string) ?? 'urn:agent:remote:unknown';
+    const agentId = callerAgentId(args) ?? 'urn:agent:remote:unknown';
     const now = new Date().toISOString();
 
     try {
@@ -8574,9 +8649,23 @@ app.post('/agents/:localPart/inbox', async (req, res) => {
   await awaitFederationHydrateWithBudget(50);
   const card = cardForLocalPart(req.params.localPart);
   if (!card) { res.status(404).json({ error: 'unknown agent' }); return; }
-  // NOTE: untrusted cross-server delivery should verify an HTTP Signature
-  // here before accepting. For now we accept + map the activity onto the
-  // agent's native LDN inbox so federated + in-substrate messages converge.
+  // FAIL-CLOSED (was: accept anything). This route is unauthenticated and maps
+  // the activity onto the agent's native LDN inbox, taking `actor` straight from
+  // the request body — so ANY anonymous caller could write into ANY agent's inbox
+  // attributed to ANY actor. Until RFC 9421 / HTTP Message Signature verification
+  // is implemented, reject unsigned deliveries instead of laundering them into the
+  // substrate. Set RELAY_FEDERATION_ACCEPT_UNSIGNED=1 to restore the old
+  // accept-anything behavior for local federation testing only.
+  const hasHttpSignature = !!(req.headers['signature'] ?? req.headers['signature-input']);
+  if (!hasHttpSignature && process.env.RELAY_FEDERATION_ACCEPT_UNSIGNED !== '1') {
+    res.status(401)
+      .set('WWW-Authenticate', 'Signature realm="interego-relay"')
+      .json({
+        error: 'unsigned_delivery_rejected',
+        detail: 'Inbound federated delivery must carry an HTTP Message Signature (RFC 9421). Unsigned activities are not accepted: the actor would be unverifiable.',
+      });
+    return;
+  }
   const act = (req.body ?? {}) as Record<string, any>;
   const obj = (act.object ?? {}) as Record<string, any>;
   const idSlug = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -11952,11 +12041,18 @@ app.post('/messages', messagesLimiter, async (req, res) => {
       }
       if (viaSignature) {
         args.agent_id = auth.recoveredDid;
+        // Server-authoritative attribution identity (reserved + wire-stripped).
+        // The /mcp transport sets this unconditionally; set it here too so
+        // callerAgentId() resolves to a verified identity on BOTH transports —
+        // otherwise attribution on /messages falls through to the forgeable
+        // caller-supplied agent_id.
+        args._session_agent_did = auth.recoveredDid;
         const addr = auth.recoveredDid!.slice('did:ethr:'.length).toLowerCase();
         if (!args.pod_name) args.pod_name = `eth-${addr.slice(2, 14)}`;
         if (!args.owner_webid) args.owner_webid = auth.recoveredDid;
       } else {
         if (!args.agent_id) args.agent_id = auth.agentId;
+        if (auth.agentId) args._session_agent_did = auth.agentId;
         if (!args.owner_webid) args.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
         if (!args.pod_name) args.pod_name = auth.userId;
       }

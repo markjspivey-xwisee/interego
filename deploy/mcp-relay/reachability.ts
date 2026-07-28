@@ -185,5 +185,16 @@ export async function fanOut(
   return results;
 }
 
-/** Channel types that carry no secret in their value and are safe to store/show. */
+/**
+ * Channel types the relay accepts on an agent card.
+ *
+ * WARNING — do NOT read this list as "safe to show". An earlier comment here
+ * claimed these "carry no secret in their value", and that claim is what let the
+ * federation directory disclose them: a discord/telegram webhook URL IS a bearer
+ * secret in URL form (possession = the right to post), and email/sms/voice are
+ * personal data. Only the NATIVE types below are derived, public addresses.
+ * Any surface that projects a channel value to a non-owner must redact the
+ * non-native ones (see handleListKnownPods).
+ */
+export const NATIVE_CHANNEL_TYPES = ['ldn', 'activitypub', 'acct'];
 export const KNOWN_CHANNEL_TYPES = ['ldn', 'activitypub', 'acct', 'discord', 'telegram', 'email', 'sms', 'voice'];
