@@ -47,6 +47,7 @@ a2ap:Profile a owl:Ontology , iap:InteropProfile ;
     a2ap:conformanceStatus "unverified" ;
     a2ap:mustTierPassing 51 ;
     a2ap:mustTierFailing 7 ;
+    a2ap:divergence "INLINE BINARY CONTENT IS REFUSED. The protocol's Part allows base64 bytes in `raw`; this substrate requires bytes to be written to a resource and referenced by a `url` part. Everything is dereferenceable here, and a message carrying opaque inline bytes is the one shape that cannot be — it also makes an inbox grow without bound. A request carrying only inline-bytes parts is refused with a reason that says exactly this, rather than having the part silently dropped and the caller told no content was supplied, which is what happened before. This is why CORE-SEND-003 does not pass and will not." ;
     rdfs:seeAlso <https://relay.interego.xwisee.com/.well-known/agent-card.json> .
 
 a2ap:protocolVersion a owl:DatatypeProperty ;
@@ -62,6 +63,11 @@ a2ap:binding a owl:DatatypeProperty ;
 a2ap:wireMediaType a owl:DatatypeProperty ;
     rdfs:label "wireMediaType" ;
     rdfs:comment "Registered media type for wire operation responses in this binding." ;
+    rdfs:range xsd:string .
+
+a2ap:divergence a owl:DatatypeProperty ;
+    rdfs:label "divergence" ;
+    rdfs:comment "A DELIBERATE, principled deviation from the protocol, published rather than hidden. Distinct from a2ap:mustTierFailing, which counts things not yet implemented: a divergence is a thing that will not be implemented, and the reason is a commitment of the substrate rather than an omission. Publishing it is the point — a peer that reads this profile learns the boundary before it hits it, instead of discovering it as an error." ;
     rdfs:range xsd:string .
 
 a2ap:mustTierPassing a owl:DatatypeProperty ;
