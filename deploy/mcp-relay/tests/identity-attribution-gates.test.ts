@@ -216,6 +216,19 @@ check('the cross-pod escape hatch is OFF by default and logs loudly',
   /RELAY_ALLOW_CROSS_POD_WRITES === '1'/.test(SERVER)
   && /\[SECURITY\] cross-pod \$\{tool\} ALLOWED/.test(SERVER));
 
+console.log('\n17. R3 — state-mutating tools are auth-gated; the dead PUBLIC_TOOLS set is gone');
+const authSet = (/const AUTH_REQUIRED_TOOLS = new Set\(\[([\s\S]*?)\]\);/.exec(SERVER) ?? [])[1] ?? '';
+for (const t of ['discover_directory', 'remove_pod', 'subscribe_all', 'unsubscribe_from_pod', 'pgsl_ingest']) {
+  check(`${t} is in AUTH_REQUIRED_TOOLS`, new RegExp(`'${t}'`).test(authSet));
+}
+// Pure reads MUST stay public: live published artifacts call them unauthenticated,
+// and R1 + R4 already removed their teeth.
+for (const t of ['get_descriptor', 'discover_all', 'discover_context']) {
+  check(`${t} stays PUBLIC (artifacts depend on it)`, !new RegExp(`'${t}'`).test(authSet));
+}
+check('the dead PUBLIC_TOOLS set is deleted (it looked like a gate but was never read)',
+  !/const PUBLIC_TOOLS = new Set/.test(SERVER));
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed\n`);
   process.exit(1);

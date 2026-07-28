@@ -53,6 +53,26 @@ function iescIri(value: string): string {
   return String(value).replace(/[\x00-\x20<>"{}|^`\\]/g, encodeURIComponent);
 }
 
+/** Escape a Turtle string LITERAL. The manifest lines below are hand-built and
+ *  appended verbatim into the pod's single SHARED `.well-known/context-graphs`, so
+ *  an unescaped value does not just corrupt one entry — it injects triples into the
+ *  document every other entry lives in. */
+function iescLit(value: string): string {
+  return String(value)
+    .replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+}
+
+/** PN_LOCAL-safe local name for a prefixed name (`iep:<local>`).
+ *  A prefixed name CANNOT be escaped into safety: any character outside PN_LOCAL
+ *  terminates the name and begins new RDF. These positions carry closed vocabularies
+ *  (facet type, ModalStatus, TrustLevel), so restrict to a conservative charset and
+ *  fall back to an inert marker rather than emitting attacker-chosen syntax. */
+function iescPn(value: string): string {
+  const s = String(value).replace(/[^A-Za-z0-9_-]/g, '');
+  return s.length > 0 ? s : 'Unspecified';
+}
+
 const MANIFEST_PATH = '.well-known/context-graphs';
 
 // ── Per-pod in-process manifest mutex ───────────────────────
@@ -379,7 +399,7 @@ function manifestEntryTurtle(
   lines.push(`<${iescIri(descriptorUrl)}> a iep:ManifestEntry ;`);
 
   if (descriptorCid) {
-    lines.push(`    iep:contentCid "${descriptorCid}" ;`);
+    lines.push(`    iep:contentCid "${iescLit(descriptorCid)}" ;`);
   }
 
   for (const g of descriptor.describes) {
@@ -388,14 +408,14 @@ function manifestEntryTurtle(
 
   const facetTypes = [...new Set(descriptor.facets.map(f => f.type))];
   for (const ft of facetTypes) {
-    lines.push(`    iep:hasFacetType iep:${ft} ;`);
+    lines.push(`    iep:hasFacetType iep:${iescPn(ft)} ;`);
   }
 
   if (descriptor.validFrom) {
-    lines.push(`    iep:validFrom "${descriptor.validFrom}"^^xsd:dateTime ;`);
+    lines.push(`    iep:validFrom "${iescLit(descriptor.validFrom)}"^^xsd:dateTime ;`);
   }
   if (descriptor.validUntil) {
-    lines.push(`    iep:validUntil "${descriptor.validUntil}"^^xsd:dateTime ;`);
+    lines.push(`    iep:validUntil "${iescLit(descriptor.validUntil)}"^^xsd:dateTime ;`);
   }
 
   // conformsTo (cleartext-mirrored)
@@ -417,13 +437,13 @@ function manifestEntryTurtle(
   // Extract modalStatus from Semiotic facet if present
   const semioticFacet = descriptor.facets.find((f): f is SemioticFacetData => f.type === 'Semiotic');
   if (semioticFacet?.modalStatus) {
-    lines.push(`    iep:modalStatus iep:${semioticFacet.modalStatus} ;`);
+    lines.push(`    iep:modalStatus iep:${iescPn(semioticFacet.modalStatus)} ;`);
   }
 
   // Extract trustLevel + issuer from Trust facet if present
   const trustFacet = descriptor.facets.find((f): f is TrustFacetData => f.type === 'Trust');
   if (trustFacet?.trustLevel) {
-    lines.push(`    iep:trustLevel iep:${trustFacet.trustLevel} ;`);
+    lines.push(`    iep:trustLevel iep:${iescPn(trustFacet.trustLevel)} ;`);
   }
   if (trustFacet?.issuer) {
     // Cleartext-mirror the issuer DID so trust-aware federation readers
@@ -798,7 +818,7 @@ function manifestEntryFromDescriptorTurtle(descriptorUrl: string, ttl: string): 
   const lines: string[] = [`<${iescIri(descriptorUrl)}> a iep:ManifestEntry ;`];
   if (cid) lines.push(`    iep:contentCid "${cid}" ;`);
   for (const g of describes) lines.push(`    iep:describes <${iescIri(g)}> ;`);
-  for (const ft of facetTypes) lines.push(`    iep:hasFacetType iep:${ft} ;`);
+  for (const ft of facetTypes) lines.push(`    iep:hasFacetType iep:${iescPn(ft)} ;`);
   if (validFrom) lines.push(`    iep:validFrom "${validFrom}"^^xsd:dateTime ;`);
   if (validUntil) lines.push(`    iep:validUntil "${validUntil}"^^xsd:dateTime ;`);
   for (const c of conformsTo) lines.push(`    dct:conformsTo <${iescIri(c)}> ;`);
