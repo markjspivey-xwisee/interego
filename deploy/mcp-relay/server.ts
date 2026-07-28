@@ -2209,7 +2209,19 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       }
       const me = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked);
       let registeredOk = false;
-      if (!me) {
+      // R2a — SELF-GRANT GATE. The auto-register below hands the caller ReadWrite
+      // plus a relay-signed delegation VC on `podUrl`, and it runs ~180 lines BEFORE
+      // runScopeGate — so the gate was structurally incapable of refusing anything:
+      // it walked a registry this handler had just written on the caller's behalf.
+      // Restrict the SELF-GRANT to the caller's own pod. Publishing to someone
+      // else's pod is untouched and still decided by runScopeGate below, so a
+      // genuinely delegated agent (shared-commons demos) keeps working — it simply
+      // can no longer mint its own delegation on the way in.
+      const selfGrantOk = !(await requireOwnPod(args, podUrl, 'publish_context:self-grant'));
+      if (!me && !selfGrantOk) {
+        log(`[SECURITY] publish_context: refused self-grant of ReadWrite on ${podUrl} — not the caller's pod; falling through to the scope gate`);
+      }
+      if (!me && selfGrantOk) {
         // Auto-register: this agent authenticated against identity server (so
         // the OAuth token proves key-possession). Safe to add to the pod's
         // authorized-agent list automatically.
@@ -4064,6 +4076,11 @@ async function handleSubscribeToPod(args: ToolArgs): Promise<string> {
 async function handleRegisterAgent(args: ToolArgs): Promise<string> {
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
+  // R2: the grantTenantAdmin block below was the ONLY authorization here — skip
+  // tenant_admin and any caller granted itself ReadWrite + a relay-signed
+  // delegation VC on ANY pod, which verify_agent then reports as a
+  // CryptographicallyVerified chain.
+  { const denied = await requireOwnPod(args, podUrl, 'register_agent'); if (denied) return denied; }
   const ownerWebId = (args.owner_webid as string) as IRI;
   const agentId = (args.agent_id as string) as IRI;
 
@@ -4522,6 +4539,49 @@ async function callerOwnPod(args: ToolArgs): Promise<string | undefined> {
     if (me?.userId) return `${CSS_URL}${me.userId}/`;
   }
   return undefined;
+}
+
+/**
+ * Refuse a relay-credentialed WRITE aimed at a pod the caller has not proven they
+ * own. Returns an error envelope (as a JSON string) to return directly, or null to
+ * proceed.
+ *
+ * `solidFetch` is the relay's root-equivalent credential against the internal CSS
+ * origin, so any handler that derives its write target from `args.pod_name` /
+ * `args.pod_url` and then writes is, without this, an "any caller writes any pod"
+ * primitive: register_agent granted ReadWrite (plus a relay-signed delegation VC)
+ * on ANY pod, revoke_agent stripped ANY pod's delegates with zero authorization,
+ * and pgsl_ingest published to an arbitrary pod with no auth at all.
+ *
+ * Fail-closed: an unproven caller (no wire-stripped session identity) is refused
+ * outright rather than defaulting to some pod.
+ */
+async function requireOwnPod(args: ToolArgs, targetPodUrl: string, tool: string): Promise<string | null> {
+  // Escape hatch, secure-by-DEFAULT. The audit flagged the register_agent check as
+  // breaking for scripts that register agents onto a shared demo pod with the
+  // maintainer's token. Rather than ship it log-only (which leaves the hole open by
+  // default), enforcement is ON and RELAY_ALLOW_CROSS_POD_WRITES=1 restores the old
+  // behavior for one release if a demo breaks — loudly, so it cannot go unnoticed.
+  if (process.env.RELAY_ALLOW_CROSS_POD_WRITES === '1') {
+    const own = await callerOwnPod(args).catch(() => undefined);
+    if (!own || canonicalPodKey(targetPodUrl) !== canonicalPodKey(own)) {
+      log(`[SECURITY] cross-pod ${tool} ALLOWED by RELAY_ALLOW_CROSS_POD_WRITES=1 — target=${targetPodUrl} caller-pod=${own ?? '<unproven>'}`);
+    }
+    return null;
+  }
+  const own = await callerOwnPod(args);
+  if (!own) {
+    return JSON.stringify({
+      error: `${tool}: authentication required — this write targets a pod, and the caller's identity could not be established`,
+    });
+  }
+  if (canonicalPodKey(targetPodUrl) !== canonicalPodKey(own)) {
+    return JSON.stringify({
+      error: `${tool}: forbidden — you may only write to your own pod`,
+      detail: 'Omit pod_name / pod_url to target the authenticated caller\'s pod.',
+    });
+  }
+  return null;
 }
 
 /**
@@ -5011,7 +5071,11 @@ async function handleSetReachability(args: ToolArgs): Promise<string> {
   // The caller declares external reachability channels on their OWN card.
   // Native channels (ldn/activitypub/acct) are managed automatically and
   // cannot be set here. Pod target = the caller's own pod.
-  const podUrl = await selfPodUrl(args);
+  // R2 (pod half): selfPodUrl() falls back to the caller-supplied pod_name, so a
+  // caller could overwrite ANOTHER agent's federation card wholesale — setting its
+  // channels to attacker webhooks, which notify_agent then fans out to (message
+  // interception). The DID half was fixed earlier; this is its sibling.
+  const podUrl = await callerOwnPod(args);
   // IDENTITY-CLAIM FIX: this stamps `owner`/`did`/`webId` onto the caller's
   // federation entry, and resolveTargetPodUrl() maps a DID to a pod by scanning
   // those very fields. Reading the forgeable args.agent_id let an authenticated
@@ -5098,6 +5162,11 @@ async function handleRebuildManifest(args: ToolArgs): Promise<string> {
   const explicit = (args.pod_url ?? args.podUrl) as string | undefined;
   const podUrl = explicit ?? await selfPodUrl(args);
   if (!podUrl) return JSON.stringify({ error: 'rebuild_manifest: no pod_url and could not derive your own pod' });
+  // R2: the comment said an explicit pod_url "lets an operator restore a peer pod",
+  // but there was no operator check — and rebuildManifestFromPod PUTs
+  // unconditionally, silently dropping descriptors it cannot GET, so a rebuild
+  // fired at a foreign pod permanently deletes rows from its index.
+  { const denied = await requireOwnPod(args, podUrl, 'rebuild_manifest'); if (denied) return denied; }
   const internal = toInternalPodUrl(podUrl);
   try {
     const r = await rebuildManifestFromPod(internal, { fetch: solidFetch, log: (m) => log(m) });
@@ -5193,6 +5262,8 @@ async function handleDiscoverDirectory(args: ToolArgs): Promise<string> {
 async function handlePublishDirectory(args: ToolArgs): Promise<string> {
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
+  // R2: wrote a relay-authored directory document into any caller-named pod.
+  { const denied = await requireOwnPod(args, podUrl, 'publish_directory'); if (denied) return denied; }
   // Seed the calling user's own pod as the FIRST entry in the
   // published directory so a downstream consumer reading it sees
   // the owner pod before any peers. The self entry is projected
@@ -5235,6 +5306,10 @@ async function handleResolveWebfinger(args: ToolArgs): Promise<string> {
 async function handleRevokeAgent(args: ToolArgs): Promise<string> {
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
+  // R2: previously ZERO authorization — any caller could strip any pod's delegates,
+  // failing their runScopeGate and DoSing another tenant persistently. The HTTP
+  // twin POST /agents/:agentIri/revoke already derives the pod from the token.
+  { const denied = await requireOwnPod(args, podUrl, 'revoke_agent'); if (denied) return denied; }
   let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
   if (!profile) return JSON.stringify({ error: 'No registry found' });
   profile = removeAuthorizedAgent(profile, (args.agent_id as string) as IRI);
@@ -5530,6 +5605,11 @@ async function handlePgslIngest(args: ToolArgs): Promise<string> {
   if (args.publish_to_pod) {
     const podName = (args.pod_name as string) ?? 'default';
     const podUrl = `${CSS_URL}${podName}/`;
+    // R2: pgsl_ingest is not in AUTH_REQUIRED_TOOLS, so this reached publish() with
+    // the relay credential on a caller-chosen pod, caller-chosen owner_webid and
+    // caller-chosen prov:wasAttributedTo — UNAUTHENTICATED. Same sink
+    // record_trajectory_step was explicitly gated for.
+    { const denied = await requireOwnPod(args, podUrl, 'pgsl_ingest'); if (denied) return denied; }
     const ownerWebId = (args.owner_webid as string) ?? `https://id.example.com/${podName}/profile#me`;
     const agentId = callerAgentId(args) ?? 'urn:agent:remote:unknown';
     const now = new Date().toISOString();
