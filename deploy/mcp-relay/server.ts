@@ -11056,6 +11056,20 @@ app.get('/identity-token', bearerVerifyLimiter, async (req, res) => {
   }
   try {
     const info = await oauthProvider.verifyAccessToken(authHeader.slice(7));
+    // R7 — SCOPE LADDER. This endpoint returns a credential STRICTLY MORE POWERFUL
+    // than the token presented: the identity-server token. Without a scope check an
+    // `mcp:read` bearer that /mcp correctly 403s on write tools could trade itself
+    // up here and then write via POST /tool/*, making the advertised read/write
+    // split a speed bump on one of four transports. Require the same write scope
+    // /mcp requires before handing out the stronger credential.
+    if (!hasWriteOauthScope((info as { scopes?: readonly string[] }).scopes)) {
+      res.status(403).json({
+        error: 'insufficient_scope',
+        scope: 'mcp:write',
+        detail: 'The identity token is a broader credential than this access token. Re-authorize with mcp:write to obtain it.',
+      });
+      return;
+    }
     const identityToken = (info as { extra?: { identityToken?: string } }).extra?.identityToken;
     if (!identityToken) {
       res.status(404).json({ error: 'No identity token associated with this access token' });
@@ -11737,11 +11751,18 @@ app.post('/agents/:agentIri/revoke', bearerVerifyLimiter, async (req, res) => {
     res.status(401).json({ error: 'Bearer token required' });
     return;
   }
-  let authInfo: { extra?: { userId?: string; ownerWebId?: string; identityToken?: string } };
+  let authInfo: { scopes?: readonly string[]; extra?: { userId?: string; ownerWebId?: string; identityToken?: string } };
   try {
     authInfo = await oauthProvider.verifyAccessToken(authHeader.slice(7)) as typeof authInfo;
   } catch (err) {
     res.status(401).json({ error: `Invalid access token: ${(err as Error).message}` });
+    return;
+  }
+  // R7 — this performs a relay-credentialed registry WRITE. Owner binding below is
+  // correct but was the only check, so an `mcp:read` bearer could mutate the
+  // registry on a transport where OAuth scope was never enforced.
+  if (!hasWriteOauthScope(authInfo.scopes)) {
+    res.status(403).json({ error: 'insufficient_scope', scope: 'mcp:write' });
     return;
   }
   const tokenUserId = authInfo.extra?.userId;
