@@ -2039,3 +2039,8 @@ iep:requiresVerifiedCaller a owl:DatatypeProperty ;
     rdfs:label "requiresVerifiedCaller" ;
     rdfs:comment "True when an affordance may only be invoked by a cryptographically verified caller (a signed request or an authenticated session), as opposed to being followable anonymously." ;
     rdfs:range xsd:boolean .
+
+iep:about a owl:ObjectProperty ;
+    rdfs:label "about" ;
+    rdfs:comment "The resource an agent-to-agent notification concerns — typically the descriptor, engagement or memory the sender wants the recipient to look at. Carried in the ActivityStreams 2.0 notification body alongside as:object. Declared here because the notification vocabulary previously bound this term to a placeholder namespace that dereferenced to nothing; it now resolves under the substrate's own naming authority like every other emitted term." ;
+    rdfs:range rdfs:Resource .

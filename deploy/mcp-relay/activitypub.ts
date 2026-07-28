@@ -66,7 +66,10 @@ export function buildActor(
 ): Record<string, unknown> {
   const actor = actorUrl(relayBase, localPart);
   return {
-    '@context': [AS2, SEC, { interego: 'https://interego-emergent.example/ns/mcp-relay#' }],
+    // The prefix was previously bound to an `interego-emergent.example` IRI — a
+    // non-dereferenceable placeholder shipped in EVERY published actor document.
+    // Bound now to the substrate's own resolving namespace.
+    '@context': [AS2, SEC, { iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#' }],
     id: actor,
     type: 'Application',
     preferredUsername: localPart,

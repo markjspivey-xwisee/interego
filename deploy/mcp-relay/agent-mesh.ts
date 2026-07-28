@@ -27,6 +27,8 @@
 import type { FetchFn } from '@interego/core';
 
 const INBOX_CONTAINER = 'inbox/';
+/** The substrate's own resolving vocabulary namespace. */
+const IEP_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 
 function ensureTrailingSlash(s: string): string {
   return s.endsWith('/') ? s : `${s}/`;
@@ -49,7 +51,7 @@ function defaultFetch(): FetchFn {
 
 const AS2_CONTEXT: Array<string | Record<string, string>> = [
   'https://www.w3.org/ns/activitystreams',
-  { interego: 'https://interego-emergent.example/ns/mcp-relay#' },
+  { iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#' },   // resolving namespace (was a .example placeholder)
 ];
 
 export interface NotificationInput {
@@ -77,12 +79,14 @@ export function buildNotification(input: NotificationInput, idSlug: string): Rec
     type: 'Note',
     summary: input.summary,
     ...(input.content ? { content: input.content } : {}),
-    ...(input.about ? { 'interego:about': input.about } : {}),
+    ...(input.about ? { 'iep:about': input.about } : {}),
     ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
   };
   return {
     '@context': AS2_CONTEXT,
-    id: `urn:interego:notif:${idSlug}`,
+    // Provisional; deliverNotification rewrites this to the resource's OWN url
+    // once the target pod is known. Never shipped as-is — see the id assignment there.
+    id: idSlug,
     type: input.type ?? 'Create',
     actor: input.from,
     to: [input.to],
@@ -106,6 +110,11 @@ export async function deliverNotification(
   log: (m: string) => void = () => {},
 ): Promise<string | null> {
   const url = `${inboxUrlFor(targetPodUrl)}${idSlug}.jsonld`;
+  // EVERYTHING IS A URL: the notification's id IS the resource it becomes. This was
+  // previously `urn:interego:notif:<slug>` — an identifier that dereferenced to
+  // nothing, in every notification the substrate delivered. buildNotification cannot
+  // mint it (it does not know the target pod); this is the first point that does.
+  notif['id'] = url;
   try {
     const r = await fetchFn(url, {
       method: 'PUT',
@@ -195,7 +204,7 @@ export async function readInbox(
         actor: d.actor,
         summary: d.summary ?? obj.summary,
         content: obj.content ?? d.content,
-        about: obj['interego:about'] ?? obj['https://interego-emergent.example/ns/mcp-relay#about'] ?? d['interego:about'] ?? d.about,
+        about: obj['iep:about'] ?? obj[`${IEP_NS}about`] ?? obj['interego:about'] ?? obj['https://interego-emergent.example/ns/mcp-relay#about'] ?? d['iep:about'] ?? d['interego:about'] ?? d.about,
         published: d.published,
       });
     } catch { /* skip */ }

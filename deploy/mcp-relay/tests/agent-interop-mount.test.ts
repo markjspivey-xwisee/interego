@@ -271,5 +271,48 @@ console.log('\n8. HYPERMEDIA — a representation carries its own followable nex
   srv.close();
 }
 
+
+console.log('\n9. MULTI-TURN — a continuation appends, it does not fork a new engagement');
+{
+  const express = (await import('express')).default;
+  const a = express(); a.use(express.json());
+  mountAgentInterop(a as any, {
+    publicBase: 'https://relay.test',
+    agent: { id: 'https://relay.test/.well-known/operations', name: 'T', description: 't' },
+    affordances: () => AFFORDANCES,
+    verifyCaller: async (req: any) => (req.headers['x-who'] as string) || 'did:ethr:0xAAA',
+    log: () => {},
+  });
+  const srv = a.listen(0);
+  await new Promise(r => srv.once('listening', r));
+  const B = `http://127.0.0.1:${(srv.address() as any).port}`;
+  const J = { 'content-type': 'application/json' };
+
+  const first: any = await (await fetch(`${B}/a2a/v1/message:send`, {
+    method: 'POST', headers: J, body: JSON.stringify({ parts: [{ text: 'one' }] }),
+  })).json();
+  const cont: any = await (await fetch(`${B}/a2a/v1/message:send`, {
+    method: 'POST', headers: J, body: JSON.stringify({ taskId: first.id, parts: [{ text: 'two' }] }),
+  })).json();
+  check('a continuation returns the SAME engagement, not a new one', cont.id === first.id,
+    `${first.id} vs ${cont.id}`);
+  check('...with both turns recorded', (cont.history ?? []).length === 2, String((cont.history ?? []).length));
+
+  // Ownership still governs: the engine refuses a continuation into another
+  // principal's engagement, and reports it as a miss rather than a 403.
+  const alien = await fetch(`${B}/a2a/v1/message:send`, {
+    method: 'POST', headers: { ...J, 'x-who': 'did:ethr:0xBBB' },
+    body: JSON.stringify({ taskId: first.id, parts: [{ text: 'intrude' }] }),
+  });
+  check('another principal cannot append to it', alien.status === 404, String(alien.status));
+
+  // A send with no continuation ref still opens a fresh engagement.
+  const fresh: any = await (await fetch(`${B}/a2a/v1/message:send`, {
+    method: 'POST', headers: J, body: JSON.stringify({ parts: [{ text: 'new' }] }),
+  })).json();
+  check('a send with no ref still opens a NEW engagement', fresh.id !== first.id);
+  srv.close();
+}
+
 if (failures > 0) { console.error(`\n${failures} assertion(s) failed\n`); process.exit(1); }
 console.log('\nAll agent-interop mount gates hold.\n');

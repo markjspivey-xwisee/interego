@@ -70,6 +70,8 @@ export const A2A_PROFILE: InteropProfile = {
   slug: 'a2a',
   protocolVersion: '1.0',
   conformanceStatus: 'unverified',
+  // A2A continues a task by sending a message that carries its id.
+  continuationField: 'taskId',
 
   card: {
     mediaType: 'application/json',

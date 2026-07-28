@@ -186,7 +186,18 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             const parts = partsFrom(req.body);
             if (!parts) { sendErr(res, profile, 'badRequest', 'at least one content part is required'); return; }
             const capability = typeof (req.body ?? {}).skillId === 'string' ? (req.body as { skillId: string }).skillId : undefined;
-            const r = engine.open({ caller, parts, ...(capability ? { capability } : {}) });
+            // CONTINUATION vs NEW. The profile declares which body member carries an
+            // existing engagement's id; the mount never names a protocol's field. Without
+            // this every send called engine.open(), so continuing a conversation silently
+            // FORKED it into a second engagement. appendTurn is owner-scoped by the
+            // engine, so a caller cannot append to someone else's engagement — a wrong or
+            // guessed id is indistinguishable from a miss.
+            const ref = profile.continuationField
+              ? (req.body ?? {})[profile.continuationField]
+              : undefined;
+            const r = typeof ref === 'string' && ref
+              ? engine.appendTurn({ id: ref, caller, role: 'requester', parts })
+              : engine.open({ caller, parts, ...(capability ? { capability } : {}) });
             if (isEngineError(r)) { sendErr(res, profile, r.error.kind, r.error.detail); return; }
             sendEngagement(res, profile, r.value, base);
             return;

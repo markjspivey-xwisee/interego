@@ -112,6 +112,17 @@ export interface InteropProfile {
    * CI — the card must carry no conformance claim while this is 'unverified'.
    */
   conformanceStatus: 'unverified' | 'verified';
+  /**
+   * The request-body member this wire format uses to CONTINUE an existing
+   * engagement rather than open a new one (e.g. a task/run id). Declared as data so the
+   * spec-blind mount never names a protocol's field; absent means the format has no
+   * multi-turn continuation and every send opens a new engagement.
+   *
+   * Without this the mount always called engine.open(), so a client continuing a
+   * conversation silently FORKED it into a second engagement — a correctness bug,
+   * not just a conformance gap.
+   */
+  continuationField?: string;
   card: CardProjection;
   lifecycle: LifecycleProjection;
   engagement: EngagementProjection;
