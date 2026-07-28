@@ -66,7 +66,7 @@ function renderCapability(c: Capability): Record<string, unknown> {
 }
 
 export const A2A_PROFILE: InteropProfile = {
-  id: 'https://relay.interego.xwisee.com/ns/maintainer/a2a',
+  id: 'https://relay.interego.xwisee.com/ns/eth-8f3b8e939600/a2a',
   slug: 'a2a',
   protocolVersion: '1.0',
   conformanceStatus: 'unverified',
