@@ -127,8 +127,11 @@ check('callerOwnPod() exists and is fail-closed',
   /async function callerOwnPod\(args: ToolArgs\)/.test(SERVER));
 check('it uses only reserved, wire-stripped sources',
   /callerOwnPod[\s\S]{0,700}_session_user_id[\s\S]{0,300}_identity_token/.test(SERVER));
-check('callerOwnPod never falls back to args.pod_name',
-  !/callerOwnPod[\s\S]{0,700}args\.pod_name/.test(SERVER));
+// Check the BODY, not the surrounding prose — the doc comment legitimately names
+// args.pod_name when explaining why it must not be used.
+const ownPodBody = (/async function callerOwnPod\(args: ToolArgs\)[^{]*\{([\s\S]*?)\n\}/.exec(SERVER) ?? [])[1] ?? '';
+check('callerOwnPod body never reads args.pod_name',
+  ownPodBody.length > 0 && !/args\.pod_name/.test(ownPodBody));
 check('read_inbox ownership uses callerOwnPod, not selfPodUrl',
   /handleReadInbox[\s\S]{0,800}const ownPod = await callerOwnPod\(args\)/.test(SERVER));
 check('channel redaction owner-check uses callerOwnPod',
@@ -141,6 +144,34 @@ check('/tool signed branch injects _session_agent_did',
 console.log('\n10. the federated-inbox gate runs BEFORE the agent lookup (no enumeration oracle)');
 check('signature gate precedes cardForLocalPart',
   /unsigned_delivery_rejected[\s\S]{0,600}cardForLocalPart\(req\.params\.localPart\)/.test(SERVER));
+
+console.log('\n11. R1 — the relay key is never handed to a caller-supplied URL (decryption oracle)');
+// publish_context makes relayAgentKey a recipient of EVERY envelope (including
+// visibility:'private'), so decrypting a caller-named URL with it returned any
+// user's private plaintext — and get_descriptor needs no credential at all.
+check('recipientKeyFor() exists and is own-pod-scoped + fail-closed',
+  /async function recipientKeyFor\(/.test(SERVER)
+  && /recipientKeyFor[\s\S]{0,900}callerOwnPod\(args\)/.test(SERVER));
+const rawKeySinks = SERVER.match(/recipientKeyPair: relayAgentKey/g) ?? [];
+check('at most ONE raw relayAgentKey sink remains (loadDynamicTools, startup-internal)',
+  rawKeySinks.length <= 1, `found ${rawKeySinks.length}`);
+check('get_descriptor decrypts only via recipientKeyFor',
+  /handleGetDescriptor[\s\S]{0,3000}recipientKeyPair: await recipientKeyFor\(args, url\)/.test(SERVER));
+check('the followed dcat:accessURL is scoped too',
+  /recipientKeyPair: await recipientKeyFor\(args, link\.accessURL\)/.test(SERVER));
+check('/render binds decryption to the token-verified identity',
+  /recipientKeyFor\(\{ _session_user_id: auth\.userId \}/.test(SERVER));
+
+console.log('\n12. R6 — the federated inbox gate is not a header-presence check');
+// `-H 'Signature: x'` satisfied the previous gate in one curl flag.
+check('no header-presence signature shortcut remains',
+  !/hasHttpSignature/.test(SERVER));
+check('the route fails closed on the env flag alone',
+  /RELAY_FEDERATION_ACCEPT_UNSIGNED !== '1'/.test(SERVER));
+
+console.log('\n13. R8 — the /tool OAuth branch injects the attribution identity');
+check('OAuth branch sets _session_agent_did',
+  /if \(auth\.agentId\) req\.body\._session_agent_did = auth\.agentId;/.test(SERVER));
 
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed\n`);
