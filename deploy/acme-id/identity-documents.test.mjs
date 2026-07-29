@@ -111,18 +111,38 @@ for (const ns of cited) {
   }
 }
 
-// Every URL a profile asserts about a person must resolve — that is what makes it a
-// statement rather than a decoration. Checked live, because these are on another host
-// (the gate) and cannot be verified from files in this repo.
-console.log('\n  asserted URLs on other hosts:');
-for (const u of [...ownUrls].sort()) {
-  const r = await fetch(u, { redirect: 'follow' }).catch(() => ({ status: 0 }));
-  check(`  ${u} resolves`, r.status >= 200 && r.status < 400, String(r.status));
+// ── The class of bug, caught WITHOUT the network ────────────────────────
+//
+// The live dereference below only runs under --live, because a pull request must
+// not fail merely because production has not yet received the fix that pull
+// request contains. But then nothing offline would catch the very defect this
+// file was widened for, so assert the SOURCE property instead: no published
+// document may reference the pod that does not exist.
+//
+// This is the check that would have caught `pim:storage` pointing at
+// /acme/users/*/ — three published statements about real people, aimed at a pod
+// that 404s, in the predicate a Solid client dereferences to find someone's data.
+const DEAD_POD = 'https://gate.interego.xwisee.com/acme/';
+for (const u of users) {
+  const card = join(SITE, 'users', u, 'profile', 'card');
+  if (!existsSync(card)) continue;
+  check(`${u}'s profile does not point at the pod that does not exist`,
+    !readFileSync(card, 'utf8').includes(DEAD_POD),
+    `remove or repoint the reference to ${DEAD_POD}`);
 }
+check('the DID document does not point at it either',
+  !JSON.stringify(did).includes(DEAD_POD));
 
 if (LIVE) {
   console.log('\n  live dereference:');
-  const urls = [...(did.service ?? []).map(s => s.serviceEndpoint), ...cited];
+  // Service endpoints and cited namespaces, PLUS every absolute URL a profile
+  // asserts as an object — the third category is what the first version of this
+  // file missed, and it is where the dangling pim:storage lived.
+  const urls = [...new Set([
+    ...(did.service ?? []).map(s => s.serviceEndpoint),
+    ...cited,
+    ...ownUrls,
+  ])].sort();
   for (const u of urls) {
     const r = await fetch(u, { redirect: 'follow' }).catch(() => ({ status: 0 }));
     check(`  ${u} resolves`, r.status >= 200 && r.status < 400, String(r.status));
