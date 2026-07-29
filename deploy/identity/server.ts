@@ -1645,6 +1645,29 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(express.json());
 
+/**
+ * Transport-security headers.
+ *
+ * This host MINTS AND ACCEPTS BEARER TOKENS. Plain http:// already 301s to https,
+ * but a redirect only protects the second request — the first one, carrying an
+ * Authorization header, has already crossed the wire in clear. HSTS is what removes
+ * that first request: once seen, the browser upgrades before sending anything.
+ *
+ * Not preloaded, and `includeSubDomains` is deliberately omitted: this zone carries
+ * hosts this service does not own, and asserting a policy on their behalf is not
+ * ours to do. A year is the usual floor for the header to be worth setting at all.
+ *
+ * `nosniff` rides along because it is the other one-liner that matters here: several
+ * routes serve JSON and Turtle that must never be content-sniffed into something
+ * executable.
+ */
+app.use((_req, res, next) => {
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
+
 // CORS: explicit allowlist, never wildcard. See cors-allowlist.ts for the
 // full rationale (the same fix is applied in deploy/mcp-relay/server.ts).
 // Unknown origins receive THIS service's own FQDN as ACAO so a browser
