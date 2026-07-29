@@ -221,7 +221,7 @@ export async function evaluateCandidate(
   emit({ actor: 'Employer', kind: 'verify', title: `Independently re-verified the candidate — ${verify?.verified ? 'CONFIRMED' : 'INSUFFICIENT'}`, detail: 'the employer re-ran verification from scratch against the candidate’s pod — not trusting the candidate or the authority', data: verify });
 
   // Candidate proves the competency privately — score cryptographically hidden.
-  const prove = (await sCall('/agent/prove-competency', K, { issuer_did: T.did, competency_name: 'Standards Extension', score: 0.9, proficiency: 'Advanced' })).body;
+  const prove = (await sCall('/agent/prove-competency', K, { competency_name: 'Standards Extension' })).body;
   const revealed = Array.isArray(prove?.revealed) ? prove.revealed : [];
   const hiddenPaths = Array.isArray(prove?.hiddenPaths) ? prove.hiddenPaths : [];
   let presentationVerified = false;
@@ -293,7 +293,7 @@ export async function evaluateCandidateLLM(
   // The candidate derives a BBS+ selective-disclosure proof — its OWN action, signed
   // by the candidate, score cryptographically hidden. The crypto is deterministic
   // (produced by the bridge); only the employer's judgment over it is the LLM's.
-  const prove = (await sCall('/agent/prove-competency', K, { issuer_did: T.did, competency_name: 'Standards Extension', score: 0.9, proficiency: 'Advanced' })).body;
+  const prove = (await sCall('/agent/prove-competency', K, { competency_name: 'Standards Extension' })).body;
   const revealed = Array.isArray(prove?.revealed) ? prove.revealed : [];
   const hiddenPaths = Array.isArray(prove?.hiddenPaths) ? prove.hiddenPaths : [];
   const proofAvailable = !!prove?.presentation;

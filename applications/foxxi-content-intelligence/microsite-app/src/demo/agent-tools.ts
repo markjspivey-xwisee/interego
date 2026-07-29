@@ -185,7 +185,9 @@ export async function dispatchTool(name: string, input: Record<string, unknown>,
     case 'verify_extension':
       return postSigned('/agent/verify-extension', agent, { subject_did: input.subject_did ?? ctx.subjectDid, name: input.name, kind: input.kind });
     case 'prove_competency':
-      return postSigned('/agent/prove-competency', agent, { issuer_did: input.issuer_did ?? ctx.authorDid, competency_name: input.competency_name, score: input.score, proficiency: input.proficiency });
+      // The bridge issues only as the authenticated signer, and derives the claims
+      // itself — passing issuer_did/score/proficiency here would now be rejected.
+      return postSigned('/agent/prove-competency', agent, { competency_name: input.competency_name });
     case 'verify_presentation':
       // The real (large) presentation is supplied via ctx; prefer it over whatever
       // the model passes (it cannot reconstruct the full BBS+ object, so a model-

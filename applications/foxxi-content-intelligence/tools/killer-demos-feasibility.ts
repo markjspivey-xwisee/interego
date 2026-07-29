@@ -142,7 +142,9 @@ async function portfolio(): Promise<void> {
   check('E independently re-verified K', eVer.status === 200 && eVer.body?.verified === true, `engineGraded=${eVer.body?.checks?.independentlyGraded} shapeConformant=${eVer.body?.checks?.shapeConformant}`);
 
   // K proves the competency privately; E verifies; learns ONLY disclosed claims
-  const prove = await postSigned('/agent/prove-competency', K, { issuer_did: didT, competency_name: 'Standards Extension', score: 0.9, proficiency: 'Advanced' });
+  // Self-asserted: the holder signs, so the holder is the issuer. Naming didT here
+  // used to make the bridge sign as T on K's say-so — forgery, now a 403.
+  const prove = await postSigned('/agent/prove-competency', K, { competency_name: 'Standards Extension' });
   check('K derived BBS+ proof (score hidden)', prove.status === 200 && Array.isArray(prove.body?.revealed) && Array.isArray(prove.body?.hiddenPaths), `revealed=${prove.body?.revealed?.length} hidden=${prove.body?.hiddenPaths?.length}`);
   let vp: any = { body: {} };
   if (prove.body?.presentation) {

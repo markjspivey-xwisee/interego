@@ -71,8 +71,37 @@ export interface CompetencyProofResult {
   hiddenClaimCount: number;
   hiddenClaimPaths: string[];
   presentationContext?: string;
-  /** Base64 BBS+ proof — opaque; an external verifier can re-check it. */
+  /** Base64 BBS+ proof bytes alone. Retained for wire compatibility.
+   *
+   *  ★ This is NOT sufficient to re-verify. A BBS+ proof is checked against the
+   *  disclosed messages, their indexes, and the issuer public key; the proof bytes
+   *  on their own cannot be verified by anyone. This field used to be documented as
+   *  "an external verifier can re-check it", which was false — the grounded proof
+   *  was, in practice, verifiable only by the bridge that minted it. Use
+   *  `presentation` below for anything a third party must check. */
   proofB64: string;
+  /** Reveal paths the caller asked for that the credential does not carry.
+   *
+   *  Unknown paths are dropped so derivation cannot throw, but dropping them
+   *  silently meant a caller could ask to reveal a claim, be told nothing failed,
+   *  and hand over a presentation disclosing NOTHING. Naming them is the
+   *  difference between a privacy guarantee and an accident. */
+  unknownRevealPaths: string[];
+  /** The serialized presentation, sufficient for an INDEPENDENT verifier.
+   *
+   *  Binary BBS+ fields are base64-encoded for transport. Feed this straight to
+   *  foxxi.verify_presentation — which is what that affordance's description has
+   *  always claimed to accept. */
+  presentation: {
+    proof: string;
+    disclosedIndexes: number[];
+    disclosedMessages: Array<{ index: number; message: string; displayValue: string }>;
+    issuerPublicKey: string;
+    issuerDid: string;
+    /** Present when the proof was bound to an occasion. A verifier MUST echo this
+     *  back, or the proof will not verify — the binding is the point. */
+    presentationContext?: string;
+  };
 }
 
 /**
@@ -103,6 +132,7 @@ export async function proveCompetency(args: ProveCompetencyArgs): Promise<Compet
     ? args.revealPaths
     : DEFAULT_REVEAL_PATHS;
   const revealPaths = wanted.filter(p => known.has(p));
+  const unknownRevealPaths = wanted.filter(p => !known.has(p));
   const header = args.presentationContext
     ? new TextEncoder().encode(args.presentationContext)
     : undefined;
@@ -129,6 +159,19 @@ export async function proveCompetency(args: ProveCompetencyArgs): Promise<Compet
     hiddenClaimPaths: hidden.map(c => c.path),
     presentationContext: args.presentationContext,
     proofB64: Buffer.from(presentation.proof).toString('base64'),
+    unknownRevealPaths,
+    presentation: {
+      proof: Buffer.from(presentation.proof).toString('base64'),
+      disclosedIndexes: presentation.disclosedIndexes,
+      disclosedMessages: presentation.disclosedMessages.map(d => ({
+        index: d.index,
+        message: Buffer.from(d.message).toString('base64'),
+        displayValue: d.displayValue,
+      })),
+      issuerPublicKey: Buffer.from(presentation.issuerPublicKey).toString('base64'),
+      issuerDid: presentation.issuerDid,
+      ...(args.presentationContext ? { presentationContext: args.presentationContext } : {}),
+    },
   };
 }
 
