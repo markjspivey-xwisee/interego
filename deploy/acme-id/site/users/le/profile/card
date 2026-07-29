@@ -61,7 +61,6 @@
       "1EdTech Open Badges 3.0" ,
       "W3C Verifiable Credentials 2.0" ;
     foaf:mbox  <mailto:le@acme-id.interego.xwisee.com> ;
-    pim:storage  <https://gate.interego.xwisee.com/acme/users/le/> ;
     solid:account  <https://acme-id.interego.xwisee.com/users/le/> ;
     solid:oidcIssuer  <https://identity.interego.xwisee.com/> ;
     fxd:audienceTag  "learning-engineering", "engineering", "all-employees", "managers" ;

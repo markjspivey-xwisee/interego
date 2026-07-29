@@ -59,6 +59,8 @@ const users = readdirSync(join(SITE, 'users'), { withFileTypes: true })
 check('WebID profiles are present', users.length > 0, users.join(','));
 
 const cited = new Set();
+/** Absolute URLs the profiles assert as objects, on any host we plausibly control. */
+const ownUrls = new Set();
 for (const u of users) {
   const card = join(SITE, 'users', u, 'profile', 'card');
   check(`${u} has a profile card`, existsSync(card), card);
@@ -67,6 +69,24 @@ for (const u of users) {
   // Every prefix bound to our OWN host must be a document we actually serve.
   for (const m of ttl.matchAll(/@prefix\s+\w+:\s+<(https:\/\/acme-id\.interego\.xwisee\.com[^>#]*)#?>/g)) {
     cited.add(m[1]);
+  }
+  // ★ AND EVERY ABSOLUTE URL THE PROFILE ASSERTS AS AN OBJECT, on any host.
+  //
+  // The first version of this test collected only @prefix declarations, and only
+  // ones on the acme-id host. So it printed "Every published reference resolves"
+  // while all three profiles pointed `pim:storage` at a pod that 404s — excluded
+  // twice over, by predicate and by host. That is a false green on the exact
+  // invariant the file exists to protect, and it shipped the same day as the fix
+  // it was written to guard.
+  //
+  // `pim:storage` is not incidental: packages/solid/src/discovery.ts reads it to
+  // decide where a person's data lives, so a dangling one is worse than the DID
+  // service that was removed for pointing at the same dead pod.
+  for (const m of ttl.matchAll(/<(https?:\/\/[^>\s]+)>/g)) {
+    const u = m[1];
+    // Skip well-known external vocabularies — we do not own their uptime.
+    if (/xmlns\.com|w3\.org|schema\.org|purl\.org|w3id\.org/.test(u)) continue;
+    ownUrls.add(u);
   }
 }
 check('profiles cite at least one namespace on this host', cited.size > 0, [...cited].join(','));
@@ -89,6 +109,15 @@ for (const ns of cited) {
     check(`  ...and defines fxd:${term}, which a profile asserts`,
       new RegExp(`fxd:${term}\\b`).test(body));
   }
+}
+
+// Every URL a profile asserts about a person must resolve — that is what makes it a
+// statement rather than a decoration. Checked live, because these are on another host
+// (the gate) and cannot be verified from files in this repo.
+console.log('\n  asserted URLs on other hosts:');
+for (const u of [...ownUrls].sort()) {
+  const r = await fetch(u, { redirect: 'follow' }).catch(() => ({ status: 0 }));
+  check(`  ${u} resolves`, r.status >= 200 && r.status < 400, String(r.status));
 }
 
 if (LIVE) {

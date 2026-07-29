@@ -30,7 +30,6 @@
     ] ;
     schema:department "Engineering" ;
     foaf:mbox  <mailto:jliu@acme-id.interego.xwisee.com> ;
-    pim:storage  <https://gate.interego.xwisee.com/acme/users/jliu/> ;
     solid:account  <https://acme-id.interego.xwisee.com/users/jliu/> ;
     solid:oidcIssuer  <https://identity.interego.xwisee.com/> ;
     fxd:audienceTag  "engineering", "all-employees", "new-hires" ;

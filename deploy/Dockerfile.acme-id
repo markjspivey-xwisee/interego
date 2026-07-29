@@ -21,6 +21,14 @@ RUN printf 'server {\n\
   root /usr/share/nginx/html;\n\
   index index.html;\n\
 \n\
+  # Each profile asserts `solid:account <.../users/<u>/>`. That URL is a directory\n\
+  # with no index, so nginx answered 403 — a published statement about a person\n\
+  # pointing at something a reader cannot fetch. Resolve it to the person it\n\
+  # identifies: their WebID profile card.\n\
+  location ~* ^/users/([^/]+)/$ {\n\
+    return 302 /users/$1/profile/card;\n\
+  }\n\
+\n\
   # WebID profile cards have no extension on the URL but are Turtle.\n\
   location ~* ^/users/[^/]+/profile/card$ {\n\
     default_type "text/turtle; charset=utf-8";\n\
