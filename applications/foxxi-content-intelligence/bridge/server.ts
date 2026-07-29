@@ -381,7 +381,30 @@ import type {
 } from '@interego/core';
 
 const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
+/**
+ * Who vouches for the records this bridge publishes.
+ *
+ * ★ THE DEFAULT IS A NON-DEREFERENCEABLE PLACEHOLDER, and it is written INTO
+ * published data as the authoritative source. `did:web:foxxi.example` resolves
+ * nowhere — `.example` is reserved precisely so it never will — so any record
+ * emitted without this env var set carries a provenance claim a verifier cannot
+ * check. That is the everything-is-a-URL invariant failing in the one field whose
+ * entire job is to be followed back to its source.
+ *
+ * Production does set it (currently did:web:acme-id.interego.xwisee.com), so nothing
+ * is wrong today. But a silent fallback to a placeholder is exactly the shape of
+ * bug found in the identity dashboard hours earlier: a derivation that degrades
+ * quietly into a plausible-looking wrong value nobody re-checks. Kept as a default
+ * so local development still boots — made LOUD so it can never ship unnoticed.
+ */
 const authoritativeSource = (process.env.FOXXI_AUTHORITATIVE_SOURCE ?? 'did:web:foxxi.example') as IRI;
+if (!process.env.FOXXI_AUTHORITATIVE_SOURCE) {
+  console.error(
+    '[foxxi] FOXXI_AUTHORITATIVE_SOURCE is unset — every published record will name '
+    + '%s as its authoritative source, and that identifier does not resolve. '
+    + 'Set it to a dereferenceable DID before publishing anything a verifier will read.',
+    authoritativeSource);
+}
 /** The bridge's own public base URL (an https IRL in prod) — used as the xAPI
  *  Account IFI homePage (xAPI requires an IRL, not a did: URI) and to link the
  *  published xAPI Profile as a contextActivities.category. */
