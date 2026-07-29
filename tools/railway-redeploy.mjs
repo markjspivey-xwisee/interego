@@ -134,6 +134,36 @@ const dep = await gql(
 const deployId = dep.serviceInstanceDeployV2;
 console.log(`deploy triggered: ${deployId}`);
 
+/**
+ * A FAILED DEPLOY MUST NOT LEAVE THE SERVICE PINNED TO THE IMAGE THAT FAILED.
+ *
+ * ★ Learned by doing it. I repointed a service at a commit sha for which that
+ * image had never been built. Railway kept the PREVIOUS container serving, so
+ * there was no outage and nothing looked wrong from outside — but the service was
+ * left pinned to an image that does not exist. The next restart, redeploy, or node
+ * migration would have tried to pull it and the service would have died then,
+ * detached in time from the change that caused it.
+ *
+ * So on any terminal failure the pin goes back to whatever was running before.
+ * The deploy still exits non-zero; it just does not leave a landmine behind.
+ */
+async function restorePin(why) {
+  const previous = before.serviceInstance.source?.image;
+  if (!previous || previous === image) return;
+  try {
+    await gql(
+      'mutation($s:String!,$e:String!,$in:ServiceInstanceUpdateInput!){ serviceInstanceUpdate(serviceId:$s,environmentId:$e,input:$in) }',
+      { s: serviceId, e: environmentId, in: { source: { image: previous } } });
+    console.error(`
+${why} — image pin ROLLED BACK to ${previous}`);
+    console.error('The previous container kept serving throughout; nothing was pinned to a broken image.');
+  } catch (e) {
+    console.error(`
+${why} — and the rollback ALSO failed: ${e.message}`);
+    console.error(`The service is still pinned to ${image}. Repoint it manually to ${previous}.`);
+  }
+}
+
 // ── 5. Watch to a terminal state.
 const GOOD = new Set(['SUCCESS']);
 const BAD = new Set(['FAILED', 'CRASHED', 'SKIPPED', 'REMOVED', 'REMOVING']);
@@ -147,8 +177,12 @@ while (Date.now() < deadline) {
   status = d.deployment.status;
   console.log(`  ${status}`);
   if (GOOD.has(status)) break;
-  if (status === 'NEEDS_APPROVAL') die('NEEDS_APPROVAL — a human must approve this deploy in the Railway UI');
+  if (status === 'NEEDS_APPROVAL') {
+    await restorePin('NEEDS_APPROVAL — a human must approve this deploy in the Railway UI');
+    die('NEEDS_APPROVAL — a human must approve this deploy in the Railway UI');
+  }
   if (BAD.has(status)) {
+    await restorePin(`deployment ${status}`);
     die(`deployment ${status}${status === 'REMOVED' ? ' — a newer deploy superseded it' : ''}`);
   }
 }
