@@ -182,5 +182,5 @@ export function emitAffordanceStatement(args: EmissionArgs): string | undefined 
     },
   };
 
-  return storeStatementInternal(statement);
+  return storeStatementInternal(statement) ?? undefined;
 }

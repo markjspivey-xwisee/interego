@@ -1752,7 +1752,36 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const perfActivityType = (typeof args.activity_type === 'string' && args.activity_type.trim())
       ? args.activity_type.trim()
       : `${FOXXI_NS}ProductionTask`;
+    // ★ A REFUSED STATEMENT MUST NOT BE REPORTED AS RECORDED.
+    //
+    // storeStatementInternal enforces xAPI conformance and refuses a statement that
+    // violates it. It used to return the id regardless, so the refusal was invisible:
+    // this handler answered `recorded: true` with a statement id, and the assembled
+    // IEEE P2997 record then advertised
+    //
+    //     rawDataLocation = <bridge>/xapi/statements?statementId=<that id>
+    //
+    // which answered 404. Confirmed live: activity_type "production-incident-command"
+    // (a bare slug, not an IRI — object.definition.type MUST be an IRI) produced
+    // recorded:true plus a 404 evidence pointer, while the same call with a full IRI
+    // stored and resolved 200. The failure was silent at every layer a caller can see.
+    //
+    // A record that cites evidence a verifier cannot fetch is worse than one that
+    // cites none: it looks like due diligence is possible and then fails it.
+    const declaredType = typeof args.activity_type === 'string' ? args.activity_type.trim() : '';
+    if (declaredType && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(declaredType)) {
+      return {
+        error: `activity_type must be an IRI (it becomes object.definition.type, which xAPI requires to be an IRI). Received "${declaredType}".`,
+        hint: `Use an absolute IRI you own, e.g. ${bridgeBaseUrl}/ns/foxxi/competency/${declaredType.toLowerCase().replace(/[^a-z0-9]+/g, '-')}. Omitting activity_type is also valid — the competency then keys off task_name.`,
+      };
+    }
     const statementId = storeStatementInternal(statement, lensTenantFor(perfLabel));
+    if (!statementId) {
+      return {
+        error: 'the performance was not recorded — the emitted xAPI statement failed conformance validation and the LRS refused it',
+        hint: 'This is a bug in the emitter, not in your arguments; the bridge log names the violated constraint. Nothing was stored, so no evidence pointer was minted.',
+      };
+    }
     const withId = { ...statement, id: statementId };
     // DURABLY persist to the performer's OWN pod as a foxxi:RecordedPerformance
     // descriptor — the exact artifact assemble_learner_record's durable read path
@@ -5766,6 +5795,18 @@ app.post('/agent/record-performance', async (req, res) => {
     const activityType = (typeof p.activity_type === 'string' && p.activity_type.trim())
       ? p.activity_type.trim()
       : `${FOXXI_NS}ProductionTask`;
+    // Same guard as the MCP foxxi.record_performance path. object.definition.type MUST
+    // be an IRI; a bare slug produced a statement the LRS refused, while this route
+    // still answered 200 with a statement id that then 404'd from the record's own
+    // rawDataLocation. Reject the input rather than mint an evidence pointer that lies.
+    if (typeof p.activity_type === 'string' && p.activity_type.trim()
+        && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(p.activity_type.trim())) {
+      res.status(400).json({
+        error: `activity_type must be an IRI (it becomes object.definition.type, which xAPI requires to be an IRI). Received "${p.activity_type.trim()}".`,
+        hint: `Use an absolute IRI you own, e.g. ${bridgeBaseUrl}/ns/foxxi/competency/${p.activity_type.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}. Omitting activity_type is also valid.`,
+      });
+      return;
+    }
     const quality = typeof p.quality === 'number' ? p.quality : undefined;
     if (quality !== undefined && (quality < -1 || quality > 1)) { res.status(400).json({ error: 'quality (result.score.scaled) must be in [-1,1]' }); return; }
     const outcomeVerb = momOutcomeVerb(p.success as boolean);
@@ -5793,6 +5834,13 @@ app.post('/agent/record-performance', async (req, res) => {
       timestamp: new Date().toISOString(),
     };
     const statementId = storeStatementInternal(statement, lensTenantFor(label));
+    if (!statementId) {
+      res.status(500).json({
+        error: 'the performance was not recorded — the emitted xAPI statement failed conformance validation and the LRS refused it',
+        hint: 'Nothing was stored, so no evidence pointer was minted. The bridge log names the violated constraint.',
+      });
+      return;
+    }
     // Optional additional recipients for the encrypted canonical holon: pod URLs
     // or DIDs, each resolved to a pod whose DURABLE keys/encryption.json is also
     // wrapped — so named agents (e.g. maintainer + boozer) can owner-decrypt this
@@ -5953,7 +6001,10 @@ app.post('/agent/record-course-completion', async (req, res) => {
       // Object-spread drops the index signature (TS collapses this to `{ id: string }`),
       // hiding the xAPI keys that are present at runtime — restore it explicitly.
       const withId: Record<string, unknown> & { id: string } = { ...s, id: (typeof s.id === 'string' && s.id) ? s.id : randomUUID() };
-      statementIds.push(storeStatementInternal(withId, lensTenantFor(label)));
+      // null = the LRS refused it for non-conformance. Reporting the id anyway is
+      // what produced learner records citing evidence URLs that 404.
+      const cmi5Id = storeStatementInternal(withId, lensTenantFor(label));
+      if (cmi5Id) statementIds.push(cmi5Id);
       // Foundation-first: PGSL canonical — compose each cmi5 statement into the
       // learner's shared lattice (lossless), no hand-authored RDF.
       void composeIntoSharedLattice({
@@ -6261,7 +6312,10 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
     : base('failed', 'failed', { success: false, completion: true, score: { scaled: score } }));
   const ids: string[] = [];
   const learnerPod = resolveSubjectPodUrl(play.learnerDid);
-  for (const s of stmts) ids.push(storeStatementInternal(s, play.lens));
+  for (const s of stmts) {
+    const sid = storeStatementInternal(s, play.lens);
+    if (sid) ids.push(sid);   // a refused statement has no retrievable id
+  }
   // Foundation-first: PGSL canonical — compose the ACTUAL completion xAPI
   // statements into the learner's shared lattice (lossless), no hand-authored RDF.
   const learnerLabel = actorForPod(learnerPod, MESH_ACTOR_LABELS);
