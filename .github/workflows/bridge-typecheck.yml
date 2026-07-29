@@ -71,3 +71,8 @@ jobs:
       # than reporting after deploy.
       - name: Guard credential issuer binding (the issuer is the signer)
         run: npx tsx applications/foxxi-content-intelligence/tests/credential-issuer-binding.test.ts
+      # A learner record advertised rawDataLocation = /xapi/statements?statementId=<id>
+      # for a statement the LRS had REFUSED — record_performance returned the id anyway,
+      # so the refusal was invisible and the credential's evidence pointer 404'd.
+      - name: Guard evidence pointers (a record may not cite what a verifier cannot fetch)
+        run: npx tsx applications/foxxi-content-intelligence/tests/evidence-pointers-resolve.test.ts

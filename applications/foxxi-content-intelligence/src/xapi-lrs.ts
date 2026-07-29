@@ -137,7 +137,24 @@ export type XapiStatementRecord = StoredStatement;
 /** The LRS's own identity as statement authority (xAPI 2.0 §4.1.9) for
  *  internally-emitted statements. homePage is an https IRL in prod. */
 const INTERNAL_LRS_AUTHORITY = { homePage: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080', name: 'foxxi-lrs' };
-export function storeStatementInternal(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT): string {
+/**
+ * Store an internally-emitted statement. Returns the statement id, or NULL when the
+ * statement was refused for non-conformance.
+ *
+ * ★ It used to return the id either way. That made a rejection invisible to every
+ * caller: record_performance reported `recorded: true`, handed the caller a
+ * statement id, and the assembled IEEE P2997 record then advertised
+ *
+ *     rawDataLocation = <bridge>/xapi/statements?statementId=<that id>
+ *
+ * as the evidence for the performance — a URL that answers 404. A relying party
+ * following the evidence pointer during due diligence cannot tell "fabricated" from
+ * "stored somewhere else", which is the one question the pointer exists to settle.
+ *
+ * Enforcing conformance is right; enforcing it silently is not. Callers must be able
+ * to see that nothing was stored, so null is the signal.
+ */
+export function storeStatementInternal(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT): string | null {
   // Author + structurally validate on the internal emission path too, exactly as
   // the inbound POST /xapi/statements path does — so an internally-stored statement
   // carries an LRS authority (§4.1.9) and is checked against the xAPI shape. A
@@ -152,7 +169,7 @@ export function storeStatementInternal(stmt: Record<string, unknown>, tenant: Te
     // statement. A loud error surfaces the offending emit path.
     // eslint-disable-next-line no-console
     console.error(`[storeStatementInternal] REJECTED non-conformant statement ${id} (not stored):`, errs.slice(0, 5).join('; '));
-    return id;
+    return null;
   }
   const rec: StoredStatement = { id, statement: enriched, stored: enriched.stored as string, voided: false };
   void statementStores.for(tenant).put(rec).catch(err => {
