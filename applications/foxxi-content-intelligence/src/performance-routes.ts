@@ -929,7 +929,23 @@ export function attachPerformanceRoutes(app: Express, config: {
     // timestamp/nonce, so reject a re-POST of the EXACT signed teaching transfer — else
     // a replay repeatedly pushLiveOutcome()s into the shared calibration profile (Sybil-
     // amplification of the 'teaching'-source cell).
-    if (!noteOutcomeSig(teacherSignature)) {
+    // ★ The replay key includes the LEARNER.
+    //
+    // The teacher signs { teachingPackage, targetBehaviour } — the lesson, and nothing
+    // about who receives it. So keying the replay guard on the signature alone meant a
+    // signed lesson could be delivered exactly once, ever: teaching the same thing to a
+    // second agent came back
+    //
+    //   { recorded: false, duplicate: true, note: '…replay ignored (idempotent)' }
+    //
+    // which is the normal case on a team, not an attack. Found by a demo that taught one
+    // lesson to two learners to show the verdict differs between them; the second
+    // transfer never ran.
+    //
+    // Including learner.id keeps the property the guard exists for — the same transfer to
+    // the same learner cannot be counted twice into the shared calibration profile — while
+    // letting one lesson reach a whole rota.
+    if (!noteOutcomeSig(`${teacherSignature}|${learner.id}`)) {
       res.json({ recorded: false, duplicate: true, note: 'this exact signed teaching transfer was already recorded — replay ignored (idempotent)' });
       return;
     }
