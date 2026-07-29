@@ -18,6 +18,7 @@ on:
     branches: [master]
     paths:
       - 'applications/foxxi-content-intelligence/**'
+      - 'applications/_shared/**'
       - 'applications/agentic-performance-practice/src/**'
       - 'applications/lrs-adapter/src/**'
       - 'packages/**'
@@ -29,6 +30,7 @@ on:
     branches: [master]
     paths:
       - 'applications/foxxi-content-intelligence/**'
+      - 'applications/_shared/**'
       - 'applications/agentic-performance-practice/src/**'
       - 'applications/lrs-adapter/src/**'
       - 'packages/**'
@@ -82,3 +84,9 @@ jobs:
       # and rows page 1 had already returned.
       - name: Guard xAPI pagination (a continuation resumes the same query)
         run: npx tsx applications/foxxi-content-intelligence/tests/statement-pagination.test.ts
+      # GET /affordances is the route an agent is told to walk to learn what a vertical
+      # can do, and it answered Turtle no matter what was asked for. The mount is shared,
+      # so this guards every vertical at once — including that the entry point and the
+      # manifest keep projecting an affordance identically.
+      - name: Guard the shared affordance manifest (negotiation + no projection drift)
+        run: npx tsx applications/_shared/vertical-bridge/affordance-manifest.test.ts
