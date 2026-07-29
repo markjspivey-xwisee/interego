@@ -23,8 +23,37 @@ on:
         default: ''
 
 jobs:
+  # A build that matched no image reported SUCCESS having built nothing.
+  # `-f image=foxxi-bridge` (the service name) instead of `interego-foxxi-bridge`
+  # (the image name) skipped all thirteen legs and went green, so the next step —
+  # pinning Railway to the "new" tag — would have deployed the previous image
+  # while every signal said the build had succeeded. A dispatch that does nothing
+  # must fail, and it must say what the valid names are.
+  validate-input:
+    name: "Requested image must exist (a no-op build must not report success)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the requested image against the matrix
+        run: |
+          req='${{ inputs.image }}'
+          [ -z "$req" ] && { echo "no image requested — building all"; exit 0; }
+          # Read the names out of this file so the check cannot drift from the matrix.
+          # sed, not `grep -oP`: PCRE mode aborts under a non-UTF-8 locale, and a
+          # guard that errors out is a guard that silently stops guarding.
+          known=$(sed -n 's/^[[:space:]]*- {[[:space:]]*image:[[:space:]]*\([a-z0-9-]*\).*/\1/p' .github/workflows/build-ghcr.yml)
+          [ -n "$known" ] || { echo "::error::could not read the image matrix"; exit 1; }
+          if printf '%s\n' "$known" | grep -qx "$req"; then
+            echo "ok — '$req' is a known image"
+          else
+            echo "::error::unknown image '$req' — nothing would be built. Valid images:"
+            printf '  %s\n' $known
+            exit 1
+          fi
+
   build:
     name: ${{ matrix.image }}
+    needs: validate-input
     runs-on: ubuntu-latest
     permissions:
       contents: read
