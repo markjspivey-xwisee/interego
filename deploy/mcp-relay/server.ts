@@ -5064,7 +5064,15 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
     if (typeof obj === 'string') { try { obj = JSON.parse(obj); } catch { return; } }
     if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
       for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-        if (!reserved.has(k)) safe[k] = v;
+        // Underscore-prefixed keys are transport and session plumbing, never caller
+        // options, and this payload is SIGNED and then forwarded to a third party.
+        // The explicit `reserved` list could only ever name the internals that
+        // existed when it was written — `_req` was not on it, so a live Express
+        // request got folded in and JSON.stringify threw on the socket cycle. Deny
+        // the whole prefix: it fails closed for internals nobody has added yet, and
+        // it keeps session state out of an artifact that leaves the relay.
+        if (k.startsWith('_') || reserved.has(k)) continue;
+        safe[k] = v;
       }
     }
   };
@@ -12200,7 +12208,30 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
   }
 
   try {
-    const result = await tool.handler({...req.body, _req: req });
+    // ★ `_req` is NON-ENUMERABLE on purpose.
+    //
+    // It used to be spread in as an ordinary property: `{...req.body, _req: req}`.
+    // Handlers that iterate their own args then picked up a live Express request —
+    // and sign_request folds every unrecognised arg into the payload it SIGNS, so it
+    // called JSON.stringify on a socket:
+    //
+    //   sign_request -> 500  "Converting circular structure to JSON
+    //                         --> starting at object with constructor 'Socket'
+    //                         |   property 'parser' -> object with constructor 'HTTPParser'
+    //                         --- property 'socket' closes the circle"
+    //
+    // That took out the substrate's signing primitive on this transport entirely:
+    // a relay-mediated agent holds no key of its own, so sign_request is the only
+    // way it can act on a signed-request affordance.
+    //
+    // Fixing it inside sign_request alone would leave the trap armed for the next
+    // handler that iterates args. Non-enumerable is the fix at the source:
+    // `args._req` still resolves for the two call sites that want it
+    // (resolveIpfsConfig), while spreads, Object.entries and JSON.stringify cannot
+    // see it. Transport plumbing should not look like a caller argument.
+    const handlerArgs: Record<string, unknown> = { ...req.body };
+    Object.defineProperty(handlerArgs, '_req', { value: req, enumerable: false, writable: false });
+    const result = await tool.handler(handlerArgs);
     // Hypermedia decoration: kernel-verb handlers already return
     // decorated JSON; named-shim handlers get decorated here.
     const decorated = decorateRelayShimText(toolName, result);
@@ -12212,10 +12243,18 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
       res.type('text/plain').send(decorated);
     }
   } catch (err) {
+    // A THROWN error here is an internal fault, not a caller-facing one — handlers
+    // report expected failures by RETURNING { error }, which takes the 200 path
+    // above. Echoing the raw message published Node's guts to an unauthenticated
+    // caller: the sign_request break surfaced as a 500 whose body named Socket and
+    // HTTPParser and described the object graph between them. Same class as the
+    // internal-error leak fixed on the A2A mount. Log the detail, return a stable
+    // one.
+    console.error(`[tool:${toolName}] handler threw:`, err);
     res.status(500).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
       '@type': ['hydra:Status', 'urn:iep:error:ToolFailure'],
-      error: (err as Error).message,
+      error: `The tool "${toolName}" could not be completed.`,
     });
   }
 });
