@@ -6,7 +6,8 @@
  * deployed bridge:
  *
  *   1. A wallet minted seconds earlier, with an empty learning record, obtained a
- *      credential asserting Expert proficiency in "Neurosurgical Anastomosis", and
+ *      credential asserting Expert proficiency in a competency it had never
+ *      demonstrated (the competency name in the probe was arbitrary), and
  *      /agent/verify-presentation returned verified: true.
  *
  *   2. Two UNRELATED holders both naming issuer_did = did:web:acme-id.interego...

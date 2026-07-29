@@ -4613,9 +4613,9 @@ app.post('/agent/prove-competency', async (req, res) => {
     if (!competencyName) { res.status(400).json({ error: 'competency_name required' }); return; }
     // Neither score nor proficiency is a request input. A holder asserting their own
     // proficiency and having the bridge sign it is the unearned-credential half of
-    // the same defect: the wallet that claimed Expert "Neurosurgical Anastomosis"
-    // supplied both values itself. A self-assertion is allowed to exist, but it may
-    // not carry a level it did not earn, so it is pinned to the floor of the scale.
+    // the same defect: the wallet that claimed Expert in a competency it had never
+    // demonstrated supplied both values itself. A self-assertion is allowed to exist,
+    // but it may not carry a level it did not earn, so it is pinned to the scale floor.
     // Anything above the floor has to come from a record — foxxi.prove_competency.
     const score = 0;
     const proficiency: 'Novice' = 'Novice';
