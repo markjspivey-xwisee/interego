@@ -409,9 +409,11 @@ export function affordanceToTurtle(affordance: Affordance, deploymentUrl: string
     ${affordance.returns ? `hydra:returns <${affordance.returns}> ;` : ''}
     hydra:expects [
         a hydra:Class ;
-        rdfs:label "${escapeLit(affordance.toolName)}-input" ;
+        rdfs:label "${escapeLit(affordance.toolName)}-input"${inputProps.trim()
+      ? ` ;
         hydra:supportedProperty
-${inputProps}
+${inputProps}`
+      : ''}
     ] ;
     iep:encrypted false .`;
 }

@@ -30,7 +30,6 @@
     ] ;
     schema:department "People Ops" ;
     foaf:mbox  <mailto:admin@acme-id.interego.xwisee.com> ;
-    pim:storage  <https://gate.interego.xwisee.com/acme/users/admin/> ;
     solid:account  <https://acme-id.interego.xwisee.com/users/admin/> ;
     solid:oidcIssuer  <https://identity.interego.xwisee.com/> ;
     fxd:audienceTag  "all-employees", "managers", "admin" ;

@@ -20,7 +20,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
-import { affordanceToMcpToolSchema } from '../../_shared/affordance-mcp/index.js';
+import { affordanceToMcpToolSchema, affordancesManifestTurtle } from '../../_shared/affordance-mcp/index.js';
+import { Parser } from 'n3';
 
 const ALL = [...foxxiAffordances, ...foxxiAdminAffordances];
 
@@ -61,6 +62,38 @@ describe('every advertised affordance can actually be invoked', () => {
       for (const i of a.inputs ?? []) {
         expect(Object.keys(schema.properties), `${a.toolName}.${i.name}`).toContain(i.name);
       }
+    }
+  });
+
+  it('the published Turtle manifest actually PARSES', () => {
+    // ★ THE ONE A STATUS-CODE CHECK CANNOT MAKE, and it was green over a broken
+    // document for months. /affordances served 198 KB of Turtle in which a single
+    // dangling `hydra:supportedProperty` — emitted for the one affordance with
+    // `inputs: []` — made the ENTIRE graph unparseable. Every smoke test saw 200.
+    // No RDF client could read a single triple.
+    //
+    // It matters more than its size suggests: that document is the redirect target
+    // of every https://relay.interego.xwisee.com/ns/iep/action/foxxi/* action IRI,
+    // so follow-your-nose landed on something no parser would accept.
+    //
+    // Serving RDF is a promise to be parseable. Assert the promise, not the status.
+    const ttl = affordancesManifestTurtle(
+      'https://foxxi-bridge.interego.xwisee.com/affordances',
+      ALL,
+      'https://foxxi-bridge.interego.xwisee.com',
+    );
+    const quads = new Parser().parse(ttl);
+    expect(quads.length).toBeGreaterThan(1000);
+  });
+
+  it('an affordance with NO inputs still emits valid Turtle', () => {
+    // The exact shape that broke it, pinned on its own so a regression names itself
+    // rather than surfacing as "the manifest stopped parsing".
+    const zeroInput = ALL.filter(a => !(a.inputs ?? []).length);
+    for (const a of zeroInput) {
+      const ttl = affordancesManifestTurtle(
+        'https://x.test/affordances', [a], 'https://x.test');
+      expect(() => new Parser().parse(ttl), a.toolName).not.toThrow();
     }
   });
 
