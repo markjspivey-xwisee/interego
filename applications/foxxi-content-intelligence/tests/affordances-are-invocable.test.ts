@@ -116,4 +116,47 @@ describe('every advertised affordance can actually be invoked', () => {
     expect(schema.properties[first]!.type).toBeTruthy();
     expect(schema.properties[first]!.description, `${withRequired!.toolName}.${first}`).toBeTruthy();
   });
+
+  // ── The LRS must be reachable by walking the manifest ────────────────────
+  //
+  // This bridge is a conformant xAPI 2.0 LRS, and the manifest declared none of it.
+  // An agent walking 90 capabilities could not learn that a queryable statement
+  // store existed; it had to read /xapi/about or already know the paths.
+  //
+  // The answer is deliberately ONE affordance rather than twenty. /xapi/statements,
+  // /xapi/activities, /xapi/agents and the three document resources are fixed by the
+  // xAPI specification and identical on every conformant LRS — restating them here
+  // would duplicate a standard this vertical does not own, and the copy would drift
+  // the first time the spec moved. What was missing was the POINTER.
+  it('declares a way to find the LRS without restating the xAPI specification', () => {
+    const door = ALL.find(a => a.targetTemplate.endsWith('/xapi/about'));
+    expect(door, 'no affordance points at the LRS discovery document').toBeTruthy();
+    expect(door!.method).toBe('GET');
+    expect(door!.externallyRouted, 'the route is served by attachXapiLrsRoutes').toBe(true);
+
+    // It has to say where the rest of the surface is, or it is a link to nowhere useful.
+    const d = door!.description;
+    expect(d).toMatch(/\/xapi\/statements/);
+    expect(d, 'a reader must learn how to get credentials, not just where the LRS is')
+      .toMatch(/credential/i);
+
+    // …and the manifest must NOT have grown a copy of the spec's own routes.
+    const rawLrsRoutes = ALL.filter(a => /\{base\}\/xapi\/(statements|activities|agents|state|profile)/.test(a.targetTemplate));
+    expect(rawLrsRoutes.map(a => a.toolName),
+      'spec-defined LRS routes should be reached via the about document, not re-declared').toEqual([]);
+  });
+
+  // Every foxxi.* tool a description points a reader at must exist. A manifest that
+  // cites a capability by a name nothing answers to is the same dangling reference as
+  // a URL that 404s — it just fails later, in the reader's code.
+  it('cross-references in descriptions name tools that exist', () => {
+    const names = new Set(ALL.map(a => a.toolName));
+    const dangling: string[] = [];
+    for (const a of ALL) {
+      for (const m of (a.description ?? '').matchAll(/\bfoxxi\.[a-z0-9_]+/g)) {
+        if (!names.has(m[0])) dangling.push(`${a.toolName} -> ${m[0]}`);
+      }
+    }
+    expect(dangling).toEqual([]);
+  });
 });

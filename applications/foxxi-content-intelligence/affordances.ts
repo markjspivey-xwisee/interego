@@ -22,6 +22,49 @@ import type {
 // ─────────────────────────────────────────────────────────────────────
 
 export const foxxiAffordances: ReadonlyArray<Affordance> = [
+  // ── The door to the LRS ────────────────────────────────────────────────────
+  //
+  // ★ WHY ONE AFFORDANCE AND NOT TWENTY.
+  //
+  // This bridge is a conformant xAPI 2.0 Learning Record Store, but none of its raw
+  // LRS routes were declared here — so an agent walking the manifest found 90
+  // capabilities and no way to learn that a queryable statement store existed at all.
+  // It had to read /xapi/about or already know the paths, which is exactly the
+  // out-of-band knowledge a hypermedia manifest exists to remove.
+  //
+  // The fix is not to declare `/xapi/statements`, `/xapi/activities`,
+  // `/xapi/agents`, the three document resources and the rest individually. Those
+  // routes are not ours to describe: they are fixed by the xAPI specification,
+  // identical on every conformant LRS, and the spec already defines its own discovery
+  // document. Restating them here would duplicate a standard we do not own, and the
+  // copy would drift the first time the spec moved.
+  //
+  // What was genuinely missing is the POINTER — the step from "walking this manifest"
+  // to "knowing there is an LRS and where its own discovery document is". That is one
+  // affordance, and it is this one.
+  {
+    action: 'urn:iep:action:foxxi:discover-lrs' as IRI,
+    toolName: 'foxxi.discover_lrs',
+    title: 'Find the xAPI Learning Record Store this bridge serves',
+    description: 'Dereference the LRS\'s own discovery document (xAPI 2.0 §4.1.6 `about`). Returns the xAPI versions supported plus extensions naming the backend, the tenancy model, the published xAPI Profile, and the IEEE-LER / ADL-TLA spec ontologies. FROM HERE the whole standard LRS surface follows without being restated in this manifest: /xapi/statements (write, query, PUT-by-id, void), /xapi/activities, /xapi/agents, and the Activity State / Activity Profile / Agent Profile document resources — all fixed by the specification rather than by this vertical. Unauthenticated and requires no version header, by design: it is how a client discovers which versions it may then ask for. TO ACTUALLY READ OR WRITE you need Basic credentials scoped to your own lens — mint them yourself with foxxi.credentials (POST /agent/credentials), which is also what an upstream system would use to forward statements in; no admin or operator role is involved. Statements you record through foxxi.record_performance land in that same lens, so course completion and production work are queryable together.',
+    method: 'GET',
+    targetTemplate: '{base}/xapi/about',
+    mediaType: 'application/json',
+    // Served by attachXapiLrsRoutes, not by a vertical-bridge handler.
+    externallyRouted: true,
+    annotations: { title: 'Discover the LRS', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputs: [],
+    appliesTo: { collections: ['profiles'] },
+    outputs: {
+      description: 'The xAPI `about` document: supported versions plus this deployment\'s extensions. Always 200; no authentication.',
+      properties: {
+        version: { type: 'array', description: 'xAPI versions this LRS accepts, newest first.', items: { type: 'string' } },
+        extensions: { type: 'object', description: 'Deployment facts under the foxxi namespace — identity, bridge, pod, statementForwarding, substrateBackend, lrsBackend, multiTenant, and the dereferenceable xapiProfile / ieeeLerOntology / adlTlaOntology IRIs.', additionalProperties: true },
+      },
+      required: ['version'],
+    },
+  },
+
   {
     action: 'urn:iep:action:foxxi:discover-assigned-courses' as IRI,
     toolName: 'foxxi.discover_assigned_courses',
