@@ -95,13 +95,49 @@ check('unavailable tools are NAMED, not silently listed as available',
 check('...each with a reason a reader can act on',
   (root.unavailableTools ?? []).every(u => /pod|wallet/i.test(u.reason)),
   JSON.stringify(root.unavailableTools));
-check('...and none of them appears in the advertised list',
-  (root.unavailableTools ?? []).every(u => !root.tools.includes(u.tool)));
-check('toolCount counts RUNNABLE tools, not the registry',
+// The inverse of what this once asserted, and deliberately so. An unavailable tool
+// DOES appear in the list — it exists — and is ALSO named as unavailable. Omitting
+// it would misreport the surface, and a client that later saw it appear would have
+// no way to explain the change.
+check('...and each unavailable tool still appears in the list, because it EXISTS',
+  (root.unavailableTools ?? []).every(u => root.tools.includes(u.tool)),
+  JSON.stringify((root.unavailableTools ?? []).map(u => u.tool)));
+// ★ THE TOTAL IS THE TOTAL. An earlier revision made toolCount the RUNNABLE count,
+// which hid four tools that genuinely exist and disagreed with tools/list on the
+// same process. Existence and availability are different facts; report both.
+check('toolCount counts every tool that EXISTS',
   root.toolCount === root.tools.length,
   `${root.toolCount} vs ${root.tools.length}`);
+check('...and the runnable count is reported separately',
+  typeof root.runnableCount === 'number' && root.runnableCount < root.toolCount,
+  `runnable ${root.runnableCount} of ${root.toolCount}`);
+check('...and they reconcile: runnable + unavailable === total',
+  root.runnableCount + (root.unavailableTools ?? []).length === root.toolCount,
+  `${root.runnableCount} + ${(root.unavailableTools ?? []).length} !== ${root.toolCount}`);
 check('pod-free tools are still advertised (degradation is partial, not total)',
-  root.tools.length > 10, String(root.tools.length));
+  root.runnableCount > 10, String(root.runnableCount));
+
+// ★ BOTH DOORS MUST TELL THE SAME STORY. A JSON-RPC agent and a hypermedia agent
+// asking about the same process must not get different answers — the drift this
+// whole line of work exists to remove.
+const listed = await (await fetch(`${B}/mcp`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 99, method: 'tools/list', params: {} }),
+})).json();
+const mcpTools = listed?.result?.tools ?? [];
+check('MCP tools/list lists every tool that exists, same as the root document',
+  mcpTools.length === root.toolCount, `${mcpTools.length} vs ${root.toolCount}`);
+const flagged = mcpTools.filter(t => t.annotations?.unavailable);
+check('...and flags exactly the ones the root calls unavailable',
+  flagged.length === (root.unavailableTools ?? []).length,
+  `${flagged.length} vs ${(root.unavailableTools ?? []).length}`);
+check('...naming the same reason, not a second wording of it',
+  flagged.every(t => (root.unavailableTools ?? []).some(
+    u => u.tool === t.name && u.reason === t.annotations.unavailableReason)),
+  JSON.stringify(flagged.map(t => t.name)));
+check('...and a runnable tool carries no unavailable marker',
+  mcpTools.some(t => t.name === 'protocol.zk_commit' && !t.annotations?.unavailable));
 
 // ── Behaviour over the real transport
 const call = async (name, args) => {

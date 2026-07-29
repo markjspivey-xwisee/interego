@@ -776,10 +776,39 @@ app.post('/mcp', async (req: Request, res: Response) => {
     return;
   }
   if (method === 'tools/list') {
+    // ★ LIST EVERY TOOL THAT EXISTS — all of them — AND SAY WHICH CANNOT RUN.
+    //
+    // These are two different facts and both belong here. A tool that is registered
+    // but unconfigured still EXISTS: hiding it would misreport the surface, and a
+    // client that later saw it appear would have no way to explain the change. But
+    // listing it with no warning is how an agent picks it, calls it, and gets a
+    // refusal it could have known about before spending the round trip.
+    //
+    // Previously this listed all 23 flat while the HTTP root reported 19 — the same
+    // capability described two ways depending on which door you came through. The
+    // count is now identical on both surfaces because it is the same number: 23
+    // tools exist. The availability is carried alongside rather than subtracted
+    // from the total.
+    //
+    // The reason rides in the description because MCP has no standard field for
+    // "registered but unavailable", and a description is what a client actually
+    // shows a model when it is choosing.
+    const unavailable = new Map(
+      toolAvailability().unavailable.map(u => [u.tool, u.reason] as const));
     res.json({
       jsonrpc: '2.0', id,
       result: {
-        tools: Object.entries(tools).map(([name, t]) => ({ name, description: t.description, inputSchema: t.inputSchema })),
+        tools: Object.entries(tools).map(([name, t]) => {
+          const reason = unavailable.get(name);
+          return {
+            name,
+            description: reason
+              ? `[UNAVAILABLE: ${reason}] ${t.description}`
+              : t.description,
+            inputSchema: t.inputSchema,
+            ...(reason ? { annotations: { readOnlyHint: true, unavailable: true, unavailableReason: reason } } : {}),
+          };
+        }),
       },
     });
     return;
@@ -857,10 +886,20 @@ app.get('/', (_req, res) => {
     pod: POD_URL_NN,
     agent: AGENT_DID,
     walletAddress: wallet?.address ?? null,
-    // Counts describe what is RUNNABLE. `toolCount` previously counted the
-    // registry, which is not the same number when configuration is partial.
-    toolCount: available.length,
-    tools: available,
+    // ★ COUNT WHAT EXISTS; REPORT SEPARATELY WHAT CAN RUN.
+    //
+    // An earlier revision made toolCount the RUNNABLE count (19). That traded one
+    // wrong number for another: 23 tools genuinely exist, and a surface reporting
+    // 19 hides four of them from anyone reading the total. Worse, it disagreed with
+    // the MCP tools/list on the same process — one capability described two ways
+    // depending on which door you came through.
+    //
+    // So the total is the total, the runnable count is its own field, and the four
+    // that cannot run are named with their reasons. Nothing is hidden and nothing
+    // is overstated. tools/list now carries exactly the same three facts.
+    toolCount: Object.keys(tools).length,
+    tools: Object.keys(tools),
+    runnableCount: available.length,
     // Named, with the reason, so a caller learns the boundary by reading rather
     // than by invoking and getting an error.
     unavailableTools: unavailable,
