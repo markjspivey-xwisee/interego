@@ -26,6 +26,13 @@ RUN printf 'server {\n\
   # pointing at something a reader cannot fetch. Resolve it to the person it\n\
   # identifies: their WebID profile card.\n\
   location ~* ^/users/([^/]+)/$ {\n\
+    # absolute_redirect off is LOAD-BEARING. nginx listens on 8080 behind Railway's\n\
+    # proxy, so by default it builds Location from its OWN scheme/host/port and\n\
+    # emitted http://acme-id.interego.xwisee.com:8080/... — an internal address on\n\
+    # a port nothing outside can reach, which is why a client following the\n\
+    # redirect timed out. Off, nginx emits a RELATIVE Location and the client\n\
+    # resolves it against the URL it actually asked for.\n\
+    absolute_redirect off;\n\
     return 302 /users/$1/profile/card;\n\
   }\n\
 \n\
