@@ -192,6 +192,12 @@ iep:Affordance a owl:Class ;
     rdfs:comment "A capability that a pod or manifest supports. Used for HATEOAS-style agent discovery of what operations are available." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
+iep:AffordanceManifest a owl:Class ;
+    rdfs:label "Affordance Manifest" ;
+    rdfs:comment "A document enumerating the iep:Affordance instances a deployment offers, with the input contract of each. The surface an agent walks to learn what a vertical can do without out-of-band knowledge; served content-negotiated as Turtle or JSON-LD." ;
+    rdfs:subClassOf <http://www.w3.org/ns/hydra/core#ApiDocumentation> ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+
 iep:AuthorizedAgent a owl:Class ;
     rdfs:label "Authorized Agent" ;
     rdfs:comment "An AI agent or software tool authorized to act on behalf of a pod owner via delegation." ;
