@@ -63,3 +63,11 @@ jobs:
       # (fake pod + test seed), so it runs here rather than in the pod-touching suite.
       - name: Guard the public-memory commons isolation invariant + action-identity dual-read
         run: npx vitest run applications/foxxi-content-intelligence/tests/public-memory-commons.test.ts applications/foxxi-content-intelligence/tests/affordances-are-invocable.test.ts tests/action-identity.test.ts tests/competency-identity.test.ts tests/activity-identity.test.ts
+      # A credential is a statement BY an issuer. /agent/prove-competency derived its
+      # BBS+ issuer seed from a caller-supplied issuer_did, so two unrelated holders
+      # naming the same authority got credentials signed by the SAME key — anyone
+      # could mint one that verifies against the key a named authority signs with.
+      # Source-level, so it gates the pull request that would reintroduce it rather
+      # than reporting after deploy.
+      - name: Guard credential issuer binding (the issuer is the signer)
+        run: npx tsx applications/foxxi-content-intelligence/tests/credential-issuer-binding.test.ts

@@ -132,7 +132,9 @@ async function main(): Promise<void> {
   check('C verify-extension consistent (verified:true)', verC.status === 200 && verC.body?.verified === true, `C=${didC.slice(0, 16)}… checks=${JSON.stringify(verC.body?.checks)}`);
 
   console.log('\n[10] BBS+ selective disclosure: B proves competency, hiding score/name/dates');
-  const prove = await postSigned('/agent/prove-competency', B, { issuer_did: didA, competency_name: 'Standards Extension', score: 0.9, proficiency: 'Advanced' });
+  // Self-asserted — see the route comment: the bridge will not issue as a party
+  // that did not sign. score/proficiency are no longer request inputs.
+  const prove = await postSigned('/agent/prove-competency', B, { competency_name: 'Standards Extension' });
   check('prove-competency derived presentation', prove.status === 200 && !!prove.body?.presentation, `revealed=${(prove.body?.revealed ?? []).length} hidden=${(prove.body?.hiddenPaths ?? []).length}`);
   const revealedStr = JSON.stringify(prove.body?.revealed ?? []);
   const hiddenStr = JSON.stringify(prove.body?.hiddenPaths ?? []);

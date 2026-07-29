@@ -145,7 +145,8 @@ async function main(): Promise<void> {
   emit('C', 'verify', `independent consistency confirmation — ${verC.body?.verified ? 'CONSISTENT' : 'MISMATCH'}`,
     `Agent C (no prior relationship to A or B) re-read B's OWN pod and re-ran the verification. This confirms B's evidence is durable + consistent across an independent read — it does NOT re-judge A's course design.`, verC.body);
 
-  const prove = await postSigned('/agent/prove-competency', B, { issuer_did: didA, competency_name: 'Standards Extension', score: 0.9, proficiency: 'Advanced' });
+  // Self-asserted — the bridge issues only as the signer.
+  const prove = await postSigned('/agent/prove-competency', B, { competency_name: 'Standards Extension' });
   authEv('B', B.address, 'prove_competency', prove.status, prove.ok);
   emit('B', 'credential', 'selective-disclosure proof derived (BBS+)', `revealed ${prove.body?.revealed?.length ?? 0} claim(s); ${prove.body?.hiddenPaths?.length ?? 0} cryptographically hidden`, prove.body);
   if (prove.body?.presentation) {

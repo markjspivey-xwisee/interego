@@ -4566,7 +4566,6 @@ app.post('/agent/verify-extension', async (req, res) => {
 // Real W3C bbs-2023 crypto (src/bbs-credentials.ts) — no LMS can do this.
 const b64e = (u: Uint8Array): string => Buffer.from(u).toString('base64');
 const b64d = (s: unknown): Uint8Array => new Uint8Array(Buffer.from(String(s ?? ''), 'base64'));
-const PROFICIENCY = new Set(['Novice', 'Beginner', 'Intermediate', 'Advanced', 'Expert']);
 
 app.post('/agent/prove-competency', async (req, res) => {
   try {
@@ -4575,11 +4574,51 @@ app.post('/agent/prove-competency', async (req, res) => {
     if (!issuerKeySeed) { res.status(503).json({ error: 'issuance not configured (FOXXI_ISSUER_KEY_SEED unset)' }); return; }
     const p = auth.payload;
     const holderDid = auth.callerDid;
-    const issuerDid = typeof p.issuer_did === 'string' ? p.issuer_did.trim() : '';
+    // ★ THE ISSUER IS THE AUTHENTICATED CALLER — NEVER A REQUEST PARAMETER.
+    //
+    // This route used to derive the BBS+ issuer seed from a caller-supplied
+    // `issuer_did`. Confirmed against the deployed bridge before this change:
+    //
+    //   1. A wallet minted seconds earlier, with an empty learning record, obtained
+    //      a credential asserting Expert proficiency in a competency it had never
+    //      demonstrated — and /agent/verify-presentation returned verified: true.
+    //   2. Two UNRELATED holders both naming issuer_did =
+    //      did:web:acme-id.interego.xwisee.com received credentials signed by the
+    //      SAME derived key. So anyone could mint a credential that verifies against
+    //      the key a named authority's credentials are signed with. A verifier doing
+    //      the right thing — pinning the issuer key — would accept the forgery.
+    //
+    // The sibling surface (handlers['foxxi.prove_competency']) was already hardened
+    // against the claim half of this; its comment reads "the old default
+    // 'Intermediate' let an agent claim any proficiency". The hardening landed on one
+    // of the two surfaces, and the affordance manifest pointed at this one. Same
+    // lesson as the ssrf-guard / turtle-escape rounds: fix the CLASS across every
+    // instance, or the next report is a sibling of the last fix.
+    //
+    // A holder signing a request can legitimately assert ONE thing: something about
+    // themselves. So the issuer is bound to the authenticated caller and the result
+    // is labelled self-asserted. Third-party issuance needs the ISSUER's signature,
+    // which this route never collected — foxxi.issue_credential is that flow.
+    const namedIssuer = typeof p.issuer_did === 'string' ? p.issuer_did.trim() : '';
+    if (namedIssuer && namedIssuer !== holderDid) {
+      res.status(403).json({
+        error: 'issuer_did may not name a party other than the authenticated signer',
+        detail: `you signed as ${holderDid} but asked the bridge to issue as ${namedIssuer}. A credential is a statement BY an issuer; minting one under another party's issuer key is forgery, and this route only ever collected the holder's signature.`,
+        remedy: 'Omit issuer_did to self-assert (trustLevel SelfAsserted), or have the issuer drive foxxi.issue_credential with their own signature. To prove a competency grounded in your actual record, use foxxi.prove_competency.',
+      });
+      return;
+    }
+    const issuerDid = holderDid;
     const competencyName = (typeof p.competency_name === 'string' && p.competency_name.trim()) ? p.competency_name.trim() : '';
-    if (!issuerDid || !competencyName) { res.status(400).json({ error: 'issuer_did + competency_name required' }); return; }
-    const score = typeof p.score === 'number' ? p.score : 0.9;
-    const proficiency = (typeof p.proficiency === 'string' && PROFICIENCY.has(p.proficiency)) ? p.proficiency as 'Advanced' : 'Advanced';
+    if (!competencyName) { res.status(400).json({ error: 'competency_name required' }); return; }
+    // Neither score nor proficiency is a request input. A holder asserting their own
+    // proficiency and having the bridge sign it is the unearned-credential half of
+    // the same defect: the wallet that claimed Expert "Neurosurgical Anastomosis"
+    // supplied both values itself. A self-assertion is allowed to exist, but it may
+    // not carry a level it did not earn, so it is pinned to the floor of the scale.
+    // Anything above the floor has to come from a record — foxxi.prove_competency.
+    const score = 0;
+    const proficiency: 'Novice' = 'Novice';
     const courseId = competencyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     const competencyId = competencyIri(courseId);   // the alignment targetCode — a dereferenceable URL
     // The issuer is the credentialing authority — its per-creator BBS+ seed (same
@@ -4596,6 +4635,13 @@ app.post('/agent/prove-competency', async (req, res) => {
     res.json({
       ok: true, holder: holderDid, issuerDid: issued.issuerDid, credentialId: issued.credential.id,
       totalClaims: issued.claimIndex.length, revealed, hiddenPaths,
+      // The holder is the issuer here, and the claims came from the request rather
+      // than from a learning record. Both facts travel WITH the credential, so a
+      // relying party can weigh it without having to know this route's history.
+      selfIssued: true,
+      trustLevel: 'SelfAsserted',
+      claimsGroundedInRecord: false,
+      groundedAlternative: 'foxxi.prove_competency — derives proficiency from the holder\'s assembled learner record and refuses a competency that was never demonstrated',
       // Serialized presentation for the verifier (binary BBS+ fields base64-encoded).
       presentation: {
         proof: b64e(pres.proof),
@@ -4604,7 +4650,7 @@ app.post('/agent/prove-competency', async (req, res) => {
         issuerPublicKey: b64e(pres.issuerPublicKey),
         issuerDid: pres.issuerDid,
       },
-      note: 'BBS+ selective disclosure (W3C bbs-2023): the holder proves ONLY the revealed claims; the hidden fields (score, dates, name, id) are cryptographically withheld. A verifier confirms the issuer signed exactly the disclosed claims without learning the rest.',
+      note: 'BBS+ selective disclosure (W3C bbs-2023): the holder proves ONLY the revealed claims; the hidden fields (score, dates, name, id) are cryptographically withheld. A verifier confirms the issuer signed exactly the disclosed claims without learning the rest. NOTE the scope of that guarantee — it is about DISCLOSURE, not about merit: this credential is self-issued from claims supplied in the request, so a verifying proof means "the holder said this and cannot have altered it since", not "an authority attests it". Use foxxi.prove_competency for a proof grounded in the holder\'s actual record.',
     });
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
@@ -4621,6 +4667,15 @@ app.post('/agent/verify-presentation', async (req, res) => {
       disclosedMessages: (Array.isArray(pr.disclosedMessages) ? pr.disclosedMessages : []).map((d: any) => ({ index: d.index, message: b64d(d.message), displayValue: d.displayValue })),
       issuerPublicKey: b64d(pr.issuerPublicKey),
       issuerDid: String(pr.issuerDid ?? ''),
+      // A presentation derived with a context is BOUND to that context: the string
+      // is hashed into the proof, which is what stops a proof shown to one verifier
+      // being replayed at another. Verification therefore has to reconstruct the
+      // same header. This route used to drop it, so every context-bound proof — the
+      // only kind worth binding — failed here with a bare "proof did not verify",
+      // pointing the blame at the crypto instead of at the missing field.
+      ...(pr.presentationContext
+        ? { presentationHeader: new TextEncoder().encode(String(pr.presentationContext)) }
+        : {}),
     };
     const result = await verifyCompletionPresentation({ presentation });
     res.json({
