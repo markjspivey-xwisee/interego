@@ -1207,6 +1207,40 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
 
 // ── Handlers ───────────────────────────────────────────────────────────
 
+/**
+ * A capability that is declared but not implemented must SAY SO in its result.
+ *
+ * ★ Five handlers returned a success-shaped body for work they never did:
+ *
+ *     foxxi.explore_concept_map        -> { concepts: [], edges: [], note: 'stub: …' }
+ *     foxxi.consume_lesson             -> { consumed: false, note: 'stub: …' }
+ *     foxxi.connect_lms                -> { note: 'stub: …' }
+ *     foxxi.publish_concept_map        -> { note: 'stub: …' }
+ *     foxxi.publish_compliance_evidence-> { note: 'stub: …' }
+ *
+ * All HTTP 200, none with an `error`. A caller checking for failure the normal way
+ * saw success. `explore_concept_map` was probed live in four configurations —
+ * unauthenticated, signed, with a real ingested course, and by course_id — and
+ * returned the identical empty graph every time; a consumer would read that as "this
+ * course has no concepts" rather than "this endpoint does nothing".
+ *
+ * The two `publish_*` names are the sharp end: a caller has every reason to believe a
+ * write happened, and for publish_compliance_evidence that belief is exactly the kind
+ * an audit later rests on.
+ *
+ * Same rule as the refused-statement fix: do not report success for something that
+ * did not happen. These stay declared — the affordance is real future work and the
+ * manifest says what is coming — but they answer honestly, and `implemented: false`
+ * gives a caller something to branch on rather than a shape to misread.
+ */
+function notImplemented(tool: string, detail: string): Record<string, unknown> {
+  return {
+    error: `${tool} is declared but not implemented — nothing was read, written or emitted`,
+    implemented: false,
+    detail,
+  };
+}
+
 const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   // ── Emergent standards-extension (agp layer re-integrated) ──────────
   // Afforded by the agentic-performance layer composing Foxxi's standards;
@@ -1262,7 +1296,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.consume_lesson': async (args) => {
     // Real implementation streams the parsed lesson + emits xAPI via lrs-adapter.
-    return { consumed: false, note: 'stub: bridge handler not yet wired; compose with applications/lrs-adapter/' };
+    return notImplemented('foxxi.consume_lesson', 'Wiring composes applications/lrs-adapter/ to stream the parsed lesson and emit xAPI.');
   },
 
   'foxxi.ask_course_question': async (args) => {
@@ -1378,7 +1412,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   'foxxi.explore_concept_map': async (args) => {
     // Real implementation fetches fxk: descriptors + builds nav graph.
-    return { concepts: [], edges: [], note: 'stub: bridge handler not yet wired; pulls the published concept map artifact' };
+    // NOTE the previous shape: an empty concepts/edges pair reads as 'this course has
+    // no concept map', which is a different and wrong answer.
+    return notImplemented('foxxi.explore_concept_map', 'Wiring pulls the published fxk: concept-map descriptors and builds the navigation graph.');
   },
 
   // ── Admin-side ───────────────────────────────────────────────────────
@@ -1446,7 +1482,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   'foxxi.connect_lms': async (args) => {
     // Skeleton: composes with src/connectors/ in the real wiring.
     void args;
-    return { note: 'stub: bridge handler not yet wired to src/connectors/ — affordance is discoverable' };
+    return notImplemented('foxxi.connect_lms', 'Wiring composes src/connectors/ for the upstream LMS.');
   },
 
   'foxxi.assign_audience': async (args) => {
@@ -1521,13 +1557,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   'foxxi.publish_concept_map': async (args) => {
     // Skeleton: would re-publish the fxk: stratum graph with explicit share_with.
     void args;
-    return { note: 'stub: bridge handler not yet wired to re-publish the fxk stratum with share_with' };
+    return notImplemented('foxxi.publish_concept_map', 'Wiring re-publishes the fxk: stratum graph with an explicit share_with. NOTHING WAS PUBLISHED.');
   },
 
   'foxxi.publish_compliance_evidence': async (args) => {
     // Skeleton: composes with integrations/compliance-overlay/ + src/ops/.
     void args;
-    return { note: 'stub: bridge handler not yet wired to compliance-overlay — wire via recordAgentAction' };
+    return notImplemented('foxxi.publish_compliance_evidence', 'Wiring composes integrations/compliance-overlay/ via recordAgentAction. NO COMPLIANCE EVIDENCE WAS RECORDED — do not treat a call to this as an audit artifact.');
   },
 
   // ── Credentialing (ADL TLA / IEEE LERS / 1EdTech CLR 2.0) ────────────
