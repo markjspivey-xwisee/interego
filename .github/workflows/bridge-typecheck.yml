@@ -76,3 +76,9 @@ jobs:
       # so the refusal was invisible and the credential's evidence pointer 404'd.
       - name: Guard evidence pointers (a record may not cite what a verifier cannot fetch)
         run: npx tsx applications/foxxi-content-intelligence/tests/evidence-pointers-resolve.test.ts
+      # The `more` IRL is opaque to the client, so the query context has to live in the
+      # token. It carried only {offset, ts}, so following a continuation re-ran an
+      # UNFILTERED query with the offset applied — page 2 held rows the filter excluded
+      # and rows page 1 had already returned.
+      - name: Guard xAPI pagination (a continuation resumes the same query)
+        run: npx tsx applications/foxxi-content-intelligence/tests/statement-pagination.test.ts

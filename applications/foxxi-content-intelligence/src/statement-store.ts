@@ -100,24 +100,108 @@ export function matchesFilter(rec: StoredStatement, f: QueryFilter): boolean {
   return true;
 }
 
-export function paginate(arr: StoredStatement[], filter: QueryFilter): QueryResult {
-  const ascending = !!filter.ascending;
-  arr.sort((a, b) => ascending ? a.stored.localeCompare(b.stored) : b.stored.localeCompare(a.stored));
-  const limit = Math.min(filter.limit ?? 100, 500);
+/** The query context a continuation token carries forward, so page N applies the
+ *  same filter as page 1. `statementId`/`voidedStatementId` are excluded: those
+ *  return a single statement and never paginate. */
+export type CursorQuery = Pick<QueryFilter,
+  'agent' | 'verb' | 'activity' | 'registration' | 'since' | 'until' | 'ascending' | 'limit'>;
 
-  let offset = 0;
-  if (filter.cursor) {
-    try {
-      const decoded = Buffer.from(filter.cursor, 'base64url').toString('utf8');
-      const parsed = JSON.parse(decoded) as { offset: number };
-      if (typeof parsed.offset === 'number') offset = parsed.offset;
-    } catch { /* ignore bad cursor */ }
+export interface DecodedCursor { offset: number; ts?: number; q?: CursorQuery }
+
+/** Read a continuation token. Returns null for anything unparseable — a bad token
+ *  must not silently degrade into "page 1 of everything". */
+export function decodeCursor(token: string | undefined): DecodedCursor | null {
+  if (!token) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(token, 'base64url').toString('utf8')) as DecodedCursor;
+    return typeof parsed?.offset === 'number' ? parsed : null;
+  } catch { return null; }
+}
+
+export function encodeCursor(c: DecodedCursor): string {
+  return Buffer.from(JSON.stringify(c), 'utf8').toString('base64url');
+}
+
+/** The filter fields a token carries. Undefined entries are dropped so the token
+ *  stays small and round-trips to an equivalent filter. */
+export function cursorQueryOf(f: QueryFilter): CursorQuery {
+  const q: CursorQuery = {};
+  if (f.agent !== undefined) q.agent = f.agent;
+  if (f.verb !== undefined) q.verb = f.verb;
+  if (f.activity !== undefined) q.activity = f.activity;
+  if (f.registration !== undefined) q.registration = f.registration;
+  if (f.since !== undefined) q.since = f.since;
+  if (f.until !== undefined) q.until = f.until;
+  if (f.ascending !== undefined) q.ascending = f.ascending;
+  if (f.limit !== undefined) q.limit = f.limit;
+  return q;
+}
+
+/**
+ * Page a filtered, sorted result set and mint the continuation token for the next
+ * page.
+ *
+ * ★ THE TOKEN CARRIES THE QUERY. It used to carry only `{offset, ts}`, and the
+ * `more` IRL was built as `/xapi/statements?continuationToken=<tok>` with the
+ * original parameters dropped. Following it therefore re-ran an UNFILTERED query
+ * and applied the offset to that, so page 2 was a different — broader — result set.
+ * Reproduced live before this change: a 3-statement `?activity=ALPHA&limit=2` query
+ * returned page 1 correctly, then page 2 contained a BETA statement the filter
+ * excludes plus both of page 1's statements again.
+ *
+ * xAPI requires the `more` IRL to return the next results of THE SAME query, and
+ * treats it as opaque to the client — so the query context belongs inside the
+ * token, not in parameters a caller has to remember to resend.
+ *
+ * ★ AND `ts` NOW DOES SOMETHING. It was written into every token and never read.
+ * Offset paging over a store that is still accepting writes is unstable: statements
+ * arriving between pages shift every later offset, so rows repeat or get skipped.
+ * Pinning the page to statements stored at or before the token's timestamp makes a
+ * continuation a view of the result set as it stood when paging began.
+ */
+/** Newest `stored` in a result set, as epoch ms — the horizon a page sequence pins to. */
+function horizonOf(rows: readonly StoredStatement[]): number {
+  let max = 0;
+  for (const r of rows) {
+    const t = Date.parse(r.stored);
+    if (Number.isFinite(t) && t > max) max = t;
+  }
+  return max || Date.now();
+}
+
+export function paginate(arr: StoredStatement[], filter: QueryFilter): QueryResult {
+  const cursor = decodeCursor(filter.cursor);
+
+  // Pin to the horizon the token was minted at, so later writes cannot shift the
+  // offsets of a page sequence already in progress.
+  let rows = arr;
+  if (cursor?.ts) {
+    const horizon = new Date(cursor.ts).toISOString();
+    rows = rows.filter(r => r.stored <= horizon);
   }
 
-  const page = arr.slice(offset, offset + limit);
+  const ascending = !!filter.ascending;
+  rows = [...rows].sort((a, b) => ascending ? a.stored.localeCompare(b.stored) : b.stored.localeCompare(a.stored));
+  const limit = Math.min(filter.limit ?? 100, 500);
+  const offset = cursor?.offset ?? 0;
+
+  const page = rows.slice(offset, offset + limit);
   const nextOffset = offset + page.length;
-  const more = nextOffset < arr.length
-    ? Buffer.from(JSON.stringify({ offset: nextOffset, ts: Date.now() }), 'utf8').toString('base64url')
+  const more = nextOffset < rows.length
+    ? encodeCursor({
+        offset: nextOffset,
+        // Keep the ORIGINAL horizon across the whole sequence; re-stamping it each
+        // page would let writes leak in partway through and reintroduce the drift.
+        //
+        // The horizon comes from the DATA — the newest row in the result set as it
+        // stands right now — not from the wall clock. Clock-based pinning only works
+        // while `stored` tracks real time, so it silently does nothing for imported
+        // or backdated statements, and nothing at all under a clock skew. The newest
+        // row is the honest definition of "the result set as it stood when paging
+        // began", whatever the timestamps mean.
+        ts: cursor?.ts ?? horizonOf(rows),
+        q: cursorQueryOf(filter),
+      })
     : null;
   return { statements: page, more };
 }

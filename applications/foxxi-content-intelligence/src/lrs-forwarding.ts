@@ -330,14 +330,37 @@ export function exportForwardingConfig(tenant: TenantId): ForwardingConfigBlob {
   return { targets, credentials: inboundCredentials.exportForTenant(tenant), updatedAt: new Date().toISOString() };
 }
 
-/** Replace a tenant's in-memory targets + inbound credentials from a decrypted blob (ids/createdAt preserved). */
+/**
+ * Replace a tenant's in-memory targets + inbound credentials from a decrypted blob
+ * (ids/createdAt preserved).
+ *
+ * ★ DELIVERY METRICS AND THE DEAD-LETTER QUEUE SURVIVE THE IMPORT.
+ *
+ * This used to rebuild every target with `freshMetrics()` and an empty dead-letter
+ * queue. The persisted blob deliberately carries neither — they are runtime
+ * observations, not configuration — so re-importing config silently erased them.
+ *
+ * That mattered because the bridge hydrates on EVERY read of
+ * `/agent/forwarding/targets`: the act of looking at the metrics is what reset them.
+ * Confirmed live — `delivered` read 0 immediately after a delivery independently
+ * proven to have succeeded, so the panel reported "nothing has ever been delivered"
+ * about a working pipeline. An operator watching that would conclude forwarding was
+ * broken and start debugging a system that was fine, or miss a genuine outage
+ * because the failure counter is equally always zero.
+ *
+ * Carry the observations across by id. A target the blob no longer lists still goes
+ * away — this is a replace, not a merge — but one that persists keeps its history.
+ */
 export function importForwardingConfig(tenant: TenantId, blob: ForwardingConfigBlob): void {
   const map = targetsByTenant.for(tenant);
+  const prior = new Map([...map.entries()].map(([id, st]) => [id, st]));
   map.clear();
   for (const t of blob.targets ?? []) {
+    const was = prior.get(t.id);
     map.set(t.id, {
       target: { id: t.id, label: t.label, endpoint: t.endpoint, credentials: t.credentials, version: t.version, enabled: t.enabled, createdAt: t.createdAt },
-      metrics: freshMetrics(), deadLetter: [],
+      metrics: was ? was.metrics : freshMetrics(),
+      deadLetter: was ? was.deadLetter : [],
     });
   }
   for (const c of blob.credentials ?? []) inboundCredentials.importRaw(c);

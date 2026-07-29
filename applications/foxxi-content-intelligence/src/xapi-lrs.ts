@@ -50,7 +50,7 @@
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import { randomUUID, createHash } from 'node:crypto';
 import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adapter/src/pod-publisher.js';
-import { createStatementStore, ConflictError, matchesFilter, type StatementStore, type StoredStatement } from './statement-store.js';
+import { createStatementStore, ConflictError, matchesFilter, decodeCursor, type StatementStore, type StoredStatement } from './statement-store.js';
 import { validateStatement, validateAgentObject } from './xapi-validate.js';
 import { TenantPartition, DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import {
@@ -1067,16 +1067,34 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
     catch { res.status(400).json({ error: 'agent filter must be a JSON-encoded Agent object (§4.2)' }); return; }
   }
 
+  const cursorToken = (req.query.continuationToken as string | undefined) ?? (req.query.cursor as string | undefined);
+
+  // ★ A CONTINUATION RESUMES THE ORIGINAL QUERY, NOT A NEW ONE.
+  //
+  // The `more` IRL this LRS mints is `/xapi/statements?continuationToken=<tok>` and
+  // carries no other parameters — correctly, since xAPI treats it as opaque to the
+  // client. But the filter used to be rebuilt from req.query alone, so following the
+  // link ran an UNFILTERED query and applied the offset to that. Reproduced live:
+  // `?activity=ALPHA&limit=2` returned page 1 correctly, then page 2 held a BETA
+  // statement the filter excludes plus both of page 1's statements again.
+  //
+  // The token now carries the query, so restore from it. The token wins over any
+  // parameters a caller appends: the LRS minted it, the LRS defines what it means,
+  // and letting a caller half-override it would produce a page sequence that is
+  // neither the original query nor a coherent new one.
+  const resumed = decodeCursor(cursorToken)?.q;
   const filter = {
-    agent,
-    verb: req.query.verb as string | undefined,
-    activity: req.query.activity as string | undefined,
-    registration: req.query.registration as string | undefined,
-    since: req.query.since as string | undefined,
-    until: req.query.until as string | undefined,
-    ascending: (req.query.ascending as string | undefined) === 'true',
-    limit: limitRaw !== undefined ? Number(limitRaw) : 100,
-    cursor: (req.query.continuationToken as string | undefined) ?? (req.query.cursor as string | undefined),
+    agent: resumed ? resumed.agent : agent,
+    verb: resumed ? resumed.verb : (req.query.verb as string | undefined),
+    activity: resumed ? resumed.activity : (req.query.activity as string | undefined),
+    registration: resumed ? resumed.registration : (req.query.registration as string | undefined),
+    since: resumed ? resumed.since : (req.query.since as string | undefined),
+    until: resumed ? resumed.until : (req.query.until as string | undefined),
+    ascending: resumed ? !!resumed.ascending : (req.query.ascending as string | undefined) === 'true',
+    limit: resumed
+      ? (resumed.limit ?? 100)
+      : (limitRaw !== undefined ? Number(limitRaw) : 100),
+    cursor: cursorToken,
   };
   const result = await store.query(filter);
 
