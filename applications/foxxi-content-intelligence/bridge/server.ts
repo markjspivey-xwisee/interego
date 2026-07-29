@@ -1241,6 +1241,46 @@ function notImplemented(tool: string, detail: string): Record<string, unknown> {
   };
 }
 
+/**
+ * What KIND of subject is this — decided by the subject, never by the reader.
+ *
+ * ★ Agent capability records are public (an agent is infrastructure you must be able
+ * to audit); human learner records are private. Three separate routes chose between
+ * those regimes from a REQUEST field:
+ *
+ *     ((p.actor_kind === 'agent') && /^did:(ethr|web|key|pkh):/.test(subjectDid))
+ *
+ * so the caller picked which rule applied to somebody else. Confirmed live between
+ * two unrelated self-sovereign identities, neither an admin:
+ *
+ *     actor_kind: 'human'  ->  REFUSED
+ *     actor_kind: 'agent'  ->  READ: n=5, task names disclosed
+ *
+ * The comment defending it said a human learner is a "directory WebId" and so cannot
+ * be passed off as a wallet DID. True for the legacy directory tenant; false for the
+ * primary case, because a SELF-SOVEREIGN human's identity IS a did:ethr:. The guard
+ * protected the rare shape and left the common one open — the same class as the
+ * credential-forgery fix, where a caller-supplied field decided an authority outcome
+ * about someone else.
+ *
+ * A subject already declares what it is, in its own signed statements: record_performance
+ * writes PERF_EXT.actorKind from the performer's own authenticated call. That is the
+ * only declaration that should count.
+ *
+ * FAILS CLOSED. 'agent' requires the subject's own evidence to say agent and none of
+ * it to say human. No evidence at all is 'human' — an unknown DID's record is not
+ * public by default.
+ */
+function subjectKindFromOwnEvidence(statements: ReadonlyArray<{ statement?: Record<string, unknown> }>): 'human' | 'agent' {
+  const declared = new Set<string>();
+  for (const s of statements) {
+    const ext = (s.statement?.context as { extensions?: Record<string, unknown> } | undefined)?.extensions;
+    const k = ext?.[PERF_EXT.actorKind];
+    if (typeof k === 'string') declared.add(k);
+  }
+  return declared.has('agent') && !declared.has('human') ? 'agent' : 'human';
+}
+
 const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   // ── Emergent standards-extension (agp layer re-integrated) ──────────
   // Afforded by the agentic-performance layer composing Foxxi's standards;
@@ -1635,18 +1675,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
     const requestedLearnerDid = (args.learner_did as string) || ctx.webId;
-    // Fail-closed classification: 'agent' (public) ONLY for an explicit wallet-DID subject;
-    // a human learner (directory WebId) can never be downgraded to the public path by a
-    // forged actor_kind='agent'. Otherwise the human-privacy gate below is bypassable.
-    const subjectKind: 'human' | 'agent' =
-      ((args.actor_kind as string) === 'agent' && /^did:(ethr|web|key|pkh):/.test(requestedLearnerDid)) ? 'agent' : 'human';
-    // Human records are private (self/admin only). Agent capability
-    // records are discoverable — like the public agent registry — so any
-    // authenticated caller may assemble one.
-    if (subjectKind === 'human' && ctx.role !== 'admin' && requestedLearnerDid !== ctx.webId) {
-      const trace = emitAccessDecision({ ctx, tool: 'foxxi.assemble_learner_record', decision: 'deny', appliedPolicies: ['learner-self'] });
-      return { error: 'forbidden — non-admins can only assemble their own human learner record', accessDecision: trace };
-    }
+    const isSelf = requestedLearnerDid === ctx.webId;
     // VIRTUALIZE over the SUBJECT'S OWN pod — Foxxi is a lens, not a store. Read
     // the subject's self-sovereign pod (wallet/credentials, via exportClr inside
     // assembleEnterpriseLearnerRecord) and their OWN derived LRS view
@@ -1666,6 +1695,50 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
     const learnerStatements = mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements);
+
+    // ★ THE SUBJECT DECIDES WHAT THE SUBJECT IS — NOT THE READER.
+    //
+    // subjectKind used to come from the REQUEST: `actor_kind === 'agent'` plus a
+    // wallet-DID subject. Agent capability records are public (they are
+    // infrastructure) and human records are private, so the caller was choosing
+    // which rule applied to someone else. Confirmed live, two unrelated
+    // self-sovereign identities, neither an admin:
+    //
+    //   actor_kind: 'human'  ->  REFUSED
+    //   actor_kind: 'agent'  ->  READ: n=5, task names disclosed
+    //
+    // The old comment claimed this was fail-closed because a human learner is a
+    // "directory WebId" that cannot be passed off as a wallet DID. That holds for the
+    // legacy directory tenant and misses the primary case: a SELF-SOVEREIGN human's
+    // identity IS a did:ethr:, which is the identity model everything else here uses.
+    // So the guard protected the rare shape and left the common one open. Same class
+    // as the credential-forgery fix — a caller-supplied field deciding an authority
+    // outcome about someone else.
+    //
+    // The subject already declares what it is, in its own signed statements
+    // (PERF_EXT.actorKind, written at record_performance time from the performer's
+    // own authenticated call). Read that instead. Fail closed: 'agent' only when the
+    // subject's own evidence says agent and none of it says human — no evidence at
+    // all means private, because an unknown DID's record is not public by default.
+    const subjectDeclaresAgent = subjectKindFromOwnEvidence(learnerStatements) === 'agent';
+    const subjectKind: 'human' | 'agent' = isSelf
+      // For your own record the hint is harmless — it is your own data either way.
+      ? ((args.actor_kind as string) === 'agent' ? 'agent' : 'human')
+      : (subjectDeclaresAgent ? 'agent' : 'human');
+
+    // Human records are private (self/admin only). Agent capability records are
+    // discoverable, like a public registry. The gate runs AFTER the read because
+    // classifying the subject requires the subject's own evidence — nothing is
+    // returned to an unauthorized caller.
+    if (subjectKind === 'human' && ctx.role !== 'admin' && !isSelf) {
+      const trace = emitAccessDecision({ ctx, tool: 'foxxi.assemble_learner_record', decision: 'deny', appliedPolicies: ['learner-self'] });
+      return {
+        error: 'forbidden — non-admins can only assemble their own human learner record',
+        detail: 'classification comes from the subject own signed statements, not from actor_kind on the request; with no evidence declaring it an agent, a record stays private',
+        accessDecision: trace,
+      };
+    }
+
     const elr = await assembleEnterpriseLearnerRecord({
       learnerDid: requestedLearnerDid,
       learnerName: args.learner_name as string | undefined,
@@ -4248,17 +4321,9 @@ app.post('/agent/review-record', async (req, res) => {
     // WALLET DID (did:ethr/web/key/pkh) — a human learner is a directory WebId, so it can never
     // be downgraded to the public 'agent' path by an omitted/forged actor_kind. (The prior
     // `=== 'human' ? 'human' : 'agent'` defaulted to the PUBLIC class — fail-open PII disclosure.)
-    const subjectKind: 'human' | 'agent' =
-      ((p.actor_kind as string) === 'agent' && /^did:(ethr|web|key|pkh):/.test(subjectDid)) ? 'agent' : 'human';
-    // PII gate — matches the MCP foxxi.assemble_learner_record twin: a HUMAN learner's full
-    // ELR + exported CLR (credentials, competencies, performance) is private, so a signed
-    // caller may review a human record ONLY when it is their OWN. Without this the delegated
-    // path disclosed any human subject's record to any signed wallet. Agent capability
-    // records stay discoverable (public), as in the twin.
-    if (subjectKind === 'human' && !isSelf) {
-      res.status(403).json({ error: 'forbidden — a human learner record is private; you may only review your own (set subject_did to your own DID). Agent capability records are public.' });
-      return;
-    }
+    // subjectKind is derived from the SUBJECT own evidence, below, once the
+    // statements have been read — never from p.actor_kind. See
+    // subjectKindFromOwnEvidence for why the request field cannot be trusted here.
     // Union the in-memory lens with the subject's durable on-pod records (deduped
     // by id) — the pod is the system of record, the lens just a derived view.
     // Foundation-first: PGSL is the canonical read source. `source:'pgsl'` reads
@@ -4272,6 +4337,20 @@ app.post('/agent/review-record', async (req, res) => {
       ? latticeStmts
       : mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements);
     const statementSource = p.source === 'pgsl' ? 'pgsl-lattice-only' : 'pgsl-lattice+lens+durable-rdf-fallback';
+
+    // PII gate — a HUMAN learner full ELR + exported CLR (credentials, competencies,
+    // performance) is private, so a signed caller may review a human record ONLY when it
+    // is their OWN. Agent capability records stay discoverable. The classification comes
+    // from the subject own signed statements: reading it off p.actor_kind let any signed
+    // wallet declare a human to be an agent and take the public path.
+    const subjectKind: 'human' | 'agent' = isSelf ? 'human' : subjectKindFromOwnEvidence(statements);
+    if (subjectKind === 'human' && !isSelf) {
+      res.status(403).json({
+        error: 'forbidden — a human learner record is private; you may only review your own (set subject_did to your own DID). Agent capability records are public.',
+        detail: 'classification comes from the subject own signed statements, not from actor_kind on the request',
+      });
+      return;
+    }
     const elr = await assembleEnterpriseLearnerRecord({
       learnerDid: subjectDid,
       learnerName: typeof p.subject_name === 'string' ? p.subject_name : undefined,
@@ -4543,16 +4622,24 @@ app.post('/agent/verify-extension', async (req, res) => {
     // the subject is a wallet DID. Without this the delegated path (any signed wallet, no
     // directory membership) disclosed any subject's score + xAPI evidence to any caller.
     const isSelf = subjectDid === auth.callerDid;
-    const subjectKind: 'human' | 'agent' =
-      ((p.actor_kind as string) === 'agent' && /^did:(ethr|web|key|pkh):/.test(subjectDid)) ? 'agent' : 'human';
-    if (subjectKind === 'human' && !isSelf) {
-      res.status(403).json({ error: 'forbidden — a human learner record is private; you may only verify your own (set subject_did to your own DID). Agent capability records are public.' });
-      return;
-    }
+    // subjectKind is derived from the SUBJECT own evidence, below, once the
+    // statements have been read — never from p.actor_kind. See
+    // subjectKindFromOwnEvidence for why the request field cannot be trusted here.
     await ensureResident(subjectPodUrl, subjectDid, subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
     const statements = mergeStatementsById([...latticeStatements(subjectLabel), ...lensStatements], durableStatements);
+
+    // Same gate, same reason as /agent/review-record: the subject own statements decide
+    // whether this record is public, not a field the caller supplies.
+    const subjectKind: 'human' | 'agent' = isSelf ? 'human' : subjectKindFromOwnEvidence(statements);
+    if (subjectKind === 'human' && !isSelf) {
+      res.status(403).json({
+        error: 'forbidden — a human learner record is private; you may only verify your own (set subject_did to your own DID). Agent capability records are public.',
+        detail: 'classification comes from the subject own signed statements, not from actor_kind on the request',
+      });
+      return;
+    }
     const stmtOf = (rec: unknown): Record<string, any> => ((rec as { statement?: unknown })?.statement ?? rec) as Record<string, any>;
     const verbOf = (rec: unknown): string => String(stmtOf(rec).verb?.id ?? '');
 
