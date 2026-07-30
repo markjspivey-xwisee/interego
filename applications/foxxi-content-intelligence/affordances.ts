@@ -348,7 +348,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
 
   {
     action: 'urn:iep:action:foxxi:prove-competency-signed' as IRI,
-    toolName: 'foxxi.prove_competency',
+    toolName: 'foxxi.prove_competency_signed',
     title: 'Prove a competency privately end-to-end (BBS+ selective disclosure)',
     description: 'Holder-facing BBS+ proof, GROUNDED IN THE HOLDER\'S ACTUAL RECORD: the bridge assembles the holder\'s learner record, refuses any competency that record does not assert ("you can only prove a demonstrated competency, not a claimed one"), and derives the proficiency from the published Dreyfus rollup rather than from the request. It then signs a multi-claim credential, discloses only a minimal privacy-preserving subset (issuer + achievement name + proficiency by default), and cryptographically HIDES the rest (score, dates, name, id); a verifier learns ONLY the disclosed claims. Real W3C bbs-2023 crypto. Returns a serialized `presentation` an INDEPENDENT verifier can check via foxxi.verify_presentation. Externally routed: sign_request the args as the HOLDER, then POST the envelope.',
     method: 'POST',
@@ -747,7 +747,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
 
   {
     action: 'urn:iep:action:foxxi:record-performance-signed' as IRI,
-    toolName: 'foxxi.record_performance',
+    toolName: 'foxxi.record_performance_signed',
     title: 'Record a production-work performance event as yourself',
     description: 'Record one unit of on-the-job production work as an xAPI performed statement, into your OWN Foxxi lens, authenticated by your delegation (the agent-drivable counterpart of the session-token foxxi.record_performance). Declare an activity_type (a domain type you define, e.g. urn:ttt:Move) to aggregate same-type executions into one competency; else it keys off task_name. success=true on demonstrated work promotes the competency to performance-verified. Composed into your shared PGSL lattice (optionally wrapped to named recipients for cross-seat owner-decrypt). Externally routed: sign_request the args, then POST the envelope.',
     method: 'POST',
