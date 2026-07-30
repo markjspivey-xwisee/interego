@@ -71,9 +71,16 @@ export function attachOntologyServing(app: Express, opts: OntologyServingOptions
   if (opts.term) {
     app.get(`${mount}/term/:name`, (req: Request, res: Response) => {
       cors(res);
-      const node = opts.term!(req.params.name);
+      // A route parameter is `string | string[]` — a repeated capture arrives as an
+      // array. Both uses below are single-valued: one is a lookup key, the other is
+      // interpolated into the term's own IRI, where an array would stringify to
+      // `a,b` and mint an identifier for a term that was never asked for. Narrow
+      // once, at the boundary, so neither can see a non-string.
+      const raw = req.params.name;
+      const name = Array.isArray(raw) ? (raw[0] ?? '') : raw;
+      const node = opts.term!(name);
       res.type('application/ld+json').json(node ?? {
-        '@id': `${opts.namespace}${req.params.name}`,
+        '@id': `${opts.namespace}${name}`,
         '_links': { ontology: opts.ontologyIri },
         note: 'Unknown term in an owned namespace — see the ontology for declared terms.',
       });

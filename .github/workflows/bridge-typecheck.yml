@@ -1,27 +1,39 @@
 name: Bridge Typecheck
 
-# The Foxxi bridge runs under tsx (transpile-only) — deploy/Dockerfile.foxxi-bridge
-# ends in `CMD ["npx","tsx", ... server.ts]` — so NOTHING typechecks it on the way
-# to production. A missing import is not a build failure there; it is a runtime
-# ReferenceError. That is not hypothetical: `latticeArtifacts is not defined`
-# shipped to production and was swallowed by a try/catch, which made a durable
-# course catalog silently report zero courses.
+# Every bridge runs under tsx (transpile-only) — deploy/Dockerfile.foxxi-bridge ends
+# in `CMD ["npx","tsx", ... server.ts]` — so NOTHING typechecks it on the way to
+# production. A missing import is not a build failure there; it is a runtime
+# ReferenceError. That is not hypothetical: `latticeArtifacts is not defined` shipped
+# to production and was swallowed by a try/catch, which made a durable course catalog
+# silently report zero courses.
 #
 # tsc IS the only guard. This job is it.
 #
-# `npm run build` is required before tsc: the bridge tsconfig resolves @interego/*
-# through the workspace symlinks, so those packages' emitted .d.ts must exist for
-# the program to typecheck at all.
+# ★ SCOPE. This workflow used to typecheck ONE of the seven bridges and trigger on
+# three of the eight application directories. The other five bridge servers, plus
+# mcp-server and examples/personal-bridge, gated nothing at all — editing them could
+# not red a pull request. That was not theoretical either: a `string | string[]`
+# error in the SHARED applications/_shared/ontology-serve module broke five of the
+# seven bridges' typecheck simultaneously and had never been seen, because the two
+# bridges that were covered are the two whose tsconfigs do not include that file.
+# Adding a path to one workflow is not the fix — the fix is that every bridge is
+# typechecked and every directory that feeds one triggers the job.
+#
+# `npm run build` is required before tsc: each bridge tsconfig resolves @interego/*
+# through the workspace symlinks, so those packages' emitted .d.ts must exist for the
+# program to typecheck at all.
 
+# NOTE: the two `paths` lists below are duplicated on purpose. GitHub Actions does
+# not officially support YAML anchors in workflow files, and a trigger that silently
+# fails to fire is the exact failure mode this workflow exists to prevent — so this
+# stays explicit rather than clever. Keep the two lists identical.
 on:
   push:
     branches: [master]
     paths:
-      - 'applications/foxxi-content-intelligence/**'
-      - 'applications/_shared/**'
-      - 'applications/agentic-performance-practice/src/**'
-      - 'applications/agentic-performance-practice/tests/**'
-      - 'applications/lrs-adapter/src/**'
+      - 'applications/**'
+      - 'mcp-server/**'
+      - 'examples/personal-bridge/**'
       - 'packages/**'
       - 'tsconfig.base.json'
       - 'package.json'
@@ -30,11 +42,9 @@ on:
   pull_request:
     branches: [master]
     paths:
-      - 'applications/foxxi-content-intelligence/**'
-      - 'applications/_shared/**'
-      - 'applications/agentic-performance-practice/src/**'
-      - 'applications/agentic-performance-practice/tests/**'
-      - 'applications/lrs-adapter/src/**'
+      - 'applications/**'
+      - 'mcp-server/**'
+      - 'examples/personal-bridge/**'
       - 'packages/**'
       - 'tsconfig.base.json'
       - 'package.json'
@@ -46,7 +56,7 @@ permissions:
 
 jobs:
   typecheck:
-    name: "Foxxi bridge typecheck (tsx never typechecks it — this is the only guard)"
+    name: "MCP surface typecheck (tsx never typechecks it — this is the only guard)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -57,10 +67,32 @@ jobs:
       - name: Install
         run: npm ci
       - name: Build @interego/* packages
-        # Not for the artifacts — for the .d.ts the bridge's tsconfig resolves.
+        # Not for the artifacts — for the .d.ts each bridge tsconfig resolves.
         run: npm run build
-      - name: Typecheck the bridge
-        run: npx tsc --noEmit -p applications/foxxi-content-intelligence/bridge/tsconfig.json
+
+      # ── Every bridge, not just the one that happened to be covered ──────────
+      # Iterating the glob rather than listing seven paths means a NEW vertical is
+      # covered the day its bridge lands, instead of the day someone remembers to
+      # add it here.
+      - name: Typecheck every vertical bridge
+        run: |
+          set -euo pipefail
+          failed=0
+          for cfg in applications/*/bridge/tsconfig.json; do
+            printf '\n=== %s ===\n' "$cfg"
+            npx tsc --noEmit -p "$cfg" || failed=1
+          done
+          exit "$failed"
+
+      # Published as @interego/mcp. Its own `npm run build` runs tsc, but only inside
+      # publish-npm.yml on a v* tag — so a type error here used to merge green and red
+      # the RELEASE instead of the pull request.
+      - name: Typecheck mcp-server (the stdio server; only tsc-checked on a tag before)
+        run: npx tsc --noEmit -p mcp-server/tsconfig.json
+
+      - name: Typecheck examples/personal-bridge (no workflow covered examples/ at all)
+        run: npx tsc --noEmit -p examples/personal-bridge/tsconfig.json
+
       # Guard the public-memory commons invariant: a PUBLIC (node-addressable) lattice
       # label must be backed by a resource disjoint from the private `shared-lattice`,
       # else resolvePublicNode becomes a cross-tenant existence oracle. Network-free
@@ -92,3 +124,8 @@ jobs:
       # manifest keep projecting an affordance identically.
       - name: Guard the shared affordance manifest (negotiation + no projection drift)
         run: npx tsx applications/_shared/vertical-bridge/affordance-manifest.test.ts
+      # POST /mcp on the shared mount is hand-rolled JSON-RPC parsed by four deployed
+      # clients that turn an envelope change into silence rather than an error. This
+      # pins the envelope so a change to it has to be deliberate and visible in a diff.
+      - name: Guard the shared MCP wire contract (the envelope four deployed clients parse)
+        run: npx tsx applications/_shared/vertical-bridge/mcp-wire-contract.test.ts
