@@ -151,6 +151,31 @@ try {
     ok(replay.status >= 400, 'replaying a spent authorization code is refused', `HTTP ${replay.status}`);
   }
 
+  // ── A bad grant is invalid_grant, not server_error ───────────────────────
+  // ★ Verified live BEFORE this was fixed: an unknown authorization code answered
+  // HTTP 500 `server_error`, because the provider threw a plain Error and both the SDK
+  // and our router map that to a generic 500. RFC 6749 §5.2 says an invalid, expired or
+  // revoked code is `invalid_grant` with HTTP 400 — the difference matters because 500
+  // tells a client the fault is the SERVER'S and it should retry, when what it must
+  // actually do is re-authorize.
+  {
+    const r = await postForm('/token', {
+      grant_type: 'authorization_code', code: 'not-a-real-code',
+      code_verifier: verifier, redirect_uri: REDIRECT, client_id: clientId,
+    });
+    const body = await r.json() as { error?: string };
+    ok(r.status === 400, 'an unknown authorization code is 400, not 500', `HTTP ${r.status}`);
+    ok(body.error === 'invalid_grant', '…and invalid_grant, not server_error', String(body.error));
+  }
+  {
+    const r = await postForm('/token', {
+      grant_type: 'refresh_token', refresh_token: 'not-a-real-refresh-token', client_id: clientId,
+    });
+    const body = await r.json() as { error?: string };
+    ok(r.status === 400 && body.error === 'invalid_grant',
+      'an unknown refresh token is likewise invalid_grant', `HTTP ${r.status} ${String(body.error)}`);
+  }
+
   // ── Refresh ──────────────────────────────────────────────────────────────
   {
     const r = await postForm('/token', {
