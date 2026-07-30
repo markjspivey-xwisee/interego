@@ -26,16 +26,15 @@
  *   CG_PORT          — CSS port for local startup (default 3456)
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-  ListPromptsRequestSchema,
-  GetPromptRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { Server } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
+import type {
+  CallToolRequest,
+  CallToolResult,
+  ReadResourceRequest,
+  GetPromptRequest,
+  Tool,
+} from '@modelcontextprotocol/server';
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
@@ -2163,13 +2162,39 @@ relevant doc resource rather than answering from inferred knowledge.
 If you're acting on Interego for the first time in a session and aren't
 sure WHEN/HOW to use a tool, fetch docs://interego/playbook first.`;
 
-const mcpServer = new Server(
-  { name: '@interego/mcp', version: '0.5.0' },
-  {
-    capabilities: { tools: {}, resources: {}, prompts: {} },
-    instructions: SERVER_INSTRUCTIONS,
-  },
-);
+/**
+ * Build a fresh server instance.
+ *
+ * ★ WHY A FACTORY RATHER THAN ONE MODULE-LEVEL SERVER. `serveStdio` calls this
+ * once per connection — but also once more for an optimistic `server/discover`
+ * probe, and it CLOSES that probe instance if the client turns out to speak the
+ * older handshake and falls back to `initialize`. A shared singleton would be
+ * torn down by that close and the real connection would then be serving a closed
+ * instance. The failure would be intermittent by construction: it appears only
+ * against clients that probe and then fall back.
+ *
+ * The same factory serves both protocol eras, so the tool, resource and prompt
+ * surface cannot drift between them.
+ */
+function buildServer(): Server {
+  const server = new Server(
+    { name: '@interego/mcp', version: '0.5.0' },
+    {
+      capabilities: { tools: {}, resources: {}, prompts: {} },
+      instructions: SERVER_INSTRUCTIONS,
+    },
+  );
+
+  // v2 registers by method STRING; the v1 *RequestSchema objects are gone.
+  server.setRequestHandler('tools/list', handleListTools);
+  server.setRequestHandler('tools/call', handleCallTool);
+  server.setRequestHandler('resources/list', handleListResources);
+  server.setRequestHandler('resources/read', handleReadResource);
+  server.setRequestHandler('prompts/list', handleListPrompts);
+  server.setRequestHandler('prompts/get', handleGetPrompt);
+
+  return server;
+}
 
 // ── Tool Definitions ────────────────────────────────────────
 
@@ -2483,7 +2508,7 @@ const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
   required: ['status', 'statusText', 'contentType', 'body', 'affordance'],
 });
 
-mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
+const handleListTools = async () => ({
   tools: ([
     // ═══════════════════════════════════════════════════════════
     //  Kernel verbs — the substrate's primitives as first-class
@@ -2993,8 +3018,12 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
       outputSchema: INVOKE_AFFORDANCE_OUTPUT,
       annotations: { title: 'Invoke a vertical affordance', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-  ] as Array<{name: string; description: string; inputSchema: object; outputSchema?: object; annotations?: object}>).filter(t => isToolEnabled(t.name)),
-}));
+  // ★ Asserted against the SDK's own `Tool` type rather than a hand-written
+  // `inputSchema: object`. That looser shape erased the one thing the MCP spec
+  // requires of an input schema — `type: "object"` — so a tool declared without it
+  // would have typechecked here and been rejected by a strict client at runtime.
+  ] as Tool[]).filter(t => isToolEnabled(t.name)),
+});
 
 // ── Kernel-verb dispatcher ─────────────────────────────────
 //
@@ -3369,7 +3398,11 @@ function decorateShimResult(name: string, text: string): string {
   return JSON.stringify(decorated);
 }
 
-mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+// The return type is annotated so the content-block `type` fields narrow to their
+// literals. Without it they widen to `string`, which the SDK's CallToolResult
+// rejects — a content block whose `type` is an arbitrary string is not a content
+// block the spec describes.
+const handleCallTool = async (request: CallToolRequest): Promise<CallToolResult> => {
   const { name, arguments: args } = request.params;
 
   try {
@@ -3488,7 +3521,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-});
+};
 
 // ── Resources ───────────────────────────────────────────────
 
@@ -3585,7 +3618,7 @@ const DOC_RESOURCES: readonly DocResource[] = [
   },
 ];
 
-mcpServer.setRequestHandler(ListResourcesRequestSchema, async () => ({
+const handleListResources = async () => ({
   resources: [
     // Live data resources (pod state)
     {
@@ -3614,9 +3647,9 @@ mcpServer.setRequestHandler(ListResourcesRequestSchema, async () => ({
       mimeType: d.mimeType,
     })),
   ],
-}));
+});
 
-mcpServer.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+const handleReadResource = async (request: ReadResourceRequest) => {
   const homePod = podRegistry.getHome()!;
 
   if (request.params.uri === `solid://${POD_NAME}/manifest`) {
@@ -3683,7 +3716,7 @@ mcpServer.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   }
 
   throw new Error(`Unknown resource: ${request.params.uri}`);
-});
+};
 
 // ── Prompts ──────────────────────────────────────────────────
 //
@@ -3847,15 +3880,15 @@ or just demo a publish + discover round-trip on their own pod.`,
   },
 ];
 
-mcpServer.setRequestHandler(ListPromptsRequestSchema, async () => ({
+const handleListPrompts = async () => ({
   prompts: PROMPTS.map(p => ({
     name: p.name,
     description: p.description,
     arguments: p.arguments,
   })),
-}));
+});
 
-mcpServer.setRequestHandler(GetPromptRequestSchema, async (request) => {
+const handleGetPrompt = async (request: GetPromptRequest) => {
   const prompt = PROMPTS.find(p => p.name === request.params.name);
   if (!prompt) throw new Error(`Unknown prompt: ${request.params.name}`);
   const args = (request.params.arguments ?? {}) as Record<string, string>;
@@ -3871,7 +3904,7 @@ mcpServer.setRequestHandler(GetPromptRequestSchema, async (request) => {
       content: { type: 'text' as const, text: prompt.build(args) },
     }],
   };
-});
+};
 
 // ── Start ───────────────────────────────────────────────────
 
@@ -3901,8 +3934,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const transport = new StdioServerTransport();
-  await mcpServer.connect(transport);
+  serveStdio(buildServer);
 
   log('MCP server connected via stdio');
 }

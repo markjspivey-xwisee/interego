@@ -93,6 +93,14 @@ jobs:
       - name: Typecheck examples/personal-bridge (no workflow covered examples/ at all)
         run: npx tsc --noEmit -p examples/personal-bridge/tsconfig.json
 
+      # Typechecking the stdio server does not prove it SERVES. This spawns the real
+      # binary and drives a real MCP client down real stdio in both protocol eras,
+      # including the `server/discover` -> `initialize` fallback that makes serveStdio
+      # discard a probe instance. mcp-server/tests/** otherwise runs only on a v* tag,
+      # so without this step the test would gate nothing before merge.
+      - name: The stdio server actually serves a client (both eras, real subprocess)
+        run: npx vitest run --root mcp-server tests/stdio-serves-both-eras.test.ts
+
       # Guard the public-memory commons invariant: a PUBLIC (node-addressable) lattice
       # label must be backed by a resource disjoint from the private `shared-lattice`,
       # else resolvePublicNode becomes a cross-tenant existence oracle. Network-free
