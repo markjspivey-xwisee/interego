@@ -754,7 +754,9 @@ app.use(express.json({ limit: '50mb' }));
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // Mcp-Method / Mcp-Name are required on protocol revision 2026-07-28; mcp-protocol-version
+  // is sent by 2025-era clients. A browser cannot send a header the preflight did not allow.
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, mcp-protocol-version, Mcp-Method, Mcp-Name');
   if (req.method === 'OPTIONS') { res.status(204).end(); return; }
   next();
 });

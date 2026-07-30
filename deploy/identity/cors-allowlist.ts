@@ -113,7 +113,11 @@ const DEFAULT_ALLOW_METHODS = 'GET, POST, OPTIONS, DELETE, PUT, PATCH';
 // adding a header on the relay side does not silently leave this twin's
 // preflight 403'ing the same header. Per-call sites (e.g. identity's
 // server.ts) still narrow the effective set via the `allowHeaders` option.
-const DEFAULT_ALLOW_HEADERS = 'Accept, Content-Type, Authorization, mcp-session-id, mcp-protocol-version, DPoP';
+// Mcp-Method / Mcp-Name are required on protocol revision 2026-07-28; a browser cannot
+// send a header the preflight did not allow. Kept identical to the relay's list — this
+// file is the second copy of that allow-list, and the two drifting is how one surface
+// silently stops accepting a revision the other serves.
+const DEFAULT_ALLOW_HEADERS = 'Accept, Content-Type, Authorization, mcp-session-id, mcp-protocol-version, Mcp-Method, Mcp-Name, DPoP';
 
 export interface CorsHeaderOptions extends CorsAllowlistOptions {
   allowMethods?: string;

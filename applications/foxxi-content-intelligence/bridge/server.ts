@@ -3388,7 +3388,11 @@ const app = createVerticalBridge({
         res.setHeader('Access-Control-Allow-Origin', '*');
       }
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Experience-API-Version, If-Match, If-None-Match');
+      // Mcp-Method / Mcp-Name are REQUIRED on protocol revision 2026-07-28, which this
+      // bridge now serves. A browser cannot send a header the preflight did not allow,
+      // so omitting them leaves the modern era unreachable from the dashboard and the
+      // microsite even though the server answers it.
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Experience-API-Version, If-Match, If-None-Match, mcp-protocol-version, Mcp-Method, Mcp-Name');
       res.setHeader('Access-Control-Expose-Headers', 'ETag, Last-Modified, X-Experience-API-Version, X-Experience-API-Consistent-Through');
       res.setHeader('Access-Control-Max-Age', '600');
       if (req.method === 'OPTIONS') return res.status(204).end();

@@ -166,7 +166,13 @@ export function isAllowedOrigin(origin: string | undefined | null, allowlist: Se
 }
 
 const DEFAULT_ALLOW_METHODS = 'GET, POST, OPTIONS, DELETE, PUT, PATCH';
-const DEFAULT_ALLOW_HEADERS = 'Accept, Content-Type, Authorization, mcp-session-id, mcp-protocol-version, DPoP';
+// ★ Mcp-Method / Mcp-Name are REQUIRED on protocol revision 2026-07-28: the modern
+// path answers -32020 ("the request headers and body disagree") when they are absent,
+// and a browser cannot send a header the preflight did not allow. Without them here
+// the modern era is SERVED but unreachable from any browser client — the era exists
+// and no browser can speak it. mcp-session-id stays for 2025-era clients, which are
+// still served from the same endpoint.
+const DEFAULT_ALLOW_HEADERS = 'Accept, Content-Type, Authorization, mcp-session-id, mcp-protocol-version, Mcp-Method, Mcp-Name, DPoP';
 const DEFAULT_EXPOSE_HEADERS = 'mcp-session-id, mcp-protocol-version';
 
 export interface CorsHeaderOptions extends CorsAllowlistOptions {
