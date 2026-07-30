@@ -23,21 +23,40 @@ import { WebSocket } from 'ws';
 import { Agent, setGlobalDispatcher } from 'undici';
 import { Wallet as EthersWalletCtor } from 'ethers';
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  ReadResourceRequestSchema,
-  ListPromptsRequestSchema,
-  GetPromptRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+// ── MCP SDK v2 ──────────────────────────────────────────────
+//
+// The MCP surface and the OAuth surface now come from DIFFERENT packages, and the
+// split is not cosmetic:
+//
+//   @modelcontextprotocol/server         the protocol server + the runtime-neutral
+//                                        resource-server core, incl. the branded
+//                                        OAuthError every 401 depends on
+//   @modelcontextprotocol/node           toNodeHandler — adapts the web-standard
+//                                        handler to Express's (req, res)
+//   @modelcontextprotocol/express        requireBearerAuth as Express middleware
+//   @modelcontextprotocol/server-legacy  a FROZEN copy of the v1 OAuth
+//                                        Authorization Server. v2 ships no
+//                                        successor: an MCP server is expected to
+//                                        verify tokens, not issue them. This
+//                                        package receives no new features and is
+//                                        slated for removal in v3, so it is a
+//                                        bridge, not a destination — see the
+//                                        follow-up that internalises the AS.
+//
+// ★ NEVER import an OAuth ERROR class from server-legacy. It defines its own
+// unbranded OAuthError, which fails the brand-based `instanceof` inside v2's
+// requireBearerAuth — so an invalid token becomes HTTP 500 with no
+// WWW-Authenticate header, and no client ever starts an OAuth flow. Error classes
+// come from '@modelcontextprotocol/server'; only the AS plumbing comes from
+// server-legacy.
+import { Server, createMcpHandler } from '@modelcontextprotocol/server';
+import type { Tool } from '@modelcontextprotocol/server';
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import type { AuthInfo } from '@modelcontextprotocol/server';
 import { resolve as resolvePath, dirname as pathDirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { mcpAuthRouter } from '@modelcontextprotocol/server-legacy';
+import { requireBearerAuth } from '@modelcontextprotocol/express';
 import { InteregoOAuthProvider } from './oauth-provider.js';
 import {
   loadClients as loadOAuthClients,
@@ -8071,12 +8090,16 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOL_SCHEMAS.map((t) => ({...t })),
+  // Asserted to the SDK's own `Tool` type. TOOL_SCHEMAS is built with `as const`, so its
+  // enum members are `readonly` tuples, which the SDK's structural JSON-Schema value type
+  // rejects — the schemas themselves are conformant (every inputSchema carries
+  // `type: 'object'`), it is only the deep readonly-ness that does not line up.
+  server.setRequestHandler('tools/list', async () => ({
+    tools: TOOL_SCHEMAS.map((t) => ({ ...t })) as unknown as Tool[],
   }));
 
   // ── Resources: doc:// URIs serve protocol documentation ────
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler('resources/list', async () => ({
     resources: [
       ...DOC_RESOURCES.map(d => ({
         uri: d.uri,
@@ -8121,7 +8144,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
   // The model reads them and CHOOSES to call invoke_affordance(descriptorUrl,
   // rel — the control's action IRI); no MCP client
   // "follows" them, because MCP is an RPC catalog, not a hypermedia protocol.
-  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+  server.setRequestHandler('resources/templates/list', async () => ({
     resourceTemplates: [{
       uriTemplate: 'interego://ns/{owner}/{slug}',
       name: 'Interego — published graph (hypermedia Markdown)',
@@ -8130,7 +8153,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     }],
   }));
 
-  server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+  server.setRequestHandler('resources/read', async (req) => {
     // The generic HyperMarkdown viewer (MCP App UI). Static HTML, no content —
     // the render_hmd tool supplies the document at call time.
     if (req.params.uri === HMD_WIDGET_URI) {
@@ -8198,7 +8221,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
   });
 
   // ── Prompts: workflow templates ────────────────────────────
-  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+  server.setRequestHandler('prompts/list', async () => ({
     prompts: PROMPTS.map(p => ({
       name: p.name,
       description: p.description,
@@ -8206,7 +8229,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     })),
   }));
 
-  server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+  server.setRequestHandler('prompts/get', async (req) => {
     const prompt = PROMPTS.find(p => p.name === req.params.name);
     if (!prompt) throw new Error(`Unknown prompt: ${req.params.name}`);
     const args = (req.params.arguments ?? {}) as Record<string, string>;
@@ -8224,7 +8247,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     };
   });
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  server.setRequestHandler('tools/call', async (req) => {
     const { name, arguments: rawArgs } = req.params;
     const tool = TOOLS[name] ?? dynamicTools.get(name);
     if (!tool) {
@@ -8433,12 +8456,14 @@ function safeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-function checkMcpApiKey(req: express.Request): { ok: true; authContext: { agentId: string; ownerWebId: string; userId: string } | null } | { ok: false; error: string } {
+// Takes the Authorization header value rather than an express.Request: under MCP SDK
+// v2 the /mcp server is built by a factory that receives a web-standard `Request`, not
+// an Express one, and this is the only field the check ever read.
+function checkMcpApiKey(auth: string | undefined): { ok: true; authContext: { agentId: string; ownerWebId: string; userId: string } | null } | { ok: false; error: string } {
   // If no key is configured, /mcp is open. Writes still require the relay's
   // existing AUTH_REQUIRED_TOOLS gate downstream.
   if (!RELAY_MCP_API_KEY) return { ok: true, authContext: null };
 
-  const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) {
     return { ok: false, error: 'Missing Authorization: Bearer <key> header' };
   }
@@ -8523,9 +8548,17 @@ app.use(corsMiddleware({
 }));
 
 // ── OAuth Routes ────────────────────────────────────────────
-// mcpAuthRouter wires: /.well-known/oauth-authorization-server,
-// /.well-known/oauth-protected-resource, /authorize, /token, /register,
-// /revoke (optional). Uses our InteregoOAuthProvider for the business logic.
+// mcpAuthRouter (now from the FROZEN @modelcontextprotocol/server-legacy — v2 ships no
+// Authorization Server surface at all) wires /authorize, /token and /register from our
+// InteregoOAuthProvider.
+//
+// Two corrections to what this comment used to claim:
+//   - /revoke is NOT mounted. The provider implements no revokeToken.
+//   - the two /.well-known documents are NOT served by the router here. Our own routes
+//     for both are registered EARLIER in this file, and Express dispatches first-match,
+//     so ours answer every GET. That is deliberate: ours carry the JSON-LD @context /
+//     @id / @type and the Hydra affordances that the SDK's derivation cannot express.
+//     Those routes MUST stay above the mcpAuthRouter mount.
 //
 // issuerUrl must be the externally-reachable URL of this relay. If unset,
 // we fall back to localhost (useful for local dev); deployments MUST set
@@ -12525,12 +12558,24 @@ app.post('/messages', messagesLimiter, async (req, res) => {
 // with proper JSON-RPC framing and SSE streaming.
 
 // Extract the auth context for this request. Three valid paths:
-//   1. req.auth populated by requireBearerAuth (OAuth token verified by provider)
+//   1. ctx.authInfo, forwarded from req.auth by toNodeHandler after
+//      requireBearerAuth verified the OAuth token
 //   2. Authorization: Bearer <RELAY_MCP_API_KEY> (legacy API key, for curl/scripts)
 //   3. Unauthenticated (if RELAY_MCP_API_KEY unset AND no OAuth token) — open mode
-function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId: string; userId: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string } | null {
-  // OAuth-verified request: bearerAuth middleware already set req.auth
-  const reqAuth = (req as express.Request & { auth?: { token?: string; scopes?: string[]; extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } } }).auth;
+//
+// ★ Takes the SDK v2 factory context, not an express.Request. createMcpHandler calls the
+// factory once per HTTP request with { era, authInfo, requestInfo }, and `authInfo` is
+// exactly the `req.auth` that requireBearerAuth set — toNodeHandler forwards it.
+//
+// ★ AND IT MUST FAIL CLOSED. `requestInfo` is typed optional. The legacy API-key branch
+// needs the Authorization header, and if it silently could not see one it would return
+// null — which does NOT reject the request: buildMcpServer(null) is OPEN MODE, so /mcp
+// would keep answering 200 while running every tool with no identity attached. Nothing
+// would throw and nothing would fail typecheck. So when a key IS configured and the
+// header is unreadable, refuse rather than degrade.
+function resolveAuthContext(ctx: { authInfo?: AuthInfo; requestInfo?: Request }): { agentId: string; ownerWebId: string; userId: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string } | null {
+  // OAuth-verified request: requireBearerAuth set req.auth, toNodeHandler passed it here
+  const reqAuth = ctx.authInfo as (AuthInfo & { extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } }) | undefined;
   if (reqAuth?.extra?.agentId && reqAuth.extra.ownerWebId && reqAuth.extra.userId) {
     return {
       agentId: reqAuth.extra.agentId,
@@ -12562,25 +12607,54 @@ function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId
     };
   }
   // Legacy API-key path: Authorization: Bearer <RELAY_MCP_API_KEY>
-  const legacy = checkMcpApiKey(req);
+  //
+  // Fail closed if a key is configured but the header is unreadable — see the note on
+  // this function. Open mode (no key configured) is unaffected.
+  if (ctx.requestInfo === undefined) {
+    if (RELAY_MCP_API_KEY) {
+      throw new Error('/mcp: cannot read the request headers, so the API-key path cannot be evaluated; refusing rather than serving anonymously');
+    }
+    return null;
+  }
+  const legacy = checkMcpApiKey(ctx.requestInfo.headers.get('authorization') ?? undefined);
   if (legacy.ok && legacy.authContext) return legacy.authContext;
   return null;
 }
 
-async function handleMcp(req: express.Request, res: express.Response): Promise<void> {
-  const authContext = resolveAuthContext(req);
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  const server = buildMcpServer(authContext);
-  try {
-    await server.connect(transport);
-    await transport.handleRequest(req, res, (req as express.Request & { body?: unknown }).body);
-  } catch (err) {
-    log(`[/mcp] transport error: ${(err as Error).message}`);
-    if (!res.headersSent) res.status(500).json({ error: (err as Error).message });
-  } finally {
-    await server.close().catch(() => {});
-  }
-}
+// ── The /mcp handler ────────────────────────────────────────
+//
+// createMcpHandler owns the whole exchange and calls the factory ONCE PER HTTP REQUEST,
+// which is what the previous hand-rolled per-request construct/connect/close did. Three
+// things about this shape are deliberate:
+//
+//  1. It is built ONCE, at module scope. The handler owns a subscriptions bus, a
+//     subscription-stream registry and SSE keepalive timers; constructing one per
+//     request would leak all three. Per-request freshness comes from the factory, not
+//     from rebuilding the handler.
+//  2. There is no explicit server.close(). The SDK owns instance lifecycle now —
+//     closing it ourselves would close an instance the SDK is still using.
+//  3. `legacy: 'stateless'` is the default and is what we want: 2025-era clients
+//     (claude.ai and ChatGPT connectors today) are served from the SAME factory as
+//     2026-07-28 clients, so the tool surface cannot drift between eras, and GET/DELETE
+//     still answer 405 exactly as the old stateless transport did.
+const mcpHandler = createMcpHandler(
+  (ctx) => buildMcpServer(resolveAuthContext(ctx)),
+  { onerror: (err) => log(`[/mcp] ${err.message}`) },
+);
+
+const mcpNodeHandler = toNodeHandler(mcpHandler, {
+  onerror: (err) => log(`[/mcp] adapter error: ${err.message}`),
+});
+
+// ★ THE THIRD ARGUMENT IS NOT OPTIONAL FOR US. `express.json()` is mounted globally and
+// has already drained the request stream by the time /mcp is reached. toNodeHandler
+// explicitly ignores a FUNCTION third argument (Express passes `next`), so mounting
+// `toNodeHandler(handler)` directly would leave it with no body: it would fall back to
+// reading an already-consumed stream, collect nothing, and answer every POST with a
+// parse error. Nothing in the type system catches this.
+const handleMcp: express.RequestHandler = (req, res) => {
+  void mcpNodeHandler(req, res, (req as express.Request & { body?: unknown }).body);
+};
 
 // Bearer-auth middleware for the OAuth path. Requires 'mcp' scope on the
 // token. When a request arrives WITHOUT an Authorization header, the

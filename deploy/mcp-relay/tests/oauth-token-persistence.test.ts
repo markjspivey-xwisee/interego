@@ -40,7 +40,8 @@ import {
   type OAuthTokenStoreConfig,
 } from '../oauth-token-store.js';
 import type { FetchFn } from '@interego/core';
-import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
+import type { OAuthClientInformationFull } from '@modelcontextprotocol/server';
+import { OAuthError } from '@modelcontextprotocol/server';
 
 // ── tiny test harness ───────────────────────────────────────
 
@@ -234,6 +235,22 @@ async function run() {
       ok(false, 'verifyAccessToken should throw on expired token');
     } catch (err: any) {
       ok(err?.message?.toLowerCase().includes('expired'), 'verifyAccessToken throws "expired" on expired token');
+      // ★ THE MESSAGE ASSERTION ABOVE CANNOT CATCH THE TRAP.
+      //
+      // It passes identically whether the throw is a v1 `InvalidTokenError`,
+      // server-legacy's identically-named unbranded copy, or v2's `OAuthError` — the
+      // message is the same in all three. But requireBearerAuth decides between a
+      // 401-with-challenge and a 500 by testing `error instanceof OAuthError`, and that
+      // check is BRAND-based. An unbranded error means every rejected token becomes an
+      // HTTP 500 with no WWW-Authenticate header, so no client ever begins an OAuth
+      // flow — and nothing in the type system or the message says so.
+      //
+      // `isInstance` must be called on the class, not detached: a detached call throws
+      // rather than silently matching nothing.
+      ok(OAuthError.isInstance(err),
+        'the expired-token error is a BRANDED OAuthError (else requireBearerAuth answers 500, not 401)');
+      ok(err?.errorCode === 'invalid_token' || err?.code === 'invalid_token',
+        `the error code is invalid_token (got ${JSON.stringify(err?.errorCode ?? err?.code)})`);
     }
     await flush();
     const accessUrl = `${POD}tokens/${sha256Hex(access)}.jsonld`;
