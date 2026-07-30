@@ -395,13 +395,25 @@ app.use(express.json({ limit: '4mb' }));
 // CORS — allow MCP clients from any origin, since this is your
 // own bridge on your own network. Tighten if you expose it
 // beyond your trust boundary.
-app.use((_req, res, next) => {
+app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  // Mcp-Method / Mcp-Name are required on protocol revision 2026-07-28, which this
+  // bridge now serves; a browser cannot send a header the preflight did not allow.
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, mcp-protocol-version, Mcp-Method, Mcp-Name');
+  // ★ Answer the preflight HERE rather than with `app.options('*', …)`.
+  //
+  // That route form is Express 4 only: under Express 5's path-to-regexp a bare `*` is
+  // not a valid path and throws `Missing parameter name at index 1: *` AT MODULE LOAD —
+  // the whole server fails to start. This example pins express ^4 locally, but the
+  // workspace root is on ^5, so which one resolves depends on whether this directory's
+  // own node_modules is installed. It worked on a dev machine and threw in CI.
+  //
+  // A middleware is correct under both majors and needs no version-specific wildcard
+  // syntax, so this cannot break again when the pin moves.
+  if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();
 });
-app.options('*', (_req, res) => res.sendStatus(204));
 
 // ── Admin UI ─────────────────────────────────────────────────
 
