@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { tools, bridgeStatus, client, handleMcpRequest } from '../examples/personal-bridge/server.js';
+import { tools, bridgeStatus, client, serveMcpOverHttp } from '../examples/personal-bridge/server.js';
 import {
   generateKeyPair,
   importWallet,
@@ -76,24 +76,46 @@ describe('personal-bridge — tool surface', () => {
     expect(r.reason).toBeDefined();
   });
 
-  it('handleMcpRequest — initialize → returns serverInfo + capabilities', async () => {
-    const r = await handleMcpRequest({ jsonrpc: '2.0', id: 1, method: 'initialize' });
-    expect(r).not.toBeNull();
-    const result = r!.result as { protocolVersion: string; capabilities: { tools: object }; serverInfo: { name: string }; instructions: string };
-    expect(result.protocolVersion).toBe('2024-11-05');
-    expect(result.capabilities.tools).toBeDefined();
-    expect(result.serverInfo.name).toBe('@interego/personal-bridge');
-    expect(result.instructions).toContain(client.pubkey);
+  // ── The MCP protocol surface ───────────────────────────────────────────
+  //
+  // ★ THESE USED TO CALL AN INTERNAL DISPATCH FUNCTION DIRECTLY, so they never
+  // exercised framing, negotiation or era routing — the parts the SDK now owns and the
+  // parts most likely to break. They now go through serveMcpOverHttp, the same path the
+  // Express route uses, so what is asserted is what a client actually receives.
+
+  it('initialize NEGOTIATES the revision the client asks for (was hard-coded 2024-11-05)', async () => {
+    for (const requested of ['2024-11-05', '2025-11-25']) {
+      const { body } = await serveMcpOverHttp({
+        jsonrpc: '2.0', id: 1, method: 'initialize',
+        params: { protocolVersion: requested, capabilities: {}, clientInfo: { name: 't', version: '1' } },
+      });
+      const result = (body as { result: { protocolVersion: string; capabilities: { tools: object }; serverInfo: { name: string }; instructions: string } }).result;
+      expect(result.protocolVersion, `asked for ${requested}`).toBe(requested);
+      expect(result.capabilities.tools).toBeDefined();
+      expect(result.serverInfo.name).toBe('@interego/personal-bridge');
+      expect(result.instructions).toContain(client.pubkey);
+    }
   });
 
-  it('handleMcpRequest — tools/list → all 6 core p2p tools present with schemas', async () => {
+  it('server/discover advertises the 2026-07-28 era from the same tool registry', async () => {
+    const { body } = await serveMcpOverHttp({
+      jsonrpc: '2.0', id: 2, method: 'server/discover',
+      params: { _meta: {
+        'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+        'io.modelcontextprotocol/clientCapabilities': {},
+      } },
+    }, { 'mcp-method': 'server/discover' });
+    const result = (body as { result: { supportedVersions: string[] } }).result;
+    expect(result.supportedVersions).toContain('2026-07-28');
+  });
+
+  it('tools/list → all 6 core p2p tools present with schemas', async () => {
     // Generic personal-bridge is foundation-layer ONLY: 6 core p2p tools.
     // Vertical tooling (lpc.* / adp.* / lrs.* / ac.*) is provided by
     // separate per-vertical bridges under applications/<vertical>/bridge/
     // — those have their own MCP servers and their own tests.
-    const r = await handleMcpRequest({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-    expect(r).not.toBeNull();
-    const result = r!.result as { tools: { name: string; description: string; inputSchema: object }[] };
+    const { body } = await serveMcpOverHttp({ jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} });
+    const result = (body as { result: { tools: { name: string; description: string; inputSchema: object }[] } }).result;
     const names = result.tools.map(t => t.name).sort();
     expect(names).toEqual([
       'bridge_status', 'decrypt_share', 'publish_p2p',
@@ -105,54 +127,41 @@ describe('personal-bridge — tool surface', () => {
     }
   });
 
-  it('handleMcpRequest — tools/call publish_p2p round-trips', async () => {
-    const r = await handleMcpRequest({
-      jsonrpc: '2.0',
-      id: 3,
-      method: 'tools/call',
+  it('a bare POST with no Accept header is served (the shape every simple client sends)', async () => {
+    // The SDK transport answers 406 unless the client accepts BOTH application/json and
+    // text/event-stream. serveMcpOverHttp normalises it; losing that breaks every
+    // client that just POSTs JSON.
+    const { status, body } = await serveMcpOverHttp({ jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} });
+    expect(status).toBe(200);
+    expect((body as { result?: { tools?: unknown[] } }).result?.tools).toBeDefined();
+  });
+
+  it('tools/call publish_p2p round-trips', async () => {
+    const { body } = await serveMcpOverHttp({
+      jsonrpc: '2.0', id: 5, method: 'tools/call',
       params: {
         name: 'publish_p2p',
         arguments: { descriptorId: 'urn:iep:mcp-handler-test', cid: 'bafkrei-mcp', graphIri: 'urn:graph:mcp-handler' },
       },
     });
-    expect(r).not.toBeNull();
-    const result = r!.result as { content: { type: string; text: string }[] };
+    const result = (body as { result: { content: { type: string; text: string }[] } }).result;
     expect(result.content[0]!.type).toBe('text');
     const parsed = JSON.parse(result.content[0]!.text) as { ok: boolean; eventId: string };
     expect(parsed.ok).toBe(true);
     expect(parsed.eventId).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('handleMcpRequest — tools/call unknown tool → -32601', async () => {
-    const r = await handleMcpRequest({
-      jsonrpc: '2.0',
-      id: 4,
-      method: 'tools/call',
+  it('tools/call unknown tool → -32601', async () => {
+    const { body } = await serveMcpOverHttp({
+      jsonrpc: '2.0', id: 6, method: 'tools/call',
       params: { name: 'no_such_tool', arguments: {} },
     });
-    expect(r).not.toBeNull();
-    expect(r!.error).toBeDefined();
-    expect(r!.error!.code).toBe(-32601);
+    expect((body as { error?: { code: number } }).error?.code).toBe(-32601);
   });
 
-  it('handleMcpRequest — notifications/initialized → null (no response)', async () => {
-    const r = await handleMcpRequest({
-      jsonrpc: '2.0',
-      id: null,
-      method: 'notifications/initialized',
-    });
-    expect(r).toBeNull();
-  });
-
-  it('handleMcpRequest — unknown method → -32601', async () => {
-    const r = await handleMcpRequest({
-      jsonrpc: '2.0',
-      id: 5,
-      method: 'foo/bar',
-    });
-    expect(r).not.toBeNull();
-    expect(r!.error).toBeDefined();
-    expect(r!.error!.code).toBe(-32601);
+  it('unknown method → -32601', async () => {
+    const { body } = await serveMcpOverHttp({ jsonrpc: '2.0', id: 7, method: 'foo/bar' });
+    expect((body as { error?: { code: number } }).error?.code).toBe(-32601);
   });
 
   it('two bridges sharing a relay can exchange encrypted shares (cross-bridge round-trip)', async () => {

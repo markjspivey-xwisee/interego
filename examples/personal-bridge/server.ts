@@ -25,6 +25,16 @@
  */
 
 import express, { type Request, type Response } from 'express';
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  ProtocolError as McpProtocolError,
+  Server as McpSdkServer,
+  WebStandardStreamableHTTPServerTransport,
+} from '@modelcontextprotocol/server';
+import type { Tool as McpTool } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
+import { protocolMembersOnly, acceptForSdkTransport } from '@interego/core';
 import { resolve, dirname } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -385,13 +395,25 @@ app.use(express.json({ limit: '4mb' }));
 // CORS — allow MCP clients from any origin, since this is your
 // own bridge on your own network. Tighten if you expose it
 // beyond your trust boundary.
-app.use((_req, res, next) => {
+app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  // Mcp-Method / Mcp-Name are required on protocol revision 2026-07-28, which this
+  // bridge now serves; a browser cannot send a header the preflight did not allow.
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, mcp-protocol-version, Mcp-Method, Mcp-Name');
+  // ★ Answer the preflight HERE rather than with `app.options('*', …)`.
+  //
+  // That route form is Express 4 only: under Express 5's path-to-regexp a bare `*` is
+  // not a valid path and throws `Missing parameter name at index 1: *` AT MODULE LOAD —
+  // the whole server fails to start. This example pins express ^4 locally, but the
+  // workspace root is on ^5, so which one resolves depends on whether this directory's
+  // own node_modules is installed. It worked on a dev machine and threw in CI.
+  //
+  // A middleware is correct under both majors and needs no version-specific wildcard
+  // syntax, so this cannot break again when the pin moves.
+  if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();
 });
-app.options('*', (_req, res) => res.sendStatus(204));
 
 // ── Admin UI ─────────────────────────────────────────────────
 
@@ -449,62 +471,107 @@ interface JsonRpcResponse {
   error?: { code: number; message: string };
 }
 
-async function handleMcpRequest(req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
-  const { method, params, id } = req;
-  const respond = (result?: unknown, error?: { code: number; message: string }): JsonRpcResponse =>
-    error ? { jsonrpc: '2.0', id, error } : { jsonrpc: '2.0', id, result };
-
-  if (method === 'initialize') {
-    return respond({
-      protocolVersion: '2024-11-05',
+/**
+ * Build a fresh MCP server.
+ *
+ * ★ WAS A HAND-ROLLED `handleMcpRequest` ADVERTISING A HARD-CODED `2024-11-05`, driven
+ * by two transports (an Express route and a stdin line-reader) that each re-implemented
+ * framing. It ignored the protocol version the client asked for entirely.
+ *
+ * Now on MCP SDK v2, one factory serves BOTH eras and BOTH transports: the 2025
+ * `initialize` handshake and the 2026-07-28 revision, which has no handshake and
+ * answers `server/discover`. The SDK owns framing, negotiation and error shape; this
+ * file owns tools.
+ *
+ * A FACTORY, not one shared instance: `serveStdio` calls it once per connection AND
+ * once for an optimistic `server/discover` probe, closing the probe instance when a
+ * client falls back to the older handshake.
+ */
+function buildMcpServer(): McpSdkServer {
+  const server = new McpSdkServer(
+    { name: '@interego/personal-bridge', version: '0.1.0' },
+    {
       capabilities: { tools: {} },
-      serverInfo: { name: '@interego/personal-bridge', version: '0.1.0' },
       instructions: `Personal bridge for Interego — your local-first P2P hub. Bridge identity: ${client.pubkey}. Use publish_p2p / query_p2p for descriptor announcements; share_encrypted for 1:N encrypted shares; query_my_inbox + decrypt_share to read what's addressed to you. Sharing is per-publish (share_with) or per-bridge (EXTERNAL_RELAYS env var); local by default.`,
-    });
-  }
+    },
+  );
 
-  if (method === 'notifications/initialized') {
-    return null; // notification — no response per JSON-RPC spec
-  }
+  server.setRequestHandler('tools/list', async () => ({
+    tools: Object.entries(tools).map(([name, t]) => ({
+      name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    })),
+  } as unknown as { tools: McpTool[] }));
 
-  if (method === 'tools/list') {
-    return respond({
-      tools: Object.entries(tools).map(([name, t]) => ({
-        name,
-        description: t.description,
-        inputSchema: t.inputSchema,
-      })),
-    });
-  }
-
-  if (method === 'tools/call') {
-    const name = String(params?.['name'] ?? '');
-    const args = (params?.['arguments'] as Record<string, unknown> | undefined) ?? {};
+  server.setRequestHandler('tools/call', async (req) => {
+    const name = req.params.name;
+    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
     const tool = tools[name];
-    if (!tool) {
-      return respond(undefined, { code: -32601, message: `Unknown tool: ${name}` });
-    }
+    // -32601 preserved: it is what this bridge answered for an unknown tool before.
+    if (!tool) throw new McpProtocolError(-32601, `Unknown tool: ${name}`);
     try {
       const result = await tool.handler(args);
-      return respond({
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
-      return respond(undefined, { code: -32000, message: `Tool error: ${(err as Error).message}` });
+      throw new McpProtocolError(-32000, `Tool error: ${(err as Error).message}`);
     }
-  }
+  });
 
-  if (id === null || id === undefined) return null; // notification
-  return respond(undefined, { code: -32601, message: `Unknown method: ${method}` });
+  return server;
+}
+
+const mcpModernHandler = createMcpHandler(buildMcpServer, {
+  legacy: 'reject',
+  responseMode: 'json',
+  onerror: () => { /* per-request failures surface in the JSON-RPC response */ },
+});
+
+/** The 2025-era leg, answering plain JSON rather than SSE frames. */
+async function serveMcpLegacy(request: globalThis.Request): Promise<globalThis.Response> {
+  const server = buildMcpServer();
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    // Honoured by the v2 runtime but absent from the published types. Without it the
+    // transport SSE-frames every reply, and this bridge's admin UI calls res.json().
+    enableJsonResponse: true,
+  } as unknown as ConstructorParameters<typeof WebStandardStreamableHTTPServerTransport>[0]);
+  await server.connect(transport);
+  return transport.handleRequest(request);
+}
+
+/**
+ * Serve one MCP request over HTTP. Exported so the test suite can drive the REAL
+ * protocol path — the previous test called an internal dispatch function directly and
+ * therefore never exercised framing, negotiation or era routing at all.
+ */
+export async function serveMcpOverHttp(
+  body: unknown,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: unknown }> {
+  const h = new Headers({ 'content-type': 'application/json', ...headers });
+  h.set('accept', acceptForSdkTransport(h.get('accept') ?? undefined));
+  const request = new globalThis.Request('http://localhost/mcp', {
+    method: 'POST',
+    headers: h,
+    body: JSON.stringify(protocolMembersOnly(body)),
+  });
+  const out = await (await isLegacyRequest(request.clone())
+    ? serveMcpLegacy(request)
+    : mcpModernHandler.fetch(request));
+  const text = await out.text();
+  let parsed: unknown;
+  try { parsed = text ? JSON.parse(text) : undefined; } catch { parsed = text; }
+  return { status: out.status, body: parsed };
 }
 
 app.post('/mcp', async (req, res) => {
-  const result = await handleMcpRequest(req.body as JsonRpcRequest);
-  if (result === null) {
-    res.status(202).end();
-    return;
-  }
-  res.json(result);
+  const { status, body } = await serveMcpOverHttp(req.body, {
+    ...(typeof req.headers['mcp-method'] === 'string' ? { 'mcp-method': req.headers['mcp-method'] } : {}),
+    ...(typeof req.headers['mcp-name'] === 'string' ? { 'mcp-name': req.headers['mcp-name'] } : {}),
+  });
+  if (body === undefined) { res.status(status).end(); return; }
+  res.status(status).json(body);
 });
 
 // REST mirrors of the MCP tools — for non-MCP clients (curl,
@@ -533,46 +600,13 @@ app.post('/api/inbox', async (req, res) => {
 // spawning a listener or stealing stdin.
 
 async function startStdioTransport(): Promise<void> {
-  // JSON-RPC over stdin/stdout. One message per line. Stdout is the
-  // protocol channel — never write anything else there.
+  // ★ WAS A HAND-ROLLED LINE READER over stdin that re-implemented JSON-RPC framing and
+  // answered a hard-coded protocol version. `serveStdio` owns framing, the era decision
+  // and the `server/discover` probe — from the SAME factory the HTTP transport uses, so
+  // the two can never advertise different tools or different revisions.
   log(`stdio transport active (bridge pubkey: ${client.pubkey})`);
   log(`external relays: ${externalRelayUrls.length === 0 ? '(none — fully local)' : externalRelayUrls.join(', ')}`);
-
-  let buffer = '';
-  process.stdin.setEncoding('utf8');
-  process.stdin.on('data', (chunk: string) => {
-    buffer += chunk;
-    let nl: number;
-    while ((nl = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line) continue;
-      void processStdioLine(line);
-    }
-  });
-  process.stdin.on('end', () => {
-    log('stdin closed; exiting');
-    process.exit(0);
-  });
-}
-
-async function processStdioLine(line: string): Promise<void> {
-  let req: JsonRpcRequest;
-  try {
-    req = JSON.parse(line) as JsonRpcRequest;
-  } catch {
-    // Malformed JSON — emit a JSON-RPC parse error per spec
-    process.stdout.write(JSON.stringify({
-      jsonrpc: '2.0',
-      id: null,
-      error: { code: -32700, message: 'Parse error' },
-    }) + '\n');
-    return;
-  }
-  const response = await handleMcpRequest(req);
-  if (response !== null) {
-    process.stdout.write(JSON.stringify(response) + '\n');
-  }
+  serveStdio(buildMcpServer);
 }
 
 if (process.env['NODE_ENV'] !== 'test') {
@@ -599,4 +633,4 @@ if (process.env['NODE_ENV'] !== 'test') {
   }
 }
 
-export { app, tools, bridgeStatus, client, handleMcpRequest };
+export { app, tools, bridgeStatus, client };
