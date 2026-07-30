@@ -1,0 +1,231 @@
+# Interego full stack, self-hosted on ONE box (Docker Compose).
+#
+# Replaces ~15 Azure Container Apps + Azure Postgres + AzureFile with:
+#   - on-box Postgres (the PGSL re-platform means CSS storage is JUST Postgres now
+#     — no AzureFile, no SMB incoherence, no volume)
+#   - on-box Redis (CSS multi-op locker)
+#   - Caddy reverse proxy with automatic TLS for every public subdomain
+#
+# Internal service-to-service traffic uses Docker service names (css:3456,
+# identity:8090, relay:8080, ...) — no more internal-FQDN host-header gymnastics.
+# Public traffic enters through Caddy on 80/443 and is routed by subdomain.
+#
+# Images: pulled from ${ACR} (set in .env; default your existing ACR — keep ACR
+# Basic ~$5/mo, or point ACR at GHCR / build on-box — see MIGRATION.md).
+# `docker login $ACR` on the box first. Tags below = what's live today.
+#
+# The *_REV / *_PROBE cache-bust env vars from ACA are deploy triggers, NOT
+# runtime config — omitted here on purpose. Real feature flags are kept.
+
+networks:
+  ie:
+    driver: bridge
+
+volumes:
+  pg_data:
+  caddy_data:
+  caddy_config:
+
+services:
+  # ── data plane ───────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    networks: [ie]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [ie]        # ephemeral locks — no volume
+
+  # ── Solid pod server (PGSL over Postgres) — INTERNAL ────────────────────
+  css:
+    image: ${ACR}/interego-css-pgsl:redis6
+    restart: unless-stopped
+    networks: [ie]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+    environment:
+      PORT: "3456"
+      CSS_BASE_URL: ${CSS_BASE_URL:-http://css:3456/}   # canonical pod host (see MIGRATION.md re-key note)
+      PGSL_PG_CONNSTR: ${PGSL_PG_CONNSTR}
+      REDIS_ADDR: redis:6379
+
+  # ── identity (WebAuthn / DID resolver) — PUBLIC ─────────────────────────
+  identity:
+    image: ${ACR}/interego-identity:dcef885bf558bdea4b85b649e634d6aba3a59386
+    restart: unless-stopped
+    networks: [ie]
+    depends_on: [css]
+    environment:
+      CSS_URL: http://css:3456/
+      BASE_URL: https://identity.${DOMAIN}
+      WEBAUTHN_RP_ID: identity.${DOMAIN}
+      WEBAUTHN_RP_ORIGIN: https://identity.${DOMAIN}
+      WEBAUTHN_RP_ORIGINS: https://identity.${DOMAIN},https://relay.${DOMAIN}
+      RELAY_URL: https://relay.${DOMAIN}
+      TOKEN_SIGNING_KEY: ${TOKEN_SIGNING_KEY}
+      IDENTITY_TIMING: "1"
+      ALLOW_OPEN_INTROSPECTION: "1"
+
+  # ── MCP relay — PUBLIC ──────────────────────────────────────────────────
+  relay:
+    image: ${ACR}/interego-relay:69f84236ffffd69f6f68582cbf9bea253ef02d87
+    restart: unless-stopped
+    networks: [ie]
+    depends_on: [css, identity]
+    environment:
+      CSS_URL: http://css:3456/
+      RELAY_OAUTH_STORE_POD: http://css:3456/svc-relay-dcr/
+      PUBLIC_BASE_URL: https://relay.${DOMAIN}
+      IDENTITY_URL: https://identity.${DOMAIN}
+      FOXXI_BRIDGE_URL: https://foxxi-bridge.${DOMAIN}
+      RELAY_INTROSPECTION_SECRET: ${RELAY_INTROSPECTION_SECRET}
+      RELAY_AGENT_KEY_JSON: ${RELAY_AGENT_KEY_JSON}
+      RELAY_COMPLIANCE_WALLET_JSON: ${RELAY_COMPLIANCE_WALLET_JSON}
+      FOXXI_RELAY_TRUST_SECRET: ${FOXXI_RELAY_TRUST_SECRET}
+      PINATA_API_KEY: ${PINATA_API_KEY:-}
+      MANIFEST_APPEND_ONLY_ENABLED: "false"
+
+  # ── CSS write-gate (external face of CSS) — PUBLIC ──────────────────────
+  css-gate:
+    # railwayfix1 strips X-Forwarded-Host/Proto before forwarding to CSS. REQUIRED here:
+    # Caddy's reverse_proxy injects X-Forwarded-Host=<public domain>, which CSS's default
+    # middleware would honour over the Host header and then 500 "outside base URL". Source
+    # fix in deploy/css-gate/server.mjs (STRIP_FORWARDED_TO_CSS).
+    image: ${ACR}/interego-css-gate:railwayfix1
+    restart: unless-stopped
+    networks: [ie]
+    depends_on: [css, identity, relay]
+    environment:
+      CSS_INTERNAL_URL: http://css:3456/
+      CSS_HOST_HEADER: css:3456
+      IDENTITY_URL: https://identity.${DOMAIN}
+      RELAY_VERIFY_URL: https://relay.${DOMAIN}
+      RELAY_INTROSPECTION_SECRET: ${RELAY_INTROSPECTION_SECRET}
+      WRITE_SECRET: ${GATE_WRITE_SECRET}
+      PUBLIC_BASE_URL: https://gate.${DOMAIN}
+
+  # ── Foxxi vertical bridge — PUBLIC (the heavy one) ──────────────────────
+  foxxi-bridge:
+    image: ${ACR}/interego-foxxi-bridge:69f84236ffffd69f6f68582cbf9bea253ef02d87
+    restart: unless-stopped
+    networks: [ie]
+    depends_on: [css-gate, relay]
+    environment:
+      PORT: "6080"
+      NODE_OPTIONS: "--max-old-space-size=3072"
+      BRIDGE_DEPLOYMENT_URL: https://foxxi-bridge.${DOMAIN}
+      FOXXI_TENANT_POD_URL: https://gate.${DOMAIN}/foxxi/
+      FOXXI_FEDERATION_PODS: https://gate.${DOMAIN}/foxxi/federation-peer/
+      FOXXI_AUTHORITATIVE_SOURCE: did:web:acme-id.${DOMAIN}
+      FOXXI_ADMIN_WEB_ID: https://acme-id.${DOMAIN}/users/admin/profile/card#me
+      FOXXI_LEARNING_ENGINEER_WEB_IDS: https://acme-id.${DOMAIN}/users/le/profile/card#me
+      FOXXI_DASHBOARD_ORIGIN: https://foxxi-dashboard.${DOMAIN},https://foxxi-microsite.${DOMAIN},https://foxxi-scorm-player.${DOMAIN}
+      FOXXI_AUDIENCE: both
+      FOXXI_TENANT_PROFILE_NAME: "Acme Training L&D"
+      FOXXI_REQUIRE_AUTH: "true"
+      FOXXI_LRS_BACKEND: memory
+      FOXXI_AGENTIC_RATE_LIMIT_PER_IP: "40"
+      FOXXI_RELAY_TRUST_SECRET: ${FOXXI_RELAY_TRUST_SECRET}
+      FOXXI_ADMIN_KEY_SEED: ${FOXXI_ADMIN_KEY_SEED}
+      FOXXI_ISSUER_KEY_SEED: ${FOXXI_ISSUER_KEY_SEED}
+      FOXXI_BRIDGE_PRIVATE_KEY: ${FOXXI_BRIDGE_PRIVATE_KEY}
+      FOXXI_POD_WRITE_SECRET: ${FOXXI_POD_WRITE_SECRET}
+      FOXXI_LLM_API_KEY: ${FOXXI_LLM_API_KEY}
+      FOXXI_LRS_BASIC_AUTH_PAIRS: ${FOXXI_LRS_BASIC_AUTH_PAIRS}
+      FOXXI_LANDING_PIN_SECRET: ${FOXXI_LANDING_PIN}
+      MANIFEST_APPEND_ONLY_ENABLED: "false"
+      # NOTE: FOXXI_MESH_PODS / FOXXI_MESH_ACTOR_LABELS reference specific agent
+      # pods on the gate — set them once the mesh agents exist (see MIGRATION.md).
+
+  # ── Interego demo bridge — PUBLIC ───────────────────────────────────────
+  bridge:
+    image: ${ACR}/interego-bridge:pedersen1
+    restart: unless-stopped
+    networks: [ie]
+    environment:
+      PORT: "6050"
+      INTEREGO_DEFAULT_AGENT_DID: did:web:interego-demo
+      BRIDGE_DEPLOYMENT_URL: https://bridge.${DOMAIN}
+
+  # ── dashboards / microsites / static-ish surfaces — PUBLIC ──────────────
+  dashboard:
+    image: ${ACR}/interego-dashboard:69f84236ffffd69f6f68582cbf9bea253ef02d87
+    restart: unless-stopped
+    networks: [ie]
+    environment:
+      CSS_URL: https://gate.${DOMAIN}/
+      IDENTITY_URL: https://identity.${DOMAIN}
+      RELAY_URL: https://relay.${DOMAIN}
+      PUBLIC_RELAY_URL: https://relay.${DOMAIN}
+      PUBLIC_BASE_URL: https://dashboard.${DOMAIN}
+
+  pgsl-browser:
+    image: ${ACR}/interego-pgsl-browser:69f84236ffffd69f6f68582cbf9bea253ef02d87
+    restart: unless-stopped
+    networks: [ie]
+    environment:
+      CSS_URL: http://css:3456/
+      POD_NAME: markj
+      CLEAN: "1"
+      PUBLIC_BASE_URL: https://pgsl-browser.${DOMAIN}
+
+  microsite:
+    image: ${ACR}/interego-microsite:pedersen1
+    restart: unless-stopped
+    networks: [ie]
+
+  main:
+    image: ${ACR}/interego-main:dcef885bf558bdea4b85b649e634d6aba3a59386
+    restart: unless-stopped
+    networks: [ie]
+
+  acme-id:
+    image: ${ACR}/interego-acme-id:dcef885bf558bdea4b85b649e634d6aba3a59386
+    restart: unless-stopped
+    networks: [ie]
+
+  foxxi-dashboard:
+    image: ${ACR}/interego-foxxi-dashboard:dcef885bf558bdea4b85b649e634d6aba3a59386
+    restart: unless-stopped
+    networks: [ie]
+
+  foxxi-microsite:
+    image: ${ACR}/interego-foxxi-microsite:dcef885bf558bdea4b85b649e634d6aba3a59386
+    restart: unless-stopped
+    networks: [ie]
+
+  foxxi-scorm-player:
+    image: ${ACR}/interego-foxxi-scorm-player:dcef885bf558bdea4b85b649e634d6aba3a59386
+    restart: unless-stopped
+    networks: [ie]
+
+  # ── reverse proxy + automatic TLS ───────────────────────────────────────
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    networks: [ie]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [relay, identity, css-gate, foxxi-bridge]
