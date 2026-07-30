@@ -11,9 +11,12 @@
 // land on the agent's eth-derived pod just like any other Interego
 // participant.
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+// MCP SDK v2. The v1 `@modelcontextprotocol/sdk` is no longer installed anywhere in
+// this repo, so these imports had stopped resolving — this shim would have crashed at
+// startup. Nothing caught it: no CI workflow triggers on examples/**, and this file
+// signs and POSTs to the PRODUCTION RELAY with a per-agent wallet.
+import { Server } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { Wallet } from 'ethers';
 import { signedToolCall, unsignedToolCall, fetchGraphPayload, podUrlForDid } from './relay.mjs';
 
@@ -28,10 +31,22 @@ if (!WALLET_KEY || !DID) {
 }
 const wallet = new Wallet(WALLET_KEY);
 
-const server = new Server(
-  { name: `interego-holodeck:${LABEL}`, version: '0.1.0' },
-  { capabilities: { tools: {} } },
-);
+/**
+ * Build a fresh server per connection.
+ *
+ * `serveStdio` calls this once per connection AND once for an optimistic
+ * `server/discover` probe, closing the probe instance if the client falls back to the
+ * 2025 handshake. A single shared instance would be torn down by that close.
+ */
+function buildServer() {
+  const server = new Server(
+    { name: `interego-holodeck:${LABEL}`, version: '0.1.0' },
+    { capabilities: { tools: {} } },
+  );
+  server.setRequestHandler('tools/list', handleListTools);
+  server.setRequestHandler('tools/call', handleCallTool);
+  return server;
+}
 
 const TOOLS = [
   {
@@ -100,9 +115,9 @@ const TOOLS = [
   },
 ];
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+const handleListTools = async () => ({ tools: TOOLS });
 
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
+const handleCallTool = async (req) => {
   const name = req.params.name;
   const args = req.params.arguments ?? {};
   try {
@@ -162,7 +177,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   } catch (err) {
     return { content: [{ type: 'text', text: JSON.stringify({ error: err.message }) }], isError: true };
   }
-});
+};
 
 function stripEnvelope(j) {
   if (!j || typeof j !== 'object') return j;
@@ -172,6 +187,7 @@ function stripEnvelope(j) {
   return rest;
 }
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+// Serves both protocol eras from one definition: the 2025 `initialize` handshake and
+// the 2026-07-28 revision, which answers `server/discover` instead.
+serveStdio(buildServer);
 process.stderr.write(`[holodeck mcp-shim] ${LABEL} (${DID}) ready\n`);
