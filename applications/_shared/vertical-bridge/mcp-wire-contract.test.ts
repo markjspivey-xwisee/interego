@@ -79,10 +79,39 @@ const app = createVerticalBridge({
   verticalName: 'wire-contract-test',
   affordances,
   handlers: {
-    'demo.ping': async (a: Record<string, unknown>) => ({ pong: a.msg }),
+    'demo.ping': async (a: Record<string, unknown>) => ({ pong: a.msg, sawToken: a.__caller_token ?? null }),
     'demo.explode': async () => { throw new Error('deliberate handler failure'); },
   },
   deploymentUrl: BASE,
+  // ★ MODEL THE REAL COMPOSITION, NOT THE COMPONENT.
+  //
+  // This test used to boot the mount ALONE and passed 29 of 29 checks — while the
+  // deployed foxxi bridge answered every /mcp request with HTTP 400. The difference
+  // was this middleware: foxxi's auth hook injects __client_ip and __caller_token
+  // into params.arguments AND at the TOP LEVEL of the JSON-RPC body. The hand-rolled
+  // mount ignored unknown top-level members; the SDK rejects them as an invalid
+  // JSON-RPC message.
+  //
+  // So the injection now runs in the test too, shaped exactly like the real one. A
+  // component test cannot observe a behaviour the composition decides.
+  middleware: (a) => {
+    a.use((req, _res, next) => {
+      if (req.body && typeof req.body === 'object') {
+        const body = req.body as { method?: string; params?: { arguments?: Record<string, unknown> } };
+        if (body.method === 'tools/call' && body.params) {
+          body.params.arguments = {
+            ...(body.params.arguments ?? {}),
+            __client_ip: '203.0.113.7',
+            __caller_token: 'injected-session-token',
+          };
+        }
+        const rec = req.body as Record<string, unknown>;
+        rec.__client_ip = '203.0.113.7';
+        rec.__caller_token = 'injected-session-token';
+      }
+      next();
+    });
+  },
 });
 const server = app.listen(PORT);
 
@@ -140,6 +169,19 @@ try {
   check('…and structuredContent alongside it (the outputSchema obligation)',
     ok.json?.result?.structuredContent?.pong === 'hi',
     JSON.stringify(ok.json?.result?.structuredContent));
+
+  // ── The injection that broke production, both halves ─────────────────────
+  // Top-level `__`-prefixed members must be stripped before the SDK parses the
+  // message (it rejects them as invalid JSON-RPC, which is what took the live bridge
+  // to HTTP 400) — and the params.arguments injection must SURVIVE, because
+  // `args.__caller_token` is the bridge's entire session-auth mechanism. Stripping
+  // both would leave every handler with no caller identity while everything still
+  // appeared to work.
+  check('a top-level __-prefixed member does not break the request (the -32600 regression)',
+    ok.json?.result !== undefined, JSON.stringify(ok.json).slice(0, 180));
+  check('…while params.arguments.__caller_token still reaches the handler',
+    JSON.parse(ok.json?.result?.content?.[0]?.text ?? '{}').sawToken === 'injected-session-token',
+    ok.json?.result?.content?.[0]?.text);
 
   // ── tools/call, handler throws ───────────────────────────────────────────
   // MIGRATION DELTA, RESOLVED. The code changed from -32000 to -32603 when the mount
