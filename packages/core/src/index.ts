@@ -758,3 +758,15 @@ export {
   toStructuredContent,
 } from './mcp/output-schema.js';
 export type { JsonSchemaNode } from './mcp/output-schema.js';
+
+// The two pieces every MCP-over-HTTP mount must get right. Shared because three
+// surfaces mount MCP over Express and both pieces were learned from production
+// breakage: protocolMembersOnly (a middleware-injected top-level field 400'd every
+// request) and acceptForSdkTransport (the SDK 406s a client that does not accept SSE,
+// which is every browser client we ship).
+export {
+  protocolMembersOnly,
+  acceptForSdkTransport,
+  SDK_REQUIRED_ACCEPT,
+  MCP_MODERN_CORS_HEADERS,
+} from './mcp/http-mount.js';

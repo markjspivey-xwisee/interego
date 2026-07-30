@@ -39,7 +39,16 @@ import {
   type PedersenCommitment, type PedersenRangeProof,
   proveConfidenceAboveThreshold, verifyConfidenceProof, verifyConfidenceProofByReveal,
   buildMerkleTree, generateMerkleProof, verifyMerkleProof,
+  protocolMembersOnly, acceptForSdkTransport,
 } from '@interego/core';
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  ProtocolError as McpProtocolError,
+  Server as McpSdkServer,
+  WebStandardStreamableHTTPServerTransport,
+} from '@modelcontextprotocol/server';
+import type { Tool as McpTool } from '@modelcontextprotocol/server';
 import { publish, discover } from '@interego/solid';
 import { mintAtom, resolveAtomValue, createPGSL } from '@interego/pgsl';
 import type { PGSLInstance } from '@interego/pgsl';
@@ -761,23 +770,32 @@ app.use((req, res, next) => {
   next();
 });
 
-app.post('/mcp', async (req: Request, res: Response) => {
-  const body = req.body as { jsonrpc?: string; id?: number | string | null; method?: string; params?: Record<string, unknown> };
-  const { id = null, method, params } = body;
+// ── MCP endpoint ────────────────────────────────────────────────────
+//
+// ★ WAS HAND-ROLLED JSON-RPC ADVERTISING A HARD-CODED `2024-11-05`. It ignored what
+// the client asked for, implemented four methods, and had no version negotiation.
+// Now on MCP SDK v2: one tool definition serves BOTH protocol eras — the 2025
+// `initialize` handshake, and the 2026-07-28 revision, which has no handshake and
+// answers `server/discover`.
+//
+// Same shape as the shared vertical-bridge mount, and deliberately so:
+//   - the LOW-LEVEL Server, not McpServer.registerTool, so the JSON-RPC error
+//     semantics this bridge's callers already parse are preserved exactly
+//   - Accept is normalised, because the SDK transport 406s a client that does not
+//     accept SSE and every browser client here sends no Accept header at all
+//   - the body is filtered to protocol members before the SDK parses it
+// The two load-bearing helpers come from @interego/core rather than being copied a
+// third time — see the note on protocolMembersOnly for what a copy cost last time.
+const buildMcpServer = (): McpSdkServer => {
+  const server = new McpSdkServer(
+    { name: 'interego-bridge-demo', version: '0.1.0' },
+    {
+      capabilities: { tools: {} },
+      instructions: `Generic protocol-level Interego bridge. Pod: ${POD_URL_NN}. Agent: ${AGENT_DID}. Exposes ${Object.keys(tools).length} tools across publish/discover, PGSL, ZK, and constitutional layers.`,
+    },
+  );
 
-  if (method === 'initialize') {
-    res.json({
-      jsonrpc: '2.0', id,
-      result: {
-        protocolVersion: '2024-11-05',
-        capabilities: { tools: {} },
-        serverInfo: { name: 'interego-bridge-demo', version: '0.1.0' },
-        instructions: `Generic protocol-level Interego bridge. Pod: ${POD_URL_NN}. Agent: ${AGENT_DID}. Exposes ${Object.keys(tools).length} tools across publish/discover, PGSL, ZK, and constitutional layers.`,
-      },
-    });
-    return;
-  }
-  if (method === 'tools/list') {
+  server.setRequestHandler('tools/list', async () => {
     // ★ LIST EVERY TOOL THAT EXISTS — all of them — AND SAY WHICH CANNOT RUN.
     //
     // These are two different facts and both belong here. A tool that is registered
@@ -786,57 +804,98 @@ app.post('/mcp', async (req: Request, res: Response) => {
     // listing it with no warning is how an agent picks it, calls it, and gets a
     // refusal it could have known about before spending the round trip.
     //
-    // Previously this listed all 23 flat while the HTTP root reported 19 — the same
-    // capability described two ways depending on which door you came through. The
-    // count is now identical on both surfaces because it is the same number: 23
-    // tools exist. The availability is carried alongside rather than subtracted
-    // from the total.
-    //
     // The reason rides in the description because MCP has no standard field for
     // "registered but unavailable", and a description is what a client actually
     // shows a model when it is choosing.
     const unavailable = new Map(
       toolAvailability().unavailable.map(u => [u.tool, u.reason] as const));
-    res.json({
-      jsonrpc: '2.0', id,
-      result: {
-        tools: Object.entries(tools).map(([name, t]) => {
-          const reason = unavailable.get(name);
-          return {
-            name,
-            description: reason
-              ? `[UNAVAILABLE: ${reason}] ${t.description}`
-              : t.description,
-            inputSchema: t.inputSchema,
-            ...(reason ? { annotations: { readOnlyHint: true, unavailable: true, unavailableReason: reason } } : {}),
-          };
-        }),
-      },
-    });
-    return;
-  }
-  if (method === 'tools/call') {
-    const toolName = params?.['name'] as string | undefined;
-    const args = (params?.['arguments'] as Record<string, unknown> | undefined) ?? {};
+    return {
+      tools: Object.entries(tools).map(([name, t]) => {
+        const reason = unavailable.get(name);
+        return {
+          name,
+          description: reason
+            ? `[UNAVAILABLE: ${reason}] ${t.description}`
+            : t.description,
+          inputSchema: t.inputSchema,
+          ...(reason ? { annotations: { readOnlyHint: true, unavailable: true, unavailableReason: reason } } : {}),
+        };
+      }),
+    } as unknown as { tools: McpTool[] };
+  });
+
+  server.setRequestHandler('tools/call', async (req) => {
+    const toolName = req.params.name;
+    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
     const tool = toolName ? tools[toolName] : undefined;
     if (!tool) {
-      res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${toolName ?? '<undefined>'}` } });
-      return;
+      // -32601 preserved over the SDK's own "tool not found": this bridge's callers
+      // (interego-microsite, foxxi-microsite's ai-tutor) read the code.
+      throw new McpProtocolError(-32601, `Unknown tool: ${toolName ?? '<undefined>'}`);
     }
-    try {
-      const result = await tool.handler(args);
-      res.json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } });
-    } catch (err) {
-      res.json({ jsonrpc: '2.0', id, error: { code: -32000, message: (err as Error).message } });
-    }
-    return;
-  }
-  if (method === 'notifications/initialized') {
-    res.status(204).end();
-    return;
-  }
-  res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown method: ${method ?? '<undefined>'}` } });
+    const result = await tool.handler(args);
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+    };
+  });
+
+  return server;
+};
+
+const mcpModernHandler = createMcpHandler(buildMcpServer, {
+  legacy: 'reject',
+  responseMode: 'json',
+  onerror: () => { /* per-request failures surface in the JSON-RPC response */ },
 });
+
+/** The 2025-era leg, answering plain JSON rather than SSE frames. */
+const serveMcpLegacy = async (request: globalThis.Request): Promise<globalThis.Response> => {
+  const server = buildMcpServer();
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    // Honoured by the v2 runtime but absent from the published types: without it the
+    // transport SSE-frames every reply and every browser client here calls res.json().
+    enableJsonResponse: true,
+  } as unknown as ConstructorParameters<typeof WebStandardStreamableHTTPServerTransport>[0]);
+  await server.connect(transport);
+  return transport.handleRequest(request);
+};
+
+const handleMcp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const headers = new Headers();
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (typeof v === 'string') headers.set(k, v);
+      else if (Array.isArray(v)) headers.set(k, v.join(', '));
+    }
+    headers.set('accept', acceptForSdkTransport(headers.get('accept') ?? undefined));
+    const hasBody = req.method === 'POST' && req.body !== undefined;
+    const request = new globalThis.Request(`http://localhost${req.originalUrl}`, {
+      method: req.method,
+      headers,
+      ...(hasBody ? { body: JSON.stringify(protocolMembersOnly(req.body)) } : {}),
+    });
+    // isLegacyRequest is the SDK's OWN classifier, so this routing can never disagree
+    // with what createMcpHandler would have decided.
+    const out = await isLegacyRequest(request.clone())
+      ? await serveMcpLegacy(request)
+      : await mcpModernHandler.fetch(request);
+    res.status(out.status);
+    out.headers.forEach((value, key) => res.setHeader(key, value));
+    res.send(await out.text());
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: '2.0', id: null,
+        error: { code: -32603, message: `MCP transport error: ${(err as Error).message}` },
+      });
+    }
+  }
+};
+
+app.post('/mcp', handleMcp);
+app.get('/mcp', handleMcp);
+app.delete('/mcp', handleMcp);
 
 app.get('/affordances', (_req, res) => {
   // Minimal Turtle stub so the readiness probe in agent-lib's spawnBridge
