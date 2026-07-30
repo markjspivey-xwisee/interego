@@ -135,20 +135,32 @@ try {
   check('…carrying the result as a JSON string',
     JSON.parse(ok.json?.result?.content?.[0]?.text ?? '{}').pong === 'hi',
     ok.json?.result?.content?.[0]?.text);
+  // Every derived tool declares an outputSchema, which obliges the tool to return
+  // conforming structuredContent. Additive: content[0].text above is unchanged.
+  check('…and structuredContent alongside it (the outputSchema obligation)',
+    ok.json?.result?.structuredContent?.pong === 'hi',
+    JSON.stringify(ok.json?.result?.structuredContent));
 
   // ── tools/call, handler throws ───────────────────────────────────────────
-  // MIGRATION DELTA. Today a throwing handler becomes a JSON-RPC *error*. Under the
-  // SDK it becomes a successful result with isError:true and the message as text.
-  // The dashboard reads j.error.message and would find undefined, then JSON.parse a
-  // bare message string and throw inside its own catch — silent breakage. Whatever
-  // the migration chooses, it must update that client in the same change.
+  // MIGRATION DELTA, RESOLVED. The code changed from -32000 to -32603 when the mount
+  // moved to the SDK. That is the right direction: -32603 is the JSON-RPC "Internal
+  // error" code, while -32000 was a server-defined value this mount invented.
+  //
+  // What MATTERS is what did NOT change: it is still a JSON-RPC *error*, so
+  // `j.error.message` — which is what the foxxi dashboard SPA reads on failure — still
+  // resolves. The feared outcome was a successful result with `isError: true`, which
+  // would have left the dashboard reading `undefined` and then JSON.parsing a bare
+  // message string inside its own catch. Registering handlers through
+  // McpServer.registerTool would produce exactly that, which is one of the reasons the
+  // mount uses the low-level Server instead.
   const boom = await rpc('tools/call', { name: 'demo.explode', arguments: {} });
-  check('a throwing handler is reported as a JSON-RPC error today',
-    boom.json?.error?.code === -32000, JSON.stringify(boom.json));
-  check('…carrying the handler message', boom.json?.error?.message === 'deliberate handler failure',
+  check('a throwing handler is still reported as a JSON-RPC error, not an isError result',
+    boom.json?.error !== undefined && boom.json?.result === undefined, JSON.stringify(boom.json));
+  check('…with the JSON-RPC internal-error code', boom.json?.error?.code === -32603,
+    String(boom.json?.error?.code));
+  check('…carrying the handler message (the dashboard reads j.error.message)',
+    boom.json?.error?.message === 'deliberate handler failure',
     String(boom.json?.error?.message));
-  check('…and NOT as an isError result (this flips under the SDK)',
-    boom.json?.result === undefined, JSON.stringify(boom.json?.result));
 
   // ── tools/call, unknown tool ─────────────────────────────────────────────
   const unknown = await rpc('tools/call', { name: 'no.such.tool', arguments: {} });
@@ -166,15 +178,28 @@ try {
     String(ext.json?.error?.message).includes(`${BASE}/demo/upload`), String(ext.json?.error?.message));
 
   // ── initialize ───────────────────────────────────────────────────────────
-  // MIGRATION DELTA. The mount answers a hard-coded protocol version and ignores
-  // what the client asked for entirely. Verified against both live bridges: sending
-  // protocolVersion 2026-07-28 still yields 2024-11-05. Real negotiation is the
-  // point of the migration, so this assertion is expected to change — deliberately.
+  // MIGRATION DELTA, RESOLVED — and this one was the point of the exercise.
+  //
+  // The mount used to answer a hard-coded `2024-11-05` and ignore what the client
+  // asked for entirely (verified against both live bridges: a client requesting
+  // 2026-07-28 was still told 2024-11-05). It now NEGOTIATES.
+  //
+  // A claim-less `initialize` is legacy-era by definition — the 2026-07-28 era is
+  // selected by the per-request `_meta` envelope, not by asking for it in an
+  // initialize — so requesting 2026-07-28 here is correctly answered with the SDK's
+  // newest LEGACY revision rather than the modern one. A client that wants the modern
+  // era sends `server/discover` with the envelope; that path is asserted below.
   const init = await rpc('initialize', {
     protocolVersion: '2026-07-28', capabilities: {}, clientInfo: { name: 'contract-test', version: '1' },
   });
-  check('initialize answers a hard-coded 2024-11-05 today, whatever was requested',
-    init.json?.result?.protocolVersion === '2024-11-05', String(init.json?.result?.protocolVersion));
+  check('initialize NEGOTIATES rather than answering a hard-coded literal',
+    init.json?.result?.protocolVersion === '2025-11-25', String(init.json?.result?.protocolVersion));
+  const initLegacy = await rpc('initialize', {
+    protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'contract-test', version: '1' },
+  });
+  check('…and honours an older revision a client actually asks for',
+    initLegacy.json?.result?.protocolVersion === '2024-11-05',
+    String(initLegacy.json?.result?.protocolVersion));
   check('…and advertises a tools capability', !!init.json?.result?.capabilities?.tools,
     JSON.stringify(init.json?.result?.capabilities));
   check('…and identifies the server by vertical name',
@@ -184,10 +209,36 @@ try {
     typeof init.json?.result?.instructions === 'string' && init.json!.result.instructions.length > 0);
 
   // ── notifications and unknown methods ────────────────────────────────────
+  // MIGRATION DELTA, RESOLVED: the ack is 200 rather than the hand-rolled 204. A
+  // notification has no response body by definition, so no client reads it; asserted
+  // only to pin that a notification is ACKNOWLEDGED and never answered with an error.
   const note = await rpc('notifications/initialized');
-  check('notifications/initialized is acknowledged with 204', note.status === 204, `HTTP ${note.status}`);
+  check('notifications/initialized is acknowledged, not errored',
+    note.status >= 200 && note.status < 300, `HTTP ${note.status}`);
   const bogus = await rpc('does/not/exist');
   check('an unknown method is -32601', bogus.json?.error?.code === -32601, JSON.stringify(bogus.json));
+
+  // ── the 2026-07-28 era, from the same mount ──────────────────────────────
+  // The whole reason for the migration: a modern client carries a per-request `_meta`
+  // envelope and gets the modern era, served by the SAME affordance definitions that
+  // answered the legacy initialize above — so the two eras cannot drift apart.
+  const ENVELOPE = {
+    'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+    'io.modelcontextprotocol/clientCapabilities': {},
+  };
+  const discover = await rpc('server/discover', { _meta: ENVELOPE }, { 'Mcp-Method': 'server/discover' });
+  check('server/discover advertises the 2026-07-28 era',
+    Array.isArray(discover.json?.result?.supportedVersions)
+      && discover.json.result.supportedVersions.includes('2026-07-28'),
+    discover.text.slice(0, 160));
+  const modernList = await rpc('tools/list', { _meta: ENVELOPE }, { 'Mcp-Method': 'tools/list' });
+  check('…and the modern era serves the same tool surface',
+    modernList.json?.result?.tools?.length === affordances.length,
+    String(modernList.json?.result?.tools?.length));
+  check('…with the CacheableResult fields the revision requires',
+    typeof modernList.json?.result?.resultType === 'string'
+      && modernList.json?.result?.cacheScope !== undefined,
+    JSON.stringify({ resultType: modernList.json?.result?.resultType, cacheScope: modernList.json?.result?.cacheScope }));
 
   // ── MIGRATION DELTA: no input validation exists today ────────────────────
   // demo.ping declares msg as required, and the mount invokes the handler anyway.
