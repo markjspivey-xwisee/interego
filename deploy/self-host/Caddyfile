@@ -1,0 +1,60 @@
+# Caddy — automatic HTTPS (Let's Encrypt) + subdomain routing.
+# Every subdomain below must have a DNS A/AAAA record pointing at this box.
+# CSS itself is NOT exposed — only its write-gate (gate.$DOMAIN) is public.
+
+{
+	email {$ACME_EMAIL}
+}
+
+relay.{$DOMAIN} {
+	reverse_proxy relay:8080
+}
+
+identity.{$DOMAIN} {
+	reverse_proxy identity:8090
+}
+
+gate.{$DOMAIN} {
+	reverse_proxy css-gate:8080
+}
+
+foxxi-bridge.{$DOMAIN} {
+	reverse_proxy foxxi-bridge:6080
+}
+
+bridge.{$DOMAIN} {
+	reverse_proxy bridge:6050
+}
+
+dashboard.{$DOMAIN} {
+	reverse_proxy dashboard:4000
+}
+
+pgsl-browser.{$DOMAIN} {
+	reverse_proxy pgsl-browser:5000
+}
+
+foxxi-dashboard.{$DOMAIN} {
+	reverse_proxy foxxi-dashboard:8080
+}
+
+foxxi-microsite.{$DOMAIN} {
+	reverse_proxy foxxi-microsite:8080
+}
+
+foxxi-scorm-player.{$DOMAIN} {
+	reverse_proxy foxxi-scorm-player:8080
+}
+
+acme-id.{$DOMAIN} {
+	reverse_proxy acme-id:8080
+}
+
+microsite.{$DOMAIN} {
+	reverse_proxy microsite:8080
+}
+
+# Apex + www -> the main marketing/landing site.
+{$DOMAIN}, www.{$DOMAIN} {
+	reverse_proxy main:8080
+}
