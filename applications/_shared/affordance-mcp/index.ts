@@ -20,7 +20,7 @@
 import type {
   IRI,
 } from '@interego/core';
-import { actionUrl } from '@interego/core';
+import { actionUrl, mcpOutputSchema } from '@interego/core';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -71,16 +71,20 @@ export interface AffordanceScope {
 }
 
 /**
- * Optional output-payload description for an affordance. When supplied,
- * the bridge's tool-schema derivation wraps it into a wire-shape MCP
- * `outputSchema` (`{ content: [{ type: 'text', text: <stringified payload> }] }`)
- * and attaches the supplied properties as an `x-payload-schema`
- * JSON-Schema extension on the `text` field — so OpenAI Apps / Claude
- * clients see a structured response-shape hint and stop reporting
- * "output schema missing". Mirrors the pattern shipped on the main MCP
- * servers (mcp-server/server.ts + deploy/mcp-relay/server.ts, commit
- * f31f64b). Omit `outputs` to fall back to a permissive generic object
- * schema.
+ * Optional description of an affordance handler's RESULT PAYLOAD.
+ *
+ * The tool-schema derivation turns this into the MCP `outputSchema` directly —
+ * the schema describes the payload, which the mount returns as
+ * `structuredContent`. Omit `outputs` for a permissive object schema.
+ *
+ * It used to be wrapped into a wire-envelope schema with the payload hidden in a
+ * non-standard `x-payload-schema` extension, which inverted the spec: since
+ * 2025-06-18 `outputSchema` describes the payload and declaring one obliges the
+ * tool to return conforming `structuredContent`.
+ *
+ * `required` is accepted for documentation but deliberately NOT enforced in the
+ * derived schema — handlers return a success payload or a soft-error payload from
+ * the same tool, so a hard presence constraint would fail one of them.
  */
 export interface AffordanceOutput {
   /** Free-text description of what the handler returns; surfaces in the
@@ -243,12 +247,12 @@ export interface McpToolSchema {
     properties: Record<string, JsonSchemaProperty>;
     required: string[];
   };
-  /** MCP wire-shape response envelope schema. Always present so OpenAI
-   *  Apps / Claude clients stop reporting "output schema missing" on
-   *  vertical-bridge tools. When the affordance carries `outputs`, the
-   *  inner `text` field gets an `x-payload-schema` JSON-Schema extension
-   *  describing the JSON payload the handler returns; otherwise the
-   *  field is a permissive generic object. */
+  /** JSON Schema for the structured RESULT PAYLOAD — the object the mount
+   *  returns as `structuredContent`. Always present so clients stop reporting
+   *  "output schema missing"; permissive when the affordance declares no
+   *  `outputs`. NOT the wire envelope: declaring an outputSchema obliges the
+   *  tool to return conforming `structuredContent` (MCP 2025-06-18), so the two
+   *  are one contract and change together. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly outputSchema: Record<string, any>;
   /** MCP-spec-2025-06-18 `annotations` object. Always present when the
@@ -269,65 +273,51 @@ interface JsonSchemaProperty {
 }
 
 /**
- * Derive an MCP `outputSchema` describing the wire envelope MCP tools
- * actually return: `{ content: [{ type: 'text', text: <string> }] }`.
- * When `payload` is supplied, it's attached to the `text` field as an
- * `x-payload-schema` JSON-Schema extension so downstream tools that
- * introspect tool catalogues can see what's IN the stringified text.
+ * Derive an MCP `outputSchema` from an affordance's declared `outputs`.
  *
- * This is the per-bridge equivalent of the helper used in the main MCP
- * servers (mcp-server/server.ts + deploy/mcp-relay/server.ts, commit
- * f31f64b — `mcpOutputSchema`).
+ * ★ THIS USED TO DESCRIBE THE WRONG THING. It emitted the wire envelope
+ * (`{ content: [{ type, text }], isError }`) as the outputSchema and tucked the
+ * real payload shape into a non-standard `x-payload-schema` extension on the
+ * `text` field.
+ *
+ * Since MCP 2025-06-18 the rule is the other way round: `outputSchema` describes
+ * the structured RESULT PAYLOAD, and declaring one OBLIGES the tool to return
+ * `structuredContent` conforming to it. So the machine-enforced part described
+ * the envelope, while the part that described the payload was invisible to every
+ * validator — and the mount returned no `structuredContent` at all.
+ *
+ * Nothing caught it because the mount advertised `2024-11-05`, a revision with no
+ * outputSchema concept, and no client validated. Under MCP SDK v2,
+ * `McpServer.registerTool` refuses such a result outright and v2 CLIENTS validate
+ * regardless of which server class serves them.
+ *
+ * The projection now delegates to `mcpOutputSchema` from `@interego/core` — the
+ * same implementation the relay uses — so the rule lives in one place. The
+ * companion half is in the vertical-bridge mount, which attaches
+ * `structuredContent`; the two MUST stay together (see that call site).
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildMcpOutputSchema(outputs?: AffordanceOutput): Record<string, any> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const textProp: Record<string, any> = {
-    type: 'string',
-    description: outputs?.description
-      ?? 'JSON-encoded result payload returned by the affordance handler.',
-  };
-  if (outputs && (outputs.properties || outputs.required || outputs.description)) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const payload: Record<string, any> = { type: 'object' };
-    if (outputs.description) payload['description'] = outputs.description;
-    if (outputs.properties) {
-      payload['properties'] = outputs.properties;
-    } else {
-      // Description-only outputs stay permissive on the property bag so a
-      // richer schema can be added later without breaking callers.
-      payload['additionalProperties'] = true;
-    }
-    if (outputs.required && outputs.required.length > 0) payload['required'] = outputs.required;
-    textProp['x-payload-schema'] = payload;
-  } else {
-    // Generic permissive payload — used when the affordance didn't
-    // declare an `outputs` shape at all. Matches GENERIC_OUTPUT_SCHEMA
-    // from the main MCP servers.
-    textProp['x-payload-schema'] = {
+  // No declared outputs → a permissive object. It satisfies clients that report a
+  // missing output schema, and imposes no constraint any real return can fail.
+  if (!outputs || !(outputs.properties || outputs.required || outputs.description)) {
+    return mcpOutputSchema({
       type: 'object',
       additionalProperties: true,
-      description: "Tool returned a JSON object (or human-readable text) embedded in the MCP content[0].text field. See the affordance handler's source for the exact shape.",
-    };
+      description: "The affordance handler's JSON result payload. See the handler's source for the exact shape.",
+    });
   }
-  return {
-    type: 'object',
-    properties: {
-      content: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            type: { type: 'string', const: 'text' },
-            text: textProp,
-          },
-          required: ['type', 'text'],
-        },
-      },
-      isError: { type: 'boolean' },
-    },
-    required: ['content'],
-  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const payload: Record<string, any> = { type: 'object' };
+  if (outputs.description) payload['description'] = outputs.description;
+  if (outputs.properties) payload['properties'] = outputs.properties;
+  else payload['additionalProperties'] = true;
+  // `outputs.required` is deliberately NOT forwarded. Handlers return a success
+  // payload OR a soft-error one (`{ error, code }`) from the same tool, so a
+  // top-level `required` would trade the "missing structuredContent" failure for a
+  // "schema mismatch" failure. mcpOutputSchema drops `required` at every level for
+  // exactly this reason; the property descriptions survive as documentation.
+  return mcpOutputSchema(payload);
 }
 
 /**

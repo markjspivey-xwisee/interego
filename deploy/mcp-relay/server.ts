@@ -50,6 +50,7 @@ import { Wallet as EthersWalletCtor } from 'ethers';
 // come from '@modelcontextprotocol/server'; only the AS plumbing comes from
 // server-legacy.
 import { Server, createMcpHandler } from '@modelcontextprotocol/server';
+import { mcpOutputSchema, toStructuredContent } from '@interego/core';
 import type { Tool } from '@modelcontextprotocol/server';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import type { AuthInfo } from '@modelcontextprotocol/server';
@@ -6553,93 +6554,15 @@ if (RELAY_DYNAMIC_TOOLS_POD) {
 // get_pod_status / analyze_question / invoke_affordance) keep their
 // hand-authored property docs. Handler behavior is untouched.
 
-// Recursively make a JSON Schema null-tolerant: drop `required` at EVERY
-// level and widen every declared `type` to also accept `null`. This closes
-// the f-schema-nullability class — a strict MCP client (Anthropic Messages
-// API mcp_servers) validates structuredContent against outputSchema and
-// rejects a `null` where the schema said `"string"`. Handlers legitimately
-// emit null for "absent" optional fields (previousHeadCid on a fresh-URN
-// publish, authorship when unsigned, precondition on a non-CAS publish, …),
-// so rather than chase every field per dogfood cycle we make the declared
-// schema accept what the handlers actually produce. Belt to the
-// toStructuredContent omit-nulls suspenders below.
-// `isRoot` MUST stay false for the top-level call: the MCP spec types a
-// tool's outputSchema as an object whose root `type` is the LITERAL
-// "object", and a strict client can reject the tool definition on
-// tools/list if the root is a union like ["object","null"]. So at the
-// root we drop `required` and recurse, but DON'T widen the root type.
-// Nested property/items types ARE widened to include null (a nested
-// object/string field can legitimately be null).
-function makeSchemaNullTolerant(node: unknown, isRoot = false): unknown {
-  if (Array.isArray(node)) return node.map(n => makeSchemaNullTolerant(n, false));
-  if (node && typeof node === 'object') {
-    const o: Record<string, unknown> = { ...(node as Record<string, unknown>) };
-    delete o.required; // drop required at every nesting level
-    if (!isRoot) {
-      if (typeof o.type === 'string' && o.type !== 'null') {
-        o.type = [o.type, 'null'];
-      } else if (Array.isArray(o.type) && !o.type.includes('null')) {
-        o.type = [...o.type, 'null'];
-      }
-    }
-    if (o.properties && typeof o.properties === 'object') {
-      const props: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(o.properties as Record<string, unknown>)) {
-        props[k] = makeSchemaNullTolerant(v, false);
-      }
-      o.properties = props;
-    }
-    if (o.items) o.items = makeSchemaNullTolerant(o.items, false);
-    return o;
-  }
-  return node;
-}
-
-function mcpOutputSchema(
-  payloadSchema?: Record<string, unknown>,
-): Record<string, unknown> {
-  if (!payloadSchema) {
-    return { type: 'object', additionalProperties: true };
-  }
-  const schema = makeSchemaNullTolerant({ ...payloadSchema, type: 'object' }, true) as Record<string, unknown>;
-  if (!('additionalProperties' in schema)) schema.additionalProperties = true;
-  return schema;
-}
-
-// Parse a handler's JSON-string return into the structuredContent object
-// the /mcp dispatch attaches to every tool result. Always yields an object
-// so it conforms to the permissive payload outputSchema: a JSON object is
-// returned as-is; a non-object JSON value (number/bool/string/array) or an
-// unparseable string is wrapped as { result: <value> }.
-// Recursively drop null/undefined-valued KEYS from objects (johnny's
-// preferred "omit optional fields when empty" — cleaner payloads + nothing
-// for a strict validator to reject). Array elements are preserved as-is
-// (removing them would shift indices / change semantics); the null-tolerant
-// outputSchema above covers any null that survives inside an array.
-function omitNullish(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(omitNullish);
-  if (v && typeof v === 'object') {
-    const o: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-      if (val === null || val === undefined) continue;
-      o[k] = omitNullish(val);
-    }
-    return o;
-  }
-  return v;
-}
-
-function toStructuredContent(text: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return omitNullish(parsed) as Record<string, unknown>;
-    }
-    return { result: parsed };
-  } catch {
-    return { result: text };
-  }
-}
+// The four helpers that used to live here — makeSchemaNullTolerant, mcpOutputSchema,
+// omitNullish, toStructuredContent — now come from @interego/core.
+//
+// They were RIGHT here and WRONG in two other copies: applications/_shared/affordance-mcp
+// and mcp-server both declared an envelope-shaped outputSchema with the real payload
+// hidden in a non-standard x-payload-schema extension, and returned no
+// structuredContent at all. Three copies of one spec rule, two of them inverted, is
+// what a fourth copy would have joined — so the implementation moved to core and all
+// three consumers now share it. Behaviour here is unchanged.
 
 const GENERIC_OUTPUT_SCHEMA = mcpOutputSchema({
   type: 'object',
