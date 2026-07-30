@@ -15,6 +15,7 @@
     "@interego/core": "*",
     "@interego/ops": "*",
     "@interego/solid": "*",
+    "@modelcontextprotocol/server": "^2.0.0",
     "express": "^4.21.0"
   },
   "devDependencies": {
