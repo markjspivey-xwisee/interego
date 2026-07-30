@@ -33,7 +33,7 @@ on:
     paths:
       - 'applications/**'
       - 'mcp-server/**'
-      - 'examples/personal-bridge/**'
+      - 'examples/**'
       - 'packages/**'
       - 'tsconfig.base.json'
       - 'package.json'
@@ -44,7 +44,7 @@ on:
     paths:
       - 'applications/**'
       - 'mcp-server/**'
-      - 'examples/personal-bridge/**'
+      - 'examples/**'
       - 'packages/**'
       - 'tsconfig.base.json'
       - 'package.json'
@@ -92,6 +92,13 @@ jobs:
 
       - name: Typecheck examples/personal-bridge (no workflow covered examples/ at all)
         run: npx tsc --noEmit -p examples/personal-bridge/tsconfig.json
+
+      # examples/holodeck/lib/mcp-shim.mjs is plain JS, signs with a per-agent wallet
+      # and POSTs to the PRODUCTION relay. When the v1 SDK was removed its imports
+      # stopped resolving and it would have crashed at startup — `node --check` cannot
+      # see that (the syntax was fine, the module graph was not), so this BOOTS it.
+      - name: The holodeck MCP shim actually boots and serves
+        run: node examples/holodeck/mcp-shim-boots.test.mjs
 
       # Typechecking the stdio server does not prove it SERVES. This spawns the real
       # binary and drives a real MCP client down real stdio in both protocol eras,
