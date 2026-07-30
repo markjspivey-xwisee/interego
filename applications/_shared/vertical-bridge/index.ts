@@ -42,6 +42,7 @@ import {
   decorateShim,
   KERNEL_JSONLD_CONTEXT,
   KERNEL_RESULT_SHAPES,
+  toStructuredContent,
 } from '@interego/core';
 
 /**
@@ -225,7 +226,26 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
       }
       try {
         const result = await handler(args);
-        res.json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result) }] } });
+        // ★ structuredContent is REQUIRED, not a nicety, and it is ADDITIVE.
+        //
+        // Every derived tool declares an `outputSchema` (see affordance-mcp), and since
+        // MCP 2025-06-18 declaring one obliges the tool to return `structuredContent`
+        // conforming to it. This mount returned only `content`, so every capability
+        // across all seven verticals was non-conformant — invisibly, because the mount
+        // advertises 2024-11-05 and no current client validates. A v2 client does, and
+        // v2's own McpServer refuses the result outright.
+        //
+        // `content[0].text` KEEPS its stringified payload. The foxxi dashboard SPA and
+        // the interego microsite both read and JSON.parse it, so this is strictly an
+        // addition — removing or reshaping the text block would break them silently.
+        res.json({
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+            structuredContent: toStructuredContent(result),
+          },
+        });
       } catch (err) {
         res.json({ jsonrpc: '2.0', id, error: { code: -32000, message: (err as Error).message } });
       }

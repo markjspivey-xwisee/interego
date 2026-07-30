@@ -75,10 +75,12 @@ import {
   pinToIpfs,
   promote as kernelPromote,
   removeAuthorizedAgent,
+  mcpOutputSchema,
   restrict as kernelRestrict,
   sha256,
   signDescriptor,
   toJsonLdString,
+  toStructuredContent,
   toTurtle,
   union,
   validate,
@@ -2198,53 +2200,35 @@ function buildServer(): Server {
 
 // ── Tool Definitions ────────────────────────────────────────
 
-// ── MCP outputSchema helpers ────────────────────────────────
+// ── MCP outputSchema ────────────────────────────────────────
 //
-// MCP tools return wire-level `{ content: [{ type: 'text', text: <result> }] }`
-// shaped responses. Most handlers JSON.stringify their result into the
-// single `text` field; a few (publish_context, discover_context,
-// get_pod_status) format human-readable strings with embedded URLs.
+// ★ THIS USED TO DESCRIBE THE WRONG THING. The local helper emitted the wire
+// envelope (`{ content: [{ type, text }], isError }`) as each tool's outputSchema
+// and tucked the real payload shape into a non-standard `x-payload-schema`
+// extension on the `text` field.
 //
-// We declare an outputSchema on every tool so OpenAI Apps / Claude
-// clients see a structured response-shape hint and stop reporting the
-// schema as missing. The top-level shape is the wire envelope (per the
-// MCP spec it MUST be `type: 'object'`); the inner `text` payload schema
-// (when known) is attached as an `x-payload-schema` JSON-Schema extension
-// for downstream tools that introspect tool catalogs. Generic tools get
-// a permissive object. This is metadata only — handler behavior is
-// untouched.
-
-function mcpOutputSchema(
-  textPayloadSchema?: Record<string, unknown>,
-): Record<string, unknown> {
-  const textProp: Record<string, unknown> = {
-    type: 'string',
-    description: textPayloadSchema && typeof textPayloadSchema.description === 'string'
-      ? textPayloadSchema.description
-      : 'JSON-encoded result payload (or human-readable summary with embedded URLs).',
-  };
-  if (textPayloadSchema) {
-    textProp['x-payload-schema'] = textPayloadSchema;
-  }
-  return {
-    type: 'object',
-    properties: {
-      content: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            type: { type: 'string', const: 'text' },
-            text: textProp,
-          },
-          required: ['type', 'text'],
-        },
-      },
-      isError: { type: 'boolean' },
-    },
-    required: ['content'],
-  };
-}
+// Since MCP 2025-06-18 the rule is the reverse: `outputSchema` describes the
+// structured RESULT PAYLOAD, and declaring one OBLIGES the tool to return
+// `structuredContent` conforming to it. 27 of the 35 tools here declared one and
+// none returned structuredContent, so every one of them was non-conformant.
+//
+// It stayed invisible because this server uses the LOW-LEVEL `Server` class, which
+// validates nothing — v2's high-level `McpServer` would have refused the results
+// outright. But a v2 CLIENT validates regardless of which server class served it,
+// so the breakage was real and merely deferred to the caller.
+//
+// The helper now comes from @interego/core, shared with the relay (which had it
+// right) and every vertical bridge — one implementation of the rule instead of
+// three, two of which were wrong. `mcpOutputSchema` drops `required` at every
+// level and widens nested types to accept null, which matters here because
+// handlers return a success payload OR a soft-error `{ error, code }` from the
+// same tool, and three tools (publish_context, discover_context, get_pod_status)
+// return human-readable multi-line text rather than JSON at all —
+// `toStructuredContent` wraps those as `{ result: <text> }`.
+//
+// The 8 kernel verbs declare NO outputSchema and must stay that way: declaring one
+// is what creates the obligation, so "add one everywhere for tidiness" would
+// convert 8 working tools into 8 broken ones.
 
 const GENERIC_OUTPUT_SCHEMA = mcpOutputSchema({
   type: 'object',
@@ -3514,8 +3498,23 @@ const handleCallTool = async (request: CallToolRequest): Promise<CallToolResult>
     // Plain-text results (multi-line human summaries from the
     // legacy publish/discover/get_pod_status paths) are left
     // verbatim so existing line-oriented parsers don't break.
-    return { content: [{ type: 'text', text: decorateShimResult(name, result) }] };
+    const decorated = decorateShimResult(name, result);
+    // ★ structuredContent is the other half of declaring an outputSchema, and it is
+    // ADDITIVE. 27 tools declare one; MCP 2025-06-18 obliges them to return
+    // conforming structuredContent, and they returned none. content[0].text KEEPS
+    // its exact current value — line-oriented parsers and the three human-text tools
+    // depend on it — so this only adds the structured view alongside.
+    // toStructuredContent parses JSON payloads and wraps anything else (including
+    // multi-line human text) as { result: <value> }, which the payload-shaped,
+    // null-tolerant, requirement-free schema accepts.
+    return {
+      content: [{ type: 'text', text: decorated }],
+      structuredContent: toStructuredContent(decorated),
+    };
   } catch (err) {
+    // No structuredContent here on purpose: the SDK short-circuits output validation
+    // when isError is set, on both the server and the client side, so an error result
+    // carries no obligation.
     return {
       content: [{ type: 'text', text: `Error: ${(err as Error).message}` }],
       isError: true,

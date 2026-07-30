@@ -743,3 +743,18 @@ export type {
   AdapterResolveResult,
   PgslNodeKind,
 } from './lattice/index.js';
+
+// ── MCP outputSchema / structuredContent projection ─────────────────────────
+// ONE implementation of the 2025-06-18 rule that a declared `outputSchema`
+// describes the RESULT PAYLOAD and obliges the tool to return conforming
+// `structuredContent`. It was implemented correctly in deploy/mcp-relay and
+// inverted (envelope-shaped, payload hidden in a non-standard extension) in both
+// applications/_shared/affordance-mcp and mcp-server. Shared here so a fourth
+// copy cannot drift.
+export {
+  makeSchemaNullTolerant,
+  mcpOutputSchema,
+  omitNullish,
+  toStructuredContent,
+} from './mcp/output-schema.js';
+export type { JsonSchemaNode } from './mcp/output-schema.js';

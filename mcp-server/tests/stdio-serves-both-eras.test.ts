@@ -76,6 +76,29 @@ describe('the stdio server serves a real client in both eras', () => {
 
         const prompts = await client.listPrompts();
         expect(Array.isArray(prompts.prompts)).toBe(true);
+
+        // ★ CALL a tool that declares an outputSchema.
+        //
+        // Listing is not enough, and the gap was not hypothetical: 27 of the 35 tools
+        // here declared an envelope-shaped outputSchema and returned no
+        // structuredContent, which MCP 2025-06-18 forbids — and this test passed
+        // anyway, because it only ever listed. The server side stayed quiet (the
+        // low-level Server validates nothing) but a v2 CLIENT validates, which is
+        // exactly what this client is.
+        //
+        // list_known_pods is chosen because it declares an outputSchema and needs no
+        // network, pod or CSS binary — so a failure here is a conformance failure, not
+        // an environment one.
+        const declaring = tools.tools.find(t => t.name === 'list_known_pods' && t.outputSchema)
+          ?? tools.tools.find(t => t.outputSchema);
+        expect(declaring, 'expected at least one tool declaring an outputSchema').toBeTruthy();
+        const called = await client.callTool({ name: declaring!.name, arguments: {} });
+        expect(JSON.stringify(called),
+          `${declaring!.name} violated its declared outputSchema`,
+        ).not.toMatch(/[Oo]utput validation error|no structured content was provided/);
+        expect((called as { structuredContent?: unknown }).structuredContent,
+          `${declaring!.name} declares an outputSchema, so it must return structuredContent`,
+        ).toBeTruthy();
       } finally {
         await client.close();
       }
