@@ -42,6 +42,7 @@ COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
 COPY deploy/identity/package.json ./deploy/identity/
 COPY deploy/validator/package.json ./deploy/validator/
 COPY applications/foxxi-content-intelligence/bridge/package.json ./applications/foxxi-content-intelligence/bridge/
+COPY applications/agentic-performance-practice/bridge/package.json ./applications/agentic-performance-practice/bridge/
 COPY applications/learner-performer-companion/bridge/package.json ./applications/learner-performer-companion/bridge/
 COPY applications/agent-collective/bridge/package.json ./applications/agent-collective/bridge/
 COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
