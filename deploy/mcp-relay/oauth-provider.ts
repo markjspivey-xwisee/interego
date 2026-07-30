@@ -17,12 +17,54 @@
 import type { Response } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
 
-// The AUTHORIZATION-SERVER contract (OAuthServerProvider and friends) has no v2
-// successor — v2 ships only the resource-server half, on the view that an MCP server
-// verifies tokens rather than issuing them. So these interfaces come from the frozen
-// server-legacy copy while this class continues to BE our authorization server.
-import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/server-legacy';
-import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy';
+// ★ THE AUTHORIZATION-SERVER CONTRACT, OWNED.
+//
+// v2 ships only the resource-server half — an MCP server is expected to verify tokens,
+// not issue them — so these three interfaces existed only in the FROZEN
+// @modelcontextprotocol/server-legacy, a package its own README says is "planned for
+// removal in v3". They are declared here instead, so nothing in the relay's
+// authorization path depends on a package that will disappear.
+//
+// They are small, and the shapes are dictated by OAuth 2.1 + RFC 7636 rather than by
+// any SDK, so owning them costs nothing and removes a whole class of future breakage.
+// deploy/mcp-relay/oauth-router.ts is the consumer.
+
+/** Parameters the authorization endpoint hands to the provider once validated. */
+export interface AuthorizationParams {
+  /** Opaque client value, echoed back on the callback for CSRF binding. */
+  state?: string;
+  /** Requested scopes, already split on spaces. */
+  scopes?: string[];
+  /** RFC 7636 code challenge. Required — OAuth 2.1 mandates PKCE. */
+  codeChallenge: string;
+  /** Validated against the client's registered URIs before this is called. */
+  redirectUri: string;
+  /** RFC 8707 resource indicator: what the token is being requested FOR. */
+  resource?: URL;
+}
+
+/** Read/write access to registered clients. */
+export interface OAuthRegisteredClientsStore {
+  getClient(clientId: string): OAuthClientInformationFull | undefined | Promise<OAuthClientInformationFull | undefined>;
+  registerClient?(client: OAuthClientInformationFull): OAuthClientInformationFull | Promise<OAuthClientInformationFull>;
+}
+
+/** What an authorization server must implement for the router to drive it. */
+export interface OAuthServerProvider {
+  get clientsStore(): OAuthRegisteredClientsStore;
+  authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void>;
+  /** The `code_challenge` recorded when the given authorization began. */
+  challengeForAuthorizationCode(client: OAuthClientInformationFull, authorizationCode: string): Promise<string>;
+  exchangeAuthorizationCode(
+    client: OAuthClientInformationFull, authorizationCode: string,
+    codeVerifier?: string, redirectUri?: string, resource?: URL,
+  ): Promise<OAuthTokens>;
+  exchangeRefreshToken(
+    client: OAuthClientInformationFull, refreshToken: string,
+    scopes?: string[], resource?: URL,
+  ): Promise<OAuthTokens>;
+  verifyAccessToken(token: string): Promise<AuthInfo>;
+}
 // ★ AuthInfo and the error classes must come from '@modelcontextprotocol/server', NOT
 // server-legacy. server-legacy defines its own unbranded OAuthError; v2's
 // requireBearerAuth tests `error instanceof OAuthError` against the BRANDED class, and

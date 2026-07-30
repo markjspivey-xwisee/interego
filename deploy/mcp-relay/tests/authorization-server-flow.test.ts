@@ -28,7 +28,7 @@
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
-import { mcpAuthRouter } from '@modelcontextprotocol/server-legacy';
+import { interegoOAuthRouter } from '../oauth-router.js';
 import { InteregoOAuthProvider, type ResolvedIdentity } from '../oauth-provider.js';
 
 let pass = 0, fail = 0;
@@ -59,7 +59,7 @@ const provider = new InteregoOAuthProvider({
 });
 
 const app = express();
-app.use(mcpAuthRouter({ provider, issuerUrl: ISSUER }));
+app.use(interegoOAuthRouter({ provider, issuerUrl: ISSUER }));
 const server = app.listen(0);
 await new Promise<void>(r => server.once('listening', () => r()));
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
