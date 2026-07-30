@@ -17,16 +17,28 @@
  *   foxxi-bridge Content-Type, Authorization, X-Experience-API-Version, If-Match, If-None-Match
  *   bridge       Content-Type
  *
- * This pins the allow-list at the layer that owns it. The allow-list is duplicated
- * across four files (relay + identity share a shape; the foxxi bridge and the substrate
- * demo bridge each set their own), which is exactly how one surface silently stops
- * accepting a revision the others serve — so this asserts the relay's, and the sibling
- * copies are kept identical by hand with a comment saying why.
+ * ★ AND THE FIRST VERSION OF THIS TEST WAS USELESS, WHICH IS THE POINT.
+ *
+ * It mounted `corsMiddleware()` with NO options and asserted the DEFAULT list. But
+ * server.ts calls `corsMiddleware({ allowHeaders: '<a second literal>' })`, and the
+ * middleware resolves `opts.allowHeaders ?? DEFAULT_ALLOW_HEADERS` — so the explicit
+ * argument narrowed the headers straight back out. Adding them to the default changed
+ * nothing, the test passed, and the deployed relay still refused the preflight. Two of
+ * four services were fixed; the relay was not, and only a live probe said so.
+ *
+ * Two changes came out of that. The second literal is GONE — server.ts now passes the
+ * exported `MCP_ALLOW_HEADERS`, so there is one list and the default IS what production
+ * serves. And this test now mounts the middleware THE WAY server.ts mounts it, options
+ * and all, rather than in the shape that happened to make it pass.
+ *
+ * (The sibling copies — deploy/identity, the foxxi bridge, the substrate demo bridge —
+ * each keep their own list. identity is not an MCP surface and deliberately narrows to
+ * `Accept, Content-Type, Authorization`.)
  */
 
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import { corsMiddleware } from '../cors-allowlist.js';
+import { corsMiddleware, MCP_ALLOW_HEADERS } from '../cors-allowlist.js';
 
 let pass = 0, fail = 0;
 const ok = (cond: boolean, name: string, detail = ''): void => {
@@ -37,7 +49,14 @@ const ok = (cond: boolean, name: string, detail = ''): void => {
 const ORIGIN = 'https://dashboard.interego.xwisee.com';
 
 const app = express();
-app.use(corsMiddleware());
+// Mounted THE WAY server.ts mounts it — same options, not the bare default. Mounting
+// it bare is what let the missing headers ship.
+app.use(corsMiddleware({
+  ownOrigin: 'https://relay.example.invalid',
+  allowMethods: 'GET, POST, OPTIONS, DELETE',
+  allowHeaders: MCP_ALLOW_HEADERS,
+  exposeHeaders: 'mcp-session-id, mcp-protocol-version',
+}));
 app.post('/mcp', (_req, res) => { res.json({ ok: true }); });
 const server = app.listen(0);
 await new Promise<void>(r => server.once('listening', () => r()));
@@ -73,6 +92,14 @@ try {
   // DPoP is the relay's proof-of-possession scheme; dropping it from the list would
   // silently downgrade every browser client to plain Bearer.
   ok(allow.includes('dpop'), 'DPoP is still allowed', allow);
+
+  // ★ THE STRUCTURAL GUARD. The bug was not a missing header — it was a SECOND copy of
+  // the list, passed explicitly, that silently won over the default. Assert the two
+  // agree, so re-introducing a hand-written literal at the call site fails here rather
+  // than in production.
+  ok(allow === MCP_ALLOW_HEADERS.toLowerCase(),
+    'the served list is EXACTLY the exported constant (no second literal has crept back in)',
+    `served: ${allow}\n        constant: ${MCP_ALLOW_HEADERS.toLowerCase()}`);
 } finally {
   server.close();
 }
