@@ -31,7 +31,7 @@ import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-l
 // flow. Same reasoning for AuthInfo: one identity, and it must be the one
 // verifyBearerToken consumes.
 import type { AuthInfo } from '@modelcontextprotocol/server';
-import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server';
+import { OAuthError, OAuthErrorCode, checkResourceAllowed, resourceUrlFromServerUrl } from '@modelcontextprotocol/server';
 import type {
   OAuthClientInformationFull,
   OAuthTokens,
@@ -109,6 +109,11 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     scopes: string[];
     identity: ResolvedIdentity;
     expiresAt: number;
+    /**
+     * RFC 8707 resource indicator the client named at /authorize, if any. The token
+     * exchange must be for the SAME resource, and the issued token is bound to it.
+     */
+    resource?: string;
   }>();
   private accessTokens = new Map<string, InteregoAuthInfo>();
   /**
@@ -172,6 +177,16 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     private readonly cfg: {
       identityUrl: string;
       tokenTtlSec?: number;
+      /**
+       * RFC 8707 canonical resource identifier of THIS resource server — the relay's
+       * own public URL. Tokens are bound to it, and a client naming a different
+       * resource is refused.
+       *
+       * When unset, audience binding is inert: tokens carry no `resource` and
+       * verifyAccessToken enforces nothing. That is the local-dev posture, not the
+       * deployed one — deployments set PUBLIC_BASE_URL and the relay passes it here.
+       */
+      resourceIdentifier?: string;
       /**
        * Map of pre-existing client_id → OAuthClientInformationFull,
        * typically loaded from the persistent store at startup. The
@@ -818,9 +833,21 @@ async function didSubmit() {
     authorizationCode: string,
     _codeVerifier?: string,
     redirectUri?: string,
+    resource?: URL,
   ): Promise<OAuthTokens> {
     const c = this.authCodes.get(authorizationCode);
     if (!c) throw new Error('Invalid authorization code');
+    // ★ RFC 8707. The SDK parses `resource` off /token and hands it here; this
+    // parameter did not exist, so the value was silently DISCARDED and every token was
+    // issued with no audience at all. 2026-07-28 makes audience restriction a MUST,
+    // and the resource-server side does none of it for you: verifyBearerToken never
+    // reads authInfo.resource.
+    //
+    // Two checks, in order: the exchange must name the same resource the
+    // authorization did (else a code obtained for one audience buys a token for
+    // another), and the resource must be one this server actually is.
+    this.assertResourceConsistent(c.resource, resource);
+    const boundResource = this.resolveBoundResource(resource ?? (c.resource ? new URL(c.resource) : undefined));
     // Single use
     this.authCodes.delete(authorizationCode);
     // DPoP binding (if any) was keyed by the same authorization code.
@@ -840,6 +867,9 @@ async function didSubmit() {
       clientId: client.client_id,
       scopes: c.scopes,
       expiresAt: Math.floor(Date.now() / 1000) + expiresIn,
+      // RFC 8707 audience binding. Present only when the client named a resource;
+      // verifyAccessToken holds the token to it on every subsequent request.
+      ...(boundResource ? { resource: boundResource } : {}),
       extra: {
         agentId: c.identity.agentId,
         ownerWebId: c.identity.ownerWebId,
@@ -913,7 +943,11 @@ async function didSubmit() {
     client: OAuthClientInformationFull,
     refreshToken: string,
     scopes?: string[],
+    resource?: URL,
   ): Promise<OAuthTokens> {
+    // RFC 8707 on the refresh grant: a refresh token may not be traded for a token
+    // aimed at a resource this server is not.
+    const boundResource = this.resolveBoundResource(resource);
     let rec = this.refreshTokens.get(refreshToken);
     // Sha-keyed fallback for refresh tokens hydrated at startup — same
     // shape as the access-token path. The promote step copies the
@@ -999,6 +1033,7 @@ async function didSubmit() {
       clientId: client.client_id,
       scopes: finalScopes,
       expiresAt: Math.floor(Date.now() / 1000) + expiresIn,
+      ...(boundResource ? { resource: boundResource } : {}),
       extra: {
         agentId: rec.identity.agentId,
         ownerWebId: rec.identity.ownerWebId,
@@ -1060,6 +1095,63 @@ async function didSubmit() {
       refresh_token: newRefresh,
       scope: finalScopes.join(' '),
     };
+  }
+
+  /**
+   * RFC 8707 §2 — the resource this server IS, in canonical form (no fragment).
+   * `undefined` when unconfigured, which makes audience handling inert.
+   */
+  private get configuredResource(): URL | undefined {
+    if (!this.cfg.resourceIdentifier) return undefined;
+    return resourceUrlFromServerUrl(this.cfg.resourceIdentifier);
+  }
+
+  /**
+   * Refuse a token exchange whose `resource` disagrees with the one the
+   * authorization was granted for.
+   *
+   * Without this an authorization code obtained for audience A could be exchanged for
+   * a token claiming audience B. The asymmetry is deliberate: a client that named a
+   * resource at /authorize must name the SAME one at /token, but a client that named
+   * none at /authorize may still name one at /token (it is narrowing, not switching).
+   */
+  private assertResourceConsistent(authorized: string | undefined, requested: URL | undefined): void {
+    if (!authorized || !requested) return;
+    if (resourceUrlFromServerUrl(authorized).href !== resourceUrlFromServerUrl(requested).href) {
+      throw new OAuthError(
+        OAuthErrorCode.InvalidRequest,
+        `The token request names resource ${requested.href}, but this authorization was granted for ${authorized}.`,
+      );
+    }
+  }
+
+  /**
+   * Validate a requested resource against what this server is, and return the value to
+   * bind onto the issued token.
+   *
+   * ★ ABSENCE IS TOLERATED, MISMATCH IS NOT. 2026-07-28 requires clients to send
+   * `resource`, but the connectors in the field today predate it — refusing an absent
+   * indicator would lock out every existing client on deploy. So a request with no
+   * resource yields an unbound token exactly as before, while a request that DOES name
+   * a resource is held to it. That makes this change strictly additive at the moment
+   * it ships, and lets the enforcement tighten once clients have caught up.
+   *
+   * `checkResourceAllowed` is the SDK's own comparison (same scheme/host/port, and the
+   * requested path must be under the configured one) rather than a string compare, so
+   * a sub-path resource is accepted and a look-alike host is not.
+   */
+  private resolveBoundResource(requested: URL | undefined): URL | undefined {
+    if (!requested) return undefined;
+    const configured = this.configuredResource;
+    // Nothing to check against: accept, but do not pretend to have validated.
+    if (!configured) return resourceUrlFromServerUrl(requested);
+    if (!checkResourceAllowed({ requestedResource: requested, configuredResource: configured })) {
+      throw new OAuthError(
+        OAuthErrorCode.InvalidTarget,
+        `This server does not issue tokens for ${requested.href}; its resource identifier is ${configured.href}.`,
+      );
+    }
+    return resourceUrlFromServerUrl(requested);
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
@@ -1131,6 +1223,26 @@ async function didSubmit() {
       }
       throw new OAuthError(OAuthErrorCode.InvalidToken, 'Token expired');
     }
+    // ★ RFC 8707 AUDIENCE ENFORCEMENT — the check that made binding worth doing.
+    //
+    // Binding a resource onto a token accomplishes nothing unless someone verifies it,
+    // and the resource-server side of the SDK deliberately does not: verifyBearerToken
+    // checks the header shape, the verifier, requiredScopes and expiry, and never reads
+    // authInfo.resource. 2026-07-28 is explicit that an MCP server MUST validate that a
+    // token was issued for IT, and MUST NOT accept or transit any other token.
+    //
+    // Only tokens that CARRY an audience are held to it. A token minted before this
+    // existed, or by a client that named no resource, has none — those stay valid, which
+    // is what keeps this deployable without invalidating every live session. The
+    // enforcement grows as the tokens do.
+    const configured = this.configuredResource;
+    if (info.resource && configured
+        && !checkResourceAllowed({ requestedResource: info.resource, configuredResource: configured })) {
+      throw new OAuthError(
+        OAuthErrorCode.InvalidToken,
+        `This token was issued for ${info.resource.href}, not for ${configured.href}.`,
+      );
+    }
     return info;
   }
 
@@ -1174,6 +1286,9 @@ async function didSubmit() {
       scopes: grantedScopes,
       identity,
       expiresAt: Date.now() + 10 * 60 * 1000,
+      // RFC 8707: remember what the client asked the token to be FOR, so the
+      // exchange can refuse a different audience and the token can be bound to it.
+      ...(pending.params.resource ? { resource: pending.params.resource.href } : {}),
     });
     return {
       redirectUri: pending.params.redirectUri,
