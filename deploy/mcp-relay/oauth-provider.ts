@@ -188,6 +188,22 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
        */
       resourceIdentifier?: string;
       /**
+       * SSRF-GUARDED fetch used to dereference a Client ID Metadata Document.
+       *
+       * MUST be the relay's `guardedInvokeFetch`, never a bare fetch: the URL is
+       * entirely caller-supplied, so every redirect hop has to be re-screened against
+       * loopback, link-local, private ranges and internal-labelled hosts. Omitting it
+       * disables CIMD rather than falling back to an unguarded fetch — a client_id
+       * URL is exactly the shape of input that turns a server into an SSRF proxy.
+       */
+      cimdFetch?: (url: string, init?: unknown) => Promise<{
+        ok: boolean; status: number;
+        text: () => Promise<string>;
+        headers: { get: (n: string) => string | null };
+      }>;
+      /** How long a resolved CIMD stays cached, in seconds. Defaults to 300. */
+      cimdCacheTtlSec?: number;
+      /**
        * Map of pre-existing client_id → OAuthClientInformationFull,
        * typically loaded from the persistent store at startup. The
        * provider takes ownership of the Map (does not copy) — callers
@@ -412,6 +428,135 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     };
   }
 
+  /** Resolved Client ID Metadata Documents, keyed by client_id URL. */
+  private cimdCache = new Map<string, { client: OAuthClientInformationFull; expiresAt: number }>();
+  /** Bound on the CIMD cache so a stream of distinct URLs cannot grow it without limit. */
+  private static readonly CIMD_CACHE_MAX = 1_000;
+  /** Refuse a metadata document larger than this. A client_id URL is caller-supplied. */
+  private static readonly CIMD_MAX_BYTES = 64 * 1024;
+
+  /**
+   * Is this client_id a Client ID Metadata Document URL rather than a registered id?
+   *
+   * CIMD identifies a client BY the https URL its metadata lives at, so the id is
+   * self-describing and no registration step is needed. Protocol revision 2026-07-28
+   * DEPRECATES Dynamic Client Registration in favour of it, and orders client
+   * preference pre-registration > CIMD > DCR.
+   *
+   * https ONLY, and no fragment: an http document is trivially spoofable on the
+   * network path, and a fragment is not sent to the server so two different ids would
+   * dereference identically.
+   */
+  private static isCimdClientId(clientId: string): boolean {
+    if (!clientId.startsWith('https://')) return false;
+    try {
+      const u = new URL(clientId);
+      return u.protocol === 'https:' && u.hash === '';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Dereference a Client ID Metadata Document and turn it into client information.
+   *
+   * ★ EVERY CHECK HERE IS LOAD-BEARING. This method fetches a URL chosen entirely by
+   * the caller and then treats the response as an OAuth client identity, so it is both
+   * an SSRF sink and an impersonation sink.
+   *
+   *  - the fetch goes through the relay's SSRF guard, which re-screens EVERY redirect
+   *    hop. Without an injected guard CIMD stays OFF rather than falling back to a
+   *    bare fetch.
+   *  - the document's `client_id` MUST equal the URL it was fetched from. Without this
+   *    anyone who can host a document could claim to BE a different, trusted client —
+   *    the self-reference is the entire binding between identity and control of a URL.
+   *  - the auth method is forced to `none`. A CIMD client is public by construction: it
+   *    proves control of a URL, never possession of a secret. Honouring a
+   *    `client_secret_*` method from the document would let a caller assert a
+   *    confidential client it cannot authenticate as.
+   *  - redirect_uris must be present and https (or loopback, which the OAuth 2.1
+   *    native-app flow requires), because that is where the authorization code goes.
+   */
+  private async resolveClientIdMetadata(clientId: string): Promise<OAuthClientInformationFull | undefined> {
+    const cached = this.cimdCache.get(clientId);
+    if (cached && cached.expiresAt > Date.now()) return cached.client;
+
+    const fetchFn = this.cfg.cimdFetch;
+    if (!fetchFn) return undefined;
+
+    let raw: string;
+    try {
+      const r = await fetchFn(clientId, { headers: { Accept: 'application/json' } });
+      if (!r.ok) return undefined;
+      const len = Number(r.headers.get('content-length') ?? '0');
+      if (len > InteregoOAuthProvider.CIMD_MAX_BYTES) return undefined;
+      raw = await r.text();
+      // content-length is advisory; enforce on the body we actually received.
+      if (raw.length > InteregoOAuthProvider.CIMD_MAX_BYTES) return undefined;
+    } catch (err) {
+      const log = this.cfg.log;
+      // A refusal from the SSRF guard lands here. Logged, never surfaced to the
+      // caller — the reason would tell a prober what the guard blocks.
+      if (log) log(`[oauth-provider] CIMD fetch failed for ${clientId}: ${(err as Error)?.message ?? String(err)}`);
+      return undefined;
+    }
+
+    let doc: Record<string, unknown>;
+    try {
+      doc = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+    if (!doc || typeof doc !== 'object') return undefined;
+
+    // ★ The self-reference check. Everything else is metadata; this is identity.
+    if (doc.client_id !== clientId) {
+      const log = this.cfg.log;
+      if (log) log(`[oauth-provider] CIMD at ${clientId} declares client_id ${String(doc.client_id)} — refused`);
+      return undefined;
+    }
+
+    const redirectUris = Array.isArray(doc.redirect_uris) ? doc.redirect_uris.filter(u => typeof u === 'string') as string[] : [];
+    if (redirectUris.length === 0) return undefined;
+    const redirectsAcceptable = redirectUris.every(u => {
+      try {
+        const p = new URL(u);
+        if (p.protocol === 'https:') return true;
+        // OAuth 2.1 keeps loopback redirects for native apps; nothing else.
+        return p.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]', '::1'].includes(p.hostname);
+      } catch {
+        return false;
+      }
+    });
+    if (!redirectsAcceptable) return undefined;
+
+    const client: OAuthClientInformationFull = {
+      client_id: clientId,
+      redirect_uris: redirectUris,
+      grant_types: Array.isArray(doc.grant_types)
+        ? (doc.grant_types as string[]) : ['authorization_code', 'refresh_token'],
+      response_types: Array.isArray(doc.response_types) ? (doc.response_types as string[]) : ['code'],
+      // Forced, not read from the document — see the note above.
+      token_endpoint_auth_method: 'none',
+      ...(typeof doc.client_name === 'string' ? { client_name: doc.client_name } : {}),
+      ...(typeof doc.client_uri === 'string' ? { client_uri: doc.client_uri } : {}),
+      ...(typeof doc.logo_uri === 'string' ? { logo_uri: doc.logo_uri } : {}),
+      ...(typeof doc.scope === 'string' ? { scope: doc.scope } : {}),
+    } as OAuthClientInformationFull;
+
+    // Bounded cache. Evict oldest-first rather than refusing to cache, so a burst of
+    // distinct ids degrades to more fetches instead of unbounded memory.
+    if (this.cimdCache.size >= InteregoOAuthProvider.CIMD_CACHE_MAX) {
+      const oldest = this.cimdCache.keys().next().value;
+      if (oldest !== undefined) this.cimdCache.delete(oldest);
+    }
+    this.cimdCache.set(clientId, {
+      client,
+      expiresAt: Date.now() + (this.cfg.cimdCacheTtlSec ?? 300) * 1000,
+    });
+    return client;
+  }
+
   get clientsStore(): OAuthRegisteredClientsStore {
     return {
       getClient: async (clientId) => {
@@ -432,6 +577,16 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
             const log = this.cfg.log;
             if (log) log(`[oauth-provider] loadClient(${clientId}) failed: ${(err as Error)?.message ?? String(err)}`);
           }
+        }
+        // ★ Client ID Metadata Documents, LAST — after both registered-client paths.
+        //
+        // Protocol revision 2026-07-28 deprecates Dynamic Client Registration in
+        // favour of CIMD and orders client preference pre-registration > CIMD > DCR.
+        // Resolving here mirrors that order exactly: an id that is already registered
+        // is never re-fetched, so a registration can never be shadowed by a document
+        // hosted at a colliding URL.
+        if (InteregoOAuthProvider.isCimdClientId(clientId)) {
+          return this.resolveClientIdMetadata(clientId);
         }
         return undefined;
       },

@@ -1326,6 +1326,13 @@ oauthProvider = new InteregoOAuthProvider({
   // value the protected-resource metadata advertises as `resource`. Absent in local
   // dev, where audience handling is inert.
   ...(PUBLIC_BASE_URL ? { resourceIdentifier: PUBLIC_BASE_URL } : {}),
+  // CIMD dereferences a URL the CALLER chose, so it goes through the same egress
+  // guard as every other caller-supplied URL — which re-screens every redirect hop
+  // against loopback, link-local, private ranges and internal-labelled hosts. Passing
+  // a bare fetch here would turn the authorization endpoint into an SSRF proxy.
+  cimdFetch: guardedInvokeFetch as unknown as NonNullable<
+    ConstructorParameters<typeof InteregoOAuthProvider>[0]['cimdFetch']
+  >,
   initialClients: _oauthInitialClients,
   persistClient: (client_id, client_data) =>
     saveOAuthClient(client_id, client_data, oauthStoreCfg),
@@ -8531,6 +8538,16 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
     grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
+    // Protocol revision 2026-07-28 DEPRECATES Dynamic Client Registration in favour of
+    // Client ID Metadata Documents: a client identifies itself by an https URL that
+    // dereferences to its own metadata, so no registration round trip is needed.
+    // Advertised here rather than by the SDK's router — mcpAuthRouter calls
+    // createOAuthMetadata internally with no override hook, so it CANNOT emit this
+    // field. Our own route is registered earlier and Express dispatches first-match,
+    // so this document is the one clients actually receive.
+    // /register stays advertised: DCR is deprecated, not removed, and existing
+    // registrations keep working.
+    client_id_metadata_document_supported: true,
     // OAuth 2.1 scopes advertised by this resource:
     //   - `mcp`       — full access (read + write). Default for clients
     //                   that request no scope or just `mcp`.
