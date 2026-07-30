@@ -32,11 +32,12 @@
     "@interego/pgsl": "*",
     "@interego/compliance": "*",
     "@interego/privacy": "*",
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "ws": "^8.19.0",
     "zod": "^4.2.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
     "tsx": "^4.0.0",
