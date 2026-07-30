@@ -56,7 +56,7 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import type { AuthInfo } from '@modelcontextprotocol/server';
 import { resolve as resolvePath, dirname as pathDirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mcpAuthRouter } from '@modelcontextprotocol/server-legacy';
+import { interegoOAuthRouter } from './oauth-router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/express';
 import { InteregoOAuthProvider } from './oauth-provider.js';
 import {
@@ -9087,7 +9087,7 @@ app.use((_req, res, next) => {
 
 app.post('/token', tokenLimiter, express.urlencoded({ extended: false }), tokenDpopMiddleware);
 
-app.use(mcpAuthRouter({
+app.use(interegoOAuthRouter({
   provider: oauthProvider,
   issuerUrl: DEFAULT_ISSUER,
   // Same vocabulary as the well-known metadata. The SDK passes the
@@ -9098,7 +9098,6 @@ app.use(mcpAuthRouter({
   // and the per-tool write-side gate (see WRITE_SIDE_OAUTH_SCOPES below
   // and handlePublishContext) inspect to decide read vs. write.
   scopesSupported: ['mcp', 'mcp:read', 'mcp:write'],
-  resourceName: 'Interego MCP',
 }));
 
 /**

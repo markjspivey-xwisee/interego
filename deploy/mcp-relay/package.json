@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "tsx server.ts",
-    "test": "node ../../deploy/mcp-relay/tool-args-hygiene.test.mjs && tsx tests/mcp-transport-wiring.test.ts && tsx tests/dpop.test.ts && tsx tests/federation-persistence.test.ts && tsx tests/oauth-token-persistence.test.ts && tsx tests/audience-binding.test.ts && tsx tests/client-id-metadata-documents.test.ts && tsx tests/authorization-server-flow.test.ts && tsx tests/pgsl-shim-kernel-fusion.test.ts && tsx tests/relay-compliance-sign.test.ts && tsx tests/publish-defer.test.ts && tsx tests/publish-gates.test.ts && tsx tests/interrogative-route.test.ts && tsx tests/identity-attribution-gates.test.ts && tsx tests/agent-interop-mount.test.ts && tsx tests/public-cors-carveout.test.ts && tsx tests/modern-era-preflight.test.ts && tsx _note-view-test.ts && tsx _hmd-app-test.ts && npm run test:amep",
+    "test": "node ../../deploy/mcp-relay/tool-args-hygiene.test.mjs && tsx tests/mcp-transport-wiring.test.ts && tsx tests/dpop.test.ts && tsx tests/federation-persistence.test.ts && tsx tests/oauth-token-persistence.test.ts && tsx tests/audience-binding.test.ts && tsx tests/client-id-metadata-documents.test.ts && tsx tests/authorization-server-flow.test.ts && tsx tests/no-frozen-dependency.test.ts && tsx tests/pgsl-shim-kernel-fusion.test.ts && tsx tests/relay-compliance-sign.test.ts && tsx tests/publish-defer.test.ts && tsx tests/publish-gates.test.ts && tsx tests/interrogative-route.test.ts && tsx tests/identity-attribution-gates.test.ts && tsx tests/agent-interop-mount.test.ts && tsx tests/public-cors-carveout.test.ts && tsx tests/modern-era-preflight.test.ts && tsx _note-view-test.ts && tsx _hmd-app-test.ts && npm run test:amep",
     "test:amep": "tsx _amep-seed-test.ts && tsx _amep-post-test.ts && tsx _amep-multihead-test.ts && tsx _amep-allacts-test.ts && tsx _amep-session-bridge-test.ts && tsx _amep-oauth-bridge-integration-test.ts && tsx _amep-proof-test.ts && tsx _amep-hmd-binding-test.ts",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium"
@@ -23,7 +23,6 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "@modelcontextprotocol/express": "^2.0.0",
     "@modelcontextprotocol/node": "^2.0.0",
-    "@modelcontextprotocol/server-legacy": "^2.0.0",
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
     "js-yaml": "^4.1.0",
