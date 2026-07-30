@@ -1021,7 +1021,13 @@ async function didSubmit() {
     authorizationCode: string,
   ): Promise<string> {
     const c = this.authCodes.get(authorizationCode);
-    if (!c) throw new Error('Invalid authorization code');
+    // ★ invalid_grant, NOT a plain Error. RFC 6749 §5.2: an authorization code that is
+    // invalid, expired, revoked or issued to another client is `invalid_grant` with
+    // HTTP 400. A plain Error became `server_error` with HTTP 500 — which tells the
+    // client the fault is OURS and it should retry, when the correct signal is that the
+    // code is spent and it must re-authorize. Verified live before this fix: an unknown
+    // code answered 500 server_error.
+    if (!c) throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Invalid or expired authorization code');
     return c.codeChallenge;
   }
 
@@ -1033,7 +1039,7 @@ async function didSubmit() {
     resource?: URL,
   ): Promise<OAuthTokens> {
     const c = this.authCodes.get(authorizationCode);
-    if (!c) throw new Error('Invalid authorization code');
+    if (!c) throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Invalid or expired authorization code');
     // ★ RFC 8707. The SDK parses `resource` off /token and hands it here; this
     // parameter did not exist, so the value was silently DISCARDED and every token was
     // issued with no audience at all. 2026-07-28 makes audience restriction a MUST,
@@ -1051,9 +1057,9 @@ async function didSubmit() {
     // Pull it out and immediately drop it to keep the stash bounded.
     const jkt = this.codeDpopJkt.get(authorizationCode);
     this.codeDpopJkt.delete(authorizationCode);
-    if (c.clientId !== client.client_id) throw new Error('Client ID mismatch');
-    if (redirectUri && c.redirectUri !== redirectUri) throw new Error('Redirect URI mismatch');
-    if (c.expiresAt < Date.now()) throw new Error('Authorization code expired');
+    if (c.clientId !== client.client_id) throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Authorization code was issued to a different client');
+    if (redirectUri && c.redirectUri !== redirectUri) throw new OAuthError(OAuthErrorCode.InvalidGrant, 'redirect_uri does not match the one used at authorization');
+    if (c.expiresAt < Date.now()) throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Authorization code expired');
 
     const token = randomBytes(32).toString('hex');
     const refresh = randomBytes(32).toString('hex');
@@ -1194,7 +1200,7 @@ async function didSubmit() {
         if (log) log(`[oauth-provider] lookupRefreshTokenByRaw failed: ${(err as Error)?.message ?? String(err)}`);
       }
     }
-    if (!rec) throw new Error('Invalid refresh token');
+    if (!rec) throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Invalid or expired refresh token');
     if (rec.expiresAt < Date.now()) {
       this.refreshTokens.delete(refreshToken);
       throw new Error('Refresh token expired');
