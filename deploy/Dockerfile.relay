@@ -69,7 +69,19 @@ COPY deploy/mcp-relay/package.json ./package.json.template
 # Strategy: drop the workspace specifiers from package.json (npm
 # would otherwise reject `*`) then install the tarballs directly so
 # npm pins them as file: deps.
-RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./package.json.template','utf8'));for(const k of Object.keys(p.dependencies)){if(k.startsWith('@interego/'))delete p.dependencies[k];}fs.writeFileSync('./package.json',JSON.stringify(p,null,2));" && \
+# Strip the @interego/* workspace deps (installed from tarballs below) AND
+# @playwright/test.
+#
+# Playwright is a BROWSER-TEST harness used only by tests/passkey-oauth.spec.ts, which
+# neither this image nor `npm test` ever runs — but the image build installed it anyway,
+# because this step keeps devDependencies (tsc and tsx are needed by the build stage).
+# It downloaded a browser-automation toolchain into a server image for nothing, and it
+# broke the build the day @playwright/test published a version whose pinned `playwright`
+# had not yet propagated to the registry replica the runner hit:
+#   npm error notarget No matching version found for playwright@1.62.1
+# A transient registry race should not be able to fail a relay deploy over a dependency
+# the image does not use.
+RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./package.json.template','utf8'));for(const k of Object.keys(p.dependencies)){if(k.startsWith('@interego/'))delete p.dependencies[k];}if(p.devDependencies)delete p.devDependencies['@playwright/test'];fs.writeFileSync('./package.json',JSON.stringify(p,null,2));" && \
     rm package.json.template && \
     npm install --no-audit --no-fund \
       /tarballs/interego-core-0.2.0.tgz \
