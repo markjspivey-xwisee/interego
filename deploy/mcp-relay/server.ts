@@ -1321,6 +1321,11 @@ log(`OAuth token store: pod=${oauthStorePodUrl} access=${_oauthInitialAccessToke
 oauthProvider = new InteregoOAuthProvider({
   identityUrl: IDENTITY_URL,
   tokenTtlSec: 3600,
+  // RFC 8707 canonical resource identifier of this resource server. The AS is
+  // co-hosted with the RS here, so it is simply the relay's own public URL — the same
+  // value the protected-resource metadata advertises as `resource`. Absent in local
+  // dev, where audience handling is inert.
+  ...(PUBLIC_BASE_URL ? { resourceIdentifier: PUBLIC_BASE_URL } : {}),
   initialClients: _oauthInitialClients,
   persistClient: (client_id, client_data) =>
     saveOAuthClient(client_id, client_data, oauthStoreCfg),
