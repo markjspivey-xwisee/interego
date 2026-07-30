@@ -309,6 +309,41 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
     return transport.handleRequest(request);
   };
 
+  /**
+   * Strip non-protocol top-level members before the body reaches the SDK.
+   *
+   * ★ THIS IS NOT DEFENSIVE HABIT — it is the fix for a regression that reached
+   * production for about a minute. A JSON-RPC 2.0 message has exactly `jsonrpc`,
+   * `method`, `params` and `id`. The hand-rolled mount read the three members it cared
+   * about and silently ignored anything else; the SDK VALIDATES the message and
+   * rejects an unknown top-level member with `-32600 "the request body is not a valid
+   * JSON-RPC message"`.
+   *
+   * The foxxi bridge's auth middleware injects `__client_ip` and `__caller_token` at
+   * the TOP LEVEL of `req.body` as well as into `params.arguments`. So every request to
+   * the live bridge carried members the SDK refuses, and `tools/list` answered HTTP 400
+   * — while the same mount, booted alone in a test, passed 29 of 29 checks. A test of a
+   * component says nothing about a behaviour the COMPOSITION decides; the injecting
+   * middleware is now part of the wire-contract test for exactly that reason.
+   *
+   * Only the top level is filtered. `params.arguments.__caller_token` is what every
+   * handler actually reads (`args.__caller_token`), and it is nested, so it survives
+   * untouched — the auth mechanism keeps working. Nothing reads the top-level copies on
+   * this path.
+   *
+   * Filtering also closes the smuggling direction: a caller can no longer put arbitrary
+   * top-level members into a message the SDK will parse.
+   */
+  const protocolMembersOnly = (body: unknown): unknown => {
+    if (Array.isArray(body)) return body.map(protocolMembersOnly);
+    if (!body || typeof body !== 'object') return body;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+      if (k === 'jsonrpc' || k === 'method' || k === 'params' || k === 'id') out[k] = v;
+    }
+    return out;
+  };
+
   const handleMcp = async (req: Request, res: Response): Promise<void> => {
     try {
       const headers = new Headers();
@@ -328,7 +363,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
       const request = new globalThis.Request(`http://localhost${req.originalUrl}`, {
         method: req.method,
         headers,
-        ...(hasBody ? { body: JSON.stringify(req.body) } : {}),
+        ...(hasBody ? { body: JSON.stringify(protocolMembersOnly(req.body)) } : {}),
       });
 
       // `isLegacyRequest` is the entry's OWN classifier, exported — so this routing can
