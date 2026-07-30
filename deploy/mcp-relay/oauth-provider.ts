@@ -17,14 +17,25 @@
 import type { Response } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
 
-import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
-import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
-import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+// The AUTHORIZATION-SERVER contract (OAuthServerProvider and friends) has no v2
+// successor — v2 ships only the resource-server half, on the view that an MCP server
+// verifies tokens rather than issuing them. So these interfaces come from the frozen
+// server-legacy copy while this class continues to BE our authorization server.
+import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/server-legacy';
+import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy';
+// ★ AuthInfo and the error classes must come from '@modelcontextprotocol/server', NOT
+// server-legacy. server-legacy defines its own unbranded OAuthError; v2's
+// requireBearerAuth tests `error instanceof OAuthError` against the BRANDED class, and
+// an unbranded one falls through as an unexpected error — turning every invalid token
+// into HTTP 500 with no WWW-Authenticate challenge, so no client ever begins an OAuth
+// flow. Same reasoning for AuthInfo: one identity, and it must be the one
+// verifyBearerToken consumes.
+import type { AuthInfo } from '@modelcontextprotocol/server';
+import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server';
 import type {
   OAuthClientInformationFull,
   OAuthTokens,
-} from '@modelcontextprotocol/sdk/shared/auth.js';
+} from '@modelcontextprotocol/server';
 
 function escapeHtml(s: string): string {
   return s
@@ -215,7 +226,7 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
       /**
        * Best-effort one-shot lookup for a single raw access token.
        * Called on verifyAccessToken miss BEFORE throwing
-       * InvalidTokenError. Lets a client whose token was issued by a
+       * OAuthError(InvalidToken). Lets a client whose token was issued by a
        * prior relay revision keep working without re-authenticating
        * — the provider transparently rehydrates from the backing
        * store. Return null on miss.
@@ -1052,11 +1063,27 @@ async function didSubmit() {
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    // Throw the SDK's `InvalidTokenError` so requireBearerAuth produces
-    // a clean RFC 6750 `401 invalid_token` with WWW-Authenticate header
-    // (rather than wrapping a plain Error as `500 server_error`, which
-    // looks like a backend outage to clients — ChatGPT's connector
-    // surfaces that as a generic "502 upstream" failure mode).
+    // ★ THROW THE BRANDED OAuthError FROM '@modelcontextprotocol/server'.
+    //
+    // requireBearerAuth turns this into a clean RFC 6750 `401 invalid_token` with a
+    // WWW-Authenticate header pointing at the discovery metadata, which is what lets a
+    // client begin the OAuth flow. It decides that by testing
+    // `error instanceof OAuthError` — and that check is BRAND-based, not structural.
+    //
+    // Three ways to get this wrong, all of which compile cleanly:
+    //   1. a plain Error                            -> 500 server_error
+    //   2. server-legacy's identically-named
+    //      InvalidTokenError / OAuthError           -> 500, no challenge (unbranded)
+    //   3. new OAuthError('some message')           -> the message lands in the CODE
+    //                                                 slot, emitting
+    //                                                 {"error":"some message"}
+    // The argument order is (code, message) — INVERTED versus v1's
+    // `new InvalidTokenError(message)`, and `code` is typed `OAuthErrorCode | string`,
+    // so form 3 type-checks.
+    //
+    // The consequence of any of them is not a loud failure: every rejected token
+    // becomes a 500 that reads as a backend outage (ChatGPT's connector reports it as
+    // a generic "502 upstream"), and no client ever starts an authorization flow.
     let info = this.accessTokens.get(token);
     const sha = InteregoOAuthProvider.sha256Hex(token);
     // Hot-path miss: consult the sha-keyed secondary map (populated at
@@ -1088,7 +1115,7 @@ async function didSubmit() {
         if (log) log(`[oauth-provider] lookupAccessTokenByRaw failed: ${(err as Error).message}`);
       }
     }
-    if (!info) throw new InvalidTokenError('Token not found (may have been issued by a prior relay revision; re-authenticate to obtain a fresh token)');
+    if (!info) throw new OAuthError(OAuthErrorCode.InvalidToken, 'Token not found (may have been issued by a prior relay revision; re-authenticate to obtain a fresh token)');
     if (info.expiresAt && info.expiresAt * 1000 < Date.now()) {
       this.accessTokens.delete(token);
       this.accessTokensBySha.delete(sha);
@@ -1102,7 +1129,7 @@ async function didSubmit() {
           if (log) log(`[oauth-provider] removeAccessToken (expired) failed: ${msg}`);
         });
       }
-      throw new InvalidTokenError('Token expired');
+      throw new OAuthError(OAuthErrorCode.InvalidToken, 'Token expired');
     }
     return info;
   }

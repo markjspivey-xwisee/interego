@@ -337,7 +337,7 @@ export async function removeRefreshToken(
  * Best-effort fetch of a single access-token record by its raw token
  * string. Used by the `verifyAccessToken` miss path: if the bearer
  * isn't in the in-memory Map, we try one pod fetch before throwing
- * InvalidTokenError. Returns null on any failure (network, 404, parse).
+ * OAuthError(InvalidToken). Returns null on any failure (network, 404, parse).
  *
  * On a successful read of an EXPIRED entry, deletes the file
  * best-effort and returns null. Caller treats this exactly the same

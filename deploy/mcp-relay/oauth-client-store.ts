@@ -45,7 +45,7 @@
 
 import type {
   OAuthClientInformationFull,
-} from '@modelcontextprotocol/sdk/shared/auth.js';
+} from '@modelcontextprotocol/server';
 
 import {
   ContextDescriptor,
