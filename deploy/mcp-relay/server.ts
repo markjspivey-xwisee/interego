@@ -111,7 +111,7 @@ import {
   athFromAccessToken,
   reconstructRequestUrl,
 } from './dpop.js';
-import { corsMiddleware } from './cors-allowlist.js';
+import { corsMiddleware, MCP_ALLOW_HEADERS } from './cors-allowlist.js';
 import { normalizeCssUrl, assertPublicPodUrl } from './url-rewrite.js';
 import { withAmepSession, principalIri, stampAmepProof, type AmepSigner } from './amep-session-bridge.js';
 
@@ -8478,7 +8478,12 @@ app.use(express.urlencoded({ extended: false, limit: '4mb' }));
 app.use(corsMiddleware({
   ownOrigin: PUBLIC_BASE_URL || `http://localhost:${PORT}`,
   allowMethods: 'GET, POST, OPTIONS, DELETE',
-  allowHeaders: 'Content-Type, Authorization, mcp-session-id, mcp-protocol-version, DPoP',
+  // ★ Was a SECOND literal list here, and that is how the 2026-07-28 headers went
+  // missing in production: `allowHeaders` is `opts.allowHeaders ?? DEFAULT_ALLOW_HEADERS`,
+  // so adding them to the default changed nothing while this line narrowed them back
+  // out. A test that mounted `corsMiddleware()` with no options exercised the default
+  // and passed. Now there is ONE list, and the default IS what production serves.
+  allowHeaders: MCP_ALLOW_HEADERS,
   exposeHeaders: 'mcp-session-id, mcp-protocol-version',
 }));
 

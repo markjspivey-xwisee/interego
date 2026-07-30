@@ -172,7 +172,8 @@ const DEFAULT_ALLOW_METHODS = 'GET, POST, OPTIONS, DELETE, PUT, PATCH';
 // the modern era is SERVED but unreachable from any browser client — the era exists
 // and no browser can speak it. mcp-session-id stays for 2025-era clients, which are
 // still served from the same endpoint.
-const DEFAULT_ALLOW_HEADERS = 'Accept, Content-Type, Authorization, mcp-session-id, mcp-protocol-version, Mcp-Method, Mcp-Name, DPoP';
+export const MCP_ALLOW_HEADERS = 'Accept, Content-Type, Authorization, mcp-session-id, mcp-protocol-version, Mcp-Method, Mcp-Name, DPoP';
+const DEFAULT_ALLOW_HEADERS = MCP_ALLOW_HEADERS;
 const DEFAULT_EXPOSE_HEADERS = 'mcp-session-id, mcp-protocol-version';
 
 export interface CorsHeaderOptions extends CorsAllowlistOptions {
