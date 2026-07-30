@@ -322,9 +322,9 @@ function buildFactors(evidence: DiagnoseInput['factorEvidence']): PerformanceFac
 export function diagnose(input: DiagnoseInput): Diagnosis {
   const { situation } = input;
 
-  // Determine the regime. Honour an explicit one; else, for an agent
-  // with trajectories, read it off the disposition; else default to
-  // Knowable (most structured workplace tasks live there).
+  // Determine the regime. Honour an explicit one; else read it off whatever
+  // trajectory signal exists; else fall back to the gap frame only when the
+  // caller supplied gap-intent evidence.
   let domain: WorkRegime | undefined;
   let regimeSource: RegimeSource;
   if (situation.domain) {
@@ -333,8 +333,28 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
     // backdoor — only an asserted Knowable is allowed to gap-analyse.
     domain = situation.domain;
     regimeSource = 'asserted';
-  } else if (situation.performer.kind === 'agent' && input.trajectories && input.trajectories.length > 0) {
-    // Regime read from trajectory signal — the honest, calibratable path.
+  } else if (input.trajectories && input.trajectories.length > 0) {
+    // ★ TRAJECTORY SIGNAL IS READ WHOEVER PRODUCED IT.
+    //
+    // This branch used to require `situation.performer.kind === 'agent'`, so a
+    // HUMAN's trajectory was never read and the situation fell through to
+    // default-gap-intent → Knowable → gap-analysis → instruction. Confirmed live
+    // with byte-identical Emergent-shaped trajectories:
+    //
+    //   kind: 'agent'  ->  Emergent  / derived            / ["coaching","probe"]
+    //   kind: 'human'  ->  Knowable  / default-gap-intent  / ["instruction"]
+    //
+    // That inverted the architecture's own thesis for every person it was used on.
+    // This module exists to say the gap model fits only Knowable work — and it
+    // guaranteed that a human could never be placed anywhere else, so a person
+    // whose work is genuinely Emergent was always told to go on a course. It is
+    // also the exact opposite of what a mixed human/agent team needs, which is the
+    // same read applied to both.
+    //
+    // Nothing in the disposition read is species-specific: exploration ratio, plan
+    // revision, structural share and tool-call success are properties of the WORK.
+    // If the signal is there, read it. If it is not, this branch does not fire
+    // anyway, so the fallbacks below are unaffected.
     domain = assessDisposition(input.trajectories).regime.name;
     regimeSource = 'derived';
   } else if (hasGapIntent(input)) {
@@ -354,8 +374,8 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
 
   // ── Unclassified — no regime signal; refuse to assume one. ──
   if (method === 'classify-first') {
-    reasoning.push('No work-regime signal was supplied: no asserted situation.domain, no agent trajectory to read a disposition from, and no gap-intent evidence (no exemplary state, no factor evidence, no answer to the discriminating question). The system refuses to default a situation into the Knowable regime and silently gap-plan it.');
-    reasoning.push('Classify the situation first — choose one: (a) assert situation.domain when the regime is genuinely known; (b) supply agent trajectories so the disposition is read from signal (the honest path); or (c) supply gap-intent evidence (exemplary + factorEvidence) to contextualize it into the Knowable gap frame.');
+    reasoning.push('No work-regime signal was supplied: no asserted situation.domain, no trajectory to read a disposition from, and no gap-intent evidence (no exemplary state, no factor evidence, no answer to the discriminating question). The system refuses to default a situation into the Knowable regime and silently gap-plan it.');
+    reasoning.push('Classify the situation first — choose one: (a) assert situation.domain when the regime is genuinely known; (b) supply trajectories for the performer — human or agent — so the disposition is read from signal (the honest path); or (c) supply gap-intent evidence (exemplary + factorEvidence) to contextualize it into the Knowable gap frame.');
     return {
       situationId: situation.id,
       regimeSource,
