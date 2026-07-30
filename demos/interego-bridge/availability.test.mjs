@@ -128,6 +128,60 @@ const listed = await (await fetch(`${B}/mcp`, {
 const mcpTools = listed?.result?.tools ?? [];
 check('MCP tools/list lists every tool that exists, same as the root document',
   mcpTools.length === root.toolCount, `${mcpTools.length} vs ${root.toolCount}`);
+// ★ BOTH PROTOCOL ERAS, from the same tool definitions.
+//
+// This mount moved to MCP SDK v2 and now serves the 2025 `initialize` handshake AND
+// the 2026-07-28 revision, which has no handshake and answers `server/discover`.
+// Asserting both here is what keeps them from drifting: the eras share one tool
+// registry, so a change that serves one and breaks the other should fail loudly.
+{
+  const bare = await (await fetch(`${B}/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },   // NO Accept header, on purpose
+    body: JSON.stringify({ jsonrpc: '2.0', id: 101, method: 'tools/list', params: {} }),
+  })).json();
+  // Every browser client in this repo sends exactly this shape. The SDK transport
+  // answers 406 without an Accept normalisation, so this is the assertion that would
+  // catch losing it.
+  check('a bare POST with no Accept header is still served (browser clients send this)',
+    Array.isArray(bare?.result?.tools) && bare.result.tools.length === root.toolCount,
+    JSON.stringify(bare).slice(0, 140));
+
+  const init = await (await fetch(`${B}/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 102, method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } } }),
+  })).json();
+  check('initialize NEGOTIATES the revision the client asked for (was hard-coded)',
+    init?.result?.protocolVersion === '2024-11-05', String(init?.result?.protocolVersion));
+
+  const discover = await (await fetch(`${B}/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Mcp-Method': 'server/discover' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 103, method: 'server/discover', params: { _meta: {
+      'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+      'io.modelcontextprotocol/clientCapabilities': {},
+    } } }),
+  })).json();
+  check('server/discover advertises the 2026-07-28 era',
+    Array.isArray(discover?.result?.supportedVersions)
+      && discover.result.supportedVersions.includes('2026-07-28'),
+    JSON.stringify(discover).slice(0, 140));
+
+  const modernList = await (await fetch(`${B}/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Mcp-Method': 'tools/list' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 104, method: 'tools/list', params: { _meta: {
+      'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+      'io.modelcontextprotocol/clientCapabilities': {},
+    } } }),
+  })).json();
+  check('...and the modern era serves the SAME tool surface as the legacy one',
+    modernList?.result?.tools?.length === mcpTools.length,
+    `${modernList?.result?.tools?.length} vs ${mcpTools.length}`);
+}
+
 const flagged = mcpTools.filter(t => t.annotations?.unavailable);
 check('...and flags exactly the ones the root calls unavailable',
   flagged.length === (root.unavailableTools ?? []).length,
