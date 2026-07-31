@@ -280,6 +280,7 @@ import type { NodeProvenance } from '@interego/pgsl';
 // The relay's PUBLISHED PGSL node commons — see pgsl-node-store.ts for the
 // publish-then-resolve invariant this module exists to enforce.
 import * as publishedNodes from './pgsl-node-store.js';
+import { alternateTurtleHref, looksLikeHtml } from './alternate-turtle.js';
 
 // Privacy — `@interego/privacy`.
 import { screenForSensitiveContent, formatSensitivityWarning } from '@interego/privacy';
@@ -1865,6 +1866,43 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
     // so a misconfigured / unreachable shape can't masquerade as "no
     // shape declared". WARN-logged below, NOT silently swallowed.
     warnReason = `fetch threw: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  // ★ Follow the alternate link rather than giving up on HTML — see alternateTurtleHref.
+  //
+  // GitHub Pages ignores Accept and serves text/html for our own ontology IRIs, so a
+  // perfectly good shape looked unreachable — and an owl:imports of one corrupted the
+  // graph it was glued into. The reflex is to append `.ttl` and move on. That would be
+  // reinventing a mechanism that already exists AND is already published: every generated
+  // page here carries
+  //
+  //     <link rel="alternate" type="text/turtle" href="iep.ttl" />
+  //
+  // The publishing side was already standards-correct. We simply were not reading it.
+  // Following the advertised link works for any publisher that does the same thing, where
+  // guessing an extension only ever works for ours.
+  if (body !== null && looksLikeHtml(body)) {
+    const href = alternateTurtleHref(body);
+    if (href) {
+      try {
+        const target = new URL(href, shapeIri).toString();
+        const r2 = await guardedInvokeFetch(target, { method: 'GET', headers: { 'Accept': SHAPE_ACCEPT_HEADER } });
+        if (r2.ok) {
+          const t2 = await r2.text();
+          if (t2.trim().length > 0) {
+            log(`conformance gate: ${shapeIri} served HTML; followed its rel=alternate to ${target}`);
+            body = t2;
+            warnReason = null;
+          }
+        }
+      } catch (err) {
+        log(`WARN conformance gate: ${shapeIri} alternate-link fetch failed: ${(err as Error).message}`);
+      }
+    }
+    if (body !== null && looksLikeHtml(body)) {
+      warnReason = 'served HTML with no usable rel=alternate text/turtle link';
+      body = null;
+    }
   }
 
   if (body === null && warnReason !== null) {

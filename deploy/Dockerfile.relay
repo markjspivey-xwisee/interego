@@ -112,6 +112,7 @@ COPY deploy/mcp-relay/agent-mesh.ts ./
 COPY deploy/mcp-relay/agent-interop-mount.ts ./
 COPY deploy/mcp-relay/activitypub.ts ./
 COPY deploy/mcp-relay/reachability.ts ./
+COPY deploy/mcp-relay/alternate-turtle.ts ./
 COPY deploy/mcp-relay/amep.ts ./
 COPY deploy/mcp-relay/amep-session-bridge.ts ./
 COPY deploy/mcp-relay/note-view.ts ./
