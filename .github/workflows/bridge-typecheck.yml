@@ -35,6 +35,9 @@ on:
       - 'mcp-server/**'
       - 'examples/**'
       - 'packages/**'
+      - 'tests/**'
+      - 'deploy/mcp-relay/**'
+      - 'docs/ns/**'
       - 'tsconfig.base.json'
       - 'package.json'
       - 'package-lock.json'
@@ -46,6 +49,9 @@ on:
       - 'mcp-server/**'
       - 'examples/**'
       - 'packages/**'
+      - 'tests/**'
+      - 'deploy/mcp-relay/**'
+      - 'docs/ns/**'
       - 'tsconfig.base.json'
       - 'package.json'
       - 'package-lock.json'
@@ -108,12 +114,26 @@ jobs:
       - name: The stdio server actually serves a client (both eras, real subprocess)
         run: npx vitest run --root mcp-server tests/stdio-serves-both-eras.test.ts
 
-      # Guard the public-memory commons invariant: a PUBLIC (node-addressable) lattice
-      # label must be backed by a resource disjoint from the private `shared-lattice`,
-      # else resolvePublicNode becomes a cross-tenant existence oracle. Network-free
-      # (fake pod + test seed), so it runs here rather than in the pod-touching suite.
-      - name: Guard the public-memory commons isolation invariant + action-identity dual-read
-        run: npx vitest run applications/foxxi-content-intelligence/tests/public-memory-commons.test.ts applications/foxxi-content-intelligence/tests/affordances-are-invocable.test.ts applications/foxxi-content-intelligence/tests/declared-but-unimplemented.test.ts applications/foxxi-content-intelligence/tests/subject-kind-not-caller-controlled.test.ts applications/foxxi-content-intelligence/tests/toolnames-are-unique.test.ts applications/foxxi-content-intelligence/tests/derived-schemas-satisfy-sdk-v2.test.ts applications/agentic-performance-practice/tests/regime-read-is-not-species-gated.test.ts applications/agent-development-practice/tests/editor-witness-is-transparent.test.ts tests/shape-namespaces-resolve.test.ts tests/action-identity.test.ts tests/competency-identity.test.ts tests/activity-identity.test.ts tests/personal-bridge.test.ts
+      # ★ THE WHOLE SUITE, NOT A HAND-PICKED LIST.
+      #
+      # This step used to name 13 test files explicitly. That made it an INCLUSION list,
+      # and an inclusion list fails silently: 98 of the 111 files in tests/ ran in no
+      # workflow at all. Locally green, gating nothing. It was found the fifth time in
+      # one session that a newly written test turned out not to run in CI — that time
+      # the test pinning a security fix (the caller-reachable entailment bypass, #217),
+      # which had already merged with its guard inert.
+      #
+      # The header of this very workflow already says it: "Adding a path to one workflow
+      # is not the fix." Naming one more file would have repeated the mistake in the same
+      # shape. So the default is inverted, from opt-in to opt-out: run everything, and
+      # let an exclusion be a visible, argued deletion rather than an omission nobody sees.
+      #
+      # Affordable: the full root suite is ~3m24s and only 12 of 111 files touch the
+      # network — several of which (action-identity, competency-identity,
+      # activity-identity) were already running here, so network access in CI is proven,
+      # not assumed.
+      - name: The whole root test suite
+        run: npx vitest run
       # A credential is a statement BY an issuer. /agent/prove-competency derived its
       # BBS+ issuer seed from a caller-supplied issuer_did, so two unrelated holders
       # naming the same authority got credentials signed by the SAME key — anyone
