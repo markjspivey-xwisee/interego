@@ -26,17 +26,13 @@ export interface CorsAllowlistOptions {
 }
 
 const SIBLING_DEPLOYMENT_ORIGINS: readonly string[] = [
-  'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  // CSS pod — internal FQDN only. The bare public-host origin was
-  // removed when CSS became internal-only; browser writes now go
-  // through interego-css-gate's public FQDN (listed below).
-  'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  // Live Railway deployment (*.interego.xwisee.com) — the current home. The
-  // Azure hosts above are retained as inert legacy (that environment is paused).
+  // ★ The six *.eastus.azurecontainerapps.io siblings that stood here were REMOVED.
+  // They were described as "inert legacy", but an entry in this list is not inert —
+  // it is an origin this service grants cross-origin trust to, and that Azure
+  // environment is deleted. An allowlist must only ever name origins we still
+  // control; a hostname we have released is one we cannot make promises about.
+  // The live stack is Railway, below.
+  // Live Railway deployment (*.interego.xwisee.com) — the current home.
   // relay.interego.xwisee.com serves the OAuth passwordless sign-in page, whose
   // WebAuthn/SIWE calls hit this identity server cross-origin — without this
   // entry the preflight ACAO falls back to identity's own host and the browser

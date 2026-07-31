@@ -7020,13 +7020,28 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'compose',
-    description: 'Kernel verb — operadic composition over typed-hyperedge category. Operators: union (join), intersection (meet), restriction (project), override (left-biased).',
+    description: 'Kernel verb — operadic composition over typed-hyperedge category. Operators: union (join), intersection (meet), restriction (project), override (left-biased). '
+      + 'IMPORTANT: `descriptors` takes the descriptor OBJECTS themselves, not IRIs referring to them. '
+      + 'Descriptors are not stored, so an id returned by `mint(kind:"descriptor")` cannot be resolved back — passing one is refused.',
     inputSchema: {
       type: 'object',
       properties: {
-        descriptors: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        descriptors: {
+          type: 'array',
+          description: 'Inline Context Descriptor objects — NOT IRIs. Each needs { id, describes: [graph IRIs], facets: [facet objects] }.',
+          items: {
+            type: 'object',
+            additionalProperties: true,
+            properties: {
+              id: { type: 'string', description: 'This descriptor\'s IRI.' },
+              describes: { type: 'array', items: { type: 'string' }, description: 'Named-graph IRIs this descriptor is about.' },
+              facets: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'Facet objects, each with a `type`.' },
+            },
+            required: ['id', 'describes', 'facets'],
+          },
+        },
         operator: { type: 'string', enum: ['union', 'intersection', 'restriction', 'override'] },
-        types: { type: 'array', items: { type: 'string' } },
+        types: { type: 'array', items: { type: 'string' }, description: 'Required for `restriction`: the facet types to project onto.' },
       },
       required: ['descriptors', 'operator'],
     },
