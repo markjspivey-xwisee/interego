@@ -18,6 +18,14 @@ export interface StoredNode {
   value?: string | number | boolean;
   /** Fragments: the ordered atom-uri span. */
   items?: string[];
+  /**
+   * Fragments: topological depth from the lattice top (@interego/pgsl's
+   * `Fragment.height`, packages/pgsl/src/types.ts). Carried so a Fragment
+   * round-trips through the store exactly rather than being reconstructed.
+   * Absent on rows written before this field existed — readers fall back to
+   * `max(0, level - 1)`. Additive to a JSON value encoding, so old rows decode.
+   */
+  height?: number;
   /** Fragments (level >= 2): the two level-(k-1) constituents. */
   left?: string;
   right?: string;

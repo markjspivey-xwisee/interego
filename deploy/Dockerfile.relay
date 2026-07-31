@@ -36,7 +36,7 @@ RUN npm run build
 # image boundaries).
 RUN mkdir -p /tarballs && \
     cd packages/core && npm pack --pack-destination /tarballs && cd /workspace && \
-    for pkg in pgsl solid abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions mdvault agent-interop; do \
+    for pkg in pgsl pgsl-store solid abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions mdvault agent-interop; do \
       cd packages/$pkg && npm pack --pack-destination /tarballs && cd /workspace ; \
     done
 
@@ -87,6 +87,8 @@ RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./packag
       /tarballs/interego-core-0.2.0.tgz \
       /tarballs/interego-solid-0.2.0.tgz \
       /tarballs/interego-pgsl-0.2.0.tgz \
+      /tarballs/interego-pgsl-store-0.0.1.tgz \
+      /tarballs/interego-abac-0.2.0.tgz \
       /tarballs/interego-compliance-0.2.0.tgz \
       /tarballs/interego-privacy-0.2.0.tgz \
       /tarballs/interego-security-txt-0.2.0.tgz \
@@ -115,6 +117,7 @@ COPY deploy/mcp-relay/amep-session-bridge.ts ./
 COPY deploy/mcp-relay/note-view.ts ./
 COPY deploy/mcp-relay/hmd-app.ts ./
 COPY deploy/mcp-relay/hmd-app-logic.ts ./
+COPY deploy/mcp-relay/pgsl-node-store.ts ./
 # AMEP reference validator + JSON-LD context, vendored verbatim. amep.ts loads
 # them by a path relative to the COMPILED module (dist/amep.js), so after tsc
 # they must sit at dist/amep-vendor/.
