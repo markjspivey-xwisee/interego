@@ -61,6 +61,9 @@ const SH_HAS_VALUE = `${SHACL}hasValue` as IRI;
 const SH_MESSAGE = `${SHACL}message` as IRI;
 const SH_IN = `${SHACL}in` as IRI;
 const SH_CLOSED = `${SHACL}closed` as IRI;
+const SH_SPARQL = `${SHACL}sparql` as IRI;
+const SH_REIFIER_SHAPE = `${SHACL}reifierShape` as IRI;
+const SH_REIFICATION_REQUIRED = `${SHACL}reificationRequired` as IRI;
 const SH_NODE = `${SHACL}node` as IRI;
 const SH_QUALIFIED_VALUE_SHAPE = `${SHACL}qualifiedValueShape` as IRI;
 const SH_QUALIFIED_MIN_COUNT = `${SHACL}qualifiedMinCount` as IRI;
@@ -1033,6 +1036,45 @@ export function validateAgainstShape(
   const subclassClosure = options.entailment === 'rdfs' ? buildSubclassClosure(dataDoc) : undefined;
 
   const shapes = compileShapes(shapeDoc);
+
+  // ★ A SHAPE THAT CANNOT BE ENFORCED MUST SAY SO.
+  //
+  // Silently ignoring a construct is how a published shape becomes a facade: it is
+  // dereferenceable, named for a real invariant, cited by dct:conformsTo — and asserts
+  // nothing. `vldp:EntailmentAuthorityShape`, the anti-authority-smuggling defence, is
+  // sh:sparql-only and therefore entirely inert today, with no signal anywhere.
+  //
+  // These are reported as Info, not Violation: a shape using an unimplemented construct
+  // is not INVALID data, and failing every publish that cites one would be a worse
+  // outcome than the silence. But it is now in the report, so a caller can surface it
+  // and nobody can mistake "conforms" for "was actually checked".
+  const unsupported: ShaclResult[] = [];
+  const noteUnsupported = (shapeId: string, construct: string, why: string): void => {
+    unsupported.push({
+      focusNode: shapeId,
+      sourceShape: shapeId,
+      constraintComponent: 'urn:iep:shacl:UnsupportedConstraint',
+      severity: 'Info',
+      message: `${construct} is not implemented by this validator, so ${why}. `
+        + 'The shape parsed, but this constraint was NOT enforced.',
+    });
+  };
+  for (const subj of shapeDoc.subjects) {
+    const id = subjectKey(subj);
+    if (subj.properties.has(SH_SPARQL)) {
+      noteUnsupported(id, 'sh:sparql', 'the SPARQL constraint was skipped entirely');
+    }
+    if (subj.properties.has(SH_REIFIER_SHAPE) || subj.properties.has(SH_REIFICATION_REQUIRED)) {
+      noteUnsupported(id, 'sh:reifierShape / sh:reificationRequired', 'RDF 1.2 reification constraints were skipped');
+    }
+    // A complex path expression is a blank node under sh:path. compilePropertyShape
+    // returns null for these, so the WHOLE property shape silently vanishes — the most
+    // dangerous of the three, because the omission is not visible in the shape at all.
+    const pathTerm = subj.properties.get(SH_PATH)?.[0];
+    if (pathTerm && pathTerm.kind === 'bnode') {
+      noteUnsupported(id, 'a complex sh:path expression', 'the entire property shape was dropped');
+    }
+  }
   // Shape references (sh:node, sh:qualifiedValueShape) resolve through this index.
   // Built from ALL compiled shapes, so a referenced shape need not have its own target.
   const byId = new Map<string, NodeShape>();
@@ -1076,6 +1118,8 @@ export function validateAgainstShape(
 
   return {
     conforms: results.filter(r => r.severity === 'Violation').length === 0,
-    results,
+    // Unsupported-construct notes ride in `results` at Info severity, so they never
+    // change `conforms` but are impossible to miss when inspecting a report.
+    results: [...results, ...unsupported],
   };
 }
