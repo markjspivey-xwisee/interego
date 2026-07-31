@@ -6088,10 +6088,17 @@ async function handleKernelMint(args: ToolArgs): Promise<string> {
   // Only PGSL node ids (atom/fragment) have an HTTP authority to resolve at;
   // descriptors and opaque content are urn:-addressed and are not claimed to.
   const httpAddressed = /\/ns\/pgsl\/(atom|fragment)\/[0-9a-f]{40}$/i.test(String(r.holon.iri));
-  return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+  // ★ These ride on the RESULT, not on decorate()'s options. decorate() accepts only
+  // {kind,id,extraTypes,shape,nextSteps,existing} and spreads the result last — passing
+  // them as options silently DROPPED them, and a conditional spread defeats excess-
+  // property checking so tsc never complained. Caught by probing the live response.
+  const decorated: Record<string, unknown> = {
+    ...(r as unknown as Record<string, unknown>),
+    ...(httpAddressed ? { resolvable: false, publishWith: 'publish_node' } : {}),
+  };
+  return JSON.stringify(decorateKernelResult(decorated, {
     kind: 'mint',
     id: r.holon.iri,
-    ...(httpAddressed ? { resolvable: false, publishWith: 'publish_node' } : {}),
     // Do NOT rename the three action ids below: `act` dispatches on exactly
     // urn:iep:action:kernel:{dereference,promote,decompose} via actOnLatticeNode, and
     // renaming them breaks the hypermedia round-trip. Add, never rename.
