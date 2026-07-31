@@ -280,6 +280,7 @@ import type { NodeProvenance } from '@interego/pgsl';
 // The relay's PUBLISHED PGSL node commons — see pgsl-node-store.ts for the
 // publish-then-resolve invariant this module exists to enforce.
 import * as publishedNodes from './pgsl-node-store.js';
+import { alternateTurtleHref, looksLikeHtml } from './alternate-turtle.js';
 
 // Privacy — `@interego/privacy`.
 import { screenForSensitiveContent, formatSensitivityWarning } from '@interego/privacy';
@@ -1867,7 +1868,7 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
     warnReason = `fetch threw: ${err instanceof Error ? err.message : String(err)}`;
   }
 
-  // ★ FOLLOW THE ALTERNATE LINK RATHER THAN GIVING UP ON HTML.
+  // ★ Follow the alternate link rather than giving up on HTML — see alternateTurtleHref.
   //
   // GitHub Pages ignores Accept and serves text/html for our own ontology IRIs, so a
   // perfectly good shape looked unreachable — and an owl:imports of one corrupted the
@@ -1880,15 +1881,11 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
   // The publishing side was already standards-correct. We simply were not reading it.
   // Following the advertised link works for any publisher that does the same thing, where
   // guessing an extension only ever works for ours.
-  if (body !== null && /^\s*<(?:!doctype|html)/i.test(body)) {
-    const alt = body.match(
-      /<link[^>]+rel=["']?(?:alternate|describedby)["']?[^>]*type=["']text\/turtle["'][^>]*href=["']([^"']+)["']/i,
-    ) ?? body.match(
-      /<link[^>]+type=["']text\/turtle["'][^>]*href=["']([^"']+)["']/i,
-    );
-    if (alt?.[1]) {
+  if (body !== null && looksLikeHtml(body)) {
+    const href = alternateTurtleHref(body);
+    if (href) {
       try {
-        const target = new URL(alt[1], shapeIri).toString();
+        const target = new URL(href, shapeIri).toString();
         const r2 = await guardedInvokeFetch(target, { method: 'GET', headers: { 'Accept': SHAPE_ACCEPT_HEADER } });
         if (r2.ok) {
           const t2 = await r2.text();
@@ -1902,7 +1899,7 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
         log(`WARN conformance gate: ${shapeIri} alternate-link fetch failed: ${(err as Error).message}`);
       }
     }
-    if (body !== null && /^\s*<(?:!doctype|html)/i.test(body)) {
+    if (body !== null && looksLikeHtml(body)) {
       warnReason = 'served HTML with no usable rel=alternate text/turtle link';
       body = null;
     }
