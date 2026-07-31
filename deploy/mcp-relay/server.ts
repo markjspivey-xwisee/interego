@@ -1908,6 +1908,49 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
 }
 
 /**
+ * Resolve `owl:imports` and append the imported graphs to the shapes text.
+ *
+ * ★ WHY THIS LIVES AT THE GATE AND NOT IN THE VALIDATOR. Following an import means a
+ * network fetch, and a validator that reaches the network is no longer a pure function —
+ * it becomes untestable offline and acquires an SSRF surface of its own. The gate already
+ * fetches shape bodies, already has the guard, and already has the cache, so resolution
+ * belongs here and the validator stays something you can reason about.
+ *
+ * ★ WHY IT MATTERS. Our shape files carry no rdfs:subClassOf; the hierarchy lives in the
+ * ontology they import (iep-shapes.ttl -> iep.ttl). Without following the import the
+ * subclass closure is empty for every published contract, so entailment sees nothing and
+ * an attacker escapes a class-targeted shape by simply not declaring the subclass triple
+ * in their own data.
+ *
+ * Bounded on every axis that could be turned into a weapon: one level deep (an import of
+ * an import is not followed), a small fan-out cap, the same guarded fetch and cache as
+ * shape bodies, and a failure to fetch an import is NON-fatal — an import is
+ * supplementary vocabulary, not the contract itself, so losing it must not refuse a
+ * publish the way losing the shape does.
+ */
+const MAX_IMPORTS = 8;
+const OWL_IMPORTS = /owl:imports\s+<([^>]+)>/g;
+async function withImports(shapeTurtle: string | null, shapeIri: string): Promise<string | null> {
+  if (!shapeTurtle) return shapeTurtle;
+  const targets: string[] = [];
+  for (const m of shapeTurtle.matchAll(OWL_IMPORTS)) {
+    const t = m[1];
+    if (t && t !== shapeIri && !targets.includes(t)) targets.push(t);
+    if (targets.length >= MAX_IMPORTS) break;
+  }
+  if (targets.length === 0) return shapeTurtle;
+  const parts = [shapeTurtle];
+  for (const t of targets) {
+    const body = await fetchShapeBody(t);
+    if (body) parts.push(`
+# ── owl:imports ${t} ──
+${body}`);
+    else log(`WARN conformance gate: owl:imports ${t} (from ${shapeIri}) unreachable — continuing without it`);
+  }
+  return parts.join('\n');
+}
+
+/**
  * Run every container-declared shape AND every caller-supplied shape
  * (via the MCP `conforms_to_shapes` arg) against the inbound graph_content.
  * Returns either { conforms: true, resolvedShapes } or the violation list
@@ -1947,7 +1990,7 @@ async function runConformanceGate(
   if (allShapes.length === 0) return { conforms: true, resolvedShapes: [] };
   const resolvedShapes: { shapeIri: string; shapeTurtle: string }[] = [];
   for (const shapeIri of allShapes) {
-    const shapeTurtle = await fetchShapeBody(shapeIri);
+    const shapeTurtle = await withImports(await fetchShapeBody(shapeIri), shapeIri);
     if (!shapeTurtle) {
       // ★ FAIL CLOSED. This used to `continue`, so a declared shape that 404'd,
       // timed out, or was simply unreachable was skipped and the publish returned

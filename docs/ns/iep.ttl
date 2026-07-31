@@ -1297,18 +1297,18 @@ iep:ActivityAnchor a owl:Class ; rdfs:subClassOf iep:Anchor ; rdfs:label "Activi
 #  SHACL Shape classes referenced from validation code
 # ══════════════════════════════════════════════════════════════
 
-iep:ContextDescriptorShape a sh:NodeShape ; rdfs:label "ContextDescriptor SHACL shape" ; sh:targetClass iep:ContextDescriptor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:TemporalFacetShape a sh:NodeShape ; rdfs:label "TemporalFacet SHACL shape" ; sh:targetClass iep:TemporalFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:ProvenanceFacetShape a sh:NodeShape ; rdfs:label "ProvenanceFacet SHACL shape" ; sh:targetClass iep:ProvenanceFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:AgentFacetShape a sh:NodeShape ; rdfs:label "AgentFacet SHACL shape" ; sh:targetClass iep:AgentFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:AccessControlFacetShape a sh:NodeShape ; rdfs:label "AccessControlFacet SHACL shape" ; sh:targetClass iep:AccessControlFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:SemioticFacetShape a sh:NodeShape ; rdfs:label "SemioticFacet SHACL shape" ; sh:targetClass iep:SemioticFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:TrustFacetShape a sh:NodeShape ; rdfs:label "TrustFacet SHACL shape" ; sh:targetClass iep:TrustFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:FederationFacetShape a sh:NodeShape ; rdfs:label "FederationFacet SHACL shape" ; sh:targetClass iep:FederationFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:ComposedDescriptorShape a sh:NodeShape ; rdfs:label "ComposedDescriptor SHACL shape" ; sh:targetClass iep:ComposedDescriptor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:ParadigmConstraintShape a sh:NodeShape ; rdfs:label "ParadigmConstraint SHACL shape" ; sh:targetClass iep:ParadigmConstraint ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:PersistenceRecordShape a sh:NodeShape ; rdfs:label "PersistenceRecord SHACL shape" ; sh:targetClass iep:PersistenceRecord ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
-iep:CoherenceCertificateShape a sh:NodeShape ; rdfs:label "CoherenceCertificate SHACL shape" ; sh:targetClass iep:CoherenceCertificate ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ContextDescriptorShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "ContextDescriptor SHACL shape" ; sh:targetClass iep:ContextDescriptor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:TemporalFacetShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "TemporalFacet SHACL shape" ; sh:targetClass iep:TemporalFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ProvenanceFacetShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "ProvenanceFacet SHACL shape" ; sh:targetClass iep:ProvenanceFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:AgentFacetShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "AgentFacet SHACL shape" ; sh:targetClass iep:AgentFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:AccessControlFacetShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "AccessControlFacet SHACL shape" ; sh:targetClass iep:AccessControlFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:SemioticFacetShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "SemioticFacet SHACL shape" ; sh:targetClass iep:SemioticFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:TrustFacetShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "TrustFacet SHACL shape" ; sh:targetClass iep:TrustFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:FederationFacetShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "FederationFacet SHACL shape" ; sh:targetClass iep:FederationFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ComposedDescriptorShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "ComposedDescriptor SHACL shape" ; sh:targetClass iep:ComposedDescriptor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:ParadigmConstraintShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "ParadigmConstraint SHACL shape" ; sh:targetClass iep:ParadigmConstraint ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:PersistenceRecordShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "PersistenceRecord SHACL shape" ; sh:targetClass iep:PersistenceRecord ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+iep:CoherenceCertificateShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ; rdfs:label "CoherenceCertificate SHACL shape" ; sh:targetClass iep:CoherenceCertificate ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Coherence (inter-agent verification)
@@ -1762,30 +1762,30 @@ iep:contentCid a owl:DatatypeProperty ;
     rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:HolonShape a sh:NodeShape ;
+iep:HolonShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Holon SHACL shape" ;
     sh:targetClass iep:Holon ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:KernelResultShape a sh:NodeShape ;
+iep:KernelResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Kernel result envelope SHACL shape" ;
     sh:targetClass iep:KernelResult ;
     rdfs:comment "Base shape every kernel-verb / shim response satisfies — requires JSON-LD typing + at least one iep:Affordance hint for next-step navigation." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:MintResultShape a sh:NodeShape ;
+iep:MintResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Mint result SHACL shape" ;
     sh:targetClass iep:MintResult ;
     rdfs:comment "Result envelope of kernel.mint — wraps a freshly minted iep:Holon." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:RestrictResultShape a sh:NodeShape ;
+iep:RestrictResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Restrict result SHACL shape" ;
     sh:targetClass iep:RestrictResult ;
     rdfs:comment "Result envelope of kernel.restrict — narrowed iep:ContextDescriptor." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:ExtendResultShape a sh:NodeShape ;
+iep:ExtendResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Extend result SHACL shape" ;
     sh:targetClass iep:ExtendResult ;
     rdfs:comment "Result envelope of kernel.extend — widened iep:ContextDescriptor." ;
@@ -1796,7 +1796,7 @@ iep:ToolResult a owl:Class ;
     rdfs:comment "Compatibility-shim response envelope — the @type every named-tool (non-kernel-verb) MCP shim emits, shaped by iep:ToolResultShape." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:ToolResultShape a sh:NodeShape ;
+iep:ToolResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Tool result envelope SHACL shape" ;
     sh:targetClass iep:ToolResult ;
     rdfs:comment "Base shape every named-tool shim response satisfies — same envelope discipline as kernel verbs." ;
@@ -1807,44 +1807,44 @@ iep:RelayEntryPoint a owl:Class ;
     rdfs:comment "Top-level Hydra entry-point envelope a hosted MCP relay advertises — co-typed with hydra:EntryPoint and shaped by iep:RelayEntryPointShape; its affordances list the relay's surface operations." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:RelayEntryPointShape a sh:NodeShape ;
+iep:RelayEntryPointShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Relay entry point SHACL shape" ;
     sh:targetClass iep:RelayEntryPoint ;
     rdfs:comment "Hypermedia entry point document for an HTTP relay's surface — every operation listed MUST be a hydra:Operation." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:AffordanceShape a sh:NodeShape ;
+iep:AffordanceShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Affordance SHACL shape" ;
     sh:targetClass iep:Affordance ;
     rdfs:comment "A iep:Affordance MUST also be a hydra:Operation with iep:action + hydra:target + hydra:method." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:DereferenceResultShape a sh:NodeShape ;
+iep:DereferenceResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Dereference result SHACL shape" ;
     rdfs:comment "Result envelope of kernel.dereference — carries the fetched representation + extracted affordances." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:ComposeResultShape a sh:NodeShape ;
+iep:ComposeResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Compose result SHACL shape" ;
     rdfs:comment "Result envelope of kernel.compose — emits a ComposedDescriptor witness." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:ActResultShape a sh:NodeShape ;
+iep:ActResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Act result SHACL shape" ;
     rdfs:comment "Result envelope of kernel.act — wraps an HTTP response and echoes the followed affordance." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:PromoteResultShape a sh:NodeShape ;
+iep:PromoteResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Promote result SHACL shape" ;
     rdfs:comment "Result envelope of kernel.promote — apex IRI + lattice level + optional pullback square." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:DecomposeResultShape a sh:NodeShape ;
+iep:DecomposeResultShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Decompose result SHACL shape" ;
     rdfs:comment "Result envelope of kernel.decompose — pullback square (apex + left + right + overlap)." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 
-iep:ManifestShape a sh:NodeShape ;
+iep:ManifestShape a sh:NodeShape ; sh:deactivated true ; rdfs:comment "DECLARED, NOT YET SPECIFIED. This shape carries no constraints, so it validated nothing while reading — from its name, its rdfs:isDefinedBy and its dereferenceable IRI — as though it enforced the invariant it is named for. sh:deactivated says so in data: a SHACL processor now correctly produces no results for it, rather than producing none by accident. Remove this flag in the same change that gives it constraints." ; ;
     rdfs:label "Manifest SHACL shape" ;
     rdfs:comment "A pod's .well-known/context-graphs manifest is a hydra:Collection of iep:ContextDescriptor entries." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
