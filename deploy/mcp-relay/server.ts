@@ -1906,7 +1906,13 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
   }
 
   if (body === null && warnReason !== null) {
-    log(`WARN conformance gate could not fetch shape ${shapeIri} — ${warnReason}. Publish will proceed UNVALIDATED against this shape.`);
+    // ★ This sentence used to read "Publish will proceed UNVALIDATED against this shape."
+    // That was true when the gate failed OPEN; it has failed CLOSED since PR #210, and the
+    // caller now gets a 422 carrying iep:shapeUnfetchable. Caught by reading the live logs
+    // beside the live response and seeing them contradict each other. A security gate whose
+    // log states the opposite of what it did is worse than one that logs nothing — it tells
+    // whoever is debugging an outage to go looking in precisely the wrong place.
+    log(`WARN conformance gate could not fetch shape ${shapeIri} — ${warnReason}. Publish is REFUSED (422 shapeUnfetchable); the gate fails closed.`);
   }
 
   // ★ NEVER CACHE A FAILURE. Storing `body: null` memoised "this shape does not
