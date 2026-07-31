@@ -248,6 +248,8 @@ export type {
 export {
   escapeTurtleLiteral,
   unescapeTurtleLiteral,
+  turtleIriRef,
+  turtlePrefixedLocal,
 } from './rdf/index.js';
 
 // ── Namespaces ───────────────────────────────────────────────

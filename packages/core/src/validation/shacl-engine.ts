@@ -60,6 +60,8 @@ const SH_PATTERN = `${SHACL}pattern` as IRI;
 const SH_HAS_VALUE = `${SHACL}hasValue` as IRI;
 const SH_MESSAGE = `${SHACL}message` as IRI;
 const SH_IN = `${SHACL}in` as IRI;
+const SH_CLOSED = `${SHACL}closed` as IRI;
+const SH_IGNORED_PROPERTIES = `${SHACL}ignoredProperties` as IRI;
 
 const RDF_FIRST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first' as IRI;
 const RDF_REST  = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest'  as IRI;
@@ -169,6 +171,22 @@ interface NodeShape {
   readonly targetClasses: readonly IRI[];
   readonly targetNodes: readonly IRI[];
   readonly propertyShapes: readonly PropertyShape[];
+  /**
+   * sh:closed — the focus node may carry NO predicate other than those its property
+   * shapes declare (plus sh:ignoredProperties).
+   *
+   * ★ WHY THIS IS DIFFERENT IN KIND FROM EVERY OTHER CONSTRAINT HERE. The rest of this
+   * engine answers "is what IS here acceptable?". Closed-world is the only one that can
+   * answer "is anything here that should NOT be?" — and that is the only question that
+   * can enforce a guarantee about content a shape's author never anticipated. An
+   * enumerated denylist can refuse the predicates you thought of; sh:closed refuses the
+   * ones you did not, which is the whole point when a shape exists to keep sensitive
+   * fields off a published graph.
+   */
+  readonly closed: boolean;
+  /** Predicates permitted despite sh:closed. rdf:type is NOT implicit — SHACL requires
+   *  it to be listed explicitly, and shape authors reliably forget, so violations name it. */
+  readonly ignoredProperties: readonly IRI[];
 }
 
 // ── Shape graph compilation ──────────────────────────────────
@@ -268,11 +286,27 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
       }
     }
 
+    // sh:closed is `true` only when literally "true" — anything else (absent, "false",
+    // a stray IRI) leaves the shape OPEN. Fail-open is correct here and only here:
+    // silently closing a shape its author did not close would reject valid data across
+    // the whole federation.
+    const closedTerm = getOne(subj, SH_CLOSED);
+    const closed = closedTerm?.kind === 'literal' && closedTerm.value === 'true';
+    const ignoredProperties: IRI[] = [];
+    for (const head of getAll(subj, SH_IGNORED_PROPERTIES)) {
+      for (const v of walkRdfList(doc, head)) {
+        const iri = asIri(v);
+        if (iri) ignoredProperties.push(iri);
+      }
+    }
+
     nodeShapes.push({
       id: subjectKey(subj),
       targetClasses,
       targetNodes,
       propertyShapes,
+      closed,
+      ignoredProperties,
     });
   }
   return nodeShapes;
@@ -541,6 +575,30 @@ export function validateAgainstShape(
     for (const focus of focusNodes) {
       for (const ps of shape.propertyShapes) {
         results.push(...evaluatePropertyShape(dataDoc, focus, shape, ps));
+      }
+      // ★ sh:closed — the only constraint that can refuse a predicate nobody anticipated.
+      // Every other check above asks "is what IS here acceptable?"; this asks "is anything
+      // here that should not be?", which is what makes it the one usable enforcement for
+      // "this graph may carry ONLY these fields".
+      if (shape.closed) {
+        const declared = new Set<string>(shape.propertyShapes.map(ps => ps.path));
+        for (const ign of shape.ignoredProperties) declared.add(ign);
+        for (const predicate of focus.properties.keys()) {
+          if (declared.has(predicate)) continue;
+          results.push({
+            focusNode: subjectKey(focus),
+            path: predicate,
+            sourceShape: shape.id,
+            constraintComponent: `${SHACL}ClosedConstraintComponent`,
+            severity: 'Violation',
+            // Name rdf:type explicitly: SHACL does not exempt it implicitly, and a shape
+            // author who closed a shape without listing it hits this first and is
+            // otherwise left guessing.
+            message: predicate === RDF_TYPE
+              ? `Closed shape ${shape.id} does not permit rdf:type — add it to sh:ignoredProperties`
+              : `Closed shape ${shape.id} does not permit predicate ${predicate}`,
+          });
+        }
       }
     }
   }

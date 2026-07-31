@@ -22,8 +22,12 @@ const NS_DIR = join(__dirname, '..', 'docs', 'ns');
 
 // Prefixes that count as L1-or-W3C grounding anchors.
 const GROUNDING_PREFIXES = new Set([
-  // L1 core
-  'cg', 'cgh', 'pgsl', 'ie', 'align',
+  // L1 core.
+  // ★ `iep` / `ieh` are the CURRENT L1 prefixes; `cg` / `cgh` are their pre-rename
+  // aliases, retained for read compatibility. Omitting the current pair meant every
+  // class grounded through L1 — i.e. almost all of them — read as ungrounded, and this
+  // lint reported 45/97 and failed. It runs in no workflow, so nothing surfaced it.
+  'iep', 'ieh', 'cg', 'cgh', 'pgsl', 'ie', 'align',
   // W3C standard
   'prov', 'dct', 'dcat', 'hydra', 'foaf', 'sh', 'skos',
   'owl', 'rdfs', 'rdf', 'vc', 'dprod', 'time', 'ldp', 'xsd',

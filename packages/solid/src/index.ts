@@ -4,6 +4,9 @@ export {
   fetchGraphContent,
   parseDistributionFromDescriptorTurtle,
   parseAuthorshipProofFromDescriptorTurtle,
+  // Exported alongside its parser: a round-trip is only testable if both halves are
+  // reachable, and a signed-but-unserialised field breaks verification silently.
+  buildAuthorshipProofBlock,
   writeAgentRegistry, readAgentRegistry,
   writeDelegationCredential, readDelegationCredential, verifyAgentDelegation,
   buildVerifyAgentEnvelope,

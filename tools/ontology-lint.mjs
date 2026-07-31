@@ -182,9 +182,34 @@ function findReferencesInFile(tsPath, prefixes) {
     'g',
   );
   let offset = 0;
+  // ★ BLOCK comments must be stripped too, not just `//` lines.
+  //
+  // A `/** ... */` doc comment that EXPLAINS a term — "a prefixed name like iep:High
+  // ends at whitespace" — was read as code emitting `iep:High`, and the lint demanded a
+  // declaration for a term nothing emits. That is the same failure mode as a guard that
+  // fires on its own explanation: the honest fix is documenting the hazard, and the lint
+  // punished exactly that.
+  //
+  // Comment regions are blanked with SPACES rather than removed, so every match's index
+  // still lines up with the real file offset the allowlist records.
+  let inBlock = false;
+  const stripComments = (raw) => {
+    let out = '';
+    for (let i = 0; i < raw.length; i++) {
+      if (inBlock) {
+        if (raw[i] === '*' && raw[i + 1] === '/') { inBlock = false; out += '  '; i++; }
+        else out += ' ';
+        continue;
+      }
+      if (raw[i] === '/' && raw[i + 1] === '*') { inBlock = true; out += '  '; i++; continue; }
+      if (raw[i] === '/' && raw[i + 1] === '/') { out += ' '.repeat(raw.length - i); break; }
+      out += raw[i];
+    }
+    return out;
+  };
+
   for (const rawLine of body.split('\n')) {
-    const commentIdx = rawLine.indexOf('//');
-    const line = commentIdx === -1 ? rawLine : rawLine.slice(0, commentIdx);
+    const line = stripComments(rawLine);
     let m;
     refRegex.lastIndex = 0;
     while ((m = refRegex.exec(line)) !== null) {
