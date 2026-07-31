@@ -408,23 +408,28 @@ export async function bootstrapDurableStore(
     log(`[pgsl] refusing to bootstrap: unsafe table identifier ${JSON.stringify(TABLE)}`);
     return 'failed';
   }
+  // ★ The role password cannot be a bind parameter. CREATE ROLE / ALTER ROLE are
+  // utility statements that take no parameters, and wrapping them in a DO block does
+  // not help — `$1` inside dollar-quoting is literal text, not a placeholder, so the
+  // server rejects the bind outright ("bind message supplies 1 parameters, but prepared
+  // statement requires 0"). It has to be an inline literal, so the password is
+  // constrained to a charset that cannot terminate the literal, and validated here
+  // rather than trusted.
+  if (!/^[A-Za-z0-9_-]{16,200}$/.test(rolePassword)) {
+    log('[pgsl] refusing to bootstrap: RELAY_PGSL_ROLE_PASSWORD must be 16-200 chars of [A-Za-z0-9_-]');
+    return 'failed';
+  }
+  const pwLiteral = `'${rolePassword}'`;
+
   const { Client } = await import('pg');
   const c = new Client({ connectionString: admin });
   try {
     await c.connect();
-    // Postgres has no CREATE ROLE IF NOT EXISTS; the DO block is the idiom. The password
-    // is passed as a parameter to format(), never concatenated into the statement.
-    await c.query(
-      `DO $$
-       BEGIN
-         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'relay_pgsl') THEN
-           EXECUTE format('CREATE ROLE relay_pgsl LOGIN PASSWORD %L', $1);
-         ELSE
-           EXECUTE format('ALTER ROLE relay_pgsl LOGIN PASSWORD %L', $1);
-         END IF;
-       END $$;`,
-      [rolePassword],
-    );
+    // Postgres has no CREATE ROLE IF NOT EXISTS, so branch in the client.
+    const exists = await c.query('SELECT 1 FROM pg_roles WHERE rolname = $1', ['relay_pgsl']);
+    await c.query(exists.rowCount
+      ? `ALTER ROLE relay_pgsl LOGIN PASSWORD ${pwLiteral}`
+      : `CREATE ROLE relay_pgsl LOGIN PASSWORD ${pwLiteral}`);
     await c.query(`CREATE TABLE IF NOT EXISTS ${TABLE} (k bytea PRIMARY KEY, v bytea NOT NULL)`);
     // Fail closed: strip anything inherited, then grant exactly this one table.
     await c.query('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM relay_pgsl');
