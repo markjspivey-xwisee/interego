@@ -770,3 +770,9 @@ export {
   SDK_REQUIRED_ACCEPT,
   MCP_MODERN_CORS_HEADERS,
 } from './mcp/http-mount.js';
+
+// Deterministic JSON for content-addressing. Shared because three call sites derived a
+// "content-stable" id with `JSON.stringify(obj, Object.keys(obj).sort())`, which is a
+// recursive property ALLOW-LIST, not a key sort — it empties every nested object, so
+// structurally different values hashed to one id. See the module header.
+export { canonicalJson } from './canonical-json.js';

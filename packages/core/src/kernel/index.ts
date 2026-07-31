@@ -45,6 +45,7 @@ import {
   override as composeOverride,
 } from '../model/composition.js';
 
+import { canonicalJson } from '../canonical-json.js';
 import { getKernelLatticeAdapter } from '../lattice/adapter.js';
 import type { LatticeProvenance, LatticeValue, LatticeLevel } from '../lattice/adapter.js';
 import { isPgslNodeId } from '../lattice/node-id.js';
@@ -256,13 +257,14 @@ export interface MintOptions {
  * Deterministic JSON with recursively sorted keys — so an object atom's value
  * is stable regardless of key insertion order. Two objects with the same
  * content produce the same string (hence the same content-address).
+ *
+ * Now the shared `canonicalJson` (../canonical-json.ts). It lived here as a private
+ * function used only by the ATOM path; the DESCRIPTOR branch below re-derived the idea
+ * as `JSON.stringify(desc, Object.keys(desc).sort())` and got a recursive property
+ * allow-list instead of a key sort, collapsing every descriptor's facets to `{}`.
+ * One implementation, so that cannot happen a fourth time.
  */
-function stableStringify(v: unknown): string {
-  if (v === null || typeof v !== 'object') return JSON.stringify(v);
-  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
-  const keys = Object.keys(v as Record<string, unknown>).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
-}
+const stableStringify = canonicalJson;
 
 /**
  * Coerce arbitrary content into a lattice `Value` (string | number | boolean).
@@ -314,7 +316,12 @@ export function mint(content: unknown, options?: MintOptions): MintResult {
 
   if (kind === 'descriptor') {
     const desc = content as ContextDescriptorData;
-    const canonical = JSON.stringify(desc, Object.keys(desc).sort());
+    // ★ Was `JSON.stringify(desc, Object.keys(desc).sort())`. That second argument is
+    // the REPLACER — an array there is a recursive property allow-list, not a key
+    // sorter — so every facet was emptied to `{}` and three descriptors whose only
+    // difference was their facet (Temporal vs Trust vs AccessControl-public) minted the
+    // SAME id. Different content, same identity: the dangerous direction.
+    const canonical = canonicalJson(desc);
     const hash = sha256Hex(`descriptor:${canonical}`);
     const iri = `urn:iep:descriptor:${hash.slice(0, 40)}` as IRI;
     return {
