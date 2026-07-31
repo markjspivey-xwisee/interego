@@ -1942,9 +1942,22 @@ async function withImports(shapeTurtle: string | null, shapeIri: string): Promis
   const parts = [shapeTurtle];
   for (const t of targets) {
     const body = await fetchShapeBody(t);
-    if (body) parts.push(`
+    // ★ AN IMPORT THAT IS NOT TURTLE MUST BE DROPPED, NOT APPENDED.
+    //
+    // Content negotiation does not save us: GitHub Pages ignores Accept and serves HTML
+    // for our own ontology IRIs, so `owl:imports <…/ns/iep>` returns a web page. Appending
+    // it made the CONCATENATED graph unparseable, which turned a shape that validated
+    // perfectly well into a hard 422 — a shape body is only as good as the worst thing
+    // glued to it. Verified live: this exact URL broke iep-shapes.ttl.
+    //
+    // Parsing it here costs one parse and converts a fatal corruption into the same
+    // non-fatal degradation an unreachable import already gets.
+    const usable = body !== null && validateAgainstShape('', body).results
+      .every(r => !/ShapeGraphParseFailure/.test(r.constraintComponent));
+    if (usable) parts.push(`
 # ── owl:imports ${t} ──
 ${body}`);
+    else if (body !== null) log(`WARN conformance gate: owl:imports ${t} (from ${shapeIri}) is not parseable Turtle (likely an HTML representation) — continuing without it`);
     else log(`WARN conformance gate: owl:imports ${t} (from ${shapeIri}) unreachable — continuing without it`);
   }
   return parts.join('\n');
