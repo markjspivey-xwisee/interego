@@ -2,7 +2,7 @@ export * from './namespaces.js';
 // Turtle/N-Triples literal escaping — substrate primitive used by every
 // vertical that emits RDF. Exported so per-vertical @interego/*
 // packages don't have to reach into core internals.
-export { escapeTurtleLiteral, unescapeTurtleLiteral } from './escape.js';
+export { escapeTurtleLiteral, unescapeTurtleLiteral, turtleIriRef, turtlePrefixedLocal } from './escape.js';
 export { toTurtle, toTurtleDocument, toTripleAnnotationTurtle, toTripleAnnotationDocument, type SerializerOptions } from './serializer.js';
 export {
   parseTrig,

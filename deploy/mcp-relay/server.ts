@@ -50,7 +50,13 @@ import { Wallet as EthersWalletCtor } from 'ethers';
 // come from '@modelcontextprotocol/server'; only the AS plumbing comes from
 // server-legacy.
 import { Server, createMcpHandler } from '@modelcontextprotocol/server';
-import { mcpOutputSchema, toStructuredContent } from '@interego/core';
+import { mcpOutputSchema, toStructuredContent,
+  // Turtle term serialisers. IRIs and prefixed names are REFUSED when unusable
+  // (Turtle defines no escape for their terminators); literals are escaped.
+  turtleIriRef,
+  turtlePrefixedLocal,
+  escapeTurtleLiteral,
+} from '@interego/core';
 import type { Tool } from '@modelcontextprotocol/server';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import type { AuthInfo } from '@modelcontextprotocol/server';
@@ -1559,18 +1565,27 @@ function renderAppendOnlyEntry(args: {
     '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
     '@prefix dct: <http://purl.org/dc/terms/> .',
     '',
-    `<${args.descriptorUrl}> a iep:ManifestEntry ;`,
+    `${turtleIriRef(args.descriptorUrl) ?? '<urn:iep:invalid-subject>'} a iep:ManifestEntry ;`,
   ];
-  if (args.contentCid) lines.push(`    iep:contentCid "${args.contentCid}" ;`);
-  for (const g of args.graphIris ?? []) lines.push(`    iep:describes <${g}> ;`);
-  for (const ft of args.facetTypes ?? []) lines.push(`    iep:hasFacetType iep:${ft} ;`);
-  if (args.validFrom)  lines.push(`    iep:validFrom "${args.validFrom}"^^xsd:dateTime ;`);
-  if (args.validUntil) lines.push(`    iep:validUntil "${args.validUntil}"^^xsd:dateTime ;`);
-  for (const c of args.conformsTo ?? []) lines.push(`    dct:conformsTo <${c}> ;`);
-  for (const s of args.supersedes ?? []) lines.push(`    iep:supersedes <${s}> ;`);
-  if (args.modalStatus) lines.push(`    iep:modalStatus iep:${args.modalStatus} ;`);
-  if (args.trustLevel)  lines.push(`    iep:trustLevel iep:${args.trustLevel} ;`);
-  if (args.issuer)      lines.push(`    iep:issuer <${args.issuer}> ;`);
+  // ★ Every value below is interpolated into Turtle, and this builder used all THREE
+  // injectable positions at once: IRI brackets, `"..."` literals, and `iep:`-prefixed
+  // names. Each has a different terminator (`>`, `"`, and whitespace/`;`/`.`), so each
+  // needs its own handling — literals get escaped, IRIs and prefixed names get REFUSED,
+  // because Turtle defines no escape for their terminators. A rejected optional value is
+  // dropped; the entry is still worth writing without it.
+  const iri = (v: unknown): string | null => turtleIriRef(v);
+  const local = (v: unknown): string | null => turtlePrefixedLocal(v);
+
+  if (args.contentCid) lines.push(`    iep:contentCid "${escapeTurtleLiteral(args.contentCid)}" ;`);
+  for (const g of args.graphIris ?? []) { const r = iri(g); if (r) lines.push(`    iep:describes ${r} ;`); }
+  for (const ft of args.facetTypes ?? []) { const l = local(ft); if (l) lines.push(`    iep:hasFacetType iep:${l} ;`); }
+  if (args.validFrom)  lines.push(`    iep:validFrom "${escapeTurtleLiteral(args.validFrom)}"^^xsd:dateTime ;`);
+  if (args.validUntil) lines.push(`    iep:validUntil "${escapeTurtleLiteral(args.validUntil)}"^^xsd:dateTime ;`);
+  for (const c of args.conformsTo ?? []) { const r = iri(c); if (r) lines.push(`    dct:conformsTo ${r} ;`); }
+  for (const s of args.supersedes ?? []) { const r = iri(s); if (r) lines.push(`    iep:supersedes ${r} ;`); }
+  if (args.modalStatus) { const l = local(args.modalStatus); if (l) lines.push(`    iep:modalStatus iep:${l} ;`); }
+  if (args.trustLevel)  { const l = local(args.trustLevel);  if (l) lines.push(`    iep:trustLevel iep:${l} ;`); }
+  if (args.issuer)      { const r = iri(args.issuer);        if (r) lines.push(`    iep:issuer ${r} ;`); }
   // Terminate (replace trailing semicolon)
   const last = lines[lines.length - 1];
   lines[lines.length - 1] = last.endsWith(' ;') ? last.slice(0, -2) + ' .' : last + ' .';
@@ -2583,6 +2598,13 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     try {
       const signer = await getDelegationSigner();
       const agentDidArg = typeof args.agent_did === 'string' ? args.agent_did : undefined;
+      // ★ COVER THE CONTENT, not just its name. The signed payload used to carry only
+      // {agentId, ownerWebId, descriptorId, created, agentDid} — who and which resource,
+      // and nothing about what it says. The proof stayed valid however the graph changed
+      // afterwards, so `sign_authorship: true` attested a filename while reading exactly
+      // like an attestation of the document.
+      const contentHash = `sha256:${createHash('sha256')
+        .update(String(args.graph_content ?? ''), 'utf8').digest('hex')}`;
       authorshipProof = await createSignedAuthorship(
         {
           agentId: agentId as IRI,
@@ -2590,6 +2612,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
           descriptorId: descriptor.id,
           created: now,
           ...(agentDidArg ? { agentDid: agentDidArg } : {}),
+          contentHash,
         },
         signer,
       );
@@ -3359,16 +3382,22 @@ async function handleRecordTrajectoryStep(args: ToolArgs): Promise<string> {
   // the publish_context side; this is the substantive content the
   // verifier reads.
   const escape = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const parentLine = typeof args.parent_step_id === 'string' && args.parent_step_id
-    ? `    traj:parentStep <${args.parent_step_id}> ;\n`
-    : '';
-  const supersedesLine = typeof args.supersedes_step_id === 'string' && args.supersedes_step_id
-    ? `    iep:supersedes <${args.supersedes_step_id}> ;\n`
-    : '';
+  // ★ These three values are CALLER-SUPPLIED and land inside Turtle IRI brackets. An IRI
+  // reference ends at the first `>`, and Turtle defines no escape for it — so
+  // `urn:x> ; prov:wasAttributedTo <did:someone-else` used to close the IRI, open a new
+  // predicate, and write a triple the caller was never authorised to assert. Escaping is
+  // not available as a fix; the only correct handling is to refuse the value, which is
+  // what turtleIriRef does by returning null. An unusable optional reference is dropped
+  // rather than failing the write — the step itself is still worth recording.
+  const parentRef = turtleIriRef(args.parent_step_id);
+  const parentLine = parentRef ? `    traj:parentStep ${parentRef} ;\n` : '';
+  const supersedesRef = turtleIriRef(args.supersedes_step_id);
+  const supersedesLine = supersedesRef ? `    iep:supersedes ${supersedesRef} ;\n` : '';
   const derivedLines = Array.isArray(args.was_derived_from)
     ? (args.was_derived_from as unknown[])
-        .filter((u): u is string => typeof u === 'string')
-        .map(u => `    prov:wasDerivedFrom <${u}> ;\n`)
+        .map(u => turtleIriRef(u))
+        .filter((r): r is string => r !== null)
+        .map(r => `    prov:wasDerivedFrom ${r} ;\n`)
         .join('')
     : '';
   const resultBlock = (() => {
@@ -7196,7 +7225,7 @@ const TOOL_SCHEMAS = [
         visibility: {
           type: 'string',
           enum: ['public', 'shared', 'private'],
-          description: 'Audience class for the published payload. Default "shared". "public" → no envelope; plaintext Turtle written to the pod; the descriptor + payload .acl grants acl:Read to acl:agentClass foaf:Agent (any authenticated user); descriptor advertises iep:visibility "public" and iep:encrypted false. Use for wiki-style notes, jam:renderView projections, or anything the user explicitly wants publicly readable. "shared" (DEFAULT) → JOSE envelope wrapped to the pod\'s authorized agents + author\'s session-agent key + any share_with recipients — historical behavior, preserves wire compat. "private" → envelope to the author\'s session agent ONLY; even other authorized agents on the same pod cannot decrypt. Use for personal scratchpads. share_with is ignored under "public" and "private" (a warn is logged if it was supplied).',
+          description: 'Audience class for the published payload. Default "shared". "public" → no envelope; plaintext Turtle written to the pod; the descriptor + payload .acl grants acl:Read to acl:agentClass foaf:Agent — which in Web Access Control means ANYONE ON THE INTERNET, including unauthenticated readers. (The WAC term for logged-in-only is acl:AuthenticatedAgent; this is deliberately NOT that.) The content is written as plaintext Turtle with no envelope, and there is no unpublish. Descriptor advertises iep:visibility "public" and iep:encrypted false. Use ONLY for content the user has decided to disclose to the open web — wiki-style notes, jam:renderView projections. If in doubt, use "shared". "shared" (DEFAULT) → JOSE envelope wrapped to the pod\'s authorized agents + author\'s session-agent key + any share_with recipients — historical behavior, preserves wire compat. "private" → envelope to the author\'s session agent ONLY; even other authorized agents on the same pod cannot decrypt. Use for personal scratchpads. share_with is ignored under "public" and "private" (a warn is logged if it was supplied).',
         },
         share_with: {
           type: 'array',
@@ -9621,6 +9650,20 @@ async function ensurePodAcls(params: {
 // `/context-graphs/` ACL is later tightened. Owner retains full control.
 // Best-effort: any non-2xx is logged by the caller; the parent ACL on
 // `/context-graphs/` still grants the same anonymous read by inheritance.
+/**
+ * Grant world-readable access to a pod resource.
+ *
+ * ★ `acl:agentClass foaf:Agent` MEANS EVERYONE, INCLUDING UNAUTHENTICATED READERS. It is
+ * not "any logged-in user" — the Web Access Control term for that is
+ * `acl:AuthenticatedAgent`, and this is deliberately not it. The `publish_context` tool
+ * description asserted the weaker reading for a long time, which understated the exposure
+ * to anyone (human or model) deciding whether to pass `visibility: "public"`.
+ *
+ * This function is correct: it is named for what it does, and `"public"` is documented as
+ * a deliberate disclosure to the open web. Only the description was wrong. Do not "fix"
+ * this by narrowing the class — callers who want authenticated-only want `"shared"`,
+ * which envelopes to specific keys.
+ */
 async function writePublicReadAcl(targetUrl: string, ownerWebId: IRI): Promise<void> {
   const aclUrl = `${targetUrl}.acl`;
   const aclBody = [

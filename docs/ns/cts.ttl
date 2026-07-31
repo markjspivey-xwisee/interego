@@ -140,7 +140,7 @@ cts:NGram a owl:Class ;
 
 cts:Occurrence a owl:Class ;
     rdfs:label "N-gram Occurrence" ;
-    rdfs:comment "A typed morphism recording that a specific NGram appears in a specific containing tuple at a specific offset. Conceptually a hyperedge (NGram, ContainingTuple, offset, length). Querying 'what tokens share substructure with X' is a SPARQL join through this class — substructure sharing is graph topology, not algorithm." .
+    rdfs:comment "A typed morphism recording that a specific NGram appears in a specific containing tuple at a specific offset. Conceptually a hyperedge (NGram, ContainingTuple, offset, length). Querying 'what tokens share substructure with X' is a SPARQL join through this class — substructure sharing is graph topology, not algorithm. Declared primitive: this is a reified n-ary INCIDENCE relation, and L1 publishes no term for one. It is deliberately NOT grounded to pgsl:Fragment, which is a typed-hyperedge COMPOSITION over constituent atoms — an Occurrence composes nothing, it records where one thing sits inside another. Should L1 later publish a reified-relation term, this should ground to it rather than stay primitive." .
 
 cts:ngram a owl:ObjectProperty ;
     rdfs:label "ngram" ;

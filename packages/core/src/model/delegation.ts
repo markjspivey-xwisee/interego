@@ -645,6 +645,23 @@ export interface AuthorshipProofInputs {
   readonly created: string;
   /** Optional agent DID, surfaced for verifiers that need the resolution hint. */
   readonly agentDid?: string;
+  /**
+   * ★ Digest of the content this authorship claim is ABOUT. `sha256:<hex>`.
+   *
+   * Without this the signed payload was `{agentId, ownerWebId, descriptorId, created,
+   * agentDid}` — every field naming WHO and WHICH RESOURCE, and none naming WHAT IT SAYS.
+   * The proof therefore attested "agent A claims authorship of descriptor D" while
+   * remaining valid no matter how D's content changed afterwards. A signature over a
+   * filename reads exactly like a signature over a document, which is what makes the gap
+   * dangerous rather than merely incomplete.
+   *
+   * Optional because it must be: proofs written before this field existed cannot acquire
+   * one retroactively, and re-signing them is not possible. It is absent on legacy proofs
+   * and present on everything written since — and {@link verifySignedAuthorship} reports
+   * which, so a consumer can refuse to treat a legacy proof as content-covering rather
+   * than being silently told it is.
+   */
+  readonly contentHash?: string;
 }
 
 /**
@@ -666,6 +683,13 @@ export interface AuthorshipProof {
   readonly ownerWebId: IRI;
   readonly descriptorId: IRI;
   readonly agentDid?: string;
+  /**
+   * Digest of the signed content, `sha256:<hex>`. Absent on proofs written before the
+   * payload covered content — see AuthorshipProofInputs.contentHash. A verifier that
+   * needs a content-covering proof must check this is present, not merely that the
+   * signature verifies.
+   */
+  readonly contentHash?: string;
   /** Signature scheme — defaults to ECDSA-secp256k1 / EcdsaSecp256k1Signature2019. */
   readonly scheme: string;
 }
@@ -696,6 +720,12 @@ export function canonicalAuthorshipPayload(
   if (inputs.agentDid) {
     ordered['agentDid'] = inputs.agentDid;
   }
+  // ★ Included ONLY when present, so a legacy proof still canonicalises to exactly the
+  // bytes it was signed over. Adding an always-present field — even an empty string —
+  // would invalidate every authorship proof ever written. Absence is the migration.
+  if (inputs.contentHash) {
+    ordered['contentHash'] = inputs.contentHash;
+  }
   return JSON.stringify(ordered);
 }
 
@@ -722,6 +752,7 @@ export async function createSignedAuthorship(
     ownerWebId: inputs.ownerWebId,
     descriptorId: inputs.descriptorId,
     ...(inputs.agentDid ? { agentDid: inputs.agentDid } : {}),
+    ...(inputs.contentHash ? { contentHash: inputs.contentHash } : {}),
     scheme: 'EcdsaSecp256k1Signature2019',
   };
 }
@@ -740,13 +771,32 @@ export async function createSignedAuthorship(
 export async function verifySignedAuthorship(
   proof: AuthorshipProof,
   verifier: DelegationVerifier,
-): Promise<{ valid: boolean; signer: IRI; reason?: string }> {
+  /**
+   * The content the proof claims to be about, if the caller has it. Supply this whenever
+   * possible: without it the function can only tell you the signature is intact, not that
+   * it covers what you are looking at.
+   */
+  observed?: { readonly contentHash?: string },
+): Promise<{
+  valid: boolean;
+  signer: IRI;
+  reason?: string;
+  /**
+   * ★ Whether the signature actually covers the CONTENT, as opposed to only naming the
+   * descriptor. `valid: true, coversContent: false` is a real and common outcome — it
+   * means a legacy proof, signed before the payload included a content digest, and it
+   * must not be read as "this content is attested". A consumer that needs content
+   * integrity has to check this, because the signature verifies either way.
+   */
+  coversContent: boolean;
+}> {
   const inputs: AuthorshipProofInputs = {
     agentId: proof.issuer,
     ownerWebId: proof.ownerWebId,
     descriptorId: proof.descriptorId,
     created: proof.created,
     ...(proof.agentDid ? { agentDid: proof.agentDid } : {}),
+    ...(proof.contentHash ? { contentHash: proof.contentHash } : {}),
   };
   const payload = canonicalAuthorshipPayload(inputs);
   // DelegationProof.type is a string-literal union — coerce the
@@ -768,14 +818,28 @@ export async function verifySignedAuthorship(
         valid: false,
         signer: proof.issuer,
         reason: 'Authorship proof signature did not verify against canonical payload',
+        coversContent: false,
       };
     }
-    return { valid: true, signer: proof.issuer };
+    // The signature is intact. Now: does it actually say anything about the content?
+    const coversContent = typeof proof.contentHash === 'string' && proof.contentHash.length > 0;
+    if (coversContent && observed?.contentHash && observed.contentHash !== proof.contentHash) {
+      // A signature that verifies over a digest of DIFFERENT content is the sharpest
+      // possible failure: the proof is authentic and the content has been swapped.
+      return {
+        valid: false,
+        signer: proof.issuer,
+        reason: `Authorship proof covers content ${proof.contentHash} but the observed content is ${observed.contentHash}`,
+        coversContent: true,
+      };
+    }
+    return { valid: true, signer: proof.issuer, coversContent };
   } catch (err) {
     return {
       valid: false,
       signer: proof.issuer,
       reason: `Authorship verifier threw: ${(err as Error).message}`,
+      coversContent: false,
     };
   }
 }

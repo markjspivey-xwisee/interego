@@ -17,6 +17,7 @@ on:
       - 'mcp-server/**'
       - 'docs/ns/**'
       - 'tools/ontology-lint.mjs'
+      - 'tools/derivation-lint.mjs'
       - 'tools/check-foxxi-affordances.mjs'
       - 'applications/foxxi-content-intelligence/affordances.ts'
       # The shared vertical-bridge mount emits iep: terms too (it types the
@@ -34,6 +35,7 @@ on:
       - 'mcp-server/**'
       - 'docs/ns/**'
       - 'tools/ontology-lint.mjs'
+      - 'tools/derivation-lint.mjs'
       - 'tools/check-foxxi-affordances.mjs'
       - 'applications/foxxi-content-intelligence/affordances.ts'
       # The shared vertical-bridge mount emits iep: terms too (it types the
@@ -57,3 +59,9 @@ jobs:
         run: node tools/ontology-lint.mjs
       - name: Check Foxxi /agent/* routes are discoverable affordances
         run: node tools/check-foxxi-affordances.mjs
+      # Every L2/L3 class must ground into L1 or a W3C vocabulary, or declare itself
+      # primitive. This lint existed but ran in NO workflow, and had been failing at
+      # 45/97 since the cg:->iep: rename left its prefix list behind — a guard nobody
+      # could see was broken is indistinguishable from no guard at all.
+      - name: Every vertical class grounds into L1 (derivation discipline)
+        run: node tools/derivation-lint.mjs

@@ -2103,7 +2103,7 @@ function buildDistributionBlock(d: {
  * descriptorId, created, agentDid?) at verify time so any tampering
  * with those fields invalidates the signature.
  */
-function buildAuthorshipProofBlock(p: import('@interego/core').AuthorshipProof): string {
+export function buildAuthorshipProofBlock(p: import('@interego/core').AuthorshipProof): string {
   // Escape minimal Turtle-literal hazards in the proof value + signer
   // address (they are hex / base64 in practice but defensive).
   const esc = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -2122,6 +2122,12 @@ function buildAuthorshipProofBlock(p: import('@interego/core').AuthorshipProof):
   ];
   if (p.agentDid) {
     lines.push(`    iep:agentDid "${esc(p.agentDid)}" ;`);
+  }
+  // ★ MUST round-trip. The verifier rebuilds the canonical payload from this block alone,
+  // so a field that is signed but not serialised makes every NEW proof fail to verify —
+  // a silent, total break that looks like a broken signature rather than a missing field.
+  if (p.contentHash) {
+    lines.push(`    iep:contentHash "${esc(p.contentHash)}" ;`);
   }
   lines.push(`    iep:proofValue "${esc(p.proofValue)}"`);
   lines.push(`] .`);
@@ -2155,6 +2161,7 @@ export function parseAuthorshipProofFromDescriptorTurtle(
   const proofValue = read(/iep:proofValue\s+"([^"]+)"/);
   const scheme = read(/iep:scheme\s+"([^"]+)"/) ?? 'EcdsaSecp256k1Signature2019';
   const agentDid = read(/iep:agentDid\s+"([^"]+)"/);
+  const contentHash = read(/iep:contentHash\s+"([^"]+)"/);
   if (!issuer || !verificationMethod || !signerAddress || !created
       || !ownerWebId || !descriptorId || !proofValue) {
     return null;
@@ -2170,6 +2177,7 @@ export function parseAuthorshipProofFromDescriptorTurtle(
     proofValue,
     scheme,
     ...(agentDid ? { agentDid } : {}),
+    ...(contentHash ? { contentHash } : {}),
   };
 }
 
