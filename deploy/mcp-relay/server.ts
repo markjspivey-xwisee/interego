@@ -2071,13 +2071,28 @@ async function runConformanceGate(
         }],
       };
     }
-    // ★ OBSERVE, DO NOT ENFORCE — yet. Entailment is a fleet change, not a code change:
-    // the moment it enforces, shapes fire on nodes they never fired on before and
-    // publishes that pass today start failing, all at once, across every publisher.
-    // In 'rdfs-observe' the entailed findings are downgraded to Info and logged below,
-    // so the list of what WOULD break is discoverable from production before it does.
-    // Flip to 'rdfs' once those logs are quiet or the fallout is understood.
-    const report = validateAgainstShape(graphContent, shapeTurtle, { entailment: 'rdfs-observe' });
+    // ★ ENFORCING. The observe period is over, and the reason it ended is not that the
+    // logs went quiet — it is that the premise for observing was wrong.
+    //
+    // Observe mode existed because "entailment is a fleet change: publishes that pass
+    // today start failing all at once." That was false. `packages/solid/src/client.ts`
+    // ALREADY validates the very same imports-resolved shape bodies with
+    // { entailment: 'rdfs' } and throws PublishShapeViolationError. Enforcement has been
+    // on the whole time, one layer down. Every graph this gate would newly refuse is
+    // already refused today — only later, and on the DEFAULT DEFERRED path silently,
+    // after the caller has already been handed a 202 "pending" success.
+    //
+    // So this is not a rollout risk being accepted; it is a silent background failure
+    // being converted into an honest synchronous 422. rdfs violations are a strict
+    // superset of observe violations (the downgrade at shacl-engine only rewrites
+    // severity), so nothing that passes today can start failing here that was not
+    // already failing deeper.
+    //
+    // Measured blast radius, recomputed independently and adversarially re-verified:
+    // iep:DescriptorCoreFacetShape additionally targets 10 iep: subclasses, and
+    // iep:NotificationShape additionally targets iep:NotificationChannelOpen. Everything
+    // else that intersects is sh:deactivated or a constraint-free stub, so inert.
+    const report = validateAgainstShape(graphContent, shapeTurtle, { entailment: 'rdfs' });
     if (!report.conforms) {
       return { conforms: false, shape: shapeIri, violations: report.results };
     }
@@ -3077,12 +3092,28 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         // so the entry is correct even written ahead of the commit.
         // Worst case (descriptor PUT itself fails) leaves a dangling
         // entry pointing at a 404 — readers dereferencing it skip it.
+        // ★ LEDGER AFTER THE PUBLISH, NOT BEFORE — and with the REAL descriptor URL.
+        //
+        // This block used to run here, ahead of publish(), keyed on
+        // `predictedDescriptorUrl`. When publish() then threw — most sharply a
+        // PublishShapeViolationError from the substrate's own entailing shape gate — the
+        // entry was already gone. In an APPEND-ONLY ledger that is not a stale row you can
+        // clean up: it is a permanent claim that a descriptor exists at a URL which never
+        // landed, written on the DEFAULT path, after the caller was handed a 202 success.
+        //
+        // The synchronous path above already had this right (it writes after publish, from
+        // result.descriptorUrl). Only the deferred path predicted-and-hoped. Making the gate
+        // enforcing raises the odds of that throw, so the ordering had to be fixed with it,
+        // not after it.
+        const real = await withPodMutex(podUrl, () =>
+          publish(descriptor, args.graph_content as string, podUrl, publishOptions),
+        );
         if (APPEND_ONLY_ENABLED) {
           const facetTypes = [...new Set(descriptor.facets.map(f => f.type))];
           const issuerFacet = descriptor.facets.find(f => f.type === 'Trust') as { type: 'Trust'; issuer?: string; trustLevel?: string } | undefined;
           const semioticFacet = descriptor.facets.find(f => f.type === 'Semiotic') as { type: 'Semiotic'; modalStatus?: string } | undefined;
           const entryTurtle = renderAppendOnlyEntry({
-            descriptorUrl: predictedDescriptorUrl,
+            descriptorUrl: real.descriptorUrl,
             graphIris: [...(descriptor.describes ?? [])] as string[],
             facetTypes,
             validFrom: descriptor.validFrom,
@@ -3093,11 +3124,8 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
             trustLevel: issuerFacet?.trustLevel,
             issuer: issuerFacet?.issuer,
           });
-          writeAppendOnlyEntryAsync(podUrl, predictedDescriptorUrl, entryTurtle);
+          writeAppendOnlyEntryAsync(podUrl, real.descriptorUrl, entryTurtle);
         }
-        const real = await withPodMutex(podUrl, () =>
-          publish(descriptor, args.graph_content as string, podUrl, publishOptions),
-        );
         manifestCache.delete(podUrl);
         if (visibility === 'public') {
           const aclResults = await Promise.allSettled([
