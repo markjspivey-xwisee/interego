@@ -6147,7 +6147,28 @@ async function handleKernelDereference(args: ToolArgs): Promise<string> {
     ...(podHint ? { podHint } : {}),
     ...(knownPodUrls.length > 0 ? { knownPods: knownPodUrls } : {}),
   });
-  return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+  // ★ MAKE THE TOOL AND THE URL AGREE.
+  //
+  // This tool resolves from the in-process lattice, so for a PGSL node id it happily
+  // reports status 'ok' for a node that no HTTP client can fetch — the relay minted the
+  // id, the relay holds the node, the tool answers. That divergence is precisely what
+  // hid the original defect: the tool said 'ok' while a plain GET of the same id 302'd
+  // into somebody else's 404.
+  //
+  // So a node id now carries, in-band, whether it is PUBLISHED — i.e. whether the URL
+  // will answer for anyone else. Absent for non-node IRIs, where the question is not
+  // meaningful.
+  const isNodeId = /\/ns\/pgsl\/(atom|fragment)\/[0-9a-f]{40}$/i.test(iri);
+  let httpResolvable: boolean | undefined;
+  if (isNodeId) {
+    const base = (PUBLIC_BASE_URL || '').replace(/\/$/, '');
+    httpResolvable = (await publishedNodes.resolvePublished(iri, base)).status === 'ok';
+  }
+  const decorated: Record<string, unknown> = {
+    ...(r as unknown as Record<string, unknown>),
+    ...(httpResolvable === undefined ? {} : { httpResolvable }),
+  };
+  return JSON.stringify(decorateKernelResult(decorated, {
     kind: 'dereference',
     id: iri,
     existing: r.affordances,
