@@ -271,6 +271,9 @@ import {
   CANONICAL_ORDER,
 } from '@interego/pgsl';
 import type { NodeProvenance } from '@interego/pgsl';
+// The relay's PUBLISHED PGSL node commons — see pgsl-node-store.ts for the
+// publish-then-resolve invariant this module exists to enforce.
+import * as publishedNodes from './pgsl-node-store.js';
 
 // Privacy — `@interego/privacy`.
 import { screenForSensitiveContent, formatSensitivityWarning } from '@interego/privacy';
@@ -352,12 +355,12 @@ const PUBLIC_BASE_URL = process.env['PUBLIC_BASE_URL'] ?? '';
  *  live relay host when PUBLIC_BASE_URL is unset (dev/stdio) rather than emitting a urn. */
 const toolTarget = (name: string): string =>
   `${(PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com').replace(/\/$/, '')}/tool/${name}`;
-// The public PGSL node resolver(s) the canonical id authority redirects to. The
-// relay is the STABLE naming authority for a pgsl node id (relay/ns/pgsl/<kind>/
-// <hash>); the bytes are served by a public-lattice resolver (the Foxxi bridge's
-// label-free node resolver today). Config-driven so the substrate authority never
-// hardcodes a vertical host in code. The resolver is itself fail-closed (public
-// lattices only, uniform 404), so the relay stays a thin redirect (w3id.org style).
+// TIER-2 fallback resolver. The relay is the naming authority AND the tier-1 resolver
+// for nodes PUBLISHED here (see /ns/pgsl/:kind/:hash below). This is the second tier: a
+// fail-closed public-lattice resolver holding a DISJOINT corpus — the Foxxi bridge's
+// ontology terms and memory commons, which it composed itself and which the relay's
+// store does not contain. Config-driven so the substrate authority never hardcodes a
+// vertical host in code.
 const PGSL_NODE_RESOLVER = (process.env['PGSL_NODE_RESOLVER'] ?? 'https://foxxi-bridge.interego.xwisee.com/agent/lattice').replace(/\/+$/, '');
 // Operator bearer for POST /amep/acts (AMEP engine). Unset ⇒ operator path
 // disabled; OAuth bearers with mcp:write scope still work.
@@ -558,6 +561,14 @@ const AUTH_REQUIRED_TOOLS = new Set([
   // rebuild_manifest rewrites a pod's manifest index (non-destructive,
   // reconstructs from on-pod descriptors) — gate it behind auth.
   'rebuild_manifest',
+  // publish_node writes durable, world-readable state under the substrate's OWN
+  // naming authority, and there is no unpublish — the strongest reason in this file
+  // to require a bound caller.
+  'publish_node',
+  // pgsl_to_turtle serialises the ENTIRE process-wide kernel singleton — every other
+  // caller's ingested atoms — to whoever asks. Same disclosure class the /ns/pgsl
+  // route change closes at the HTTP layer, closed here in the same round.
+  'pgsl_to_turtle',
   // ── R3: state-MUTATING tools that ran anonymously ──────────────────
   // This set is the ONLY runtime classifier. WRITE_SIDE_TOOLS lists some of
   // these but is consulted only in the /mcp CallTool handler, so on
@@ -1950,6 +1961,7 @@ const WRITE_SIDE_TOOLS = new Set<string>([
   'unsubscribe_from_pod',
   'subscribe_all',
   'pgsl_ingest',
+  'publish_node',
   'publish_context_descriptor',
   'publish_directory',
   'link_wallet',
@@ -5779,6 +5791,66 @@ async function handlePgslToTurtle(_args: ToolArgs): Promise<string> {
   return JSON.stringify({ turtle: pgslToTurtle(getKernelPGSL(pgslProvenance)) });
 }
 
+/**
+ * publish_node — the missing ACT.
+ *
+ * `mint` and `promote` COMPUTE a content-addressed id; they do not publish it. The id
+ * denotes immediately and resolves over HTTPS only after this call, which moves the
+ * node and its transitive closure out of the process-local kernel lattice and into the
+ * relay's durable published-node store — the only thing GET /ns/pgsl/<kind>/<hash>
+ * serves.
+ *
+ * Authenticated and fail-closed: publication writes durable, world-readable state under
+ * the substrate's own naming authority.
+ */
+async function handlePublishNode(args: ToolArgs): Promise<string> {
+  const iri = String(args['iri'] ?? '').trim();
+  if (!/^https?:\/\/\S+\/ns\/pgsl\/(atom|fragment)\/[0-9a-f]{40}$/i.test(iri)) {
+    return JSON.stringify({ error: 'iri must be a PGSL atom/fragment node id (…/ns/pgsl/<kind>/<40hex>)' });
+  }
+  const pgsl = getKernelPGSL(pgslProvenance);
+  if (!pgsl.nodes.get(iri as IRI)) {
+    return JSON.stringify({ error: `not in this relay's lattice: ${iri}. mint or promote it first, in this session.` });
+  }
+  // Publication is irreversible and public — screen before anything durable is written,
+  // with the same gate the other publish paths use.
+  const resolved = pgslResolve(pgsl, iri as IRI);
+  const flags = screenForSensitiveContent(
+    typeof resolved === 'string' ? resolved : JSON.stringify(resolved ?? ''));
+  // SensitivityFlag's own contract: high → block by default, medium → confirm,
+  // low → warn. The other publish paths treat every flag as advisory because the
+  // caller can retract a pod write; publication here is world-readable and there is
+  // no unpublish, so HIGH blocks. Lower severities ride along on the success result
+  // rather than silently vanishing.
+  const high = flags.filter((f) => f.severity === 'high');
+  if (high.length > 0) {
+    return JSON.stringify({
+      error: 'refused',
+      reason: formatSensitivityWarning(high),
+      note: 'publish_node writes world-readable state and there is no unpublish.',
+    });
+  }
+  const publisherIri = callerAgentId(args) ?? 'urn:agent:remote:unknown';
+  try {
+    const out = await publishedNodes.publishSlice(pgsl, iri as IRI, {
+      iri: String(publisherIri), at: new Date().toISOString(),
+    });
+    return JSON.stringify({
+      published: true,
+      id: iri,
+      resolvable: true,
+      nodes: out.nodes,
+      created: out.published,
+      dedup: out.dedup,
+      dereference: iri,
+      note: 'GET this id over plain HTTPS; it now resolves from the relay\'s durable store.',
+      ...(flags.length > 0 ? { sensitivityWarning: formatSensitivityWarning(flags) } : {}),
+    });
+  } catch (e) {
+    return JSON.stringify({ error: (e as Error).message });
+  }
+}
+
 // ── get_current_head ────────────────────────────────────────
 //
 // Returns the current chain head for a given urn:graph IRI — the
@@ -6010,13 +6082,27 @@ async function handleKernelMint(args: ToolArgs): Promise<string> {
   // `urn:iep:action:{dereference,promote,decompose}` action IRIs plus the
   // bogus `urn:iep:tool:promote` / `urn:iep:tool:decompose` targets broke the
   // hypermedia round-trip (act → 405 unsupported_action_on_lattice_target).
+  // ★ HONESTY. Minting computes a content address; it does NOT publish. The id
+  // DENOTES immediately and RESOLVES over HTTPS only after publish_node. Saying
+  // otherwise is exactly what produced a live `@id` that 302'd into a 404.
+  // Only PGSL node ids (atom/fragment) have an HTTP authority to resolve at;
+  // descriptors and opaque content are urn:-addressed and are not claimed to.
+  const httpAddressed = /\/ns\/pgsl\/(atom|fragment)\/[0-9a-f]{40}$/i.test(String(r.holon.iri));
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
     kind: 'mint',
     id: r.holon.iri,
+    ...(httpAddressed ? { resolvable: false, publishWith: 'publish_node' } : {}),
+    // Do NOT rename the three action ids below: `act` dispatches on exactly
+    // urn:iep:action:kernel:{dereference,promote,decompose} via actOnLatticeNode, and
+    // renaming them breaks the hypermedia round-trip. Add, never rename.
     nextSteps: [
       { action: 'urn:iep:action:kernel:dereference', target: r.holon.iri, method: 'GET' },
       { action: 'urn:iep:action:kernel:promote',     target: r.holon.iri, method: 'POST' },
       { action: 'urn:iep:action:kernel:decompose',   target: r.holon.iri, method: 'POST' },
+      // Publish this node so its @id resolves over plain HTTPS.
+      ...(httpAddressed
+        ? [{ action: 'urn:iep:action:relay:publish_node', target: r.holon.iri, method: 'POST' as const }]
+        : []),
     ],
   }));
 }
@@ -6386,6 +6472,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   pgsl_lattice_status: { description: 'Report PGSL lattice statistics', handler: handlePgslLatticeStatus },
   pgsl_meet: { description: 'Compute the lattice meet of two PGSL fragments', handler: handlePgslMeet },
   pgsl_to_turtle: { description: 'Serialize the PGSL lattice as RDF Turtle', handler: handlePgslToTurtle },
+  publish_node: { description: 'Publish a PGSL node (and its closure) to the relay\'s durable store so its canonical @id resolves over plain HTTPS', handler: handlePublishNode },
   // Generic affordance follower (Path A — reach any vertical without per-vertical bridge)
   invoke_affordance: { description: 'Invoke a vertical affordance by descriptor URL + iep:action IRI', handler: handleInvokeAffordance },
   // Linked-data dereference for MCP-only clients (the tool-equivalent of GET <relay>/ns/<owner>/<slug>)
@@ -7649,6 +7736,19 @@ const TOOL_SCHEMAS = [
     inputSchema: { type: 'object', properties: {} },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Serialize PGSL as Turtle', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'publish_node',
+    description: 'Publish a PGSL node so its canonical id becomes dereferenceable over plain HTTPS. `mint` and `promote` COMPUTE a content-addressed id; they do not publish it — the id denotes immediately but resolves only after this act. Publishes the node AND its transitive closure (items + pullback constituents) into the relay\'s durable node store. Public and irreversible: there is no unpublish. Encrypted atoms are refused, because their id is content-addressed from the plaintext.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        iri: { type: 'string', description: 'A node id previously returned by mint/promote in this session, e.g. https://relay.interego.xwisee.com/ns/pgsl/atom/<40hex>' },
+      },
+      required: ['iri'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Publish a PGSL node', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   // ── Generic affordance follower (Path A — reach any vertical) ──
   {
@@ -10577,24 +10677,34 @@ async function handleResolveLinkedData(args: ToolArgs): Promise<string> {
 // actually RESOLVE, so a node both denotes (the id) and resolves to connotation (its
 // description) — the standing "every id is a dereferenceable URL" principle.
 //
-// The relay is the STABLE naming authority; it does not hold lattices, so it 302s to
-// a public-lattice resolver (PGSL_NODE_RESOLVER, the Foxxi bridge today) — the
-// w3id.org / PURL pattern. That resolver is fail-closed (public lattices only,
-// private/absent both uniform-404), so this adds no cross-tenant existence oracle.
+// ★ THE RELAY DOES HOLD A LATTICE. The comment that stood here claimed otherwise and
+// had been false since the shim/kernel fusion. But that lattice is NOT what this route
+// serves: it is untenanted scratch written by the unauthenticated mint / promote /
+// pgsl_ingest tools, and this route is unauthenticated with ACAO:*. Serving it by hash
+// would be a cross-tenant guess-and-check disclosure oracle over every caller's content
+// — worse for encrypted atoms, whose id is addressed from the PLAINTEXT while the
+// stored value is a placeholder, so a public hash resolver confirms plaintext guesses
+// without leaking a byte.
+//
+// THE INVARIANT: resolvable ⟺ PUBLISHED. Three tiers:
+//   1. the relay's durable published-node store — 200
+//   2. PGSL_NODE_RESOLVER, a fail-closed public-lattice resolver holding a DISJOINT
+//      corpus (the Foxxi bridge's ontology terms + memory commons) — 302
+//   3. uniform 404, byte-identical for never-minted, minted-but-unpublished, and
+//      private — no existence signal.
+// Tier 1 reads the DURABLE store (its in-memory commons is a strict subset), so a
+// local-first write can never shadow what other replicas can see.
 // 4 path segments, so no collision with the 3-segment /ns/:owner/:slug below.
+// The handler lives in pgsl-node-store.ts and is mounted here. It is exported as a
+// factory precisely so the regression test can mount THE SAME FUNCTION — a test that
+// re-implemented it would assert a composition we do not ship, which is how the
+// 302-into-a-foreign-404 survived a suite already containing a test named
+// "…resolves at its authority".
 app.options('/ns/pgsl/:kind/:hash', (_req, res) => { res.status(204).end(); });
-app.get('/ns/pgsl/:kind/:hash', (req, res) => {
-  // CORS (ACAO:*) is applied by corsMiddleware's /ns/* public linked-data carve-out.
-  const kind = String(req.params.kind);
-  const hash = String(req.params.hash);
-  // Validate before redirecting — no open redirect: the target host is fixed
-  // (PGSL_NODE_RESOLVER) and only a known kind + hex hash reach it.
-  if (!['atom', 'fragment', 'metagraph'].includes(kind) || !/^[0-9a-f]{6,64}$/i.test(hash)) {
-    res.status(404).json({ error: 'no such pgsl node' });
-    return;
-  }
-  res.redirect(302, `${PGSL_NODE_RESOLVER}/${kind}/${encodeURIComponent(hash)}`);
-});
+app.get('/ns/pgsl/:kind/:hash', publishedNodes.nodeRouteHandler({
+  resolverBase: PGSL_NODE_RESOLVER,
+  publicBase: PUBLIC_BASE_URL,
+}));
 
 // The naming authority for iep:action identifiers. An action's canonical id is
 // https://relay.interego.xwisee.com/ns/iep/action/<vertical>/<verb>; it 302-redirects to
@@ -12841,6 +12951,29 @@ app.listen(PORT, () => {
   log(`OAuth issuer: ${PUBLIC_BASE_URL || `http://localhost:${PORT}`}`);
   log(`Identity server: ${IDENTITY_URL}`);
   log(`Relay agent key fingerprint (X25519 public): ${fingerprint(relayAgentKey.publicKey)}`);
+  // Rehydrate the published-node commons from the durable store before it is asked for
+  // anything. Deliberately non-fatal and non-blocking: an unreachable store must
+  // degrade to 503 on /ns/pgsl alone, never take the relay down or delay listen.
+  // One-time provisioning, when RELAY_PGSL_BOOTSTRAP_CONNSTR is present. Runs from
+  // inside the private network so the database never needs public exposure; expected to
+  // be removed from the environment once it has run. Idempotent, so a stale var is
+  // harmless rather than destructive.
+  void publishedNodes.bootstrapDurableStore(log)
+    .then((r) => { if (r !== 'skipped') log(`[pgsl] durable-store bootstrap: ${r}`); })
+    .catch(() => {})
+    .then(() => {
+      if (publishedNodes.isConfigured()) {
+        return publishedNodes.hydrateAll(true)
+          .then(() => log('[pgsl] published-node commons hydrated from the durable store'))
+          .catch((e) => log(`[startup-warn] [pgsl] commons hydrate failed; /ns/pgsl/* will 503: ${(e as Error).message}`));
+      }
+      return undefined;
+    });
+  if (publishedNodes.isConfigured()) {
+    // hydration is chained above
+  } else {
+    log('[startup-warn] [pgsl] RELAY_PGSL_PG_CONNSTR unset — /ns/pgsl/* will 503 rather than claim "not published"');
+  }
   log(`CDP API key: ${ORG_CDP_API_KEY_NAME ? `name=${ORG_CDP_API_KEY_NAME} priv-fp=${fingerprint(ORG_CDP_API_KEY_PRIVATE)}` : '<unset>'}`);
   // Startup banner: be explicit about whether IPFS pinning is actually
   // active. A `local-unpinned` provider means we compute CIDs but DO NOT

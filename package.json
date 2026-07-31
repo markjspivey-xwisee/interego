@@ -1,7 +1,7 @@
 {
   "name": "@interego/workspace",
   "version": "0.2.0",
-  "description": "Interego monorepo \u2014 substrate kernel (@interego/core) + per-vertical packages composing it. Primitives + composition mechanics for emergent agent-to-agent context.",
+  "description": "Interego monorepo — substrate kernel (@interego/core) + per-vertical packages composing it. Primitives + composition mechanics for emergent agent-to-agent context.",
   "author": "Mark Spivey",
   "license": "MIT",
   "private": true,
@@ -23,7 +23,7 @@
   "scripts": {
     "build": "npm run build:core && npm run build:leaves",
     "build:core": "npm run build --workspace @interego/core",
-    "build:leaves": "npm run build --workspace @interego/pgsl && npm run build --workspace @interego/solid && npm run build --workspace @interego/abac && npm run build --workspace @interego/compliance && npm run build --workspace @interego/constitutional && npm run build --workspace @interego/extractors && npm run build --workspace @interego/connectors && npm run build --workspace @interego/ops && npm run build --workspace @interego/p2p && npm run build --workspace @interego/passport && npm run build --workspace @interego/privacy && npm run build --workspace @interego/registry && npm run build --workspace @interego/security-txt && npm run build --workspace @interego/skills && npm run build --workspace @interego/transactions && npm run build --workspace @interego/mdvault && npm run build --workspace @interego/agent-interop",
+    "build:leaves": "npm run build --workspace @interego/pgsl && npm run build --workspace @interego/solid && npm run build --workspace @interego/abac && npm run build --workspace @interego/pgsl-store && npm run build --workspace @interego/compliance && npm run build --workspace @interego/constitutional && npm run build --workspace @interego/extractors && npm run build --workspace @interego/connectors && npm run build --workspace @interego/ops && npm run build --workspace @interego/p2p && npm run build --workspace @interego/passport && npm run build --workspace @interego/privacy && npm run build --workspace @interego/registry && npm run build --workspace @interego/security-txt && npm run build --workspace @interego/skills && npm run build --workspace @interego/transactions && npm run build --workspace @interego/mdvault && npm run build --workspace @interego/agent-interop",
     "test": "vitest run && npm run test:deploy",
     "test:deploy": "npm test --workspace @interego/identity && npm test --workspace @interego/mcp-relay",
     "test:watch": "vitest",

@@ -89,6 +89,76 @@ ok(/cp -r amep-vendor dist\/amep-vendor/.test(dockerfile),
 ok(/RUN npx tsc/.test(dockerfile),
   'the image still COMPILES, so a missing module fails the build rather than a request');
 
+// ── every @interego/* dependency is BUILT and INSTALLED in the image ──────
+//
+// ★ The COPY walk above only sees relay .ts files. A new WORKSPACE dependency is a
+// different failure: the manifest declares it, local `npm install` symlinks it from the
+// monorepo so everything is green, and the image — which strips all @interego/* deps
+// and reinstalls them from tarballs — simply does not have it. That is a runtime
+// ERR_MODULE_NOT_FOUND on the first request that touches the import, and this class
+// already cost one deploy.
+//
+// Two lists must agree with the manifest: the `for pkg in …` pack loop that BUILDS the
+// tarballs, and the `npm install /tarballs/…` list that INSTALLS them. Transitive
+// @interego deps count too — installing a tarball whose own @interego dep is absent
+// makes npm reach for a registry package that does not exist.
+{
+  const relayPkg = JSON.parse(readFileSync(join(relayDir, 'package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>;
+  };
+  const pkgVersion = (name: string): string | null => {
+    const p = resolve(relayDir, '..', '..', 'packages', name, 'package.json');
+    if (!existsSync(p)) return null;
+    return (JSON.parse(readFileSync(p, 'utf8')) as { version: string }).version;
+  };
+
+  // Close over transitive @interego/* deps, since a tarball drags its own in.
+  const needed = new Set<string>();
+  const visit = (name: string): void => {
+    if (needed.has(name)) return;
+    needed.add(name);
+    const p = resolve(relayDir, '..', '..', 'packages', name, 'package.json');
+    if (!existsSync(p)) return;
+    const deps = (JSON.parse(readFileSync(p, 'utf8')) as { dependencies?: Record<string, string> }).dependencies ?? {};
+    for (const d of Object.keys(deps)) {
+      if (d.startsWith('@interego/')) visit(d.slice('@interego/'.length));
+    }
+  };
+  for (const d of Object.keys(relayPkg.dependencies ?? {})) {
+    if (d.startsWith('@interego/')) visit(d.slice('@interego/'.length));
+  }
+
+  const packLoop = dockerfile.match(/for pkg in ([^;]+);/)?.[1] ?? '';
+  const packed = new Set(packLoop.trim().split(/\s+/));
+
+  const missingFromPack: string[] = [];
+  const missingFromInstall: string[] = [];
+  for (const name of needed) {
+    const version = pkgVersion(name);
+    if (version === null) continue;               // not a workspace package
+    // `core` is copied explicitly rather than via the loop; accept either.
+    if (!packed.has(name) && !dockerfile.includes(`packages/${name}`)) missingFromPack.push(name);
+    if (!dockerfile.includes(`/tarballs/interego-${name}-${version}.tgz`)) {
+      missingFromInstall.push(`interego-${name}-${version}.tgz`);
+    }
+  }
+
+  ok(missingFromPack.length === 0,
+    'every @interego/* dependency (incl. transitive) is BUILT by the pack loop',
+    missingFromPack.length ? `MISSING: ${missingFromPack.join(', ')}` : '');
+  ok(missingFromInstall.length === 0,
+    '…and INSTALLED from a tarball whose name matches the package version',
+    missingFromInstall.length ? `MISSING: ${missingFromInstall.join(', ')}` : '');
+
+  // A non-@interego runtime dep loaded by DYNAMIC import is invisible to the build:
+  // openPgStore imports 'pg' lazily so the package carries no hard dep, so its absence
+  // is a first-request throw rather than a build error.
+  if (Object.keys(relayPkg.dependencies ?? {}).includes('pg')) {
+    ok(!/delete p\.dependencies\['pg'\]/.test(dockerfile),
+      "'pg' survives into the image (openPgStore dynamic-imports it, so a miss is a runtime throw)");
+  }
+}
+
 console.log(failures === 0
   ? `\n${'-'.repeat(60)}\nEvery compiled source is in the image.\n`
   : `\n${failures} check(s) failed.\n`);

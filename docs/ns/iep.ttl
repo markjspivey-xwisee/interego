@@ -2050,3 +2050,84 @@ iep:about a owl:ObjectProperty ;
     rdfs:label "about" ;
     rdfs:comment "The resource an agent-to-agent notification concerns — typically the descriptor, engagement or memory the sender wants the recipient to look at. Carried in the ActivityStreams 2.0 notification body alongside as:object. Declared here because the notification vocabulary previously bound this term to a placeholder namespace that dereferenced to nothing; it now resolves under the substrate's own naming authority like every other emitted term." ;
     rdfs:range rdfs:Resource .
+
+# ── The published-node description (relay /ns/pgsl/<kind>/<hash>) ────────────
+# Emitted by deploy/mcp-relay/pgsl-node-store.ts when a PGSL node that has been
+# PUBLISHED is dereferenced at its authority. Minting a node computes its
+# content address; only publication makes that address resolve, so these terms
+# describe the published projection rather than the lattice node itself.
+
+iep:hash a owl:DatatypeProperty ;
+    rdfs:label "hash"@en ;
+    rdfs:comment "The content address a holon's identifier is derived from — the substrate's identity-by-reference invariant made explicit in the served description."@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:height a owl:DatatypeProperty ;
+    rdfs:label "height"@en ;
+    rdfs:comment "A fragment's topological depth from the top of the lattice. Complements iep:level, which counts upward from the atoms."@en ;
+    rdfs:domain iep:Fragment ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:resolved a owl:DatatypeProperty ;
+    rdfs:label "resolved"@en ;
+    rdfs:comment "The human-readable rendering of a holon — for an atom its value, for a fragment the sequence of its constituents' renderings."@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:structure a owl:ObjectProperty ;
+    rdfs:label "structure"@en ;
+    rdfs:comment "SYNTAGM, downward: what this holon is composed of — its ordered items and, for a level>=2 fragment, its two pullback constituents."@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:range rdfs:Resource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:context a owl:ObjectProperty ;
+    rdfs:label "context"@en ;
+    rdfs:comment "Upward: the fragments that reuse this holon. Reuse is what makes the lattice a lattice rather than a forest, so a node's containers are part of what it means."@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:range rdfs:Resource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:paradigm a owl:ObjectProperty ;
+    rdfs:label "paradigm"@en ;
+    rdfs:comment "PARADIGM, sideways: the substitution class — holons that occupy the same position in otherwise-identical containers, and are therefore commutable with this one."@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:range rdfs:Resource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:contextComplete a owl:DatatypeProperty ;
+    rdfs:label "contextComplete"@en ;
+    rdfs:comment "False when the served iep:context and iep:paradigm were computed from a partially-hydrated view — a cold replica answering from a point read. The identity facets (iep:hash, iep:value, iep:items) are always exact; only the derived reuse facets are eventually consistent, and this term says so in-band rather than letting a consumer over-trust them."@en ;
+    rdfs:domain iep:Holon ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:publishedBy a owl:ObjectProperty ;
+    rdfs:label "publishedBy"@en ;
+    rdfs:comment "The agent that PUBLISHED this node — distinct from the agent that minted it. Minting is a pure content-addressing computation with no consent and no network; publication is an authenticated, irreversible act that makes the identifier resolve. The published description attributes the act, not the arithmetic."@en ;
+    rdfs:range rdfs:Resource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:publishedAt a owl:DatatypeProperty ;
+    rdfs:label "publishedAt"@en ;
+    rdfs:comment "When the node was published, i.e. when its identifier began to resolve. Not when it was minted."@en ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:target a owl:ObjectProperty ;
+    rdfs:label "target"@en ;
+    rdfs:comment "The resource an affordance acts on. Already carried as hydra:target in the JSON-LD context; declared under this authority so the compacted iep: form dereferences too."@en ;
+    rdfs:domain iep:Affordance ;
+    rdfs:range rdfs:Resource ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+iep:method a owl:DatatypeProperty ;
+    rdfs:label "method"@en ;
+    rdfs:comment "The HTTP method an affordance is invoked with. Mirrors hydra:method; declared here for the same reason as iep:target."@en ;
+    rdfs:domain iep:Affordance ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
