@@ -81,6 +81,18 @@ await startTee({
   fromAgent: child.stdout,
   toEditor: process.stdout,
   observers: [observer],
+  // ★ THE EDITOR OWNS THE SESSION. When it hangs up, the day is over — report then,
+  // rather than waiting for an agent that may never exit. Found on the first live run
+  // against a real agent: it errored, stayed alive, both pumps stayed open, and the whole
+  // tally vanished. A measurement you only get from a well-behaved peer is not a
+  // measurement you can rely on having.
+  onDirectionEnd: (direction) => {
+    if (direction !== 'editor->agent') return;
+    report();
+    // Give the agent a bounded moment to drain, then stop waiting on it.
+    const grace = setTimeout(() => { child.kill(); process.exit(0); }, 3000);
+    grace.unref?.();
+  },
   onObserverError: (err) => {
     // Never fatal: the session outranks the measurement.
     note(`[witness] observer error (session unaffected): ${(err as Error)?.message ?? String(err)}`);
