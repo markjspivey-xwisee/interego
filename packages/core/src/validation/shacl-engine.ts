@@ -485,11 +485,51 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
 
 // ── Data graph indexing ──────────────────────────────────────
 
-function findFocusNodes(data: ParsedDocument, shape: NodeShape): readonly ParsedSubject[] {
+/**
+ * Map each class to the set of classes that are ITS subclasses (transitively), so a
+ * shape targeting a superclass can select instances of any descendant.
+ *
+ * Built from rdfs:subClassOf in the data graph. Cycle-safe: a class already expanded is
+ * not expanded again, so `A subClassOf B . B subClassOf A` terminates instead of hanging.
+ */
+const RDFS_SUBCLASS_OF = 'http://www.w3.org/2000/01/rdf-schema#subClassOf' as IRI;
+function buildSubclassClosure(data: ParsedDocument): Map<IRI, Set<IRI>> {
+  const direct = new Map<IRI, Set<IRI>>();          // parent -> direct children
+  for (const subj of data.subjects) {
+    if (typeof subj.subject !== 'string') continue;
+    for (const t of subj.properties.get(RDFS_SUBCLASS_OF) ?? []) {
+      if (t.kind !== 'iri') continue;
+      const kids = direct.get(t.iri) ?? new Set<IRI>();
+      kids.add(subj.subject);
+      direct.set(t.iri, kids);
+    }
+  }
+  const closure = new Map<IRI, Set<IRI>>();
+  for (const parent of direct.keys()) {
+    const out = new Set<IRI>();
+    const stack = [...(direct.get(parent) ?? [])];
+    while (stack.length > 0) {
+      const c = stack.pop()!;
+      if (out.has(c)) continue;                     // cycle-safe
+      out.add(c);
+      for (const g of direct.get(c) ?? []) stack.push(g);
+    }
+    closure.set(parent, out);
+  }
+  return closure;
+}
+
+function findFocusNodes(
+  data: ParsedDocument,
+  shape: NodeShape,
+  subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
+): readonly ParsedSubject[] {
   const matched: ParsedSubject[] = [];
   const seen = new Set<string>();
   for (const cls of shape.targetClasses) {
-    for (const s of findSubjectsOfType(data, cls)) {
+    // The class itself, plus every transitive subclass when rdfs entailment is on.
+    const classes: IRI[] = [cls, ...(subclassClosure?.get(cls) ?? [])];
+    for (const s of classes.flatMap(c => findSubjectsOfType(data, c))) {
       const key = subjectKey(s);
       if (!seen.has(key)) {
         seen.add(key);
@@ -978,10 +1018,19 @@ export function validateAgainstShape(
     };
   }
 
-  // entailment is reserved for parity with rdf-validate-shacl; the
-  // direct-type check is what the kernel ships. Mark it used to keep
-  // strict-null TS happy.
-  void options.entailment;
+  // ★ RDFS SUBCLASS ENTAILMENT. This used to be `void options.entailment;` — the option
+  // was accepted and discarded, and the relay's publish gate has been passing
+  // `{ entailment: 'rdfs' }` the whole time believing it did something.
+  //
+  // The consequence was a ONE-TRIPLE BYPASS of every class-targeted shape: adding
+  // `ex:Sub rdfs:subClassOf ex:Target` and typing the node `ex:Sub` made it escape a
+  // shape targeting `ex:Target` entirely, with a conforming result. For a closed privacy
+  // shape that is a complete bypass; for vault-ld's authority-class check it is exactly
+  // the smuggling attack that file documents in its own comment.
+  //
+  // The closure is computed from rdfs:subClassOf statements present in the DATA graph,
+  // which is where SHACL says entailment applies. Cycle-safe and computed once.
+  const subclassClosure = options.entailment === 'rdfs' ? buildSubclassClosure(dataDoc) : undefined;
 
   const shapes = compileShapes(shapeDoc);
   // Shape references (sh:node, sh:qualifiedValueShape) resolve through this index.
@@ -993,7 +1042,7 @@ export function validateAgainstShape(
   for (const shape of shapes) {
     // sh:deactivated — a shape switched off by its author MUST produce no results.
     if (shape.deactivated) continue;
-    const focusNodes = findFocusNodes(dataDoc, shape);
+    const focusNodes = findFocusNodes(dataDoc, shape, subclassClosure);
     for (const focus of focusNodes) {
       for (const ps of shape.propertyShapes) {
         results.push(...evaluatePropertyShape(dataDoc, focus, shape, ps, byId, 0));
