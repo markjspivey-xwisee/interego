@@ -509,7 +509,26 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
  * not expanded again, so `A subClassOf B . B subClassOf A` terminates instead of hanging.
  */
 const RDFS_SUBCLASS_OF = 'http://www.w3.org/2000/01/rdf-schema#subClassOf' as IRI;
-function buildSubclassClosure(...docs: readonly ParsedDocument[]): Map<IRI, Set<IRI>> {
+/**
+ * The closure, plus whether the bound was hit.
+ *
+ * ★ `truncated` EXISTS BECAUSE THE BOUND WAS A BYPASS. The cap below is a necessary DoS
+ * guard, but abandoning the closure silently means "no entailment", and the closure is
+ * seeded from CALLER-SUPPLIED data. So a publisher could switch entailment off for their
+ * own publish by padding the graph with irrelevant `rdfs:subClassOf` triples — measured:
+ * ~209 KB of junk, free against a 4 MiB body limit, flipped a 5-violation graph to
+ * conforms. A guard a caller can disable is not a guard.
+ *
+ * Worse, the same trick silences the evidence: with no closure there are no
+ * entailment-only findings, so "the observe logs are quiet" stops being proof of anything.
+ */
+interface SubclassClosure {
+  readonly closure: Map<IRI, Set<IRI>>;
+  /** True when the edge cap aborted the computation, so the closure is NOT authoritative. */
+  readonly truncated: boolean;
+}
+
+function buildSubclassClosure(...docs: readonly ParsedDocument[]): SubclassClosure {
   const direct = new Map<IRI, Set<IRI>>();          // parent -> direct children
   for (const subj of docs.flatMap(d => d.subjects)) {
     if (typeof subj.subject !== 'string') continue;
@@ -535,12 +554,14 @@ function buildSubclassClosure(...docs: readonly ParsedDocument[]): Map<IRI, Set<
       const c = stack.pop()!;
       if (out.has(c)) continue;                     // cycle-safe
       out.add(c);
-      if (++edges > MAX_CLOSURE_EDGES) return new Map();
+      // Abandon the closure rather than risk OOM — but SAY SO, so the caller can refuse
+      // instead of silently validating with entailment switched off.
+      if (++edges > MAX_CLOSURE_EDGES) return { closure: new Map(), truncated: true };
       for (const g of direct.get(c) ?? []) stack.push(g);
     }
     closure.set(parent, out);
   }
-  return closure;
+  return { closure, truncated: false };
 }
 
 function findFocusNodes(
@@ -1077,9 +1098,9 @@ export function validateAgainstShape(
   // (Still unresolved: an `owl:imports` in a shapes file pointing at a separate ontology
   // document. Following it needs a fetch, which belongs to the caller that already
   // fetches shape bodies, not to a pure validator. Called out rather than pretended.)
-  const subclassClosure = options.entailment === 'rdfs' || options.entailment === 'rdfs-observe'
-    ? buildSubclassClosure(dataDoc, shapeDoc)
-    : undefined;
+  const entailmentRequested = options.entailment === 'rdfs' || options.entailment === 'rdfs-observe';
+  const closureResult = entailmentRequested ? buildSubclassClosure(dataDoc, shapeDoc) : undefined;
+  const subclassClosure = closureResult?.closure;
 
   const shapes = compileShapes(shapeDoc);
 
@@ -1095,6 +1116,33 @@ export function validateAgainstShape(
   // outcome than the silence. But it is now in the report, so a caller can surface it
   // and nobody can mistake "conforms" for "was actually checked".
   const unsupported: ShaclResult[] = [];
+
+  // ★ IF YOU ASKED FOR ENTAILMENT AND I COULD NOT COMPUTE IT, I MUST NOT SAY "CONFORMS".
+  //
+  // The closure's edge cap is a real DoS guard, but it is seeded from caller-supplied
+  // data, so abandoning it quietly hands the caller an off switch for the very inference
+  // the gate depends on. Measured: padding a graph with ~209 KB of irrelevant
+  // `rdfs:subClassOf` triples — free against a 4 MiB limit — turned 5 violations into
+  // conforms. Same precedent as an unfetchable shape: degrade LOUDLY and fail closed
+  // rather than validate against something weaker than was asked for.
+  //
+  // Under 'rdfs-observe' this cannot be a Violation without defeating the point of the
+  // mode, so it is a Warning: visible in the report and the logs, `conforms` untouched.
+  if (closureResult?.truncated) {
+    unsupported.push({
+      focusNode: 'urn:iep:shacl:subclassClosure',
+      sourceShape: 'urn:iep:shacl:subclassClosure',
+      constraintComponent: 'urn:iep:shacl:EntailmentIncomplete',
+      severity: options.entailment === 'rdfs' ? 'Violation' : 'Warning',
+      message:
+        'RDFS entailment was requested but the subclass closure exceeded its edge bound, '
+        + 'so it was abandoned and NO subclass reasoning was applied. A result computed '
+        + 'without the entailment that was asked for is not the result that was asked for. '
+        + 'If this graph is not adversarial, reduce its rdfs:subClassOf count or raise the '
+        + 'bound deliberately.',
+    });
+  }
+
   const noteUnsupported = (shapeId: string, construct: string, why: string): void => {
     unsupported.push({
       focusNode: shapeId,
@@ -1176,10 +1224,17 @@ export function validateAgainstShape(
     }
   }
 
+  // ★ `conforms` MUST be computed over the SAME list that is returned.
+  //
+  // It used to read `results` alone while the report returned `[...results, ...unsupported]`.
+  // That was harmless while everything in `unsupported` was Info — and it silently made the
+  // first Violation ever added there (the truncated-closure fail-closed above) into dead
+  // code: the report would carry the violation and still say conforms: true. Deriving both
+  // from one list removes the class of bug rather than this instance of it.
+  const all = [...results, ...unsupported];
   return {
-    conforms: results.filter(r => r.severity === 'Violation').length === 0,
-    // Unsupported-construct notes ride in `results` at Info severity, so they never
-    // change `conforms` but are impossible to miss when inspecting a report.
-    results: [...results, ...unsupported],
+    // Info notes still never change this; they are Info. A Violation anywhere does.
+    conforms: all.filter(r => r.severity === 'Violation').length === 0,
+    results: all,
   };
 }

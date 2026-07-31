@@ -155,3 +155,66 @@ ex:S a sh:NodeShape ; sh:targetClass ex:Doc ;
     expect(validateAgainstShape(bad, SHAPE, { entailment: 'rdfs' }).conforms).toBe(false);
   });
 });
+
+/**
+ * ★ THE EDGE BOUND WAS AN OFF SWITCH THE CALLER COULD REACH.
+ *
+ * buildSubclassClosure caps materialised descendant edges to avoid a caller-triggered
+ * CPU/heap blowup on the publish path. That guard is necessary. Abandoning the closure
+ * SILENTLY was not: the closure is seeded from caller-supplied data, so a publisher could
+ * switch entailment off for their own publish by padding the graph with irrelevant
+ * rdfs:subClassOf triples. Measured before the fix: ~209 KB of junk — free against a 4 MiB
+ * body limit — turned a 5-violation graph into `conforms: true`.
+ *
+ * A guard the guarded party can disable is not a guard. The same padding also silenced the
+ * observe-mode evidence, so "the entailment logs are quiet" stopped meaning anything.
+ */
+describe('a truncated subclass closure fails closed instead of disabling entailment', () => {
+  const P = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex: <https://example.org/> .
+`;
+  const SHAPE = P + `ex:Sub rdfs:subClassOf ex:Base .
+ex:S a sh:NodeShape ; sh:targetClass ex:Base ;
+  sh:property [ sh:path ex:needed ; sh:minCount 1 ] .`;
+
+  /** Enough unrelated subclass edges to blow the bound. */
+  const pad = (n: number) =>
+    Array.from({ length: n }, (_, i) => `ex:J${i} rdfs:subClassOf ex:Root .`).join('\n');
+
+  const violating = P + 'ex:n a ex:Sub .';
+
+  it('rejects the entailed violation when the closure fits', () => {
+    const r = validateAgainstShape(violating, SHAPE, { entailment: 'rdfs' });
+    expect(r.conforms).toBe(false);
+  });
+
+  it('STILL rejects when the graph is padded past the bound', () => {
+    const r = validateAgainstShape(violating + '\n' + pad(6000), SHAPE, { entailment: 'rdfs' });
+    expect(r.conforms, 'padding rdfs:subClassOf must not buy a pass').toBe(false);
+  });
+
+  it('says WHY, so the refusal is not mistaken for the original violation', () => {
+    const r = validateAgainstShape(violating + '\n' + pad(6000), SHAPE, { entailment: 'rdfs' });
+    const note = r.results.find(x => x.constraintComponent === 'urn:iep:shacl:EntailmentIncomplete');
+    expect(note, 'must report that entailment was abandoned').toBeDefined();
+    expect(note!.severity).toBe('Violation');
+  });
+
+  it('observe mode reports it as a Warning without changing conforms', () => {
+    // Downgrading here is the point of observe mode; going silent is not.
+    const r = validateAgainstShape(violating + '\n' + pad(6000), SHAPE, { entailment: 'rdfs-observe' });
+    const note = r.results.find(x => x.constraintComponent === 'urn:iep:shacl:EntailmentIncomplete');
+    expect(note?.severity).toBe('Warning');
+    expect(r.conforms).toBe(true);
+  });
+
+  it('a Violation added to the notes list actually changes conforms', () => {
+    // Regression guard: `conforms` was computed from a DIFFERENT list than the one
+    // returned, which made the first Violation ever added to the notes dead on arrival.
+    const r = validateAgainstShape(violating + '\n' + pad(6000), SHAPE, { entailment: 'rdfs' });
+    const violations = r.results.filter(x => x.severity === 'Violation');
+    expect(violations.length).toBeGreaterThan(0);
+    expect(r.conforms).toBe(false);
+  });
+});
