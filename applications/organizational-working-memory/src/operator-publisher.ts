@@ -41,6 +41,7 @@ import type {
   IRI,
   ManifestEntry,
 } from '@interego/core';
+import { canonicalJson } from '@interego/core';
 import type {
   ComplianceFramework,
 } from '@interego/compliance';
@@ -423,7 +424,13 @@ export async function publishOrgPolicy(
   // Content-stable IRI: re-publishing the same policy body under the
   // same type yields the same IRI and supersedes the prior version
   // via the substrate's auto-supersedes machinery in publish().
-  const canon = JSON.stringify(args.policy_body, Object.keys(args.policy_body).sort());
+  //
+  // ★ Was `JSON.stringify(body, Object.keys(body).sort())`, which is a recursive
+  // property ALLOW-LIST rather than a key sort: every nested object emptied to `{}`,
+  // so policy bodies differing anywhere below the top level produced the SAME IRI —
+  // and auto-supersede then retired an unrelated policy. The IRI is now derived from
+  // the whole body.
+  const canon = canonicalJson(args.policy_body);
   const policyIri = `urn:owm:policy:${args.policy_type}:${sha16(canon)}` as IRI;
   const graphIri = `urn:graph:owm:policy:${args.policy_type}:${sha16(canon)}` as IRI;
 

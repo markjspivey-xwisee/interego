@@ -33,6 +33,7 @@ import {
 import type {
   IRI,
 } from '@interego/core';
+import { canonicalJson } from '@interego/core';
 import { projectDescriptorToLrs } from '../../lrs-adapter/src/pod-publisher.js';
 import {
   gatherParticipations, buildAttestedAggregateResult,
@@ -170,7 +171,12 @@ export async function issueCohortCredentialTemplate(
 
   // Content-stable: same cohort + same template yields same templateIri,
   // so re-publishing updates supersedes the prior version via publish().
-  const canon = JSON.stringify(args.credential_subject_template, Object.keys(args.credential_subject_template).sort());
+  //
+  // ★ Was `JSON.stringify(tpl, Object.keys(tpl).sort())`, a recursive property
+  // ALLOW-LIST rather than a key sort: nested objects emptied to `{}`, so two
+  // credential-subject templates for one cohort+format shared a templateIri and
+  // silently superseded each other. Derived from the whole template now.
+  const canon = canonicalJson(args.credential_subject_template);
   const templateIri = `urn:lpc:credential-template:${sha16(`${args.cohort_iri}|${args.credential_format}|${canon}`)}` as IRI;
   const graphIri = `urn:graph:lpc:credential-template:${sha16(`${args.cohort_iri}|${args.credential_format}`)}` as IRI;
 
