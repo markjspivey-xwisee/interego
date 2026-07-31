@@ -101,7 +101,13 @@ async function store(): Promise<PgslStore> {
   try {
     const fdb = process.env['RELAY_PGSL_IN_MEMORY'] === '1'
       ? new InMemoryFdb()
-      : await openPgStore({ connectionString: CONNSTR, table: TABLE });
+      // ensureSchema:false — the runtime role deliberately has NO DDL rights. It holds
+      // SELECT/INSERT/UPDATE/DELETE on exactly one table and nothing else, so a relay
+      // compromise cannot create or alter anything in a database it shares with the
+      // CSS's pod storage. `bootstrapDurableStore` creates the table, as the admin,
+      // once. Leaving the default (true) made every boot attempt CREATE TABLE and fail
+      // with "permission denied for schema public" — the tight grant working correctly.
+      : await openPgStore({ connectionString: CONNSTR, table: TABLE, ensureSchema: false });
     _store = openStore(fdb);
     return _store;
   } catch (e) {
