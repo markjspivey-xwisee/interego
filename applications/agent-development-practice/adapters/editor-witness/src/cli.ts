@@ -73,7 +73,21 @@ const report = (): void => {
 // not by anything as tidy as a protocol goodbye.
 process.on('SIGINT', () => { report(); process.exit(0); });
 process.on('SIGTERM', () => { report(); process.exit(0); });
-child.on('exit', () => { report(); process.exit(0); });
+// ★ DO NOT REPORT-AND-EXIT THE MOMENT THE AGENT EXITS.
+//
+// This used to be `child.on('exit', () => { report(); process.exit(0); })`. A process
+// exiting does not mean its stdout has been drained: the frames it wrote just before
+// exiting are still in the pipe. Exiting here left them unforwarded to the editor AND
+// uncounted — breaking the invisibility invariant at the one moment it is most visible,
+// the end of a session, where the last tool result and the stop message live.
+//
+// The correct signal is the STREAM ending, which fires after the buffer flushes and is
+// handled by onDirectionEnd below. This keeps only a bounded backstop for an agent whose
+// stdout never closes.
+child.on('exit', () => {
+  const backstop = setTimeout(() => { report(); process.exit(0); }, 3000);
+  backstop.unref?.();
+});
 
 await startTee({
   fromEditor: process.stdin,
@@ -87,8 +101,10 @@ await startTee({
   // tally vanished. A measurement you only get from a well-behaved peer is not a
   // measurement you can rely on having.
   onDirectionEnd: (direction) => {
-    if (direction !== 'editor->agent') return;
+    // Either end closing ends the session, and both fire only AFTER their stream has
+    // flushed — so nothing is counted late or dropped. report() is idempotent.
     report();
+    if (direction !== 'editor->agent') return;
     // Give the agent a bounded moment to drain, then stop waiting on it.
     const grace = setTimeout(() => { child.kill(); process.exit(0); }, 3000);
     grace.unref?.();

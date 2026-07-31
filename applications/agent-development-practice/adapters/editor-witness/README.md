@@ -55,11 +55,29 @@ npx tsx src/cli.ts -- node node_modules/@agentclientprotocol/sdk/dist/examples/a
 
 ## The one invariant
 
-**The tee is invisible.** Every frame is forwarded byte-for-byte — the original line, never
-a re-serialisation of a parsed object, because re-encoding would shift key order and number
+**The tee is invisible.** Every frame is forwarded as *the original line text*, never a
+re-serialisation of a parsed object, because re-encoding would shift key order and number
 formatting and would silently drop ACP's `_meta` passthrough and any field this build does
 not know about. A frame that fails to parse is still forwarded; we are not a validator and
 must never become a filter. An observer that throws cannot break the stream.
+
+The precise guarantee, because the looser wording here used to say "byte-for-byte" and that
+is not what the code delivers:
+
+- **Text is preserved exactly** — key order, number formatting, unknown fields, `_meta`.
+- **Bytes are preserved only for valid UTF-8.** The tee decodes with `setEncoding('utf8')`,
+  so an invalid byte sequence becomes U+FFFD and is re-emitted altered. JSON-RPC is
+  UTF-8 by specification, so this should never fire — but it is a decode, not a copy, and
+  claiming otherwise would be the kind of overclaim this file is supposed to catch.
+- **A final frame with no trailing newline gains one.** Framing is newline-delimited; a
+  peer that omits the last newline gets a well-formed stream back, not its exact bytes.
+- **Content-Length (LSP-style) framing is NOT supported.** No ACP implementation uses it,
+  but a client that did would hang rather than fail loudly.
+
+**A session ends when either side's stream ENDS, not when the agent process exits.** A
+process can exit with frames still in its pipe; reporting on the exit event dropped them
+from both the editor and the tally, at exactly the end of a session where the last tool
+result lives.
 
 `transport.ts` is framing, which is code by nature, and contains no ACP method name.
 `measure.ts` is the increment-0 instrument and is deliberately literal about ACP tokens —
