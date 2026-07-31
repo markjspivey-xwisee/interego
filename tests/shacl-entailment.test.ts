@@ -67,3 +67,91 @@ describe('rdfs entailment', () => {
     expect(conforms(`ex:Other a rdfs:Class .\nex:n a ex:Other ; ex:whatever "x" .`, true)).toBe(true);
   });
 });
+
+describe('the closure is seeded from BOTH graphs', () => {
+  /**
+   * ★ Reading the data graph alone made entailment inert for every contract in this
+   * repo: our published shape files carry zero `rdfs:subClassOf`, because the hierarchy
+   * lives in the ontology beside the shapes. Worse, a data-only closure is trivially
+   * evaded — the attacker controls the data, so they simply omit the triple.
+   */
+  const P = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ex: <https://example.org/> .
+`;
+  const SHAPE_WITH_HIERARCHY = P + `
+ex:Rich rdfs:subClassOf ex:Turn .
+ex:S a sh:NodeShape ; sh:targetClass ex:Turn ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path ex:allowed ; sh:minCount 1 ] .
+`;
+  const DATA_NO_HIERARCHY = P + `ex:t a ex:Rich ; ex:allowed "x" ; ex:secret "s" .`;
+
+  it('a hierarchy declared only in the SHAPES graph is honoured', () => {
+    const r = validateAgainstShape(DATA_NO_HIERARCHY, SHAPE_WITH_HIERARCHY, { entailment: 'rdfs' });
+    expect(r.conforms, 'the attacker omits the triple from their data; the shape still knows')
+      .toBe(false);
+  });
+});
+
+describe('observe mode reports without rejecting', () => {
+  /**
+   * Turning entailment on is a FLEET change, not a code change: shapes begin firing on
+   * nodes they never fired on before, so publishes that pass today start failing all at
+   * once at deploy time. Observe mode makes that list discoverable from production
+   * BEFORE it bites. There is no safe way to learn it except by running it.
+   */
+  const P = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix ex: <https://example.org/> .
+`;
+  const SHAPE = P + `ex:Rich rdfs:subClassOf ex:Turn .
+ex:S a sh:NodeShape ; sh:targetClass ex:Turn ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ; sh:property [ sh:path ex:allowed ; sh:minCount 1 ] .`;
+  const DATA = P + `ex:t a ex:Rich ; ex:allowed "x" ; ex:secret "s" .`;
+
+  it('does not change conformance', () => {
+    expect(validateAgainstShape(DATA, SHAPE, { entailment: 'rdfs-observe' }).conforms).toBe(true);
+  });
+
+  it('but reports what enforcing WOULD have rejected', () => {
+    const r = validateAgainstShape(DATA, SHAPE, { entailment: 'rdfs-observe' });
+    const notes = r.results.filter(x => (x.message ?? '').startsWith('[entailment-observe]'));
+    expect(notes.length).toBeGreaterThan(0);
+    expect(notes[0]!.severity).toBe('Info');
+  });
+
+  it('does NOT downgrade a violation that would fire without entailment either', () => {
+    // A direct-type instance failing minCount is a real violation in every mode —
+    // downgrading it would hide a genuine failure behind the rollout flag.
+    const direct = P + `ex:t a ex:Turn .`;
+    expect(validateAgainstShape(direct, SHAPE, { entailment: 'rdfs-observe' }).conforms).toBe(false);
+  });
+});
+
+describe('sh:class moves with sh:targetClass', () => {
+  /**
+   * Making only TARGETING subclass-aware creates a false-reject asymmetry: the shape
+   * starts firing on subclass instances (right) and then rejects them for failing an
+   * sh:class check still demanding the exact parent type (wrong).
+   */
+  const P = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex: <https://example.org/> .
+`;
+  const SHAPE = P + `ex:SubFacet rdfs:subClassOf ex:Facet .
+ex:S a sh:NodeShape ; sh:targetClass ex:Doc ;
+  sh:property [ sh:path ex:facet ; sh:class ex:Facet ; sh:minCount 1 ] .`;
+  const DATA = P + `ex:d a ex:Doc ; ex:facet ex:f . ex:f a ex:SubFacet .`;
+
+  it('accepts a subclass value under entailment', () => {
+    expect(validateAgainstShape(DATA, SHAPE, { entailment: 'rdfs' }).conforms).toBe(true);
+  });
+
+  it('and still rejects an unrelated class', () => {
+    const bad = P + `ex:d a ex:Doc ; ex:facet ex:f . ex:f a ex:Unrelated .`;
+    expect(validateAgainstShape(bad, SHAPE, { entailment: 'rdfs' }).conforms).toBe(false);
+  });
+});
