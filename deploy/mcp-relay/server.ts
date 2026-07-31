@@ -1867,6 +1867,47 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
     warnReason = `fetch threw: ${err instanceof Error ? err.message : String(err)}`;
   }
 
+  // ★ FOLLOW THE ALTERNATE LINK RATHER THAN GIVING UP ON HTML.
+  //
+  // GitHub Pages ignores Accept and serves text/html for our own ontology IRIs, so a
+  // perfectly good shape looked unreachable — and an owl:imports of one corrupted the
+  // graph it was glued into. The reflex is to append `.ttl` and move on. That would be
+  // reinventing a mechanism that already exists AND is already published: every generated
+  // page here carries
+  //
+  //     <link rel="alternate" type="text/turtle" href="iep.ttl" />
+  //
+  // The publishing side was already standards-correct. We simply were not reading it.
+  // Following the advertised link works for any publisher that does the same thing, where
+  // guessing an extension only ever works for ours.
+  if (body !== null && /^\s*<(?:!doctype|html)/i.test(body)) {
+    const alt = body.match(
+      /<link[^>]+rel=["']?(?:alternate|describedby)["']?[^>]*type=["']text\/turtle["'][^>]*href=["']([^"']+)["']/i,
+    ) ?? body.match(
+      /<link[^>]+type=["']text\/turtle["'][^>]*href=["']([^"']+)["']/i,
+    );
+    if (alt?.[1]) {
+      try {
+        const target = new URL(alt[1], shapeIri).toString();
+        const r2 = await guardedInvokeFetch(target, { method: 'GET', headers: { 'Accept': SHAPE_ACCEPT_HEADER } });
+        if (r2.ok) {
+          const t2 = await r2.text();
+          if (t2.trim().length > 0) {
+            log(`conformance gate: ${shapeIri} served HTML; followed its rel=alternate to ${target}`);
+            body = t2;
+            warnReason = null;
+          }
+        }
+      } catch (err) {
+        log(`WARN conformance gate: ${shapeIri} alternate-link fetch failed: ${(err as Error).message}`);
+      }
+    }
+    if (body !== null && /^\s*<(?:!doctype|html)/i.test(body)) {
+      warnReason = 'served HTML with no usable rel=alternate text/turtle link';
+      body = null;
+    }
+  }
+
   if (body === null && warnReason !== null) {
     log(`WARN conformance gate could not fetch shape ${shapeIri} — ${warnReason}. Publish will proceed UNVALIDATED against this shape.`);
   }
