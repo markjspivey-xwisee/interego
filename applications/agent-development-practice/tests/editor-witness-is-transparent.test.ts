@@ -220,10 +220,106 @@ describe('consent is counted by correlating the answer back to the request', () 
   });
 
   it('states plainly when the evidence does not support the thesis', async () => {
+    // This fixture DOES offer reject_always; the answer was allow_always. So the deny set
+    // is empty by a real choice, and the thesis is genuinely unsupported.
     const { observer, finish } = createTally();
     await runTee([ans(1, 'aa') + '\n'], [req(1, 'edit') + '\n'], [observer]);
     const out = summarise(finish());
-    expect(out).toMatch(/no always-scoped DENIALS/);
-    expect(out).toMatch(/Ship the trace as a log/);
+    expect(out).toMatch(/WAS offered/);
+    expect(out).toMatch(/genuinely unsupported/);
+  });
+
+  /**
+   * ★ THE DISTINCTION THE INSTRUMENT EXISTS TO PROTECT.
+   *
+   * Zero always-scoped denials means "developers declined" only if the option was ON THE
+   * MENU. The production ACP agent (@zed-industries/claude-code-acp) offers exactly
+   * allow_always / allow_once / reject_once and NEVER constructs reject_always — verified
+   * against its own dist and against a live session through this tee. Reporting that as
+   * "the thesis is unsupported" states a conclusion the run did not earn: nobody could
+   * have chosen a button that was never rendered.
+   */
+  const realWorldReq = (id: number, toolKind: string) => JSON.stringify({
+    jsonrpc: '2.0', id, method: 'session/request_permission',
+    params: {
+      sessionId: 'sess-rw',
+      toolCall: { toolCallId: `call_${id}`, kind: toolKind, title: 'irrelevant' },
+      options: [
+        { optionId: 'allow_always', kind: 'allow_always' },
+        { optionId: 'allow', kind: 'allow_once' },
+        { optionId: 'reject', kind: 'reject_once' },
+      ],
+    },
+  });
+
+  it('reports UNTESTED, not unsupported, when reject_always was never offered', async () => {
+    const { observer, finish } = createTally();
+    await runTee([ans(1, 'reject') + '\n'], [realWorldReq(1, 'edit') + '\n'], [observer]);
+    const t = finish();
+    expect(t.offeredKinds['reject_always']).toBeUndefined();
+    expect(t.offeredKinds['allow_always']).toBe(1);
+
+    const out = summarise(t);
+    expect(out).toMatch(/UNTESTED/);
+    expect(out).not.toMatch(/genuinely unsupported/);
+    // And it must name the asymmetry, because that is the actual finding.
+    expect(out).toMatch(/allow_always` WAS offered/);
+  });
+
+  /**
+   * ★ THE MODE DECIDES WHO ANSWERED.
+   *
+   * The production agent advertises acceptEdits ("Auto-accept file edit operations"),
+   * dontAsk ("Don’t prompt for permissions, deny if not pre-approved") and
+   * bypassPermissions ("Bypass all permission checks"), and announces a switch as
+   * session/update with sessionUpdate: "current_mode_update". That frame carries no
+   * `kind`, so the original handler dropped it — leaving a tally in which forty human
+   * decisions and forty agent auto-accepts look identical.
+   */
+  // A mode change is a NOTIFICATION: no id, and no `kind` for a naive handler to find.
+  const modeUpdate = (mode: string) => JSON.stringify({
+    jsonrpc: '2.0', method: 'session/update',
+    params: { sessionId: 'sess-1', update: { sessionUpdate: 'current_mode_update', currentModeId: mode } },
+  });
+
+  it('attributes each permission request to the mode in force at the time', async () => {
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  req(1, 'edit') + '\n'],
+      ['editor', ans(1, 'r1') + '\n'],
+      ['agent',  modeUpdate('acceptEdits') + '\n'],
+      ['agent',  req(2, 'edit') + '\n'],
+      ['editor', ans(2, 'a1') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.modeRequests).toEqual({ default: 1, acceptEdits: 1 });
+    expect(t.modeTimeline).toEqual(['acceptEdits']);
+  });
+
+  it('warns that auto-answered outcomes are not consent data', async () => {
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  modeUpdate('bypassPermissions') + '\n'],
+      ['agent',  req(1, 'edit') + '\n'],
+      ['editor', ans(1, 'a1') + '\n'],
+    ], [observer]);
+    const out = summarise(finish());
+    expect(out).toMatch(/not consent data/);
+  });
+
+  it('does not warn when every request was answered by a human', async () => {
+    const { observer, finish } = createTally();
+    await runTee([ans(1, 'r1') + '\n'], [req(1, 'edit') + '\n'], [observer]);
+    expect(summarise(finish())).not.toMatch(/not consent data/);
+  });
+
+  it('counts the menu per option, so an unoffered kind is absent rather than zero', async () => {
+    const { observer, finish } = createTally();
+    await runTee([ans(1, 'r1') + '\n'], [req(1, 'edit') + '\n'], [observer]);
+    const t = finish();
+    // All four offered once by the four-kind fixture.
+    expect(t.offeredKinds).toEqual({
+      allow_once: 1, allow_always: 1, reject_once: 1, reject_always: 1,
+    });
   });
 });

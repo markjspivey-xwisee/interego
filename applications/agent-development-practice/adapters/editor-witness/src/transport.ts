@@ -78,6 +78,16 @@ export interface TeeOptions {
   /** Called when an observer throws. Default: ignore. An observer fault must never
    *  surface to either peer, but it must not vanish silently either. */
   readonly onObserverError?: (err: unknown, o: Observation) => void;
+  /**
+   * ★ Called as soon as ONE direction closes, naming it.
+   *
+   * The tee's own promise waits for BOTH ends, which is right for forwarding but wrong as
+   * the signal to report a measurement. When the editor hangs up, the session is over by
+   * definition — whether or not the agent is well-behaved enough to notice. A first live
+   * run against a real agent hit exactly that: the agent errored, never exited, both pumps
+   * stayed open, and the entire tally was lost in silence.
+   */
+  readonly onDirectionEnd?: (direction: Direction) => void;
   /** Injectable clock, so tests are deterministic and nothing here calls Date.now(). */
   readonly now?: () => number;
 }
@@ -162,6 +172,9 @@ export function startTee(opts: TeeOptions): Promise<void> {
     src.on('end', () => {
       for (const line of splitter.flush()) forward(line);
       dst.end();
+      // Announce this end BEFORE resolving: the other direction may never close, and a
+      // measurement that only lands when both do is a measurement that can be lost.
+      try { opts.onDirectionEnd?.(direction); } catch { /* never fatal */ }
       resolve();
     });
     src.on('error', reject);
