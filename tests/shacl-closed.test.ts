@@ -135,3 +135,59 @@ ex:t1 a ex:Turn ;
     expect(r.results.some(v => /Closed/i.test(v.constraintComponent))).toBe(true);
   });
 });
+
+describe('★ closed-world alone is NOT the privacy guarantee', () => {
+  /**
+   * The decisive property, and the reason a privacy contract needs TWO shapes.
+   *
+   * `sh:targetClass` is direct-type: SHACL does not entail subclasses, and this engine
+   * does not either (`void options.entailment`). So one triple —
+   * `ex:Rich rdfs:subClassOf ex:Turn` — makes an instance escape a closed shape entirely.
+   * A one-triple bypass that returns a green 200.
+   *
+   * The counter is a shape with a DIFFERENT QUANTIFIER: `sh:targetSubjectsOf` selects a
+   * node BECAUSE it carries the forbidden predicate, so it does not care what class the
+   * carrier claims. Node-scoped positive closure answers "does this node carry anything
+   * nobody anticipated?"; graph-scoped negative closure answers "does ANY node carry a
+   * forbidden predicate?".
+   *
+   * Neither alone is the guarantee — it exists only in the conjunction. That is why the
+   * ACP witness's privacy contract is specified as two shapes rather than one, and this
+   * test is what makes the claim falsifiable.
+   */
+  const P = PREFIXES + `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n`;
+  const withSecret = (type: string) => P + `
+ex:Rich rdfs:subClassOf ex:Turn .
+ex:t a ${type} ; ex:allowed "fine" ; ex:secretPath "/home/me/.ssh/id_rsa" .
+`;
+  const CLOSED = P + `
+ex:TurnShape a sh:NodeShape ; sh:targetClass ex:Turn ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path ex:allowed ; sh:minCount 1 ] .
+`;
+  const DENYLIST = P + `
+ex:NoSecrets a sh:NodeShape ; sh:targetSubjectsOf ex:secretPath ;
+  sh:property [ sh:path ex:secretPath ; sh:maxCount 0 ;
+                sh:message "content-bearing predicate on a witnessed graph" ] .
+`;
+
+  it('the closed shape catches the secret on a DIRECT instance', () => {
+    expect(validateAgainstShape(withSecret('ex:Turn'), CLOSED).conforms).toBe(false);
+  });
+
+  it('…but a SUBCLASS escapes it entirely — a one-triple bypass', () => {
+    // Documenting the hole, not endorsing it. If this ever starts failing because
+    // entailment was added, the denylist below is still required — see the module note.
+    expect(validateAgainstShape(withSecret('ex:Rich'), CLOSED).conforms).toBe(true);
+  });
+
+  it('the graph-scoped denylist catches what the closed shape missed', () => {
+    const r = validateAgainstShape(withSecret('ex:Rich'), DENYLIST);
+    expect(r.conforms).toBe(false);
+    expect(r.results.some(v => /content-bearing/.test(v.message ?? ''))).toBe(true);
+  });
+
+  it('and it still catches the direct case, so the pair covers both', () => {
+    expect(validateAgainstShape(withSecret('ex:Turn'), DENYLIST).conforms).toBe(false);
+  });
+});
