@@ -172,7 +172,20 @@ export interface ValidateAgainstShapeOptions {
    * check stays direct-type. Provided for API parity with rdf-validate-
    * shacl.
    */
-  readonly entailment?: 'none' | 'rdfs';
+  /**
+   * - `'none'` (default) — direct-type matching, exactly as SHACL and every other
+   *   processor default. A published shape must mean the same thing here as in pySHACL.
+   * - `'rdfs'` — subclass-aware targeting and sh:class. ENFORCING.
+   * - `'rdfs-observe'` — compute entailment, but downgrade every violation that exists
+   *   ONLY because of it to Info, so `conforms` is unchanged.
+   *
+   * ★ The observe mode exists because turning entailment on is not a code change, it is a
+   * FLEET change: shapes begin firing on nodes they never fired on before, so publishes
+   * that pass today start failing — all at once, across every publisher, at deploy time.
+   * Observe first, read what would have been rejected, then enforce. There is no safe way
+   * to discover that list except by running it.
+   */
+  readonly entailment?: 'none' | 'rdfs' | 'rdfs-observe';
 }
 
 interface PropertyShape {
@@ -496,9 +509,9 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
  * not expanded again, so `A subClassOf B . B subClassOf A` terminates instead of hanging.
  */
 const RDFS_SUBCLASS_OF = 'http://www.w3.org/2000/01/rdf-schema#subClassOf' as IRI;
-function buildSubclassClosure(data: ParsedDocument): Map<IRI, Set<IRI>> {
+function buildSubclassClosure(...docs: readonly ParsedDocument[]): Map<IRI, Set<IRI>> {
   const direct = new Map<IRI, Set<IRI>>();          // parent -> direct children
-  for (const subj of data.subjects) {
+  for (const subj of docs.flatMap(d => d.subjects)) {
     if (typeof subj.subject !== 'string') continue;
     for (const t of subj.properties.get(RDFS_SUBCLASS_OF) ?? []) {
       if (t.kind !== 'iri') continue;
@@ -624,20 +637,30 @@ function matchesDatatype(t: ParsedTerm, datatype: IRI): boolean {
   return datatype === (`${XSD}string` as IRI);
 }
 
-function valueHasClass(data: ParsedDocument, valueTerm: ParsedTerm, expectedClass: IRI): boolean {
-  // Locate the subject in the data graph whose key matches the value.
-  const key = valueTerm.kind === 'iri'
-    ? valueTerm.iri
-    : valueTerm.kind === 'bnode'
-      ? `_:${valueTerm.id}`
-      : null;
-  if (!key) return false;
-  for (const s of data.subjects) {
-    if (subjectKey(s) !== key) continue;
-    const types = s.properties.get(RDF_TYPE) ?? [];
-    for (const t of types) {
-      if (t.kind === 'iri' && t.iri === expectedClass) return true;
-    }
+/**
+ * Does the value have `expectedClass` as its type?
+ *
+ * ★ SUBCLASS-AWARE, and it must be, symmetrically with sh:targetClass. Making only
+ * targeting subclass-aware creates a FALSE-REJECT asymmetry: a shape would start firing
+ * on subclass instances (correct) and then reject them for failing an sh:class check that
+ * still demanded the exact parent type (wrong). The two have to move together.
+ *
+ * Also indexed rather than scanned — this was the same accidentally-quadratic
+ * `subjects.find`-style loop already fixed in subjectFor, on a hotter path.
+ */
+function valueHasClass(
+  data: ParsedDocument,
+  valueTerm: ParsedTerm,
+  expectedClass: IRI,
+  subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
+): boolean {
+  const subj = subjectFor(data, valueTerm);
+  if (!subj) return false;
+  const accepted = subclassClosure?.get(expectedClass);
+  for (const t of subj.properties.get(RDF_TYPE) ?? []) {
+    if (t.kind !== 'iri') continue;
+    if (t.iri === expectedClass) return true;
+    if (accepted?.has(t.iri)) return true;
   }
   return false;
 }
@@ -658,13 +681,16 @@ function conformsToShape(
   target: NodeShape,
   byId: ReadonlyMap<string, NodeShape>,
   depth: number,
+  subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
 ): boolean {
   if (depth > 12) return true;
   if (target.deactivated) return true;
   // Node-level value constraints apply to the focus node itself.
   if (target.nodeClass !== undefined) {
+    const accepted = subclassClosure?.get(target.nodeClass);
     const types = subj.properties.get(RDF_TYPE) ?? [];
-    if (!types.some(t => t.kind === 'iri' && t.iri === target.nodeClass)) return false;
+    if (!types.some(t => t.kind === 'iri'
+      && (t.iri === target.nodeClass || accepted?.has(t.iri)))) return false;
   }
   if (target.nodeKindConstraint !== undefined) {
     const asTerm: ParsedTerm = typeof subj.subject === 'string'
@@ -717,6 +743,8 @@ function evaluatePropertyShape(
   /** Shape index for resolving sh:node / sh:qualifiedValueShape references. */
   byId?: ReadonlyMap<string, NodeShape>,
   depth = 0,
+  /** Subclass closure, so sh:class matches subclasses exactly as sh:targetClass does. */
+  subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
 ): ShaclResult[] {
   const results: ShaclResult[] = [];
   // A property shape its author deactivated must produce nothing, exactly as for a
@@ -842,7 +870,7 @@ function evaluatePropertyShape(
         for (const v of values) {
           const sub = subjectFor(data, v);
           // A value with no description cannot satisfy a shape that requires anything.
-          const ok = sub ? conformsToShape(data, sub, target, byId, depth) : target.propertyShapes.length === 0;
+          const ok = sub ? conformsToShape(data, sub, target, byId, depth, subclassClosure) : target.propertyShapes.length === 0;
           if (!ok) {
             fail(ps.path, 'NodeConstraintComponent', `Value does not conform to sh:node ${ps.node}`, v);
           }
@@ -855,7 +883,7 @@ function evaluatePropertyShape(
         let n = 0;
         for (const v of values) {
           const sub = subjectFor(data, v);
-          if (sub ? conformsToShape(data, sub, target, byId, depth) : target.propertyShapes.length === 0) n++;
+          if (sub ? conformsToShape(data, sub, target, byId, depth, subclassClosure) : target.propertyShapes.length === 0) n++;
         }
         if (ps.qualifiedMinCount !== undefined && n < ps.qualifiedMinCount) {
           fail(ps.path, 'QualifiedMinCountConstraintComponent',
@@ -913,7 +941,7 @@ function evaluatePropertyShape(
         message: ps.message ?? `Value does not match sh:datatype ${ps.datatype}`,
       });
     }
-    if (ps.clazz && !valueHasClass(data, v, ps.clazz)) {
+    if (ps.clazz && !valueHasClass(data, v, ps.clazz, subclassClosure)) {
       results.push({
         focusNode,
         path: ps.path,
@@ -1041,7 +1069,17 @@ export function validateAgainstShape(
   //
   // The closure is computed from rdfs:subClassOf statements present in the DATA graph,
   // which is where SHACL says entailment applies. Cycle-safe and computed once.
-  const subclassClosure = options.entailment === 'rdfs' ? buildSubclassClosure(dataDoc) : undefined;
+  // ★ SEEDED FROM BOTH GRAPHS. Reading the data graph alone made this inert for every
+  // contract in this repo: our published shape files carry zero rdfs:subClassOf, because
+  // the hierarchy lives in the ontology alongside the shapes. A closure that only sees
+  // the data is trivially evaded by omitting the triple — the attacker controls the data.
+  //
+  // (Still unresolved: an `owl:imports` in a shapes file pointing at a separate ontology
+  // document. Following it needs a fetch, which belongs to the caller that already
+  // fetches shape bodies, not to a pure validator. Called out rather than pretended.)
+  const subclassClosure = options.entailment === 'rdfs' || options.entailment === 'rdfs-observe'
+    ? buildSubclassClosure(dataDoc, shapeDoc)
+    : undefined;
 
   const shapes = compileShapes(shapeDoc);
 
@@ -1093,9 +1131,23 @@ export function validateAgainstShape(
     // sh:deactivated — a shape switched off by its author MUST produce no results.
     if (shape.deactivated) continue;
     const focusNodes = findFocusNodes(dataDoc, shape, subclassClosure);
+    // Which of these would NOT have been selected without entailment? Only those can
+    // produce a "new" violation, so only those are downgraded in observe mode.
+    const directOnly = new Set(findFocusNodes(dataDoc, shape).map(f => subjectKey(f)));
     for (const focus of focusNodes) {
+      const entailedOnly = options.entailment === 'rdfs-observe'
+        && !directOnly.has(subjectKey(focus));
+      const emit = (r: ShaclResult): void => {
+        results.push(entailedOnly && r.severity === 'Violation'
+          ? {
+              ...r,
+              severity: 'Info',
+              message: `[entailment-observe] would REJECT under entailment:'rdfs' — ${r.message ?? ''}`,
+            }
+          : r);
+      };
       for (const ps of shape.propertyShapes) {
-        results.push(...evaluatePropertyShape(dataDoc, focus, shape, ps, byId, 0));
+        for (const r of evaluatePropertyShape(dataDoc, focus, shape, ps, byId, 0, subclassClosure)) emit(r);
       }
       // ★ sh:closed — the only constraint that can refuse a predicate nobody anticipated.
       // Every other check above asks "is what IS here acceptable?"; this asks "is anything
@@ -1106,7 +1158,7 @@ export function validateAgainstShape(
         for (const ign of shape.ignoredProperties) declared.add(ign);
         for (const predicate of focus.properties.keys()) {
           if (declared.has(predicate)) continue;
-          results.push({
+          emit({
             focusNode: subjectKey(focus),
             path: predicate,
             sourceShape: shape.id,

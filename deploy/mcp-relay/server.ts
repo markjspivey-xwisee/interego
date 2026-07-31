@@ -1971,7 +1971,13 @@ async function runConformanceGate(
         }],
       };
     }
-    const report = validateAgainstShape(graphContent, shapeTurtle, { entailment: 'rdfs' });
+    // ★ OBSERVE, DO NOT ENFORCE — yet. Entailment is a fleet change, not a code change:
+    // the moment it enforces, shapes fire on nodes they never fired on before and
+    // publishes that pass today start failing, all at once, across every publisher.
+    // In 'rdfs-observe' the entailed findings are downgraded to Info and logged below,
+    // so the list of what WOULD break is discoverable from production before it does.
+    // Flip to 'rdfs' once those logs are quiet or the fallout is understood.
+    const report = validateAgainstShape(graphContent, shapeTurtle, { entailment: 'rdfs-observe' });
     if (!report.conforms) {
       return { conforms: false, shape: shapeIri, violations: report.results };
     }
@@ -1981,6 +1987,11 @@ async function runConformanceGate(
     for (const note of report.results) {
       if (note.constraintComponent === 'urn:iep:shacl:UnsupportedConstraint') {
         log(`WARN conformance gate: ${shapeIri} — ${note.message}`);
+      }
+      // The entailment rollout signal. Each line is a publish that WOULD be rejected
+      // once entailment enforces — this is the list to read before flipping it on.
+      if (typeof note.message === 'string' && note.message.startsWith('[entailment-observe]')) {
+        log(`WARN entailment-observe: ${shapeIri} focus=${note.focusNode} — ${note.message}`);
       }
     }
     resolvedShapes.push({ shapeIri, shapeTurtle });
