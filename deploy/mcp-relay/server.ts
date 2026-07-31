@@ -1745,9 +1745,22 @@ export function getDeferredPublishStatus(descriptorUrl: string): DeferredPublish
 // Either source is fine; #1 is preferred because it doesn't compete with
 // publish() for manifest etags.
 const CONTAINER_SHAPE_CACHE_TTL_MS = 60 * 1000;
+/**
+ * How long a previously-VERIFIED shape body stays usable as a fallback when a refetch
+ * fails. Deliberately much longer than the freshness TTL: the choice on a transient
+ * fetch failure is between validating against a slightly stale contract and refusing
+ * the publish outright, and the stale contract is the better error. Beyond this the
+ * gate fails closed.
+ */
+const KNOWN_GOOD_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * Namespace for gate-emitted constraint components. A dereferenceable URL, not a
+ * `urn:` — the same principle the substrate applies to every other identifier it mints.
+ */
+const PUBLIC_SHAPE_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#shape';
 const CONTAINER_SHAPE_CACHE_MAX = 256;
 const containerShapeCache = new Map<string, { shapes: readonly string[]; expiresAt: number }>();
-const shapeBodyCache = new Map<string, { body: string | null; expiresAt: number }>();
+const shapeBodyCache = new Map<string, { body: string; expiresAt: number; knownGoodUntil: number }>();
 
 async function fetchContainerShapes(podUrl: string): Promise<readonly string[]> {
   const cached = containerShapeCache.get(podUrl);
@@ -1757,7 +1770,8 @@ async function fetchContainerShapes(podUrl: string): Promise<readonly string[]> 
   const shapes = new Set<string>();
   const containerShapeUrl = `${podUrl.replace(/\/$/, '')}/.well-known/container-shape`;
   try {
-    const r = await solidFetch(containerShapeUrl, { method: 'GET', headers: { 'Accept': 'text/turtle' } });
+    // Derived from podUrl, which is caller-influenced — same guard.
+    const r = await guardedInvokeFetch(containerShapeUrl, { method: 'GET', headers: { 'Accept': 'text/turtle' } });
     if (r.ok) {
       const body = await r.text();
       for (const m of body.matchAll(/iep:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
@@ -1816,12 +1830,24 @@ const SHAPE_ACCEPT_HEADER =
 async function fetchShapeBody(shapeIri: string): Promise<string | null> {
   const cached = shapeBodyCache.get(shapeIri);
   if (cached && cached.expiresAt > Date.now()) return cached.body;
-  if (cached) shapeBodyCache.delete(shapeIri);
+  // ★ DO NOT DELETE the stale entry — it is the last-known-good fallback used below.
+  // Deleting here made that fallback dead code, so fail-closed would have shipped with
+  // no mitigation at all: one transient blip on a shape host would 422 every publish
+  // to that pod for as long as it lasted.
 
   let body: string | null = null;
   let warnReason: string | null = null;
+  // Only a TRANSIENT failure may fall back to a stale body. A 404/403/410 is the shape
+  // owner deleting or tightening the shape, and honouring a cached permissive copy for
+  // 24h after that would be worse than the bug this fixes.
+  let transient = false;
   try {
-    const r = await solidFetch(shapeIri, { method: 'GET', headers: { 'Accept': SHAPE_ACCEPT_HEADER } });
+    // ★ guardedInvokeFetch, NOT solidFetch. shapeIri comes from the caller's
+    // `conforms_to_shapes` argument, so an unguarded fetch here is a caller-directed
+    // SSRF that runs BEFORE the scope gate — loopback, `.internal` hosts and cloud
+    // metadata endpoints were all reachable. Same guard every other caller-URL fetch
+    // in this file already uses.
+    const r = await guardedInvokeFetch(shapeIri, { method: 'GET', headers: { 'Accept': SHAPE_ACCEPT_HEADER } });
     if (r.ok) {
       const text = await r.text();
       if (text && text.trim().length > 0) {
@@ -1831,8 +1857,10 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
       }
     } else {
       warnReason = `HTTP ${r.status} ${r.statusText}`;
+      transient = r.status >= 500 || r.status === 429 || r.status === 408;
     }
   } catch (err) {
+    transient = true;   // network throw / timeout / DNS
     // Network failures → treat as missing shape, but record the cause
     // so a misconfigured / unreachable shape can't masquerade as "no
     // shape declared". WARN-logged below, NOT silently swallowed.
@@ -1843,11 +1871,39 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
     log(`WARN conformance gate could not fetch shape ${shapeIri} — ${warnReason}. Publish will proceed UNVALIDATED against this shape.`);
   }
 
+  // ★ NEVER CACHE A FAILURE. Storing `body: null` memoised "this shape does not
+  // constrain anything" for the whole TTL, so one transient blip disabled a contract
+  // for every subsequent publish without even retrying. Only successes are cached.
+  //
+  // A cached success also doubles as LAST-KNOWN-GOOD: if a later fetch fails we fall
+  // back to the body we previously verified rather than refusing the publish, so a
+  // network blip degrades to "validated against a slightly stale shape" instead of an
+  // outage. The fallback is deliberately generous (KNOWN_GOOD_TTL_MS) because the
+  // alternative — failing the publish — is the worse error for a transient fault.
+  if (body === null) {
+    if (transient && cached?.body && cached.knownGoodUntil > Date.now()) {
+      log(`WARN conformance gate: ${shapeIri} unreachable (${warnReason}); validating against last-known-good body`);
+      return cached.body;
+    }
+    // A permanent failure evicts, so a deleted shape stops being honoured.
+    if (!transient && cached) shapeBodyCache.delete(shapeIri);
+    return null;
+  }
+  // ★ Only stamp known-good on a body that actually PARSES as a shapes graph. Any
+  // non-empty 200 used to qualify — including an HTML error page, which is not
+  // hypothetical: GitHub Pages ignores Accept and serves HTML for our own shape IRIs.
+  // Pinning that for 24h would be pinning a shape that constrains nothing.
+  const parses = validateAgainstShape('', body).results
+    .every(r => r.constraintComponent !== `${'http://www.w3.org/ns/shacl#'}ShapeGraphParseFailure`);
   if (shapeBodyCache.size >= CONTAINER_SHAPE_CACHE_MAX) {
     const oldestKey = shapeBodyCache.keys().next().value;
     if (oldestKey !== undefined) shapeBodyCache.delete(oldestKey);
   }
-  shapeBodyCache.set(shapeIri, { body, expiresAt: Date.now() + CONTAINER_SHAPE_CACHE_TTL_MS });
+  shapeBodyCache.set(shapeIri, {
+    body,
+    expiresAt: Date.now() + CONTAINER_SHAPE_CACHE_TTL_MS,
+    knownGoodUntil: parses ? Date.now() + KNOWN_GOOD_TTL_MS : 0,
+  });
   return body;
 }
 
@@ -1892,10 +1948,40 @@ async function runConformanceGate(
   const resolvedShapes: { shapeIri: string; shapeTurtle: string }[] = [];
   for (const shapeIri of allShapes) {
     const shapeTurtle = await fetchShapeBody(shapeIri);
-    if (!shapeTurtle) continue;
+    if (!shapeTurtle) {
+      // ★ FAIL CLOSED. This used to `continue`, so a declared shape that 404'd,
+      // timed out, or was simply unreachable was skipped and the publish returned
+      // conforms:true — every contract was optional at the discretion of whoever
+      // could make a shape unfetchable. You cannot claim conformance to a shape you
+      // could not read.
+      return {
+        conforms: false,
+        shape: shapeIri,
+        violations: [{
+          focusNode: shapeIri,
+          sourceShape: shapeIri,
+          constraintComponent: /^https:\/\//i.test(shapeIri)
+            ? `${PUBLIC_SHAPE_NS}Unfetchable`
+            // A non-https shape IRI can NEVER be fetched — that is a configuration
+            // error, not an outage, and the operator response is completely different.
+            : `${PUBLIC_SHAPE_NS}UnfetchableScheme`,
+          severity: 'Violation',
+          message: `Declared shape ${shapeIri} could not be fetched, so conformance cannot be asserted. `
+            + 'The publish was refused rather than proceeding unvalidated.',
+        }],
+      };
+    }
     const report = validateAgainstShape(graphContent, shapeTurtle, { entailment: 'rdfs' });
     if (!report.conforms) {
       return { conforms: false, shape: shapeIri, violations: report.results };
+    }
+    // ★ Carry the Info notes forward. The engine emits UnsupportedConstraint precisely
+    // so `conforms` cannot be mistaken for `was actually checked` — dropping them here
+    // would have thrown away the signal one commit after adding it.
+    for (const note of report.results) {
+      if (note.constraintComponent === 'urn:iep:shacl:UnsupportedConstraint') {
+        log(`WARN conformance gate: ${shapeIri} — ${note.message}`);
+      }
     }
     resolvedShapes.push({ shapeIri, shapeTurtle });
   }
@@ -2458,11 +2544,19 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
 
   // ── FIX 4: gates before the CSS write ───────────────────────
   //
-  // Two sub-gates run BEFORE publish() touches the pod. Order matters:
-  // conformance is the cheap local computation, scope walks the chain
-  // (one CSS GET worst-case, cached), so we run conformance first to
-  // fail fast on shape violations and skip the chain walk when the
-  // payload was never going to be accepted anyway.
+  // Two sub-gates run BEFORE publish() touches the pod. Order matters, and it was
+  // REVERSED here.
+  //
+  // The old comment said conformance was "the cheap local computation". That stopped
+  // being true when the conformance gate began fetching shape bodies: it now performs N
+  // serial network fetches (up to GUARDED_MAX_REDIRECTS hops each, with a timeout apiece)
+  // and a subclass-closure computation over caller-supplied content, against the scope
+  // gate's single cached CSS GET.
+  //
+  // Running it first meant an agent whose scope forbids publishing at all could still
+  // make the relay do unbounded network and CPU work on every call. Scope is now checked
+  // first: cheap, cached, and it rejects a caller who was never allowed to publish before
+  // any of their content is processed.
   // Caller-supplied shape IRIs (via the MCP `conforms_to_shapes` arg)
   // stack on top of any container-declared shapes the target pod carries.
   // Both sources are validated; either failing rejects with the same 422
@@ -2473,6 +2567,17 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const callerShapeIris: string[] = Array.isArray(callerShapesRaw)
     ? (callerShapesRaw as unknown[]).filter((s): s is string => typeof s === 'string' && s.length > 0)
     : [];
+  const scopeCheck = await runScopeGate(agentId, podUrl);
+  if (scopeCheck.allowed === false) {
+    return JSON.stringify({
+      error: 'scope_violation',
+      code: 403,
+      scope: scopeCheck.scope,
+      requiredScope: ['ReadWrite', 'PublishOnly'],
+      reason: scopeCheck.reason,
+    });
+  }
+
   const conformance = await runConformanceGate(
     podUrl,
     (args.graph_content as string) ?? '',
@@ -2491,17 +2596,6 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         severity: r.severity,
         message: r.message,
       })),
-    });
-  }
-
-  const scopeCheck = await runScopeGate(agentId, podUrl);
-  if (scopeCheck.allowed === false) {
-    return JSON.stringify({
-      error: 'scope_violation',
-      code: 403,
-      scope: scopeCheck.scope,
-      requiredScope: ['ReadWrite', 'PublishOnly'],
-      reason: scopeCheck.reason,
     });
   }
 

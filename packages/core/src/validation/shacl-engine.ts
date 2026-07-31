@@ -61,6 +61,9 @@ const SH_HAS_VALUE = `${SHACL}hasValue` as IRI;
 const SH_MESSAGE = `${SHACL}message` as IRI;
 const SH_IN = `${SHACL}in` as IRI;
 const SH_CLOSED = `${SHACL}closed` as IRI;
+const SH_SPARQL = `${SHACL}sparql` as IRI;
+const SH_REIFIER_SHAPE = `${SHACL}reifierShape` as IRI;
+const SH_REIFICATION_REQUIRED = `${SHACL}reificationRequired` as IRI;
 const SH_NODE = `${SHACL}node` as IRI;
 const SH_QUALIFIED_VALUE_SHAPE = `${SHACL}qualifiedValueShape` as IRI;
 const SH_QUALIFIED_MIN_COUNT = `${SHACL}qualifiedMinCount` as IRI;
@@ -485,11 +488,59 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
 
 // ── Data graph indexing ──────────────────────────────────────
 
-function findFocusNodes(data: ParsedDocument, shape: NodeShape): readonly ParsedSubject[] {
+/**
+ * Map each class to the set of classes that are ITS subclasses (transitively), so a
+ * shape targeting a superclass can select instances of any descendant.
+ *
+ * Built from rdfs:subClassOf in the data graph. Cycle-safe: a class already expanded is
+ * not expanded again, so `A subClassOf B . B subClassOf A` terminates instead of hanging.
+ */
+const RDFS_SUBCLASS_OF = 'http://www.w3.org/2000/01/rdf-schema#subClassOf' as IRI;
+function buildSubclassClosure(data: ParsedDocument): Map<IRI, Set<IRI>> {
+  const direct = new Map<IRI, Set<IRI>>();          // parent -> direct children
+  for (const subj of data.subjects) {
+    if (typeof subj.subject !== 'string') continue;
+    for (const t of subj.properties.get(RDFS_SUBCLASS_OF) ?? []) {
+      if (t.kind !== 'iri') continue;
+      const kids = direct.get(t.iri) ?? new Set<IRI>();
+      kids.add(subj.subject);
+      direct.set(t.iri, kids);
+    }
+  }
+  const closure = new Map<IRI, Set<IRI>>();
+  // ★ BOUNDED. The closure materialises a descendant set per parent, so a deep chain is
+  // O(k^2) in both time and heap — and this runs on fully caller-supplied graph_content,
+  // synchronously, on the publish path. Unbounded it is a caller-triggered CPU/heap
+  // exhaustion vector that blocks the event loop for the whole replica. Past the cap the
+  // closure is abandoned (entailment degrades to direct-type) rather than risking OOM.
+  const MAX_CLOSURE_EDGES = 5000;
+  let edges = 0;
+  for (const parent of direct.keys()) {
+    const out = new Set<IRI>();
+    const stack = [...(direct.get(parent) ?? [])];
+    while (stack.length > 0) {
+      const c = stack.pop()!;
+      if (out.has(c)) continue;                     // cycle-safe
+      out.add(c);
+      if (++edges > MAX_CLOSURE_EDGES) return new Map();
+      for (const g of direct.get(c) ?? []) stack.push(g);
+    }
+    closure.set(parent, out);
+  }
+  return closure;
+}
+
+function findFocusNodes(
+  data: ParsedDocument,
+  shape: NodeShape,
+  subclassClosure?: ReadonlyMap<IRI, ReadonlySet<IRI>>,
+): readonly ParsedSubject[] {
   const matched: ParsedSubject[] = [];
   const seen = new Set<string>();
   for (const cls of shape.targetClasses) {
-    for (const s of findSubjectsOfType(data, cls)) {
+    // The class itself, plus every transitive subclass when rdfs entailment is on.
+    const classes: IRI[] = [cls, ...(subclassClosure?.get(cls) ?? [])];
+    for (const s of classes.flatMap(c => findSubjectsOfType(data, c))) {
       const key = subjectKey(s);
       if (!seen.has(key)) {
         seen.add(key);
@@ -978,12 +1029,60 @@ export function validateAgainstShape(
     };
   }
 
-  // entailment is reserved for parity with rdf-validate-shacl; the
-  // direct-type check is what the kernel ships. Mark it used to keep
-  // strict-null TS happy.
-  void options.entailment;
+  // ★ RDFS SUBCLASS ENTAILMENT. This used to be `void options.entailment;` — the option
+  // was accepted and discarded, and the relay's publish gate has been passing
+  // `{ entailment: 'rdfs' }` the whole time believing it did something.
+  //
+  // The consequence was a ONE-TRIPLE BYPASS of every class-targeted shape: adding
+  // `ex:Sub rdfs:subClassOf ex:Target` and typing the node `ex:Sub` made it escape a
+  // shape targeting `ex:Target` entirely, with a conforming result. For a closed privacy
+  // shape that is a complete bypass; for vault-ld's authority-class check it is exactly
+  // the smuggling attack that file documents in its own comment.
+  //
+  // The closure is computed from rdfs:subClassOf statements present in the DATA graph,
+  // which is where SHACL says entailment applies. Cycle-safe and computed once.
+  const subclassClosure = options.entailment === 'rdfs' ? buildSubclassClosure(dataDoc) : undefined;
 
   const shapes = compileShapes(shapeDoc);
+
+  // ★ A SHAPE THAT CANNOT BE ENFORCED MUST SAY SO.
+  //
+  // Silently ignoring a construct is how a published shape becomes a facade: it is
+  // dereferenceable, named for a real invariant, cited by dct:conformsTo — and asserts
+  // nothing. `vldp:EntailmentAuthorityShape`, the anti-authority-smuggling defence, is
+  // sh:sparql-only and therefore entirely inert today, with no signal anywhere.
+  //
+  // These are reported as Info, not Violation: a shape using an unimplemented construct
+  // is not INVALID data, and failing every publish that cites one would be a worse
+  // outcome than the silence. But it is now in the report, so a caller can surface it
+  // and nobody can mistake "conforms" for "was actually checked".
+  const unsupported: ShaclResult[] = [];
+  const noteUnsupported = (shapeId: string, construct: string, why: string): void => {
+    unsupported.push({
+      focusNode: shapeId,
+      sourceShape: shapeId,
+      constraintComponent: 'urn:iep:shacl:UnsupportedConstraint',
+      severity: 'Info',
+      message: `${construct} is not implemented by this validator, so ${why}. `
+        + 'The shape parsed, but this constraint was NOT enforced.',
+    });
+  };
+  for (const subj of shapeDoc.subjects) {
+    const id = subjectKey(subj);
+    if (subj.properties.has(SH_SPARQL)) {
+      noteUnsupported(id, 'sh:sparql', 'the SPARQL constraint was skipped entirely');
+    }
+    if (subj.properties.has(SH_REIFIER_SHAPE) || subj.properties.has(SH_REIFICATION_REQUIRED)) {
+      noteUnsupported(id, 'sh:reifierShape / sh:reificationRequired', 'RDF 1.2 reification constraints were skipped');
+    }
+    // A complex path expression is a blank node under sh:path. compilePropertyShape
+    // returns null for these, so the WHOLE property shape silently vanishes — the most
+    // dangerous of the three, because the omission is not visible in the shape at all.
+    const pathTerm = subj.properties.get(SH_PATH)?.[0];
+    if (pathTerm && pathTerm.kind === 'bnode') {
+      noteUnsupported(id, 'a complex sh:path expression', 'the entire property shape was dropped');
+    }
+  }
   // Shape references (sh:node, sh:qualifiedValueShape) resolve through this index.
   // Built from ALL compiled shapes, so a referenced shape need not have its own target.
   const byId = new Map<string, NodeShape>();
@@ -993,7 +1092,7 @@ export function validateAgainstShape(
   for (const shape of shapes) {
     // sh:deactivated — a shape switched off by its author MUST produce no results.
     if (shape.deactivated) continue;
-    const focusNodes = findFocusNodes(dataDoc, shape);
+    const focusNodes = findFocusNodes(dataDoc, shape, subclassClosure);
     for (const focus of focusNodes) {
       for (const ps of shape.propertyShapes) {
         results.push(...evaluatePropertyShape(dataDoc, focus, shape, ps, byId, 0));
@@ -1027,6 +1126,8 @@ export function validateAgainstShape(
 
   return {
     conforms: results.filter(r => r.severity === 'Violation').length === 0,
-    results,
+    // Unsupported-construct notes ride in `results` at Info severity, so they never
+    // change `conforms` but are impossible to miss when inspecting a report.
+    results: [...results, ...unsupported],
   };
 }
