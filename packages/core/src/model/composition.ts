@@ -19,7 +19,14 @@ import type {
   ContextTypeName,
   ComposedDescriptorData,
 } from './types.js';
+import { createHash } from 'node:crypto';
 import { getFacetEntry, executeMerge, facetFingerprint } from './registry.js';
+import { canonicalJson } from '../canonical-json.js';
+import { assertDescriptor } from './descriptor-shape.js';
+
+function sha256Hex(input: string): string {
+  return createHash('sha256').update(input, 'utf8').digest('hex');
+}
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -100,16 +107,43 @@ function meetFacetsOfType(
 
 // ── Composition Operators ────────────────────────────────────
 
-let _composedIdCounter = 0;
-function nextComposedId(): IRI {
-  return `urn:iep:composed:${++_composedIdCounter}` as IRI;
+/**
+ * A composed descriptor's identity, derived from its content.
+ *
+ * ★ THIS WAS A PROCESS-LOCAL SEQUENTIAL COUNTER — `urn:iep:composed:${++n}` — which is
+ * the worst identity scheme available here, because it fails in BOTH directions at once:
+ *
+ *   - Same content, DIFFERENT id. Compose A∪B twice in one process and you get
+ *     `…:1` and `…:2`. Nothing is idempotent, and the lattice laws in category.ts had to
+ *     call resetComposedIdCounter() between every path just to compare two results.
+ *   - Different content, SAME id. Two unrelated compositions in two processes are both
+ *     `…:1`. Restart the relay and `urn:iep:composed:1` names something else entirely.
+ *
+ * In a substrate whose first invariant is identity-by-reference, an id that is neither
+ * reproducible nor unique is not an identifier at all. It is now a hash over the composed
+ * descriptor's whole defining content — the operator, its operands, the graphs it
+ * describes and the resulting facets — so composing the same things always yields the
+ * same id, everywhere, forever.
+ *
+ * Deliberately still `urn:` and not a URL: a composed descriptor is not stored anywhere
+ * and has no resolution story, so spelling it as a URL would promise a fetch that cannot
+ * succeed — the exact defect fixed for PGSL node ids. Give it somewhere to live first.
+ */
+function composedId(body: Omit<ComposedDescriptorData, 'id'>): IRI {
+  return `urn:iep:composed:${sha256Hex(canonicalJson(body)).slice(0, 40)}` as IRI;
 }
 
 /**
- * Reset the composed ID counter (for testing).
+ * No longer necessary, and kept only so existing callers keep compiling.
+ *
+ * It existed because sequential ids made every composition unequal to its own repeat.
+ * Content-addressed ids are stable by construction, so there is nothing to reset — the
+ * lattice-law checks in category.ts now compare naturally.
+ *
+ * @deprecated Composed ids are content-addressed; this is a no-op.
  */
 export function resetComposedIdCounter(): void {
-  _composedIdCounter = 0;
+  /* intentionally empty — see composedId() */
 }
 
 /**
@@ -123,6 +157,8 @@ export function union(
   d2: ContextDescriptorData,
   id?: IRI
 ): ComposedDescriptorData {
+  assertDescriptor(d1, 'union() operand 1');
+  assertDescriptor(d2, 'union() operand 2');
   const g1 = groupByType(d1.facets);
   const g2 = groupByType(d2.facets);
   const allTypes = new Set<ContextTypeName>([...g1.keys(), ...g2.keys()]);
@@ -152,8 +188,7 @@ export function union(
     sharedBoundary.push(...meetFacetsOfType(type, f1, f2));
   }
 
-  return {
-    id: id ?? nextComposedId(),
+  const body = {
     compositionOp: 'union',
     operands: [d1.id, d2.id],
     describes: allDescribedGraphs([d1, d2]),
@@ -164,6 +199,7 @@ export function union(
     structuralOp: sharedBoundary.length > 0 ? 'extend' : 'beside',
     sharedBoundary: sharedBoundary.length > 0 ? sharedBoundary : undefined,
   };
+  return { id: id ?? composedId(body as Omit<ComposedDescriptorData, 'id'>), ...body } as ComposedDescriptorData;
 }
 
 /**
@@ -177,6 +213,8 @@ export function intersection(
   d2: ContextDescriptorData,
   id?: IRI
 ): ComposedDescriptorData {
+  assertDescriptor(d1, 'intersection() operand 1');
+  assertDescriptor(d2, 'intersection() operand 2');
   const g1 = groupByType(d1.facets);
   const g2 = groupByType(d2.facets);
   const sharedTypes = [...g1.keys()].filter(t => g2.has(t));
@@ -198,8 +236,7 @@ export function intersection(
   const graphs1 = new Set(d1.describes);
   const commonGraphs = d2.describes.filter(g => graphs1.has(g));
 
-  return {
-    id: id ?? nextComposedId(),
+  const body = {
     compositionOp: 'intersection',
     operands: [d1.id, d2.id],
     describes: commonGraphs,
@@ -210,6 +247,7 @@ export function intersection(
     structuralOp: 'meet',
     sharedBoundary: resultFacets,
   };
+  return { id: id ?? composedId(body as Omit<ComposedDescriptorData, 'id'>), ...body } as ComposedDescriptorData;
 }
 
 /**
@@ -222,11 +260,11 @@ export function restriction(
   types: readonly ContextTypeName[],
   id?: IRI
 ): ComposedDescriptorData {
+  assertDescriptor(d, 'restriction() operand');
   const typeSet = new Set(types);
   const resultFacets = d.facets.filter(f => typeSet.has(f.type));
 
-  return {
-    id: id ?? nextComposedId(),
+  const body = {
     compositionOp: 'restriction',
     operands: [d.id],
     restrictToTypes: types,
@@ -237,6 +275,7 @@ export function restriction(
     // like viewing only certain levels of the pyramid.
     structuralOp: 'wrap',
   };
+  return { id: id ?? composedId(body as Omit<ComposedDescriptorData, 'id'>), ...body } as ComposedDescriptorData;
 }
 
 /**
@@ -250,6 +289,8 @@ export function override(
   overrideDesc: ContextDescriptorData,
   id?: IRI
 ): ComposedDescriptorData {
+  assertDescriptor(base, 'override() base');
+  assertDescriptor(overrideDesc, 'override() operand');
   const baseByType = groupByType(base.facets);
   const overrideByType = groupByType(overrideDesc.facets);
   const allTypes = new Set<ContextTypeName>([...baseByType.keys(), ...overrideByType.keys()]);
@@ -271,8 +312,7 @@ export function override(
     sharedBoundary.push(...baseByType.get(type)!);
   }
 
-  return {
-    id: id ?? nextComposedId(),
+  const body = {
     compositionOp: 'override',
     operands: [base.id, overrideDesc.id],
     describes: allDescribedGraphs([base, overrideDesc]),
@@ -284,6 +324,7 @@ export function override(
     structuralOp: 'extend',
     sharedBoundary: sharedBoundary.length > 0 ? sharedBoundary : undefined,
   };
+  return { id: id ?? composedId(body as Omit<ComposedDescriptorData, 'id'>), ...body } as ComposedDescriptorData;
 }
 
 // ── Effective Context (§3.5) ─────────────────────────────────

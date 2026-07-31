@@ -507,7 +507,17 @@ describe('THE ADVERSARIAL AUDIT — Interego self-defense demonstration', () => 
     step(true, `Proof verified by third party in 1 function call`);
 
     // Tamper test: change a single byte in the leaf, proof must fail.
-    const tamperedProof = { ...proof!, leaf: '0' + proof!.leaf.slice(1) };
+    //
+    // ★ This used to be `'0' + leaf.slice(1)`, which is a NO-OP whenever the leaf
+    // already begins with '0' — about one run in sixteen, decided by whatever content
+    // happened to be hashed. The test then "passed" a tamper it had not performed, and
+    // failed only when unrelated content shifted the hash. Flip the character to a
+    // provably different one instead, and assert the tamper actually changed something
+    // before asserting what it caused.
+    const first = proof!.leaf[0];
+    const tamperedLeaf = (first === '0' ? '1' : '0') + proof!.leaf.slice(1);
+    expect(tamperedLeaf, 'the tamper must actually alter the leaf').not.toBe(proof!.leaf);
+    const tamperedProof = { ...proof!, leaf: tamperedLeaf };
     const tamperedValid = verifyMerkleProof(tamperedProof);
     expect(tamperedValid).toBe(false);
     step(true, `Tampering with the leaf hash invalidates the proof`);

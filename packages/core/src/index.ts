@@ -776,3 +776,8 @@ export {
 // recursive property ALLOW-LIST, not a key sort — it empties every nested object, so
 // structurally different values hashed to one id. See the module header.
 export { canonicalJson } from './canonical-json.js';
+
+// Structural check for a Context Descriptor. Exported because `mint(kind:'descriptor')`
+// used to accept any value and the mistake only surfaced later, inside compose(), as a
+// raw `facets is not iterable` TypeError with no hint of what was expected.
+export { descriptorProblem, assertDescriptor } from './model/descriptor-shape.js';

@@ -46,6 +46,7 @@ import {
 } from '../model/composition.js';
 
 import { canonicalJson } from '../canonical-json.js';
+import { assertDescriptor } from '../model/descriptor-shape.js';
 import { getKernelLatticeAdapter } from '../lattice/adapter.js';
 import type { LatticeProvenance, LatticeValue, LatticeLevel } from '../lattice/adapter.js';
 import { isPgslNodeId } from '../lattice/node-id.js';
@@ -315,6 +316,10 @@ export function mint(content: unknown, options?: MintOptions): MintResult {
   }
 
   if (kind === 'descriptor') {
+    // Validate at the point where the value ENTERS. Previously any value at all was
+    // accepted and hashed into an IRI, and the mistake only surfaced much later inside
+    // compose() as a raw `facets is not iterable` TypeError.
+    assertDescriptor(content, 'mint(kind:descriptor) content');
     const desc = content as ContextDescriptorData;
     // ★ Was `JSON.stringify(desc, Object.keys(desc).sort())`. That second argument is
     // the REPLACER — an array there is a recursive property allow-list, not a key

@@ -29,9 +29,13 @@ import {
   isAllowedOrigin,
 } from '../deploy/mcp-relay/cors-allowlist.js';
 
-const RELAY_OWN = 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const IDENTITY_OWN = 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const CSS_GATE_OWN = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+// The services' own origins on the LIVE stack. These were Azure FQDNs, which quietly
+// weakened several assertions below: buildCorsAllowlist always adds `ownOrigin`, so
+// passing a retired host made the suite prove things about a deployment that no longer
+// exists — and kept proving them after the real allowlist had moved on.
+const RELAY_OWN = 'https://relay.interego.xwisee.com';
+const IDENTITY_OWN = 'https://identity.interego.xwisee.com';
+const CSS_GATE_OWN = 'https://gate.interego.xwisee.com';
 
 const OFF_LIST_ORIGINS = [
   'https://evil.example',
@@ -70,11 +74,27 @@ describe('CORS allowlist — module', () => {
     const list = buildCorsAllowlist({ ownOrigin: RELAY_OWN });
     for (const sibling of [
       RELAY_OWN, IDENTITY_OWN, CSS_GATE_OWN,
-      'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-      'https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-      'https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+      'https://dashboard.interego.xwisee.com',
+      'https://gate.interego.xwisee.com',
+      'https://pgsl-browser.interego.xwisee.com',
     ]) {
       expect(isAllowedOrigin(sibling, list)).toBe(true);
+    }
+  });
+
+  // The other half of the same invariant, behaviourally: the retired environment's
+  // origins are not merely absent from the source, they are actually refused.
+  it('refuses the retired Azure environment it used to trust', () => {
+    const list = buildCorsAllowlist({ ownOrigin: RELAY_OWN });
+    // NB: not via ownOrigin — buildCorsAllowlist always trusts its own origin by
+    // construction, so an assertion routed through it could never fail.
+    for (const gone of [
+      'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+      'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+      'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+      'https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+    ]) {
+      expect(isAllowedOrigin(gone, list), `${gone} is still trusted`).toBe(false);
     }
   });
 
@@ -202,13 +222,26 @@ const RELAY_FILE = join(REPO_ROOT, 'deploy', 'mcp-relay', 'cors-allowlist.ts');
 const IDENTITY_FILE = join(REPO_ROOT, 'deploy', 'identity', 'cors-allowlist.ts');
 const CSS_GATE_FILE = join(REPO_ROOT, 'deploy', 'css-gate', 'server.mjs');
 
+/**
+ * The LIVE stack's sibling FQDNs.
+ *
+ * ★ This list used to name the Azure environment (`*.livelysky-8b81abb0.eastus.
+ * azurecontainerapps.io`). The stack moved to Railway, css-gate was written fresh and
+ * never carried those hosts, and this assertion had been failing on master ever since —
+ * a red that said nothing true, which is worse than no test, because it trains everyone
+ * to ignore the suite.
+ *
+ * The Azure origins have now been removed from the allowlists themselves too. They were
+ * commented as "inert legacy", but an entry here is not inert: it is an origin these
+ * services grant cross-origin trust to, and that environment is deleted. See the
+ * no-released-hostnames assertion below.
+ */
 const CANONICAL_SIBLINGS = [
-  'interego-relay.livelysky-8b81abb0',
-  'interego-identity.livelysky-8b81abb0',
-  'interego-dashboard.livelysky-8b81abb0',
-  'interego-css.internal.livelysky-8b81abb0',
-  'interego-css-gate.livelysky-8b81abb0',
-  'interego-pgsl-browser.livelysky-8b81abb0',
+  'relay.interego.xwisee.com',
+  'identity.interego.xwisee.com',
+  'dashboard.interego.xwisee.com',
+  'gate.interego.xwisee.com',
+  'pgsl-browser.interego.xwisee.com',
 ];
 
 const CANONICAL_BROWSER_HOSTS = [
@@ -227,6 +260,33 @@ describe('CORS allowlist — sync across mcp-relay / identity / css-gate', () =>
       expect(relaySrc, `relay missing ${sibling}`).toContain(sibling);
       expect(identitySrc, `identity missing ${sibling}`).toContain(sibling);
       expect(cssGateSrc, `css-gate missing ${sibling}`).toContain(sibling);
+    }
+  });
+
+  /**
+   * ★ An allowlist may only name origins we still control.
+   *
+   * Six `*.eastus.azurecontainerapps.io` origins sat in SIBLING_DEPLOYMENT_ORIGINS long
+   * after that environment was deleted, carrying a comment calling them inert. An entry
+   * in a CORS allowlist is never inert — it is standing cross-origin trust extended to a
+   * hostname, and a hostname we have released is one whose future occupant we do not
+   * choose. Cheap to remove, and nothing good comes of keeping it.
+   *
+   * Matched against code with comments stripped, because the removal's own note names
+   * the pattern to explain it, and a guard that fires on its own explanation gets deleted.
+   */
+  it('grants cross-origin trust to no hostname we have released', () => {
+    const stripComments = (s: string) =>
+      s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const RELEASED = /azurecontainerapps\.io|azurewebsites\.net|\.azureedge\.net/;
+    for (const [name, src] of [
+      ['relay', relaySrc], ['identity', identitySrc], ['css-gate', cssGateSrc],
+    ] as const) {
+      const offending = stripComments(src)
+        .split('\n')
+        .filter(l => RELEASED.test(l));
+      expect(offending, `${name} still trusts a released hostname:\n  ${offending.join('\n  ')}`)
+        .toEqual([]);
     }
   });
 
