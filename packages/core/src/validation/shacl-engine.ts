@@ -508,6 +508,13 @@ function buildSubclassClosure(data: ParsedDocument): Map<IRI, Set<IRI>> {
     }
   }
   const closure = new Map<IRI, Set<IRI>>();
+  // ★ BOUNDED. The closure materialises a descendant set per parent, so a deep chain is
+  // O(k^2) in both time and heap — and this runs on fully caller-supplied graph_content,
+  // synchronously, on the publish path. Unbounded it is a caller-triggered CPU/heap
+  // exhaustion vector that blocks the event loop for the whole replica. Past the cap the
+  // closure is abandoned (entailment degrades to direct-type) rather than risking OOM.
+  const MAX_CLOSURE_EDGES = 5000;
+  let edges = 0;
   for (const parent of direct.keys()) {
     const out = new Set<IRI>();
     const stack = [...(direct.get(parent) ?? [])];
@@ -515,6 +522,7 @@ function buildSubclassClosure(data: ParsedDocument): Map<IRI, Set<IRI>> {
       const c = stack.pop()!;
       if (out.has(c)) continue;                     // cycle-safe
       out.add(c);
+      if (++edges > MAX_CLOSURE_EDGES) return new Map();
       for (const g of direct.get(c) ?? []) stack.push(g);
     }
     closure.set(parent, out);
