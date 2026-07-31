@@ -56,8 +56,14 @@ describe('every declared shape namespace resolves to a published file', () => {
   }
 
   it('the published copy matches its source of truth', () => {
-    const a = readFileSync(join(REPO, 'docs/applications/agentic-performance-practice/agp-shapes.ttl'), 'utf8');
-    const b = readFileSync(join(REPO, 'docs/applications/agentic-performance-practice/agp/shapes'), 'utf8');
-    expect(b, 'the copy served at the declared IRI has drifted from agp-shapes.ttl').toBe(a);
+    // Line endings are normalised: git's autocrlf rewrites them on checkout, so a raw
+    // byte comparison fails on Windows for content that is in fact identical. What must
+    // not drift is the CONTENT.
+    const norm = (p: string) =>
+      readFileSync(join(REPO, p), 'utf8').split('\r\n').join('\n');
+    expect(
+      norm('docs/applications/agentic-performance-practice/agp/shapes'),
+      'the copy served at the declared IRI has drifted from agp-shapes.ttl',
+    ).toBe(norm('docs/applications/agentic-performance-practice/agp-shapes.ttl'));
   });
 });
