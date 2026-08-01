@@ -43,6 +43,12 @@ import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { LineSplitter } from '../../editor-witness/src/transport.js';
 
+// Frame tracing is ON while the instrument itself is being debugged; PROBE_TRACE=0
+// silences it. Method names only, never params.
+const TRACE = process.env['PROBE_TRACE'] !== '0';
+const TRACE_CAP = 80;
+let traced = 0;
+
 const REJECT_ALWAYS_ID = 'iep_reject_always';
 const PERMISSION_METHOD = 'session/request_permission';
 
@@ -81,6 +87,9 @@ child.on('error', (e) => { note(`[probe] could not start agent: ${e.message}`); 
 const standing = new Map<string, { at: number; toolKind: string }>();
 /** requestId -> the toolName it concerned, so the answer can be attributed. */
 const pending = new Map<string, { toolName: string; toolKind: string }>();
+/** requestId -> when we forwarded it, so the answer's latency is visible. A human takes
+ *  seconds; an editor answering from policy takes milliseconds. That gap is the tell. */
+const askedAtMs = new Map<string, number>();
 
 const tally = {
   requestsSeen: 0,
@@ -90,6 +99,8 @@ const tally = {
   autoDeniedByStandingRule: 0,
   autoDeniedByTool: {} as Record<string, number>,
   otherOutcomes: {} as Record<string, number>,
+  /** reject_always answers arriving too fast to be human — the client's policy, not consent. */
+  machineSpeedRejectAlways: 0,
 };
 
 /**
@@ -136,6 +147,16 @@ function handleFromAgent(line: string): void {
   let f: Frame | null = null;
   try { const v: unknown = JSON.parse(line); if (v && typeof v === 'object') f = v as Frame; } catch { /* forward as-is */ }
 
+  // ★ Trace what the agent actually asks the editor to do. Diagnosing "it said it wrote
+  // the file but the file is not there" needs to separate a tool that never ran from one
+  // the EDITOR was asked to run and did not. Method names ONLY — never params, which carry
+  // prompts, paths and file contents. Capped so a long session cannot flood the log.
+  if (TRACE && f?.method && traced < TRACE_CAP) {
+    traced += 1;
+    note(`[probe] frame agent->editor: ${String(f.method)}`);
+    if (traced === TRACE_CAP) note('[probe] frame trace cap reached; further frames not logged');
+  }
+
   if (!f || f.method !== PERMISSION_METHOD) { process.stdout.write(line + '\n'); return; }
 
   tally.requestsSeen += 1;
@@ -168,6 +189,14 @@ function handleFromAgent(line: string): void {
   if (typeof f.id === 'string' || typeof f.id === 'number') {
     pending.set(String(f.id), { toolName, toolKind });
   }
+  // ★ Announce every request as it happens. The tally only lands when the thread ends,
+  // which is useless while diagnosing "it never asked me": the question is whether the
+  // AGENT failed to ask or the EDITOR answered silently, and those look identical from the
+  // UI. With this line in the editor's log, an ask with no visible prompt is provably the
+  // editor auto-answering — and the round-trip time below says how fast.
+  const offeredKinds = options.map(o => String(o.kind));
+  note(`[probe] ASK #${tally.requestsSeen} tool="${toolName}" kind=${toolKind} offered=[${offeredKinds.join(', ')}]`);
+  askedAtMs.set(String(f.id), Date.now());
   // Re-serialised deliberately — this frame is being CHANGED. Every other frame above is
   // forwarded as its original text.
   send(process.stdout, { ...f, params: { ...p, options } });
@@ -200,9 +229,36 @@ function handleFromEditor(line: string): void {
   }
   pending.delete(id!);
 
+  const waited = askedAtMs.has(id!) ? Date.now() - askedAtMs.get(id!)! : -1;
+  askedAtMs.delete(id!);
+  note(`[probe] ANSWER "${outcome.optionId}" after ${waited}ms`
+    + (waited >= 0 && waited < 250 ? '  <- too fast for a human: the EDITOR answered, not you' : ''));
+
   if (outcome.optionId !== REJECT_ALWAYS_ID) {
     tally.otherOutcomes[outcome.optionId] = (tally.otherOutcomes[outcome.optionId] ?? 0) + 1;
     child.stdin.write(line + '\n');
+    return;
+  }
+
+  // ★ A MACHINE-SPEED ANSWER IS NOT CONSENT, AND MUST NOT AUTHOR A STANDING RULE.
+  //
+  // This program APPENDS an option to a menu, which changes what a client that answers by
+  // position selects. If the editor auto-answers from policy it can land on the injected
+  // option, and the probe would then record a standing denial the developer never made —
+  // and silently auto-deny that tool for the rest of the session, while the agent narrates
+  // the failed calls as successes. Observed exactly that: a run where no prompt appeared,
+  // no file was written, and the agent reported "Done".
+  //
+  // A standing constraint is a claim about a PERSON's intent. So a reject_always that came
+  // back faster than a human could read the prompt is honoured ONCE and never persisted,
+  // and it is reported loudly rather than counted.
+  const HUMAN_FLOOR_MS = 250;
+  if (waited >= 0 && waited < HUMAN_FLOOR_MS) {
+    tally.machineSpeedRejectAlways += 1;
+    note(`[probe] IGNORING reject_always for "${ctx.toolName}" — answered in ${waited}ms, `
+      + 'far too fast for a human. The CLIENT chose it, probably by position because this '
+      + 'probe appends an option. Honouring it once; NOT authoring a standing rule.');
+    send(child.stdin, { jsonrpc: '2.0', id: f!.id, result: { outcome: { outcome: 'selected', optionId: 'reject' } } });
     return;
   }
 
