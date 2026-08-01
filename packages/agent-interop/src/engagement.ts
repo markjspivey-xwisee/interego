@@ -25,6 +25,11 @@ export interface EngagementStoreOptions {
   maxPartsPerTurn?: number;
   /** Hard cap on outputs per engagement — rejected, not evicted. */
   maxOutputsPerEngagement?: number;
+  /**
+   * Hard cap on retained eviction markers. Bounded for the same reason the engagements
+   * are: an unbounded record of what was dropped for space defeats the bound it explains.
+   */
+  maxTombstones?: number;
 }
 
 const DEFAULTS = {
@@ -32,12 +37,26 @@ const DEFAULTS = {
   maxTurnsPerEngagement: 1_000,
   maxPartsPerTurn: 128,
   maxOutputsPerEngagement: 32,
+  maxTombstones: 10_000,
 } as const;
 
 export type EngineResult<T> = { ok: true; value: T } | { ok: false; error: EngineError };
 
 export interface EngineError {
-  kind: 'unauthenticated' | 'forbidden' | 'notFound' | 'badRequest' | 'unsupportedOperation' | 'internal';
+  kind:
+    | 'unauthenticated' | 'forbidden' | 'notFound' | 'badRequest'
+    | 'unsupportedOperation' | 'internal'
+    /**
+     * The engagement existed and was dropped to stay within the retention bound.
+     *
+     * ★ Distinct from `notFound` on purpose. `notFound` asserts the id never existed,
+     * which after an eviction is false — and a peer holding the id, or a workspace entry
+     * citing it, cannot act on a claim that is false. This says "real, and no longer
+     * kept", which is a retention limit somebody can raise rather than an error in the
+     * caller. Only ever returned to the engagement's OWNER; to anyone else it stays
+     * indistinguishable from a genuine miss.
+     */
+    | 'gone';
   detail: string;
 }
 
@@ -94,6 +113,8 @@ export function availableOperations(state: EngagementState): ReadonlyArray<'appe
 
 export class EngagementEngine {
   private readonly engagements = new Map<string, Engagement>();
+  /** Evicted ids, with who owned them — owner-scoped so this is not an existence oracle. */
+  private readonly tombstones = new Map<string, { owner: string; evictedAt: string }>();
   private readonly opts: Required<EngagementStoreOptions>;
   private seq = 0;
 
@@ -112,10 +133,39 @@ export class EngagementEngine {
     return `${base}/engagements/${now.toString(36)}-${(this.seq++).toString(36)}`;
   }
 
+  /**
+   * Drop the oldest engagement when the store is full — and leave a marker saying so.
+   *
+   * ★ Eviction used to be silent, and silence here breaks a promise the id itself makes.
+   * `mintId` returns a dereferenceable URL, and the substrate's rule is that an identifier
+   * resolves. After eviction it did not: the id came back `notFound`, which asserts that
+   * it NEVER EXISTED. A peer holding that id — or a workspace entry citing it — could not
+   * tell "this engagement was real and we no longer keep it" from "you made this up".
+   *
+   * Those are different facts and they need different answers. The first is a retention
+   * limit somebody can raise; the second is an error in the caller. Conflating them makes
+   * a capacity problem look like a correctness problem, which is how retention limits go
+   * unnoticed until an audit needs the record that is gone.
+   *
+   * ★ The tombstone is OWNER-SCOPED, exactly like `get`. Telling a stranger that some id
+   * once existed would turn eviction into the existence oracle the owner-scoping exists to
+   * prevent — the same rule the `/engagements/:id` route follows, and for the same reason.
+   * The tombstone set is bounded too: an unbounded record of evictions would defeat the
+   * bound it exists to explain.
+   */
   private evictIfNeeded(): void {
     if (this.engagements.size < this.opts.maxEngagements) return;
     const oldest = this.engagements.keys().next().value;
-    if (oldest !== undefined) this.engagements.delete(oldest);
+    if (oldest === undefined) return;
+    const victim = this.engagements.get(oldest);
+    this.engagements.delete(oldest);
+    if (victim) {
+      if (this.tombstones.size >= this.opts.maxTombstones) {
+        const stale = this.tombstones.keys().next().value;
+        if (stale !== undefined) this.tombstones.delete(stale);
+      }
+      this.tombstones.set(oldest, { owner: victim.openedBy, evictedAt: new Date().toISOString() });
+    }
   }
 
   /** Open an engagement attributed to the VERIFIED caller. */
@@ -160,9 +210,23 @@ export class EngagementEngine {
   get(id: string, caller: string | undefined): EngineResult<Engagement> {
     if (!caller) return fail('unauthenticated', 'a verified caller is required');
     const e = this.engagements.get(id);
-    // Deliberately indistinguishable from a genuine miss: a distinct 403 would be
-    // an existence oracle over other principals' engagement ids.
-    if (!e || e.openedBy !== caller) return fail('notFound', 'no such engagement');
+    if (!e || e.openedBy !== caller) {
+      // ★ The OWNER of an evicted engagement is told it was evicted. Everyone else gets
+      // the same answer they would get for an id that never existed — a distinct response
+      // would be an existence oracle over other principals' engagement ids, which is the
+      // rule `/engagements/:id` follows for exactly this reason.
+      const t = this.tombstones.get(id);
+      if (t && t.owner === caller) {
+        return fail(
+          'gone',
+          `this engagement existed and was dropped at ${t.evictedAt} to stay within the `
+          + 'retention bound. It is not recoverable from this relay. Raise maxEngagements, '
+          + 'or persist engagements you need to keep.',
+        );
+      }
+      // Deliberately indistinguishable from a genuine miss.
+      return fail('notFound', 'no such engagement');
+    }
     return { ok: true, value: e };
   }
 

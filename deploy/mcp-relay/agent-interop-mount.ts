@@ -23,11 +23,22 @@ import {
   EngagementEngine, renderCard, capabilitiesFromAffordances, isEngineError, availableOperations,
   PROFILES,
   type Capability, type InteropProfile, type InteropErrorKind, type InteropOperation, type Part,
+  type EngineError,
 } from '@interego/agent-interop';
 
 export interface AgentInteropDeps {
   /** Absolute public base URL of this relay. */
   publicBase: string;
+  /**
+   * The engagement store. Defaults to a fresh in-memory engine bound to `publicBase`.
+   *
+   * ★ Injectable because the default DOES NOT SURVIVE A RESTART, and every engagement id
+   * this relay mints is a dereferenceable URL that promises it will. A deployment that
+   * needs cited engagements to keep resolving — a workspace entry pointing at one, a peer
+   * holding the id from last week — supplies an engine backed by real storage. Nothing in
+   * this mount changes when it does, which is the point of the seam.
+   */
+  engine?: EngagementEngine;
   /** Agent identity for the card. */
   agent: { id: string; name: string; description: string; tenant?: string };
   /** The relay's LIVE affordance set. Called per card render so the card tracks
@@ -75,6 +86,23 @@ export interface AgentInteropDeps {
 /** Escape a literal for embedding in a RegExp route. */
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Narrow an engine error kind to something the wire protocols can actually say.
+ *
+ * ★ `gone` exists at the ENGINE level and has no equivalent in the protocols this mount
+ * fronts. Their error vocabularies are fixed by their own specifications, and inventing a
+ * code inside one would be non-conformant — the TCK would be right to fail it.
+ *
+ * So a protocol peer is told `notFound`, and information is genuinely lost. That is a real
+ * cost of speaking someone else's protocol faithfully, and the right place to pay it: the
+ * protocol-neutral `/engagements/:id` route is OURS, answers 410 with the eviction time,
+ * and is exactly what a peer following the id it was handed will reach. The narrowing is
+ * one function so it cannot be applied inconsistently across profiles.
+ */
+function wireKind(kind: EngineError['kind']): InteropErrorKind {
+  return kind === 'gone' ? 'notFound' : kind;
 }
 
 /** Render a profile-shaped error. Never echoes internal detail. */
@@ -300,7 +328,15 @@ function sendEngagement(
 
 export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
   const base = deps.publicBase.replace(/\/$/, '');
-  const engine = new EngagementEngine(base);
+  // The engine is injectable so a deployment can supply one that OUTLIVES the process.
+  //
+  // ★ The default is in-memory and bounded, which means every engagement id this relay
+  // mints stops resolving on restart — and eviction can retire one sooner than that. The
+  // id is a URL, and a URL that stops resolving is a broken promise however good the
+  // reason. Making the engine injectable is what lets a durable store be supplied without
+  // a second change to this mount; the eviction tombstone is what makes the interim state
+  // honest rather than silent.
+  const engine = deps.engine ?? new EngagementEngine(base);
 
   const identityFor = (capabilities: Capability[]) => ({
     id: deps.agent.id,
@@ -454,7 +490,7 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             const r = typeof ref === 'string' && ref
               ? engine.appendTurn({ id: ref, caller, role: 'requester', parts })
               : engine.open({ caller, parts, ...(capability ? { capability } : {}) });
-            if (isEngineError(r)) { sendErr(res, profile, r.error.kind, r.error.detail); return; }
+            if (isEngineError(r)) { sendErr(res, profile, wireKind(r.error.kind), r.error.detail); return; }
 
             // ── Do the work, if a capability was named and we can perform it ──
             //
@@ -467,7 +503,7 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             const cap = eng.capability;
             if (cap && deps.invokeCapability) {
               const began = engine.begin(eng.id, caller);
-              if (isEngineError(began)) { sendErr(res, profile, began.error.kind, began.error.detail); return; }
+              if (isEngineError(began)) { sendErr(res, profile, wireKind(began.error.kind), began.error.detail); return; }
               // ★ A DELIBERATE REFUSAL AND A CRASH ARE DIFFERENT FACTS, and only one
               // of them is safe to repeat to a caller. The invoker RETURNS a refusal
               // whose reason it has chosen to publish; anything THROWN is unexpected
@@ -494,7 +530,7 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
               // question and the answer is "that did not work".
               if (outcome.ok === false) {
                 const failed = engine.fail({ id: eng.id, caller, reason: (outcome as { reason: string }).reason });
-                if (isEngineError(failed)) { sendErr(res, profile, failed.error.kind); return; }
+                if (isEngineError(failed)) { sendErr(res, profile, wireKind(failed.error.kind)); return; }
                 sendEngagement(res, profile, (failed as { ok: true; value: typeof eng }).value, base, route.operation);
                 return;
               }
@@ -502,7 +538,7 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
                 id: eng.id, caller,
                 outputs: [(outcome as { output: { name?: string; description?: string; parts: Part[] } }).output],
               });
-              if (isEngineError(done)) { sendErr(res, profile, done.error.kind, done.error.detail); return; }
+              if (isEngineError(done)) { sendErr(res, profile, wireKind(done.error.kind), done.error.detail); return; }
               sendEngagement(res, profile, (done as { ok: true; value: typeof eng }).value, base, route.operation);
               return;
             }
@@ -513,7 +549,7 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
 
           if (route.operation === 'getEngagement') {
             const r = engine.get(engagementIdFrom(req), caller);
-            if (isEngineError(r)) { sendErr(res, profile, r.error.kind); return; }
+            if (isEngineError(r)) { sendErr(res, profile, wireKind(r.error.kind)); return; }
             sendEngagement(res, profile, r.value, base, route.operation);
             return;
           }
@@ -521,7 +557,7 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
           if (route.operation === 'listEngagements') {
             const limit = Number.parseInt(String(req.query['limit'] ?? '50'), 10);
             const r = engine.list(caller, Number.isFinite(limit) ? limit : 50);
-            if (isEngineError(r)) { sendErr(res, profile, r.error.kind); return; }
+            if (isEngineError(r)) { sendErr(res, profile, wireKind(r.error.kind)); return; }
             if (profile.wireMediaType) res.type(profile.wireMediaType);
             // The collection member name comes from the profile. This line used to
             // hardcode one particular protocol's field name in a mount that is
@@ -536,7 +572,7 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
 
           if (route.operation === 'cancelEngagement') {
             const r = engine.cancel(engagementIdFrom(req), caller);
-            if (isEngineError(r)) { sendErr(res, profile, r.error.kind); return; }
+            if (isEngineError(r)) { sendErr(res, profile, wireKind(r.error.kind)); return; }
             sendEngagement(res, profile, r.value, base, route.operation);
             return;
           }
@@ -584,7 +620,24 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
         // trailing segment, because the id IS the URL.
         const id = `${base}/engagements/${String((req.params as Record<string, string>)['id'] ?? '')}`;
         const found = engine.get(id, caller);
-        if (!found.ok) { res.status(404).json({ error: 'notFound' }); return; }
+        if (!found.ok) {
+          // ★ 410 ONLY for the engagement's own owner, and only when it was evicted.
+          //
+          // The id is a URL this relay minted and promised would resolve. After eviction
+          // it answered 404 — which asserts it never existed, and for a peer or a
+          // workspace entry holding that id, that assertion is false. 410 says "real, and
+          // no longer kept": a retention limit somebody can raise, not a caller error.
+          //
+          // The engine only ever returns `gone` to the owner; to anyone else an evicted id
+          // is still `notFound`, byte-identical to a guess. Distinguishing them for a
+          // stranger would rebuild the existence oracle the owner-scoping exists to close.
+          if (isEngineError(found) && found.error.kind === 'gone') {
+            res.status(410).json({ error: 'gone', detail: found.error.detail });
+            return;
+          }
+          res.status(404).json({ error: 'notFound' });
+          return;
+        }
 
         // Navigable across protocols without the body naming one: each profile's own view
         // of this engagement is offered as a Link, so a peer can follow to the projection
