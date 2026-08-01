@@ -1235,8 +1235,36 @@ export async function checkSupersessionPrecondition(input: {
    * comparison removes the flaky read from the CAS path entirely.
    */
   readonly headCidLookup?: (descriptorUrl: string) => string | null | undefined;
+  /**
+   * The chain's CURRENT heads — the descriptors nothing else supersedes.
+   *
+   * ★ Without this, the precondition is not a compare-and-swap. `supersedesList` is
+   * `descriptor.supersedes`, which under `auto_supersede_prior` holds EVERY prior
+   * version of the graph, so matching the caller's assertion against that list means an
+   * ancestor satisfies it forever. Two writers who both read v1 then both succeed, and
+   * the second overwrites a state it never read — precisely the lost update the
+   * precondition exists to prevent — while the response reports `precondition.passed`.
+   *
+   * Supplied, the assertion must name a live head. The frontier comes from the same
+   * manifest read `get_current_head` performs, so the read and write halves of one CAS
+   * agree on what "head" means instead of each carrying an opinion.
+   *
+   * Omitted, the older membership test applies — for callers whose supersedes list is
+   * content-authored semantic supersession rather than a manifest-derived version chain,
+   * where there is no frontier to compute. The relay's publish path, which is the only
+   * externally reachable one, always supplies it.
+   */
+  readonly currentHeads?: readonly string[];
+  /**
+   * Canonicaliser for descriptor URLs. Manifest entries and `iep:supersedes` targets can
+   * carry either the internal-FQDN host or the legacy public one; comparing the two raw
+   * would make a live head look absent from its own frontier, rejecting a legitimate
+   * publish — and a guard that fires on valid input is a guard someone switches off.
+   */
+  readonly normalizeUrl?: (descriptorUrl: string) => string;
 }): Promise<SupersessionPreconditionPass> {
-  const { supersedesList, ifMatchSupersedes, ifMatchCid, fetchFn, headCidLookup } = input;
+  const { supersedesList, ifMatchSupersedes, ifMatchCid, fetchFn, headCidLookup, currentHeads } = input;
+  const normalizeUrl = input.normalizeUrl ?? ((u: string) => u);
   if (ifMatchSupersedes === undefined && ifMatchCid === undefined) {
     throw new Error(
       'checkSupersessionPrecondition: at least one of ifMatchSupersedes / ifMatchCid must be set — callers should skip this function when no precondition was requested.',
@@ -1378,6 +1406,33 @@ export async function checkSupersessionPrecondition(input: {
     );
   }
 
+  // ★ THE COMPARE-AND-SWAP. Everything above only established that the assertion names
+  // SOMETHING in the supersedes list; under auto_supersede_prior that list is every
+  // version ever published for this graph, so an ancestor matches forever. Requiring the
+  // matched target to be a live head is what makes this a swap rather than a lookup:
+  // a writer who read v1, was overtaken by v2, and asserts v1 is now told so, instead of
+  // landing a v3 computed from a state that no longer exists.
+  if (currentHeads !== undefined) {
+    const heads = new Set(currentHeads.map(normalizeUrl));
+    if (!heads.has(normalizeUrl(resolvedHeadUrl))) {
+      throw new PublishPreconditionFailedError(
+        `publish: precondition failed — <${resolvedHeadUrl}> is a SUPERSEDED ancestor of this chain, `
+        + `not its current head. Another writer published after you read it. `
+        + `Current head${currentHeads.length === 1 ? '' : 's'}: [${currentHeads.join(', ')}]`
+        + `${currentHeads.length === 0 ? ' (none — every descriptor for this graph is superseded)' : ''}.`,
+        {
+          ...(ifMatchSupersedes !== undefined ? { supersedes: ifMatchSupersedes } : {}),
+          ...(ifMatchCid !== undefined ? { cid: ifMatchCid } : {}),
+        },
+        {
+          descriptorUrl: currentHeads[0] ?? null,
+          cid: observed.find(o => normalizeUrl(o.descriptorUrl) === normalizeUrl(currentHeads[0] ?? ''))?.cid ?? null,
+          supersedesList: currentHeads,
+        },
+      );
+    }
+  }
+
   return {
     ok: true,
     resolvedHeadUrl,
@@ -1491,6 +1546,8 @@ export async function publish(
       ...(options.ifMatchCid !== undefined ? { ifMatchCid: options.ifMatchCid } : {}),
       fetchFn,
       ...(options.headCidLookup ? { headCidLookup: options.headCidLookup } : {}),
+      ...(options.currentHeads ? { currentHeads: options.currentHeads } : {}),
+      ...(options.normalizeHeadUrl ? { normalizeUrl: options.normalizeHeadUrl } : {}),
     });
     resolvedHeadUrl = pass.resolvedHeadUrl;
     resolvedHeadCid = pass.resolvedHeadCid;

@@ -309,6 +309,27 @@ export interface PublishOptions {
   readonly headCidLookup?: (descriptorUrl: string) => string | null | undefined;
 
   /**
+   * The chain's current heads — descriptors nothing else supersedes — used to make
+   * `ifMatchSupersedes` / `ifMatchCid` an actual compare-and-swap.
+   *
+   * ★ Without it the precondition compares against `descriptor.supersedes`, which under
+   * `auto_supersede_prior` accumulates EVERY prior version, so a stale assertion naming
+   * a long-superseded ancestor passes. Both concurrent writers then succeed and the
+   * second silently overwrites a state it never read.
+   *
+   * Computed by the caller from the manifest (the same source `get_current_head` reads),
+   * so the two halves of one CAS share a definition of "head".
+   */
+  readonly currentHeads?: readonly string[];
+
+  /**
+   * Canonicaliser applied to both sides of the head comparison. Manifest entries and
+   * `iep:supersedes` targets may carry the internal-FQDN host or the legacy public one;
+   * without normalisation a live head can look absent from its own frontier.
+   */
+  readonly normalizeHeadUrl?: (descriptorUrl: string) => string;
+
+  /**
    * Optional SHACL conformance gate, run BEFORE any pod write. Lets the
    * caller (typically the MCP relay, but anything calling publish()
    * directly) declare a list of shape graphs the inbound `graphContent`

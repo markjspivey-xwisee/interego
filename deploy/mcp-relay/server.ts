@@ -281,6 +281,7 @@ import type { NodeProvenance } from '@interego/pgsl';
 // publish-then-resolve invariant this module exists to enforce.
 import * as publishedNodes from './pgsl-node-store.js';
 import { alternateTurtleHref, looksLikeHtml } from './alternate-turtle.js';
+import { supersessionFrontier } from './supersession-frontier.js';
 
 // Privacy — `@interego/privacy`.
 import { screenForSensitiveContent, formatSensitivityWarning } from '@interego/privacy';
@@ -2439,6 +2440,29 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       },
     };
   })();
+  // ★ The chain's CURRENT heads, for the compare-and-swap.
+  //
+  // `priorVersions` above is EVERY descriptor describing this graph, because that is
+  // what auto_supersede_prior must link. Comparing `if_match` against that list is not a
+  // swap — an ancestor stays in it forever, so a writer who read v1 and was overtaken by
+  // v2 still passes and lands a v3 computed from a state that no longer exists. Both
+  // concurrent writers succeed; one update is lost; the response says
+  // `precondition.passed: true`. Observed live before this was fixed.
+  //
+  // `get_current_head` — the READ half of the same CAS — has always computed the frontier
+  // correctly. Sharing one function is the point: the two halves cannot drift apart into
+  // separate opinions about which descriptor is the head.
+  //
+  // Computed only when a precondition was actually asserted. A plain republish does not
+  // need it, and the frontier says nothing about whether auto_supersede should link a
+  // prior — it must still link all of them.
+  const casHeads: readonly string[] | undefined =
+    ifMatch !== undefined && manifestEntriesForLookup && args.graph_iri
+      ? supersessionFrontier(manifestEntriesForLookup, args.graph_iri as string, {
+        exclude: descId,
+        normalize: normalizeCssUrl,
+      }).heads
+      : undefined;
   // Wire-level visibility for Phase A diagnosis. Logs whether the
   // mirror lookup is populated, the supersedes list the precondition
   // will iterate, and a sample of indexed URLs so a publish that 503s
@@ -2853,6 +2877,14 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const conformsToShapesOpt = resolvedShapesForPublish.length > 0
     ? { conformsToShapes: resolvedShapesForPublish }
     : {};
+  // The frontier goes onto BOTH publish paths, not only Phase A. The sync path
+  // (compliance / authorship / conformance publishes) runs its own precondition inside
+  // publish(); leaving it off there would fix the CAS for ordinary publishes and quietly
+  // leave it broken for the compliance-grade ones, which are the writes most likely to
+  // matter in an audit.
+  const casHeadsOpt = casHeads
+    ? { currentHeads: casHeads, normalizeHeadUrl: normalizeCssUrl }
+    : {};
   const publishOptions: Parameters<typeof publish>[3] = recipients.length > 0
     ? {
         fetch: solidFetch,
@@ -2863,6 +2895,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
         ...(ifMatchCid ? { ifMatchCid } : {}),
         ...manifestHeadCidLookupOpt,
+        ...casHeadsOpt,
         ...conformsToShapesOpt,
       }
     : {
@@ -2872,6 +2905,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
         ...(ifMatchCid ? { ifMatchCid } : {}),
         ...manifestHeadCidLookupOpt,
+        ...casHeadsOpt,
         ...conformsToShapesOpt,
       };
   // Per-pod mutex: serialize same-process publishers to this pod so the
@@ -2955,6 +2989,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         ...(ifMatchCid ? { ifMatchCid } : {}),
         fetchFn: solidFetch,
         ...manifestHeadCidLookupOpt,
+        ...(casHeads ? { currentHeads: casHeads, normalizeUrl: normalizeCssUrl } : {}),
       });
     } catch (err) {
       if (err instanceof PublishPreconditionFailedError) {
@@ -6223,20 +6258,19 @@ async function handleGetCurrentHead(args: ToolArgs): Promise<string> {
     return JSON.stringify({ error: `Could not read manifest from ${podUrl}: ${(err as Error).message}` });
   }
 
-  const describing = entries.filter((e) => e.describes.includes(urn as IRI));
-  if (describing.length === 0) {
+  // An entry is a chain head iff no other entry's iep:supersedes points at it. The
+  // manifest mirrors iep:supersedes (see manifestEntryTurtle), so this needs no
+  // descriptor fetches.
+  //
+  // Shared with the publish path's CAS precondition: this read half was always correct
+  // and the write half was not, so they now compute the frontier with one function
+  // rather than two implementations that can disagree about which descriptor is current.
+  const frontier = supersessionFrontier(entries, urn, { normalize: normalizeCssUrl });
+  if (frontier.all.length === 0) {
     return JSON.stringify({ urn, podUrl, head: null, message: 'No descriptor on this pod describes the requested urn.' });
   }
-  // An entry is a chain head iff no other entry's iep:supersedes points
-  // at it. The manifest mirrors iep:supersedes (see manifestEntryTurtle),
-  // so we can compute this without fetching descriptors.
-  const superseded = new Set<string>();
-  for (const e of describing) {
-    for (const s of (e.supersedes ?? [])) {
-      superseded.add(s);
-    }
-  }
-  const heads = describing.filter((e) => !superseded.has(e.descriptorUrl));
+  const byUrl = new Map(entries.map(e => [e.descriptorUrl, e]));
+  const heads = frontier.heads.map(u => byUrl.get(u)!).filter(Boolean);
   // Compute CIDs for each candidate head. If there are multiple, the
   // chain has forked — the caller needs to see all of them.
   //
