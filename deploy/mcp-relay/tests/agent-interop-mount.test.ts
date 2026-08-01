@@ -157,6 +157,48 @@ check('a malformed body is a 400 from the profile table', badRes.statusCode === 
 check('the error body carries a code + message, not a stack',
   !!(badRes.body as any)?.error?.code && !/stack|\bat \//i.test(JSON.stringify(badRes.body)));
 
+console.log('\n5b. the engine\'s own ids RESOLVE (they used to 404)');
+{
+  // ★ mintId's own comment promises "a URL that resolves to the record, never a urn:" —
+  // and nothing served it. Every engagement id handed to a peer 404'd, measured live
+  // against production. A urn: would at least be honestly undereferenceable; this was a
+  // URL that promised and refused.
+  // Located by its registered form: this one is an ordinary Express `:id` path, not a
+  // RegExp, because the trailing segment of a minted id contains no slashes.
+  const resolver = routes.find(r => r.method === 'GET' && r.path === '/engagements/:id');
+  check('a route exists for engine-minted ids', resolver !== undefined);
+
+  verifiedCaller = 'did:ethr:0xAAA';
+  const openRes = mkRes();
+  await send.handler({ headers: {}, query: {}, params: {}, body: { parts: [{ text: 'resolve me' }] } }, openRes);
+  const eng = ((openRes.body as any)?.task ?? openRes.body) as any;
+  const tail = String(eng.id).split('/engagements/')[1];
+
+  const mine = mkRes();
+  await resolver!.handler({ headers: {}, query: {}, params: { id: tail }, body: {} }, mine);
+  check('the owner resolves their own engagement', mine.statusCode === 200, String(mine.statusCode));
+  check('...and it carries rel=self plus a per-profile alternate',
+    /rel="self"/.test(String(mine.headers['link'])) && /rel="alternate"/.test(String(mine.headers['link'])),
+    String(mine.headers['link']).slice(0, 90));
+
+  // ★ NOT-YOURS AND NOT-FOUND MUST BE THE SAME ANSWER. Distinguishing them would turn
+  // this route into an existence oracle over every engagement in the deployment.
+  verifiedCaller = 'did:ethr:0xBBB';
+  const theirs = mkRes();
+  await resolver!.handler({ headers: {}, query: {}, params: { id: tail }, body: {} }, theirs);
+  const bogus = mkRes();
+  await resolver!.handler({ headers: {}, query: {}, params: { id: 'no-such-engagement' }, body: {} }, bogus);
+  check('another principal gets notFound, not forbidden', theirs.statusCode === 404, String(theirs.statusCode));
+  check('...and a genuine miss is INDISTINGUISHABLE from it',
+    theirs.statusCode === bogus.statusCode && JSON.stringify(theirs.body) === JSON.stringify(bogus.body));
+
+  verifiedCaller = undefined;
+  const anon = mkRes();
+  await resolver!.handler({ headers: {}, query: {}, params: { id: tail }, body: {} }, anon);
+  check('an unverified caller is refused before the engine is touched', anon.statusCode === 401);
+  verifiedCaller = 'did:ethr:0xAAA';
+}
+
 console.log('\n6. engagements are owner-scoped (possession of an id is not authority)');
 const okRes = mkRes();
 await send.handler({ headers: {}, query: {}, params: {}, body: { parts: [{ text: 'hello' }] } }, okRes);
