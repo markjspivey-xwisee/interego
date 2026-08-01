@@ -226,8 +226,26 @@ triples.
 
 ## Status
 
-Increments 1–4 are built and verified against production. 5–6 (durable A2A engagements,
-cross-org + pySHACL conformance in CI) are not.
+All six increments are built. What is verified, and what is not:
+
+| | state |
+|---|---|
+| 1 roster, two-sided membership | built, 16 assertions |
+| 2 per-participant stream | built, **20/20 live** |
+| 3 composed cross-pod view | built, **14/14 live** across two identities on two pods |
+| 4 authority at the fold | built, **13/13 live**, refused at both layers |
+| 5 engagement `gone` + injectable engine | built, 11 assertions, deployed |
+| 6 independent SHACL agreement | built, **in CI** — `@interego/core` vs pySHACL |
+
+★ Two things are deliberately **not** claimed:
+
+- **Engagements are still not durable.** #239 made the gap visible (an evicted id answers
+  410 with the time, to its owner) and removed the substrate change that was blocking a
+  fix. The default engine still does not survive a restart.
+- **Cross-*organisation* is not verified.** What is verified is cross-**pod** and
+  cross-**identity**: two wallets, two pods, two credentials, composed into one view. A
+  second organisation means a second relay and a second identity provider, which nothing
+  here has exercised.
 
 There is deliberately **no CRDT**. The substrate already stores immutable
 content-addressed records, so per-resource compare-and-swap with a **visible** conflict is
