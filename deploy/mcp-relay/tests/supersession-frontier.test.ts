@@ -27,7 +27,7 @@
  * Exits non-zero on any failing assertion.
  */
 
-import { supersessionFrontier, type FrontierEntry } from '../supersession-frontier.js';
+import { supersessionFrontier, classifyIfMatch, type FrontierEntry } from '../supersession-frontier.js';
 
 let pass = 0;
 let fail = 0;
@@ -149,6 +149,20 @@ function main(): void {
       .heads.length === 0,
     'a self-superseding descriptor yields no head rather than a contradiction',
   );
+
+  // eslint-disable-next-line no-console
+  console.log('\nan unusable if_match is not a retryable failure');
+
+  // ★ "Wrong head" and "unusable value" deserve opposite answers. A wrong head is 412 and
+  // a re-read fixes it. Null can never work — reported as retryable, a caller loops until
+  // it gives up, and what it gives up on is its own compare-and-swap.
+  ok(classifyIfMatch(undefined) === 'absent', 'omitted is absent — the correct way to say "first version"');
+  ok(classifyIfMatch(null) === 'unusable', '★ JSON null is unusable, not absent');
+  ok(classifyIfMatch('') === 'unusable', 'an empty string is unusable');
+  ok(classifyIfMatch('   ') === 'unusable', 'whitespace is unusable');
+  ok(classifyIfMatch(0) === 'unusable', 'a number is unusable');
+  ok(classifyIfMatch('bafkreiabc') === 'usable', 'a CID is usable');
+  ok(classifyIfMatch('https://pod.example/c/1.ttl') === 'usable', 'a descriptor URL is usable');
 
   // eslint-disable-next-line no-console
   console.log(`\n${pass} passed, ${fail} failed`);

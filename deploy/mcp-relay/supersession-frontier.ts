@@ -34,6 +34,31 @@
  * are fetched to answer this question.
  */
 
+/**
+ * Is this `if_match` value usable at all?
+ *
+ * ★ Separate from "is the assertion correct", and it has to be, because the two failures
+ * deserve opposite answers. A WRONG head is 412 and retrying after a re-read fixes it. An
+ * UNUSABLE value — JSON null, an empty string, a number — can never work, however many
+ * times it is sent.
+ *
+ * Before this existed, an unusable value fell through: both `ifMatchSupersedes` and
+ * `ifMatchCid` ended up undefined (null and '' are falsy, so neither was spread into the
+ * publish options), the substrate gate threw its internal "at least one must be set"
+ * contract error, and the relay reported that as `503 precondition_unavailable,
+ * retryable: true`. A caller that believes `retryable` loops until it gives up, and what it
+ * gives up on is its own compare-and-swap.
+ *
+ * Observed while building the workspace stream, from a caller passing the head it had —
+ * which is legitimately null on an empty chain. Omitting `if_match` is how you say "this is
+ * the first version"; sending an empty one is not.
+ */
+export function classifyIfMatch(value: unknown): 'absent' | 'usable' | 'unusable' {
+  if (value === undefined) return 'absent';
+  if (typeof value !== 'string' || value.trim().length === 0) return 'unusable';
+  return 'usable';
+}
+
 /** The manifest fields this computation needs. Structural, so both callers' types fit. */
 export interface FrontierEntry {
   readonly descriptorUrl: string;
