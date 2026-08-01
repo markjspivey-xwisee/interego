@@ -383,4 +383,36 @@ describe('readStream', () => {
     const rows = await readStream(ref, deps);
     expect(rows.map(r => r.descriptorUrl)).toEqual([d(0)]);
   });
+
+  // ★ These exist because the live substrate reports a failed read as DATA, not as a
+  // rejection. `discover_context` against a dead host returns the plain string
+  // "Error: fetch failed"; against a real pod holding nothing it returns
+  // `{entries: [], registry: null}`. A permissive read reduces both to zero rows, and the
+  // two claims could not be further apart.
+  //
+  // The composed view's per-stream isolation was fully covered by a double that THREW, so
+  // it passed — and against the real relay it never fired once. An unreachable member was
+  // rendered as an idle one. Testing the double is not testing the composition.
+
+  const readWith = (value: unknown) =>
+    readStream(ref, { publish: vi.fn(), discover: vi.fn(async () => value as Record<string, unknown>) });
+
+  it('★ a tool-level error string THROWS rather than reading as an empty stream', async () => {
+    await expect(readWith('Error: fetch failed')).rejects.toThrow(/did not return a result object/);
+  });
+
+  it('★ an error envelope throws too, carrying the message', async () => {
+    await expect(readWith({ error: 'forbidden', message: 'no access to that pod' }))
+      .rejects.toThrow(/no access to that pod/);
+  });
+
+  it('★ a result with no entries array throws — the read did not succeed', async () => {
+    await expect(readWith({ registry: null })).rejects.toThrow(/unreachable member as an idle one/);
+  });
+
+  it('but a genuinely empty pod reads as an empty stream, not an error', async () => {
+    // The opposite direction matters just as much: a member who has not written yet is
+    // normal, and turning that into a failure would make every new workspace look broken.
+    await expect(readWith({ entries: [], registry: null })).resolves.toEqual([]);
+  });
 });

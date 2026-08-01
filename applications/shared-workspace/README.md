@@ -64,7 +64,9 @@ notices; over-privileging is a failure nobody notices.
 |---|---|
 | [`src/roster.ts`](src/roster.ts) | the two-sided fold: `foldRoster`, `may`, `explain`. Pure. |
 | [`src/stream.ts`](src/stream.ts) | one participant's log: `appendEntry`, `readStream`, `verifyChain`. |
-| [`tools/verify-stream-live.ts`](tools/verify-stream-live.ts) | the same module against the **live** relay. |
+| [`src/compose.ts`](src/compose.ts) | many pods read as one workspace: `composeWorkspace`, `resolveCitations`. |
+| [`tools/verify-stream-live.ts`](tools/verify-stream-live.ts) | the stream, against the **live** relay. |
+| [`tools/verify-compose-live.ts`](tools/verify-compose-live.ts) | two real identities, two real pods, one view. |
 | [`../../docs/applications/shared-workspace/wsp.ttl`](../../docs/applications/shared-workspace/wsp.ttl) | the vocabulary |
 | [`../../docs/applications/shared-workspace/wsp-shapes.ttl`](../../docs/applications/shared-workspace/wsp-shapes.ttl) | SHACL, enforced at publish |
 | [`../../docs/applications/shared-workspace/wsp-roles-default.ttl`](../../docs/applications/shared-workspace/wsp-roles-default.ttl) | five roles, as **data** |
@@ -111,6 +113,42 @@ same `seq` cannot both land: the loser gets a 412.
 in an append-only log, so a duplicate entry is unfixable by the writer. A lost retry is
 recoverable; a phantom is not.
 
+## The composed view, and the two grades of order
+
+`composeWorkspace` reads every member's stream — different pods, different owners,
+different credentials — and merges them. It carries **two grades of ordering and never
+conflates them**:
+
+- **within a stream — verified.** Every entry declares its predecessor; the chain is
+  walked and checked. Reordering it would require forging a descriptor.
+- **across streams — advisory.** Merged on `validFrom`, tie-broken by content-CID so the
+  result is at least deterministic. Two members' clocks can disagree and no merge fixes
+  that. Anything that depends on *"A happened before B"* across members must say so in the
+  **data** — an entry citing another entry is a fact; adjacency in this list is not.
+
+A single-relay design can total-order everything because one server assigns the order.
+This one cannot, and `crossStreamOrderIsAdvisory` is a non-omittable field so that anything
+consuming the feed has had to see the claim.
+
+### Partial availability is the point, so it has to be visible
+
+When the single relay is down, a one-relay workspace is **entirely** gone. Here, one
+member's pod being unreachable costs exactly that member's entries. That is a real
+advantage and a real hazard — a view that silently omits an unreachable member looks
+complete. So `unavailable` is first-class, `complete` is a boolean, and a failed stream is
+**never** merged as an empty one.
+
+> ★ That distinction was broken until the live run. `discover_context` reports an
+> unreachable pod as **data**, not as a rejection — the tool result for a dead host is the
+> plain string `"Error: fetch failed"`. Both that and a genuinely empty pod reduced to zero
+> rows, so an unreachable member was rendered as an idle one. The per-stream isolation was
+> fully covered by a double that *threw*, so it passed every test and never fired once
+> against the real relay. Testing the double is not testing the composition.
+
+A stream that reads but **does not verify** is reported and withheld from the feed —
+merging it would place entries whose order within their own member is unknown beside
+entries whose order is verified, with nothing to tell them apart.
+
 ## Poly-vertical by citation, not integration
 
 A `wsp:Reference` entry points at another vertical's record — a Foxxi credential, an
@@ -122,10 +160,17 @@ of step with the other.
 ## Verifying it
 
 ```bash
-npx vitest run tests/workspace-roster-fold.test.ts tests/workspace-stream.test.ts
+npx vitest run tests/workspace-roster-fold.test.ts \
+              tests/workspace-stream.test.ts \
+              tests/workspace-compose.test.ts
 
 # and against the live substrate — the doubles cannot verify the substrate
-IEP_BEARER=<relay bearer> npx tsx applications/shared-workspace/tools/verify-stream-live.ts
+IEP_BEARER=<token-a> npx tsx applications/shared-workspace/tools/verify-stream-live.ts
+
+# the composed view needs TWO real participants, because the relay's publish scope gate
+# refuses a caller writing to someone else's pod — which is the design working
+IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
+  npx tsx applications/shared-workspace/tools/verify-compose-live.ts
 ```
 
 The live verifier exists because a harness that stands in for a dependency cannot verify
@@ -136,8 +181,8 @@ triples.
 
 ## Status
 
-Increments 1–2 are built. 3–6 (composed cross-pod view, `wsp.can` as a live refusal,
-durable engagements, cross-org + pySHACL in CI) are not.
+Increments 1–3 are built and verified against production. 4–6 (`wsp.can` as a live
+refusal, durable engagements, cross-org + pySHACL in CI) are not.
 
 There is deliberately **no CRDT**. The substrate already stores immutable
 content-addressed records, so per-resource compare-and-swap with a **visible** conflict is
