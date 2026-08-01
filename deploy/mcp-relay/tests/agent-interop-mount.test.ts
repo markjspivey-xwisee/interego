@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mountAgentInterop } from '../agent-interop-mount.js';
-import { PROFILES } from '@interego/agent-interop';
+import { PROFILES, EngagementEngine, isEngineError } from '@interego/agent-interop';
 
 const here = dirname(fileURLToPath(import.meta.url));
 let failures = 0;
@@ -645,6 +645,99 @@ console.log("\n11. THE CARD'S PROMISE — an advertised capability is actually P
     plain.task.status.state);
 
   srv2.close();
+}
+
+
+console.log('\n9. an evicted engagement is GONE, not "never existed"');
+{
+  // ★ The engine's store is bounded, so a long-running relay silently drops the oldest
+  // engagements. The id it minted is a URL, and after eviction that URL answered 404 —
+  // which asserts it never existed. For a peer holding the id, or a workspace entry citing
+  // it, that assertion is FALSE, and the two facts need different answers: "we no longer
+  // keep this" is a retention limit somebody can raise; "you made this up" is a caller bug.
+  //
+  // Same defect class as the 404 fixed in 5b above, one layer down: there the route was
+  // missing, here the record is. Both made a minted URL lie.
+  const tiny = new EngagementEngine('https://relay.test', { maxEngagements: 2 });
+  const A = tiny.open({ caller: 'did:ethr:0xAAA', parts: [{ text: 'first' }] });
+  const B = tiny.open({ caller: 'did:ethr:0xAAA', parts: [{ text: 'second' }] });
+  check('two engagements fit', A.ok && B.ok);
+  const firstId = A.ok ? A.value.id : '';
+
+  // The third open evicts the first.
+  tiny.open({ caller: 'did:ethr:0xAAA', parts: [{ text: 'third' }] });
+
+  const evicted = tiny.get(firstId, 'did:ethr:0xAAA');
+  check('★ the OWNER is told it was evicted, not that it never existed',
+    isEngineError(evicted) && evicted.error.kind === 'gone',
+    isEngineError(evicted) ? evicted.error.kind : 'ok');
+  check('...and the reason names when, so a retention limit is diagnosable',
+    isEngineError(evicted) && /dropped at \d{4}-/.test(evicted.error.detail),
+    isEngineError(evicted) ? evicted.error.detail.slice(0, 70) : '');
+
+  // ★ AND NOT TO ANYONE ELSE. A tombstone visible to a stranger would rebuild the
+  // existence oracle the owner-scoping exists to close — the same rule 5b enforces.
+  const stranger = tiny.get(firstId, 'did:ethr:0xBBB');
+  const invented = tiny.get('https://relay.test/engagements/never', 'did:ethr:0xBBB');
+  check('★ a stranger gets notFound for the evicted id',
+    isEngineError(stranger) && stranger.error.kind === 'notFound',
+    isEngineError(stranger) ? stranger.error.kind : 'ok');
+  check('...INDISTINGUISHABLE from an id that never existed',
+    JSON.stringify(stranger) === JSON.stringify(invented));
+
+  // The tombstone set is itself bounded: an unbounded record of what was dropped for
+  // space would defeat the bound it exists to explain.
+  const capped = new EngagementEngine('https://relay.test', { maxEngagements: 1, maxTombstones: 1 });
+  const ids: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    const r = capped.open({ caller: 'did:ethr:0xAAA', parts: [{ text: `e${i}` }] });
+    if (r.ok) ids.push(r.value.id);
+  }
+  const oldestGone = capped.get(ids[0]!, 'did:ethr:0xAAA');
+  const newestGone = capped.get(ids[2]!, 'did:ethr:0xAAA');
+  check('the tombstone set is itself bounded — the oldest marker is dropped',
+    isEngineError(oldestGone) && oldestGone.error.kind === 'notFound',
+    isEngineError(oldestGone) ? oldestGone.error.kind : 'ok');
+  check('...while a recent eviction still reports gone',
+    isEngineError(newestGone) && newestGone.error.kind === 'gone',
+    isEngineError(newestGone) ? newestGone.error.kind : 'ok');
+}
+
+console.log('\n10. the engine is injectable, so durability needs no second change here');
+{
+  // ★ The default engine does not survive a restart, so every id this relay minted stops
+  // resolving. A deployment that needs cited engagements to keep resolving supplies its
+  // own; the seam is what makes that possible without touching the mount again.
+  const injected = new EngagementEngine('https://relay.test');
+  const pre = injected.open({ caller: 'did:ethr:0xAAA', parts: [{ text: 'from before the restart' }] });
+  check('an engagement exists in the injected engine before mounting', pre.ok);
+
+  // Every verb the mount can register, for the same reason the first double carries
+  // `delete`: a missing one crashes at boot rather than silently skipping a route.
+  const r2: any[] = [];
+  const app2: any = {
+    get: (p: any, h: any) => r2.push({ method: 'GET', path: p, handler: h }),
+    post: (p: any, h: any) => r2.push({ method: 'POST', path: p, handler: h }),
+    delete: (p: any, h: any) => r2.push({ method: 'DELETE', path: p, handler: h }),
+  };
+  mountAgentInterop(app2, {
+    publicBase: 'https://relay.test',
+    agent: { id: 'https://relay.test/.well-known/operations', name: 'Test Relay', description: 'test' },
+    affordances: () => AFFORDANCES,
+    verifyCaller: async () => 'did:ethr:0xAAA',
+    engine: injected,
+    log: () => {},
+  });
+  const resolver2 = r2.find((r: any) => r.method === 'GET' && r.path === '/engagements/:id');
+  const tail2 = pre.ok ? String(pre.value.id).split('/engagements/')[1] : '';
+  const got = mkRes();
+  await resolver2.handler({ headers: {}, query: {}, params: { id: tail2 }, body: {} }, got);
+  check('★ a mount given an engine resolves engagements it did not create',
+    got.statusCode === 200, String(got.statusCode));
+
+  // The seam must be a DEFAULT, not a requirement — every existing caller omits it.
+  check('omitting the engine still works (the default is in-memory)',
+    routes.some(r => r.method === 'GET' && r.path === '/engagements/:id'));
 }
 
 
