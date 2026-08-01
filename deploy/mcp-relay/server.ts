@@ -8854,6 +8854,22 @@ app.set('trust proxy', 1);
 // `packages/solid/src/client.ts` and is far above any realistic single-
 // descriptor publish (oversized payloads are content-addressed into
 // PGSL instead, per the size guard's error message).
+// ★ HSTS, before anything can short-circuit a response.
+//
+// The relay was serving no Strict-Transport-Security at all, while identity has had it for
+// a while — so the fleet was inconsistent in the direction that matters: this is the host
+// that carries bearer tokens, DPoP proofs and OAuth traffic. Without HSTS a single plaintext
+// request (a typed hostname, an old bookmark, a redirect from an http:// link) is available
+// to be intercepted before TLS is ever negotiated.
+//
+// Deliberately max-age only. `includeSubDomains` would bind every *.interego.xwisee.com
+// including any that is not fully HTTPS today, and `preload` is close to irreversible —
+// browsers bake it in and removal takes months. Both are a separate, explicit decision.
+app.use((_req, res, next) => {
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  next();
+});
+
 app.use(express.json({ limit: '4mb' }));
 // Login form POSTs x-www-form-urlencoded; OAuth token endpoint does too.
 app.use(express.urlencoded({ extended: false, limit: '4mb' }));
