@@ -81,6 +81,42 @@ export interface Tally {
   modeRequests: Record<string, number>;
   /** Mode transitions in order, so a mid-session switch is visible rather than averaged. */
   modeTimeline: string[];
+  /**
+   * ★ TRAP (b) — "allow_always" answers that were really SESSION MODE SWITCHES.
+   *
+   * The production agent's ExitPlanMode prompt is, verbatim:
+   *   { kind: "allow_always", name: "Yes, and auto-accept edits", optionId: "acceptEdits" }
+   *   { kind: "allow_once",   name: "Yes, and manually approve edits", optionId: "default" }
+   *   { kind: "reject_once",  name: "No, keep planning",  optionId: "plan" }
+   *
+   * Those optionIds ARE mode names. Choosing the first does not grant anything about the
+   * tool being asked about — it puts the whole session into acceptEdits, where the agent
+   * answers subsequent prompts itself. Counting it as "always-allow this tool" adds a
+   * grant that was never made and hides a mode change that reinterprets everything after.
+   *
+   * Detected from the wire rather than a vendor list: a mode switch announces itself, the
+   * agent emitting `current_mode_update` with `currentModeId` equal to the optionId just
+   * chosen. When that arrives the outcome is reclassified here instead of being guessed at.
+   */
+  modeSwitchesMistakableForGrants: Array<{ optionId: string; kind: string; toolKind: string }>;
+  /**
+   * ★ TRAP (a) — a standing grant is not a frequency.
+   *
+   * `allow_always` installs a SESSION RULE, so that tool never asks again. Each tool can
+   * therefore contribute at most ONE `allow_always` per session, and the total is a
+   * decreasing function of how early the developer granted: grant Bash at 09:01 and forty
+   * later uses are invisible; grant it at 17:00 and thirty-nine asks were counted first.
+   * Read as a rate it is not merely noisy, it is inverted.
+   *
+   * So the honest unit is DISTINCT TOOLS placed under a standing grant.
+   */
+  standingGrantsByTool: Record<string, number>;
+  /**
+   * Requests that arrived for a tool ALREADY under a standing grant. Should be zero; a
+   * non-zero value means the rule did not stick, and the allow_always count is then closer
+   * to a real frequency than to a count of tools.
+   */
+  asksAfterStandingGrant: number;
   /** Distinct sessions observed. */
   sessions: number;
   frames: number;
@@ -110,12 +146,20 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
     deniedAlwaysKinds: [],
     modeRequests: {},
     modeTimeline: [],
+    modeSwitchesMistakableForGrants: [],
+    standingGrantsByTool: {},
+    asksAfterStandingGrant: 0,
     sessions: 0,
     frames: 0,
   };
   // The agent's default until it says otherwise. Named, not left undefined, so the
   // summary never has to guess whether "no mode seen" means default or means unknown.
   let currentMode = 'default';
+  /** toolKind -> true once an always-scoped GRANT is in force for it (trap a). */
+  const standingGrant = new Set<string>();
+  /** The most recent answered outcome, so a following current_mode_update can reclassify
+   *  it (trap b). Kept as one slot: a mode update follows its own answer immediately. */
+  let lastAnswer: { optionId: string; kind: string; toolKind: string } | null = null;
 
   /** id -> { optionId -> kind, toolKind } for requests awaiting an answer. */
   const pending = new Map<string, { kinds: Map<string, string>; toolKind: string }>();
@@ -146,6 +190,10 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
         options?: ReadonlyArray<{ optionId?: unknown; kind?: unknown }>;
       } | undefined;
       const toolKind = typeof p?.toolCall?.kind === 'string' ? p.toolCall.kind : 'unknown';
+      // A standing grant should stop this tool asking again. If it asks anyway the rule did
+      // not stick, and the allow_always total means something different — so it is counted
+      // rather than assumed away.
+      if (standingGrant.has(toolKind)) tally.asksAfterStandingGrant++;
       const kinds = new Map<string, string>();
       for (const opt of p?.options ?? []) {
         if (typeof opt?.optionId === 'string' && typeof opt?.kind === 'string') {
@@ -168,9 +216,32 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
       // says who is answering from here on.
       if (u?.['sessionUpdate'] === 'current_mode_update') {
         const mode = u['currentModeId'];
-        if (typeof mode === 'string' && mode !== currentMode) {
-          currentMode = mode;
-          tally.modeTimeline.push(mode);
+        if (typeof mode === 'string') {
+          // ★ TRAP (b), resolved from the wire. If the answer just given named this very
+          // mode as its optionId, it was a MODE SWITCH, not a grant on the tool that was
+          // asked about. Undo the misclassification rather than leave a grant that was
+          // never made standing in the tally.
+          if (lastAnswer && lastAnswer.optionId === mode) {
+            tally.modeSwitchesMistakableForGrants.push({ ...lastAnswer });
+            const k = lastAnswer.kind;
+            if (tally.outcomeByKind[k]) {
+              tally.outcomeByKind[k] -= 1;
+              if (tally.outcomeByKind[k] === 0) delete tally.outcomeByKind[k];
+            }
+            if (k === 'allow_always') {
+              standingGrant.delete(lastAnswer.toolKind);
+              const t = lastAnswer.toolKind;
+              if (tally.standingGrantsByTool[t]) {
+                tally.standingGrantsByTool[t] -= 1;
+                if (tally.standingGrantsByTool[t] === 0) delete tally.standingGrantsByTool[t];
+              }
+            }
+            lastAnswer = null;
+          }
+          if (mode !== currentMode) {
+            currentMode = mode;
+            tally.modeTimeline.push(mode);
+          }
         }
         return;
       }
@@ -191,6 +262,15 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
 
     const kind = ctx.kinds.get(outcome.optionId) ?? 'unknown';
     bump(tally.outcomeByKind, kind);
+    // Held so an immediately following current_mode_update can reclassify it (trap b).
+    lastAnswer = { optionId: outcome.optionId, kind, toolKind: ctx.toolKind };
+    // ★ TRAP (a). A standing GRANT is recorded per TOOL, not as a tick in a frequency:
+    // the tool stops asking afterwards, so a second one for the same tool cannot occur
+    // and the total counts tools placed under a rule, not times you said yes.
+    if (kind.startsWith('allow') && kind.endsWith('always') && !standingGrant.has(ctx.toolKind)) {
+      standingGrant.add(ctx.toolKind);
+      bump(tally.standingGrantsByTool, ctx.toolKind);
+    }
     // "always" is the axis that matters: a once-scoped answer is a UI event, an
     // always-scoped one is a rule the human intends to persist.
     if (kind.startsWith('reject') && kind.endsWith('always')) {
@@ -228,6 +308,8 @@ export function summarise(t: Tally): string {
     `  unanswered at exit     ${t.unanswered}`,
     `  tool calls by kind     ${JSON.stringify(t.toolCallsByKind)}`,
     `  requests by mode       ${JSON.stringify(t.modeRequests)}`,
+    `  standing GRANTS by tool ${JSON.stringify(t.standingGrantsByTool)}`,
+    `  mode switches miscounted ${t.modeSwitchesMistakableForGrants.length}`,
     `  mode changes           ${t.modeTimeline.length ? t.modeTimeline.join(' → ') : '(none)'}`,
     `  always-scoped total    ${always}`,
     `  tool kinds ever denied ${t.deniedAlwaysKinds.length ? t.deniedAlwaysKinds.join(', ') : '(none)'}`,
@@ -271,6 +353,31 @@ export function summarise(t: Tally): string {
       '  classifier answers, not the developer — so those outcomes are not consent data.',
       '  Read the by-mode breakdown above before quoting any number from this run.');
   }
+
+  // ★ Trap (a): say what the allow_always number IS, next to it, not in a source comment.
+  const grantedTools = Object.keys(t.standingGrantsByTool).length;
+  if (grantedTools > 0 || (t.outcomeByKind['allow_always'] ?? 0) > 0) {
+    lines.push('',
+      '  NOTE on allow_always: a standing grant stops that tool asking again, so this is',
+      `  ${grantedTools} TOOL(S) placed under a rule — not a count of how often you allowed.`,
+      '  Grant early and every later use is invisible; grant late and the asks were counted',
+      '  first. Read as a rate it is not noisy, it is inverted.');
+    if (t.asksAfterStandingGrant > 0) {
+      lines.push(`  ⚠ ${t.asksAfterStandingGrant} ask(s) arrived for a tool already granted —`,
+        '  the rule did not stick, so the count is closer to a frequency after all.');
+    }
+  }
+
+  // ★ Trap (b): a mode switch wearing an allow_always label.
+  if (t.modeSwitchesMistakableForGrants.length > 0) {
+    const ids = [...new Set(t.modeSwitchesMistakableForGrants.map(m => m.optionId))].join(', ');
+    lines.push('',
+      `  NOTE: ${t.modeSwitchesMistakableForGrants.length} answer(s) labelled allow_always were`,
+      `  SESSION MODE SWITCHES (${ids}), not grants on the tool being asked about. They have`,
+      '  been removed from the outcome counts — the agent confirmed each by announcing the',
+      '  matching current_mode_update, so this is observed, not inferred from a vendor list.');
+  }
+
   lines.push('');
   return lines.join('\n');
 }

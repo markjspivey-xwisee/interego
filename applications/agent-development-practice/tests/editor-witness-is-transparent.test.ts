@@ -313,6 +313,91 @@ describe('consent is counted by correlating the answer back to the request', () 
     expect(summarise(finish())).not.toMatch(/not consent data/);
   });
 
+  /**
+   * ★ TRAP (b) — an "allow_always" that is really a SESSION MODE SWITCH.
+   *
+   * Verbatim from the production agent's ExitPlanMode prompt: the allow_always option's
+   * optionId is "acceptEdits", a MODE, and choosing it grants nothing about the tool being
+   * asked about. Counted naively it invents a grant and hides a mode change that
+   * reinterprets every answer after it.
+   */
+  const exitPlanReq = (id: number) => JSON.stringify({
+    jsonrpc: '2.0', id, method: 'session/request_permission',
+    params: {
+      sessionId: 'sess-1',
+      toolCall: { toolCallId: `call_${id}`, kind: 'other', title: 'ExitPlanMode' },
+      options: [
+        { optionId: 'acceptEdits', kind: 'allow_always', name: 'Yes, and auto-accept edits' },
+        { optionId: 'default', kind: 'allow_once', name: 'Yes, and manually approve edits' },
+        { optionId: 'plan', kind: 'reject_once', name: 'No, keep planning' },
+      ],
+    },
+  });
+
+  it('does not count a mode switch as an always-allow grant', async () => {
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  exitPlanReq(1) + '\n'],
+      ['editor', ans(1, 'acceptEdits') + '\n'],
+      // The agent confirms it was a mode change by announcing it. That frame is the
+      // evidence — the reclassification is observed, not inferred from a vendor list.
+      ['agent',  modeUpdate('acceptEdits') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.modeSwitchesMistakableForGrants).toHaveLength(1);
+    expect(t.outcomeByKind['allow_always'], 'the phantom grant must be removed').toBeUndefined();
+    expect(t.standingGrantsByTool).toEqual({});
+    expect(summarise(t)).toMatch(/SESSION MODE SWITCHES/);
+  });
+
+  it('still counts a REAL always-allow that is not followed by a mode change', async () => {
+    // The mirror case: without this, the fix could just delete every allow_always.
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  req(1, 'edit') + '\n'],
+      ['editor', ans(1, 'aa') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.outcomeByKind['allow_always']).toBe(1);
+    expect(t.standingGrantsByTool).toEqual({ edit: 1 });
+    expect(t.modeSwitchesMistakableForGrants).toHaveLength(0);
+  });
+
+  /**
+   * ★ TRAP (a) — a standing grant is not a frequency. allow_always installs a session rule,
+   * so each tool can contribute at most one, and the total is a decreasing function of how
+   * early the grant happened.
+   */
+  it('counts standing grants per TOOL, and says so', async () => {
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  req(1, 'edit') + '\n'],
+      ['editor', ans(1, 'aa') + '\n'],
+      ['agent',  req(2, 'execute') + '\n'],
+      ['editor', ans(2, 'aa') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.standingGrantsByTool).toEqual({ edit: 1, execute: 1 });
+    expect(summarise(t)).toMatch(/2 TOOL\(S\) placed under a rule/);
+    expect(summarise(t)).toMatch(/not a count of how often you allowed/);
+  });
+
+  it('flags a tool that asks again despite a standing grant', async () => {
+    // If the rule did not stick, the count means something different — say so rather
+    // than quietly reporting a tool count that is really a frequency.
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  req(1, 'edit') + '\n'],
+      ['editor', ans(1, 'aa') + '\n'],
+      ['agent',  req(2, 'edit') + '\n'],
+      ['editor', ans(2, 'a1') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.asksAfterStandingGrant).toBe(1);
+    expect(t.standingGrantsByTool).toEqual({ edit: 1 });
+    expect(summarise(t)).toMatch(/the rule did not stick/);
+  });
+
   it('counts the menu per option, so an unoffered kind is absent rather than zero', async () => {
     const { observer, finish } = createTally();
     await runTee([ans(1, 'r1') + '\n'], [req(1, 'edit') + '\n'], [observer]);
