@@ -1,0 +1,13 @@
+# shape: wsp-shapes.ttl
+# expect: conforms
+# why: A citation into another vertical by its real IRI is the poly-vertical case, and must pass.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://alice.test/ws/a/stream/e/1>
+  a wsp:Entry, wsp:Reference ;
+  wsp:workspace <https://relay.test/ws/a> ;
+  wsp:seq "1"^^xsd:nonNegativeInteger ;
+  wsp:references <https://foxxi.test/credential/7> .

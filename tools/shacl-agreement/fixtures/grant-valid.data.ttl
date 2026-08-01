@@ -1,0 +1,13 @@
+# shape: wsp-shapes.ttl
+# expect: conforms
+# why: The same grant with a dereferenceable WebID must pass — the pattern has to accept what it is meant to accept.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://conv.test/g1>
+  a wsp:MembershipGrant ;
+  wsp:grantedTo <https://alice.test/profile#me> ;
+  wsp:role <https://roles.test/p#Contributor> ;
+  wsp:workspace <https://relay.test/ws/a> .

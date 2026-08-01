@@ -1,0 +1,13 @@
+# shape: wsp-shapes.ttl
+# expect: conforms
+# why: An agent principal is a did:, which the same pattern must also accept. Agents are principals here, not second-class bots.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://conv.test/g2>
+  a wsp:MembershipGrant ;
+  wsp:grantedTo <did:web:agents.test:bot-7> ;
+  wsp:role <https://roles.test/p#Observer> ;
+  wsp:workspace <https://relay.test/ws/a> .

@@ -1,0 +1,13 @@
+# shape: wsp-shapes.ttl
+# expect: violates
+# why: wsp:references must cite a dereferenceable IRI. Citing something unresolvable is indistinguishable from citing nothing — and this is another sh:pattern-on-IRI case.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://alice.test/ws/a/stream/e/1>
+  a wsp:Entry, wsp:Reference ;
+  wsp:workspace <https://relay.test/ws/a> ;
+  wsp:seq "1"^^xsd:nonNegativeInteger ;
+  wsp:references <urn:foxxi:credential:7> .
