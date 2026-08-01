@@ -209,6 +209,125 @@ describe('checkSupersessionPrecondition — Phase A standalone CAS gate', () => 
 });
 
 // ═════════════════════════════════════════════════════════════
+//  The precondition must compare against the HEAD, not the chain
+// ═════════════════════════════════════════════════════════════
+//
+// ★ Every test above uses a one-element supersedes list, so none of them could
+// distinguish "the assertion names the head" from "the assertion names anything in the
+// chain". The difference is the whole of compare-and-swap, and it went unnoticed until a
+// live probe produced this against production:
+//
+//     chain v0 → v1;  publish v2 with if_match = v0
+//     → { published: true, precondition: { passed: true } }
+//
+// Under `auto_supersede_prior` the descriptor supersedes EVERY prior version, so a stale
+// ancestor satisfied a membership test forever. Two writers who both read v1 both landed,
+// and the second overwrote a state it never read — while the response affirmed the swap
+// was atomic. `currentHeads` is what makes the comparison a swap.
+
+describe('★ if_match must name a live head, not merely an ancestor', () => {
+  const V0 = 'https://alice.pod/context-graphs/v0.ttl';
+  const V1 = PRIOR_HEAD_URL;
+
+  /** As auto_supersede_prior writes it: v2 links v1 AND v0. */
+  const ALL_PRIORS = [V1, V0];
+
+  const V0_TURTLE = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+<urn:iep:v0> a iep:ContextDescriptor ; iep:describes <urn:graph:cas-split> .
+`;
+  const V0_CID = computeCid(V0_TURTLE);
+
+  const lookup = (url: string) =>
+    url === V1 ? EXPECTED_HEAD_CID : url === V0 ? V0_CID : null;
+
+  const check = (args: Record<string, unknown>) =>
+    checkSupersessionPrecondition({
+      supersedesList: ALL_PRIORS,
+      fetchFn: makeRecordingFetch().fetch as unknown as typeof globalThis.fetch,
+      headCidLookup: lookup,
+      currentHeads: [V1],
+      ...args,
+    });
+
+  it('★ asserting a SUPERSEDED ancestor by URL is refused, though it is in the chain', async () => {
+    await expect(check({ ifMatchSupersedes: V0 })).rejects.toMatchObject({
+      name: 'PublishPreconditionFailedError',
+      code: 412,
+    });
+  });
+
+  it('★ asserting a superseded ancestor by CID is refused too', async () => {
+    // The CID form is the one the docs steer callers to (`previousHeadCid`), so a hole
+    // here would be the one people actually fall into.
+    await expect(check({ ifMatchCid: V0_CID })).rejects.toMatchObject({ code: 412 });
+  });
+
+  it('the refusal says WHICH descriptor is current, so the caller can retry', async () => {
+    // A 412 that does not name the head forces a second round-trip to find out, and an
+    // agent that cannot cheaply recover will be written to drop the precondition instead.
+    const err = await check({ ifMatchSupersedes: V0 }).catch(e => e as Error & {
+      actual: { supersedesList: readonly string[] };
+    });
+    expect(err.message).toMatch(/SUPERSEDED ancestor/);
+    expect(err.message).toContain(V1);
+    expect(err.actual.supersedesList).toEqual([V1]);
+  });
+
+  it('asserting the actual head still passes — the fix must not reject valid writes', async () => {
+    const pass = await check({ ifMatchSupersedes: V1 });
+    expect(pass.ok).toBe(true);
+    expect(pass.resolvedHeadUrl).toBe(V1);
+  });
+
+  it('a fork reports both heads, and either may be asserted', async () => {
+    // Two unresolved heads is a real state (a missed CAS). Refusing both would strand the
+    // chain with no way to publish; the honest move is to let a writer supersede either
+    // one and let the divergence surface where it can be repaired.
+    const forked = (args: Record<string, unknown>) =>
+      checkSupersessionPrecondition({
+        supersedesList: ALL_PRIORS,
+        fetchFn: makeRecordingFetch().fetch as unknown as typeof globalThis.fetch,
+        headCidLookup: lookup,
+        currentHeads: [V1, V0],
+        ...args,
+      });
+    expect((await forked({ ifMatchSupersedes: V0 })).ok).toBe(true);
+    expect((await forked({ ifMatchSupersedes: V1 })).ok).toBe(true);
+  });
+
+  it('host-form differences do not turn a live head into a refusal', async () => {
+    // The frontier is computed from manifest URLs; the assertion arrives from whatever
+    // form the caller was handed. Compared raw, a legitimate publish 412s — and a guard
+    // that fires on valid input is a guard someone switches off.
+    const INTERNAL = V1.replace('https://alice.pod/', 'http://css.internal:3456/');
+    const pass = await checkSupersessionPrecondition({
+      supersedesList: ALL_PRIORS,
+      fetchFn: makeRecordingFetch().fetch as unknown as typeof globalThis.fetch,
+      headCidLookup: lookup,
+      ifMatchSupersedes: V1,
+      currentHeads: [INTERNAL],
+      normalizeUrl: (u: string) => u.replace('https://alice.pod/', 'http://css.internal:3456/'),
+    });
+    expect(pass.ok).toBe(true);
+  });
+
+  it('without currentHeads the old membership test still applies — and is still wrong', async () => {
+    // Pinned deliberately. Callers whose supersedes list is content-authored semantic
+    // supersession have no frontier to compute, so the option cannot be mandatory at this
+    // layer. That makes "the relay always supplies it" a property of the relay, verified
+    // where the relay is — not something this unit can assert. Documenting the gap here
+    // keeps it from being mistaken for coverage.
+    const pass = await checkSupersessionPrecondition({
+      supersedesList: ALL_PRIORS,
+      fetchFn: makeRecordingFetch().fetch as unknown as typeof globalThis.fetch,
+      headCidLookup: lookup,
+      ifMatchSupersedes: V0,
+    });
+    expect(pass.ok).toBe(true);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
 //  Phase A + Phase B integration — simulated relay flow
 // ═════════════════════════════════════════════════════════════
 
