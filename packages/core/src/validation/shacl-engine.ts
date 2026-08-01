@@ -18,7 +18,7 @@
  *   - sh:class                  — value must be a subject with that rdf:type
  *   - sh:in (...)               — value enumeration (parsed as comma list)
  *   - sh:hasValue               — must include the listed value
- *   - sh:pattern                — regex on literal lexical form
+ *   - sh:pattern                — regex on the lexical form of a literal OR an IRI (SHACL 4.6.3)
  *   - sh:message                — surfaced verbatim on violation
  *
  * NOT supported (intentional — out-of-scope for the kernel gate):
@@ -973,10 +973,26 @@ function evaluatePropertyShape(
         message: ps.message ?? `Value is not an instance of sh:class ${ps.clazz}`,
       });
     }
-    if (ps.pattern && v.kind === 'literal') {
+    // ★ sh:pattern APPLIES TO IRIs TOO, not only literals.
+    //
+    // SHACL §4.6.3: the constraint tests the value node's lexical form, and for an IRI that
+    // is the IRI string itself. Only a blank node is out of scope (it has no lexical form,
+    // and the spec makes that a violation rather than a pass).
+    //
+    // Restricting this to literals silently ignored every pattern written against an IRI —
+    // and the natural use is exactly the one that matters here: constraining a principal to
+    // a dereferenceable scheme. A shape saying `sh:pattern "^https?://|^did:"` on a
+    // membership was accepting `urn:` identifiers, which is the opposite of what it says.
+    //
+    // The sharper problem is disagreement rather than laxity: pySHACL enforces this, so our
+    // published shape meant one thing to us and another to anyone who checked it. A shape
+    // published at a dereferenceable URL is a claim a stranger must be able to re-verify,
+    // and it stops being one the moment our engine and theirs disagree.
+    if (ps.pattern && (v.kind === 'literal' || v.kind === 'iri')) {
       try {
         const re = new RegExp(ps.pattern);
-        if (!re.test(v.value)) {
+        const lexical = v.kind === 'iri' ? v.iri : v.value;
+        if (!re.test(lexical)) {
           results.push({
             focusNode,
             path: ps.path,

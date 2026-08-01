@@ -86,7 +86,9 @@ child.on('error', (e) => { note(`[probe] could not start agent: ${e.message}`); 
 /** toolName -> the standing deny the human authored. */
 const standing = new Map<string, { at: number; toolKind: string }>();
 /** requestId -> the toolName it concerned, so the answer can be attributed. */
-const pending = new Map<string, { toolName: string; toolKind: string }>();
+// Carries the request's own option kinds so an answer can be translated back into an
+// optionId THIS menu actually offered, rather than a hardcoded one.
+const pending = new Map<string, { toolName: string; toolKind: string; kinds: Map<string, string> }>();
 /** requestId -> when we forwarded it, so the answer's latency is visible. A human takes
  *  seconds; an editor answering from policy takes milliseconds. That gap is the tell. */
 const askedAtMs = new Map<string, number>();
@@ -168,7 +170,11 @@ function handleFromAgent(line: string): void {
   const rule = standing.get(toolName);
   if (rule) {
     const options = Array.isArray(p?.options) ? p!.options : [];
-    const reject = options.find(o => o.kind === 'reject_once') ?? options[options.length - 1];
+    // ★ NEVER fall back to the last option. It used to be `?? options[last]`, which on a
+    // menu whose last entry is an allow would answer ALLOW while logging a denial — the
+    // exact inversion a standing deny exists to prevent. Only a genuine reject qualifies.
+    const reject = options.find(o => o.kind === 'reject_once')
+      ?? options.find(o => typeof o.kind === 'string' && o.kind.startsWith('reject'));
     if (reject && typeof reject.optionId === 'string') {
       tally.autoDeniedByStandingRule += 1;
       tally.autoDeniedByTool[toolName] = (tally.autoDeniedByTool[toolName] ?? 0) + 1;
@@ -188,7 +194,11 @@ function handleFromAgent(line: string): void {
     tally.menusAugmented += 1;
   }
   if (typeof f.id === 'string' || typeof f.id === 'number') {
-    pending.set(String(f.id), { toolName, toolKind });
+    const kinds = new Map<string, string>();
+    for (const o of options) {
+      if (typeof o?.optionId === 'string' && typeof o?.kind === 'string') kinds.set(o.optionId, o.kind);
+    }
+    pending.set(String(f.id), { toolName, toolKind, kinds });
   }
   // ★ Announce every request as it happens. The tally only lands when the thread ends,
   // which is useless while diagnosing "it never asked me": the question is whether the
@@ -254,6 +264,18 @@ function handleFromEditor(line: string): void {
   // A standing constraint is a claim about a PERSON's intent. So a reject_always that came
   // back faster than a human could read the prompt is honoured ONCE and never persisted,
   // and it is reported loudly rather than counted.
+  /**
+   * ★ Translate to an option THIS menu actually offered. 'reject' is claude-code-acp's id
+   * for its ordinary tool menu, but its ExitPlanMode menu uses acceptEdits / default / plan
+   * — so a hardcoded 'reject' sends an optionId the agent never offered, which is precisely
+   * the failure the translation exists to avoid. Resolved from the request's own options.
+   */
+  const rejectIdFor = (kinds: Map<string, string>): string | null => {
+    for (const [optionId, kind] of kinds) if (kind === 'reject_once') return optionId;
+    for (const [optionId, kind] of kinds) if (kind.startsWith('reject')) return optionId;
+    return null;
+  };
+
   const HUMAN_FLOOR_MS = 250;
   if (waited >= 0 && waited < HUMAN_FLOOR_MS) {
     tally.machineSpeedRejectAlways += 1;
@@ -261,7 +283,9 @@ function handleFromEditor(line: string): void {
     note(`[probe] IGNORING reject_always for "${ctx.toolName}" — answered in ${waited}ms, `
       + 'far too fast for a human. The CLIENT chose it, probably by position because this '
       + 'probe appends an option. Honouring it once; NOT authoring a standing rule.');
-    send(child.stdin, { jsonrpc: '2.0', id: f!.id, result: { outcome: { outcome: 'selected', optionId: 'reject' } } });
+    const rid = rejectIdFor(ctx.kinds);
+    if (rid === null) { note('[probe] no reject option on this menu; forwarding the answer unchanged'); child.stdin.write(line + '\n'); return; }
+    send(child.stdin, { jsonrpc: '2.0', id: f!.id, result: { outcome: { outcome: 'selected', optionId: rid } } });
     return;
   }
 
@@ -273,7 +297,9 @@ function handleFromEditor(line: string): void {
   note(`[probe] ★ STANDING DENY authored for "${ctx.toolName}" — it will not be asked again`);
 
   // The agent cannot be sent an optionId it never offered. Translate to its own reject.
-  send(child.stdin, { jsonrpc: '2.0', id: f!.id, result: { outcome: { outcome: 'selected', optionId: 'reject' } } });
+  const rid = rejectIdFor(ctx.kinds);
+    if (rid === null) { note('[probe] no reject option on this menu; forwarding the answer unchanged'); child.stdin.write(line + '\n'); return; }
+    send(child.stdin, { jsonrpc: '2.0', id: f!.id, result: { outcome: { outcome: 'selected', optionId: rid } } });
 }
 
 /**
