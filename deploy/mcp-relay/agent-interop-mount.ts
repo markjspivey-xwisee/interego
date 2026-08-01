@@ -553,4 +553,56 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
 
     deps.log(`[agent-interop] mounted profile "${profile.slug}" (${profile.protocolVersion}, ${profile.conformanceStatus}) — card ${profile.card.wellKnownPath}, ${profile.wire.length} operations under ${mountBase}`);
   }
+
+  // ── the id resolver ─────────────────────────────────────────────────────────
+  //
+  // ★ THE ENGINE MINTS ids OF THE FORM `<publicBase>/engagements/<t36>-<seq36>`, AND
+  // NOTHING SERVED THEM. Every engagement id handed to a peer was a URL that 404'd —
+  // measured live before this route existed. The minting function's own comment reads
+  // "Mint a dereferenceable engagement id — a URL that resolves to the record, never a
+  // urn:", so the code documented a property it did not have. A urn: would at least have
+  // been honestly undereferenceable; this was a URL that promised and refused.
+  //
+  // ★ IT LIVES HERE, NOT IN A PROFILE. The id belongs to the ENGINE, not to any wire
+  // protocol — a peer that learned it from one protocol must be able to resolve it
+  // without knowing which. So this is one route outside every profile's mount base, and
+  // it names no protocol (the mount is grep-asserted to name none).
+  //
+  // ★ NOT-FOUND AND NOT-YOURS ARE THE SAME ANSWER. `engine.get` is owner-scoped, so a
+  // guessed id is indistinguishable from someone else's. Distinguishing them would turn
+  // this route into an existence oracle over every engagement in the deployment — the
+  // precise failure the public-memory work established as the line not to cross.
+  const resolverProfiles = Object.values(PROFILES);
+  const renderProfile = resolverProfiles[0];
+  if (renderProfile) {
+    app.get('/engagements/:id', async (req: Request, res: Response) => {
+      try {
+        const caller = await deps.verifyCaller(req);
+        if (!caller) { res.status(401).json({ error: 'unauthenticated' }); return; }
+
+        // Reconstruct the full id: the engine keys on the whole URL it minted, not on the
+        // trailing segment, because the id IS the URL.
+        const id = `${base}/engagements/${String((req.params as Record<string, string>)['id'] ?? '')}`;
+        const found = engine.get(id, caller);
+        if (!found.ok) { res.status(404).json({ error: 'notFound' }); return; }
+
+        // Navigable across protocols without the body naming one: each profile's own view
+        // of this engagement is offered as a Link, so a peer can follow to the projection
+        // it understands rather than parsing a projection it does not.
+        const links = [`<${id}>; rel="self"`];
+        for (const p of resolverProfiles) {
+          // Same derivation the profile loop uses, so the alternates cannot drift from
+          // the routes actually mounted.
+          links.push(`<${base}/${p.slug}/v1/tasks/${encodeURIComponent(id)}>; rel="alternate"; title="${p.slug}"`);
+        }
+        res.setHeader('Link', links.join(', '));
+        res.setHeader('Content-Type', 'application/json');
+        res.status(200).json(renderProfile.engagement.render(found.value, { serviceUrl: base }));
+      } catch (err) {
+        deps.log(`[agent-interop] engagement resolve failed: ${(err as Error).message}`);
+        res.status(500).json({ error: 'internal' });
+      }
+    });
+    deps.log(`[agent-interop] engagement ids resolve at ${base}/engagements/:id (owner-scoped)`);
+  }
 }
