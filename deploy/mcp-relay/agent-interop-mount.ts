@@ -121,9 +121,43 @@ function sendErr(res: Response, profile: InteropProfile, kind: InteropErrorKind,
  */
 function compilePath(mountBase: string, template: string): string | RegExp {
   const hasCustomVerb = /:[A-Za-z][A-Za-z0-9_-]*$/.test(template);
-  return hasCustomVerb
-    ? new RegExp(`^${(mountBase + template).split('{id}').map(escapeRe).join('([^/]+)')}$`)
-    : `${mountBase}${template.replace(/\{(\w+)\}/g, ':$1')}`;
+  if (hasCustomVerb) {
+    // A custom verb terminates the path, so the id is still bounded — but it may itself
+    // contain slashes (see below), hence `.+?` rather than `[^/]+`, lazily so the trailing
+    // `:verb` still wins.
+    return new RegExp(`^${(mountBase + template).split('{id}').map(escapeRe).join('(.+?)')}$`);
+  }
+  if (!template.includes('{id}')) {
+    return `${mountBase}${template.replace(/\{(\w+)\}/g, ':$1')}`;
+  }
+  // ★ AN ID THAT IS A URL DOES NOT FIT IN A PATH SEGMENT.
+  //
+  // Engagement ids here are absolute URLs, because every identifier is meant to be
+  // dereferenceable. A wire profile that binds a lookup as `/resource/{id}` gets `:id` from
+  // Express, which matches ONE segment — so a peer echoing back the very id it was handed
+  // builds `/resource/https://host/engagements/abc` and receives a 404. Measured against a
+  // running instance: percent-encoded returned 200, raw returned 404. A conformance suite
+  // hid it behind an unrelated skip, so the surface looked green while a peer could not
+  // dereference a resource it had just been given.
+  //
+  // Be strict in what we emit (a real URL) and liberal in what we accept: match across
+  // segments so the raw and percent-encoded spellings reach the same resource.
+  //
+  // ★ EVERY placeholder, not just {id}. Splitting on `{id}` alone left a following
+  // `{configId}` as a LITERAL in the pattern, so the per-config sub-route stopped matching
+  // and answered 404 instead of its declared refusal. The string branch above had always
+  // replaced all of them; the regex branch has to as well.
+  //
+  // Only {id} crosses segments — it is the one that holds a URL. Every other parameter
+  // stays single-segment, so a stray slash cannot be absorbed into it.
+  //
+  // LAZY for {id}: a template may carry further segments after it, and a greedy `.+`
+  // swallows them. `$`-anchored lazy still consumes the whole remainder when it is last.
+  const pattern = (mountBase + template)
+    .split(/(\{\w+\})/)
+    .map(part => (part === '{id}' ? '(.+?)' : /^\{\w+\}$/.test(part) ? '([^/]+)' : escapeRe(part)))
+    .join('');
+  return new RegExp(`^${pattern}$`);
 }
 
 /**
@@ -211,7 +245,13 @@ function partsFrom(body: unknown, envelope?: string): PartsResult {
  *  (custom-method routes compile to a RegExp, where Express exposes `params[0]`). */
 function engagementIdFrom(req: Request): string {
   const p = req.params as unknown as Record<string, string>;
-  return decodeURIComponent(String(p['id'] ?? p['0'] ?? ''));
+  const raw = String(p['id'] ?? p['0'] ?? '');
+  // ★ decodeURIComponent ONLY if it is actually encoded. Our ids are URLs, so a raw one
+  // arrives already containing `://` and slashes; decoding it again is harmless but
+  // decoding a raw id that legitimately contains a `%` would corrupt it. Try, and keep the
+  // original if the result is not a valid encoding.
+  if (!/%[0-9A-Fa-f]{2}/.test(raw)) return raw;
+  try { return decodeURIComponent(raw); } catch { return raw; }
 }
 
 

@@ -164,7 +164,9 @@ await send.handler({ headers: {}, query: {}, params: {}, body: { parts: [{ text:
 const created = ((okRes.body as any)?.task ?? okRes.body) as any;
 check('a verified caller can open one', okRes.statusCode === 200 && typeof created?.id === 'string');
 check('its id is a dereferenceable URL, never a urn', /^https:\/\/relay\.test\/engagements\//.test(created.id));
-const getRoute = wireRoutes.find(r => pstr(r.path) === '/a2a/v1/tasks/:id')!;
+// Located by the URL it SERVES, not by its compiled form: the task route is a RegExp now,
+// because an id that is a URL does not fit in a single `:id` path segment.
+const getRoute = routeFor(wireRoutes, '/a2a/v1/tasks/anything');
 const mineRes = mkRes();
 await getRoute.handler({ headers: {}, query: {}, params: { id: created.id }, body: {} }, mineRes);
 check('the owner can read it back', mineRes.statusCode === 200);
@@ -172,6 +174,33 @@ verifiedCaller = 'did:ethr:0xBBB';
 const theirsRes = mkRes();
 await getRoute.handler({ headers: {}, query: {}, params: { id: created.id }, body: {} }, theirsRes);
 check('another principal cannot read it', theirsRes.statusCode === 404);
+
+// ★ THE ID WE HAND OUT MUST BE THE ID THAT WORKS.
+//
+// Our engagement ids are absolute URLs, because every identifier here is meant to be
+// dereferenceable. A2A binds the lookup as GET /tasks/{id}, and a single-segment `:id`
+// cannot hold one: a peer echoing back the very id we gave it builds
+//   /a2a/v1/tasks/https://relay.test/engagements/abc
+// which used to 404. Measured against the running SUT: percent-encoded returned 200, raw
+// returned 404. The conformance suite hid it behind an unrelated skip, so the surface
+// looked green while a peer could not dereference a task it had just been handed.
+// Restore the owner for these two checks, then hand state back exactly as found —
+// this block sits mid-scenario and later assertions depend on the caller.
+const callerBefore = verifiedCaller;
+verifiedCaller = 'did:ethr:0xAAA';
+const taskUrl = `/a2a/v1/tasks/${created.id}`;
+check('a raw URL id still matches the task route (no 404 from split segments)',
+  routeFor(wireRoutes, taskUrl) !== undefined);
+const rawRes = mkRes();
+await getRoute.handler(
+  { headers: {}, query: {}, params: { 0: created.id }, body: {} }, rawRes);
+check('...and the raw id resolves to the task', rawRes.statusCode === 200);
+const encRes = mkRes();
+await getRoute.handler(
+  { headers: {}, query: {}, params: { 0: encodeURIComponent(created.id) }, body: {} }, encRes);
+check('...and so does the percent-encoded spelling (both reach the same task)',
+  encRes.statusCode === 200);
+verifiedCaller = callerBefore;
 check('...and is told notFound, NOT forbidden (no existence oracle)',
   (theirsRes.body as any)?.error?.status === 'NOT_FOUND');
 const listRes = mkRes();
