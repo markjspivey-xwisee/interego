@@ -281,7 +281,7 @@ import type { NodeProvenance } from '@interego/pgsl';
 // publish-then-resolve invariant this module exists to enforce.
 import * as publishedNodes from './pgsl-node-store.js';
 import { alternateTurtleHref, looksLikeHtml } from './alternate-turtle.js';
-import { supersessionFrontier } from './supersession-frontier.js';
+import { supersessionFrontier, classifyIfMatch } from './supersession-frontier.js';
 
 // Privacy — `@interego/privacy`.
 import { screenForSensitiveContent, formatSensitivityWarning } from '@interego/privacy';
@@ -2369,6 +2369,30 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // invalidation at the end of this handler keeps the cache honest
   // for the NEXT call.
   const ifMatch = args.if_match as string | undefined;
+  // ★ An if_match that is PRESENT but unusable — JSON null, an empty string, a number —
+  // is rejected here, before the manifest read it would otherwise trigger.
+  //
+  // Left to fall through, both ifMatchSupersedes and ifMatchCid end up undefined (null and
+  // '' are falsy, so neither is spread into the publish options), the substrate gate throws
+  // its internal "at least one must be set" contract error, and the relay reports that as
+  // `503 precondition_unavailable, retryable: true`.
+  //
+  // Retryable is a lie there: no number of retries turns null into a head. A caller that
+  // believes the field it was handed loops until it gives up, and the thing it gives up on
+  // is its own compare-and-swap. Observed while building the workspace stream, from a
+  // caller passing the head it had — which is legitimately null on an empty chain.
+  if (classifyIfMatch(args.if_match) === 'unusable') {
+    return JSON.stringify({
+      error: 'invalid_if_match',
+      code: 400,
+      retryable: false,
+      message:
+        'if_match must be a non-empty descriptor URL (https://….ttl) or content-CID (bafkrei…). '
+        + `Received ${ifMatch === null ? 'null' : typeof ifMatch === 'string' ? 'an empty string' : typeof ifMatch}. `
+        + 'Omit if_match entirely when there is no prior head to gate on — an absent precondition '
+        + 'is how you say "this is the first version"; an empty one is not.',
+    });
+  }
   const priorVersions: IRI[] = [];
   // Manifest entries the substrate gate / best-effort head-CID echo can
   // reuse. Populated when EITHER (a) auto_supersede needs to look up
