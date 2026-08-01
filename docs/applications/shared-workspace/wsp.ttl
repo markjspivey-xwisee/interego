@@ -1,0 +1,228 @@
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#>.
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#>.
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#>.
+@prefix owl:  <http://www.w3.org/2002/07/owl#>.
+@prefix prov: <http://www.w3.org/ns/prov#>.
+@prefix dct:  <http://purl.org/dc/terms/>.
+@prefix foaf: <http://xmlns.com/foaf/0.1/>.
+@prefix vann: <http://purl.org/vocab/vann/>.
+
+# ══════════════════════════════════════════════════════════════
+#  WSP — Shared Workspace 1.0 Ontology
+# ══════════════════════════════════════════════════════════════
+#
+#  A workspace where several people and several agents work
+#  together, without any of them giving up custody of what they
+#  wrote.
+#
+#  ── THE ONE DESIGN DECISION ──────────────────────────────────
+#
+#  A comparable system (Buzz, by Block) states its model plainly:
+#  "The relay is the single source of truth. All reads and writes
+#  flow through it." A community there IS one relay URL, and
+#  membership is a row in that server's database.
+#
+#  Here a workspace IS one dereferenceable graph URL whose content
+#  is the roster and the governance, and the work is the union of
+#  one append-only log per participant, each living in that
+#  participant's own pod. Nobody moves their storage to join.
+#
+#  Two consequences follow, and they are the point:
+#
+#   * A workspace can span organisations, because joining requires
+#     no shared server — only a WebID, a pod, and a grant.
+#   * A participant's record outlives the workspace, because it was
+#     never in the workspace to begin with. Leaving does not delete
+#     your history; it stops your stream being folded in.
+#
+#  The cost is equally real and is stated in the README: catch-up
+#  is N manifest reads rather than one indexed query, and there is
+#  no presence, no typing indicator and no full-text search. A team
+#  feels those absences within an hour.
+#
+#  ── WHAT IS NEW HERE, AND WHAT IS NOT ────────────────────────
+#
+#  Nothing below is a storage tier, a retrieval engine, an identity
+#  system or an authorization plane. Those exist in the substrate
+#  and are used as they are:
+#
+#   * durability + ordering  — iep: descriptors, the pod manifest,
+#                              iep:supersedes and iep:contentCid
+#   * identity               — WebID and did:*, unchanged
+#   * authorization          — the existing signed delegation chain,
+#                              INTERSECTED with the roles below,
+#                              never stacked beside it
+#   * validation             — SHACL at publish, unchanged
+#   * notification           — LDN inboxes, unchanged
+#
+#  The wsp: terms are the domain payload INSIDE iep: descriptors.
+#  A role here grants nothing on its own: effective capability is
+#  the intersection of what the role permits and what the
+#  principal's own delegation already allowed. A role can only
+#  ever narrow, never escalate.
+# ══════════════════════════════════════════════════════════════
+
+<https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp>
+  a owl:Ontology ;
+  dct:title "Shared Workspace (WSP) 1.0" ;
+  dct:description
+    "A workspace as a published roster over federated per-participant logs. Membership is a two-sided signed artifact rather than a server-side row, and the work is the union of append-only logs each held in its author's own pod." ;
+  vann:preferredNamespacePrefix "wsp" ;
+  vann:preferredNamespaceUri
+    "https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#" ;
+  rdfs:seeAlso <https://markjspivey-xwisee.github.io/interego/ns/iep> ;
+  owl:versionInfo "1.0.0" .
+
+# ── The workspace itself ──────────────────────────────────────
+
+wsp:Workspace a owl:Class ;
+  rdfs:label "Workspace" ;
+  rdfs:comment
+    "A named place where several principals work together. Its identifier is the dereferenceable URL of the descriptor that declares it, so the workspace can be read, audited and replayed by anyone who can GET that URL — including someone who is not a member and has no account anywhere." ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:convener a owl:ObjectProperty ;
+  rdfs:label "convener" ;
+  rdfs:comment
+    "The principal who published the workspace and may issue the first grants. Deliberately not called 'owner': the convener holds no custody of anyone else's contributions, which live on their authors' own pods." ;
+  rdfs:domain wsp:Workspace ; rdfs:range foaf:Agent ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:roleProfile a owl:ObjectProperty ;
+  rdfs:label "role profile" ;
+  rdfs:comment
+    "The published document defining this workspace's roles and their capabilities. Roles are DATA, not code: a workspace that wants different roles publishes a different profile rather than requiring a new release." ;
+  rdfs:domain wsp:Workspace ; rdfs:range wsp:RoleProfile ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+# ── Roles as published policy data ────────────────────────────
+
+wsp:RoleProfile a owl:Class ;
+  rdfs:label "Role profile" ;
+  rdfs:comment
+    "A published set of roles and the capabilities each permits. Referenced by a workspace, shared between workspaces that want the same governance." ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:Role a owl:Class ;
+  rdfs:label "Role" ;
+  rdfs:comment
+    "A named bundle of capabilities within a role profile. A role is a CEILING, never a grant: holding it cannot give a principal a capability their own delegation does not already carry." ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:permits a owl:ObjectProperty ;
+  rdfs:label "permits" ;
+  rdfs:comment "A capability this role permits, subject to intersection with the principal's delegated scope." ;
+  rdfs:domain wsp:Role ; rdfs:range wsp:Capability ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:Capability a owl:Class ;
+  rdfs:label "Capability" ;
+  rdfs:comment
+    "A thing that may be done in a workspace: read the roster, append to one's own stream, grant or revoke membership, admit an off-roster reference, assign an engagement." ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+# ── Membership: two-sided, so neither side can fake it ────────
+
+wsp:MembershipGrant a owl:Class ;
+  rdfs:label "Membership grant" ;
+  rdfs:comment
+    "An offer of a role, published on the CONVENER's pod. Half of a membership. A grant alone does not make someone a member — the substrate has no way to make a person's pod hold a record they did not write, and pretending otherwise would let a convener manufacture participants." ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:MembershipAcceptance a owl:Class ;
+  rdfs:label "Membership acceptance" ;
+  rdfs:comment
+    "Acceptance of a grant, published on the MEMBER's own pod, naming the stream they will write to. The other half. A roster entry exists only where a grant and an acceptance agree, which is why membership cannot be asserted unilaterally from either direction." ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:grantedTo a owl:ObjectProperty ;
+  rdfs:label "granted to" ;
+  rdfs:comment "The principal offered the role: a WebID for a person, a DID for an agent. Both are principals here; neither is a second-class 'bot'." ;
+  rdfs:domain wsp:MembershipGrant ; rdfs:range foaf:Agent ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:role a owl:ObjectProperty ;
+  rdfs:label "role" ;
+  rdfs:comment "The role offered. MUST be declared by the workspace's role profile; a grant naming an undeclared role is refused at publish." ;
+  rdfs:domain wsp:MembershipGrant ; rdfs:range wsp:Role ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:workspace a owl:ObjectProperty ;
+  rdfs:label "workspace" ;
+  rdfs:comment "The workspace this record belongs to, by its dereferenceable URL." ;
+  rdfs:range wsp:Workspace ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:accepts a owl:ObjectProperty ;
+  rdfs:label "accepts" ;
+  rdfs:comment "The grant being accepted, by its own dereferenceable URL — so the two halves are linked by content, not by a shared secret." ;
+  rdfs:domain wsp:MembershipAcceptance ; rdfs:range wsp:MembershipGrant ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:revoked a owl:DatatypeProperty ;
+  rdfs:label "revoked" ;
+  rdfs:comment
+    "Set on a superseding grant to withdraw membership. Revocation is an APPEND, not a deletion: the record that someone was once a member, and when that ended, survives." ;
+  rdfs:domain wsp:MembershipGrant ; rdfs:range xsd:boolean ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:withdrawn a owl:DatatypeProperty ;
+  rdfs:label "withdrawn" ;
+  rdfs:comment "Set on a superseding acceptance to leave voluntarily. The member's own pod remains theirs, and their stream remains readable at its own URLs." ;
+  rdfs:domain wsp:MembershipAcceptance ; rdfs:range xsd:boolean ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+# ── The per-participant log ───────────────────────────────────
+
+wsp:Stream a owl:Class ;
+  rdfs:label "Stream" ;
+  rdfs:comment
+    "One participant's append-only log within one workspace, held on that participant's own pod. The workspace is the union of its members' streams; there is no central log to compact, migrate, or lose." ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:stream a owl:ObjectProperty ;
+  rdfs:label "stream" ;
+  rdfs:comment "The stream a member registers when accepting. Named by the member, on the member's pod." ;
+  rdfs:range wsp:Stream ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:Entry a owl:Class ;
+  rdfs:label "Entry" ;
+  rdfs:comment
+    "One append to a stream. Immutable and content-addressed; its identifier is its own descriptor URL, so an entry can be cited from outside the workspace and still resolve after the workspace is gone." ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:seq a owl:DatatypeProperty ;
+  rdfs:label "sequence" ;
+  rdfs:comment "Position within the author's own stream. Per-stream only: there is deliberately no global sequence, because a global counter would need a central authority and that is the thing being avoided." ;
+  rdfs:domain wsp:Entry ; rdfs:range xsd:nonNegativeInteger ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:Reference a owl:Class ;
+  rdfs:label "Reference" ;
+  rdfs:comment
+    "An entry that points at a record belonging to another vertical — a decision, a review, an intervention plan — by its own IRI, without copying it. This is how a workspace becomes poly-vertical: Foxxi and the others are not integrated, they are cited." ;
+  rdfs:subClassOf wsp:Entry ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:references a owl:ObjectProperty ;
+  rdfs:label "references" ;
+  rdfs:comment "The foreign record cited, by its dereferenceable IRI. The cited record is never copied, so it keeps its own authorship, shape and access control." ;
+  rdfs:domain wsp:Reference ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+# ── Honesty about disagreement ────────────────────────────────
+
+wsp:Divergence a owl:Class ;
+  rdfs:label "Divergence" ;
+  rdfs:comment
+    "Reported when a grant or acceptance chain has more than one head — two concurrent writes that never got ordered. The roster does NOT pick a winner: it names both heads and applies the INTERSECTION of their capabilities, because last-write-wins on an authorization record can silently escalate privilege. Under-privileging a member is an operational annoyance; over-privileging one is a security failure." ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+wsp:divergentHead a owl:ObjectProperty ;
+  rdfs:label "divergent head" ;
+  rdfs:comment "One of the competing heads, by URL, so a human can look at both and republish a clean one." ;
+  rdfs:domain wsp:Divergence ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .

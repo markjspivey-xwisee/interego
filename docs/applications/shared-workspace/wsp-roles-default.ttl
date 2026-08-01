@@ -1,0 +1,97 @@
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#>.
+@prefix wspr: <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix dct:  <http://purl.org/dc/terms/>.
+
+# ══════════════════════════════════════════════════════════════
+#  Default role profile for shared workspaces
+# ══════════════════════════════════════════════════════════════
+#
+#  Roles are DATA. A workspace that wants different governance
+#  publishes a different profile and points at it — no release,
+#  no code change, no new deploy. That is the whole reason roles
+#  are not an enum in TypeScript.
+#
+#  ── A ROLE IS A CEILING, NOT A GRANT ─────────────────────────
+#
+#  Holding a role never adds capability. Effective capability is
+#
+#      role.permits  ∩  principal's delegated scope
+#
+#  so a Convener whose agent holds only a ReadOnly delegation
+#  still cannot write. This is the single most important property
+#  of the model and the one that distinguishes it from a
+#  membership table: there, being an admin IS the authority. Here
+#  it is only a ceiling on an authority you already had.
+#
+#  Compare: in the system this is competing with, an authenticated
+#  key receives every scope, so "this agent may read but not
+#  write" is not expressible at all.
+#
+#  ── FIVE ROLES, MATCHING WHAT TEAMS ACTUALLY DO ──────────────
+#
+#  Deliberately close to the roles a team already understands.
+#  Familiarity is a feature; inventing a novel vocabulary for
+#  governance is how a system becomes unadoptable.
+# ══════════════════════════════════════════════════════════════
+
+<https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default>
+  a wsp:RoleProfile ;
+  dct:title "Default workspace roles" ;
+  dct:description
+    "Five roles covering the ordinary cases. Every capability is a ceiling intersected with the principal's own delegated scope." .
+
+# ── Capabilities ──────────────────────────────────────────────
+
+wspr:read a wsp:Capability ;
+  rdfs:label "read" ;
+  rdfs:comment "Read the roster and the composed view. Note that reading a member's ENTRIES also requires their pod to permit it — this capability governs the workspace, not other people's storage." .
+
+wspr:append a wsp:Capability ;
+  rdfs:label "append" ;
+  rdfs:comment "Append to one's OWN stream. Nobody can ever append to somebody else's: the stream lives on its author's pod and is written with their credentials." .
+
+wspr:grant a wsp:Capability ;
+  rdfs:label "grant" ;
+  rdfs:comment "Offer a role to a principal. Only half of adding a member — the invitee must accept on their own pod." .
+
+wspr:revoke a wsp:Capability ;
+  rdfs:label "revoke" ;
+  rdfs:comment "Withdraw a grant. Stops the member's stream being folded into the view; does not and cannot delete what they wrote." .
+
+wspr:admit a wsp:Capability ;
+  rdfs:label "admit" ;
+  rdfs:comment "Allow a reference to a record whose pod owner is not on the roster, so citing outside work is a deliberate act rather than a silent widening of the workspace's surface." .
+
+wspr:assign a wsp:Capability ;
+  rdfs:label "assign" ;
+  rdfs:comment "Open an engagement and assign it to a participant — human or agent, with no distinction." .
+
+# ── Roles ─────────────────────────────────────────────────────
+
+wspr:Convener a wsp:Role ;
+  rdfs:label "Convener" ;
+  rdfs:comment "Started the workspace. Governs membership; holds no custody of anyone's contributions." ;
+  wsp:permits wspr:read, wspr:append, wspr:grant, wspr:revoke, wspr:admit, wspr:assign .
+
+wspr:Steward a wsp:Role ;
+  rdfs:label "Steward" ;
+  rdfs:comment "Runs the workspace day to day: may invite and assign, but not revoke — so removing someone always takes a convener." ;
+  wsp:permits wspr:read, wspr:append, wspr:grant, wspr:admit, wspr:assign .
+
+wspr:Contributor a wsp:Role ;
+  rdfs:label "Contributor" ;
+  rdfs:comment "The ordinary working member, human or agent. Reads the workspace and writes their own stream." ;
+  wsp:permits wspr:read, wspr:append .
+
+wspr:Observer a wsp:Role ;
+  rdfs:label "Observer" ;
+  rdfs:comment
+    "Reads and cannot write. Useful for an auditor, or for an agent deliberately kept to analysis — and expressible here precisely because a role intersects a delegated scope rather than replacing it." ;
+  wsp:permits wspr:read .
+
+wspr:Delegate a wsp:Role ;
+  rdfs:label "Delegate" ;
+  rdfs:comment
+    "An agent acting for a member. Appends and takes assignments, but may never change who is in the workspace — an agent should not be able to widen the set of principals its own principal must trust." ;
+  wsp:permits wspr:read, wspr:append, wspr:assign .
