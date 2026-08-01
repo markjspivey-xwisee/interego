@@ -172,6 +172,7 @@ function handleFromAgent(line: string): void {
     if (reject && typeof reject.optionId === 'string') {
       tally.autoDeniedByStandingRule += 1;
       tally.autoDeniedByTool[toolName] = (tally.autoDeniedByTool[toolName] ?? 0) + 1;
+    flush();
       note(`[probe] standing deny on "${toolName}" — auto-rejected without asking (${tally.autoDeniedByTool[toolName]}x)`);
       send(child.stdin, { jsonrpc: '2.0', id: f.id, result: { outcome: { outcome: 'selected', optionId: reject.optionId } } });
       return; // never reaches the editor: that is what "always" means
@@ -236,6 +237,7 @@ function handleFromEditor(line: string): void {
 
   if (outcome.optionId !== REJECT_ALWAYS_ID) {
     tally.otherOutcomes[outcome.optionId] = (tally.otherOutcomes[outcome.optionId] ?? 0) + 1;
+    flush();
     child.stdin.write(line + '\n');
     return;
   }
@@ -255,6 +257,7 @@ function handleFromEditor(line: string): void {
   const HUMAN_FLOOR_MS = 250;
   if (waited >= 0 && waited < HUMAN_FLOOR_MS) {
     tally.machineSpeedRejectAlways += 1;
+    flush();
     note(`[probe] IGNORING reject_always for "${ctx.toolName}" — answered in ${waited}ms, `
       + 'far too fast for a human. The CLIENT chose it, probably by position because this '
       + 'probe appends an option. Honouring it once; NOT authoring a standing rule.');
@@ -266,10 +269,28 @@ function handleFromEditor(line: string): void {
   tally.rejectAlwaysChosen += 1;
   standing.set(ctx.toolName, { at: tally.requestsSeen, toolKind: ctx.toolKind });
   tally.standingRules = [...standing.keys()].sort();
+    flush();
   note(`[probe] ★ STANDING DENY authored for "${ctx.toolName}" — it will not be asked again`);
 
   // The agent cannot be sent an optionId it never offered. Translate to its own reject.
   send(child.stdin, { jsonrpc: '2.0', id: f!.id, result: { outcome: { outcome: 'selected', optionId: 'reject' } } });
+}
+
+/**
+ * ★ WRITE AS WE GO, NOT ONLY AT THE END.
+ *
+ * The tally used to be written once, on exit. An editor does not close its agent politely:
+ * it terminates the process, so no stream-end fires, no handler runs, and the whole session
+ * is lost. Measured — a real editor session produced one ask and one answer, and both files
+ * were absent afterwards. Only the stderr log survived, by accident.
+ *
+ * A measurement you get only from a well-behaved peer is not a measurement you can rely on
+ * having. So every recorded outcome is flushed immediately; exit is now just the last write
+ * rather than the only one.
+ */
+function flush(): void {
+  if (!jsonOut) return;
+  try { writeFileSync(jsonOut, JSON.stringify(tally, null, 2)); } catch { /* never fatal */ }
 }
 
 let finished = false;
