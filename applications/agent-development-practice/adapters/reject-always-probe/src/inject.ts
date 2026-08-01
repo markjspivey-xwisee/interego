@@ -93,6 +93,8 @@ const tally = {
   autoDeniedByStandingRule: 0,
   autoDeniedByTool: {} as Record<string, number>,
   otherOutcomes: {} as Record<string, number>,
+  /** reject_always answers arriving too fast to be human — the client's policy, not consent. */
+  machineSpeedRejectAlways: 0,
 };
 
 /**
@@ -219,6 +221,28 @@ function handleFromEditor(line: string): void {
   if (outcome.optionId !== REJECT_ALWAYS_ID) {
     tally.otherOutcomes[outcome.optionId] = (tally.otherOutcomes[outcome.optionId] ?? 0) + 1;
     child.stdin.write(line + '\n');
+    return;
+  }
+
+  // ★ A MACHINE-SPEED ANSWER IS NOT CONSENT, AND MUST NOT AUTHOR A STANDING RULE.
+  //
+  // This program APPENDS an option to a menu, which changes what a client that answers by
+  // position selects. If the editor auto-answers from policy it can land on the injected
+  // option, and the probe would then record a standing denial the developer never made —
+  // and silently auto-deny that tool for the rest of the session, while the agent narrates
+  // the failed calls as successes. Observed exactly that: a run where no prompt appeared,
+  // no file was written, and the agent reported "Done".
+  //
+  // A standing constraint is a claim about a PERSON's intent. So a reject_always that came
+  // back faster than a human could read the prompt is honoured ONCE and never persisted,
+  // and it is reported loudly rather than counted.
+  const HUMAN_FLOOR_MS = 250;
+  if (waited >= 0 && waited < HUMAN_FLOOR_MS) {
+    tally.machineSpeedRejectAlways += 1;
+    note(`[probe] IGNORING reject_always for "${ctx.toolName}" — answered in ${waited}ms, `
+      + 'far too fast for a human. The CLIENT chose it, probably by position because this '
+      + 'probe appends an option. Honouring it once; NOT authoring a standing rule.');
+    send(child.stdin, { jsonrpc: '2.0', id: f!.id, result: { outcome: { outcome: 'selected', optionId: 'reject' } } });
     return;
   }
 
