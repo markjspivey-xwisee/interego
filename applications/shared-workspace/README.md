@@ -65,8 +65,10 @@ notices; over-privileging is a failure nobody notices.
 | [`src/roster.ts`](src/roster.ts) | the two-sided fold: `foldRoster`, `may`, `explain`. Pure. |
 | [`src/stream.ts`](src/stream.ts) | one participant's log: `appendEntry`, `readStream`, `verifyChain`. |
 | [`src/compose.ts`](src/compose.ts) | many pods read as one workspace: `composeWorkspace`, `resolveCitations`. |
+| [`src/can.ts`](src/can.ts) | authority: `canAct`, `authorizeView`, `scopesFromRegistry`. |
 | [`tools/verify-stream-live.ts`](tools/verify-stream-live.ts) | the stream, against the **live** relay. |
 | [`tools/verify-compose-live.ts`](tools/verify-compose-live.ts) | two real identities, two real pods, one view. |
+| [`tools/verify-can-live.ts`](tools/verify-can-live.ts) | a live refusal, at both layers that can refuse. |
 | [`../../docs/applications/shared-workspace/wsp.ttl`](../../docs/applications/shared-workspace/wsp.ttl) | the vocabulary |
 | [`../../docs/applications/shared-workspace/wsp-shapes.ttl`](../../docs/applications/shared-workspace/wsp-shapes.ttl) | SHACL, enforced at publish |
 | [`../../docs/applications/shared-workspace/wsp-roles-default.ttl`](../../docs/applications/shared-workspace/wsp-roles-default.ttl) | five roles, as **data** |
@@ -149,6 +151,49 @@ A stream that reads but **does not verify** is reported and withheld from the fe
 merging it would place entries whose order within their own member is unknown beside
 entries whose order is verified, with nothing to tell them apart.
 
+## Where authority can actually be enforced
+
+This is the honest part, and a one-relay design never has to think about it. There, every
+write passes through one server, so an unauthorised one is **prevented**.
+
+Here there is no chokepoint, and pretending otherwise would be security theatre.
+**Nothing can stop a person writing to their own pod.** It is their pod, and the
+substrate's gate answers a different question — *is this caller the owner?* — to which the
+answer is yes.
+
+So workspace authority is enforced at the **fold**. An entry from a member whose effective
+capability lacks `append` is not blocked; it is **not counted**. It exists, signed by its
+author, at its own URL — and `authorizeView` excludes it and says why.
+
+| | one relay | here |
+|---|---|---|
+| unauthorised write | **prevented** | **possible, but inert** |
+| what must be trusted | the relay, absolutely | nothing beyond the signatures on the records |
+| who can audit it | nobody — it is a promise about a server | anyone who can read the records, member or not |
+
+Two layers refuse, and they refuse different things. Both are demonstrated live by
+[`tools/verify-can-live.ts`](tools/verify-can-live.ts) (13/13):
+
+```
+the substrate  bee writes to alice's pod       -> 403 scope_violation, nothing lands
+the substrate  bee writes to HER OWN pod       -> succeeds. It is her pod.
+the workspace  the fold reads both pods        -> 2 entries are readable
+the workspace  authorizeView applies the roster -> 1 is workspace content;
+                                                   the Observer's is reported, not deleted
+```
+
+The ceiling is not invented here: `scopesFromRegistry` reads the `ReadWrite` /
+`PublishOnly` / `ReadOnly` scope the substrate's own agent registry records — the same one
+the publish gate consults. Two authorization systems that each hold an opinion eventually
+disagree, and the disagreement is discovered by whoever it lets through.
+
+An unrecognised scope grants **nothing**. Defaulting the other way would turn every scope
+name the substrate adds in future into a silent grant.
+
+`complete` deliberately stays about **reachability**, not authority: folding the two
+together would make a correctly-governed workspace permanently report itself incomplete,
+and a flag that is always false is a flag nobody reads.
+
 ## Poly-vertical by citation, not integration
 
 A `wsp:Reference` entry points at another vertical's record — a Foxxi credential, an
@@ -181,8 +226,8 @@ triples.
 
 ## Status
 
-Increments 1–3 are built and verified against production. 4–6 (`wsp.can` as a live
-refusal, durable engagements, cross-org + pySHACL in CI) are not.
+Increments 1–4 are built and verified against production. 5–6 (durable A2A engagements,
+cross-org + pySHACL conformance in CI) are not.
 
 There is deliberately **no CRDT**. The substrate already stores immutable
 content-addressed records, so per-resource compare-and-swap with a **visible** conflict is
