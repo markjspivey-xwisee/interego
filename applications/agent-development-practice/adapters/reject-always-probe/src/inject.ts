@@ -103,8 +103,17 @@ function toolNameOf(p: Frame['params']): string {
     ? (meta as Record<string, unknown>)['toolName'] ?? (meta as Record<string, unknown>)['tool_name']
     : undefined;
   if (typeof fromMeta === 'string' && fromMeta) return fromMeta;
+  // ★ The title fallback needs cleaning, not just splitting. `_meta.toolName` gives a real
+  // name ("Edit") when the agent supplies it, but for a shell tool it is often absent and
+  // the title is the COMMAND — so the naive first-word split produced a rule keyed on
+  // "`echo", complete with the backtick. That reads as a bug in the prompt ("Reject always
+  // (`echo)") and scopes the rule to a token the developer never chose.
   const t = p?.toolCall?.title;
-  if (typeof t === 'string' && t) return t.split(/[\s(]/)[0] ?? t;
+  if (typeof t === 'string' && t) {
+    const head = t.split(/[\s(]/)[0] ?? t;
+    const cleaned = head.replace(/^[`'"*_~\-\[(]+|[`'"*_~\-\])]+$/g, '');
+    if (cleaned) return cleaned;
+  }
   const k = p?.toolCall?.kind;
   return typeof k === 'string' ? `kind:${k}` : 'unknown';
 }
