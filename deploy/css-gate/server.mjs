@@ -667,6 +667,17 @@ function firstPathSegment(reqUrl) {
 const server = createServer(async (req, res) => {
   const method = (req.method ?? 'GET').toUpperCase();
 
+  // ★ HSTS on every response, set once here rather than added to each writeHead.
+  //
+  // res.writeHead(status, obj) MERGES with anything already set via setHeader, so a single
+  // call up here covers every exit path — preflight, health, 401, and the proxied body —
+  // without having to remember it at each of them. That "remember it everywhere" pattern is
+  // exactly how this header came to be missing while identity had it.
+  //
+  // max-age only, deliberately: includeSubDomains would bind every *.interego.xwisee.com
+  // including any not fully on HTTPS, and preload is near-irreversible. Separate decision.
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+
   // CORS headers attached to every response (including errors + preflight).
   // Computed once per request from the Origin header so an off-list
   // browser caller cannot read the response body.
