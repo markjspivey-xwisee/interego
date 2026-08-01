@@ -72,7 +72,11 @@ jobs:
           git clone https://github.com/a2aproject/a2a-tck.git /tmp/a2a-tck
           cd /tmp/a2a-tck && git checkout "$TCK_REF"
         env:
-          TCK_REF: main
+          # ★ ACTUALLY pinned now. This said `main` while the comment above claimed a
+          # commit pin — so the guard the comment describes did not exist, and "we were
+          # conformant on Tuesday" was exactly as unfalsifiable as it warns against.
+          # 5996b79 is the commit the current baseline of 51 was measured against.
+          TCK_REF: 5996b79f9cefa6fc390980e383e358a66fb9e49e
 
       - name: Install the suite
         working-directory: /tmp/a2a-tck
