@@ -43,6 +43,12 @@ import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { LineSplitter } from '../../editor-witness/src/transport.js';
 
+// Frame tracing is ON while the instrument itself is being debugged; PROBE_TRACE=0
+// silences it. Method names only, never params.
+const TRACE = process.env['PROBE_TRACE'] !== '0';
+const TRACE_CAP = 80;
+let traced = 0;
+
 const REJECT_ALWAYS_ID = 'iep_reject_always';
 const PERMISSION_METHOD = 'session/request_permission';
 
@@ -140,6 +146,16 @@ child.stdout.on('end', () => {
 function handleFromAgent(line: string): void {
   let f: Frame | null = null;
   try { const v: unknown = JSON.parse(line); if (v && typeof v === 'object') f = v as Frame; } catch { /* forward as-is */ }
+
+  // ★ Trace what the agent actually asks the editor to do. Diagnosing "it said it wrote
+  // the file but the file is not there" needs to separate a tool that never ran from one
+  // the EDITOR was asked to run and did not. Method names ONLY — never params, which carry
+  // prompts, paths and file contents. Capped so a long session cannot flood the log.
+  if (TRACE && f?.method && traced < TRACE_CAP) {
+    traced += 1;
+    note(`[probe] frame agent->editor: ${String(f.method)}`);
+    if (traced === TRACE_CAP) note('[probe] frame trace cap reached; further frames not logged');
+  }
 
   if (!f || f.method !== PERMISSION_METHOD) { process.stdout.write(line + '\n'); return; }
 
