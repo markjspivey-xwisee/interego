@@ -100,7 +100,7 @@ export interface TeeOptions {
  * corrupts any frame that straddles a chunk boundary — which happens constantly once a
  * tool call carries a real diff — so the remainder is carried explicitly.
  */
-class LineSplitter {
+export class LineSplitter {
   private buf = '';
   /** Feed a chunk; returns complete lines, retaining any partial tail. */
   push(chunk: string): string[] {
