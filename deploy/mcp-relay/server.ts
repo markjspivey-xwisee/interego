@@ -5020,6 +5020,78 @@ async function handleDiscoverAll(args: ToolArgs): Promise<string> {
   return JSON.stringify({ pods: results.length, results });
 }
 
+/**
+ * Which shapes does the fleet actually declare?
+ *
+ * ★ WHY THIS EXISTS. The publish gate enforces a container's declared shapes, but nothing
+ * could ANSWER "which shapes are declared, and by whom" — so exposure to a shape change
+ * was unmeasurable. An earlier attempt inferred it from a publish probe and was refuted:
+ * the gate 422s only when a declared shape VIOLATES the probe graph, so a shape that
+ * simply does not target the probe's type is indistinguishable from no shape at all. That
+ * method detected 1 of 12 shape documents and reported the other 11 as absent.
+ *
+ * ★ WHY IT IS NOT AN EXISTENCE ORACLE, precisely.
+ *
+ * Two properties, both structural rather than promised:
+ *
+ *  1. It enumerates ONLY the federation registry, which `list_known_pods` already returns
+ *     to every caller. No pod becomes visible here that was not already listed there. It
+ *     deliberately does NOT accept a caller-supplied URL — that would be the oracle, since
+ *     probing an arbitrary URL and reading "declared / not a pod" is exactly the
+ *     cross-tenant existence leak this must avoid.
+ *
+ *  2. The declarations themselves are ALREADY public. fetchContainerShapes reads
+ *     `.well-known/container-shape` with guardedInvokeFetch and no credentials, so any
+ *     declaration the gate can enforce is one an anonymous client could already GET. If a
+ *     pod's declaration were private, the gate could not see it either and it would be
+ *     absent here too.
+ *
+ * So this discloses nothing new; it aggregates what was already readable and previously
+ * only knowable by hand.
+ */
+async function handleListDeclaredShapes(args: ToolArgs): Promise<string> {
+  await awaitFederationHydrateWithBudget(50);
+  const seen = new Set<string>();
+  const pods = (await knownPodsWithSelf(args)).filter(p => {
+    const key = canonicalPodKey(p.url);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const byPod: Array<{ pod: string; label?: string; shapes: string[]; error?: string }> = [];
+  const shapeUse = new Map<string, string[]>();
+  for (const p of pods) {
+    try {
+      const shapes = [...await fetchContainerShapes(p.url)];
+      const row: { pod: string; label?: string; shapes: string[] } = { pod: p.url, shapes };
+      if (p.label) row.label = p.label;
+      byPod.push(row);
+      for (const sh of shapes) shapeUse.set(sh, [...(shapeUse.get(sh) ?? []), p.url]);
+    } catch (e) {
+      // A pod that cannot be reached is reported as unreachable, never as "declares
+      // nothing" — the whole point is that absence and unknown are different facts.
+      byPod.push({ pod: p.url, shapes: [], error: (e as Error).message.slice(0, 160) });
+    }
+  }
+
+  const declaring = byPod.filter(r => r.shapes.length > 0).length;
+  return JSON.stringify({
+    pods: byPod.sort((a, b) => a.pod.localeCompare(b.pod)),
+    byShape: [...shapeUse.entries()].sort().map(([shape, usedBy]) => ({ shape, usedBy })),
+    summary: {
+      podsKnown: byPod.length,
+      podsDeclaringAShape: declaring,
+      distinctShapes: shapeUse.size,
+      unreachable: byPod.filter(r => r.error).length,
+    },
+    note: 'Enumerates only the federation registry that list_known_pods already returns, '
+      + 'and only declarations that are already anonymously fetchable — the same ones the '
+      + 'publish gate reads. A caller-supplied pod URL is deliberately not accepted, '
+      + 'because probing an arbitrary URL would make this an existence oracle.',
+  }, null, 2);
+}
+
 async function handleListKnownPods(args: ToolArgs): Promise<string> {
   // Surface federation-store observability so operators can
   // distinguish a healthy fresh-deploy-with-no-writes-yet from a
@@ -6735,6 +6807,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   // Federation tools
   discover_all: { description: 'Discover across all known pods', handler: handleDiscoverAll },
   list_known_pods: { description: 'List pods in the federation registry', handler: handleListKnownPods },
+  list_declared_shapes: { description: 'Which SHACL shapes each known pod declares (fleet exposure view)', handler: handleListDeclaredShapes },
   add_pod: { description: 'Add a pod to the registry', handler: handleAddPod },
   remove_pod: { description: 'Remove a pod from the registry', handler: handleRemovePod },
   discover_directory: { description: 'Import pods from a directory graph', handler: handleDiscoverDirectory },
@@ -7748,6 +7821,17 @@ const TOOL_SCHEMAS = [
     inputSchema: { type: 'object', properties: {} },
     outputSchema: LIST_KNOWN_PODS_OUTPUT,
     annotations: { title: 'List pods in federation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: 'list_declared_shapes',
+    description: 'Which SHACL shapes each known pod declares, and which pods use each shape. '
+      + 'Answers "what is the fleet exposed to if this shape changes". Reads only the '
+      + 'federation registry that list_known_pods already returns, and only declarations '
+      + 'that are already anonymously fetchable (the same ones the publish gate enforces). '
+      + 'Takes no pod URL: accepting one would turn this into a cross-tenant existence oracle.',
+    inputSchema: { type: 'object', properties: {} },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'List declared shapes across known pods', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'add_pod',
