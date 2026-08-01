@@ -81,6 +81,9 @@ child.on('error', (e) => { note(`[probe] could not start agent: ${e.message}`); 
 const standing = new Map<string, { at: number; toolKind: string }>();
 /** requestId -> the toolName it concerned, so the answer can be attributed. */
 const pending = new Map<string, { toolName: string; toolKind: string }>();
+/** requestId -> when we forwarded it, so the answer's latency is visible. A human takes
+ *  seconds; an editor answering from policy takes milliseconds. That gap is the tell. */
+const askedAtMs = new Map<string, number>();
 
 const tally = {
   requestsSeen: 0,
@@ -168,6 +171,14 @@ function handleFromAgent(line: string): void {
   if (typeof f.id === 'string' || typeof f.id === 'number') {
     pending.set(String(f.id), { toolName, toolKind });
   }
+  // ★ Announce every request as it happens. The tally only lands when the thread ends,
+  // which is useless while diagnosing "it never asked me": the question is whether the
+  // AGENT failed to ask or the EDITOR answered silently, and those look identical from the
+  // UI. With this line in the editor's log, an ask with no visible prompt is provably the
+  // editor auto-answering — and the round-trip time below says how fast.
+  const offeredKinds = options.map(o => String(o.kind));
+  note(`[probe] ASK #${tally.requestsSeen} tool="${toolName}" kind=${toolKind} offered=[${offeredKinds.join(', ')}]`);
+  askedAtMs.set(String(f.id), Date.now());
   // Re-serialised deliberately — this frame is being CHANGED. Every other frame above is
   // forwarded as its original text.
   send(process.stdout, { ...f, params: { ...p, options } });
@@ -199,6 +210,11 @@ function handleFromEditor(line: string): void {
     return;
   }
   pending.delete(id!);
+
+  const waited = askedAtMs.has(id!) ? Date.now() - askedAtMs.get(id!)! : -1;
+  askedAtMs.delete(id!);
+  note(`[probe] ANSWER "${outcome.optionId}" after ${waited}ms`
+    + (waited >= 0 && waited < 250 ? '  <- too fast for a human: the EDITOR answered, not you' : ''));
 
   if (outcome.optionId !== REJECT_ALWAYS_ID) {
     tally.otherOutcomes[outcome.optionId] = (tally.otherOutcomes[outcome.optionId] ?? 0) + 1;
