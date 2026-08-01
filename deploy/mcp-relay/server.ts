@@ -282,6 +282,7 @@ import type { NodeProvenance } from '@interego/pgsl';
 import * as publishedNodes from './pgsl-node-store.js';
 import { alternateTurtleHref, looksLikeHtml } from './alternate-turtle.js';
 import { supersessionFrontier, classifyIfMatch } from './supersession-frontier.js';
+import { resolveInteropPrincipal } from './interop-principal.js';
 
 // Privacy — `@interego/privacy`.
 import { screenForSensitiveContent, formatSensitivityWarning } from '@interego/privacy';
@@ -11317,13 +11318,29 @@ mountAgentInterop(app, {
       requiresAuth: AUTH_REQUIRED_TOOLS.has(t.name),
     }));
   },
-  // Compose the relay's OWN verification — the interop surface gets no second,
-  // weaker notion of identity. Returns a principal only for a verified caller.
-  verifyCaller: async (req) => {
-    const auth = await verifyBearerToken(req.headers.authorization);
-    if (!auth.authenticated) return undefined;
-    return auth.agentId ?? (auth.userId ? `${IDENTITY_URL}/users/${auth.userId}/profile#me` : undefined);
-  },
+  // Compose the relay's OWN verification — the interop surface gets no second, weaker
+  // notion of identity.
+  //
+  // ★ It must accept the credential its own card tells peers to get. The card below
+  // advertises this relay's authorization server with `bearer: true`; a peer that
+  // followed it exactly was refused 401 by every interop route, because only the
+  // IDENTITY server's token store was consulted and never the relay's own OAuth
+  // provider — the one `/mcp` uses. Measured live: 200 from /mcp, 401 from
+  // /a2a/v1/message:send, same token, same second.
+  //
+  // The decision lives in interop-principal.ts so it can be tested; server.ts starts a
+  // listener on import, and an auth check with no coverage is the worst place for one.
+  verifyCaller: req => resolveInteropPrincipal(req.headers.authorization, {
+    verifyOAuth: async token => {
+      const info = await oauthProvider.verifyAccessToken(token);
+      return (info as { extra?: { userId?: string; agentId?: string } }).extra ?? {};
+    },
+    verifyIdentity: async header => {
+      const a = await verifyBearerToken(header);
+      return { authenticated: a.authenticated, agentId: a.agentId, userId: a.userId };
+    },
+    identityUrl: IDENTITY_URL,
+  }),
   auth: {
     oauth2: {
       metadataUrl: `${(PUBLIC_BASE_URL || '').replace(/\/$/, '')}/.well-known/oauth-authorization-server`,
