@@ -53,6 +53,19 @@ child.on('error', (e) => { note(`[witness] could not start agent: ${e.message}`)
 
 const { observer, finish } = createTally();
 
+/**
+ * ★ FLUSH ON EVERY OBSERVATION, NOT ONLY AT EXIT.
+ *
+ * An editor terminates its agent rather than closing the pipe, so no stream-end fires and
+ * the exit-time write never happens. Measured against a real editor: one permission request
+ * and one answer observed, and the tally file absent afterwards — the entire session lost,
+ * with only the stderr log surviving by accident. A day of work would have gone the same way.
+ */
+const flush = (): void => {
+  if (!jsonOut) return;
+  try { writeFileSync(jsonOut, JSON.stringify(finish(), null, 2)); } catch { /* never fatal */ }
+};
+
 let reported = false;
 const report = (): void => {
   if (reported) return;
@@ -94,7 +107,7 @@ await startTee({
   toAgent: child.stdin,
   fromAgent: child.stdout,
   toEditor: process.stdout,
-  observers: [observer],
+  observers: [observer, () => flush()],
   // ★ THE EDITOR OWNS THE SESSION. When it hangs up, the day is over — report then,
   // rather than waiting for an agent that may never exit. Found on the first live run
   // against a real agent: it errored, stayed alive, both pumps stayed open, and the whole
