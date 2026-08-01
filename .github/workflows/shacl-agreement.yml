@@ -1,0 +1,82 @@
+name: SHACL Agreement
+
+# Does an INDEPENDENT SHACL implementation agree with ours?
+#
+# We publish shapes at dereferenceable URLs and invite anyone to validate against them.
+# That invitation is only worth something if our engine and a conformant one reach the same
+# verdict — otherwise a published shape means one thing to us and something else to every
+# reader, and the disagreement is discovered by whoever it lets through.
+#
+# ★ Not hypothetical. `sh:pattern` was applied only to literals here, while SHACL §4.6.3
+# applies it to IRIs and pySHACL implements it that way. THREE published a2a constraints
+# were inert as a result — including one whose own message reads "every advertised
+# capability id MUST be a dereferenceable http(s) URL" (fixed in #231). Our own tests could
+# not find it, because they encoded our reading of the spec. Only a second implementation
+# could, and there wasn't one in the loop. Now there is.
+#
+# Agreement is on the VERDICT, not on result counts: two conformant implementations may
+# legitimately report a different number of results for the same violation, and demanding
+# they match would fail for reasons that are nobody's bug.
+#
+# ★ Each fixture also declares the verdict it EXPECTS, so two engines that are wrong in the
+# same direction are caught too. Without that, mutual error reads as perfect agreement —
+# the exact shape of a test that cannot fail.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'packages/core/src/validation/**'
+      - 'docs/**/*.ttl'
+      - 'tools/shacl-agreement/**'
+      - '.github/workflows/shacl-agreement.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/core/src/validation/**'
+      - 'docs/**/*.ttl'
+      - 'tools/shacl-agreement/**'
+      - '.github/workflows/shacl-agreement.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  agreement:
+    name: "@interego/core vs pySHACL — same shapes, same data, same verdict"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+
+      - name: Install workspace
+        run: npm ci --ignore-scripts
+      - name: Build @interego/core
+        run: npm run build --workspace @interego/core
+
+      - name: Install pySHACL
+        run: pip install --quiet pyshacl
+
+      # ★ The published shape file is COPIED into fixtures/ rather than being a second
+      # hand-written copy, so the thing under test is the thing we actually serve. This step
+      # fails the job if the two have drifted — a check against a stale copy of the shape
+      # would pass while the published one was broken, which is the failure this whole
+      # workflow exists to prevent.
+      - name: The fixture shape must BE the published shape
+        run: |
+          diff -u docs/applications/shared-workspace/wsp-shapes.ttl \
+                  tools/shacl-agreement/fixtures/wsp-shapes.ttl \
+            || { echo "::error::fixtures/wsp-shapes.ttl has drifted from the published shape — copy it over"; exit 1; }
+
+      - name: Validate with our engine
+        run: node tools/shacl-agreement/run.mjs
+
+      - name: Validate with pySHACL
+        run: python3 tools/shacl-agreement/run_pyshacl.py
+
+      - name: Compare the verdicts
+        run: node tools/shacl-agreement/run.mjs --compare

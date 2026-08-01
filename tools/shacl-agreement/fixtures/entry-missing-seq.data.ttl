@@ -1,0 +1,12 @@
+# shape: wsp-shapes.ttl
+# expect: violates
+# why: sh:minCount 1 on wsp:seq. Without it a stream cannot be replayed and a gap cannot be told from a deletion.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://alice.test/ws/a/stream/e/0>
+  a wsp:Entry ;
+  wsp:workspace <https://relay.test/ws/a> ;
+  dct:description "no sequence" .
