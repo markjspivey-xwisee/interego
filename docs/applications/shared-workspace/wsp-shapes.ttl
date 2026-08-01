@@ -1,0 +1,156 @@
+@prefix wsp:   <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#>.
+@prefix wspsh: <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-shapes#>.
+@prefix sh:    <http://www.w3.org/ns/shacl#>.
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#>.
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix dct:   <http://purl.org/dc/terms/>.
+
+# ══════════════════════════════════════════════════════════════
+#  Shapes for the shared workspace
+# ══════════════════════════════════════════════════════════════
+#
+#  These run at PUBLISH, before anything reaches a pod. A record
+#  that violates one is refused with a 422 and never lands, so a
+#  malformed membership cannot exist even briefly.
+#
+#  ── WHY EVERY PRINCIPAL MUST BE A URL ────────────────────────
+#
+#  sh:pattern "^https?://|^did:" on each principal is not
+#  decoration. A membership naming an identifier nobody can
+#  dereference is an assertion about a party who cannot be looked
+#  up, checked, or contacted — which is exactly the failure a
+#  roster is supposed to prevent. A urn: here would also break
+#  cross-organisation membership outright, since the other
+#  organisation has no way to resolve it.
+#
+#  ── WHY THESE SHAPES ARE NOT sh:closed ───────────────────────
+#
+#  Deliberate. A workspace record is expected to carry vertical
+#  payload alongside these terms — a Foxxi reference, an agp
+#  plan — and closing the shape would make citing another
+#  vertical a violation. Closure belongs on records whose whole
+#  content is known in advance; these are not those.
+# ══════════════════════════════════════════════════════════════
+
+<https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-shapes>
+  dct:title "Shared workspace shapes 1.0" ;
+  rdfs:seeAlso <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+# ── A workspace ───────────────────────────────────────────────
+
+wspsh:WorkspaceShape a sh:NodeShape ;
+  sh:targetClass wsp:Workspace ;
+  rdfs:comment "A workspace must name exactly one convener and exactly one role profile, both dereferenceable." ;
+  sh:property [
+    sh:path wsp:convener ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https?://|^did:" ;
+    sh:message "wsp:convener must be exactly one dereferenceable principal (https: or did:). A convener nobody can look up cannot be held to anything." ;
+  ] ;
+  sh:property [
+    sh:path wsp:roleProfile ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https?://" ;
+    sh:message "wsp:roleProfile must be exactly one https URL. Roles are published data; a workspace whose governance cannot be fetched cannot be audited." ;
+  ] ;
+  sh:property [
+    sh:path dct:title ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+    sh:message "A workspace needs exactly one dct:title. People have to be able to tell two of them apart." ;
+  ] .
+
+# ── Half a membership: the grant ──────────────────────────────
+
+wspsh:MembershipGrantShape a sh:NodeShape ;
+  sh:targetClass wsp:MembershipGrant ;
+  rdfs:comment
+    "A grant names one principal, one role and one workspace. It is only half of a membership — the roster requires a matching acceptance on the invitee's own pod." ;
+  sh:property [
+    sh:path wsp:grantedTo ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https?://|^did:" ;
+    sh:message "wsp:grantedTo must be exactly one dereferenceable principal (https: WebID or did:). A urn: principal cannot be resolved by another organisation, which defeats cross-org membership." ;
+  ] ;
+  sh:property [
+    sh:path wsp:role ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https?://" ;
+    sh:message "wsp:role must be exactly one role IRI drawn from the workspace's published role profile." ;
+  ] ;
+  sh:property [
+    sh:path wsp:workspace ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https?://" ;
+    sh:message "wsp:workspace must be exactly one workspace URL." ;
+  ] ;
+  sh:property [
+    sh:path wsp:revoked ;
+    sh:maxCount 1 ; sh:datatype xsd:boolean ;
+    sh:message "wsp:revoked, when present, is a single boolean. Revocation supersedes the prior grant; it never deletes it." ;
+  ] .
+
+# ── The other half: the acceptance ────────────────────────────
+
+wspsh:MembershipAcceptanceShape a sh:NodeShape ;
+  sh:targetClass wsp:MembershipAcceptance ;
+  rdfs:comment
+    "Published on the MEMBER's own pod. Names the grant it answers and the stream the member will write to. Without this the convener's grant is an unanswered offer, which is the point: a convener cannot manufacture a participant." ;
+  sh:property [
+    sh:path wsp:accepts ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https?://" ;
+    sh:message "wsp:accepts must name exactly one grant, by its own dereferenceable URL — the two halves are linked by content, not by a shared secret." ;
+  ] ;
+  sh:property [
+    sh:path wsp:stream ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:nodeKind sh:IRI ;
+    sh:message "wsp:stream must name exactly one stream. A member with no stream has nowhere to write, and the fold would silently drop them." ;
+  ] ;
+  sh:property [
+    sh:path wsp:workspace ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https?://" ;
+    sh:message "wsp:workspace must be exactly one workspace URL." ;
+  ] ;
+  sh:property [
+    sh:path wsp:withdrawn ;
+    sh:maxCount 1 ; sh:datatype xsd:boolean ;
+    sh:message "wsp:withdrawn, when present, is a single boolean." ;
+  ] .
+
+# ── An entry in a stream ──────────────────────────────────────
+
+wspsh:EntryShape a sh:NodeShape ;
+  sh:targetClass wsp:Entry ;
+  rdfs:comment
+    "One append. wsp:seq is per-stream and mandatory: without it a stream cannot be replayed in order, and a gap cannot be told from a deletion." ;
+  sh:property [
+    sh:path wsp:seq ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:nonNegativeInteger ;
+    sh:message "wsp:seq must be exactly one non-negative integer. It orders the author's own stream only — there is deliberately no global sequence, because a global counter needs a central authority." ;
+  ] ;
+  sh:property [
+    sh:path wsp:workspace ;
+    sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:pattern "^https?://" ;
+    sh:message "An entry must name the workspace it belongs to." ;
+  ] .
+
+wspsh:ReferenceShape a sh:NodeShape ;
+  sh:targetClass wsp:Reference ;
+  rdfs:comment
+    "A citation of another vertical's record. The cited record is never copied, so it keeps its own authorship, shape and access control — this is how the workspace stays poly-vertical without absorbing the verticals." ;
+  sh:property [
+    sh:path wsp:references ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https?://" ;
+    sh:message "wsp:references must cite at least one dereferenceable record IRI. Citing something unresolvable is indistinguishable from citing nothing." ;
+  ] .
