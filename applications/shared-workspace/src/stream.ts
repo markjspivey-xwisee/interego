@@ -251,6 +251,33 @@ export async function readStream(ref: StreamRef, deps: StreamDeps): Promise<read
     graph_iri: ref.graphIri,
     sort: 'oldest-first',
   });
+
+  // ★ A FAILED READ MUST NOT LOOK LIKE AN EMPTY ONE.
+  //
+  // The substrate reports an unreachable pod as DATA, not as a rejection: the tool result
+  // for a dead host is the plain string "Error: fetch failed", and for a pod that exists
+  // but holds nothing it is `{entries: [], registry: null}`. Both reduce to zero rows
+  // under a permissive read, and the two claims could not be further apart — "this member
+  // has written nothing" versus "we could not reach this member at all".
+  //
+  // This was found live and only live. The composed view's per-stream error isolation was
+  // fully tested against a double that THREW, so it passed; against the real relay it
+  // never fired once, and an unreachable member was silently rendered as an idle one.
+  if (res === null || typeof res !== 'object' || Array.isArray(res)) {
+    throw new Error(
+      `discover_context on <${ref.podUrl}> did not return a result object: ${JSON.stringify(res)?.slice(0, 200)}`,
+    );
+  }
+  if (res.error !== undefined) {
+    throw new Error(`discover_context on <${ref.podUrl}> failed: ${String(res.message ?? res.error)}`);
+  }
+  if (!Array.isArray(res.entries)) {
+    throw new Error(
+      `discover_context on <${ref.podUrl}> returned no entries array — the read did not succeed, `
+      + 'and treating that as an empty stream would report an unreachable member as an idle one.',
+    );
+  }
+
   return asArray(res.entries)
     .map(e => e as Record<string, unknown>)
     .filter(e => asArray(e.describes).includes(ref.graphIri))
