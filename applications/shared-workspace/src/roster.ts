@@ -42,13 +42,28 @@
  * strength, because it really is her unmodified record. The lie is in which record was
  * submitted, not in the record, so a stronger guarantee about the record cannot reach it.
  *
- * So "bee is an attested member" means *a record at this URL was signed by bee, and it says
- * what she signed*, and NOT *bee agreed to this*.
- * {@link Roster.recordFieldBinding} is a non-omittable field whose only value is
- * `'unbound'`, so a caller cannot read `members` without having been handed that
- * distinction. Closing it needs the record's own content parsed and compared against the
- * fields — evidence this pure module is not given, and which nothing in the repo produces,
- * there being no serializer for a grant or an acceptance anywhere.
+ * So without field binding, "bee is an attested member" means *a record at this URL was
+ * signed by bee, and it says what she signed*, and NOT *bee agreed to this*.
+ *
+ * ★★★ AND THAT IS THE GAP `membership.ts` CLOSES, FOR CALLERS THAT ASK.
+ *
+ * The blocker was never the fold. It was that nothing in the repo had ever WRITTEN a
+ * `wsp:MembershipGrant` or a `wsp:MembershipAcceptance`, so there was no content to compare
+ * the typed fields against. `membership.ts` serializes both halves, validates them against
+ * the published shapes at publish, signs them, reads them back and parses every field out of
+ * the payload — and marks the row with a {@link FieldProvenance} saying so.
+ * {@link AttestationPolicy.requireFieldBinding} then refuses any row without one, and
+ * {@link Roster.recordFieldBinding} reports `'bound'`. Bee's log entry no longer reaches the
+ * fold at all: it declares no `wsp:MembershipAcceptance`, so the reader refuses it.
+ *
+ * `'unbound'` remains the default and remains reachable, because every hand-built caller
+ * still produces exactly the rows described above and must keep being told so.
+ *
+ * ★ WHAT IS STILL OPEN, and it is named rather than absorbed: nothing establishes that
+ * {@link AttestationPolicy.convener} is the workspace's convener. That principal is typed by
+ * the caller, and neither this module nor `membership.ts` fetches the workspace descriptor
+ * to check `wsp:convener` against it. Field binding makes every record state its own
+ * membership; it does not make the policy state the right convener.
  *
  * Without that policy the fold still works exactly as before, and says so:
  * {@link Roster.membershipGrade} is `'asserted'` and {@link Roster.attributionNote} states
@@ -109,6 +124,13 @@
  * a second place where authorization quietly happens.
  */
 
+// ★ TYPE-ONLY, so this stays the pure module its header says it is — the import is erased
+// and nothing here gains a runtime dependency. Both names are the SUBSTRATE's, imported
+// rather than retyped: a local copy of `ContentBinding` that gained a value the verifier
+// never emits, or lost one it does, would be a policy silently reading a vocabulary the
+// relay does not speak.
+import type { ContentBinding as SubstrateContentBinding, DescriptorBindingBasis } from '@interego/core';
+
 /** A principal: a WebID for a person, a DID for an agent. No distinction is drawn between them. */
 export type Principal = string;
 
@@ -159,6 +181,39 @@ export interface Attestation {
    */
   readonly boundToDescriptor: boolean;
   /**
+   * ON WHAT BASIS the flag above is `true`. Carried because the boolean is a two-valued
+   * reading of a three-valued verdict, and the value it erases is the weak one.
+   *
+   * `'exact-url'` compared host, pod, container and name. `'slug-only'` compared ONE path
+   * segment: the proof names a `urn:`, and `slugFromIri` relates a URN to a URL by its last
+   * segment alone, so the host and the pod were not compared and cannot be. A record served
+   * from `https://attacker.example/anything/1712345678901.ttl` reaches `bound: true,
+   * slug-only` against a proof minted for a real record at
+   * `https://css/bee-pod/context-graphs/1712345678901.ttl`. `stream.ts` used to drop this on
+   * the floor at the boundary; it now travels with the verdict it qualifies.
+   *
+   * ★ AND NO POLICY HERE REFUSES ON IT — DECIDED AGAINST, AND MEASURED, NOT ASSUMED. The
+   * tempting rule is "field binding requires `exact-url`". It would refuse EVERY record the
+   * substrate mints: `publish_context` mints `descriptor_id` as `urn:iep:<pod>:<epoch-ms>`,
+   * so every honest membership record in existence is `slug-only`, and the rule fails closed
+   * on 100% of honest data — the failure direction this area has already shipped once.
+   *
+   * What it would buy, measured after the parse-scope fix: nothing that is conferred. A
+   * relocated verbatim copy of a genuinely signed acceptance produces a roster IDENTICAL to
+   * the honest one — `workspace`, `member`, `accepts`, `stream` and the role all come out of
+   * the signed block, and two copies present at once raise the acceptance-fork divergence
+   * rather than escalating anything. See `tests/workspace-membership.test.ts`.
+   *
+   * What it leaves open is NOT nothing, and it is named rather than folded away: `head` — the
+   * URL an operator dereferences to audit a record, and the URL printed in `unattested` and
+   * in every `divergence` — is chosen by whoever hosts the copy. A `slug-only` row sends a
+   * reader to a document the attacker controls. That is residual gap 1 in the README.
+   *
+   * Optional because a hand-built {@link Attestation} records no basis, and absent must never
+   * read as `'exact-url'`.
+   */
+  readonly descriptorBindingBasis?: DescriptorBindingBasis;
+  /**
    * Whether the substrate verified the proof against the CONTENT served with the record,
    * as opposed to only against the proof's own bytes. Read from
    * `get_descriptor.authorship.contentBinding` through an allowlist, not passed through:
@@ -198,8 +253,16 @@ export interface Attestation {
 /**
  * Re-exported from the substrate rather than redeclared, so the two cannot drift into
  * meaning different things by the same name.
+ *
+ * ★ AND IT NOW ACTUALLY IS. This said "re-exported rather than redeclared" above a
+ * hand-written copy of the union — the drift the sentence promised to prevent, sitting under
+ * the sentence. It is an alias of `@interego/core`'s type now, so adding a value there is a
+ * compile error here rather than a policy quietly not recognising it.
  */
-export type ContentBinding = 'bound' | 'mismatched' | 'declared' | 'unbound';
+export type ContentBinding = SubstrateContentBinding;
+
+/** Re-exported for the same reason. See {@link Attestation.descriptorBindingBasis}. */
+export type { DescriptorBindingBasis };
 
 /**
  * Which grade of attribution a result carries. Two grades, never conflated — the same
@@ -286,6 +349,24 @@ export interface AttestationPolicy {
    * {@link Roster.recordContentBinding} whether it was.
    */
   readonly requireContentBinding?: boolean;
+  /**
+   * Also require that each conferring record's FIELDS were parsed from its own payload —
+   * {@link FieldProvenance} present, naming this record. Refuses every hand-built row.
+   *
+   * ★ THIS IMPLIES {@link requireContentBinding}, IN CODE, AND MAY NOT BE SET WITHOUT IT.
+   * Fields parsed out of bytes nobody re-digested are fields that may have been changed
+   * after signing: the parse would faithfully report a role somebody edited in. "Read from
+   * the record" is only worth something when the record is known to state what its signer
+   * signed, so the fold ORs the two rather than letting a caller pick the combination that
+   * looks strict and checks half.
+   *
+   * Off by default, and it has to be: nothing in the repo produced a grant or an acceptance
+   * until `membership.ts`, so every existing caller hand-builds its rows and turning this on
+   * by default would empty every roster at once. Turning it on only ever refuses MORE — see
+   * the monotonicity rule in this module's header — and the fold reports in
+   * {@link Roster.recordFieldBinding} whether it was on.
+   */
+  readonly requireFieldBinding?: boolean;
 }
 
 /**
@@ -392,6 +473,39 @@ export function refuseAttestation(
   return null;
 }
 
+/**
+ * Where a record's own fields came from.
+ *
+ * ★ THE EVIDENCE `Attestation` COULD NEVER CARRY. An attestation is a statement about a
+ * SIGNATURE; this is a statement about the FIELDS sitting next to it. The two were the same
+ * gap for four rounds: the substrate could prove a record was signed, then prove it stated
+ * what was signed, and the fold still read `role`, `grantedTo` and `stream` off an object
+ * whoever called it had typed. `membership.ts` is the only thing that produces this — its
+ * readers parse every field out of the payload `get_descriptor` served, in the same response
+ * the binding verdict came from.
+ *
+ * ★ AND IT IS STILL A CLAIM THIS PURE MODULE CANNOT CHECK, exactly like `Attestation`. A
+ * caller can hand-build `{source: 'payload', descriptor: head}` beside invented fields, and
+ * nothing here can tell. What the fold CAN do — and does, in {@link refuseFieldBinding} — is
+ * the one check that is not self-certifying: `descriptor` must be the record's own `head`.
+ * That catches the realistic failure, which is not a liar but a composer reading many pods
+ * and attaching one record's parsed fields to another record's head.
+ */
+export interface FieldProvenance {
+  /**
+   * `'payload'` — every field on this record was parsed from the record's own bytes.
+   *
+   * A single-valued union rather than a boolean so that a future second source has to be
+   * named and reasoned about rather than folded into `true`.
+   */
+  readonly source: 'payload';
+  /**
+   * The descriptor URL those bytes were read from. MUST equal the record's `head`; see
+   * {@link refuseFieldBinding}.
+   */
+  readonly descriptor: string;
+}
+
 /** Half a membership, from the convener's pod. `head` is the descriptor URL of this version. */
 export interface Grant {
   readonly head: string;
@@ -401,6 +515,11 @@ export interface Grant {
   readonly revoked?: boolean;
   /** What the substrate's verifier said about who signed this grant. See {@link Attestation}. */
   readonly attestation?: Attestation;
+  /**
+   * Set by `readGrantRecord` when these fields were parsed from the record's payload rather
+   * than typed by a caller. Absent on every hand-built grant, which is the safe default.
+   */
+  readonly fieldProvenance?: FieldProvenance;
 }
 
 /** The other half, from the member's own pod. */
@@ -413,6 +532,49 @@ export interface Acceptance {
   readonly withdrawn?: boolean;
   /** What the substrate's verifier said about who signed this acceptance. */
   readonly attestation?: Attestation;
+  /** Set by `readAcceptanceRecord`. See {@link Grant.fieldProvenance}. */
+  readonly fieldProvenance?: FieldProvenance;
+}
+
+/**
+ * Why these fields cannot be treated as the record's own, or null when they can.
+ *
+ * Separate from {@link refuseAttestation} because it answers a different question about a
+ * different part of the row — who signed this, versus where did these values come from —
+ * and collapsing the two would produce a single verdict that cannot say which half failed.
+ *
+ * Every branch refuses, and the default refuses: a record with no provenance is a record
+ * whose fields somebody typed, which is the condition this whole gate exists to notice.
+ */
+export function refuseFieldBinding(
+  provenance: FieldProvenance | undefined,
+  head: string,
+  requireFieldBinding = false,
+): string | null {
+  if (!requireFieldBinding) return null;
+  if (provenance === undefined) {
+    return 'its fields were typed by whoever called this fold rather than read from the '
+      + 'record — the role, the grantee and the stream are caller-supplied, so one of a '
+      + 'member\'s ordinary signed records would pass every signature check as their '
+      + 'acceptance. Read it with readGrantRecord/readAcceptanceRecord in membership.ts';
+  }
+  // `!== 'payload'` rather than a positive test: this arrives as JSON in a federated
+  // composer, and a value the type says is impossible must not come out the admitting end.
+  if (provenance.source !== 'payload') {
+    return `its fields claim an unrecognised source (${String(provenance.source)}), and an `
+      + 'unknown provenance establishes nothing about where a value came from';
+  }
+  if (provenance.descriptor !== head) {
+    // ★ THE ONE CHECK HERE THAT IS NOT SELF-CERTIFYING, and it catches a real shape rather
+    // than a hypothetical one. A composer that reads several pods holds many parsed records
+    // at once; attaching the fields parsed from <a> to the row for <b> produces a membership
+    // assembled from two different documents, each individually genuine. The mismatch is
+    // visible without trusting anybody's say-so, so it is checked.
+    return `its fields were parsed from <${provenance.descriptor}> and this row is <${head}> — `
+      + 'the values and the record they are attributed to came from different documents, so '
+      + 'neither one states what the other says';
+  }
+  return null;
 }
 
 /** A record the fold refused to use, and why. Reported so a refusal is diagnosable. */
@@ -519,29 +681,59 @@ export interface Roster {
    */
   readonly recordContentBinding: 'bound' | 'unbound';
   /**
-   * ★ STILL ALWAYS `'unbound'`, and non-omittable for the reason `crossStreamOrderIsAdvisory`
-   * is: the claim has to be unavoidable, because the output looks identical whether or not
-   * it holds.
+   * Whether the FIELDS of every conferring record were read out of that record, rather than
+   * typed by whoever called this fold.
    *
-   * `recordContentBinding: 'bound'` now closes the question *does this record state what
-   * was signed*. It does not touch the question this field names, which is *does what it
-   * states match what this Grant or Acceptance says*. `Grant.role`, `Grant.grantedTo`, `Grant.revoked`,
-   * `Acceptance.member`, `Acceptance.accepts` and `Acceptance.stream` are all typed by
-   * whoever called {@link foldRoster}; the attestation sits beside them and covers none of
-   * them. Handed one of a member's ordinary published log entries as their "acceptance" —
-   * genuinely signed, genuinely bound to its own descriptor, and now genuinely
-   * content-bound too, because it really is that member's unmodified record — this fold
-   * still produces an attested member who never agreed to anything, at whatever role the
-   * caller typed.
+   *   bound     `attestation.requireFieldBinding` was set, so each conferring grant and
+   *             acceptance carried a {@link FieldProvenance} naming itself — the values were
+   *             parsed from the payload `get_descriptor` served, in the same response whose
+   *             `contentBinding` was `'bound'`. The record SAYS what this roster reports it
+   *             says. Produced only by `readGrantRecord` / `readAcceptanceRecord`.
+   *   unbound   no policy, or the policy did not require it. `Grant.role`,
+   *             `Grant.grantedTo`, `Acceptance.member`, `Acceptance.stream` and the rest are
+   *             whatever the caller typed, and the attestation beside them covers none of
+   *             them. One of a member's ordinary published log entries — genuinely signed,
+   *             genuinely content-bound, genuinely theirs — passes as their acceptance at
+   *             whatever role the caller chose.
    *
-   * Content binding does not narrow that attack, and saying so plainly is the point of
-   * keeping the field. Closing it needs the record's own content parsed and compared
-   * against the typed fields, which needs grants and acceptances to BE published records
-   * with a defined shape. Nothing in this repo writes one: there is no serializer for a
-   * grant or an acceptance anywhere, so there is no content to compare against and no
-   * value other than `'unbound'` that would be true.
+   * Non-omittable for the reason `crossStreamOrderIsAdvisory` is: the two rosters look
+   * identical, and a caller must not be able to read `members` without having been handed
+   * the difference.
+   *
+   * ★ WHICH VALUES IT COVERS, EXACTLY — AND {@link Member.role} IS NOT ONE OF THEM.
+   *
+   * `'bound'` is a statement about every CONFERRING RECORD: each one's `workspace`,
+   * `grantedTo`, `role`, `member`, `accepts` and `stream` were parsed from its own payload.
+   * It is NOT a statement about the DERIVED fields this fold computes across records, and
+   * the two were being read as one.
+   *
+   * `Member.role` and `Member.effective` are both folded across the RESTRICTING track —
+   * every in-workspace grant for the principal, including ones this policy refused — because
+   * a refusal must never widen an intersection or widen a printed label. A row whose fields
+   * the caller typed, which appears in `unattested` and confers nothing, can therefore still
+   * decide the role LABEL a field-bound member is printed with, and still narrow their
+   * capabilities. Measured: a grant with no attestation and no provenance, listed in
+   * `unattested`, changed the printed role of an otherwise field-bound member while this
+   * field read `'bound'`.
+   *
+   * That is not an escalation and it cannot become one — the direction is fixed by
+   * construction, and the enumeration in `tests/workspace-adversarial.test.ts` is what fixes
+   * it: `knownRole` is the NARROWEST role across `gs` and `roleCaps` is the INTERSECTION
+   * across `gs`, so an extra row can only ever subtract. But "bound" was being read as
+   * covering the label, and it does not. Binding the label instead would mean choosing it off
+   * the conferring track, which is exactly the change that let a stricter policy print
+   * `Convener` beside an `Observer`'s capabilities — an escalation of the word.
+   *
+   * ★ WHAT `'bound'` STILL DOES NOT MEAN, and this is the line most at risk of being
+   * over-read now that the value is reachable. It establishes that each record states the
+   * membership this roster reports. It does NOT establish that the SIGNER of the grant was
+   * entitled to grant: `AttestationPolicy.convener` is a principal the caller names, and
+   * nothing in this fold or in `membership.ts` fetches the workspace descriptor to check
+   * `wsp:convener` against it. A workspace whose convener is misidentified produces a
+   * perfectly field-bound roster of the wrong memberships. That is residual gap 6 in the
+   * README and it is open.
    */
-  readonly recordFieldBinding: 'unbound';
+  readonly recordFieldBinding: 'bound' | 'unbound';
 }
 
 const uniqueSorted = (xs: readonly string[]): string[] => [...new Set(xs)].sort();
@@ -654,11 +846,21 @@ export function foldRoster(args: {
   const unattested: UnattestedRecord[] = [];
   let conferringGrants = inWorkspaceGrants;
   let conferringAcceptances = inWorkspaceAcceptances;
-  const requireBinding = args.attestation?.requireContentBinding === true;
+  const requireFields = args.attestation?.requireFieldBinding === true;
+  // ★ FIELD BINDING FORCES CONTENT BINDING ON, and the OR is the enforcement. Reading the
+  // fields out of a payload the substrate never re-digested would report, faithfully and
+  // precisely, whatever somebody edited into the record after it was signed — a strictly
+  // worse answer than admitting the fields were untrusted, because it looks checked. The
+  // combination `requireFieldBinding: true, requireContentBinding: false` is therefore not
+  // reachable rather than merely discouraged. See `AttestationPolicy.requireFieldBinding`.
+  const requireBinding = args.attestation?.requireContentBinding === true || requireFields;
   if (args.attestation) {
     const convener = args.attestation.convener;
     conferringGrants = inWorkspaceGrants.filter(g => {
-      const why = refuseAttestation(g.attestation, convener, signerOf, requireBinding);
+      // Attestation first: "who signed this" is the more fundamental question and its
+      // refusals name a party, which is what an operator acts on.
+      const why = refuseAttestation(g.attestation, convener, signerOf, requireBinding)
+        ?? refuseFieldBinding(g.fieldProvenance, g.head, requireFields);
       if (why === null) return true;
       unattested.push({
         kind: 'grant', head: g.head, principal: g.grantedTo, because: why,
@@ -667,7 +869,8 @@ export function foldRoster(args: {
       return false;
     });
     conferringAcceptances = inWorkspaceAcceptances.filter(a => {
-      const why = refuseAttestation(a.attestation, a.member, signerOf, requireBinding);
+      const why = refuseAttestation(a.attestation, a.member, signerOf, requireBinding)
+        ?? refuseFieldBinding(a.fieldProvenance, a.head, requireFields);
       if (why === null) return true;
       unattested.push({
         kind: 'acceptance', head: a.head, principal: a.member, because: why,
@@ -920,16 +1123,38 @@ export function foldRoster(args: {
             + 'each record STATES what its signer signed. That is triple-identity, not '
             + 'byte-identity — the digest is over the graph\'s triples, so a record can be '
             + 'reordered, reindented or re-prefixed and still match. What it rules out is a '
-            + 'change in what the record says. '
+            + 'change in what the record says. The digest covers ONE REGION of each served '
+            + 'document — the named-graph block — and the fields above were parsed from that '
+            + 'same region and no other. '
           : 'Content binding was NOT required, so nothing here was checked against a '
             + 'record\'s content; pass `requireContentBinding` to demand it. ')
-        + 'Residual, and it is not small, and content binding does not reduce it: every field '
-        + 'here — the role, the grantee, the stream — is still as the CALLER TYPED IT rather '
-        + 'than read from the record, so one of a member\'s ordinary signed records passes '
-        + 'this gate as their acceptance. That record is genuinely theirs and genuinely '
-        + 'unmodified, which is why binding its content changes nothing about the attack. '
-        + 'See `recordFieldBinding`. A proof lifted out of a principal\'s real record and '
-        + 'pasted into a fabricated one is narrowed separately — see `readAttestation`.'
+        + (requireFields
+          ? 'Field binding was REQUIRED and every conferring record met it: the role, the '
+            + 'grantee, the stream and the grant each acceptance answers were PARSED FROM THE '
+            + 'RECORD, in the same read whose content binding matched — not typed by whoever '
+            + 'called this fold. One of a member\'s ordinary signed log entries no longer '
+            + 'passes as their acceptance: it is a wsp:Entry, it declares no '
+            + 'wsp:MembershipAcceptance, and the reader refuses it before the fold sees it. '
+            // ★ SCOPED, because it was being read as covering more than it does. `Member.role`
+            // and `Member.effective` are folded across the RESTRICTING track, so a refused,
+            // caller-typed row can still narrow both. It only ever subtracts — but "bound"
+            // was standing in for "and the label is bound too", and it is not.
+            + 'That covers each RECORD. `Member.role` and `Member.effective` are folded '
+            + 'ACROSS records including refused ones, so a row listed in `unattested` can '
+            + 'still narrow a member\'s role label and capabilities — never widen them. '
+            + 'RESIDUAL, and it is the one left: nothing checked that the convener named in '
+            + `this policy (${args.attestation.convener}) is the workspace's convener. That is `
+            + 'a value the caller typed, and no record here was read from <'
+            + `${workspace}> to confirm it. See \`recordFieldBinding\`.`
+          : 'Residual, and it is not small, and content binding does not reduce it: every '
+            + 'field here — the role, the grantee, the stream — is as the CALLER TYPED IT '
+            + 'rather than read from the record, so one of a member\'s ordinary signed '
+            + 'records passes this gate as their acceptance. That record is genuinely theirs '
+            + 'and genuinely unmodified, which is why binding its content changes nothing '
+            + 'about the attack. Pass `requireFieldBinding` and read the records with '
+            + 'membership.ts to close it. See `recordFieldBinding`. A proof lifted out of a '
+            + 'principal\'s real record and pasted into a fabricated one is narrowed '
+            + 'separately — see `readAttestation`.')
       : 'Membership is ASSERTED, not attested: no grant or acceptance was checked for an '
         + 'authorship proof, so a convener who holds both records could have written both '
         + 'halves and this list would look identical. Pass `attestation` to foldRoster to '
@@ -941,10 +1166,13 @@ export function foldRoster(args: {
     // whatever the inputs happened to carry would be a claim about data rather than about
     // the check — which is the same substitution the substrate was making.
     recordContentBinding: requireBinding ? 'bound' : 'unbound',
-    // Always 'unbound', and separate from the line above on purpose. See the field's note:
-    // binding the BYTES leaves the typed fields uncompared, and no record shape exists to
-    // compare them against.
-    recordFieldBinding: 'unbound',
+    // Same rule, one question further in, and still a report of what was ENFORCED rather
+    // than of what the inputs happened to carry: rows that arrive with a `fieldProvenance`
+    // under a policy that never demanded one were not checked by this fold, and reporting
+    // 'bound' off the back of them would be data standing in for a guarantee. Kept a
+    // separate field from the line above because the two answer different questions and
+    // `requireContentBinding: true` alone must never read as though the fields were bound.
+    recordFieldBinding: requireFields ? 'bound' : 'unbound',
   };
 }
 

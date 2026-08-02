@@ -225,6 +225,44 @@ function payloadOf(body: unknown, envelope: string | undefined): Record<string, 
 }
 
 /**
+ * Read the requested capability out of a payload, by the paths the PROFILE declares.
+ *
+ * ★ THIS USED TO BE `payload['skillId']`, INLINE, AND IT DID NOT ROUND-TRIP. The mount
+ * accepted the capability only as a bare top-level member while the profile emitted it
+ * back nested under the protocol's extension point, so a peer that echoed the value
+ * exactly as it had been handed it got silently ignored: the engagement opened with no
+ * capability, the invoker never ran, and the peer received a task parked in its opening
+ * state with no artifact and no error to explain it. Same shape of defect as the task id
+ * a peer could not dereference — we were strict outbound and read something else inbound.
+ *
+ * Two properties this shape buys, neither of which a hardcoded member name has:
+ *
+ *   THE MOUNT NAMES NO PROTOCOL FIELD. `skillId` was a wire vocabulary word sitting in
+ *   the spec-blind mount, and the module's drift guard did not catch it because that
+ *   guard only greps for the protocol's NAME. A member name is just as much a protocol
+ *   detail as the protocol's name is.
+ *
+ *   EMIT AND ACCEPT ARE DECLARED TOGETHER. The profile's first path is the one it
+ *   renders, so the two ends cannot drift apart unnoticed again; the mount test asserts
+ *   that closure directly rather than trusting the ordering convention.
+ *
+ * Dotted, because a closed schema forces the value into a nested extension object. Own
+ * properties only — a caller-supplied body must not be able to walk into a prototype and
+ * have `constructor.name` answer as a capability.
+ */
+function capabilityFrom(payload: Record<string, unknown>, paths: readonly string[] | undefined): string | undefined {
+  for (const path of paths ?? []) {
+    let cur: unknown = payload;
+    for (const seg of path.split('.')) {
+      if (!cur || typeof cur !== 'object' || !Object.prototype.hasOwnProperty.call(cur, seg)) { cur = undefined; break; }
+      cur = (cur as Record<string, unknown>)[seg];
+    }
+    if (typeof cur === 'string' && cur) return cur;
+  }
+  return undefined;
+}
+
+/**
  * Extract content parts from a request payload without trusting anything else in it.
  *
  * ★ WHY THIS RETURNS A REASON, NOT JUST null. It used to drop any part shape it did
@@ -578,7 +616,7 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             // The caller is told which of the several possible problems occurred.
             if (isPartsError(got)) { sendErr(res, profile, 'badRequest', got.reason); return; }
             const parts = (got as { ok: true; parts: Part[] }).parts;
-            const capability = typeof payload['skillId'] === 'string' ? payload['skillId'] : undefined;
+            const capability = capabilityFrom(payload, profile.capabilityFields);
             // CONTINUATION vs NEW. The profile declares which member carries an existing
             // engagement's id; the mount never names a protocol's field. Without this
             // every send called engine.open(), so continuing a conversation silently

@@ -45,7 +45,89 @@ permissions:
 env:
   # Update ONLY together with the fix that earns it, in the same commit. The job
   # fails if the real number goes below this OR rises above it.
+  #
+  # ★ ALL THREE FIGURES BELOW ARE ENFORCED IN BOTH DIRECTIONS, and the collected total is
+  # checked first: without it the other two describe a suite that may have changed underneath
+  # them. 235 collected − 51 passed − 7 failed = 177 skipped, and every term is pinned.
   BASELINE_PASSED: '51'
+  # ★ PASSED ALONE IS NOT A RATCHET. It was enforced in both directions and still had a
+  # hole big enough to walk a regression through: 177 of the 235 MUST-tier cases SKIP,
+  # and a case that turned from SKIPPED into FAILED left `passed` untouched. Conformance
+  # would have got strictly worse while this job went green — and "hidden behind a skip"
+  # is not hypothetical here: a real interop bug (a peer could not dereference the task
+  # id we handed it) lived undetected behind exactly such a skip until #223. So the
+  # failure count is pinned too, both ways.
+  BASELINE_FAILED: '7'
+  # ★ AND THE COLLECTED TOTAL, WHICH IS THE THIRD FIGURE THE COMMENT ABOVE CLAIMED IT DID
+  # NOT NEED. It read "the two numbers together fix the skip count at 235 - 51 - 7 = 177
+  # without a third figure to keep in step". They do not: that arithmetic holds only if
+  # `len(cases)` is fixed, and nothing asserted it. The total is held only by TCK_REF, pinned
+  # in a different step — so a TCK_REF bump that changed what the suite collects would keep
+  # 51/7 exactly and move the skip count silently, which is the same class of hole
+  # BASELINE_FAILED was added to close, one level up. Pinned both ways like the other two.
+  BASELINE_COLLECTED: '235'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★ WHICH SEVEN, AND WHY EACH IS STILL FAILING.
+#
+# Recorded HERE, at the number, because a ratchet with an unexplained gap invites
+# someone to lower it — or to "fix" a failure by making the implementation agree with
+# the suite rather than with the protocol. Everything below was measured against a
+# locally booted SUT at TCK_REF, not inferred from reading the tests.
+#
+# ── FIVE need the SUT to be built as the TCK's own fixture, not as a conformant agent.
+#      DM-ART-001 x4  (test_artifacts.py: Text / File / FileUrl / Data)
+#      DM-MSG-001 x1  (test_artifacts.py: TestMessageResponse)
+#
+#    These key off a scenario prefix in the messageId — `tck_id()` builds
+#    `tck-artifact-text-<session>`, `tck-artifact-data-<session>` … — and then assert
+#    LITERAL fixture content back: the exact string "Generated text content", a file
+#    part named "output.txt" of type text/plain, the object {"key":"value","count":42},
+#    a Message (not a Task) reading "Direct message response". Passing them means
+#    sniffing the suite's messageId prefixes and returning canned payloads. That is not
+#    conformance; it is a server that recognises its examiner. Refused before, refused
+#    here. (The same fixture protocol is also why SEVEN further http_json MUSTs SKIP
+#    rather than run — `_task_helpers.create_completed_task` requires the prefix
+#    `tck-complete-task-*` to come back TASK_STATE_COMPLETED. Those skips are the ones
+#    BASELINE_FAILED now stops from silently becoming failures.)
+#
+# ── ONE is unpassable by any implementation that obeys the requirement it states.
+#      CORE-SEND-003 — "SendMessage returns ContentTypeNotSupportedError for
+#      unsupported media"
+#
+#    Its RequirementSpec sets no `expected_error` (CORE-SEND-002, three entries above it
+#    in the same file, does). Without one, `_validate_response` falls through to the
+#    generic `if not response.success` branch, so ANY error fails and only a 2xx passes —
+#    from a requirement whose own title and description say an error MUST be returned.
+#    A previous round attributed this to our inline-bytes divergence and published that
+#    as fact; it was disproved by experiment (a shim returning a spec-perfect 415 /
+#    INVALID_ARGUMENT / CONTENT_TYPE_NOT_SUPPORTED / a2a-protocol.org still fails) and the
+#    retraction is published in docs/ns/a2a.ttl. Do not "fix" this by returning 200.
+#
+# ── ONE is a defect in the suite's own skip path, on a capability we declare false.
+#      HTTP_JSON-SSE-001 — TestRestStreaming::test_streaming_content_type
+#
+#    The test means to skip when streaming is unsupported — it literally reads
+#    `pytest.skip(f"Streaming not supported: {response.error}")`. But
+#    `_request_streaming` issues the POST with `stream=True` and, on any status >= 400,
+#    calls `response.close()` WITHOUT reading it; `.error` then does `response.json()`
+#    and httpx raises ResponseNotRead. So a correct refusal is scored a hard failure.
+#    Measured through a shim on all three answers: 400-with-an-AIP-193-body -> crash,
+#    400-with-no-body -> crash, 200 + text/event-stream -> PASS. Still present on the
+#    suite's own main; the pin is already at its tip, so bumping TCK_REF does not help.
+#
+#    It is therefore passable ONLY by serving SSE. That is not a profile edit: declaring
+#    `capabilities.streaming: true` un-skips 28 further MUST cases (16 "Agent does not
+#    support streaming" + 12 "does not declare capabilities for: ['streaming']"), every
+#    one of which would then have to pass or this ratchet drops. Increment 1 declares
+#    streaming false and genuinely does not implement it, which is the conformant way to
+#    not implement an optional capability — not a gap to be closed with a header.
+#
+# ── AND A NUMBER TO STOP REPEATING: it is NOT "51/53 with 2 MUSTs outstanding". That
+#    total came from the very first run and survived in commit messages long after it
+#    stopped being true. The measured figure is 51 passed / 7 failed / 177 skipped of
+#    235 collected. The counts published in docs/ns/a2a.ttl (51 / 7) are the right ones.
+# ─────────────────────────────────────────────────────────────────────────────
 
 jobs:
   tck:
@@ -114,13 +196,33 @@ jobs:
           failed = [c for c in cases if c.find('failure') is not None or c.find('error') is not None]
           passed = len(cases) - len(failed) - len([c for c in cases if c.find('skipped') is not None])
           base   = int(os.environ['BASELINE_PASSED'])
-          print(f"MUST tier: {passed} passed, {len(failed)} failed (baseline {base})")
+          base_f = int(os.environ['BASELINE_FAILED'])
+          base_c = int(os.environ['BASELINE_COLLECTED'])
+          skipped = len([c for c in cases if c.find('skipped') is not None])
+          print(f"MUST tier: {len(cases)} collected, {passed} passed, {len(failed)} failed, "
+                f"{skipped} skipped (baseline {base_c} / {base} / {base_f})")
           for c in failed:
               print(f"  FAIL {c.get('classname','')}::{c.get('name','')}")
+          # The collected total FIRST, because the other two are meaningless without it: a
+          # TCK_REF bump that changes what the suite collects moves the skip count while
+          # holding passed and failed exactly, and every conclusion drawn from those two
+          # numbers is then about a different suite.
+          if len(cases) != base_c:
+              sys.exit(f"COLLECTION CHANGED: {len(cases)} cases collected, baseline {base_c}. "
+                       f"The suite is not the one the baselines were measured against — check TCK_REF, "
+                       f"then update BASELINE_COLLECTED in the commit that earns it.")
           if passed < base:
               sys.exit(f"REGRESSION: {passed} < baseline {base}. A conformance property that held has stopped holding.")
           if passed > base:
               sys.exit(f"BASELINE STALE: {passed} > {base}. Raise BASELINE_PASSED to {passed} in this workflow, in the commit that earned it.")
+          # The failure count moves independently of the pass count, because most of the
+          # tier SKIPS: a skip turning into a failure holds `passed` exactly still. Both
+          # directions again — more failures is a regression the pass count cannot see,
+          # and fewer means the recorded explanation above no longer describes reality.
+          if len(failed) > base_f:
+              sys.exit(f"REGRESSION: {len(failed)} failing > baseline {base_f}, with passed unchanged — a SKIPPED case has started FAILING. Identify it above before touching either number.")
+          if len(failed) < base_f:
+              sys.exit(f"BASELINE STALE: {len(failed)} failing < {base_f}. Lower BASELINE_FAILED to {len(failed)} and delete that failure from the explanation above it, in the commit that earned it.")
           print("Conformance held at the recorded baseline.")
           EOF
 

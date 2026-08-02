@@ -21,11 +21,28 @@
  * that change meaning. `tests/authorship-content-binding.test.ts` pins the byte difference
  * and the triple agreement on the same payload.
  *
+ * ★ AND THE SCOPE IS NOT THIS MODULE'S TO CHOOSE. The region a proof covers is decided once,
+ * by `digestedGraphRegion` in @interego/solid, and every party that reads a payload goes
+ * through it. When this module owned the decision privately, a reader in
+ * `applications/shared-workspace` parsed the whole served document while this digested only
+ * the named-graph block — so a forged `wsp:MembershipAcceptance` in the DEFAULT graph left
+ * the digest byte-identical and manufactured a workspace participant out of a verbatim copy
+ * of somebody else's honest record. A digest scope that only one side knows is not a scope.
+ *
  * Lives outside server.ts because server.ts opens a listener on import, so nothing defined
  * inside it can be exercised by a test.
  */
 import { canonicalGraphDigest, digestAlgorithmOf, GRAPH_DIGEST_ALGORITHM } from '@interego/core';
-import { extractNamedGraphTurtle } from '@interego/solid';
+import { digestedGraphRegion, graphIriFromDescriptorTurtle } from '@interego/solid';
+
+/**
+ * Re-exported, not redefined. It used to be declared here, which put it out of reach of the
+ * only other party that needs it — a reader deciding which bytes of a served document it may
+ * parse — and that reader consequently parsed all of them. It now lives beside `wrapAsTriG`
+ * and `extractNamedGraphTurtle` in @interego/solid, and this re-export keeps the relay's
+ * import surface unchanged.
+ */
+export { graphIriFromDescriptorTurtle };
 
 /**
  * What `get_descriptor` publishes about content binding, kept as its own type so the
@@ -47,34 +64,21 @@ export type ReadContentBinding = 'bound' | 'mismatched' | 'declared' | 'unbound'
 export function observedGraphDigest(args: {
   /** Plaintext graph document as served (the TriG wrap), or null when unreadable. */
   readonly graphContent: string | null | undefined;
-  /** The graph IRI the descriptor's `iep:describes` names — which block to digest. */
-  readonly graphIri: string | null | undefined;
+  /**
+   * The descriptor Turtle served with it. Takes the TURTLE, not a pre-extracted graph IRI:
+   * `digestedGraphRegion` derives the IRI itself, so the digester and every reader are
+   * handed the same two strings and cannot disagree about which region is covered. Passing
+   * the IRI separately is how the scopes came apart in the first place.
+   */
+  readonly descriptorTurtle: string | null | undefined;
 }): string | undefined {
-  const { graphContent, graphIri } = args;
-  if (typeof graphContent !== 'string' || graphContent.length === 0) return undefined;
-  if (typeof graphIri !== 'string' || graphIri.length === 0) return undefined;
-
   // The payload is served wrapped, with the descriptor's own triples in the same document.
   // Digesting it whole would fold the descriptor into the answer — and the descriptor
   // contains the proof, so the digest could never match anything the publisher computed.
-  const graphOnly = extractNamedGraphTurtle(graphContent, graphIri);
-  if (graphOnly === null) return undefined;
+  const region = digestedGraphRegion(args);
+  if (!region.ok) return undefined;
 
-  return canonicalGraphDigest(graphOnly) ?? undefined;
-}
-
-/**
- * The `iep:describes` object of a descriptor — the graph IRI whose block carries the
- * payload. Read from the Turtle rather than reconstructed from the descriptor URL, because
- * the two are related only by the relay's naming convention and a descriptor is free to
- * describe a graph named some other way.
- */
-export function graphIriFromDescriptorTurtle(turtle: string): string | null {
-  // `iep:describes <IRI>` in the emitted descriptor; the legacy `cg:` alias is still on
-  // pods written before the protocol rename, and refusing to read those would silently
-  // downgrade every one of them to unverifiable.
-  const m = turtle.match(/\b(?:iep|cg):describes\s+<([^>]+)>/);
-  return m ? m[1]! : null;
+  return canonicalGraphDigest(region.turtle) ?? undefined;
 }
 
 /**

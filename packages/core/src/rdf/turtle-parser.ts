@@ -2,13 +2,16 @@
  * Minimal TriG / Turtle parser focused on subject-property extraction.
  *
  * Scope (deliberately narrow):
- *   - @prefix declarations
+ *   - Prefix/base declarations in BOTH spellings: Turtle `@prefix ex: <iri> .` and
+ *     SPARQL `PREFIX ex: <iri>` (no terminator). See the directive branch in parseTrig for
+ *     why the difference had to be carried through the tokeniser rather than smoothed over.
  *   - Graph blocks   { ... }
  *   - Triples         s p o ;  s p o , o2 ;
  *   - Subjects:       <iri> | prefixed:name | blank node "[ ]" (skipped)
  *   - Predicates:     <iri> | prefixed:name | the keyword "a"
- *   - Objects:        <iri> | prefixed:name | "string" (with optional ^^datatype or @lang)
- *                     | "string"-style triple-quoted | integer | decimal | boolean | nested [ ... ]
+ *   - Objects:        <iri> | prefixed:name | literal in all four Turtle quotings
+ *                     ("…" '…' """…""" '''…''') with optional ^^datatype or @lang
+ *                     | integer | decimal | boolean | nested [ ... ]
  *
  * NOT supported (intentional):
  *   - Lists ( ... )
@@ -81,7 +84,10 @@ type Tok =
   | { type: 'number'; value: string; pos: number }
   | { type: 'boolean'; value: boolean; pos: number }
   | { type: 'punct'; value: string; pos: number }   // . ; , [ ] { } ( ) ^^ @
-  | { type: 'keyword'; value: string; pos: number } // a, true, false, prefix, base
+  // a, GRAPH, and the four directive forms kept DISTINCT: `prefix`/`base` are the Turtle
+  // `@`-forms (terminated by `.`), `sparql-prefix`/`sparql-base` are the SPARQL forms (no
+  // terminator). Collapsing them is what made valid `PREFIX` input unparseable.
+  | { type: 'keyword'; value: string; pos: number }
   | { type: 'lang'; value: string; pos: number };   // @en, @en-US
 
 function tokenize(src: string): Tok[] {
@@ -123,17 +129,32 @@ function tokenize(src: string): Tok[] {
       continue;
     }
 
-    // String literal — supports "..." and """..."""
-    if (c === '"') {
+    // String literal. All four Turtle forms: "…" '…' """…""" '''…'''
+    //
+    // ★ THE SINGLE-QUOTE FORMS USED TO THROW `unexpected character '''`, AND THAT WAS NOT A
+    // PARSE FAILURE — IT WAS A SILENT DOWNGRADE OF LIVE DATA. `canonicalGraphDigest` catches
+    // every throw and returns null; `handlePublishContext` turns null into "no contentHash",
+    // so a payload using `'''…'''` — ordinary, valid Turtle that every other tool accepts —
+    // was signed with NO content binding at all and its proof reports `contentBinding:
+    // 'unbound'` forever. Nothing told the publisher. This is the "fails closed on honest
+    // data" failure the digest module's own header warns about, arriving through the
+    // tokeniser instead of through the comparison.
+    //
+    // The quote character is captured rather than hard-coded so the closing delimiter must
+    // be the one that opened: `'he said "hi"'` and `"it's fine"` both carry the OTHER quote
+    // as ordinary content, and a scanner looking for either would truncate them.
+    if (c === '"' || c === "'") {
+      const q = c;
+      const qqq = q + q + q;
       let value = '';
       let triple = false;
       let closed = false;
-      if (src.slice(i, i + 3) === '"""') { triple = true; i += 3; } else { i++; }
+      if (src.slice(i, i + 3) === qqq) { triple = true; i += 3; } else { i++; }
       while (i < n) {
         if (triple) {
-          if (src.slice(i, i + 3) === '"""') { i += 3; closed = true; break; }
+          if (src.slice(i, i + 3) === qqq) { i += 3; closed = true; break; }
         } else {
-          if (src[i] === '"') { i++; closed = true; break; }
+          if (src[i] === q) { i++; closed = true; break; }
           if (src[i] === '\n' || src[i] === '\r') {
             throw new ParseError('unterminated single-line string', startPos);
           }
@@ -251,9 +272,22 @@ function tokenize(src: string): Tok[] {
       if (prefix === 'a') { out.push({ type: 'keyword', value: 'a', pos: startPos }); continue; }
       if (prefix === 'true') { out.push({ type: 'boolean', value: true, pos: startPos }); continue; }
       if (prefix === 'false') { out.push({ type: 'boolean', value: false, pos: startPos }); continue; }
-      if (prefix === 'PREFIX' || prefix === 'BASE') {
-        // SPARQL-style; treat as keyword variant
-        out.push({ type: 'keyword', value: prefix.toLowerCase(), pos: startPos });
+      // SPARQL-style directives, which differ from the Turtle `@`-forms in exactly one way
+      // that matters here: they are NOT terminated by a `.`.
+      //
+      // ★ THEY USED TO BE FOLDED ONTO THE `@prefix` KEYWORD — `value: prefix.toLowerCase()`
+      // — and the directive branch in parseTrig() then demanded the `.` that SPARQL syntax
+      // forbids. So `PREFIX ex: <…>` threw `expected "." after @prefix declaration`, which
+      // `canonicalGraphDigest` swallowed into null and `handlePublishContext` turned into a
+      // proof with no content binding. Distinct keyword values are what let the two grammars
+      // be parsed by their own rules instead of one being run through the other's.
+      //
+      // Matched case-insensitively because SPARQL keywords are case-insensitive; the Turtle
+      // `@prefix` / `@base` forms are NOT, and they are recognised on the `@` branch above,
+      // so widening here cannot make a mis-cased Turtle directive parse.
+      const upper = prefix.toUpperCase();
+      if (upper === 'PREFIX' || upper === 'BASE') {
+        out.push({ type: 'keyword', value: `sparql-${upper.toLowerCase()}`, pos: startPos });
         continue;
       }
       // TriG GRAPH keyword: `GRAPH <iri> { ... }` / `GRAPH prefix:name { ... }`.
@@ -561,33 +595,52 @@ export function parseTrig(src: string): ParsedDocument {
   while (state.index < tokens.length) {
     const t = peek(state)!;
 
-    // Directive: @prefix prefix: <iri> .
-    if (t.type === 'keyword' && t.value === 'prefix') {
+    // Prefix directive, both spellings: `@prefix ex: <iri> .` and `PREFIX ex: <iri>`.
+    //
+    // The two are identical up to the terminator, which is why they share this branch and
+    // differ only in `wantsDot`: Turtle REQUIRES the `.`, SPARQL forbids it. Demanding it of
+    // both is what made every `PREFIX`-headed document unparseable.
+    if (t.type === 'keyword' && (t.value === 'prefix' || t.value === 'sparql-prefix')) {
+      const wantsDot = t.value === 'prefix';
       consume(state);
       const nameTok = consume(state);
       if (!nameTok || nameTok.type !== 'pname') {
-        throw new ParseError('expected "prefix:" after @prefix', nameTok?.pos ?? -1);
+        throw new ParseError('expected "prefix:" after a prefix directive', nameTok?.pos ?? -1);
       }
       const iriTok = consume(state);
       if (!iriTok || iriTok.type !== 'iri') {
         throw new ParseError('expected IRI for prefix value', iriTok?.pos ?? -1);
       }
       state.prefixes.set(nameTok.prefix, iriTok.value);
-      const dot = consume(state);
-      if (!dot || dot.type !== 'punct' || dot.value !== '.') {
-        throw new ParseError('expected "." after @prefix declaration', dot?.pos ?? -1);
+      if (wantsDot) {
+        const dot = consume(state);
+        if (!dot || dot.type !== 'punct' || dot.value !== '.') {
+          throw new ParseError('expected "." after @prefix declaration', dot?.pos ?? -1);
+        }
       }
       continue;
     }
 
-    if (t.type === 'keyword' && t.value === 'base') {
-      // Skip @base — we don't resolve relative IRIs in this parser
+    if (t.type === 'keyword' && (t.value === 'base' || t.value === 'sparql-base')) {
+      // Skip either base form — this parser does not resolve relative IRIs, so the base has
+      // nothing to act on and dropping it changes no term it would otherwise produce.
       consume(state);
-      consume(state); // the IRI
-      const dot = consume(state);
-      if (dot?.type !== 'punct' || dot.value !== '.') {
-        // best-effort: don't fail hard
-      }
+      const iriTok = peek(state);
+      if (iriTok?.type === 'iri') consume(state);
+      // ★ THE TERMINATOR IS PEEKED, NOT CONSUMED BLIND. This was an unconditional
+      // `consume(state)` whose result was inspected and then discarded with a "best-effort"
+      // comment — so on `BASE <iri>` (SPARQL, no terminator) it ate the FIRST TOKEN OF THE
+      // NEXT TRIPLE. The subject vanished and its predicate was read as a subject.
+      //
+      // ★ MEASURED OUTCOME, AND ONLY THE ONE: the old parser THREW — `expected predicate, got
+      // string` — on every shape reproduced against it side by side. A previous version of
+      // this comment added "or parsed into a different triple set than it states — the second
+      // being the dangerous one", which is the outcome that would matter and is the one clause
+      // here nobody could construct: the eaten subject always leaves an IRI in predicate
+      // position, which throws. Removed rather than softened. A speculation sitting inside a
+      // paragraph of measurements borrows their standing.
+      const dot = peek(state);
+      if (dot?.type === 'punct' && dot.value === '.') consume(state);
       continue;
     }
 

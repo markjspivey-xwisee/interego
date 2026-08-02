@@ -94,19 +94,64 @@ export function canonicalGraphTriples(turtle: string): string {
 }
 
 /**
+ * The digest, or the reason there is none.
+ *
+ * ★ WHY THE REASON HAD TO BECOME A RETURN VALUE. `canonicalGraphDigest` swallowed every
+ * throw into `null`, and `handlePublishContext` spells that `?? undefined` — so a payload
+ * this parser could not read got signed with NO content binding, its proof reports
+ * `contentBinding: 'unbound'` for the rest of its life, and a reader is told the proof
+ * merely "predates content binding". Nobody was told otherwise, least of all the publisher,
+ * who was standing right there holding the payload and could have fixed it.
+ *
+ * That silence was not confined to legacy data. `'''…'''` literals and SPARQL-style `PREFIX`
+ * headers are ordinary valid Turtle and BOTH threw here until the tokeniser was taught them
+ * (see turtle-parser.ts). The tokeniser fix removes those two shapes; it cannot remove the
+ * class. Annotation syntax `{| |}`, `@base`-relative IRIs — everything this deliberately
+ * narrow parser does not implement lands in the same place, and the next one has to arrive
+ * as a NAMED refusal an operator can act on rather than as a proof that quietly attests
+ * nothing.
+ *
+ * The reason carries the parser's own message, byte offset included, because "which shape
+ * defeated it" is a question about a position in one specific document and no generic label
+ * answers it.
+ */
+export type GraphDigestResult =
+  | { readonly digest: string; readonly reason?: undefined }
+  | { readonly digest: null; readonly reason: string };
+
+export function canonicalGraphDigestResult(turtle: string): GraphDigestResult {
+  let canonical: string;
+  try {
+    canonical = canonicalGraphTriples(turtle);
+  } catch (err) {
+    return {
+      digest: null,
+      reason:
+        'the payload did not parse as Turtle/TriG in this build, so NO content digest was '
+        + 'computed — an authorship proof signed over it carries no content binding and will '
+        + 'report contentBinding "unbound" permanently, which readers are told means the '
+        + `proof predates content binding: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  return {
+    digest: `${GRAPH_DIGEST_ALGORITHM}:${createHash('sha256').update(canonical, 'utf8').digest('hex')}`,
+  };
+}
+
+/**
  * `graph-nquads-sha256:<hex>` over the triples of `turtle`, or null when it does not parse.
  *
  * ★ NULL IS NOT ZERO. An unparseable payload returns null so the caller reports "I could
  * not check this" rather than hashing the empty string — which would produce a real-looking
  * digest that every other unparseable payload also produces, and make two different broken
  * documents verify against each other.
+ *
+ * Kept as the plain form for the READ path, where a reason has nowhere useful to go: the
+ * reader did not write the payload and cannot repair it, and `contentBindingNote` already
+ * narrates "could not be read here". On the WRITE path use
+ * {@link canonicalGraphDigestResult} — there the publisher can act on the reason, and
+ * discarding it is what let unparseable payloads sign themselves into permanent `unbound`.
  */
 export function canonicalGraphDigest(turtle: string): string | null {
-  let canonical: string;
-  try {
-    canonical = canonicalGraphTriples(turtle);
-  } catch {
-    return null;
-  }
-  return `${GRAPH_DIGEST_ALGORITHM}:${createHash('sha256').update(canonical, 'utf8').digest('hex')}`;
+  return canonicalGraphDigestResult(turtle).digest;
 }

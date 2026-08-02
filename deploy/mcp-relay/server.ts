@@ -136,9 +136,17 @@ import {
   // contentHash commits to, so publish and read can compute the same answer over a
   // payload publishing rewrites in between.
   canonicalGraphDigest,
+  // Same digest, but carrying WHY there is none. Used on the publish path only: a
+  // publisher can repair an unparseable payload, and the old `?? undefined` there threw
+  // the reason away and signed a proof that attests nothing.
+  canonicalGraphDigestResult,
   // The one rule for "the content was not checked" — shared with the verifier so the
   // relay's catch path and the verifier's own failure paths cannot disagree about it.
   contentBindingWhenUnchecked,
+  // "Is this proof about the record it was served with" — the question the read path never
+  // asked. Shared with the workspace layer so the two cannot answer it differently.
+  proofBindsToDescriptorUrl,
+  type DescriptorBindingBasis,
   type AuthorshipProof,
   cryptoComputeCid,
   decompose as kernelDecompose,
@@ -304,7 +312,6 @@ import {
 import { resolveInteropPrincipal } from './interop-principal.js';
 import {
   observedGraphDigest,
-  graphIriFromDescriptorTurtle,
   contentBindingNote,
   type ReadContentBinding,
 } from './authorship-content-binding.js';
@@ -2045,9 +2052,17 @@ ${body}`);
  * Run every container-declared shape AND every caller-supplied shape
  * (via the MCP `conforms_to_shapes` arg) against the inbound graph_content.
  * Returns either { conforms: true, resolvedShapes } or the violation list
- * ready to surface in the 422 error envelope. Missing shape bodies (404
- * etc.) are ignored — they can't constrain a publish if the relay can't
- * fetch them.
+ * ready to surface in the 422 error envelope.
+ *
+ * ★ A MISSING SHAPE BODY REFUSES THE PUBLISH. This header used to end "Missing shape bodies
+ * (404 etc.) are ignored — they can't constrain a publish if the relay can't fetch them",
+ * which is the behaviour the ★ FAIL CLOSED branch forty lines below was written to remove and
+ * is its exact inverse. The header outlived the fix and described a relay that no longer
+ * exists — and it is load-bearing in both directions: `applications/shared-workspace`'s
+ * `publishMembershipRecord` passes `conforms_to_shapes` precisely so a malformed authorization
+ * record never lands, and its README rests on "shape-validated at publish". A reader who
+ * believed this sentence would conclude an unreachable shape silently waves a record through.
+ * You cannot claim conformance to a shape you could not read.
  *
  * Container-declared shapes (from .well-known/container-shape or the
  * pod's manifest collection's iep:conformsTo / dct:conformsTo triples)
@@ -3033,6 +3048,14 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const signAuthorship = args.sign_authorship === true;
   let authorshipProof: AuthorshipProof | undefined;
   let authorshipError: string | undefined;
+  // ★ WHY THE PAYLOAD WAS LEFT UNCOVERED, WHEN IT WAS. Non-undefined only when the digester
+  // refused, and then it names the shape and offset that defeated it. This used to be
+  // nowhere: the digest call ended `?? undefined`, so an unparseable payload produced a
+  // proof with no content binding and a response that mentioned none of it. The publisher —
+  // the one party holding the source text and able to repair it — was the only one never
+  // told, and the resulting proof reports `contentBinding: 'unbound'` forever, which readers
+  // are told means the proof simply predates content binding.
+  let contentBindingRefusal: string | undefined;
   if (signAuthorship) {
     try {
       const signer = await getDelegationSigner();
@@ -3055,7 +3078,19 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       // content digest rather than with a digest of nothing: `contentBinding: 'unbound'`
       // truthfully says the content is uncovered, where a digest over the empty string
       // would be a binding every unparseable payload satisfies.
-      const contentHash = canonicalGraphDigest(String(args.graph_content ?? '')) ?? undefined;
+      //
+      // ★ BUT NOT SILENTLY ANY MORE. `'unbound'` is narrated to readers as "every proof
+      // written before content binding existed" — a sentence about legacy data — and it was
+      // also what a payload written TODAY got whenever this parser could not read it. Two
+      // shapes reaching it were plain valid Turtle (`'''…'''` literals, SPARQL `PREFIX`);
+      // those are fixed in the tokeniser, and the rest of the class is now NAMED instead,
+      // both in the log and in the publish response, so an operator can act on it.
+      const digestResult = canonicalGraphDigestResult(String(args.graph_content ?? ''));
+      const contentHash = digestResult.digest ?? undefined;
+      if (digestResult.digest === null) {
+        contentBindingRefusal = digestResult.reason;
+        log(`WARN: sign_authorship over an undigestible payload for ${agentId}: ${digestResult.reason}`);
+      }
       authorshipProof = await createSignedAuthorship(
         {
           agentId: agentId as IRI,
@@ -3815,6 +3850,14 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
                 signerAddress: authorshipProof.signerAddress,
                 created: authorshipProof.created,
                 scheme: authorshipProof.scheme,
+                // Present iff the proof covers the payload's triples. Reported explicitly
+                // rather than left to be inferred from the presence of a hash, because
+                // `signed: true` on its own was read — correctly, by its plain wording — as
+                // "the content is attested" by callers whose proof covered only a URL.
+                contentBinding: authorshipProof.contentHash ? 'bound-at-signing' : 'unbound',
+                // Only on the refusing side, and it names the shape + offset. A clean
+                // publish carries no diagnostic; see the same rule in readAttestation.
+                ...(contentBindingRefusal ? { contentBindingRefusal } : {}),
               }
             : {
                 signed: false,
@@ -4316,9 +4359,46 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
     reason?: string;
     contentBinding: ReadContentBinding;
     contentBindingNote: string;
+    // ★ IS THE PROOF EVEN ABOUT THIS RECORD? The read path never asked. It re-derived the
+    // canonical payload from the proof block's own fields and checked the signature over
+    // it, so a proof block lifted verbatim out of one of a principal's real public
+    // descriptors and pasted into a record somebody else fabricated came back
+    // `authorshipVerified: true` with that principal named as the signer — and every
+    // consumer downstream, including the workspace roster, was left to notice on its own
+    // that "the signature is intact" and "the signature is about this document" are
+    // different sentences. This function holds the proof AND the URL it fetched it from,
+    // which is everything the comparison needs, so it makes it.
+    descriptorBinding: {
+      bound: boolean;
+      basis: DescriptorBindingBasis;
+      // Present on a refusal AND on a `slug-only` pass. On the pass it is the more
+      // important of the two: a bare `bound: true` would claim a check that was not made.
+      note?: string;
+    };
   } | undefined;
   const parsedProof = parseAuthorshipProofFromDescriptorTurtle(turtle);
   if (parsedProof) {
+    // Computed once, OUTSIDE the try, so it is reported on all three exits — verified,
+    // refused, and verifier-threw. It does not depend on the signature and it does not
+    // depend on the payload: it is a comparison of two strings this function already holds.
+    // Putting it inside would have made "the verifier threw" also mean "and nobody checked
+    // what the proof was attached to", which is the collapse the contentBinding work spent
+    // three rounds undoing in the neighbouring field.
+    //
+    // `normalizeCssUrl` is supplied because THIS is the layer that knows about the pod
+    // host's `.internal.` migration. Live descriptors carry the pre-migration host inside
+    // signed bytes that can never be rewritten, and a raw comparison reports those honest
+    // records as unbound.
+    const descriptorBindingResult = proofBindsToDescriptorUrl(
+      parsedProof.descriptorId,
+      url,
+      normalizeCssUrl,
+    );
+    const descriptorBinding = {
+      bound: descriptorBindingResult.bound,
+      basis: descriptorBindingResult.basis,
+      ...(descriptorBindingResult.caveat ? { note: descriptorBindingResult.caveat } : {}),
+    };
     try {
       // ★ THE PROOF IS NOW CHECKED AGAINST THE PAYLOAD, NOT JUST AGAINST ITSELF. This call
       // passed no observed content and discarded the verifier's content verdict, so a
@@ -4330,7 +4410,7 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
       // either an attestation or an accusation.
       const observedContentHash = observedGraphDigest({
         graphContent: graph?.content,
-        graphIri: graphIriFromDescriptorTurtle(turtle),
+        descriptorTurtle: turtle,
       });
       const verifyResult = await verifySignedAuthorship(
         parsedProof,
@@ -4372,6 +4452,7 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
           effectiveTrustLevel: effective,
           contentBinding: verifyResult.contentBinding,
           contentBindingNote: contentBindingNote(verifyResult.contentBinding, parsedProof.contentHash),
+          descriptorBinding,
         };
       } else {
         authorship = {
@@ -4389,6 +4470,7 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
             parsedProof.contentHash,
             verifyResult.contentBinding === 'mismatched',
           ),
+          descriptorBinding,
         };
       }
     } catch (err) {
@@ -4402,6 +4484,9 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
         reason: `verifier threw: ${(err as Error).message}`,
         contentBinding: unchecked,
         contentBindingNote: contentBindingNote(unchecked, parsedProof.contentHash, false),
+        // Still reported. The comparison ran before the try and does not depend on anything
+        // the verifier does, so a throw there is no reason to withhold an answer that exists.
+        descriptorBinding,
       };
     }
   }
@@ -7663,6 +7748,29 @@ const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
           description: 'Whether the proof covers the CONTENT served with this descriptor, not merely its URL. `bound` — the signed digest was recomputed over the payload actually served and matched; only this licenses treating the content as attested. It means the graph STATES the same triples that were signed, NOT that the bytes are identical — the payload is rewritten on publish, so the bytes never match. `mismatched` — the digest WAS recomputed and did NOT match: the signature is authentic and covers different content, so the graph has been altered since signing. Evidence against the content; authorshipVerified is also false. `declared` — the proof commits to a digest and NOTHING was checked against it (payload unreadable here, a digest form this verifier cannot recompute, or the signature failed before the content was reached); not an attestation and not an accusation. `unbound` — the proof carries no digest at all: every proof written before content binding existed, plus any payload the digester could not parse. Silent about content, and when authorshipVerified is false it is silent about the signer too.',
         },
         contentBindingNote: { type: 'string', description: 'The same verdict in prose, stating plainly what it does and does not license' },
+        descriptorBinding: {
+          type: 'object',
+          description:
+            'Whether the proof is about THIS record, which is a different question from whether its signature verified. '
+            + 'A proof block lifted out of one of a principal\'s real public descriptors and pasted into a record somebody '
+            + 'else fabricated verifies clean and names that principal — signature validity says the proof\'s bytes were '
+            + 'not altered, not what the proof is attached to. Read this field before attributing the record to signedBy.',
+          properties: {
+            bound: { type: 'boolean', description: 'The proof\'s iep:descriptorId matched the URL this record was served from' },
+            basis: {
+              type: 'string',
+              enum: ['exact-url', 'slug-only', 'none'],
+              description:
+                'HOW it matched, because the two passing values are not equally strong. `exact-url`: the proof names an '
+                + 'http(s) URL and it was compared in full (host, pod, container, name) after host normalisation — nothing '
+                + 'unexamined. `slug-only`: the proof names a URN, whose only defined relation to a URL is its terminal '
+                + 'segment, so ONLY that segment matched — the host, the pod and the container were not compared and '
+                + 'cannot be, because the URN-to-URL mapping discards them. A proof lifted onto a same-named record on a '
+                + 'different pod, or a different host, reaches `slug-only` too. `none`: not bound.',
+            },
+            note: { type: 'string', description: 'Names what was compared and what was not. Present on a refusal AND on a slug-only pass.' },
+          },
+        },
         reason: { type: 'string', description: 'Diagnostic when authorshipVerified is false' },
       },
     },

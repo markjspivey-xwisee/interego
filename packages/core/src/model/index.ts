@@ -20,6 +20,7 @@ export {
   createSignedAuthorship,
   contentBindingWhenUnchecked,
   verifySignedAuthorship,
+  proofBindsToDescriptorUrl,
   ownerProfileToTurtle,
   parseOwnerProfile,
   delegationCredentialToJsonLd,
@@ -34,6 +35,8 @@ export type {
   AuthorshipProof,
   AuthorshipProofInputs,
   ContentBinding,
+  DescriptorBinding,
+  DescriptorBindingBasis,
 } from './delegation.js';
 export {
   registerFacetType,

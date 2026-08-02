@@ -88,6 +88,29 @@
  *   wiring —      the deferred re-check removed from server.ts          1
  *                 server.ts calls the chain half directly again         2
  *
+ * ★ A FIFTH ROUND, on the one thing the fourth round DOCUMENTED instead of fixing:
+ *
+ *   7. `foreignDescriptorOverwriteRefusal` waved through an entry with an EMPTY `describes`,
+ *      on the docstring's own reasoning that it "strands no chain". True, and beside the
+ *      point: this guard's subject is "that resource is not yours to replace". A manifest
+ *      row naming no graph is positive evidence a descriptor is at that URL — strictly MORE
+ *      than the no-row case, which goes unprotected only because there is no evidence at
+ *      all — and it was handled identically. Reproduced both halves: a relay-written
+ *      manifest never yields an empty row (`describes: ["…"]`), and a manifest whose entry
+ *      header shares a line with its `iep:describes` yields `describes: []`, because
+ *      `discover()`'s line-based parser `continue`s off the header line. So an empty row
+ *      means "a descriptor is there and this build cannot tell whose", which is the state in
+ *      which overwriting is least defensible. Now `descriptor_id_collides_with_unidentified_
+ *      descriptor`, 409, with the recovery named — and unlike a CAS token, omitting
+ *      `descriptor_id` always recovers, so it cannot become the unrecoverable refusal this
+ *      header's own §3 warns about.
+ *
+ * ★ Round-5 mutations, each applied, suite re-run, then reverted:
+ *   ungraphed —   the empty-describes refusal removed (the old hole)     5
+ *                 it fires unscoped (every publish refused)              8
+ *                 reported AHEAD of a named foreign graph                1
+ *                 the recovery instruction dropped from the message      1
+ *
  * ★ NOT covered, and no test here can cover it: that the `reDecidedSupersedes` call sits
  *   INSIDE the mutex acquisition that performs the deferred write rather than just before
  *   it. That is a fact about `handlePublishContext`, which starts an HTTP listener on
@@ -728,9 +751,61 @@ function main(): void {
     descriptorWriteCollisionRefusal(otherHead, G, d(0), { normalize: normalizeCssUrl }) === null,
     '★ republishing to the SAME graph\'s URL with no if_match is a legitimate idempotent overwrite',
   );
+  // ★ THE "STATED LIMIT" THAT WAS NOT SAFE, AND THE TEST THAT USED TO PIN IT.
+  //
+  // This asserted `=== null` on the reasoning in the docstring: an entry describing no graph
+  // belongs to no chain, so overwriting it strands nothing. That reasoning is sound and it
+  // answers a question this guard does not ask. The guard's subject is "that resource is not
+  // yours to replace"; a manifest row with an empty `describes` is positive evidence that a
+  // descriptor IS at that URL — strictly more evidence than the no-row case, which goes
+  // unprotected only because there is none. Allowing the better-evidenced case was the
+  // incoherence, and its cost is an unconditional PUT over a document the caller never wrote.
+  const unidentified = foreignDescriptorOverwriteRefusal(
+    [{ descriptorUrl: d(4), describes: [] }], G, d(4), normalizeCssUrl,
+  );
   ok(
-    foreignDescriptorOverwriteRefusal([{ descriptorUrl: d(4), describes: [] }], G, d(4), normalizeCssUrl) === null,
-    'an entry describing no graph strands no chain, so nothing here objects — the stated limit',
+    unidentified?.code === 409,
+    `★ an entry that names NO graph is refused, not waved through (got ${unidentified?.code ?? 'null'})`,
+  );
+  ok(
+    unidentified?.error === 'descriptor_id_collides_with_unidentified_descriptor',
+    'under its own code — "could not tell whose" is a different operator action from "it is X\'s"',
+  );
+  ok(
+    unidentified?.retryable === false,
+    'non-retryable: the row will parse the same way on every retry',
+  );
+  ok(
+    /Omit descriptor_id/.test(unidentified?.message ?? ''),
+    '★ and it names the recovery — unlike a CAS token, the caller can always get a fresh URL, '
+    + 'so this cannot become the unrecoverable refusal this module\'s header warns about',
+  );
+  // Reached with or without a precondition, through the single gate, same as its sibling.
+  ok(
+    descriptorWriteCollisionRefusal(
+      [{ descriptorUrl: d(4), describes: [] }], G, d(4),
+      { casGraphIri: G, normalize: normalizeCssUrl },
+    )?.error === 'descriptor_id_collides_with_unidentified_descriptor',
+    '★ and through the combined gate under an if_match too',
+  );
+  // ★ THE NAMED-GRAPH REFUSAL STILL WINS WHEN BOTH APPLY. A URL holding both an ungraphed
+  // row and a foreign-graph row is better described by the graph it CAN name, because that
+  // is the string the caller has to act on. Reporting "could not tell whose" while holding
+  // the answer would be a downgrade of a message, not a widening of a guard.
+  ok(
+    foreignDescriptorOverwriteRefusal(
+      [{ descriptorUrl: d(4), describes: [] }, { descriptorUrl: d(4), describes: [OTHER] }],
+      G, d(4), normalizeCssUrl,
+    )?.error === 'descriptor_id_collides_with_other_graph',
+    '★ a named foreign graph outranks the unidentified row when both sit at the URL',
+  );
+  // The scoping still holds: an ungraphed row somewhere ELSE on the pod is not this
+  // publish's problem. Without this the new branch would refuse every publish on the pod.
+  ok(
+    foreignDescriptorOverwriteRefusal(
+      [{ descriptorUrl: d(4), describes: [] }], G, d(99), normalizeCssUrl,
+    ) === null,
+    'an ungraphed row at a DIFFERENT URL is not a collision — the guard is still per-URL',
   );
   // Host forms: `normalizeCssUrl` is the whole reason the chain guard sees across the
   // internal/public FQDN split, and a foreign-ownership check that compared raw strings

@@ -166,6 +166,31 @@ export interface InteropProfile {
    */
   continuationField?: string;
   /**
+   * Where the request payload names the CAPABILITY the engagement should invoke, as
+   * dotted paths into the payload. The FIRST entry is canonical — it is the spelling
+   * the profile's own `engagement.render` emits — and later entries are tolerated
+   * inbound only, exactly as `lifecycle.parse` tolerates non-canonical state names.
+   * Absent means the format has no way to name a capability and every send is inert.
+   *
+   * ★ THIS EXISTS BECAUSE THE MOUNT HARDCODED ONE MEMBER NAME, AND THAT WAS A REAL
+   * INTEROP BUG rather than merely a layering smell. The member it read was one the
+   * live profile's own message schema does not define and, being a closed schema,
+   * forbids — so a validating peer could not name a capability at all. Meanwhile the
+   * profile RENDERED the capability back nested under the schema's declared extension
+   * point, for the very reason that the body is closed. The reasoning was applied
+   * outbound and never inbound, so the round trip did not close: a peer echoing the
+   * value back exactly as it had been handed it was ignored, the engagement opened
+   * with no capability, the invoker never ran, and the peer received a record parked
+   * in its opening state with no output and no error to explain it. Measured on a
+   * running instance before the fix — nested spelling: opening state, no output; bare
+   * spelling: terminal state with the result.
+   *
+   * Declaring it as data is what keeps the two ends in one place, and a mount test
+   * asserts the closure: the value a profile EMITS must be readable by the paths it
+   * declares here.
+   */
+  capabilityFields?: readonly string[];
+  /**
    * The body member the request payload nests under, when this format wraps it —
    * a protocol whose request is a schema'd envelope rather than the payload itself.
    * Absent means the body IS the payload.

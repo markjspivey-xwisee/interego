@@ -479,12 +479,41 @@ export function casSelfOverwriteRefusal(
  * `descriptor_id` precisely to control the URL, and the honest answer to "I cannot give you
  * that URL" is to say so.
  *
- * ★ WHAT THIS DOES NOT COVER, STATED PLAINLY. Its only evidence is the manifest, so:
- *   - a resource sitting at that URL which the manifest does not list — not a descriptor, or
- *     a descriptor whose manifest row was lost — is not seen, and is still overwritten;
- *   - an entry with an EMPTY `describes` belongs to no graph, so nothing here objects to
- *     replacing it. There is no chain to break.
+ * ★ WHAT THIS DOES NOT COVER, STATED PLAINLY. Its only evidence is the manifest, so a
+ * resource sitting at that URL which the manifest does not list — not a descriptor, or a
+ * descriptor whose manifest row was lost entirely — is not seen, and is still overwritten.
  * It is a guard on graph ownership of a URL, not a general "this resource exists" check.
+ *
+ * ★ AN EMPTY `describes` IS NOW REFUSED, AND THE ARGUMENT THAT IT WAS SAFE WAS ANSWERING A
+ * NARROWER QUESTION THAN THE GUARD ASKS. That argument — "it belongs to no graph, so there
+ * is no chain to break" — is true, and it is a claim about supersession chains. This
+ * refusal's own stated subject is not chains; it is "that resource is not yours to replace".
+ * A row with an empty `describes` is positive evidence that a descriptor exists at that URL:
+ * STRICTLY MORE than the no-row case above, which is unprotected only because there is no
+ * evidence at all. Treating more evidence and no evidence identically is the incoherence,
+ * and the cost of it is a silent unconditional PUT over a document the caller did not write.
+ *
+ * ★ WHY REFUSING CANNOT STRAND A HONEST WRITER — measured, because this module's own header
+ * is the story of a guard that refused a legitimate client "with a state no value recovers
+ * from". Two things make this one different. First, nothing the relay writes can produce an
+ * empty row: `manifestEntryTurtle` emits one `iep:describes` line per graph and a descriptor
+ * with zero graphs cannot be built (`publish()` dereferences `describes[0]`), while the
+ * manifest-recovery path returns null rather than an entry when a descriptor has no
+ * `iep:describes` at all. Reproduced: a relay-written manifest parses to `describes:
+ * ["…"]`. Second, the recovery is unconditional and in the caller's hands — omit
+ * `descriptor_id` and a fresh URL is minted — unlike a CAS token, where no value the caller
+ * can send is accepted.
+ *
+ * ★ WHERE AN EMPTY ROW ACTUALLY COMES FROM, since it is reachable and worth naming:
+ * `discover()`'s manifest parser is line-based and its entry-header branch `continue`s, so
+ * anything on the SAME line as `<url> a iep:ManifestEntry` is discarded. A manifest written
+ * by any other Turtle serialiser — `<url> a iep:ManifestEntry ; iep:describes <g> .` on one
+ * line — parses to `describes: []`. Reproduced. So an empty row means "a descriptor is
+ * there and this build could not tell whose", which is precisely the state in which
+ * overwriting is least defensible and the previous behaviour was to overwrite. The parser
+ * is the deeper bug and lives in packages/solid/src/client.ts; this refusal is correct
+ * regardless of whether that is fixed, because a foreign-written manifest is not ours to
+ * assume the shape of.
  *
  * `graphIri` is optional because `graph_iri` is a `publish_context` argument that
  * `tools/call` does not schema-validate. Omitting it means the descriptor being written
@@ -527,8 +556,14 @@ export function foreignDescriptorOverwriteRefusal(
   // the graphs rather than short-circuiting also lets the message name them, which is the
   // difference between a caller re-picking a slug and a caller re-reading the manifest.
   const foreign = new Set<string>();
+  // A row at this URL that names NO graph at all. Tracked separately from `foreign` because
+  // it cannot be expressed as one: `foreign` holds graph IRIs, and the whole condition here
+  // is that there is not one to hold. Folding it in by adding a placeholder string would put
+  // an invented IRI into a message whose entire job is to name IRIs a caller must match.
+  let ungraphedOccupant = false;
   for (const e of entries) {
     if (norm(e.descriptorUrl) !== self) continue;
+    if (e.describes.length === 0) { ungraphedOccupant = true; continue; }
     // The stored side has already been through `new URL(u, manifestUrl).href` in
     // `discover()`; the caller's side has not. Compared raw, an honest same-graph republish
     // to a stable descriptor id was refused as somebody else's URL — `graph_iri
@@ -536,6 +571,28 @@ export function foreignDescriptorOverwriteRefusal(
     // `normalizeGraphIri` puts both through the same transform; the message still names the
     // graph as it is stored, because that is the string a caller has to match.
     for (const g of e.describes) if (normalizeGraphIri(g) !== claimed) foreign.add(g);
+  }
+  // Reported before the named-graph refusal, and only when that one does not fire: a URL
+  // holding both a graphed and an ungraphed row is better described by the graph it can
+  // name, which is the string the caller can act on.
+  if (foreign.size === 0 && ungraphedOccupant) {
+    return {
+      error: 'descriptor_id_collides_with_unidentified_descriptor',
+      code: 409,
+      retryable: false,
+      message:
+        `This publish would be written to <${selfDescriptorUrl}>, which the pod manifest `
+        + 'already lists as a descriptor — but that row names NO graph, so it could not be '
+        + 'determined whose descriptor it is. Writing would replace it in place and nothing '
+        + 'afterwards could report what was lost. This is refused rather than allowed '
+        + 'because a manifest row is positive evidence that a document is there: less '
+        + 'information about the occupant is not a reason to be more willing to destroy it. '
+        + 'Omit descriptor_id so a fresh URL is minted (the normal case), or choose one whose '
+        + 'final segment is not already taken. Refused with or without an if_match: this is '
+        + 'about who owns the URL, not about a swap. If you believe that row is stale, a '
+        + 'manifest whose entry header shares a line with its iep:describes parses to no '
+        + 'graph here — re-serialising the manifest one predicate per line will restore it.',
+    };
   }
   if (foreign.size === 0) return null;
   const named = [...foreign].map(g => `<${g}>`).join(', ');

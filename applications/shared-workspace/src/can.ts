@@ -41,7 +41,7 @@ import {
   foldRoster, may, explain,
   type Roster, type RoleProfile, type Capability, type Principal, type DelegatedScope,
   type SignerResolver, type SignerFinding, type Attestation, type AttestationPolicy,
-  type AttributionGrade, type ContentBinding,
+  type AttributionGrade, type ContentBinding, type FieldProvenance,
 } from './roster.js';
 import type { ComposedView, ComposedEntry, ComposableMember } from './compose.js';
 
@@ -464,5 +464,5 @@ export { foldRoster, may, explain };
 export type {
   Roster, RoleProfile, Capability, Principal, DelegatedScope,
   SignerResolver, SignerFinding, Attestation, AttestationPolicy, AttributionGrade,
-  ContentBinding,
+  ContentBinding, FieldProvenance,
 };

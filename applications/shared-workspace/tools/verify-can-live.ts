@@ -38,9 +38,19 @@
  * CONTROL — the genuine half must be ADMITTED — so a run where everything is refused reports
  * itself as having established nothing.
  *
- * ★ SECTIONS 6 AND 7 HAVE STILL NOT BEEN RUN AGAINST THE LIVE SUBSTRATE. No bearer pair has
- * been available. Whether the assertions hold now that they CAN fail is therefore unknown,
- * and nothing in this file or the README claims otherwise.
+ * ★ AND SECTION 6 STILL DID NOT BIND A RECORD TO THE FIELDS CLAIMED FOR IT. It publishes
+ * three records carrying a single `dct:description` and then hands the fold `Grant` and
+ * `Acceptance` object literals typed twelve lines above — so what it establishes is who
+ * signed each URL, and nothing at all about what those records SAY. Hand the same policy one
+ * of bee's ordinary published log entries with `member: bee` typed beside it and she becomes
+ * a member of a workspace she never joined. Section 8 is the half that was missing: real
+ * `wsp:MembershipGrant` and `wsp:MembershipAcceptance` documents, shape-validated, signed,
+ * read back and PARSED, with the manufactured-participant attack run live against both the
+ * new policy and the old one so the gap is shown to have been real.
+ *
+ * ★ SECTIONS 6, 7 AND 8 HAVE STILL NOT BEEN RUN AGAINST THE LIVE SUBSTRATE. No bearer pair
+ * has been available. Whether the assertions hold now that they CAN fail is therefore
+ * unknown, and nothing in this file or the README claims otherwise.
  *
  * Usage:
  *   IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
@@ -50,14 +60,37 @@
 import { appendEntry, readAttestation, type StreamDeps } from '../src/stream.js';
 import { composeWorkspace, type ComposableMember } from '../src/compose.js';
 import {
+  grantTurtle, acceptanceTurtle, publishMembershipRecord,
+  readGrantRecord, readAcceptanceRecord,
+} from '../src/membership.js';
+import type { Acceptance } from '../src/roster.js';
+import {
   authorizeView, scopesFromRegistry, signerIndexFromRegistry, canAct, CAPS, foldRoster,
   type RoleProfile, type Attestation,
 } from '../src/can.js';
 
 const RELAY = process.env.IEP_RELAY ?? 'https://relay.interego.xwisee.com';
-const BEARER = process.env.IEP_BEARER;
-const BEARER_B = process.env.IEP_BEARER_B;
-if (!BEARER || !BEARER_B) { console.error('IEP_BEARER and IEP_BEARER_B are both required.'); process.exit(2); }
+
+/**
+ * An environment variable this script cannot run without, narrowed to `string`.
+ *
+ * ★ The guard used to be one `if (!BEARER || !BEARER_B) process.exit(2)` beside the two
+ * `process.env` reads, which reads as sufficient and is not: control-flow narrowing does not
+ * cross into a nested function body, so every use inside `main()` was still
+ * `string | undefined` and every `callAs(BEARER, …)` was a type error. Nothing said so — this
+ * file was in no tsconfig's program until `tsconfig.check.json`. Returning the narrowed value
+ * from the guard is what makes the check and the type agree.
+ */
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value === '') {
+    console.error(`${name} is required.`);
+    process.exit(2);
+  }
+  return value;
+}
+const BEARER = requiredEnv('IEP_BEARER');
+const BEARER_B = requiredEnv('IEP_BEARER_B');
 
 const RUN = process.argv[2] ?? String(Date.now());
 const WS = `${RELAY}/ns/maintainer/wsp-can-${RUN}`;
@@ -189,7 +222,9 @@ async function main(): Promise<void> {
   ok(view.entries.length === 1, `★ only one is workspace content (${view.entries.length})`);
   ok(view.entries[0]?.principal === alice, '★ and it is the Contributor\'s');
   ok(view.disallowed.length === 1, 'the Observer\'s entry is REPORTED, not silently filtered');
-  ok(view.disallowed[0]?.because.includes('does not permit'), 'with a reason a person can act on');
+  // `=== true`, not the optional chain's `boolean | undefined`: an ABSENT row must read as a
+  // failure here, and `ok(undefined)` would have been a falsy pass-through nobody chose.
+  ok(view.disallowed[0]?.because.includes('does not permit') === true, 'with a reason a person can act on');
   console.log(`     ${view.disallowed[0]?.because.slice(0, 150)}…`);
 
   // ── 5. the excluded entry is still THERE, at its own URL ──
@@ -355,6 +390,195 @@ async function main(): Promise<void> {
     '★ the CONTROL holds here too: at least one entry was ADMITTED at the attested grade',
     'if this fails, the two assertions above are arithmetic on zero and establish nothing — '
     + `withheld: ${JSON.stringify(attestedView.unattested).slice(0, 300)}`,
+  );
+
+  // ── 8. the half section 6 could NOT establish: the record's own FIELDS ──
+  //
+  // ★ WHAT SECTION 6 PROVED AND WHERE IT STOPPED. It published three records and read their
+  // authorship back through the relay's verifier, so it really did establish who signed
+  // what. But the `Grant` and `Acceptance` it handed the fold were object literals typed
+  // TWELVE LINES ABOVE — `member: bee, accepts: grantUrl, stream: ...` — and the published
+  // records carried a single `dct:description`. So the roster's fields and the signed bytes
+  // had nothing to do with each other: the section's own comment says "the record body is
+  // deliberately minimal; what is under test is the PROVENANCE the substrate attaches".
+  //
+  // The consequence was measurable and it is the residual gap this section closes. Hand the
+  // fold one of bee's ordinary published log entries — genuinely hers, genuinely signed,
+  // genuinely content-bound — with `member: bee` typed beside it, and section 6's policy
+  // admits her as a member of a workspace she never joined, at whatever role was typed.
+  //
+  // Here both halves are REAL wsp:MembershipGrant / wsp:MembershipAcceptance documents,
+  // shape-validated at publish, signed, read back, and PARSED. Nothing below types a field.
+  console.log('\n8. the fields come from the RECORD — a grant and an acceptance, published and parsed');
+
+  // ★ NO `pod_name`, DELIBERATELY. Every write below is a principal writing to their OWN
+  // pod through their OWN session, which is the default target — the same thing section 3's
+  // `appendEntry` does. Naming the pod explicitly would be the one way to turn a valid
+  // own-pod write into a 403 and make the section fail for a reason it is not about.
+  const wsDeps = (bearer: string): StreamDeps => deps(bearer);
+
+  // The convener publishes the grant on HER pod…
+  const grantIri = `${WS}/mg/bee`;
+  const grantPub = await publishMembershipRecord({
+    graphIri: grantIri,
+    graphContent: grantTurtle({
+      grantIri, workspace: WS, grantedTo: bee, role: `${P}#Observer`,
+      title: 'alice, convening, offers bee Observer',
+    }),
+  }, wsDeps(BEARER));
+  ok(grantPub.outcome === 'published', '★ the convener publishes a wsp:MembershipGrant on her own pod', JSON.stringify(grantPub).slice(0, 240));
+  if (grantPub.outcome !== 'published') { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
+  const mgUrl = grantPub.descriptorUrl;
+
+  // …and the MEMBER publishes the acceptance on HERS, naming the grant by its own URL.
+  const acceptIri = `${WS}/ma/bee`;
+  const acceptPub = await publishMembershipRecord({
+    graphIri: acceptIri,
+    graphContent: acceptanceTurtle({
+      acceptanceIri: acceptIri, workspace: WS, member: bee, accepts: mgUrl,
+      stream: `${WS}/stream/bee`, title: 'bee accepts, from her own session',
+    }),
+  }, wsDeps(BEARER_B));
+  ok(acceptPub.outcome === 'published', '★ the member publishes a wsp:MembershipAcceptance on HER OWN pod', JSON.stringify(acceptPub).slice(0, 240));
+  if (acceptPub.outcome !== 'published') { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
+
+  // ★ AND THE CONVENER FORGES ONE. Same bytes, same shape, same workspace — published from
+  // ALICE'S session onto ALICE'S pod. This is the record that must be refused, and it is a
+  // sharper forgery than section 6's: its fields are perfect and parsed, so nothing but the
+  // signature distinguishes it.
+  const forgedIri = `${WS}/ma/bee-forged`;
+  const forgedPub = await publishMembershipRecord({
+    graphIri: forgedIri,
+    graphContent: acceptanceTurtle({
+      acceptanceIri: forgedIri, workspace: WS, member: bee, accepts: mgUrl,
+      stream: `${WS}/stream/bee`, title: 'alice writing bee\'s acceptance',
+    }),
+  }, wsDeps(BEARER));
+  ok(forgedPub.outcome === 'published', 'and the convener publishes a forged one for bee on her own pod', JSON.stringify(forgedPub).slice(0, 240));
+  if (forgedPub.outcome !== 'published') { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
+
+  // ── read all three back and PARSE them. No field below was typed by this file. ──
+  const readGrant = await readGrantRecord(mgUrl, wsDeps(BEARER));
+  const readAccept = await readAcceptanceRecord(acceptPub.descriptorUrl, wsDeps(BEARER));
+  const readForged = await readAcceptanceRecord(forgedPub.descriptorUrl, wsDeps(BEARER));
+  ok(
+    readGrant.record !== null && readAccept.record !== null && readForged.record !== null,
+    'all three records read back and parsed into membership rows',
+    JSON.stringify({ g: readGrant.problems, a: readAccept.problems, f: readForged.problems }),
+  );
+  if (!readGrant.record || !readAccept.record || !readForged.record) {
+    console.log(`\n${pass} passed, ${fail} failed`); process.exit(1);
+  }
+  // The fields really came from the bytes, and the substrate really re-digested those bytes.
+  ok(
+    readGrant.record.grantedTo === bee && readGrant.record.role === `${P}#Observer`,
+    `★ the grantee and the role were READ FROM THE GRANT (${readGrant.record.role})`,
+    JSON.stringify(readGrant.record),
+  );
+  ok(
+    readAccept.record.accepts === mgUrl && readAccept.record.member === bee,
+    '★ and the acceptance names that grant by its own URL, from its own bytes',
+    JSON.stringify(readAccept.record),
+  );
+  ok(
+    readGrant.record.attestation?.contentBinding === 'bound'
+    && readAccept.record.attestation?.contentBinding === 'bound',
+    '★ and the substrate re-digested the payload it served for each and MATCHED — so the '
+    + 'parsed fields are the triples that were signed',
+    JSON.stringify({ g: readGrant.record.attestation, a: readAccept.record.attestation }),
+  );
+
+  const fieldBound = (acceptance: Acceptance) => foldRoster({
+    workspace: WS, profile: PROFILE, scopes,
+    grants: [readGrant.record!],
+    acceptances: [acceptance],
+    attestation: { convener: alice, signerOf, requireFieldBinding: true },
+  });
+
+  // ★ THE CONTROL, FIRST AND OUT LOUD. §6's two headline assertions once passed because
+  // every record was unreadable and the fold refused both halves. A refusal only
+  // discriminates if the genuine article is admitted, so that is asserted before the
+  // refusal, not after it.
+  const genuineRoster = fieldBound(readAccept.record);
+  ok(
+    genuineRoster.members.length === 1 && genuineRoster.members[0]!.principal === bee,
+    '★★ the CONTROL holds: bee, who really accepted, IS a member under requireFieldBinding',
+    JSON.stringify({ members: genuineRoster.members, unattested: genuineRoster.unattested }),
+  );
+  ok(
+    genuineRoster.recordFieldBinding === 'bound' && genuineRoster.recordContentBinding === 'bound',
+    'and the roster reports both bindings as ENFORCED',
+    JSON.stringify({ f: genuineRoster.recordFieldBinding, c: genuineRoster.recordContentBinding }),
+  );
+
+  const forgedRoster = fieldBound(readForged.record);
+  ok(forgedRoster.members.length === 0, '★★ and the acceptance ALICE wrote for bee produces NO member');
+  const forgedWhy = forgedRoster.unattested.find(u => u.kind === 'acceptance')?.because ?? '';
+  ok(
+    /acts for/.test(forgedWhy),
+    '★ refused for the RIGHT REASON — the signer acts for someone other than bee',
+    `because = ${forgedWhy}`,
+  );
+  ok(
+    !/could not be retrieved|no graph payload|did not verify/.test(forgedWhy),
+    'and NOT because the record was unreadable, which would prove nothing',
+    `because = ${forgedWhy}`,
+  );
+
+  // ★ THE ATTACK THAT SURVIVED EVERY PREVIOUS ROUND, run live. One of bee's OWN entries —
+  // published by her, in section 3, signed by her key, content-bound — offered as her
+  // acceptance. Every signature check passes. Only reading the record refuses it.
+  const beeEntryUrl = beePut.outcome === 'appended' ? beePut.entry.descriptorUrl : null;
+  if (beeEntryUrl === null) {
+    ok(false, 'bee\'s own entry from section 3 was needed here and is not available');
+  } else {
+    const asAcceptance = await readAcceptanceRecord(beeEntryUrl, wsDeps(BEARER));
+    ok(
+      asAcceptance.record === null && /declares no/.test(asAcceptance.problems.join(' ')),
+      '★★ bee\'s own signed log entry is NOT readable as her acceptance — the manufactured '
+      + 'participant, refused by reading the record',
+      JSON.stringify(asAcceptance.problems).slice(0, 300),
+    );
+    // …and it really is a perfect record otherwise, which is why nothing weaker caught it.
+    ok(
+      asAcceptance.attestation.authorshipVerified && asAcceptance.attestation.signedBy !== null,
+      'and that same entry carries a valid authorship proof — signatures were never the '
+      + 'discriminator here',
+      JSON.stringify(asAcceptance.attestation),
+    );
+    // The previously-strongest policy still admits it, with the fields typed by hand. Stated
+    // so the gap is shown to have been REAL rather than described as having been.
+    const beforeRoster = foldRoster({
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [readGrant.record],
+      acceptances: [{
+        head: beeEntryUrl, workspace: WS, member: bee, accepts: mgUrl,
+        stream: `${WS}/stream/bee`, attestation: asAcceptance.attestation,
+      }],
+      attestation: { convener: alice, signerOf, requireContentBinding: true },
+    });
+    ok(
+      beforeRoster.members.length === 1,
+      '★★ and requireContentBinding ALONE still admits it — the gap was real, and this is it',
+      JSON.stringify(beforeRoster.unattested),
+    );
+  }
+
+  // ★ WHAT IS STILL NOT ESTABLISHED, asserted rather than left to the README. The convener
+  // is whoever this file named. Nothing above read <WS> and checked wsp:convener, so a
+  // policy naming BEE as convener produces a field-bound roster of the wrong memberships.
+  const wrongConvener = foldRoster({
+    workspace: WS, profile: PROFILE, scopes,
+    grants: [readGrant.record],
+    acceptances: [readAccept.record],
+    attestation: { convener: bee, signerOf, requireFieldBinding: true },
+  });
+  ok(
+    wrongConvener.members.length === 0 && wrongConvener.recordFieldBinding === 'bound',
+    '★ RESIDUAL GAP 6, demonstrated not described: naming the wrong convener changes the '
+    + 'roster and the fold reports field binding as bound either way — the policy\'s '
+    + 'convener is caller-supplied and nothing here checks it against <' + WS + '>',
+    JSON.stringify({ members: wrongConvener.members.length, binding: wrongConvener.recordFieldBinding }),
   );
 
   console.log(`\n${pass} passed, ${fail} failed`);

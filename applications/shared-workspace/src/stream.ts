@@ -69,7 +69,7 @@
  * conflict becomes a mystery.
  */
 
-import { escapeTurtleLiteral, turtleIriRef } from '@interego/core';
+import { escapeTurtleLiteral, turtleIriRef, proofBindsToDescriptorUrl } from '@interego/core';
 import type { Attestation, ContentBinding } from './roster.js';
 
 export const WSP = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#';
@@ -592,48 +592,40 @@ export function proofDescriptorId(descriptorTurtle: string): string | null {
   return block[1]!.match(/iep:descriptorId\s+<([^>]+)>/)?.[1] ?? null;
 }
 
-/**
- * Does this proof belong to THIS descriptor, or was it copied in from another one?
+/*
+ * ── WHERE `proofBindsToDescriptor` WENT ──────────────────────────────────────
  *
- * ★ THE SUBSTRATE DOES NOT ASK THIS, AND THE WHOLE PROPERTY TURNS ON IT. `get_descriptor`
- * re-derives the canonical payload from the proof block's OWN fields and checks the ECDSA
- * signature over it — so a proof block lifted verbatim out of one of a principal's real,
- * public descriptors and pasted into a record somebody else fabricated verifies clean, with
- * that principal named as signer. Signature validity says the bytes of the proof were not
- * altered; it says nothing about what the proof is attached to.
+ * This file used to export a one-line wrapper —
  *
- * ★ WHAT THIS CHECK IS WORTH, precisely — AND IT IS LESS THAN IT LOOKS. The relay mints
- * `descriptor_id` as `urn:iep:<pod>:<epoch-ms>` and derives the descriptor's own URL from it
- * via `predictDescriptorUrl`/`slugFromIri` — TERMINAL SEGMENT ONLY, URL-encoded, plus
- * `.ttl`. So the two are related by a naming convention, not by an equality the substrate
- * enforces, and this compares them on the only part of it that survives: the last segment.
+ *     export function proofBindsToDescriptor(claimedId, descriptorUrl): boolean {
+ *       return proofBindsToDescriptorUrl(claimedId, descriptorUrl).bound;
+ *     }
  *
- * The pod is therefore NOT compared, and a proof lifted across pods at the same epoch
- * passes. Measured:
- *   proofBindsToDescriptor('urn:iep:alice-pod:1712345678901',
- *                          'https://css/mallory-pod/context-graphs/1712345678901.ttl') === true
- * This docstring used to claim the opposite ("a lifted proof carries the original record's
- * epoch and fails"). What the check actually catches is a proof pasted onto a record with a
- * DIFFERENT terminal segment — the common copy — and it does not catch a fabricated record
- * deliberately named to collide with the epoch of a real one.
+ * — justified as "every caller here decides admit-or-withhold and has nothing to do with a
+ * third value". That justification was wrong in the way a convenience wrapper is usually
+ * wrong: it made the LOSSY reading the short one to write. `proofBindsToDescriptorUrl`
+ * returns `{bound, basis}` where `basis` distinguishes `'exact-url'` — host, pod, container
+ * and name all compared — from `'slug-only'`, which compared one path segment and nothing
+ * else. A `bound: true` on a `slug-only` basis is what let a record hosted at
+ * `https://attacker.example/anything/<epoch>.ttl` bind to a proof minted for a real record
+ * on someone else's pod, and the wrapper is why no caller ever saw that it had.
  *
- * A publish that names its descriptor some other way (the PGSL-primary path writes a
- * content-addressed `holon-<hash>.ttl`) fails this, wrongly — which withholds the entry and
- * says so, the safe direction, and is why verification is opt-in rather than the default.
- * The durable fix belongs in the substrate: `get_descriptor` already holds both the proof
- * and the URL it read it from and could compare them in full.
+ * It is deleted rather than fixed. A function whose whole body is the collapse cannot be
+ * called correctly, and leaving it exported means the next caller writes the collapse by
+ * reaching for the shorter name. Call `proofBindsToDescriptorUrl` from @interego/core and
+ * read the field you actually mean — {@link attestationOfResponse} does, and now carries
+ * `basis` onto the {@link Attestation} instead of dropping it at the boundary.
+ *
+ * The substrate function carries the full argument for what a URN-form id can and cannot
+ * buy, and for why reading the pod out of the URN breaks honest relay-minted shapes
+ * (`urn:iep:pod-bootstrap:<user>:v1`, `urn:iep:trajectory-step:<agent>:<ms>`).
+ *
+ * ★ THIS LAYER STILL COMPUTES THE COMPARISON LOCALLY RATHER THAN READING THE RELAY'S ANSWER.
+ * The relay reports its own `descriptorBinding` now, and deferring to it would be a
+ * downgrade: the workspace would stop holding an independent opinion about the one question
+ * the substrate historically did not ask. Same function, two independent evaluations,
+ * neither trusting the other's verdict.
  */
-export function proofBindsToDescriptor(claimedId: string | null, descriptorUrl: string): boolean {
-  if (claimedId === null) return false;
-  if (claimedId === descriptorUrl) return true;
-  const tail = (s: string): string | null => s.split(/[/:#]/).filter(Boolean).pop() ?? null;
-  const claimed = tail(claimedId);
-  if (claimed === null) return false;
-  let pathname: string;
-  try { pathname = new URL(descriptorUrl).pathname; } catch { return false; }
-  const served = tail(pathname)?.replace(/\.ttl$/, '');
-  return served !== null && served !== undefined && encodeURIComponent(claimed) === served;
-}
 
 /**
  * What the substrate's verifier says about who published one descriptor. ONE `get_descriptor`.
@@ -660,15 +652,42 @@ export async function readAttestation(
       + 'required by default — but asking to verify without it cannot be answered.',
     );
   }
-  const unattested = (reason: string): Attestation =>
-    ({ authorshipVerified: false, signedBy: null, boundToDescriptor: false, reason });
-
   let res: Record<string, unknown>;
   try {
     res = await deps.getDescriptor({ url: descriptorUrl });
   } catch (err) {
-    return unattested(`get_descriptor threw: ${err instanceof Error ? err.message : String(err)}`);
+    return {
+      authorshipVerified: false, signedBy: null, boundToDescriptor: false,
+      reason: `get_descriptor threw: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
+  return attestationOfResponse(res, descriptorUrl);
+}
+
+/**
+ * The same verdict, off a `get_descriptor` response the caller already holds.
+ *
+ * ★ EXTRACTED SO A READER PAYS FOR ONE CALL, NOT TWO. `membership.ts` needs the descriptor's
+ * PAYLOAD and its attestation together, and the two must describe the same read: the relay
+ * computes `contentBinding` by digesting the very `graph.content` it returns in that
+ * response (`observedGraphDigest({graphContent: graph?.content, descriptorTurtle: turtle})`
+ * in the `get_descriptor` handler), so `'bound'` means "the bytes in THIS response are the
+ * triples the signer signed". Fetching the payload in one call and the attestation in
+ * another would let the two answers come from different reads of a pod that changed in
+ * between — and the whole value of field binding is that the fields and the binding verdict
+ * cover the same bytes.
+ *
+ * ★ SAME READ IS ONLY HALF OF IT — see `payloadOf` in membership.ts. The relay digests one
+ * REGION of the document it serves, not the document, and a reader that parsed the whole of
+ * it read fields out of bytes this verdict does not cover.
+ */
+export function attestationOfResponse(
+  res: Record<string, unknown>,
+  descriptorUrl: string,
+): Attestation {
+  const unattested = (reason: string): Attestation =>
+    ({ authorshipVerified: false, signedBy: null, boundToDescriptor: false, reason });
+
   if (res === null || typeof res !== 'object' || Array.isArray(res)) {
     return unattested(`get_descriptor did not return a result object for <${descriptorUrl}>`);
   }
@@ -708,22 +727,40 @@ export async function readAttestation(
   // operators are told to watch, is how a true report gets ignored.
   const turtle = res.turtle === undefined || res.turtle === null ? null : String(res.turtle);
   const claimedId = turtle === null ? null : proofDescriptorId(turtle);
-  const bound = proofBindsToDescriptor(claimedId, descriptorUrl);
+  // The shared substrate comparison, which returns the BASIS alongside the verdict. No
+  // normaliser is passed: `normalizeCssUrl` lives at the relay's HTTP boundary and this
+  // package cannot reach it, so a URL-form id is compared literally here — which is exactly
+  // what this layer did before, so nothing regresses by omitting it.
+  const binding = proofBindsToDescriptorUrl(claimedId, descriptorUrl);
   const unboundReason =
     turtle === null
       ? 'get_descriptor returned no descriptor turtle, so the proof could not be matched to '
         + 'this descriptor at all — this says nothing about the proof itself'
-      : claimedId === null
-        ? 'the descriptor turtle carries no iep:descriptorId inside its proof block, so there '
-          + 'is nothing to compare against the URL it was served from'
-        : `the proof names <${claimedId}> and the record is served at <${descriptorUrl}>`;
+      // Every other cause now carries the shared function's own caveat, which names the id,
+      // the URL and which of them could not be compared. Kept behind this one local case
+      // because "no turtle came back" is a fact about the RESPONSE, and the comparison
+      // function is never shown the response.
+      : binding.caveat ?? `the proof names <${claimedId}> and the record is served at <${descriptorUrl}>`;
 
   return {
     authorshipVerified: true,
     signedBy,
-    boundToDescriptor: bound,
+    boundToDescriptor: binding.bound,
+    // ★ THE BASIS TRAVELS WITH THE BOOLEAN, out of the same object, one line apart, so the
+    // pair cannot be written half-updated. This used to stop here: `binding.basis` was
+    // computed and thrown away, and every consumer downstream saw a bare `true` covering
+    // both "host, pod, container and name all matched" and "one path segment matched and
+    // the host was never looked at". See `Attestation.descriptorBindingBasis` for what the
+    // weak one costs and for why no policy refuses on it.
+    descriptorBindingBasis: binding.basis,
     contentBinding: readContentBinding(authorship.contentBinding),
-    ...(bound ? {} : { reason: unboundReason }),
+    // ★ A CAVEAT ON A PASSING RESULT IS NOT THE "NOISE ON A CLEAN RESULT" THIS FILE REFUSES
+    // ELSEWHERE — but it is also not a refusal, and rendering it in `reason` would make
+    // `boundToDescriptor: true` look like a failure to every caller that reads the field.
+    // So the reason stays exactly what it was: present iff the binding failed. What a
+    // `slug-only` pass did not compare is now on `descriptorBindingBasis` above, and the
+    // RELAY reports the same verdict with its own caveat string (`descriptorBinding.note`).
+    ...(binding.bound ? {} : { reason: unboundReason }),
   };
 }
 

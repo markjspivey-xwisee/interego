@@ -24,18 +24,30 @@ import { appendEntry, type StreamDeps } from '../src/stream.js';
 import { composeWorkspace, resolveCitations, describeCoverage, type ComposableMember } from '../src/compose.js';
 
 const RELAY = process.env.IEP_RELAY ?? 'https://relay.interego.xwisee.com';
-const BEARER = process.env.IEP_BEARER;
+
+/**
+ * An environment variable this script cannot run without, narrowed to `string`.
+ *
+ * Same correction as `verify-can-live.ts`: a bare `if (!BEARER) process.exit(2)` beside the
+ * `process.env` read does not narrow inside a nested function body, so every use below stayed
+ * `string | undefined`. Nothing said so until this file entered a tsconfig program.
+ */
+function requiredEnv(name: string, why: string): string {
+  const value = process.env[name];
+  if (value === undefined || value === '') {
+    console.error(`${name} is required — ${why}`);
+    process.exit(2);
+  }
+  return value;
+}
+const BEARER = requiredEnv('IEP_BEARER', 'this test needs two real participants.');
 // ★ TWO bearers, because there are two participants.
 //
 // The first version of this used one identity and `pod_name` to reach a second pod. The
 // relay refused with `scope_violation` — correctly, and the refusal is the design working.
 // A participant writes to their OWN pod with their OWN credentials; that is the property
 // the whole layer rests on, and a test that routed around it would have verified nothing.
-const BEARER_B = process.env.IEP_BEARER_B;
-if (!BEARER || !BEARER_B) {
-  console.error('IEP_BEARER and IEP_BEARER_B are both required — this test needs two real participants.');
-  process.exit(2);
-}
+const BEARER_B = requiredEnv('IEP_BEARER_B', 'this test needs two real participants.');
 
 const RUN = process.argv[2] ?? String(Date.now());
 const WS = `${RELAY}/ns/maintainer/wsp-compose-${RUN}`;

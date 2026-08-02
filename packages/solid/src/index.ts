@@ -2,9 +2,17 @@ export {
   publish, discover, subscribe, parseManifest,
   rebuildManifestFromPod,
   fetchGraphContent,
-  // Inverse of the TriG wrap — how a reader recovers the graph an authorship
-  // proof's contentHash was computed over.
+  // The TriG wrap `publish()` writes, and its inverse — how a reader recovers the graph an
+  // authorship proof's contentHash was computed over. The emitter is exported so a test can
+  // serve the document a pod serves rather than a hand-rolled approximation of it.
+  wrapAsTriG,
   extractNamedGraphTurtle,
+  // ★ AND THE ONE FUNCTION BOTH THE DIGESTER AND ANY READER MUST GO THROUGH. Exported
+  // rather than left to be reimplemented: the reader that reimplemented it parsed the
+  // whole served document while the digester covered only the block, and the gap between
+  // the two scopes was a manufactured workspace participant.
+  digestedGraphRegion,
+  graphIriFromDescriptorTurtle,
   parseDistributionFromDescriptorTurtle,
   parseAuthorshipProofFromDescriptorTurtle,
   // Exported alongside its parser: a round-trip is only testable if both halves are
@@ -18,7 +26,10 @@ export {
   predictManifestUrl,
   checkSupersessionPrecondition,
 } from './client.js';
-export type { DistributionLink, VerifyAgentDelegationOptions, VerifyAgentEnvelope, SupersessionPreconditionPass } from './client.js';
+export type {
+  DistributionLink, VerifyAgentDelegationOptions, VerifyAgentEnvelope, SupersessionPreconditionPass,
+  DigestedGraphRegion, DigestedRegionFailure,
+} from './client.js';
 export type {
   FetchFn,
   FetchResponse,

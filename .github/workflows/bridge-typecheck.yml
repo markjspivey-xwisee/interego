@@ -39,6 +39,8 @@ on:
       - 'deploy/mcp-relay/**'
       - 'docs/ns/**'
       - 'tsconfig.base.json'
+      - 'tsconfig.check.json'
+      - 'tools/typecheck-gate.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/bridge-typecheck.yml'
@@ -53,6 +55,8 @@ on:
       - 'deploy/mcp-relay/**'
       - 'docs/ns/**'
       - 'tsconfig.base.json'
+      - 'tsconfig.check.json'
+      - 'tools/typecheck-gate.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/bridge-typecheck.yml'
@@ -98,6 +102,24 @@ jobs:
 
       - name: Typecheck examples/personal-bridge (no workflow covered examples/ at all)
         run: npx tsc --noEmit -p examples/personal-bridge/tsconfig.json
+
+      # ── The two programs NO tsconfig in the repo reached ─────────────────────
+      #
+      # `tests/**` and `applications/shared-workspace/**`. Every other application's src is
+      # pulled into its own `bridge/tsconfig.json` by that config's `"../src/**/*.ts"`
+      # include; shared-workspace is the one vertical with no bridge/ directory, so nothing
+      # compiled it. And vitest transpiles with esbuild, so `npx vitest run tests/` stripped
+      # the types and ran the JavaScript underneath.
+      #
+      # Measured: deleting a required bail-out from `readAcceptanceRecord` left all 237 tests
+      # GREEN while tsc caught it in one pass.
+      #
+      # The gate also runs in vitest's globalSetup, so a local run cannot miss it. It is a
+      # NAMED STEP here as well because a gate whose only home is a setup hook is one config
+      # edit away from being invisible — and because a CI log should say which guard failed,
+      # not "vitest exited 1".
+      - name: Typecheck tests/ and applications/shared-workspace/ (ratcheted)
+        run: node tools/typecheck-gate.mjs
 
       # examples/holodeck/lib/mcp-shim.mjs is plain JS, signs with a per-agent wallet
       # and POSTs to the PRODUCTION relay. When the v1 SDK was removed its imports

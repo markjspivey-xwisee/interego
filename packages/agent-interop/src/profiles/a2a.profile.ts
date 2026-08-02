@@ -102,6 +102,16 @@ export const A2A_PROFILE: InteropProfile = {
   // A2A's SendMessageRequest wraps the payload: {message:{role,parts,messageId,taskId}}.
   // taskId lives INSIDE that envelope, not beside it.
   requestEnvelope: 'message',
+  // WHERE A CALLER NAMES THE SKILL. Canonical first, and it is the same place
+  // `engagement.render` puts it — `Message` is `additionalProperties: false` and
+  // carries no `skillId` of its own, so `metadata` is the only member a schema-valid
+  // peer can use, precisely as for the closed Task body below.
+  //
+  // The bare top-level spelling stays accepted because it is what this substrate's own
+  // callers have always sent, and dropping it would break them for no gain. It is
+  // tolerated inbound only; nothing emits it. See `capabilityFields` for the round-trip
+  // failure that made this a declaration instead of a hardcoded member name.
+  capabilityFields: ['metadata.skillId', 'skillId'],
   // Left unset — responses are plain `application/json`.
   //
   // This previously declared `application/a2a+json`, and the note here said the
@@ -258,6 +268,10 @@ export const A2A_PROFILE: InteropProfile = {
         // this engagement invokes cannot ride as a top-level field however natural
         // `skillId` reads. `metadata` is the schema's own extension point, and the
         // value stays a dereferenceable action URL either way.
+        //
+        // ★ This member MUST agree with `capabilityFields[0]` above, or a peer echoing
+        // back what we told it gets ignored — which is exactly what happened while the
+        // mount read a hardcoded top-level `skillId`. A mount test asserts the closure.
         ...(e.capability ? { metadata: { skillId: e.capability } } : {}),
       };
     },
