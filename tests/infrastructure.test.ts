@@ -388,8 +388,13 @@ describe('Checkpoint/Recovery', () => {
       createCheckpoint(store, pgsl, 'agent-3');
 
       const all = listCheckpoints(store);
+      // ★ Assert the loop has something to do. Every assertion in this test lives inside
+      // the loop body, so `listCheckpoints` returning 0 or 1 entries made the test pass by
+      // running nothing — the ordering property would go unchecked exactly when the store
+      // was broken enough to lose checkpoints. Three were created above.
+      expect(all).toHaveLength(3);
       for (let i = 1; i < all.length; i++) {
-        expect(all[i].createdAt >= all[i - 1].createdAt).toBe(true);
+        expect(all[i]!.createdAt >= all[i - 1]!.createdAt).toBe(true);
       }
     });
   });
@@ -447,7 +452,7 @@ describe('CRDT Sync', () => {
     });
 
     it('createOp stamps with current clock', () => {
-      let state = createCRDTState('peer-A');
+      const state = createCRDTState('peer-A');
       const result = createOp(state, 'mint-atom', { value: 'hello' });
       // Clock should have been incremented to 1
       expect(result.op.clock.entries.get('peer-A')).toBe(1);
@@ -465,39 +470,39 @@ describe('CRDT Sync', () => {
     });
 
     it('applyOp applies mint-atom to PGSL', () => {
-      let state = createCRDTState('peer-A');
+      const state = createCRDTState('peer-A');
       const { state: sA, op } = createOp(state, 'mint-atom', {
         value: 'hello',
         provenance: TEST_PROV,
       });
 
-      let stateB = createCRDTState('peer-B');
+      const stateB = createCRDTState('peer-B');
       const result = applyOp(stateB, pgsl, op);
       expect(result.applied).toBe(true);
       expect(latticeStats(pgsl).atoms).toBe(1);
     });
 
     it('applyOp applies ingest-chain to PGSL', () => {
-      let state = createCRDTState('peer-A');
+      const state = createCRDTState('peer-A');
       const { state: sA, op } = createOp(state, 'ingest-chain', {
         sequence: ['hello', 'world'],
         provenance: TEST_PROV,
       });
 
-      let stateB = createCRDTState('peer-B');
+      const stateB = createCRDTState('peer-B');
       const result = applyOp(stateB, pgsl, op);
       expect(result.applied).toBe(true);
       expect(latticeStats(pgsl).fragments).toBeGreaterThan(0);
     });
 
     it('applyOp is idempotent (skip if already applied)', () => {
-      let state = createCRDTState('peer-A');
+      const state = createCRDTState('peer-A');
       const { op } = createOp(state, 'mint-atom', {
         value: 'once',
         provenance: TEST_PROV,
       });
 
-      let stateB = createCRDTState('peer-B');
+      const stateB = createCRDTState('peer-B');
       const r1 = applyOp(stateB, pgsl, op);
       expect(r1.applied).toBe(true);
 
@@ -506,7 +511,7 @@ describe('CRDT Sync', () => {
     });
 
     it('applyOp merges clocks', () => {
-      let stateA = createCRDTState('peer-A');
+      const stateA = createCRDTState('peer-A');
       const { state: updatedA, op } = createOp(stateA, 'mint-atom', {
         value: 'sync-test',
         provenance: TEST_PROV,
@@ -531,7 +536,7 @@ describe('CRDT Sync', () => {
 
       const pending = getPendingOps(state);
       expect(pending).toHaveLength(1);
-      expect(pending[0].id).toBe(r1.op.id);
+      expect(pending[0]!.id).toBe(r1.op.id);
     });
 
     it('markSynced clears pending', () => {
@@ -544,7 +549,7 @@ describe('CRDT Sync', () => {
       // Mark only first as synced
       state = markSynced(state, [r1.op.id]);
       expect(getPendingOps(state)).toHaveLength(1);
-      expect(getPendingOps(state)[0].id).toBe(r2.op.id);
+      expect(getPendingOps(state)[0]!.id).toBe(r2.op.id);
 
       // Mark second as synced
       state = markSynced(state, [r2.op.id]);

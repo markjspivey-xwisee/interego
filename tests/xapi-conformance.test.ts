@@ -278,9 +278,15 @@ describe('Batch Ingestion', () => {
 
   it('each statement gets its own top-level fragment', () => {
     const uris = batchIngestWithProfile(pgsl, 'xapi', [basicStatement, secondStatement]);
+    // ★ Two statements in, two fragment URIs out. Without this the `not.toBe` below passes
+    // vacuously on an EMPTY result — `undefined !== undefined` is false, but so is any
+    // comparison of two missing elements against each other once one of them exists, and
+    // `nodes.get(undefined)` just returns undefined, making `?.kind` quietly skip the
+    // assertion. The batch returning nothing is exactly the regression this test names.
+    expect(uris).toHaveLength(2);
     expect(uris[0]).not.toBe(uris[1]);
-    expect(pgsl.nodes.get(uris[0])?.kind).toBe('Fragment');
-    expect(pgsl.nodes.get(uris[1])?.kind).toBe('Fragment');
+    expect(pgsl.nodes.get(uris[0]!)?.kind).toBe('Fragment');
+    expect(pgsl.nodes.get(uris[1]!)?.kind).toBe('Fragment');
   });
 
   it('empty batch returns empty array', () => {

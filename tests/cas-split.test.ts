@@ -265,9 +265,16 @@ describe('★ if_match must name a live head, not merely an ancestor', () => {
   it('the refusal says WHICH descriptor is current, so the caller can retry', async () => {
     // A 412 that does not name the head forces a second round-trip to find out, and an
     // agent that cannot cheaply recover will be written to drop the precondition instead.
-    const err = await check({ ifMatchSupersedes: V0 }).catch(e => e as Error & {
-      actual: { supersedesList: readonly string[] };
-    });
+    // ★ The `.catch(...)` form left `err` typed as pass-OR-error, and the three assertions
+    // below all reach for error-only fields. If the guard ever STOPS refusing, `check`
+    // resolves, `err` is the pass object, and the failure surfaces as a TypeError reading
+    // `.supersedesList` of undefined — a stack trace about the test instead of "the
+    // precondition accepted a superseded ancestor". Rejecting explicitly on the success
+    // path names the actual regression and narrows the type at the same time.
+    const err = await check({ ifMatchSupersedes: V0 }).then(
+      pass => { throw new Error(`expected a 412 refusal, but the precondition PASSED: ${JSON.stringify(pass)}`); },
+      (e: unknown) => e as Error & { actual: { supersedesList: readonly string[] } },
+    );
     expect(err.message).toMatch(/SUPERSEDED ancestor/);
     expect(err.message).toContain(V1);
     expect(err.actual.supersedesList).toEqual([V1]);

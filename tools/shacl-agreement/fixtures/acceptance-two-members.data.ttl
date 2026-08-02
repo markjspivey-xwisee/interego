@@ -1,0 +1,14 @@
+# shape: wsp-shapes.ttl
+# expect: violates
+# why: sh:maxCount 1 on wsp:member. An acceptance naming two members states no member — choosing one would let its author decide who accepted by the order the triples happened to be written in, which is what readAcceptanceRecord's oneIri refuses and what the shape must refuse too.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://alice.test/a1>
+  a wsp:MembershipAcceptance ;
+  wsp:member <https://alice.test/profile/card#me> , <https://mallory.test/profile/card#me> ;
+  wsp:accepts <https://conv.test/g1> ;
+  wsp:stream <https://alice.test/ws/a/stream> ;
+  wsp:workspace <https://relay.test/ws/a> .

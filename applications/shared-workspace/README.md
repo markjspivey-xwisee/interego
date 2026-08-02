@@ -42,17 +42,26 @@ cannot confirm — see below.
 ## The three properties that do the work
 
 **1. Membership is two-sided, and `foldRoster` can now be made to check it — including what
-each half SAYS.** A grant lives on the convener's pod and an acceptance on the member's own,
-and a roster entry exists only where both agree — *and* where each half was signed by the
-party it claims to come from, *and* where every field was read out of the record rather than
-typed by whoever called the fold.
+each half SAYS, and including who was entitled to offer.** A grant lives on the convener's pod
+and an acceptance on the member's own, and a roster entry exists only where both agree — *and*
+where each half was signed by the party it claims to come from, *and* where every field was
+read out of the record rather than typed by whoever called the fold, *and* where the convener
+the fold attested those grants against is the one the **workspace's own record** names.
 
 > ★ **What that last clause costs, stated before the claim is made.** It holds only under
-> `attestation: { …, requireFieldBinding: true }`, only for rows produced by
-> [`src/membership.ts`](src/membership.ts)'s readers, and it does **not** establish that the
-> convener named in the policy is the workspace's convener — see residual gap 6. The
-> end-to-end demonstration in `verify-can-live.ts` §8 is written and **has not been run
-> against the live substrate**; no bearer pair has been available.
+> `attestation: { …, requireFieldBinding: true }` and only for rows produced by
+> [`src/membership.ts`](src/membership.ts)'s readers. Whether the convener named in the policy
+> is the workspace's convener is a **separate** question with a **separate** answer —
+> `workspaceEvidence` and `Roster.convenerBinding`, residual gap 6, closed this round — and a
+> roster can be `recordFieldBinding: 'bound'` with `convenerBinding: 'unchecked'`, which is
+> every caller that has not asked.
+>
+> ★ **And the run state is no longer "unrun".** `verify-can-live.ts` §§1–8 were run against
+> production with two real bearers on 2026-08-02 and passed **46/46**, including the
+> manufactured-participant refusal and §8's closing demonstration that gap 6 was open. What is
+> unrun is smaller and newer: §9, the gap-6 **close**, which publishes a real `wsp:Workspace`
+> and folds against it. Said as two facts rather than one, because collapsing them is how a
+> stale "unverified" survives a round.
 
 > ★ **An independent review refuted the original claim, and it was right.** `Grant` and
 > `Acceptance` carried no provenance: the only cross-checks were that the acceptance names
@@ -91,7 +100,7 @@ field that gets left out.
 > Fixed as a rule the whole fold obeys, not as a patch on one branch: **a record that fails
 > attestation loses its power to confer and keeps its power to restrict.** The fold reads two
 > tracks — *conferring* (gated) and *restricting* (every row) — and
-> `tests/workspace-adversarial.test.ts` enumerates **76,800 configurations across six axes**
+> `tests/workspace-adversarial.test.ts` enumerates **76,800 configurations across seven axes**
 > and asserts, literally, that no stronger configuration admits anything a weaker one
 > withholds, reports a wider role than it reported, or raises fewer divergences. The sixth
 > axis is the descriptor-binding **basis**, and it asserts an *invariance* rather than an
@@ -102,6 +111,24 @@ field that gets left out.
 > have refused all of them and passed 6,400 vacuous subset checks. The four provenance shapes
 > give the rung something to admit as well as something to refuse, and a separate case asserts
 > it really does both.
+> The seventh is the **declared convener** (gap 6), and it learned that lesson directly rather
+> than by repeating it. The rung is crossed at every one of the 76,800 points against **two**
+> generated workspace records — one naming the policy's convener, one naming somebody else —
+> so 153,600 convener comparisons sit on top of the lattice. Both directions are counted
+> during the loop and asserted non-zero after it: a rung that admitted nothing would satisfy
+> every subset check on an empty set, and one that refused nothing would satisfy them on an
+> untouched one. Agreeing evidence must also change the report and **nothing else**, which the
+> subset direction cannot see, so the two rosters' decisions are compared whole.
+>
+> The disagreeing record names `alice`, deliberately: `signed-by-alice` is one of the generated
+> attestations, so the tempting implementation — read the convener out of the workspace and
+> *use* it — turns evidence into a **source** of authority and is caught by `assertNoWiderThan`
+> at every point where a grant carries alice's signature. A disagreeing record naming a
+> principal no attestation is signed by would have made the axis look complete and tested
+> nothing. Seven further workspace-record shapes (about another workspace, signed by a
+> stranger, unattested, content-unbound, no provenance, provenance elsewhere, unreadable) are
+> crossed separately against grant × acceptance × revoked × withdrawn × rung, because three of
+> them are evidence at one rung and refused at a higher one.
 > Honouring an unattestable revocation does let anyone who can get a row into `grants` evict
 > a member; that is a denial of service the `asserted` configuration already permits in full,
 > and it is the strictly lesser evil.
@@ -110,18 +137,27 @@ field that gets left out.
 [Attribution](#-attribution-what-is-now-verified-and-what-is-not) below. The short version:
 it defeats a convener writing an acceptance from their own session; with
 `requireFieldBinding` it also defeats offering one of the member's *unrelated* signed records
-as their acceptance, because the record is read and it does not say it is one; it does
-**not** defeat a convener lifting a valid proof block out of one of the member's real
-records; and — the one a reader is now most likely to over-read — **it does not establish
-that the convener is the workspace's convener**, which is caller-supplied and unchecked.
+as their acceptance, because the record is read and it does not say it is one; with
+`workspaceEvidence` it also defeats a policy that names the wrong convener, because the
+workspace's own record is read and it names a different one; and it does **not** defeat a
+convener lifting a valid proof block out of one of the member's real records.
 
-> This paragraph has been wrong twice, in the same direction, and the corrections are left
-> visible. It first said the fold binds *"a signer to a URL, never a record to its content"*;
-> the substrate closed that half — a proof commits to a digest of the graph's triples and the
-> read path recomputes it. It then said the fold binds *"a signer to a RECORD, never a record
-> to the fields claimed for it"*; `src/membership.ts` closes that half, under a policy you
-> have to ask for. What is left is gap 6, and the pattern worth noticing is that each
-> closure moved the unverified step **outward** rather than removing it.
+> This paragraph has been wrong three times, in the same direction, and the corrections are
+> left visible. It first said the fold binds *"a signer to a URL, never a record to its
+> content"*; the substrate closed that half — a proof commits to a digest of the graph's
+> triples and the read path recomputes it. It then said the fold binds *"a signer to a RECORD,
+> never a record to the fields claimed for it"*; `src/membership.ts` closed that half. It then
+> said the policy's convener *"is caller-supplied and unchecked"*; `readWorkspaceRecord` and
+> `AttestationPolicy.workspaceEvidence` close that half.
+>
+> ★ **The pattern is worth more than any of the three closures.** Each one moved the unverified
+> step **outward** rather than removing it, and each was blocked by the same thing: a published
+> shape describing a record no code in the repo wrote. `wspsh:WorkspaceShape` has required
+> exactly one `wsp:convener` since the day it was published, and for three rounds the answer
+> was sitting in a document nobody was writing. What is outward of here now is the **URL**: the
+> descriptor these readers are handed is chosen by whoever assembled the fold, so a caller who
+> dereferenced `<workspace>` has an answer about `<workspace>` and a caller handed a URL has an
+> answer about that URL. Same residue as `head` under a `slug-only` binding — gap 1.
 
 **2. A role is a ceiling, never a grant.** Effective capability is
 `role.permits ∩ delegatedScope`. A Convener whose agent holds a read-only delegation still
@@ -145,8 +181,8 @@ notices; over-privileging is a failure nobody notices.
 
 | file | what it is |
 |---|---|
-| [`src/roster.ts`](src/roster.ts) | the two-sided fold: `foldRoster`, `may`, `explain`, `refuseAttestation`, `refuseFieldBinding`. Pure. |
-| [`src/membership.ts`](src/membership.ts) | the two halves as **records**: `grantTurtle`, `acceptanceTurtle`, `publishMembershipRecord`, `readGrantRecord`, `readAcceptanceRecord`. The producer residual gap 0 was waiting on. |
+| [`src/roster.ts`](src/roster.ts) | the two-sided fold: `foldRoster`, `may`, `explain`, `refuseAttestation`, `refuseFieldBinding`, `refuseConvenerAuthority`. Pure. |
+| [`src/membership.ts`](src/membership.ts) | the three records: `workspaceTurtle` / `readWorkspaceRecord` (who may grant), `grantTurtle` / `readGrantRecord` (who was offered what), `acceptanceTurtle` / `readAcceptanceRecord` (who agreed), plus `publishMembershipRecord` and `convenerEvidenceOf`. The producer residual gaps 0 and 6 were both waiting on. |
 | [`src/stream.ts`](src/stream.ts) | one participant's log: `appendEntry`, `readStream`, `verifyChain`, `readAttestation`. |
 | [`src/compose.ts`](src/compose.ts) | many pods read as one workspace: `composeWorkspace`, `resolveCitations`. |
 | [`src/can.ts`](src/can.ts) | authority: `canAct`, `authorizeView`, `scopesFromRegistry`, `signerIndexFromRegistry`. |
@@ -394,21 +430,29 @@ Three details are load-bearing rather than decorative:
 - **`requireFieldBinding` forces `requireContentBinding` on, in code.** Fields parsed from
   bytes nobody re-digested are fields somebody may have edited after signing, and the parse
   would report the edit faithfully. The combination that checks half is not reachable.
-- **A reader refuses more than the shape does, and never drops a restriction.** Two
-  `wsp:grantedTo` triples are refused rather than resolved first-match; an unreadable
-  `wsp:revoked` reads as **set**; a record damaged in a non-identifying field still reaches
-  the fold, because it may carry a revocation and deleting it would reinstate a removed
-  member.
+- **A reader refuses more than the shape does, and never drops a restriction — with one
+  measured exception.** Two `wsp:grantedTo` triples are refused rather than resolved
+  first-match; an unreadable `wsp:revoked` reads as **set**; a record damaged in a
+  non-identifying field still reaches the fold, because it may carry a revocation and
+  deleting it would reinstate a removed member. The exception is `wsp:member`: the published
+  shape now constrains it to `^https?://|^did:` and `oneIri` applies no scheme pattern, so a
+  `urn:` member is refused by the **shape** and admitted by the **reader**. The publish gate
+  validates first, so nothing gets in — but the sentence does not hold in both directions on
+  that field and is not written as though it did.
 
 **What it still does not mean.** *"bee is a field-bound member"* means **two records, each
 signed by the party it claims to come from, each stating this membership in the region of its
 own bytes the substrate re-digested and matched**. The qualifier is not pedantry: without it
 the sentence was false, because the reader parsed a strictly wider region than the digest
-covered and a convener could manufacture a participant in the difference. It does not mean the
-convener was entitled to convene (**gap 6**, now the binding one here), it does not bind
-`Member.role` — a derived label, foldable downward by a refused row — and the guarantee rests
-on this reader rather than on the published contract for one field (**gap 7**). All three are
-stated below rather than absorbed into the sentence above.
+covered and a convener could manufacture a participant in the difference. It says nothing at
+all about whether the convener was entitled to convene: that is a **separate field answering a
+separate question**, `Roster.convenerBinding`, and `recordFieldBinding: 'bound'` beside
+`convenerBinding: 'unchecked'` is a roster of perfectly parsed records that may be about the
+wrong memberships (**gap 6**, closed under a policy you must ask for). It also does not bind
+`Member.role` — a derived label, foldable downward by a refused row. All of that is stated
+below rather than absorbed into the sentence above. (The third item that used to sit here —
+`wsp:member` resting on our reader rather than the published contract, **gap 7** — is closed;
+see "Closed in this round".)
 
 **What changed: the substrate half is closed.** An authorship proof now commits to a digest
 of the graph's **triples**, and `get_descriptor` **recomputes that digest over the payload it
@@ -473,6 +517,10 @@ been real rather than described as having been.
 
 `recordContentBinding` and `recordFieldBinding` remain **two** non-omittable fields for that
 reason: `'bound'` on the first must never be readable as covering the second.
+`convenerBinding` is a **third**, for the same reason one question further out — it answers
+*was the party these records came from entitled to grant here*, which neither of the other two
+touches, and it has **three** values rather than two because "the caller did not ask" and "the
+caller asked and the answer was no" are different facts and only one of them is a refusal.
 
 **★ And `bound` covers ONE REGION of a served document, not the document.** This is the
 sentence the first version of this close did not have, and its absence defeated the whole
@@ -624,39 +672,100 @@ reported rather than assumed — `declaredSeqChecked` exists precisely so "nobod
 not confusable with "the numbering agrees" — but the removed-and-linked-around attack is
 currently caught only by a hand-built row.
 
-**6. Nothing establishes that the convener is the workspace's convener.** New this round, and
-it is the gap that binds now that gap 0 is closed. `AttestationPolicy.convener` is a
-principal **the caller of `foldRoster` names**. Neither the fold nor `membership.ts` fetches
-the workspace descriptor at `<workspace>` and checks its `wsp:convener` against it — so a
-policy naming the wrong party produces a roster that is field-bound, content-bound,
-signer-checked, reported as `recordFieldBinding: 'bound'`, and **about the wrong
-memberships**. `verify-can-live.ts` §8 asserts this rather than describing it: it folds the
-same two genuine records under `convener: bee` and shows the membership vanish while
-`recordFieldBinding` still reports `'bound'`. (It used to say **both** binding fields. The
-statement is true of the behaviour — `requireFieldBinding` ORs content binding on — but the
-assertion only ever checked `recordFieldBinding`, and §§6–8 of that script have not been run
-against live infrastructure this round. Claiming the wider assertion off the narrower one is
-the substitution this file exists to refuse.)
+**6. That the convener is the workspace's convener — now closed, under a policy you must ask
+for.** Kept with its history, like gap 0, because what replaced it matters more than the fact
+that something did.
 
-Closing it needs the workspace descriptor read and its convener parsed — the same
-serialize / publish / read-back / parse treatment `membership.ts` gives the two halves,
-applied to `wsp:Workspace`. It is deliberately **not** attempted here: the shape for it
-already exists (`wspsh:WorkspaceShape`, one convener, one role profile, one title), and doing
-it half way — reading the descriptor without deciding what makes *that* record authoritative
-for the URL it sits at — would produce another check that looks like evidence.
+**What it was.** `AttestationPolicy.convener` — the principal every grant is attested against
+— was named by **the caller of `foldRoster`**. Neither the fold nor `membership.ts` read
+`<workspace>` and checked its `wsp:convener` against it, so a policy naming the wrong party
+produced a roster that was field-bound, content-bound, signer-checked, reported as
+`recordFieldBinding: 'bound'`, and **about the wrong memberships**. `verify-can-live.ts` §8
+asserted it rather than describing it — fold the same two genuine records under
+`convener: bee`, watch the membership vanish, watch `recordFieldBinding` still say `'bound'` —
+and **that assertion passed live** in the 46/46 run. The gap was a measurement, not a worry.
 
-**7. `wsp:member` is enforced by this reader, not by the published shape.**
-`wspsh:MembershipAcceptanceShape` constrains `wsp:accepts`, `wsp:stream`, `wsp:workspace` and
-`wsp:withdrawn`. It says nothing about **who is accepting**, because until `membership.ts`
-there was no reader that needed to know it from the document. So the publish gate accepts an
-acceptance with no `wsp:member` and `readAcceptanceRecord` refuses one.
+**Why it stayed open, and it is the same reason gap 0 did.** A published shape described a
+record no code in the repo wrote. `wspsh:WorkspaceShape` has required exactly one
+`wsp:convener` since it was published; nothing had ever emitted a `wsp:Workspace`, so the
+convener a policy claimed had nothing to be compared against.
 
-Refusing more than the published contract is the safe direction and is deliberate, but it
-means this half of the guarantee rests on **our reader** rather than on the contract other
-organisations validate against. Closing it is one `sh:minCount 1` on a **deployed** artifact,
-which is a change to what the live gate accepts and is not made as a side effect of this
-round. The term is declared in `wsp.ttl`, with the limitation written into its
-`rdfs:comment`, so a reader of the vocabulary is told.
+**What closes it.** `workspaceTurtle` serializes it through the same guards as the two
+membership halves; `publishMembershipRecord` publishes it shape-validated and signed and waits
+for it to be readable; `readWorkspaceRecord` reads it back in **one** `get_descriptor` and
+parses `wsp:convener` out of the same `digestedGraphRegion` the digest covers.
+`AttestationPolicy.workspaceEvidence` carries it into the fold and
+`refuseConvenerAuthority` compares four things: that the record's **subject** is this
+workspace, that its convener is the policy's, that its own authorship holds up, and that its
+own fields were parsed. `Roster.convenerBinding` reports `'bound'` / `'refused'` /
+`'unchecked'` and is non-omittable.
+
+Three things about the *direction* are load-bearing, and each one is a defect that was
+available:
+
+- **Evidence can refuse a convener; it can never supply one.** The obvious implementation is
+  `convener = workspaceRecord.convener ?? policy.convener` — read it from the workspace and
+  use it. That is an **escalation**: a policy naming a stranger, handed a workspace naming the
+  real convener, would start admitting every grant it was refusing, so *passing evidence would
+  grant more than withholding it*. Enumerated at all 76,800 lattice points and pinned by its
+  own case.
+- **A disagreement refuses on the conferring track only.** It removes the power to make
+  members; it does not remove the records that unmake them. A revocation still revokes, a
+  withdrawal still withdraws, `restrictionStillApplied` still says so, and the fork report is
+  still raised — the exact inversion round 3 shipped, at a gate that fires on *every* grant at
+  once.
+- **Asking and getting silence is not the same as not asking.** `ConvenerEvidence` has a
+  second member, `{kind: 'unreadable'}`, and `convenerEvidenceOf` maps a failed read onto it.
+  A bare optional record would let a transient `get_descriptor` failure silently reopen this
+  gap with `'unchecked'` as the only trace.
+
+**What it still does not mean.** These readers are handed a descriptor URL; none of them
+dereferences a logical name to find one. So `'bound'` means *a record whose subject is
+`<workspace>` names this convener, signed by an agent that principal's own registry vouches
+for, over bytes the substrate re-digested* — **not** *that record is what `<workspace>`
+resolves to*. A caller that obtained the URL by dereferencing `<workspace>` holds both; a
+caller handed a URL holds the first. Structurally the same residue as `head` under a
+`slug-only` binding — **gap 1** — and it is why the live verifier publishes the workspace
+record at graph IRI `<WS>` rather than at a name minted beside it.
+
+**And one new gap fell out of building it — gap 8, below.** `foldRoster` still takes its
+`RoleProfile` from its caller, exactly as it used to take the convener, and the workspace
+record declares one. The value is parsed and handed over; nothing compares them.
+
+**7. `wsp:member` is enforced by this reader, not by the published shape — CLOSED.**
+`wspsh:MembershipAcceptanceShape` constrained `wsp:accepts`, `wsp:stream`, `wsp:workspace` and
+`wsp:withdrawn` and said nothing about **who is accepting**, so the publish gate accepted an
+acceptance attributed to nobody while `readAcceptanceRecord` refused one — a conformant reader
+elsewhere, validating the same record against the same shape, would have admitted it.
+
+`docs/applications/shared-workspace/wsp-shapes.ttl` now carries
+`sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:pattern "^https?://|^did:"` on
+`wsp:member`, and `wsp.ttl`'s `rdfs:comment` was updated to match. **This is a live behaviour
+change to a deployed artifact**: `membership.ts` passes `conforms_to_shapes: [WSP_SHAPES]` and
+the relay's shape cache TTL is 60s, so on merge and Pages rebuild the live gate starts
+refusing memberless acceptances within a minute. Pinned by `acceptance-no-member`,
+`acceptance-two-members` and `acceptance-urn-member` in `tools/shacl-agreement/fixtures/`,
+where our engine and pySHACL must agree on the verdict, and by the byte-for-byte drift diff
+between the published file and its fixture copy.
+
+One consequence, recorded because it inverts a sentence stated elsewhere in this document:
+`oneIri` applies no scheme pattern, so a `urn:` member is now refused by the **shape** and
+admitted by the **reader** — the only field where the shape is the stricter of the two.
+
+**8. The role profile is caller-supplied and unchecked — gap 6 one field over.** Found while
+closing gap 6, and named rather than folded into it. `wspsh:WorkspaceShape` requires exactly
+one `wsp:roleProfile`, `readWorkspaceRecord` parses it, and `WorkspaceRecord.roleProfile`
+carries it — but `foldRoster` takes its `RoleProfile` from `args.profile`, which is whatever
+the caller passed. So a roster can have `convenerBinding: 'bound'` and still be folded against
+governance the workspace never declared, which decides every capability in it.
+
+It is deliberately **not** closed in the same round as the gap it resembles. Comparing them
+means deciding what happens when they differ, and that decision has the same two-track hazard
+the convener check has: refusing to confer is safe, and adopting the workspace's profile is
+the escalating version of exactly the mistake gap 6's implementation notes are about. Doing it
+by reflex, in the diff that closes its twin, is how this area has shipped a new defect in each
+of the last five rounds. `verify-can-live.ts` §9 asserts the parsed value equals the profile
+the file folds against, so the evidence is shown to be real and its non-use is visible.
 
 ## Where authority can actually be enforced
 
@@ -679,9 +788,16 @@ author, at its own URL — and `authorizeView` excludes it and says why.
 | who can audit it | nobody — it is a promise about a server | anyone who can read the records, member or not |
 
 Two layers refuse, and they refuse different things. Both are demonstrated live by
-[`tools/verify-can-live.ts`](tools/verify-can-live.ts) (sections 1–5, **13/13 live** — that
-number is the file **as it stood at that run**; section 3 has since gained two assertions
-that the relay did not publish either entry unsigned, and those two have not been run):
+[`tools/verify-can-live.ts`](tools/verify-can-live.ts) (**46/46 live** across §§1–8 on
+2026-08-02, which supersedes the earlier 13/13 over §§1–5 — that number was the file as it
+stood at *that* run, and the two assertions §3 gained afterwards, that the relay did not
+publish either entry unsigned, are covered by the 46).
+
+**And 46 is likewise the file as it stood at *that* run.** The same caveat applied to 13/13
+one sentence ago applies here, and applying it only backwards is how these numbers go stale.
+§9 was added afterwards and §8's closing `wrongConvener` assertion moved into it, so §§1–8
+now carry **45** assertion sites and a re-run of them today reports **45/45**. That is the
+move, not a regression:
 
 ```
 the substrate  bee writes to alice's pod       -> 403 scope_violation, nothing lands
@@ -696,9 +812,16 @@ established two-sidedness — there was no forgery for the fold to refuse, becau
 was the only author of anything. Sections 6 and 7 exist to close that: they publish an
 acceptance from bee's own session *and* a forged one for bee from alice's, read each
 record's `iep:authorshipProof` back through the relay's verifier, and require the fold to
-admit the first and refuse the second. **Those two sections have not yet been run against
-the live substrate** — no bearer pair was available — so they are code, not a result, and
-nothing here claims otherwise.
+admit the first and refuse the second.
+
+★ **Those sections have now been run.** `verify-can-live.ts` §§1–8 were run against production
+with two real bearers on 2026-08-02 and passed **46/46** — including the forgery refused *for
+the right reason*, the manufactured-participant refused by the reader, and §8's closing
+demonstration that residual gap 6 was open. The paragraph that stood here said they were
+"code, not a result"; they are a result. What is unrun is **§9**, the gap-6 close, added after
+that run: a real `wsp:Workspace` published at the workspace's own URL, read back by the *other*
+party, and folded against. Whether the live shape gate accepts a `wsp:Workspace` at a `/ns/…`
+graph IRI is read off the published shape, not observed.
 
 > ★★ **And as written, section 6's two headline assertions could not have failed.**
 > `publish_context` is deferred unless `compliance`, `sync` or `if_match` is set —
@@ -717,8 +840,9 @@ nothing here claims otherwise.
 > fails loudly, if it does not); the refusal **reason** is asserted rather than logged; and
 > both sections carry an explicit **CONTROL** assertion — the genuine half must be *admitted*
 > — so a run in which everything is refused reports itself as having established nothing.
-> **Whether the assertions still hold now that they can fail is unknown**, because the
-> sections remain unrun. That is the honest state and it is not dressed up as more.
+> ★ **And they hold.** The 46/46 production run put every one of those assertions in a state
+> where it could fail, including both CONTROLs, and none did. The sentence here used to say
+> that whether they hold "is unknown"; it was true when written and it is not now.
 
 > ★★★ **And section 6 still did not bind a record to the fields claimed for it.** Its three
 > published records carry a single `dct:description`; the `Grant` and `Acceptance` it folds
@@ -736,11 +860,20 @@ nothing here claims otherwise.
 > refused *and its reason checked*, then bee's own section-3 log entry is offered as her
 > acceptance and refused by the **reader**, and finally the same entry is shown to be
 > **admitted** under `requireContentBinding` alone — so the gap is demonstrated to have been
-> real rather than asserted to have been. Section 8 closes by demonstrating **residual gap
-> 6**: fold the two genuine records under `convener: bee` and the membership vanishes while
-> both binding fields still report `'bound'`.
+> real rather than asserted to have been. Section 8 used to close by demonstrating **residual
+> gap 6**: fold the two genuine records under `convener: bee`, and the membership vanishes
+> while `recordFieldBinding` still reports `'bound'`.
 >
-> Section 8 is **unrun**, for the same reason as 6 and 7.
+> ★ **Section 8 ran, and that demonstration is what made gap 6 a measurement.** It is now
+> **section 9** that carries the subject, and it CLOSES rather than demonstrates: alice
+> publishes a real `wsp:Workspace` at `<WS>`, **bee** reads it back and parses it, and the fold
+> is given it as `workspaceEvidence`. The control is asserted first — naming the convener the
+> workspace names must ADMIT — then naming bee must produce no members with
+> `convenerBinding: 'refused'` and the disagreement as the reason, then the same policy
+> *without* the evidence is folded to prove the evidence never widened anything.
+>
+> **Section 9 is unrun.** Sections 1–8 passed 46/46 on 2026-08-02, as the file then stood;
+> §8's closing assertion has since moved into §9, so re-running §§1–8 today reports 45/45.
 
 The ceiling is not invented here: `scopesFromRegistry` reads the `ReadWrite` /
 `PublishOnly` / `ReadOnly` scope the substrate's own agent registry records — the same one
@@ -791,10 +924,12 @@ IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
   npx tsx applications/shared-workspace/tools/verify-compose-live.ts
 
 # two-sidedness as a fact: each half published by whoever it claims to come from, with a
-# forged acceptance alongside it for the fold to refuse (§6) — and §8, where both halves are
-# real wsp:MembershipGrant / wsp:MembershipAcceptance documents whose FIELDS are parsed back
-# out of the bytes, with the manufactured-participant attack run against both the new policy
-# and the old one. §§6–8 have never been run; running them is the next thing this needs.
+# forged acceptance alongside it for the fold to refuse (§6); §8, where both halves are real
+# wsp:MembershipGrant / wsp:MembershipAcceptance documents whose FIELDS are parsed back out of
+# the bytes, with the manufactured-participant attack run against both the new policy and the
+# old one; and §9, where the CONVENER comes out of a real wsp:Workspace instead of out of this
+# file. §§1–8 passed 46/46 against production on 2026-08-02. §9 is new and UNRUN — running it
+# is the next thing this needs.
 IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
   npx tsx applications/shared-workspace/tools/verify-can-live.ts
 ```
@@ -809,7 +944,7 @@ triples.
 membership verifier built both halves of every roster itself, so it proved only that a fold
 of its own inputs behaved as it had been written to. `verify-can-live.ts` sections 6–7
 publish each half from a different session and read authorship back through the relay's
-verifier — and, being unrun, are currently code rather than evidence.
+verifier — and, having now been run, are evidence rather than code.
 
 ★ And a harness can be caught a second way: by writing an assertion that **cannot fail**.
 Sections 6–7 did, by reading three deferred publishes back with no wait, and the two
@@ -817,27 +952,33 @@ assertions that carried the property passed vacuously. They now wait, assert the
 *reason*, and carry a CONTROL that fails when nothing was admitted. An assertion that cannot
 fail is worse than no assertion, because it is counted.
 
+★ A third way, and §9 is written against it: **reading your own record back proves nothing**.
+A convener fetching the workspace record she just published learns only that she still holds
+the same opinion. §9 publishes it from alice's session and reads it back through **bee's**, so
+what is established is that the other party can see who the workspace says may grant.
+
 ## Status
 
 All six increments are built. What is verified, and what is not:
 
 | | state |
 |---|---|
-| 1 roster, two-sided membership | built; **signer-checked, content-bound, and now field-bound** — under `requireFieldBinding`, every field is parsed from **the region of the record the digest covers**. Verified **by doubles only** (six workspace suites, 76,800-configuration monotonicity enumeration); the live path is written and **unrun** |
+| 1 roster, two-sided membership | built; **signer-checked, content-bound, field-bound, and now convener-checked** — under `requireFieldBinding` every field is parsed from **the region of the record the digest covers**, and under `workspaceEvidence` the convener comes from the workspace instead of the caller. Doubles: six workspace suites, 76,800-configuration monotonicity enumeration across seven axes. Live: **46/46**, §§1–8 as the file stood on 2026-08-02 (45 sites there today; one moved into §9) |
 | 2 per-participant stream | built, **20/20 live** (the live run predates `sign_authorship`) |
 | 3 composed cross-pod view | built, **14/14 live** across two identities on two pods |
-| 4 authority at the fold | **13/13 live** for sections 1–5 *of the file as it then stood* (assertions added since, unrun); 6–8 not yet run — §§6–7's assertions were vacuous until the round before this one, and §8 is new |
+| 4 authority at the fold | **46/46 live**, §§1–8, on 2026-08-02 with two real bearers — the forgery refused for the right reason, the manufactured participant refused by the reader, and gap 6 demonstrated open. §9 (the gap-6 **close**) was written after that run and is **unrun** |
 | 5 engagement `gone` + injectable engine | built, 11 assertions, deployed |
 | 6 independent SHACL agreement | built, **in CI** — `@interego/core` vs pySHACL |
-| 7 membership records: serialize → publish → read → parse | built (`src/membership.ts`), verified against doubles only, **no live run**; the shape gate, the deferred-publish wait and the parse are all exercised against doubles, and [a harness that stands in for a dependency cannot verify it](#verifying-it) |
+| 7 membership records: serialize → publish → read → parse | built (`src/membership.ts`), **live** as part of the 46/46: the shape gate accepted both halves, the deferred-publish wait was needed and worked, and `get_descriptor` returned `graph.content` for them |
+| 8 the workspace record: who may grant | built (`workspaceTurtle` / `readWorkspaceRecord` / `convenerEvidenceOf`), verified **against doubles only** — `verify-can-live.ts` §9 is written and **unrun** |
 
-★ **The one thing to carry away from this table**: nothing on the field-binding row has met
-the live substrate. Every claim in the gap-0 section above is a claim about code and its
-tests. Two things a double cannot get wrong and the relay can: whether the live
-`wsp-shapes.ttl` accepts a record carrying `wsp:member` (it should — the shapes are
-deliberately not `sh:closed`), and whether `get_descriptor` returns `graph.content` for these
-records at all. Both are assumed here on the strength of reading the relay handler, not on
-the strength of having run it.
+★ **The one thing to carry away from this table** — and it has been rewritten, because the
+sentence that stood here ("nothing on the field-binding row has met the live substrate") is no
+longer true and a stale "unverified" is as much a defect as a stale "fixed". The field-binding
+path HAS met the substrate: the live gate accepted `wsp:member`, and `get_descriptor` returned
+`graph.content` for these records. What has not met it is **row 8** — a `wsp:Workspace`
+published at a `/ns/…` graph IRI, and whether the live shape gate accepts it. That is assumed
+on the strength of reading `wspsh:WorkspaceShape`, not on the strength of having run it.
 
 ### Substrate changes needed to finish the job
 
@@ -883,13 +1024,13 @@ time this file changes.
 
 | | severity |
 |---|---|
-| **nothing checks that the policy's `convener` is the workspace's convener** — residual gap 6, and the binding one now that gap 0 is closed. A field-bound, content-bound, signer-checked roster can be about entirely the wrong memberships, and both binding fields still report `'bound'`. Demonstrated in `verify-can-live.ts` §8 | **high** |
-| **the field-binding path has never met the live substrate.** Gap 0 is closed against doubles: `tests/workspace-membership.test.ts` plus the 76,800-configuration enumeration. `verify-can-live.ts` §8 is written and **unrun** for want of a bearer pair, so whether the live shape gate accepts `wsp:member` and whether `get_descriptor` returns `graph.content` for these records is **read off the relay's source, not observed** | **high** *(unverified, not known-broken)* |
-| `wsp:member` is required by `readAcceptanceRecord` and **not** by the published `wspsh:MembershipAcceptanceShape` — residual gap 7. The reader refuses more than the contract does, which is the safe direction, but the guarantee rests on our reader rather than on what other organisations validate against | medium |
+| **the role profile is caller-supplied and unchecked** — residual gap 8, and the binding one now that gap 6 is closed. It is gap 6 one field over: `foldRoster` takes `args.profile` from its caller, the workspace record declares `wsp:roleProfile`, and nothing compares them — so a roster can report `convenerBinding: 'bound'` and be folded against governance the workspace never declared, which decides every capability in it. The value IS parsed and carried on `WorkspaceRecord.roleProfile`; only the comparison is missing, and it is missing deliberately — see gap 8 | **high** |
+| **the workspace record has never met the live substrate.** Gap 6 is closed against doubles: `tests/workspace-membership.test.ts` plus the enumeration's seventh axis. `verify-can-live.ts` §9 is written and **unrun**, so whether the live shape gate accepts a `wsp:Workspace` published at a `/ns/…` graph IRI is **read off the published shape, not observed** | **high** *(unverified, not known-broken)* |
+| `oneIri` applies no scheme pattern to `wsp:member`, and the published shape now does (`^https?://|^did:`) — so on this one field the **shape** refuses more than the **reader**, the opposite of the rule stated at the top of this document. The publish gate validates first, so no `urn:` member reaches a pod; what is open is the inconsistency itself, and it is the tail of gap 7 rather than gap 7 | low |
 | `Member.stream` can legitimately differ between two configurations of the same fold: naming the stream is a conferring act, so refusing an acceptance re-picks the head. No authority moves with it, and it is never silent — both configurations raise the `acceptance` divergence — but a caller that reads `stream` without reading `divergences` will go to a different pod under a stricter policy | low-med |
 | `proofBindsToDescriptorUrl` compares **a URN-form id** on its terminal segment only, and every `descriptor_id` the relay mints is a URN — so a party who controls a pod and chooses a colliding epoch reaches `bound: true, basis: 'slug-only'` on any host. A URL-form id **is** compared in full, host included, and nothing in this tree mints one. What this leaves reachable, measured: not any conferred value, but `head` — the URL an operator dereferences to audit the record and the URL printed in `unattested` and every `divergence` — residual gap 1 | medium |
 | `wsp:seq` has no producer: `ManifestEntry` carries no `seq`, so the sequence check is inert on every real read — residual gap 5 | low-med |
-| `verify-can-live.ts` §§6–8 remain **unrun**; their assertions can now fail, and whether they hold is unknown | low-med *(honesty, not behaviour)* |
+| `verify-can-live.ts` **§9** is unrun. §§1–8 passed 46/46 against production on 2026-08-02 **as the file then stood**; §9 was added afterwards and took §8's closing `wrongConvener` assertion with it, so §§1–8 hold **45** sites today and a re-run reports 45/45. The row above this one used to read "§§6–8 remain unrun" and stayed after they had been run, which is the same staleness in the other direction — and dropping the "as it then stood" caveat from 46 while keeping it on 13 was this row doing it again | low-med *(honesty, not behaviour)* |
 | a `Grant` or `Acceptance` refused for naming **two** grantees takes any revocation on it out of the fold entirely. Refusing is the only honest reading — the record does not say who it grants to — but the cost is real and is paid in the restricting direction, which is the direction this module otherwise protects | low-med |
 | `headOf` on a forked chain throws rather than returning a value; `appendEntry` converts it to a named `conflict` first, so the shipped path is safe and a direct caller must catch | low |
 
@@ -897,6 +1038,9 @@ time this file changes.
 
 | | where |
 |---|---|
+| ★★★ **residual gap 6** — `AttestationPolicy.convener` was named by the caller, so a field-bound, content-bound, signer-checked roster could be about entirely the wrong memberships. Closed by the same treatment gap 0 got, applied to the record that was missing: `workspaceTurtle` / `readWorkspaceRecord` write and parse a `wsp:Workspace`, `workspaceEvidence` carries it in, `refuseConvenerAuthority` compares subject, convener, authorship and provenance, and `convenerBinding` reports which of the three answers came back. The direction is the whole of it — evidence can refuse a convener and can never supply one, and a disagreement refuses on the conferring track only | `workspace-membership` "the workspace record"; `workspace-adversarial` axis G, plus "THE INVERSION" and the revocation/withdrawal cases |
+| ★★ **the inversion that was available while closing it**: `convener = workspaceRecord.convener ?? policy.convener` is the obvious implementation and it turns evidence into a **source** of authority — a policy naming a stranger, handed a workspace naming the real convener, starts admitting grants it was refusing. Caught by generating the disagreeing record as `alice`, whose key is one of the enumerated signers, so `assertNoWiderThan` reaches it at every lattice point | `workspace-adversarial` axis G + "THE INVERSION" |
+| ★ **residual gap 7** — `wspsh:MembershipAcceptanceShape` did not constrain `wsp:member`, so the publish gate admitted an acceptance attributed to nobody and only `readAcceptanceRecord` refused it. A conformant reader elsewhere, validating the same record against the same published shape, would have admitted it. Closed by `sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:pattern "^https?://\|^did:"` on the **deployed** shape (`wsp.ttl`'s `rdfs:comment` updated to match), which changes what the live gate accepts within one 60s shape-cache TTL of merge | `tools/shacl-agreement` fixtures `acceptance-no-member`, `acceptance-two-members`, `acceptance-urn-member` — both engines must agree; plus the byte-for-byte drift diff against the published file |
 | ★★★ **residual gap 0** — `Grant`/`Acceptance` fields were caller-typed, so a member's own ordinary signed log entry passed as their acceptance at whatever role the caller chose. Closed by `src/membership.ts`: both halves are now serialized, shape-validated, signed, published, read back and **parsed**, and `requireFieldBinding` refuses any row whose fields were not | `workspace-membership`, `workspace-adversarial` axis E |
 | ★★★ **the first close did not hold: PARSE SCOPE was strictly wider than DIGEST SCOPE.** `contentBinding: 'bound'` covers one region of a served document — the `<graphIri> { … }` block — and `payloadOf` handed the WHOLE document to `parseTrig`. A convener could take a **verbatim copy** of one of a member's real signed records (so the relay re-digests it and honestly reports `'bound'`) and write a `wsp:MembershipAcceptance` into the DEFAULT graph beside it: digest byte-identical, `members: [bee]`, `unattested: []`, `recordContentBinding: 'bound'`, `recordFieldBinding: 'bound'` — **with no cooperation from the member at all**. The same hole ran the other way: one decoy subject outside the block made an honest acceptance read as "declares 2 … subjects" and vanish. Closed by routing both the digester and the reader through one `digestedGraphRegion` in `@interego/solid`; `observedGraphDigest` no longer accepts a caller-chosen graph IRI, so the two scopes cannot be written apart | `workspace-membership` "parse scope must equal digest scope"; relay `authorship-content-binding` |
 | ★★ **the suite could not see it, because every double served the wrong document.** `graph.content` was set to the raw payload Turtle, which has no default graph to hide anything in — so the tests exercised a shape no pod serves. The doubles now build the served document with `wrapAsTriG`, the emitter `publish()` itself calls, rather than a replica of it: a replica of the emitter is a second double | `workspace-membership` `descriptorDeps` |

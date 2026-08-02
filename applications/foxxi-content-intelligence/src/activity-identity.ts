@@ -71,5 +71,10 @@ export function activityRefOf(iri: string): { category: string; instance?: strin
   const m = /\/ns\/foxxi\/activity\/([^/?#]+)(?:\/([^/?#]+))?/.exec(iri);
   if (!m) return null;
   const dec = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
-  return m[2] ? { category: dec(m[1]), instance: dec(m[2]) } : { category: dec(m[1]) };
+  // Group 1 is not optional in the pattern, so a match always fills it — but this file is
+  // pulled transitively into `tsconfig.check.json`, which sets `noUncheckedIndexedAccess`
+  // where this vertical's own bridge/tsconfig.json does not, and there `m[1]` is
+  // `string | undefined`. Naming the invariant once keeps the file compiling under both.
+  const category = dec(m[1] ?? '');
+  return m[2] ? { category, instance: dec(m[2]) } : { category };
 }

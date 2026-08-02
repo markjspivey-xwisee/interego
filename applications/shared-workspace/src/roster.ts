@@ -59,11 +59,40 @@
  * `'unbound'` remains the default and remains reachable, because every hand-built caller
  * still produces exactly the rows described above and must keep being told so.
  *
- * ★ WHAT IS STILL OPEN, and it is named rather than absorbed: nothing establishes that
- * {@link AttestationPolicy.convener} is the workspace's convener. That principal is typed by
- * the caller, and neither this module nor `membership.ts` fetches the workspace descriptor
- * to check `wsp:convener` against it. Field binding makes every record state its own
- * membership; it does not make the policy state the right convener.
+ * ★★★★ AND THE CONVENER IS CHECKABLE TOO, FOR CALLERS THAT READ THE WORKSPACE.
+ *
+ * What used to stand here said nothing establishes that {@link AttestationPolicy.convener} is
+ * the workspace's convener — the principal was typed by the caller, and no code fetched the
+ * workspace to compare. A roster could be field-bound, content-bound and signer-checked, with
+ * both binding fields reporting `'bound'`, and be about ENTIRELY THE WRONG MEMBERSHIPS.
+ *
+ * A workspace IS a dereferenceable graph URL whose content declares `wsp:convener`, so the
+ * convener is readable from the workspace itself. `membership.ts` now writes, publishes,
+ * shape-validates, signs, reads back and PARSES that record through the same
+ * `digestedGraphRegion` path as the two membership halves, and
+ * {@link AttestationPolicy.workspaceEvidence} carries the result in as
+ * {@link ConvenerEvidence}. {@link refuseConvenerAuthority} compares it against the policy and
+ * {@link Roster.convenerBinding} reports which of its three answers came back.
+ *
+ * ★ AND THE DIRECTION IS THE WHOLE OF IT, BECAUSE THE OBVIOUS IMPLEMENTATION IS AN ESCALATION.
+ * The tempting one line is `const convener = workspaceRecord?.convener ?? policy.convener` —
+ * read the convener from the workspace and use it. That GRANTS MORE THAN NOT PASSING THE
+ * EVIDENCE AT ALL: a policy naming a stranger, handed a workspace that names the real
+ * convener, would start admitting every grant the same policy refuses on its own. Supplying
+ * evidence would widen authority, which is the exact shape this file has already had to undo.
+ *
+ * So a disagreement only ever REFUSES CONFERRAL, and it refuses it on the conferring track
+ * alone. The restricting track never sees this check, so a policy that disagrees with the
+ * workspace cannot erase a revocation or a withdrawal by disagreeing — it removes the power to
+ * make members, not the records that unmake them.
+ *
+ * ★ WHAT REMAINS OPEN AFTER IT, stated here rather than absorbed: the descriptor URL the
+ * workspace record was read from is chosen by whoever assembled the fold. What is established
+ * is "a record whose subject is <workspace> says X convenes, signed by an agent X's own
+ * registry vouches for, over bytes the substrate re-digested" — not "that record is what
+ * <workspace> dereferences to". Structurally the same residue as `head` under a `slug-only`
+ * binding, and it is closed the same way: by dereferencing <workspace> to obtain the URL
+ * rather than being handed one.
  *
  * Without that policy the fold still works exactly as before, and says so:
  * {@link Roster.membershipGrade} is `'asserted'` and {@link Roster.attributionNote} states
@@ -367,7 +396,93 @@ export interface AttestationPolicy {
    * {@link Roster.recordFieldBinding} whether it was on.
    */
   readonly requireFieldBinding?: boolean;
+  /**
+   * What the WORKSPACE says about who convenes it, so {@link convener} can be checked against
+   * something other than the caller's own opinion of it.
+   *
+   * Optional, and absent means exactly one thing: this fold was not asked. It reports
+   * {@link Roster.convenerBinding} as `'unchecked'` and behaves as it always did — a policy
+   * whose convener is a value somebody typed. Every caller that predates this field is in that
+   * state and must keep being told so.
+   *
+   * ★ THIS IS EVIDENCE, NOT A SOURCE. The convener grants are attested against is
+   * {@link convener}, and only ever {@link convener}. This field can REFUSE that principal; it
+   * can never supply one. See this module's header for why the substitution would be an
+   * escalation rather than a fix.
+   */
+  readonly workspaceEvidence?: ConvenerEvidence;
 }
+
+/**
+ * A workspace's own statement of who convenes it, parsed out of the workspace record.
+ *
+ * ★ THE THIRD RECORD, AND IT IS THE SAME KIND OF THING AS THE OTHER TWO. `Grant` says who was
+ * offered what, `Acceptance` says who agreed, and this says who was entitled to offer at all.
+ * All three were once answered by whoever called this fold; the first two stopped being in the
+ * round `membership.ts` landed, and this is the last of them.
+ *
+ * Produced by `readWorkspaceRecord`, which parses every field below out of the region of the
+ * served document the substrate's digest covers. Hand-buildable, exactly like the other two,
+ * and refused for it under {@link AttestationPolicy.requireFieldBinding} for the same reason.
+ */
+export interface WorkspaceRecord {
+  /** The descriptor URL these fields were read from. Must equal {@link FieldProvenance.descriptor}. */
+  readonly head: string;
+  /**
+   * The workspace this record IS — the `wsp:Workspace` subject's own IRI, not a value pointing
+   * at one.
+   *
+   * ★ THE SUBJECT, DELIBERATELY. A record carrying `wsp:workspace <somewhere>` would be a
+   * record ABOUT a workspace, and any pod may write one of those about any workspace. Being
+   * the subject is what makes this a record OF the workspace, and
+   * {@link refuseConvenerAuthority} compares it against the workspace being folded.
+   */
+  readonly workspace: string;
+  /** `wsp:convener`. The one field this fold reads. */
+  readonly convener: Principal;
+  /**
+   * `wsp:roleProfile`, the governance document the workspace declares.
+   *
+   * ★ CARRIED AND NOT CONSULTED, and the gap is named rather than papered over. `foldRoster`
+   * takes its {@link RoleProfile} from its caller exactly as it used to take the convener, so
+   * a roster can still be folded against a profile the workspace never declared. Comparing the
+   * two is a second change with a second failure mode and it is not made in the same round;
+   * the value is parsed and handed over so a caller CAN compare, and the README carries the
+   * non-comparison as a residual gap.
+   *
+   * Empty string where the record stated none readably — reported in `problems`, and never a
+   * profile IRI anything will match.
+   */
+  readonly roleProfile: string;
+  /** What the substrate's verifier said about who signed the workspace's own declaration. */
+  readonly attestation?: Attestation;
+  /** Set by `readWorkspaceRecord`. See {@link Grant.fieldProvenance}. */
+  readonly fieldProvenance?: FieldProvenance;
+}
+
+/**
+ * What a caller found when it went and asked the workspace who convenes it.
+ *
+ * ★ TWO MEMBERS, AND THE SECOND IS THE ONE THAT MATTERS. A bare optional `WorkspaceRecord`
+ * would collapse "I did not ask" and "I asked and the substrate could not answer" into the
+ * same absent field — and the second silently reopens the gap the first honestly reports as
+ * open. A transient `get_descriptor` failure would turn a checked roster back into an
+ * unchecked one with nothing saying so, which is the same shape that once turned a read
+ * failure into the reinstatement of a revoked member.
+ *
+ * So a caller that asked says so even when the answer was nothing, and the fold refuses to
+ * confer. Asking and getting silence is not the same as not asking.
+ */
+export type ConvenerEvidence =
+  | { readonly kind: 'declared'; readonly record: WorkspaceRecord }
+  | {
+      readonly kind: 'unreadable';
+      /** Why the workspace record could not be read. Rendered into every refusal it causes. */
+      readonly why: string;
+    };
+
+/** What {@link foldRoster} was able to establish about the policy's convener. */
+export type ConvenerBinding = 'bound' | 'refused' | 'unchecked';
 
 /**
  * Why this record cannot be attributed to `expected`, or null when it can.
@@ -577,6 +692,119 @@ export function refuseFieldBinding(
   return null;
 }
 
+/**
+ * Why the convener this policy names cannot be treated as entitled to grant here, or null when
+ * it can.
+ *
+ * Composed from the two refusals above rather than reimplementing either: a workspace record
+ * is a record, and holding it to a weaker standard than the grants it authorises would put the
+ * softest check at the top of the chain.
+ *
+ * ★ AN ARGUMENT OBJECT, NOT SIX POSITIONALS, and that is defect avoidance rather than style.
+ * The last two parameters are booleans meaning different things (`requireContentBinding`,
+ * `requireFieldBinding`); transposed at a call site they compile, they run, and they silently
+ * check the weaker of the two conditions. The refusals above carry at most one boolean each
+ * and can afford the positional form.
+ *
+ * Every branch refuses, including the one where the caller asked and got nothing back. The
+ * only path to null is a workspace record that IS this workspace, names THIS convener, and
+ * holds up as a record at whatever strength the rest of the policy demands.
+ *
+ * ★ AND THE DISPATCH IS POSITIVE ON EVERY TAG, WHICH IT WAS NOT. It read `kind === 'unreadable'`
+ * → refuse, EVERYTHING ELSE → treat as `'declared'`, and {@link ConvenerEvidence} is exported
+ * through `can.ts` for federated composers that hand it across a JSON boundary where the type
+ * guarantees nothing. Two shapes came out of that, both reproduced before this was written:
+ *
+ *   `{ kind: 'i-did-not-ask', record: <an agreeing record> }` reported
+ *   `convenerBinding: 'bound'`. The union has exactly two members so that "asked and got
+ *   silence" could not masquerade as an answer; a third tag masqueraded instead, and
+ *   {@link Roster.convenerBinding}'s own contract is that `'bound'` is never reachable off
+ *   the back of nothing.
+ *
+ *   `{ kind: 'declared' }` with no record threw `TypeError: Cannot read properties of
+ *   undefined (reading 'workspace')` out of the authorization path. Not a refusal — no
+ *   roster, no members, no diagnosis, the whole fold dead.
+ *
+ * {@link refuseFieldBinding} above already tests its own tag with `!== 'payload'` for exactly
+ * this reason. This was the one refusal in the file without that guard.
+ */
+export function refuseConvenerAuthority(args: {
+  readonly evidence: ConvenerEvidence;
+  /** The workspace being folded. The record's own subject must be this. */
+  readonly workspace: string;
+  /** The principal the policy treats as entitled to grant. Never replaced by the record's. */
+  readonly convener: Principal;
+  readonly signerOf?: SignerResolver;
+  readonly requireContentBinding?: boolean;
+  readonly requireFieldBinding?: boolean;
+}): string | null {
+  const { evidence, workspace, convener } = args;
+  // Read the tag out before the narrowing below erases it. After the `'unreadable'` branch the
+  // compiler believes `kind` can only be `'declared'`, and the check that follows exists
+  // precisely because the compiler is wrong about a value that arrived as JSON.
+  const tag: string = evidence.kind;
+  if (evidence.kind === 'unreadable') {
+    return 'the workspace record that would say who convenes here could not be read '
+      + `(${evidence.why}). This policy ASKED, and an unanswered question about who may grant `
+      + 'is not the same as never having asked — so nothing CONFERS. Every revocation and '
+      + 'withdrawal still applies, because refusing to confer is not deleting a record';
+  }
+  if (tag !== 'declared') {
+    return `the workspace evidence is tagged '${tag}', which is neither 'declared' nor `
+      + "'unreadable'. This dispatch used to send everything that was not 'unreadable' into "
+      + 'the declared branch, so an unrecognised tag carrying an agreeing record reported the '
+      + 'convener as BOUND — a value that must never be reachable off the back of nothing. An '
+      + 'unknown tag establishes nothing about who convenes here';
+  }
+  // Typed `| undefined` deliberately. The union says this is always present and JSON says
+  // otherwise; reading it unguarded was a `TypeError` in the authorization path rather than a
+  // refusal, which is the one outcome worse than refusing.
+  const ws: WorkspaceRecord | undefined = evidence.record;
+  if (ws === undefined) {
+    return "the workspace evidence is tagged 'declared' and carries no record. A declaration "
+      + 'with nothing in it declares nothing — and reading it anyway used to kill the fold '
+      + 'outright (`Cannot read properties of undefined`), returning no roster and no '
+      + 'diagnosis instead of naming the fault';
+  }
+  if (ws.workspace !== workspace) {
+    // First, because a record about somewhere else cannot agree with this policy, cannot
+    // disagree with it, and cannot be repaired by re-signing it. Reporting a signature problem
+    // on it would send an operator to fix the wrong document.
+    return `the workspace record at <${ws.head}> declares the convener of <${ws.workspace}> `
+      + `and this roster is <${workspace}> — a record of another workspace says nothing about `
+      + 'who may grant in this one, however well signed it is';
+  }
+  if (ws.convener !== convener) {
+    // ★ THE HEADLINE REFUSAL, AND IT REFUSES RATHER THAN CORRECTING. Adopting `ws.convener`
+    // here would admit every grant signed for the workspace's real convener under a policy
+    // that named somebody else — so passing evidence would GRANT MORE than withholding it.
+    return `this policy treats ${convener} as entitled to grant and <${workspace}> names `
+      + `${ws.convener}. The two disagree, so no grant here CONFERS. The policy's convener is `
+      + 'not replaced by the workspace\'s: a fold that adopted it would start admitting grants '
+      + 'this same policy refuses on its own, so a disagreement is refused rather than resolved';
+  }
+  // The branch above establishes that `ws.convener` and `convener` are the same principal. The
+  // record's own value is the one passed, because the party this record must have come from is
+  // the party it names.
+  const badSignature = refuseAttestation(
+    ws.attestation, ws.convener, args.signerOf, args.requireContentBinding === true,
+  );
+  if (badSignature !== null) {
+    return `the workspace record at <${ws.head}> names ${ws.convener} as convener and that `
+      + `record itself does not hold up: ${badSignature}. A declaration of who may grant is `
+      + 'worth exactly what its own authorship is worth, and anybody can write one about '
+      + 'anybody';
+  }
+  const badFields = refuseFieldBinding(
+    ws.fieldProvenance, ws.head, args.requireFieldBinding === true,
+  );
+  if (badFields !== null) {
+    return `the workspace record at <${ws.head}> names ${ws.convener} as convener and that `
+      + `value was not read from the record: ${badFields}`;
+  }
+  return null;
+}
+
 /** A record the fold refused to use, and why. Reported so a refusal is diagnosable. */
 export interface UnattestedRecord {
   readonly kind: 'grant' | 'acceptance';
@@ -727,13 +955,40 @@ export interface Roster {
    * ★ WHAT `'bound'` STILL DOES NOT MEAN, and this is the line most at risk of being
    * over-read now that the value is reachable. It establishes that each record states the
    * membership this roster reports. It does NOT establish that the SIGNER of the grant was
-   * entitled to grant: `AttestationPolicy.convener` is a principal the caller names, and
-   * nothing in this fold or in `membership.ts` fetches the workspace descriptor to check
-   * `wsp:convener` against it. A workspace whose convener is misidentified produces a
-   * perfectly field-bound roster of the wrong memberships. That is residual gap 6 in the
-   * README and it is open.
+   * entitled to grant — that is a separate question, answered separately, and the answer is
+   * {@link convenerBinding}. `'bound'` here beside `'unchecked'` there is a roster of
+   * perfectly parsed records that may be about entirely the wrong memberships.
    */
   readonly recordFieldBinding: 'bound' | 'unbound';
+  /**
+   * Whether the convener this fold attested grants against is the convener the WORKSPACE
+   * declares.
+   *
+   *   bound       `attestation.workspaceEvidence` carried a workspace record, its subject is
+   *               this workspace, its `wsp:convener` is the principal the policy named, and
+   *               the record held up as a record at whatever strength the rest of the policy
+   *               demanded. The party that granted here is the party the workspace says may.
+   *   refused     evidence was supplied and did NOT establish that. Either the two disagree,
+   *               or the record is of another workspace, or its own authorship or fields did
+   *               not hold up, or the caller asked and the substrate could not answer. NO
+   *               GRANT CONFERRED — every one is in `unattested` with the reason — and every
+   *               revocation and withdrawal still applied.
+   *   unchecked   no policy, or a policy that passed no evidence. `AttestationPolicy.convener`
+   *               is a value the caller typed and nothing compared it to anything. This is
+   *               what every caller written before the field does, and the roster it produces
+   *               is indistinguishable from a checked one except through this field.
+   *
+   * Non-omittable, for the reason {@link recordFieldBinding} and `crossStreamOrderIsAdvisory`
+   * are: the three rosters look identical, and a caller must not be able to read `members`
+   * without having been handed the difference.
+   *
+   * ★ WHAT `'bound'` DOES NOT MEAN HERE EITHER. The descriptor URL the workspace record was
+   * read from is chosen by whoever assembled the fold. This says a record whose subject is
+   * this workspace names that convener, signed for them, over bytes the substrate re-digested
+   * — not that the record is what dereferencing the workspace returns. See this module's
+   * header.
+   */
+  readonly convenerBinding: ConvenerBinding;
 }
 
 const uniqueSorted = (xs: readonly string[]): string[] => [...new Set(xs)].sort();
@@ -854,13 +1109,42 @@ export function foldRoster(args: {
   // combination `requireFieldBinding: true, requireContentBinding: false` is therefore not
   // reachable rather than merely discouraged. See `AttestationPolicy.requireFieldBinding`.
   const requireBinding = args.attestation?.requireContentBinding === true || requireFields;
+  // ★ COMPUTED ONCE, OUTSIDE THE FILTER, BECAUSE IT IS A FACT ABOUT THE POLICY AND NOT ABOUT
+  // ANY RECORD. Every grant gets the same answer, so evaluating it per grant would be the same
+  // string N times at N times the cost — and, more to the point, computing it inside the
+  // filter invites a future edit to make it depend on the row, which is how a policy-level
+  // gate becomes a per-row one that some rows pass.
+  const evidence = args.attestation?.workspaceEvidence;
+  const convenerRefusal = args.attestation === undefined || evidence === undefined
+    ? null
+    : refuseConvenerAuthority({
+        evidence, workspace, convener: args.attestation.convener, signerOf,
+        // The workspace record is held to the SAME strength as the records it authorises.
+        // Anything weaker would put the softest check at the top of the chain.
+        requireContentBinding: requireBinding, requireFieldBinding: requireFields,
+      });
+  const convenerBinding: ConvenerBinding =
+    args.attestation === undefined || evidence === undefined
+      ? 'unchecked'
+      : convenerRefusal === null ? 'bound' : 'refused';
   if (args.attestation) {
     const convener = args.attestation.convener;
     conferringGrants = inWorkspaceGrants.filter(g => {
       // Attestation first: "who signed this" is the more fundamental question and its
       // refusals name a party, which is what an operator acts on.
+      //
+      // ★ AND THE CONVENER CHECK IS LAST, WHICH IS THE OPPOSITE OF WHAT ITS IMPORTANCE
+      // SUGGESTS. It is the most consequential refusal here — it invalidates the whole roster
+      // rather than one row — but it is also CONSTANT, so putting it first would overwrite
+      // every per-record diagnosis with one repeated sentence. An operator would fix the
+      // policy, re-fold, and only then discover the forged grant that was there all along:
+      // two round trips to see two independent faults. Last in the chain, every genuine grant
+      // reports the policy fault and every bad one still reports its own, in a single fold —
+      // and the policy fault is stated once at roster scope, where it belongs, in
+      // `convenerBinding` and `attributionNote` rather than N times at record scope.
       const why = refuseAttestation(g.attestation, convener, signerOf, requireBinding)
-        ?? refuseFieldBinding(g.fieldProvenance, g.head, requireFields);
+        ?? refuseFieldBinding(g.fieldProvenance, g.head, requireFields)
+        ?? convenerRefusal;
       if (why === null) return true;
       unattested.push({
         kind: 'grant', head: g.head, principal: g.grantedTo, because: why,
@@ -868,6 +1152,13 @@ export function foldRoster(args: {
       });
       return false;
     });
+    // ★ AND `convenerRefusal` IS DELIBERATELY NOT IN THIS CHAIN. A convener disagreement is
+    // about who may GRANT; an acceptance is a member's own statement about their own pod and
+    // is no less theirs because the policy misidentified the convener. Adding it here would
+    // refuse strictly more — monotone, so not unsafe — and would print a line accusing every
+    // member of something the CONVENER's side got wrong, in the one channel operators are told
+    // to watch. It also buys nothing: a member needs a conferring grant AND a conferring
+    // acceptance, and the grant filter above has already refused all of them.
     conferringAcceptances = inWorkspaceAcceptances.filter(a => {
       const why = refuseAttestation(a.attestation, a.member, signerOf, requireBinding)
         ?? refuseFieldBinding(a.fieldProvenance, a.head, requireFields);
@@ -1050,17 +1341,35 @@ export function foldRoster(args: {
         heads: acceptanceHeads,
         // Same correction as the grant note: "the member is included" was emitted for a
         // principal the withdrawal check below had already removed.
+        // ★ AND `accepted.length === 0` HAS TWO CAUSES, WHICH IT USED TO REPORT AS ONE. It is
+        // read off the CONFERRING track, so it is empty both when every acceptance head was
+        // refused AND when no grant confers at all — and in the second case every clause of
+        // the refused-answers note is false. Measured on a workspace where every record is
+        // honest and only the policy and the workspace disagree about who convenes: the note
+        // said "listed as invited instead" with `pendingInvitations` EMPTY (nothing to invite
+        // under, because `conferring` is what the pending branch below iterates), and
+        // "`unattested` says why each answer was refused" with `unattested` holding one GRANT
+        // row and no acceptance rows at all. The members were blamed for the convener's fault,
+        // in the one channel this file insists must never assert an outcome that did not
+        // happen. `conferring.length === 0` is the exact discriminator, because it is also the
+        // condition under which the pending branch pushes nothing.
         note: withdrawn
           ? `${acceptanceHeads.length} concurrent acceptance heads for ${principal}, and one of `
             + 'them WITHDRAWS. The member is NOT included: a withdrawal on any head is '
             + 'decisive, so the ambiguity about which stream is theirs does not arise.'
-          : accepted.length === 0
-            ? `${acceptanceHeads.length} concurrent acceptance heads for ${principal}, and NONE of `
-              + 'them could be attested under this policy. The member is not included and is '
-              + 'listed as invited instead — but they did answer, more than once, and `unattested` '
-              + 'says why each answer was refused.'
-            : `${acceptanceHeads.length} concurrent acceptance heads for ${principal}. The member is `
-              + 'included, but their stream is ambiguous until one head is republished cleanly.',
+          : conferring.length === 0
+            ? `${acceptanceHeads.length} concurrent acceptance heads for ${principal}, and no grant `
+              + 'to them CONFERS under this policy — so there is nothing for either head to '
+              + 'accept. The fork is real and still unresolved, but it is not why the member is '
+              + 'absent, their answers were not refused, and no invitation is raised because '
+              + 'there is no conferring grant to invite them under. `unattested` names the grant.'
+            : accepted.length === 0
+              ? `${acceptanceHeads.length} concurrent acceptance heads for ${principal}, and NONE of `
+                + 'them could be attested under this policy. The member is not included and is '
+                + 'listed as invited instead — but they did answer, more than once, and `unattested` '
+                + 'says why each answer was refused.'
+              : `${acceptanceHeads.length} concurrent acceptance heads for ${principal}. The member is `
+                + 'included, but their stream is ambiguous until one head is republished cleanly.',
       };
       divergences.push(acceptanceDivergence);
     }
@@ -1142,10 +1451,6 @@ export function foldRoster(args: {
             + 'That covers each RECORD. `Member.role` and `Member.effective` are folded '
             + 'ACROSS records including refused ones, so a row listed in `unattested` can '
             + 'still narrow a member\'s role label and capabilities — never widen them. '
-            + 'RESIDUAL, and it is the one left: nothing checked that the convener named in '
-            + `this policy (${args.attestation.convener}) is the workspace's convener. That is `
-            + 'a value the caller typed, and no record here was read from <'
-            + `${workspace}> to confirm it. See \`recordFieldBinding\`.`
           : 'Residual, and it is not small, and content binding does not reduce it: every '
             + 'field here — the role, the grantee, the stream — is as the CALLER TYPED IT '
             + 'rather than read from the record, so one of a member\'s ordinary signed '
@@ -1155,6 +1460,31 @@ export function foldRoster(args: {
             + 'membership.ts to close it. See `recordFieldBinding`. A proof lifted out of a '
             + 'principal\'s real record and pasted into a fabricated one is narrowed '
             + 'separately — see `readAttestation`.')
+        // ★ OUTSIDE THE FIELD-BINDING TERNARY, because it is a different question and used to
+        // be answered inside it. The convener sentence lived in the `requireFieldBinding`
+        // branch, so the only configuration that ever mentioned the convener at all was the
+        // strictest one — a caller at a lower rung was told nothing about the principal every
+        // grant here was attested against.
+        + (convenerBinding === 'bound'
+          ? `The CONVENER was checked against the workspace: a record whose subject is `
+            + `<${workspace}> declares wsp:convener ${args.attestation.convener}, in the region `
+            + 'of its own document the substrate digested, signed by an agent that principal\'s '
+            + 'registry vouches for. Residual: the descriptor URL that record was read from was '
+            + 'supplied by whoever assembled this fold, so what is established is that such a '
+            + 'record exists and says so — not that it is what dereferencing the workspace '
+            + 'returns. See `convenerBinding`.'
+          : convenerBinding === 'refused'
+            ? 'The CONVENER was checked against the workspace and did NOT agree, so nothing '
+              + 'here confers: every grant is listed in `unattested` with the disagreement as '
+              + 'its reason, and `members` is empty of anyone who needed one. Revocations and '
+              + 'withdrawals still applied — refusing to confer is not deleting a record. See '
+              + '`convenerBinding`.'
+            : 'RESIDUAL, and it is the one left at every rung: nothing checked that the '
+              + `convener named in this policy (${args.attestation.convener}) is the workspace's `
+              + `convener. That is a value the caller typed, and no record was read from `
+              + `<${workspace}> to confirm it, so these are the right memberships only if the `
+              + 'right principal was named. Pass `workspaceEvidence`, read with '
+              + 'readWorkspaceRecord in membership.ts, to close it. See `convenerBinding`.')
       : 'Membership is ASSERTED, not attested: no grant or acceptance was checked for an '
         + 'authorship proof, so a convener who holds both records could have written both '
         + 'halves and this list would look identical. Pass `attestation` to foldRoster to '
@@ -1173,6 +1503,12 @@ export function foldRoster(args: {
     // separate field from the line above because the two answer different questions and
     // `requireContentBinding: true` alone must never read as though the fields were bound.
     recordFieldBinding: requireFields ? 'bound' : 'unbound',
+    // Same rule again, and the reason it is a THIRD field rather than a value folded into
+    // either of the two above: those report what was established about the RECORDS, and this
+    // reports what was established about the POLICY. A roster can be `bound`/`bound`/
+    // `unchecked` — every record perfectly parsed, and no evidence at all that the party they
+    // came from was entitled to grant here.
+    convenerBinding,
   };
 }
 

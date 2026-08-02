@@ -26,7 +26,6 @@
  */
 
 // PGSLInstance used indirectly via latticeStats
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { latticeStats } from './lattice.js';
 
 // ── Types ──────────────────────────────────────────────────

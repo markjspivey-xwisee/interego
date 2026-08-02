@@ -101,7 +101,11 @@ describe('dkg: round 2 share verification', () => {
 
     const r2 = dkgRound2({ recipientIndex, received: [honestA, tamperedB, wrongXC] });
     expect(r2.qualifiedSenders).toEqual([1]);
-    expect(r2.rejectedSenders.sort()).toEqual([2, 3]);
+    // Copy before sorting. `rejectedSenders` is `readonly number[]`, and `.sort()` sorts
+    // IN PLACE — the assertion was reordering the result object it was about to assert on.
+    // Harmless while the expected order happens to match, and a silent corruption of the
+    // round-2 result the moment anything else reads it afterwards.
+    expect([...r2.rejectedSenders].sort()).toEqual([2, 3]);
   });
 });
 

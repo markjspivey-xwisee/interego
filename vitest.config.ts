@@ -20,6 +20,16 @@ export default defineConfig({
     // legacy list. Wired here rather than into an npm script because the command people type
     // is `npx vitest run tests/`, which never reads package.json. ~6s per invocation.
     globalSetup: ['./tools/vitest-typecheck-setup.mjs'],
+    // ★ THE CHECK THAT THE SUITE RAN AT ALL, and it is here rather than in a workflow for the
+    // same reason globalSetup is: the command people type is `npx vitest run tests/`, which
+    // reads this file and nothing else. `'default'` is listed explicitly because naming any
+    // reporter replaces the default one — dropping it would trade the whole summary for the
+    // gate, which is the sort of silent coverage loss this pair exists to prevent.
+    //
+    // What it caught: AXIS A blocked the single worker for 66.8s, vitest's 60s birpc deadline
+    // killed it, and `Test Files 2 passed (185)` was the entire report of a run that never
+    // executed 183 files. See tools/vitest-run-integrity.mjs.
+    reporters: ['default', './tools/vitest-run-integrity.mjs'],
     // Pod-touching tests (Tier 2 + Tier 8 vertical tests) all hit the
     // same shared Azure CSS pod. publish() is now CAS-safe via HTTP
     // If-Match (see src/solid/client.ts), so concurrent writes don't

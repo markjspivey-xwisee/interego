@@ -36,7 +36,12 @@ import { ContextDescriptor } from '@interego/core';
 import { createPGSL, mintAtom, projectHolon } from '@interego/pgsl';
 import { publish } from '@interego/solid';
 
-import type { IRI, NodeProvenance } from '@interego/core';
+// `NodeProvenance` is declared by @interego/pgsl (packages/pgsl/src/types.ts) and is the
+// shape `mintAtom` below actually consumes. @interego/core has only a PRIVATE alias of the
+// same name — `type NodeProvenance = LatticeProvenance` inside kernel/index.ts, never
+// exported — so importing it from core never resolved. `IRI` does come from core.
+import type { IRI } from '@interego/core';
+import type { NodeProvenance } from '@interego/pgsl';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 

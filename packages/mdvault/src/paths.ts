@@ -45,7 +45,7 @@ export function canonicalizeVaultPath(raw: unknown): string {
     throw new VaultInputError('path.control', 'decoded vault path contains control/NUL characters');
   }
   // Normalise Unicode form and separators so the resolver and exporter cannot disagree.
-  let s = decoded.normalize('NFC').replace(/\\/g, '/');
+  const s = decoded.normalize('NFC').replace(/\\/g, '/');
 
   if (SCHEME_RE.test(s)) {
     throw new VaultInputError('path.scheme', `vault path must be bundle-relative, not a scheme/drive/URL: ${raw}`);
@@ -97,7 +97,6 @@ export function parentFolder(canonicalPath: string): string {
 export function ancestorFolders(canonicalPath: string): string[] {
   const out: string[] = [];
   let dir = parentFolder(canonicalPath);
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     out.push(dir);
     if (dir === '') break;

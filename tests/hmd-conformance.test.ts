@@ -42,7 +42,10 @@ function frontmatterObject(md: string): Record<string, unknown> {
 
 async function expand(obj: Record<string, unknown>): Promise<Record<string, unknown>> {
   const out = await jsonld.expand(obj as never, { documentLoader: offlineLoader as never } as never);
-  return (out as unknown[])[0] as Record<string, unknown>;
+  // Through `unknown`: the `as never` on the arguments above drives jsonld's overload
+  // resolution onto its callback form, whose declared return is `void`, so `out` is `void`
+  // and a direct cast to `unknown[]` is rejected outright.
+  return (out as unknown as unknown[])[0] as Record<string, unknown>;
 }
 
 // Fixtures shaped like the three real composers: an /ns ontology page, an

@@ -1,16 +1,14 @@
 # shape: wsp-shapes.ttl
-# expect: violates
-# why: sh:minCount 1 on wsp:stream. A member with no stream has nowhere to write and the fold would silently drop them.
+# expect: conforms
+# why: A well-formed acceptance must pass in both engines, or the two acceptance violations below prove nothing.
 
 @prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
 @prefix dct:  <http://purl.org/dc/terms/> .
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
 
-# wsp:member is present ON PURPOSE. It was absent, and once wsp:member became required this
-# fixture would have gone on violating for a reason it does not name — so deleting the
-# wsp:stream constraint it exists to test would not have changed its verdict.
 <https://alice.test/a1>
   a wsp:MembershipAcceptance ;
   wsp:member <https://alice.test/profile/card#me> ;
   wsp:accepts <https://conv.test/g1> ;
+  wsp:stream <https://alice.test/ws/a/stream> ;
   wsp:workspace <https://relay.test/ws/a> .

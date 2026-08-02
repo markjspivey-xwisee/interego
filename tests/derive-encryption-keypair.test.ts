@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
   createEncryptedEnvelope,
   deriveEncryptionKeyPair,
@@ -84,7 +85,6 @@ describe('deriveEncryptionKeyPair — deterministic X25519 from wallet', () => {
     // (sha256(privKey + ':interego-bridge-encryption-v1')). Different
     // domain tags → different hashes → no shared bits.
     // We verify by deriving each manually and comparing.
-    const { createHash } = require('node:crypto') as typeof import('node:crypto');
     const stem = ALICE_KEY.toLowerCase().replace(/^0x/, '');
     const storageKey = createHash('sha256').update(stem + ':interego-bridge-storage-v1', 'utf8').digest('hex');
     const encKp = deriveEncryptionKeyPair(ALICE_KEY);

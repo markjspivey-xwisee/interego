@@ -80,8 +80,27 @@ jobs:
           - { image: interego-foxxi-dashboard,    dockerfile: deploy/Dockerfile.foxxi-dashboard, build_args: "VITE_FOXXI_BRIDGE_URL=https://foxxi-bridge.interego.xwisee.com" }
           - { image: interego-foxxi-microsite,    dockerfile: deploy/Dockerfile.foxxi-microsite, build_args: "VITE_FOXXI_BRIDGE_URL=https://foxxi-bridge.interego.xwisee.com" }
           - { image: interego-foxxi-scorm-player, dockerfile: deploy/Dockerfile.foxxi-scorm-player }
-          # interego-css is managed out-of-band (the PGSL-backed CSS server lives
-          # in integrations/pgsl-css-accessor and has its own workflow).
+          # ★ THE ONE SERVICE THAT HAD NO BUILD PATH AT ALL.
+          #
+          # CSS runs `interego-css-pgsl:redis6` — a genuinely mutable tag. It was
+          # "managed out-of-band", which in practice meant no sha-tagged image of it
+          # had ever been built by anything, so the running code is identified by a
+          # name that can be repointed and a rollback has nothing to roll back TO.
+          # Every other service in the fleet is pinned to an immutable sha; this one
+          # was pinned to a promise.
+          #
+          # The image name is `interego-css-pgsl`, NOT `interego-css` — the service is
+          # named `css` and tools/railway-redeploy.mjs derives `interego-${service}`,
+          # so THAT SCRIPT CANNOT REDEPLOY THIS SERVICE (it dies on its own
+          # repository-mismatch guard, which is the correct outcome). Renaming the
+          # image to satisfy the script would orphan the package that is actually
+          # deployed; the pin has to be moved by hand. See the note in that file.
+          #
+          # `prebuild` names a workspace artifact the Dockerfile expects to ALREADY
+          # EXIST in the build context: it COPYs `packages/pgsl-store/dist`, which is
+          # gitignored and therefore absent from a fresh checkout. Without the step
+          # below the COPY fails and the leg is red — loudly, which is the point.
+          - { image: interego-css-pgsl,           dockerfile: integrations/pgsl-css-accessor/Dockerfile, prebuild: pgsl-store }
 
     steps:
       - name: Should this matrix leg run?
@@ -97,6 +116,46 @@ jobs:
 
       - uses: actions/checkout@v4
         if: steps.gate.outputs.skip != 'true'
+
+      # Only interego-css-pgsl needs this. Its Dockerfile COPYs
+      # `packages/pgsl-store/dist` straight out of the context instead of compiling
+      # it in a build stage, because the accessor has to be assembled in a tree with
+      # no monorepo root above it: the repo-root node_modules carries componentsjs@6
+      # (via @comunica) and CSS 7.1.9 needs componentsjs@5, so a build stage that ran
+      # `npm ci` at the repo root inside the image would load the wrong one at
+      # runtime. `dist` is gitignored, so a fresh checkout does not have it.
+      #
+      # The three builds are exactly the recipe pgsl-css-server.yml already proves
+      # green against a real Postgres — @interego/pgsl-store's own build needs core
+      # and abac compiled first. Kept in step with that workflow deliberately: two
+      # different recipes for the same artifact is how a CI-green image turns out not
+      # to be the image the tests exercised.
+      - name: Pre-build the workspace dist this image's Dockerfile expects in the context
+        if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'pgsl-store'
+        uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Build @interego/pgsl-store dist
+        if: steps.gate.outputs.skip != 'true' && matrix.prebuild == 'pgsl-store'
+        run: |
+          npm ci
+          npm run build --workspace @interego/core
+          npm run build --workspace @interego/abac
+          npm run build --workspace @interego/pgsl-store
+          # A missing dist would otherwise surface as an opaque COPY failure inside
+          # buildx. Say which artifact is absent, here, where the recipe is.
+          test -d packages/pgsl-store/dist \
+            || { echo "::error::packages/pgsl-store/dist was not produced — the CSS image cannot be built without it"; exit 1; }
+          # The dist existing on the RUNNER is not the same as it reaching the build
+          # CONTEXT. The root .dockerignore lists `dist`, and Docker matches a
+          # separator-free pattern against the whole relative path — `dist` is the
+          # top-level directory only, which is why that same file has to spell
+          # `node_modules` and `**/node_modules` separately. So this should arrive.
+          # If it does not, the leg dies on `COPY packages/pgsl-store/dist` with "no
+          # source files", and the fix is one line in /.dockerignore:
+          #   !packages/pgsl-store/dist
+          # Recorded here rather than pre-emptively applied: changing the root
+          # ignore file changes the context of all fourteen images, and that is not
+          # a thing to do on a hunch about a pattern-matcher.
 
       - uses: docker/setup-buildx-action@v3
         if: steps.gate.outputs.skip != 'true'
@@ -119,6 +178,14 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         uses: docker/build-push-action@v6
         with:
+          # Repo root for every image, including interego-css-pgsl, whose Dockerfile
+          # header describes a "deployment-shaped tree assembled by the deploy
+          # script". That constraint is about the shape of the IMAGE, not of the
+          # context: its COPYs name three context paths (plus `docker-entrypoint.sh`,
+          # which sits inside the third), and the build stage
+          # writes its own root package.json, so the tree inside the image is the same
+          # clean one either way. The root .dockerignore already drops node_modules at
+          # every level, which is the part that would actually poison it.
           context: .
           file: ${{ matrix.dockerfile }}
           push: true

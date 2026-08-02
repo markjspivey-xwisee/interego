@@ -126,9 +126,14 @@ if (before.serviceInstance.source?.image === image) {
  * `interego-${service}` holds for thirteen of the sixteen services and is wrong for
  * three, so the assumption is invisible until the day it isn't:
  *
- *   css      is `interego-css-pgsl`, not `interego-css`. It is built out of band
- *            (integrations/pgsl-css-accessor) and has no entry in build-ghcr.yml's
- *            matrix, so `interego-css:<sha>` has never existed at any sha.
+ *   css      is `interego-css-pgsl`, not `interego-css`. `interego-css:<sha>` has never
+ *            existed at any sha, and still does not: build-ghcr.yml now DOES carry a
+ *            matrix leg for it (`interego-css-pgsl`, with a `prebuild` step for
+ *            `packages/pgsl-store/dist`), but under the real name. This sentence used to
+ *            say the service had no entry in that matrix at all, and that leg's own
+ *            comment points the reader here — so the note it cites was made false by the
+ *            change that added it. The conclusion is unaffected: the derivation
+ *            `interego-${service}` is still wrong for this service.
  *   postgres and redis are upstream images (`postgres:16`, `redis:7-alpine`). Pointing
  *            either at an interego image would replace a datastore with an application.
  *

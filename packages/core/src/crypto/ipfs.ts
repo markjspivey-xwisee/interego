@@ -219,6 +219,12 @@ function localPin(content: string): IpfsPinResult {
   const cid = computeCid(content);
   if (!LOCAL_UNPINNED_WARNED) {
     LOCAL_UNPINNED_WARNED = true;
+    // The one console call in `packages/*/src` that is load-bearing rather than left over.
+    // A caller with no PINATA_API_KEY / WEB3STORAGE_TOKEN gets a content address that is
+    // pinned NOWHERE; the `warning` field on the result covers programmatic consumers, and
+    // this covers the operator who never reads it. Routing it through a logger the substrate
+    // does not have would just delete the notice.
+    // eslint-disable-next-line no-console
     console.warn(LOCAL_UNPINNED_WARNING);
   }
   return {

@@ -40,14 +40,27 @@
  * `'bound'` verdict said nothing about. See {@link payloadOf} — every field below now comes
  * from `digestedGraphRegion`, the same function the digester calls.
  *
+ * ── AND THE THIRD RECORD, WHICH SAYS WHO WAS ENTITLED TO GRANT ───────────────
+ *
+ * The paragraph that used to close this header said the module answered *does this record say
+ * what the fold was told it says* and not *is the signer of the grant entitled to grant here*
+ * — because `AttestationPolicy.convener` was a value the caller typed and nothing fetched the
+ * workspace to check `wsp:convener` against it.
+ *
+ * {@link readWorkspaceRecord} and {@link workspaceTurtle} are that missing pair, and the
+ * blocker was the same one twice: `wspsh:WorkspaceShape` has always required exactly one
+ * `wsp:convener`, and no code in this repo had ever written a `wsp:Workspace`. The convener a
+ * policy claimed had nothing to be compared against. It does now, through the same publish
+ * path, the same shape gate, the same one read and the same `digestedGraphRegion`.
+ *
  * ── WHAT THIS STILL DOES NOT ESTABLISH ───────────────────────────────────────
  *
- * Read {@link readAcceptanceRecord}'s note before concluding anything about authority. In
- * short: this closes *does this record say what the fold was told it says*. It does not
- * close *is the signer of the grant entitled to grant here* — `AttestationPolicy.convener`
- * is still a value the caller types, and nothing here fetches the workspace descriptor to
- * check `wsp:convener` against it. Named as residual gap 6 in the README rather than
- * quietly folded into the headline.
+ * Read {@link readAcceptanceRecord}'s note before concluding anything about authority, and
+ * {@link readWorkspaceRecord}'s before concluding anything about the convener. In short: every
+ * reader here is handed a descriptor URL and reads what is at it. None of them dereferences a
+ * logical name to find that URL, so a caller that was handed the wrong URL is told the truth
+ * about the wrong document. That residue is the same one `head` carries under a `slug-only`
+ * binding, and it is residual gap 1.
  */
 
 import {
@@ -64,7 +77,7 @@ import {
   type StreamDeps,
 } from './stream.js';
 import type {
-  Attestation, Grant, Acceptance, Principal,
+  Attestation, Grant, Acceptance, Principal, WorkspaceRecord, ConvenerEvidence,
   FieldProvenance as FieldProvenanceValue,
 } from './roster.js';
 
@@ -72,27 +85,46 @@ const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const XSD_BOOLEAN = 'http://www.w3.org/2001/XMLSchema#boolean';
 
-/** The two record classes, and every predicate this module writes or reads. */
+/** The three record classes, and every predicate this module writes or reads. */
 export const WSP_TERMS = {
   MembershipGrant: `${WSP}MembershipGrant`,
   MembershipAcceptance: `${WSP}MembershipAcceptance`,
+  /**
+   * ★ THE CLASS THAT MADE THE OTHER TWO CHECKABLE. `wspsh:WorkspaceShape` has always required
+   * exactly one `wsp:convener` and exactly one `wsp:roleProfile`, and nothing in this repo had
+   * ever written one — so the convener a policy claimed had nothing to be compared against and
+   * `AttestationPolicy.convener` stayed a value the caller typed. Same story as the two
+   * membership halves one round earlier: the shape described a record no code produced.
+   */
+  Workspace: `${WSP}Workspace`,
+  convener: `${WSP}convener`,
+  roleProfile: `${WSP}roleProfile`,
   workspace: `${WSP}workspace`,
   grantedTo: `${WSP}grantedTo`,
   role: `${WSP}role`,
   revoked: `${WSP}revoked`,
   /**
-   * ★ THE ONE TERM THE PUBLISHED SHAPE DOES NOT REQUIRE, and the reason it is called out
-   * here rather than left to be noticed. `wspsh:MembershipAcceptanceShape` constrains
-   * `wsp:accepts`, `wsp:stream`, `wsp:workspace` and `wsp:withdrawn` — it says nothing
-   * about who is accepting, because until this module there was no reader that needed to
-   * know from the document. So the publish gate will accept an acceptance with no
-   * `wsp:member`, and {@link readAcceptanceRecord} refuses one.
+   * ★ THE TERM THE PUBLISHED SHAPE USED NOT TO REQUIRE, AND NOW DOES.
+   * `wspsh:MembershipAcceptanceShape` constrained `wsp:accepts`, `wsp:stream`,
+   * `wsp:workspace` and `wsp:withdrawn` and said nothing about who was accepting, so the
+   * publish gate admitted an acceptance attributed to nobody while
+   * {@link readAcceptanceRecord} refused one. The guarantee rested on THIS reader rather
+   * than on the contract we publish, which made publishing the shape an invitation to check
+   * less than we check.
    *
-   * Refusing more than the shape does is the safe direction and it is deliberate, but it
-   * means the guarantee here rests on THIS reader rather than on the published contract.
-   * Closing that needs `sh:minCount 1` on the published shape, which is a change to a
-   * deployed artifact and is named as residual gap 7 in the README instead of made
-   * silently.
+   * `docs/applications/shared-workspace/wsp-shapes.ttl:103-115` now carries
+   * `sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:pattern "^https?://|^did:"` on
+   * `wsp:member`. That is a live change to a deployed artifact — the relay caches the shape
+   * for 60s and `conforms_to_shapes` points at this URL — so it is pinned by
+   * `acceptance-no-member`, `acceptance-two-members` and `acceptance-urn-member` in
+   * `tools/shacl-agreement/fixtures/`, where both engines must agree.
+   *
+   * ★ AND THE ASYMMETRY NOW RUNS BOTH WAYS ON THIS ONE FIELD. {@link oneIri} checks only that
+   * the term is an IRI; it applies no scheme pattern. So a `urn:` member is refused by the
+   * published SHAPE and admitted by this READER — the opposite direction from every other
+   * field, where the reader is the stricter of the two. Not a hole, because the publish gate
+   * validates first and refuses it there, but the general sentence "a reader refuses more
+   * than the shape does" is false here and is not repeated as though it held.
    */
   member: `${WSP}member`,
   accepts: `${WSP}accepts`,
@@ -199,6 +231,46 @@ function membershipTurtle(args: {
   const last = lines[lines.length - 1]!;
   lines[lines.length - 1] = last.replace(/ ;$/, ' .');
   return lines.join('\n') + '\n';
+}
+
+/**
+ * Render the workspace itself — the record that says who may issue the grants below.
+ *
+ * ★ `title` IS REQUIRED HERE AND OPTIONAL ON THE OTHER TWO, and that is the published shape
+ * speaking rather than a preference. `wspsh:WorkspaceShape` carries `sh:minCount 1` on
+ * `dct:title` (the grant and acceptance shapes carry none), so a workspace without one is
+ * refused at 422 before it reaches a pod. Typing it as required turns a runtime refusal from
+ * the substrate into a compile error here, which is the cheaper place to find it.
+ *
+ * ★ AND THE SUBJECT IRI IS THE WORKSPACE'S OWN URL, not a name minted for the record. The fold
+ * compares this subject against the workspace it is folding — see `WorkspaceRecord.workspace`
+ * — so a record subject-named anything else is a record about a different workspace, whatever
+ * URL it happens to be served from.
+ */
+export function workspaceTurtle(args: {
+  /** The workspace's own dereferenceable URL. This becomes the record's subject. */
+  readonly workspaceIri: string;
+  readonly convener: Principal;
+  readonly roleProfile: string;
+  readonly title: string;
+  readonly supersedes?: string | null;
+  readonly extraTriples?: readonly string[];
+}): string {
+  return membershipTurtle({
+    subjectIri: args.workspaceIri,
+    type: WSP_TERMS.Workspace,
+    iris: [
+      [WSP_TERMS.convener, args.convener],
+      [WSP_TERMS.roleProfile, args.roleProfile],
+    ],
+    // A workspace record has no restriction flag: there is no `wsp:revoked` for a convener,
+    // and a workspace is unmade by superseding it rather than by carrying a boolean.
+    booleans: [],
+    supersedes: args.supersedes,
+    title: args.title,
+    extraTriples: args.extraTriples,
+    what: 'workspaceTurtle',
+  });
 }
 
 /** Render half a membership — the convener's half — as a `wsp:MembershipGrant`. */
@@ -425,7 +497,7 @@ export interface MembershipRead<T> {
  * from WHICH record" are different claims and only the pair is worth anything. See
  * `refuseFieldBinding` in roster.ts for what the fold does with it.
  */
-export type { FieldProvenance } from './roster.js';
+export type { FieldProvenance, WorkspaceRecord, ConvenerEvidence } from './roster.js';
 
 const problem = (s: string): string => s;
 
@@ -624,6 +696,121 @@ function subjectIriOf(subject: ParsedSubject): string | null {
 }
 
 /**
+ * Read a `wsp:Workspace` back off a pod and parse who it says convenes it.
+ *
+ * ★ WHAT THIS EXISTS TO ANSWER. `AttestationPolicy.convener` is the principal every grant is
+ * attested against, and it was a value the caller typed. A roster could be field-bound,
+ * content-bound and signer-checked — both binding fields reporting `'bound'` — and be about
+ * entirely the wrong memberships, because the party it treated as entitled to grant was
+ * whoever the caller nominated. `verify-can-live.ts` §8 demonstrated it live: naming BEE as
+ * convener changed the roster and the fold reported field binding as bound either way.
+ *
+ * A workspace IS a dereferenceable graph URL whose content declares `wsp:convener`, so the
+ * answer was readable all along and nothing was reading it. Same treatment as the two
+ * membership halves, through the same `payloadOf` and therefore the same digested region:
+ * ONE `get_descriptor`, fields out of the bytes the substrate re-digested, provenance naming
+ * the record they came from.
+ *
+ * ★ WHAT IT STILL DOES NOT ESTABLISH, and read this before extending the claim. This reader is
+ * handed a descriptor URL; it does not dereference the workspace to find one. So what a caller
+ * gets is "a record whose subject is <W> says X convenes it, and it is X's own signed record"
+ * — not "this is what <W> resolves to". A caller that obtained the URL by dereferencing <W>
+ * has both; a caller handed a URL by whoever assembled the fold has only the first. The
+ * structurally identical residue on `head` is residual gap 1.
+ */
+export async function readWorkspaceRecord(
+  descriptorUrl: string,
+  deps: StreamDeps,
+): Promise<MembershipRead<WorkspaceRecord>> {
+  const got = await fetchDescriptor(descriptorUrl, deps);
+  if ('why' in got) {
+    return { record: null, problems: [got.why], attestation: got.attestation };
+  }
+  const { res, attestation } = got;
+  const problems: string[] = [];
+
+  const payload = payloadOf(res);
+  if ('why' in payload) return { record: null, problems: [payload.why], attestation };
+  const found = oneSubjectOfType(payload.content, WSP_TERMS.Workspace, 'a workspace');
+  if ('why' in found) return { record: null, problems: [found.why], attestation };
+  const subject = found.subject;
+
+  // ★ THE SUBJECT IS THE WORKSPACE, so a record with no subject IRI is a record of no
+  // workspace. Refused rather than read: the fold's whole use of this record is to compare
+  // this value against the workspace it is folding, and a blank node compares to nothing —
+  // which, left to the fold, would be a record that quietly matched no workspace and quietly
+  // refused every roster it was handed to, for a reason nobody could see.
+  const workspaceIri = subjectIriOf(subject);
+  if (workspaceIri === null) {
+    return { record: null, problems: [problem(
+      'the workspace is a blank node, so it names no workspace at all. A workspace IS its URL '
+      + '— the fold compares this subject against the workspace it is folding — and a record '
+      + 'with no URL cannot be compared with anything',
+    )], attestation };
+  }
+
+  const convener = oneIri(subject, WSP_TERMS.convener, 'who convenes it');
+  const roleProfile = oneIri(subject, WSP_TERMS.roleProfile, 'which role profile governs it');
+  for (const [field, r] of [['convener', convener], ['roleProfile', roleProfile]] as const) {
+    if ('why' in r) problems.push(`wsp:${field}: ${r.why}`);
+  }
+  if ('why' in convener) {
+    // ★ NULL, AND NOT THE HALF-RECORD THE OTHER TWO READERS RETURN. A grant that cannot state
+    // its role still REVOKES and a damaged acceptance still WITHDRAWS, so both survive with
+    // their conferring field emptied and their restriction intact. A workspace record has no
+    // restricting half at all — no `wsp:revoked`, no `wsp:withdrawn`, nothing that takes
+    // authority away — so a record that does not say who convenes answers no question and
+    // there is nothing to preserve by keeping it.
+    return { record: null, problems, attestation };
+  }
+
+  return {
+    record: {
+      head: descriptorUrl,
+      workspace: workspaceIri,
+      convener: convener.iri,
+      // Parsed because the published shape requires it and reading a record means reading it;
+      // carried because a caller may want to check the role profile it folded against. Not
+      // fatal when unreadable: nothing in the fold consults it, so refusing the whole record
+      // over it would withhold a convener the record does state. Named in `problems` instead.
+      roleProfile: 'why' in roleProfile ? '' : roleProfile.iri,
+      attestation,
+      // ★ UNCONDITIONAL, WHERE THE OTHER TWO READERS USE `provenanceUnless`. The two-track
+      // rule collapses here for the reason above: the conferring field of a workspace record
+      // is its convener, and a record that could not state one returned null a few lines up.
+      // Everything reaching this line stated its convener inside the digested region, so
+      // there is no case where the record survives without provenance — and writing
+      // `provenanceUnless(false, …)` would imply one exists.
+      fieldProvenance: { source: 'payload', descriptor: descriptorUrl },
+    },
+    problems,
+    attestation,
+  };
+}
+
+/**
+ * Turn a workspace read into the {@link ConvenerEvidence} the fold takes.
+ *
+ * ★ THE POINT OF THIS ONE-LINER IS THE FAILING BRANCH. A caller that wrote
+ * `ws.record ? {kind: 'declared', record: ws.record} : undefined` would have a fold that
+ * silently stops checking the convener whenever `get_descriptor` has a bad minute — a
+ * transient read failure quietly reopening the gap, with `convenerBinding: 'unchecked'` the
+ * only trace and nobody reading it. This maps an unreadable workspace onto `'unreadable'`
+ * instead, which refuses to confer. Asking and getting silence is not the same as not asking,
+ * and the shortest correct spelling of that should be the one in front of callers.
+ */
+export function convenerEvidenceOf(read: MembershipRead<WorkspaceRecord>): ConvenerEvidence {
+  if (read.record !== null) return { kind: 'declared', record: read.record };
+  return {
+    kind: 'unreadable',
+    why: read.problems.length > 0
+      ? read.problems.join('; ')
+      : 'the read produced no workspace record and no reason, which is itself a reason not to '
+        + 'confer anything',
+  };
+}
+
+/**
  * Read a `wsp:MembershipGrant` back off a pod and parse its fields from the payload.
  *
  * ONE `get_descriptor`. The returned `Grant` carries `head` = the descriptor URL it was read
@@ -717,11 +904,16 @@ export async function readGrantRecord(
  *
  * ★ WHAT IT DOES NOT ESTABLISH, and read this before extending the claim:
  *
- *   — that the convener is entitled to convene. `AttestationPolicy.convener` is a value the
- *     CALLER types. Nothing here fetches <w> and checks `wsp:convener`. A stranger who
- *     signs a grant is refused only because the caller named someone else as convener.
- *   — that `wsp:member` was required of the record. The published shape does not constrain
- *     it; this reader does. See {@link WSP_TERMS.member}.
+ *   — that the convener is entitled to convene, UNLESS the caller also reads <w> with
+ *     {@link readWorkspaceRecord} and passes the result as
+ *     `AttestationPolicy.workspaceEvidence`. Without that, `AttestationPolicy.convener` is
+ *     still a value the CALLER types and a stranger who signs a grant is refused only because
+ *     the caller named someone else as convener. With it, the policy's convener must be the
+ *     one <w>'s own record declares, in bytes that record's signer signed.
+ *   — that a `urn:` member would be refused. The published shape constrains `wsp:member` to
+ *     `^https?://|^did:`; {@link oneIri} checks only that the term is an IRI, so on this one
+ *     field the SHAPE is the stricter of the two and the publish gate is what refuses. See
+ *     {@link WSP_TERMS.member}.
  *   — anything about a record whose `contentBinding` is not `'bound'`. Fields parsed from
  *     bytes nobody re-digested are fields that may have been changed after signing, which
  *     is why `requireFieldBinding` forces `requireContentBinding` on in the fold rather

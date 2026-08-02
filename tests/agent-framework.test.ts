@@ -32,11 +32,16 @@ import {
   createPGSL,
 } from '@interego/pgsl';
 import type {
-  PolicyContext,
-} from '@interego/abac';
-import type {
   AbstractAgentType,
   DecoratedAffordance,
+  // ★ `PolicyContext` was imported from '@interego/abac' — a DIFFERENT interface that
+  // happens to share the name. abac's is `{ subject, subjectAttributes, resource, action,
+  // now }`; pgsl's agent-framework one is `{ agentId, agentAAT, nodeUri, action }`.
+  // `makePolicyContext` below builds the pgsl shape and every function it feeds
+  // (evaluatePolicy, validateAction, ...) is imported from '@interego/pgsl', so the
+  // annotation contradicted both the literal above it and the call below it — 19 of the
+  // typecheck gate's pinned errors were this single wrong import path.
+  PolicyContext,
   PolicyRule,
   ProvTrace,
 } from '@interego/pgsl';

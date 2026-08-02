@@ -1,0 +1,44 @@
+name: ESLint
+
+# ★ THE WORKFLOW THAT DID NOT EXIST, WHICH IS WHY THE LINTER'S DEATH WENT UNNOTICED.
+#
+# `npm run lint` was `eslint packages/*/src/ tests/` from the initial commit onward, and
+# the repo has never contained an eslint config in any format. Under `eslint@^9` a missing
+# flat config is a hard error, so the script exited 2 having examined zero files. Nothing
+# in .github/workflows called it, so nobody saw. Fourteen other workflows existed; the one
+# for the linter did not.
+#
+# This runs `tools/lint-gate.mjs`, which additionally asserts that eslint EXAMINED files —
+# an eslint run that lints nothing exits 0, and that is the failure mode that hid here.
+#
+# Unfiltered by `paths:` on purpose. The gate's file-count floor is a claim about its lint
+# SURFACE — `TARGETS = ['packages', 'tests']` in lint-gate.mjs, not the whole tree; `deploy/`,
+# `applications/`, `tools/` and `mcp-server/` are linted by nothing. A path filter would let a
+# change to eslint.config.js's `ignores` (or a directory rename) collapse even that coverage
+# in a commit the workflow was configured to skip.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  eslint:
+    name: "Flat-config lint + ratcheted baseline (47 files pinned)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - name: Install
+        run: npm ci
+      # Fails on: any error in a file not on the baseline; any pinned file whose count
+      # grows; any pinned file whose count IMPROVES without the pin moving; and on eslint
+      # examining fewer files than the floor, which is what a silently-disabled config
+      # looks like from the outside.
+      - name: Lint gate
+        run: node tools/lint-gate.mjs

@@ -99,7 +99,20 @@ wspsh:MembershipGrantShape a sh:NodeShape ;
 wspsh:MembershipAcceptanceShape a sh:NodeShape ;
   sh:targetClass wsp:MembershipAcceptance ;
   rdfs:comment
-    "Published on the MEMBER's own pod. Names the grant it answers and the stream the member will write to. Without this the convener's grant is an unanswered offer, which is the point: a convener cannot manufacture a participant." ;
+    "Published on the MEMBER's own pod. Names who is accepting, the grant it answers, and the stream the member will write to. Without this the convener's grant is an unanswered offer, which is the point: a convener cannot manufacture a participant." ;
+  sh:property [
+    sh:path wsp:member ;
+    sh:minCount 1 ; sh:maxCount 1 ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https?://|^did:" ;
+    # This constraint was missing while `readAcceptanceRecord` refused an acceptance naming
+    # no member, so the guarantee rested on OUR reader instead of on the contract we publish
+    # — and a conformant reader elsewhere, validating the same record against the same
+    # shape, would have admitted an acceptance attributed to nobody. Publishing a shape is
+    # an invitation to check what we check; until this line it was an invitation to check
+    # less.
+    sh:message "wsp:member must be exactly one dereferenceable principal (https: WebID or did:) — the party whose acceptance this is, stated IN the record. Taking it from the pod it sits on or the key that signed it fails on exactly the record that matters: a withdrawal whose signature no longer verifies." ;
+  ] ;
   sh:property [
     sh:path wsp:accepts ;
     sh:minCount 1 ; sh:maxCount 1 ;

@@ -1,6 +1,40 @@
-#!/usr/bin/env node
 /**
  * The compiler that was missing from `npx vitest run tests/`.
+ *
+ * ── ON THE MISSING SHEBANG, AND ON THE STORY THIS BLOCK USED TO TELL ─────────
+ *
+ * This block asserted that the `#!/usr/bin/env node` the file shipped with (commit 34957ad)
+ * was what made globalSetup throw a SyntaxError inside vite-node before collection, and that
+ * the gate had therefore NEVER ONCE RUN under vitest. That is not true of this repo's
+ * toolchain. It is corrected here rather than quietly deleted, because the claim was
+ * specific enough to be checked and the next person will check it.
+ *
+ * Measured three ways against the locked versions — vitest 3.2.6, vite-node 3.2.4, vite
+ * 7.3.5, and `package-lock.json` has not moved since that commit:
+ *
+ *   — this file with the hashbang put back, `npx vitest run tests/ipfs-cid.test.ts`: the
+ *     gate loads and prints its line, exit 0;
+ *   — `git show HEAD:tools/typecheck-gate.mjs` verbatim, hashbang and all, imported by a
+ *     globalSetup: loads, and fails on its own RATCHET, not on a parse;
+ *   — a two-line `.mjs` carrying a hashbang, imported from a test file and from a
+ *     globalSetup: both fine.
+ *
+ * The toolchain handles it, in two places that are easy to find once looked for.
+ * `vite/dist/node/chunks/config.js:15429` defines `hashbangRE`, and `ssrTransformScript`
+ * takes its `fileStartIndex` from it so that every import and export it hoists is placed
+ * AFTER the hashbang, leaving it at index 0. `vite-node/dist/client.mjs:373` then overwrites
+ * a leading `#!` line with spaces before wrapping the module — guarded by
+ * `transformed[0] === "#"`, which is precisely the position vite just preserved.
+ *
+ * The premise about Node was wrong independently: Node strips a hashbang from ANY ES module
+ * it loads, not only from an entry file. `node -e` importing a hashbanged `.mjs` from another
+ * `.mjs` works.
+ *
+ * Something real did throw once — `scratchpad/vitest.nogate.config.ts` was written around an
+ * observed SyntaxError — but whatever it was is gone and it was not this. The hashbang stays
+ * off because nothing invokes this file as an executable: `.github/workflows/
+ * bridge-typecheck.yml` and every human run say `node tools/typecheck-gate.mjs`. It buys
+ * nothing. It is no longer claimed to cost anything either.
  *
  * ── WHAT WAS NOT BEING TYPECHECKED, AND HOW IT WAS FOUND ─────────────────────
  *
@@ -50,37 +84,102 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT = join(ROOT, 'tsconfig.check.json');
 
 /**
- * Files that already failed the day the compiler was first pointed at them, with the exact
- * count each produced. Every one of these predates this gate; none is in
- * `applications/shared-workspace/**` or `tests/workspace-*.test.ts`.
+ * The remaining debt: 97 errors in 28 files. Read as two separate numbers, because they moved
+ * for opposite reasons and averaging them would hide both.
  *
- * Two are not test files at all — they are application and relay source pulled in
- * TRANSITIVELY by a test's imports, and compiled here under `tsconfig.base.json`'s
- * `noUncheckedIndexedAccess` / `strict`, which their own tsconfigs do not set. They cannot be
- * excluded by path (an exclude does not stop a transitive import) and they are not this
- * round's to re-strict, so they are pinned like the rest.
+ *   4 in 1 file, down from the 60 in 20 files this gate shipped with. The other 19 files are
+ *   gone from this list because they are gone from the output — deleting a line here is how a
+ *   file becomes permanently gated, and every deletion below was earned by a fix, never by an
+ *   exclusion.
+ *
+ *   93 in 27 files, which are not new errors and not a regression: they are what appeared when
+ *   `tsconfig.check.json` was made to include the globs it already CLAIMED to include. See the
+ *   block above that group in {@link LEGACY}.
+ *
+ * ── WHAT THE OTHER 56 TURNED OUT TO BE ───────────────────────────────────────
+ *
+ * Worth recording, because the split was not what the counts suggested. The single largest
+ * entry (agent-framework.test.ts, 19) was ONE wrong import path: `PolicyContext` taken from
+ * '@interego/abac' when every function it was passed to came from '@interego/pgsl', which
+ * declares a different interface under the same name. Six more were tests naming types
+ * their package genuinely did not export — and in the DKG case the package was at fault:
+ * '@interego/core' exported `dkgRound1/2/3` while exporting none of their parameter or
+ * return types, so no external caller could name the argument to a function it could call.
+ * Nine were `Object is possibly 'undefined'` on indexed access; several of those sat under
+ * assertions that would have passed vacuously on an empty result, and now assert a length
+ * first. Two were genuine stricter-setting artifacts in transitively-pulled source (see
+ * below). None was noise.
+ *
+ * ── WHY THESE FOUR ARE STILL HERE ────────────────────────────────────────────
+ *
+ * All four are `tests/abac.test.ts`, and all four are the same finding: THE REPO HAS TWO
+ * INCOMPATIBLE TRUST VOCABULARIES AND THE TYPE ENCODES THE ONE NOTHING USES.
+ *
+ *   packages/core/src/model/types.ts   TrustLevel = 'SelfAsserted' | 'ThirdPartyAttested'
+ *                                                 | 'CryptographicallyVerified'
+ *   packages/registry/src/index.ts     issuerTrustLevel?: 'HighAssurance' | 'PeerAttested'
+ *                                                       | 'SelfAsserted'
+ *   docs/AGENT-PLAYBOOK.md L117        "HighAssurance > PeerAttested > SelfAsserted"
+ *   deploy/mcp-relay/server.ts L8141   advertises "Forces trust to HighAssurance"
+ *
+ * Only `SelfAsserted` is common to both. `TrustFacetData.trustLevel` is typed with core's
+ * union, but the vocabulary the relay advertises, the docs document, the registry weights,
+ * and this test exercises is the other one — so `trustLevel: 'HighAssurance'` cannot be
+ * written without a cast, and the two `as IRI` casts at L64/L69 are what was hiding it.
+ * A fourth-of-the-same: L232 constructs `amtaAxes` on a Trust facet, which
+ * `packages/abac/src/attribute-resolver.ts:129` reads back out through its own inline
+ * `(f as { amtaAxes?: ... })` cast because `TrustFacetData` never declared the field.
+ *
+ * Making the test compile means either changing it to stop exercising the vocabulary the
+ * system actually ships, or changing a core substrate type. Both are decisions about which
+ * vocabulary is canonical, not cleanups, so the errors stay pinned and VISIBLE rather than
+ * being cast away. Pinning is the honest state here; a cast would delete the question.
  */
 const LEGACY = {
-  'applications/foxxi-content-intelligence/src/activity-identity.ts': 2,
-  'deploy/mcp-relay/agent-interop-mount.ts': 2,
   'tests/abac.test.ts': 4,
-  'tests/agent-framework.test.ts': 19,
-  'tests/cas-split.test.ts': 3,
-  'tests/constitutional.test.ts': 1,
-  'tests/dkg.test.ts': 2,
-  'tests/hmd-conformance.test.ts': 1,
-  'tests/hypermedia-markdown.test.ts': 1,
-  'tests/infrastructure.test.ts': 4,
-  'tests/p2p.test.ts': 1,
-  'tests/pgsl-cas-persistence.test.ts': 2,
-  'tests/pgsl-describe.test.ts': 1,
-  'tests/projection-on-publish.test.ts': 1,
-  'tests/round25-pgsl-escaping.test.ts': 1,
-  'tests/round27-projection-escaping.test.ts': 1,
-  'tests/rte-conformance.test.ts': 1,
-  'tests/solid.test.ts': 7,
-  'tests/transactions.test.ts': 4,
-  'tests/xapi-conformance.test.ts': 2,
+
+  // ── ★ THE 93 THAT ARRIVED WITH THE GLOBS, NOT WITH A CHANGE ─────────────────
+  //
+  // `tsconfig.check.json` claimed its include list was "deliberately the same globs
+  // `vitest.config.ts` runs", under a warning that a divergence between the two reopens the
+  // gap. It had diverged: vitest also runs `applications/**/tests/**`,
+  // `integrations/**/tests/**` and `mcp-server/tests/**`, which is 66 of the 185 files it
+  // executes. A third of the suite ran with no compiler behind it, and the comment said
+  // otherwise.
+  //
+  // Closing the divergence surfaced these. Every one predates it; none is in this round's
+  // surface. They are pinned rather than excluded for the reason the whole ratchet exists —
+  // an exclusion is permanent and silent, a pin is visible and only ever goes down. The
+  // `src/` entries are transitively pulled in by the tests above them and are stricter-setting
+  // artifacts: those files ARE compiled by their own bridge tsconfig, which does not turn on
+  // everything `tsconfig.base.json` does.
+  'applications/_shared/tests/aggregate-privacy.test.ts': 24,
+  'applications/_shared/vc-jwt/bbs-2023.ts': 1,
+  'applications/agentic-performance-practice/tests/regime-read-is-not-species-gated.test.ts': 1,
+  'applications/foxxi-content-intelligence/dashboard-app/src/types.ts': 1,
+  'applications/foxxi-content-intelligence/src/clr.ts': 5,
+  'applications/foxxi-content-intelligence/src/content-forms.ts': 1,
+  'applications/foxxi-content-intelligence/src/course-graph.ts': 5,
+  'applications/foxxi-content-intelligence/src/course-identity.ts': 2,
+  'applications/foxxi-content-intelligence/src/course-skill-bridge.ts': 7,
+  'applications/foxxi-content-intelligence/src/pod-snapshot-publisher.ts': 1,
+  'applications/foxxi-content-intelligence/src/pod-statement-store.ts': 1,
+  'applications/foxxi-content-intelligence/src/ssrf-guard.ts': 4,
+  'applications/foxxi-content-intelligence/tests/course-skill-bridge.test.ts': 4,
+  'applications/foxxi-content-intelligence/tests/round13-remediation.test.ts': 1,
+  'applications/foxxi-content-intelligence/tests/round4-remediation.test.ts': 1,
+  'applications/foxxi-content-intelligence/tests/round45-remediation.test.ts': 2,
+  'applications/foxxi-content-intelligence/tests/round7-remediation.test.ts': 3,
+  'applications/foxxi-content-intelligence/tests/scorm-fingerprint.test.ts': 1,
+  'applications/learner-performer-companion/tests/integration.test.ts': 2,
+  'applications/learner-performer-companion/tests/tier6-scorm-ingestion.test.ts': 3,
+  'applications/learner-performer-companion/tests/tier6b-scorm-zip.test.ts': 5,
+  'applications/lrs-adapter/tests/tier8-real-pod-end-to-end.test.ts': 2,
+  'integrations/compliance-overlay/src/aggregate-bridge.ts': 6,
+  'integrations/compliance-overlay/src/overlay.ts': 3,
+  'integrations/compliance-overlay/tests/aggregate-bridge.test.ts': 5,
+  'integrations/openclaw-memory/tests/bridge.test.ts': 1,
+  'mcp-server/tests/stdio-serves-both-eras.test.ts': 1,
 };
 
 /** `path/to/file.ts(12,3): error TS1234: …` — the only line shape tsc reports errors on. */

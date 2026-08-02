@@ -86,11 +86,15 @@ describe('ratification', () => {
   it('cooling period delays ratification', () => {
     const a = proposeAmendment({
       id: 'urn:a:3' as IRI, proposedBy: ALICE,
-      amends: 'urn:p:1' as IRI, tier: 3,
+      // Tier 3 has 0 cooling, so this case needs Tier 2 (7 days). It used to propose at
+      // tier 3 and then assign `a.tier = 2` before ratifying — an assignment to a readonly
+      // property that only compiled because nothing type-checked this file. Proposing at
+      // tier 2 is equivalent: `proposeAmendment` only stores `tier`, `vote` never reads it,
+      // and `tryRatify` is the first thing that does.
+      amends: 'urn:p:1' as IRI, tier: 2,
       diff: { summary: 'x' },
       proposedAt: '2026-04-24T00:00:00Z',
     });
-    // Tier 3 has 0 cooling, so this case uses Tier 2 (7 days):
     votersFromArray(a, [
       { voter: 'urn:b', modal: 'Asserted' },
       { voter: 'urn:c', modal: 'Asserted' },
@@ -103,7 +107,6 @@ describe('ratification', () => {
       { voter: 'urn:j', modal: 'Asserted' },
       { voter: 'urn:k', modal: 'Asserted' },
     ]);
-    a.tier = 2;
     tryRatify(a, undefined, '2026-04-25T00:00:00Z'); // 1 day after, < 7-day cool
     expect(a.status).toBe('PendingCooling');
     tryRatify(a, undefined, '2026-05-05T00:00:00Z'); // past cooling

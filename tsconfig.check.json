@@ -41,12 +41,25 @@
     "noUnusedParameters": false,
     "types": ["node"]
   },
-  // Deliberately the same globs `vitest.config.ts` runs, plus the application source those
-  // tests import. If vitest can execute it, this must be able to compile it — that identity
-  // is the whole point, and a divergence between the two lists reopens the gap.
+  // ★ THE SAME GLOBS `vitest.config.ts` RUNS, plus the application source those tests import.
+  // If vitest can execute it, this must be able to compile it — that identity is the whole
+  // point, and a divergence between the two lists reopens the gap.
+  //
+  // It HAD diverged, and the comment here asserted the identity anyway. The list was
+  // `tests/**` and `applications/shared-workspace/**`; vitest's `include` also names
+  // `applications/**/tests/**`, `integrations/**/tests/**` and `mcp-server/tests/**`. That is
+  // 66 of the 185 files vitest executes — a third of the suite — running with no compiler
+  // behind them, under a comment warning that exactly this reopens the gap. Adding the three
+  // missing globs surfaced 93 further errors in 27 files, all pre-existing, none new; they are
+  // pinned in `tools/typecheck-gate.mjs`'s LEGACY the same way the first 60 were, so the debt
+  // is visible and frozen rather than excluded. Gate cost went from ~9.5s to the time printed
+  // by `node tools/typecheck-gate.mjs`.
   "include": [
     "tests/**/*.ts",
-    "applications/shared-workspace/**/*.ts"
+    "applications/shared-workspace/**/*.ts",
+    "applications/**/tests/**/*.ts",
+    "integrations/**/tests/**/*.ts",
+    "mcp-server/tests/**/*.ts"
   ],
   "exclude": ["node_modules", "**/dist/**", "scratchpad/**"]
 }

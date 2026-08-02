@@ -9,7 +9,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createPGSL, ingest, projectHolon, type IRI, type NodeProvenance } from '@interego/pgsl';
+import { createPGSL, ingest, projectHolon, type NodeProvenance } from '@interego/pgsl';
+// `IRI` is declared in @interego/core; @interego/pgsl imports it but does not re-export it.
+import type { IRI } from '@interego/core';
 
 describe('round-27 — projectHolon escapes the injected provenance IRI', () => {
   it('a > in provenance.wasAttributedTo cannot break out of <…> (plain + typedFacets)', () => {

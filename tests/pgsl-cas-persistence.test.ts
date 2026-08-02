@@ -9,8 +9,12 @@
  * the etag is read via HEAD), and the tests drive the exact conflict path.
  */
 import { describe, it, expect } from 'vitest';
-import { createPGSL, ingest, promoteInstanceEncryptedCAS, resolveLatticeFromPodDetailed, type IRI } from '@interego/pgsl';
-import { deriveEncryptionKeyPair } from '@interego/core';
+import { createPGSL, ingest, promoteInstanceEncryptedCAS, resolveLatticeFromPodDetailed } from '@interego/pgsl';
+// `IRI` is core's type. `@interego/pgsl` only ever imported it — `export * from './types.js'`
+// does not re-export a name that types.ts itself imported — so `type IRI` from '@interego/pgsl'
+// never resolved. Taking it from the package that declares it is the fix in the right
+// direction; re-exporting a core type from a leaf package would invert the dependency.
+import { deriveEncryptionKeyPair, type IRI } from '@interego/core';
 
 const kp = deriveEncryptionKeyPair('0'.repeat(64));
 const prov = { wasAttributedTo: 'https://example.test/agent' as IRI, generatedAtTime: '2026-07-17T00:00:00Z' };
@@ -33,7 +37,13 @@ function mockPod() {
       const ifNone = h.get('If-None-Match');
       if (ifNone === '*' && body != null) return new Response(null, { status: 412 });   // create-guard
       if (ifMatch && ifMatch !== tag()) return new Response(null, { status: 412 });      // stale update
-      body = await new Response(init?.body as BodyInit).text();
+      // `?? null` rather than `as BodyInit`. `RequestInit['body']` is already
+      // `BodyInit | null | undefined` and `Response` accepts `BodyInit | null`, so the only
+      // work the cast did was drop `undefined` — while making this file depend on the DOM
+      // `BodyInit` global, which reaches this program only because `@types/jsdom` (pulled in
+      // for one unrelated test) references lib.dom. Dropping that test would have broken
+      // this one for no visible reason.
+      body = await new Response(init?.body ?? null).text();
       etag += 1;
       return new Response(null, { status: body === null ? 201 : 205 });                 // no etag on PUT
     }

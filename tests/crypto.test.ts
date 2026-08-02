@@ -199,9 +199,15 @@ describe('Real Delegation (EIP-712)', () => {
 
     // Tamper with the scope
     const tampered = { ...delegation, scope: 'Admin' };
-    const valid = verifyDelegationSignature(tampered);
-    // The message field still has the original scope, so this should still verify
-    // But if we tamper the message too:
+    // ★ ASSERTED, NOT NARRATED. This line used to be `const valid = verify(tampered);`
+    // with no `expect` anywhere — the comment below claimed a result the test never
+    // checked, so the scope-only case contributed nothing and a regression that made
+    // `verifyDelegationSignature` read `scope` instead of `message` would have passed.
+    // The claim is that the signature covers `message` and NOTHING ELSE, which means a
+    // tampered `scope` alone still verifies. That is the property worth pinning: it is
+    // what makes the deep-tamper case below the real defence.
+    expect(verifyDelegationSignature(tampered)).toBe(true);
+    // Tampering the signed `message` too is what breaks it:
     const deepTampered = {
       ...delegation,
       message: delegation.message.replace('ReadWrite', 'Admin'),

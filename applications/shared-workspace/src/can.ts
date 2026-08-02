@@ -42,6 +42,7 @@ import {
   type Roster, type RoleProfile, type Capability, type Principal, type DelegatedScope,
   type SignerResolver, type SignerFinding, type Attestation, type AttestationPolicy,
   type AttributionGrade, type ContentBinding, type FieldProvenance,
+  type WorkspaceRecord, type ConvenerEvidence, type ConvenerBinding,
 } from './roster.js';
 import type { ComposedView, ComposedEntry, ComposableMember } from './compose.js';
 
@@ -465,4 +466,7 @@ export type {
   Roster, RoleProfile, Capability, Principal, DelegatedScope,
   SignerResolver, SignerFinding, Attestation, AttestationPolicy, AttributionGrade,
   ContentBinding, FieldProvenance,
+  // The convener evidence a caller assembles from `readWorkspaceRecord` and hands to
+  // `AttestationPolicy.workspaceEvidence`, plus what the fold reports back about it.
+  WorkspaceRecord, ConvenerEvidence, ConvenerBinding,
 };
