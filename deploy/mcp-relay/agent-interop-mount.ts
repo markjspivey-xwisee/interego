@@ -23,8 +23,11 @@ import {
   EngagementEngine, renderCard, capabilitiesFromAffordances, isEngineError, availableOperations,
   PROFILES,
   type Capability, type InteropProfile, type InteropErrorKind, type InteropOperation, type Part,
-  type EngineError,
+  type EngineError, type Engagement,
 } from '@interego/agent-interop';
+import {
+  DurableEngagements, defaultEngagementStore, StoreFault, type EngagementRecordStore,
+} from './engagement-store.js';
 
 export interface AgentInteropDeps {
   /** Absolute public base URL of this relay. */
@@ -39,6 +42,16 @@ export interface AgentInteropDeps {
    * this mount changes when it does, which is the point of the seam.
    */
   engine?: EngagementEngine;
+  /**
+   * Durable storage behind the engine's working set.
+   *
+   * OMIT for the environment-configured default (Postgres when RELAY_PGSL_PG_CONNSTR is
+   * set, nothing otherwise). Pass `null` to force memory-only regardless of the
+   * environment; pass a store to supply your own. Explicit `null` rather than "falsy
+   * means default" so a test can pin the memory-only path without depending on which
+   * variables happen to be set in the shell that runs it.
+   */
+  engagementStore?: EngagementRecordStore | null;
   /** Agent identity for the card. */
   agent: { id: string; name: string; description: string; tenant?: string };
   /** The relay's LIVE affordance set. Called per card render so the card tracks
@@ -338,6 +351,37 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
   // honest rather than silent.
   const engine = deps.engine ?? new EngagementEngine(base);
 
+  // ── Durability ──────────────────────────────────────────────────────────────
+  //
+  // The seam above was built for an engine that outlives the process and nobody supplied
+  // one, so the default engine's Map stayed the system of record and every minted id
+  // stopped resolving at the next rolling deploy. Rather than a second engine
+  // implementation, the engine keeps its SYNCHRONOUS surface — the conformance suite runs
+  // against it, and a network round trip inside the transition legality rules has no
+  // defined partial-failure meaning — and the I/O lands here, where the handlers are
+  // already async: `warm` before a synchronous read, `persist` before the response.
+  //
+  // Awaited, never fire-and-forget. A background flush is one round trip cheaper and
+  // recreates the same lie in a narrower window: respond with an id, die before the
+  // flush, and the id just handed out resolves nowhere.
+  const durable = new DurableEngagements(
+    engine,
+    deps.engagementStore !== undefined ? deps.engagementStore : defaultEngagementStore(),
+  );
+  // Say which mode this is, unprompted. A deployment that believes it is durable and is
+  // not is worse off than one that knows it is not, because the second knows to keep
+  // whatever it needs somewhere else.
+  //
+  // ★ "CONFIGURED", NOT "DURABLE". This fires on a store being wired in, and the Postgres
+  // connection is opened lazily on the first request — so the old wording announced
+  // "records are DURABLE" at boot for a connection string that might be wrong, unreachable,
+  // or pointed at a database with no grant, while every subsequent request faulted. A boot
+  // banner cannot know more than what it was handed, and claiming more is the same lie
+  // this module exists to remove, relocated into a log line.
+  deps.log(durable.enabled
+    ? '[agent-interop] durable engagement store CONFIGURED — ids are written before they are answered, and survive restart and eviction once the store answers (a listing still only covers ids this process has read; connectivity is proven per request, not here)'
+    : '[agent-interop] engagement records are IN-MEMORY ONLY — set RELAY_PGSL_PG_CONNSTR to make minted engagement ids survive a restart');
+
   const identityFor = (capabilities: Capability[]) => ({
     id: deps.agent.id,
     name: deps.agent.name,
@@ -438,6 +482,63 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
     for (const route of profile.wire) {
       const path = compilePath(mountBase, route.path);
       const handler = async (req: Request, res: Response): Promise<void> => {
+        /**
+         * The id of a record this request has MUTATED but not yet durably written.
+         *
+         * ★ THE ORDERING RULE HAD A BACK DOOR AND IT WAS REACHABLE. `engine.open` inserts
+         * into the working set before any durable write exists, and three exits between
+         * there and `persistThenSend` used to just return: `begin` failing, `fail`
+         * failing, and `complete` failing — the last of which happens whenever the
+         * injected capability returns more than 128 parts or more than 32 outputs, i.e.
+         * from ordinary data. The caller got a 400 and the record stayed in the heap with
+         * nothing behind it, which `list` then reported and the resolver then denied.
+         *
+         * Tracking the mutation and clearing it only on a successful write turns "every
+         * branch must remember to clean up" into "the one branch that persists is the one
+         * that opts out" — the same reason `persistThenSend` exists at all. The `finally`
+         * below is what makes it cover exits nobody has written yet.
+         */
+        let unpersisted: string | undefined;
+        /**
+         * Take responsibility for `id` until it is written or dropped.
+         *
+         * ★ THE MARK IS TOLD TO THE DURABLE FACADE, NOT JUST KEPT HERE. As a local it only
+         * served this handler's `finally`. The facade needs it too, because `warm` had no
+         * way to tell "the store says this id is absent" from "the store has not been told
+         * about it yet" and answered both by DELETING the record — so a concurrent read,
+         * including the owner's own listing, destroyed an engagement whose write was still
+         * an `await` away and the succeeding request answered 404. Now a held id reads as
+         * `unwritten`: other readers decline, nobody deletes.
+         */
+        const holdUnpersisted = (id: string): void => {
+          if (unpersisted === id) return;
+          // A handler only ever has one engagement in flight; releasing any previous mark
+          // keeps `hold`/`settle` paired even if that ever stops being true.
+          if (unpersisted) durable.settle(unpersisted);
+          unpersisted = id;
+          durable.hold(id);
+        };
+        /**
+         * Durably record the mutation, THEN answer.
+         *
+         * Every mutating exit goes through here so none can be added later that responds
+         * over an unpersisted record — the ordering is the property, and a helper is how
+         * it stops being a thing each branch has to remember. A write failure throws to
+         * the handler's catch, which answers the profile's `internal` error: the caller
+         * learns the operation did not land instead of receiving a 200 over a record only
+         * this heap holds. That covers a refused compare-and-swap too — a concurrent
+         * mutation is answered as a failure rather than as a 200 over a turn that a
+         * competing write is about to overwrite.
+         */
+        const persistThenSend = async (e: Engagement, op: InteropOperation): Promise<void> => {
+          holdUnpersisted(e.id);
+          await durable.persist(e);
+          // Written: the store answers for it now, so readers may too. Cleared BEFORE the
+          // response so the `finally` cannot abandon a record that landed.
+          unpersisted = undefined;
+          durable.settle(e.id);
+          sendEngagement(res, profile, e, base, op);
+        };
         try {
           // ── Protocol version, if this profile pins one ────────────────────
           //
@@ -487,6 +588,19 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             const ref = profile.continuationField
               ? payload[profile.continuationField]
               : undefined;
+            // A continuation names a record that may predate this process, so the engine's
+            // view of it is reconciled with durable storage before the synchronous
+            // append reads it. Without the warm, continuing an engagement across a rolling
+            // deploy answered `notFound` for an id this relay had minted and promised.
+            //
+            // `unwritten` — a record another in-flight request opened and has not written —
+            // is refused rather than appended to. The id cannot legitimately be held by this
+            // caller yet (it is not in a response until its write lands), and appending
+            // would put two handlers on one object with one compare-and-swap baseline
+            // between them.
+            if (typeof ref === 'string' && ref && await durable.warm(ref) === 'unwritten') {
+              sendErr(res, profile, 'notFound'); return;
+            }
             const r = typeof ref === 'string' && ref
               ? engine.appendTurn({ id: ref, caller, role: 'requester', parts })
               : engine.open({ caller, parts, ...(capability ? { capability } : {}) });
@@ -500,6 +614,11 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             // false on the card and refused at their routes, so nothing here
             // pretends otherwise.
             const eng = (r as { ok: true; value: typeof r.value }).value;
+            // From here the working set holds a mutation the store does not, until
+            // `persistThenSend` clears this or the `finally` drops the record. Declared to
+            // the durable facade too, so the `await` below — an invocation of arbitrary
+            // length — is not a window in which another reader can delete this record.
+            holdUnpersisted(eng.id);
             const cap = eng.capability;
             if (cap && deps.invokeCapability) {
               const began = engine.begin(eng.id, caller);
@@ -531,7 +650,12 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
               if (outcome.ok === false) {
                 const failed = engine.fail({ id: eng.id, caller, reason: (outcome as { reason: string }).reason });
                 if (isEngineError(failed)) { sendErr(res, profile, wireKind(failed.error.kind)); return; }
-                sendEngagement(res, profile, (failed as { ok: true; value: typeof eng }).value, base, route.operation);
+                // ONE durable write per request, at the terminal state — not one per
+                // intermediate transition. The `working` state exists for the length of
+                // this handler and is never observed by anyone else, and a crash before
+                // this line loses an engagement whose id has NOT been handed out, so
+                // nothing outside this process is left holding a broken promise.
+                await persistThenSend((failed as { ok: true; value: typeof eng }).value, route.operation);
                 return;
               }
               const done = engine.complete({
@@ -539,25 +663,51 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
                 outputs: [(outcome as { output: { name?: string; description?: string; parts: Part[] } }).output],
               });
               if (isEngineError(done)) { sendErr(res, profile, wireKind(done.error.kind), done.error.detail); return; }
-              sendEngagement(res, profile, (done as { ok: true; value: typeof eng }).value, base, route.operation);
+              await persistThenSend((done as { ok: true; value: typeof eng }).value, route.operation);
               return;
             }
 
-            sendEngagement(res, profile, eng, base, route.operation);
+            await persistThenSend(eng, route.operation);
             return;
           }
 
           if (route.operation === 'getEngagement') {
-            const r = engine.get(engagementIdFrom(req), caller);
+            const wanted = engagementIdFrom(req);
+            // An id another request opened and has not yet written is answered as a miss,
+            // not served and not deleted — see `WarmVerdict`. Serving it would answer for a
+            // record no other replica can see; deleting it was the 404-over-a-succeeding-
+            // request bug this branch used to cause.
+            if (await durable.warm(wanted) === 'unwritten') {
+              sendErr(res, profile, 'notFound'); return;
+            }
+            const r = engine.get(wanted, caller);
             if (isEngineError(r)) { sendErr(res, profile, wireKind(r.error.kind)); return; }
             sendEngagement(res, profile, r.value, base, route.operation);
             return;
           }
 
           if (route.operation === 'listEngagements') {
+            // ★ THIS READ USED TO SKIP THE STORE ENTIRELY, and the comment that stood here
+            // disclosed only half of what that cost. It said the listing under-reports
+            // after a restart. It also OVER-reported: it answered from the working set, so
+            // it handed back ids the sibling resolver 404'd, and it rendered one replica's
+            // stale copy of a record another replica had already completed — cancel
+            // affordance and all. The module's whole argument is that a mutable record
+            // cannot be served from a cache hit; this was the one read exempt from it.
+            //
+            // The engine's page is bounded (≤200 by its own clamp) and every id in it is
+            // now checked against the store before it is rendered, so the page is short
+            // rather than wrong when the store has moved on.
+            //
+            // What survives is the half that is genuinely hard: a listing cannot DISCOVER
+            // an id this process has never read, so after a restart it under-reports until
+            // reads warm the working set. Every id it omits still resolves individually.
+            // Fixing that needs a per-owner index whose two cheap shapes are both worse
+            // than the gap — engagement-store.ts carries the full reasoning.
             const limit = Number.parseInt(String(req.query['limit'] ?? '50'), 10);
             const r = engine.list(caller, Number.isFinite(limit) ? limit : 50);
             if (isEngineError(r)) { sendErr(res, profile, wireKind(r.error.kind)); return; }
+            const page = await durable.reconcile(r.value, caller);
             if (profile.wireMediaType) res.type(profile.wireMediaType);
             // The collection member name comes from the profile. This line used to
             // hardcode one particular protocol's field name in a mount that is
@@ -565,22 +715,49 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
             // other wire-shape decision.
             const member = profile.responseEnvelope?.[route.operation] ?? 'items';
             res.status(200).json({
-              [member]: r.value.map(e => profile.engagement.render(e, { serviceUrl: base })),
+              [member]: page.map(e => profile.engagement.render(e, { serviceUrl: base })),
             });
             return;
           }
 
           if (route.operation === 'cancelEngagement') {
-            const r = engine.cancel(engagementIdFrom(req), caller);
+            const wanted = engagementIdFrom(req);
+            // Cancelling a record that has not been written yet is refused for the same
+            // reason a continuation of one is: the id is not in anyone's hands until its
+            // write lands, and the request that owns it is about to write it.
+            if (await durable.warm(wanted) === 'unwritten') {
+              sendErr(res, profile, 'notFound'); return;
+            }
+            const r = engine.cancel(wanted, caller);
             if (isEngineError(r)) { sendErr(res, profile, wireKind(r.error.kind)); return; }
-            sendEngagement(res, profile, r.value, base, route.operation);
+            // Recorded even though `persistThenSend` is the very next statement: the
+            // property is "a mutation is tracked from the moment it exists", and a branch
+            // that relies on there being no exit in between is one refactor from being
+            // the next hole.
+            holdUnpersisted(wanted);
+            await persistThenSend(r.value, route.operation);
             return;
           }
 
           sendErr(res, profile, 'unsupportedOperation');
         } catch (err) {
+          // A StoreFault lands here too, and renders as the profile's `internal` error.
+          // That loses information — "the record store is unreachable" is not "we broke" —
+          // for the same reason `wireKind` collapses `gone`: these protocols' error
+          // vocabularies are fixed by their own specifications and inventing a code inside
+          // one would be non-conformant. What matters is the property that is preserved: a
+          // fault NEVER renders as notFound, so an unreachable store can never be read as
+          // a definitive "no such engagement". The protocol-neutral `/engagements/:id`
+          // route is ours, and answers 503 with the distinction intact.
           deps.log(`[agent-interop] ${profile.slug} ${route.operation} failed: ${(err as Error).message}`);
           sendErr(res, profile, 'internal');
+        } finally {
+          // Whatever this request did, it does not leave behind a record the durable store
+          // has never seen. `abandon` is a no-op without a store (there the working set IS
+          // the system of record) and idempotent after a failed `persist`, which already
+          // dropped the record. It also releases the hold taken by `holdUnpersisted`, so
+          // the id stops reading as `unwritten` to everyone else.
+          if (unpersisted) durable.abandon(unpersisted);
         }
       };
       if (route.method === 'GET') app.get(path, handler);
@@ -619,6 +796,18 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
         // Reconstruct the full id: the engine keys on the whole URL it minted, not on the
         // trailing segment, because the id IS the URL.
         const id = `${base}/engagements/${String((req.params as Record<string, string>)['id'] ?? '')}`;
+        // The record may predate this process — this route is the whole reason the store
+        // exists, since it is where a peer following the id it was handed arrives.
+        //
+        // ★ AND IT IS WHERE A READ MUST NOT DESTROY ONE. An id another request opened
+        // moments ago and has not written yet is answered 404 — the same answer a guess
+        // gets, which is right, because the id has not been handed to anyone yet. It used
+        // to be answered by FORGETTING the record, which 404'd the request that was
+        // creating it.
+        if (await durable.warm(id) === 'unwritten') {
+          res.status(404).json({ error: 'notFound' });
+          return;
+        }
         const found = engine.get(id, caller);
         if (!found.ok) {
           // ★ 410 ONLY for the engagement's own owner, and only when it was evicted.
@@ -652,6 +841,17 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
         res.setHeader('Content-Type', 'application/json');
         res.status(200).json(renderProfile.engagement.render(found.value, { serviceUrl: base }));
       } catch (err) {
+        // ★ 503, NOT 404, WHEN THE STORE CANNOT ANSWER. This route is ours, so unlike the
+        // wire routes above it is free to make the distinction its protocol-bound siblings
+        // cannot. A reachable-but-empty store and an unreachable one are different facts,
+        // and only the first justifies telling a peer its id does not exist. Collapsing
+        // them is how a database blip becomes a permanent negative in someone's cache.
+        if (err instanceof StoreFault) {
+          deps.log(`[agent-interop] engagement store fault resolving an id: ${err.message}`);
+          res.setHeader('Cache-Control', 'no-store');
+          res.status(503).json({ error: 'engagement store unavailable' });
+          return;
+        }
         deps.log(`[agent-interop] engagement resolve failed: ${(err as Error).message}`);
         res.status(500).json({ error: 'internal' });
       }

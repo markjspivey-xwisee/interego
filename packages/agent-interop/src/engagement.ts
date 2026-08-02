@@ -206,6 +206,71 @@ export class EngagementEngine {
     return { ok: true, value: engagement };
   }
 
+  /**
+   * Admit a record that came FROM durable storage.
+   *
+   * ★ THE ORDERING RULE THIS EXISTS TO SERVE. The engagements map is a working set, not a
+   * system of record: it empties on restart and evicts under its own bound. A deployment
+   * that wants its minted ids to keep resolving pairs this engine with a durable store and
+   * keeps the map a strict SUBSET of it — nothing enters here except immediately after a
+   * successful durable write, or as the result of a read FROM the durable store. This is
+   * that second door, and it is the only one. Admitting a record from anywhere else would
+   * let one process answer for something no other replica can see, which is the failure
+   * durability was added to remove rather than relocate.
+   *
+   * ★ IT CLEARS THE TOMBSTONE. Eviction leaves an owner-scoped marker so `get` can say
+   * `gone` instead of the false `notFound`. But `gone` is also false once the record is
+   * back from durable storage — it says "real, and no longer kept" about something that
+   * IS kept. Re-admitting therefore retires the marker.
+   *
+   * The record is re-inserted at the tail, so eviction order tracks last use rather than
+   * first write. That is a deliberate consequence, not an oversight: under a durable store
+   * evicting the least recently touched record is what a bounded cache should do.
+   *
+   * ★ IT IS NOT, HOWEVER, A LISTING ORDER, and for a while it silently was one. `list` read
+   * the map in insertion order, so re-admitting a page reversed the order of the NEXT
+   * listing and successive identical calls alternated. Map order is now a cache-eviction
+   * concern only; `list` sorts on `createdAt`.
+   *
+   * Deliberately NOT owner-scoped, and safe not to be: it takes no caller and returns
+   * nothing, so it discloses nothing. Every READ of what it admits still goes through the
+   * owner check in `get`.
+   */
+  admit(e: Engagement): void {
+    this.tombstones.delete(e.id);
+    this.engagements.delete(e.id);
+    this.evictIfNeeded();
+    this.engagements.set(e.id, e);
+  }
+
+  /**
+   * Drop a record from the working set WITHOUT a tombstone.
+   *
+   * Two callers, one rule: this map must never answer for something durable storage does
+   * not have. A read that finds the store has no such record calls this; so does a write
+   * whose durable put failed, because the alternative is a record that resolves here and
+   * nowhere else, until the next restart denies it.
+   *
+   * No tombstone, unlike eviction, because the facts differ. Eviction says "this was real
+   * and we dropped it for space" — a retention limit somebody can raise. This says nothing
+   * at all, because the record was never durably real, and claiming otherwise to its own
+   * would-be owner is just a different false answer.
+   *
+   * ★ IT ALSO RETIRES ANY TOMBSTONE ALREADY STANDING, and leaving that line out made the
+   * paragraph above a lie. `forget` only deleted from `engagements`, so a record the bound
+   * had already evicted kept its marker, and the very next owner-scoped read answered
+   * `gone` — rendered by the resolver route as 410 "dropped at <t> to stay within the
+   * retention bound … Raise maxEngagements". That reason is false for every caller of this
+   * method: they call it because a durable write FAILED or because the store says the
+   * record is not there, neither of which is a retention limit and neither of which
+   * raising `maxEngagements` would fix. Saying the wrong cause with a confident status
+   * code is worse than saying nothing, so the marker goes when the record does.
+   */
+  forget(id: string): void {
+    this.engagements.delete(id);
+    this.tombstones.delete(id);
+  }
+
   /** Owner-scoped read. Possession of an id is never authority. */
   get(id: string, caller: string | undefined): EngineResult<Engagement> {
     if (!caller) return fail('unauthenticated', 'a verified caller is required');
@@ -230,12 +295,36 @@ export class EngagementEngine {
     return { ok: true, value: e };
   }
 
-  /** Owner-scoped list — only the caller's own engagements, newest first. */
+  /**
+   * Owner-scoped list — only the caller's own engagements, newest first.
+   *
+   * ★ "NEWEST FIRST" IS DECIDED BY `createdAt`, NOT BY MAP ORDER, AND IT HAD TO BE.
+   *
+   * This used to be `mine.slice(-bounded).reverse()` — the last N in insertion order. That
+   * is only "newest first" while insertion order tracks creation order, and `admit` breaks
+   * exactly that: it re-inserts at the tail so eviction can be least-recently-used. Pair
+   * the engine with a durable store and every listing warms its own page, which re-admits
+   * every record it listed, which reverses their map order — so two identical successive
+   * listings came back newest-first, then oldest-first, then newest-first again. A caller
+   * paging or diffing a list saw the order flip under it with no write anywhere.
+   *
+   * Sorting on the record's own creation time makes the answer a property of the records
+   * rather than of the reads that happened to precede it, so warming, eviction and restart
+   * order cannot move it. Ties (records minted in the same millisecond) break on the id, so
+   * the order is at least deterministic; the id's mint counter is base36 and compared as
+   * text, so within one millisecond that tiebreak is stable but not necessarily mint order.
+   *
+   * The bound now takes the newest N rather than the most recently TOUCHED N, which is what
+   * a caller asking for "newest first, limit N" was already being promised.
+   */
   list(caller: string | undefined, limit = 50): EngineResult<Engagement[]> {
     if (!caller) return fail('unauthenticated', 'a verified caller is required');
     const bounded = Math.max(1, Math.min(limit, 200));
     const mine = [...this.engagements.values()].filter(e => e.openedBy === caller);
-    return { ok: true, value: mine.slice(-bounded).reverse() };
+    mine.sort((a, b) => (a.createdAt === b.createdAt
+      ? (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+      : (a.createdAt < b.createdAt ? 1 : -1)));
+    return { ok: true, value: mine.slice(0, bounded) };
   }
 
   /** Append a turn. Owner-scoped; refuses once terminal. */

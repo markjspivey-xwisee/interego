@@ -37,6 +37,8 @@
  * Exits non-zero on any failing assertion.
  */
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { ContextDescriptor } from '@interego/core';
 import type { FetchFn, IRI } from '@interego/core';
 import {
@@ -242,6 +244,44 @@ async function main(): Promise<void> {
       `${sz.label}: publish() (${tPublish.ms.toFixed(2)}ms) > predict (${tPredictForSize.ms.toFixed(2)}ms) — defer has wall-time payoff`,
     );
   }
+
+  // ── The 202's content address, and what is pinned under it ─────────────────
+  //
+  // ★ THE DEFERRED RESPONSE IS CONTENT-ADDRESSED OVER A DESCRIPTOR THAT MIGHT NOT LAND.
+  //
+  // The CID is computed from the descriptor decided on the request thread. The deferred
+  // write then RE-DECIDES `iep:supersedes` inside the mutex that performs it (so a publish
+  // that queued behind another does not fork the chain), which changes the bytes. So under
+  // contention the caller was handed — and IPFS was permanently pinned with — a content
+  // address for a document the pod does not hold. A content address cannot be retracted.
+  //
+  // Two properties are asserted here, both about `handlePublishContext`, which no test can
+  // call: server.ts starts an HTTP listener on import. Read as source for the same reason
+  // identity-attribution-gates.test.ts does — the alternative is no witness at all.
+  const serverSrc = readFileSync(
+    fileURLToPath(new URL('../server.ts', import.meta.url)), 'utf8',
+  );
+  ok(
+    /const writtenTurtle = toTurtle\(descriptorToWrite\);/.test(serverSrc),
+    'the deferred task content-addresses the descriptor it actually wrote',
+  );
+  ok(
+    /void pinToIpfs\(writtenTurtle,/.test(serverSrc),
+    '★ and pins THOSE bytes — not the prediction the response was computed over',
+  );
+  ok(
+    /if \(!publishDeferred\) \{\s*\n\s*void pinToIpfs\(turtle,/.test(serverSrc),
+    '★ the response-path pin is skipped on the deferred path, so the prediction is never pinned',
+  );
+  ok(
+    /const cidIsProvisional = publishDeferred;/.test(serverSrc)
+    && /provisional: true,/.test(serverSrc),
+    'and the CID the caller is handed is marked provisional on that path rather than claimed final',
+  );
+  ok(
+    /cid: committedCid,/.test(serverSrc),
+    'with the committed CID recorded on the deferred status the response points at',
+  );
 
   // ── Summary ────────────────────────────────────────────────
   if (fail > 0) {

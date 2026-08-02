@@ -29,23 +29,47 @@
  */
 
 // Match `https://interego-css.livelysky-<hex>.eastus.azurecontainerapps.io`
-// at the start of the URL, followed by `/` or end-of-string. The
-// `livelysky-<hex>` deployment ID is captured in the regex so a future
-// re-deployment with a different ID does not silently rewrite to the wrong
-// host — only the specific deployment whose canonical form is
-// `interego-css.internal.livelysky-8b81abb0...` is rewritten.
+// at the start of the URL, followed by `/` or end-of-string.
 //
-// NOTE the negative lookahead `(?!internal\.)`: a URL ALREADY on the
-// internal-FQDN host (`interego-css.internal.livelysky-...`) MUST NOT
-// match. Without this guard the regex would treat the leading
-// `interego-css.` of the internal form as the OLD pattern and rewrite
-// to `internal.internal.livelysky-...` on a second pass — corrupting
-// the URL into a non-existent host.
+// ★ THE DEPLOYMENT ID IS CAPTURED **AND KEPT**. It used to be captured and then
+// discarded: the replacement was a hard-coded
+// `interego-css.internal.livelysky-8b81abb0...` literal, so EVERY deployment ID
+// matching the pattern normalised to that one host and two genuinely different
+// URLs compared equal. The comment that stood here claimed the opposite
+// guarantee — that a future re-deployment with a different ID would not
+// silently rewrite to the wrong host — which is precisely what it did.
+//
+// Two live consequences, both from the SAME collapse:
+//
+//   - `supersessionFrontier` is handed this function as its `normalize`. A
+//     descriptor from deployment A citing `iep:supersedes` compared equal to a
+//     descriptor from deployment B, so a write that never touched B's chain
+//     retired B's head — invalidating a CAS token held by a writer doing
+//     nothing wrong, and (on the write path) admitting a stale one.
+//
+//   - `solidFetch` normalises before fetching, WITH the relay's CSS
+//     credentials. A caller-supplied `interego-css.livelysky-<anything>` URL
+//     was rewritten onto our real pod host and fetched as us: the caller
+//     chooses a host, the relay silently substitutes its own.
+//
+// Latent today — current infra is Railway, and no URL with any other ID exists
+// in the tree — but the collapse is real, so keep the ID and let the rewrite be
+// the one thing it says it is: insert the `.internal.` label, change nothing else.
+//
+// Group 1 is the prefix the rewrite splits on; group 2 exists to NAME the span
+// that must survive untouched (nothing substitutes it — that was the bug); the
+// trailing `(\/|$)` is load-bearing, or `…azurecontainerapps.io.evil.example`
+// prefix-matches and an attacker-registered host gets rewritten onto ours.
+//
+// The negative lookahead `(?!internal\.)` is belt-and-braces. Idempotence
+// actually comes from the literal `livelysky-` that follows it: in the internal
+// form the label after `interego-css.` is `internal.`, which cannot match, so a
+// second pass is already a no-op and cannot produce `internal.internal.…`.
 const OLD_CSS_PUBLIC_HOST_RE =
-  /^https:\/\/interego-css\.(?!internal\.)livelysky-[0-9a-f]+\.eastus\.azurecontainerapps\.io(\/|$)/;
+  /^(https:\/\/interego-css\.)(?!internal\.)(livelysky-[0-9a-f]+\.eastus\.azurecontainerapps\.io)(\/|$)/;
 
-const CANONICAL_CSS_INTERNAL_HOST =
-  'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+/** The label the migration inserts. The rest of the host is the caller's, preserved. */
+const CSS_INTERNAL_LABEL = 'internal.';
 
 /**
  * Translate a legacy public-host CSS URL to the canonical internal-FQDN
@@ -56,12 +80,11 @@ export function normalizeCssUrl(url: string): string {
   if (typeof url !== 'string' || url.length === 0) return url;
   const m = url.match(OLD_CSS_PUBLIC_HOST_RE);
   if (!m) return url;
-  // m[0] is the matched prefix INCLUDING the trailing `/` (or empty
-  // string at end-of-input). The trailing slash belongs to the path,
-  // so keep it; everything before it is the host to swap out.
-  const trailing = m[1] ?? '';
-  const hostLen = m[0].length - trailing.length;
-  return CANONICAL_CSS_INTERNAL_HOST + url.slice(hostLen);
+  // Splice, don't substitute. `m[1]` is `https://interego-css.`; everything from
+  // there on — deployment ID, region, the trailing `/` and the whole path — is
+  // the caller's URL and is carried through byte-for-byte.
+  const scheme = m[1]!;
+  return scheme + CSS_INTERNAL_LABEL + url.slice(scheme.length);
 }
 
 // IPv4 literals that must never appear as an SSRF target on a

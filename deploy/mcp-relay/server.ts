@@ -248,7 +248,11 @@ import {
   predictGraphUrl,
   predictManifestUrl,
   PublishPreconditionFailedError,
-  checkSupersessionPrecondition,
+  // `checkSupersessionPrecondition` is deliberately NOT imported. It was, for a
+  // relay-side Phase A pre-flight that checked the precondition on the request thread and
+  // let the write happen in a later critical section — a check and a write that are not a
+  // swap. The only caller of that gate is now `publish()` itself, which runs it against
+  // the same manifest state it is about to write.
 } from '@interego/solid';
 
 // PGSL — `@interego/pgsl`.
@@ -281,7 +285,10 @@ import type { NodeProvenance } from '@interego/pgsl';
 // publish-then-resolve invariant this module exists to enforce.
 import * as publishedNodes from './pgsl-node-store.js';
 import { alternateTurtleHref, looksLikeHtml } from './alternate-turtle.js';
-import { supersessionFrontier, classifyIfMatch } from './supersession-frontier.js';
+import {
+  supersessionFrontier, classifyCasRequest, casRefusal,
+  priorVersionsFor, reDecidedSupersedes, casSelfOverwriteRefusal,
+} from './supersession-frontier.js';
 import { resolveInteropPrincipal } from './interop-principal.js';
 
 // Privacy — `@interego/privacy`.
@@ -1700,7 +1707,14 @@ function cacheDescriptorBody(url: string, value: { content: string; mediaType: s
 // resolves OR after DEFERRED_PUBLISH_MAX_AGE_MS to bound memory.
 type DeferredPublishStatus =
   | { kind: 'pending'; startedAt: number }
-  | { kind: 'committed'; startedAt: number; resolvedAt: number; descriptorUrl: string; graphUrl: string }
+  // `cid` is the content address of the descriptor turtle THAT WAS ACTUALLY WRITTEN.
+  //
+  // ★ It is here because the 202's CID can be wrong and the caller needs somewhere to get
+  // the right one. A deferred publish is answered before its write is decided, and the write
+  // re-decides `supersedes` against the manifest as it stands at write time — so under
+  // contention the bytes that land differ from the bytes the response was content-addressed
+  // over. The response now says so (`ipfs.provisional`) and points here.
+  | { kind: 'committed'; startedAt: number; resolvedAt: number; descriptorUrl: string; graphUrl: string; cid?: string }
   | { kind: 'failed'; startedAt: number; resolvedAt: number; error: string };
 const DEFERRED_PUBLISH_MAX_ENTRIES = 4096;
 const DEFERRED_PUBLISH_MAX_AGE_MS = 5 * 60 * 1000;
@@ -2289,6 +2303,13 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const agentId = callerAgentId(args) ?? 'urn:agent:remote:unknown';
   const ownerWebId = (args.owner_webid as string) ?? `https://id.example.com/${podName}/profile#me`;
   const descId = (args.descriptor_id as string ?? `urn:iep:${podName}:${Date.now()}`) as IRI;
+  // The URL this publish will land on. Deterministic from (podUrl, descId), so it is
+  // knowable here — before the manifest read that has to compare against it. Hoisted from
+  // its old home further down because THREE things need it and two of them used to
+  // improvise: the self-supersede filter compared against `descId` (a urn, never equal to
+  // an https manifest entry) and the frontier excluded it (caller-chosen, see
+  // supersession-frontier.ts). One value, computed once, used by all of them.
+  const predictedDescriptorUrl = predictDescriptorUrl(podUrl, descId);
   const now = new Date().toISOString();
 
   // Ensure pod container exists. Skip on steady-state — lazy-pod-init's
@@ -2309,7 +2330,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // ── Per-pod write serialization ───────────────────────────────
   //
   // Everything below — manifest pre-fetch, priorVersions computation,
-  // agent-registry read-modify-write, Phase A precondition, and the
+  // agent-registry read-modify-write, and (on the synchronous path) the
   // substrate publish() call — needs to run atomically per pod or
   // concurrent publish_context calls to the same pod will all read
   // the same stale manifest snapshot and compute the same
@@ -2382,18 +2403,21 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // believes the field it was handed loops until it gives up, and the thing it gives up on
   // is its own compare-and-swap. Observed while building the workspace stream, from a
   // caller passing the head it had — which is legitimately null on an empty chain.
-  if (classifyIfMatch(args.if_match) === 'unusable') {
-    return JSON.stringify({
-      error: 'invalid_if_match',
-      code: 400,
-      retryable: false,
-      message:
-        'if_match must be a non-empty descriptor URL (https://….ttl) or content-CID (bafkrei…). '
-        + `Received ${ifMatch === null ? 'null' : typeof ifMatch === 'string' ? 'an empty string' : typeof ifMatch}. `
-        + 'Omit if_match entirely when there is no prior head to gate on — an absent precondition '
-        + 'is how you say "this is the first version"; an empty one is not.',
-    });
-  }
+  //
+  // ★ AND SO IS AN if_match WITH NO `graph_iri`. A head is only defined relative to a graph:
+  // with none there is no chain for `supersessionFrontier` to compute a frontier over.
+  //
+  // That case used to fall straight through. `casHeads` below was gated on `args.graph_iri`
+  // being truthy, and `checkSupersessionPrecondition` skips the head check entirely when
+  // `currentHeads` is undefined — so omitting one argument reverted the precondition to the
+  // pre-fix membership test that an ancestor satisfies forever. `graph_iri` is `required` in
+  // the tool schema, but `tools/call` does no schema validation, so the schema was never the
+  // guard it looked like.
+  //
+  // Both refusals are built in supersession-frontier.ts, where a test can reach them.
+  const casRequest = classifyCasRequest(args.if_match, args.graph_iri);
+  const refusal = casRefusal(casRequest, args.if_match);
+  if (refusal) return JSON.stringify(refusal);
   const priorVersions: IRI[] = [];
   // Manifest entries the substrate gate / best-effort head-CID echo can
   // reuse. Populated when EITHER (a) auto_supersede needs to look up
@@ -2447,15 +2471,24 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       }
     }
     if (manifestEntriesForLookup && args.auto_supersede_prior !== false && args.graph_iri) {
-      for (const e of manifestEntriesForLookup) {
-        if (e.describes.includes((args.graph_iri as string) as IRI) && e.descriptorUrl !== descId) {
-          priorVersions.push(e.descriptorUrl as IRI);
-        }
-      }
+      // ★ The self-filter compares URLs now, not a urn against a URL. The old inline
+      // `e.descriptorUrl !== descId` could never match: descId is `urn:iep:<pod>:<ts>` and
+      // manifest entries are `https://…/<slug>.ttl`. Harmless while the id is freshly
+      // minted per call, fatal with a stable `descriptor_id` — the entry for this very
+      // descriptor lands in its own supersedes list, and a self-superseding entry makes
+      // `supersessionFrontier` report NO head for the graph from then on.
+      priorVersions.push(
+        ...priorVersionsFor(
+          manifestEntriesForLookup,
+          args.graph_iri as string,
+          predictedDescriptorUrl,
+          normalizeCssUrl,
+        ) as IRI[],
+      );
     }
   }
-  // Manifest-mirrored head-CID lookup. Threaded into Phase A precondition
-  // AND into publish()'s sync path so the descriptor-body GET +
+  // Manifest-mirrored head-CID lookup. Threaded into publish() on both
+  // the encrypted and plaintext option shapes so the descriptor-body GET +
   // computeCid step is skipped whenever the manifest carries the head's
   // iep:contentCid (always the case for entries written by post-fix
   // publishes; legacy entries fall through to the body fetch).
@@ -2505,20 +2538,56 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // Computed only when a precondition was actually asserted. A plain republish does not
   // need it, and the frontier says nothing about whether auto_supersede should link a
   // prior — it must still link all of them.
+  //
+  // ★ NOTHING IS EXCLUDED FROM IT ANY MORE. The publish being prepared used to be dropped
+  // from the frontier by its predicted URL — and `descriptor_id` is a caller argument, so
+  // the caller chose which entry disappeared. Dropping an entry removes it as a candidate
+  // head AND as a source of supersedes edges, so naming the live head resurrected its
+  // ancestor and a stale writer passed against it; naming your own only entry emptied the
+  // frontier and refused you forever. The self-supersession that exclusion was reaching for
+  // is handled where it belongs, on the supersedes list (`priorVersionsFor` above) plus the
+  // collision refusal immediately below. Written up in supersession-frontier.ts.
+  if (casRequest.kind === 'evaluable' && manifestEntriesForLookup) {
+    const collision = casSelfOverwriteRefusal(
+      manifestEntriesForLookup,
+      casRequest.graphIri,
+      predictedDescriptorUrl,
+      normalizeCssUrl,
+    );
+    if (collision) return JSON.stringify(collision);
+  }
   const casHeads: readonly string[] | undefined =
-    ifMatch !== undefined && manifestEntriesForLookup && args.graph_iri
-      // ★ Exclude by the PREDICTED DESCRIPTOR URL, not by descId. descId is a urn
-      // (`urn:iep:<pod>:<ts>`) while manifest entries carry https descriptor URLs, so the
-      // exclusion never matched a single entry — a guard that could not fire. Currently
-      // inert on the monolithic manifest, which skips a manifest update when the URL is
-      // already present; under MANIFEST_APPEND_ONLY_ENABLED the shard IS overwritten, the
-      // descriptor lands in its own supersedes list, and the frontier goes permanently
-      // EMPTY — every subsequent if_match refused with no value that can recover it.
-      ? supersessionFrontier(manifestEntriesForLookup, args.graph_iri as string, {
-        exclude: predictDescriptorUrl(podUrl, descId),
+    casRequest.kind === 'evaluable' && manifestEntriesForLookup
+      ? supersessionFrontier(manifestEntriesForLookup, casRequest.graphIri, {
         normalize: normalizeCssUrl,
       }).heads
       : undefined;
+  // ★ FAIL CLOSED ON THE WHOLE CLASS, not just the two instances above.
+  //
+  // `publish()` spreads `currentHeads` only when it is set, and `checkSupersessionPrecondition`
+  // skips the head check entirely when it is absent — so `casHeads === undefined` reads all
+  // the way down as "no head check requested" and degrades to the membership test an
+  // ancestor satisfies forever. Two ways to reach that state with
+  // a precondition asserted have already been found and fixed one at a time (missing
+  // manifest → 503 above; missing graph_iri → 400 above). This is the invariant itself,
+  // asserted once at the single point where the value is produced, so a THIRD way to arrive
+  // here silently is a 503 rather than a `precondition.passed: true` that means nothing.
+  //
+  // Unreachable as written (`getCachedManifest` throws rather than returning null, and that
+  // throw is already caught into the 503). That is the point: a load-bearing invariant that
+  // depends on an unrelated function's error convention should be checked, not inferred.
+  if (casRequest.kind === 'evaluable' && casHeads === undefined) {
+    return JSON.stringify({
+      error: 'precondition_unavailable',
+      code: 503,
+      retryable: true,
+      message:
+        `Could not resolve the current head of ${casRequest.graphIri} on ${podUrl}, so the `
+        + 'if_match precondition could not be evaluated. Refusing the publish rather than '
+        + 'downgrading the precondition: an if_match that cannot be evaluated must not be '
+        + 'reported as satisfied.',
+    });
+  }
   // Wire-level visibility for Phase A diagnosis. Logs whether the
   // mirror lookup is populated, the supersedes list the precondition
   // will iterate, and a sample of indexed URLs so a publish that 503s
@@ -2933,11 +3002,10 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const conformsToShapesOpt = resolvedShapesForPublish.length > 0
     ? { conformsToShapes: resolvedShapesForPublish }
     : {};
-  // The frontier goes onto BOTH publish paths, not only Phase A. The sync path
-  // (compliance / authorship / conformance publishes) runs its own precondition inside
-  // publish(); leaving it off there would fix the CAS for ordinary publishes and quietly
-  // leave it broken for the compliance-grade ones, which are the writes most likely to
-  // matter in an audit.
+  // The frontier goes into `publish()` itself, on both option shapes (encrypted and not).
+  // `publish()` is where the precondition and the write share a critical section, so it is
+  // the only place the head comparison means anything; supplying it anywhere else — as a
+  // pre-flight the write then happens after — is how the CAS was broken twice.
   const casHeadsOpt = casHeads
     ? { currentHeads: casHeads, normalizeHeadUrl: normalizeCssUrl }
     : {};
@@ -2967,9 +3035,17 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // Per-pod mutex: serialize same-process publishers to this pod so the
   // read-check-write (auto-supersede manifest read above + substrate CAS
   // gate inside publish() + manifest CAS) is atomic from this relay's
-  // perspective. Cross-process / cross-replica writers still hit the
-  // CSS-side ETag CAS plus the supersedes substrate gate, which is the
-  // cross-host portion of the precondition.
+  // perspective.
+  //
+  // ★ AND ONLY THIS RELAY'S. This used to claim that "cross-process /
+  // cross-replica writers still hit the CSS-side ETag CAS plus the supersedes
+  // substrate gate, which is the cross-host portion of the precondition."
+  // They hit both, and neither one is a precondition across replicas: the
+  // manifest ETag CAS is a merge loop that retries until BOTH writers' entries
+  // land, and the substrate gate compares against `currentHeads`, which was
+  // frozen from THIS replica's manifest snapshot. Two replicas both read v1,
+  // both pass, both write. See the write-up at `podWriteMutexes` for what a
+  // real cross-replica lock would take and why the relay is safe today.
   //
   // ── Accept-then-publish (deferred) ──────────────────────────
   //
@@ -3002,28 +3078,18 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // also works once the descriptor PUT lands. Public-ACL writes +
   // emitNotification fire AFTER the deferred publish resolves since they
   // both need a confirmed result.descriptorUrl/graphUrl.
-  // CAS-split (Phase A / Phase B):
+  // ── ★ `if_match` IS ON `syncRequired`, AND HAS TO BE ─────────
   //
-  // The if_match branch used to be part of `syncRequired` so the relay
-  // held the request thread for the full ~7-10s of CSS round-trips
-  // (graph PUT + descriptor PUT + manifest CAS). The substrate gate
-  // itself is the only part of that chain that has to be observable
-  // synchronously — a deferred 412 would be a silent precondition
-  // violation. So we now run the precondition check (Phase A) on the
-  // request thread via the standalone checkSupersessionPrecondition
-  // helper, and — on pass — defer the rest of the chain (Phase B) to
-  // the background, just like the default async path. compliance:true
-  // and sync:true STILL take the fully synchronous chain.
-  //
-  // ★ AND `if_match` IS BACK ON IT. Deferring the write after a synchronous Phase A
-  // looked safe — "the gate is the only part that has to be observable synchronously" —
-  // and it is not, because a precondition and the write it guards have to be in the SAME
+  // There was a CAS split here: run the precondition (Phase A) on the request thread, and
+  // on pass defer the write (Phase B) to the background like every other publish. The
+  // reasoning was "the gate is the only part that has to be observable synchronously".
+  // It is wrong, because a precondition and the write it guards have to be in the SAME
   // critical section or the pair is not a swap.
   //
-  // The frontier is computed once at Phase A and frozen into publishOptions; Phase B
-  // re-runs the check against that frozen snapshot and never re-reads the manifest. The
-  // per-pod mutex does not close the window, because Phase B queues on the gate from
-  // INSIDE the handler — so a writer that queued earlier runs its own Phase A first:
+  // The frontier was computed at Phase A and frozen into publishOptions; Phase B re-ran
+  // the check against that frozen snapshot and never re-read the manifest. The per-pod
+  // mutex did not close the window, because Phase B queues from INSIDE the handler and so
+  // lands behind any request that arrived in between:
   //
   //   W1 enters, holds g1.  W2 queues behind it (g2).  W1's Phase B queues (g3).
   //   W1 returns "pending", g1 releases -> W2's Phase A reads the manifest and still
@@ -3034,73 +3100,53 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // Found by an independent adversarial review of the very fix that was supposed to make
   // this impossible. The frontier was right; the composition around it was not.
   //
-  // Correctness beats the latency this deferral bought. A caller that asked for a
+  // Correctness beats the latency the split bought. A caller that asked for a
   // compare-and-swap is asking to be told NO, and a 412 that arrives after the response
   // cannot tell them anything.
+  //
+  // ★ THE SAME WINDOW IS STILL OPEN FOR THE DEFAULT WRITER, and closed differently.
+  // A publish with no precondition also decides against a snapshot here and writes from
+  // the deferred branch, so its `supersedes` can be stale by the time it lands — which
+  // forks the chain rather than losing an update. That one is re-decided inside the
+  // acquisition that performs the write; see the re-decide in the deferred branch below.
+  // It cannot be solved the same way (making every publish synchronous is the latency
+  // this whole path exists to avoid) and it does not need to be: nothing in the response
+  // is a verdict about pod state, so there is nothing to invalidate by deciding later.
   const syncRequired =
     args.compliance === true ||
     args.sync === true ||
     ifMatch !== undefined;
   const willEncrypt = recipients.length > 0;
-  const predictedDescriptorUrl = predictDescriptorUrl(podUrl, descriptor.id);
   const predictedGraphUrl = predictGraphUrl(podUrl, descriptor.id, { encrypted: willEncrypt });
   const predictedManifestUrl = predictManifestUrl(podUrl);
 
-  // Phase A precondition pre-flight — only when if_match was supplied.
-  // On pass we capture the resolved head identifiers so the deferred
-  // 202 can echo previousHeadCid / previousHeadUrl synchronously
-  // (unlike the default async path, which leaves them null because no
-  // CAS read happened on the request thread).
+  // ── ★ PHASE A IS GONE, NOT DISABLED ──────────────────────────
   //
-  // Manifest-CID fast-path: getCachedManifest is a single lightweight
-  // GET on `.well-known/context-graphs` that already mirrors the head
-  // CID into each entry's `iep:contentCid` triple (publish path always
-  // writes it; legacy entries fall through to the body-fetch path
-  // inside the substrate gate). Threading the cached entries' CIDs
-  // through as `headCidLookup` removes 1xN descriptor body GETs from
-  // Phase A — the exact flaky read johnny pinned as the 503
-  // `precondition_unavailable` source on cold Azure-Files caches.
-  let phaseAPass: Awaited<ReturnType<typeof checkSupersessionPrecondition>> | null = null;
-  if (!syncRequired && ifMatch !== undefined) {
-    try {
-      phaseAPass = await checkSupersessionPrecondition({
-        supersedesList: descriptor.supersedes ?? [],
-        ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
-        ...(ifMatchCid ? { ifMatchCid } : {}),
-        fetchFn: solidFetch,
-        ...manifestHeadCidLookupOpt,
-        ...(casHeads ? { currentHeads: casHeads, normalizeUrl: normalizeCssUrl } : {}),
-      });
-    } catch (err) {
-      if (err instanceof PublishPreconditionFailedError) {
-        manifestCache.delete(podUrl);
-        return JSON.stringify({
-          error: 'precondition_failed',
-          code: 412,
-          message: err.message,
-          expected: err.expected,
-          currentHead: {
-            descriptorUrl: err.actual.descriptorUrl,
-            cid: err.actual.cid,
-            supersedesList: err.actual.supersedesList,
-          },
-          retryHint: 'Re-read the manifest (or call get_current_head with the urn:graph IRI) and resend publish_context with the fresh if_match value.',
-        });
-      }
-      // Non-412 (transient GET exhaustion, malformed turtle, etc.) —
-      // surface as a retryable 503 so the caller can distinguish "your
-      // assertion was wrong" from "we couldn't tell".
-      const message = (err as Error).message;
-      log(`[publish/phaseA] precondition check failed for ${descriptor.id}: ${message}`);
-      return JSON.stringify({
-        error: 'precondition_unavailable',
-        code: 503,
-        retryable: true,
-        message,
-      });
-    }
-  }
-
+  // It used to stand here: `if (!syncRequired && ifMatch !== undefined)`, a standalone
+  // `checkSupersessionPrecondition` on the request thread so the 412 was observable before
+  // the write was deferred. Putting `if_match` back on `syncRequired` above made that guard
+  // unsatisfiable — `syncRequired` is true whenever `ifMatch !== undefined`, so the two
+  // conditions cannot both hold.
+  //
+  // Deleted rather than left in place, because of what it carried: `...(casHeads ?
+  // { currentHeads } : {})`. That spread is the exact shape the 503 backstop further up
+  // exists to compensate for — a falsy `casHeads` silently omits the head check and
+  // degrades to the membership test. Dead code holding a live footgun is one `return` away
+  // from being reachable again, and the next person to re-enable a fast path would inherit
+  // the omission without inheriting the reasoning.
+  //
+  // `previousHeadCid` / `previousHeadUrl` still reach the caller on this path: the
+  // synchronous `publish()` resolves them from its own gate and they come back on `result`.
+  // Resolved BEFORE the write branches, because the deferred branch needs them: on that path
+  // the pin is performed from inside the background task, over the descriptor that was
+  // actually written. See the IPFS block after this if/else for why.
+  const ipfsConfig = resolveIpfsConfig(args._req ?? {});
+  // The descriptor AS DECIDED ON THE REQUEST THREAD. On the synchronous path these are the
+  // bytes that get written, so the CID is final. On the deferred path they are a prediction:
+  // the write re-decides `supersedes` and can produce different bytes, which is why the
+  // response marks this CID provisional and the background task pins its own.
+  const turtle = toTurtle(descriptor);
+  const provisionalCid = cryptoComputeCid(turtle);
   let result: Awaited<ReturnType<typeof publish>>;
   let publishDeferred = false;
   if (syncRequired) {
@@ -3177,19 +3223,18 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // Deferred path. Construct a predicted-shape PublishResult so the
     // synchronous response carries the URLs the substrate is committed
     // to writing — the slug + container naming is deterministic from
-    // (podUrl, descriptor.id, recipients>0). previousHead* are left null
-    // unless Phase A ran an if_match precondition above — in which case
-    // we carry the resolved head identifiers through synchronously, so
-    // the 202 response is observably stronger than the default async
-    // path (the precondition was definitively checked).
+    // (podUrl, descriptor.id, recipients>0). previousHead* are null and
+    // now unconditionally so: this branch is only reached when no
+    // precondition was asserted (if_match forces the synchronous path),
+    // so there is no resolved head to report and nothing pretends there is.
     publishDeferred = true;
     result = {
       descriptorUrl: predictedDescriptorUrl,
       graphUrl: predictedGraphUrl,
       manifestUrl: predictedManifestUrl,
       encrypted: willEncrypt,
-      previousHeadCid: phaseAPass?.resolvedHeadCid ?? null,
-      previousHeadUrl: phaseAPass?.resolvedHeadUrl ?? null,
+      previousHeadCid: null,
+      previousHeadUrl: null,
     } as Awaited<ReturnType<typeof publish>>;
     setDeferredPublishStatus(predictedDescriptorUrl, {
       kind: 'pending',
@@ -3220,21 +3265,107 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         // result.descriptorUrl). Only the deferred path predicted-and-hoped. Making the gate
         // enforcing raises the odds of that throw, so the ordering had to be fixed with it,
         // not after it.
-        const real = await withPodMutex(podUrl, () =>
-          publish(descriptor, args.graph_content as string, podUrl, publishOptions),
-        );
+        // ── ★ RE-DECIDE `supersedes` INSIDE THE MUTEX THAT DOES THE WRITE ──
+        //
+        // The rest of this descriptor was decided in the outer critical section and is
+        // fine to carry: it depends on the caller's own arguments, not on pod state.
+        // `supersedes` is the exception — it is a fact ABOUT THE POD, read from the
+        // manifest, and this write does not happen in the critical section that read it.
+        //
+        // `withPodMutex` is strict FIFO per pod, and the acquisition below is requested
+        // from inside the outer one, so it queues behind every request that arrived in
+        // between. Those requests get to read the manifest, decide, and write first:
+        //
+        //   t0  W1 (no if_match) holds g1, reads the manifest: head = v1, supersedes [v0,v1]
+        //   t1  W2 (if_match = v1) arrives, queues as g2
+        //   t2  W1 reaches here; this acquisition queues as g3 — BEHIND g2
+        //   t3  g2: W2 re-reads fresh, v1 is still head because W1 has not written,
+        //           passes its precondition, writes v2 superseding v1
+        //   t4  g3: W1 writes with the t0 snapshot [v0, v1] — it never saw v2
+        //
+        // The chain forks: v2 and W1's version are both heads, neither superseding the
+        // other, and `get_current_head` reports a divergence no one caused deliberately.
+        // W2's `precondition.passed: true` was true when it was issued; W1 then landed a
+        // version computed from a state that had already moved on. Recomputing here makes
+        // W1's write link v2 as well, so the chain stays linear and the last writer is the
+        // head — which is exactly what "I asserted no precondition" means.
+        //
+        // Only when the list came FROM the manifest. With `auto_supersede_prior: false`
+        // the supersedes triples are the caller's own content and are not ours to revise.
+        //
+        // ★ THE RE-READ IS INSIDE THE SAME ACQUISITION AS THE WRITE. Doing it just before
+        // `withPodMutex` would reproduce the defect one frame later: another writer can
+        // still land between the read and the acquisition. Read and write are one critical
+        // section or they are not a decision.
+        let descriptorToWrite = descriptor;
+        const real = await withPodMutex(podUrl, async () => {
+          // Only when the list came FROM the manifest. With `auto_supersede_prior: false`
+          // the supersedes triples are the caller's own content, not ours to revise.
+          if (args.auto_supersede_prior !== false && args.graph_iri) {
+            try {
+              manifestCache.delete(podUrl);
+              const fresh = await getCachedManifest(podUrl);
+              // `null` means nothing landed while we were queued, and then the descriptor
+              // object is carried through untouched — so the uncontended write is
+              // byte-for-byte the one whose CID the caller already has in its 202.
+              const merged = reDecidedSupersedes(
+                descriptor.supersedes ?? [],
+                preprocessed.supersedes,
+                fresh,
+                args.graph_iri as string,
+                predictedDescriptorUrl,
+                normalizeCssUrl,
+              );
+              if (merged) {
+                log(`[publish/deferred] supersedes re-decided for ${descriptor.id}: ${(descriptor.supersedes ?? []).length} -> ${merged.length} priors landed while this write was queued`);
+                descriptorToWrite = { ...descriptor, supersedes: merged as IRI[] };
+              }
+            } catch (err) {
+              // Fail OPEN, deliberately and only here: no precondition was asserted on
+              // this path (`if_match` forces the synchronous branch), so there is no guard
+              // to downgrade — the worst case is the stale snapshot we would have written
+              // anyway. Refusing a publish because a best-effort freshness read failed
+              // would trade a rare fork for a common outage.
+              log(`[publish/deferred] supersedes re-read failed for ${descriptor.id}, writing the snapshot: ${(err as Error).message}`);
+            }
+          }
+          return publish(descriptorToWrite, args.graph_content as string, podUrl, publishOptions);
+        });
+        // ── ★ PIN THE BYTES THAT LANDED, NOT THE BYTES WE PREDICTED ──
+        //
+        // The pin used to be fired from the response path below, over the FROZEN
+        // `descriptor`. On the deferred path that is the one document guaranteed not to be
+        // what the pod holds whenever the re-decide above fires: `descriptorToWrite` carries
+        // the priors that landed while this write was queued. So IPFS was handed — and
+        // permanently pinned, under a CID the caller had already been given — a descriptor
+        // that was never written anywhere.
+        //
+        // A content-addressed store cannot be corrected later; the wrong CID stays resolvable
+        // and keeps looking authoritative. Pinning from here costs nothing (this task is
+        // already off the request thread, which is the whole reason the pin was deferred) and
+        // makes the pinned bytes and the pod's bytes the same bytes by construction.
+        const writtenTurtle = toTurtle(descriptorToWrite);
+        const committedCid = cryptoComputeCid(writtenTurtle);
+        if (ipfsConfig.provider !== 'local-unpinned' && ipfsConfig.apiKey) {
+          void pinToIpfs(writtenTurtle, `descriptor-${descriptor.id}`, ipfsConfig, solidFetch)
+            .then(r => log(`IPFS pin completed for ${descriptor.id}: ${r.cid} via ${r.provider}`))
+            .catch(err => log(`IPFS pin failed for ${descriptor.id}: ${(err as Error).message}`));
+        }
+        if (committedCid !== provisionalCid) {
+          log(`[publish/deferred] descriptor re-decided before the write: the 202 carried cid ${provisionalCid}, the pod holds ${committedCid} — /publish/status?descriptorUrl=${encodeURIComponent(predictedDescriptorUrl)} reports the committed one`);
+        }
         if (APPEND_ONLY_ENABLED) {
-          const facetTypes = [...new Set(descriptor.facets.map(f => f.type))];
-          const issuerFacet = descriptor.facets.find(f => f.type === 'Trust') as { type: 'Trust'; issuer?: string; trustLevel?: string } | undefined;
-          const semioticFacet = descriptor.facets.find(f => f.type === 'Semiotic') as { type: 'Semiotic'; modalStatus?: string } | undefined;
+          const facetTypes = [...new Set(descriptorToWrite.facets.map(f => f.type))];
+          const issuerFacet = descriptorToWrite.facets.find(f => f.type === 'Trust') as { type: 'Trust'; issuer?: string; trustLevel?: string } | undefined;
+          const semioticFacet = descriptorToWrite.facets.find(f => f.type === 'Semiotic') as { type: 'Semiotic'; modalStatus?: string } | undefined;
           const entryTurtle = renderAppendOnlyEntry({
             descriptorUrl: real.descriptorUrl,
-            graphIris: [...(descriptor.describes ?? [])] as string[],
+            graphIris: [...(descriptorToWrite.describes ?? [])] as string[],
             facetTypes,
-            validFrom: descriptor.validFrom,
-            validUntil: descriptor.validUntil,
-            conformsTo: descriptor.conformsTo ? [...descriptor.conformsTo] as string[] : undefined,
-            supersedes: descriptor.supersedes ? [...descriptor.supersedes] as string[] : undefined,
+            validFrom: descriptorToWrite.validFrom,
+            validUntil: descriptorToWrite.validUntil,
+            conformsTo: descriptorToWrite.conformsTo ? [...descriptorToWrite.conformsTo] as string[] : undefined,
+            supersedes: descriptorToWrite.supersedes ? [...descriptorToWrite.supersedes] as string[] : undefined,
             modalStatus: semioticFacet?.modalStatus,
             trustLevel: issuerFacet?.trustLevel,
             issuer: issuerFacet?.issuer,
@@ -3258,7 +3389,11 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         // graph land on the pod so subscribers reading the notification
         // can dereference the URLs immediately.
         emitNotification(podUrl, {
-          eventType: priorVersions.length > 0 ? 'superseded' : 'created',
+          // Read off what was actually written, not off the snapshot. In the race the
+          // re-decide above exists for, a publish whose snapshot saw no priors DOES
+          // supersede one by the time it lands, and announcing that as `created` tells
+          // every subscriber the chain grew a second root.
+          eventType: (descriptorToWrite.supersedes?.length ?? 0) > 0 ? 'superseded' : 'created',
           descriptorUrl: real.descriptorUrl,
           graphUrl: real.graphUrl,
           author: agentId,
@@ -3269,6 +3404,9 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
           resolvedAt: Date.now(),
           descriptorUrl: real.descriptorUrl,
           graphUrl: real.graphUrl,
+          // The definitive content address, over the bytes on the pod. A caller that was
+          // handed a provisional CID in the 202 reads the real one here.
+          cid: committedCid,
         });
       } catch (err) {
         const message = (err as Error).message;
@@ -3295,15 +3433,45 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   //   - `warning`: present iff provider is 'local-unpinned' so consumers
   //     don't mistake a content-addressed-but-not-uploaded CID for a
   //     successful pin to a public gateway.
-  const ipfsConfig = resolveIpfsConfig(args._req ?? {});
-  const turtle = toTurtle(descriptor);
+  //
+  // ★ AND `provisional`, WHICH IS THE ONE THIS BLOCK USED TO GET WRONG.
+  //
+  // The CID is computed from the FROZEN descriptor — the one decided on the request thread.
+  // On the deferred path that descriptor is not necessarily what lands: the write re-decides
+  // `supersedes` inside the mutex that performs it, precisely so a concurrent publish does
+  // not fork the chain, and that changes the bytes. So on contention the caller was handed a
+  // content address for a document the pod does not hold, and the pin fired from here put
+  // those never-written bytes on a public gateway under it.
+  //
+  // Two halves to the fix, because a content address cannot be retracted:
+  //   - the PIN moved into the deferred task, over `descriptorToWrite` (see above), so what
+  //     is pinned is what was written;
+  //   - the CID reported here is marked `provisional` on that path, with the poll target
+  //     that carries the committed one. Reporting no CID at all would be worse — it is
+  //     correct for every uncontended publish, which is nearly all of them — but reporting
+  //     it as final was a claim this path cannot make.
   const addresses: 'ciphertext' | 'plaintext' = (result.encrypted ?? false) ? 'ciphertext' : 'plaintext';
+  // Only the deferred branch re-decides; a synchronous publish writes the frozen descriptor
+  // under the same lock that built it, so its CID is final.
+  const cidIsProvisional = publishDeferred;
+  const provisionalNote = cidIsProvisional
+    ? {
+        provisional: true,
+        provisionalReason:
+          'This publish was accepted and is being written in the background. If another version of '
+          + 'this graph lands first, the descriptor\'s iep:supersedes is re-decided at write time and '
+          + 'the bytes — and therefore this CID — differ. GET /publish/status?descriptorUrl=<pollUrl> '
+          + 'for the committed cid; the IPFS pin is performed over the bytes actually written.',
+      }
+    : {};
   let ipfs: {
     cid?: string;
     url?: string;
     provider?: string;
     addresses?: 'ciphertext' | 'plaintext';
     warning?: string;
+    provisional?: boolean;
+    provisionalReason?: string;
   } = {};
   if (ipfsConfig.provider !== 'local-unpinned' && ipfsConfig.apiKey) {
     // Defer the external HTTPS pin upload to a background task so the
@@ -3312,27 +3480,31 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // The CID is content-addressed so the value returned now is the same
     // value the pin will carry. Mirrors the IPFS-pin defer in
     // mcp-server/server.ts.
-    const cid = cryptoComputeCid(turtle);
     ipfs = {
-      cid,
-      url: `ipfs://${cid}`,
+      cid: provisionalCid,
+      url: `ipfs://${provisionalCid}`,
       provider: 'pending',
       addresses,
+      ...provisionalNote,
     };
-    void pinToIpfs(turtle, `descriptor-${descriptor.id}`, ipfsConfig, solidFetch)
-      .then(r => log(`IPFS pin completed for ${descriptor.id}: ${r.cid} via ${r.provider}`))
-      .catch(err => log(`IPFS pin failed for ${descriptor.id}: ${(err as Error).message}`));
+    // Not on the deferred path: that branch pins the descriptor it actually wrote, from
+    // inside the task that wrote it. Firing here too would pin the prediction as well.
+    if (!publishDeferred) {
+      void pinToIpfs(turtle, `descriptor-${descriptor.id}`, ipfsConfig, solidFetch)
+        .then(r => log(`IPFS pin completed for ${descriptor.id}: ${r.cid} via ${r.provider}`))
+        .catch(err => log(`IPFS pin failed for ${descriptor.id}: ${(err as Error).message}`));
+    }
   } else {
     // No pinning provider configured: compute the CID locally so the
     // descriptor still has a content-address, but report `local-unpinned`
     // and carry a warning so the caller knows it's NOT on a public gateway.
-    const cid = cryptoComputeCid(turtle);
     ipfs = {
-      cid,
-      url: `ipfs://${cid}`,
+      cid: provisionalCid,
+      url: `ipfs://${provisionalCid}`,
       provider: 'local-unpinned',
       addresses,
       warning: '[ipfs] no PINATA_API_KEY / WEB3STORAGE_TOKEN — content is NOT on a public gateway; CID is local-only',
+      ...provisionalNote,
     };
   }
 
@@ -3411,20 +3583,22 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // When pending, the descriptor URL doubles as a poll target —
     // HEAD it until 200 to confirm the publish landed.
     ...(publishDeferred ? { pollUrl: result.descriptorUrl } : {}),
-    // When the CAS-split Phase A ran an if_match precondition before
-    // deferring, echo the observed-vs-expected CIDs so the caller can
-    // confirm the gate fired synchronously (vs. silently skipped). The
-    // pollUrl is a hint; /publish/status is authoritative for the
-    // commit outcome, including the case where Phase B fails AFTER
-    // Phase A passed (descriptor / graph may have landed but manifest
-    // CAS gave up — the pollUrl can return 200 while status is failed).
-    ...(phaseAPass !== null
+    // The if_match verdict, reported from the write that it guarded.
+    //
+    // ★ It used to be reported from Phase A — a precondition check that ran on the request
+    // thread and then let the write happen later, in a different critical section. That is
+    // what made `passed: true` a claim the relay could not back: by the time the write
+    // landed, the head it had been compared against could already have moved. Reaching this
+    // line with `ifMatch` set now means `publish()` returned, and `publish()` runs the gate
+    // and the write together — so the field says what happened rather than what was true a
+    // moment before something else happened.
+    ...(ifMatch !== undefined && !publishDeferred
       ? {
           precondition: {
             passed: true,
-            observedCid: phaseAPass.resolvedHeadCid,
-            expectedCid: ifMatchCid ?? phaseAPass.resolvedHeadCid,
-            ...(ifMatchSupersedes ? { observedUrl: phaseAPass.resolvedHeadUrl, expectedUrl: ifMatchSupersedes } : {}),
+            observedCid: result.previousHeadCid,
+            expectedCid: ifMatchCid ?? result.previousHeadCid,
+            ...(ifMatchSupersedes ? { observedUrl: result.previousHeadUrl, expectedUrl: ifMatchSupersedes } : {}),
           },
         }
       : {}),
@@ -3472,6 +3646,11 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     sharedWith: shareResolved.length > 0 ? shareResolved : undefined,
     manifestUrl: result.manifestUrl,
     ipfs,
+    // The priors as decided ON THE REQUEST THREAD. On the deferred path this is the same
+    // snapshot the `ipfs.provisional` note is about: if a version of this graph lands while
+    // the write is queued, the descriptor that lands supersedes it too and this list is
+    // short by that entry. It is not re-reported, because the caller already has the
+    // response. Dereference the descriptor, or poll /publish/status, for what was written.
     supersedesPriorVersions: priorVersions.length > 0 ? priorVersions : undefined,
     // CAS chain head — content-CID + URL of the prior head this publish
     // was gated against (or, if no precondition was supplied, an
@@ -9936,6 +10115,54 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
 // If-Match) or an external lock. The post-write verify-and-merge loop
 // inside `bootstrapPod` provides a best-effort safety net even
 // across replicas.
+//
+// ── ★ PUBLISH_CONTEXT'S `if_match` IS NOT CROSS-REPLICA SAFE ──────
+//
+// `handlePublishContext` wraps its ENTIRE body in this mutex, including the
+// compare-and-swap: manifest read → supersessionFrontier → precondition check →
+// descriptor + manifest write. That read-check-write is atomic per pod within
+// ONE process and nowhere else. Two replicas both read the manifest at v1, both
+// compute currentHeads=[v1], both pass, both write. Lost update, and both callers
+// are told `precondition.passed: true` — the exact failure the frontier fix
+// exists to prevent, just relocated from one process to two.
+//
+// The comment two paragraphs up is right about the AGENT REGISTRY (bootstrapPod's
+// verify-and-merge converges). It does NOT extend to the CAS, and neither does
+// anything else already in the tree. Both candidates were checked:
+//
+//   - The CSS manifest If-Match/ETag CAS (packages/solid/src/client.ts ~L1774)
+//     is a MERGE loop by design: on 412 it re-GETs the freshest etag, rebuilds
+//     the body from the fresh entries, and re-PUTs, so BOTH writers' entries
+//     land. It serialises the manifest RESOURCE; it deliberately does not reject
+//     a second chain writer. Repurposing it would mean turning its 412 into a
+//     publish failure, which is the opposite of what every non-CAS publish needs.
+//     There is also no shared resource to contend on: each publish PUTs a NEW,
+//     uniquely-named descriptor URL, so two chain heads never collide on one ETag.
+//
+//   - The substrate gate (`checkSupersessionPrecondition`) re-reads descriptor
+//     BODIES, but compares them against `currentHeads`, which this handler froze
+//     from ITS replica's manifest snapshot. A fresh read on one side of a stale
+//     comparison is still a stale comparison.
+//
+// A real fix needs a lock both replicas can see, and the smallest honest version
+// is `pg_advisory_xact_lock(hashtext(podUrl))` — `pg` is already a direct
+// dependency of this service, the lock needs no DDL (the runtime role has none by
+// design, see pgsl-node-store.ts), and Postgres is already deployed alongside.
+// It is NOT small, and that is why it is written up here instead of half-built:
+// the connection string (RELAY_PGSL_PG_CONNSTR) is OPTIONAL and unset in dev, CI,
+// and any relay that does not run the PGSL node store. So the fix forces a policy
+// choice with no safe default — fail-open when no lock is configured re-creates
+// the "guard silently disabled" class this file has now been bitten by three
+// times, and fail-closed makes every local publish require a Postgres. Making
+// that choice, and provisioning the connstr everywhere the relay runs, IS the
+// work; the lock call itself is four lines.
+//
+// Evidence for "single-replica today", so this stays a latent limit and not a
+// live bug: Railway serviceInstance(relay).numReplicas is null (unset ⇒ platform
+// default 1), neither deploy/railway/services.json nor deploy/railway/deploy.mjs
+// ever sets it, and CSS itself is pinned to one replica anyway (Dockerfile.css:
+// the Redis-locker multi-replica variant FAILED a concurrent-write torture test).
+// ★ Turning on relay replicas without the lock above silently un-fixes if_match.
 const podWriteMutexes = new Map<string, Promise<unknown>>();
 
 async function withPodMutex<T>(podUrl: string, fn: () => Promise<T>): Promise<T> {
