@@ -32,6 +32,28 @@
  * The manifest mirrors each entry's `iep:supersedes`, so the frontier is computable
  * from the single manifest GET the publish path already performs. No descriptor bodies
  * are fetched to answer this question.
+ *
+ * ── ★ WHY THERE IS NO `exclude` ──────────────────────────────────────────────
+ *
+ * There was one, and the caller chose its value. `publish_context` takes an unvalidated
+ * `descriptor_id`; the relay turned it into a descriptor URL (last `:`/`#` segment,
+ * URI-encoded) and passed that as `exclude`. Dropping an entry removes it BOTH as a
+ * candidate head AND as a source of `supersedes` edges, so naming the live head made its
+ * ancestor a head again — and a writer holding only the stale token then passed:
+ *
+ *     manifest: v0, v1 (supersedes v0).  Real head: v1.
+ *     publish_context{ if_match: v0, descriptor_id: "urn:x:<v1's slug>" }
+ *       → exclude = v1 → describing = [v0] → heads = [v0] → v0 accepted as the head
+ *
+ * The same line refused a legitimate writer from the other direction: a client using a
+ * STABLE `descriptor_id` for idempotency excluded its own only entry, so `heads` was `[]`
+ * and every `if_match` it could possibly send was refused with "every descriptor for this
+ * graph is superseded" — a state no value recovers from.
+ *
+ * The exclusion was only ever there to stop a descriptor superseding ITSELF. That belongs
+ * on the supersedes list being built, not on the frontier being measured, so it lives in
+ * `priorVersionsFor` below; `casSelfOverwriteRefusal` handles the case the two cannot both
+ * be satisfied. The option is gone rather than fixed so no later caller can re-supply it.
  */
 
 /**
@@ -57,6 +79,138 @@ export function classifyIfMatch(value: unknown): 'absent' | 'usable' | 'unusable
   if (value === undefined) return 'absent';
   if (typeof value !== 'string' || value.trim().length === 0) return 'unusable';
   return 'usable';
+}
+
+/** What the publish request as a whole permits: an if_match plus the graph it is about. */
+export type CasRequest =
+  /** No precondition asserted. Publish normally. */
+  | { readonly kind: 'absent' }
+  /** A precondition was asserted with a value no retry can turn into a head. 400. */
+  | { readonly kind: 'unusable' }
+  /** A usable if_match, but no graph to resolve a head WITHIN. 400 — see below. */
+  | { readonly kind: 'ungraphed' }
+  /**
+   * A graph_iri that is not the literal IRI it will be compared against — today, one with
+   * surrounding whitespace. 400, with the reason. See `classifyCasRequest`.
+   */
+  | { readonly kind: 'unpadded-graph-required'; readonly graphIri: string }
+  /** Enough to compute the frontier and hold the caller to it. */
+  | { readonly kind: 'evaluable'; readonly ifMatch: string; readonly graphIri: string };
+
+/**
+ * Can this `if_match` actually be checked against a chain?
+ *
+ * ★ A HEAD IS ONLY DEFINED RELATIVE TO A GRAPH. `supersessionFrontier` needs a graph IRI to
+ * pick the entries that form the chain; with no graph there is no chain, no frontier, and
+ * nothing for the assertion to be compared against.
+ *
+ * The relay used to reach that state and keep going. `casHeads` was computed only when
+ * `args.graph_iri` was truthy, and `checkSupersessionPrecondition` skips the head check
+ * entirely when `currentHeads` is undefined — so a publish with an `if_match` and NO
+ * `graph_iri` silently fell back to the pre-fix membership test, the exact test the frontier
+ * exists to replace. `graph_iri` is marked `required` in the tool schema, but `tools/call`
+ * performs no schema validation, so omitting it is one keystroke.
+ *
+ * No chain takeover was demonstrated from this — a descriptor with no `graph_iri` describes
+ * no graph, and `supersessionFrontier` only lets DESCRIBING entries retire a head — so this
+ * is a guard that turns itself off, not an exploit. It still has to go: the whole point of
+ * the fix is that "we could not evaluate your precondition" never renders as
+ * `precondition.passed: true`.
+ *
+ * 400, not the 503 a failed manifest read gets: a manifest read can succeed next time, and
+ * a request that named no graph will name no graph however often it is resent.
+ *
+ * ★ AND A PADDED graph_iri IS REFUSED RATHER THAN QUIETLY TRIMMED. This validated
+ * `graphIri.trim()` and then returned `graphIri` — so ` urn:graph:x ` was `evaluable`,
+ * `describes.includes(' urn:graph:x ')` matched nothing, and the caller got the 412 that
+ * reads "(none — every descriptor for this graph is superseded)": the unrecoverable-looking
+ * answer this whole module exists to stop emitting, for one stray space.
+ *
+ * Refused rather than trimmed because trimming HERE would only move the disagreement. The
+ * frontier would be computed over the trimmed IRI while the descriptor being written still
+ * declares `iep:describes` from the caller's raw argument — so the precondition would be
+ * evaluated against one chain and the write would join another. A graph IRI is compared
+ * literally everywhere it is compared at all; the honest answer is to say the argument is
+ * not the IRI it looks like, and let the caller send the IRI.
+ */
+export function classifyCasRequest(ifMatch: unknown, graphIri: unknown): CasRequest {
+  const value = classifyIfMatch(ifMatch);
+  if (value === 'absent') return { kind: 'absent' };
+  if (value === 'unusable') return { kind: 'unusable' };
+  // Whitespace-only is rejected for the same reason it is rejected in `if_match`: it is
+  // not an IRI, and `describes.includes('  ')` would match nothing, silently emptying the
+  // frontier instead of saying why.
+  if (typeof graphIri !== 'string' || graphIri.trim().length === 0) return { kind: 'ungraphed' };
+  if (graphIri !== graphIri.trim()) return { kind: 'unpadded-graph-required', graphIri };
+  return { kind: 'evaluable', ifMatch: ifMatch as string, graphIri };
+}
+
+/** The error envelope `publish_context` returns verbatim. */
+export interface CasRefusal {
+  readonly error: string;
+  readonly code: number;
+  readonly retryable: boolean;
+  readonly message: string;
+}
+
+/**
+ * The response for a precondition that cannot be evaluated — or `null` to proceed.
+ *
+ * ★ Lives here, not inline in the handler, so the WIRE ANSWER is testable. `server.ts`
+ * starts an HTTP listener on import, so a refusal written inline there is a branch no test
+ * can reach; both holes closed in this file were "the branch that quietly did not run",
+ * and a fix whose only witness is a predicate one call upstream repeats that shape.
+ *
+ * `retryable` is the field callers act on, so it carries the whole distinction:
+ *   - 400 / false — no resend of this request can succeed. The value is not a head, or
+ *     names no graph to be a head of.
+ *   - 503 / true (raised by the handler, which knows the pod) — we could not read the
+ *     manifest. That can work next time.
+ * The one answer never available is silence, which is what both of these used to be.
+ */
+export function casRefusal(request: CasRequest, ifMatch: unknown): CasRefusal | null {
+  if (request.kind === 'unusable') {
+    const received = ifMatch === null
+      ? 'null'
+      : typeof ifMatch === 'string' ? 'an empty string' : typeof ifMatch;
+    return {
+      error: 'invalid_if_match',
+      code: 400,
+      retryable: false,
+      message:
+        'if_match must be a non-empty descriptor URL (https://….ttl) or content-CID (bafkrei…). '
+        + `Received ${received}. `
+        + 'Omit if_match entirely when there is no prior head to gate on — an absent precondition '
+        + 'is how you say "this is the first version"; an empty one is not.',
+    };
+  }
+  if (request.kind === 'unpadded-graph-required') {
+    return {
+      error: 'graph_iri_not_canonical',
+      code: 400,
+      retryable: false,
+      message:
+        `graph_iri was received as ${JSON.stringify(request.graphIri)} — with surrounding `
+        + 'whitespace. A graph IRI is compared literally against each descriptor\'s '
+        + `iep:describes, so that value names a different graph from ${JSON.stringify(request.graphIri.trim())} `
+        + 'and its chain has no descriptors at all. Refused rather than trimmed: trimming it '
+        + 'here would evaluate the precondition against one chain while the descriptor this '
+        + 'publish writes joins another. Send the IRI without the padding.',
+    };
+  }
+  if (request.kind === 'ungraphed') {
+    return {
+      error: 'precondition_not_evaluable',
+      code: 400,
+      retryable: false,
+      message:
+        'if_match was supplied without a graph_iri, so there is no chain to resolve a current '
+        + 'head within and the precondition cannot be evaluated. Send the graph_iri the '
+        + 'if_match descriptor is a version of, or omit if_match — an if_match that cannot be '
+        + 'checked must never be reported as satisfied.',
+    };
+  }
+  return null;
 }
 
 /** The manifest fields this computation needs. Structural, so both callers' types fit. */
@@ -85,7 +239,6 @@ export interface Frontier {
  *
  * @param entries    manifest entries for the pod
  * @param graphIri   the graph whose chain we want
- * @param options.exclude    descriptor URL to leave out (the publish being prepared)
  * @param options.normalize  URL canonicaliser. Manifest entries and `iep:supersedes`
  *   targets can carry either the internal-FQDN host or the legacy public one depending
  *   on when they were written. Comparing raw strings across that boundary would find no
@@ -96,14 +249,11 @@ export interface Frontier {
 export function supersessionFrontier(
   entries: readonly FrontierEntry[],
   graphIri: string,
-  options: { readonly exclude?: string; readonly normalize?: (url: string) => string } = {},
+  options: { readonly normalize?: (url: string) => string } = {},
 ): Frontier {
   const norm = options.normalize ?? ((u: string) => u);
-  const excluded = options.exclude === undefined ? undefined : norm(options.exclude);
 
-  const describing = entries.filter(
-    e => e.describes.includes(graphIri) && (excluded === undefined || norm(e.descriptorUrl) !== excluded),
-  );
+  const describing = entries.filter(e => e.describes.includes(graphIri));
 
   // An entry is superseded iff some OTHER describing entry points at it. Restricting the
   // superseder set to describing entries is deliberate: a descriptor for an unrelated
@@ -121,4 +271,175 @@ export function supersessionFrontier(
   }
 
   return { heads, superseded: dead, all: describing.map(e => e.descriptorUrl) };
+}
+
+/**
+ * The `iep:supersedes` list a publish of `selfDescriptorUrl` should declare.
+ *
+ * Every descriptor already describing this graph, minus the one being written. That is
+ * what `auto_supersede_prior` means: the new version links ALL priors, not just the head,
+ * so a reader arriving at any ancestor can walk forward.
+ *
+ * ★ MINUS ITS OWN URL, COMPARED AS A URL. The relay filtered on `descriptor_id` instead —
+ * a `urn:iep:<pod>:<ts>`, while manifest entries carry `https://…/x.ttl` URLs. The two
+ * shapes never compare equal, so the self-filter never fired once. It went unnoticed
+ * because the relay-generated id is fresh per call, so there is normally no self entry to
+ * filter. Supply a stable `descriptor_id` and the entry IS there: the descriptor lands in
+ * its own supersedes list, `supersessionFrontier` sees a self-superseding entry, and the
+ * chain reports NO head from then on — every later `if_match` refused, none recoverable.
+ *
+ * Also the recompute point for a deferred publish: the list is only correct as of the
+ * manifest read it came from, and a deferred write happens later. See the Phase B
+ * recompute in `handlePublishContext`.
+ */
+export function priorVersionsFor(
+  entries: readonly FrontierEntry[],
+  graphIri: string,
+  selfDescriptorUrl: string,
+  normalize?: (url: string) => string,
+): string[] {
+  const norm = normalize ?? ((u: string) => u);
+  const self = norm(selfDescriptorUrl);
+  return entries
+    .filter(e => e.describes.includes(graphIri) && norm(e.descriptorUrl) !== self)
+    .map(e => e.descriptorUrl);
+}
+
+/**
+ * The `supersedes` a DEFERRED publish should actually write — or `null` for "unchanged".
+ *
+ * ★ A DEFAULT PUBLISH DECIDES ITS SUPERSEDES LIST IN ONE CRITICAL SECTION AND WRITES IT IN
+ * ANOTHER. The relay reads the manifest under a per-pod mutex, builds the descriptor, hands
+ * the caller a 202, and performs the write from a background task that re-acquires the
+ * mutex. That acquisition is strict FIFO and is requested from INSIDE the first one, so it
+ * queues behind every request that arrived in the meantime — and those get to write first:
+ *
+ *     t0  W1 reads: head v1, supersedes [v0, v1]
+ *     t3  W2 (queued after W1, running before W1's write) publishes v2 superseding v1
+ *     t4  W1 writes with [v0, v1] — a list that predates v2
+ *
+ * Nothing overwrites anything, which is why it is not a lost update; what it produces is a
+ * FORK. v2 and W1's version each supersede v1 and neither supersedes the other, so the
+ * chain has two heads, `get_current_head` reports a divergence nobody asked for, and the
+ * next compare-and-swap has no single value to assert.
+ *
+ * Re-deciding against the manifest as it stands AT WRITE TIME makes W1 link v2 as well and
+ * the chain stays linear with the last writer as its head — which is what publishing
+ * without a precondition means.
+ *
+ * ★ "NOTHING MOVED" IS A QUESTION ABOUT MEMBERS, NOT ABOUT ORDER. The comparison was
+ * element-wise and positional, so a manifest that merely came back in a different order
+ * — and it can: `getCachedManifest` unions the append-only container with the monolithic
+ * manifest through a Map, and append-only entries are written asynchronously — produced a
+ * "changed" verdict and a rewrite for a supersedes list with identical contents. Comparing
+ * membership means an uncontended write stays byte-for-byte the descriptor whose CID the
+ * caller was handed in the 202, which is the property that matters; `iep:supersedes` is a
+ * set of triples, so the order this preserves carries no meaning beyond those bytes.
+ *
+ * ★ WHAT THIS DOES NOT FIX, STATED PLAINLY: when the members really HAVE changed, the
+ * descriptor that lands is not the descriptor the 202's CID was computed over. That is
+ * unavoidable here — the caller was answered before the write was decided — so it is
+ * handled at the call site instead: the deferred publish marks its CID provisional and
+ * pins the bytes it actually wrote. See `handlePublishContext`.
+ *
+ * Only valid where the frozen list CAME from the manifest. Under `auto_supersede_prior:
+ * false` the triples are the caller's own content and are not ours to revise, so the caller
+ * must not call this.
+ */
+export function reDecidedSupersedes(
+  frozen: readonly string[],
+  contentSupersedes: readonly string[],
+  freshEntries: readonly FrontierEntry[],
+  graphIri: string,
+  selfDescriptorUrl: string,
+  normalize?: (url: string) => string,
+): readonly string[] | null {
+  const merged = [
+    ...new Set([
+      ...contentSupersedes,
+      ...priorVersionsFor(freshEntries, graphIri, selfDescriptorUrl, normalize),
+    ]),
+  ];
+  // `merged` is already de-duplicated (it is built from a Set), so comparing its length
+  // against the DISTINCT frozen targets is a set equality test. A frozen list carrying a
+  // duplicate still compares equal and is written unchanged — duplicate triples say nothing
+  // extra, and preserving the caller's bytes is worth more than tidying them.
+  const frozenTargets = new Set(frozen);
+  if (merged.length === frozenTargets.size && merged.every(u => frozenTargets.has(u))) return null;
+  return merged;
+}
+
+/**
+ * Refuse a compare-and-swap whose own write would land ON a member of the chain.
+ *
+ * ★ `descriptor_id` DECIDES THE DESCRIPTOR URL, so a caller can aim this publish at a URL
+ * the chain already occupies. Two things then cannot both be true:
+ *
+ *   - the write is a NEW version, which is what `iep:supersedes` and therefore the whole
+ *     frontier assume — every version has its own URL and the chain is the edges between
+ *     them; and
+ *   - the write overwrites an existing version in place, destroying the very descriptor
+ *     the `if_match` names as the state being swapped from.
+ *
+ * Left unrefused it is not merely confusing, it is corrupting. Aim a publish at an
+ * ANCESTOR's URL while holding the real head token and the precondition passes on the
+ * merits (the head genuinely is the head), then the write replaces the ancestor with a
+ * descriptor that supersedes the head — the head supersedes the ancestor, the ancestor now
+ * supersedes the head, and `supersessionFrontier` reports no head at all, permanently.
+ * Aim it at the HEAD's URL and `priorVersionsFor` correctly refuses to let it supersede
+ * itself, leaving an empty supersedes list and a 412 that reads as if the caller's token
+ * were stale when it was perfectly current.
+ *
+ * So: say what actually happened, and say it before anything is written. 409 rather than
+ * 412 because nothing about the caller's ASSERTION was wrong — the request is
+ * self-contradictory. Non-retryable for the same reason: resending it re-collides.
+ *
+ * Scoped to publishes that asserted an `if_match`. Republishing to a stable descriptor URL
+ * with no precondition is a legitimate idempotent overwrite (the relay's own trajectory
+ * recorder does exactly that), and refusing it would break callers doing nothing wrong.
+ *
+ * ★ THE SCOPE OF THIS CHECK IS ONE GRAPH, AND THAT IS NARROWER THAN "DOES THIS URL EXIST".
+ *
+ * It inspects only entries whose `describes` contains `graphIri`. `descriptor_id` decides
+ * the descriptor URL through `slugFromIri` — the last `/`, `:` or `#` segment — so a caller
+ * publishing a version of G1 can choose a slug that lands on a descriptor belonging to G2.
+ * Nothing here sees that: G2's entry does not describe G1, the collision is not reported,
+ * the `if_match` passes on its own merits, and the write replaces G2's descriptor in place.
+ * If it was G2's only head, G2 silently loses its head. Measured, not theorised:
+ * `scratchpad/adv-cas.test.ts` CAS-A.
+ *
+ * That hole PREDATES the frontier work and closing it is a different change — it needs a
+ * pod-wide "is this URL already a descriptor of anything" check, which is a decision about
+ * whether one graph's owner may ever overwrite another's resource, not about compare-and-
+ * swap. What is fixed here is the message: it used to tell the caller to "send a
+ * descriptor_id that does not resolve to an existing version", which claims a completeness
+ * this function does not have. It now says which chain it looked at.
+ */
+export function casSelfOverwriteRefusal(
+  entries: readonly FrontierEntry[],
+  graphIri: string,
+  selfDescriptorUrl: string,
+  normalize?: (url: string) => string,
+): CasRefusal | null {
+  const norm = normalize ?? ((u: string) => u);
+  const self = norm(selfDescriptorUrl);
+  const collides = entries.some(
+    e => e.describes.includes(graphIri) && norm(e.descriptorUrl) === self,
+  );
+  if (!collides) return null;
+  return {
+    error: 'descriptor_id_collides_with_chain',
+    code: 409,
+    retryable: false,
+    message:
+      `This publish would be written to <${selfDescriptorUrl}>, which is already a version of `
+      + `<${graphIri}> on this pod. A compare-and-swap over a supersession chain writes a NEW `
+      + 'version that supersedes the head; overwriting an existing version in place would '
+      + 'destroy the state the if_match names and leave the chain with no resolvable head. '
+      + 'Omit descriptor_id so a fresh URL is minted (the normal case) — or, if you really do '
+      + 'mean to overwrite that resource, drop if_match and accept that it is not a swap. '
+      + `Note that this check covers only the chain for <${graphIri}>: a descriptor_id whose `
+      + 'URL belongs to some OTHER graph on this pod is not detected here, and would overwrite '
+      + 'it. Choosing your own descriptor_id means choosing the resource you land on.',
+  };
 }

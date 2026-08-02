@@ -137,16 +137,32 @@ describe('normalizeCssUrl — pass-through (no rewrite)', () => {
     expect(normalizeCssUrl(attackerUrl)).toBe(attackerUrl);
   });
 
-  it('does NOT rewrite a different deployment ID', () => {
-    // The regex captures any `livelysky-<hex>` deployment ID for forward-
-    // compatibility, but the canonical rewrite target is hard-coded to
-    // 8b81abb0. A different-ID OLD-host URL WILL match the regex (intent:
-    // future-proof if we re-deploy) and rewrite to the canonical target.
-    // This documents and locks in that behaviour.
+  it('KEEPS a different deployment ID — the rewrite inserts a label, it does not pick a host', () => {
+    // ★ THIS TEST USED TO ASSERT THE OPPOSITE, AND THE OPPOSITE WAS THE BUG.
+    //
+    // The replacement was a hard-coded `...internal.livelysky-8b81abb0...` literal, so
+    // EVERY matching deployment ID collapsed onto that one host and two genuinely
+    // different URLs compared equal. The test called that "future-proof if we re-deploy"
+    // and locked it in; url-rewrite.ts now carries the two live consequences (a
+    // cross-deployment `iep:supersedes` comparing equal in the CAS frontier, and a
+    // caller-supplied host being fetched WITH the relay's CSS credentials).
+    //
+    // The `.internal.` label is inserted; the deployment ID, region, path and everything
+    // else are the caller's URL, carried through byte-for-byte.
     const altOld = 'https://interego-css.livelysky-deadbeef.eastus.azurecontainerapps.io/markj/';
-    const out = normalizeCssUrl(altOld);
-    // It rewrites to the canonical internal host.
-    expect(out).toBe(`${NEW_HOST}/markj/`);
+    expect(normalizeCssUrl(altOld))
+      .toBe('https://interego-css.internal.livelysky-deadbeef.eastus.azurecontainerapps.io/markj/');
+    // And the canonical deployment is untouched by that generality.
+    expect(normalizeCssUrl(`${OLD_HOST}/markj/`)).toBe(`${NEW_HOST}/markj/`);
+  });
+
+  it('two deployments never normalise to the same URL', () => {
+    // The property the collapse destroyed, asserted directly: `normalizeCssUrl` is what
+    // `supersessionFrontier` compares descriptor URLs with, so equality after
+    // normalisation must mean the URLs named the same resource.
+    const a = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/c/1.ttl';
+    const b = 'https://interego-css.livelysky-deadbeef.eastus.azurecontainerapps.io/markj/c/1.ttl';
+    expect(normalizeCssUrl(a)).not.toBe(normalizeCssUrl(b));
   });
 });
 
