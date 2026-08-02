@@ -27,6 +27,7 @@ Every one of these is a thing Buzz does better, and a team feels the absence wit
 | | here | one-relay design |
 |---|---|---|
 | catching up on a workspace | one manifest read **per member** | one indexed query |
+| …with attribution verified | **+ one `get_descriptor` per entry** | authorship is the server's word |
 | full-text search across members | none | server-side index |
 | presence, typing indicators | none | trivial |
 | an append becoming readable | **~3–4s** (publish is deferred) | immediate |
@@ -40,17 +41,59 @@ cannot confirm — see below.
 
 ## The three properties that do the work
 
-**1. Membership is two-sided — as a *design*, not yet as an *enforced* property.** A grant
-is meant to live on the convener's pod and an acceptance on the member's own, and a roster
-entry exists only where both agree.
+**1. Membership is two-sided, and `foldRoster` can now be made to check it.** A grant lives
+on the convener's pod and an acceptance on the member's own, and a roster entry exists only
+where both agree — *and* where each half was signed by the party it claims to come from.
 
-> ★ **An independent review refuted the enforcement.** `Grant` and `Acceptance` carry no
-> provenance, and `foldRoster` checks only that the acceptance names the grant and the same
-> principal. A convener can write *both halves on their own pod* and the fold produces a
-> member who agreed to nothing. Worse: the live verifier that reported 13/13 **built both
-> halves itself**, so the property was demonstrated by construction rather than
-> established. The fix is to require and verify each record's `iep:authorshipProof` — the
-> substrate can write it; this layer does not yet read it.
+> ★ **An independent review refuted the original claim, and it was right.** `Grant` and
+> `Acceptance` carried no provenance: the only cross-checks were that the acceptance names
+> the grant and repeats the principal, both of which the convener types. A convener could
+> write *both halves on their own pod* and the fold produced a member who agreed to nothing.
+> Worse, the live verifier that reported 13/13 **built both halves itself**, so the property
+> was demonstrated by construction.
+
+Both records now carry an `Attestation` — the substrate's own answer to *who signed this* —
+and `foldRoster` takes an optional `attestation: { convener, signerOf }` policy. Under it,
+a grant not traceable to the convener and an acceptance not traceable to the member it names
+are **refused and listed in `roster.unattested`**, never folded and never dropped.
+
+Two things make that hard to skip:
+
+- `Roster.membershipGrade` is **non-omittable** — `'attested'` or `'asserted'`. A caller
+  cannot obtain `members` without also holding the answer to *who checked?*, the same reason
+  `crossStreamOrderIsAdvisory` exists.
+- Without a policy, `Roster.attributionNote` says in words that *"a convener who holds both
+  records could have written both halves and this list would look identical."*
+
+`AttestationPolicy.convener` is a required field, not an optional one: *"require attestation
+but do not say against whom"* has no safe answer, and a field that can be left out is a
+field that gets left out.
+
+> ★★ **Turning that policy on granted MORE authority than leaving it off, and a second review
+> found it.** The gate filtered refused rows out of the grant list *before* the revocation
+> check, so a revocation nobody could attest was not refused — it was **erased**, and the
+> member kept everything. A transient `get_descriptor` failure silently reinstated a revoked
+> member, and nothing in `unattested`, `explain()` or `attributionNote` said a revocation had
+> failed to take effect. Three more of the same shape were present: a refused grant head
+> deleted the narrower half of an intersection and **widened** a role; a refused withdrawal
+> retained a member who had left; a refused withdrawal also raised a *pending invitation* for
+> somebody who had already answered and then retracted.
+>
+> Fixed as a rule the whole fold obeys, not as a patch on one branch: **a record that fails
+> attestation loses its power to confer and keeps its power to restrict.** The fold reads two
+> tracks — *conferring* (gated) and *restricting* (every row) — and
+> `tests/workspace-adversarial.test.ts` enumerates 576 configurations across three axes and
+> asserts, literally, that no stronger configuration admits anything a weaker one withholds.
+> Honouring an unattestable revocation does let anyone who can get a row into `grants` evict
+> a member; that is a denial of service the `asserted` configuration already permits in full,
+> and it is the strictly lesser evil.
+
+**What this does and does not establish** is set out under
+[Attribution](#-attribution-what-is-now-verified-and-what-is-not) below. The short version:
+it defeats a convener writing an acceptance from their own session; it does **not** defeat a
+convener lifting a valid proof block out of one of the member's real records; and — the one
+a reader is most likely to over-read — **it binds a signer to a URL, never a record to its
+content**, so it does not establish that the member agreed to anything at all.
 
 **2. A role is a ceiling, never a grant.** Effective capability is
 `role.permits ∩ delegatedScope`. A Convener whose agent holds a read-only delegation still
@@ -74,10 +117,10 @@ notices; over-privileging is a failure nobody notices.
 
 | file | what it is |
 |---|---|
-| [`src/roster.ts`](src/roster.ts) | the two-sided fold: `foldRoster`, `may`, `explain`. Pure. |
-| [`src/stream.ts`](src/stream.ts) | one participant's log: `appendEntry`, `readStream`, `verifyChain`. |
+| [`src/roster.ts`](src/roster.ts) | the two-sided fold: `foldRoster`, `may`, `explain`, `refuseAttestation`. Pure. |
+| [`src/stream.ts`](src/stream.ts) | one participant's log: `appendEntry`, `readStream`, `verifyChain`, `readAttestation`. |
 | [`src/compose.ts`](src/compose.ts) | many pods read as one workspace: `composeWorkspace`, `resolveCitations`. |
-| [`src/can.ts`](src/can.ts) | authority: `canAct`, `authorizeView`, `scopesFromRegistry`. |
+| [`src/can.ts`](src/can.ts) | authority: `canAct`, `authorizeView`, `scopesFromRegistry`, `signerIndexFromRegistry`. |
 | [`tools/verify-stream-live.ts`](tools/verify-stream-live.ts) | the stream, against the **live** relay. |
 | [`tools/verify-compose-live.ts`](tools/verify-compose-live.ts) | two real identities, two real pods, one view. |
 | [`tools/verify-can-live.ts`](tools/verify-can-live.ts) | a live refusal, at both layers that can refuse. |
@@ -123,6 +166,20 @@ same `seq` cannot both land: the loser gets a 412.
 | `conflict` | someone else got there first (412), or the chain does not verify. The current head is attached. |
 | `refused` | the shape gate or the substrate said no, with the code. |
 
+`appended` and `pending` both carry a non-omittable `signing`: `'signed'`, `'NOT-SIGNED'` or
+`'unreported'`, plus a `signingNote` that is always populated.
+
+> ★ **`sign_authorship: true` is a request, and `appendEntry` was not reading the answer.**
+> The relay catches a signing failure, logs a warning, **publishes anyway**, and reports it
+> as `authorship: {signed: false, reason}`. `appendEntry` read only `code`, `error` and
+> `descriptorUrl`, so a transient outage of the signing key produced a run of entries
+> reported as a clean `appended` with nothing anywhere mentioning signing. By this module's
+> own rule that is **permanent** — the bytes are immutable and the key has moved on — so the
+> operator would have found out at read time, when `verifyAuthorship: true` withheld a
+> stretch of their own log, months later. `'unreported'` is kept distinct from
+> `'NOT-SIGNED'`: guessing "unsigned" would make every append look broken against a relay
+> that simply does not report it.
+
 `appendWithRetry` retries `conflict` only. It never retries `pending`: there is no delete
 in an append-only log, so a duplicate entry is unfixable by the writer. A lost retry is
 recoverable; a phantom is not.
@@ -142,7 +199,9 @@ conflates them**:
 
 A single-relay design can total-order everything because one server assigns the order.
 This one cannot, and `crossStreamOrderIsAdvisory` is a non-omittable field so that anything
-consuming the feed has had to see the claim.
+consuming the feed has had to see the claim. `attributionGrade` is non-omittable for the
+same reason and is modelled directly on it — see
+[Attribution](#-attribution-what-is-now-verified-and-what-is-not).
 
 ### Partial availability is the point, so it has to be visible
 
@@ -163,10 +222,10 @@ A stream that reads but **does not verify** is reported and withheld from the fe
 merging it would place entries whose order within their own member is unknown beside
 entries whose order is verified, with nothing to tell them apart.
 
-## ★ Attribution is not verified, and that bounds everything below
+## ★ Attribution: what is now verified, and what is not
 
-`ComposedEntry.principal` is a **label the composer attaches from the members list**, not a
-fact read from the record. Nothing in the read path derives authorship.
+`ComposedEntry.principal` **was** a label the composer attached from the members list — not
+a fact read from the record. Nothing in the read path derived authorship.
 
 An independent review turned that into a live escalation: a member's stream IRI comes from
 their **own acceptance**, and nothing required it to be under their own authority. Point it
@@ -174,19 +233,170 @@ at somebody else's pod and their entries were folded in *attributed to you* — 
 writes laundered into a Contributor's, and with the recommended `readableMembers` pre-filter
 the Observer's pod was never read, so nothing was even reported.
 
-What is now checked: **each returned record must be served from the member's own pod**, and
-entries served from elsewhere are withheld and reported.
+Two checks now stand between a record and a name.
 
-> The first attempt at this defence range-checked the *stream IRI* against the pod, and
+**Containment.** Each returned record must be served from under the `podUrl` **supplied for
+that member**; entries served from elsewhere are withheld and reported in `misattributed`.
+
+> The first attempt at this defence range-checked the *stream IRI* against the pod and
 > rejected every real member on the first live run. A graph IRI lives under the relay's
 > naming authority; its entries are stored on a pod. Conflating them is a category error,
-> not a check — caught only because the live verifiers were re-run after the change. What that check **cannot** do is
-help when `podUrl` was itself derived from the member's claim — asking the attacker where
-the attacker lives. The honest fix is verifying each descriptor's own `iep:authorshipProof`,
-which the substrate can write and this layer does not yet read.
+> not a check — caught only because the live verifiers were re-run after the change.
 
-**Until it does, every authority claim below is only as good as the `podUrl` the caller
-supplied.**
+> ★ **Four places in the code, and this table, used to call it "that member's own pod". That
+> is the claim, not the check**, and a third review reproduced the original laundering
+> escalation through it: point `podUrl` *and* `stream` at a victim — both come from the same
+> acceptance — and containment passes, `misattributed` is empty and `complete` is `true`.
+> Composing both members then admits the attacker's laundered copy and puts the victim's own
+> legitimate copy in `disallowed`, an exact inversion. The wording is now "the pod URL
+> supplied for that member" everywhere, because that is what is actually compared.
+
+Containment structurally cannot help when `podUrl` was itself derived from the member's
+claim: that asks the attacker where the attacker lives. Which is why there is a second check.
+
+**Authorship.** Every append now goes out with `sign_authorship: true`, so each entry's
+descriptor embeds an `iep:authorshipProof`. `composeWorkspace({ verifyAuthorship: true })`
+reads each one back through `get_descriptor` — which runs the relay's verifier, not ours —
+and admits an entry only when the signer resolves, through the member's **own agent
+registry**, to the member the entry would be attributed to. Anything else is **withheld and
+reported** in `unattested`, never admitted and never silently dropped.
+
+Signing is unconditional; verifying is opt-in. The asymmetry is not a compromise: an entry
+written unsigned can never acquire a proof, because the bytes are immutable and the key has
+moved on, whereas verification is a recurring cost paid on every read forever.
+
+### The two grades of attribution
+
+| grade | what the name beside an entry means | cost |
+|---|---|---|
+| `asserted` *(default)* | it came from the caller's members list, and the record is served from under the `podUrl` the caller supplied for that member — **not** a check that the pod is theirs | nothing |
+| `attested` | the substrate verified the record's own signature and it traces to an agent that member's registry vouches for, and which is not revoked | **one `get_descriptor` per entry** |
+
+`ComposedView.attributionGrade` is non-omittable and `ComposedView.descriptorReads` reports
+what verification actually spent, so the bill is countable rather than described.
+
+### What is genuinely established
+
+- A convener cannot fabricate an acceptance **from their own session**. The proof would name
+  their agent, the member's registry does not vouch for it, and the fold refuses it by name.
+  Read that narrowly: it says *this URL was not signed by the convener*. It does **not** say
+  the member accepted anything — see residual gap 1.
+- An entry cannot be laundered from one member to another **once `verifyAuthorship: true` is
+  on**: the record must be signed by a live agent the named member vouches for. Containment
+  alone does not establish this, because the pod URL is the caller's claim.
+- A **revoked** signing key no longer attests, and the entry is withheld and named in
+  `unattested` rather than admitted.
+
+> ★ **That last bullet used to say the opposite, and the opposite was wrong.** It read: *"a
+> revoked agent still attributes, deliberately — revocation removes the capability, so those
+> entries land in `disallowed`."* That holds only when the revoked agent was the principal's
+> **only** agent. `scopesFromRegistry` unions over the live ones, so a review signed an entry
+> with a key its owner had already thrown out and it was counted as that member's workspace
+> content at the **highest grade the system offers**, with `ComposedEntry` carrying no signer
+> field for anything downstream to recover it from. That is the compromised-key case the
+> revocation work exists for, admitted.
+>
+> **What the fix costs, stated rather than buried:** rotating a key now withholds everything
+> it signed until the retired row is restored to the registry live. A registry cannot tell a
+> routine rotation from a compromise, and only one of the two readings is safe when it
+> cannot. Revoked rows are still *indexed* — the key-to-person mapping is what makes a
+> revocation legible at all — they just come back marked.
+
+Two more things `signerIndexFromRegistry` now does, both found by review:
+
+- It reads the pod registry's own **`agentId`** field, not just `did`/`id`. That field is on
+  `AuthorizedAgentData`, the **only** shape that carries `revoked` — so reading `did ?? id`
+  indexed nothing on the one path where revocation arrives, refusing every genuine grant
+  while the revoked branch downstream sat unreachable.
+- A signing key **two registries claim** resolves to neither, naming both claimants. Anyone
+  may write their own pod's registry, so anyone could list a rival's DID in it and take over
+  the attribution of everything that rival ever signed, with the answer flipping on the order
+  the rows arrived in.
+
+### ★ What is NOT established — the residual gaps, precisely
+
+**0. The gate binds a SIGNER TO A URL, never a RECORD TO ITS CONTENT.** Numbered zero because
+it is larger than the three below it and is the one a reader of "attested membership" will
+over-read. `Grant.role`, `Grant.grantedTo`, `Grant.revoked`, `Acceptance.member`,
+`Acceptance.accepts` and `Acceptance.stream` are **typed by the caller of `foldRoster`**; the
+`Attestation` sits beside them and covers none of them. A review handed the fold one of
+bee's *ordinary published log entries* as her acceptance — genuinely signed, genuinely bound
+to its own descriptor, genuinely naming bee — and bee became an **attested member** of a
+workspace she had never heard of, at whatever role the caller typed. That needs no proof
+lifting; it needs only that the victim ever published one signed public record, which every
+`appendEntry` now guarantees.
+
+So *"bee is an attested member"* means **a record at this URL was signed by bee**, and not
+*bee agreed to this*. `Roster.recordContentBinding` is a non-omittable field whose only value
+is `'unbound'`, so the distinction cannot be read past. **This is not fixed and is not
+claimed to be fixed.** Closing it needs the record's own content parsed and compared against
+the fields — and no code anywhere in this repo yet reads a `Grant` or an `Acceptance` off a
+pod, so the shape that gate will eventually be handed does not exist to be checked against.
+
+**1. A proof can be lifted.** `get_descriptor` re-derives the canonical
+payload from the proof block's **own fields** and checks the signature over it. It never
+compares the proof's `iep:descriptorId` against the descriptor it just read, and it calls
+`verifySignedAuthorship` **without** the observed content, so `contentHash` coverage is not
+checked either. A proof block copied verbatim out of any of a member's real, public records
+and pasted into a record somebody else fabricated therefore **verifies clean, naming that
+member**.
+
+This layer narrows it with `proofBindsToDescriptor`, which compares the proof's `descriptorId`
+against the descriptor URL. Be clear about what that is worth: the relay mints
+`descriptor_id` as `urn:iep:<pod>:<epoch-ms>` and derives the URL from its terminal segment
+via `predictDescriptorUrl`/`slugFromIri`, so the two are related by a **naming convention,
+not by an equality the substrate enforces**.
+
+> ★ This paragraph used to say *"a lifted proof carries the original record's epoch and
+> fails"*, and that overstates it. The check compares **only the terminal segment** and
+> discards the pod component entirely, so `urn:iep:alice-pod:1712345678901` binds happily to
+> `https://css/mallory-pod/context-graphs/1712345678901.ttl`. Against the threat model the
+> feature exists for — a party writing descriptor bytes on a pod they control, and choosing
+> the `descriptor_id`, which is an ordinary caller-supplied argument — **the narrowing is
+> close to zero**. What it does still catch is a proof lifted onto a *differently-named*
+> record. Do not read it as more than that.
+
+A publish that names its descriptor some other way — the PGSL-primary path writes a
+content-addressed `holon-<hash>.ttl` — fails this check too, *wrongly*, withholding the
+entry. That is the safe direction and it is now the *reported* direction as well: the
+refusal used to say **"the proof was copied in from another record"**, stated as fact, for
+all four situations that set `boundToDescriptor: false` — three of which are not forgeries.
+Calling a record's real author a forger, in the one channel operators are told to watch, is
+how a true report stops being believed. The message now carries the diagnostic and says only
+one of the two readings is a forgery and that this layer cannot tell which.
+
+**The durable fix belongs in the substrate**, which already holds both the proof and the URL
+it read it from: `get_descriptor` should compare them, and should pass the observed content
+to the verifier.
+
+**2. The signature is the relay's, not the member's.** `sign_authorship` signs with the
+relay's compliance wallet, over a payload whose `iep:issuer` is the session's
+`_session_agent_did` — a reserved wire field the transport strips, so a caller cannot forge
+it. What a verified proof establishes is therefore *"this relay, holding an authenticated
+session for this agent, published this record"* — delegated verification, not a
+self-sovereign signature. It is unforgeable by a workspace participant and it is **not**
+independent of the relay operator.
+
+**3. `signerOf` is only as good as the registry behind it.** `signerIndexFromRegistry` reads
+the agent registry on each principal's own pod, which is exactly why it is evidence — a
+convener cannot add their agent to somebody else's registry. Pass the wrong registry and the
+mapping is wrong. An unknown signer resolves to `null`, never to itself, and a **contested**
+one (two registries claiming the same key) resolves to neither, so a registry that failed to
+load, or one that is being fought over, withholds rather than admits.
+
+**4. Turning verification on withholds every pre-existing entry.** Entries written before
+`sign_authorship` carry no proof, so they are correctly refused. That is the right answer and
+an operationally violent one. **Key rotation now has the same shape**: a revoked signing key
+no longer attests, so a member's history is withheld until the retired registry row is
+restored live.
+
+**5. `wsp:seq` verification has no producer.** `verifyChain`'s sequence check, the
+`seqMismatches` clause in `intact`, and the `headOf` refusal that cites it are **inert
+against every stream this module can actually read**: `ManifestEntry` has no `seq` column, so
+`declaredSeqChecked` is `false` and `seqMismatches` is `[]` on every real read. That is
+reported rather than assumed — `declaredSeqChecked` exists precisely so "nobody looked" is
+not confusable with "the numbering agrees" — but the removed-and-linked-around attack is
+currently caught only by a hand-built row.
 
 ## Where authority can actually be enforced
 
@@ -205,11 +415,13 @@ author, at its own URL — and `authorizeView` excludes it and says why.
 | | one relay | here |
 |---|---|---|
 | unauthorised write | **prevented** | **possible, but inert** |
-| what must be trusted | the relay, absolutely | nothing beyond the signatures on the records |
+| what must be trusted | the relay, absolutely | the relay's *signing key*, and nothing else — see residual gap 2 |
 | who can audit it | nobody — it is a promise about a server | anyone who can read the records, member or not |
 
 Two layers refuse, and they refuse different things. Both are demonstrated live by
-[`tools/verify-can-live.ts`](tools/verify-can-live.ts) (13/13):
+[`tools/verify-can-live.ts`](tools/verify-can-live.ts) (sections 1–5, **13/13 live** — that
+number is the file **as it stood at that run**; section 3 has since gained two assertions
+that the relay did not publish either entry unsigned, and those two have not been run):
 
 ```
 the substrate  bee writes to alice's pod       -> 403 scope_violation, nothing lands
@@ -218,6 +430,35 @@ the workspace  the fold reads both pods        -> 2 entries are readable
 the workspace  authorizeView applies the roster -> 1 is workspace content;
                                                    the Observer's is reported, not deleted
 ```
+
+Those five sections **build the roster by hand**, which is exactly why they could never have
+established two-sidedness — there was no forgery for the fold to refuse, because the harness
+was the only author of anything. Sections 6 and 7 exist to close that: they publish an
+acceptance from bee's own session *and* a forged one for bee from alice's, read each
+record's `iep:authorshipProof` back through the relay's verifier, and require the fold to
+admit the first and refuse the second. **Those two sections have not yet been run against
+the live substrate** — no bearer pair was available — so they are code, not a result, and
+nothing here claims otherwise.
+
+> ★★ **And as written, section 6's two headline assertions could not have failed.**
+> `publish_context` is deferred unless `compliance`, `sync` or `if_match` is set —
+> `sign_authorship` does **not** force the synchronous path — so all three records were
+> published `status: "pending"` with a *predicted* URL and read back with **zero wait**. A
+> not-yet-written descriptor answers `{error: 'descriptor could not be retrieved'}`, so the
+> fold refused *both* acceptances, and `manufactured.members.length === 0` plus
+> `manufactured.unattested.some(u => u.kind === 'acceptance')` both passed for entirely the
+> wrong reason. The refusal string was only `console.log`ged, so nothing distinguished
+> *"refused because alice signed bee's acceptance"* from *"refused because nothing was
+> readable"*. That is the same demonstrated-by-construction shape section 6 exists to
+> eliminate, applied to the property under review. §7's two accounting assertions had the
+> same hole: `0 + 2 === 2` holds when every entry is withheld.
+>
+> Fixed: each publish now waits for its record to become readable (and returns `null`, which
+> fails loudly, if it does not); the refusal **reason** is asserted rather than logged; and
+> both sections carry an explicit **CONTROL** assertion — the genuine half must be *admitted*
+> — so a run in which everything is refused reports itself as having established nothing.
+> **Whether the assertions still hold now that they can fail is unknown**, because the
+> sections remain unrun. That is the honest state and it is not dressed up as more.
 
 The ceiling is not invented here: `scopesFromRegistry` reads the `ReadWrite` /
 `PublishOnly` / `ReadOnly` scope the substrate's own agent registry records — the same one
@@ -244,7 +485,9 @@ of step with the other.
 ```bash
 npx vitest run tests/workspace-roster-fold.test.ts \
               tests/workspace-stream.test.ts \
-              tests/workspace-compose.test.ts
+              tests/workspace-compose.test.ts \
+              tests/workspace-can.test.ts \
+              tests/workspace-adversarial.test.ts
 
 # and against the live substrate — the doubles cannot verify the substrate
 IEP_BEARER=<token-a> npx tsx applications/shared-workspace/tools/verify-stream-live.ts
@@ -253,6 +496,11 @@ IEP_BEARER=<token-a> npx tsx applications/shared-workspace/tools/verify-stream-l
 # refuses a caller writing to someone else's pod — which is the design working
 IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
   npx tsx applications/shared-workspace/tools/verify-compose-live.ts
+
+# two-sidedness as a fact: each half published by whoever it claims to come from,
+# with a forged acceptance alongside it for the fold to refuse
+IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
+  npx tsx applications/shared-workspace/tools/verify-can-live.ts
 ```
 
 The live verifier exists because a harness that stands in for a dependency cannot verify
@@ -261,34 +509,85 @@ stale precondition is refused **and nothing lands**, that an entry missing `wsp:
 refused **and nothing lands**, and that every entry id actually dereferences to its own
 triples.
 
+★ It is also where a harness that stands in for the thing under test gets caught. The
+membership verifier built both halves of every roster itself, so it proved only that a fold
+of its own inputs behaved as it had been written to. `verify-can-live.ts` sections 6–7
+publish each half from a different session and read authorship back through the relay's
+verifier — and, being unrun, are currently code rather than evidence.
+
+★ And a harness can be caught a second way: by writing an assertion that **cannot fail**.
+Sections 6–7 did, by reading three deferred publishes back with no wait, and the two
+assertions that carried the property passed vacuously. They now wait, assert the refusal
+*reason*, and carry a CONTROL that fails when nothing was admitted. An assertion that cannot
+fail is worse than no assertion, because it is counted.
+
 ## Status
 
 All six increments are built. What is verified, and what is not:
 
 | | state |
 |---|---|
-| 1 roster, two-sided membership | built, 16 assertions |
-| 2 per-participant stream | built, **20/20 live** |
+| 1 roster, two-sided membership | built; **signer-checked, content-UNbound** (residual gap 0), not yet run live |
+| 2 per-participant stream | built, **20/20 live** (the live run predates `sign_authorship`) |
 | 3 composed cross-pod view | built, **14/14 live** across two identities on two pods |
-| 4 authority at the fold | built, **13/13 live**, refused at both layers |
+| 4 authority at the fold | **13/13 live** for sections 1–5 *of the file as it then stood* (two assertions added since, unrun); 6–7 not yet run, and their assertions were vacuous until this round |
 | 5 engagement `gone` + injectable engine | built, 11 assertions, deployed |
 | 6 independent SHACL agreement | built, **in CI** — `@interego/core` vs pySHACL |
 
-### Known defects, found by an independent adversarial review and not yet fixed
+### Substrate changes needed to finish the job
 
-Reported here rather than left in a transcript. Each is real and reproducible.
+Not defects in this layer, and not fixable from it. Both are one-line comparisons in
+`get_descriptor`, which already holds everything needed to make them:
+
+| | |
+|---|---|
+| the authorship verifier never checks the proof's `iep:descriptorId` against the descriptor it read, so a proof block can be **lifted** between records | high |
+| it calls `verifySignedAuthorship` **without** the observed content, so `contentHash` coverage is never checked and `coversContent` is never reported | high |
+
+### Known defects, and their current state
+
+Reported here rather than left in a transcript. **A previous version of this table was stale
+in two of its three top rows** — both had been fixed and it still listed them as open — which
+makes a ledger useless in both directions at once. It is re-checked against the code each
+time this file changes.
+
+**Open. Real, reproducible, and not fixed:**
 
 | | severity |
 |---|---|
-| two-sided membership is **not enforced** — no provenance on grant/acceptance | high |
-| authorship is **not verified** — attribution rests on the caller-supplied `podUrl` | high |
-| a successful read whose rows all fail the `describes` filter looks *idle*, `complete: true` | medium |
-| `explain()` names the role, not the divergence, when a grant chain has two heads | medium |
-| `readableMembers` removes the *reported* half of read-time enforcement | medium |
-| `headOf` reports a forked chain as an empty stream (`appendEntry` guards separately) | low-med |
-| duplicate input rows manufacture phantom divergences | low-med |
-| `wsp:seq` is written on every entry and never read back, so tail truncation verifies clean | low-med |
-| a revoked agent still contributes its scope — `capabilitiesForScope` ignores `revoked` | low |
+| the attestation gate binds a signer to a URL, never a record to its content, so every `Grant`/`Acceptance` field is caller-typed — residual gap 0 | **high** |
+| `proofBindsToDescriptor` compares only the terminal segment, so a party who controls a pod *and* the caller-supplied `descriptor_id` is barely narrowed at all — residual gap 1 | medium |
+| `wsp:seq` has no producer: `ManifestEntry` carries no `seq`, so the sequence check is inert on every real read — residual gap 5 | low-med |
+| `verify-can-live.ts` §§6–7 remain **unrun**; their assertions can now fail, and whether they hold is unknown | low-med *(honesty, not behaviour)* |
+| `headOf` on a forked chain throws rather than returning a value; `appendEntry` converts it to a named `conflict` first, so the shipped path is safe and a direct caller must catch | low |
+
+**Closed in this round, with the test that pins each:**
+
+| | where |
+|---|---|
+| ★★ turning attestation ON granted MORE than leaving it off (revocation erased; role widened; withdrawal ignored; a withdrawn member shown as *pending*) | `workspace-adversarial` — 576-configuration monotonicity enumeration |
+| a **revoked** signing key attested at the `attested` grade whenever the principal had a second live agent | `workspace-can`, `workspace-adversarial` axis B |
+| `signerIndexFromRegistry` could not index `AuthorizedAgentData.agentId`, the only shape carrying `revoked` | `workspace-can` |
+| a signing key claimed by two registries resolved last-write-wins, silently | `workspace-can` |
+| a role declared twice in a profile last-write-won in the *granting* direction | `workspace-adversarial` |
+| `appendEntry` reported a **failed** signing as a successful signed append | `workspace-stream` |
+| `refuseAttestation` stated a forgery as fact for all four unbound causes, three of which are not forgeries | `workspace-roster-fold`, `workspace-stream` |
+| `explain()` blamed a grant fork whose heads name the same role | `workspace-roster-fold` |
+| divergence notes asserted resolutions that did not happen ("the intersection applies" / "the member is included" over an empty roster) | `workspace-roster-fold` |
+| `complete: true` with an entire **authorized** member never read, invisible in every field | `workspace-can` |
+| `describeCoverage` silently dropped `disallowed` and `notRead` from every `AuthorizedView` | `workspace-can` |
+| the `asserted` grade claimed a pod-ownership check that is never made (four places plus this file) | wording, throughout |
+| a foreign row mid-chain was reported twice, the second time as a fork of the member's own log | `workspace-compose` |
+
+**Previously listed here and since fixed** (the stale rows): a read whose rows all fail the
+`describes` filter is now `unmatched` with `complete: false`; `explain()` names the
+divergence; `readableMembers` no longer deletes the reported half; duplicate input rows no
+longer manufacture phantom divergences; `capabilitiesOfAgent` honours `revoked`.
+
+Every guard added this round was mutation-checked — broken one at a time against the five
+suites — and **25 of 25 mutants were killed**. The four that reinstate the monotonicity
+defects are each caught by the enumeration itself, which names the exact failing
+configuration rather than a symptom.
 
 ### What survived the same review
 

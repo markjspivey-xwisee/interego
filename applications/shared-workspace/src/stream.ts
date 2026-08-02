@@ -51,6 +51,16 @@
  * only as good as that gate, which is why {@link verifyChain} re-derives the ordering from
  * the entries themselves instead of trusting that the appends were well-behaved.
  *
+ * ── WHY EVERY APPEND IS SIGNED AND ONLY SOME READS VERIFY ────────────────────
+ *
+ * Every append goes out with `sign_authorship: true`, unconditionally. An entry written
+ * without a proof can never acquire one: the bytes are immutable and the signing key has
+ * moved on, so the choice at write time is between one ECDSA operation now and a record
+ * whose author is forever unknowable. There is nothing to trade off.
+ *
+ * Verification is the opposite shape — one `get_descriptor` per entry, every read, forever —
+ * so it is opt-in, and {@link readAttestation} is what a caller opts in to.
+ *
  * ── WHAT THIS MODULE DOES NOT DO ─────────────────────────────────────────────
  *
  * It does not retry. A 412 is returned as a value, named, with the current head attached.
@@ -60,6 +70,7 @@
  */
 
 import { escapeTurtleLiteral, turtleIriRef } from '@interego/core';
+import type { Attestation } from './roster.js';
 
 export const WSP = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#';
 export const WSP_SHAPES = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-shapes.ttl';
@@ -100,8 +111,39 @@ export interface AppendedEntry {
   readonly cid: string | null;
 }
 
+/**
+ * Whether the relay actually embedded the authorship proof the append asked for.
+ *
+ * ★ THREE VALUES, BECAUSE "IT DID NOT SIGN" AND "IT DID NOT SAY" ARE NOT THE SAME CLAIM, and
+ * neither of them is success. `appendEntry` sends `sign_authorship: true` and used to read
+ * only `code`, `error` and `descriptorUrl` off the response — but the relay catches a signing
+ * failure, logs a warning, LEAVES THE PUBLISH TO PROCEED, and reports it in the response body
+ * as `authorship: {signed: false, reason}`. So a transient outage of the signing key produced
+ * a run of entries this module called `appended`, with nothing anywhere mentioning signing.
+ *
+ * That is permanent by this module's own rule: an entry written unsigned can never acquire a
+ * proof, because the bytes are immutable and the key has moved on. The operator finds out at
+ * read time, when `verifyAuthorship: true` withholds a stretch of their own log, months later.
+ *
+ *   signed        the response says the proof was embedded.
+ *   NOT-SIGNED    the response says it was not. The entry landed and is unattributable
+ *                 forever. Spelled loudly because it is not recoverable.
+ *   unreported    the response said nothing either way — an older relay, or a shape change.
+ *                 Not treated as failure: guessing "unsigned" would make every append look
+ *                 broken against a relay that simply does not report it.
+ */
+export type AppendSigning = 'signed' | 'NOT-SIGNED' | 'unreported';
+
 export type AppendResult =
-  | { readonly outcome: 'appended'; readonly entry: AppendedEntry; readonly visibleAfterMs: number }
+  | {
+      readonly outcome: 'appended';
+      readonly entry: AppendedEntry;
+      readonly visibleAfterMs: number;
+      /** See {@link AppendSigning}. Non-omittable: the whole defect was nobody being told. */
+      readonly signing: AppendSigning;
+      /** Always populated, so the fact survives a caller who never branches on the enum. */
+      readonly signingNote: string;
+    }
   /**
    * The substrate accepted the write but it had not become readable within the budget.
    *
@@ -119,6 +161,9 @@ export type AppendResult =
       readonly descriptorUrl: string;
       readonly waitedMs: number;
       readonly message: string;
+      /** Same fact as on `appended`: the write happened, so the signing question is settled. */
+      readonly signing: AppendSigning;
+      readonly signingNote: string;
     }
   /**
    * Someone else appended between the read and the write. Not an error: it is the CAS
@@ -137,6 +182,22 @@ export interface StreamRow {
   readonly cid: string | null;
   readonly validFrom: string | null;
   readonly supersedes: readonly string[];
+  /**
+   * The `wsp:seq` the entry declares, or null/absent when the reader could not obtain it.
+   *
+   * ★ From a manifest read it is ALWAYS absent, and the reason is structural rather than an
+   * oversight: a manifest row mirrors `descriptorUrl`, `cid`, `describes`, `facetTypes`,
+   * `validFrom`, `validUntil`, `modalStatus`, `trustLevel`, `conformsTo`, `supersedes` and
+   * `issuer` — `seq` is not among them, because it lives in the entry's own payload graph.
+   * Getting it would cost one `get_descriptor` PER ENTRY, which destroys the one-read
+   * catch-up the single stream IRI exists to buy.
+   *
+   * So the number this module writes on every entry is read back when it can be and
+   * reported as unavailable when it cannot, rather than quietly assumed — see
+   * {@link ChainReport.declaredSeqChecked}. Until then `seq` is only ever populated by a
+   * caller that already holds the payload.
+   */
+  readonly seq?: number | null;
 }
 
 /** The I/O this module needs, injected — so the CAS discipline is testable without a pod. */
@@ -145,6 +206,16 @@ export interface StreamDeps {
   readonly publish: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   /** `discover_context`. Returns the parsed tool result. */
   readonly discover: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /**
+   * `get_descriptor`. Needed ONLY to verify authorship, which costs one call PER ENTRY on
+   * top of the one manifest read per member — the number this whole design is costed on.
+   *
+   * Optional here and refused loudly at the point of use rather than made mandatory, so a
+   * caller who does not want to pay that cost is not obliged to supply a dependency, and a
+   * caller who asks for verification without it gets a refusal instead of a silently
+   * unverified result.
+   */
+  readonly getDescriptor?: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   /** Injected so tests do not sleep and so a caller can back off differently. */
   readonly sleep?: (ms: number) => Promise<void>;
   /** Injected so `visibleAfterMs` is measurable without a real clock. */
@@ -164,6 +235,18 @@ export interface StreamRef {
   readonly podUrl: string;
   /** Pod to write to, when the session's default is not the right one. */
   readonly podName?: string;
+  /**
+   * The writing agent's DID, forwarded to `publish_context` as `agent_did`.
+   *
+   * ★ A HINT, NOT THE IDENTITY. It is worth being precise about this, because a field named
+   * `agent_did` sitting next to `sign_authorship` reads exactly like the thing that decides
+   * who the proof names — and if it did, the proof would be worthless, because the caller
+   * supplies it. The proof's `iep:issuer` is the relay's own `_session_agent_did`, a
+   * reserved wire field the transport strips before any handler sees it; `agent_did` only
+   * rides along in the signed payload so a verifier has a resolution hint. Omitting it
+   * changes nothing about what the proof establishes.
+   */
+  readonly agentDid?: string;
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
@@ -290,6 +373,20 @@ const asArray = (v: unknown): readonly unknown[] => (Array.isArray(v) ? v : []);
 const asString = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
 
 /**
+ * A declared `wsp:seq` as a number, or null when the row does not carry one.
+ *
+ * The lexical form is accepted alongside the number because the value is published as
+ * `"3"^^xsd:nonNegativeInteger`: anything mirroring that literal without interpreting its
+ * datatype hands back the string, and rejecting it would report a row that DID declare its
+ * position as one that declared nothing — turning a checkable chain into an unchecked one.
+ */
+const asSeq = (v: unknown): number | null => {
+  if (typeof v === 'number') return Number.isInteger(v) && v >= 0 ? v : null;
+  if (typeof v === 'string' && /^\d+$/.test(v)) return Number(v);
+  return null;
+};
+
+/**
  * Read a stream: ONE `discover_context`, no per-entry fetches.
  *
  * Rows come back in whatever order the manifest yields them; ordering is imposed by
@@ -339,6 +436,11 @@ export async function readStream(ref: StreamRef, deps: StreamDeps): Promise<read
       cid: asString(e.cid),
       validFrom: asString(e.validFrom),
       supersedes: asArray(e.supersedes).filter((s): s is string => typeof s === 'string'),
+      // Null against today's relay: the manifest row has no seq column. Read anyway rather
+      // than dropped, so the check switches itself on the moment the number is available —
+      // and so nothing has to remember to wire it up then. `declaredSeqChecked` tells the
+      // reader which of the two situations they are actually in.
+      seq: asSeq(e.seq),
     }))
     .filter(r => r.descriptorUrl.length > 0);
 }
@@ -352,7 +454,44 @@ export interface ChainReport {
   readonly merges: readonly string[];
   /** Rows whose declared prior is absent from the stream. A missing link, not a gap in seq. */
   readonly danglingLinks: readonly { readonly from: string; readonly missing: string }[];
-  /** True only when there is exactly one head, one root, and every row is on the path. */
+  /**
+   * Rows whose declared `wsp:seq` disagrees with the position the links put them in.
+   *
+   * ★ The links alone cannot catch a row that was removed and linked around: rows
+   * `[seq 0] ← [seq 2]`, where the survivor was re-pointed at its grandparent, has one head,
+   * one root, no dangling link and covers every row present — it verifies clean. The
+   * number each entry declares is the only evidence left that a position is missing, and
+   * this module writes that number on every entry and then had no field to read it into.
+   */
+  readonly seqMismatches: readonly {
+    readonly url: string;
+    readonly declared: number;
+    readonly position: number;
+  }[];
+  /**
+   * Whether every ordered row carried a declared seq, so the numbering could be compared
+   * with the walked order at all.
+   *
+   * ★ FALSE for every stream read from a manifest, which is every stream this module reads
+   * today — see {@link StreamRow.seq}. Reported rather than left implicit because the two
+   * cases are worlds apart and `seqMismatches: []` looks identical in both: "the log's own
+   * numbering agrees with its links" versus "nobody looked". It is deliberately NOT part of
+   * {@link ChainReport.intact} — a stream is not divergent because the manifest omits a
+   * column, and folding it in would make `appendEntry` refuse every real append forever.
+   */
+  readonly declaredSeqChecked: boolean;
+  /**
+   * True only when there is exactly one head, one root, every row is on the path, and no
+   * declared position contradicts it.
+   *
+   * ★ It does NOT mean "this is the whole log", and no amount of walking can make it mean
+   * that. Dropping the OLDEST rows leaves a dangling link and is caught; dropping the
+   * NEWEST leaves a clean prefix, and a prefix of a valid chain is a valid chain. `wsp:seq`
+   * does not rescue it either — the row carrying the highest number is precisely the row
+   * that was removed. Detecting tail truncation needs an anchor from outside the served
+   * rows (a head the reader saw earlier, or a signed length claim), which this layer does
+   * not have and does not pretend to.
+   */
   readonly intact: boolean;
 }
 
@@ -400,11 +539,28 @@ export function verifyChain(rows: readonly StreamRow[]): ChainReport {
     }
   }
 
+  // Compare each entry's own declared position against the one the links walked it into.
+  // A row that declares 2 while sitting at 1 says a position between them is not here, and
+  // that is the one removal the links cannot report: whoever dropped it re-pointed the
+  // survivor, so the chain still walks cleanly end to end.
+  const seqMismatches: { url: string; declared: number; position: number }[] = [];
+  let declared = 0;
+  for (let i = 0; i < ordered.length; i++) {
+    const row = ordered[i]!;
+    if (row.seq === undefined || row.seq === null) continue;
+    declared++;
+    if (row.seq !== i) seqMismatches.push({ url: row.descriptorUrl, declared: row.seq, position: i });
+  }
+
   return {
     ordered,
     heads,
     merges,
     danglingLinks: dangling,
+    seqMismatches,
+    // Every ordered row, not merely one of them: a partial answer would let a caller read
+    // "checked" off a stream where only the row that happened to carry a number was.
+    declaredSeqChecked: ordered.length > 0 && declared === ordered.length,
     // ★ A dangling link makes the chain NOT intact even when everything present walks
     // cleanly. Rows [v1 ← v2] where v1 declares an absent v0 orders perfectly and covers
     // every row it has — and the reader is still missing the beginning of the log.
@@ -414,17 +570,181 @@ export function verifyChain(rows: readonly StreamRow[]): ChainReport {
       heads.length === 1
       && merges.length === 0
       && dangling.length === 0
+      && seqMismatches.length === 0
       && ordered.length === rows.length
       && rows.length > 0,
   };
 }
 
+// ── Authorship ───────────────────────────────────────────────────────────────
+
+/**
+ * The `iep:descriptorId` the embedded authorship proof claims to be about, or null.
+ *
+ * Parsed with the same shape the substrate's own `parseAuthorshipProofFromDescriptorTurtle`
+ * uses, deliberately: a second, cleverer parser here would eventually disagree with the one
+ * that decided whether the signature verified, and the disagreement would be discovered by
+ * whichever record it let through.
+ */
+export function proofDescriptorId(descriptorTurtle: string): string | null {
+  const block = descriptorTurtle.match(/iep:authorshipProof\s+\[([^\]]*)\]/);
+  if (!block) return null;
+  return block[1]!.match(/iep:descriptorId\s+<([^>]+)>/)?.[1] ?? null;
+}
+
+/**
+ * Does this proof belong to THIS descriptor, or was it copied in from another one?
+ *
+ * ★ THE SUBSTRATE DOES NOT ASK THIS, AND THE WHOLE PROPERTY TURNS ON IT. `get_descriptor`
+ * re-derives the canonical payload from the proof block's OWN fields and checks the ECDSA
+ * signature over it — so a proof block lifted verbatim out of one of a principal's real,
+ * public descriptors and pasted into a record somebody else fabricated verifies clean, with
+ * that principal named as signer. Signature validity says the bytes of the proof were not
+ * altered; it says nothing about what the proof is attached to.
+ *
+ * ★ WHAT THIS CHECK IS WORTH, precisely. The relay mints `descriptor_id` as
+ * `urn:iep:<pod>:<epoch-ms>` and derives the descriptor's own URL from it via
+ * `predictDescriptorUrl`/`slugFromIri` — terminal segment, URL-encoded, plus `.ttl`. So the
+ * two are related by a NAMING CONVENTION, not by an equality the substrate enforces, and
+ * this compares them on that convention. A lifted proof carries the original record's epoch
+ * and fails. A publish that names its descriptor some other way (the PGSL-primary path
+ * writes a content-addressed `holon-<hash>.ttl`) also fails, wrongly — which withholds the
+ * entry and says so, the safe direction, and is why verification is opt-in rather than the
+ * default. The durable fix belongs in the substrate: `get_descriptor` already holds both
+ * the proof and the URL it read it from and could simply compare them.
+ */
+export function proofBindsToDescriptor(claimedId: string | null, descriptorUrl: string): boolean {
+  if (claimedId === null) return false;
+  if (claimedId === descriptorUrl) return true;
+  const tail = (s: string): string | null => s.split(/[/:#]/).filter(Boolean).pop() ?? null;
+  const claimed = tail(claimedId);
+  if (claimed === null) return false;
+  let pathname: string;
+  try { pathname = new URL(descriptorUrl).pathname; } catch { return false; }
+  const served = tail(pathname)?.replace(/\.ttl$/, '');
+  return served !== null && served !== undefined && encodeURIComponent(claimed) === served;
+}
+
+/**
+ * What the substrate's verifier says about who published one descriptor. ONE `get_descriptor`.
+ *
+ * ★ Every failure mode returns "not attested" with a reason rather than throwing, and that
+ * is not the usual laxness. The three situations — the descriptor carries no proof, the
+ * proof did not verify, the descriptor could not be read at all — are worlds apart to a
+ * person and identical to the caller's decision, which is to withhold the record and name
+ * it. Collapsing them into a rejection would lose the reason; collapsing them into an
+ * absence would admit the record. The reason string keeps them distinguishable in the one
+ * place a human looks.
+ */
+export async function readAttestation(
+  descriptorUrl: string,
+  deps: StreamDeps,
+): Promise<Attestation> {
+  if (deps.getDescriptor === undefined) {
+    // A programming error, not a data condition: the caller asked for verified attribution
+    // and did not supply the tool it is verified with. Answering "unverified" here would
+    // hand back a result that looks like a forged workspace.
+    throw new Error(
+      'readAttestation: verifying authorship needs a `getDescriptor` dependency (the '
+      + '`get_descriptor` tool). It costs one call per entry, which is why it is not '
+      + 'required by default — but asking to verify without it cannot be answered.',
+    );
+  }
+  const unattested = (reason: string): Attestation =>
+    ({ authorshipVerified: false, signedBy: null, boundToDescriptor: false, reason });
+
+  let res: Record<string, unknown>;
+  try {
+    res = await deps.getDescriptor({ url: descriptorUrl });
+  } catch (err) {
+    return unattested(`get_descriptor threw: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (res === null || typeof res !== 'object' || Array.isArray(res)) {
+    return unattested(`get_descriptor did not return a result object for <${descriptorUrl}>`);
+  }
+  if (res.error !== undefined) {
+    return unattested(`get_descriptor failed: ${String(res.message ?? res.error)}`);
+  }
+
+  const authorship = res.authorship as Record<string, unknown> | undefined;
+  if (authorship === undefined || authorship === null) {
+    return unattested(
+      'the descriptor carries no iep:authorshipProof — it was published without '
+      + 'sign_authorship, so there is nothing to verify and nobody to attribute it to',
+    );
+  }
+  const signedBy = asString(authorship.signedBy);
+  // `=== true`, not truthiness: this is JSON read off a pod, and a value that is not the
+  // boolean the schema promises must not come out the admitting end of the branch.
+  if (authorship.authorshipVerified !== true) {
+    return {
+      authorshipVerified: false,
+      signedBy,
+      boundToDescriptor: false,
+      reason: String(authorship.reason ?? 'the verifier reported the proof did not verify'),
+    };
+  }
+  // ★ WHY THE BINDING FAILED, NOT JUST THAT IT DID. `boundToDescriptor: false` has four
+  // distinct causes and `refuseAttestation` was rendering all four as "the proof was copied
+  // in from another record" — stated as fact. Three of them are not forgeries: a response
+  // with no turtle, a proof block carrying no `iep:descriptorId`, and a record whose name
+  // does not follow the convention this check compares on (the PGSL-primary path writes
+  // `holon-<hash>.ttl`). Calling a record's real author a forger, in the one channel
+  // operators are told to watch, is how a true report gets ignored.
+  const turtle = res.turtle === undefined || res.turtle === null ? null : String(res.turtle);
+  const claimedId = turtle === null ? null : proofDescriptorId(turtle);
+  const bound = proofBindsToDescriptor(claimedId, descriptorUrl);
+  const unboundReason =
+    turtle === null
+      ? 'get_descriptor returned no descriptor turtle, so the proof could not be matched to '
+        + 'this descriptor at all — this says nothing about the proof itself'
+      : claimedId === null
+        ? 'the descriptor turtle carries no iep:descriptorId inside its proof block, so there '
+          + 'is nothing to compare against the URL it was served from'
+        : `the proof names <${claimedId}> and the record is served at <${descriptorUrl}>`;
+
+  return {
+    authorshipVerified: true,
+    signedBy,
+    boundToDescriptor: bound,
+    ...(bound ? {} : { reason: unboundReason }),
+  };
+}
+
 // ── Appending ────────────────────────────────────────────────────────────────
 
-/** The precondition token for the next append, derived from a verified chain. */
+/**
+ * The precondition token for the next append, derived from a verified chain.
+ *
+ * ★ AN UNVERIFIABLE CHAIN MUST NOT LOOK LIKE AN EMPTY ONE — the same rule as
+ * {@link readStream}, in the position where getting it wrong writes rather than reads.
+ *
+ * It used to answer `{url: null, seq: 0}` for both, because it read `ordered` and ignored
+ * `intact`, and a forked chain orders to nothing. That value does not say "I could not
+ * tell"; it says "brand new stream, start at 0, no precondition needed". A caller who
+ * believed it would land a THIRD head on a log that already had two, at a sequence number
+ * two other entries already claim, gated on nothing — the exact failure `if_match` exists
+ * to prevent, produced by the helper whose docstring promised a verified chain.
+ *
+ * {@link appendEntry} guards before it gets here, so the shipped path never throws. This
+ * function is exported, and the next caller will not have that guard, so the refusal lives
+ * where the wrong answer was rather than in each caller's discipline.
+ */
 export function headOf(rows: readonly StreamRow[]): { url: string | null; seq: number } {
+  // An empty stream is the one case where "no head, start at 0" is the truth rather than a
+  // failure to determine it, and it is why the two were confusable in the first place.
+  if (rows.length === 0) return { url: null, seq: 0 };
+
   const report = verifyChain(rows);
-  if (report.ordered.length === 0) return { url: null, seq: 0 };
+  if (!report.intact) {
+    throw new Error(
+      `headOf: refusing to derive a head from a stream that does not verify — ${report.heads.length} `
+      + `head(s), ${report.merges.length} merge(s), ${report.danglingLinks.length} dangling link(s), `
+      + `${report.seqMismatches.length} sequence mismatch(es). There is no head to gate on, and the `
+      + 'answer for an empty stream — seq 0 with no precondition — would append onto the divergence '
+      + 'instead of surfacing it. Call verifyChain, repair, then derive.',
+    );
+  }
   const head = report.ordered[report.ordered.length - 1]!;
   return { url: head.descriptorUrl, seq: report.ordered.length };
 }
@@ -444,6 +764,9 @@ export async function appendEntry(
 ): Promise<AppendResult> {
   const rows = await readStream(ref, deps);
   const report = verifyChain(rows);
+  // Also what keeps the headOf below from throwing: a divergence is an ordinary racing
+  // outcome for a caller of appendEntry, so it is returned as a named value here rather
+  // than left to surface as an exception from a helper two lines further down.
   if (rows.length > 0 && !report.intact) {
     return {
       outcome: 'conflict',
@@ -475,8 +798,22 @@ export async function appendEntry(
     // The shape gate runs BEFORE any pod write, so a malformed entry never lands even
     // briefly. An entry with no wsp:seq is refused here rather than silently unorderable.
     conforms_to_shapes: [WSP_SHAPES],
+    // ★ WITHOUT THIS THE ENTRY CANNOT BE ATTRIBUTED TO ANYONE, EVER.
+    //
+    // The read path used to attach `principal` from the caller's members list and nothing in
+    // the record contradicted it, because there was nothing in the record. `sign_authorship`
+    // embeds an `iep:authorshipProof` naming the session's own agent, which `get_descriptor`
+    // re-verifies from the descriptor turtle alone — so a reader who trusts neither the pod's
+    // storage nor whoever assembled the members list can still tell who published this.
+    //
+    // Unconditional rather than opt-in, and the asymmetry is the reason: signing costs one
+    // ECDSA operation at write time, once, whereas an entry written unsigned can never be
+    // verified afterwards — the key is gone and the bytes are immutable. Verification is
+    // where the recurring cost is, so that is what is opt-in (see `composeWorkspace`).
+    sign_authorship: true,
     ...(head.url ? { if_match: head.url } : {}),
     ...(ref.podName ? { pod_name: ref.podName } : {}),
+    ...(ref.agentDid ? { agent_did: ref.agentDid } : {}),
   });
 
   const code = typeof res.code === 'number' ? res.code : null;
@@ -494,6 +831,12 @@ export async function appendEntry(
 
   const descriptorUrl = String(res.descriptorUrl ?? '');
 
+  // ★ DID THE RELAY ACTUALLY SIGN IT? Asking `sign_authorship: true` is a request, and the
+  // relay answers. It catches a signing failure, warns, and publishes anyway — so reading
+  // only `code`/`error`/`descriptorUrl`, as this did, reported an unsigned entry as a signed
+  // append. See `AppendSigning`: the entry is already on the pod and cannot be re-signed.
+  const [signing, signingNote] = readSigning(res);
+
   // ★ WAIT FOR THE ENTRY TO BECOME READABLE BEFORE CALLING THE APPEND DONE.
   //
   // `publish_context` returns `status: "pending"`: the descriptor and manifest writes are
@@ -509,7 +852,13 @@ export async function appendEntry(
   for (;;) {
     const seen = await readStream(ref, deps);
     if (seen.some(r => r.descriptorUrl === descriptorUrl)) {
-      return { outcome: 'appended', entry: { seq, descriptorUrl, cid: asString(res.cid) }, visibleAfterMs: waited };
+      return {
+        outcome: 'appended',
+        entry: { seq, descriptorUrl, cid: asString(res.cid) },
+        visibleAfterMs: waited,
+        signing,
+        signingNote,
+      };
     }
     waited = now(deps) - started;
     if (waited >= VISIBILITY_BUDGET_MS) {
@@ -521,10 +870,43 @@ export async function appendEntry(
           `The substrate accepted the entry but it was not readable within ${VISIBILITY_BUDGET_MS}ms. `
           + 'It has probably landed. Do NOT append again without re-reading: deriving the next '
           + 'sequence from a stale view is how one writer forks its own log.',
+        signing,
+        signingNote,
       };
     }
     await sleep(deps, VISIBILITY_POLL_MS);
   }
+}
+
+/**
+ * What the publish response says about whether the authorship proof was embedded.
+ *
+ * Split out so the three readings sit in one place rather than inline in the append path,
+ * and so the "not reported" case cannot quietly collapse into either of the other two.
+ */
+function readSigning(res: Record<string, unknown>): [AppendSigning, string] {
+  const authorship = res.authorship as Record<string, unknown> | undefined | null;
+  if (authorship === undefined || authorship === null) {
+    return ['unreported',
+      'The publish response carried no `authorship` block, so whether the proof was embedded '
+      + 'is UNKNOWN — not confirmed and not denied. Read the descriptor back with '
+      + '`readAttestation` if it matters that this entry can be attributed later.'];
+  }
+  // `=== true`, not truthiness: this is a parsed tool result, and a value that is not the
+  // boolean the schema promises must not come out the reassuring end of the branch.
+  if (authorship.signed === true) {
+    return ['signed', 'The relay reports the iep:authorshipProof was embedded in the descriptor.'];
+  }
+  if (authorship.signed === false) {
+    return ['NOT-SIGNED',
+      'The relay REFUSED OR FAILED to sign and published the entry anyway '
+      + `(${String(authorship.reason ?? 'no reason given')}). The entry has landed and cannot `
+      + 'be signed after the fact — the bytes are immutable and the key has moved on — so it '
+      + 'is unattributable FOREVER and `verifyAuthorship: true` will withhold it on every '
+      + 'read from now on. If the signing key is merely down, stop appending until it is back.'];
+  }
+  return ['unreported',
+    `The publish response's authorship block did not say whether it signed (${JSON.stringify(authorship).slice(0, 120)}).`];
 }
 
 const now = (deps: StreamDeps): number => (deps.now ?? Date.now)();

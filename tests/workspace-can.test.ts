@@ -12,11 +12,12 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
-  capabilitiesForScope, scopesFromRegistry, canAct, can, authorizeView, readableMembers, CAPS,
+  capabilitiesForScope, capabilitiesOfAgent, scopesFromRegistry, signerIndexFromRegistry,
+  canAct, can, authorizeView, readableMembers, CAPS,
   type RoleProfile,
 } from '../applications/shared-workspace/src/can.js';
-import { foldRoster } from '../applications/shared-workspace/src/roster.js';
-import { composeWorkspace, type ComposableMember } from '../applications/shared-workspace/src/compose.js';
+import { foldRoster, refuseAttestation } from '../applications/shared-workspace/src/roster.js';
+import { composeWorkspace, describeCoverage, type ComposableMember } from '../applications/shared-workspace/src/compose.js';
 import type { StreamDeps } from '../applications/shared-workspace/src/stream.js';
 
 const P = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default';
@@ -76,12 +77,158 @@ describe('the substrate\'s delegation scope IS the ceiling', () => {
     expect(scope!.capabilities).toEqual([CAPS.append, CAPS.read].sort());
   });
 
+  it('★ a REVOKED agent carries nothing, whatever scope its row still records', () => {
+    // Revocation withdraws the delegation without rewriting the scope, so the row still
+    // literally says ReadWrite and switching on the scope alone hands all six capabilities
+    // to an agent the owner has already thrown out. The relay tests `!a.revoked` everywhere
+    // it surfaces an agent — reading the same record and disagreeing about what it says is
+    // exactly how two authorization systems get found out by whoever they let through.
+    expect(capabilitiesOfAgent({ did: 'did:web:live', scope: 'ReadWrite' })).toHaveLength(6);
+    expect(capabilitiesOfAgent({ did: 'did:web:gone', scope: 'ReadWrite', revoked: true })).toEqual([]);
+    expect(capabilitiesOfAgent({ did: 'did:web:gone', scope: 'ReadOnly', revoked: true })).toEqual([]);
+  });
+
+  it('★ revoking the only ReadWrite agent actually narrows the union', () => {
+    // The failure this prevents is a revocation that revokes nothing. Union over every row
+    // regardless of `revoked` leaves the union unchanged for as long as one live agent
+    // remains, and the fold downstream sees only the union — so nothing reports it.
+    const [scope] = scopesFromRegistry([{
+      principal: alice,
+      agents: [{ did: 'did:a', scope: 'ReadWrite', revoked: true }, { did: 'did:b', scope: 'ReadOnly' }],
+    }]);
+    expect(scope!.capabilities).toEqual([CAPS.read]);
+  });
+
+  it('★ a Convener whose only agent is revoked may do nothing at all', () => {
+    // The strongest role in the profile, intersected against an empty delegation. A role is
+    // a ceiling, so there is nothing left under it.
+    const m = member(alice, 'Convener');
+    const roster = foldRoster({
+      workspace: WS, profile: PROFILE, grants: [m.grant], acceptances: [m.acceptance],
+      scopes: scopesFromRegistry([{
+        principal: alice, agents: [{ did: 'did:web:gone', scope: 'ReadWrite', revoked: true }],
+      }]),
+    });
+    expect(canAct(roster, alice, CAPS.append).allowed).toBe(false);
+    expect(canAct(roster, alice, CAPS.read).allowed).toBe(false);
+  });
+
   it('★ a Convener with a ReadOnly delegation still cannot append', () => {
     // The property that distinguishes a published roster from a membership table: in a
     // table, being an admin IS the authority. Here it is only a bound on it.
     const roster = rosterOf([{ principal: alice, role: 'Convener', scope: 'ReadOnly' }]);
     expect(canAct(roster, alice, CAPS.append).allowed).toBe(false);
     expect(canAct(roster, alice, CAPS.append).because).toMatch(/ceiling, never a grant/);
+  });
+});
+
+describe('★ signerIndexFromRegistry — a signature names an agent, a roster names a principal', () => {
+  // Comparing a proof's `signedBy` against a workspace principal as strings answers false for
+  // every person in every real workspace: a WebID is not a DID. An attribution check built
+  // that way withholds everything and gets turned off, so the mapping has to exist — and it
+  // has to come from the registry on each principal's OWN pod, which nobody else can write.
+  const registry = [
+    { principal: alice, agents: [{ did: 'did:web:alice-laptop', scope: 'ReadWrite' }, { id: 'did:web:alice-phone' }] },
+    { principal: bee, agents: [{ did: 'did:web:bee-bot', scope: 'ReadOnly' }] },
+  ];
+
+  it('maps every one of a principal\'s agents to that principal', () => {
+    const signerOf = signerIndexFromRegistry(registry);
+    expect(signerOf('did:web:alice-laptop')).toEqual({ acts: 'for', principal: alice, revoked: false });
+    // `id` counts as well as `did`
+    expect(signerOf('did:web:alice-phone')).toEqual({ acts: 'for', principal: alice, revoked: false });
+    expect(signerOf('did:web:bee-bot')).toEqual({ acts: 'for', principal: bee, revoked: false });
+  });
+
+  it('★ the pod registry\'s own `agentId` is indexed too — the shape that carries `revoked`', () => {
+    // The one shape that can answer "was this key withdrawn?" is a pod's own AgentRegistry
+    // row (`AuthorizedAgentData`), whose identifier field is `agentId` — the relay's
+    // projections use `id`/`did` and filter revoked rows out before anyone sees them. Reading
+    // only `did ?? id` therefore indexed NOTHING on the only path where revocation arrives:
+    // every genuine grant was refused with "no agent registry vouches for that signer", and
+    // the revoked branch downstream was unreachable. Invisible to a suite that builds its own
+    // literals, which is exactly why it is pinned here with the real field name.
+    const signerOf = signerIndexFromRegistry([
+      { principal: alice, agents: [{ agentId: 'did:web:relay:agents:alice-1', scope: 'ReadWrite' }] },
+    ]);
+    expect(signerOf('did:web:relay:agents:alice-1')).toEqual({ acts: 'for', principal: alice, revoked: false });
+  });
+
+  it('a principal signing under its own IRI resolves to itself', () => {
+    expect(signerIndexFromRegistry(registry)(alice)).toEqual({ acts: 'for', principal: alice, revoked: false });
+  });
+
+  it('★ an unknown signer resolves to NULL, not to itself', () => {
+    // Falling back to identity would make an unregistered DID vouch for a principal whose IRI
+    // happens to equal it — and would turn a registry this layer failed to read into a
+    // blanket "everyone is themselves", which admits every record in the workspace.
+    expect(signerIndexFromRegistry(registry)('did:web:stranger')).toBeNull();
+    expect(signerIndexFromRegistry([])('did:web:alice-laptop')).toBeNull();
+  });
+
+  it('★ a REVOKED agent still identifies, and comes back MARKED so it cannot attest', () => {
+    // The old reading — keep revoked rows so key rotation does not un-author a member's
+    // history, and let `disallowed` handle the authority half — holds only when the revoked
+    // agent was the principal's ONLY agent. `scopesFromRegistry` unions over the live ones,
+    // so an entry signed by a key its owner had already thrown out was counted as that
+    // member's workspace content at the `attested` grade, with nothing downstream able to
+    // recover which key wrote it. That is the compromised-key case, admitted.
+    const signerOf = signerIndexFromRegistry([
+      { principal: alice, agents: [{ did: 'did:web:retired', scope: 'ReadWrite', revoked: true }] },
+    ]);
+    expect(signerOf('did:web:retired')).toEqual({ acts: 'for', principal: alice, revoked: true });
+    expect(scopesFromRegistry([
+      { principal: alice, agents: [{ did: 'did:web:retired', scope: 'ReadWrite', revoked: true }] },
+    ])[0]!.capabilities).toEqual([]);
+  });
+
+  it('★ a revoked key does NOT attest even when the principal has a live agent beside it', () => {
+    // The exact shape that was admitted: one compromised ReadWrite row, one live one. The
+    // union hides the revocation completely, so nothing else in the pipeline can catch it.
+    const signerOf = signerIndexFromRegistry([
+      { principal: bee, agents: [
+        { did: 'did:web:bee-COMPROMISED', scope: 'ReadWrite', revoked: true },
+        { did: 'did:web:bee-live', scope: 'ReadWrite' },
+      ] },
+    ]);
+    const proof = { authorshipVerified: true, signedBy: 'did:web:bee-COMPROMISED', boundToDescriptor: true };
+    expect(refuseAttestation(proof, bee, signerOf)).toMatch(/REVOKED/);
+    // and the live one still works, so this is a narrowing and not a shutdown
+    expect(refuseAttestation({ ...proof, signedBy: 'did:web:bee-live' }, bee, signerOf)).toBeNull();
+  });
+
+  it('★ a key TWO registries claim attributes to neither, and names both claimants', () => {
+    // Anyone may write their own pod's registry, so anyone can list a rival's signing DID in
+    // it. `index.set(id, principal)` with no collision detection let the later row win: the
+    // victim's own verified grants were then refused as "signed by … who acts for mallory",
+    // and the answer flipped on the order the rows arrived in — the same order-dependent,
+    // unreported last-write-wins `foldRoster` intersects and reports one file over.
+    const contested = [
+      { principal: alice, agents: [{ did: 'did:web:contested', scope: 'ReadWrite' }] },
+      { principal: bee, agents: [{ did: 'did:web:contested', scope: 'ReadWrite' }] },
+    ];
+    const forward = signerIndexFromRegistry(contested)('did:web:contested');
+    const reversed = signerIndexFromRegistry([...contested].reverse())('did:web:contested');
+    expect(forward).toEqual({ acts: 'contested', claimedBy: [alice, bee].sort() });
+    expect(reversed).toEqual(forward); // order-independent, which is the whole point
+    expect(refuseAttestation(
+      { authorshipVerified: true, signedBy: 'did:web:contested', boundToDescriptor: true },
+      alice,
+      signerIndexFromRegistry(contested),
+    )).toMatch(/registries claim that signer/);
+  });
+
+  it('one principal listing the same key twice is not contested — and revoked wins', () => {
+    // A federated composer reads one registry per pod, so a duplicate row for one person is
+    // ordinary. Two rows disagreeing about whether the delegation stands resolve to "it does
+    // not", the same direction every other ambiguity in this layer resolves.
+    const signerOf = signerIndexFromRegistry([
+      { principal: alice, agents: [
+        { did: 'did:web:dup', scope: 'ReadWrite' },
+        { did: 'did:web:dup', scope: 'ReadWrite', revoked: true },
+      ] },
+    ]);
+    expect(signerOf('did:web:dup')).toEqual({ acts: 'for', principal: alice, revoked: true });
   });
 });
 
@@ -104,6 +251,17 @@ describe('canAct — the acting agent is a second ceiling', () => {
   it('the same principal and agent, for a capability both carry, is allowed', () => {
     const roster = rosterOf([{ principal: alice, role: 'Contributor', scope: 'ReadWrite' }]);
     expect(canAct(roster, alice, CAPS.append, { did: 'did:web:laptop', scope: 'ReadWrite' }).allowed).toBe(true);
+  });
+
+  it('★ a revoked acting agent is refused, and is not described as merely too narrow', () => {
+    // Falling through to the scope message would name ReadWrite and invite the reader to
+    // widen a scope that is already as wide as it goes. The row is not too narrow; it is
+    // withdrawn, and the two need different fixes.
+    const roster = rosterOf([{ principal: alice, role: 'Convener', scope: 'ReadWrite' }]);
+    const res = canAct(roster, alice, CAPS.append, { did: 'did:web:laptop', scope: 'ReadWrite', revoked: true });
+    expect(res.allowed).toBe(false);
+    expect(res.because).toMatch(/REVOKED/);
+    expect(res.because).not.toMatch(/does not carry it/);
   });
 
   it('an agent with an unresolvable scope is refused, not waved through', () => {
@@ -209,6 +367,38 @@ describe('★ enforcement happens at the FOLD, because it cannot happen at the w
     expect(view.disallowed).toHaveLength(1);
   });
 
+  it('★ `notRead` and `disallowed` are complementary, never both and never neither', async () => {
+    // Read bee's pod and her entry is reported as disallowed; skip it and she is reported
+    // as notRead. Exactly one, so the same problem cannot be double-counted or vanish
+    // depending on an optimisation the reader was never told had run.
+    const roster = rosterOf([
+      { principal: alice, role: 'Contributor', scope: 'ReadWrite' },
+      { principal: bee, role: 'Observer', scope: 'ReadWrite' },
+    ]);
+    const view = authorizeView(await composeWorkspace({ workspace: WS, members }, deps(streams)), roster);
+    expect(view.disallowed.map(d => d.entry.principal)).toEqual([bee]);
+    expect(view.notRead).toEqual([]);
+  });
+
+  it('an unauthorised member whose pod was UNREACHABLE is not miscounted as unread', async () => {
+    // "We did not look" and "we looked and could not reach it" are different facts, and the
+    // second already has a field. Reporting both would send an operator after a pre-filter
+    // that never ran while the actual outage sat in `unavailable` next to it.
+    const roster = rosterOf([
+      { principal: alice, role: 'Contributor', scope: 'ReadWrite' },
+      { principal: bee, role: 'Observer', scope: 'ReadWrite' },
+    ]);
+    const dead: StreamDeps = {
+      publish: vi.fn(),
+      discover: vi.fn(async (args: Record<string, unknown>) => (
+        String(args.pod_url) === 'https://bee.test/' ? { error: 'fetch failed' } : { entries: [] }
+      )),
+    };
+    const view = authorizeView(await composeWorkspace({ workspace: WS, members }, dead), roster);
+    expect(view.unavailable.map(u => u.member.principal)).toEqual([bee]);
+    expect(view.notRead).toEqual([]);
+  });
+
   it('everyone permitted means nothing is disallowed', async () => {
     const roster = rosterOf([
       { principal: alice, role: 'Contributor', scope: 'ReadWrite' },
@@ -217,6 +407,71 @@ describe('★ enforcement happens at the FOLD, because it cannot happen at the w
     const view = authorizeView(await composeWorkspace({ workspace: WS, members }, deps(streams)), roster);
     expect(view.entries).toHaveLength(2);
     expect(view.disallowed).toEqual([]);
+  });
+
+  it('★★ an AUTHORIZED member nobody read is a gap: named, and `complete` is FALSE', async () => {
+    // `notRead` was filtered to members who may NOT act — precisely the set `readableMembers`
+    // skips on purpose. So the one member whose absence actually costs the reader content, a
+    // Contributor missing from the caller's members list (a stale roster, no podUrl, a
+    // hand-rolled filter), appeared in NO field and `complete` said `true`. A view missing an
+    // entire authorized participant is the strongest thing `complete` exists to be false for,
+    // and it was the single case that was invisible.
+    const roster = rosterOf([
+      { principal: alice, role: 'Contributor', scope: 'ReadWrite' },
+      { principal: bee, role: 'Contributor', scope: 'ReadWrite' },
+    ]);
+    const onlyAlice = await composeWorkspace(
+      { workspace: WS, members: [mem(alice, 'https://alice.test/')] },
+      deps({ 'https://alice.test/': [{ url: 'https://alice.test/c/1.ttl', at: '2026-08-01T10:00:00Z' }] }),
+    );
+    expect(onlyAlice.complete).toBe(true); // the composition itself reached everything it tried
+    const view = authorizeView(onlyAlice, roster);
+    expect(view.notRead.map(u => u.principal)).toEqual([bee]);
+    expect(view.notRead[0]!.authorizedHere).toBe(true);
+    expect(view.notRead[0]!.because).toMatch(/missing from this view rather than excluded/);
+    expect(view.complete).toBe(false);
+  });
+
+  it('★ …and an unread member who may NOT act still leaves `complete` true', async () => {
+    // The other half, and the reason the two are not folded together: making `complete` false
+    // for a deliberately-skipped Observer would make every correctly-governed workspace
+    // permanently incomplete, and a flag that is always false is a flag nobody reads.
+    const roster = rosterOf([
+      { principal: alice, role: 'Contributor', scope: 'ReadWrite' },
+      { principal: bee, role: 'Observer', scope: 'ReadWrite' },
+    ]);
+    const view = authorizeView(
+      await composeWorkspace(
+        { workspace: WS, members: [mem(alice, 'https://alice.test/')] },
+        deps({ 'https://alice.test/': [{ url: 'https://alice.test/c/1.ttl', at: '2026-08-01T10:00:00Z' }] }),
+      ),
+      roster,
+    );
+    expect(view.notRead[0]!.authorizedHere).toBe(false);
+    expect(view.complete).toBe(true);
+  });
+
+  it('★ describeCoverage names `disallowed` and `notRead`, which it used to silently drop', () => {
+    // Typed on ComposedView, it dropped both from every AuthorizedView — which is assignable,
+    // and which both live verifiers pipe straight in. So the one function whose stated job is
+    // that a view can describe its own gaps rendered a workspace with a member writing
+    // entries that do not count as "1 entries from 2 of 2 streams", with no hint at all.
+    const roster = rosterOf([
+      { principal: alice, role: 'Contributor', scope: 'ReadWrite' },
+      { principal: bee, role: 'Observer', scope: 'ReadWrite' },
+    ]);
+    const withDisallowed = {
+      workspace: WS, entries: [], streams: [], unavailable: [], unverified: [],
+      misattributed: [], unmatched: [], unattested: [], complete: true,
+      crossStreamOrderIsAdvisory: true, attributionGrade: 'asserted', descriptorReads: 0,
+      disallowed: [{ entry: { principal: bee }, because: 'x' }],
+      notRead: [{ principal: alice, because: 'y', authorizedHere: true }],
+    } as unknown as Parameters<typeof describeCoverage>[0];
+    const line = describeCoverage(withDisallowed);
+    expect(line).toMatch(/NOT counted as workspace content/);
+    expect(line).toContain(bee);
+    expect(line).toMatch(/AUTHORIZED member\(s\) never read/);
+    expect(line).toContain(alice);
   });
 });
 
@@ -230,5 +485,47 @@ describe('readableMembers — not reading a pod you would discard', () => {
       { principal: bee, role: 'Observer', scope: 'ReadWrite' },
     ]);
     expect(readableMembers(roster, [mem(alice, 'a'), mem(bee, 'b')]).map(m => m.principal)).toEqual([alice]);
+  });
+
+  it('★ a member dropped here is still REPORTED by the view, not deleted from it', async () => {
+    // The property this whole layer exists for is that an unauthorised writer is surfaced
+    // rather than silently filtered. Pre-filtering removed exactly that: bee's pod is never
+    // read, so she contributes no entries, so `disallowed` is empty — and the view reports
+    // a clean workspace it has merely not looked at. The optimisation deleted the report
+    // the same file argues for.
+    const roster = rosterOf([
+      { principal: alice, role: 'Contributor', scope: 'ReadWrite' },
+      { principal: bee, role: 'Observer', scope: 'ReadWrite' },
+    ]);
+    const all = [mem(alice, 'https://alice.test/'), mem(bee, 'https://bee.test/')];
+    const view = authorizeView(
+      await composeWorkspace(
+        { workspace: WS, members: readableMembers(roster, all) },
+        deps({
+          'https://alice.test/': [{ url: 'https://alice.test/c/1.ttl', at: '2026-08-01T10:00:00Z' }],
+          'https://bee.test/': [{ url: 'https://bee.test/c/1.ttl', at: '2026-08-01T11:00:00Z' }],
+        }),
+      ),
+      roster,
+    );
+    expect(view.disallowed).toEqual([]);
+    expect(view.notRead.map(u => u.principal)).toEqual([bee]);
+    expect(view.notRead[0]!.because).toMatch(/does not permit/);
+  });
+
+  it('★ the report is derived, so hand-rolling the same filter cannot lose it either', () => {
+    // Recovered from the roster against the streams actually attempted, not threaded in by
+    // the caller. A caller who never touches readableMembers — composing a subset for their
+    // own reasons — gets the same report, because there is nothing to pass and therefore
+    // nothing to forget to pass.
+    const roster = rosterOf([
+      { principal: alice, role: 'Contributor', scope: 'ReadWrite' },
+      { principal: bee, role: 'Observer', scope: 'ReadWrite' },
+    ]);
+    const onlyAlice = {
+      workspace: WS, entries: [], streams: [{ member: mem(alice, 'a'), rows: 0, report: { intact: true, ordered: [] } }],
+      unavailable: [], unverified: [], misattributed: [], complete: true, crossStreamOrderIsAdvisory: true,
+    } as unknown as Parameters<typeof authorizeView>[0];
+    expect(authorizeView(onlyAlice, roster).notRead.map(u => u.principal)).toEqual([bee]);
   });
 });
