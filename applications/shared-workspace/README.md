@@ -40,17 +40,29 @@ cannot confirm — see below.
 
 ## The three properties that do the work
 
-**1. Membership is two-sided.** A grant lives on the convener's pod; an acceptance lives on
-the member's own. A roster entry exists only where both agree. The substrate cannot make a
-person's pod hold a record they did not write, so a one-sided roster would let a convener
-**manufacture participants** — in a system whose whole claim is custody, the worst
-available failure.
+**1. Membership is two-sided — as a *design*, not yet as an *enforced* property.** A grant
+is meant to live on the convener's pod and an acceptance on the member's own, and a roster
+entry exists only where both agree.
+
+> ★ **An independent review refuted the enforcement.** `Grant` and `Acceptance` carry no
+> provenance, and `foldRoster` checks only that the acceptance names the grant and the same
+> principal. A convener can write *both halves on their own pod* and the fold produces a
+> member who agreed to nothing. Worse: the live verifier that reported 13/13 **built both
+> halves itself**, so the property was demonstrated by construction rather than
+> established. The fix is to require and verify each record's `iep:authorshipProof` — the
+> substrate can write it; this layer does not yet read it.
 
 **2. A role is a ceiling, never a grant.** Effective capability is
 `role.permits ∩ delegatedScope`. A Convener whose agent holds a read-only delegation still
 cannot write. In a membership table, being an admin *is* the authority; here it is only a
 bound on authority the principal already had. An unresolvable delegation yields **no**
 capability, not full — otherwise an identity outage becomes a privilege grant.
+
+> ★ The same review found this one broken in the aggregation rather than the intersection:
+> a principal appearing **twice** in `scopes` silently last-won, so `[ReadOnly, ReadWrite]`
+> granted append and revoke while the reverse order granted neither, with no divergence
+> reported. Two rows for one principal is ordinary — a federated composer reads one agent
+> registry per pod. Fixed: duplicate scope rows are **intersected** and reported.
 
 **3. Divergence is reported, never resolved by guessing.** Two concurrent grant heads?
 Name both, apply the **intersection**. Two stream heads? Refuse to append until it is
@@ -151,6 +163,26 @@ A stream that reads but **does not verify** is reported and withheld from the fe
 merging it would place entries whose order within their own member is unknown beside
 entries whose order is verified, with nothing to tell them apart.
 
+## ★ Attribution is not verified, and that bounds everything below
+
+`ComposedEntry.principal` is a **label the composer attaches from the members list**, not a
+fact read from the record. Nothing in the read path derives authorship.
+
+An independent review turned that into a live escalation: a member's stream IRI comes from
+their **own acceptance**, and nothing required it to be under their own authority. Point it
+at somebody else's pod and their entries were folded in *attributed to you* — an Observer's
+writes laundered into a Contributor's, and with the recommended `readableMembers` pre-filter
+the Observer's pod was never read, so nothing was even reported.
+
+What is now checked: a member's stream must be **under the pod believed to be theirs**, and
+entries not served from that pod are withheld and reported. What that check **cannot** do is
+help when `podUrl` was itself derived from the member's claim — asking the attacker where
+the attacker lives. The honest fix is verifying each descriptor's own `iep:authorshipProof`,
+which the substrate can write and this layer does not yet read.
+
+**Until it does, every authority claim below is only as good as the `podUrl` the caller
+supplied.**
+
 ## Where authority can actually be enforced
 
 This is the honest part, and a one-relay design never has to think about it. There, every
@@ -236,6 +268,29 @@ All six increments are built. What is verified, and what is not:
 | 4 authority at the fold | built, **13/13 live**, refused at both layers |
 | 5 engagement `gone` + injectable engine | built, 11 assertions, deployed |
 | 6 independent SHACL agreement | built, **in CI** — `@interego/core` vs pySHACL |
+
+### Known defects, found by an independent adversarial review and not yet fixed
+
+Reported here rather than left in a transcript. Each is real and reproducible.
+
+| | severity |
+|---|---|
+| two-sided membership is **not enforced** — no provenance on grant/acceptance | high |
+| authorship is **not verified** — attribution rests on the caller-supplied `podUrl` | high |
+| a successful read whose rows all fail the `describes` filter looks *idle*, `complete: true` | medium |
+| `explain()` names the role, not the divergence, when a grant chain has two heads | medium |
+| `readableMembers` removes the *reported* half of read-time enforcement | medium |
+| `headOf` reports a forked chain as an empty stream (`appendEntry` guards separately) | low-med |
+| duplicate input rows manufacture phantom divergences | low-med |
+| `wsp:seq` is written on every entry and never read back, so tail truncation verifies clean | low-med |
+| a revoked agent still contributes its scope — `capabilitiesForScope` ignores `revoked` | low |
+
+### What survived the same review
+
+`verifyChain` was attacked with **1,052,736** generated chain shapes against an independent
+oracle: **zero** false positives. `appendEntry`'s refusal to write onto an unverifying chain
+held. `entryTurtle`'s IRI and literal escaping held for every position except `extraTriples`,
+which is now constrained.
 
 ★ Two things are deliberately **not** claimed:
 

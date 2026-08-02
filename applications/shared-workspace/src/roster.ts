@@ -92,7 +92,7 @@ export interface Member {
 }
 
 export interface Divergence {
-  readonly kind: 'grant' | 'acceptance';
+  readonly kind: 'grant' | 'acceptance' | 'scope';
   readonly heads: readonly string[];
   readonly note: string;
 }
@@ -142,7 +142,29 @@ export function foldRoster(args: {
   const { workspace, profile, grants, acceptances, scopes } = args;
 
   const permitsOf = new Map(profile.roles.map(r => [r.role, uniqueSorted([...r.permits])]));
-  const scopeOf = new Map(scopes.map(s => [s.principal, uniqueSorted([...s.capabilities])]));
+  // ★ A PRINCIPAL APPEARING TWICE IS INTERSECTED, NOT OVERWRITTEN.
+  //
+  // `new Map(scopes.map(...))` silently last-wins, which is last-write-wins on a
+  // DELEGATION record — the exact thing this module's header says it never does on
+  // authorization data. An independent review demonstrated it through the documented
+  // builder: `[{alice, ReadOnly}, {alice, ReadWrite}]` gave alice append and revoke;
+  // reversed, neither; and `divergences` was empty both times. Order-dependent authority,
+  // unreported, in the direction that grants.
+  //
+  // Two rows for one principal is not exotic: a federated composer reads one agent
+  // registry per pod, so it produces one row per (principal, pod). The intersection is
+  // the same choice the grant-head divergence makes, for the same reason — under
+  // disagreement, the weaker reading is the only safe one — and it is REPORTED so the
+  // duplicate can be resolved rather than silently tolerated.
+  const scopeOf = new Map<Principal, string[]>();
+  const duplicatedScopes = new Set<Principal>();
+  for (const s of scopes) {
+    const caps = uniqueSorted([...s.capabilities]);
+    const prior = scopeOf.get(s.principal);
+    if (prior === undefined) { scopeOf.set(s.principal, caps); continue; }
+    duplicatedScopes.add(s.principal);
+    scopeOf.set(s.principal, intersect(prior, caps));
+  }
 
   // Records naming a different workspace are not ours to interpret. Dropping them silently
   // is correct: a pod holds many workspaces' records and seeing another's is not an error.
@@ -150,6 +172,16 @@ export function foldRoster(args: {
   const ourAcceptances = acceptances.filter(a => a.workspace === workspace);
 
   const divergences: Divergence[] = [];
+  for (const principal of [...duplicatedScopes].sort()) {
+    divergences.push({
+      kind: 'scope',
+      heads: [principal],
+      note:
+        `${principal} has more than one delegated-scope record. No winner is chosen: the `
+        + 'INTERSECTION applies. Last-write-wins on a delegation record makes authority '
+        + 'depend on the order rows happened to arrive in, which is not a decision anyone made.',
+    });
+  }
   const members: Member[] = [];
   const pending: { principal: Principal; role: string; grant: string }[] = [];
 

@@ -74,6 +74,34 @@ export interface UnavailableStream {
   readonly reason: string;
 }
 
+/** Entries a member's stream pointed at but which are not served from that member's pod. */
+export interface MisattributedEntries {
+  readonly member: ComposableMember;
+  readonly descriptorUrls: readonly string[];
+  readonly reason: string;
+}
+
+/**
+ * Is this descriptor served from within this pod?
+ *
+ * Origin AND path prefix, not origin alone: two members can legitimately share a host
+ * (the same CSS serves every pod on this deployment), so origin-only containment would
+ * let any member on that host claim any other's entries. Compared on the normalised
+ * pod path, so a missing trailing slash is not a bypass.
+ */
+export function isUnder(descriptorUrl: string, podUrl: string): boolean {
+  try {
+    const d = new URL(descriptorUrl);
+    const p = new URL(podUrl.endsWith('/') ? podUrl : `${podUrl}/`);
+    if (d.origin !== p.origin) return false;
+    return d.pathname.startsWith(p.pathname);
+  } catch {
+    // An unparseable URL is not under anything. Refusing is the safe direction: the
+    // alternative admits a record whose location we could not determine.
+    return false;
+  }
+}
+
 export interface ComposedView {
   readonly workspace: string;
   /**
@@ -88,6 +116,15 @@ export interface ComposedView {
   readonly unavailable: readonly UnavailableStream[];
   /** Streams that were read but do not verify — a fork, a merge, a missing link. */
   readonly unverified: readonly StreamOutcome[];
+  /**
+   * Entries a member's stream pointed at that are NOT served from that member's pod.
+   *
+   * ★ Withheld rather than attributed. A stream IRI is chosen by the member in their own
+   * acceptance, so treating "their stream pointed at it" as "they wrote it" lets anyone
+   * claim anyone else's records — including, in the case that found this, laundering an
+   * Observer's writes into a Contributor's entries.
+   */
+  readonly misattributed: readonly MisattributedEntries[];
   /**
    * True only when every member's stream was read AND verified. A caller that renders a
    * workspace without checking this shows a partial view as a whole one.
@@ -113,8 +150,28 @@ export async function composeWorkspace(
   args: { readonly workspace: string; readonly members: readonly ComposableMember[] },
   deps: StreamDeps,
 ): Promise<ComposedView> {
+  // ★ A MEMBER'S STREAM MUST BE UNDER THE POD WE BELIEVE IS THEIRS.
+  //
+  // The stream IRI comes from the member's OWN acceptance, so it is a claim, not a fact.
+  // Nothing required it to be under their own authority: point it at somebody else's pod
+  // and their entries get folded in attributed to you — an Observer's writes laundered
+  // into a Contributor's.
+  //
+  // Containment against `podUrl` only bites when `podUrl` was established INDEPENDENTLY of
+  // the member's claim. A caller that derives it from the stream IRI is asking the
+  // attacker where the attacker lives, and the check becomes a tautology. So the mismatch
+  // is surfaced here rather than silently tolerated: if the stream is not under the pod we
+  // were told is theirs, the member is refused and named.
+  //
+  // ★ This is a containment check, NOT proof of authorship. The record that would prove it
+  // is the descriptor's own `iep:authorshipProof`, which the substrate can write and this
+  // layer does not yet verify. Until it does, attribution is only as good as the podUrl
+  // the caller supplied — and that limit is stated in the README rather than papered over.
+  const wrongPod = args.members.filter(m => !isUnder(m.stream, m.podUrl));
+  const composable = args.members.filter(m => isUnder(m.stream, m.podUrl));
+
   const settled = await Promise.allSettled(
-    args.members.map(async member => {
+    composable.map(async member => {
       const rows = await readStream(
         { graphIri: member.stream, workspace: args.workspace, podUrl: member.podUrl },
         deps,
@@ -125,12 +182,25 @@ export async function composeWorkspace(
 
   const streams: StreamOutcome[] = [];
   const unavailable: UnavailableStream[] = [];
+  const misattributed: MisattributedEntries[] = [];
   const unverified: StreamOutcome[] = [];
   const entries: ComposedEntry[] = [];
 
+  for (const m of wrongPod) {
+    misattributed.push({
+      member: m,
+      descriptorUrls: [],
+      reason:
+        `this member's stream <${m.stream}> is not under <${m.podUrl}>, the pod believed to be `
+        + 'theirs. The stream IRI comes from their own acceptance, so treating it as authority '
+        + 'over whatever it points at would let anyone claim records written by anyone else. '
+        + 'The whole stream is withheld.',
+    });
+  }
+
   for (let i = 0; i < settled.length; i++) {
     const outcome = settled[i]!;
-    const member = args.members[i]!;
+    const member = composable[i]!;
 
     if (outcome.status === 'rejected') {
       unavailable.push({
@@ -141,12 +211,42 @@ export async function composeWorkspace(
     }
 
     const rows: readonly StreamRow[] = outcome.value.rows;
-    const report = verifyChain(rows);
-    const record: StreamOutcome = { member, rows: rows.length, report };
+
+    // ★ AN ENTRY MUST LIVE WHERE ITS AUTHOR'S STREAM LIVES.
+    //
+    // `principal` below is a LABEL this function attaches from the members list — it is
+    // not read from the record, and nothing in the read path derives authorship. An
+    // independent review turned that into a live escalation: a member's acceptance names
+    // the stream IRI, and nothing required that IRI to be under their own authority. Point
+    // it at somebody else's pod and their entries get folded in ATTRIBUTED TO YOU, so an
+    // Observer's writes are admitted as a Contributor's — and with the recommended
+    // pre-filter they are not even reported as disallowed, because the Observer's own pod
+    // is never read.
+    //
+    // The check that can be made here is containment: a descriptor served from outside the
+    // pod this member's stream was read from is not this member's entry. It is not a
+    // substitute for verifying the descriptor's own authorship proof — that is the real
+    // fix and is not built — but it turns a silent cross-attribution into a visible one.
+    const foreign = rows.filter(r => !isUnder(r.descriptorUrl, member.podUrl));
+    const own = rows.filter(r => isUnder(r.descriptorUrl, member.podUrl));
+    if (foreign.length > 0) {
+      misattributed.push({
+        member,
+        descriptorUrls: foreign.map(r => r.descriptorUrl),
+        reason:
+          `${foreign.length} entr${foreign.length === 1 ? 'y is' : 'ies are'} served from outside `
+          + `<${member.podUrl}>, the pod this member's stream was read from. They are withheld: `
+          + 'attributing a record to a principal because their acceptance pointed at it would let '
+          + 'anyone claim records written by anyone else.',
+      });
+    }
+
+    const report = verifyChain(own);
+    const record: StreamOutcome = { member, rows: own.length, report };
     streams.push(record);
 
     // An empty stream is a member who has not written yet — normal, and not an error.
-    if (rows.length === 0) continue;
+    if (own.length === 0) continue;
 
     if (!report.intact) {
       // ★ Contributed to `unverified` but NOT to `entries`. Merging a forked stream would
@@ -174,7 +274,8 @@ export async function composeWorkspace(
     streams,
     unavailable,
     unverified,
-    complete: unavailable.length === 0 && unverified.length === 0,
+    misattributed,
+    complete: unavailable.length === 0 && unverified.length === 0 && misattributed.length === 0,
     crossStreamOrderIsAdvisory: true,
   };
 }
@@ -267,6 +368,10 @@ export function describeCoverage(view: ComposedView): string {
   }
   if (view.unverified.length > 0) {
     parts.push(`${view.unverified.length} read but NOT verified, so withheld from the feed`);
+  }
+  if (view.misattributed.length > 0) {
+    const n = view.misattributed.reduce((a, m) => a + m.descriptorUrls.length, 0);
+    parts.push(`${n} entr${n === 1 ? 'y' : 'ies'} withheld as served from outside the member's own pod`);
   }
   parts.push('order within each stream is verified; order between streams is advisory');
   return parts.join('; ') + '.';
