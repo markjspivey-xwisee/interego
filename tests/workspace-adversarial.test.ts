@@ -150,24 +150,40 @@ describe('★ entry.principal was a LABEL, not a fact about who wrote the entry'
     'https://bee.test/': [{ url: 'https://bee.test/c/observer-wrote-this.ttl', at: '2026-08-01T10:00:00Z' }],
   };
 
-  it('★ a member whose stream is not under their own pod is WITHHELD entirely', async () => {
-    const view = await composeWorkspace({ workspace: WS, members: honest }, deps(beeWrote));
-    expect(view.entries.filter(e => e.principal === alice)).toHaveLength(0);
-    expect(view.misattributed.some(m => m.member.principal === alice)).toBe(true);
+  it('★ an entry served from another pod is WITHHELD, not attributed', async () => {
+    // alice's pod is established independently, so reading bee's stream IRI against
+    // alice's pod returns bee's record — which is not under alice's pod, and so is not
+    // alice's entry however her acceptance was written.
+    const view = await composeWorkspace({ workspace: WS, members: [honest[0]!] }, deps({
+      'https://alice.test/': [{ url: 'https://bee.test/c/observer-wrote-this.ttl', at: '2026-08-01T10:00:00Z' }],
+    }));
+    expect(view.entries).toHaveLength(0);
+    expect(view.misattributed).toHaveLength(1);
+    expect(view.misattributed[0]!.descriptorUrls).toEqual(['https://bee.test/c/observer-wrote-this.ttl']);
     expect(view.complete).toBe(false);
-  });
-
-  it('★ ...and it is REPORTED, so the bad acceptance is diagnosable', async () => {
-    const view = await composeWorkspace({ workspace: WS, members: honest }, deps(beeWrote));
-    expect(view.misattributed[0]!.reason).toMatch(/not under/);
     expect(describeCoverage(view)).toMatch(/outside the member's own pod/);
   });
 
-  it('★ the Observer\'s write is no longer laundered into a Contributor\'s entry', async () => {
-    const view = authorizeView(await composeWorkspace({ workspace: WS, members: honest }, deps(beeWrote)), roster);
-    // It is bee's entry, bee is an Observer, so it is not workspace content — and crucially
+  it('★ the Observer's write is no longer laundered into a Contributor's entry', async () => {
+    const view = authorizeView(await composeWorkspace({ workspace: WS, members: honest }, deps({
+      'https://alice.test/': [{ url: 'https://bee.test/c/observer-wrote-this.ttl', at: '2026-08-01T10:00:00Z' }],
+      'https://bee.test/': [{ url: 'https://bee.test/c/observer-wrote-this.ttl', at: '2026-08-01T10:00:00Z' }],
+    })), roster);
+    // bee wrote it and bee is an Observer, so it is not workspace content — and crucially
     // it is NOT simultaneously admitted under alice, which was the actual defect.
     expect(view.entries).toHaveLength(0);
+  });
+
+  it('★ a stream IRI is a logical name, so it is NOT range-checked against the pod', async () => {
+    // The first attempt at this defence required member.stream to be under member.podUrl
+    // and rejected every real member on the first live run: a graph IRI lives under the
+    // relay's naming authority while its entries are stored on a pod. Conflating them is
+    // a category error. Pinned so the wrong check does not come back.
+    const view = await composeWorkspace({ workspace: WS, members: [
+      { principal: alice, stream: 'https://relay.test/ns/o/ws/stream/alice', podUrl: 'https://alice.test/' },
+    ] }, deps({ 'https://alice.test/': [{ url: 'https://alice.test/c/1.ttl', at: '2026-08-01T10:00:00Z' }] }));
+    expect(view.entries).toHaveLength(1);
+    expect(view.complete).toBe(true);
   });
 
   it('★ deriving the pod FROM the member\'s own claim is a tautology — pinned, not defended', async () => {

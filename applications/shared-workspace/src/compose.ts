@@ -150,28 +150,21 @@ export async function composeWorkspace(
   args: { readonly workspace: string; readonly members: readonly ComposableMember[] },
   deps: StreamDeps,
 ): Promise<ComposedView> {
-  // ★ A MEMBER'S STREAM MUST BE UNDER THE POD WE BELIEVE IS THEIRS.
+  // ★ A STREAM IRI IS A LOGICAL NAME, NOT A STORAGE PATH — so it cannot be range-checked.
   //
-  // The stream IRI comes from the member's OWN acceptance, so it is a claim, not a fact.
-  // Nothing required it to be under their own authority: point it at somebody else's pod
-  // and their entries get folded in attributed to you — an Observer's writes laundered
-  // into a Contributor's.
+  // The first attempt at defending attribution required `member.stream` to be under
+  // `member.podUrl`. It rejected every real member on the first live run: a stream's graph
+  // IRI lives under the relay's naming authority (`…/ns/<owner>/<workspace>/stream/alice`)
+  // while its entries are stored on a pod (`…/u-eth-…/context-graphs/…`). Those are
+  // deliberately different — the substrate's whole `graph_iri` vs `descriptorUrl`
+  // distinction — and conflating them is a category error, not a check.
   //
-  // Containment against `podUrl` only bites when `podUrl` was established INDEPENDENTLY of
-  // the member's claim. A caller that derives it from the stream IRI is asking the
-  // attacker where the attacker lives, and the check becomes a tautology. So the mismatch
-  // is surfaced here rather than silently tolerated: if the stream is not under the pod we
-  // were told is theirs, the member is refused and named.
-  //
-  // ★ This is a containment check, NOT proof of authorship. The record that would prove it
-  // is the descriptor's own `iep:authorshipProof`, which the substrate can write and this
-  // layer does not yet verify. Until it does, attribution is only as good as the podUrl
-  // the caller supplied — and that limit is stated in the README rather than papered over.
-  const wrongPod = args.members.filter(m => !isUnder(m.stream, m.podUrl));
-  const composable = args.members.filter(m => isUnder(m.stream, m.podUrl));
-
+  // What CAN be checked is where each returned record is actually served from, which is
+  // done per row below. A member's acceptance can name any graph IRI it likes; it cannot
+  // make somebody else's pod serve a record, and it cannot make a record served from
+  // somebody else's pod count as theirs.
   const settled = await Promise.allSettled(
-    composable.map(async member => {
+    args.members.map(async member => {
       const rows = await readStream(
         { graphIri: member.stream, workspace: args.workspace, podUrl: member.podUrl },
         deps,
@@ -186,21 +179,9 @@ export async function composeWorkspace(
   const unverified: StreamOutcome[] = [];
   const entries: ComposedEntry[] = [];
 
-  for (const m of wrongPod) {
-    misattributed.push({
-      member: m,
-      descriptorUrls: [],
-      reason:
-        `this member's stream <${m.stream}> is not under <${m.podUrl}>, the pod believed to be `
-        + 'theirs. The stream IRI comes from their own acceptance, so treating it as authority '
-        + 'over whatever it points at would let anyone claim records written by anyone else. '
-        + 'The whole stream is withheld.',
-    });
-  }
-
   for (let i = 0; i < settled.length; i++) {
     const outcome = settled[i]!;
-    const member = composable[i]!;
+    const member = args.members[i]!;
 
     if (outcome.status === 'rejected') {
       unavailable.push({

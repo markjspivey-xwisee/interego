@@ -174,8 +174,13 @@ at somebody else's pod and their entries were folded in *attributed to you* — 
 writes laundered into a Contributor's, and with the recommended `readableMembers` pre-filter
 the Observer's pod was never read, so nothing was even reported.
 
-What is now checked: a member's stream must be **under the pod believed to be theirs**, and
-entries not served from that pod are withheld and reported. What that check **cannot** do is
+What is now checked: **each returned record must be served from the member's own pod**, and
+entries served from elsewhere are withheld and reported.
+
+> The first attempt at this defence range-checked the *stream IRI* against the pod, and
+> rejected every real member on the first live run. A graph IRI lives under the relay's
+> naming authority; its entries are stored on a pod. Conflating them is a category error,
+> not a check — caught only because the live verifiers were re-run after the change. What that check **cannot** do is
 help when `podUrl` was itself derived from the member's claim — asking the attacker where
 the attacker lives. The honest fix is verifying each descriptor's own `iep:authorshipProof`,
 which the substrate can write and this layer does not yet read.
