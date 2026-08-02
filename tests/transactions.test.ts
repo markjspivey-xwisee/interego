@@ -82,7 +82,7 @@ describe('saga transactions — failure + compensation', () => {
     expect(result.state).toBe('PartialAbort');
     expect(result.partialAbortDetails).toBeDefined();
     expect(result.partialAbortDetails!.length).toBe(1);
-    expect(result.partialAbortDetails![0].step).toBe('urn:step:b');
+    expect(result.partialAbortDetails![0]!.step).toBe('urn:step:b');
   });
 
   it('first step fails → no compensations needed; just Aborted', async () => {
@@ -114,8 +114,11 @@ describe('transactionStatus', () => {
     await executeTransaction(txn);
     const s = transactionStatus(txn);
     expect(s.state).toBe('Aborted');
-    expect(s.steps[0].state).toBe('Compensated');
-    expect(s.steps[1].state).toBe('Failed');
-    expect(s.steps[1].error).toBe('boom');
+    // Both steps were declared on the transaction above, so `!` states what the loop
+    // bounds already guarantee rather than hiding a maybe-missing element.
+    expect(s.steps).toHaveLength(2);
+    expect(s.steps[0]!.state).toBe('Compensated');
+    expect(s.steps[1]!.state).toBe('Failed');
+    expect(s.steps[1]!.error).toBe('boom');
   });
 });

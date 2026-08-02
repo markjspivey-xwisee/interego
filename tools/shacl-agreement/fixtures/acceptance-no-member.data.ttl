@@ -1,0 +1,13 @@
+# shape: wsp-shapes.ttl
+# expect: violates
+# why: sh:minCount 1 on wsp:member. An acceptance that does not say who is accepting is an unattributed half of a membership, and readAcceptanceRecord already refuses it — the published shape has to refuse it too, or a conformant reader elsewhere validates something weaker than we do.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://alice.test/a1>
+  a wsp:MembershipAcceptance ;
+  wsp:accepts <https://conv.test/g1> ;
+  wsp:stream <https://alice.test/ws/a/stream> ;
+  wsp:workspace <https://relay.test/ws/a> .

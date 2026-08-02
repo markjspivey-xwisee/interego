@@ -603,6 +603,42 @@ function manifestHeaderTurtle(podUrl: string): string {
  * Turtle body. When supplied it's mirrored onto the entry as
  * `iep:contentCid "<cid>"` so CAS supersession gates can compare
  * `if_match` against the head identity without a body GET + rehash.
+ *
+ * ── WHAT MAY BE MIRRORED HERE, AND WHY `wsp:seq` MAY NOT ──────────
+ *
+ * Everything below is descriptor-level `iep:`/`dct:` metadata: it is
+ * read off `ContextDescriptorData`, and mirroring it only saves a
+ * fetch of something the same writer already wrote in the same act.
+ *
+ * ★ REFUSED, AND NOT FOR TIDINESS. The shared workspace writes a
+ * `wsp:seq` on every stream entry, and `verifyChain` has a check that
+ * compares it against the position the supersedes links walk the row
+ * into — the one check that can catch an entry removed and linked
+ * around. It never fires, because the manifest row has no seq. The
+ * caller's `graphContent` is in scope where this function is called,
+ * so scraping the number out of it and emitting `iep:seq` here is
+ * mechanically easy. It would still be wrong:
+ *
+ *   `verifyChain` takes its links from THIS ROW's mirrored
+ *   `iep:supersedes`. Removing an entry and re-pointing its successor
+ *   means rewriting the manifest anyway — dropping one row and
+ *   editing another's supersedes. Renumbering a mirrored seq in that
+ *   same edit costs nothing, so the check would be comparing the
+ *   manifest against itself and could never disagree.
+ *
+ * And it would not fail silent, it would fail LOUD AND WRONG: the
+ * report's `declaredSeqChecked` would flip from `false` ("nobody
+ * looked", which is true today) to `true` ("the log's own numbering
+ * agrees with its links") over a number that is not the log's own.
+ *
+ * The number is evidence only where it is signed. `wsp:seq` sits
+ * inside the named-graph region that `digestedGraphRegion` covers and
+ * `sign_authorship` binds, so a tamperer can delete an entry but
+ * cannot renumber a survivor without breaking its authorship proof.
+ * Reading it therefore costs one `get_descriptor` per entry, and
+ * belongs to the caller that is already paying that — not to a
+ * cleartext mirror that launders an unsigned value into a signed
+ * one's place.
  */
 function manifestEntryTurtle(
   descriptorUrl: string,

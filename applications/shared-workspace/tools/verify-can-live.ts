@@ -48,9 +48,20 @@
  * read back and PARSED, with the manufactured-participant attack run live against both the
  * new policy and the old one so the gap is shown to have been real.
  *
- * ★ SECTIONS 6, 7 AND 8 HAVE STILL NOT BEEN RUN AGAINST THE LIVE SUBSTRATE. No bearer pair
- * has been available. Whether the assertions hold now that they CAN fail is therefore
- * unknown, and nothing in this file or the README claims otherwise.
+ * ★ SECTIONS 6, 7 AND 8 HAVE NOW BEEN RUN AGAINST PRODUCTION, with two real bearers, and the
+ * file passed 46/46 — including the manufactured-participant refusal and §8's closing
+ * demonstration that residual gap 6 was open. The sentence that stood here said they were
+ * unrun and that whether the assertions hold was unknown. It is known.
+ *
+ * ★ AND WHAT IS UNRUN IS NOW A SMALLER, DIFFERENT THING, SAID PRECISELY RATHER THAN GLOSSED.
+ * The 46 assertions that ran are the ones this file carried at that moment — §§1–8 now carry
+ * 45, because §8's closing `wrongConvener` assertion moved into §9. A re-run of §§1–8 today
+ * reports 45/45, and that is the move rather than a regression. Section 8's
+ * closing block has since been rewritten: the gap-6 DEMONSTRATION it ended on is replaced by a
+ * gap-6 CLOSE — a real `wsp:Workspace` record published at the workspace's own URL, read back,
+ * parsed, and fed to the fold as `workspaceEvidence`. Those assertions have NOT been run. In
+ * particular, whether the live shape gate accepts a `wsp:Workspace` at a `/ns/…` graph IRI is
+ * read off the published shape rather than observed.
  *
  * Usage:
  *   IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
@@ -60,13 +71,13 @@
 import { appendEntry, readAttestation, type StreamDeps } from '../src/stream.js';
 import { composeWorkspace, type ComposableMember } from '../src/compose.js';
 import {
-  grantTurtle, acceptanceTurtle, publishMembershipRecord,
-  readGrantRecord, readAcceptanceRecord,
+  grantTurtle, acceptanceTurtle, workspaceTurtle, publishMembershipRecord,
+  readGrantRecord, readAcceptanceRecord, readWorkspaceRecord, convenerEvidenceOf,
 } from '../src/membership.js';
 import type { Acceptance } from '../src/roster.js';
 import {
   authorizeView, scopesFromRegistry, signerIndexFromRegistry, canAct, CAPS, foldRoster,
-  type RoleProfile, type Attestation,
+  type RoleProfile, type Attestation, type ConvenerEvidence,
 } from '../src/can.js';
 
 const RELAY = process.env.IEP_RELAY ?? 'https://relay.interego.xwisee.com';
@@ -564,21 +575,203 @@ async function main(): Promise<void> {
     );
   }
 
-  // ★ WHAT IS STILL NOT ESTABLISHED, asserted rather than left to the README. The convener
-  // is whoever this file named. Nothing above read <WS> and checked wsp:convener, so a
-  // policy naming BEE as convener produces a field-bound roster of the wrong memberships.
-  const wrongConvener = foldRoster({
+  // ── 9. the convener, checked against the WORKSPACE instead of against the caller ──
+  //
+  // ★ WHAT §8 USED TO END ON. The block here asserted the gap rather than closing it: a
+  // policy naming BEE as convener produced a field-bound roster of the wrong memberships,
+  // `recordFieldBinding: 'bound'` either way, because `AttestationPolicy.convener` was a value
+  // this file typed and nothing read <WS> to check `wsp:convener` against it. That assertion
+  // passed live, which is what made the gap a measurement rather than a worry.
+  //
+  // It is closed the same way gap 0 was, and the blocker was the same one twice: the published
+  // `wspsh:WorkspaceShape` has always required exactly one `wsp:convener`, and no code in the
+  // repo had ever WRITTEN a `wsp:Workspace`. Below, alice publishes one at the workspace's own
+  // URL, it is read back and parsed, and the fold is given it as evidence.
+  console.log('\n9. the convener comes from the WORKSPACE — the record that says who may grant');
+
+  // ★ THE GRAPH IRI IS <WS> ITSELF, and so is the subject. Both matter and for different
+  // reasons: the subject is what makes this a record OF this workspace rather than one ABOUT
+  // it (the fold compares it), and the graph IRI is what makes <WS> dereference to this record
+  // through the relay's /ns/:owner/:slug route — which is the half a reader needs and the half
+  // no assertion here can make on its own behalf.
+  const wsPub = await publishMembershipRecord({
+    graphIri: WS,
+    graphContent: workspaceTurtle({
+      workspaceIri: WS, convener: alice, roleProfile: P,
+      title: `wsp-can-${RUN}, convened by alice`,
+    }),
+  }, wsDeps(BEARER));
+  ok(
+    wsPub.outcome === 'published',
+    '★ the convener publishes a wsp:Workspace at the workspace\'s own URL',
+    JSON.stringify(wsPub).slice(0, 240),
+  );
+  if (wsPub.outcome !== 'published') { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
+
+  const readWs = await readWorkspaceRecord(wsPub.descriptorUrl, wsDeps(BEARER_B));
+  ok(
+    readWs.record !== null,
+    'the workspace record reads back and parses',
+    JSON.stringify(readWs.problems),
+  );
+  if (!readWs.record) { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
+  // ★ READ BY BEE, NOT BY ALICE. A convener declaration only settles anything if the other
+  // party can read it: alice reading her own record back establishes nothing a second copy of
+  // alice's opinion would not. `wsDeps(BEARER_B)` above is the whole of that point.
+  ok(
+    readWs.record.convener === alice && readWs.record.workspace === WS,
+    `★ the convener was READ FROM THE WORKSPACE, by the OTHER party (${readWs.record.convener})`,
+    JSON.stringify(readWs.record),
+  );
+  ok(
+    readWs.record.attestation?.contentBinding === 'bound',
+    '★ and the substrate re-digested the bytes it served and MATCHED — so the convener above '
+    + 'is the convener alice signed',
+    JSON.stringify(readWs.record.attestation),
+  );
+  // Parsed and handed over, deliberately NOT gated on — the fold still takes its role profile
+  // from this file. Asserted so the evidence is shown to be real, and named as a residual gap
+  // in the README rather than quietly conflated with the convener.
+  ok(
+    readWs.record.roleProfile === P,
+    'the workspace also declares its role profile, which this fold does NOT check against '
+    + '`profile` — parsed and handed over, and named as a residual gap',
+    `roleProfile = ${readWs.record.roleProfile}`,
+  );
+
+  const evidence: ConvenerEvidence = convenerEvidenceOf(readWs);
+  const convened = (convener: string) => foldRoster({
     workspace: WS, profile: PROFILE, scopes,
-    grants: [readGrant.record],
-    acceptances: [readAccept.record],
+    grants: [readGrant.record!],
+    acceptances: [readAccept.record!],
+    attestation: { convener, signerOf, requireFieldBinding: true, workspaceEvidence: evidence },
+  });
+
+  // ★ THE CONTROL, FIRST AND OUT LOUD, for the third time in this file and for the same
+  // reason: a refusal only discriminates if the genuine article is admitted. A run where the
+  // workspace record failed to publish, or read back empty, would refuse both conveners and
+  // the two assertions after this one would establish nothing at all.
+  const rightConvener = convened(alice);
+  ok(
+    rightConvener.members.length === 1 && rightConvener.convenerBinding === 'bound',
+    '★★ the CONTROL holds: naming the convener the WORKSPACE names admits bee as a member, '
+    + 'and the fold reports the convener as checked',
+    JSON.stringify({ members: rightConvener.members.length, binding: rightConvener.convenerBinding, unattested: rightConvener.unattested }),
+  );
+
+  // ── the attack gap 6 actually permitted: BEE CONVENES ALICE'S WORKSPACE ──
+  //
+  // ★ FOLDING §8'S RECORDS UNDER `convener: bee` IS THE WEAK VERSION, AND WRITING IT FIRST WAS
+  // A MISTAKE THIS FILE HAS MADE BEFORE. Those records are signed by ALICE, so under a policy
+  // naming bee they are refused by `refuseAttestation` — the convener check never runs, and an
+  // assertion that the refusal cites the disagreement would fail for a reason that has nothing
+  // to do with what is under test. Worse, the roster would be empty either way, so a reader
+  // would see a passing section that had established nothing. It is the vacuous-assertion
+  // shape §6 was rewritten to remove.
+  //
+  // The sharp version is bee writing BOTH HALVES ON HER OWN POD and naming HERSELF convener.
+  // Every check below the convener passes at full strength: bee's key signed both records,
+  // both are content-bound, both were parsed. Nothing but the workspace's own declaration
+  // stands between that and a membership in a workspace alice convenes.
+  const selfGrantIri = `${WS}/mg/bee-self`;
+  const selfGrantPub = await publishMembershipRecord({
+    graphIri: selfGrantIri,
+    graphContent: grantTurtle({
+      grantIri: selfGrantIri, workspace: WS, grantedTo: bee, role: `${P}#Contributor`,
+      title: 'bee, convening alice\'s workspace, grants herself Contributor',
+    }),
+  }, wsDeps(BEARER_B));
+  const selfAcceptIri = `${WS}/ma/bee-self`;
+  const selfAcceptPub = selfGrantPub.outcome !== 'published' ? null : await publishMembershipRecord({
+    graphIri: selfAcceptIri,
+    graphContent: acceptanceTurtle({
+      acceptanceIri: selfAcceptIri, workspace: WS, member: bee,
+      accepts: selfGrantPub.descriptorUrl, stream: `${WS}/stream/bee`,
+      title: 'bee accepts her own grant',
+    }),
+  }, wsDeps(BEARER_B));
+  ok(
+    selfGrantPub.outcome === 'published' && selfAcceptPub?.outcome === 'published',
+    'bee publishes BOTH halves on her own pod, naming herself convener',
+    JSON.stringify({ g: selfGrantPub, a: selfAcceptPub }).slice(0, 240),
+  );
+  if (selfGrantPub.outcome !== 'published' || selfAcceptPub?.outcome !== 'published') {
+    console.log(`\n${pass} passed, ${fail} failed`); process.exit(1);
+  }
+  const selfGrant = await readGrantRecord(selfGrantPub.descriptorUrl, wsDeps(BEARER));
+  const selfAccept = await readAcceptanceRecord(selfAcceptPub.descriptorUrl, wsDeps(BEARER));
+  ok(
+    selfGrant.record !== null && selfAccept.record !== null,
+    'and both parse — the attack is made of well-formed, signed, content-bound records',
+    JSON.stringify({ g: selfGrant.problems, a: selfAccept.problems }),
+  );
+  if (!selfGrant.record || !selfAccept.record) { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
+
+  const selfArgs = {
+    workspace: WS, profile: PROFILE, scopes,
+    grants: [selfGrant.record], acceptances: [selfAccept.record],
+  };
+  // ★ THE GAP, LIVE, AT FULL STRENGTH. Every guard this layer had before this round passes.
+  const gapOpen = foldRoster({
+    ...selfArgs,
     attestation: { convener: bee, signerOf, requireFieldBinding: true },
   });
   ok(
-    wrongConvener.members.length === 0 && wrongConvener.recordFieldBinding === 'bound',
-    '★ RESIDUAL GAP 6, demonstrated not described: naming the wrong convener changes the '
-    + 'roster and the fold reports field binding as bound either way — the policy\'s '
-    + 'convener is caller-supplied and nothing here checks it against <' + WS + '>',
-    JSON.stringify({ members: wrongConvener.members.length, binding: wrongConvener.recordFieldBinding }),
+    gapOpen.members.length === 1 && gapOpen.recordFieldBinding === 'bound'
+    && gapOpen.convenerBinding === 'unchecked',
+    '★★ RESIDUAL GAP 6, at full strength: with no workspace evidence, bee CONVENES ALICE\'S '
+    + 'WORKSPACE — a field-bound, content-bound, signer-checked membership nobody in it agreed to',
+    JSON.stringify({ members: gapOpen.members.length, f: gapOpen.recordFieldBinding, c: gapOpen.convenerBinding }),
+  );
+
+  // ★ AND CLOSED. Same records, same policy, one field added.
+  const gapClosed = foldRoster({
+    ...selfArgs,
+    attestation: { convener: bee, signerOf, requireFieldBinding: true, workspaceEvidence: evidence },
+  });
+  ok(
+    gapClosed.members.length === 0 && gapClosed.convenerBinding === 'refused',
+    '★★ RESIDUAL GAP 6, CLOSED: <' + WS + '> names alice, so bee\'s self-convened membership '
+    + 'confers nothing',
+    JSON.stringify({ members: gapClosed.members.length, binding: gapClosed.convenerBinding }),
+  );
+  const conveneWhy = gapClosed.unattested.find(u => u.kind === 'grant')?.because ?? '';
+  ok(
+    /The two disagree/.test(conveneWhy),
+    '★ and refused for the RIGHT REASON — the policy and the workspace name different conveners',
+    `because = ${conveneWhy}`,
+  );
+  ok(
+    !/could not be read|does not hold up|another workspace|acts for/.test(conveneWhy),
+    'and NOT because the record was unreadable, malformed, or signed by the wrong party — '
+    + 'every one of those checks PASSED, which is what makes this the convener\'s refusal',
+    `because = ${conveneWhy}`,
+  );
+
+  // ★ THE INVERSION, LIVE. Reading the convener out of the workspace and USING it is the
+  // obvious implementation, and it is an escalation: this policy names bee, the workspace names
+  // alice, and alice signed §8's grant — so a substituting fold would ADMIT the §8 membership
+  // that this same policy refuses without the evidence. Asserted as a comparison, because that
+  // is what the claim is: supplying evidence must never widen.
+  const inversionWith = convened(bee);
+  const inversionWithout = foldRoster({
+    workspace: WS, profile: PROFILE, scopes,
+    grants: [readGrant.record], acceptances: [readAccept.record],
+    attestation: { convener: bee, signerOf, requireFieldBinding: true },
+  });
+  ok(
+    inversionWith.members.length <= inversionWithout.members.length
+    && inversionWith.members.length === 0,
+    '★★ and supplying the evidence never GRANTS: the workspace\'s convener is not substituted '
+    + 'for the policy\'s, so a policy naming bee stays empty even when the workspace names alice',
+    JSON.stringify({ with: inversionWith.members.length, without: inversionWithout.members.length }),
+  );
+  ok(
+    inversionWithout.convenerBinding === 'unchecked'
+    && /is the workspace's convener/.test(inversionWithout.attributionNote),
+    '★ and a policy that passes no evidence still says so — the gap is reported open, not '
+    + 'silently closed by a field somebody forgot to set',
+    `binding = ${inversionWithout.convenerBinding}`,
   );
 
   console.log(`\n${pass} passed, ${fail} failed`);

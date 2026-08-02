@@ -23,6 +23,7 @@ import type {
 } from '@interego/core';
 import type {
   ContextChangeEvent,
+  WebSocketConstructor,
 } from '@interego/solid';
 
 // ── Mock helpers ────────────────────────────────────────────
@@ -672,7 +673,7 @@ describe('publish — in-process concurrency (per-pod mutex)', () => {
         if (!manifestExists) return mockResponse('', { status: 404, ok: false });
         const etagSnapshot = currentEtag();
         const resp = mockResponse(manifestBody);
-        (resp as Record<string, unknown>).headers = {
+        (resp as unknown as Record<string, unknown>).headers ={
           get: (name: string) => name.toLowerCase() === 'etag' ? etagSnapshot : null,
         };
         return resp;
@@ -757,7 +758,7 @@ describe('publish — in-process concurrency (per-pod mutex)', () => {
         if (!m.exists) return mockResponse('', { status: 404, ok: false });
         const tag = `"v${m.etagN}"`;
         const resp = mockResponse(m.body);
-        (resp as Record<string, unknown>).headers = { get: (n: string) => n.toLowerCase() === 'etag' ? tag : null };
+        (resp as unknown as Record<string, unknown>).headers ={ get: (n: string) => n.toLowerCase() === 'etag' ? tag : null };
         return resp;
       }
       if (method === 'PUT') {
@@ -1155,7 +1156,7 @@ describe('subscribe', () => {
         if (opts?.headFail) return mockResponse('', { status: 401, ok: false });
         const resp = mockResponse('');
         // Add Link header via a custom headers object
-        (resp as Record<string, unknown>).headers = {
+        (resp as unknown as Record<string, unknown>).headers ={
           get: (name: string) => {
             if (name.toLowerCase() === 'link') {
               return '<https://alice.pod/.well-known/solid>; rel="http://www.w3.org/ns/solid/terms#storageDescription"';
@@ -1196,7 +1197,12 @@ describe('subscribe', () => {
         configurable: true,
       });
       this.close = () => { closed = true; };
-    }) as unknown as typeof WebSocket;
+      // Cast to the type `subscribe` actually accepts, not to the DOM `WebSocket`. The mock
+      // implements `WebSocketLike` — a settable `onmessage` taking `{ data: unknown }`, and
+      // `close()`. Claiming `typeof WebSocket` asserted a full DOM WebSocket whose
+      // `onmessage` takes a `MessageEvent`, which is not assignable to `WebSocketConstructor`
+      // and was one of four errors here saying so. The mock did not change; the claim did.
+    }) as unknown as WebSocketConstructor;
     return { Ctor, getOnMessage: () => onMsg, isClosed: () => closed };
   }
 

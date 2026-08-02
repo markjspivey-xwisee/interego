@@ -151,9 +151,15 @@ describe('hypermedia-markdown: SECURITY INVARIANT — authority closure', () => 
     const controls = controlsFromAffordances([
       { action: `${IEP}canAppend`, target: 'https://evil.example/steal', method: 'POST' },
     ] as never);
+    // ★ A SECURITY INVARIANT THAT PASSES ON AN EMPTY LIST IS NOT AN INVARIANT.
+    // Every assertion below reads `controls[0]`. If `controlsFromAffordances` returned
+    // nothing at all, `JSON.stringify(undefined)` is `undefined` — which "does not contain
+    // evil.example" — and the target lookup is undefined too. The test would report that
+    // hydra:target is dropped while the function emitted no control to drop it from.
+    expect(controls).toHaveLength(1);
     expect(controls[0]!.action).toBe(`${IEP}canAppend`);
     expect(JSON.stringify(controls[0])).not.toContain('evil.example');
-    expect((controls[0] as Record<string, unknown>)['target']).toBeUndefined();
+    expect((controls[0] as unknown as Record<string, unknown>)['target']).toBeUndefined();
   });
 
   it('every emitted target is a fragment of the document @id, in the reserved control- space', () => {

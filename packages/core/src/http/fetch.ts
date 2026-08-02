@@ -18,7 +18,6 @@ import type { FetchFn, WebSocketConstructor } from './types.js';
  * the standard pattern across Solid + federation calls in the substrate.
  */
 export function getDefaultFetch(): FetchFn {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (typeof globalThis !== 'undefined' && typeof (globalThis as Record<string, unknown>)['fetch'] === 'function') {
     return (globalThis as Record<string, unknown>)['fetch'] as FetchFn;
   }
@@ -31,7 +30,6 @@ export function getDefaultFetch(): FetchFn {
  * Use this when you want to honour `options.WebSocket ?? getDefaultWebSocket()`.
  */
 export function getDefaultWebSocket(): WebSocketConstructor {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (typeof globalThis !== 'undefined' && typeof (globalThis as Record<string, unknown>)['WebSocket'] === 'function') {
     return (globalThis as Record<string, unknown>)['WebSocket'] as WebSocketConstructor;
   }

@@ -39,17 +39,16 @@ describe('createConnector — type dispatch', () => {
 
 describe('createWebConnector', () => {
   it('fetches each URL and emits an event with extracted content', async () => {
-    const mockFetch = vi.fn(async (url: string) => ({
-      ok: true,
-      text: async () => `<html><body>hello from ${url}</body></html>`,
-      headers: new Map([['content-type', 'text/html']]),
-    }));
-    // Type-cast: vitest's vi.fn satisfies the global fetch shape for our purposes
-    vi.stubGlobal('fetch', mockFetch as unknown as typeof fetch);
-    // Make Map.get behave like Headers.get
-    (mockFetch as unknown as { mock: { results: { value: { headers: Map<string, string> } }[] } });
-
-    // The connector calls resp.headers.get(...) — mock with a Headers-like
+    // ★ A dead first mock used to sit here: a `mockFetch` whose `headers` was a `Map`,
+    // stubbed onto the global and then overwritten by `realFetch` five lines later without
+    // ever being fetched through. Between the two stubs was
+    //
+    //   (mockFetch as unknown as { mock: { results: ... } });
+    //
+    // — an expression statement that evaluates a cast and discards it. The comment above it
+    // said "Make Map.get behave like Headers.get"; the line did nothing at all, and the
+    // Map-based mock it was meant to repair was already unreachable. Deleting both leaves
+    // the Headers-like mock that the connector has always actually run against.
     const realFetch = vi.fn(async (url: string) => ({
       ok: true,
       text: async () => `<html><body>hello from ${url}</body></html>`,

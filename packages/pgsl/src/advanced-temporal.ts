@@ -47,7 +47,7 @@ export function parseTemporalQuestion(question: string): TemporalQuestionParsed 
   const contentWords = entities.contentWords;
 
   // "Which X came first, A or B?" / "Which did I do first, A or B?"
-  const orderingMatch = lower.match(/which\s+.*(?:first|earlier|before).*,?\s+(?:the\s+)?(.+?)\s+or\s+(?:the\s+)?(.+?)[\?\.]/i);
+  const orderingMatch = lower.match(/which\s+.*(?:first|earlier|before).*,?\s+(?:the\s+)?(.+?)\s+or\s+(?:the\s+)?(.+?)[?.]/i);
   if (orderingMatch) {
     return {
       type: 'ordering',
@@ -58,7 +58,7 @@ export function parseTemporalQuestion(question: string): TemporalQuestionParsed 
   }
 
   // "How many days between X and Y?"
-  const durationMatch = lower.match(/how\s+many\s+(?:days?|weeks?|months?)\s+(?:between|from|since|after|before)\s+(?:the\s+)?(.+?)\s+(?:and|to|until)\s+(?:the\s+)?(.+?)[\?\.]/i);
+  const durationMatch = lower.match(/how\s+many\s+(?:days?|weeks?|months?)\s+(?:between|from|since|after|before)\s+(?:the\s+)?(.+?)\s+(?:and|to|until)\s+(?:the\s+)?(.+?)[?.]/i);
   if (durationMatch) {
     return {
       type: 'duration',
@@ -69,7 +69,7 @@ export function parseTemporalQuestion(question: string): TemporalQuestionParsed 
   }
 
   // "How many days before/after X did Y happen?"
-  const durationMatch2 = lower.match(/how\s+many\s+(?:days?|weeks?|months?)\s+(?:before|after)\s+(?:the\s+)?(.+?)\s+(?:did|was|were|had)\s+(?:i\s+)?(.+?)[\?\.]/i);
+  const durationMatch2 = lower.match(/how\s+many\s+(?:days?|weeks?|months?)\s+(?:before|after)\s+(?:the\s+)?(.+?)\s+(?:did|was|were|had)\s+(?:i\s+)?(.+?)[?.]/i);
   if (durationMatch2) {
     return {
       type: 'duration',
@@ -80,7 +80,7 @@ export function parseTemporalQuestion(question: string): TemporalQuestionParsed 
   }
 
   // "How many days did it take for X after Y?"
-  const durationMatch3 = lower.match(/how\s+many\s+(?:days?|weeks?|months?)\s+(?:did\s+it\s+take|had\s+passed|elapsed)\s+.*?(?:to|for|between)\s+(.+?)(?:\s+after\s+(.+?))?[\?\.]/i);
+  const durationMatch3 = lower.match(/how\s+many\s+(?:days?|weeks?|months?)\s+(?:did\s+it\s+take|had\s+passed|elapsed)\s+.*?(?:to|for|between)\s+(.+?)(?:\s+after\s+(.+?))?[?.]/i);
   if (durationMatch3) {
     return {
       type: 'duration',
@@ -91,7 +91,7 @@ export function parseTemporalQuestion(question: string): TemporalQuestionParsed 
   }
 
   // "What was the first X after Y?"
-  const firstAfterMatch = lower.match(/(?:what|which)\s+was\s+the\s+first\s+(.+?)\s+after\s+(.+?)[\?\.]/i);
+  const firstAfterMatch = lower.match(/(?:what|which)\s+was\s+the\s+first\s+(.+?)\s+after\s+(.+?)[?.]/i);
   if (firstAfterMatch) {
     return {
       type: 'first_after',

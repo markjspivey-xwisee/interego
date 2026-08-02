@@ -17,6 +17,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   grantTurtle, acceptanceTurtle, readGrantRecord, readAcceptanceRecord,
+  workspaceTurtle, readWorkspaceRecord, convenerEvidenceOf,
   publishMembershipRecord, WSP_TERMS, MEMBERSHIP_VISIBILITY_BUDGET_MS,
 } from '../applications/shared-workspace/src/membership.js';
 import {
@@ -148,6 +149,11 @@ const ACCEPT_TTL = acceptanceTurtle({
   acceptanceIri: 'https://bee.test/a/1', workspace: WS, member: bee,
   accepts: GRANT_URL, stream: 'https://bee.test/s',
 });
+// ★ THE SUBJECT IS `WS` ITSELF, not a record name minted beside it. See `workspaceTurtle`.
+const WORKSPACE_TTL = workspaceTurtle({
+  workspaceIri: WS, convener: CONV, roleProfile: P, title: 'alpha',
+});
+const WORKSPACE_URL = 'https://conv.test/c/ws.ttl';
 
 // ── the serializer ───────────────────────────────────────────────────────────
 
@@ -211,6 +217,247 @@ describe('serializing a membership record', () => {
         grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`, extraTriples: [bad],
       })).toThrow(/extraTriples must be ONE predicate-object pair/);
     }
+  });
+});
+
+// ── residual gap 6: the record that says who was entitled to grant ───────────
+
+describe('the workspace record — who convenes here', () => {
+  it('renders every term wspsh:WorkspaceShape requires, with the workspace as SUBJECT', () => {
+    // ★ THE SUBJECT IS THE ASSERTION. A record carrying `wsp:workspace <W>` would be a record
+    // ABOUT W, and any pod can write one of those about any workspace. The fold compares this
+    // subject with the workspace it is folding, which is what makes it a record OF W.
+    expect(WORKSPACE_TTL).toContain(`<${WS}>`);
+    expect(WORKSPACE_TTL).toContain('a wsp:Workspace ;');
+    expect(WORKSPACE_TTL).toContain(`wsp:convener <${CONV}> ;`);
+    expect(WORKSPACE_TTL).toContain(`wsp:roleProfile <${P}> ;`);
+    // `sh:minCount 1` on dct:title in the published shape, so a workspace without one is a 422
+    // before it reaches a pod. Required in the signature here so it is a compile error instead.
+    expect(WORKSPACE_TTL).toContain('dct:title "');
+  });
+
+  it('★ REFUSES an IRI that would close the reference — same guard as the other two', () => {
+    expect(() => workspaceTurtle({
+      workspaceIri: WS, roleProfile: P, title: 'x',
+      convener: 'https://x/p> ; <https://markjspivey-xwisee.github.io/interego/applications/'
+        + 'shared-workspace/wsp#convener> <did:web:attacker',
+    })).toThrow(/not serializable as a Turtle IRI/);
+  });
+
+  it('★ reads the convener FROM THE PAYLOAD, with provenance naming the record', async () => {
+    const deps = descriptorDeps({ [WORKSPACE_URL]: { content: WORKSPACE_TTL, signedBy: CONV_KEY } });
+    const read = await readWorkspaceRecord(WORKSPACE_URL, deps);
+    expect(read.problems).toEqual([]);
+    expect(read.record).not.toBeNull();
+    expect(read.record!.workspace).toBe(WS);
+    expect(read.record!.convener).toBe(CONV);
+    expect(read.record!.roleProfile).toBe(P);
+    expect(read.record!.head).toBe(WORKSPACE_URL);
+    expect(read.record!.fieldProvenance).toEqual({ source: 'payload', descriptor: WORKSPACE_URL });
+    // Same read, same verdict: the fields came out of the bytes the digest covered.
+    expect(read.record!.attestation?.contentBinding).toBe('bound');
+  });
+
+  it('★★ and it will not read one out of the UNDIGESTED part of the document', async () => {
+    // The parse-scope defect, at the newest record. A convener declaration written into the
+    // DEFAULT graph of a document whose named-graph block is somebody's real signed record
+    // would come back `contentBinding: 'bound'` — the digest covers the block and nothing
+    // else. If this reader looked outside the block, anyone could nominate themselves the
+    // convener of anything without touching a single signed byte.
+    const smuggled = `<${WS}> a <${WSP_TERMS.Workspace}> ; `
+      + `<${WSP_TERMS.convener}> <https://attacker.test/#me> ; `
+      + `<${WSP_TERMS.roleProfile}> <${P}> .`;
+    const deps = descriptorDeps({
+      [WORKSPACE_URL]: { content: WORKSPACE_TTL, signedBy: CONV_KEY, outsideBlock: `\n${smuggled}\n` },
+    });
+    const read = await readWorkspaceRecord(WORKSPACE_URL, deps);
+    // The block's own declaration is what is read; the smuggled one is not seen at all, so
+    // this is not even a "two subjects" ambiguity — it is outside the region entirely.
+    expect(read.record!.convener).toBe(CONV);
+  });
+
+  it('a record declaring two conveners states none — order must not decide who may grant', async () => {
+    // Through `extraTriples`, so the document is genuinely well-formed and genuinely carries
+    // two declarations — not a string edit that only looks like one.
+    const two = workspaceTurtle({
+      workspaceIri: WS, convener: CONV, roleProfile: P, title: 'two',
+      extraTriples: ['wsp:convener <https://attacker.test/#me>'],
+    });
+    const deps = descriptorDeps({ [WORKSPACE_URL]: { content: two, signedBy: CONV_KEY } });
+    const read = await readWorkspaceRecord(WORKSPACE_URL, deps);
+    expect(read.record).toBeNull();
+    expect(read.problems.join(' ')).toMatch(/2 <.*convener> values/);
+  });
+
+  it('★ a record with no readable convener is NULL, not a half-record', async () => {
+    // ★ WHERE THE TWO-TRACK RULE DOES NOT APPLY, AND WHY. A grant that cannot state its role
+    // still REVOKES and a damaged acceptance still WITHDRAWS, so both survive with the
+    // conferring field emptied. A workspace record has no restricting half — no revoked, no
+    // withdrawn — so a record that does not say who convenes answers nothing, and keeping it
+    // would hand the fold a row whose `convener: ''` matched no policy for reasons nobody
+    // could see in `problems`.
+    const noConvener = workspaceTurtle({ workspaceIri: WS, convener: CONV, roleProfile: P, title: 'x' })
+      .replace(/\n  wsp:convener <[^>]+> ;/, '');
+    const deps = descriptorDeps({ [WORKSPACE_URL]: { content: noConvener, signedBy: CONV_KEY } });
+    const read = await readWorkspaceRecord(WORKSPACE_URL, deps);
+    expect(read.record).toBeNull();
+    expect(read.problems.join(' ')).toMatch(/carries no <.*convener>/);
+  });
+
+  it('★ a blank-node workspace subject is refused — FOUND BY MUTATION, and it survived', async () => {
+    // ★ THIS GUARD HAD NO TEST AND DELETING IT BROKE NOTHING, which is the whole reason the
+    // case exists. The fold happens to fail closed on the mutant — `workspace: null` compares
+    // unequal to every real workspace IRI, so `refuseConvenerAuthority` refuses it on the
+    // wrong-workspace branch — so the enumeration and every fold-level case stayed green while
+    // the reader's own contract (`workspace: string`) was being violated. A `null` crossing a
+    // JSON boundary into a federated composer is not a hazard the fold's coincidental refusal
+    // covers, and a guard nothing can distinguish from its absence is not a guard.
+    const bnode = `@prefix wsp: <${WSP_TERMS.workspace.replace(/workspace$/, '')}> .\n`
+      + `@prefix dct: <http://purl.org/dc/terms/> .\n`
+      + `[] a wsp:Workspace ; wsp:convener <${CONV}> ; wsp:roleProfile <${P}> ; dct:title "x" .\n`;
+    const read = await readWorkspaceRecord(WORKSPACE_URL, descriptorDeps({ [WORKSPACE_URL]: { content: bnode } }));
+    expect(read.record).toBeNull();
+    expect(read.problems[0]).toMatch(/blank node/);
+  });
+
+  it('an unreadable role profile is a PROBLEM, not a refusal — nothing in the fold reads it', async () => {
+    // The other direction of the same rule: the conferring field of a workspace record is its
+    // convener, so refusing the whole record over a field no code consults would withhold a
+    // convener the record does state. Reported instead, so a caller that wants to compare the
+    // profile can see it did not get one.
+    const noProfile = workspaceTurtle({ workspaceIri: WS, convener: CONV, roleProfile: P, title: 'x' })
+      .replace(/\n  wsp:roleProfile <[^>]+> ;/, '');
+    const deps = descriptorDeps({ [WORKSPACE_URL]: { content: noProfile, signedBy: CONV_KEY } });
+    const read = await readWorkspaceRecord(WORKSPACE_URL, deps);
+    expect(read.record).not.toBeNull();
+    expect(read.record!.convener).toBe(CONV);
+    expect(read.record!.roleProfile).toBe('');
+    expect(read.problems.join(' ')).toMatch(/roleProfile/);
+  });
+
+  it('one of the convener\'s own signed records is NOT readable as a workspace declaration', async () => {
+    // The manufactured-participant attack, aimed one level up: an ordinary signed entry
+    // offered as the workspace's statement of who convenes it. Genuinely the convener's,
+    // genuinely content-bound, and it declares no wsp:Workspace.
+    const entry = entryTurtle({ entryIri: `${WS}/s/e/0`, workspace: WS, seq: 0, draft: { body: 'hello' } });
+    const deps = descriptorDeps({ [WORKSPACE_URL]: { content: entry, signedBy: CONV_KEY } });
+    const read = await readWorkspaceRecord(WORKSPACE_URL, deps);
+    expect(read.record).toBeNull();
+    expect(read.problems.join(' ')).toMatch(/declares no <.*Workspace>/);
+    // …and it really is a perfect record otherwise, which is why nothing weaker catches it.
+    expect(read.attestation.authorshipVerified).toBe(true);
+  });
+
+  it('★ convenerEvidenceOf maps an unreadable workspace onto REFUSAL, never onto silence', async () => {
+    // ★ THE BRANCH THAT MAKES THE HELPER WORTH HAVING. `record ? {declared} : undefined` would
+    // let a transient get_descriptor failure silently reopen gap 6, with `unchecked` the only
+    // trace. Asking and getting silence is not the same as not asking.
+    const deps = descriptorDeps({ [WORKSPACE_URL]: { error: 'descriptor could not be retrieved' } });
+    const evidence = convenerEvidenceOf(await readWorkspaceRecord(WORKSPACE_URL, deps));
+    expect(evidence.kind).toBe('unreadable');
+    expect(evidence.kind === 'unreadable' && evidence.why).toMatch(/could not be retrieved/);
+
+    const good = convenerEvidenceOf(await readWorkspaceRecord(
+      WORKSPACE_URL, descriptorDeps({ [WORKSPACE_URL]: { content: WORKSPACE_TTL, signedBy: CONV_KEY } }),
+    ));
+    expect(good.kind).toBe('declared');
+  });
+
+  it('★★ the attack gap 6 permitted: BEE CONVENES ALICE\'S WORKSPACE, with everything signed', async () => {
+    // ★ THE SHARPEST STATEMENT OF WHAT WAS OPEN, and the shape `verify-can-live.ts` §9 now runs
+    // live. Folding alice's genuine records under `convener: bee` is the WEAK version — those
+    // are signed by alice, so `refuseAttestation` refuses them first and the roster is empty
+    // for a reason that has nothing to do with the convener.
+    //
+    // The real attack is bee writing BOTH HALVES on her own pod and naming herself convener.
+    // Every guard this layer had before this round passes at full strength: bee's key signed
+    // both records, the substrate re-digested both, every field was parsed. Nothing but the
+    // workspace's own declaration stands between that and a membership in alice's workspace.
+    const SELF_GRANT = 'https://bee.test/c/self-g.ttl';
+    const SELF_ACCEPT = 'https://bee.test/c/self-a.ttl';
+    const deps = descriptorDeps({
+      [WORKSPACE_URL]: { content: WORKSPACE_TTL, signedBy: CONV_KEY },
+      [SELF_GRANT]: {
+        content: grantTurtle({
+          grantIri: 'https://bee.test/g/self', workspace: WS, grantedTo: bee, role: `${P}#Contributor`,
+        }),
+        signedBy: BEE_KEY,
+      },
+      [SELF_ACCEPT]: {
+        content: acceptanceTurtle({
+          acceptanceIri: 'https://bee.test/a/self', workspace: WS, member: bee,
+          accepts: SELF_GRANT, stream: 'https://bee.test/s',
+        }),
+        signedBy: BEE_KEY,
+      },
+    });
+    const base = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [(await readGrantRecord(SELF_GRANT, deps)).record!],
+      acceptances: [(await readAcceptanceRecord(SELF_ACCEPT, deps)).record!],
+    };
+
+    // The gap, at full strength: the strictest policy that existed before this round.
+    const open = foldRoster({
+      ...base, attestation: { convener: bee, signerOf, requireFieldBinding: true },
+    });
+    expect(open.members).toHaveLength(1);
+    expect(open.recordFieldBinding).toBe('bound');
+    expect(open.recordContentBinding).toBe('bound');
+    expect(open.convenerBinding).toBe('unchecked');
+    expect(open.unattested).toHaveLength(0);
+
+    // …and closed: same records, same policy, one field added.
+    const evidence = convenerEvidenceOf(await readWorkspaceRecord(WORKSPACE_URL, deps));
+    const closed = foldRoster({
+      ...base,
+      attestation: { convener: bee, signerOf, requireFieldBinding: true, workspaceEvidence: evidence },
+    });
+    expect(closed.members).toHaveLength(0);
+    expect(closed.convenerBinding).toBe('refused');
+    // ★ REFUSED BY THE CONVENER CHECK AND BY NOTHING ELSE. If the signer, the binding or the
+    // provenance had refused first, this case would be pinning some other guard while looking
+    // like it pins this one.
+    expect(closed.unattested[0]!.because).toMatch(/The two disagree/);
+    expect(closed.unattested[0]!.because).not.toMatch(/acts for|does not hold up/);
+  });
+
+  it('★★ end to end: the wrong convener is refused and the right one is ADMITTED', async () => {
+    // ★ THE CONTROL FIRST. A suite where every configuration is refused establishes nothing,
+    // which is exactly how §6 of verify-can-live.ts used to pass.
+    const deps = descriptorDeps({
+      [WORKSPACE_URL]: { content: WORKSPACE_TTL, signedBy: CONV_KEY },
+      [GRANT_URL]: { content: GRANT_TTL, signedBy: CONV_KEY },
+      [ACCEPT_URL]: { content: ACCEPT_TTL, signedBy: BEE_KEY },
+    });
+    const evidence = convenerEvidenceOf(await readWorkspaceRecord(WORKSPACE_URL, deps));
+    const grants = [(await readGrantRecord(GRANT_URL, deps)).record!];
+    const acceptances = [(await readAcceptanceRecord(ACCEPT_URL, deps)).record!];
+    const base = { workspace: WS, profile: PROFILE, scopes, grants, acceptances };
+
+    const right = foldRoster({
+      ...base, attestation: { convener: CONV, signerOf, requireFieldBinding: true, workspaceEvidence: evidence },
+    });
+    expect(right.members).toHaveLength(1);
+    expect(right.convenerBinding).toBe('bound');
+
+    // ★ AND THE CASE verify-can-live.ts §8 DEMONSTRATED AS OPEN. Naming bee as convener used
+    // to produce a field-bound roster of the wrong memberships with `recordFieldBinding:
+    // 'bound'` either way. It now refuses, and says which of the three questions failed.
+    const wrong = foldRoster({
+      ...base, attestation: { convener: bee, signerOf, requireFieldBinding: true, workspaceEvidence: evidence },
+    });
+    expect(wrong.members).toHaveLength(0);
+    expect(wrong.convenerBinding).toBe('refused');
+    expect(wrong.recordFieldBinding).toBe('bound');   // the records were still perfectly parsed
+    // Without the evidence, the same wrong policy is silent about the reason: it refuses the
+    // grant for the SIGNER, and the roster reports the convener as unchecked. That difference
+    // is the whole of gap 6.
+    const unchecked = foldRoster({
+      ...base, attestation: { convener: bee, signerOf, requireFieldBinding: true },
+    });
+    expect(unchecked.convenerBinding).toBe('unchecked');
+    expect(unchecked.attributionNote).toMatch(/is the workspace's convener/);
   });
 });
 

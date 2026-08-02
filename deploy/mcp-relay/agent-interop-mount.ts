@@ -513,7 +513,19 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
       if (typeof register !== 'function') {
         throw new Error(`[agent-interop] host app cannot register ${declined.method} (declined route ${declined.path})`);
       }
-      register.call(app, dPath as never, refuse);
+      // Narrow to the (path, handler) shape before calling. `app.get` is overloaded, and one
+      // of its overloads is `(path, subApplication: Application)` for mounting a sub-app;
+      // `dPath as never` satisfied EVERY overload's first parameter, so resolution landed on
+      // the sub-app one and then rejected `refuse` for not being an Express Application.
+      // Under this directory's `"strict": false` tsconfig that stayed quiet, and only the
+      // stricter tsconfig.check.json program surfaced it. Naming the one signature actually
+      // being invoked keeps the runtime call identical — `app.get(path, handler)` — and
+      // stops the compiler guessing.
+      // `compilePath` returns `string | RegExp`, and both are legal Express paths — typing
+      // this parameter as bare `string` was a first attempt that the check program rejected
+      // outright, which is the point of narrowing to a signature instead of `as never`.
+      type RouteRegistrar = (path: string | RegExp, handler: (req: Request, res: Response) => void) => unknown;
+      (register as RouteRegistrar).call(app, dPath, refuse);
     }
 
     // ── The wire routes, generated from the profile's own route table ────────
@@ -599,7 +611,12 @@ export function mountAgentInterop(app: Express, deps: AgentInteropDeps): void {
           // A body sent as something we cannot parse is 415, not 400: the request
           // may be perfectly valid in a format we do not accept, and a client that
           // can retry in another encoding needs to be told which of the two it is.
-          const ctype = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+          // `?? ''` on the split result, not because a split can yield nothing — it always
+          // yields at least one element — but because this file is pulled transitively into
+          // `tsconfig.check.json`, whose `strict` + `noUncheckedIndexedAccess` are stricter
+          // than this directory's own tsconfig (`"strict": false`). Same expression, two
+          // compilers; this satisfies the stricter one without changing the parse.
+          const ctype = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
           if (route.method === 'POST' && ctype && !/^application\/(\w[\w.+-]*\+)?json$/.test(ctype)) {
             sendErr(res, profile, 'unsupportedMediaType'); return;
           }

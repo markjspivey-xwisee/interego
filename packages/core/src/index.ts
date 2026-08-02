@@ -584,6 +584,18 @@ export type {
   ShamirShare,
   FeldmanCommitments,
   VerifiableShamirShare,
+  // ★ The DKG functions above (dkgRound1/2/3, simulateDKG) were exported with NONE of
+  // their parameter or return types. `dkgRound2({ recipientIndex, received })` takes a
+  // `readonly DKGReceivedShare[]`, so an external caller could invoke the function and
+  // had no way to name the shape of its required argument — the round-2 input had to be
+  // built untyped and any field typo went uncaught. Found by the typecheck gate, which
+  // flagged tests/dkg.test.ts importing a name the package does not export; the defect
+  // was the package's, not the test's. All four public DKG shapes are surfaced together
+  // so the same gap cannot reopen one type at a time.
+  DKGParticipantState,
+  DKGReceivedShare,
+  DKGRound2Result,
+  DKGFinalState,
   BitProof,
   PedersenRangeProof,
   Commitment,

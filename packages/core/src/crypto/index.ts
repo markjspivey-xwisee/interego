@@ -159,7 +159,16 @@ export {
   dkgRound3,
   simulateDKG,
 } from './dkg.js';
-export type { DKGFinalState } from './dkg.js';
+// `DKGFinalState` (dkgRound3's return) was the only shape surfaced here, so callers could
+// name what came OUT of the protocol and not what had to go IN. `DKGReceivedShare` is
+// dkgRound2's required argument type and `DKGParticipantState` is dkgRound1's return that
+// feeds it; without them the round-1 → round-2 hand-off could not be typed at all.
+export type {
+  DKGParticipantState,
+  DKGReceivedShare,
+  DKGRound2Result,
+  DKGFinalState,
+} from './dkg.js';
 
 // Differential-privacy accountant (Renyi DP — substrate primitive
 // for aggregate-privacy bounds + regulator-audit reports).

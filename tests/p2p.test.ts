@@ -447,7 +447,9 @@ describe('P2P transport — 1:N encrypted share (closes Tier 4 gap)', () => {
       recipients: [{ sigPubkey: bob.pubkey, encryptionPubkey: bobEnc.publicKey }],
       senderEncryptionKeyPair: aliceEnc,
     });
-    await new Promise(r => queueMicrotask(r));
+    // `queueMicrotask` takes a zero-arg callback; `Promise`'s resolve takes one. Passing
+    // `r` directly relies on the arity mismatch being tolerated, which strict mode refuses.
+    await new Promise<void>(r => queueMicrotask(() => r()));
 
     expect(received).toEqual(['live message']);
     sub.close();

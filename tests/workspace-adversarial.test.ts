@@ -15,8 +15,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { entryTurtle } from '../applications/shared-workspace/src/stream.js';
 import {
-  foldRoster, may,
+  foldRoster, may, explain, refuseConvenerAuthority,
   type Roster, type Grant, type Acceptance, type Attestation,
+  type WorkspaceRecord, type ConvenerEvidence,
 } from '../applications/shared-workspace/src/roster.js';
 import { composeWorkspace, isUnder, describeCoverage, type ComposableMember } from '../applications/shared-workspace/src/compose.js';
 import {
@@ -293,8 +294,126 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     }
   };
 
-  it('★ AXIS A — enumerating every grant × acceptance × revoked × withdrawn × second grant head × acceptance count × field provenance × descriptor-binding basis', () => {
+  // ── ★ AXIS G — the convener the WORKSPACE declares ──────────────────────────
+
+  const WS_RECORD = 'https://conv.test/workspace.ttl';
+  const contentBound = (by: string): Attestation =>
+    ({ authorshipVerified: true, signedBy: by, boundToDescriptor: true, contentBinding: 'bound' });
+
+  /** A workspace record good enough to survive every rung, declaring whoever is named. */
+  const workspaceRecord = (
+    convener: string, signer: string,
+    over: Partial<WorkspaceRecord> = {},
+  ): WorkspaceRecord => ({
+    head: WS_RECORD, workspace: WS, convener, roleProfile: P,
+    attestation: contentBound(signer),
+    fieldProvenance: { source: 'payload', descriptor: WS_RECORD },
+    ...over,
+  });
+
+  /**
+   * ★ THE GENERATOR AXIS THE CONVENER RUNG NEEDED, and it is AXIS E's lesson applied a second
+   * time. A rung whose generated rows all AGREE with it refuses nothing and passes every
+   * subset check on an untouched set; a rung whose rows all DISAGREE refuses everything and
+   * passes every subset check on an empty one. Either way the assertions hold and the rung is
+   * inert. So the declared convener varies, and both directions are counted during the
+   * enumeration and asserted non-zero after it.
+   *
+   * ★★ `'names-another'` NAMES `alice`, AND THAT CHOICE IS THE WHOLE TEST. The obvious
+   * implementation of this feature is `convener = workspaceRecord.convener ?? policy.convener`
+   * — read the convener from the workspace and use it. Under that implementation, a policy
+   * naming CONV plus a workspace naming ALICE would attest grants against ALICE, so every
+   * configuration with `grant=signed-by-alice` would gain a member the same policy refuses
+   * WITHOUT the evidence. Supplying evidence would grant more than withholding it, which is
+   * the exact inversion this file exists to catch — and `attestations` already generates
+   * `signed-by-alice`, so `assertNoWiderThan(onConvened, onFields)` reaches it. Naming a
+   * principal no attestation is signed by would make the axis look complete and test nothing.
+   *
+   * The record itself is beyond reproach in both shapes — content-bound, self-provenanced,
+   * signed by an agent the declared convener's own registry vouches for. Only the
+   * disagreement refuses, which is the sharp version.
+   */
+  const conveneShapes = ['agrees', 'names-another'] as const;
+  const conveneEvidence: Record<typeof conveneShapes[number], ConvenerEvidence> = {
+    agrees: { kind: 'declared', record: workspaceRecord(CONV, CONV_KEY) },
+    'names-another': { kind: 'declared', record: workspaceRecord(alice, ALICE_KEY) },
+  };
+
+  /**
+   * Everything a roster DECIDES, with the two fields that are supposed to differ left out.
+   * Used to assert that agreeing evidence changes the REPORT and nothing else — the other
+   * half of non-vacuity, and the half that catches a rung which quietly fails closed on
+   * honest data.
+   */
+  const decisions = (r: Roster): string => JSON.stringify({
+    members: r.members, pending: r.pendingInvitations,
+    divergences: r.divergences, unattested: r.unattested,
+  });
+
+  /**
+   * ★★ THE ENUMERATION BELOW BLOCKED THE WORKER AND TOOK THE WHOLE SUITE DOWN, AND THIS IS
+   * WHY IT NOW AWAITS.
+   *
+   * AXIS A was a fully synchronous `it()`. Measured on this file alone: 66,847 ms in one
+   * uninterrupted turn of the worker thread's event loop. vitest's worker talks to the main
+   * process over birpc, whose request deadline is 60 s — `DEFAULT_TIMEOUT = 6e4` in
+   * `vitest/dist/chunks/index.B521nVV-.js:3`. `onTaskUpdate` is a REQUEST, not one of the
+   * three fire-and-forget `eventNames` in `chunks/rpc.-pEldfrD.js:41`, so the main process's
+   * reply sat unread in the worker's message queue for the whole 66.8 s while the deadline
+   * expired underneath it:
+   *
+   *   Error: [vitest-worker]: Timeout calling "onTaskUpdate"
+   *     at Object.onTimeoutError node_modules/vitest/dist/chunks/rpc.-pEldfrD.js:53:10
+   *     at Timeout._onTimeout node_modules/vitest/dist/chunks/index.B521nVV-.js:59:62
+   *
+   * `vitest.config.ts` pins `singleThread`/`singleFork`, so all 185 files share that one
+   * worker. Killing it mid-run produced the worst signal this repo has a name for:
+   *
+   *   Test Files  2 passed (185)
+   *   Tests       169 passed (169)
+   *
+   * — 183 files never ran, 2,400-odd tests never executed, and the summary said "passed".
+   * The same class of dead signal `tools/lint-gate.mjs` exists for (`eslint` exits 0 when it
+   * lints nothing), reached from the other end: not a gate that never fires, a suite that
+   * never runs.
+   *
+   * ★ AND IT IS A RACE, WHICH IS WHY THE FIX IS NOT "MAKE IT FASTER". The same command on the
+   * same tree also passed clean at 181/185 on a quieter box — 66.8 s is close enough to the
+   * 60 s deadline that machine load decides. A guard that reports the whole suite green or
+   * one percent of it depending on what else is running is worse than one that always fails.
+   *
+   * ★ THE ENUMERATION IS NOT TRIMMED, AND THE 60 s DEADLINE IS NOT RAISED. Sampling the
+   * lattice is how the 1,296-case version missed two escalations; buying responsiveness with
+   * coverage is the trade the whole file exists to refuse. And raising the deadline would fix
+   * this one test while leaving every future long synchronous loop free to do it again.
+   * Yielding fixes the actual fault: a worker that cannot answer is a worker nobody can hear.
+   *
+   * {@link YIELD_EVERY} configurations per turn puts 300 yields across the lattice and keeps
+   * the longest uninterrupted block near 220 ms. Exceeding the deadline again would take a
+   * 270x slowdown of a single 256-case chunk, so this holds on a CI runner far slower than
+   * this box rather than only on a fast one.
+   *
+   * The overhead is not quoted, because it could not be measured apart from the noise: three
+   * runs of this file came in at 66.8 s (before), 72.4 s and 55.0 s (after). 300 returns
+   * through the timers phase is arithmetically sub-second; run-to-run variance here is tens of
+   * seconds, and a number that cannot be distinguished from the noise should not be written
+   * down as if it had been.
+   */
+  const YIELD_EVERY = 256;
+
+  /**
+   * A MACROTASK, and a microtask will not do. `await Promise.resolve()` drains the microtask
+   * queue without ever leaving the current turn, so the worker's port message — the reply
+   * this test was killed for failing to read — is still not delivered. `setTimeout` returns
+   * through the timers phase, which means the poll phase ran and the message queue drained.
+   */
+  const yieldToEventLoop = (): Promise<void> =>
+    new Promise<void>(resolve => { setTimeout(resolve, 0); });
+
+  it('★ AXIS A — enumerating every grant × acceptance × revoked × withdrawn × second grant head × acceptance count × field provenance × descriptor-binding basis × declared convener', async () => {
     let cases = 0;
+    // AXIS G's two non-vacuity counters. See the assertions after the loop.
+    let conveneCases = 0, agreeAdmitted = 0, disagreeRefused = 0;
     for (const gAtt of attKeys) {
       for (const aAtt of attKeys) {
         for (const revoked of [false, true]) {
@@ -386,6 +505,12 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
               // …and asking for fields must never leave content binding unreported as
               // enforced, because the fold turns it on regardless of what the caller passed.
               expect(onFields.recordContentBinding).toBe('bound');
+              // ★ NONE OF THE FOUR RUNGS ABOVE PASSES WORKSPACE EVIDENCE, so all four must say
+              // so. `'unchecked'` is not a default that can be reached by accident here: it is
+              // the honest report that the convener every one of these rungs attested against
+              // is a value this test typed, and a rung that started reporting `'bound'` off the
+              // back of nothing would be the substrate's own substitution one layer up.
+              for (const r of [off, on, onBound, onFields]) expect(r.convenerBinding).toBe('unchecked');
               assertNoWiderThan(on, off, label);
               assertNoWiderThan(onBound, on, `require-binding ${label}`);
               assertNoWiderThan(onBound, off, `require-binding vs off ${label}`);
@@ -446,7 +571,49 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
                   ).toBe(JSON.stringify(foldRoster({ ...args, attestation: policy })));
                 }
               }
+
+              // ★ AXIS G, THE FIFTH AND SIXTH RUNGS: the same field-bound policy, plus what the WORKSPACE
+              // says about who convenes it. Built on top of `onFields` rather than beside it
+              // because that is where it sits on the ladder — evidence can only ever refuse
+              // more — so the chain the lattice must satisfy at every point is now
+              // convened ⊆ fields ⊆ bound ⊆ attested ⊆ asserted.
+              for (const convene of conveneShapes) {
+                const onConvened = foldRoster({
+                  ...args,
+                  attestation: {
+                    convener: CONV,
+                    signerOf: signerIndexFromRegistry(registry(false)),
+                    requireFieldBinding: true,
+                    workspaceEvidence: conveneEvidence[convene],
+                  },
+                });
+                const glabel = `convener=${convene} ${label}`;
+                expect(onConvened.convenerBinding).toBe(convene === 'agrees' ? 'bound' : 'refused');
+                assertNoWiderThan(onConvened, onFields, glabel);
+                assertNoWiderThan(onConvened, off, `${glabel} vs off`);
+                if (convene === 'agrees') {
+                  // ★ THE OTHER HALF OF NON-VACUITY, AND THE ONE A SUBSET CHECK CANNOT SEE.
+                  // A rung that refused everything would satisfy every ⊆ assertion above on an
+                  // empty set — which is precisely how the 6,400-case version of AXIS E would
+                  // have passed. Agreeing evidence must change the REPORT and nothing else, so
+                  // the decisions are compared whole: same members, same invitations, same
+                  // divergences, same refusals.
+                  expect(decisions(onConvened), `${glabel}: agreeing evidence changed a decision`)
+                    .toBe(decisions(onFields));
+                  agreeAdmitted += onConvened.members.length;
+                } else {
+                  // A disagreement removes the power to make members. It does NOT remove the
+                  // records — see the revocation and withdrawal cases below the enumeration.
+                  expect(onConvened.members, `${glabel}: a disagreeing convener still conferred`).toHaveLength(0);
+                  expect(onConvened.pendingInvitations, `${glabel}: a disagreeing convener still invited`).toHaveLength(0);
+                  if (onFields.members.length > 0) disagreeRefused++;
+                }
+                conveneCases++;
+              }
               cases++;
+              // Hand the turn back so the worker can answer the main process. See
+              // `YIELD_EVERY` above: without this the run reported 2 of 185 files as a pass.
+              if (cases % YIELD_EVERY === 0) await yieldToEventLoop();
               }
               }
               }
@@ -460,12 +627,32 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       attKeys.length * attKeys.length * 2 * 2 * 4
       * acceptShapes.length * provenanceShapes.length * basisShapes.length,
     );
-    // 76,800 configurations × 6 subset comparisons, plus 2 basis-invariance comparisons on
-    // each of the two thirds that carry a basis. The timeout below is raised rather than the
-    // enumeration trimmed: every axis here was added because a defect was unreachable without
-    // it, and sampling the lattice is how the 1296-case version missed two escalations. Half a
-    // minute of CI is the cheaper side of that trade.
-  }, 120_000);
+    expect(conveneCases).toBe(cases * conveneShapes.length);
+    // ★ AND AXIS G IS NOT VACUOUS, COUNTED OVER THE WHOLE LATTICE RATHER THAN SAMPLED.
+    //
+    // Both numbers have to be non-zero or the 153,600 comparisons above establish nothing.
+    // `agreeAdmitted === 0` would mean the rung fails closed on every honest configuration —
+    // a security feature that refuses everything passes every subset check ever written.
+    // `disagreeRefused === 0` would mean no configuration ever had a member for the
+    // disagreement to take away, so nothing was refused and the axis is decoration.
+    expect(
+      agreeAdmitted,
+      'AXIS G admitted no member anywhere: agreeing workspace evidence refused every '
+      + 'configuration in the lattice, so every subset assertion above held on an empty set',
+    ).toBeGreaterThan(0);
+    expect(
+      disagreeRefused,
+      'AXIS G refused nothing anywhere: no configuration had a member for a disagreeing '
+      + 'convener to withhold, so the rung was never exercised in the refusing direction',
+    ).toBeGreaterThan(0);
+    // 76,800 configurations × 8 subset comparisons (6 on the four original rungs, 2 more on
+    // each of AXIS G's two shapes), plus 2 basis-invariance comparisons on each of the two
+    // thirds that carry a basis. The timeout is raised rather than the enumeration trimmed:
+    // every axis here was added because a defect was unreachable without it, and sampling the
+    // lattice is how the 1296-case version missed two escalations. A few minutes of CI is the
+    // cheaper side of that trade — AXIS G's own generator exists because a rung crossed
+    // against rows that all agree with it is a rung that refuses nothing.
+  }, 600_000);
 
   it('★ AXIS E is not vacuous — field binding really does admit and really does refuse', () => {
     // A subset assertion over a rung that refuses EVERYTHING holds trivially, and that is
@@ -512,6 +699,508 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       ...base, acceptances: [acceptance],
       attestation: { convener: CONV, signerOf: policy.signerOf, requireContentBinding: true },
     }).members).toHaveLength(1);
+  });
+
+  it('★ AXIS G is not vacuous — the declared convener really does admit and really does refuse', () => {
+    // The AXIS E case one question further in. Two assertions and a control: agreeing evidence
+    // must ADMIT, disagreeing evidence must REFUSE, and the rung below must admit both — or
+    // the difference belongs to something other than the convener.
+    const base = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
+        role: `${P}#Contributor`, attestation: contentBound(CONV_KEY),
+        fieldProvenance: { source: 'payload' as const, descriptor: 'https://conv.test/g1' },
+      }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+        attestation: contentBound(ALICE_KEY),
+        fieldProvenance: { source: 'payload' as const, descriptor: 'https://alice.test/a1' },
+      }],
+    };
+    const policy = {
+      convener: CONV, signerOf: signerIndexFromRegistry(registry(false)), requireFieldBinding: true,
+    };
+
+    // ADMITS: the workspace names the principal this policy names.
+    const admitted = foldRoster({ ...base, attestation: { ...policy, workspaceEvidence: conveneEvidence.agrees } });
+    expect(admitted.members).toHaveLength(1);
+    expect(admitted.convenerBinding).toBe('bound');
+    expect(admitted.attributionNote).toMatch(/CONVENER was checked against the workspace/);
+
+    // REFUSES: the identical membership, with the workspace naming somebody else.
+    const refused = foldRoster({ ...base, attestation: { ...policy, workspaceEvidence: conveneEvidence['names-another'] } });
+    expect(refused.members).toHaveLength(0);
+    expect(refused.convenerBinding).toBe('refused');
+    expect(refused.unattested[0]!.because).toMatch(/The two disagree/);
+    // …and the refusal explains itself as a policy fault rather than as an unanswered offer.
+    expect(explain(refused, alice, CAPS.read)).toMatch(/disagree/);
+
+    // …and the rung below still admits it, so the difference is AXIS G's and nothing else's.
+    expect(foldRoster({ ...base, attestation: policy }).members).toHaveLength(1);
+    expect(foldRoster({ ...base, attestation: policy }).convenerBinding).toBe('unchecked');
+  });
+
+  it('★★ THE INVERSION: supplying evidence must never admit what the policy alone refuses', () => {
+    // ★ THE DEFECT THIS AXIS EXISTS TO MAKE UNWRITABLE, stated as its own case because it is
+    // the one a reasonable person would ship. Reading the convener from the workspace and
+    // USING it is the obvious implementation, and it turns evidence into a source of
+    // authority: a policy that names the wrong principal, handed a workspace that names the
+    // right one, starts admitting every grant it was refusing a moment earlier.
+    //
+    // Here the policy names a STRANGER as convener and the workspace names CONV, who signed
+    // the grant. Under the substituting implementation this roster has a member. Under this
+    // one it has none, and it has none for the ORIGINAL reason as well as the new one.
+    const stranger = 'https://stranger.test/profile#me';
+    const args = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
+        role: `${P}#Contributor`, attestation: contentBound(CONV_KEY),
+        fieldProvenance: { source: 'payload' as const, descriptor: 'https://conv.test/g1' },
+      }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+        attestation: contentBound(ALICE_KEY),
+        fieldProvenance: { source: 'payload' as const, descriptor: 'https://alice.test/a1' },
+      }],
+    };
+    const signerOf = signerIndexFromRegistry(registry(false));
+    const withoutEvidence = foldRoster({
+      ...args, attestation: { convener: stranger, signerOf, requireFieldBinding: true },
+    });
+    const withEvidence = foldRoster({
+      ...args,
+      attestation: {
+        convener: stranger, signerOf, requireFieldBinding: true,
+        workspaceEvidence: conveneEvidence.agrees,
+      },
+    });
+    expect(withoutEvidence.members).toHaveLength(0);
+    expect(withEvidence.members).toHaveLength(0);
+    assertNoWiderThan(withEvidence, withoutEvidence, 'evidence must not supply a convener');
+    // The workspace's convener is not adopted: the roster still reports the disagreement.
+    expect(withEvidence.convenerBinding).toBe('refused');
+    expect(withEvidence.attributionNote).toMatch(/CONVENER was checked against the workspace and did NOT agree/);
+
+    // ★ AND THE PER-RECORD REASON IS THE ATTESTATION FAULT, NOT THE CONVENER ONE, WHICH IS THE
+    // ORDER THIS FOLD DELIBERATELY CHOSE. `refuseConvenerAuthority` is last in the `??` chain
+    // because it is CONSTANT: first, it would overwrite every row's own diagnosis with one
+    // repeated sentence, and an operator who fixed the policy would only then discover the
+    // record faults that were there all along. Pinned as an assertion rather than left in a
+    // comment, because it is exactly the kind of line a later edit reorders for tidiness.
+    expect(withEvidence.unattested[0]!.because).toMatch(/who acts for .* — not for/);
+    // The convener refusal is still reachable in words — it is what `convenerBinding` above is
+    // reporting — so the wording is pinned where it is produced.
+    expect(refuseConvenerAuthority({
+      evidence: conveneEvidence.agrees, workspace: WS, convener: stranger, signerOf,
+    })).toMatch(/not replaced by the workspace/);
+  });
+
+  it('★ a disagreeing convener refuses to CONFER and does not erase a revocation', () => {
+    // ★ THE OTHER HALF OF THE TWO-TRACK RULE, at the newest gate. Round 3 filtered refused rows
+    // out of the grant list BEFORE the revocation check, so a revocation nobody could attest
+    // was not refused, it was ERASED. A policy-level refusal is the same hazard with a wider
+    // blast radius: it fires on EVERY grant at once, so implementing it against
+    // `inWorkspaceGrants` instead of the conferring track would delete a principal's whole
+    // history from the fold — the revocation, the fork report and the `unattested` row that
+    // says the revocation still bit.
+    //
+    // `members` alone cannot see that: with no conferring grant the principal is absent either
+    // way. So what is asserted here is what erasure WOULD change — the divergence and the
+    // refusal record.
+    const revoking: Grant[] = [
+      {
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
+        attestation: contentBound(CONV_KEY),
+        fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g1' },
+      },
+      {
+        head: 'https://conv.test/g2', workspace: WS, grantedTo: alice, role: `${P}#Observer`,
+        revoked: true, attestation: contentBound(CONV_KEY),
+        fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g2' },
+      },
+    ];
+    const args = {
+      workspace: WS, profile: PROFILE, scopes, grants: revoking,
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+        attestation: contentBound(ALICE_KEY),
+        fieldProvenance: { source: 'payload' as const, descriptor: 'https://alice.test/a1' },
+      }],
+    };
+    const signerOf = signerIndexFromRegistry(registry(false));
+    const agreeing = foldRoster({
+      ...args,
+      attestation: { convener: CONV, signerOf, requireFieldBinding: true, workspaceEvidence: conveneEvidence.agrees },
+    });
+    const disagreeing = foldRoster({
+      ...args,
+      attestation: { convener: CONV, signerOf, requireFieldBinding: true, workspaceEvidence: conveneEvidence['names-another'] },
+    });
+
+    // The revocation removes alice under BOTH, which is the point: the disagreement takes away
+    // the power to make a member, not the record that unmade one.
+    expect(agreeing.members).toHaveLength(0);
+    expect(disagreeing.members).toHaveLength(0);
+    // ★ AND THE REVOCATION IS STILL THERE, still reported as having taken effect. Erasing it
+    // would leave this row absent, or present with `restrictionStillApplied: false`.
+    const stillApplied = disagreeing.unattested.find(u => u.head === 'https://conv.test/g2');
+    expect(stillApplied, 'the revoking grant vanished from `unattested` — it was erased, not refused').toBeDefined();
+    expect(stillApplied!.restrictionStillApplied).toBe(true);
+    // ★ AND THE FORK IS STILL REPORTED. A warning is the opposite of a grant, so a stricter
+    // configuration must never buy silence with it.
+    expect(disagreeing.divergences.filter(d => d.kind === 'grant')).toHaveLength(1);
+    expect(disagreeing.divergences.find(d => d.kind === 'grant')!.note).toMatch(/REVOKES/);
+    // …and nobody is left rendered as merely invited, which would send the convener chasing
+    // a reply from somebody they had already removed.
+    expect(disagreeing.pendingInvitations).toHaveLength(0);
+    assertNoWiderThan(disagreeing, agreeing, 'disagreeing vs agreeing under a revocation');
+  });
+
+  it('★ a disagreeing convener does not erase a WITHDRAWAL either', () => {
+    // Same rule on the member's side of the record. A withdrawal that stopped applying because
+    // the POLICY named the wrong convener would retain someone who had left, under the
+    // configuration with the most evidence — the failure direction this whole area keeps
+    // producing.
+    const args = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
+        attestation: contentBound(CONV_KEY),
+        fieldProvenance: { source: 'payload' as const, descriptor: 'https://conv.test/g1' },
+      }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s', withdrawn: true,
+        attestation: contentBound(ALICE_KEY),
+        fieldProvenance: { source: 'payload' as const, descriptor: 'https://alice.test/a1' },
+      }],
+    };
+    const signerOf = signerIndexFromRegistry(registry(false));
+    const disagreeing = foldRoster({
+      ...args,
+      attestation: { convener: CONV, signerOf, requireFieldBinding: true, workspaceEvidence: conveneEvidence['names-another'] },
+    });
+    expect(disagreeing.members).toHaveLength(0);
+    // The withdrawal is what keeps alice out of `pendingInvitations`: without it reaching the
+    // restricting track she would be rendered as a principal who never answered.
+    expect(disagreeing.pendingInvitations).toHaveLength(0);
+  });
+
+  it('★ every shape a workspace record can arrive in, against every rung', () => {
+    // ★ THE SHAPES AXIS A CANNOT AFFORD TO CROSS. Two convener shapes ride the full 76,800-case
+    // lattice; these seven do not, because each one multiplies it. They are crossed here
+    // against the axes they actually interact with — the RUNG, which decides how hard the
+    // workspace record's own authorship and provenance are checked, and the grant and
+    // acceptance attestations, which decide whether there was a member to withhold.
+    //
+    // The table is the assertion. Three of these shapes are `'bound'` at one rung and
+    // `'refused'` at a higher one, which is what makes it a table rather than a list of
+    // refusals: a record whose content binding was never checked is evidence under a policy
+    // that never asked for content binding, and stops being evidence under one that did.
+    const other = 'https://other.test/ws';
+    const shapes: Record<string, { evidence: ConvenerEvidence; attested: string; content: string; fields: string }> = {
+      agrees: { evidence: conveneEvidence.agrees, attested: 'bound', content: 'bound', fields: 'bound' },
+      'names-another': { evidence: conveneEvidence['names-another'], attested: 'refused', content: 'refused', fields: 'refused' },
+      'about-another-workspace': {
+        evidence: { kind: 'declared', record: workspaceRecord(CONV, CONV_KEY, { workspace: other }) },
+        attested: 'refused', content: 'refused', fields: 'refused',
+      },
+      'signed-by-stranger': {
+        evidence: { kind: 'declared', record: workspaceRecord(CONV, STRANGER_KEY) },
+        attested: 'refused', content: 'refused', fields: 'refused',
+      },
+      unattested: {
+        evidence: { kind: 'declared', record: workspaceRecord(CONV, CONV_KEY, { attestation: undefined }) },
+        attested: 'refused', content: 'refused', fields: 'refused',
+      },
+      'content-unbound': {
+        evidence: { kind: 'declared', record: workspaceRecord(CONV, CONV_KEY, { attestation: verified(CONV_KEY) }) },
+        // Evidence under a policy that never asked about content, and not under one that did.
+        attested: 'bound', content: 'refused', fields: 'refused',
+      },
+      'no-provenance': {
+        evidence: { kind: 'declared', record: workspaceRecord(CONV, CONV_KEY, { fieldProvenance: undefined }) },
+        attested: 'bound', content: 'bound', fields: 'refused',
+      },
+      'provenance-elsewhere': {
+        evidence: {
+          kind: 'declared',
+          record: workspaceRecord(CONV, CONV_KEY, {
+            fieldProvenance: { source: 'payload', descriptor: 'https://elsewhere.test/x.ttl' },
+          }),
+        },
+        attested: 'bound', content: 'bound', fields: 'refused',
+      },
+      unreadable: {
+        evidence: { kind: 'unreadable', why: 'get_descriptor failed' },
+        attested: 'refused', content: 'refused', fields: 'refused',
+      },
+    };
+    const signerOf = signerIndexFromRegistry(registry(false));
+    let crossed = 0, admitted = 0, withheld = 0;
+    for (const [name, shape] of Object.entries(shapes)) {
+      for (const gAtt of attKeys) {
+        for (const aAtt of attKeys) {
+          for (const revoked of [false, true]) {
+            for (const withdrawn of [false, true]) {
+              const grants: Grant[] = [{
+                head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
+                role: `${P}#Contributor`, revoked, attestation: attestations[gAtt],
+                fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g1' },
+              }];
+              const acceptances: Acceptance[] = [{
+                head: 'https://alice.test/a1', workspace: WS, member: alice,
+                accepts: 'https://conv.test/g1', stream: 'https://alice.test/s', withdrawn,
+                attestation: attestations[aAtt],
+                fieldProvenance: { source: 'payload', descriptor: 'https://alice.test/a1' },
+              }];
+              const args = { workspace: WS, profile: PROFILE, grants, acceptances, scopes };
+              const label = `ws=${name} grant=${gAtt} accept=${aAtt} revoked=${revoked} withdrawn=${withdrawn}`;
+              for (const [rung, extra, expected] of [
+                ['attested', {}, shape.attested],
+                ['content', { requireContentBinding: true }, shape.content],
+                ['fields', { requireFieldBinding: true }, shape.fields],
+              ] as const) {
+                const without = foldRoster({ ...args, attestation: { convener: CONV, signerOf, ...extra } });
+                const withIt = foldRoster({
+                  ...args,
+                  attestation: { convener: CONV, signerOf, ...extra, workspaceEvidence: shape.evidence },
+                });
+                expect(withIt.convenerBinding, `${label} rung=${rung}`).toBe(expected);
+                expect(without.convenerBinding, `${label} rung=${rung}: no evidence must read as unchecked`).toBe('unchecked');
+                // Whatever the shape, supplying it can only ever refuse more.
+                assertNoWiderThan(withIt, without, `${label} rung=${rung}`);
+                if (expected === 'bound') admitted += withIt.members.length;
+                else if (without.members.length > 0) withheld++;
+                crossed++;
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(crossed).toBe(Object.keys(shapes).length * attKeys.length * attKeys.length * 2 * 2 * 3);
+    // Both directions reached, for the same reason as AXIS G's counters in the enumeration.
+    expect(admitted, 'no shape admitted a member at any rung — the table is all refusals').toBeGreaterThan(0);
+    expect(withheld, 'no shape withheld a member at any rung — the table refuses nothing').toBeGreaterThan(0);
+  }, 300_000);
+
+  it('the fold reports the convener check as ENFORCED, never as merely available', () => {
+    // ★ The rule `recordContentBinding` and `recordFieldBinding` already follow, at the newest
+    // field. A policy that did not pass evidence did not get the check, and a roster that read
+    // `'bound'` because evidence happened to be lying around would be data standing in for a
+    // guarantee — the substitution this whole layer exists to stop making.
+    const args = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
+        attestation: contentBound(CONV_KEY),
+      }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+        attestation: contentBound(ALICE_KEY),
+      }],
+    };
+    const signerOf = signerIndexFromRegistry(registry(false));
+    expect(foldRoster(args).convenerBinding).toBe('unchecked');
+    expect(foldRoster({ ...args, attestation: { convener: CONV, signerOf } }).convenerBinding).toBe('unchecked');
+    const checked = foldRoster({
+      ...args, attestation: { convener: CONV, signerOf, workspaceEvidence: conveneEvidence.agrees },
+    });
+    expect(checked.convenerBinding).toBe('bound');
+    // …and the unchecked roster says so in words, because a three-valued enum is easy to not
+    // branch on and this is the value that means "nobody checked".
+    expect(foldRoster({ ...args, attestation: { convener: CONV, signerOf } }).attributionNote)
+      .toMatch(/is the workspace's convener/);
+  });
+
+  // ── ★ the two shapes `ConvenerEvidence` cannot have and JSON can ────────────
+  //
+  // `ConvenerEvidence` is exported through `can.ts` for federated composers, which means it
+  // arrives parsed from somebody else's bytes and the compiler has guaranteed nothing about
+  // it. The dispatch in `refuseConvenerAuthority` was `kind === 'unreadable'` → refuse and
+  // EVERYTHING ELSE → treat as declared, which is the same "a value the type says is
+  // impossible must not come out the admitting end" that `refuseFieldBinding` guards with its
+  // own `!== 'payload'` test one function above. Both were reproduced before being fixed.
+  //
+  // Cast through `unknown` deliberately: writing these shapes is the whole point, and the
+  // cast is the test saying out loud that the type forbids what the wire permits.
+  describe('★ evidence in a shape the union forbids', () => {
+    const evidenceArgs = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
+        attestation: contentBound(CONV_KEY),
+      }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+        attestation: contentBound(ALICE_KEY),
+      }],
+    };
+    const foldWith = (evidence: ConvenerEvidence): Roster => foldRoster({
+      ...evidenceArgs,
+      attestation: {
+        convener: CONV, signerOf: signerIndexFromRegistry(registry(false)),
+        workspaceEvidence: evidence,
+      },
+    });
+
+    it('★ an UNRECOGNISED kind is refused, and does not report the convener as bound', () => {
+      // Was: `convenerBinding: 'bound'` with alice a member. The union has exactly two members
+      // so that "asked and got silence" cannot masquerade as an answer; a third tag
+      // masqueraded instead, which is the same lie one value over.
+      const r = foldWith({ kind: 'i-did-not-ask', record: workspaceRecord(CONV, CONV_KEY) } as unknown as ConvenerEvidence);
+      expect(r.convenerBinding).toBe('refused');
+      expect(r.members).toHaveLength(0);
+      expect(r.unattested.some(u => /tagged 'i-did-not-ask'/.test(u.because))).toBe(true);
+    });
+
+    it("★ a 'declared' evidence carrying NO record refuses instead of killing the fold", () => {
+      // Was: `TypeError: Cannot read properties of undefined (reading 'workspace')` thrown out
+      // of the authorization path. A refusal names a fault; a throw returns no roster at all,
+      // so nothing downstream can even report that authorization failed.
+      const evidence = { kind: 'declared' } as unknown as ConvenerEvidence;
+      expect(() => foldWith(evidence)).not.toThrow();
+      const r = foldWith(evidence);
+      expect(r.convenerBinding).toBe('refused');
+      expect(r.members).toHaveLength(0);
+      expect(r.unattested.some(u => /carries no record/.test(u.because))).toBe(true);
+    });
+
+    it('…and the control still admits: neither guard fails closed on honest evidence', () => {
+      // Without this the two cases above are satisfied by a function that refuses everything.
+      const r = foldWith(conveneEvidence.agrees);
+      expect(r.convenerBinding).toBe('bound');
+      expect(r.members).toHaveLength(1);
+    });
+
+    it('refuseConvenerAuthority refuses both shapes directly, not only through the fold', () => {
+      // The function is exported and callable on its own, so the guard has to be in the
+      // function rather than in whatever the fold happens to do with its answer.
+      const at = (evidence: ConvenerEvidence): string | null => refuseConvenerAuthority({
+        evidence, workspace: WS, convener: CONV,
+        // Needed only by the honest control: without a resolver the signing DID cannot be
+        // mapped to the principal it acts for, so `refuseAttestation` refuses the good record
+        // too and all three cases pass for the wrong reason.
+        signerOf: signerIndexFromRegistry(registry(false)),
+      });
+      expect(at({ kind: 'whatever' } as unknown as ConvenerEvidence)).toMatch(/tagged 'whatever'/);
+      expect(at({ kind: 'declared' } as unknown as ConvenerEvidence)).toMatch(/carries no record/);
+      expect(at({ kind: 'declared', record: workspaceRecord(CONV, CONV_KEY) })).toBeNull();
+    });
+  });
+
+  // ── ★ the divergence NOTE, which the enumeration cannot see ─────────────────
+  //
+  // `divergenceKeys` compares `kind|heads`. That is right for what it is for — proving a
+  // stricter policy did not DELETE a warning — and it means the 153,600 comparisons above are
+  // blind to a warning whose TEXT was replaced with a false one. `roster.ts` states the rule
+  // itself: this channel must never assert an outcome that did not happen.
+  //
+  // It was asserting three. Measured on a workspace where every record is honest and only the
+  // policy and the workspace disagree about who convenes, the acceptance note said the member
+  // was "listed as invited instead" with `pendingInvitations` EMPTY, and that "`unattested`
+  // says why each answer was refused" with `unattested` holding one grant row and no
+  // acceptance rows. Both acceptances were signed, content-bound and field-bound. The members
+  // were told off for the convener's fault.
+  //
+  // So the note is checked against the roster that emitted it, clause by clause, over a cross
+  // that reaches every branch.
+  describe('★ an acceptance divergence note never asserts an outcome that did not happen', () => {
+    /** Two honest heads on different streams — the only way to raise the note at all. */
+    const twoHeads = (over: Partial<Acceptance> = {}): Acceptance[] => ['a1', 'a2'].map(n => ({
+      head: `https://alice.test/${n}`, workspace: WS, member: alice,
+      accepts: 'https://conv.test/g1', stream: `https://alice.test/s-${n}`,
+      attestation: contentBound(ALICE_KEY),
+      fieldProvenance: { source: 'payload' as const, descriptor: `https://alice.test/${n}` },
+      ...over,
+    }));
+    const oneGrant: Grant[] = [{
+      head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
+      attestation: contentBound(CONV_KEY),
+      fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g1' },
+    }];
+
+    /**
+     * Each clause the note can print, paired with what the roster must actually show for it to
+     * be true. A clause with no predicate here is a clause nobody is checking, so new wording
+     * belongs in this table rather than only in `roster.ts`.
+     */
+    const CLAUSES: readonly [RegExp, (r: Roster) => boolean, string][] = [
+      [/listed as invited instead/, r => r.pendingInvitations.some(p => p.principal === alice),
+        'said the member was invited instead, and pendingInvitations does not name them'],
+      [/says why each answer was refused/, r => r.unattested.some(u => u.kind === 'acceptance'),
+        'sent the reader to `unattested` for the refused answers, and it holds no acceptance row'],
+      [/The member is included/, r => r.members.some(m => m.principal === alice),
+        'said the member is included, and they are not in `members`'],
+      [/member is NOT included|member is absent/, r => !r.members.some(m => m.principal === alice),
+        'said the member is not included, and they are in `members`'],
+    ];
+
+    const check = (r: Roster, label: string): string => {
+      const note = r.divergences.find(d => d.kind === 'acceptance')?.note;
+      expect(note, `${label}: no acceptance divergence was raised, so this case tests nothing`)
+        .toBeDefined();
+      for (const [clause, holds, complaint] of CLAUSES) {
+        if (!clause.test(note!)) continue;
+        expect(holds(r), `${label}: the note ${complaint} — ${note!}`).toBe(true);
+      }
+      return note!;
+    };
+
+    const foldNote = (over: {
+      acceptances?: Acceptance[];
+      evidence?: ConvenerEvidence;
+      requireFieldBinding?: boolean;
+    }): Roster => foldRoster({
+      workspace: WS, profile: PROFILE, scopes, grants: oneGrant,
+      acceptances: over.acceptances ?? twoHeads(),
+      attestation: {
+        convener: CONV, signerOf: signerIndexFromRegistry(registry(false)),
+        requireFieldBinding: over.requireFieldBinding ?? true,
+        workspaceEvidence: over.evidence,
+      },
+    });
+
+    it('★ a DISAGREEING convener does not make the note blame the members', () => {
+      const r = foldNote({ evidence: conveneEvidence['names-another'] });
+      const note = check(r, 'disagreeing convener');
+      // The positive half: the fork is still reported, and the note says whose fault it is not.
+      expect(note).toMatch(/no grant to them CONFERS/);
+      expect(r.members).toHaveLength(0);
+      expect(r.pendingInvitations).toHaveLength(0);
+      expect(r.unattested.every(u => u.kind === 'grant')).toBe(true);
+    });
+
+    it('…and the note that WAS accurate still is: genuinely refused acceptances', () => {
+      // Without this the branch above could have been reached by weakening the true case.
+      const r = foldNote({
+        acceptances: twoHeads({ attestation: contentBound(STRANGER_KEY) }),
+        requireFieldBinding: false,
+      });
+      const note = check(r, 'refused acceptances');
+      expect(note).toMatch(/listed as invited instead/);
+      expect(r.pendingInvitations.map(p => p.principal)).toContain(alice);
+      expect(r.unattested.filter(u => u.kind === 'acceptance')).toHaveLength(2);
+    });
+
+    it('…and so do the admitted and the withdrawn branches', () => {
+      const admitted = foldNote({ evidence: conveneEvidence.agrees });
+      expect(check(admitted, 'agreeing convener')).toMatch(/The member is included/);
+      expect(admitted.members).toHaveLength(1);
+
+      const [first, second] = twoHeads();
+      const withdrawn = foldNote({ acceptances: [first!, { ...second!, withdrawn: true }] });
+      expect(check(withdrawn, 'withdrawn head')).toMatch(/WITHDRAWS/);
+      expect(withdrawn.members).toHaveLength(0);
+    });
   });
 
   // A lattice assertion passes trivially where the rungs never differ. These name the two

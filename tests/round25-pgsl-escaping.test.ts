@@ -12,7 +12,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createPGSL, ingest, pgslToTurtle, type IRI, type NodeProvenance } from '@interego/pgsl';
+import { createPGSL, ingest, pgslToTurtle, type NodeProvenance } from '@interego/pgsl';
+// `IRI` is declared in @interego/core; @interego/pgsl imports it but does not re-export it.
+import type { IRI } from '@interego/core';
 
 describe('round-25 — pgslToTurtle escapes injected atom values + provenance IRIs', () => {
   it('a quote/newline in an atom value cannot break out of pgsl:value "…"; a > in the provenance IRI cannot break out of <…>', () => {

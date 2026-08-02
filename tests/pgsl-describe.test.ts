@@ -5,7 +5,9 @@
  * paradigm (source/target at a position, computed from usage).
  */
 import { describe, it, expect } from 'vitest';
-import { createPGSL, ingest, describeNode, pgslCanonicalUrl, type IRI } from '@interego/pgsl';
+import { createPGSL, ingest, describeNode, pgslCanonicalUrl } from '@interego/pgsl';
+// `IRI` is declared in @interego/core; @interego/pgsl imports it but does not re-export it.
+import type { IRI } from '@interego/core';
 
 const prov = { wasAttributedTo: 'https://example.test/agent' as IRI, generatedAtTime: '2026-07-17T00:00:00Z' };
 const href = (u: IRI) => `/node/${encodeURIComponent(u)}`;

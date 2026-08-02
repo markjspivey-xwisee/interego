@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import {
   EngagementEngine, renderCard, cardVersion, capabilitiesFromAffordances,
   A2A_PROFILE, INTEREGO_AGENTS_PROFILE, PROFILES,
@@ -46,7 +46,7 @@ describe('spec-blindness drift guard', () => {
   it('no file under src/ (outside profiles/) names a wire protocol', () => {
     const offenders: string[] = [];
     for (const f of filesUnder(SRC)) {
-      if (f.includes(`${'profiles'}${require('node:path').sep}`)) continue;
+      if (f.includes(`${'profiles'}${sep}`)) continue;
       const body = readFileSync(f, 'utf8');
       // The engine may not name the protocol anywhere — code OR comment.
       if (/\ba2a\b/i.test(body) || /agent2agent/i.test(body)) offenders.push(f);
