@@ -1,0 +1,28 @@
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Hand-authored, and that is the point: a pod is a SHAPE, not a product.
+# Same layout packages/solid/src/client.ts writes on a real pod — one
+# iep:ManifestEntry per descriptor, mirroring describes/validFrom/contentCid/
+# supersedes in cleartext so a reader finds the chain head from this file alone.
+
+<https://markjspivey-xwisee.github.io/interego/orgb/context-graphs/e0.ttl> a iep:ManifestEntry ;
+    iep:contentCid "sha256-f7d5085e79741b758fb3b85050885d7e" ;
+    iep:describes <https://markjspivey-xwisee.github.io/interego/orgb/workspace/stream/carol> ;
+    iep:hasFacetType iep:Temporal ;
+    iep:hasFacetType iep:Trust ;
+    iep:validFrom "2026-08-02T09:00:00.000Z"^^xsd:dateTime ;
+    iep:modalStatus iep:Asserted ;
+    iep:trustLevel iep:SelfAsserted ;
+    iep:issuer <https://markjspivey-xwisee.github.io/interego/orgb/carol#me> .
+
+<https://markjspivey-xwisee.github.io/interego/orgb/context-graphs/e1.ttl> a iep:ManifestEntry ;
+    iep:contentCid "sha256-e311cc2120f29f833696fef2fe0c077f" ;
+    iep:describes <https://markjspivey-xwisee.github.io/interego/orgb/workspace/stream/carol> ;
+    iep:hasFacetType iep:Temporal ;
+    iep:hasFacetType iep:Trust ;
+    iep:validFrom "2026-08-02T09:05:00.000Z"^^xsd:dateTime ;
+    iep:supersedes <https://markjspivey-xwisee.github.io/interego/orgb/context-graphs/e0.ttl> ;
+    iep:modalStatus iep:Asserted ;
+    iep:trustLevel iep:SelfAsserted ;
+    iep:issuer <https://markjspivey-xwisee.github.io/interego/orgb/carol#me> .
