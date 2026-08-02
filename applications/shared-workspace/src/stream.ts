@@ -70,7 +70,7 @@
  */
 
 import { escapeTurtleLiteral, turtleIriRef } from '@interego/core';
-import type { Attestation } from './roster.js';
+import type { Attestation, ContentBinding } from './roster.js';
 
 export const WSP = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#';
 export const WSP_SHAPES = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-shapes.ttl';
@@ -602,16 +602,26 @@ export function proofDescriptorId(descriptorTurtle: string): string | null {
  * that principal named as signer. Signature validity says the bytes of the proof were not
  * altered; it says nothing about what the proof is attached to.
  *
- * ★ WHAT THIS CHECK IS WORTH, precisely. The relay mints `descriptor_id` as
- * `urn:iep:<pod>:<epoch-ms>` and derives the descriptor's own URL from it via
- * `predictDescriptorUrl`/`slugFromIri` — terminal segment, URL-encoded, plus `.ttl`. So the
- * two are related by a NAMING CONVENTION, not by an equality the substrate enforces, and
- * this compares them on that convention. A lifted proof carries the original record's epoch
- * and fails. A publish that names its descriptor some other way (the PGSL-primary path
- * writes a content-addressed `holon-<hash>.ttl`) also fails, wrongly — which withholds the
- * entry and says so, the safe direction, and is why verification is opt-in rather than the
- * default. The durable fix belongs in the substrate: `get_descriptor` already holds both
- * the proof and the URL it read it from and could simply compare them.
+ * ★ WHAT THIS CHECK IS WORTH, precisely — AND IT IS LESS THAN IT LOOKS. The relay mints
+ * `descriptor_id` as `urn:iep:<pod>:<epoch-ms>` and derives the descriptor's own URL from it
+ * via `predictDescriptorUrl`/`slugFromIri` — TERMINAL SEGMENT ONLY, URL-encoded, plus
+ * `.ttl`. So the two are related by a naming convention, not by an equality the substrate
+ * enforces, and this compares them on the only part of it that survives: the last segment.
+ *
+ * The pod is therefore NOT compared, and a proof lifted across pods at the same epoch
+ * passes. Measured:
+ *   proofBindsToDescriptor('urn:iep:alice-pod:1712345678901',
+ *                          'https://css/mallory-pod/context-graphs/1712345678901.ttl') === true
+ * This docstring used to claim the opposite ("a lifted proof carries the original record's
+ * epoch and fails"). What the check actually catches is a proof pasted onto a record with a
+ * DIFFERENT terminal segment — the common copy — and it does not catch a fabricated record
+ * deliberately named to collide with the epoch of a real one.
+ *
+ * A publish that names its descriptor some other way (the PGSL-primary path writes a
+ * content-addressed `holon-<hash>.ttl`) fails this, wrongly — which withholds the entry and
+ * says so, the safe direction, and is why verification is opt-in rather than the default.
+ * The durable fix belongs in the substrate: `get_descriptor` already holds both the proof
+ * and the URL it read it from and could compare them in full.
  */
 export function proofBindsToDescriptor(claimedId: string | null, descriptorUrl: string): boolean {
   if (claimedId === null) return false;
@@ -681,6 +691,11 @@ export async function readAttestation(
       authorshipVerified: false,
       signedBy,
       boundToDescriptor: false,
+      // Carried even on the refusing branch, because `'mismatched'` only ever arrives here:
+      // a recomputed digest that did not match also fails the signature-level verdict.
+      // Dropping the field would leave the caller unable to tell "the content was swapped"
+      // from "the proof could not be verified", and the first is the sharper of the two.
+      contentBinding: readContentBinding(authorship.contentBinding),
       reason: String(authorship.reason ?? 'the verifier reported the proof did not verify'),
     };
   }
@@ -707,8 +722,29 @@ export async function readAttestation(
     authorshipVerified: true,
     signedBy,
     boundToDescriptor: bound,
+    contentBinding: readContentBinding(authorship.contentBinding),
     ...(bound ? {} : { reason: unboundReason }),
   };
+}
+
+/**
+ * Read `get_descriptor.authorship.contentBinding` off a JSON response.
+ *
+ * ★ ANY UNRECOGNISED VALUE BECOMES `'unbound'`. This is JSON from a pod-facing tool, so the
+ * field may be missing entirely (a relay predating content binding), a non-string, or a
+ * value from some later vocabulary this build does not know. Every one of those means the
+ * same thing to a caller — nobody here established that the proof covers the content — and
+ * `'unbound'` is the value that claims least, so an unknown string can never be the thing
+ * that satisfies `requireContentBinding`. Defaulting the other way would make an older
+ * relay, or a typo, into a passing content check.
+ *
+ * ★ WHICH IS WHY `'mismatched'` HAD TO BE ADDED HERE THE DAY IT WAS ADDED UPSTREAM. It is
+ * the one value where "claims least" is the wrong instinct: coercing it to `'unbound'`
+ * would relabel a detected content swap as ordinary pre-binding data. A relay that reports
+ * tampering must not have the report flattened on the way in.
+ */
+function readContentBinding(raw: unknown): ContentBinding {
+  return raw === 'bound' || raw === 'mismatched' || raw === 'declared' ? raw : 'unbound';
 }
 
 // ── Appending ────────────────────────────────────────────────────────────────

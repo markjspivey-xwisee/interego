@@ -71,20 +71,25 @@ describe('the canonical payload covers content when a digest is supplied', () =>
 });
 
 describe('signing and verification', () => {
-  it('a proof over content verifies, and reports that it covers content', async () => {
+  it('★ a digest NOBODY CHECKED reports as `declared`, not as covering content', async () => {
+    // This assertion used to read `coversContent === true`, and that expectation was the
+    // overclaim in miniature: the caller passed no observed content, so the only thing
+    // established was that the SIGNER had committed to a digest. Whether the document in
+    // front of the reader is that content was never asked. A boolean cannot hold both
+    // facts, which is why the field is now three-valued.
     const proof = await createSignedAuthorship({ ...BASE, contentHash: sha('the graph') }, signer);
     const r = await verifySignedAuthorship(proof, verifier);
     expect(r.valid).toBe(true);
-    expect(r.coversContent).toBe(true);
+    expect(r.contentBinding).toBe('declared');
   });
 
-  it('a LEGACY proof still verifies, but is reported as NOT covering content', async () => {
+  it('a LEGACY proof still verifies, and is reported as `unbound`', async () => {
     const proof = await createSignedAuthorship(BASE, signer);
     const r = await verifySignedAuthorship(proof, verifier);
     expect(r.valid).toBe(true);
-    // The whole point: valid and content-covering are different questions, and a consumer
-    // that needs integrity must be able to tell them apart.
-    expect(r.coversContent).toBe(false);
+    // Three outcomes, not two: this is neither an attestation of content nor a forgery,
+    // and both of the other verdicts would be a lie about a proof that is exactly intact.
+    expect(r.contentBinding).toBe('unbound');
   });
 
   it('detects a content swap — authentic signature, different content', async () => {
@@ -99,7 +104,21 @@ describe('signing and verification', () => {
     const proof = await createSignedAuthorship({ ...BASE, contentHash: h }, signer);
     const r = await verifySignedAuthorship(proof, verifier, { contentHash: h });
     expect(r.valid).toBe(true);
-    expect(r.coversContent).toBe(true);
+    expect(r.contentBinding).toBe('bound');
+  });
+
+  it('★★ digests of DIFFERENT algorithms are never compared, so old proofs are not forgeries', async () => {
+    // The live-data guard. Proofs already on pods carry a bare `sha256:` over inbound bytes
+    // that no reader is ever served. Once the read path started recomputing a
+    // `graph-nquads-sha256:` digest, comparing the two strings would have branded every one
+    // of them as tampering on the first read — a security check whose opening act is to
+    // accuse honest data is worse than the gap it closes.
+    const proof = await createSignedAuthorship({ ...BASE, contentHash: sha('original') }, signer);
+    const r = await verifySignedAuthorship(proof, verifier, {
+      contentHash: 'graph-nquads-sha256:0000000000000000000000000000000000000000000000000000000000000000',
+    });
+    expect(r.valid).toBe(true);
+    expect(r.contentBinding).toBe('declared');
   });
 });
 
@@ -119,7 +138,7 @@ describe('contentHash survives the Turtle round-trip', () => {
     // does from pod Turtle alone.
     const r = await verifySignedAuthorship(parsed!, verifier);
     expect(r.valid, 'a signed-but-unserialised field breaks verification silently').toBe(true);
-    expect(r.coversContent).toBe(true);
+    expect(r.contentBinding).toBe('declared');
   });
 
   it('a legacy proof round-trips without acquiring one', async () => {
@@ -128,6 +147,6 @@ describe('contentHash survives the Turtle round-trip', () => {
     expect(parsed!.contentHash).toBeUndefined();
     const r = await verifySignedAuthorship(parsed!, verifier);
     expect(r.valid).toBe(true);
-    expect(r.coversContent).toBe(false);
+    expect(r.contentBinding).toBe('unbound');
   });
 });

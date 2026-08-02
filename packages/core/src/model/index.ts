@@ -18,6 +18,7 @@ export {
   canonicalCredentialPayload,
   canonicalAuthorshipPayload,
   createSignedAuthorship,
+  contentBindingWhenUnchecked,
   verifySignedAuthorship,
   ownerProfileToTurtle,
   parseOwnerProfile,
@@ -32,6 +33,7 @@ export type {
   DelegationVerificationOptions,
   AuthorshipProof,
   AuthorshipProofInputs,
+  ContentBinding,
 } from './delegation.js';
 export {
   registerFacetType,

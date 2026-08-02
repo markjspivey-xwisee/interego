@@ -122,7 +122,23 @@ function render(){
   var d=DATA||{};
   q('title').textContent=d.title||'HyperMarkdown';
   var prov=q('prov'); var a=d.authorship||{};
-  if(a.authorshipVerified){ prov.className='prov verified'; prov.innerHTML=''; prov.appendChild(el('span','dot')); prov.appendChild(document.createTextNode('Authorship verified'+(a.effectiveTrustLevel?' · '+a.effectiveTrustLevel:''))); }
+  // ★ "Authorship verified" ALONE IS THE OVERCLAIM THIS BADGE USED TO MAKE. The signature
+  // can be intact over a descriptor whose graph says anything at all, so the badge names the
+  // content verdict too: only bound means the document below it is the document that was
+  // signed. declared and unbound are shown as signed-but-unverified rather than hidden,
+  // because a reader who sees a green tick and no qualifier will assume the strongest thing.
+  // (No backticks anywhere in this string: BOOT_JS is a String.raw template literal and a
+  // stray backtick in a comment silently ends it, which is a parse error 50 lines later.)
+  if(a.authorshipVerified){
+    var cb=a.contentBinding||'unbound';
+    var bound=cb==='bound';
+    prov.className=bound?'prov verified':'prov';
+    prov.innerHTML=''; prov.appendChild(el('span','dot'));
+    prov.appendChild(document.createTextNode(
+      (bound?'Signed · content verified':'Signed · content NOT verified ('+cb+')')
+      +(a.effectiveTrustLevel?' · '+a.effectiveTrustLevel:'')));
+    if(a.contentBindingNote) prov.title=a.contentBindingNote;
+  }
   else { prov.className='prov'; prov.innerHTML=''; prov.appendChild(el('span','dot')); prov.appendChild(document.createTextNode(a.reason?'Unverified':'Self-asserted')); }
   // Enhanced: prose + controls
   var enh=q('pane-enhanced'); enh.innerHTML='';

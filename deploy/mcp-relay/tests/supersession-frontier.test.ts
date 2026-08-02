@@ -49,6 +49,20 @@
  *      writes from a deferred task that queues behind later arrivals, so it links a state
  *      that has already moved and FORKS the chain.
  *
+ * ★ A FOURTH ROUND, on the one thing every previous round disclaimed instead of fixing:
+ *
+ *   6. `descriptor_id` chooses the descriptor's filename (`slugFromIri` — the last `/`, `:`
+ *      or `#` segment) and every descriptor on a pod shares one flat container, so a publish
+ *      of G could be aimed at a descriptor belonging to OTHER and `publish()` would PUT over
+ *      it. The chain-scoped collision guard inspects only entries describing G, so it saw
+ *      nothing; without an `if_match` it was not consulted at all. Measured: OTHER's frontier
+ *      went from one head to none with the refusal reading `null`
+ *      (`scratchpad/adv-cas.test.ts` CAS-A). `foreignDescriptorOverwriteRefusal` refuses it,
+ *      with or without a precondition, and `descriptorWriteCollisionRefusal` is now the only
+ *      way to reach either half. It arrives with no caller malice too: two agents calling
+ *      `record_trajectory_step` in the same millisecond mint ids ending in the same
+ *      `Date.now()` digits — one URL, two `urn:graph:trajectory:*` graphs.
+ *
  * ★ Mutation-checked, each mutation applied and the suite re-run, then reverted:
  *   frontier —    every entry treated as a head (the original defect) 13 failures
  *                 `describes` filter dropped                           2
@@ -65,11 +79,26 @@
  *                 it compares raw strings instead of normalised ones    1
  *   re-decide —   `reDecidedSupersedes` never re-decides               4
  *                 it re-decides even when nothing moved                 1
+ *   foreign —     `foreignDescriptorOverwriteRefusal` never refuses    10
+ *                 the destination-URL match dropped (always refuses)    2
+ *                 it compares raw URLs instead of normalised ones       1
+ *                 the publish's OWN graph counted as foreign            2
+ *                 the foreign half gated on if_match, as before         2
+ *                 the chain collision reported ahead of foreign         1
+ *   wiring —      the deferred re-check removed from server.ts          1
+ *                 server.ts calls the chain half directly again         2
  *
  * ★ NOT covered, and no test here can cover it: that the `reDecidedSupersedes` call sits
  *   INSIDE the mutex acquisition that performs the deferred write rather than just before
  *   it. That is a fact about `handlePublishContext`, which starts an HTTP listener on
  *   import. The decision is pinned here; its placement is reviewed, not tested.
+ *
+ * ★ ALSO NOT covered, same reason: the two 503s `handlePublishContext` returns when the
+ *   manifest cannot be read — the pre-existing `precondition_unavailable` and the new
+ *   `overwrite_check_unavailable`, which refuses a publish that can no longer be told
+ *   whether its destination URL belongs to another graph. The last section below reads
+ *   server.ts as text to pin WHICH function the relay calls and on how many paths, which is
+ *   where the defect actually lived; it says nothing about what the handler returns.
  *
  * Run from deploy/mcp-relay/:
  *   npx tsx tests/supersession-frontier.test.ts
@@ -79,9 +108,13 @@
 
 import {
   supersessionFrontier, classifyIfMatch, classifyCasRequest, casRefusal,
-  priorVersionsFor, reDecidedSupersedes, casSelfOverwriteRefusal, type FrontierEntry,
+  priorVersionsFor, reDecidedSupersedes, casSelfOverwriteRefusal,
+  foreignDescriptorOverwriteRefusal, descriptorWriteCollisionRefusal, type FrontierEntry,
 } from '../supersession-frontier.js';
 import { normalizeCssUrl } from '../url-rewrite.js';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Verbatim behaviour of `predictDescriptorUrl` + `slugFromIri`
@@ -600,18 +633,17 @@ function main(): void {
   // eslint-disable-next-line no-console
   console.log('\nthe collision refusal states the scope it actually checked');
 
-  // ★ The message told the caller to "send a descriptor_id that does not resolve to an
-  // existing version", which claims a completeness the guard does not have: it inspects only
-  // entries describing THIS graph. `slugFromIri` takes the last `/ : #` segment, so a caller
-  // can aim a G-publish at a descriptor belonging to OTHER and nothing here reports it. The
-  // hole predates this work and is not closed here; the claim that it was covered is.
+  // The chain-scoped refusal is still one-graph-scoped, on purpose — everything it reasons
+  // about (which version is destroyed, which supersedes edge goes missing) is chain-shaped.
+  // What changed is that the cross-graph case is no longer merely disclaimed: see the next
+  // section. This one only checks that the message says which half it is.
   const otherHead: FrontierEntry[] = [
     { descriptorUrl: d(0), describes: [G] },
     { descriptorUrl: d(7), describes: [OTHER] },
   ];
   ok(
     casSelfOverwriteRefusal(otherHead, G, d(7), normalizeCssUrl) === null,
-    'a descriptor_id landing on ANOTHER graph\'s descriptor is genuinely not detected here',
+    'a descriptor_id landing on ANOTHER graph\'s descriptor is not this function\'s question',
   );
   const sameGraph = casSelfOverwriteRefusal(otherHead, G, d(0), normalizeCssUrl);
   ok(sameGraph?.code === 409, 'a collision within this graph still is');
@@ -620,10 +652,232 @@ function main(): void {
     '★ the message no longer claims a check over every existing version',
   );
   ok(
-    /covers only the chain for/.test(sameGraph?.message ?? '')
-    && /OTHER graph/.test(sameGraph?.message ?? ''),
-    'and states the scope it did check, plus what it did not',
+    /covers the chain for/.test(sameGraph?.message ?? '')
+    && /descriptor_id_collides_with_other_graph/.test(sameGraph?.message ?? ''),
+    '★ and names the sibling that covers the rest, rather than leaving the caller with a hole',
   );
+  ok(
+    !/is not detected here/.test(sameGraph?.message ?? ''),
+    '★ and no longer tells the caller a cross-graph descriptor_id would go through — it will not',
+  );
+
+  // eslint-disable-next-line no-console
+  console.log('\na descriptor_id landing on ANOTHER graph\'s descriptor is refused');
+
+  // ★ THE DEFECT. `slugFromIri` takes the last `/ : #` segment of a caller-supplied
+  // `descriptor_id`, every descriptor on a pod shares one flat `context-graphs/` container,
+  // and `publish()` PUTs to the resulting URL unconditionally. So a caller publishing G can
+  // name a slug that lands on OTHER's descriptor, and the write replaces it — removing it
+  // from OTHER's chain. Reviewer's repro, `scratchpad/adv-cas.test.ts` CAS-A, which measured
+  // OTHER's frontier going from one head to none while the refusal was null.
+  const g2Frontier = supersessionFrontier(otherHead, OTHER, { normalize: normalizeCssUrl });
+  ok(g2Frontier.heads.length === 1, 'precondition of the repro: OTHER has exactly one head');
+  const foreign = descriptorWriteCollisionRefusal(otherHead, G, d(7), {
+    casGraphIri: G, normalize: normalizeCssUrl,
+  });
+  ok(foreign?.code === 409, `★ the cross-graph overwrite is refused 409 (got ${foreign?.code ?? 'null'})`);
+  ok(
+    foreign?.error === 'descriptor_id_collides_with_other_graph',
+    'under its own error code — it is not the chain collision and should not be triaged as one',
+  );
+  ok(foreign?.retryable === false, 'non-retryable: resending the same descriptor_id re-collides');
+  ok(new RegExp(OTHER).test(foreign?.message ?? ''), 'the message names the graph that would be stranded');
+  ok(
+    /Omit descriptor_id/.test(foreign?.message ?? ''),
+    'and the one-word fix, same as its sibling',
+  );
+
+  // ★ REGARDLESS OF `if_match`, WHICH IS THE HALF THAT MATTERED MOST. The chain-scoped
+  // refusal is gated on a precondition because it is a statement about a swap. This one is
+  // not, and without a precondition nothing else on the publish path reads the destination
+  // before PUTting to it — so gating it the same way would switch the guard off in exactly
+  // the case with no other protection.
+  const unconditional = descriptorWriteCollisionRefusal(otherHead, G, d(7), {
+    normalize: normalizeCssUrl,
+  });
+  ok(
+    unconditional?.error === 'descriptor_id_collides_with_other_graph',
+    '★ refused with NO if_match too — the unconditional PUT is the worse case, not the safer one',
+  );
+
+  // Foreign ownership outranks the chain collision when both apply: an entry describing both
+  // graphs, overwritten by a G-only publish under a precondition, collides on both counts and
+  // the answer that matters is about the graph not in the conversation.
+  const bothGraphs: FrontierEntry[] = [{ descriptorUrl: d(3), describes: [G, OTHER] }];
+  const overlap = descriptorWriteCollisionRefusal(bothGraphs, G, d(3), {
+    casGraphIri: G, normalize: normalizeCssUrl,
+  });
+  ok(
+    overlap?.error === 'descriptor_id_collides_with_other_graph',
+    '★ an entry describing [G, OTHER] is foreign to a G-only publish — it would strand OTHER',
+  );
+
+  // A publish that names no graph at all — `graph_iri` is `required` in the tool schema and
+  // `tools/call` does not validate it — has no claim on a URL that holds one.
+  ok(
+    foreignDescriptorOverwriteRefusal(otherHead, undefined, d(7), normalizeCssUrl)?.code === 409,
+    '★ a publish with no graph_iri cannot overwrite a descriptor that has one',
+  );
+
+  // Scoping, so the guard does not refuse every publish on the pod.
+  ok(
+    descriptorWriteCollisionRefusal(otherHead, G, d(99), { normalize: normalizeCssUrl }) === null,
+    'a URL nothing occupies is not a collision',
+  );
+  ok(
+    descriptorWriteCollisionRefusal(otherHead, G, d(0), { normalize: normalizeCssUrl }) === null,
+    '★ republishing to the SAME graph\'s URL with no if_match is a legitimate idempotent overwrite',
+  );
+  ok(
+    foreignDescriptorOverwriteRefusal([{ descriptorUrl: d(4), describes: [] }], G, d(4), normalizeCssUrl) === null,
+    'an entry describing no graph strands no chain, so nothing here objects — the stated limit',
+  );
+  // Host forms: `normalizeCssUrl` is the whole reason the chain guard sees across the
+  // internal/public FQDN split, and a foreign-ownership check that compared raw strings
+  // would let a legacy-host entry be overwritten by an internal-host publish.
+  ok(
+    foreignDescriptorOverwriteRefusal(
+      [{ descriptorUrl: PUB, describes: [OTHER] }], G, INT, normalizeCssUrl,
+    )?.code === 409,
+    '★ and it sees across host forms too, exactly as the chain guard does',
+  );
+
+  // ★ GRAPH IRIs, NOT JUST DESCRIPTOR URLs. `discover()` maps every manifest `describes`
+  // through `new URL(u, manifestUrl).href`; the caller's `graph_iri` arrives verbatim. The
+  // two were compared raw, so WHATWG's own rewrites read as a different graph.
+  const BARE = 'https://graphs.example.org';
+  const SLASHED = 'https://graphs.example.org/';    // what discover() stores for BARE
+  ok(
+    descriptorWriteCollisionRefusal(
+      [{ descriptorUrl: d(7), describes: [SLASHED] }], BARE, d(7), { normalize: normalizeCssUrl },
+    ) === null,
+    '★ an honest republish of one\'s OWN graph is not refused because discover() added a trailing slash',
+  );
+  ok(
+    descriptorWriteCollisionRefusal(
+      [{ descriptorUrl: d(7), describes: ['https://ex.org/my%20graph'] }],
+      'https://ex.org/my graph', d(7), { normalize: normalizeCssUrl },
+    ) === null,
+    '…nor because it percent-encoded a space',
+  );
+  // The direction that matters more: the chain-scoped half MISSED a version of the caller's
+  // own chain under the same mismatch, and a missed match there lets the swap overwrite it.
+  ok(
+    casSelfOverwriteRefusal(
+      [{ descriptorUrl: d(7), describes: [SLASHED] }], BARE, d(7), normalizeCssUrl,
+    )?.code === 409,
+    '★★ the chain guard SEES a version of the same chain across the same rewrite — missing it would destroy the head',
+  );
+  // …and normalising must not merge two genuinely different graphs into one.
+  ok(
+    descriptorWriteCollisionRefusal(
+      [{ descriptorUrl: d(7), describes: ['https://graphs.example.org/other'] }],
+      BARE, d(7), { normalize: normalizeCssUrl },
+    )?.code === 409,
+    'a genuinely different graph at the same URL is still foreign — normalising did not merge them',
+  );
+
+  // eslint-disable-next-line no-console
+  console.log('\nthe relay\'s own stable-id publisher is not broken by any of this');
+
+  // ★ VERIFIED, NOT ASSUMED. `record_trajectory_step` (server.ts) builds
+  // `urn:iep:trajectory-step:<agentSlug>:<Date.now()>` and publishes it against
+  // `urn:graph:trajectory:<agentSlug>`. server.ts starts an HTTP listener on import, so the
+  // handler cannot be called from here; what is reproduced is the pair of values it derives,
+  // and the derivation is pinned by the two `ok`s below rather than described in prose.
+  const trajGraph = (slug: string) => `urn:graph:trajectory:${slug}`;
+  const trajStep = (slug: string, ms: number) => `urn:iep:trajectory-step:${slug}:${ms}`;
+  ok(
+    predictDescriptorUrl(POD, trajStep('alice', 1785637357109)) === `${POD}context-graphs/1785637357109.ttl`,
+    'the recorder\'s step id slugs to the bare timestamp — the agent slug is NOT in the URL',
+  );
+  // Step one lands; step two, same agent, same graph, later millisecond.
+  const afterStepOne: FrontierEntry[] = [
+    { descriptorUrl: predictDescriptorUrl(POD, trajStep('alice', 1785637357109)), describes: [trajGraph('alice')] },
+  ];
+  ok(
+    descriptorWriteCollisionRefusal(
+      afterStepOne, trajGraph('alice'), predictDescriptorUrl(POD, trajStep('alice', 1785637357110)),
+      { normalize: normalizeCssUrl },
+    ) === null,
+    '★ consecutive trajectory steps are not refused — fresh timestamp, fresh URL',
+  );
+  // And a genuine same-graph republish to the very same id, which is what a stable
+  // `descriptor_id` looks like: still allowed, because no precondition is asserted.
+  ok(
+    descriptorWriteCollisionRefusal(
+      afterStepOne, trajGraph('alice'), predictDescriptorUrl(POD, trajStep('alice', 1785637357109)),
+      { normalize: normalizeCssUrl },
+    ) === null,
+    '★ and re-publishing the SAME step id for the SAME trajectory is still allowed',
+  );
+  // ★ But two DIFFERENT agents stepping in the same millisecond are two different trajectory
+  // graphs whose ids end in the same digits — one URL, and today the second write silently
+  // replaced the first. That is the same defect as the reviewer's repro arriving with no
+  // caller malice at all, and it is now a 409 instead of a lost step.
+  ok(
+    descriptorWriteCollisionRefusal(
+      afterStepOne, trajGraph('bob'), predictDescriptorUrl(POD, trajStep('bob', 1785637357109)),
+      { normalize: normalizeCssUrl },
+    )?.error === 'descriptor_id_collides_with_other_graph',
+    '★ two agents stepping in the same millisecond collide on one URL, and are told so',
+  );
+
+  // eslint-disable-next-line no-console
+  console.log('\nthe two collision halves are reachable from the relay only together');
+
+  // ★ THE COMPOSITION, PINNED THE ONLY WAY IT CAN BE. `handlePublishContext` lives in
+  // server.ts, which starts an HTTP listener on import, so no test here can call it. But the
+  // defect that survived three rounds was never in a predicate — it was in which predicate
+  // got called, and under what condition. `casSelfOverwriteRefusal` looked like the collision
+  // check while covering half of it, and the relay called it behind an `if_match` gate.
+  //
+  // Reading the source is a weaker check than calling the handler and an infinitely stronger
+  // one than a comment. It fails loudly if someone imports a half directly, which is the one
+  // move that can reopen the gap without changing anything this file can otherwise observe.
+  const serverSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'server.ts'), 'utf8');
+  const callsFrom = (fn: string): number => [...serverSrc.matchAll(new RegExp(`(?<![\\w.])${fn}\\s*\\(`, 'g'))].length;
+  ok(
+    callsFrom('casSelfOverwriteRefusal') === 0,
+    '★ the relay does not call the chain-scoped half directly — it would skip foreign ownership',
+  );
+  ok(
+    callsFrom('foreignDescriptorOverwriteRefusal') === 0,
+    '★ nor the pod-wide half directly — it would skip the chain collision',
+  );
+  const combined = callsFrom('descriptorWriteCollisionRefusal');
+  ok(
+    combined >= 2,
+    `★ and it calls the combined gate on BOTH write paths (found ${combined})`
+    + ' — the request thread decides against a snapshot, and the deferred branch writes later,'
+    + ' so the destination is re-checked inside the acquisition that performs the write',
+  );
+
+  // ★★ EVERY `publish()` IN THE RELAY IS GATED, NOT JUST `publish_context`'s TWO. A review
+  // found three call sites that reached `publish()` directly with nothing reading the
+  // destination first: `pgsl_ingest` with `publish_to_pod` (descriptor id
+  // `urn:iep:<pod>:pgsl:<Date.now()>`, so the URL is `<epoch-ms>.ttl` — the same slug space
+  // as `record_trajectory_step` and every auto-minted id), pod bootstrap (`…:v1`, so `v1.ttl`),
+  // and the OAuth client store. Counting the gate's own call sites could never have caught
+  // that: the number was right and the coverage was not.
+  //
+  // Counted per file and compared, so ADDING a `publish()` without a gate fails here rather
+  // than in production. A statement is a line that awaits or returns `publish(...)`; doc
+  // comments mentioning it are excluded, since prose about the call is not the call.
+  const statementsIn = (src: string, re: RegExp): number =>
+    src.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l) && re.test(l)).length;
+  const gateRe = /(?<![\w.])descriptorWriteCollisionRefusal\s*\(/;
+  const publishRe = /(?:await|return)\s+publish\s*\(/;
+  const storeSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'oauth-client-store.ts'), 'utf8');
+  for (const [name, src] of [['server.ts', serverSrc], ['oauth-client-store.ts', storeSrc]] as const) {
+    const writes = statementsIn(src, publishRe);
+    const gates = statementsIn(src, gateRe);
+    ok(
+      writes > 0 && gates >= writes,
+      `★★ ${name}: every publish() is preceded by the collision gate `
+      + `(${writes} write${writes === 1 ? '' : 's'}, ${gates} gate call${gates === 1 ? '' : 's'})`,
+    );
+  }
 
   // eslint-disable-next-line no-console
   console.log(`\n${pass} passed, ${fail} failed`);

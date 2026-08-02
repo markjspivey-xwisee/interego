@@ -682,7 +682,38 @@ describe('readAttestation — one get_descriptor, and every failure is REPORTED'
       authorshipVerified: true,
       signedBy: 'did:web:agents.test:bot-7',
       boundToDescriptor: true,
+      // A relay that reports no contentBinding has not checked one. Reading the omission as
+      // anything but 'unbound' would let an older relay satisfy `requireContentBinding`.
+      contentBinding: 'unbound',
     });
+  });
+
+  it('★ contentBinding is passed through, and anything unrecognised falls to `unbound`', async () => {
+    // ★ THE DEFAULT IS THE SECURITY PROPERTY. This is JSON off a pod-facing tool: the field
+    // can be missing, a non-string, or a value from a vocabulary this build predates. All of
+    // them mean "nobody here established that the proof covers the content", and only
+    // 'bound' may ever satisfy a policy that demands it — so the mapping is an allowlist,
+    // not a cast. Defaulting the other way would turn a typo into a passing content check.
+    const cases: [unknown, string][] = [
+      ['bound', 'bound'],
+      ['declared', 'declared'],
+      ['unbound', 'unbound'],
+      [undefined, 'unbound'],
+      [null, 'unbound'],
+      ['BOUND', 'unbound'],
+      ['bound-ish', 'unbound'],
+      [true, 'unbound'],
+      [1, 'unbound'],
+      [{ toString: () => 'bound' }, 'unbound'],
+    ];
+    for (const [raw, expected] of cases) {
+      const att = await readAttestation(URL_A, depsReturning({
+        url: URL_A,
+        turtle: proofTtl('urn:iep:u-alice:1754000000000'),
+        authorship: { authorshipVerified: true, signedBy: 'did:web:agents.test:bot-7', contentBinding: raw },
+      }));
+      expect(att.contentBinding, `contentBinding: ${JSON.stringify(raw)}`).toBe(expected);
+    }
   });
 
   it('★ a descriptor with NO proof is unattested, with a reason naming why', async () => {

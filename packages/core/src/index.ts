@@ -45,6 +45,7 @@ export {
   canonicalCredentialPayload,
   canonicalAuthorshipPayload,
   createSignedAuthorship,
+  contentBindingWhenUnchecked,
   verifySignedAuthorship,
   ownerProfileToTurtle,
   parseOwnerProfile,
@@ -112,6 +113,7 @@ export type {
   DelegationVerificationOptions,
   AuthorshipProof,
   AuthorshipProofInputs,
+  ContentBinding,
 } from './model/index.js';
 
 // ── Causality (Pearl's SCM Framework) ───────────────────────
@@ -233,6 +235,11 @@ export {
   readStringValues,
   readIntegerValue,
   readIriValue,
+  // Serialization-stable graph digest (authorship contentHash)
+  canonicalGraphDigest,
+  canonicalGraphTriples,
+  digestAlgorithmOf,
+  GRAPH_DIGEST_ALGORITHM,
 } from './rdf/index.js';
 export type {
   BaseDirection,
