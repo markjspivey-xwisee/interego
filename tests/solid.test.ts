@@ -445,10 +445,19 @@ describe('publish', () => {
     expect(exThing).toBeDefined();
   });
 
-  // De-duplication path: if caller-supplied graphContent re-declares a
-  // prefix the descriptor already declares (e.g. `iep:` or `xsd:`), the
-  // descriptor binding wins and we don't emit a duplicate directive.
-  it('de-duplicates caller-supplied prefixes against the descriptor prefix block', async () => {
+  // Alias-collision path: caller-supplied graphContent re-declares a prefix the descriptor
+  // also declares (`iep:`). Both bindings are real and neither may be discarded — the
+  // descriptor's triples mean what the descriptor's block says, the payload's triples mean
+  // what the payload says. The emitter separates them by POSITION.
+  //
+  // This test used to assert the opposite ("the bogus IRI MUST NOT shadow the descriptor's
+  // canonical binding") and pinned an outright drop of the caller's directive. That was a
+  // silent data corruption: a third-party payload binding any of the descriptor's 23
+  // aliases to its own namespace had its terms re-pointed at the descriptor's namespace on
+  // the way to the pod. Once authorship proofs began committing to a content digest it also
+  // became a false accusation — the stored graph no longer denoted what the signer signed,
+  // so an honest publish verified as tampering.
+  it('keeps BOTH bindings when a caller prefix collides with the descriptor prefix block', async () => {
     const writes: { url: string; body?: string }[] = [];
     const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof url === 'string' ? url : url.toString();
@@ -461,12 +470,11 @@ describe('publish', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const graphContent = [
-      // Conflicting declaration — descriptor already binds `iep:`. The
-      // caller's bogus IRI MUST NOT shadow the descriptor's canonical
-      // binding.
-      '@prefix iep: <http://bogus.example/cg#> .',
+      // Conflicting declaration — the descriptor block also binds `iep:`. Within the
+      // payload, `iep:` means what the payload says it means.
+      '@prefix iep: <http://caller.example/own#> .',
       '@prefix ex: <http://example.org/> .',
-      'ex:Thing a ex:Note .',
+      'ex:Thing a ex:Note ; iep:kind "caller-local" .',
     ].join('\n');
 
     await publish(testDescriptor(), graphContent, 'https://alice.pod/', {
@@ -477,18 +485,129 @@ describe('publish', () => {
     const graphPut = writes.find(w => w.url.endsWith('-graph.trig'))!;
     const body = graphPut.body!;
 
-    // Bogus iep: re-declaration is dropped.
-    expect(body).not.toContain('http://bogus.example/cg#');
+    // The caller's binding survives — dropping it is what corrupted the payload.
+    expect(body).toContain('@prefix iep: <http://caller.example/own#> .');
     // ex: still hoisted exactly once.
     const exPrefixCount = (body.match(/@prefix ex: <http:\/\/example\.org\/>/g) || []).length;
     expect(exPrefixCount).toBe(1);
 
-    // parseTrig confirms the iep: prefix still points at the descriptor's
-    // canonical namespace (containing "interego/ns/iep"), not the bogus
-    // override.
+    // Position is what separates them: the caller's re-binding must land AFTER the
+    // descriptor's triples and BEFORE the named-graph block. Emitted anywhere else, one
+    // side reads the other's namespace.
+    const callerPrefixIdx = body.indexOf('@prefix iep: <http://caller.example/own#>');
+    expect(callerPrefixIdx).toBeGreaterThan(body.indexOf('iep:describes'));
+    expect(callerPrefixIdx).toBeLessThan(body.indexOf('<urn:graph:g1> {'));
+
+    // The consequence, read back through the parser: the descriptor's own `iep:describes`
+    // resolved against the canonical namespace, and the payload's `iep:kind` against the
+    // caller's. Asserting the IRIs rather than the final prefix table, because the table is
+    // only the last binding seen and says nothing about what the triples denote.
     const parsed = parseTrig(body);
-    expect(parsed.prefixes.get('iep')).toContain('interego/ns/iep');
+    const descriptorSubject = parsed.subjects.find(s => s.subject === 'urn:iep:test-solid');
+    expect([...descriptorSubject!.properties.keys()]).toContain(
+      'https://markjspivey-xwisee.github.io/interego/ns/iep#describes',
+    );
+    const payloadSubject = parsed.subjects.find(s => s.subject === 'http://example.org/Thing');
+    expect([...payloadSubject!.properties.keys()]).toContain('http://caller.example/own#kind');
     expect(parsed.prefixes.get('ex')).toBe('http://example.org/');
+  });
+
+  // The one rewrite hoisting cannot reproduce, and the only case where refusing to publish
+  // is the honest answer: an alias bound to two namespaces with triples written against
+  // each. Collapsing the directives to one point re-points the earlier triples, so the pod
+  // would hold a graph the caller never wrote. Refuse instead of storing it.
+  it('refuses a payload that re-binds one alias to two namespaces across its own triples', async () => {
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if ((init?.method ?? 'GET') === 'GET' && urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: 404, ok: false });
+      }
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const graphContent = [
+      '@prefix p: <http://a.example/> .',
+      '<urn:s1> p:x "one" .',
+      '@prefix p: <http://b.example/> .',
+      '<urn:s2> p:x "two" .',
+    ].join('\n');
+
+    await expect(
+      publish(testDescriptor(), graphContent, 'https://alice.pod/', { fetch: mockFetch, visibility: 'public' }),
+    ).rejects.toThrow(/re-binds prefix "p:"/);
+  });
+
+  // …but only when it actually changes the triples. A payload that repeats a binding it
+  // never contradicts is honest and must still publish; a syntactic "saw the alias twice"
+  // check would have refused it.
+  it('publishes a payload that re-declares an alias to the SAME namespace', async () => {
+    const writes: { url: string; body?: string }[] = [];
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = init?.method ?? 'GET';
+      if (method === 'PUT') writes.push({ url: urlStr, body: init?.body as string });
+      if (method === 'GET' && urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: 404, ok: false });
+      }
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const graphContent = [
+      '@prefix p: <http://a.example/> .',
+      '<urn:s1> p:x "one" .',
+      '@prefix p: <http://a.example/> .',
+      '<urn:s2> p:x "two" .',
+    ].join('\n');
+
+    await publish(testDescriptor(), graphContent, 'https://alice.pod/', {
+      fetch: mockFetch,
+      visibility: 'public',
+    });
+    const body = writes.find(w => w.url.endsWith('-graph.trig'))!.body!;
+    const parsed = parseTrig(body);
+    for (const s of ['urn:s1', 'urn:s2']) {
+      expect([...parsed.subjects.find(x => x.subject === s)!.properties.keys()])
+        .toContain('http://a.example/x');
+    }
+  });
+
+  // A directive-shaped line inside a triple-quoted literal is literal text. Hoisting it
+  // truncated the caller's string AND injected a foreign binding at document scope.
+  it('does not hoist a directive-shaped line out of a triple-quoted literal', async () => {
+    const writes: { url: string; body?: string }[] = [];
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = init?.method ?? 'GET';
+      if (method === 'PUT') writes.push({ url: urlStr, body: init?.body as string });
+      if (method === 'GET' && urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: 404, ok: false });
+      }
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const graphContent = [
+      '@prefix ex: <http://example.org/> .',
+      '<urn:s> ex:note """one',
+      '@prefix injected: <http://evil.example/> .',
+      'three""" .',
+    ].join('\n');
+
+    await publish(testDescriptor(), graphContent, 'https://alice.pod/', {
+      fetch: mockFetch,
+      visibility: 'public',
+    });
+    const body = writes.find(w => w.url.endsWith('-graph.trig'))!.body!;
+    // The binding never reaches document scope — its only occurrence is inside the block,
+    // which is where the caller put it. (Matching `/^@prefix injected:/m` would pass on the
+    // literal's own line, since the emitter correctly leaves it at column 0.)
+    expect(body.slice(0, body.indexOf('<urn:graph:g1> {'))).not.toContain('injected:');
+    expect(parseTrig(body).prefixes.get('injected')).toBeUndefined();
+    // …and the literal still carries all three of its lines, un-indented.
+    const parsed = parseTrig(body);
+    const note = parsed.subjects.find(s => s.subject === 'urn:s')!
+      .properties.get('http://example.org/note' as never)![0]!;
+    expect(note).toMatchObject({ kind: 'literal' });
+    expect((note as { value: string }).value).toBe('one\n@prefix injected: <http://evil.example/> .\nthree');
   });
 });
 

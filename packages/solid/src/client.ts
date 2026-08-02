@@ -19,6 +19,9 @@ import { turtlePrefixes } from '@interego/core';
 import { ownerProfileToTurtle, parseOwnerProfile, delegationCredentialToJsonLd, parseDelegationCredential, verifyDelegation } from '@interego/core';
 import { createEncryptedEnvelope, openEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
 import { computeCid } from '@interego/core';
+// The wrap refuses to store a payload whose meaning it would change; deciding that needs
+// the triples, not the characters, so it reaches for the same digest the read path uses.
+import { canonicalGraphDigest } from '@interego/core';
 import { withTransientRetry } from '@interego/core/http';
 import { getDefaultFetch, getDefaultWebSocket } from '@interego/core/http';
 
@@ -242,12 +245,48 @@ export { getDefaultFetch } from '@interego/core/http';
  * vacuously conformed.
  *
  * This implementation extracts every `@prefix` / `@base` (and SPARQL
- * `PREFIX` / `BASE`) directive from `graphContent`, merges them with
- * the descriptor's own prefix block at document scope (descriptor
- * declarations win on conflict; new prefix names are appended), and
- * emits ONLY the remaining triples inside the named-graph block — which
- * inherits the document-level prefix bindings automatically.
+ * `PREFIX` / `BASE`) directive from `graphContent`, re-emits them at
+ * document scope, and emits ONLY the remaining triples inside the
+ * named-graph block — which inherits the document-level prefix
+ * bindings automatically.
+ *
+ * ★ WHERE THE CALLER'S DIRECTIVES GO, AND WHY IT IS NOT THE TOP. They are emitted
+ * immediately BEFORE the named-graph block, after the descriptor's own body — not merged
+ * into the descriptor's prefix block. Turtle/TriG directives bind from their position
+ * forward, so this order gives the descriptor's triples the descriptor's bindings and the
+ * payload's triples the caller's, with no arbitration between them.
+ *
+ * The implementation used to arbitrate: a caller `@prefix` whose alias the descriptor
+ * already bound was DROPPED. The descriptor block binds 23 aliases (`iep cg ieh cgh rdf
+ * rdfs xsd owl prov time dct as sh acl vc did dcat ldp solid oa hydra dprod foaf`), so a
+ * third-party payload declaring, say, `@prefix as: <https://example.org/assessment#>` had
+ * that binding deleted and its `as:` terms silently re-pointed at ActivityStreams. Measured:
+ * publishing `<urn:s> as:kind "v"` stored `<urn:s> <https://www.w3.org/ns/activitystreams#kind> "v"`.
+ * That is a data-corruption defect on its own, and once authorship proofs began committing
+ * to a content digest it became a live false accusation — the served graph no longer
+ * denoted what the signer signed, so an entirely honest publish verified as tampering.
+ * A check that fails closed on honest data is worse than no check.
  */
+/**
+ * Does this line open or close a triple-quoted literal — i.e. flip "inside a long literal"?
+ *
+ * Shared by {@link wrapAsTriG} and {@link extractNamedGraphTurtle} on purpose. The wrap
+ * skips indenting lines inside a long literal and the unwrap skips un-indenting them; the
+ * moment those two disagree about where a literal starts, the unwrap either eats four
+ * characters of a caller's string or leaves four in, and the content digest of an honest
+ * record stops matching. One function, so they cannot drift.
+ *
+ * An odd number of a delimiter on a line flips the state. Both styles are counted
+ * independently because `'''` cannot terminate a `"""`.
+ */
+function flipsLongLiteralState(line: string): boolean {
+  let flip = false;
+  for (const delim of ['"""', "'''"]) {
+    if ((line.split(delim).length - 1) % 2 === 1) flip = !flip;
+  }
+  return flip;
+}
+
 function wrapAsTriG(
   descriptorTurtle: string,
   graphContent: string,
@@ -267,70 +306,155 @@ function wrapAsTriG(
   const directiveRe = /^\s*(@prefix\s+\w*:\s*<[^>]+>\s*\.|@base\s+<[^>]+>\s*\.|PREFIX\s+\w*:\s*<[^>]+>|BASE\s+<[^>]+>)\s*$/i;
   const graphLines = graphContent.split('\n');
   const graphDirectives: string[] = [];
-  const graphBodyLines: string[] = [];
+  // Each body line paired with whether it began inside a triple-quoted literal, because
+  // both rewrites below have to leave those lines alone.
+  const graphBodyLines: { readonly text: string; readonly inLiteral: boolean }[] = [];
+  // ★ A LINE INSIDE A LONG LITERAL IS TEXT, NOT SYNTAX, and both rewrites used to treat it
+  // as syntax. A directive-shaped line was hoisted out of the literal — truncating the
+  // string the caller wrote AND injecting a foreign prefix binding at document scope — and
+  // every continuation line was indented four spaces, silently changing the literal's
+  // value. `<s> <p> """one\n@prefix x: <http://a/> .\nthree"""` was stored as the one-line
+  // string "one" under an injected `x:` binding. Track the delimiters so neither happens.
+  let insideLongLiteral = false;
   for (const line of graphLines) {
-    if (directiveRe.test(line)) {
+    if (!insideLongLiteral && directiveRe.test(line)) {
       graphDirectives.push(line.trim());
     } else {
-      graphBodyLines.push(line);
+      graphBodyLines.push({ text: line, inLiteral: insideLongLiteral });
     }
+    insideLongLiteral = flipsLongLiteralState(line) ? !insideLongLiteral : insideLongLiteral;
   }
 
-  // Collect the prefix names the descriptor already declares so caller
-  // prefixes that name the same alias don't shadow the descriptor's
-  // canonical binding. Normalise SPARQL-style `PREFIX` directives to
-  // Turtle `@prefix` form when re-emitting, so the document is
-  // syntactically uniform.
+  // Re-emit the caller's directives verbatim and in their original order, normalising
+  // SPARQL-style `PREFIX` / `BASE` to Turtle `@prefix` / `@base` form so the document is
+  // syntactically uniform. Nothing is dropped and nothing is de-duplicated: which binding
+  // is in force is decided by POSITION below, not by arbitration here.
   const prefixNameRe = /^\s*(?:@prefix|PREFIX)\s+(\w*):/i;
-  const declaredPrefixes = new Set<string>();
-  for (const l of descriptorPrefixBlock.split('\n')) {
-    const m = l.match(prefixNameRe);
-    if (m) declaredPrefixes.add(m[1]!);
-  }
-  const additionalPrefixLines: string[] = [];
+  const callerPrefixLines: string[] = [];
   for (const directive of graphDirectives) {
     const m = directive.match(prefixNameRe);
-    // `@base` / `BASE` have no prefix name; if a caller declares a base
-    // we hoist it once and let the descriptor block keep its (typically
-    // absent) base. SPARQL `PREFIX a: <...>` → Turtle `@prefix a: <...> .`
     if (!m) {
-      // @base / BASE — hoist verbatim, normalising SPARQL form to Turtle.
-      if (/^\s*BASE\s/i.test(directive)) {
-        additionalPrefixLines.push(directive.replace(/^\s*BASE\s+(<[^>]+>)\s*$/i, '@base $1 .'));
-      } else {
-        additionalPrefixLines.push(directive);
-      }
+      // @base / BASE — no prefix name to carry; normalise SPARQL form to Turtle.
+      callerPrefixLines.push(
+        /^\s*BASE\s/i.test(directive)
+          ? directive.replace(/^\s*BASE\s+(<[^>]+>)\s*$/i, '@base $1 .')
+          : directive,
+      );
       continue;
     }
-    if (declaredPrefixes.has(m[1]!)) continue;
-    declaredPrefixes.add(m[1]!);
-    if (/^\s*PREFIX\s/i.test(directive)) {
-      additionalPrefixLines.push(
-        directive.replace(/^\s*PREFIX\s+(\w*):\s*(<[^>]+>)\s*$/i, '@prefix $1: $2 .'),
+    callerPrefixLines.push(
+      /^\s*PREFIX\s/i.test(directive)
+        ? directive.replace(/^\s*PREFIX\s+(\w*):\s*(<[^>]+>)\s*$/i, '@prefix $1: $2 .')
+        : directive,
+    );
+  }
+
+  // ★ THE ONE REWRITE HOISTING CANNOT PRESERVE. A payload that binds the same alias twice
+  // to different namespaces relies on the directives' positions RELATIVE TO ITS OWN
+  // TRIPLES, and hoisting collapses them all to one point — the last binding would win for
+  // the whole block, silently re-pointing the terms written before it. There is no ordering
+  // of a single block that reproduces it, so refuse rather than store something other than
+  // what the caller wrote. Checked semantically, not syntactically: a payload that
+  // re-declares an alias it never used in between is unharmed and still publishes.
+  const seenCallerNs = new Map<string, string>();
+  let aliasRebound: string | null = null;
+  for (const directive of callerPrefixLines) {
+    const m = directive.match(/^@prefix\s+(\w*):\s*(<[^>]+>)/);
+    if (!m) continue;
+    const prior = seenCallerNs.get(m[1]!);
+    if (prior !== undefined && prior !== m[2]!) aliasRebound = m[1]!;
+    seenCallerNs.set(m[1]!, m[2]!);
+  }
+  if (aliasRebound !== null) {
+    const hoisted = `${callerPrefixLines.join('\n')}\n${graphBodyLines.map(l => l.text).join('\n')}\n`;
+    if (canonicalGraphDigest(hoisted) !== canonicalGraphDigest(graphContent)) {
+      throw new Error(
+        `publish: graph content re-binds prefix "${aliasRebound}:" to a second namespace `
+        + 'partway through, and terms written before the re-binding resolve differently once '
+        + 'the directives are hoisted to document scope. Publishing would store a graph that '
+        + 'says something the caller did not write. Give each namespace its own alias.',
       );
-    } else {
-      additionalPrefixLines.push(directive);
     }
   }
 
   const lines: string[] = [];
   lines.push(descriptorPrefixBlock.trimEnd());
-  if (additionalPrefixLines.length > 0) {
-    lines.push(additionalPrefixLines.join('\n'));
-  }
   lines.push('');
   lines.push('# ── Context Descriptor ────────────────────────────');
   lines.push(descriptorBody);
   lines.push('');
+  // The caller's bindings sit here — past the descriptor's triples, ahead of the payload's
+  // — so each side resolves against its own. Emitting them up in the descriptor's prefix
+  // block instead would force one binding on both, which is what the dropping behaviour
+  // this replaced was doing.
+  if (callerPrefixLines.length > 0) {
+    lines.push(callerPrefixLines.join('\n'));
+    lines.push('');
+  }
   lines.push('# ── Named Graph Content ───────────────────────────');
   lines.push(`<${iescIri(graphIri)}> {`);
   for (const line of graphBodyLines) {
-    lines.push(line ? `    ${line}` : '');
+    // Indent for readability, but never a line the caller is still inside a long literal
+    // on: those four spaces would become part of the string's value. `extractNamedGraphTurtle`
+    // runs the identical state machine so the strip stays exactly symmetric with this.
+    lines.push(line.inLiteral || line.text === '' ? line.text : `    ${line.text}`);
   }
   lines.push('}');
   lines.push('');
 
   return lines.join('\n');
+}
+
+/**
+ * Recover the named graph from a document {@link wrapAsTriG} produced, as standalone
+ * Turtle a parser can read on its own.
+ *
+ * ★ THE INVERSE, AND IT LIVES HERE FOR THAT REASON. A reader verifying an authorship
+ * proof's `contentHash` has to digest the same graph the publisher digested, and what it
+ * is served is the WRAPPED document — descriptor triples and payload triples in one file,
+ * the payload's own `@prefix` lines hoisted to the top and its body indented four spaces.
+ * Digesting the served bytes whole would mix the descriptor's triples into the answer and
+ * never match. This undoes the wrap; keeping it adjacent to `wrapAsTriG` is what stops the
+ * two drifting apart, because a change to the emitter that skipped this function would
+ * silently turn every content-bound proof unverifiable.
+ *
+ * The hoisted prefixes are carried back in deliberately: they are what the payload's
+ * abbreviated terms resolve against, so a document served with a rebound prefix yields
+ * DIFFERENT triples and a different digest — which is the point of binding to content.
+ *
+ * Returns null when the block is absent or unterminated, so the caller reports "could not
+ * check" rather than digesting a truncated graph.
+ */
+export function extractNamedGraphTurtle(trig: string, graphIri: string): string | null {
+  const opener = `<${iescIri(graphIri)}> {`;
+  const open = trig.indexOf(opener);
+  if (open < 0) return null;
+  const bodyStart = trig.indexOf('\n', open);
+  if (bodyStart < 0) return null;
+  // The emitter always writes the terminator as `}` alone at column 0, so an unindented
+  // brace is the block end and a `}` inside a payload line (blank-node close, collection)
+  // is not mistaken for one.
+  const close = trig.indexOf('\n}', bodyStart);
+  if (close < 0) return null;
+
+  // Exactly the four spaces the emitter added, and only on the lines it added them to: an
+  // empty line never got them, and neither did a line inside a triple-quoted literal, whose
+  // leading spaces are the caller's own characters. Same state machine as the emitter, run
+  // in the same order — decide from the state BEFORE the line, then advance it.
+  let insideLongLiteral = false;
+  const unindented: string[] = [];
+  for (const line of trig.slice(bodyStart + 1, close).split('\n')) {
+    unindented.push(!insideLongLiteral && line.startsWith('    ') ? line.slice(4) : line);
+    insideLongLiteral = flipsLongLiteralState(line) ? !insideLongLiteral : insideLongLiteral;
+  }
+  const body = unindented.join('\n');
+
+  const prefixes = trig.slice(0, open)
+    .split('\n')
+    .filter(line => /^\s*(?:@prefix|@base|PREFIX|BASE)\s/i.test(line))
+    .join('\n');
+
+  return `${prefixes}\n${body}\n`;
 }
 
 /**

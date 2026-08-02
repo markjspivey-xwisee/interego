@@ -2,6 +2,9 @@ export {
   publish, discover, subscribe, parseManifest,
   rebuildManifestFromPod,
   fetchGraphContent,
+  // Inverse of the TriG wrap — how a reader recovers the graph an authorship
+  // proof's contentHash was computed over.
+  extractNamedGraphTurtle,
   parseDistributionFromDescriptorTurtle,
   parseAuthorshipProofFromDescriptorTurtle,
   // Exported alongside its parser: a round-trip is only testable if both halves are

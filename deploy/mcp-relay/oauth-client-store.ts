@@ -69,6 +69,10 @@ import {
   fetchGraphContent,
   publish,
 } from '@interego/solid';
+// The one entry point to the descriptor-collision refusal — see its header for why the two
+// halves are never reachable separately.
+import { descriptorWriteCollisionRefusal } from './supersession-frontier.js';
+import { normalizeCssUrl } from './url-rewrite.js';
 
 // ── Scenario namespace ──────────────────────────────────────
 // Deliberately under a non-owned namespace per the codebase's ontology-
@@ -736,6 +740,25 @@ export async function saveClient(
     .conformsTo(RELAY_OAUTH_CLIENT_TYPE)
     .version(1)
     .build();
+
+  // ★ THE SAME GATE `publish_context` GOES THROUGH. This site passes an explicit
+  // `descriptorSlug`, so it does not share the bare-`<epoch-ms>` slug space the auto-minted
+  // ids land in — but "narrow" is not "closed": `oauth-client-<id>.ttl` is reachable by any
+  // descriptor id ending in that segment, and reaching `publish()` without the check meant
+  // nothing at all read the destination first. Re-saving THIS client is unaffected: the gate
+  // compares graphs, and the graph IRI is stable per client, so an update is an idempotent
+  // overwrite of the client's own descriptor.
+  //
+  // A failed manifest read must not silently disable the check, so it refuses the save.
+  // Client registration is infrequent and retried; overwriting somebody else's descriptor is
+  // not something to fall back to when the pod is unreadable.
+  const collision = descriptorWriteCollisionRefusal(
+    await discover(cfg.podUrl, undefined, { fetch: cfg.fetch }),
+    graphIri,
+    descriptorUrlForClient(cfg.podUrl, clientId),
+    { normalize: normalizeCssUrl },
+  );
+  if (collision) throw new Error(`[oauth-client-store] refusing to save client ${clientId}: ${collision.message}`);
 
   await withTransientRetry(async () => {
     await publish(descriptor, graphContent, cfg.podUrl, {

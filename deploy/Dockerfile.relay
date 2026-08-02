@@ -122,6 +122,7 @@ COPY deploy/mcp-relay/hmd-app.ts ./
 COPY deploy/mcp-relay/hmd-app-logic.ts ./
 COPY deploy/mcp-relay/pgsl-node-store.ts ./
 COPY deploy/mcp-relay/engagement-store.ts ./
+COPY deploy/mcp-relay/authorship-content-binding.ts ./
 # AMEP reference validator + JSON-LD context, vendored verbatim. amep.ts loads
 # them by a path relative to the COMPILED module (dist/amep.js), so after tsc
 # they must sit at dist/amep-vendor/.

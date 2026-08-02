@@ -20,6 +20,9 @@ import type {
   DelegationVerification,
   DelegationScope,
 } from './types.js';
+// Digest labels are compared, never assumed equal — see the algorithm check in
+// verifySignedAuthorship for the false-forgery this import prevents.
+import { digestAlgorithmOf } from '../rdf/graph-digest.js';
 
 // ── Signer / Verifier injection types ───────────────────────
 //
@@ -758,6 +761,51 @@ export async function createSignedAuthorship(
 }
 
 /**
+ * How much a verified authorship proof says about the CONTENT served beside it.
+ *
+ * Four values because there are four genuinely different situations, and the three that
+ * are not `'bound'` are not the same as each other:
+ *
+ *   bound       the proof carries a digest THIS verifier knows how to recompute, it
+ *               recomputed it over the payload actually served, and the two matched. Only
+ *               this value licenses "the content is attested".
+ *   mismatched  the digest WAS recomputed over the payload served and did NOT match. The
+ *               signature is authentic and it is a signature over different content. This
+ *               is the sharpest evidence of tampering the substrate can produce.
+ *   declared    the proof commits to a digest, but nothing was checked against it — the
+ *               caller supplied no payload (encrypted and the reader is not a recipient,
+ *               the fetch failed), the payload did not parse, or the digest carries an
+ *               algorithm label this verifier does not implement. An honest "I did not
+ *               check", which must never be read as either an attestation or an accusation.
+ *   unbound     the proof carries no digest at all. Every proof written before the payload
+ *               covered content is this, and on its own it is no evidence of forgery — the
+ *               signature means exactly what it always meant, which is that a named signer
+ *               signed a descriptor URL.
+ *
+ * ★ WHY `'mismatched'` IS ITS OWN VALUE AND NOT FOLDED INTO `'declared'`. It used to be
+ * folded in, on the reasoning that a mismatch already fails verification (`valid: false`)
+ * so the binding field need not carry it. It does need to carry it: readers render the
+ * binding on its own, and `'declared'` is documented and narrated as "nothing was checked
+ * … neither an attestation of the content nor evidence against it". Emitting that sentence
+ * about a check that ran, failed, and caught a content swap is the substrate's strongest
+ * signal delivered with a note telling the reader to disregard it.
+ */
+export type ContentBinding = 'bound' | 'mismatched' | 'declared' | 'unbound';
+
+/**
+ * What to report when the content digest was NOT examined — because the signature failed
+ * first, or the verifier threw before reaching it.
+ *
+ * Keyed on whether the proof carries a digest at all, which is knowable from the proof
+ * alone and is the only thing the two values distinguish. Reporting `'unbound'` for a proof
+ * that does carry one asserts "this proof commits to no content", which is false and is the
+ * more dangerous direction: `'unbound'` reads as ordinary legacy data.
+ */
+export function contentBindingWhenUnchecked(contentHash: string | undefined): ContentBinding {
+  return typeof contentHash === 'string' && contentHash.length > 0 ? 'declared' : 'unbound';
+}
+
+/**
  * Verify a parsed authorship proof against the canonical payload it
  * claims to sign. Recovers the signer from `(payload, signature)` and
  * checks it matches `proof.signerAddress` — symmetric with
@@ -782,13 +830,14 @@ export async function verifySignedAuthorship(
   signer: IRI;
   reason?: string;
   /**
-   * ★ Whether the signature actually covers the CONTENT, as opposed to only naming the
-   * descriptor. `valid: true, coversContent: false` is a real and common outcome — it
-   * means a legacy proof, signed before the payload included a content digest, and it
-   * must not be read as "this content is attested". A consumer that needs content
-   * integrity has to check this, because the signature verifies either way.
+   * ★ THREE OUTCOMES, NEVER TWO. This replaced a `coversContent: boolean` that was true
+   * whenever the proof merely CARRIED a digest — which is a claim about the proof, not
+   * about the document in front of the reader. Collapsing "the signer committed to a
+   * digest" together with "I recomputed that digest over the bytes I am serving" into one
+   * flag is precisely how a proof that covers nothing gets reported as one that does.
+   * See {@link ContentBinding} for what each value licenses.
    */
-  coversContent: boolean;
+  contentBinding: ContentBinding;
 }> {
   const inputs: AuthorshipProofInputs = {
     agentId: proof.issuer,
@@ -818,28 +867,54 @@ export async function verifySignedAuthorship(
         valid: false,
         signer: proof.issuer,
         reason: 'Authorship proof signature did not verify against canonical payload',
-        coversContent: false,
+        // Nothing about the content was examined — the signature failed before that. This
+        // used to report 'unbound' unconditionally, which readers narrate as "the proof
+        // carries no content digest … it is not a forgery", said about a proof that does
+        // carry one and whose signature did not verify.
+        contentBinding: contentBindingWhenUnchecked(proof.contentHash),
       };
     }
-    // The signature is intact. Now: does it actually say anything about the content?
-    const coversContent = typeof proof.contentHash === 'string' && proof.contentHash.length > 0;
-    if (coversContent && observed?.contentHash && observed.contentHash !== proof.contentHash) {
-      // A signature that verifies over a digest of DIFFERENT content is the sharpest
-      // possible failure: the proof is authentic and the content has been swapped.
+    // The signature is intact. Now the separate question: does it say anything about the
+    // content, and did anyone check?
+    const claimed = typeof proof.contentHash === 'string' && proof.contentHash.length > 0
+      ? proof.contentHash
+      : null;
+    if (claimed === null) return { valid: true, signer: proof.issuer, contentBinding: 'unbound' };
+
+    const seen = typeof observed?.contentHash === 'string' && observed.contentHash.length > 0
+      ? observed.contentHash
+      : null;
+    if (seen === null) return { valid: true, signer: proof.issuer, contentBinding: 'declared' };
+
+    // ★ COMPARE LIKE WITH LIKE, OR DO NOT COMPARE. Two digests produced by different
+    // algorithms differ for a reason that has nothing to do with tampering, and reporting
+    // that difference as a content swap would brand every proof written before
+    // `graph-nquads-sha256` — each carrying a bare `sha256:` over inbound bytes no reader
+    // is ever served — as a forgery the moment a reader started checking. That is the
+    // failure this branch exists to prevent: a new check whose first act is to accuse
+    // honest historical data.
+    if (digestAlgorithmOf(claimed) !== digestAlgorithmOf(seen)) {
+      return { valid: true, signer: proof.issuer, contentBinding: 'declared' };
+    }
+    if (claimed !== seen) {
+      // Same algorithm, different answer: the proof is authentic and the content is not
+      // the content it was signed over.
       return {
         valid: false,
         signer: proof.issuer,
-        reason: `Authorship proof covers content ${proof.contentHash} but the observed content is ${observed.contentHash}`,
-        coversContent: true,
+        reason: `Authorship proof covers content ${claimed} but the observed content is ${seen}`,
+        contentBinding: 'mismatched',
       };
     }
-    return { valid: true, signer: proof.issuer, coversContent };
+    return { valid: true, signer: proof.issuer, contentBinding: 'bound' };
   } catch (err) {
     return {
       valid: false,
       signer: proof.issuer,
       reason: `Authorship verifier threw: ${(err as Error).message}`,
-      coversContent: false,
+      // A verifier that threw compared nothing, so this is the same "not checked" as a
+      // failed signature — not a claim that the proof carries no digest.
+      contentBinding: contentBindingWhenUnchecked(proof.contentHash),
     };
   }
 }

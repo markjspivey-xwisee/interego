@@ -132,6 +132,13 @@ import {
   TENANT_ADMIN_CAPABILITY,
   createOwnerProfile,
   verifySignedAuthorship,
+  // Serialization-stable digest of a graph's triples — what an authorship proof's
+  // contentHash commits to, so publish and read can compute the same answer over a
+  // payload publishing rewrites in between.
+  canonicalGraphDigest,
+  // The one rule for "the content was not checked" — shared with the verifier so the
+  // relay's catch path and the verifier's own failure paths cannot disagree about it.
+  contentBindingWhenUnchecked,
   type AuthorshipProof,
   cryptoComputeCid,
   decompose as kernelDecompose,
@@ -287,9 +294,20 @@ import * as publishedNodes from './pgsl-node-store.js';
 import { alternateTurtleHref, looksLikeHtml } from './alternate-turtle.js';
 import {
   supersessionFrontier, classifyCasRequest, casRefusal,
-  priorVersionsFor, reDecidedSupersedes, casSelfOverwriteRefusal,
+  priorVersionsFor, reDecidedSupersedes,
+  // `casSelfOverwriteRefusal` and `foreignDescriptorOverwriteRefusal` are deliberately NOT
+  // imported here. They have different trigger conditions over the same predicted URL, and
+  // reaching one without the other is the shape of the defect that let a publish overwrite
+  // another graph's descriptor. `descriptorWriteCollisionRefusal` is the only way in.
+  descriptorWriteCollisionRefusal,
 } from './supersession-frontier.js';
 import { resolveInteropPrincipal } from './interop-principal.js';
+import {
+  observedGraphDigest,
+  graphIriFromDescriptorTurtle,
+  contentBindingNote,
+  type ReadContentBinding,
+} from './authorship-content-binding.js';
 
 // Privacy — `@interego/privacy`.
 import { screenForSensitiveContent, formatSensitivityWarning } from '@interego/privacy';
@@ -2310,6 +2328,14 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // an https manifest entry) and the frontier excluded it (caller-chosen, see
   // supersession-frontier.ts). One value, computed once, used by all of them.
   const predictedDescriptorUrl = predictDescriptorUrl(podUrl, descId);
+  // The graph this publish claims, as a STRING or not at all. `tools/call` performs no
+  // schema validation, so `graph_iri` arrives as whatever the caller sent; the collision gate
+  // compares it against manifest `iep:describes` values, which are strings, and a number
+  // compared against a string is never equal. Narrowing here rather than casting means the
+  // gate is handed "this publish names no graph" — which it refuses against an occupied URL —
+  // instead of a value that silently matches nothing. `classifyCasRequest` already rejects the
+  // same shape on the if_match path; this covers the path that has no precondition.
+  const claimedGraphIri = typeof args.graph_iri === 'string' ? args.graph_iri : undefined;
   const now = new Date().toISOString();
 
   // Ensure pod container exists. Skip on steady-state — lazy-pod-init's
@@ -2420,9 +2446,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   if (refusal) return JSON.stringify(refusal);
   const priorVersions: IRI[] = [];
   // Manifest entries the substrate gate / best-effort head-CID echo can
-  // reuse. Populated when EITHER (a) auto_supersede needs to look up
-  // prior versions, OR (b) an if_match precondition was supplied.
-  // Built once so the manifest GET round-trip is shared.
+  // reuse. Built once so the manifest GET round-trip is shared.
   //
   // Stale-cache defence: when an if_match precondition was supplied we
   // FORCE a fresh manifest read (same `manifestCache.delete` policy
@@ -2432,11 +2456,19 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // backfill admin endpoint ran would see a pre-mirror cached snapshot
   // (cidByUrl empty) and fall through to the body-fetch path the
   // backfill was meant to retire — exact failure mode johnny pinned.
+  //
+  // ★ READ ON EVERY PUBLISH NOW, NOT ONLY WHEN AUTO-SUPERSEDE OR A PRECONDITION WANTS IT.
+  //
+  // It used to be gated on `(auto_supersede_prior !== false && graph_iri) || if_match`, and
+  // the destination-URL collision check below is the reason that is no longer enough. Every
+  // descriptor on a pod lives in one flat `context-graphs/<slug>.ttl` namespace and the slug
+  // comes from `descriptor_id`, so the only way to know whether this write lands on another
+  // graph's descriptor is to look. The old condition switched the manifest off for exactly
+  // the shape that needs it most — `auto_supersede_prior: false` with no `if_match`, which
+  // is what `record_trajectory_step` sends on every step — so the check would have been
+  // present in code and absent at runtime for the relay's own highest-volume publisher.
   let manifestEntriesForLookup: readonly ManifestEntry[] | null = null;
-  const needsManifest =
-    (args.auto_supersede_prior !== false && args.graph_iri) ||
-    ifMatch !== undefined;
-  if (needsManifest) {
+  {
     if (ifMatch !== undefined) {
       manifestCache.delete(podUrl);
     }
@@ -2469,6 +2501,29 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
             + 'an if_match that cannot be evaluated must not be reported as satisfied.',
         });
       }
+      // ★ AND FAIL CLOSED WHEN THERE IS NO PRECONDITION EITHER, because the manifest is now
+      // load-bearing for something other than the precondition: it is the only evidence of
+      // who already owns the URL this publish will PUT to. Falling through here would leave
+      // `descriptorWriteCollisionRefusal` inspecting an empty entry list, which refuses
+      // nothing — the guard would switch itself off during precisely the CSS wobble in which
+      // a blind unconditional PUT over another graph's descriptor is least recoverable.
+      //
+      // This DOES refuse publishes that used to succeed. The cost is bounded: `discover()`
+      // returns [] rather than throwing on a 404 manifest (an empty pod is not a failure),
+      // and it only throws after six attempts against a 5xx — a CSS that unhealthy is one
+      // the descriptor PUT two steps below was not going to reach either. Retryable, because
+      // that is a condition that clears.
+      return JSON.stringify({
+        error: 'overwrite_check_unavailable',
+        code: 503,
+        retryable: true,
+        message:
+          `Could not read the manifest for ${podUrl}, so it could not be determined whether `
+          + `<${predictedDescriptorUrl}> already holds a descriptor for another graph. `
+          + 'Refusing the publish rather than writing blind: an unconditional PUT over '
+          + 'another graph\'s descriptor removes it from that graph\'s supersession chain and '
+          + 'nothing afterwards can tell that it happened.',
+      });
     }
     if (manifestEntriesForLookup && args.auto_supersede_prior !== false && args.graph_iri) {
       // ★ The self-filter compares URLs now, not a urn against a URL. The old inline
@@ -2547,12 +2602,27 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // frontier and refused you forever. The self-supersession that exclusion was reaching for
   // is handled where it belongs, on the supersedes list (`priorVersionsFor` above) plus the
   // collision refusal immediately below. Written up in supersession-frontier.ts.
-  if (casRequest.kind === 'evaluable' && manifestEntriesForLookup) {
-    const collision = casSelfOverwriteRefusal(
+  //
+  // ★ AND THE COLLISION CHECK IS NO LONGER GATED ON `if_match`. It asks two questions of the
+  // one predicted URL — "is this already a version of the chain I claim to be swapping over"
+  // (only meaningful under a precondition) and "does this URL already belong to some OTHER
+  // graph on this pod" (meaningful always, and worse without a precondition, because then
+  // nothing else on this path reads the destination before PUTting to it). Both live behind
+  // `descriptorWriteCollisionRefusal` so the difference in trigger conditions is expressed
+  // once, in the module that explains it, instead of as an `if` here that a later edit can
+  // quietly widen.
+  if (manifestEntriesForLookup) {
+    const collision = descriptorWriteCollisionRefusal(
       manifestEntriesForLookup,
-      casRequest.graphIri,
+      claimedGraphIri,
       predictedDescriptorUrl,
-      normalizeCssUrl,
+      {
+        // Present iff a precondition was asserted AND was evaluable — the chain-scoped half
+        // needs a graph to scope to, and `classifyCasRequest` has already refused every
+        // other shape above.
+        ...(casRequest.kind === 'evaluable' ? { casGraphIri: casRequest.graphIri } : {}),
+        normalize: normalizeCssUrl,
+      },
     );
     if (collision) return JSON.stringify(collision);
   }
@@ -2972,8 +3042,20 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       // and nothing about what it says. The proof stayed valid however the graph changed
       // afterwards, so `sign_authorship: true` attested a filename while reading exactly
       // like an attestation of the document.
-      const contentHash = `sha256:${createHash('sha256')
-        .update(String(args.graph_content ?? ''), 'utf8').digest('hex')}`;
+      //
+      // ★ AND IT COMMITS TO THE TRIPLES, NOT THE CHARACTERS. This was a raw
+      // `sha256(graph_content)`, which no reader could ever reproduce: `publish()` rewrites
+      // the payload through `wrapAsTriG` before it lands, so the bytes served are never the
+      // bytes hashed (measured: published sha256:db3d64fd…, served sha256:71904d61…). The
+      // digest was unverifiable in principle, and the read path's silence about that is what
+      // let it look verified. A canonical-triples digest is stable across the rewrite and so
+      // can actually be checked on read — see authorship-content-binding.ts.
+      //
+      // Null when the payload does not parse as RDF. The proof is then written WITHOUT a
+      // content digest rather than with a digest of nothing: `contentBinding: 'unbound'`
+      // truthfully says the content is uncovered, where a digest over the empty string
+      // would be a binding every unparseable payload satisfies.
+      const contentHash = canonicalGraphDigest(String(args.graph_content ?? '')) ?? undefined;
       authorshipProof = await createSignedAuthorship(
         {
           agentId: agentId as IRI,
@@ -2981,7 +3063,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
           descriptorId: descriptor.id,
           created: now,
           ...(agentDidArg ? { agentDid: agentDidArg } : {}),
-          contentHash,
+          ...(contentHash ? { contentHash } : {}),
         },
         signer,
       );
@@ -3297,14 +3379,65 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         // `withPodMutex` would reproduce the defect one frame later: another writer can
         // still land between the read and the acquisition. Read and write are one critical
         // section or they are not a decision.
+        //
+        // ── ★ AND RE-CHECK THE DESTINATION URL IN THE SAME ACQUISITION ──
+        //
+        // The collision refusal on the request thread reads a snapshot too, and this write
+        // happens after it, so the URL-ownership question has the identical staleness. The
+        // race is symmetric to the fork above and costs more:
+        //
+        //   t0  W1 (graph G1, no if_match) predicts <…/s.ttl>; nothing holds it; accepted 202
+        //   t2  W2 (graph G2, descriptor_id slugging to `s`) arrives, also sees it free,
+        //         and — being synchronous, or simply shorter — writes <…/s.ttl> for G2
+        //   t4  W1's deferred write PUTs <…/s.ttl> for G1, and G2 loses the descriptor
+        //
+        // Re-asking inside the acquisition that performs the write closes it, for the same
+        // reason the re-decide is here rather than one frame earlier: a read and the write
+        // it authorises are one critical section or they are not a decision.
+        //
+        // The re-read is therefore unconditional, where it used to be skipped under
+        // `auto_supersede_prior: false`. That costs one extra manifest GET per step for
+        // `record_trajectory_step`, the relay's highest-volume publisher — paid off the
+        // request thread, and paid for the case that publisher actually hits: two agents
+        // stepping in the same millisecond mint ids ending in the same `Date.now()` digits,
+        // which is one slug, one URL, and two different `urn:graph:trajectory:*` graphs.
         let descriptorToWrite = descriptor;
         const real = await withPodMutex(podUrl, async () => {
-          // Only when the list came FROM the manifest. With `auto_supersede_prior: false`
-          // the supersedes triples are the caller's own content, not ours to revise.
-          if (args.auto_supersede_prior !== false && args.graph_iri) {
-            try {
-              manifestCache.delete(podUrl);
-              const fresh = await getCachedManifest(podUrl);
+          let fresh: readonly ManifestEntry[] | null = null;
+          try {
+            manifestCache.delete(podUrl);
+            fresh = await getCachedManifest(podUrl);
+          } catch (err) {
+            // Fail OPEN on the RE-READ, deliberately, and it is a smaller concession than it
+            // looks: both things this read feeds were already decided against a snapshot at
+            // most seconds old on the request thread. Failing open degrades them to that
+            // snapshot, not to nothing — the supersedes list is the one we would have written
+            // before this re-decide existed, and the destination URL was checked and clear
+            // when the caller was answered. No precondition was asserted on this path
+            // (`if_match` forces the synchronous branch), so there is no CAS verdict being
+            // downgraded. Refusing here would trade a narrow race for a common outage, and
+            // the caller has already been handed a 202 that cannot be taken back.
+            log(`[publish/deferred] manifest re-read failed for ${descriptor.id}, writing against the request-thread snapshot: ${(err as Error).message}`);
+          }
+          if (fresh) {
+            // ★ Ownership before content. If another graph claimed this URL while we were
+            // queued, the supersedes list is beside the point — the write must not happen at
+            // all. Thrown rather than returned: the caller already holds a 202, so the only
+            // channel left is the deferred status the catch below records, which
+            // /publish/status reports.
+            const collision = descriptorWriteCollisionRefusal(
+              fresh,
+              claimedGraphIri,
+              predictedDescriptorUrl,
+              { normalize: normalizeCssUrl },
+            );
+            if (collision) {
+              log(`[publish/deferred] destination claimed while queued for ${descriptor.id}: ${collision.error}`);
+              throw new Error(`${collision.error}: ${collision.message}`);
+            }
+            // Only when the list came FROM the manifest. With `auto_supersede_prior: false`
+            // the supersedes triples are the caller's own content, not ours to revise.
+            if (args.auto_supersede_prior !== false && args.graph_iri) {
               // `null` means nothing landed while we were queued, and then the descriptor
               // object is carried through untouched — so the uncontended write is
               // byte-for-byte the one whose CID the caller already has in its 202.
@@ -3320,13 +3453,6 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
                 log(`[publish/deferred] supersedes re-decided for ${descriptor.id}: ${(descriptor.supersedes ?? []).length} -> ${merged.length} priors landed while this write was queued`);
                 descriptorToWrite = { ...descriptor, supersedes: merged as IRI[] };
               }
-            } catch (err) {
-              // Fail OPEN, deliberately and only here: no precondition was asserted on
-              // this path (`if_match` forces the synchronous branch), so there is no guard
-              // to downgrade — the worst case is the stale snapshot we would have written
-              // anyway. Refusing a publish because a best-effort freshness read failed
-              // would trade a rare fork for a common outage.
-              log(`[publish/deferred] supersedes re-read failed for ${descriptor.id}, writing the snapshot: ${(err as Error).message}`);
             }
           }
           return publish(descriptorToWrite, args.graph_content as string, podUrl, publishOptions);
@@ -4188,11 +4314,29 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
     verificationMethod?: IRI;
     effectiveTrustLevel?: 'CryptographicallyVerified' | 'SelfAsserted';
     reason?: string;
+    contentBinding: ReadContentBinding;
+    contentBindingNote: string;
   } | undefined;
   const parsedProof = parseAuthorshipProofFromDescriptorTurtle(turtle);
   if (parsedProof) {
     try {
-      const verifyResult = await verifySignedAuthorship(parsedProof, delegationVerifier);
+      // ★ THE PROOF IS NOW CHECKED AGAINST THE PAYLOAD, NOT JUST AGAINST ITSELF. This call
+      // passed no observed content and discarded the verifier's content verdict, so a
+      // descriptor whose graph had been replaced wholesale still came back
+      // `authorshipVerified: true` — the signature was intact, and nothing had ever asked
+      // whether it was a signature over what was being served. `observedGraphDigest`
+      // returns undefined whenever the payload could not be read (encrypted to others,
+      // absent, unparseable), which the verifier renders as 'declared' rather than as
+      // either an attestation or an accusation.
+      const observedContentHash = observedGraphDigest({
+        graphContent: graph?.content,
+        graphIri: graphIriFromDescriptorTurtle(turtle),
+      });
+      const verifyResult = await verifySignedAuthorship(
+        parsedProof,
+        delegationVerifier,
+        observedContentHash !== undefined ? { contentHash: observedContentHash } : undefined,
+      );
       if (verifyResult.valid) {
         let effective: 'CryptographicallyVerified' | 'SelfAsserted' = 'SelfAsserted';
         try {
@@ -4214,11 +4358,20 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
             }
           }
         } catch { /* chain-walk best-effort; fall back to SelfAsserted */ }
+        // ★ contentBinding IS A SEPARATE AXIS FROM effectiveTrustLevel, and they are
+        // reported separately on purpose. The trust level answers "is the signer a
+        // delegate the pod owner vouches for"; the binding answers "is this signature over
+        // the bytes in front of you". A descriptor can be CryptographicallyVerified and
+        // 'unbound' at the same time, and that combination is exactly the one a reader
+        // most needs told — folding either into the other reproduces the collapse this
+        // whole change exists to undo.
         authorship = {
           authorshipVerified: true,
           signedBy: parsedProof.issuer,
           verificationMethod: parsedProof.verificationMethod,
           effectiveTrustLevel: effective,
+          contentBinding: verifyResult.contentBinding,
+          contentBindingNote: contentBindingNote(verifyResult.contentBinding, parsedProof.contentHash),
         };
       } else {
         authorship = {
@@ -4226,13 +4379,29 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
           signedBy: parsedProof.issuer,
           verificationMethod: parsedProof.verificationMethod,
           reason: verifyResult.reason ?? 'verification returned false',
+          contentBinding: verifyResult.contentBinding,
+          // `signatureVerified: false` — except on the one failure that IS a content
+          // verdict. A mismatch means the signature verified and the digest did not, and
+          // the note has to say the content was checked, not that the signature failed
+          // before reaching it.
+          contentBindingNote: contentBindingNote(
+            verifyResult.contentBinding,
+            parsedProof.contentHash,
+            verifyResult.contentBinding === 'mismatched',
+          ),
         };
       }
     } catch (err) {
+      // A verifier that threw compared nothing. Which "not checked" it is depends on
+      // whether the proof carries a digest at all — `contentBindingWhenUnchecked` is the
+      // same rule the verifier applies, so the two paths cannot report it differently.
+      const unchecked = contentBindingWhenUnchecked(parsedProof.contentHash);
       authorship = {
         authorshipVerified: false,
         signedBy: parsedProof.issuer,
         reason: `verifier threw: ${(err as Error).message}`,
+        contentBinding: unchecked,
+        contentBindingNote: contentBindingNote(unchecked, parsedProof.contentHash, false),
       };
     }
   }
@@ -6336,6 +6505,20 @@ async function handlePgslIngest(args: ToolArgs): Promise<string> {
         }],
       );
       const turtle = pgslToTurtle(pgsl);
+      // ★ THE SAME GATE `publish_context` GOES THROUGH, AND FOR THE SAME REASON. This site
+      // reached `publish()` directly, so nothing checked the destination. Its descriptor id
+      // is `urn:iep:<pod>:pgsl:<Date.now()>`, and `slugFromIri` keeps only the LAST segment
+      // — so the URL is `<pod>/context-graphs/<epoch-ms>.ttl`, the identical slug space
+      // `record_trajectory_step` and every auto-minted `publish_context` id write into. An
+      // ingest landing on the same millisecond as another graph's descriptor overwrote it in
+      // place and removed it from its supersession chain, silently.
+      const collision = descriptorWriteCollisionRefusal(
+        await getCachedManifest(podUrl),
+        topUri,
+        predictDescriptorUrl(podUrl, desc.id),
+        { normalize: normalizeCssUrl },
+      );
+      if (collision) return JSON.stringify(collision);
       const publishResult = await publish(desc, turtle, podUrl, { fetch: solidFetch });
       result.publishedDescriptorUrl = publishResult.descriptorUrl;
     } catch (err) {
@@ -7468,12 +7651,18 @@ const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
     },
     authorship: {
       type: 'object',
-      description: 'When the descriptor embeds a iep:authorshipProof, the relay automatically re-derives the canonical authorship payload and runs the delegation verifier from the descriptor turtle alone. authorshipVerified=true means the signature matched and the named agent really signed the AgentFacet. When BOTH the authorship proof and the delegation chain verify, effectiveTrustLevel becomes CryptographicallyVerified even if the descriptor body shipped SelfAsserted.',
+      description: 'When the descriptor embeds a iep:authorshipProof, the relay automatically re-derives the canonical authorship payload and runs the delegation verifier from the descriptor turtle alone. authorshipVerified=true means the signature matched and the named agent really signed the AgentFacet. When BOTH the authorship proof and the delegation chain verify, effectiveTrustLevel becomes CryptographicallyVerified even if the descriptor body shipped SelfAsserted. ★ authorshipVerified alone says WHO SIGNED A DESCRIPTOR — read contentBinding to learn whether the signature also covers the graph served with it; the two are separate questions and a proof can verify while covering nothing.',
       properties: {
         authorshipVerified: { type: 'boolean' },
         signedBy: { type: 'string', description: 'Agent IRI claimed in the proof' },
         verificationMethod: { type: 'string', description: 'did:ethr:<addr> or other key-resolution IRI' },
         effectiveTrustLevel: { type: 'string', enum: ['CryptographicallyVerified', 'SelfAsserted'] },
+        contentBinding: {
+          type: 'string',
+          enum: ['bound', 'mismatched', 'declared', 'unbound'],
+          description: 'Whether the proof covers the CONTENT served with this descriptor, not merely its URL. `bound` — the signed digest was recomputed over the payload actually served and matched; only this licenses treating the content as attested. It means the graph STATES the same triples that were signed, NOT that the bytes are identical — the payload is rewritten on publish, so the bytes never match. `mismatched` — the digest WAS recomputed and did NOT match: the signature is authentic and covers different content, so the graph has been altered since signing. Evidence against the content; authorshipVerified is also false. `declared` — the proof commits to a digest and NOTHING was checked against it (payload unreadable here, a digest form this verifier cannot recompute, or the signature failed before the content was reached); not an attestation and not an accusation. `unbound` — the proof carries no digest at all: every proof written before content binding existed, plus any payload the digester could not parse. Silent about content, and when authorshipVerified is false it is silent about the signer too.',
+        },
+        contentBindingNote: { type: 'string', description: 'The same verdict in prose, stating plainly what it does and does not license' },
         reason: { type: 'string', description: 'Diagnostic when authorshipVerified is false' },
       },
     },
@@ -10860,6 +11049,26 @@ async function publishPodBootstrapDescriptor(params: {
   ].join('\n');
 
   try {
+    // ★ THE SAME GATE `publish_context` GOES THROUGH. `urn:iep:pod-bootstrap:<user>:v1`
+    // slugs to the bare tail `v1`, so this writes `<pod>/context-graphs/v1.ttl` — a name a
+    // user reaches with any descriptor id ending in `v1` (`https://example.org/mygraph/v1`,
+    // `urn:mine:v1`). Bootstrap's own idempotency guard is a process-local Set plus a HEAD
+    // on `<pod>/agents`; neither looks at the descriptor it is about to replace, so before
+    // this check a re-bootstrap could overwrite a user's graph descriptor in place and drop
+    // it out of its supersession chain.
+    const collision = descriptorWriteCollisionRefusal(
+      await getCachedManifest(podUrl),
+      podUrl,
+      predictDescriptorUrl(podUrl, descId),
+      { normalize: normalizeCssUrl },
+    );
+    if (collision) {
+      // Bootstrap is best-effort and has no caller to answer, so refusing is logged rather
+      // than returned. Skipping the write is the whole point: the alternative is destroying
+      // somebody's descriptor to install a convenience record.
+      log(`WARN: pod-bootstrap SKIPPED for ${podUrl}: ${collision.message}`);
+      return;
+    }
     await publish(descriptor, graphContent, podUrl, { fetch: solidFetch });
     log(`[pod-bootstrap] published ${descId} to ${podUrl}`);
   } catch (err) {

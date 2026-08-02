@@ -394,26 +394,27 @@ export function reDecidedSupersedes(
  * 412 because nothing about the caller's ASSERTION was wrong — the request is
  * self-contradictory. Non-retryable for the same reason: resending it re-collides.
  *
- * Scoped to publishes that asserted an `if_match`. Republishing to a stable descriptor URL
- * with no precondition is a legitimate idempotent overwrite (the relay's own trajectory
- * recorder does exactly that), and refusing it would break callers doing nothing wrong.
+ * Scoped to publishes that asserted an `if_match`. Republishing to a descriptor URL that
+ * already holds a version of THE SAME graph, with no precondition, is a legitimate
+ * idempotent overwrite, and refusing it would break callers doing nothing wrong.
  *
- * ★ THE SCOPE OF THIS CHECK IS ONE GRAPH, AND THAT IS NARROWER THAN "DOES THIS URL EXIST".
+ * ★ THE SCOPE OF THIS CHECK IS STILL ONE GRAPH — DELIBERATELY, AND NO LONGER ALONE.
  *
- * It inspects only entries whose `describes` contains `graphIri`. `descriptor_id` decides
- * the descriptor URL through `slugFromIri` — the last `/`, `:` or `#` segment — so a caller
- * publishing a version of G1 can choose a slug that lands on a descriptor belonging to G2.
- * Nothing here sees that: G2's entry does not describe G1, the collision is not reported,
- * the `if_match` passes on its own merits, and the write replaces G2's descriptor in place.
- * If it was G2's only head, G2 silently loses its head. Measured, not theorised:
- * `scratchpad/adv-cas.test.ts` CAS-A.
+ * It inspects only entries whose `describes` contains `graphIri`, because everything it
+ * reasons about is chain-shaped: which descriptor the `if_match` names, which version the
+ * write would destroy, which supersedes edge would be missing afterwards. None of that is
+ * defined for a descriptor belonging to a different graph.
  *
- * That hole PREDATES the frontier work and closing it is a different change — it needs a
- * pod-wide "is this URL already a descriptor of anything" check, which is a decision about
- * whether one graph's owner may ever overwrite another's resource, not about compare-and-
- * swap. What is fixed here is the message: it used to tell the caller to "send a
- * descriptor_id that does not resolve to an existing version", which claims a completeness
- * this function does not have. It now says which chain it looked at.
+ * The case it does NOT see — `descriptor_id` slugging onto a descriptor of some OTHER graph
+ * on the same pod, silently removing that graph's head — is real and was measured
+ * (`scratchpad/adv-cas.test.ts` CAS-A). It is now refused by `foreignDescriptorOverwriteRefusal`
+ * below, which is pod-wide and runs whether or not an `if_match` was sent. The two are only
+ * ever reached through `descriptorWriteCollisionRefusal`, so a caller cannot be told the
+ * chain is clear while the URL belongs to someone else.
+ *
+ * The message used to tell the caller to "send a descriptor_id that does not resolve to an
+ * existing version", which claimed a completeness nothing then had. It now names the chain
+ * it looked at and the sibling that covers the rest.
  */
 export function casSelfOverwriteRefusal(
   entries: readonly FrontierEntry[],
@@ -423,8 +424,14 @@ export function casSelfOverwriteRefusal(
 ): CasRefusal | null {
   const norm = normalize ?? ((u: string) => u);
   const self = norm(selfDescriptorUrl);
+  // Same raw-vs-absolutised mismatch as in `foreignDescriptorOverwriteRefusal`, and here it
+  // fails the OTHER way: `describes` has been through `new URL(u, manifestUrl).href` in
+  // `discover()` and `graphIri` has not, so `includes` MISSED a version of the caller's own
+  // chain and let the swap overwrite it in place — the exact destruction this refusal
+  // exists to prevent. A missed match here is a false ALLOW, not a false refusal.
+  const claimed = normalizeGraphIri(graphIri);
   const collides = entries.some(
-    e => e.describes.includes(graphIri) && norm(e.descriptorUrl) === self,
+    e => e.describes.some(g => normalizeGraphIri(g) === claimed) && norm(e.descriptorUrl) === self,
   );
   if (!collides) return null;
   return {
@@ -438,8 +445,154 @@ export function casSelfOverwriteRefusal(
       + 'destroy the state the if_match names and leave the chain with no resolvable head. '
       + 'Omit descriptor_id so a fresh URL is minted (the normal case) — or, if you really do '
       + 'mean to overwrite that resource, drop if_match and accept that it is not a swap. '
-      + `Note that this check covers only the chain for <${graphIri}>: a descriptor_id whose `
-      + 'URL belongs to some OTHER graph on this pod is not detected here, and would overwrite '
-      + 'it. Choosing your own descriptor_id means choosing the resource you land on.',
+      + `This check covers the chain for <${graphIri}>. A descriptor_id landing on a `
+      + 'descriptor of some OTHER graph is refused separately as '
+      + 'descriptor_id_collides_with_other_graph, with or without an if_match; the two are '
+      + 'decided together so neither can be reached without the other.',
   };
+}
+
+/**
+ * Refuse a publish whose descriptor URL is already occupied by ANOTHER graph's descriptor.
+ *
+ * ★ THIS IS THE HOLE `casSelfOverwriteRefusal` DOES NOT AND SHOULD NOT SEE. `descriptor_id`
+ * is an unvalidated `publish_context` argument, and `slugFromIri`
+ * (packages/solid/src/client.ts) turns it into a filename by taking the last `/`, `:` or `#`
+ * segment. Every descriptor on a pod lands in one flat `context-graphs/<slug>.ttl`
+ * namespace, so the caller picks the destination URL outright — including a URL that already
+ * holds a descriptor for a graph they are not publishing. `publish()` PUTs there
+ * unconditionally, the manifest row is rewritten to the new `iep:describes`, and the graph
+ * that owned it loses that descriptor. If it was that graph's only head, the graph has no
+ * head at all and no `get_current_head` caller can tell what happened. Measured, not
+ * theorised: `scratchpad/adv-cas.test.ts` CAS-A, where G2's frontier went `[other-head]` → `[]`.
+ *
+ * ★ AND IT APPLIES WITH OR WITHOUT `if_match`. The chain-scoped refusal is gated on a
+ * precondition because it is a statement about a swap. This one is not: it is "that resource
+ * is not yours to replace", which does not become true because the caller declined to assert
+ * anything. Without a precondition the damage is strictly worse — nothing else on the path
+ * reads the destination first — so gating it the same way would leave the guard off in
+ * exactly the case that needs it.
+ *
+ * Refusal, not merge. A descriptor is a single document with one `iep:describes` set; there
+ * is no way to write this publish that also keeps the other graph's version at that URL. And
+ * silently choosing a different URL would be worse than either: the caller supplied
+ * `descriptor_id` precisely to control the URL, and the honest answer to "I cannot give you
+ * that URL" is to say so.
+ *
+ * ★ WHAT THIS DOES NOT COVER, STATED PLAINLY. Its only evidence is the manifest, so:
+ *   - a resource sitting at that URL which the manifest does not list — not a descriptor, or
+ *     a descriptor whose manifest row was lost — is not seen, and is still overwritten;
+ *   - an entry with an EMPTY `describes` belongs to no graph, so nothing here objects to
+ *     replacing it. There is no chain to break.
+ * It is a guard on graph ownership of a URL, not a general "this resource exists" check.
+ *
+ * `graphIri` is optional because `graph_iri` is a `publish_context` argument that
+ * `tools/call` does not schema-validate. Omitting it means the descriptor being written
+ * describes nothing, so EVERY graph described at that URL is foreign and the write is
+ * refused — the strict reading, and the right one: a publish that names no graph has no
+ * claim on a URL that holds one.
+ */
+/**
+ * Put a graph IRI into the one form both sides of an ownership comparison can be in.
+ *
+ * ★ WHY THE COMPARISON NEEDED THIS AT ALL. `discover()` maps every manifest `describes`
+ * through `new URL(u, manifestUrl).href` so downstream consumers get something `fetch()` can
+ * take. The caller's `graph_iri` arrives verbatim from `tools/call`. Comparing an
+ * already-normalised string against a raw one made WHATWG's own rewrites look like a
+ * different graph: `https://graphs.example.org` (raw) against `https://graphs.example.org/`
+ * (stored) refused an honest republish of the caller's OWN graph, on the one path this gate
+ * was told not to break.
+ *
+ * Both sides go through the same function, so no two stored values can be merged that
+ * `discover()` had not already merged — the direction that would turn a false refusal into a
+ * false ALLOW. Unparseable input (a relative IRI, with no base available here) is returned
+ * untouched, so it fails to match an absolute stored value and the write is refused: the
+ * safe direction, and the same answer as before.
+ */
+function normalizeGraphIri(iri: string): string {
+  try { return new URL(iri).href; } catch { return iri; }
+}
+
+export function foreignDescriptorOverwriteRefusal(
+  entries: readonly FrontierEntry[],
+  graphIri: string | undefined,
+  selfDescriptorUrl: string,
+  normalize?: (url: string) => string,
+): CasRefusal | null {
+  const norm = normalize ?? ((u: string) => u);
+  const self = norm(selfDescriptorUrl);
+  const claimed = graphIri === undefined ? undefined : normalizeGraphIri(graphIri);
+  // A descriptor may describe several graphs, so "foreign" is per-graph, not per-entry: an
+  // entry describing [G1, G2] overwritten by a G1-only publish still strands G2. Collecting
+  // the graphs rather than short-circuiting also lets the message name them, which is the
+  // difference between a caller re-picking a slug and a caller re-reading the manifest.
+  const foreign = new Set<string>();
+  for (const e of entries) {
+    if (norm(e.descriptorUrl) !== self) continue;
+    // The stored side has already been through `new URL(u, manifestUrl).href` in
+    // `discover()`; the caller's side has not. Compared raw, an honest same-graph republish
+    // to a stable descriptor id was refused as somebody else's URL — `graph_iri
+    // "https://graphs.example.org"` against the stored `"https://graphs.example.org/"`.
+    // `normalizeGraphIri` puts both through the same transform; the message still names the
+    // graph as it is stored, because that is the string a caller has to match.
+    for (const g of e.describes) if (normalizeGraphIri(g) !== claimed) foreign.add(g);
+  }
+  if (foreign.size === 0) return null;
+  const named = [...foreign].map(g => `<${g}>`).join(', ');
+  return {
+    error: 'descriptor_id_collides_with_other_graph',
+    code: 409,
+    retryable: false,
+    message:
+      `This publish would be written to <${selfDescriptorUrl}>, which already holds a `
+      + `descriptor for ${named} — ${graphIri === undefined
+        ? 'and this publish names no graph_iri at all'
+        : `not <${graphIri}>`}. Writing it would replace that descriptor in place and remove `
+      + 'it from that graph\'s supersession chain; if it was the chain\'s only head, the graph '
+      + 'would be left with no resolvable head and nothing would report why. descriptor_id '
+      + 'becomes the filename via its last "/", ":" or "#" segment, and every descriptor on '
+      + 'this pod shares one flat container — so two unrelated ids ending in the same segment '
+      + 'name the same resource. Omit descriptor_id so a fresh URL is minted (the normal '
+      + 'case), or choose one whose final segment is not already taken. Refused with or '
+      + 'without an if_match: this is about who owns the URL, not about a swap.',
+  };
+}
+
+/**
+ * The single collision gate `publish_context` calls before it writes anything.
+ *
+ * ★ ONE ENTRY POINT SO THE TWO REFUSALS CANNOT DRIFT APART. They answer different questions
+ * about the same predicted URL — "is this a version of the chain I am swapping over" and "is
+ * this someone else's graph" — and they have different trigger conditions, the first only
+ * under an `if_match` and the second always. Left as two call sites in `handlePublishContext`
+ * that difference is one `if` away from being wrong in the direction that costs data, which
+ * is how the cross-graph hole survived three rounds of review: the chain-scoped check looked
+ * like the collision check and nothing named what it left out.
+ *
+ * Foreign ownership is reported FIRST when both apply — an entry describing [G1, G2]
+ * overwritten by a G1 publish under an `if_match` collides on both counts, and the answer
+ * that matters is the one about the graph that is not in the conversation.
+ *
+ * `casGraphIri` is present iff a precondition was asserted, and carries the graph it names
+ * (`CasRequest.graphIri` — already validated as an unpadded, non-empty IRI). Passing the
+ * graph rather than a boolean is what keeps the chain-scoped check from being reachable with
+ * no graph to scope it to.
+ */
+export function descriptorWriteCollisionRefusal(
+  entries: readonly FrontierEntry[],
+  graphIri: string | undefined,
+  selfDescriptorUrl: string,
+  options: {
+    readonly casGraphIri?: string;
+    readonly normalize?: (url: string) => string;
+  } = {},
+): CasRefusal | null {
+  const foreign = foreignDescriptorOverwriteRefusal(
+    entries, graphIri, selfDescriptorUrl, options.normalize,
+  );
+  if (foreign) return foreign;
+  if (options.casGraphIri === undefined) return null;
+  return casSelfOverwriteRefusal(
+    entries, options.casGraphIri, selfDescriptorUrl, options.normalize,
+  );
 }

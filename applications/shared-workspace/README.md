@@ -82,8 +82,9 @@ field that gets left out.
 > Fixed as a rule the whole fold obeys, not as a patch on one branch: **a record that fails
 > attestation loses its power to confer and keeps its power to restrict.** The fold reads two
 > tracks — *conferring* (gated) and *restricting* (every row) — and
-> `tests/workspace-adversarial.test.ts` enumerates 576 configurations across three axes and
-> asserts, literally, that no stronger configuration admits anything a weaker one withholds.
+> `tests/workspace-adversarial.test.ts` enumerates **6,400 configurations across four axes**
+> and asserts, literally, that no stronger configuration admits anything a weaker one
+> withholds, reports a wider role than it reported, or raises fewer divergences.
 > Honouring an unattestable revocation does let anyone who can get a row into `grants` evict
 > a member; that is a denial of service the `asserted` configuration already permits in full,
 > and it is the strictly lesser evil.
@@ -92,8 +93,11 @@ field that gets left out.
 [Attribution](#-attribution-what-is-now-verified-and-what-is-not) below. The short version:
 it defeats a convener writing an acceptance from their own session; it does **not** defeat a
 convener lifting a valid proof block out of one of the member's real records; and — the one
-a reader is most likely to over-read — **it binds a signer to a URL, never a record to its
-content**, so it does not establish that the member agreed to anything at all.
+a reader is most likely to over-read — **it binds a signer to a RECORD, never a record to
+the fields claimed for it**, so it does not establish that the member agreed to anything at
+all. (This line used to say "a signer to a URL, never a record to its content". The
+substrate half of that has since closed: a proof now commits to a digest of the graph's
+triples and the read path recomputes it. The half that matters here has not.)
 
 **2. A role is a ceiling, never a grant.** Effective capability is
 `role.permits ∩ delegatedScope`. A Convener whose agent holds a read-only delegation still
@@ -315,7 +319,7 @@ Two more things `signerIndexFromRegistry` now does, both found by review:
 
 ### ★ What is NOT established — the residual gaps, precisely
 
-**0. The gate binds a SIGNER TO A URL, never a RECORD TO ITS CONTENT.** Numbered zero because
+**0. The gate binds a SIGNER TO A RECORD, never a RECORD TO THE FIELDS CLAIMED FOR IT.** Numbered zero because
 it is larger than the three below it and is the one a reader of "attested membership" will
 over-read. `Grant.role`, `Grant.grantedTo`, `Grant.revoked`, `Acceptance.member`,
 `Acceptance.accepts` and `Acceptance.stream` are **typed by the caller of `foldRoster`**; the
@@ -327,19 +331,84 @@ lifting; it needs only that the victim ever published one signed public record, 
 `appendEntry` now guarantees.
 
 So *"bee is an attested member"* means **a record at this URL was signed by bee**, and not
-*bee agreed to this*. `Roster.recordContentBinding` is a non-omittable field whose only value
-is `'unbound'`, so the distinction cannot be read past. **This is not fixed and is not
-claimed to be fixed.** Closing it needs the record's own content parsed and compared against
-the fields — and no code anywhere in this repo yet reads a `Grant` or an `Acceptance` off a
-pod, so the shape that gate will eventually be handed does not exist to be checked against.
+*bee agreed to this*.
+
+**What changed: the substrate half is closed.** An authorship proof now commits to a digest
+of the graph's **triples**, and `get_descriptor` **recomputes that digest over the payload it
+actually serves** and reports the result as `authorship.contentBinding` — four values, never
+a boolean:
+
+| value | meaning |
+| --- | --- |
+| `bound` | the signed digest was recomputed over the served payload and matched |
+| `mismatched` | the digest **was** recomputed and did **not** match. The signature is authentic and covers different content: the record was altered after signing. Evidence *against* the content |
+| `declared` | the proof commits to a digest and **nothing checked it** — the payload was unreadable here, the digest is an older form no reader can recompute, or the signature failed before the content was reached |
+| `unbound` | the proof carries no digest at all: every proof written before this existed, **plus any payload the digester could not parse**, which includes ones written seconds ago. Silent about content |
+
+> ★ `mismatched` used to be reported as `declared`, on the reasoning that a mismatch already
+> sets `valid: false` so the binding field need not carry it. It did need to: readers render
+> the binding on its own, and `declared` is narrated as *"nothing was checked … neither an
+> attestation of the content nor evidence against it"*. The substrate's sharpest signal was
+> being delivered with a note telling the reader to disregard it.
+
+`AttestationPolicy.requireContentBinding` makes the roster gate demand `'bound'`, and
+`Roster.recordContentBinding` then reports `'bound'` — reporting what the fold **enforced**,
+never what its inputs happened to carry.
+
+**What `bound` means, exactly: triple-identity, not byte-identity.** The digest is over the
+graph's *triples*, so two documents sharing **no bytes** — a different alias for the same
+namespace, statements reordered, reflowed, reindented — produce the identical digest and
+both verify. That is deliberate, not a weakness: `publish()` rewrites the payload through
+`wrapAsTriG` before it lands, hoisting the caller's `@prefix` lines to document scope and
+indenting the body, so the bytes signed are **never** the bytes served. A byte comparison
+would have reported every honest content-bound proof as tampering.
+`deploy/mcp-relay/tests/authorship-content-binding.test.ts` measures both halves on one
+payload and **prints** the hashes, so the figures can be checked rather than quoted. (They
+used to be quoted here as fixed constants "measured on a four-line payload"; the payload was
+not in the repo, so nobody could reproduce or refute them.) What `bound` rules out is a
+change in what the record **says**.
+
+Digests carrying **different algorithm labels are never compared at all**, so the `sha256:`
+proofs already on pods degrade to `'declared'` rather than being branded forgeries the first
+time a reader checks them.
+
+> ★ **And the rewrite itself had to be fixed before any of this was safe.** `wrapAsTriG`
+> **dropped** a caller `@prefix` whose alias the descriptor already bound — 23 of them —
+> so a third-party payload declaring, say, `@prefix as: <https://example.org/assessment#>`
+> had its `as:` terms silently re-pointed at ActivityStreams on the way to the pod. That was
+> a data-corruption defect on its own; once proofs committed to a content digest it became a
+> live **false accusation**, because the served graph no longer denoted what the signer
+> signed. Caller directives are now emitted at document scope *between* the descriptor's
+> triples and the payload's, so each side resolves against its own bindings and nothing is
+> discarded. The one rewrite that ordering cannot reproduce — a payload binding one alias to
+> two namespaces with triples written against each — is **refused at publish** rather than
+> stored as something the caller did not write.
+
+**What is still NOT closed, and content binding does not narrow it.** The fields remain
+caller-typed. Bee's ordinary log entry is *genuinely hers and genuinely unmodified*, so it
+reports `contentBinding: 'bound'` — the strongest verdict the substrate can produce — and she
+**still** becomes an attested member of a workspace she never joined, under the strictest
+policy available. Binding the record's content cannot help when the lie is in *which record was
+submitted*, and `tests/workspace-adversarial.test.ts` pins exactly that case so the claim
+cannot quietly grow. `Roster.recordFieldBinding` is a separate non-omittable field whose only
+value is `'unbound'`, kept precisely so `recordContentBinding: 'bound'` cannot be read as
+covering this. **This half is not fixed and is not claimed to be fixed.** Closing it needs a
+`Grant` and an `Acceptance` to *be* published records with a defined shape, and nothing in
+this repo writes one — there is no serializer for either anywhere, so there is no content to
+compare the fields against.
 
 **1. A proof can be lifted.** `get_descriptor` re-derives the canonical
 payload from the proof block's **own fields** and checks the signature over it. It never
-compares the proof's `iep:descriptorId` against the descriptor it just read, and it calls
-`verifySignedAuthorship` **without** the observed content, so `contentHash` coverage is not
-checked either. A proof block copied verbatim out of any of a member's real, public records
-and pasted into a record somebody else fabricated therefore **verifies clean, naming that
-member**.
+compares the proof's `iep:descriptorId` against the descriptor it just read. A proof block
+copied verbatim out of any of a member's real, public records and pasted into a record
+somebody else fabricated therefore **verifies clean, naming that member**.
+
+Content binding narrows this one, and only partly. A lifted proof carries the digest of the
+record it was lifted *from*, so pasting it beside different content now yields either
+`contentBinding: 'mismatched'` with `valid: false` (the digests are comparable and differ)
+or `'declared'` (they are not comparable) — never `'bound'`. What it does **not** stop is a
+proof lifted together with the content it covers, which is the manufactured-participant case
+in gap 0.
 
 This layer narrows it with `proofBindsToDescriptor`, which compares the proof's `descriptorId`
 against the descriptor URL. Be clear about what that is worth: the relay mints
@@ -366,8 +435,11 @@ how a true report stops being believed. The message now carries the diagnostic a
 one of the two readings is a forgery and that this layer cannot tell which.
 
 **The durable fix belongs in the substrate**, which already holds both the proof and the URL
-it read it from: `get_descriptor` should compare them, and should pass the observed content
-to the verifier.
+it read it from: `get_descriptor` should compare them. (The second half of this sentence used
+to read "and should pass the observed content to the verifier" — that half is **done**, and
+was already struck through as done 175 lines further down while still being listed as
+outstanding here. The descriptor-id comparison is the part that remains open:
+`parsedProof.descriptorId` appears nowhere in `deploy/mcp-relay/server.ts`.)
 
 **2. The signature is the relay's, not the member's.** `sign_authorship` signs with the
 relay's compliance wallet, over a payload whose `iep:issuer` is the session's
@@ -527,7 +599,7 @@ All six increments are built. What is verified, and what is not:
 
 | | state |
 |---|---|
-| 1 roster, two-sided membership | built; **signer-checked, content-UNbound** (residual gap 0), not yet run live |
+| 1 roster, two-sided membership | built; **signer-checked, and record content now verifiably bound** via `requireContentBinding`; the caller-typed *fields* remain unbound (residual gap 0), not yet run live |
 | 2 per-participant stream | built, **20/20 live** (the live run predates `sign_authorship`) |
 | 3 composed cross-pod view | built, **14/14 live** across two identities on two pods |
 | 4 authority at the fold | **13/13 live** for sections 1–5 *of the file as it then stood* (two assertions added since, unrun); 6–7 not yet run, and their assertions were vacuous until this round |
@@ -536,13 +608,19 @@ All six increments are built. What is verified, and what is not:
 
 ### Substrate changes needed to finish the job
 
-Not defects in this layer, and not fixable from it. Both are one-line comparisons in
-`get_descriptor`, which already holds everything needed to make them:
+Not defects in this layer, and not fixable from it:
 
 | | |
 |---|---|
 | the authorship verifier never checks the proof's `iep:descriptorId` against the descriptor it read, so a proof block can be **lifted** between records | high |
-| it calls `verifySignedAuthorship` **without** the observed content, so `contentHash` coverage is never checked and `coversContent` is never reported | high |
+| ~~it calls `verifySignedAuthorship` **without** the observed content, so `contentHash` coverage is never checked~~ — **done.** `get_descriptor` recomputes the digest over the payload it serves and reports `authorship.contentBinding` as `bound` / `mismatched` / `declared` / `unbound` | ~~high~~ |
+
+The second row was not the one-line comparison it was filed as. The digest it was meant to
+check was over the caller's inbound bytes, and `publish()` rewrites those before they land,
+so no reader is ever served them — the check as specified would have failed every honest
+proof. Closing it meant moving the commitment onto the graph's **triples**, which survive
+that rewrite. Filed as trivial, and it was not; the estimate was wrong because nobody had
+run the round-trip.
 
 ### Known defects, and their current state
 
@@ -555,7 +633,8 @@ time this file changes.
 
 | | severity |
 |---|---|
-| the attestation gate binds a signer to a URL, never a record to its content, so every `Grant`/`Acceptance` field is caller-typed — residual gap 0 | **high** |
+| every `Grant`/`Acceptance` **field** is caller-typed, so a member's own unrelated signed record still passes as their acceptance — residual gap 0. Narrowed, **not** closed: the record now verifiably *states* what its signer signed (`requireContentBinding`), and that changes nothing here, because the record in the attack is genuine. `Roster.recordFieldBinding` reports `'unbound'` | **high** |
+| `Member.stream` can legitimately differ between two configurations of the same fold: naming the stream is a conferring act, so refusing an acceptance re-picks the head. No authority moves with it, and it is never silent — both configurations raise the `acceptance` divergence — but a caller that reads `stream` without reading `divergences` will go to a different pod under a stricter policy | low-med |
 | `proofBindsToDescriptor` compares only the terminal segment, so a party who controls a pod *and* the caller-supplied `descriptor_id` is barely narrowed at all — residual gap 1 | medium |
 | `wsp:seq` has no producer: `ManifestEntry` carries no `seq`, so the sequence check is inert on every real read — residual gap 5 | low-med |
 | `verify-can-live.ts` §§6–7 remain **unrun**; their assertions can now fail, and whether they hold is unknown | low-med *(honesty, not behaviour)* |
@@ -565,7 +644,8 @@ time this file changes.
 
 | | where |
 |---|---|
-| ★★ turning attestation ON granted MORE than leaving it off (revocation erased; role widened; withdrawal ignored; a withdrawn member shown as *pending*) | `workspace-adversarial` — 576-configuration monotonicity enumeration |
+| ★★ turning attestation ON granted MORE than leaving it off (revocation erased; role widened; withdrawal ignored; a withdrawn member shown as *pending*) | `workspace-adversarial` — 6,400-configuration monotonicity enumeration |
+| ★ the same class again, three more instances the enumeration structurally could not see because it generated exactly **one** acceptance: a stricter policy **widened the reported role** (`Observer` → `Convener`, capabilities unchanged), **deleted** the acceptance-ambiguity divergence, and **dropped every divergence** about a principal whose grants were all refused | `workspace-adversarial` — acceptance-count axis, plus divergence and role comparisons in `assertNoWiderThan` |
 | a **revoked** signing key attested at the `attested` grade whenever the principal had a second live agent | `workspace-can`, `workspace-adversarial` axis B |
 | `signerIndexFromRegistry` could not index `AuthorizedAgentData.agentId`, the only shape carrying `revoked` | `workspace-can` |
 | a signing key claimed by two registries resolved last-write-wins, silently | `workspace-can` |
@@ -584,10 +664,15 @@ time this file changes.
 divergence; `readableMembers` no longer deletes the reported half; duplicate input rows no
 longer manufacture phantom divergences; `capabilitiesOfAgent` honours `revoked`.
 
-Every guard added this round was mutation-checked — broken one at a time against the five
-suites — and **25 of 25 mutants were killed**. The four that reinstate the monotonicity
-defects are each caught by the enumeration itself, which names the exact failing
-configuration rather than a symptom.
+Each round's guards were mutation-checked — broken one at a time against the suites, then
+reverted. **25 of 25** for the attestation round; the content-binding and monotonicity
+guards added since were checked the same way and are counted separately in that round's
+report. There is no single number covering all of them, and stating one would be the kind of
+assurance that goes stale the moment a guard is added — which is exactly what happened to the
+"25 of 25" line, which predated `requireContentBinding`, `readContentBinding`,
+`descriptorWriteCollisionRefusal` and the manifest fail-closed and was still being read as
+covering them. The mutants that reinstate the monotonicity defects are each caught by the
+enumeration itself, which names the exact failing configuration rather than a symptom.
 
 ### What survived the same review
 

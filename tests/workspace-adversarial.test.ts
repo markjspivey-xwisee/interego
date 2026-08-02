@@ -57,17 +57,32 @@ const PROFILE: RoleProfile = {
  * because the same person had a second live agent.
  *
  * So the property is stated over the CONFIGURATION LATTICE rather than over an input, and
- * every case is enumerated. Three axes, each with an unambiguous weaker side:
+ * every case is enumerated. Four axes, each with an unambiguous weaker side:
  *
  *   A  attestation policy PRESENT ⊆ absent
  *   B  a signing key marked REVOKED ⊆ the same key live
  *   C  compose with verifyAuthorship TRUE ⊆ false
+ *   D  requireContentBinding TRUE ⊆ false  (folded into AXIS A's lattice, not bolted beside)
  *
  * "⊆" is meant literally and is checked literally: every member of the stronger roster must
  * be a member of the weaker one, every effective capability of theirs must be present in the
  * weaker one, and every entry the stronger view admits must be admitted by the weaker one.
  * A configuration that refuses more is always fine; one that admits more is the defect,
  * whatever produced it.
+ *
+ * ★ WHAT THE ENUMERATION COULD NOT SEE, AND NOW CAN. Two more escalations were found by a
+ * review, both invisible here for structural reasons rather than by bad luck:
+ *
+ *   — AXIS A generated exactly ONE acceptance per configuration. Every defect that needs two
+ *     acceptance heads to disagree about was therefore unreachable, no matter how many
+ *     attestation shapes were crossed. The `accepts` axis below generates zero, one and two,
+ *     and the second head's attestation is varied independently of the first's.
+ *   — `assertNoWiderThan` compared members, capabilities and pending invitations. It did not
+ *     compare DIVERGENCES or the reported ROLE, so a stricter policy that deleted an
+ *     ambiguity warning, or that widened the role LABEL while holding the capabilities, ran
+ *     clean. Both are now part of the comparison: a warning is the opposite of a grant, so
+ *     the stronger configuration must raise every one the weaker did, and the role it prints
+ *     must not permit more than the role the weaker one printed.
  */
 describe('★★ MONOTONICITY: no configuration grants more than a weaker one', () => {
   const CONV = 'https://conv.test/profile#me';
@@ -98,11 +113,37 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     'no-attestation': undefined,
     'proof-did-not-verify': { authorshipVerified: false, signedBy: CONV_KEY, boundToDescriptor: true, reason: 'x' },
     'proof-not-bound': { authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: false },
+    // ── the content-binding axis ────────────────────────────────────────────
+    // `verified()` above leaves `contentBinding` ABSENT, which is what an older relay
+    // returns, so the six shapes above already cover the unreported case. These add the
+    // four values the substrate can actually report, on a signer the convener policy
+    // accepts — otherwise the signer check would refuse them first and the binding axis
+    // would never be reached.
+    'convener-content-bound': { authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: true, contentBinding: 'bound' },
+    'convener-content-declared': { authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: true, contentBinding: 'declared' },
+    'convener-content-unbound': { authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: true, contentBinding: 'unbound' },
+    // `mismatched` arrives with `authorshipVerified: false` and nothing else: a recomputed
+    // digest that did not match also fails the signature-level verdict, so this is the shape
+    // `readAttestation` actually produces. Enumerated with the real shape rather than a
+    // convenient one, because a value that can only reach the fold alongside a false
+    // `authorshipVerified` must be shown never to confer under ANY rung of the ladder.
+    'convener-content-mismatched': { authorshipVerified: false, signedBy: CONV_KEY, boundToDescriptor: false, contentBinding: 'mismatched', reason: 'digest differs' },
   };
   const attKeys = Object.keys(attestations);
 
   const capsOf = (r: Roster): Map<string, Set<string>> =>
     new Map(r.members.map(m => [m.principal, new Set(m.effective)]));
+
+  /** What the profile permits at a role — used to compare two role LABELS for width. */
+  const permitCount = (role: string | undefined): number =>
+    role === undefined ? -1 : (PROFILE.roles.find(r => r.role === role)?.permits.length ?? 0);
+
+  /**
+   * A divergence's identity for comparison purposes: its kind and the heads it names.
+   * Compared as a set, so a warning cannot be silently swapped for a different one.
+   */
+  const divergenceKeys = (r: Roster): Set<string> =>
+    new Set(r.divergences.map(d => `${d.kind}|${[...d.heads].sort().join(',')}`));
 
   /** `strong` must admit nothing `weak` withholds. The direction is the whole test. */
   const assertNoWiderThan = (strong: Roster, weak: Roster, label: string): void => {
@@ -131,15 +172,76 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     for (const p of strong.pendingInvitations) {
       expect(weakKnows.has(p.principal), `${label}: <${p.principal}> is invited only under the stronger configuration`).toBe(true);
     }
+
+    // ★ A WARNING IS THE OPPOSITE OF A GRANT, so it moves the other way: the stronger
+    // configuration must not go quiet about a principal it still reports. Counting acceptance
+    // heads off the conferring track let `requireContentBinding: true` DELETE the note that
+    // a member's stream was ambiguous — while naming a different stream than the weaker
+    // configuration had. Silence is the one thing a stricter setting must never buy.
+    //
+    // Scoped to principals both configurations still name. A principal whose every grant was
+    // refused disappears from the stronger roster altogether and is accounted for in
+    // `unattested`; warnings about a principal who is no longer there are not silence, and
+    // demanding them would be demanding a report about nobody.
+    const weakMembers = new Map(weak.members.map(m => [m.principal, m]));
+    for (const m of strong.members) {
+      const w = weakMembers.get(m.principal);
+      if (w?.divergence === undefined) continue;
+      expect(
+        m.divergence !== undefined
+        && m.divergence.kind === w.divergence.kind
+        && [...m.divergence.heads].sort().join(',') === [...w.divergence.heads].sort().join(','),
+        `${label}: <${m.principal}> carries divergence [${w.divergence.kind}|`
+        + `${[...w.divergence.heads].sort().join(',')}] under the weaker configuration and `
+        + `[${m.divergence ? `${m.divergence.kind}|${[...m.divergence.heads].sort().join(',')}` : 'none'}] `
+        + 'under the stronger one — a stricter policy deleted or replaced a warning',
+      ).toBe(true);
+    }
+    // The same rule at roster scope, and UNCONDITIONAL. Divergence reporting is a function
+    // of the restricting track only, which no policy changes, so the two rosters must raise
+    // the identical set — not merely a superset. Stated as a superset anyway, because that
+    // is the direction that matters and it survives a future divergence kind that legitimately
+    // depends on what was admitted.
+    const strongDiv = divergenceKeys(strong);
+    for (const d of divergenceKeys(weak)) {
+      expect(
+        strongDiv.has(d),
+        `${label}: the weaker configuration reported divergence [${d}] and the stronger one `
+        + 'did not — a stricter policy bought silence',
+      ).toBe(true);
+    }
+
+    // ★ THE ROLE LABEL IS PART OF THE SECURITY OUTPUT. Capabilities can hold while the word
+    // beside them escalates: heads {Observer, Convener} with the Observer head refused
+    // reported `role: Convener` and `effective: [read]`. Nobody gained a permission and the
+    // report still said the wrong thing, in the field a person reads first.
+    const weakRole = new Map(weak.members.map(m => [m.principal, m.role]));
+    for (const m of strong.members) {
+      const weaker = weakRole.get(m.principal);
+      if (weaker === undefined) continue; // membership itself is covered above
+      expect(
+        permitCount(m.role) <= permitCount(weaker),
+        `${label}: <${m.principal}> is reported as ${m.role} under the stronger configuration `
+        + `and ${weaker} under the weaker one — the stricter policy widened the role LABEL`,
+      ).toBe(true);
+    }
   };
 
-  it('★ AXIS A — enumerating every grant × acceptance × revoked × withdrawn × second head', () => {
+  // ★ THE AXIS THE 1296-CONFIGURATION VERSION DID NOT HAVE. It generated exactly one
+  // acceptance, so no amount of crossing attestation shapes could reach a defect that needs
+  // two acceptance heads to disagree about — which is what re-picking `accepted[0]` and
+  // deleting the ambiguity warning both were. `second` above adds a second GRANT; this adds
+  // a second ACCEPTANCE, on its own stream, with its own attestation.
+  const acceptShapes = ['one', 'none', 'two-second-refusable', 'two-second-bound'] as const;
+
+  it('★ AXIS A — enumerating every grant × acceptance × revoked × withdrawn × second grant head × acceptance count', () => {
     let cases = 0;
     for (const gAtt of attKeys) {
       for (const aAtt of attKeys) {
         for (const revoked of [false, true]) {
           for (const withdrawn of [false, true]) {
             for (const second of ['none', 'narrower-head', 'wider-head', 'revoking-head'] as const) {
+              for (const accepts of acceptShapes) {
               const grants: Grant[] = [{
                 head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
                 role: `${P}#Contributor`, revoked, attestation: attestations[gAtt],
@@ -153,30 +255,144 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
                   // move that used to delete the narrower side of the intersection.
                 });
               }
-              const acceptances: Acceptance[] = [{
+              const acceptances: Acceptance[] = accepts === 'none' ? [] : [{
                 head: 'https://alice.test/a1', workspace: WS, member: alice,
                 accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
                 withdrawn, attestation: attestations[aAtt],
               }];
+              if (accepts === 'two-second-refusable' || accepts === 'two-second-bound') {
+                acceptances.push({
+                  head: 'https://alice.test/a2', workspace: WS, member: alice,
+                  accepts: 'https://conv.test/g1',
+                  // A DIFFERENT stream, so re-picking the head is observable at all.
+                  stream: 'https://alice.test/s2',
+                  // Refusable = signed by a stranger, so every policy drops it and only the
+                  // no-policy fold sees it. Bound = the shape every policy keeps. Between
+                  // them the two heads change places under each rung of the ladder.
+                  attestation: accepts === 'two-second-refusable'
+                    ? verified(STRANGER_KEY)
+                    : { authorshipVerified: true, signedBy: ALICE_KEY, boundToDescriptor: true, contentBinding: 'bound' },
+                });
+              }
               const args = { workspace: WS, profile: PROFILE, grants, acceptances, scopes };
-              const label = `grant=${gAtt} accept=${aAtt} revoked=${revoked} withdrawn=${withdrawn} second=${second}`;
+              const label = `grant=${gAtt} accept=${aAtt} revoked=${revoked} withdrawn=${withdrawn} second=${second} accepts=${accepts}`;
 
               const off = foldRoster(args);
               const on = foldRoster({
                 ...args,
                 attestation: { convener: CONV, signerOf: signerIndexFromRegistry(registry(false)) },
               });
+              // ★ AXIS D, folded into the same enumeration rather than bolted on beside it:
+              // requiring content binding is a THIRD rung on the same ladder, and the chain
+              // bound ⊆ attested ⊆ asserted has to hold at every point of the lattice, not
+              // just at the ones a separate test would have thought to sample.
+              const onBound = foldRoster({
+                ...args,
+                attestation: {
+                  convener: CONV,
+                  signerOf: signerIndexFromRegistry(registry(false)),
+                  requireContentBinding: true,
+                },
+              });
               expect(off.membershipGrade).toBe('asserted');
               expect(on.membershipGrade).toBe('attested');
               assertNoWiderThan(on, off, label);
+              assertNoWiderThan(onBound, on, `require-binding ${label}`);
+              assertNoWiderThan(onBound, off, `require-binding vs off ${label}`);
+
+              // ★ A DIFFERENT STREAM IS ALLOWED; A SILENT ONE IS NOT. Naming the stream is a
+              // conferring act, so a refused acceptance must not choose it — which means a
+              // stricter policy CAN legitimately name a different stream than a weaker one.
+              // What it may never do is name a different stream without saying the choice
+              // was ambiguous. Asserted here rather than left to the prose, because the
+              // divergence check above only proves the warning was not deleted, not that it
+              // fires wherever the stream actually moves.
+              // Read off the roster's own divergence list rather than `Member.divergence`,
+              // which holds only ONE — `grantDivergence ?? acceptanceDivergence` — so a
+              // principal with a forked grant AND a forked acceptance shows the grant and
+              // hides the acceptance. Every configuration here concerns one principal, so
+              // "the roster raised an acceptance divergence" is the same statement.
+              const saysAmbiguous = (r: Roster): boolean => r.divergences.some(d => d.kind === 'acceptance');
+              for (const strict of [on, onBound]) {
+                for (const m of strict.members) {
+                  const loose = off.members.find(x => x.principal === m.principal);
+                  if (loose === undefined || loose.stream === m.stream) continue;
+                  expect(
+                    saysAmbiguous(strict) && saysAmbiguous(off),
+                    `${label}: <${m.principal}> is given stream ${m.stream} under the stricter `
+                    + `configuration and ${loose.stream} under the weaker one, and at least one `
+                    + 'of the two did not report the choice as ambiguous',
+                  ).toBe(true);
+                }
+              }
               cases++;
+              }
             }
           }
         }
       }
     }
     // Guard the guard: an enumeration that silently stopped generating would pass vacuously.
-    expect(cases).toBe(attKeys.length * attKeys.length * 2 * 2 * 4);
+    expect(cases).toBe(attKeys.length * attKeys.length * 2 * 2 * 4 * acceptShapes.length);
+  });
+
+  // A lattice assertion passes trivially where the rungs never differ. These name the two
+  // configurations the acceptance-count axis exists to reach, and assert the differences are
+  // the ones the fold is supposed to have — so a future change that makes the axis inert
+  // fails here rather than passing 5184 vacuous subset checks.
+  it('★ the acceptance-count axis is not vacuous — two heads really do change the outcome', () => {
+    const args = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
+        role: `${P}#Contributor`, attestation: verified(CONV_KEY),
+      }],
+      acceptances: [
+        // First head refusable under any policy, second head good — so the conferring track
+        // sees BOTH without a policy and only the SECOND with one.
+        { head: 'https://alice.test/a1', workspace: WS, member: alice, accepts: 'https://conv.test/g1', stream: 'https://alice.test/s1', attestation: verified(STRANGER_KEY) },
+        { head: 'https://alice.test/a2', workspace: WS, member: alice, accepts: 'https://conv.test/g1', stream: 'https://alice.test/s2', attestation: verified(ALICE_KEY) },
+      ],
+    };
+    const off = foldRoster(args);
+    const on = foldRoster({ ...args, attestation: { convener: CONV, signerOf: signerIndexFromRegistry(registry(false)) } });
+
+    // The stream really does move — this is the case the reviewer reproduced.
+    expect(off.members[0]!.stream).toBe('https://alice.test/s1');
+    expect(on.members[0]!.stream).toBe('https://alice.test/s2');
+    // …and BOTH sides now say the choice was ambiguous. Before, the stricter side went
+    // silent: `acceptanceHeads` was counted off the conferring track, so refusing a head
+    // removed the evidence that there had ever been two.
+    expect(off.divergences.filter(d => d.kind === 'acceptance')).toHaveLength(1);
+    expect(on.divergences.filter(d => d.kind === 'acceptance')).toHaveLength(1);
+    expect(on.divergences.find(d => d.kind === 'acceptance')!.heads)
+      .toEqual(['https://alice.test/a1', 'https://alice.test/a2']);
+  });
+
+  it('★ the reported ROLE does not widen when a head is refused', () => {
+    const args = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [
+        // Observer head unattested-for-binding, Convener head fully bound. Requiring binding
+        // refuses the Observer head — and used to promote the LABEL to Convener while the
+        // capability intersection stayed at the Observer's `[read]`.
+        { head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Observer`, attestation: { authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: true, contentBinding: 'unbound' as const } },
+        { head: 'https://conv.test/g2', workspace: WS, grantedTo: alice, role: `${P}#Convener`, attestation: { authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: true, contentBinding: 'bound' as const } },
+      ],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        // Accepts the head that SURVIVES the binding policy, so the member exists under both
+        // configurations and the comparison is about the label rather than about membership.
+        accepts: 'https://conv.test/g2', stream: 'https://alice.test/s',
+        attestation: { authorshipVerified: true, signedBy: ALICE_KEY, boundToDescriptor: true, contentBinding: 'bound' as const },
+      }],
+    };
+    const loose = foldRoster({ ...args, attestation: { convener: CONV, signerOf: signerIndexFromRegistry(registry(false)) } });
+    const strict = foldRoster({ ...args, attestation: { convener: CONV, signerOf: signerIndexFromRegistry(registry(false)), requireContentBinding: true } });
+    expect(loose.members[0]!.role).toBe(`${P}#Observer`);
+    expect(strict.members[0]!.role).toBe(`${P}#Observer`);
+    // The capabilities were always right; it was the word beside them that escalated.
+    expect(strict.members[0]!.effective).toEqual(loose.members[0]!.effective);
   });
 
   it('★ AXIS B — marking a signing key REVOKED never widens anything', () => {
@@ -283,26 +499,85 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     expect(on.disallowed).toHaveLength(1);
   });
 
-  it('★ the fold states that its records\' CONTENT is unbound, and cannot say otherwise', () => {
-    // The gate binds a SIGNER TO A URL. Every field of Grant and Acceptance is typed by the
-    // caller and none is covered by the proof, so an attested membership establishes "a
-    // record at this URL was signed by this party" and NOT "this party agreed to this". A
-    // review handed the fold one of a member's ordinary signed log entries as their
-    // acceptance and got an attested member who had never heard of the workspace.
+  it('★★ CONTENT BINDING DOES NOT NARROW THE MANUFACTURED PARTICIPANT, and the fold says so', () => {
+    // ★ THE CLAIM MOST AT RISK OF BEING OVER-READ once binding exists. Every field of Grant
+    // and Acceptance is typed by the CALLER, and the proof covers none of them. A review
+    // handed the fold one of a member's ordinary signed log entries as their acceptance and
+    // got an attested member who had never heard of the workspace.
+    //
+    // Requiring content binding does not touch that attack, and this case is built to prove
+    // it rather than to assert it: alice's record is marked `contentBinding: 'bound'`,
+    // because it genuinely IS her unmodified record — the strongest attestation the
+    // substrate can produce — and she still becomes a member of a workspace she never
+    // joined. Binding the bytes cannot help when the lie is in which record was submitted.
+    const contentBound = (by: string): Attestation =>
+      ({ authorshipVerified: true, signedBy: by, boundToDescriptor: true, contentBinding: 'bound' });
     const r = foldRoster({
       workspace: WS, profile: PROFILE, scopes,
-      grants: [{ head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`, attestation: verified(CONV_KEY) }],
+      grants: [{ head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`, attestation: contentBound(CONV_KEY) }],
       acceptances: [{
         // ★ NOT an acceptance. One of alice's ordinary published entries, genuinely signed,
-        // genuinely bound to its own descriptor, genuinely naming alice.
+        // genuinely bound to its own descriptor, and now genuinely content-bound as well.
         head: 'https://alice.test/c/some-ordinary-entry.ttl', workspace: WS, member: alice,
-        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s', attestation: verified(ALICE_KEY),
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s', attestation: contentBound(ALICE_KEY),
       }],
-      attestation: { convener: CONV, signerOf: signerIndexFromRegistry(registry(false)) },
+      attestation: { convener: CONV, signerOf: signerIndexFromRegistry(registry(false)), requireContentBinding: true },
     });
-    expect(r.members).toHaveLength(1);            // this is what the gate actually permits
-    expect(r.recordContentBinding).toBe('unbound'); // ...and the field that says so
-    expect(r.attributionNote).toMatch(/WHO SIGNED A URL/);
+    expect(r.members).toHaveLength(1);              // the strictest policy still permits it
+    expect(r.recordContentBinding).toBe('bound');   // the bytes really were verified...
+    expect(r.recordFieldBinding).toBe('unbound');   // ...and the fields still were not
+    expect(r.attributionNote).toMatch(/CALLER TYPED IT/);
+    expect(r.attributionNote).toMatch(/content binding does not reduce it/);
+  });
+
+  it('the fold reports content binding as ENFORCED, never as merely observed', () => {
+    // ★ `recordContentBinding` is a statement about the CHECK, not about the inputs. Records
+    // that happen to arrive bound under a policy that never demanded it were not verified by
+    // this fold, and reporting 'bound' off the back of them would be the same substitution
+    // — data standing in for a guarantee — that the substrate was making.
+    const bound = (by: string): Attestation =>
+      ({ authorshipVerified: true, signedBy: by, boundToDescriptor: true, contentBinding: 'bound' });
+    const args = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{ head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`, attestation: bound(CONV_KEY) }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s', attestation: bound(ALICE_KEY),
+      }],
+    };
+    const signerOf = signerIndexFromRegistry(registry(false));
+    expect(foldRoster({ ...args, attestation: { convener: CONV, signerOf } }).recordContentBinding).toBe('unbound');
+    expect(foldRoster({ ...args, attestation: { convener: CONV, signerOf, requireContentBinding: true } }).recordContentBinding).toBe('bound');
+    expect(foldRoster(args).recordContentBinding).toBe('unbound');
+  });
+
+  it('★ an UNBOUND or DECLARED record is refused when binding is required — and not called a forgery', () => {
+    const shapes: [string, Attestation, RegExp][] = [
+      ['unbound', { authorshipVerified: true, signedBy: ALICE_KEY, boundToDescriptor: true, contentBinding: 'unbound' }, /no content digest at all/],
+      ['declared', { authorshipVerified: true, signedBy: ALICE_KEY, boundToDescriptor: true, contentBinding: 'declared' }, /nothing was checked against it/],
+      // A relay too old to report the field must not pass the gate by omission.
+      ['absent', { authorshipVerified: true, signedBy: ALICE_KEY, boundToDescriptor: true }, /no content digest at all/],
+    ];
+    for (const [label, att, why] of shapes) {
+      const r = foldRoster({
+        workspace: WS, profile: PROFILE, scopes,
+        grants: [{ head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`, attestation: { authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: true, contentBinding: 'bound' } }],
+        acceptances: [{ head: 'https://alice.test/a1', workspace: WS, member: alice, accepts: 'https://conv.test/g1', stream: 'https://alice.test/s', attestation: att }],
+        attestation: { convener: CONV, signerOf: signerIndexFromRegistry(registry(false)), requireContentBinding: true },
+      });
+      expect(r.members, `${label} must not confer membership`).toHaveLength(0);
+      const refusal = r.unattested.find(u => u.kind === 'acceptance');
+      expect(refusal, `${label} must be listed, never silently dropped`).toBeDefined();
+      expect(refusal!.because).toMatch(why);
+      // ★ The refusal must not read as an ACCUSATION: the overwhelming majority of these
+      // are records that predate content binding, not tampering, and the sibling branch
+      // above this one in `refuseAttestation` had to be rewritten once already for calling
+      // a record's real author a forger in the one channel operators are told to watch.
+      // Asserting the absence of the words would be satisfied by a bare "refused", so what
+      // is pinned is the presence of the exculpation.
+      expect(refusal!.because).not.toMatch(/\bforg(?:ed|ery)\b|\bwas tampered\b/i);
+      expect(refusal!.because).toMatch(/not evidence|it is intact|says nothing about/i);
+    }
   });
 });
 
