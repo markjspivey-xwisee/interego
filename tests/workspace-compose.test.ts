@@ -179,6 +179,149 @@ describe('★ partial availability is visible, never silent', () => {
     expect(view.streams).toHaveLength(2);
   });
 
+  // ★ EVERY OTHER TEST IN THIS FILE BUILDS ITS MANIFEST WITH `manifest()`, WHICH SYNTHESISES
+  // `describes` FROM THE STREAM IT WAS ASKED FOR — so the filter that drops foreign rows can
+  // never fail there, and the gap below survived the whole suite. These build the response by
+  // hand, which is the only way to make the filter discard everything.
+  describe('★ a read that returns records, none of them this stream\'s, is not an idle member', () => {
+    /** A manifest whose rows describe a DIFFERENT graph — the read landed on another stream. */
+    const otherStream = {
+      entries: [
+        {
+          descriptorUrl: 'https://agents.test/c/x0.ttl', cid: 'cid-x0', validFrom: '2026-08-01T11:00:00Z',
+          supersedes: [], describes: ['https://agents.test/ws/BETA/stream'],
+        },
+        {
+          descriptorUrl: 'https://agents.test/c/x1.ttl', cid: 'cid-x1', validFrom: '2026-08-01T11:30:00Z',
+          supersedes: ['https://agents.test/c/x0.ttl'], describes: ['https://agents.test/ws/BETA/stream'],
+        },
+      ],
+    };
+
+    it('reports it, rather than folding it in as a member who has written nothing', async () => {
+      const view = await composeWorkspace({ workspace: WS, members: [alice, bot] }, makeDeps({
+        'https://alice.test/': manifest(alice.stream, A),
+        'https://agents.test/': otherStream,
+      }));
+
+      expect(view.unmatched).toHaveLength(1);
+      expect(view.unmatched[0]!.member.principal).toBe(bot.principal);
+      // The count is the discriminator: 2 records served, 0 of them this stream's.
+      expect(view.unmatched[0]!.served).toBe(2);
+      expect(view.unmatched[0]!.reason).toMatch(/written nothing/);
+    });
+
+    it('★ and the view is NOT complete, so it cannot be rendered as whole', async () => {
+      // The defect exactly: reachable pod, successful read, every row filtered out, and the
+      // view previously said complete: true with "0 entries from 1 of 1 streams".
+      const view = await composeWorkspace({ workspace: WS, members: [alice, bot] }, makeDeps({
+        'https://alice.test/': manifest(alice.stream, A),
+        'https://agents.test/': otherStream,
+      }));
+      expect(view.complete).toBe(false);
+      expect(describeCoverage(view)).toMatch(/not idle/i);
+    });
+
+    it('★ a manifest with no `describes` at all is the same fault, not an empty stream', async () => {
+      // The likelier shape in practice: the substrate answers with rows that carry no
+      // `describes` key. Every row is discarded, and the member looks idle.
+      const view = await composeWorkspace({ workspace: WS, members: [bot] }, makeDeps({
+        'https://agents.test/': {
+          entries: [{
+            descriptorUrl: 'https://agents.test/c/b0.ttl', cid: 'c', validFrom: '2026-08-01T11:00:00Z',
+            supersedes: [],
+          }],
+        },
+      }));
+      expect(view.unmatched).toHaveLength(1);
+      expect(view.complete).toBe(false);
+    });
+
+    it('★ a trailing-slash mismatch on the stream IRI is reported, not silently empty', async () => {
+      // `describes` is compared by exact string, so one slash is the difference between a
+      // member's whole history and a member who appears to have written nothing.
+      const view = await composeWorkspace({ workspace: WS, members: [bot] }, makeDeps({
+        'https://agents.test/': {
+          entries: [{
+            descriptorUrl: 'https://agents.test/c/b0.ttl', cid: 'c', validFrom: '2026-08-01T11:00:00Z',
+            supersedes: [], describes: [`${bot.stream}/`],
+          }],
+        },
+      }));
+      expect(view.unmatched).toHaveLength(1);
+      expect(view.unmatched[0]!.served).toBe(1);
+      expect(view.complete).toBe(false);
+    });
+
+    it('a genuinely empty pod is still NOT reported — the flag has to stay meaningful', async () => {
+      // The other direction, and the one that decides whether this is worth having. If zero
+      // records also flagged, `complete` would be false for every workspace with a member
+      // who has not written yet, and a flag that is always false is a flag nobody reads.
+      const view = await composeWorkspace({ workspace: WS, members: [alice, bot] }, makeDeps({
+        'https://alice.test/': manifest(alice.stream, A),
+        'https://agents.test/': { entries: [] },
+      }));
+      expect(view.unmatched).toHaveLength(0);
+      expect(view.complete).toBe(true);
+    });
+
+    it('an UNREACHABLE pod stays unavailable and is not double-reported as unmatched', async () => {
+      // The read threw, so there is no served count to reason from. Naming the member in
+      // both places would say two different things happened when one did.
+      const view = await composeWorkspace({ workspace: WS, members: [bot] }, makeDeps({
+        'https://agents.test/': new Error('ECONNREFUSED'),
+      }));
+      expect(view.unavailable).toHaveLength(1);
+      expect(view.unmatched).toHaveLength(0);
+    });
+
+    it('entries served from ANOTHER pod stay misattributed, and are not also unmatched', async () => {
+      // rows survived the stream filter and were dropped by the containment check instead.
+      // That fact is already named once; naming it twice makes the report unreadable.
+      const view = await composeWorkspace({ workspace: WS, members: [bot] }, makeDeps({
+        'https://agents.test/': {
+          entries: [{
+            descriptorUrl: 'https://elsewhere.test/c/z.ttl', cid: 'c', validFrom: '2026-08-01T11:00:00Z',
+            supersedes: [], describes: [bot.stream],
+          }],
+        },
+      }));
+      expect(view.misattributed).toHaveLength(1);
+      expect(view.unmatched).toHaveLength(0);
+      // nothing was stripped from the middle of a chain, so no consequential break
+      expect(view.misattributed[0]!.brokeTheChain).toBe(false);
+    });
+
+    it('★ a foreign row in the MIDDLE is one fault, and the second report says it is a consequence', async () => {
+      // Stripping the foreign row leaves its neighbours pointing at something no longer
+      // present, so the member landed in `misattributed` AND `unverified` and the coverage
+      // line read "1 read but NOT verified" — which says this member's log is forked. It is
+      // not; the composer's own containment filter broke it. Reporting one fault twice, with
+      // the second one mislabelled, makes the count of what is wrong unreadable.
+      const view = await composeWorkspace({ workspace: WS, members: [bot] }, makeDeps({
+        'https://agents.test/': {
+          entries: [
+            { descriptorUrl: 'https://agents.test/c/e0.ttl', cid: 'c0', validFrom: '2026-08-01T10:00:00Z', supersedes: [], describes: [bot.stream] },
+            { descriptorUrl: 'https://elsewhere.test/c/e1.ttl', cid: 'c1', validFrom: '2026-08-01T11:00:00Z', supersedes: ['https://agents.test/c/e0.ttl'], describes: [bot.stream] },
+            { descriptorUrl: 'https://agents.test/c/e2.ttl', cid: 'c2', validFrom: '2026-08-01T12:00:00Z', supersedes: ['https://elsewhere.test/c/e1.ttl'], describes: [bot.stream] },
+          ],
+        },
+      }));
+      expect(view.misattributed).toHaveLength(1);
+      expect(view.unverified).toHaveLength(1);
+      expect(view.misattributed[0]!.brokeTheChain).toBe(true);
+      expect(view.misattributed[0]!.reason).toMatch(/the member's own log is not forked/);
+    });
+
+    it('★ the pod is read exactly ONCE — the count must not cost a second manifest read', async () => {
+      // Catch-up is costed at one manifest read per member; buying this distinction with a
+      // second read would spend the number the README publishes as the design's price.
+      const deps = makeDeps({ 'https://agents.test/': otherStream });
+      await composeWorkspace({ workspace: WS, members: [bot] }, deps);
+      expect(vi.mocked(deps.discover)).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('every member unreachable yields an empty, explicitly incomplete view', async () => {
     const view = await composeWorkspace({ workspace: WS, members: [alice, bot] }, makeDeps({
       'https://alice.test/': new Error('a'),
@@ -236,6 +379,147 @@ describe('★ a stream that does not verify is withheld from the feed', () => {
     expect(view.unverified[0]!.report.heads).toHaveLength(2);
     expect(view.complete).toBe(false);
     expect(describeCoverage(view)).toMatch(/NOT verified/);
+  });
+});
+
+describe('★ the two grades of ATTRIBUTION, and what the second one costs', () => {
+  // `ComposedEntry.principal` was a label attached from the members list. Nothing in the read
+  // path derived it, so the confident name beside every entry rested on whoever assembled the
+  // inputs. These pin both grades — including the cheap one, because an honest label on a
+  // cheap read is a result and not a failure, and it has to keep saying what it is.
+
+  const aliceAgent = 'did:web:agents.test:alice-1';
+  const botAgent = 'did:web:agents.test:bot-7';
+  const signerOf = (s: string) =>
+    ({ [aliceAgent]: alice.principal, [botAgent]: bot.principal } as Record<string, string>)[s] ?? null;
+
+  /**
+   * Deps that also answer get_descriptor, per descriptor URL, with the authorship block the
+   * relay would return. `null` means the descriptor carries no proof at all.
+   */
+  function withDescriptors(
+    byPod: Record<string, unknown>,
+    signers: Record<string, string | null>,
+  ): StreamDeps {
+    return {
+      ...makeDeps(byPod),
+      getDescriptor: vi.fn(async (args: Record<string, unknown>) => {
+        const url = String(args.url);
+        const signedBy = signers[url];
+        if (signedBy === undefined || signedBy === null) {
+          return { url, turtle: '<> a iep:ContextDescriptor .' };
+        }
+        return {
+          url,
+          // Bound by the relay's own naming convention: the proof's urn terminal segment is
+          // the descriptor's slug. Built the way the substrate builds it, not the way the
+          // check reads it, so a check that only ever sees exact equality would fail here.
+          turtle: '<> iep:authorshipProof [ iep:descriptorId '
+            + `<urn:iep:pod:${url.split('/').pop()!.replace(/\.ttl$/, '')}> ] .`,
+          authorship: { authorshipVerified: true, signedBy },
+        };
+      }),
+    };
+  }
+
+  const allSigned = {
+    'https://alice.test/c/a0.ttl': aliceAgent,
+    'https://alice.test/c/a1.ttl': aliceAgent,
+    'https://agents.test/c/b0.ttl': botAgent,
+  };
+  const bothPods = {
+    'https://alice.test/': manifest(alice.stream, A),
+    'https://agents.test/': manifest(bot.stream, B),
+  };
+
+  it('the default grade is ASSERTED, and it costs nothing extra', () => {
+    return composeWorkspace({ workspace: WS, members: [alice, bot] }, makeDeps(bothPods)).then(view => {
+      expect(view.attributionGrade).toBe('asserted');
+      expect(view.descriptorReads).toBe(0);
+      expect(view.unattested).toEqual([]);
+      expect(describeCoverage(view)).toMatch(/attribution is ASSERTED/);
+    });
+  });
+
+  it('★ verifying admits the entries and reports the grade AND the bill', async () => {
+    // One get_descriptor per entry, on top of one manifest read per member. Asserted here
+    // rather than described, because this is the number the README publishes as the design's
+    // price and it is the one a caller has to decide about.
+    const deps = withDescriptors(bothPods, allSigned);
+    const view = await composeWorkspace(
+      { workspace: WS, members: [alice, bot], verifyAuthorship: true, signerOf }, deps,
+    );
+    expect(view.attributionGrade).toBe('attested');
+    expect(view.entries).toHaveLength(3);
+    expect(view.descriptorReads).toBe(3);
+    expect(vi.mocked(deps.getDescriptor!)).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(deps.discover)).toHaveBeenCalledTimes(2); // still one manifest per member
+    expect(view.complete).toBe(true);
+  });
+
+  it('★ an entry signed by SOMEONE ELSE is withheld and reported, never admitted', async () => {
+    // The escalation in its post-containment form: the record really is served from alice's
+    // pod, and alice did not publish it.
+    const view = await composeWorkspace(
+      { workspace: WS, members: [alice], verifyAuthorship: true, signerOf },
+      withDescriptors(bothPods, { ...allSigned, 'https://alice.test/c/a1.ttl': botAgent }),
+    );
+    expect(view.entries.map(e => e.descriptorUrl)).toEqual(['https://alice.test/c/a0.ttl']);
+    expect(view.unattested).toHaveLength(1);
+    expect(view.unattested[0]!.entries[0]!.because).toMatch(new RegExp(`acts for ${bot.principal}`));
+    expect(view.complete).toBe(false);
+    expect(describeCoverage(view)).toMatch(/NOT attributable to the member named/);
+  });
+
+  it('★ an UNSIGNED entry is withheld too — every pre-existing entry is in this state', async () => {
+    // Turning verification on for a workspace written before entries were signed withholds
+    // all of it. That is the correct answer and an operationally violent one, which is
+    // exactly why the grade is asked for rather than assumed.
+    const view = await composeWorkspace(
+      { workspace: WS, members: [alice], verifyAuthorship: true, signerOf },
+      withDescriptors(bothPods, {}),
+    );
+    expect(view.entries).toHaveLength(0);
+    expect(view.unattested[0]!.entries).toHaveLength(2);
+    expect(view.unattested[0]!.entries[0]!.because).toMatch(/without sign_authorship/);
+  });
+
+  it('★ a withheld entry keeps its position, so the gap in the chain stays visible', async () => {
+    // Renumbering the survivors would close the hole over a record the reader is entitled to
+    // know is missing: alice's log would read 0,1 with entry 0 forged.
+    const view = await composeWorkspace(
+      { workspace: WS, members: [alice], verifyAuthorship: true, signerOf },
+      withDescriptors(bothPods, { ...allSigned, 'https://alice.test/c/a0.ttl': botAgent }),
+    );
+    expect(view.unattested[0]!.entries[0]!.seqInStream).toBe(0);
+    expect(view.entries[0]!.seqInStream).toBe(1);
+  });
+
+  it('a stream that does not verify is NOT also charged a descriptor read per entry', async () => {
+    // It is withheld whole either way, so paying the expensive check on it spends the budget
+    // on records that were never going to be admitted — and reports one fault twice.
+    const FORKED = [
+      { url: 'https://agents.test/c/b0.ttl', at: '2026-08-01T09:00:00Z' },
+      { url: 'https://agents.test/c/b1.ttl', at: '2026-08-01T09:30:00Z', prior: 'https://agents.test/c/b0.ttl' },
+      { url: 'https://agents.test/c/b2.ttl', at: '2026-08-01T09:40:00Z', prior: 'https://agents.test/c/b0.ttl' },
+    ];
+    const view = await composeWorkspace(
+      { workspace: WS, members: [bot], verifyAuthorship: true, signerOf },
+      withDescriptors({ 'https://agents.test/': manifest(bot.stream, FORKED) }, allSigned),
+    );
+    expect(view.descriptorReads).toBe(0);
+    expect(view.unverified).toHaveLength(1);
+    expect(view.unattested).toEqual([]);
+  });
+
+  it('★ asking to verify without a getDescriptor REJECTS — there is no half-verified view', async () => {
+    // Deliberately not isolated per-stream like an unreachable pod. A missing dependency is a
+    // programming error affecting every member equally, and reporting it as "these members
+    // were unavailable" would let a caller carry on with a view whose remaining entries look
+    // attested and were never checked.
+    await expect(composeWorkspace(
+      { workspace: WS, members: [alice], verifyAuthorship: true }, makeDeps(bothPods),
+    )).rejects.toThrow(/one call per entry/);
   });
 });
 

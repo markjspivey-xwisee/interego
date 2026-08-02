@@ -9,8 +9,71 @@
  * That is not ceremony. The substrate has no way to make a person's pod hold a record they
  * did not write, so a one-sided roster would let a convener list participants who never
  * agreed to anything — and in a system whose whole claim is that people keep custody of what
- * they wrote, a manufactured participant is the worst possible failure. Requiring both halves
- * makes it structurally impossible rather than merely discouraged.
+ * they wrote, a manufactured participant is the worst possible failure.
+ *
+ * ★ THAT ARGUMENT WAS ABOUT WHERE THE RECORDS LIVE, AND THIS FUNCTION NEVER LOOKED.
+ *
+ * An independent review wrote both halves on one pod and the fold produced a member: the
+ * only cross-check was that the acceptance named the grant and repeated the principal, both
+ * of which the convener types. The live verifier that reported 13/13 built both halves
+ * itself, so the property was demonstrated by construction and never established.
+ *
+ * The evidence that CAN distinguish the two is the substrate's `iep:authorshipProof`, which
+ * `publish_context{sign_authorship: true}` embeds and `get_descriptor` verifies. This module
+ * is pure, so it does not fetch it — it takes the verifier's answer as {@link Attestation}
+ * on each record and, when {@link foldRoster} is given an {@link AttestationPolicy},
+ * REFUSES any grant not signed for the convener and any acceptance not signed for the member
+ * it names. Refusals are listed in {@link Roster.unattested}, never dropped.
+ *
+ * ★ AND IT BINDS A SIGNER TO A URL, NEVER A RECORD TO ITS CONTENT. Say this before anyone
+ * over-reads the paragraph above. `Grant.role`, `Grant.grantedTo`, `Grant.revoked`,
+ * `Acceptance.member`, `Acceptance.accepts` and `Acceptance.stream` are typed by whoever
+ * called this function; the {@link Attestation} sits BESIDE them and covers none of them. A
+ * review handed the fold one of bee's ordinary published log entries as her "acceptance" —
+ * genuinely signed, genuinely bound to its own descriptor, genuinely naming bee — and bee
+ * became an ATTESTED member of a workspace she had never heard of, at whatever role the
+ * caller typed. Every member who has ever published one signed public record is that input.
+ *
+ * So "bee is an attested member" means *a record at this URL was signed by bee*, and NOT
+ * *bee agreed to this*. {@link Roster.recordContentBinding} is a non-omittable field whose
+ * only value is `'unbound'`, so a caller cannot read `members` without having been handed
+ * that distinction. Closing it needs the record's own content parsed and compared against
+ * the fields — evidence this pure module is not given and nothing in the repo yet produces.
+ *
+ * Without that policy the fold still works exactly as before, and says so:
+ * {@link Roster.membershipGrade} is `'asserted'` and {@link Roster.attributionNote} states
+ * in words that nothing was checked. The grade is non-omittable for the same reason
+ * `crossStreamOrderIsAdvisory` is — a caller cannot read `members` without having been told
+ * what the list is worth.
+ *
+ * ── ★★ TURNING THE POLICY ON MUST NEVER GRANT MORE THAN LEAVING IT OFF ───────
+ *
+ * The first version of that gate filtered refused rows out of the grant list BEFORE the
+ * revocation check, so a revocation nobody could attest was not refused — it was ERASED, and
+ * the member kept everything. A second review turned a transient `get_descriptor` failure
+ * into a silent reinstatement of a revoked member, with nothing in `unattested`, `explain()`
+ * or `attributionNote` saying a revocation had failed to take effect. Turning a security
+ * feature ON granted more authority than leaving it OFF, which is the worst possible shape
+ * for one.
+ *
+ * The repair is not a patch on the revocation branch. It is a rule the whole fold obeys:
+ *
+ *   ★ A RECORD THAT FAILS ATTESTATION LOSES ITS POWER TO CONFER AND KEEPS ITS POWER TO
+ *     RESTRICT.
+ *
+ * So the fold reads its inputs on TWO tracks. The CONFERRING track — membership, the role,
+ * the stream, a pending invitation — sees only records that passed the gate. The RESTRICTING
+ * track — revocation, withdrawal, and the intersection across forked heads — sees every
+ * in-workspace record, attested or not. Anything a refused record could do is therefore a
+ * subset of what the same record does with no policy at all, for every principal, which is
+ * exactly the invariant `workspace-adversarial.test.ts` enumerates configurations to assert.
+ *
+ * The cost is named rather than hidden. Honouring an unattestable revocation means anyone who
+ * can get a row into `grants` can evict a member — the argument the erasing version was built
+ * on. That argument is real and it is the lesser evil: it is a denial of service the ASSERTED
+ * configuration already permits in full, so refusing to honour it bought nothing except a
+ * configuration that grants more than the weaker one. A wrongly-evicted member complains
+ * within the hour; a wrongly-retained one is why the revocation was written.
  *
  * ── WHY A ROLE CANNOT ESCALATE ───────────────────────────────────────────────
  *
@@ -54,6 +117,183 @@ export interface RoleProfile {
   readonly roles: readonly RoleDefinition[];
 }
 
+// ── Provenance ───────────────────────────────────────────────────────────────
+
+/**
+ * What a reader established about who actually signed a record — the substrate verifier's
+ * answer, not the record's own say-so.
+ *
+ * Deliberately the shape of `get_descriptor`'s `authorship` block plus one field this layer
+ * derives, so there is nothing to translate and nothing to get subtly wrong in the
+ * translation. Populated by `readAttestation` in `stream.ts`; a pure caller can also build
+ * one by hand, which is what the tests do.
+ */
+export interface Attestation {
+  /** The relay re-derived the canonical payload and the ECDSA signature matched. */
+  readonly authorshipVerified: boolean;
+  /**
+   * The agent IRI the proof names. NOT usually the workspace principal: a person's
+   * principal is a WebID and the signer is one of their agent DIDs, which is why the
+   * checks below go through a {@link SignerResolver} rather than comparing strings.
+   */
+  readonly signedBy: string | null;
+  /**
+   * Whether the proof's own `iep:descriptorId` names the descriptor it was read from.
+   *
+   * ★ A proof block is plain Turtle inside a public descriptor, and the relay's verifier
+   * checks the signature WITHOUT checking what it is attached to. So a proof lifted verbatim
+   * out of one of a member's real records and pasted into a record somebody else fabricated
+   * verifies clean, with the member named as signer — which is exactly the manufactured
+   * participant this file exists to prevent. See `readAttestation` for what can and cannot
+   * be determined about the binding from outside the substrate.
+   */
+  readonly boundToDescriptor: boolean;
+  /** The verifier's diagnostic when it refused, or this layer's when it could not read. */
+  readonly reason?: string;
+}
+
+/**
+ * Which grade of attribution a result carries. Two grades, never conflated — the same
+ * discipline `compose.ts` applies to ordering, in the position where getting it wrong
+ * invents a participant rather than reordering a feed.
+ *
+ *   asserted   the principal on a record is a LABEL, taken from whoever assembled the
+ *              inputs. Nothing was verified.
+ *   attested   every record folded in carried an `iep:authorshipProof` that the substrate
+ *              verified, signed by an agent the expected principal vouches for.
+ */
+export type AttributionGrade = 'asserted' | 'attested';
+
+/**
+ * Who does this signer act for?
+ *
+ * A signature names an agent DID; a roster names principals. The mapping between them is
+ * the agent registry on the principal's OWN pod — a claim only that principal can write,
+ * which is what makes it evidence rather than assertion. Injected rather than looked up so
+ * this module stays pure; `signerIndexFromRegistry` in `can.ts` builds one from the same
+ * registry `scopesFromRegistry` already reads.
+ */
+export type SignerResolver = (signedBy: string) => Principal | SignerFinding | null;
+
+/**
+ * What a registry actually says about one signer, when a bare principal cannot say it.
+ *
+ * A resolver may still return a plain {@link Principal}, and {@link signerIsSelf} does, so
+ * every resolver written against the older signature keeps working. The richer form exists
+ * because two of a registry's possible answers are not a "who" at all, and both used to come
+ * back indistinguishable from a clean attribution:
+ *
+ *   revoked     the delegation was WITHDRAWN. The union in `scopesFromRegistry` hides this
+ *               completely whenever the principal has a second live agent: a review had an
+ *               entry signed by a key its owner had already thrown out counted at the
+ *               `attested` grade, because a different agent of the same person was live.
+ *   contested   TWO principals' registries claim the same signing key. Anyone can write
+ *               their own registry, so anyone can add a rival's key to it; answering with
+ *               either claimant states one of two conflicting claims as established, and
+ *               which one it is depends on the order the rows arrived in.
+ */
+export type SignerFinding =
+  | {
+      readonly acts: 'for';
+      readonly principal: Principal;
+      /** The registry row carries `revoked`. {@link refuseAttestation} refuses on it. */
+      readonly revoked?: boolean;
+    }
+  | {
+      readonly acts: 'contested';
+      /** Every principal that claimed this signer. Deliberately not one of them. */
+      readonly claimedBy: readonly Principal[];
+    };
+
+/** A signer is only itself. The safe default: it vouches for nobody it is not. */
+export const signerIsSelf: SignerResolver = (signedBy: string) => signedBy;
+
+/** Read a resolver's answer in whichever of its two forms it came back. */
+function asFinding(answer: Principal | SignerFinding | null): SignerFinding | null {
+  if (answer === null) return null;
+  return typeof answer === 'string' ? { acts: 'for', principal: answer } : answer;
+}
+
+/** Require an attestation on every record, checked against the two parties named here. */
+export interface AttestationPolicy {
+  /**
+   * Who is entitled to grant here. Mandatory rather than optional: "require attestation but
+   * do not say against whom" has no safe answer, and expressing it in the type as a field
+   * that can be left out is how it ends up being left out.
+   */
+  readonly convener: Principal;
+  /** Defaults to {@link signerIsSelf}, which suits principals that sign as themselves. */
+  readonly signerOf?: SignerResolver;
+}
+
+/**
+ * Why this record cannot be attributed to `expected`, or null when it can.
+ *
+ * Every branch refuses. There is no path where a missing or unreadable attestation is
+ * treated as an absent objection — an authorization record nobody could verify is not the
+ * same as one that verified, and reading it as one is the whole defect.
+ */
+export function refuseAttestation(
+  attestation: Attestation | undefined,
+  expected: Principal,
+  signerOf: SignerResolver = signerIsSelf,
+): string | null {
+  if (attestation === undefined) {
+    return 'it carries no attestation at all — nobody read its authorship proof, and an '
+      + 'unchecked record is not a verified one';
+  }
+  if (!attestation.authorshipVerified) {
+    return `its iep:authorshipProof did not verify (${attestation.reason ?? 'no reason given'})`;
+  }
+  if (!attestation.boundToDescriptor) {
+    // ★ REFUSE WITHOUT ACCUSING. This branch used to say the proof "was copied in from
+    // another record", stated as fact — and `readAttestation` sets the flag false for four
+    // different situations, only one of which is a forgery. A descriptor named by the
+    // PGSL-primary path (`holon-<hash>.ttl`) is refused here too, and a record's real author
+    // was being called a forger in the one channel operators are told to watch. The
+    // attestation's own reason distinguishes them; the verdict is the same either way.
+    return 'its authorship proof does not name this descriptor'
+      + (attestation.reason !== undefined ? ` (${attestation.reason})` : '')
+      + ' — either the proof was minted for another record and copied in, or this record does '
+      + 'not follow the naming convention the binding is compared on. Both are refused; only '
+      + 'one of them is a forgery, and this layer cannot tell which';
+  }
+  if (attestation.signedBy === null) {
+    return 'the proof verified but names no signer, so it attributes the record to nobody';
+  }
+  const finding = asFinding(signerOf(attestation.signedBy));
+  if (finding === null) {
+    return `it was signed by ${attestation.signedBy}, and no agent registry vouches for that `
+      + 'signer as acting for anyone';
+  }
+  if (finding.acts === 'contested') {
+    // Reporting one of the claimants would state a false mapping as fact and let whoever
+    // wrote their registry last decide it. A contested key is evidence of nothing.
+    return `it was signed by ${attestation.signedBy}, and ${finding.claimedBy.length} registries `
+      + `claim that signer (${finding.claimedBy.join(', ')}). A key two principals both claim `
+      + 'attributes a record to neither of them';
+  }
+  if (finding.principal !== expected) {
+    return `it was signed by ${attestation.signedBy}, who acts for ${finding.principal} — `
+      + `not for ${expected}`;
+  }
+  if (finding.revoked === true) {
+    // ★ A WITHDRAWN KEY DOES NOT ATTEST, even though it still identifies. The registry cannot
+    // tell a routine rotation from a compromise, and the safe reading of an authorization
+    // statement that has been withdrawn is that it authorises nothing — the same rule
+    // `capabilitiesOfAgent` applies. A review signed an entry with a key its owner had
+    // already revoked and it was admitted at the `attested` grade, because the union in
+    // `scopesFromRegistry` still found the principal a live agent. What this costs is real
+    // and is stated where it is paid: rotating a key withholds everything it signed until
+    // the retired row is put back live. Withheld and NAMED, never silently dropped.
+    return `it was signed by ${attestation.signedBy}, whose delegation from ${expected} is `
+      + 'REVOKED. The row still identifies the signer, and a withdrawn delegation is not '
+      + 'evidence the owner stands behind what it signed — a rotation and a compromised key '
+      + 'are the same row';
+  }
+  return null;
+}
+
 /** Half a membership, from the convener's pod. `head` is the descriptor URL of this version. */
 export interface Grant {
   readonly head: string;
@@ -61,6 +301,8 @@ export interface Grant {
   readonly grantedTo: Principal;
   readonly role: string;
   readonly revoked?: boolean;
+  /** What the substrate's verifier said about who signed this grant. See {@link Attestation}. */
+  readonly attestation?: Attestation;
 }
 
 /** The other half, from the member's own pod. */
@@ -71,6 +313,31 @@ export interface Acceptance {
   readonly accepts: string;
   readonly stream: string;
   readonly withdrawn?: boolean;
+  /** What the substrate's verifier said about who signed this acceptance. */
+  readonly attestation?: Attestation;
+}
+
+/** A record the fold refused to use, and why. Reported so a refusal is diagnosable. */
+export interface UnattestedRecord {
+  readonly kind: 'grant' | 'acceptance';
+  /** The descriptor URL of the refused record. */
+  readonly head: string;
+  /** Who the record claims to be about — the grantee for a grant, the member for an acceptance. */
+  readonly principal: Principal;
+  readonly because: string;
+  /**
+   * Whether this record still TOOK EFFECT despite being refused, because what it carries is a
+   * restriction rather than a conferral.
+   *
+   * ★ Non-omittable, and it is the field that makes a refusal readable. A refused revocation
+   * and a refused grant used to render identically here — `{kind: 'grant', because: 'it
+   * carries no attestation at all…'}` — so a revocation that had (in the erasing version)
+   * failed to take effect was indistinguishable from a grant that had failed to create a
+   * member, and the difference between those two is whether somebody still holds authority
+   * they were supposed to have lost. Now both the fact and its direction are here: `true`
+   * means the member was removed anyway.
+   */
+  readonly restrictionStillApplied: boolean;
 }
 
 /** What a principal's own delegation already permits, independent of any workspace. */
@@ -92,9 +359,18 @@ export interface Member {
 }
 
 export interface Divergence {
-  readonly kind: 'grant' | 'acceptance' | 'scope';
+  readonly kind: 'grant' | 'acceptance' | 'scope' | 'role';
   readonly heads: readonly string[];
   readonly note: string;
+  /**
+   * The distinct roles the forked heads name, for `kind: 'grant'`.
+   *
+   * ★ Carried so {@link explain} can tell a fork that CAUSES a refusal from one that merely
+   * accompanies it. Two heads both naming Observer intersect to Observer, so a refused
+   * `append` has nothing to do with the fork — and `explain` was blaming it anyway, and
+   * prescribing "republish a single clean head", which changes the answer by not one byte.
+   */
+  readonly roles?: readonly string[];
 }
 
 export interface Roster {
@@ -104,6 +380,44 @@ export interface Roster {
   readonly pendingInvitations: readonly { principal: Principal; role: string; grant: string }[];
   /** Every divergence found, so an operator can republish a clean head. */
   readonly divergences: readonly Divergence[];
+  /**
+   * Whether the two-sidedness of this roster was VERIFIED or merely assumed.
+   *
+   * ★ Non-omittable, and that is the point. `members` used to be a list whose provenance
+   * lived only in a README claim, and the claim was false. A caller now cannot obtain the
+   * list without also holding the answer to "who checked?" — modelled on
+   * `crossStreamOrderIsAdvisory`, which exists so nobody can consume a merged feed without
+   * having seen that its cross-member order is a guess.
+   */
+  readonly membershipGrade: AttributionGrade;
+  /** The same fact in a sentence, because a two-value enum is easy to not branch on. */
+  readonly attributionNote: string;
+  /**
+   * Records refused for failing the attestation policy. Empty when no policy was given —
+   * an unchecked record is not a refused one, and `membershipGrade` is what distinguishes
+   * the two.
+   *
+   * A refused record still restricts: see {@link UnattestedRecord.restrictionStillApplied}
+   * and the monotonicity note in this module's header.
+   */
+  readonly unattested: readonly UnattestedRecord[];
+  /**
+   * ★ ALWAYS `'unbound'`, and non-omittable for exactly the reason
+   * `crossStreamOrderIsAdvisory` is: the claim has to be unavoidable, because the output
+   * looks identical whether or not it holds.
+   *
+   * An attestation covers WHO SIGNED A URL. It does not cover what the record at that URL
+   * says, and every field of {@link Grant} and {@link Acceptance} is typed by the caller of
+   * {@link foldRoster}, not read from the bytes the proof is over. So an attested membership
+   * establishes *a record at this URL was signed by this party* — it does NOT establish that
+   * the party granted this role, or accepted anything at all. Handed one of a member's
+   * ordinary signed log entries as their "acceptance", this fold produces an attested member
+   * who never agreed to anything.
+   *
+   * There is no value other than `'unbound'` yet, and inventing one before content is
+   * actually compared would be the claim without the check.
+   */
+  readonly recordContentBinding: 'unbound';
 }
 
 const uniqueSorted = (xs: readonly string[]): string[] => [...new Set(xs)].sort();
@@ -138,10 +452,34 @@ export function foldRoster(args: {
   readonly grants: readonly Grant[];
   readonly acceptances: readonly Acceptance[];
   readonly scopes: readonly DelegatedScope[];
+  /**
+   * Require each half to have been signed by the party it is supposed to come from.
+   *
+   * Omitting it is legal and is what every existing caller does, so this is not a gate that
+   * can be forgotten silently: the omission is reported as `membershipGrade: 'asserted'`
+   * with {@link Roster.attributionNote} spelling out that a convener holding both records
+   * could have written both halves.
+   */
+  readonly attestation?: AttestationPolicy;
 }): Roster {
   const { workspace, profile, grants, acceptances, scopes } = args;
+  const signerOf = args.attestation?.signerOf ?? signerIsSelf;
 
-  const permitsOf = new Map(profile.roles.map(r => [r.role, uniqueSorted([...r.permits])]));
+  // ★ A ROLE DECLARED TWICE IS INTERSECTED, NOT OVERWRITTEN — the same rule as the scope
+  // rows below it, and it was a plain `new Map` two lines above them. A profile declaring
+  // `#Observer` narrow then wide gave the Observer append, grant and revoke; reversed, none
+  // of the three; `divergences` was empty both ways and `explain()` affirmed whichever
+  // answer came out. Order-dependent privilege in a published governance document, decided
+  // by which triple the parser emitted last.
+  const permitsOf = new Map<string, string[]>();
+  const duplicatedRoles = new Set<string>();
+  for (const r of profile.roles) {
+    const permits = uniqueSorted([...r.permits]);
+    const prior = permitsOf.get(r.role);
+    if (prior === undefined) { permitsOf.set(r.role, permits); continue; }
+    duplicatedRoles.add(r.role);
+    permitsOf.set(r.role, intersect(prior, permits));
+  }
   // ★ A PRINCIPAL APPEARING TWICE IS INTERSECTED, NOT OVERWRITTEN.
   //
   // `new Map(scopes.map(...))` silently last-wins, which is last-write-wins on a
@@ -168,10 +506,64 @@ export function foldRoster(args: {
 
   // Records naming a different workspace are not ours to interpret. Dropping them silently
   // is correct: a pod holds many workspaces' records and seeing another's is not an error.
-  const ourGrants = grants.filter(g => g.workspace === workspace);
-  const ourAcceptances = acceptances.filter(a => a.workspace === workspace);
+  const inWorkspaceGrants = grants.filter(g => g.workspace === workspace);
+  const inWorkspaceAcceptances = acceptances.filter(a => a.workspace === workspace);
+
+  // ★ THE PROVENANCE GATE, AND IT RUNS BEFORE ANYTHING ELSE READS THESE ROWS.
+  //
+  // Placed here rather than inside the per-principal loop so there is exactly one place a
+  // record can enter the fold from. The grant side is checked against the CONVENER and the
+  // acceptance side against the member it names — different parties, which is the whole of
+  // what "two-sided" means once it is a fact instead of a layout convention.
+  //
+  // Refused records are named, not dropped: a convener who fabricated an acceptance sees
+  // their grant surface as a PENDING INVITATION plus a line in `unattested` saying who
+  // actually signed the acceptance. Dropping it would render identically to a grant nobody
+  // has answered yet, which is the one reading that hides what happened.
+  //
+  // ★★ AND WHAT THE GATE PRODUCES IS THE CONFERRING TRACK ONLY. The restricting track below
+  // it is `inWorkspaceGrants` / `inWorkspaceAcceptances` — every row, refused or not — and
+  // the two are read separately for the rest of this function. That split is the whole of
+  // the monotonicity guarantee in the header: a refused record can still revoke, still
+  // withdraw and still narrow an intersection, so no configuration of this fold grants more
+  // than a weaker one. Reversing it is what made a revocation nobody could attest vanish.
+  const unattested: UnattestedRecord[] = [];
+  let conferringGrants = inWorkspaceGrants;
+  let conferringAcceptances = inWorkspaceAcceptances;
+  if (args.attestation) {
+    const convener = args.attestation.convener;
+    conferringGrants = inWorkspaceGrants.filter(g => {
+      const why = refuseAttestation(g.attestation, convener, signerOf);
+      if (why === null) return true;
+      unattested.push({
+        kind: 'grant', head: g.head, principal: g.grantedTo, because: why,
+        restrictionStillApplied: g.revoked === true,
+      });
+      return false;
+    });
+    conferringAcceptances = inWorkspaceAcceptances.filter(a => {
+      const why = refuseAttestation(a.attestation, a.member, signerOf);
+      if (why === null) return true;
+      unattested.push({
+        kind: 'acceptance', head: a.head, principal: a.member, because: why,
+        restrictionStillApplied: a.withdrawn === true,
+      });
+      return false;
+    });
+  }
 
   const divergences: Divergence[] = [];
+  for (const role of [...duplicatedRoles].sort()) {
+    divergences.push({
+      kind: 'role',
+      heads: [profile.profile],
+      note:
+        `${role} is declared more than once in <${profile.profile}>. No winner is chosen: the `
+        + 'INTERSECTION of its permits applies. Whichever declaration a parser emitted last '
+        + 'would otherwise decide the role, so the same published profile would confer '
+        + 'different authority depending on how it was read.',
+    });
+  }
   for (const principal of [...duplicatedScopes].sort()) {
     divergences.push({
       kind: 'scope',
@@ -185,30 +577,70 @@ export function foldRoster(args: {
   const members: Member[] = [];
   const pending: { principal: Principal; role: string; grant: string }[] = [];
 
-  const grantsByPrincipal = groupBy(ourGrants, g => g.grantedTo);
-  const acceptancesByGrant = groupBy(ourAcceptances, a => a.accepts);
+  // The CONFERRING track: only records that passed the gate can create a member, name a
+  // role, choose a stream or raise an invitation.
+  const grantsByPrincipal = groupBy(conferringGrants, g => g.grantedTo);
+  const acceptancesByGrant = groupBy(conferringAcceptances, a => a.accepts);
+  // The RESTRICTING track: every in-workspace record, refused or not. Read ONLY where a
+  // record takes authority away — revocation, withdrawal, and the intersection across forked
+  // heads. Identical to the conferring track when no policy was given, which is why the two
+  // configurations cannot diverge in the granting direction.
+  const restrictingGrantsByPrincipal = groupBy(inWorkspaceGrants, g => g.grantedTo);
+  const restrictingAcceptancesByGrant = groupBy(inWorkspaceAcceptances, a => a.accepts);
 
-  for (const [principal, gs] of [...grantsByPrincipal].sort((x, y) => x[0].localeCompare(y[0]))) {
+  for (const [principal, conferring] of [...grantsByPrincipal].sort((x, y) => x[0].localeCompare(y[0]))) {
+    const gs = restrictingGrantsByPrincipal.get(principal) ?? conferring;
     // ── grant side ──
+    // ★ COUNT HEADS, NOT ROWS. Gating on `gs.length` reported a fork for a principal whose
+    // single grant simply arrived twice: "2 concurrent grant heads" above a `heads` list of
+    // length one. The duplicate is ordinary — the same federated composer that produces two
+    // scope rows per principal reads the convener's pod through two registries — and this is
+    // the one channel operators are told to act on, so a phantom on it sends someone hunting
+    // a divergence that does not exist and erodes trust in the ones that do.
+    const grantHeads = uniqueSorted(gs.map(g => g.head));
+    const grantRoles = uniqueSorted(gs.map(g => g.role));
+
+    // Revocation is decisive in either direction: if ANY head revokes, the member is out.
+    // Erring towards removal is the safe direction — a wrongly-removed member complains, a
+    // wrongly-retained one does not.
+    //
+    // ★ READ OFF THE RESTRICTING TRACK, so a revocation nobody could attest still removes.
+    // The erasing version filtered it out above and the member kept everything: turning the
+    // policy on granted more than leaving it off, and `unattested` rendered the dropped
+    // revocation identically to a dropped grant. Honouring it means a row anyone can inject
+    // can evict — a denial of service the asserted configuration already permits in full,
+    // and the strictly lesser evil. `restrictionStillApplied` on the `unattested` entry is
+    // where a reader is told the refusal did not save the member.
+    const revoked = gs.some(g => g.revoked === true);
+
     let grantDivergence: Divergence | undefined;
-    if (gs.length > 1) {
+    if (grantHeads.length > 1) {
       grantDivergence = {
         kind: 'grant',
-        heads: uniqueSorted(gs.map(g => g.head)),
-        note:
-          `${gs.length} concurrent grant heads for ${principal}. No winner is chosen: the `
-          + 'intersection of their capabilities applies. Last-write-wins on an authorization '
-          + 'record can silently escalate privilege, so this is reported instead.',
+        heads: grantHeads,
+        roles: grantRoles,
+        // ★ The note used to be pushed before the revocation check and said an intersection
+        // applied to a principal who had just been removed entirely. A divergence report
+        // that asserts an outcome that did not happen sends an operator to repair a live
+        // member's authority when there is no live member.
+        note: revoked
+          ? `${grantHeads.length} concurrent grant heads for ${principal}, one of which REVOKES. `
+            + 'No intersection applies and no winner is chosen: the principal is removed. A '
+            + 'revocation on any head is decisive, because a wrongly-removed member complains '
+            + 'and a wrongly-retained one does not.'
+          : `${grantHeads.length} concurrent grant heads for ${principal}. No winner is chosen: the `
+            + 'intersection of their capabilities applies. Last-write-wins on an authorization '
+            + 'record can silently escalate privilege, so this is reported instead.',
       };
       divergences.push(grantDivergence);
     }
 
-    // Revocation is decisive in either direction: if ANY live head revokes, the member is out.
-    // Erring towards removal is the safe direction — a wrongly-removed member complains, a
-    // wrongly-retained one does not.
-    if (gs.some(g => g.revoked === true)) continue;
+    if (revoked) continue;
 
-    // Under divergence the role's capabilities are intersected across heads.
+    // ★ INTERSECTED ACROSS THE RESTRICTING TRACK. Refusing one of two heads would delete the
+    // narrower one and hand the member the wider head's capabilities outright: heads
+    // {Convener attested, Observer unattested} gave `read` with no policy and four
+    // capabilities with one. A refusal must never widen an intersection.
     const roleCaps = gs
       .map(g => permitsOf.get(g.role) ?? [])
       .reduce((acc, caps) => (acc === null ? [...caps] : intersect(acc, caps)), null as string[] | null)
@@ -217,30 +649,57 @@ export function foldRoster(args: {
     // A grant naming a role the profile does not declare contributes nothing. The publish
     // shape should already have refused it; this is the second line, because a profile can
     // be superseded after a grant was written and the fold must not then invent authority.
-    const knownRole = gs.find(g => permitsOf.has(g.role))?.role;
+    // Taken from the CONFERRING track: the role is a label on the member, and a refused
+    // record may not be the thing that names them.
+    const knownRole = conferring.find(g => permitsOf.has(g.role))?.role;
 
-    const accepted = gs
+    // ★ WITHDRAWAL OFF THE RESTRICTING TRACK, for the same reason as revocation: an
+    // acceptance carrying `withdrawn` that could not be attested must still remove the
+    // member, or the policy retains someone the weaker configuration lets go.
+    //
+    // Computed BEFORE the pending branch, and the monotonicity enumeration is what found
+    // that it had to be. With the withdrawal on a refused record, the conferring track saw
+    // NO acceptance at all and raised a pending invitation — so a principal who had left was
+    // rendered as one who had never answered, under the strong configuration only, sending
+    // the convener to chase somebody for a reply they had already given and then retracted.
+    const withdrawn = gs
+      .flatMap(g => restrictingAcceptancesByGrant.get(g.head) ?? [])
+      .some(a => a.member === principal && a.withdrawn === true);
+
+    const accepted = conferring
       .flatMap(g => acceptancesByGrant.get(g.head) ?? [])
       .filter(a => a.member === principal);
 
     if (accepted.length === 0) {
-      for (const g of gs) pending.push({ principal, role: g.role, grant: g.head });
+      if (!withdrawn) {
+        for (const g of conferring) pending.push({ principal, role: g.role, grant: g.head });
+      }
       continue;
     }
 
+    // Counting rows here was worse than on the grant side, because `accepted` is re-fetched
+    // once per grant head: one duplicated grant row pulled the SAME acceptance in twice and
+    // manufactured a second, entirely fictional fork on a member's own chain — a pod the
+    // operator would then go and inspect for a conflict that was never written there.
+    const acceptanceHeads = uniqueSorted(accepted.map(a => a.head));
     let acceptanceDivergence: Divergence | undefined;
-    if (accepted.length > 1) {
+    if (acceptanceHeads.length > 1) {
       acceptanceDivergence = {
         kind: 'acceptance',
-        heads: uniqueSorted(accepted.map(a => a.head)),
-        note:
-          `${accepted.length} concurrent acceptance heads for ${principal}. The member is `
-          + 'included, but their stream is ambiguous until one head is republished cleanly.',
+        heads: acceptanceHeads,
+        // Same correction as the grant note: "the member is included" was emitted for a
+        // principal the withdrawal check two lines down had already removed.
+        note: withdrawn
+          ? `${acceptanceHeads.length} concurrent acceptance heads for ${principal}, and one of `
+            + 'them WITHDRAWS. The member is NOT included: a withdrawal on any head is '
+            + 'decisive, so the ambiguity about which stream is theirs does not arise.'
+          : `${acceptanceHeads.length} concurrent acceptance heads for ${principal}. The member is `
+            + 'included, but their stream is ambiguous until one head is republished cleanly.',
       };
       divergences.push(acceptanceDivergence);
     }
 
-    if (accepted.some(a => a.withdrawn === true)) continue;
+    if (withdrawn) continue;
 
     const scope = scopeOf.get(principal);
     // ★ NO SCOPE MEANS NO CAPABILITY, not full capability. A principal whose delegation could
@@ -251,7 +710,7 @@ export function foldRoster(args: {
 
     members.push({
       principal,
-      role: knownRole ?? gs[0]!.role,
+      role: knownRole ?? conferring[0]!.role,
       stream: accepted[0]!.stream,
       effective,
       withheldByDelegation: uniqueSorted(withheld),
@@ -266,6 +725,30 @@ export function foldRoster(args: {
     members,
     pendingInvitations: pending.sort((a, b) => a.principal.localeCompare(b.principal)),
     divergences,
+    membershipGrade: args.attestation ? 'attested' : 'asserted',
+    attributionNote: args.attestation
+      ? `Membership is ATTESTED: every grant folded in carries an iep:authorshipProof the `
+        + `substrate verified and traced to ${args.attestation.convener}, and every acceptance `
+        + 'one traced to the member it names. '
+        + `${unattested.length} record(s) were refused and are listed in \`unattested\`. `
+        + 'A refused record still RESTRICTS — a revocation or a withdrawal takes effect '
+        + 'whether or not it can be attributed, so turning this policy on never grants more '
+        + 'than leaving it off; `restrictionStillApplied` says which refusals did. '
+        + 'Residual, and it is not small: the proof covers WHO SIGNED A URL and nothing about '
+        + 'what the record says, so every field here — the role, the grantee, the stream — is '
+        + 'still as the caller typed it, and one of a member\'s ordinary signed records '
+        + 'passes this gate as their acceptance. See `recordContentBinding`. The substrate '
+        + 'also verifies a signature without checking the content it is attached to, so a '
+        + 'proof lifted out of a principal\'s real record verifies — see `readAttestation` '
+        + 'for how far that is narrowed here.'
+      : 'Membership is ASSERTED, not attested: no grant or acceptance was checked for an '
+        + 'authorship proof, so a convener who holds both records could have written both '
+        + 'halves and this list would look identical. Pass `attestation` to foldRoster to '
+        + 'require that the grant was signed for the convener and the acceptance for the member.',
+    unattested,
+    // Always 'unbound'. See the field's own note: the gate binds a signer to a URL, and
+    // nothing in this module has ever compared a record's content against these fields.
+    recordContentBinding: 'unbound',
   };
 }
 
@@ -288,6 +771,27 @@ export function may(roster: Roster, principal: Principal, capability: Capability
 export function explain(roster: Roster, principal: Principal, capability: Capability): string {
   const m = roster.members.find(x => x.principal === principal);
   if (!m) {
+    // ★ A REFUSED RECORD MUST NOT EXPLAIN ITSELF AS AN UNANSWERED INVITATION.
+    //
+    // A convener who wrote both halves gets a pending invitation plus a refused acceptance,
+    // and the invitation sentence — "was offered Contributor but has not accepted" — is a
+    // true statement that describes the wrong event entirely. It sends whoever reads it to
+    // chase the member for an answer they already appear to have given, and the forgery is
+    // the thing nobody is told about. Named first, for that reason.
+    const refused = roster.unattested.filter(u => u.principal === principal);
+    if (refused.length > 0) {
+      return `${principal} is not a member of ${roster.workspace}: `
+        + refused.map(u => (u.restrictionStillApplied
+          // ★ "Refused" is the wrong word for a revocation, and the difference decides what
+          // an operator does next. Re-signing a refused GRANT restores a member; re-signing
+          // a refused REVOCATION removes them again. The single sentence used to be the
+          // former in both cases.
+          ? `their ${u.kind} <${u.head}> could not be attributed (${u.because}) — but it `
+            + 'WITHDRAWS authority, and a withdrawal applies whether or not it can be '
+            + 'attributed, so it took effect'
+          : `their ${u.kind} <${u.head}> was refused because ${u.because}`)).join('; ')
+        + '.';
+    }
     const invited = roster.pendingInvitations.find(p => p.principal === principal);
     return invited
       ? `${principal} was offered ${invited.role} but has not accepted, so is not yet a member.`
@@ -299,6 +803,32 @@ export function explain(roster: Roster, principal: Principal, capability: Capabi
   if (m.withheldByDelegation.includes(capability)) {
     return `${principal} holds ${m.role}, which permits ${capability} — but their own delegated `
       + 'scope does not carry it, so it is withheld. A role is a ceiling, never a grant.';
+  }
+  // ★ UNDER A FORKED GRANT CHAIN THE ROLE IS NOT THE REASON, AND NAMING IT STATES A FALSE ONE.
+  // `member.role` is whichever head the profile happens to declare first, so with heads
+  // {Convener, Observer} this said "holds Convener, which does not permit grant" — Convener
+  // permits grant — and with the rows reversed it blamed Observer instead. Same fork, two
+  // different explanations, neither of them the cause.
+  //
+  // The damage is the remedy it implies: an operator told the role is too narrow widens the
+  // role. Capabilities here are the INTERSECTION across heads, so widening one head is
+  // intersected straight back away, and the second attempt is to widen both — which is how a
+  // fork gets resolved upwards, silently, on an authorization record. The only repair is one
+  // clean head. An acceptance fork is left to fall through: it makes the STREAM ambiguous,
+  // not the role, and blaming it would send someone to repair the wrong chain.
+  //
+  // ★ AND ONLY WHEN THE HEADS ACTUALLY DISAGREE. The first fix over-corrected: it took this
+  // branch for ANY grant fork, so two heads both naming Observer produced "roles that may
+  // disagree … republish a single clean head" for a refusal Observer would have produced on
+  // its own. Republishing changes the answer by not one byte. The old bug named the role
+  // instead of the fork; that one named the fork instead of the role — the same false cause,
+  // pointing the other way.
+  if (m.divergence?.kind === 'grant' && new Set(m.divergence.roles ?? []).size > 1) {
+    return `${principal} has ${m.divergence.heads.length} concurrent grant heads `
+      + `(${m.divergence.heads.join(', ')}) naming roles that may disagree. Their capabilities `
+      + `are the INTERSECTION across those heads and ${capability} is not in it. Republish a `
+      + 'single clean head before reading anything off the role: widening one head would be '
+      + 'intersected away.';
   }
   return `${principal} holds ${m.role}, which does not permit ${capability}.`;
 }

@@ -20,6 +20,9 @@ import {
   readStream,
   appendEntry,
   appendWithRetry,
+  readAttestation,
+  proofDescriptorId,
+  proofBindsToDescriptor,
   WSP_SHAPES,
   type StreamRow,
   type StreamDeps,
@@ -169,6 +172,122 @@ describe('verifyChain — the order is derived, never taken on trust', () => {
   it('headOf points at the verified tip and the next free sequence', () => {
     expect(headOf(LINEAR)).toEqual({ url: d(2), seq: 3 });
   });
+
+  it('★ headOf REFUSES a forked chain instead of answering "brand new stream"', () => {
+    // The whole trap in one assertion. `{url: null, seq: 0}` is not "I could not tell" — it
+    // is "start at 0, no precondition needed", and acting on it lands a THIRD head at a seq
+    // two entries already claim, gated on nothing. appendEntry guards separately, so this
+    // only ever bites a caller of the exported helper — which is who it must protect.
+    const forked = [...LINEAR, row(3, [d(1)])];
+    expect(verifyChain(forked).ordered).toEqual([]);   // the input that produced the wrong answer
+    expect(() => headOf(forked)).toThrow(/does not verify/);
+  });
+
+  it('★ headOf refuses a chain missing its beginning, which DOES order cleanly', () => {
+    // Ordering is not the test — this walks perfectly and covers every row it was given.
+    // It is still missing the start of the log, so there is no verified tip to gate on.
+    const truncatedHead = [row(1, [d(0)]), row(2, [d(1)])];
+    expect(verifyChain(truncatedHead).ordered).toHaveLength(2);
+    expect(() => headOf(truncatedHead)).toThrow(/dangling link/);
+  });
+
+  it('an empty stream is still the one case headOf answers with seq 0', () => {
+    // The refusal must not swallow the legitimate case, or no stream could ever be started.
+    expect(() => headOf([])).not.toThrow();
+  });
+});
+
+describe('★ wsp:seq is written on every entry — so it has to be read back', () => {
+  // The number was published on every entry and had nowhere to land: StreamRow carried no
+  // seq, so nothing could compare what an entry SAYS its position is against where the
+  // links put it. That leaves one removal invisible — a row dropped and linked around.
+
+  it('a declared sequence that agrees with the walked position verifies', () => {
+    const rows: StreamRow[] = [
+      { ...row(0), seq: 0 }, { ...row(1, [d(0)]), seq: 1 }, { ...row(2, [d(1)]), seq: 2 },
+    ];
+    const r = verifyChain(rows);
+    expect(r.seqMismatches).toEqual([]);
+    expect(r.declaredSeqChecked).toBe(true);
+    expect(r.intact).toBe(true);
+  });
+
+  it('★ a row removed and LINKED AROUND is caught by its successor\'s declared position', () => {
+    // Structurally flawless: one head, one root, no dangling link, every row on the path.
+    // Only the number says a position is missing — seq 2 sitting at index 1.
+    const relinked: StreamRow[] = [{ ...row(0), seq: 0 }, { ...row(2, [d(0)]), seq: 2 }];
+    const r = verifyChain(relinked);
+    expect(r.heads).toEqual([d(2)]);
+    expect(r.danglingLinks).toEqual([]);
+    expect(r.ordered).toHaveLength(2);          // it ordered, and it is still not trustworthy
+    expect(r.seqMismatches).toEqual([{ url: d(2), declared: 2, position: 1 }]);
+    expect(r.intact).toBe(false);
+  });
+
+  it('★ and headOf will not derive a precondition from it either', () => {
+    const relinked: StreamRow[] = [{ ...row(0), seq: 0 }, { ...row(2, [d(0)]), seq: 2 }];
+    expect(() => headOf(relinked)).toThrow(/sequence mismatch/);
+  });
+
+  it('★ "nobody looked" is reported, never rendered as "the numbering agrees"', () => {
+    // The honest half. A manifest row carries descriptorUrl / cid / describes / facetTypes /
+    // validFrom / supersedes / issuer — and NOT seq, which lives in the entry's payload and
+    // would cost one get_descriptor per entry to fetch, destroying the one-read catch-up.
+    // So `seqMismatches: []` on a real stream means nothing was compared, and the two cases
+    // are indistinguishable unless the report says which one it is.
+    const r = verifyChain(LINEAR);
+    expect(r.seqMismatches).toEqual([]);
+    expect(r.declaredSeqChecked).toBe(false);
+    expect(r.intact).toBe(true);   // NOT divergent — a missing manifest column is not a fork
+  });
+
+  it('a partially-numbered chain does not report itself as checked', () => {
+    // One row carrying a number is not the log's numbering having been verified, and
+    // reading "checked" off it would be exactly the false assurance this field exists for.
+    const partial: StreamRow[] = [{ ...row(0), seq: 0 }, row(1, [d(0)])];
+    const r = verifyChain(partial);
+    expect(r.declaredSeqChecked).toBe(false);
+    expect(r.seqMismatches).toEqual([]);
+    expect(r.intact).toBe(true);
+  });
+
+  it('★ but TAIL truncation still verifies clean, and that is stated, not hidden', () => {
+    // The limit of what the served rows can show. Dropping the oldest leaves a dangling
+    // link and is caught; dropping the newest leaves a prefix, and a prefix of a valid
+    // chain IS a valid chain. seq cannot rescue it — the row carrying the highest number is
+    // precisely the row that was removed — so both of these verify, and a reader who needs
+    // "this is the whole log" needs an anchor from outside these rows.
+    const whole: StreamRow[] = [
+      { ...row(0), seq: 0 }, { ...row(1, [d(0)]), seq: 1 }, { ...row(2, [d(1)]), seq: 2 },
+    ];
+    const prefix = whole.slice(0, 2);
+    expect(verifyChain(whole).intact).toBe(true);
+    expect(verifyChain(prefix).intact).toBe(true);
+    expect(verifyChain(prefix).seqMismatches).toEqual([]);
+    // And headOf answers confidently on the prefix, because from the rows it was given
+    // there is nothing wrong with it.
+    expect(headOf(prefix)).toEqual({ url: d(1), seq: 2 });
+  });
+
+  it('readStream reads the declared sequence when a row carries one', async () => {
+    // Null against today's relay — the check switches itself on if the number ever arrives,
+    // rather than waiting for someone to remember to wire it up.
+    const deps: StreamDeps = {
+      publish: vi.fn(),
+      discover: vi.fn(async () => ({
+        entries: [
+          { descriptorUrl: d(0), cid: 'a', validFrom: null, supersedes: [], seq: 0, describes: [STREAM] },
+          // The lexical form of "3"^^xsd:nonNegativeInteger, which is how anything
+          // mirroring the literal without reading its datatype would hand it back.
+          { descriptorUrl: d(1), cid: 'b', validFrom: null, supersedes: [d(0)], seq: '1', describes: [STREAM] },
+          { descriptorUrl: d(2), cid: 'c', validFrom: null, supersedes: [d(1)], describes: [STREAM] },
+        ],
+      })),
+    };
+    const rows = await readStream(ref, deps);
+    expect(rows.map(r => r.seq)).toEqual([0, 1, null]);
+    expect(verifyChain(rows).declaredSeqChecked).toBe(false); // one row short of checked
+  });
 });
 
 // ── Append, against a recording double of the two tools ─────────────────────
@@ -241,6 +360,82 @@ describe('appendEntry', () => {
     expect(calls[0]!.auto_supersede_prior).toBe(false);
     expect(calls[0]!.conforms_to_shapes).toEqual([WSP_SHAPES]);
     expect(String(calls[0]!.graph_content)).toContain(`iep:supersedes <${d(2)}>`);
+  });
+
+  it('★ every entry is SIGNED — an unsigned one can never be attributed afterwards', async () => {
+    // The read path used to attach `principal` from the caller's members list and nothing in
+    // the record could contradict it. Without this flag there is no iep:authorshipProof to
+    // verify, so `verifyAuthorship` withholds every entry and the property is unreachable —
+    // and it is unreachable permanently, because the bytes are immutable and the key moved on.
+    const { deps, calls } = makeDeps({ rows: [] });
+    await appendEntry(ref, { body: 'first' }, deps);
+    expect(calls[0]!.sign_authorship).toBe(true);
+  });
+
+  it('★★ asking to sign is not being signed: a relay that REFUSED to sign is reported', async () => {
+    // `sign_authorship: true` is a REQUEST. The relay catches a signing failure, logs a
+    // warning, leaves the publish to proceed, and reports it in the response body as
+    // `authorship: {signed: false, reason}`. `appendEntry` read only `code`, `error` and
+    // `descriptorUrl`, so a transient outage of the signing key produced a run of entries
+    // reported as a clean `appended` with nothing anywhere mentioning signing.
+    //
+    // That is PERMANENT by this module's own rule — the bytes are immutable and the key has
+    // moved on — so the operator finds out at read time, when `verifyAuthorship: true`
+    // withholds a stretch of their own log, months later. The previous test pinned only that
+    // the flag went out on the wire, so no double could express the failure at all.
+    const { deps } = makeDeps({
+      rows: [],
+      publishResult: {
+        descriptorUrl: d(90), status: 'pending',
+        authorship: { signed: false, reason: 'issuer seed unset' },
+      },
+    });
+    const res = await appendEntry(ref, { body: 'first' }, deps);
+    expect(res.outcome).toBe('appended'); // it DID land — pretending otherwise is its own lie
+    expect(res.outcome === 'appended' && res.signing).toBe('NOT-SIGNED');
+    expect(res.outcome === 'appended' && res.signingNote).toMatch(/issuer seed unset/);
+    expect(res.outcome === 'appended' && res.signingNote).toMatch(/unattributable FOREVER/);
+  });
+
+  it('a relay that DID sign says so, and the value is not the failure one', async () => {
+    const { deps } = makeDeps({
+      rows: [], publishResult: { descriptorUrl: d(90), status: 'pending', authorship: { signed: true } },
+    });
+    const res = await appendEntry(ref, { body: 'first' }, deps);
+    expect(res.outcome === 'appended' && res.signing).toBe('signed');
+  });
+
+  it('★ a relay that says NOTHING is `unreported`, not silently either answer', async () => {
+    // Guessing "unsigned" would make every append look broken against a relay that simply
+    // does not report it; guessing "signed" is the defect above. Neither is a claim this
+    // layer is entitled to make, so it says it does not know.
+    const { deps } = makeDeps({ rows: [] });
+    const res = await appendEntry(ref, { body: 'first' }, deps);
+    expect(res.outcome === 'appended' && res.signing).toBe('unreported');
+    expect(res.outcome === 'appended' && res.signingNote).toMatch(/UNKNOWN/);
+  });
+
+  it('the signing verdict survives onto a `pending` outcome too — the write happened', async () => {
+    const { deps } = makeDeps({
+      rows: [], neverVisible: true,
+      publishResult: { descriptorUrl: d(90), status: 'pending', authorship: { signed: false, reason: 'key down' } },
+    });
+    const res = await appendEntry(ref, { body: 'first' }, deps);
+    expect(res.outcome).toBe('pending');
+    expect(res.outcome === 'pending' && res.signing).toBe('NOT-SIGNED');
+  });
+
+  it('agent_did rides along when the ref carries one, and is absent when it does not', async () => {
+    // A hint for the verifier, NOT the identity: iep:issuer comes from the relay's own
+    // session field. If this argument decided who the proof named, the proof would be
+    // worthless — the caller types it.
+    const withDid = makeDeps({ rows: [] });
+    await appendEntry({ ...ref, agentDid: 'did:web:agents.test:bot-7' }, { body: 'x' }, withDid.deps);
+    expect(withDid.calls[0]!.agent_did).toBe('did:web:agents.test:bot-7');
+
+    const without = makeDeps({ rows: [] });
+    await appendEntry(ref, { body: 'x' }, without.deps);
+    expect(without.calls[0]).not.toHaveProperty('agent_did');
   });
 
   it('the first entry has no precondition, because there is nothing to gate on', async () => {
@@ -414,5 +609,189 @@ describe('readStream', () => {
     // The opposite direction matters just as much: a member who has not written yet is
     // normal, and turning that into a failure would make every new workspace look broken.
     await expect(readWith({ entries: [], registry: null })).resolves.toEqual([]);
+  });
+});
+
+// ── Authorship ───────────────────────────────────────────────────────────────
+
+describe('proofBindsToDescriptor — is this proof about THIS record?', () => {
+  // ★ The substrate's verifier answers a narrower question than it appears to: it re-derives
+  // the canonical payload from the proof block's own fields and checks the signature over it.
+  // A proof block copied verbatim out of one of a principal's real, public descriptors and
+  // pasted into a record somebody else fabricated therefore verifies clean, naming that
+  // principal. These pin the only cross-check available from outside the relay.
+
+  it('an exact match binds', () => {
+    expect(proofBindsToDescriptor('https://alice.test/c/9.ttl', 'https://alice.test/c/9.ttl')).toBe(true);
+  });
+
+  it('the relay\'s urn form binds to the URL its slug produces', () => {
+    // descriptor_id is minted as `urn:iep:<pod>:<epoch-ms>` and the descriptor URL is derived
+    // from its terminal segment. Rejecting that shape would withhold every real entry.
+    expect(proofBindsToDescriptor(
+      'urn:iep:u-alice:1754000000000',
+      'https://alice.test/context-graphs/1754000000000.ttl',
+    )).toBe(true);
+  });
+
+  it('★ a proof LIFTED from another of the same author\'s records does not bind', () => {
+    // The manufactured-participant attack in its surviving form: the signature is genuine and
+    // the signer really is the member, and the proof is about a different document.
+    expect(proofBindsToDescriptor(
+      'urn:iep:u-alice:1754000000000',
+      'https://conv.test/context-graphs/1799999999999.ttl',
+    )).toBe(false);
+  });
+
+  it('a descriptor with no proof block at all does not bind', () => {
+    expect(proofBindsToDescriptor(null, 'https://alice.test/c/9.ttl')).toBe(false);
+  });
+
+  it('an unparseable descriptor URL does not bind — refusing is the safe direction', () => {
+    expect(proofBindsToDescriptor('urn:iep:u-alice:1', 'not a url')).toBe(false);
+  });
+
+  it('parses the id out of the embedded block, and only out of that block', () => {
+    const ttl = '<> a iep:ContextDescriptor ;\n  iep:descriptorId <urn:iep:decoy:0> .\n\n'
+      + '<> iep:authorshipProof [\n    a iep:SignedAuthorship ;\n'
+      + '    iep:issuer <did:web:agents.test:bot-7> ;\n'
+      + '    iep:descriptorId <urn:iep:u-alice:7> ;\n    iep:proofValue "0xabc"\n  ] .\n';
+    expect(proofDescriptorId(ttl)).toBe('urn:iep:u-alice:7');
+    expect(proofDescriptorId('<> a iep:ContextDescriptor .')).toBeNull();
+  });
+});
+
+describe('readAttestation — one get_descriptor, and every failure is REPORTED', () => {
+  const URL_A = 'https://alice.test/context-graphs/1754000000000.ttl';
+  const proofTtl = (id: string) =>
+    `<> iep:authorshipProof [ a iep:SignedAuthorship ; iep:descriptorId <${id}> ] .`;
+
+  const depsReturning = (res: unknown): StreamDeps => ({
+    publish: vi.fn(),
+    discover: vi.fn(),
+    getDescriptor: vi.fn(async () => res as Record<string, unknown>),
+  });
+
+  it('a verified proof bound to this descriptor is attested', async () => {
+    const att = await readAttestation(URL_A, depsReturning({
+      url: URL_A,
+      turtle: proofTtl('urn:iep:u-alice:1754000000000'),
+      authorship: { authorshipVerified: true, signedBy: 'did:web:agents.test:bot-7' },
+    }));
+    expect(att).toEqual({
+      authorshipVerified: true,
+      signedBy: 'did:web:agents.test:bot-7',
+      boundToDescriptor: true,
+    });
+  });
+
+  it('★ a descriptor with NO proof is unattested, with a reason naming why', async () => {
+    // The state every entry written before this change is in. It must not read as an absent
+    // objection: "nobody signed it" and "the signature checked out" are opposite claims.
+    const att = await readAttestation(URL_A, depsReturning({ url: URL_A, turtle: '<> a iep:ContextDescriptor .' }));
+    expect(att.authorshipVerified).toBe(false);
+    expect(att.reason).toMatch(/without sign_authorship/);
+  });
+
+  it('a proof the relay refused carries the relay\'s own diagnostic', async () => {
+    const att = await readAttestation(URL_A, depsReturning({
+      url: URL_A, turtle: proofTtl('urn:iep:u-alice:1754000000000'),
+      authorship: { authorshipVerified: false, signedBy: 'did:web:x', reason: 'signature did not recover' },
+    }));
+    expect(att).toMatchObject({ authorshipVerified: false, signedBy: 'did:web:x' });
+    expect(att.reason).toBe('signature did not recover');
+  });
+
+  it('★ authorshipVerified must be the BOOLEAN true, not merely truthy', async () => {
+    // This is JSON read off somebody's pod. A string "false", or a 1, must not come out the
+    // admitting end of the branch.
+    for (const value of ['true', 1, {}] as unknown[]) {
+      const att = await readAttestation(URL_A, depsReturning({
+        url: URL_A, turtle: proofTtl('urn:iep:u-alice:1754000000000'),
+        authorship: { authorshipVerified: value, signedBy: 'did:web:x' },
+      }));
+      expect(att.authorshipVerified).toBe(false);
+    }
+  });
+
+  it('a read that failed is unattested and says so, rather than throwing past the caller', async () => {
+    // Withholding is the right outcome for all three of "no proof", "bad proof" and "could
+    // not read" — the reason string is what keeps them distinguishable to a person.
+    const errEnvelope = await readAttestation(URL_A, depsReturning({ error: 'forbidden', message: 'no access' }));
+    expect(errEnvelope).toMatchObject({ authorshipVerified: false, signedBy: null });
+    expect(errEnvelope.reason).toMatch(/no access/);
+
+    const threw = await readAttestation(URL_A, {
+      publish: vi.fn(), discover: vi.fn(),
+      getDescriptor: vi.fn(async () => { throw new Error('ECONNREFUSED'); }),
+    });
+    expect(threw.reason).toMatch(/ECONNREFUSED/);
+
+    const notAnObject = await readAttestation(URL_A, depsReturning('Error: fetch failed'));
+    expect(notAnObject.reason).toMatch(/did not return a result object/);
+  });
+
+  it('★ asking to verify without the tool THROWS — it cannot be answered "unverified"', async () => {
+    // Answering here would hand back a result indistinguishable from a workspace whose
+    // entries really are forged, produced by a caller who merely forgot a dependency.
+    await expect(readAttestation(URL_A, { publish: vi.fn(), discover: vi.fn() }))
+      .rejects.toThrow(/one call per entry/);
+  });
+
+  it('★ an unbound proof says WHICH of the four situations it is — three are not forgeries', () => {
+    // `boundToDescriptor: false` has four causes and only one of them is a lifted proof. The
+    // refusal downstream used to render all four as "the proof was copied in from another
+    // record", stated as fact, so a record published by the PGSL-primary path
+    // (`holon-<hash>.ttl`, which the naming convention here cannot match) had its real author
+    // accused of forgery in the one channel operators are told to watch.
+    return Promise.all([
+      // (a) the response carried no turtle at all — nothing to compare, says nothing about
+      //     the proof
+      readAttestation(URL_A, depsReturning({
+        url: URL_A, authorship: { authorshipVerified: true, signedBy: 'did:web:x' },
+      })).then(att => {
+        expect(att.boundToDescriptor).toBe(false);
+        expect(att.reason).toMatch(/no descriptor turtle/);
+      }),
+      // (b) turtle present, proof block carries no iep:descriptorId
+      readAttestation(URL_A, depsReturning({
+        url: URL_A, turtle: '<> iep:authorshipProof [ a iep:SignedAuthorship ] .',
+        authorship: { authorshipVerified: true, signedBy: 'did:web:x' },
+      })).then(att => {
+        expect(att.boundToDescriptor).toBe(false);
+        expect(att.reason).toMatch(/no iep:descriptorId/);
+      }),
+      // (c) an honest record whose name does not follow the convention — refused, correctly,
+      //     and NOT called a forgery
+      readAttestation(
+        'https://css.test/u-alice/context-graphs/holon-9f2c1a.ttl',
+        depsReturning({
+          turtle: proofTtl('urn:iep:u-alice:pgsl:sha256-9f2c1a'),
+          authorship: { authorshipVerified: true, signedBy: 'did:web:x' },
+        }),
+      ).then(att => {
+        expect(att.boundToDescriptor).toBe(false);
+        expect(att.reason).toMatch(/pgsl:sha256-9f2c1a/);
+        expect(att.reason).toMatch(/holon-9f2c1a\.ttl/);
+      }),
+      // (d) an actually-lifted proof reaches the same verdict by the same route — the layer
+      //     genuinely cannot tell (c) from (d), which is why it now says so
+      readAttestation(URL_A, depsReturning({
+        url: URL_A, turtle: proofTtl('urn:iep:u-alice:1799999999999'),
+        authorship: { authorshipVerified: true, signedBy: 'did:web:x' },
+      })).then(att => {
+        expect(att.boundToDescriptor).toBe(false);
+        expect(att.reason).toMatch(/1799999999999/);
+      }),
+    ]).then(() => undefined);
+  });
+
+  it('a bound proof carries NO reason — a diagnostic on a clean result is noise', async () => {
+    const att = await readAttestation(URL_A, depsReturning({
+      url: URL_A, turtle: proofTtl('urn:iep:u-alice:1754000000000'),
+      authorship: { authorshipVerified: true, signedBy: 'did:web:x' },
+    }));
+    expect(att.boundToDescriptor).toBe(true);
+    expect(att.reason).toBeUndefined();
   });
 });
