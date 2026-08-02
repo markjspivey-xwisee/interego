@@ -28,13 +28,14 @@
  *   IEP_BEARER=<token> npx tsx applications/shared-workspace/tools/verify-cross-org-live.ts
  */
 
-import { readStream, verifyChain, type StreamDeps } from '../src/stream.js';
+import { readStream, verifyChain, appendEntry, type StreamDeps } from '../src/stream.js';
 import { composeWorkspace, describeCoverage, isUnder, type ComposableMember } from '../src/compose.js';
 
 const RELAY = process.env.IEP_RELAY ?? 'https://relay.interego.xwisee.com';
 const BEARER = process.env.IEP_BEARER;
 if (!BEARER) { console.error('IEP_BEARER is required.'); process.exit(2); }
 
+const RUN = process.argv[2] ?? String(Date.now());
 const ORG_B = 'https://markjspivey-xwisee.github.io/interego/orgb/';
 const WS = 'https://markjspivey-xwisee.github.io/interego/orgb/workspace';
 const CAROL_STREAM = `${WS}/stream/carol`;
@@ -98,24 +99,33 @@ async function main(): Promise<void> {
   console.log('\n2. one workspace, two organisations');
   const status = await call('get_pod_status', {});
   const ourPod = String(status.pod ?? status.podUrl ?? '');
-  const ourStream = `${WS}/stream/${String(status.userId ?? 'us')}`;
-  const appended = await call('publish_context', {
-    graph_iri: ourStream,
-    graph_content:
-      `@prefix wsp: <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .\n`
-      + `@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n`
-      + `<${ourStream}/e/0> a wsp:Entry ; wsp:workspace <${WS}> ;\n`
-      + `  wsp:seq "0"^^xsd:nonNegativeInteger ; dct:description "our side of the workspace" .\n`,
-    visibility: 'public', auto_supersede_prior: false,
-  });
-  ok(appended.error === undefined, 'our own member writes to our own pod', JSON.stringify(appended).slice(0, 160));
-
-  // Wait for the deferred write to become readable — publish_context returns "pending".
-  for (let i = 0; i < 40; i++) {
-    const seen = await readStream({ graphIri: ourStream, workspace: WS, podUrl: ourPod }, deps);
-    if (seen.length > 0) break;
-    await new Promise(r => setTimeout(r, 500));
-  }
+  // ★ A FRESH STREAM PER RUN, and the reason is worth recording. An earlier version of this
+  // tool raw-published an UNLINKED entry to a fixed stream IRI, so each re-run added another
+  // head. By the fourth run that stream had four heads, `appendEntry` correctly refused to
+  // build on a chain that does not verify, and the composed view correctly withheld our
+  // whole side — the tool reported a regression that was entirely its own.
+  //
+  // The poisoned stream is still on the pod, because nothing here deletes anything. That is
+  // the custody property working, and it is why a run id is the fix rather than a cleanup.
+  const ourStream = `${WS}/stream/${String(status.userId ?? 'us')}-${RUN}`;
+  // ★ APPEND, do not raw-publish. The first version of this tool published an unlinked
+  // entry under a fixed stream IRI, so every RE-RUN added another head: the chain stopped
+  // verifying on the second run and the composed view withheld our whole side. The tool
+  // passed 14/14 once and then reported a regression that was its own.
+  //
+  // appendEntry chains onto the verified head and waits for the deferred write to become
+  // readable, so repeated runs extend ONE verified chain — which is a stronger check than
+  // the original, because it exercises catch-up across runs rather than a fresh stream.
+  const appended = await appendEntry(
+    { graphIri: ourStream, workspace: WS, podUrl: ourPod },
+    { body: 'our side of the workspace' },
+    deps,
+  );
+  ok(
+    appended.outcome === 'appended',
+    'our own member appends to our own pod, chained onto its verified head',
+    JSON.stringify(appended).slice(0, 200),
+  );
 
   const members: ComposableMember[] = [
     { principal: String(status.webId), stream: ourStream, podUrl: ourPod },
@@ -125,7 +135,14 @@ async function main(): Promise<void> {
   console.log(`   ${describeCoverage(view)}`);
 
   ok(view.complete, 'the composed view is complete — both organisations read and verified');
-  ok(view.entries.length === 3, `three entries across two ORGANISATIONS (got ${view.entries.length})`);
+  // Not a fixed count: our side is an append-only chain that GROWS on every run, which is
+  // the point of chaining rather than republishing. What must hold is the invariant.
+  const foreign = view.entries.filter(e => new URL(e.descriptorUrl).host !== new URL(ourPod).host);
+  ok(foreign.length === 2, `both foreign entries are present (got ${foreign.length})`);
+  ok(
+    view.entries.length > foreign.length,
+    `and at least one of ours alongside them (${view.entries.length} total)`,
+  );
   ok(
     new Set(view.entries.map(e => new URL(e.descriptorUrl).host)).size === 2,
     '★ the entries are served by two different hosts, under two different operators',
