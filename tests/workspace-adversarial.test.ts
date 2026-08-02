@@ -164,7 +164,7 @@ describe('★ entry.principal was a LABEL, not a fact about who wrote the entry'
     expect(describeCoverage(view)).toMatch(/outside the member's own pod/);
   });
 
-  it('★ the Observer's write is no longer laundered into a Contributor's entry', async () => {
+  it('the Observer write is no longer laundered into a Contributor entry', async () => {
     const view = authorizeView(await composeWorkspace({ workspace: WS, members: honest }, deps({
       'https://alice.test/': [{ url: 'https://bee.test/c/observer-wrote-this.ttl', at: '2026-08-01T10:00:00Z' }],
       'https://bee.test/': [{ url: 'https://bee.test/c/observer-wrote-this.ttl', at: '2026-08-01T10:00:00Z' }],
