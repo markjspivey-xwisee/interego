@@ -76,7 +76,14 @@ export interface EntryDraft {
    * still a Foxxi credential, not a workspace-flavoured copy of one that can drift.
    */
   readonly references?: readonly string[];
-  /** Extra Turtle predicates for the entry subject, already serialized by the caller. */
+  /**
+   * Extra Turtle predicate-object pairs for the entry subject, serialized by the caller.
+   *
+   * ★ Raw Turtle, so it CANNOT be escaped — that is what makes it useful to a vertical
+   * adding its own terms, and what made it an injection point. Constrained instead: one
+   * predicate-object pair, no `.` terminator, no `@prefix`/`@base`. Anything richer
+   * belongs in its own published graph, cited via {@link EntryDraft.references}.
+   */
   readonly extraTriples?: readonly string[];
 }
 
@@ -161,6 +168,31 @@ export interface StreamRef {
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
+
+/**
+ * Why this raw fragment cannot be spliced into the entry, or null if it can.
+ *
+ * ★ `extraTriples` is raw Turtle and CANNOT be escaped — being a raw predicate-object
+ * fragment is exactly what lets a vertical add its own terms. It was interpolated
+ * straight in, two lines below a docstring promising that "every interpolated value goes
+ * through the shared escaper or the shared IRI guard". An independent review used it to
+ * emit a well-formed document carrying a top-level
+ * `<victim> acl:agent <did:web:attacker> .` — an authorization triple about a third
+ * party, written by string concatenation, which the publish shape gate then accepted
+ * because the result parses.
+ *
+ * So it is CONSTRAINED rather than escaped. Anything that could end the current statement
+ * or open a new one is refused; a caller needing more should publish its own graph and
+ * cite it, which is what `wsp:Reference` exists for.
+ */
+export function rejectExtraTriple(fragment: string): string | null {
+  if (/[\r\n]/.test(fragment)) return 'it spans more than one line';
+  if (/@\s*(prefix|base)\b/i.test(fragment)) return 'it contains a directive';
+  if (/(^|[\s>"])\.(\s|$)/.test(fragment)) return 'it contains a statement terminator';
+  if (/[.;]$/.test(fragment)) return 'it ends with a terminator or separator';
+  return null;
+}
+
 /**
  * Render one entry as Turtle.
  *
@@ -223,7 +255,28 @@ export function entryTurtle(args: {
   if (args.draft.body !== undefined) {
     lines.push(`  dct:description "${escapeTurtleLiteral(args.draft.body)}" ;`);
   }
-  for (const t of args.draft.extraTriples ?? []) lines.push(`  ${t} ;`);
+  // ★ extraTriples IS raw Turtle, and it used to be interpolated straight in — two lines
+  // below a docstring promising that "every interpolated value goes through the shared
+  // escaper or the shared IRI guard". An independent review produced a well-formed
+  // document carrying a top-level `<victim> acl:agent <did:web:attacker> .` through it,
+  // which the shape gate then accepted because the result parses.
+  //
+  // It cannot be escaped — it is deliberately a raw predicate-object fragment, which is
+  // what makes a vertical able to add its own terms. So it is CONSTRAINED instead: one
+  // predicate-object pair, no statement terminator, no directive. A caller that needs
+  // more should publish its own graph and cite it, which is what wsp:Reference is for.
+  for (const raw of args.draft.extraTriples ?? []) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) continue;
+    const rejection = rejectExtraTriple(trimmed);
+    if (rejection !== null) {
+      throw new Error(
+        'entryTurtle: extraTriples must be ONE predicate-object pair for the entry itself '
+        + `subject — ${rejection}: ${trimmed.slice(0, 80)}`,
+      );
+    }
+    lines.push(`  ${trimmed} ;`);
+  }
 
   // Close the predicate list.
   const last = lines[lines.length - 1]!;

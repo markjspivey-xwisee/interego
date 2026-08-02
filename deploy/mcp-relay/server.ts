@@ -2421,6 +2421,30 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     } catch (err) {
       log(`[publish/phaseA] manifest pre-fetch threw for ${podUrl}: ${(err as Error).message}`);
       manifestEntriesForLookup = null;
+      // ★ FAIL CLOSED WHEN A PRECONDITION WAS ASSERTED.
+      //
+      // Without this the CAS degraded silently: no manifest means no frontier, and
+      // `checkSupersessionPrecondition` skips the head check entirely when `currentHeads`
+      // is undefined — so a sustained CSS 5xx quietly reverted every if_match publish to
+      // the pre-fix membership test. Worse for content-declared supersession
+      // (auto_supersede_prior:false, which is what the workspace stream uses): there
+      // `descriptor.supersedes` comes from the caller's own content, so the degraded test
+      // compares the caller's assertion against the caller's own declaration and always
+      // passes. A tautology wearing a precondition's clothes.
+      //
+      // "We could not tell" is not "your assertion was right". 503 retryable is the
+      // honest answer, and unlike the 400 for an unusable if_match, retrying here CAN help.
+      if (ifMatch !== undefined) {
+        return JSON.stringify({
+          error: 'precondition_unavailable',
+          code: 503,
+          retryable: true,
+          message:
+            `Could not read the manifest for ${podUrl}, so the current chain head could not `
+            + 'be resolved. Refusing the publish rather than downgrading the precondition: '
+            + 'an if_match that cannot be evaluated must not be reported as satisfied.',
+        });
+      }
     }
     if (manifestEntriesForLookup && args.auto_supersede_prior !== false && args.graph_iri) {
       for (const e of manifestEntriesForLookup) {
@@ -2483,8 +2507,15 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // prior — it must still link all of them.
   const casHeads: readonly string[] | undefined =
     ifMatch !== undefined && manifestEntriesForLookup && args.graph_iri
+      // ★ Exclude by the PREDICTED DESCRIPTOR URL, not by descId. descId is a urn
+      // (`urn:iep:<pod>:<ts>`) while manifest entries carry https descriptor URLs, so the
+      // exclusion never matched a single entry — a guard that could not fire. Currently
+      // inert on the monolithic manifest, which skips a manifest update when the URL is
+      // already present; under MANIFEST_APPEND_ONLY_ENABLED the shard IS overwritten, the
+      // descriptor lands in its own supersedes list, and the frontier goes permanently
+      // EMPTY — every subsequent if_match refused with no value that can recover it.
       ? supersessionFrontier(manifestEntriesForLookup, args.graph_iri as string, {
-        exclude: descId,
+        exclude: predictDescriptorUrl(podUrl, descId),
         normalize: normalizeCssUrl,
       }).heads
       : undefined;
@@ -2983,9 +3014,33 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // helper, and — on pass — defer the rest of the chain (Phase B) to
   // the background, just like the default async path. compliance:true
   // and sync:true STILL take the fully synchronous chain.
+  //
+  // ★ AND `if_match` IS BACK ON IT. Deferring the write after a synchronous Phase A
+  // looked safe — "the gate is the only part that has to be observable synchronously" —
+  // and it is not, because a precondition and the write it guards have to be in the SAME
+  // critical section or the pair is not a swap.
+  //
+  // The frontier is computed once at Phase A and frozen into publishOptions; Phase B
+  // re-runs the check against that frozen snapshot and never re-reads the manifest. The
+  // per-pod mutex does not close the window, because Phase B queues on the gate from
+  // INSIDE the handler — so a writer that queued earlier runs its own Phase A first:
+  //
+  //   W1 enters, holds g1.  W2 queues behind it (g2).  W1's Phase B queues (g3).
+  //   W1 returns "pending", g1 releases -> W2's Phase A reads the manifest and still
+  //   sees v1, because W1's Phase B has not run.  Both pass.  g2 -> W1 writes v2a.
+  //   g3 -> W2 writes v2b against frozen currentHeads=[v1].  Two heads, one lost
+  //   update, and BOTH callers were told precondition.passed: true.
+  //
+  // Found by an independent adversarial review of the very fix that was supposed to make
+  // this impossible. The frontier was right; the composition around it was not.
+  //
+  // Correctness beats the latency this deferral bought. A caller that asked for a
+  // compare-and-swap is asking to be told NO, and a 412 that arrives after the response
+  // cannot tell them anything.
   const syncRequired =
     args.compliance === true ||
-    args.sync === true;
+    args.sync === true ||
+    ifMatch !== undefined;
   const willEncrypt = recipients.length > 0;
   const predictedDescriptorUrl = predictDescriptorUrl(podUrl, descriptor.id);
   const predictedGraphUrl = predictGraphUrl(podUrl, descriptor.id, { encrypted: willEncrypt });
