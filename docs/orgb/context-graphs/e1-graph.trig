@@ -1,0 +1,13 @@
+@prefix wsp: <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://markjspivey-xwisee.github.io/interego/orgb/workspace/stream/carol> {
+    <https://markjspivey-xwisee.github.io/interego/orgb/workspace/stream/carol/e/1>
+      a wsp:Entry ;
+      wsp:workspace <https://markjspivey-xwisee.github.io/interego/orgb/workspace> ;
+      wsp:seq "1"^^xsd:nonNegativeInteger ;
+      iep:supersedes <https://markjspivey-xwisee.github.io/interego/orgb/context-graphs/e0.ttl> ;
+      dct:description "a second entry, so the chain has to be walked" .
+}

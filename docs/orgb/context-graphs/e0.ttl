@@ -1,0 +1,11 @@
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://markjspivey-xwisee.github.io/interego/orgb/context-graphs/e0.ttl>
+    a iep:ContextDescriptor ;
+    iep:describes <https://markjspivey-xwisee.github.io/interego/orgb/workspace/stream/carol> ;
+    iep:validFrom "2026-08-02T09:00:00.000Z"^^xsd:dateTime ;
+    iep:modalStatus iep:Asserted ;
+    iep:trustLevel iep:SelfAsserted ;
+    iep:issuer <https://markjspivey-xwisee.github.io/interego/orgb/carol#me> ;
+    iep:payload <https://markjspivey-xwisee.github.io/interego/orgb/context-graphs/e0-graph.trig> .
