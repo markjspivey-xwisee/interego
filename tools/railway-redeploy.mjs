@@ -120,6 +120,38 @@ if (before.serviceInstance.source?.image === image) {
   console.log('already pinned to this tag — deploying anyway to pick up a rebuilt image.');
 }
 
+/**
+ * ★ THE IMAGE NAME IS NOT THE SERVICE NAME, AND THIS SCRIPT ASSUMES IT IS.
+ *
+ * `interego-${service}` holds for thirteen of the sixteen services and is wrong for
+ * three, so the assumption is invisible until the day it isn't:
+ *
+ *   css      is `interego-css-pgsl`, not `interego-css`. It is built out of band
+ *            (integrations/pgsl-css-accessor) and has no entry in build-ghcr.yml's
+ *            matrix, so `interego-css:<sha>` has never existed at any sha.
+ *   postgres and redis are upstream images (`postgres:16`, `redis:7-alpine`). Pointing
+ *            either at an interego image would replace a datastore with an application.
+ *
+ * And a wrong name does not fail loudly. Railway accepts the pin, cannot pull the
+ * image, and leaves the PREVIOUS container serving — /health keeps answering 200 from
+ * the old code while the service is pinned to something that does not exist, exactly
+ * the landmine `restorePin` below was written for. Here it is prevented instead of
+ * cleaned up: a redeploy changes the TAG, never which image is being run, so if the
+ * repository we derived is not the repository already deployed, the derivation is the
+ * thing that is wrong.
+ *
+ * Deliberately not overridable. An escape hatch on this guard is the same command
+ * typed with one more flag, at the moment somebody is already sure they are right.
+ */
+const repoOf = (ref) => String(ref ?? '').replace(/:[^:/]*$/, '');
+const currentRepo = repoOf(before.serviceInstance.source?.image);
+if (currentRepo && currentRepo !== repoOf(image)) {
+  die(`"${service}" currently runs ${currentRepo}, but this script derived ${repoOf(image)} from its name.\n` +
+      `       A redeploy retags the SAME image; it must not change which image runs.\n` +
+      `       Nothing has been changed. Repoint it by hand if the move is intended:\n` +
+      `         serviceInstanceUpdate(${serviceId}, ${environmentId}, { source: { image: "<repo>:<tag>" } })`);
+}
+
 // ── 3. Repoint. No registryCredentials: omitting them preserves the stored
 //       private-registry credentials rather than clearing them.
 await gql(

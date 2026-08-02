@@ -22,11 +22,18 @@ import {
   appendWithRetry,
   readAttestation,
   proofDescriptorId,
-  proofBindsToDescriptor,
   WSP_SHAPES,
   type StreamRow,
   type StreamDeps,
 } from '../applications/shared-workspace/src/stream.js';
+// The comparison lives in the substrate, so the workspace and the relay's `get_descriptor`
+// answer "is this proof about this record" with ONE function. Imported directly because
+// there is no longer a workspace-level wrapper to import: the boolean one discarded the
+// basis, which is the whole of what distinguishes a strong pass from a weak one.
+import { proofBindsToDescriptorUrl } from '@interego/core';
+// The relay's host-migration normaliser, used here to prove the shared function honours one
+// when it is given one — and that it does not merge two different pods while doing so.
+import { normalizeCssUrl } from '../deploy/mcp-relay/url-rewrite.js';
 
 const WS = 'https://relay.test/ws/alpha';
 const STREAM = 'https://alice.test/ws/alpha/stream';
@@ -147,7 +154,9 @@ describe('verifyChain — the order is derived, never taken on trust', () => {
     // order can be changed by a clock is not an audit trail.
     const r = verifyChain([row(0), row(1, [d(0)]), row(2, [d(0)])]);
     expect(r.ordered).toEqual([]);
-    expect(r.heads.sort()).toEqual([d(1), d(2)]);
+    // Copied before sorting: `heads` is `readonly string[]`, and `.sort()` on it is both a
+    // type error and an in-place mutation of the result under test.
+    expect([...r.heads].sort()).toEqual([d(1), d(2)]);
   });
 
   it('a declared prior that is absent is reported as a dangling link', () => {
@@ -614,41 +623,131 @@ describe('readStream', () => {
 
 // ── Authorship ───────────────────────────────────────────────────────────────
 
-describe('proofBindsToDescriptor — is this proof about THIS record?', () => {
+describe('proofBindsToDescriptorUrl — is this proof about THIS record, and on what basis?', () => {
   // ★ The substrate's verifier answers a narrower question than it appears to: it re-derives
   // the canonical payload from the proof block's own fields and checks the signature over it.
   // A proof block copied verbatim out of one of a principal's real, public descriptors and
   // pasted into a record somebody else fabricated therefore verifies clean, naming that
   // principal. These pin the only cross-check available from outside the relay.
+  //
+  // ★ AND EVERY ASSERTION NAMES A BASIS, NOT A BOOLEAN. These used to run through
+  // `proofBindsToDescriptor`, a one-line wrapper in stream.ts returning `.bound`. A suite
+  // written against it could not tell `exact-url` from `slug-only` and so asserted the same
+  // `true` for "host, pod, container and name all matched" and for "one path segment matched
+  // and the host was never looked at". The wrapper is deleted; asserting the pair is what
+  // stops a future change silently downgrading a strong pass into a weak one.
 
-  it('an exact match binds', () => {
-    expect(proofBindsToDescriptor('https://alice.test/c/9.ttl', 'https://alice.test/c/9.ttl')).toBe(true);
+  it('an exact match binds, on the strong basis', () => {
+    expect(proofBindsToDescriptorUrl('https://alice.test/c/9.ttl', 'https://alice.test/c/9.ttl'))
+      .toMatchObject({ bound: true, basis: 'exact-url' });
   });
 
-  it('the relay\'s urn form binds to the URL its slug produces', () => {
+  it('the relay\'s urn form binds to the URL its slug produces — on the WEAK basis', () => {
     // descriptor_id is minted as `urn:iep:<pod>:<epoch-ms>` and the descriptor URL is derived
-    // from its terminal segment. Rejecting that shape would withhold every real entry.
-    expect(proofBindsToDescriptor(
+    // from its terminal segment. Rejecting that shape would withhold every real entry. What
+    // the basis records is that this pass compared one segment: it is the verdict EVERY
+    // record the relay mints receives, which is why no policy may demand `exact-url`.
+    expect(proofBindsToDescriptorUrl(
       'urn:iep:u-alice:1754000000000',
       'https://alice.test/context-graphs/1754000000000.ttl',
-    )).toBe(true);
+    )).toMatchObject({ bound: true, basis: 'slug-only' });
   });
 
   it('★ a proof LIFTED from another of the same author\'s records does not bind', () => {
     // The manufactured-participant attack in its surviving form: the signature is genuine and
     // the signer really is the member, and the proof is about a different document.
-    expect(proofBindsToDescriptor(
+    expect(proofBindsToDescriptorUrl(
       'urn:iep:u-alice:1754000000000',
       'https://conv.test/context-graphs/1799999999999.ttl',
-    )).toBe(false);
+    )).toMatchObject({ bound: false, basis: 'none' });
+  });
+
+  it('★ a URL-form id is compared IN FULL — a foreign host no longer binds on its last segment', () => {
+    // ★ THE HOLE, MEASURED. The URL branch was `claimedId === descriptorUrl` with a
+    // fall-through to the terminal-segment compare, so a URL-form id that failed the exact
+    // test got graded like a URN. With the `.ttl` present the two sides differ by the suffix
+    // and it happened to refuse; WITHOUT it, a proof naming a document on an
+    // attacker-controlled host bound to a record on the victim's pod. That accident was the
+    // only thing standing in the way, and an accident is not a check.
+    const served = 'https://css.test/alice-pod/context-graphs/9.ttl';
+    expect(proofBindsToDescriptorUrl('https://evil.example/anything/9', served))
+      .toMatchObject({ bound: false, basis: 'none' });
+    expect(proofBindsToDescriptorUrl('https://css.test/mallory-pod/context-graphs/9', served))
+      .toMatchObject({ bound: false, basis: 'none' });
+    // The accidental refusal still refuses, now on purpose.
+    expect(proofBindsToDescriptorUrl('https://evil.example/anything/9.ttl', served))
+      .toMatchObject({ bound: false, basis: 'none' });
+    // And the honest full match still binds — the point of signing a URL at all.
+    expect(proofBindsToDescriptorUrl(served, served)).toMatchObject({ bound: true, basis: 'exact-url' });
+  });
+
+  it('★ the URN pod is NOT compared, and that is a limit this test states rather than hides', () => {
+    // `slugFromIri` maps a urn onto its last segment only, so the pod is not recoverable
+    // from the URL by anyone. A proof lifted across pods — or onto an entirely foreign host
+    // — at the same epoch binds, and no amount of care in this function changes that. The
+    // durable fix is upstream: sign a URL, which the case above then compares in full.
+    // Asserted as `true` deliberately: a test that pinned the wish rather than the behaviour
+    // is how the previous round's docstring came to claim the opposite of what ran. The
+    // `slug-only` basis is asserted beside it so the pass is never read as a strong one.
+    expect(proofBindsToDescriptorUrl(
+      'urn:iep:alice-pod:1712345678901',
+      'https://css.test/mallory-pod/context-graphs/1712345678901.ttl',
+    )).toMatchObject({ bound: true, basis: 'slug-only' });
+    expect(proofBindsToDescriptorUrl(
+      'urn:iep:alice-pod:1712345678901',
+      'https://evil.example/x/1712345678901.ttl',
+    )).toMatchObject({ bound: true, basis: 'slug-only' });
+  });
+
+  it('★ the relay-minted urn shapes whose 3rd segment is a ROLE still bind', () => {
+    // These are why the pod is not read out of the urn's third component. All three are
+    // honest, relay-minted, and would be refused by any "the pod is segment 3" rule.
+    for (const [id, url] of [
+      ['urn:iep:pod-bootstrap:markj:v1', 'https://css.test/markj/context-graphs/v1.ttl'],
+      ['urn:iep:trajectory-step:alice:1712345678901', 'https://css.test/markj/context-graphs/1712345678901.ttl'],
+      ['urn:iep:markj:pgsl:1712345678901', 'https://css.test/markj/context-graphs/1712345678901.ttl'],
+    ] as const) {
+      expect(proofBindsToDescriptorUrl(id, url)).toMatchObject({ bound: true, basis: 'slug-only' });
+    }
+  });
+
+  it('★ the basis is reported, and the weak one carries the caveat that says what went uncompared', () => {
+    // One implementation shared with the relay, so this layer and the relay cannot drift into
+    // two answers. The pair is what the deleted boolean wrapper could not express.
+    const served = 'https://css.test/alice/context-graphs/9.ttl';
+    expect(proofBindsToDescriptorUrl(served, served)).toMatchObject({ bound: true, basis: 'exact-url' });
+    const slug = proofBindsToDescriptorUrl('urn:iep:alice:9', served);
+    expect(slug).toMatchObject({ bound: true, basis: 'slug-only' });
+    expect(slug.caveat).toMatch(/ONLY that segment matched/);
+    // A caveat on the STRONG basis would be noise, and its absence is what makes the weak
+    // one's presence readable.
+    expect(proofBindsToDescriptorUrl(served, served).caveat).toBeUndefined();
+    expect(proofBindsToDescriptorUrl('urn:iep:alice:8', served)).toMatchObject({ bound: false, basis: 'none' });
+  });
+
+  it('★ a host-form normaliser is honoured — a migrated record is not called unbound', () => {
+    // The CSS pod's host gained an `.internal.` label and live descriptors carry the old form
+    // in signed bytes that can never be rewritten. Compared raw, those honest records read as
+    // unbound — the "fails closed on honest data" direction this repo has shipped once
+    // already. The relay passes `normalizeCssUrl`; this layer cannot reach it, so it compares
+    // raw, which is exactly what it did before.
+    const OLD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/u/context-graphs/9.ttl';
+    const NEW = 'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/u/context-graphs/9.ttl';
+    expect(proofBindsToDescriptorUrl(OLD, NEW)).toMatchObject({ bound: false });
+    expect(proofBindsToDescriptorUrl(OLD, NEW, normalizeCssUrl)).toMatchObject({ bound: true, basis: 'exact-url' });
+    // …and the normaliser must not merge two genuinely different pods on the way.
+    const OTHER = 'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/OTHER/context-graphs/9.ttl';
+    expect(proofBindsToDescriptorUrl(OLD, OTHER, normalizeCssUrl)).toMatchObject({ bound: false });
   });
 
   it('a descriptor with no proof block at all does not bind', () => {
-    expect(proofBindsToDescriptor(null, 'https://alice.test/c/9.ttl')).toBe(false);
+    expect(proofBindsToDescriptorUrl(null, 'https://alice.test/c/9.ttl'))
+      .toMatchObject({ bound: false, basis: 'none' });
   });
 
   it('an unparseable descriptor URL does not bind — refusing is the safe direction', () => {
-    expect(proofBindsToDescriptor('urn:iep:u-alice:1', 'not a url')).toBe(false);
+    expect(proofBindsToDescriptorUrl('urn:iep:u-alice:1', 'not a url'))
+      .toMatchObject({ bound: false, basis: 'none' });
   });
 
   it('parses the id out of the embedded block, and only out of that block', () => {
@@ -682,6 +781,11 @@ describe('readAttestation — one get_descriptor, and every failure is REPORTED'
       authorshipVerified: true,
       signedBy: 'did:web:agents.test:bot-7',
       boundToDescriptor: true,
+      // ★ AND ON WHICH BASIS. The boolean above covers both "host, pod, container and name
+      // matched" and "one path segment matched and the host was never looked at". A URN-form
+      // descriptorId — which is every id the relay mints — is the second, and this layer used
+      // to compute the distinction and throw it away.
+      descriptorBindingBasis: 'slug-only',
       // A relay that reports no contentBinding has not checked one. Reading the omission as
       // anything but 'unbound' would let an older relay satisfy `requireContentBinding`.
       contentBinding: 'unbound',

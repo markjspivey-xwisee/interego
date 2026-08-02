@@ -4,9 +4,22 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts', 'applications/**/tests/**/*.test.ts', 'integrations/**/tests/**/*.test.ts', 'mcp-server/tests/**/*.test.ts'],
     globals: false,
+    // ★ THIS DOES NOT TYPECHECK THE SUITE, AND READING IT AS THOUGH IT DID WAS THE GAP.
+    // vitest's `typecheck` block collects TYPE TESTS — files matching `typecheck.include`,
+    // which defaults to `**/*.test-d.ts`. There are none in this repo, so the setting has
+    // been enabled and inert: every file above was transpiled by esbuild with the types
+    // stripped and never compiled. Deleting a required bail-out from application source left
+    // all 237 tests green while `tsc` caught it in one pass. The real compiler is the
+    // globalSetup below.
     typecheck: {
       enabled: true,
     },
+    // ★ THE COMPILER, RUN BEFORE COLLECTION. `tools/typecheck-gate.mjs` compiles
+    // `tsconfig.check.json` — `tests/**` plus `applications/shared-workspace/**`, the two
+    // programs no tsconfig in the repo reached — and throws on any error outside a pinned
+    // legacy list. Wired here rather than into an npm script because the command people type
+    // is `npx vitest run tests/`, which never reads package.json. ~6s per invocation.
+    globalSetup: ['./tools/vitest-typecheck-setup.mjs'],
     // Pod-touching tests (Tier 2 + Tier 8 vertical tests) all hit the
     // same shared Azure CSS pod. publish() is now CAS-safe via HTTP
     // If-Match (see src/solid/client.ts), so concurrent writes don't

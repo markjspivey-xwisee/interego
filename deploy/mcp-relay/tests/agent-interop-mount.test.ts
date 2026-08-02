@@ -644,6 +644,58 @@ console.log("\n11. THE CARD'S PROMISE — an advertised capability is actually P
     plain.task.status.state === 'TASK_STATE_SUBMITTED' && !plain.task.artifacts,
     plain.task.status.state);
 
+  // ★ THE ROUND TRIP MUST CLOSE. We emit the capability at `task.metadata.skillId`,
+  // because the Task body is a closed schema and `metadata` is its extension point.
+  // The mount used to accept it ONLY as a bare top-level `skillId` — a member A2A's
+  // `Message` schema forbids outright (additionalProperties: false, no such field), so
+  // a schema-valid peer could not name a capability at all, and a peer echoing back
+  // what we had just told it got ignored: engagement opened with no capability, invoker
+  // never ran, task returned parked in TASK_STATE_SUBMITTED with no artifact and no
+  // error explaining why. Strict outbound, reading somewhere else inbound — the same
+  // defect as the task id a peer could not dereference.
+  //
+  // Asserted as a CLOSURE over what the profile actually emitted, not against the
+  // literal string 'metadata.skillId': hardcoding the path here would make this test
+  // agree with whatever the code does, which is the failure mode it exists to catch.
+  const emitted = done.task.metadata?.skillId;
+  check('the capability is emitted under the protocol\'s extension point',
+    emitted === 'https://relay.test/ns/iep/action/relay/get_descriptor', JSON.stringify(done.task.metadata));
+  const echoed = await fetch(`${B2}/a2a/v1/message:send`, {
+    method: 'POST', headers: J2,
+    body: JSON.stringify({ message: { parts: [{ text: 'echo' }], metadata: { skillId: emitted } } }),
+  }).then(r => r.json() as any);
+  check('...and a peer echoing it back EXACTLY as emitted reaches a terminal state',
+    echoed.task.status.state === 'TASK_STATE_COMPLETED', echoed.task.status.state);
+  check('...and gets the real result, not a submitted-forever task with no artifact',
+    echoed.task.artifacts?.[0]?.parts?.[0]?.text === 'ECHO',
+    JSON.stringify(echoed.task.artifacts));
+
+  // OWN PROPERTIES ONLY. A declared path is walked over a caller-supplied body, and one
+  // of A2A's declared paths is the bare `skillId` — read straight off the payload. If
+  // anything in this process ever puts `skillId` on Object.prototype, an unguarded walk
+  // would make EVERY inbound message invoke a capability chosen by whoever polluted it,
+  // with no member present in the request at all.
+  //
+  // ★ THE FIRST VERSION OF THIS CHECK WAS A FAKE. It POSTed a `__proto__` member in the
+  // JSON and asserted nothing was named — but JSON.parse defines `__proto__` as an
+  // ORDINARY OWN PROPERTY rather than setting a prototype, so the value was never on a
+  // prototype chain and the assertion held identically with the guard removed. It killed
+  // no mutant, which means it was testing nothing. Pollute the prototype for real, and
+  // restore it immediately — everything after this line shares the intrinsic.
+  (Object.prototype as any).skillId = 'https://relay.test/ns/iep/action/relay/get_descriptor';
+  let polluted: any;
+  try {
+    polluted = await fetch(`${B2}/a2a/v1/message:send`, {
+      method: 'POST', headers: J2,
+      body: JSON.stringify({ message: { parts: [{ text: 'x' }] } }),
+    }).then(r => r.json() as any);
+  } finally {
+    delete (Object.prototype as any).skillId;
+  }
+  check('...and a skillId reachable only through the prototype names nothing',
+    polluted?.task?.status?.state === 'TASK_STATE_SUBMITTED' && !polluted?.task?.artifacts,
+    JSON.stringify(polluted?.task?.status));
+
   srv2.close();
 }
 

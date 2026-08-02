@@ -161,6 +161,13 @@ wsp:accepts a owl:ObjectProperty ;
   rdfs:domain wsp:MembershipAcceptance ; rdfs:range wsp:MembershipGrant ;
   rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
 
+wsp:member a owl:ObjectProperty ;
+  rdfs:label "member" ;
+  rdfs:comment
+    "The principal whose acceptance this is, stated IN the acceptance. Redundant with the pod the record sits on and with the key that signed it, and that redundancy is the point: a reader that takes the member from the signature cannot read a record whose signature failed, and a withdrawal has to keep working when attribution does not. Named here so the acceptance says who it is from without anyone having to infer it. Note that wsp-shapes.ttl does not yet require this property — the workspace reader does." ;
+  rdfs:domain wsp:MembershipAcceptance ; rdfs:range foaf:Agent ;
+  rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
 wsp:revoked a owl:DatatypeProperty ;
   rdfs:label "revoked" ;
   rdfs:comment

@@ -920,6 +920,206 @@ export async function verifySignedAuthorship(
 }
 
 /**
+ * How strongly a proof's `iep:descriptorId` was tied to the URL the record was served from.
+ *
+ * Three values because the middle one is real and used to be invisible. A boolean reported
+ * `exact-url` and `slug-only` identically, and `slug-only` is a materially weaker claim — see
+ * {@link proofBindsToDescriptorUrl} for exactly how much weaker, measured.
+ */
+export type DescriptorBindingBasis =
+  /** The proof names this URL, compared in full after normalisation. Nothing is unexamined. */
+  | 'exact-url'
+  /**
+   * The proof names a URN, and a URN is related to its URL only by `slugFromIri`, which
+   * keeps the last `/ : #` segment and discards the rest. Only that segment was compared:
+   * the pod, the host and the container were NOT.
+   */
+  | 'slug-only'
+  /** The two disagree, or there was nothing comparable. Not bound. */
+  | 'none';
+
+export interface DescriptorBinding {
+  readonly bound: boolean;
+  readonly basis: DescriptorBindingBasis;
+  /** Present iff `bound` is false, or iff `bound` is true on a basis weaker than the URL. */
+  readonly caveat?: string;
+}
+
+/**
+ * Is this proof about the record it was served with?
+ *
+ * ★ THE SUBSTRATE'S SIGNATURE CHECK DOES NOT ASK THIS. `verifySignedAuthorship` re-derives
+ * the canonical payload from the proof block's OWN fields, so a proof block lifted verbatim
+ * out of one of a principal's real, public descriptors and pasted into a record somebody
+ * else fabricated verifies clean, with that principal named as signer. Signature validity
+ * says the bytes of the proof were not altered. It says nothing about what the proof is
+ * attached to. This is the only function that asks the second question, and it lives here —
+ * not in the relay and not in the workspace — because BOTH need it and a second, cleverer
+ * copy would eventually disagree with the one that decided whether the record was admitted.
+ *
+ * ── WHAT A URL-FORM `descriptorId` BUYS, AND WHAT IT COST TO GET IT ──────────────────────
+ *
+ * When the proof names an http(s) URL there is a full comparison available and it is now the
+ * ONLY one performed. It used to be `claimedId === descriptorUrl` with a fall-through to the
+ * terminal-segment compare, so a URL-form id that failed the exact test got graded on its
+ * last segment like a URN. Measured before the change, and note WHICH form is the live one:
+ *
+ *     'https://evil.example/anything/9.ttl' vs '…/alice-pod/context-graphs/9.ttl'  → false
+ *     'https://evil.example/anything/9'     vs '…/alice-pod/context-graphs/9.ttl'  → TRUE
+ *
+ * The first is refused only by accident — the served name carries `.ttl`, the claimed one
+ * carries it too, and `9.ttl` ≠ `9` after the suffix is stripped from one side only. Drop
+ * the suffix and a proof naming a document on an ATTACKER-CONTROLLED HOST bound to a record
+ * on the victim's pod. Same result across pods on our own host. That asymmetry was the only
+ * thing standing in the way, and it is not a check.
+ *
+ * The fall-through is gone: a URL-form id is directly comparable, so there is no case in
+ * which grading it on a suffix is right.
+ *
+ * ★ THE ONE HONEST CASE THIS REFUSES, NAMED RATHER THAN GUESSED AT. A caller who supplies a
+ * URL `descriptor_id` WITHOUT the `.ttl` — `…/context-graphs/9` for a record that lands at
+ * `…/context-graphs/9.ttl` — used to bind through that same segment compare and now does
+ * not. It is the identical comparison as the attack above; there is no predicate that keeps
+ * one and drops the other, so both go. Nothing in this tree is in that state: every
+ * `descriptor_id` minted anywhere in the repo is a `urn:` (relay, mcp-server, validator,
+ * demos — checked), and the recovery is in the publisher's hands and is the point of the
+ * migration anyway — sign the descriptor's actual URL, `.ttl` included, and it binds
+ * `exact-url` with nothing left uncompared.
+ *
+ * ★ AND THE FULL COMPARISON IS NORMALISED. `normalizeCssUrl` is injected rather than imported
+ * because it lives at the relay boundary; omitting it leaves the comparison raw, which is the
+ * previous behaviour, not a new one.
+ *
+ * ★★ WHAT THAT NORMALISATION IS AND IS NOT EVIDENCE OF — RE-REGISTERED, because the previous
+ * version of this paragraph put it in the register this file reserves for live observations
+ * and it does not belong there. It said the raw comparison was *"measured `false` on a record
+ * that is exactly what it claims to be"*. The mechanism is real and the figure reproduces:
+ * feed the pre-migration and post-migration hosts to this function and it answers
+ * `{bound: false}` raw and `{bound: true, basis: 'exact-url'}` normalised. But it was measured
+ * on a CONSTRUCTED STRING, not read off a record, and two things stop it being a live fact:
+ *
+ *   — `normalizeCssUrl` matches only `https://interego-css.<hex>.eastus.azurecontainerapps.io`
+ *     (`deploy/mcp-relay/url-rewrite.ts`), an Azure host that is not the live infrastructure.
+ *     The live relay reports `"css": "http://css.railway.internal:3456/"`, and url-rewrite.ts
+ *     says so itself: *"Latent today — current infra is Railway."*
+ *   — a URN never reaches the `exact-url` branch and `normalizeCssUrl` is a no-op on one, so
+ *     for every `descriptor_id` this repo mints (all of them URNs — see above) the normaliser
+ *     cannot change any verdict at all.
+ *
+ * So this is a guard against a shape that WOULD fail closed on honest data if a URL-form
+ * `descriptor_id` ever met a migrated host. That is worth having and worth stating precisely.
+ * It is not a record that was rescued, and calling it one borrows credibility the measurement
+ * does not have.
+ *
+ * ── ★ WHAT A URN-FORM `descriptorId` CANNOT BUY, STATED AS A LIMIT AND NOT AS A HEDGE ────
+ *
+ * The relay mints `descriptor_id` as `urn:iep:<pod>:<epoch-ms>` and derives the URL from it
+ * through `slugFromIri` — LAST `/ : #` SEGMENT ONLY, URL-encoded, plus `.ttl`. That function
+ * is lossy, so from the URL alone NO verifier — this one, the relay, or a future one — can
+ * recover which pod the URN named. The pod is therefore not compared and a proof lifted
+ * across pods at the same epoch binds:
+ *
+ *     'urn:iep:alice-pod:1712345678901'
+ *       vs 'https://css/mallory-pod/context-graphs/1712345678901.ttl'   → bound, slug-only
+ *
+ * A previous round called this narrowing "close to zero" and left it. It is worth stating
+ * more precisely than that: what the slug compare DOES catch is a proof pasted onto a record
+ * with a different terminal segment — the ordinary copy — and what it does NOT catch is a
+ * record deliberately named to collide with the epoch of a real one, on any pod, on any host.
+ *
+ * ★ WHY THE POD IS NOT READ OUT OF THE URN ANYWAY. The obvious tightening — treat the third
+ * URN component as the pod and require it to appear in the URL path — breaks live shapes the
+ * relay itself mints, where that component is a ROLE and not a pod at all:
+ *
+ *     urn:iep:pod-bootstrap:<userId>:v1         → published to pod <userId>
+ *     urn:iep:trajectory-step:<agentSlug>:<ms>  → published to the CALLER's pod
+ *     urn:iep:<pod>:pgsl:<ms>                   → pod is third, but a fourth follows
+ *
+ * All three are honest and all three would be refused. Guessing which URN dialect is in hand
+ * is how a check starts accusing real authors, so it is not attempted. The durable fix is
+ * upstream and structural: sign a URL as the `descriptorId`, at which point the `exact-url`
+ * branch handles it in full. Until then the honest report is `slug-only` with a caveat that
+ * names what went uncompared — which is why this returns a basis rather than a boolean.
+ */
+export function proofBindsToDescriptorUrl(
+  claimedDescriptorId: string | null | undefined,
+  descriptorUrl: string,
+  normalize?: (url: string) => string,
+): DescriptorBinding {
+  const norm = normalize ?? ((u: string) => u);
+  if (typeof claimedDescriptorId !== 'string' || claimedDescriptorId.length === 0) {
+    return {
+      bound: false,
+      basis: 'none',
+      caveat:
+        'the proof block carries no iep:descriptorId, so there is nothing to compare against '
+        + 'the URL it was served from — this says nothing about the proof itself',
+    };
+  }
+
+  let served: URL;
+  try { served = new URL(norm(descriptorUrl)); } catch {
+    return {
+      bound: false,
+      basis: 'none',
+      caveat: `the record's own URL <${descriptorUrl}> could not be parsed, so no comparison `
+        + 'was possible; refusing is the safe direction',
+    };
+  }
+
+  // An http(s) claimed id is directly comparable to the URL, so compare it and stop. Falling
+  // through to the slug compare when this fails is what let a foreign host bind.
+  let claimedUrl: URL | null = null;
+  try {
+    const u = new URL(norm(claimedDescriptorId));
+    if (u.protocol === 'http:' || u.protocol === 'https:') claimedUrl = u;
+  } catch { /* not a URL — the URN path below is the only one left */ }
+  if (claimedUrl !== null) {
+    if (claimedUrl.href === served.href) return { bound: true, basis: 'exact-url' };
+    return {
+      bound: false,
+      basis: 'none',
+      caveat:
+        `the proof names the URL <${claimedDescriptorId}> and the record is served at `
+        + `<${descriptorUrl}>. A URL-form descriptorId is compared in full — host, pod, `
+        + 'container and name — so a difference in any of them is a difference.',
+    };
+  }
+
+  // URN (or any non-URL IRI). `slugFromIri` is the only relation the substrate defines
+  // between it and a URL, and it keeps just the terminal segment.
+  const tail = (s: string): string | null => s.split(/[/:#]/).filter(Boolean).pop() ?? null;
+  const claimedTail = tail(claimedDescriptorId);
+  const servedTail = tail(served.pathname)?.replace(/\.ttl$/, '');
+  if (claimedTail === null || servedTail === null || servedTail === undefined) {
+    return {
+      bound: false,
+      basis: 'none',
+      caveat: `the proof names <${claimedDescriptorId}> and the record is served at `
+        + `<${descriptorUrl}>; neither yields a segment to compare`,
+    };
+  }
+  if (encodeURIComponent(claimedTail) !== servedTail) {
+    return {
+      bound: false,
+      basis: 'none',
+      caveat: `the proof names <${claimedDescriptorId}> and the record is served at `
+        + `<${descriptorUrl}>`,
+    };
+  }
+  return {
+    bound: true,
+    basis: 'slug-only',
+    caveat:
+      `the proof names the URN <${claimedDescriptorId}>, whose only defined relation to a URL `
+      + 'is its terminal segment, so ONLY that segment matched. The host, the pod and the '
+      + 'container were not compared and cannot be: the URN-to-URL mapping discards them. A '
+      + 'proof lifted onto a record with the same final segment on a different pod would '
+      + 'reach this same verdict.',
+  };
+}
+
+/**
  * Walk a signed delegation chain from `agentId` up to the pod owner's
  * WebID, verifying each VC's signature in turn.
  *

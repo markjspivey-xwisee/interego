@@ -1,0 +1,52 @@
+// ★ THE PROGRAM NOTHING WAS COMPILING.
+//
+// Every other TypeScript in this repo is typechecked by something:
+//
+//   packages/*                      `npm run build` runs tsc per package
+//   deploy/mcp-relay/*.ts           relay-tests.yml — `tsc --noEmit -p .`
+//   applications/*/bridge + src     bridge-typecheck.yml, via each bridge tsconfig's
+//                                   `"../src/**/*.ts"` include
+//   mcp-server, examples/*          bridge-typecheck.yml
+//
+// Two things were in none of them: `tests/**`, and `applications/shared-workspace/**` — the
+// one application with no `bridge/` directory and therefore no tsconfig reaching its source.
+// vitest transpiles with esbuild and does not typecheck, so `npx vitest run tests/` compiled
+// nothing: it stripped the types and ran the JavaScript underneath.
+//
+// ★ MEASURED, NOT ASSUMED. Deleting a required bail-out from `readAcceptanceRecord` — the
+// branch that stops an acceptance naming no member from becoming a row with an empty
+// `member` string — left all 237 tests GREEN. `tsc` catches it outright: the reader's
+// `{iri} | {why}` union makes the branch structurally necessary. The suite said nothing
+// because there was no compiler in the loop, and the missing behaviour test was found only
+// by mutating the source by hand.
+//
+// This config is that compiler. `vitest.config.ts` runs it in `globalSetup`, so
+// `npx vitest run tests/` cannot report green over source that does not compile — however
+// vitest is invoked, and without depending on anyone remembering an npm script. CI runs it
+// as its own named step too (bridge-typecheck.yml), because a gate whose only home is a
+// setup hook is a gate one `--no-isolate` flag away from being skipped.
+//
+// `noEmit` and no `rootDir`: this program exists to be checked and never to be built.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    // Tests destructure more than they use and bind fixtures they only pass along. Unused
+    // locals are a style question; the defects this file exists to catch are type errors, and
+    // failing the whole program on an unused `const` would get the gate turned off.
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "types": ["node"]
+  },
+  // Deliberately the same globs `vitest.config.ts` runs, plus the application source those
+  // tests import. If vitest can execute it, this must be able to compile it — that identity
+  // is the whole point, and a divergence between the two lists reopens the gap.
+  "include": [
+    "tests/**/*.ts",
+    "applications/shared-workspace/**/*.ts"
+  ],
+  "exclude": ["node_modules", "**/dist/**", "scratchpad/**"]
+}

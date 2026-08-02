@@ -21,10 +21,12 @@ export {
 // Serialization-stable graph digest — what an authorship proof's contentHash is over.
 export {
   canonicalGraphDigest,
+  canonicalGraphDigestResult,
   canonicalGraphTriples,
   digestAlgorithmOf,
   GRAPH_DIGEST_ALGORITHM,
 } from './graph-digest.js';
+export type { GraphDigestResult } from './graph-digest.js';
 // RDF 1.2 helpers (version directive, directional language tags)
 export {
   langString,

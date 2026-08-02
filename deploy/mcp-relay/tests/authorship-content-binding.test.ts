@@ -29,12 +29,60 @@
  * checked" was its mirror image, and shipped the substrate's sharpest signal under a note
  * telling the reader it was not evidence of anything.
  *
+ * ★ ROUND 6 — TWO MORE THINGS THE READ PATH WAS SILENT ABOUT:
+ *
+ *   1. VALID TURTLE THE DIGESTER REFUSED. `canonicalGraphDigest` swallowed every parse throw
+ *      into `null`, and `handlePublishContext` spelled that `?? undefined` — so a payload
+ *      this build could not read was SIGNED WITH NO CONTENT BINDING and its proof reports
+ *      `contentBinding: 'unbound'` forever, which readers are told means the proof predates
+ *      content binding. Two shapes reaching it were ordinary valid Turtle: `'''…'''` literals
+ *      (the tokeniser handled only `"`) and SPARQL-style `PREFIX` (the directive branch
+ *      demanded the `.` that SPARQL forbids). Both now parse; the rest of the class now
+ *      arrives as a NAMED reason, with the parser's offset, on the publish response.
+ *      ★ The dangerous half of that fix is asserted here too: teaching the tokeniser `'''`
+ *      means those payloads now GET a digest, so a wrap/unwrap that disagreed about where a
+ *      `'''` literal starts would have converted a silent `unbound` into an active TAMPERING
+ *      accusation against an honest publisher — strictly worse than the bug. Measured
+ *      through the real publish path, not read off `flipsLongLiteralState`.
+ *
+ *   2. WHETHER THE PROOF IS ABOUT THIS RECORD AT ALL. `verifySignedAuthorship` re-derives the
+ *      canonical payload from the proof block's OWN fields, so a proof lifted verbatim out of
+ *      one of a principal's real public descriptors and pasted into a fabricated record
+ *      verified clean and named that principal. `get_descriptor` held the proof AND the URL
+ *      it fetched it from and never compared them. It does now, via the same
+ *      `proofBindsToDescriptorUrl` the workspace layer uses, reporting a BASIS — because
+ *      `exact-url` and `slug-only` are not equally strong and a boolean hid the difference.
+ *
  * ★ MUTATION-CHECKED — each guard broken, the suite re-run, then reverted. Round 5 covered
  * the guards added in round 5 (the four-value binding, the prefix-position rewrite and its
  * refusal, the acceptance-count enumeration); earlier rounds' counts covered earlier
  * guards. No single number covers all of them, and a header claiming one would be the kind
  * of stale assurance this round was convened to remove. See the header of
  * tests/authorship-covers-content.test.ts for the core half of the same property.
+ *
+ * ★ Round-6 mutations, each applied, suite re-run, then reverted:
+ *   parser —      single/triple single-quote literals unsupported again  4
+ *                 SPARQL PREFIX folded back onto @prefix (dot demanded)  1
+ *                 SPARQL BASE consumes the next token blind again        1
+ *   digest —      the refusal reason emptied (silent null restored)      1
+ *                 the parser offset dropped from the reason              1
+ *                 publish path back to the silent digest                 1
+ *   binding —     the URL branch falls through to the slug compare       1
+ *                 the URL branch never taken (every id graded as URN)    4
+ *                 the slug compare dropped (everything binds)            3
+ *                 the host normaliser ignored                            1
+ *                 slug-only reported as exact-url                        1
+ *   wiring —      stream.ts stops using the shared function              3
+ *                 the relay stops passing normalizeCssUrl                2
+ *                 the relay computes the binding INSIDE the try          1
+ *
+ * ★ THE HARNESS ITSELF WAS WRONG FIRST, and the way it was wrong is worth recording: it
+ * mutated `packages/core/src` without rebuilding, and `@interego/core` resolves to `dist/`,
+ * so EVERY core mutation reported "SURVIVED". A harness that stands in for the thing it
+ * measures cannot measure it — the same lesson as the double-vs-real-publish() note above,
+ * arriving from the tooling side. A second false survivor came from a mutation that set a
+ * variable after the return that made it irrelevant: a mutation that does not mutate is not
+ * evidence of a guard.
  *
  * Run from deploy/mcp-relay/:
  *   npx tsx tests/authorship-content-binding.test.ts
@@ -48,6 +96,9 @@ import {
   createSignedAuthorship,
   verifySignedAuthorship,
   canonicalGraphDigest,
+  // The same digest, carrying WHY there is none. The publish path uses this one; the silent
+  // form is what let an unparseable payload sign itself into a permanent `unbound`.
+  canonicalGraphDigestResult,
   GRAPH_DIGEST_ALGORITHM,
   type IRI,
 } from '@interego/core';
@@ -153,7 +204,13 @@ async function main(): Promise<void> {
   console.log('\n★ the digest that survives it');
 
   const publisherDigest = canonicalGraphDigest(PAYLOAD)!;
-  const readerDigest = observedGraphDigest({ graphContent: served, graphIri: GRAPH_IRI });
+  // ★ THE DESCRIPTOR TURTLE, NOT A PRE-EXTRACTED GRAPH IRI. `observedGraphDigest` derives the
+  // IRI itself, through `digestedGraphRegion`, so the digester and every reader are handed
+  // the same two strings and cannot disagree about which region is covered. Passing the IRI
+  // separately is how the scopes came apart: the relay digested the block and
+  // `membership.ts` parsed the whole served document, and everything in the gap was read
+  // and never digested.
+  const readerDigest = observedGraphDigest({ graphContent: served, descriptorTurtle: turtle });
   ok(
     publisherDigest === readerDigest,
     '★ publisher and reader agree across the wrap — the whole fix rests on this',
@@ -218,9 +275,28 @@ async function main(): Promise<void> {
   console.log('\n★ tampering IS caught');
 
   const TAMPERED = PAYLOAD.replace('Revenue up 4%.', 'Revenue up 40%.');
-  const { served: servedTampered } = await publishAndServe(TAMPERED);
-  const tamperedDigest = observedGraphDigest({ graphContent: servedTampered, graphIri: GRAPH_IRI });
+  const { turtle: turtleTampered, served: servedTampered } = await publishAndServe(TAMPERED);
+  const tamperedDigest = observedGraphDigest({
+    graphContent: servedTampered, descriptorTurtle: turtleTampered,
+  });
   ok(tamperedDigest !== readerDigest, 'a one-character content change moves the digest');
+
+  // ★★ AND A CHANGE OUTSIDE THE BLOCK DOES NOT — WHICH IS THE POINT, AND WAS THE HOLE. The
+  // digest covers ONE REGION of the served document. Triples added to the DEFAULT graph
+  // leave it byte-identical, so `contentBinding` stays `'bound'` and says so honestly. What
+  // made that a manufactured workspace participant was a READER that parsed the whole
+  // document while believing `'bound'` covered it. Pinned here, on the digester's side, so
+  // the scope this verdict actually has is a measured fact rather than a comment.
+  const outsideBlock = served.replace(
+    '# ── Named Graph Content',
+    `<https://attacker.example/planted> <https://example.org/ns#p> "not digested" .\n\n# ── Named Graph Content`,
+  );
+  ok(
+    outsideBlock !== served
+      && observedGraphDigest({ graphContent: outsideBlock, descriptorTurtle: turtle }) === readerDigest,
+    '★★ triples in the DEFAULT graph do not move the digest — `bound` covers the block ALONE, '
+    + 'and any reader that parses more than the block is reading undigested bytes',
+  );
   const rSwap = await verifySignedAuthorship(boundProof, verifier, { contentHash: tamperedDigest! });
   ok(
     !rSwap.valid && /covers content/.test(rSwap.reason ?? ''),
@@ -238,21 +314,102 @@ async function main(): Promise<void> {
   );
 
   ok(
-    observedGraphDigest({ graphContent: null, graphIri: GRAPH_IRI }) === undefined,
+    observedGraphDigest({ graphContent: null, descriptorTurtle: turtle }) === undefined,
     'an unreadable payload (encrypted to others) yields no digest rather than a digest of nothing',
   );
   ok(
-    observedGraphDigest({ graphContent: served, graphIri: 'urn:graph:not-in-this-document' }) === undefined,
+    observedGraphDigest({
+      graphContent: served,
+      descriptorTurtle: '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n'
+        + '<https://x/d.ttl> iep:describes <urn:graph:not-in-this-document> .\n',
+    }) === undefined,
     'a graph IRI absent from the document yields no digest',
   );
   ok(
-    observedGraphDigest({ graphContent: 'this is not turtle {{{', graphIri: GRAPH_IRI }) === undefined,
+    observedGraphDigest({ graphContent: served, descriptorTurtle: '<https://x/d.ttl> a <urn:t> .' }) === undefined,
+    'a descriptor with no iep:describes yields no digest — the region cannot be located, so '
+    + 'nothing may be digested and nothing may be parsed',
+  );
+  ok(
+    observedGraphDigest({ graphContent: 'this is not turtle {{{', descriptorTurtle: turtle }) === undefined,
     'an unparseable payload yields no digest',
   );
   ok(
     canonicalGraphDigest('@prefix broken <<<') === null,
     'an unparseable payload digests to null, not to a hash of the empty string',
   );
+
+  console.log("\n★ valid Turtle the digester used to refuse — and the silence around it");
+
+  // ★ THE DEFECT. `null` here is not inert: `handlePublishContext` spells it `?? undefined`,
+  // so the proof is signed with NO contentHash and reports `contentBinding: 'unbound'`
+  // forever — which readers are told means "every proof written before content binding
+  // existed". Both shapes below are ordinary valid Turtle that every other tool accepts, so
+  // this was not a legacy-data story: live payloads were being signed into a permanent,
+  // unexplained "uncovered" and nobody was told, least of all the publisher.
+  const NOW_PARSES: [string, string][] = [
+    ['SPARQL PREFIX (no terminating `.`)',
+      `PREFIX ex: <https://example.org/ns#>\n<${GRAPH_IRI}> ex:p "v" .\n`],
+    ['SPARQL BASE (no terminating `.`)',
+      `BASE <https://example.org/>\n<${GRAPH_IRI}> <https://example.org/ns#p> "v" .\n`],
+    ["triple-quoted ''' literal",
+      `<${GRAPH_IRI}> <https://example.org/ns#p> '''line one\nline two''' .\n`],
+    ["single-quoted ' literal",
+      `<${GRAPH_IRI}> <https://example.org/ns#p> 'plain' .\n`],
+    ["' and \" nested in each other's literals",
+      `<${GRAPH_IRI}> <https://example.org/ns#a> 'he said "hi"' ;\n`
+      + `    <https://example.org/ns#b> "it's fine" .\n`],
+  ];
+  for (const [label, src] of NOW_PARSES) {
+    ok(canonicalGraphDigest(src) !== null, `★ ${label} now digests instead of yielding a permanent unbound`);
+  }
+
+  // ★★ AND THE SAME QUOTING SURVIVES THE PUBLISH REWRITE. This is the assertion that matters
+  // most and the one a helper-only test would have missed. Teaching the tokeniser `'''`
+  // means those payloads now GET a contentHash where before they silently got none — so if
+  // `wrapAsTriG`/`extractNamedGraphTurtle` disagreed about where a `'''` literal starts, the
+  // fix would have converted a silent `unbound` into an active TAMPERING accusation against
+  // an honest publisher. Strictly worse than the bug. `flipsLongLiteralState` counts both
+  // delimiters, so they agree — measured here through the real publish path rather than
+  // asserted from reading it.
+  const SQ_INDENTED = `@prefix ex: <https://example.org/ns#> .
+<${GRAPH_IRI}> ex:note '''first
+    four spaces of the caller's own
+last''' .
+`;
+  const sqTrip = await publishAndServe(SQ_INDENTED);
+  ok(
+    observedGraphDigest({ graphContent: sqTrip.served, descriptorTurtle: sqTrip.turtle })
+      === canonicalGraphDigest(SQ_INDENTED),
+    "★★ a ''' literal's own leading spaces survive the wrap and the unwrap — the new parse "
+    + 'did not turn a silent unbound into a false tampering report',
+  );
+
+  // ★ THE REFUSAL NAMES THE SHAPE. Fixing two shapes does not remove the class — this parser
+  // is deliberately narrow — so what changed structurally is that the next unsupported shape
+  // arrives as a NAMED reason instead of as a proof that quietly attests nothing.
+  const stillBroken = canonicalGraphDigestResult('@prefix broken <<<');
+  ok(stillBroken.digest === null, 'a genuinely unparseable payload still yields no digest');
+  ok(
+    /did not parse as Turtle/.test(stillBroken.reason ?? ''),
+    '★ and it now says so, rather than returning a bare null the publish path spells `?? undefined`',
+  );
+  ok(
+    /at offset \d+/.test(stillBroken.reason ?? ''),
+    '★ with the parser\'s own offset — "which shape defeated it" is a question about a position',
+    stillBroken.reason,
+  );
+  ok(
+    /contentBinding "unbound" permanently/.test(stillBroken.reason ?? ''),
+    'and it states the CONSEQUENCE, which is the part an operator has to act on',
+  );
+  ok(
+    canonicalGraphDigestResult(PAYLOAD).reason === undefined
+      && canonicalGraphDigestResult(PAYLOAD).digest === canonicalGraphDigest(PAYLOAD),
+    'a clean payload carries no reason and the same digest as the plain form',
+  );
+  // (The wiring assertion — that the publish path actually CALLS the reason-carrying form —
+  // lives in the server.ts-as-text section below, where SERVER is read.)
 
   console.log('\n★ prefix rebinding changes meaning, so it must change the digest');
 
@@ -293,7 +450,7 @@ last""" .
 `;
   const roundTrip = await publishAndServe(INDENTED_LITERAL);
   ok(
-    observedGraphDigest({ graphContent: roundTrip.served, graphIri: GRAPH_IRI })
+    observedGraphDigest({ graphContent: roundTrip.served, descriptorTurtle: roundTrip.turtle })
       === canonicalGraphDigest(INDENTED_LITERAL),
     "★★ a literal's own leading spaces survive the wrap and the unwrap — publisher and reader agree",
   );
@@ -322,8 +479,21 @@ last""" .
     'the observed digest is taken from the payload get_descriptor actually serves',
   );
   ok(
-    /graphIri:\s*graphIriFromDescriptorTurtle\(turtle\)/.test(SERVER),
+    /observedGraphDigest\(\{[\s\S]{0,200}descriptorTurtle:\s*turtle/.test(SERVER),
     'the graph IRI comes from the descriptor rather than the caller-supplied URL',
+  );
+  // ★★ AND THE SCOPE IS NOT THE RELAY'S TO PICK ALONE. `observedGraphDigest` no longer
+  // accepts a pre-extracted `graphIri`: it takes the descriptor Turtle and derives the region
+  // through `digestedGraphRegion`, the ONE function every party that reads a payload must go
+  // through. While the parameter existed, the relay passed a block and `membership.ts`
+  // parsed the whole document, and the difference was a manufactured workspace participant
+  // built from a verbatim copy of somebody else's honest record. Pinned on the module source,
+  // because a signature is exactly the thing a future caller would widen back.
+  const BINDING_SRC = readFileSync(join(here, '..', 'authorship-content-binding.ts'), 'utf8');
+  ok(
+    !/readonly graphIri:/.test(BINDING_SRC) && /digestedGraphRegion\(args\)/.test(BINDING_SRC),
+    '★★ observedGraphDigest cannot be handed a graph IRI of the caller\'s own choosing — one '
+    + 'function decides the digested region, and readers call the same one',
   );
   // ★ NON-OMITTABLE IN THE TYPE, not merely present at the three sites. Declared without
   // `?`, tsc forces every assignment — verified, refused, and threw — to carry it, so a
@@ -344,9 +514,64 @@ last""" .
     /contentBindingWhenUnchecked\(parsedProof\.contentHash\)/.test(SERVER),
     'the catch branch derives "not checked" from the proof rather than asserting `declared`',
   );
+
+  // ★★ THE OTHER QUESTION THE READ PATH NEVER ASKED: is the proof about THIS record?
+  // `verifySignedAuthorship` re-derives the canonical payload from the proof block's own
+  // fields, so a proof lifted verbatim out of one of a principal's real public descriptors
+  // and pasted into a fabricated record verified clean and named that principal. This
+  // function holds the proof AND the URL it fetched it from — everything the comparison
+  // needs — and did not make it.
   ok(
-    /canonicalGraphDigest\(String\(args\.graph_content/.test(SERVER),
+    /proofBindsToDescriptorUrl\(\s*parsedProof\.descriptorId,\s*url,\s*normalizeCssUrl,?\s*\)/.test(SERVER),
+    '★★ get_descriptor compares the proof\'s descriptorId against the URL it was served from',
+  );
+  ok(
+    /normalizeCssUrl,\s*\);?\s*\n\s*const descriptorBinding/.test(SERVER),
+    '★ …through the host normaliser, so a record carrying the pre-migration CSS host in its '
+    + 'signed bytes is not called unbound — the fails-closed-on-honest-data direction',
+  );
+  // ★ COMPUTED OUTSIDE THE `try`. It depends on neither the signature nor the payload, so a
+  // verifier that throws is no reason to withhold an answer that already exists. Inside, a
+  // throw would have meant "and nobody checked what the proof was attached to" — the exact
+  // collapse the contentBinding work spent three rounds undoing in the neighbouring field.
+  const bindingDecl = SERVER.indexOf('const descriptorBindingResult');
+  const tryAfterProof = SERVER.indexOf('try {', SERVER.indexOf('const parsedProof'));
+  ok(
+    bindingDecl > 0 && bindingDecl < tryAfterProof,
+    '★★ the binding is computed BEFORE the try, so all three exits can report it',
+  );
+  ok(
+    (SERVER.match(/^\s*descriptorBinding,$/gm) ?? []).length >= 3,
+    'all three outcome branches (verified, refused, threw) carry it',
+    `found ${(SERVER.match(/^\s*descriptorBinding,$/gm) ?? []).length}`,
+  );
+  // Non-omittable in the type, same discipline as contentBinding: declared without `?`, so
+  // tsc forces a future branch to answer rather than quietly omitting the field.
+  ok(
+    /descriptorBinding: \{\s*\n\s*bound: boolean;/.test(SERVER),
+    '★ descriptorBinding is a REQUIRED field of the authorship result',
+  );
+  ok(
+    /enum: \['exact-url', 'slug-only', 'none'\]/.test(SERVER),
+    '★ the published schema advertises the BASIS, so a caller can tell a full URL comparison '
+    + 'from a terminal-segment one — the two are not equally strong and a boolean hid that',
+  );
+  ok(
+    /canonicalGraphDigestResult\(String\(args\.graph_content/.test(SERVER),
     'the publish path commits to the canonical-triples digest, not to a hash of the raw bytes',
+  );
+  // ★★ AND IT USES THE FORM THAT CARRIES A REASON. The silent `canonicalGraphDigest(...) ??
+  // undefined` here is what turned "this build cannot parse your payload" into a proof that
+  // attests nothing, reported to nobody. Pinned as a NEGATIVE too: reverting to the silent
+  // call is a one-token edit and every other assertion in this file would still pass.
+  ok(
+    !/canonicalGraphDigest\(String\(args\.graph_content[^)]*\)\)?\s*\?\?\s*undefined/.test(SERVER),
+    '★★ …and NOT via the silent form whose null the publish path spelled `?? undefined`',
+  );
+  ok(
+    /contentBindingRefusal/.test(SERVER),
+    '★★ the reason reaches the publish RESPONSE, not just the log — the publisher is the one '
+    + 'party holding the source text and able to repair it',
   );
 
   console.log('\n★ the note a reader is handed');

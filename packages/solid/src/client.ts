@@ -287,7 +287,17 @@ function flipsLongLiteralState(line: string): boolean {
   return flip;
 }
 
-function wrapAsTriG(
+/**
+ * ★ EXPORTED SO A TEST CAN SERVE WHAT A POD SERVES. It was private, and every `get_descriptor`
+ * double in `tests/workspace-membership.test.ts` therefore set `graph.content` to the RAW
+ * payload Turtle instead of the wrapped document `publish()` actually writes. Forty tests
+ * carrying the round's headline claim ran against a shape that does not exist, and the defect
+ * they were written to catch — a reader whose parse scope was the whole document while the
+ * digester covered only the block — is invisible on a document that has no wrap to be outside
+ * of. Replicating the wrap in the test file is the same mistake with more code: the copy is
+ * the double. This is the emitter itself.
+ */
+export function wrapAsTriG(
   descriptorTurtle: string,
   graphContent: string,
   graphIri: string,
@@ -455,6 +465,86 @@ export function extractNamedGraphTurtle(trig: string, graphIri: string): string 
     .join('\n');
 
   return `${prefixes}\n${body}\n`;
+}
+
+/**
+ * The `iep:describes` object of a descriptor — the graph IRI whose block carries the
+ * payload. Read from the Turtle rather than reconstructed from the descriptor URL, because
+ * the two are related only by the relay's naming convention and a descriptor is free to
+ * describe a graph named some other way.
+ *
+ * Lives here, beside {@link wrapAsTriG} and {@link extractNamedGraphTurtle}, because it is
+ * the third of the three things you need to know to say which bytes of a served document a
+ * proof covers, and the three have to move together. It used to live in the relay, where the
+ * only other party that needs the answer — a reader parsing the payload — could not reach it,
+ * and so did not ask.
+ */
+export function graphIriFromDescriptorTurtle(turtle: string): string | null {
+  // `iep:describes <IRI>` in the emitted descriptor; the legacy `cg:` alias is still on
+  // pods written before the protocol rename, and refusing to read those would silently
+  // downgrade every one of them to unverifiable.
+  const m = turtle.match(/\b(?:iep|cg):describes\s+<([^>]+)>/);
+  return m ? m[1]! : null;
+}
+
+/**
+ * Why the digested region of a served document could not be identified. Each is ordinary
+ * rather than suspicious, and they are kept apart because a caller renders them differently:
+ * `'no-content'` and `'no-graph-iri'` mean "I could not look", `'no-block'` means "I looked
+ * and this document is not the shape {@link wrapAsTriG} produces".
+ */
+export type DigestedRegionFailure = 'no-content' | 'no-graph-iri' | 'no-block';
+
+/** @see digestedGraphRegion */
+export type DigestedGraphRegion =
+  | { readonly ok: true; readonly turtle: string; readonly graphIri: string }
+  | { readonly ok: false; readonly why: DigestedRegionFailure };
+
+/**
+ * WHICH BYTES OF A SERVED DOCUMENT AN AUTHORSHIP PROOF COVERS. One function, because two
+ * answers to this question is a forgery.
+ *
+ * ★ THE DEFECT THIS EXISTS TO MAKE UNWRITABLE. The digester and the reader used to answer it
+ * separately: `observedGraphDigest` digested `extractNamedGraphTurtle(content, graphIri)` —
+ * the block alone — while `membership.ts` handed the WHOLE served document to `parseTrig`.
+ * The reader's scope strictly contained the digester's, and everything in the gap was parsed
+ * and never digested. A convener could write a `wsp:MembershipAcceptance` into the DEFAULT
+ * graph of a document whose named-graph block was a verbatim copy of one of a member's real
+ * signed records: the digest came back byte-identical, `contentBinding` came back `'bound'`,
+ * and the roster reported that member as a participant with `recordFieldBinding: 'bound'` —
+ * with no cooperation from them at all. Measured: the digest of the honest and the tampered
+ * document were the same string, `graph-nquads-sha256:19b2cf81…`, before and after the
+ * insertion.
+ *
+ * ★ SO BOTH SIDES CALL THIS, WITH THE SAME TWO STRINGS OUT OF THE SAME RESPONSE. Not
+ * `extractNamedGraphTurtle` twice: the graph IRI has to be derived the same way too, and a
+ * caller free to derive it its own way is a caller free to digest one region and parse
+ * another. There is exactly one argument shape and exactly one place the scope is decided.
+ *
+ * Returns a reason rather than null so a reader can say WHICH of the three ordinary "I could
+ * not look" cases it hit. It must never fall back to the whole document — that fallback is
+ * the defect.
+ */
+export function digestedGraphRegion(args: {
+  /** The descriptor Turtle served with the payload; its `iep:describes` names the block. */
+  readonly descriptorTurtle: string | null | undefined;
+  /** The plaintext graph document as served (the TriG wrap), or null when unreadable. */
+  readonly graphContent: string | null | undefined;
+}): DigestedGraphRegion {
+  const { descriptorTurtle, graphContent } = args;
+  if (typeof graphContent !== 'string' || graphContent.length === 0) {
+    return { ok: false, why: 'no-content' };
+  }
+  if (typeof descriptorTurtle !== 'string' || descriptorTurtle.length === 0) {
+    return { ok: false, why: 'no-graph-iri' };
+  }
+  const graphIri = graphIriFromDescriptorTurtle(descriptorTurtle);
+  if (graphIri === null || graphIri.length === 0) {
+    return { ok: false, why: 'no-graph-iri' };
+  }
+  const turtle = extractNamedGraphTurtle(graphContent, graphIri);
+  if (turtle === null) return { ok: false, why: 'no-block' };
+  return { ok: true, turtle, graphIri };
 }
 
 /**

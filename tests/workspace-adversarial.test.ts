@@ -57,12 +57,30 @@ const PROFILE: RoleProfile = {
  * because the same person had a second live agent.
  *
  * So the property is stated over the CONFIGURATION LATTICE rather than over an input, and
- * every case is enumerated. Four axes, each with an unambiguous weaker side:
+ * every case is enumerated. Five policy axes, each with an unambiguous weaker side, plus one
+ * that asserts an INVARIANCE rather than an ordering:
  *
  *   A  attestation policy PRESENT ⊆ absent
  *   B  a signing key marked REVOKED ⊆ the same key live
  *   C  compose with verifyAuthorship TRUE ⊆ false
  *   D  requireContentBinding TRUE ⊆ false  (folded into AXIS A's lattice, not bolted beside)
+ *   E  requireFieldBinding TRUE ⊆ requireContentBinding TRUE ⊆ …  (folded in the same way)
+ *   F  the descriptor-binding BASIS changes nothing, at any rung  (`basisShapes`)
+ *
+ * ★ AXIS F IS NOT AN ORDERING, AND THAT IS DELIBERATE. `exact-url` and `slug-only` are not a
+ * strong and a weak policy — they are two answers the substrate gives about the SAME record,
+ * and the decision this file pins is that no policy refuses on the difference. Requiring
+ * `exact-url` would fail closed on 100% of honest records, because every `descriptor_id` the
+ * relay mints is a `urn:`. Enumerated so that a future change gating on it goes red here,
+ * naming the configuration, rather than being discovered by the first honest record refused.
+ *
+ * ★ AXIS E IS THE FIELD-BINDING RUNG, and it needed a second generator axis to be reachable
+ * at all: a row either carries a `fieldProvenance` or it does not, and every configuration
+ * the 6,400-case version produced carried none — so `requireFieldBinding: true` would have
+ * refused everything and passed 6,400 vacuous subset checks. `provenanceShapes` below
+ * generates the four states a row can be in (absent, matching, mismatched, unrecognised
+ * source) so the rung has something to admit as well as something to refuse, and the
+ * non-vacuity case after the enumeration asserts it really does admit.
  *
  * "⊆" is meant literally and is checked literally: every member of the stronger roster must
  * be a member of the weaker one, every effective capability of theirs must be present in the
@@ -234,7 +252,48 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
   // a second ACCEPTANCE, on its own stream, with its own attestation.
   const acceptShapes = ['one', 'none', 'two-second-refusable', 'two-second-bound'] as const;
 
-  it('★ AXIS A — enumerating every grant × acceptance × revoked × withdrawn × second grant head × acceptance count', () => {
+  /**
+   * ★ THE AXIS AXIS E NEEDED TO EXIST AT ALL. `fieldProvenance` is the only evidence
+   * `requireFieldBinding` reads, and every row the previous enumeration built had none — so
+   * the new rung would have refused all 6,400 configurations and every subset check would
+   * have held on an empty set. These are the four states a row can arrive in: no provenance
+   * (every hand-built caller), provenance naming this record (what `readGrantRecord`
+   * produces), provenance naming a DIFFERENT record (a composer attaching one document's
+   * parsed fields to another's row), and a source value the type says is impossible but JSON
+   * can carry.
+   */
+  /**
+   * ★ THE AXIS ADDED WITH `Attestation.descriptorBindingBasis`, AND IT ENUMERATES A DECISION
+   * RATHER THAN A DEFECT.
+   *
+   * `proofBindsToDescriptorUrl` returns `{bound, basis}`; `stream.ts` used to collapse that to
+   * `.bound` and throw the basis away, so `exact-url` (host, pod, container and name all
+   * compared) and `slug-only` (one path segment compared, host never looked at) read
+   * identically to everything downstream. The basis now travels with the boolean.
+   *
+   * The decision recorded here is that NO POLICY REFUSES ON IT — requiring `exact-url` would
+   * fail closed on 100% of honest records, because every `descriptor_id` the relay mints is a
+   * `urn:`. That is a claim about the fold's behaviour under every configuration, so it is
+   * asserted under every configuration: the basis must make no difference to any roster, at
+   * any rung. If a future change gates on it, this axis goes red and the change is made
+   * deliberately rather than discovered by whichever record it refused.
+   *
+   * `undefined` is in the list because a hand-built {@link Attestation} carries no basis, and
+   * absent must behave as the weak one rather than as the strong one.
+   */
+  const basisShapes = [undefined, 'slug-only', 'exact-url'] as const;
+
+  const provenanceShapes = ['none', 'self', 'other-record', 'unknown-source'] as const;
+  const provenanceOf = (shape: typeof provenanceShapes[number], head: string) => {
+    switch (shape) {
+      case 'none': return {};
+      case 'self': return { fieldProvenance: { source: 'payload' as const, descriptor: head } };
+      case 'other-record': return { fieldProvenance: { source: 'payload' as const, descriptor: 'https://elsewhere.test/x.ttl' } };
+      case 'unknown-source': return { fieldProvenance: { source: 'trust-me' } as never };
+    }
+  };
+
+  it('★ AXIS A — enumerating every grant × acceptance × revoked × withdrawn × second grant head × acceptance count × field provenance × descriptor-binding basis', () => {
     let cases = 0;
     for (const gAtt of attKeys) {
       for (const aAtt of attKeys) {
@@ -242,9 +301,15 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
           for (const withdrawn of [false, true]) {
             for (const second of ['none', 'narrower-head', 'wider-head', 'revoking-head'] as const) {
               for (const accepts of acceptShapes) {
+              for (const prov of provenanceShapes) {
+              for (const basis of basisShapes) {
+              /** Every attestation in this configuration, re-stamped with the basis under test. */
+              const at = (a: Attestation | undefined): Attestation | undefined =>
+                (a === undefined || basis === undefined ? a : { ...a, descriptorBindingBasis: basis });
               const grants: Grant[] = [{
                 head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
-                role: `${P}#Contributor`, revoked, attestation: attestations[gAtt],
+                role: `${P}#Contributor`, revoked, attestation: at(attestations[gAtt]),
+                ...provenanceOf(prov, 'https://conv.test/g1'),
               }];
               if (second !== 'none') {
                 grants.push({
@@ -258,24 +323,29 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
               const acceptances: Acceptance[] = accepts === 'none' ? [] : [{
                 head: 'https://alice.test/a1', workspace: WS, member: alice,
                 accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
-                withdrawn, attestation: attestations[aAtt],
+                withdrawn, attestation: at(attestations[aAtt]),
+                ...provenanceOf(prov, 'https://alice.test/a1'),
               }];
               if (accepts === 'two-second-refusable' || accepts === 'two-second-bound') {
                 acceptances.push({
                   head: 'https://alice.test/a2', workspace: WS, member: alice,
                   accepts: 'https://conv.test/g1',
+                  // Always self-bound, so the second head can survive AXIS E while the first
+                  // is refused by it — which is the pairing that makes the stream re-pick,
+                  // the divergence report and the role label observable at this rung too.
+                  fieldProvenance: { source: 'payload', descriptor: 'https://alice.test/a2' },
                   // A DIFFERENT stream, so re-picking the head is observable at all.
                   stream: 'https://alice.test/s2',
                   // Refusable = signed by a stranger, so every policy drops it and only the
                   // no-policy fold sees it. Bound = the shape every policy keeps. Between
                   // them the two heads change places under each rung of the ladder.
-                  attestation: accepts === 'two-second-refusable'
+                  attestation: at(accepts === 'two-second-refusable'
                     ? verified(STRANGER_KEY)
-                    : { authorshipVerified: true, signedBy: ALICE_KEY, boundToDescriptor: true, contentBinding: 'bound' },
+                    : { authorshipVerified: true, signedBy: ALICE_KEY, boundToDescriptor: true, contentBinding: 'bound' }),
                 });
               }
               const args = { workspace: WS, profile: PROFILE, grants, acceptances, scopes };
-              const label = `grant=${gAtt} accept=${aAtt} revoked=${revoked} withdrawn=${withdrawn} second=${second} accepts=${accepts}`;
+              const label = `grant=${gAtt} accept=${aAtt} revoked=${revoked} withdrawn=${withdrawn} second=${second} accepts=${accepts} prov=${prov} basis=${basis ?? 'absent'}`;
 
               const off = foldRoster(args);
               const on = foldRoster({
@@ -294,11 +364,34 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
                   requireContentBinding: true,
                 },
               });
+              // ★ AXIS E, the fourth rung, folded in the same way and for the same reason.
+              // `requireFieldBinding` forces content binding on inside the fold, so this is
+              // strictly above `onBound` on the ladder and the chain that must hold at every
+              // point of the lattice is now fields ⊆ bound ⊆ attested ⊆ asserted.
+              const onFields = foldRoster({
+                ...args,
+                attestation: {
+                  convener: CONV,
+                  signerOf: signerIndexFromRegistry(registry(false)),
+                  requireFieldBinding: true,
+                },
+              });
               expect(off.membershipGrade).toBe('asserted');
               expect(on.membershipGrade).toBe('attested');
+              // The report must track the enforcement at every rung, not just at the two the
+              // dedicated cases sample.
+              expect(off.recordFieldBinding).toBe('unbound');
+              expect(onBound.recordFieldBinding).toBe('unbound');
+              expect(onFields.recordFieldBinding).toBe('bound');
+              // …and asking for fields must never leave content binding unreported as
+              // enforced, because the fold turns it on regardless of what the caller passed.
+              expect(onFields.recordContentBinding).toBe('bound');
               assertNoWiderThan(on, off, label);
               assertNoWiderThan(onBound, on, `require-binding ${label}`);
               assertNoWiderThan(onBound, off, `require-binding vs off ${label}`);
+              assertNoWiderThan(onFields, onBound, `require-fields ${label}`);
+              assertNoWiderThan(onFields, on, `require-fields vs attested ${label}`);
+              assertNoWiderThan(onFields, off, `require-fields vs off ${label}`);
 
               // ★ A DIFFERENT STREAM IS ALLOWED; A SILENT ONE IS NOT. Naming the stream is a
               // conferring act, so a refused acceptance must not choose it — which means a
@@ -313,7 +406,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
               // hides the acceptance. Every configuration here concerns one principal, so
               // "the roster raised an acceptance divergence" is the same statement.
               const saysAmbiguous = (r: Roster): boolean => r.divergences.some(d => d.kind === 'acceptance');
-              for (const strict of [on, onBound]) {
+              for (const strict of [on, onBound, onFields]) {
                 for (const m of strict.members) {
                   const loose = off.members.find(x => x.principal === m.principal);
                   if (loose === undefined || loose.stream === m.stream) continue;
@@ -325,7 +418,37 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
                   ).toBe(true);
                 }
               }
+              // ★ AND THE BASIS CHANGES NOTHING, AT EVERY RUNG. This is the decision recorded
+              // at `basisShapes`, asserted rather than argued: `slug-only` IS sufficient for
+              // field binding, because requiring `exact-url` would fail closed on every record
+              // the substrate mints. The roster under this configuration's basis must be
+              // identical to the roster with no basis at all. A future change that gates on it
+              // fails here — deliberately, with the exact configuration named — instead of
+              // being discovered by whichever honest record it started refusing.
+              if (basis !== undefined) {
+                const strip = <T extends { attestation?: Attestation }>(rows: readonly T[]): T[] =>
+                  rows.map(r => (r.attestation === undefined ? r : {
+                    ...r,
+                    attestation: Object.fromEntries(
+                      Object.entries(r.attestation).filter(([k]) => k !== 'descriptorBindingBasis'),
+                    ) as Attestation,
+                  }));
+                const bare = { ...args, grants: strip(grants), acceptances: strip(acceptances) };
+                for (const [name, policy] of [
+                  ['attested', { convener: CONV, signerOf: signerIndexFromRegistry(registry(false)) }],
+                  ['require-fields', { convener: CONV, signerOf: signerIndexFromRegistry(registry(false)), requireFieldBinding: true }],
+                ] as const) {
+                  expect(
+                    JSON.stringify(foldRoster({ ...bare, attestation: policy })),
+                    `${label}: the descriptor-binding BASIS changed the ${name} roster. No policy `
+                    + 'reads it — see `basisShapes` for why `exact-url` is not demanded — so if '
+                    + 'that has deliberately changed, extend this axis rather than deleting it',
+                  ).toBe(JSON.stringify(foldRoster({ ...args, attestation: policy })));
+                }
+              }
               cases++;
+              }
+              }
               }
             }
           }
@@ -333,7 +456,62 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       }
     }
     // Guard the guard: an enumeration that silently stopped generating would pass vacuously.
-    expect(cases).toBe(attKeys.length * attKeys.length * 2 * 2 * 4 * acceptShapes.length);
+    expect(cases).toBe(
+      attKeys.length * attKeys.length * 2 * 2 * 4
+      * acceptShapes.length * provenanceShapes.length * basisShapes.length,
+    );
+    // 76,800 configurations × 6 subset comparisons, plus 2 basis-invariance comparisons on
+    // each of the two thirds that carry a basis. The timeout below is raised rather than the
+    // enumeration trimmed: every axis here was added because a defect was unreachable without
+    // it, and sampling the lattice is how the 1296-case version missed two escalations. Half a
+    // minute of CI is the cheaper side of that trade.
+  }, 120_000);
+
+  it('★ AXIS E is not vacuous — field binding really does admit and really does refuse', () => {
+    // A subset assertion over a rung that refuses EVERYTHING holds trivially, and that is
+    // precisely the shape the 6,400-case version would have had: no row it generated carried
+    // a `fieldProvenance`, so `requireFieldBinding: true` would have emptied every roster and
+    // passed. Both directions are named here so a future change that makes the axis inert
+    // fails on this case rather than passing 76,800 comparisons against an empty set.
+    const bound = (by: string): Attestation =>
+      ({ authorshipVerified: true, signedBy: by, boundToDescriptor: true, contentBinding: 'bound' });
+    const base = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
+        role: `${P}#Contributor`, attestation: bound(CONV_KEY),
+        fieldProvenance: { source: 'payload' as const, descriptor: 'https://conv.test/g1' },
+      }],
+    };
+    const acceptance = {
+      head: 'https://alice.test/a1', workspace: WS, member: alice,
+      accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+      attestation: bound(ALICE_KEY),
+    };
+    const policy = {
+      convener: CONV, signerOf: signerIndexFromRegistry(registry(false)), requireFieldBinding: true,
+    };
+
+    // ADMITS: both halves parsed from their own records.
+    const admitted = foldRoster({
+      ...base,
+      acceptances: [{ ...acceptance, fieldProvenance: { source: 'payload' as const, descriptor: acceptance.head } }],
+      attestation: policy,
+    });
+    expect(admitted.members).toHaveLength(1);
+    expect(admitted.recordFieldBinding).toBe('bound');
+
+    // REFUSES: the identical membership with the acceptance's fields typed by the caller —
+    // which is every acceptance that existed before `membership.ts`.
+    const refused = foldRoster({ ...base, acceptances: [acceptance], attestation: policy });
+    expect(refused.members).toHaveLength(0);
+    expect(refused.unattested[0]!.because).toMatch(/typed by whoever called this fold/);
+
+    // …and the rung below still admits it, so the difference is AXIS E's and nothing else's.
+    expect(foldRoster({
+      ...base, acceptances: [acceptance],
+      attestation: { convener: CONV, signerOf: policy.signerOf, requireContentBinding: true },
+    }).members).toHaveLength(1);
   });
 
   // A lattice assertion passes trivially where the rungs never differ. These name the two
