@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import {
   detectFormat,
   extract,
@@ -6,6 +6,40 @@ import {
 import {
   ContextGraphsSDK,
 } from '@interego/solid';
+
+/**
+ * ★ LEAVE THE SHARED REALM AS WE FOUND IT — this file polluted it, and another file died.
+ *
+ * vitest runs this repo single-threaded (`poolOptions.threads.singleThread` /
+ * `forks.singleFork`, see vitest.config.ts), so all 187 test files share ONE globalThis.
+ * The PDF cases below deliberately run the real pdfjs pipeline, and `pdf-parse` loads
+ * `pdfjs-dist/legacy` — the build that carries bundled core-js polyfills. On Node 20 (what
+ * CI runs, and what our Dockerfiles ship) there is no native `Iterator`, so core-js DEFINES
+ * `globalThis.Iterator`. It defines it in THIS realm only.
+ *
+ * That leak is invisible here and fatal in tests/rte-conformance.test.ts. jsdom computes its
+ * install list once, as `Object.entries(jsGlobals).filter(([name]) => name in global)`, then
+ * evaluates each surviving name inside a FRESH V8 context via `vm.runInContext`. `Iterator`
+ * is on jsdom's list, so the polyfill smuggles it in — but core-js patched the main realm and
+ * not that context, so `new JSDOM(..., { runScripts: 'outside-only' })` throws
+ * `ReferenceError: Iterator is not defined`. That is exactly how all 9 RTE conformance tests
+ * failed in CI while passing on a dev machine, where Node 22's native `Iterator` exists in
+ * every realm and core-js therefore never installs anything. Measured additions on Node 20:
+ * __core-js_shared__, Iterator, DOMMatrix, ImageData, Path2D, navigator, pdfjsLib,
+ * _pdfjsTestingUtils — of which `Iterator` is the one jsdom re-evaluates.
+ *
+ * Restoring the snapshot is version-correct by construction: on a runtime that already has
+ * these globals natively they are never "added", so nothing is deleted.
+ */
+const realmBefore = new Set(Object.getOwnPropertyNames(globalThis));
+afterAll(() => {
+  for (const name of Object.getOwnPropertyNames(globalThis)) {
+    // vitest hangs its own worker state off globalThis (`__vitest_worker__` and friends);
+    // deleting those would break every file scheduled after this one.
+    if (realmBefore.has(name) || name.startsWith('__vi')) continue;
+    delete (globalThis as unknown as Record<string, unknown>)[name];
+  }
+});
 
 // ═════════════════════════════════════════════════════════════
 //  Format Detection
