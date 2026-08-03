@@ -264,6 +264,19 @@ export {
   turtlePrefixedLocal,
 } from './rdf/index.js';
 
+// ── Following a page's advertised Turtle (substrate primitive) ─
+// Our own ontology IRIs answer 200 text/html — GitHub Pages ignores Accept and falls back to
+// `<name>.html` — and every page we publish advertises its Turtle with a `rel=alternate`.
+// Both the relay's shape gate and the workspace reader dereference such IRIs, so the
+// follower is here rather than in either of them.
+export {
+  looksLikeHtml,
+  alternateTurtleHref,
+  alternateTurtleUrl,
+  followAlternateTurtle,
+} from './rdf/index.js';
+export type { FetchedRepresentation } from './rdf/index.js';
+
 // ── Namespaces ───────────────────────────────────────────────
 export {
   CG, RDF, RDFS, XSD, OWL, PROV, TIME, DCT, AS, SHACL, ACL, VC, DID, DCAT, LDP, SOLID, OA, HYDRA, DPROD, FOAF, SKOS,

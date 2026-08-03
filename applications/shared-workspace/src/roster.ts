@@ -834,8 +834,12 @@ export interface RoleProfileDocument {
  * Two members for the reason {@link ConvenerEvidence} has two, and it is the same failure: a
  * bare optional document would collapse "I did not ask" and "I asked and could not read it"
  * into one absent field, and the second silently reopens the gap the first honestly reports as
- * open. A profile IRI that 404s — which is the state the DEPLOYED one is in, measured — must
- * not read as a fold that never asked.
+ * open. A profile IRI that 404s must not read as a fold that never asked — and that was the
+ * state of the DEPLOYED one when this type was written, so the distinction was load-bearing on
+ * the ordinary case rather than on an edge. `docs/` now serves a page at the extensionless IRI
+ * and `dereferenceRoleProfile` follows its `rel=alternate`, so the live artifact lands on
+ * `'declared'`; the sentence stays because the two states must remain distinguishable, not
+ * because one of them is currently occupied.
  */
 export type RoleTableEvidence =
   | { readonly kind: 'declared'; readonly document: RoleProfileDocument }
@@ -1955,10 +1959,14 @@ function compareRoleTables(
  *   revocation, withdrawal and divergence exactly where a fold with no evidence at all leaves
  *   them. Round 3 shipped the inversion of that at a narrower gate and had to undo it.
  *
- *   ASKING AND GETTING NOTHING IS A REFUSAL. `'unreadable'` refuses. This matters more here than
- *   it did for the workspace record, because the deployed profile IRI 404s: the honest state of
- *   the live artifact lands on this branch, and a branch that passed would report the strictest
- *   check in the policy as satisfied by a document nobody could read.
+ *   ASKING AND GETTING NOTHING IS A REFUSAL. `'unreadable'` refuses. When this was written the
+ *   deployed profile IRI 404'd, so the honest state of the live artifact landed on this branch
+ *   and the branch was the ordinary case. `docs/` now serves a page there and the reader follows
+ *   its `rel=alternate`, so the live artifact reaches `'declared'` — which changes how often this
+ *   branch is taken and nothing about why it must refuse. A profile a reader could not fetch, a
+ *   page advertising no Turtle, and a host that has gone down all still arrive here, and a branch
+ *   that passed would report the strictest check in the policy as satisfied by a document nobody
+ *   could read.
  *
  * ★ AND THE SUBJECT IS NOT COMPARED — see {@link RoleProfileDocument.dereferenced} for why, and
  * do not add it back as a "free" extra check. A document's own subject is a triple its writer
