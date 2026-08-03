@@ -94,6 +94,22 @@ export interface Connector {
 //  Notion Connector
 // ═════════════════════════════════════════════════════════════
 
+/** A Notion rich-text run, to the one field the extractor reads. */
+interface NotionRichText { readonly plain_text?: string }
+/** A Notion page property. Only `title` properties are inspected. */
+interface NotionProperty { readonly type?: string; readonly title?: readonly NotionRichText[] }
+/** A Notion page as returned by `POST /v1/databases/{id}/query`. */
+interface NotionPage {
+  readonly id: string;
+  readonly last_edited_time: string;
+  readonly properties: Record<string, NotionProperty>;
+}
+/** A Notion block as returned by `GET /v1/blocks/{id}/children`. */
+interface NotionBlock {
+  readonly type: string;
+  readonly paragraph?: { readonly rich_text?: readonly NotionRichText[] };
+}
+
 export function createNotionConnector(config: ConnectorConfig & {
   databaseId?: string;
   pageIds?: string[];
@@ -137,21 +153,27 @@ export function createNotionConnector(config: ConnectorConfig & {
           });
 
           if (resp.ok) {
-            const data = await resp.json() as { results: Array<{ id: string; last_edited_time: string; properties: Record<string, any> }> };
+            // Notion's own response shapes, written out to the depth this code reads them
+            // and no further. `any` here was not "the API is dynamic" — every access below
+            // is a specific documented field, and `any` meant a Notion response-format
+            // change (or a typo like `rich_texts`) produced an empty `text` and a page
+            // titled with its own id, which is exactly what a page with no content looks
+            // like. Silent degradation to plausible-looking output.
+            const data = await resp.json() as { results: Array<NotionPage> };
             for (const page of data.results) {
               // Fetch page content
               const blocksResp = await fetch(`https://api.notion.com/v1/blocks/${page.id}/children`, { headers });
               let text = '';
               if (blocksResp.ok) {
-                const blocks = await blocksResp.json() as { results: Array<{ type: string; [key: string]: any }> };
+                const blocks = await blocksResp.json() as { results: Array<NotionBlock> };
                 text = blocks.results
                   .filter(b => b.type === 'paragraph' && b.paragraph?.rich_text)
-                  .map(b => b.paragraph.rich_text.map((t: any) => t.plain_text).join(''))
+                  .map(b => (b.paragraph?.rich_text ?? []).map(t => t.plain_text ?? '').join(''))
                   .join('\n');
               }
 
               const title = Object.values(page.properties)
-                .find((p: any) => p.type === 'title')
+                .find(p => p.type === 'title')
                 ?.title?.[0]?.plain_text ?? page.id;
 
               const extraction = await extract(text, { filename: `${title}.md` });
@@ -361,13 +383,41 @@ export function createWebConnector(config: ConnectorConfig & {
 // ═════════════════════════════════════════════════════════════
 
 export function createConnector(config: ConnectorConfig & Record<string, unknown>): Connector {
+  // ★ THE CASTS ARE NARROWED, NOT REMOVED, AND THE NARROWING IS THE POINT.
+  //
+  // Each branch needs a cast because `Record<string, unknown>` cannot satisfy a concrete
+  // per-connector shape. But `as any` cast to ANY parameter list, so a branch wired to the
+  // wrong factory — `case 'slack': return createWebConnector(...)` — compiled silently and
+  // produced a connector polling the wrong service under the requested name. Casting to
+  // the factory's own `Parameters<>` keeps each branch pinned to the function it names,
+  // and a factory that grows a new required field breaks here instead of at first poll.
+  // ★ AND THE CASTS NOW HAVE A GUARD IN FRONT OF THEM, because narrowing them surfaced
+  // what the wide one had been absorbing: `createSlackConnector` REQUIRES `channelId` and
+  // `createWebConnector` REQUIRES `urls`, and this signature cannot promise either.
+  // `createConnector({ type: 'slack', name: 'x' })` compiled and returned a connector whose
+  // every poll issues `conversations.history?channel=undefined` (see the template literal
+  // in createSlackConnector below — `config.channelId` is interpolated unguarded) — an
+  // authenticated request to Slack, on every tick, forever, that can only ever come back
+  // `ok: false`. Refused at construction instead.
+  const requireField = <T>(field: string, v: T | undefined): T => {
+    if (v === undefined || v === null || (Array.isArray(v) && v.length === 0)) {
+      throw new Error(`Connector '${config.name}' of type '${config.type}' requires '${field}'`);
+    }
+    return v;
+  };
   switch (config.type) {
     case 'notion':
-      return createNotionConnector(config as any);
+      return createNotionConnector(config as Parameters<typeof createNotionConnector>[0]);
     case 'slack':
-      return createSlackConnector(config as any);
+      return createSlackConnector({
+        ...config,
+        channelId: requireField('channelId', config['channelId'] as string | undefined),
+      });
     case 'web':
-      return createWebConnector(config as any);
+      return createWebConnector({
+        ...config,
+        urls: requireField('urls', config['urls'] as string[] | undefined),
+      });
     default:
       throw new Error(`Unknown connector type: ${config.type}`);
   }

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shared workspace shapes 1.0</title>
+<!-- ★ THIS PAGE EXISTS SO THE IRI DEREFERENCES AT ALL.
+     <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-shapes> is what the vocabulary, the shapes and every published record
+     NAME. GitHub Pages serves no extensionless path, so that IRI answered 404 while only
+     wsp-shapes.ttl resolved — every identifier in this vertical pointed at nothing, and the
+     workspace layer that reads a role profile by its declared IRI could not close its own
+     chain against the deployed artifact. Pages falls back to <name>.html, and RDF clients
+     follow the rel=alternate below to the Turtle; browsers get this. Same pattern as
+     docs/ns/*.html. -->
+<link rel="alternate" type="text/turtle" href="wsp-shapes.ttl" />
+<link rel="describedby" type="text/turtle" href="wsp-shapes.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>Shared workspace shapes 1.0 <span class="mono ns">wsp:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-shapes#</code></p>
+  <p>SHACL shapes for the shared workspace. These run at PUBLISH, before anything reaches a pod: a record that violates one is refused with a 422 and never lands, so a malformed membership cannot exist even briefly.</p>
+  <p><strong>Machine-readable form:</strong> <a href="wsp-shapes.ttl" rel="alternate">wsp-shapes.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it.</p>
+  <h2>What this is for</h2>
+  <div class="term"><code>wspsh:WorkspaceShape</code><div class="c">Exactly one convener and one role profile, both dereferenceable.</div></div>
+  <div class="term"><code>wspsh:MembershipGrantShape</code> / <code>wspsh:MembershipAcceptanceShape</code><div class="c">Every principal must be an <code>https:</code> or <code>did:</code> URL. A membership naming an identifier nobody can dereference asserts something about a party who cannot be looked up &mdash; and a <code>urn:</code> here would break cross-organisation membership outright, since the other organisation has no way to resolve it.</div></div>
+  <div class="term"><code>wspsh:EntryShape</code><div class="c">Requires <code>wsp:seq</code>: without it a stream cannot be replayed in order and a gap cannot be told from a deletion.</div></div>
+  <p class="sub">Checked in CI against pySHACL as well as our own engine, so a shape cannot mean one thing to us and another to a conformant reader.</p>
+</body>
+</html>

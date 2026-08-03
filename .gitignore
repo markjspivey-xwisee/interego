@@ -75,4 +75,18 @@ examples/holodeck/.holodeck/
 examples/tic-tac-toe-tournament/_server.log
 examples/tic-tac-toe-tournament/_tournament.log
 examples/tic-tac-toe-tournament/last-run.json
-deploy/railway/
+# The Azure→Railway migrator stays untracked (it is a one-shot, local, guarded script
+# carrying machine-specific paths), but its manifest does NOT.
+#
+# ★ services.json used to be ignored along with it, and that made a warning unmaintainable.
+# The file is a frozen 2026-07-11 snapshot, it is repeatedly misread as a table of what
+# production runs, and the `_STALE` banner explaining that was corrected twice — both times
+# in a working tree, both times uncommittable, so both times the correction was lost and the
+# next reader met the same wrong text. A warning that cannot be committed is not a warning.
+#
+# `deploy/railway/*` rather than `deploy/railway/`: git cannot re-include a file whose
+# parent DIRECTORY is excluded, so the directory itself must stay un-excluded for the
+# negation below to have any effect. Written as `deploy/railway/` the `!` line silently
+# does nothing.
+deploy/railway/*
+!deploy/railway/services.json

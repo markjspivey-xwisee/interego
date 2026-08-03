@@ -56,6 +56,66 @@ export type ModalStatus =
 
 // ── Trust Level (§5.6) ──────────────────────────────────────
 
+/**
+ * How a descriptor's own claim is BACKED. A property of the claim, not of anyone's
+ * standing. This is the sole vocabulary of `iep:trustLevel`, and it is normative:
+ *
+ *   - `rdf/system-ontology.ts` declares `iep:trustLevel` an `owl:FunctionalProperty`
+ *     with `rdfs:range iep:TrustLevelEnum`, itself `owl:oneOf` these three;
+ *   - `docs/spec/interego-protocol-1.0-wd.html` publishes a SHACL shape with
+ *     `sh:in ( iep:SelfAsserted iep:ThirdPartyAttested iep:CryptographicallyVerified )`;
+ *   - `rdf/namespaces.ts`'s `CGTrustLevel`, `sparql/patterns.ts`'s `levelMap`, and
+ *     `@interego/solid`'s `TRUST_RANK` all rank exactly these three, 1 → 2 → 3.
+ *
+ * ── ★ IT IS NOT THE SAME AXIS AS `AttestationInput.issuerTrustLevel` ─────────
+ *
+ * `@interego/registry` grades attestation ISSUERS `HighAssurance | PeerAttested |
+ * SelfAsserted`. That is a second, unrelated axis — who is vouching, used purely as a
+ * numeric weight inside `aggregateReputation` — and it never becomes RDF and never
+ * reaches a `TrustFacetData`. The two vocabularies share the token `SelfAsserted` and
+ * mean different things by it: here, "nobody but the subject stands behind this claim";
+ * there, "the issuer of this attestation has no standing, so weight it 0".
+ *
+ * ★ WHICH ONE WINS IN THIS SLOT WAS ALREADY DECIDED, and this comment exists because the
+ * decision was recorded only at the point of use. `@interego/compliance`'s
+ * `checkComplianceInputs` says it outright — "Compliance vocabulary calls this
+ * HighAssurance but the L1 type uses CryptographicallyVerified" — and every producer in
+ * the tree honours it: the relay, `mcp-server`, `lrs-adapter`, `learner-performer-
+ * companion`, `foxxi-content-intelligence`, `oauth-client-store`. Not one of them has
+ * ever written `HighAssurance` into a Trust facet, and the published shape would reject
+ * it if one did.
+ *
+ * What went wrong is that four AGENT-FACING surfaces said otherwise, and nothing
+ * compiled them. `docs/AGENT-PLAYBOOK.md` told readers to expect
+ * "HighAssurance > PeerAttested > SelfAsserted" here — a ladder on which the two values
+ * this system actually emits do not appear, so an agent following it would surface
+ * uncertainty on `CryptographicallyVerified`, the strongest tier, exactly inverting the
+ * advice. The relay's `publish_context` schema and its long-form publishing prompt both
+ * advertised that `compliance: true` "forces trust to HighAssurance" while the code four
+ * thousand lines above writes `CryptographicallyVerified` (and only when the delegation
+ * chain verifies); `mcp-server` carried the same false line in three places. And
+ * `tests/abac.test.ts` believed them, writing `HighAssurance` and `PeerAttested` into
+ * `TrustFacetData.trustLevel` behind `as IRI` — which does not convert, it only widens
+ * the branded string back to `string` so tsc stops looking. All four are corrected.
+ *
+ * ── AND THERE IS A THIRD "TRUST LEVEL", WHICH IS FINE, AND IS LISTED SO THAT
+ *    "WHICH ONE IS THIS?" HAS A COMPLETE ANSWER ─────────────────────────────
+ *
+ * `AffordanceDecorator.trustLevel` in `@interego/pgsl` is `'system' | 'expert' |
+ * 'community' | 'llm'` — how much weight to give a DECORATOR's suggested affordance. It
+ * has its own published vocabulary (`ieh:TrustLevel`, a `skos:ConceptScheme` of
+ * SystemTrust / ExpertTrust / CommunityTrust / LLMTrust in `docs/ns/harness.ttl`) and its
+ * own shape in `docs/ns/harness-shapes.ttl`. Unlike the registry's, it never collides:
+ * different prefix, different property, no shared token. Three axes, then, and the useful
+ * question is never "what is the trust level" but "of what": of the claim (here), of the
+ * attestation's issuer (registry), or of the decorator (harness).
+ *
+ * If a fourth tier above `CryptographicallyVerified` is ever wanted on THIS axis (the
+ * relay's prose imagined one: operator-grade signature over the whole turtle, for
+ * regulated evidence), it is a spec change to §5.6 — new named individual, new
+ * `owl:oneOf` member, new `sh:in` entry in the published WD, new rank in all three ranking
+ * tables — not a string a caller may pass.
+ */
 export type TrustLevel =
   | 'SelfAsserted'
   | 'ThirdPartyAttested'

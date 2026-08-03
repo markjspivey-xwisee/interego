@@ -418,9 +418,13 @@ describe('Deontic Policy Engine', () => {
         condition: (ctx) => ctx.nodeValue?.includes('sensitive') ?? false,
         description: 'deny on sensitive content',
       });
-      const normalDecision = evaluatePolicy(engine, makePolicyContext({ nodeValue: 'normal data' } as any));
+      // No cast: `PolicyContext.nodeValue` is a declared optional `string`, so both of
+      // these `as any` were pure noise — and noise that would have hidden a typo'd key,
+      // which in a Partial<> override silently produces the DEFAULT context and a test
+      // that passes while exercising nothing it names.
+      const normalDecision = evaluatePolicy(engine, makePolicyContext({ nodeValue: 'normal data' }));
       expect(normalDecision.allowed).toBe(true);
-      const sensitiveDecision = evaluatePolicy(engine, makePolicyContext({ nodeValue: 'sensitive data' } as any));
+      const sensitiveDecision = evaluatePolicy(engine, makePolicyContext({ nodeValue: 'sensitive data' }));
       expect(sensitiveDecision.allowed).toBe(false);
     });
   });

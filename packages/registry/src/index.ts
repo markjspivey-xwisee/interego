@@ -52,6 +52,32 @@ export interface AttestationInput {
   readonly subject: IRI;               // who the attestation is about
   readonly axes: Readonly<Record<string, number>>; // axis → [0, 1]
   readonly issuedAt: string;
+  /**
+   * The ISSUER's standing as a voucher — how much this attestation counts, not what
+   * the attestation says. Consumed only by `aggregateReputation`, which looks the token
+   * up in `AggregationPolicy.trustWeights`; it is never serialized and never reaches a
+   * descriptor.
+   *
+   * ★ THIS IS A DIFFERENT AXIS FROM `iep:trustLevel`, WHICH IS WHY THE TOKENS DIFFER.
+   * `@interego/core`'s `TrustLevel` (`SelfAsserted | ThirdPartyAttested |
+   * CryptographicallyVerified`) grades how a CLAIM is backed and is pinned by the
+   * published ontology and SHACL shape. These three grade WHO IS SPEAKING. The overlap
+   * is one token, `SelfAsserted`, and even it means something different on each axis:
+   * there, "no backing beyond the subject's own word"; here, "this issuer has no
+   * standing, weight 0 — you cannot vouch for yourself".
+   *
+   * Concrete failure this note prevents: `tests/abac.test.ts` put `HighAssurance` and
+   * `PeerAttested` into `TrustFacetData.trustLevel` for as long as that file has
+   * existed, hidden by `as IRI` casts, on the strength of `docs/AGENT-PLAYBOOK.md`
+   * saying `iep:trustLevel` ranked `HighAssurance > PeerAttested > SelfAsserted`. No
+   * producer has ever emitted those values there and the published shape's `sh:in`
+   * would reject them. See the note on `TrustLevel` in
+   * `packages/core/src/model/types.ts` for the full account and the decision.
+   *
+   * A registry that wants to weight by how a claim is backed rather than by who backs
+   * it should read the subject's `TrustFacetData.trustLevel` and add its own weights
+   * table; do not widen this union to hold both vocabularies.
+   */
   readonly issuerTrustLevel?: 'HighAssurance' | 'PeerAttested' | 'SelfAsserted';
 }
 

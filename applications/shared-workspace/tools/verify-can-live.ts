@@ -68,10 +68,30 @@
  *    9  the CONVENER comes from the workspace (residual gap 6), and gap 9 shown OPEN
  *   10  the ROLE PROFILE comes from the workspace (residual gap 8)
  *   11  the EVIDENCE must be the record <WS> dereferences to (residual gap 9, closed)
+ *   12  the ROLE TABLE comes from the profile DOCUMENT (residual gap 10, closed) — UNRUN
  *
  * ★ RUN AGAINST PRODUCTION on 2026-08-03 UTC with two real bearers: §§1–8 = 45 assertions,
- * §9 = 18, §10 = 7, §11 = 7 — 77 of 77. Everything in the list above has been executed against
- * the live substrate. Two sections were fixed by being run rather than by being read:
+ * §9 = 18, §10 = 7, §11 = 7 — 77 of 77.
+ *
+ * ★★ §12 HAS NOT BEEN RUN, AND IT IS MARKED UNRUN IN THE ROSTER ABOVE RATHER THAN LEFT FOR
+ * SOMEBODY TO DISCOVER. The round that wrote it had no bearer tokens. Say it plainly, because
+ * this file's own history is the argument: §10 was written by copying §8's shape, went unrun for
+ * a round, and then FAILED the first time it was executed — its rogue profile named `#Contributor`
+ * while the grant it was folding named `#Observer`, so the escalation it was written to
+ * demonstrate compared `0 > 1`. An unrun section is not a passing one. What §12 has instead is a
+ * mutation sweep: 41 mutants across `refuseRoleTableAuthority`, `compareRoleTables`,
+ * `normaliseRoleTable`, the fold's wiring and `dereferenceRoleProfile`, every one of them killed
+ * by `tests/workspace-adversarial.test.ts` and `tests/workspace-membership.test.ts`. That is a
+ * stronger check of the GUARD than a live run, and no check at all of the SUBSTRATE.
+ *
+ * ★ ONE PART OF §12 WAS MEASURED WITHOUT BEARERS, because it needs none: an anonymous
+ * `GET <https://…/wsp-roles-default>` — the profile IRI every `wsp:roleProfile` in this repo
+ * declares — answers 404, and only `<…/wsp-roles-default.ttl>` answers 200. So the declared
+ * profile does not dereference, §12's first assertion is about that, and the full
+ * workspace→profile→table chain cannot close against the deployed artifact until the published
+ * file is served at the extensionless IRI. That is a defect in `docs/`, not in the reader.
+ *
+ * Two sections were fixed by being run rather than by being read:
  *
  *   §9 was written around a `WS` constant of `${RELAY}/ns/maintainer/…`, and <WS> answered 404
  *   for every run this file had ever done, because the /ns owner segment selects a POD and
@@ -105,7 +125,7 @@ import { composeWorkspace, type ComposableMember } from '../src/compose.js';
 import {
   grantTurtle, acceptanceTurtle, workspaceTurtle, publishMembershipRecord,
   readGrantRecord, readAcceptanceRecord, readWorkspaceRecord, convenerEvidenceOf,
-  dereferenceWorkspaceRecord,
+  dereferenceWorkspaceRecord, dereferenceRoleProfile,
 } from '../src/membership.js';
 import type { Acceptance } from '../src/roster.js';
 import {
@@ -168,6 +188,19 @@ const deps = (bearer: string): StreamDeps => ({
   // this file. `get_current_head` takes the /ns owner segment as `pod_name`, so
   // `dereferenceWorkspaceRecord` asks the pod the workspace IRI itself names.
   currentHead: a => callAs(bearer, 'get_current_head', a),
+  // ★ §12's, AND THE ONLY DEPENDENCY HERE THAT DOES NOT GO THROUGH THE RELAY — because the
+  // document it fetches does not live on the substrate. The role profile every workspace in this
+  // repo declares is a static file on GitHub Pages; routing the GET through the relay would not
+  // make it signed, it would only move who did the fetching. `res.url` is passed through as the
+  // FINAL url so `dereferenceRoleProfile` can refuse a redirect that leaves the origin — for a
+  // document nobody signed, the origin is the whole of the authority.
+  fetchDocument: async (url: string) => {
+    const r = await fetch(url, { headers: { Accept: 'text/turtle' } });
+    return {
+      status: r.status, url: r.url, contentType: r.headers.get('content-type'),
+      body: await r.text(),
+    };
+  },
 });
 
 const PROFILE: RoleProfile = {
@@ -1178,6 +1211,200 @@ async function main(): Promise<void> {
     '★ and a fold that did NOT ask says so, in a value distinct from `refused` — the gap is '
     + 'reported open, not silently closed by a flag somebody forgot to set',
     `binding = ${sourcedOff.evidenceProvenanceBinding}`,
+  );
+
+  // ── 12. residual gap 10, closed: the role TABLE behind the profile IRI ──────
+  //
+  // ★ WHAT §§9–11 ALL HAVE IN COMMON, AND WHY IT WAS NOT ENOUGH. Every one of them compares a
+  // NAME: who the workspace says convenes, which profile IRI it declares, which descriptor it
+  // dereferences to. The thing every capability in the roster is computed from is the role
+  // TABLE those names point at — `permitsOf` is built from `profile.roles` — and that array was
+  // the caller's. §10's rogue profile is refused only because it claims a DIFFERENT IRI; a rogue
+  // table claiming the RIGHT one walks past all three.
+  console.log('\n12. the role table comes from the DOCUMENT the profile IRI names');
+
+  // ★★ AND THE FIRST THING THIS SECTION MEASURES IS THAT THE DECLARED IRI DOES NOT DEREFERENCE.
+  // Not an aside — it is the finding, and it is the same class as §9's `/ns/maintainer` 404.
+  // `<…/wsp-roles-default>` is what every `wsp:roleProfile` in this repo declares, including the
+  // record §9 published, and GitHub Pages serves the file at `<…/wsp-roles-default.ttl>` only.
+  const declaredHead = await fetch(P, { headers: { Accept: 'text/turtle' } });
+  const ttlHead = await fetch(`${P}.ttl`, { headers: { Accept: 'text/turtle' } });
+  ok(
+    declaredHead.status === 404 && ttlHead.status === 200,
+    '★★ the profile IRI the workspace DECLARES does not dereference — <P> answers 404 and only '
+    + '<P>.ttl answers 200. The name is not the document, and until the deployed artifact serves '
+    + 'the extensionless IRI the full chain cannot close against it',
+    `<P> = ${declaredHead.status}, <P>.ttl = ${ttlHead.status}`,
+  );
+
+  // …and the reader says so rather than guessing. A producer that helpfully appended `.ttl`
+  // would be choosing a URL on the workspace's behalf, which is what `nsOwnerSegmentOf` refuses
+  // to do one document over — so this is `'unreadable'`, which REFUSES.
+  const declaredTable = await dereferenceRoleProfile(P, wsDeps(BEARER));
+  ok(
+    declaredTable.kind === 'unreadable' && /answered 404/.test(declaredTable.why),
+    '★ and dereferenceRoleProfile refuses rather than guessing <P>.ttl — asking and getting '
+    + 'nothing is not the same as not asking',
+    JSON.stringify(declaredTable).slice(0, 240),
+  );
+
+  // ★ THE COMPOSITION, MEASURED AND REPORTED OPEN. The workspace record §9 published declares
+  // <P>; <P> does not resolve; so a fold that asks BOTH questions of the deployed artifact gets
+  // `roleProfileBinding: 'bound'` and `roleTableBinding: 'refused'`, and confers nothing. That
+  // is the correct behaviour and it is also a live artifact defect — the residue this round
+  // reports rather than papering over.
+  const chainToday = foldRoster({
+    workspace: WS, profile: PROFILE, scopes,
+    grants: [readGrant.record!], acceptances: [readAccept.record!],
+    attestation: {
+      convener: alice, signerOf, requireFieldBinding: true,
+      workspaceEvidence: evidence, roleTableEvidence: declaredTable,
+    },
+  });
+  ok(
+    chainToday.roleProfileBinding === 'bound' && chainToday.roleTableBinding === 'refused'
+    && chainToday.members.length === 0,
+    '★★ so the FULL chain cannot close against the deployed artifact today: the workspace names '
+    + 'the right profile and that profile answers nothing, so the fold confers nothing. The fix '
+    + 'is to the published document, not to the reader',
+    JSON.stringify({ p: chainToday.roleProfileBinding, t: chainToday.roleTableBinding, m: chainToday.members.length }),
+  );
+
+  // ── the gap itself, against the URL that DOES resolve ──
+  //
+  // ★ THE FOLDS BELOW PASS NO `workspaceEvidence`, AND THAT IS FORCED RATHER THAN CHOSEN. The
+  // workspace declares <P> and these tables claim <P>.ttl, so gap 8's check would refuse them
+  // first and every measurement would be about the IRI rather than about the table. The two
+  // questions are independent by construction — `roleTableEvidence` is a different document —
+  // and the assertion above is what states the composition honestly.
+  const T = `${P}.ttl`;
+  // ★ WRITTEN OUT, NOT READ BACK FROM THE FETCH. Folding against the table the evidence carries
+  // would make the CONTROL circular: it would agree with itself no matter what the document
+  // said. This is an independent statement of what the published profile declares, and if the
+  // deployed file ever changes, the control below FAILS — which is the point. A caller must
+  // track the governance it folds against.
+  const DECLARED_TABLE: RoleProfile = {
+    profile: T,
+    roles: [
+      { role: `${P}#Convener`, permits: [CAPS.read, CAPS.append, CAPS.grant, CAPS.revoke, CAPS.admit, CAPS.assign] },
+      { role: `${P}#Steward`, permits: [CAPS.read, CAPS.append, CAPS.grant, CAPS.admit, CAPS.assign] },
+      { role: `${P}#Contributor`, permits: [CAPS.read, CAPS.append] },
+      { role: `${P}#Observer`, permits: [CAPS.read] },
+      { role: `${P}#Delegate`, permits: [CAPS.read, CAPS.append, CAPS.assign] },
+    ],
+  };
+  // ★ `#Observer`, BECAUSE THAT IS THE ROLE §8'S GRANT ACTUALLY NAMES — the mistake §10 shipped
+  // and had to be told about by a live run. A rogue table that widened `#Steward` would confer
+  // nothing here and the escalation comparison would be `0 > 0`.
+  const ROGUE_TABLE: RoleProfile = {
+    profile: T,
+    roles: DECLARED_TABLE.roles.map(r => (r.role === `${P}#Observer`
+      ? { role: r.role, permits: [CAPS.read, CAPS.append, CAPS.grant, CAPS.revoke] }
+      : r)),
+  };
+
+  const readTable = await dereferenceRoleProfile(T, wsDeps(BEARER));
+  ok(
+    readTable.kind === 'declared' && readTable.document.dereferenced === T
+    && readTable.document.roles.length === 5
+    && readTable.document.authority === 'transport-only'
+    && readTable.document.attestation === undefined,
+    '★ the document at <P>.ttl is read and its five roles parsed — and it is graded '
+    + 'TRANSPORT-ONLY, because a static Pages file carries no authorship proof and no digested '
+    + 'region. That grade is the honest ceiling for it, not a missing step',
+    JSON.stringify(readTable).slice(0, 300),
+  );
+
+  const foldWithTable = (profile: RoleProfile, tableOn: boolean) => foldRoster({
+    workspace: WS, profile, scopes,
+    grants: [readGrant.record!], acceptances: [readAccept.record!],
+    attestation: {
+      convener: alice, signerOf, requireFieldBinding: true,
+      ...(tableOn ? { roleTableEvidence: readTable } : {}),
+    },
+  });
+
+  // ★ THE GAP, LIVE, AT FULL STRENGTH — and the assertion is a COMPARISON rather than
+  // `includes(revoke)`, for the reason §10 records: effective capability is `permits ∩ scope`
+  // and the delegation comes from the live registry, so a literal capability would make this
+  // depend on whatever bee's agent happens to hold. What the gap IS, at any ceiling, is that the
+  // caller's table confers more than the published one.
+  const tableGapOpen = foldWithTable(ROGUE_TABLE, false);
+  const publishedCaps = foldWithTable(DECLARED_TABLE, false).members[0]?.effective ?? [];
+  const rogueTableCaps = tableGapOpen.members[0]?.effective ?? [];
+  ok(
+    tableGapOpen.members.length === 1 && rogueTableCaps.length > publishedCaps.length
+    && tableGapOpen.recordFieldBinding === 'bound'
+    && tableGapOpen.roleTableBinding === 'unchecked',
+    '★★ RESIDUAL GAP 10, at full strength: bee holds MORE than alice\'s published governance '
+    + 'permits, on a table that claims the right profile IRI and was never read from it — a '
+    + 'field-bound, content-bound membership governed by an array the caller typed',
+    JSON.stringify({ rogue: rogueTableCaps, published: publishedCaps, t: tableGapOpen.roleTableBinding }),
+  );
+
+  // ★ AND CLOSED. Same records, same policy, one field: the document actually fetched.
+  const tableGapClosed = foldWithTable(ROGUE_TABLE, true);
+  const tableWhy = tableGapClosed.unattested.find(u => u.kind === 'grant')?.because ?? '';
+  ok(
+    tableGapClosed.members.length === 0 && tableGapClosed.roleTableBinding === 'refused'
+    && /it PERMITS MORE than the document does/.test(tableWhy)
+    && tableWhy.includes(`${P}#Observer`),
+    '★★ RESIDUAL GAP 10, CLOSED: the document at the profile IRI does not permit what this fold '
+    + 'was conferring, so nothing CONFERS — and the refusal names the role and the capabilities',
+    JSON.stringify({ members: tableGapClosed.members.length, because: tableWhy.slice(0, 220) }),
+  );
+  ok(
+    // The half that makes it a measurement rather than a refusal: nothing else failed. If the
+    // records, the signatures or the field binding had refused first, this section would be
+    // pinning some other guard under a new name.
+    !/entitled to grant|could not be read|does not hold up|typed by whoever called/.test(tableWhy)
+    && tableGapClosed.recordFieldBinding === 'bound',
+    '★ and NOT because the records, the signatures or the field binding failed — every one of '
+    + 'those PASSED, which is what makes this the role table\'s own refusal',
+    `f = ${tableGapClosed.recordFieldBinding}, because = ${tableWhy.slice(0, 160)}`,
+  );
+
+  // ★ THE CONTROL, LAST AND EXPLICIT — §6's lesson, and the one this file has had to relearn
+  // three times. Every assertion above is satisfied by a fold that refuses whenever a role table
+  // is present. The PUBLISHED table, against the same document, must be ADMITTED.
+  const tableAgrees = foldWithTable(DECLARED_TABLE, true);
+  ok(
+    tableAgrees.members.length === 1 && tableAgrees.roleTableBinding === 'bound',
+    '★★ the CONTROL holds: folding against the table the document actually contains admits bee, '
+    + 'and the fold reports the governance as READ rather than merely named',
+    JSON.stringify({
+      members: tableAgrees.members.length, binding: tableAgrees.roleTableBinding,
+      unattested: tableAgrees.unattested,
+    }),
+  );
+  ok(
+    // The second control, in the direction a subset assertion cannot see: reading the document
+    // and finding it agrees must change the REPORT and nothing else.
+    JSON.stringify(tableAgrees.members) === JSON.stringify(foldWithTable(DECLARED_TABLE, false).members),
+    '★ and reading it changed nothing but the report — same members, same capabilities as the '
+    + 'same fold without the evidence',
+    JSON.stringify(tableAgrees.members),
+  );
+  ok(
+    // ★ THE GRADE, IN WORDS, IN THE ONE FIELD A CALLER CANNOT SKIP. `roleTableBinding: 'bound'`
+    // over a static Pages file must never be read as "somebody signed this", and a three-valued
+    // enum cannot carry the difference.
+    /obtained by an ORDINARY HTTPS FETCH/.test(tableAgrees.attributionNote)
+    && !/obtained as a SIGNED POD RECORD/.test(tableAgrees.attributionNote),
+    '★ and the roster says what that is worth: an ordinary HTTPS fetch, not a proof — a static '
+    + 'Pages file cannot carry an authorship proof and the report does not pretend it did',
+    tableAgrees.attributionNote.slice(-320),
+  );
+  ok(
+    // ★★ AND SUPPLYING THE EVIDENCE NEVER GRANTS, which is the invariant every one of these
+    // gates has had to be checked against and the one round 3 shipped inverted.
+    tableGapClosed.members.length <= tableGapOpen.members.length
+    && tableGapClosed.members.every(m => tableGapOpen.members.some(
+      w => w.principal === m.principal && m.effective.every(c => w.effective.includes(c)),
+    )),
+    '★★ and reading the document never GRANTS: every member and every capability under the '
+    + 'checked fold is present under the unchecked one',
+    JSON.stringify({ with: tableGapClosed.members.length, without: tableGapOpen.members.length }),
   );
 
   console.log(`\n${pass} passed, ${fail} failed`);

@@ -25,7 +25,14 @@
  */
 
 import type { IRI } from '@interego/core';
-import type { PGSLInstance, NodeProvenance, Value } from './types.js';
+// `NodeRepository` (= Map<IRI, Node>) rather than the `Map<IRI, any>` the six casts below
+// used to name. The cast is still needed — `PGSLInstance.nodes` is declared readonly and
+// these are the sanctioned in-place mutations (fork, merge, checkpoint restore) — but
+// casting to `any` also switched off checking of the node VALUE being written, which is
+// what those three restore paths hand-build from a serialized checkpoint. A checkpoint that
+// deserializes a Fragment missing `items`, or an Atom whose `level` is not 0, now fails to
+// compile instead of landing a malformed node in the lattice.
+import type { PGSLInstance, NodeProvenance, NodeRepository, Value } from './types.js';
 import { createPGSL, mintAtom, ingest, latticeStats } from './lattice.js';
 import { createHash } from 'node:crypto';
 
@@ -131,7 +138,7 @@ export function forkEnclave(
     (forkedPgsl.fragments as Map<string, IRI>).set(key, uri);
   }
   for (const [uri, node] of source.pgsl.nodes) {
-    (forkedPgsl.nodes as Map<IRI, any>).set(uri, node);
+    (forkedPgsl.nodes as NodeRepository).set(uri, node);
   }
 
   const enclave: Enclave = {
@@ -213,7 +220,7 @@ export function mergeEnclave(
       (target.pgsl.fragments as Map<string, IRI>).set(key, uri);
     }
     for (const [uri, node] of source.pgsl.nodes) {
-      (target.pgsl.nodes as Map<IRI, any>).set(uri, node);
+      (target.pgsl.nodes as NodeRepository).set(uri, node);
     }
   } else {
     // Intersection: keep only what exists in both
@@ -222,7 +229,7 @@ export function mergeEnclave(
       if (!source.pgsl.atoms.has(key)) {
         const uri = targetAtoms.get(key)!;
         targetAtoms.delete(key);
-        (target.pgsl.nodes as Map<IRI, any>).delete(uri);
+        (target.pgsl.nodes as NodeRepository).delete(uri);
       }
     }
     const targetFragments = target.pgsl.fragments as Map<string, IRI>;
@@ -230,7 +237,7 @@ export function mergeEnclave(
       if (!source.pgsl.fragments.has(key)) {
         const uri = targetFragments.get(key)!;
         targetFragments.delete(key);
-        (target.pgsl.nodes as Map<IRI, any>).delete(uri);
+        (target.pgsl.nodes as NodeRepository).delete(uri);
       }
     }
   }
@@ -451,7 +458,7 @@ export function restoreCheckpoint(checkpoint: Checkpoint): PGSLInstance {
       provenance: atom.provenance,
     };
     (pgsl.atoms as Map<string, IRI>).set(atom.key, atom.uri as IRI);
-    (pgsl.nodes as Map<IRI, any>).set(atom.uri as IRI, atomNode);
+    (pgsl.nodes as NodeRepository).set(atom.uri as IRI, atomNode);
   }
 
   // Restore fragments
@@ -467,7 +474,7 @@ export function restoreCheckpoint(checkpoint: Checkpoint): PGSLInstance {
       provenance: frag.provenance,
     };
     (pgsl.fragments as Map<string, IRI>).set(frag.key, frag.uri as IRI);
-    (pgsl.nodes as Map<IRI, any>).set(frag.uri as IRI, fragNode);
+    (pgsl.nodes as NodeRepository).set(frag.uri as IRI, fragNode);
   }
 
   return pgsl;
@@ -546,7 +553,16 @@ export interface CRDTOperation {
   readonly agentId: string;
   readonly timestamp: string;
   readonly clock: VectorClock;
-  readonly payload: any;
+  /**
+   * Operation-specific data, interpreted by `applyOp`'s switch on `type`.
+   *
+   * `unknown`, not `any`: this arrives from a PEER over the wire, and `applyOp` already
+   * treats it as untrusted — every branch narrows it with an `as {…}` before destructuring.
+   * Under `any` those casts were decorative, and any NEW branch could reach straight into
+   * the payload with no cast and no diagnostic. Under `unknown` the narrowing step is
+   * mandatory, which is the property the existing branches were already trying to have.
+   */
+  readonly payload: unknown;
 }
 
 /** CRDT state for a shared lattice peer. */
@@ -654,7 +670,7 @@ export function happensBefore(a: VectorClock, b: VectorClock): boolean {
 export function createOp(
   state: CRDTState,
   type: CRDTOperation['type'],
-  payload: any,
+  payload: unknown,
 ): { state: CRDTState; op: CRDTOperation } {
   // Increment local clock
   const ticked = incrementClock(state);

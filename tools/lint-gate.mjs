@@ -62,7 +62,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TARGETS = ['packages', 'tests'];
 
 /**
- * The remaining debt: 155 errors in 30 files, down from 222 in 47.
+ * The remaining debt: 38 errors in 7 files, down from 222 in 47.
  *
  * Nothing here is new code; every entry predates the config existing at all.
  *
@@ -99,57 +99,104 @@ const TARGETS = ['packages', 'tests'];
  * `PGSLInstance | null`, and a decorator whose `decorate(context: any)` is handed a
  * `DecoratorContext` by the same registry as every other decorator.
  *
- * ── WHAT IS LEFT, AND WHY ────────────────────────────────────────────────────
+ * ── ★ WHAT THE NEXT 117 TURNED OUT TO BE, AND THE CLAIM THAT WAS WRONG ───────
  *
- * All 155 remaining are `no-explicit-any` except six: five in
- * `tests/workspace-membership.test.ts` (four `no-regex-spaces`, one unused import) which
- * another change owns, and one unused LOCAL in `tests/workspace-can.test.ts`, same owner.
+ * The note here used to say the remaining `any`s "are load-bearing at genuine dynamic
+ * boundaries and each needs a design decision rather than a substitution", and named
+ * `affordance/compute.ts` + `engine.ts` (24 between them) as walking "heterogeneous facet
+ * unions". That was false of both files and of most of the rest. 117 of the 155 are gone,
+ * and the two named as hardest were the two easiest:
  *
- * ★ "LOCAL", NOT "IMPORT", AND THE CORRECTION IS THE POINT OF THE PARAGRAPH FIFTY LINES UP.
+ *   ★ 24  `compute.ts` + `engine.ts` were not walking anything heterogeneous. `FacetMap`
+ *         ALREADY declares `trust?: TrustFacetData`, `semiotic?: SemioticFacetData` and so
+ *         on, so ten `facets.trust as any` reads were casting an already-narrowed value to
+ *         `any` and buying nothing but the loss of every property check underneath. The
+ *         eleven in `engine.ts` were `facets.find(f => f.type === 'X') as any`, which a
+ *         four-line `facetOf()` type-guard replaces outright.
+ *
+ *   ★★ AND THAT CAST WAS HIDING A LIVE DEFECT. With the narrowing on, tsc immediately
+ *         reported `Property 'agentIdentity' does not exist on type 'AgentDescription'` at
+ *         three sites. `agentIdentity` is the RDF PREDICATE (`iep:agentIdentity`, which
+ *         `rdf/serializer.ts` emits FROM the field); the TypeScript property is `identity`.
+ *         So `orient()`'s `if (agentFacet?.assertingAgent?.agentIdentity)` had never once
+ *         been true — the OODA orientation's trustedSources map was never populated from an
+ *         observation — and `evaluateSurprise`'s entire "unknown source?" factor (+0.3
+ *         surprise, +0.4 epistemic value) was dead code. The same typo sat in
+ *         `@interego/abac`'s `attribute-resolver.ts` behind a hand-written cast, where it
+ *         made `resolveAttributes` clause (b) unreachable; see that file for why turning it
+ *         back on is written down as widening rather than as a fix.
+ *
+ *     26  Doubles and fixtures built out of `any`: the fake Express in
+ *         `engagement-durability.test.ts` (9), the two SCORM API surfaces in
+ *         `rte-conformance.test.ts` (5) — in a CONFORMANCE test, of the very signatures
+ *         under test — and `derivation.test.ts` (12), whose twelve casts were the
+ *         `FacetTransformation<F extends ContextFacetData>` monoid being exercised with
+ *         `number[]`. Twelve casts is an API saying the test is not testing it.
+ *
+ *     20  PGSL `Node` is a discriminated union on `kind` and `(node as any).value` appeared
+ *         seventeen times in four test files immediately after a `kind === 'Atom'` check
+ *         that had already narrowed it, plus `tools.ts` (3).
+ *
+ *     17  Readonly-mutation casts: `(registry as any).decorators` (4),
+ *         `(broker as any).{conversations,memory,presence}` (6), `(pgsl.nodes as
+ *         Map<IRI, any>)` (6), `(node as any).cid` (1). Each is a real and intended
+ *         in-place write, so a cast stays — but to a `-readonly` mapped type that names the
+ *         one liberty, not to `any`, which also erased the value being written.
+ *
+ *   ★  7  `connectors/src/index.ts`, and the last one there was also live. Narrowing
+ *         `createConnector`'s three `as any` dispatches to each factory's own
+ *         `Parameters<>` surfaced that `createSlackConnector` REQUIRES `channelId` and
+ *         `createWebConnector` REQUIRES `urls`, which the factory's signature cannot
+ *         promise: `createConnector({ type: 'slack', name: 'x' })` compiled and returned a
+ *         connector polling `channels.history?channel=undefined` forever. Now refused at
+ *         construction, with a test pinning both directions.
+ *
+ *     23  The rest, and 24 + 26 + 20 + 17 + 7 + 23 = 117: an LLM's `JSON.parse` output typed
+ *         `as any[]` with none of its fields checked, `SearchOptions.facetType` as `string`
+ *         where `DiscoverFilter` wants `ContextTypeName` (so `'trust'` silently matched
+ *         nothing and looked like an empty result), `catch (err: any)` printing `undefined`
+ *         for a non-Error throw, a token union read through `(t as any).value` where two of
+ *         its members have no `value` at all, `CAPABILITY_REQUIREMENTS` typed `string[]`
+ *         instead of `AgentCapability[]`, and the four `(a.values as any).x.y` in
+ *         `projection-facets.test.ts` — replaced by the same `valueAt` helper
+ *         `interrogative-router.test.ts` already uses, and for the same reason.
+ *
+ * ── WHAT IS LEFT, AND WHY, FILE BY FILE ──────────────────────────────────────
+ *
+ *   23  `packages/core/src/model/registry.ts` — the ONE file the old note described
+ *       correctly. It is an open facet registry: `executeMerge` and `facetFingerprint`
+ *       operate on third-party facet shapes by design, and every read is a bare
+ *       `f.validFrom` / `f.causalConfidence` / `f.bindings` on a value with no declared
+ *       type. `unknown` is the right type and it is not a substitution — each of ~12 reads
+ *       needs its own narrowing, and two of them (`(f.causalConfidence ?? 0) > (best…)`,
+ *       the string-sorted `validFrom` comparisons) change merge SEMANTICS if narrowed
+ *       carelessly. That is a change to the composition operators with its own test
+ *       surface, not a lint cleanup, and doing it inside one is how the wrong answer ships.
+ *    6  `packages/pgsl-store/src/fdb-real.ts` — `await import('foundationdb')`, an optional
+ *       native dependency installed only by `pgsl-store-fdb.yml`. No types are resolvable
+ *       in a normal tree, so there is nothing to narrow TO; the same reason this file
+ *       already has its own `ban-ts-comment` exception in eslint.config.js.
+ *    1  `packages/pgsl-store/src/pg-store.ts` — `await import('pg')`, same story.
+ *    1  `packages/extractors/src/index.ts` — `await import('pdf-parse')`, same story.
+ *    1  `packages/core/src/crypto/wallet.ts` — `await import(moduleName)`, a runtime-named
+ *       AgentKit module. Not statically resolvable even in principle.
+ *    5  `tests/workspace-membership.test.ts` (four `no-regex-spaces`, one unused import) and
+ *    1  `tests/workspace-can.test.ts` (one unused LOCAL) — another change owns both files.
+ *
+ * ★ "LOCAL", NOT "IMPORT", AND THE CORRECTION IS THE POINT OF THE PARAGRAPH ABOVE.
  * That paragraph is a long argument that an unused local in a TEST is very often an assertion
  * somebody dropped — and then this line mislabelled the one remaining instance of exactly that
  * shape as an import, which would have been harmless. `tests/workspace-can.test.ts:459` is
  * `const roster = rosterOf([...])`: computed, and discarded while the test builds a hand-rolled
  * `as unknown as` object instead. Measured, not restated: `npx eslint` reports it as
  * `'roster' is assigned a value but never used`.
- *
- * The `any`s that remain are load-bearing at genuine dynamic boundaries and each needs a
- * design decision rather than a substitution — `model/registry.ts` (23) is an OPEN facet
- * registry whose whole contract is accepting third-party facet shapes; `affordance/compute.ts`
- * and `engine.ts` (24) walk heterogeneous facet unions; `pgsl-store`'s (7) are `await import()`
- * of optional native dependencies that are absent from most environments. Converting these to
- * `unknown` cascades narrowing changes through core substrate that `npm run build` and every
- * dependent vertical compile against. Pinned, visible, and only ever going down.
  */
 const BASELINE = {
-  'packages/connectors/src/index.ts': 7,
-  'packages/core/src/affordance/compute.ts': 13,
-  'packages/core/src/affordance/engine.ts': 11,
   'packages/core/src/crypto/wallet.ts': 1,
   'packages/core/src/model/registry.ts': 23,
-  'packages/core/src/rdf/turtle-parser.ts': 3,
   'packages/extractors/src/index.ts': 1,
   'packages/pgsl-store/src/fdb-real.ts': 6,
   'packages/pgsl-store/src/pg-store.ts': 1,
-  'packages/pgsl/src/affordance-decorators.ts': 7,
-  'packages/pgsl/src/agent-framework.ts': 7,
-  'packages/pgsl/src/decision-functor.ts': 1,
-  'packages/pgsl/src/fact-extraction.ts': 1,
-  'packages/pgsl/src/infrastructure.ts': 8,
-  'packages/pgsl/src/lattice.ts': 1,
-  'packages/pgsl/src/tools.ts': 3,
-  'packages/pgsl/src/virtualized-layer.ts': 3,
-  'packages/solid/src/sdk.ts': 2,
-  'tests/agent-framework.test.ts': 2,
-  'tests/context-graphs.test.ts': 1,
-  'tests/derivation.test.ts': 12,
-  'tests/engagement-durability.test.ts': 9,
-  'tests/multi-agent-integration.test.ts': 7,
-  'tests/pgsl-cas-persistence.test.ts': 2,
-  'tests/pgsl-sparql.test.ts': 3,
-  'tests/pgsl.test.ts': 5,
-  'tests/projection-facets.test.ts': 4,
-  'tests/rte-conformance.test.ts': 5,
   'tests/workspace-can.test.ts': 1,
   'tests/workspace-membership.test.ts': 5,
 };

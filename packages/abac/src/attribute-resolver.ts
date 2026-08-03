@@ -12,7 +12,7 @@
  */
 
 import type { IRI, ContextFacetData, ContextDescriptorData } from '@interego/core';
-import type { AttributeGraph } from './types.js';
+import type { AttributeGraph, AmtaTrustFacetData } from './types.js';
 
 /**
  * Filter an attribute graph down to facets whose source descriptor
@@ -82,10 +82,39 @@ export function resolveAttributes(
   return { subject, facets, sources };
 }
 
+/**
+ * ★ `.identity`, NOT `.agentIdentity`, AND THE DIFFERENCE WAS A DEAD CLAUSE.
+ *
+ * `agentIdentity` is the RDF predicate name (`iep:agentIdentity`, which
+ * `@interego/core`'s serializer emits FROM this field); the TypeScript
+ * property on `AgentDescription` has always been `identity`. The inline
+ * `as { assertingAgent?: { agentIdentity?: IRI } }` this replaces asserted
+ * a shape core does not have, so the read was permanently `undefined` and
+ * `resolveAttributes`' clause (b) — "or the descriptor attributes a facet
+ * to the subject via an AgentFacet" — never once matched. Only clause (a),
+ * `describes.includes(subject)`, has ever contributed anything. Nothing was
+ * red because "no Agent facet" and "Agent facet read through the wrong
+ * property name" both answer `null` here. The same typo sat in three places
+ * in `@interego/core`'s affordance engine; all four are fixed together.
+ *
+ * ★ TURNING CLAUSE (b) BACK ON WIDENS WHAT REACHES A POLICY DECISION, so say
+ * what that means rather than leaving it implicit. A descriptor now
+ * contributes ALL of its facets to a subject's attribute graph merely
+ * because that subject is its asserting agent — including facets about
+ * something else entirely. An agent can therefore feed its own
+ * `trustLevel: 'CryptographicallyVerified'` Trust facet into its own
+ * attribute graph by publishing any descriptor it signs. That is not new in
+ * kind (clause (a) already admits a self-published descriptor that
+ * `describes` the subject) and it is the documented design, but it means
+ * `resolveAttributes` is an AGGREGATOR, not an authorization boundary.
+ * Callers making an access decision must pass the result through
+ * `filterAttributeGraph` with an issuer predicate first — see the
+ * sybil-resistance tests in `tests/abac.test.ts`, which are the whole point
+ * of that function existing.
+ */
 function agentIdentity(f: ContextFacetData): IRI | null {
   if (f.type !== 'Agent') return null;
-  const agent = (f as { assertingAgent?: { agentIdentity?: IRI } }).assertingAgent;
-  return agent?.agentIdentity ?? null;
+  return f.assertingAgent?.identity ?? null;
 }
 
 /**
@@ -112,21 +141,29 @@ export function extractAttribute(graph: AttributeGraph, path: string): unknown[]
     if (path === 'iep:validFrom' && f.type === 'Temporal') out.push(f.validFrom);
     if (path === 'iep:validUntil' && f.type === 'Temporal') out.push(f.validUntil);
     // Agent
+    // Same wrong property name as `agentIdentity()` above, with a sharper edge: this path
+    // returned [] for EVERY graph, so a `{ path: 'iep:agentIdentity', … }` constraint could
+    // never be satisfied. On a Permit policy that fails closed; on a DENY policy it fails
+    // OPEN — the deny simply never applied. Both directions now work.
     if (path === 'iep:agentIdentity' && f.type === 'Agent') {
-      const a = (f as { assertingAgent?: { agentIdentity?: string } }).assertingAgent;
-      if (a?.agentIdentity) out.push(a.agentIdentity);
+      const id = f.assertingAgent?.identity;
+      if (id) out.push(id);
     }
     if (path === 'iep:onBehalfOf' && f.type === 'Agent') {
-      const o = (f as { onBehalfOf?: string }).onBehalfOf;
-      if (o) out.push(o);
+      if (f.onBehalfOf) out.push(f.onBehalfOf);
     }
     // Federation
     if (path === 'iep:origin' && f.type === 'Federation') out.push(f.origin);
     if (path === 'iep:storageEndpoint' && f.type === 'Federation') out.push(f.storageEndpoint);
     // AMTA-style attestation axis (e.g. amta:competence, amta:honesty).
     // Exposed on Trust facets that carry amta attributes as extensions.
+    // Typed through `AmtaTrustFacetData` rather than an inline `as { amtaAxes?: … }`
+    // so the shape this reader expects is the same declaration a writer can import.
+    // The anonymous cast it replaces left writers guessing: `tests/abac.test.ts`
+    // reproduced the field by hand and cast the result, and nothing tied the two ends
+    // together well enough for a rename here to break there.
     if (path.startsWith('amta:') && f.type === 'Trust') {
-      const axes = (f as { amtaAxes?: Record<string, number> }).amtaAxes;
+      const axes = (f as AmtaTrustFacetData).amtaAxes;
       const axisName = path.slice('amta:'.length);
       if (axes && axisName in axes) out.push(axes[axisName]);
     }

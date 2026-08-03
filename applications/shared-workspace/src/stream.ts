@@ -233,6 +233,37 @@ export interface StreamDeps {
    * who asks for the check without it gets a refusal rather than a silent pass.
    */
   readonly currentHead?: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /**
+   * An ordinary HTTPS GET. Needed ONLY by `dereferenceRoleProfile` in `membership.ts`, and only
+   * for a role profile that lives somewhere other than a pod — see `RoleTableAuthority` in
+   * `roster.ts` for what such a document can and cannot be worth.
+   *
+   * ★ NOT A SUBSTRATE CALL, AND THAT IS THE UNCOMFORTABLE PART RATHER THAN AN OVERSIGHT. Every
+   * other dependency here goes through the relay, so its answer is something the substrate
+   * stands behind. This one does not, because the document it fetches does not live on the
+   * substrate: the role profile every workspace in this repo declares is a static file on
+   * GitHub Pages. Routing it through the relay would not make it signed — there is nothing to
+   * sign — it would only move who did the fetching. So the dependency is honest about being a
+   * plain fetch, and the evidence it produces is labelled `'transport-only'` all the way up to
+   * `Roster.attributionNote`.
+   *
+   * ★ `url` IS THE FINAL URL, AFTER REDIRECTS, AND IT IS NOT DECORATION. A role profile's whole
+   * authority is its ORIGIN — nobody signed the bytes — so a redirect that leaves the origin
+   * hands the answer to a different party, and `dereferenceRoleProfile` refuses one. A
+   * dependency that returned only the body could not express that, and the check would be
+   * unwritable rather than merely unwritten.
+   *
+   * Optional and refused loudly at the point of use, the same posture as `getDescriptor` and
+   * `currentHead`: a caller who does not need the check is not obliged to supply the dependency,
+   * and a caller who asks for the check without it gets a refusal rather than a silent pass.
+   */
+  readonly fetchDocument?: (url: string) => Promise<{
+    readonly status: number;
+    /** The URL the response actually came from. See above. */
+    readonly url: string;
+    readonly contentType: string | null;
+    readonly body: string;
+  }>;
   /** Injected so tests do not sleep and so a caller can back off differently. */
   readonly sleep?: (ms: number) => Promise<void>;
   /** Injected so `visibleAfterMs` is measurable without a real clock. */

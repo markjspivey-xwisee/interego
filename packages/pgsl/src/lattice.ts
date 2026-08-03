@@ -677,7 +677,12 @@ export function computeLatticeCids(
 
     // Also set the cid on the node if mutable
     if ('cid' in node && node.cid === undefined) {
-      (node as any).cid = cid;
+      // `-readonly` mapped type rather than `as any`: `cid` is declared readonly on both
+      // Atom and Fragment and this is the one sanctioned in-place backfill. Widening to
+      // `any` also erased the VALUE's type, so a future refactor assigning a Buffer or a
+      // CID object here — instead of the string the manifest and pin paths serialize —
+      // would have gone through silently.
+      (node as { -readonly [K in keyof typeof node]: (typeof node)[K] }).cid = cid;
     }
   }
 

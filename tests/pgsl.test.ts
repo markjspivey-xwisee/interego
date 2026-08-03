@@ -187,7 +187,11 @@ describe('Presheaf Structure', () => {
     ingest(pgsl, ['A', 'B']);
     const l2 = fiber(pgsl, 2);
     expect(l2.length).toBe(1);
-    const morphisms = constituents(pgsl, l2[0]!.kind === 'Fragment' ? (l2[0] as any).uri : '');
+    // Semantics preserved exactly, cast dropped: `uri` is declared on BOTH members of
+    // `Node`, so the `as any` was never needed to reach it, and the `''` fallback for the
+    // (impossible at level 2) Atom case is kept rather than quietly turned into an assert.
+    const top = l2[0]!;
+    const morphisms = constituents(pgsl, top.kind === 'Fragment' ? top.uri : ('' as IRI));
     expect(morphisms.length).toBe(2);
     expect(morphisms[0]!.position).toBe('left');
     expect(morphisms[1]!.position).toBe('right');
@@ -241,9 +245,12 @@ describe('Lattice Operations', () => {
     const abc = ingest(pgsl, ['A', 'B', 'C']);
     // Find the (A,B) fragment at level 2
     const l2 = fiber(pgsl, 2);
-    const ab = l2.find(n => n.kind === 'Fragment' && pgslResolve(pgsl, (n as any).uri) === 'A B');
+    const ab = l2.find(n => n.kind === 'Fragment' && pgslResolve(pgsl, n.uri) === 'A B');
     expect(ab).toBeDefined();
-    expect(isSubFragment(pgsl, (ab as any).uri, abc)).toBe(true);
+    // `ab!` rather than `ab as any`: the cast also erased `undefined`, so a `find` that
+    // matched nothing reached `isSubFragment` as `undefined.uri` — a TypeError instead of
+    // the `toBeDefined()` failure the line above is there to give.
+    expect(isSubFragment(pgsl, ab!.uri, abc)).toBe(true);
   });
 });
 
@@ -256,10 +263,10 @@ describe('QueryNeighbors', () => {
     ingest(pgsl, ['A', 'B', 'C']);
     const l1 = fiber(pgsl, 1);
     const wrapperA = l1.find(n =>
-      n.kind === 'Fragment' && pgslResolve(pgsl, (n as any).uri) === 'A'
+      n.kind === 'Fragment' && pgslResolve(pgsl, n.uri) === 'A'
     );
     expect(wrapperA).toBeDefined();
-    const neighbors = queryNeighbors(pgsl, (wrapperA as any).uri, 'right');
+    const neighbors = queryNeighbors(pgsl, wrapperA!.uri, 'right');
     expect(neighbors.size).toBeGreaterThan(0);
   });
 });

@@ -13,6 +13,7 @@ import type {
   IRI,
   AccessControlPolicyData,
   ContextFacetData,
+  TrustFacetData,
 } from '@interego/core';
 
 /**
@@ -33,6 +34,30 @@ export interface AttributeGraph {
   /** Provenance of each facet: where (which pod / descriptor) it came from. */
   readonly sources: ReadonlyMap<ContextFacetData, IRI>;
 }
+
+/**
+ * A Trust facet carrying `amta:` multi-axis attestation scores — competence, honesty,
+ * codeQuality, whatever axes the issuing registry defines. `extractAttribute` resolves
+ * every `amta:<axis>` path against this shape, and it is the only facet extension the
+ * evaluator reads that `@interego/core` does not declare.
+ *
+ * ★ NAMED HERE RATHER THAN ADDED TO `TrustFacetData`, and that is a deliberate boundary.
+ * `amta:` is an L2 attestation vocabulary layered over the L1 Trust facet by whoever
+ * issues attestations; widening a core substrate type to hold it would put an
+ * L2-specific field in the union every vertical compiles against. The extension stays
+ * where it is consumed.
+ *
+ * It exists as a TYPE, though, because the alternative was worse: `extractAttribute`
+ * reached the field through an inline anonymous `(f as { amtaAxes?: … })` written at
+ * the point of use, so nothing connected the reader to any writer. Callers constructing
+ * these facets had to reproduce the shape from memory and cast — `tests/abac.test.ts`
+ * did exactly that in four places, one of which tsc rejected outright because a fresh
+ * object literal with an undeclared property is not comparable to `ContextFacetData`.
+ * A value of this type is assignable to `ContextFacetData` with no cast at all.
+ */
+export type AmtaTrustFacetData = TrustFacetData & {
+  readonly amtaAxes?: Readonly<Record<string, number>>;
+};
 
 /**
  * Everything an evaluator needs to decide one request:

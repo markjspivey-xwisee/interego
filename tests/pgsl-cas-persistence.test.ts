@@ -118,7 +118,14 @@ describe('CAS persistence', () => {
     expect(wB2.status).toBe('ok');
     // The final pod state must contain BOTH A's and B's atoms — no loss.
     const final = await resolveLatticeFromPodDetailed(URL_, kp, pod.fetchFn);
-    const values = new Set([...final.nodes!.values()].filter((n: any) => n.kind === 'Atom').map((n: any) => String(n.value)));
+    // `n is Atom` rather than `(n: any)`: the `.map` used to read `n.value` off whatever
+    // came back, so if `filter` ever stopped selecting Atoms the map would quietly produce
+    // `"undefined"` strings and the two assertions below would fail with no clue why.
+    const values = new Set(
+      [...final.nodes!.values()]
+        .filter((n): n is Extract<typeof n, { kind: 'Atom' }> => n.kind === 'Atom')
+        .map(n => String(n.value)),
+    );
     expect(values.has('a1')).toBe(true);
     expect(values.has('a2')).toBe(true);
     expect(values.has('b1')).toBe(true);

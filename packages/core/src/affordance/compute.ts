@@ -12,10 +12,11 @@
  * as an interventional query P(Y|do(X)) (Pearl rung 2).
  */
 
-import type { ContextDescriptorData, ContextFacetData } from '../model/types.js';
+import type { ContextDescriptorData, ContextFacetData, TrustLevel } from '../model/types.js';
 import { DEFAULT_EPISTEMIC_CONFIDENCE } from '../model/types.js';
 import type {
   AffordanceAction,
+  AgentCapability,
   AffordanceReason,
   Affordance,
   AntiAffordance,
@@ -45,7 +46,11 @@ const SCOPE_PERMISSIONS: Record<string, readonly AffordanceAction[]> = {
 
 // ── Capability → required actions mapping ────────────────────
 
-const CAPABILITY_REQUIREMENTS: Partial<Record<AffordanceAction, string[]>> = {
+// Typed as AgentCapability rather than `string[]`: the loose type forced an `as any` at
+// every `capabilities.includes(c)` below, and it also let a typo in this table through —
+// a misspelt requirement would simply never be satisfiable by any agent, blocking the
+// action with the message "Agent lacks capability: <typo>" and no other symptom.
+const CAPABILITY_REQUIREMENTS: Partial<Record<AffordanceAction, readonly AgentCapability[]>> = {
   compose: ['compose'],
   intervene: ['causal'],
   ingest: ['pgsl'],
@@ -109,10 +114,10 @@ export function computeAffordances(
     // 2. Capability check
     const required = CAPABILITY_REQUIREMENTS[action];
     if (required && !blocked) {
-      const hasAll = required.every(c => agent.capabilities.includes(c as any));
+      const hasAll = required.every(c => agent.capabilities.includes(c));
       if (!hasAll) {
         blocked = true;
-        blockReason = `Agent lacks capability: ${required.filter(c => !agent.capabilities.includes(c as any)).join(', ')}`;
+        blockReason = `Agent lacks capability: ${required.filter(c => !agent.capabilities.includes(c)).join(', ')}`;
         blockSource = 'capability';
         overridable = true; // capabilities could be acquired
       }
@@ -223,11 +228,30 @@ interface FacetMap {
   accessControl?: ContextFacetData & { type: 'AccessControl' };
 }
 
+/**
+ * Dispatched on the discriminant rather than by lower-casing `facet.type` and writing
+ * through `(map as any)[key]`, which is what this replaces. That string was never checked
+ * against `keyof FacetMap`: a new facet type, or a rename of an existing one, computed a
+ * key belonging to no slot, assigned it, and left every reader of the intended slot seeing
+ * `undefined` — an affordance silently losing a constraint, with nothing red anywhere. The
+ * `satisfies never` on the default branch is the part that earns this: it turns "a
+ * ContextTypeName exists with no slot here" into a compile error at the point of addition.
+ */
 function buildFacetMap(descriptor: ContextDescriptorData): FacetMap {
-  const map: FacetMap = {};
+  const map: { -readonly [K in keyof FacetMap]: FacetMap[K] } = {};
   for (const facet of descriptor.facets) {
-    const key = facet.type.charAt(0).toLowerCase() + facet.type.slice(1);
-    (map as any)[key] = facet;
+    switch (facet.type) {
+      case 'Temporal': map.temporal = facet; break;
+      case 'Provenance': map.provenance = facet; break;
+      case 'Agent': map.agent = facet; break;
+      case 'AccessControl': map.accessControl = facet; break;
+      case 'Semiotic': map.semiotic = facet; break;
+      case 'Trust': map.trust = facet; break;
+      case 'Federation': map.federation = facet; break;
+      case 'Causal': map.causal = facet; break;
+      case 'Projection': map.projection = facet; break;
+      default: void (facet satisfies never);
+    }
   }
   return map;
 }
@@ -239,8 +263,10 @@ function evaluateTrustPolicy(
   action: AffordanceAction,
   facets: FacetMap,
 ): { satisfied: boolean; constraint: string; reason: string } {
-  const trustFacet = facets.trust as any;
-  const semioticFacet = facets.semiotic as any;
+  // No `as any`: `FacetMap` already declares each slot as the narrowed facet type, so the
+  // casts these replace bought nothing and cost the checking of every property read below.
+  const trustFacet = facets.trust;
+  const semioticFacet = facets.semiotic;
 
   for (const policy of policies) {
     if (!policy.requiredForAction.includes(action)) continue;
@@ -248,7 +274,7 @@ function evaluateTrustPolicy(
     // Check trust level. Absence of a Trust facet is semantically distinct
     // from a positive 'SelfAsserted' assertion; by default it fails any
     // minTrustLevel unless the policy opts in via allowMissingTrustFacet.
-    const trustLevels = ['SelfAsserted', 'ThirdPartyAttested', 'CryptographicallyVerified'];
+    const trustLevels: readonly TrustLevel[] = ['SelfAsserted', 'ThirdPartyAttested', 'CryptographicallyVerified'];
     if (!trustFacet) {
       if (!policy.allowMissingTrustFacet) {
         return {
@@ -258,15 +284,22 @@ function evaluateTrustPolicy(
         };
       }
     } else {
+      // ★ `trustLevel` IS OPTIONAL, and the `as any` above hid that from every reader of
+      // this block. A Trust facet that carries an issuer but no level reached
+      // `indexOf(undefined)`, which answers -1 — below every rung, so the policy refused.
+      // That happens to be the fail-CLOSED direction and the behaviour is kept exactly, but
+      // it was arrived at by accident rather than by decision, and the refusal reason
+      // printed "Trust level 'undefined' below required '…'". Stated outright now, so the
+      // next person changing this block knows -1 is load-bearing rather than a leftover.
       const actualLevel = trustFacet.trustLevel;
-      const actualIdx = trustLevels.indexOf(actualLevel);
+      const actualIdx = actualLevel === undefined ? -1 : trustLevels.indexOf(actualLevel);
       const requiredIdx = trustLevels.indexOf(policy.minTrustLevel);
 
       if (actualIdx < requiredIdx) {
         return {
           satisfied: false,
           constraint: `trust >= ${policy.minTrustLevel} for '${action}'`,
-          reason: `Trust level '${actualLevel}' below required '${policy.minTrustLevel}'`,
+          reason: `Trust level '${actualLevel ?? 'unset'}' below required '${policy.minTrustLevel}'`,
         };
       }
     }
@@ -295,7 +328,7 @@ function evaluateSemioticConstraint(
   action: AffordanceAction,
   facets: FacetMap,
 ): { satisfied: boolean; constraint: string; reason: string } {
-  const semiotic = facets.semiotic as any;
+  const semiotic = facets.semiotic;
   if (!semiotic) {
     return { satisfied: true, constraint: 'no semiotic facet', reason: '' };
   }
@@ -341,7 +374,7 @@ function evaluateVocabularyAccess(
   agent: AgentProfile,
   facets: FacetMap,
 ): { accessible: boolean; detail: string } {
-  const projection = facets.projection as any;
+  const projection = facets.projection;
 
   // If there's a projection facet with vocabulary mappings, check if agent knows the target
   if (projection?.vocabularyMappings) {
@@ -367,13 +400,13 @@ function computeActionConfidence(
   let confidence = 1.0;
 
   // Factor in epistemic confidence
-  const semiotic = facets.semiotic as any;
+  const semiotic = facets.semiotic;
   if (semiotic?.epistemicConfidence !== undefined) {
     confidence *= semiotic.epistemicConfidence;
   }
 
   // Factor in trust level
-  const trust = facets.trust as any;
+  const trust = facets.trust;
   if (trust?.trustLevel) {
     const trustMultipliers: Record<string, number> = {
       CryptographicallyVerified: 1.0,
@@ -403,7 +436,9 @@ function extractSignifiers(facet: ContextFacetData): Signifier[] {
 
   switch (facet.type) {
     case 'Semiotic': {
-      const f = facet as any;
+      // `switch (facet.type)` has already narrowed the union; the `as any` this replaces
+      // threw that narrowing away and left `f.modalStatus` unchecked against ModalStatus.
+      const f = facet;
       const modal = f.modalStatus ?? 'Asserted';
       const conf = f.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
       signifiers.push({
@@ -418,7 +453,7 @@ function extractSignifiers(facet: ContextFacetData): Signifier[] {
       break;
     }
     case 'Trust': {
-      const f = facet as any;
+      const f = facet;
       signifiers.push({
         facetType: 'Trust',
         indicates: f.trustLevel === 'CryptographicallyVerified'
@@ -492,9 +527,10 @@ function buildSALevel(
     level3_projection: {
       anticipatedChanges: [],
       projectedAffordances: available,
-      timeHorizon: facets.temporal && (facets.temporal as any).validUntil
-        ? (facets.temporal as any).validUntil
-        : 'indefinite',
+      // `||`, not `??`, on purpose: the two `as any` reads this replaces were joined by a
+      // TRUTHINESS ternary, so an empty-string validUntil produced 'indefinite'. `??` would
+      // have quietly started emitting `''` as a time horizon. Cast removed, semantics kept.
+      timeHorizon: facets.temporal?.validUntil || 'indefinite',
       projectionConfidence: available.reduce((sum, a) => sum + a.confidence, 0) / Math.max(available.length, 1),
     },
   };

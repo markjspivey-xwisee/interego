@@ -40,7 +40,21 @@ export interface SystemState {
   readonly descriptors: readonly ContextDescriptorData[];
   readonly certificates: readonly CoherenceCertificate[];
   readonly persistenceRegistry?: PersistenceRegistry;
-  readonly constraints: readonly any[]; // ParadigmConstraint from server
+  /**
+   * Paradigm constraints, as the server hands them over. The four fields below are the
+   * only ones `materializeSystem` reads, and each one is interpolated into a TRIPLE — so
+   * `readonly any[]` was switching off checking on the way into the RDF store. `id`
+   * becomes a SUBJECT IRI; under `any` a caller could supply a number or an object there
+   * and the triple would carry `[object Object]` as a subject with nothing red anywhere.
+   * Declared shape rather than `unknown` because, unlike the opaque pass-through in
+   * `affordance-decorators.ts`, this module DOES look inside.
+   */
+  readonly constraints: readonly {
+    readonly id?: string;
+    readonly operation?: string;
+    readonly field?: string;
+    readonly values?: readonly unknown[];
+  }[];
   readonly pods: readonly { url: string; name: string; status: string; descriptorCount: number }[];
 }
 
@@ -552,8 +566,11 @@ export function writeBackTriples(
       ingest(pgsl, [subjectItem, predicateLocal, objectItem]);
       pgslMutations++;
       triplesAdded++;
-    } catch (err: any) {
-      errors.push(`Error processing triple <${triple.subject}> <${triple.predicate}> ${triple.object}: ${err.message}`);
+    } catch (err) {
+      // `err.message` on an `any` catch binding: a thrown string or a rejected non-Error
+      // produced "…: undefined" in the error list, which is the one place a reader looks
+      // to find out what went wrong with a triple.
+      errors.push(`Error processing triple <${triple.subject}> <${triple.predicate}> ${triple.object}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -719,8 +736,12 @@ function formatTurtleObject(obj: string): string {
 export function systemToJsonLd(state: SystemState): object {
   const store = materializeSystem(state);
 
-  // Build the @graph array from triples
-  const subjects = new Map<string, Record<string, any>>();
+  // Build the @graph array from triples. `unknown` values, not `any`: each slot holds a
+  // string, an `{'@id'}` / `{'@value'}` object, or an array of those, and the only
+  // operation performed on an existing slot is the `Array.isArray` branch below — which
+  // narrows `unknown` on its own. `any` bought nothing and switched off checking of every
+  // node member assignment in this loop.
+  const subjects = new Map<string, Record<string, unknown>>();
 
   for (const t of store.triples) {
     let node = subjects.get(t.subject);

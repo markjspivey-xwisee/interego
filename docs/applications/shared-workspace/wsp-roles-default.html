@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Default workspace role profile</title>
+<!-- ★ THIS PAGE EXISTS SO THE IRI DEREFERENCES AT ALL.
+     <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default> is what the vocabulary, the shapes and every published record
+     NAME. GitHub Pages serves no extensionless path, so that IRI answered 404 while only
+     wsp-roles-default.ttl resolved — every identifier in this vertical pointed at nothing, and the
+     workspace layer that reads a role profile by its declared IRI could not close its own
+     chain against the deployed artifact. Pages falls back to <name>.html, and RDF clients
+     follow the rel=alternate below to the Turtle; browsers get this. Same pattern as
+     docs/ns/*.html. -->
+<link rel="alternate" type="text/turtle" href="wsp-roles-default.ttl" />
+<link rel="describedby" type="text/turtle" href="wsp-roles-default.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>Default workspace role profile <span class="mono ns">wsp:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default#</code></p>
+  <p>Five roles and the capabilities each permits. Roles are DATA: a workspace wanting different governance publishes a different profile rather than requiring a new release.</p>
+  <p><strong>Machine-readable form:</strong> <a href="wsp-roles-default.ttl" rel="alternate">wsp-roles-default.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it.</p>
+  <h2>What this is for</h2>
+  <div class="term"><code>wspr:Convener</code> / <code>Steward</code> / <code>Contributor</code> / <code>Observer</code> / <code>Delegate</code> <span class="kind">Roles</span><div class="c">A role is a CEILING, never a grant. Effective capability is <code>role.permits &cap; delegatedScope</code>, so holding a role cannot give a principal something their own delegation does not already carry, and an unresolvable delegation yields nothing rather than everything.</div></div>
+  <p class="sub">★ This document is a static file. It carries no authorship proof and cannot: nothing published it and there is no descriptor to bind to. A reader that fetches it learns that this origin served these bytes at this URL at that moment &mdash; TLS and host control, re-checkable by nobody afterwards. The application README states that limit rather than claiming a grade the artifact cannot support.</p>
+</body>
+</html>

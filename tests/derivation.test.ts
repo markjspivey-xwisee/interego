@@ -20,12 +20,14 @@ import { describe, it, expect } from 'vitest';
 import {
   composeFacetTransformations,
   constructOmega,
+  type FacetTransformation,
   identityFacetTransformation,
   type IRI,
   makeGeometricMorphism,
   ModalAlgebra,
   type ModalValue,
   type PodView,
+  type SemioticFacetData,
 } from '@interego/core';
 
 // ── Ω (subobject classifier) ──────────────────────────────
@@ -177,30 +179,41 @@ describe('modal Heyting algebra on {Asserted, Hypothetical, Counterfactual}', ()
 // ── FacetTransformation monoid ────────────────────────────
 
 describe('FacetTransformation composition', () => {
-  const add = (arr: readonly number[]) => [...arr, 100];
-  const dup = (arr: readonly number[]) => [...arr, ...arr];
+  // ★ FACETS, NOT NUMBERS. `FacetTransformation<F>` is declared
+  // `F extends ContextFacetData`, and these three tests used `readonly number[]` — which
+  // is why every line of them carried an `as any`: twelve of them, one per position where
+  // a number failed to be a facet. Twelve casts is the API telling you the test is not
+  // exercising it. The monoid laws are the same laws over facets, and the transformations
+  // now typecheck against the signature they claim to be testing, so a change to
+  // `FacetTransformation`'s shape breaks this file instead of sliding through.
+  const conf = (n: number): SemioticFacetData => ({ type: 'Semiotic', epistemicConfidence: n });
+  const add: FacetTransformation<SemioticFacetData> = (arr) => [...arr, conf(1)];
+  const dup: FacetTransformation<SemioticFacetData> = (arr) => [...arr, ...arr];
+  const two: readonly SemioticFacetData[] = [conf(0.1), conf(0.2)];
+  const one: readonly SemioticFacetData[] = [conf(0.1)];
 
   it('identity is a left identity', () => {
-    const id = identityFacetTransformation<any>();
-    const result = composeFacetTransformations(id, add)([1, 2] as any);
-    expect(result).toEqual([1, 2, 100]);
+    const id = identityFacetTransformation<SemioticFacetData>();
+    expect(composeFacetTransformations(id, add)(two)).toEqual([...two, conf(1)]);
   });
 
   it('identity is a right identity', () => {
-    const id = identityFacetTransformation<any>();
-    const result = composeFacetTransformations(add, id)([1, 2] as any);
-    expect(result).toEqual([1, 2, 100]);
+    const id = identityFacetTransformation<SemioticFacetData>();
+    expect(composeFacetTransformations(add, id)(two)).toEqual([...two, conf(1)]);
   });
 
   it('composition is associative', () => {
     const left = composeFacetTransformations(
-      composeFacetTransformations(add as any, dup as any),
-      add as any,
-    )([1] as any);
+      composeFacetTransformations(add, dup),
+      add,
+    )(one);
     const right = composeFacetTransformations(
-      add as any,
-      composeFacetTransformations(dup as any, add as any),
-    )([1] as any);
+      add,
+      composeFacetTransformations(dup, add),
+    )(one);
     expect(left).toEqual(right);
+    // Pin the VALUE too, not just the equality: `left` and `right` would agree trivially
+    // if either composition had silently become the identity.
+    expect(left).toEqual([conf(0.1), conf(1), conf(0.1), conf(1), conf(1)]);
   });
 });

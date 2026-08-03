@@ -158,12 +158,15 @@ function executeLookupEntity(ctx: ToolContext, args: Record<string, string>): To
   const atomUris = new Set(matchingAtoms.map(a => a.uri));
   for (const node of ctx.pgsl.nodes.values()) {
     if (node.kind === 'Fragment') {
-      const frag = node as any;
-      if (frag.items.some((i: string) => atomUris.has(i))) {
+      // `node` is already narrowed to Fragment by the `kind` check on the line above; the
+      // three `as any` this replaces threw that away, and the innermost one hid that
+      // `nodes` is keyed by IRI rather than by any string.
+      const frag = node;
+      if (frag.items.some(i => atomUris.has(i))) {
         // Resolve item values for readability
-        const itemValues = frag.items.map((i: string) => {
-          const n = ctx.pgsl.nodes.get(i as any);
-          return n?.kind === 'Atom' ? String((n as any).value) : i;
+        const itemValues = frag.items.map(i => {
+          const n = ctx.pgsl.nodes.get(i);
+          return n?.kind === 'Atom' ? String(n.value) : i;
         });
         containingFragments.push({ uri: frag.uri, level: frag.level, items: itemValues });
       }

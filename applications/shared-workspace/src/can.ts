@@ -44,6 +44,8 @@ import {
   type AttributionGrade, type ContentBinding, type FieldProvenance,
   type WorkspaceRecord, type ConvenerEvidence, type ConvenerBinding, type RoleProfileBinding,
   type EvidenceProvenance, type EvidenceProvenanceBinding,
+  type RoleProfileDocument, type RoleTableEvidence, type RoleTableBinding,
+  type RoleTableAuthority, type RoleDefinition,
 } from './roster.js';
 import type { ComposedView, ComposedEntry, ComposableMember } from './compose.js';
 
@@ -478,4 +480,10 @@ export type {
   // SOME record agrees, not that the workspace's own does — which is what residual gap 9 was.
   WorkspaceRecord, ConvenerEvidence, ConvenerBinding, RoleProfileBinding,
   EvidenceProvenance, EvidenceProvenanceBinding,
+  // …and a FOURTH question, off a different document entirely: the role TABLE the profile IRI
+  // names. Exported beside the other three because a consumer holding `roleProfileBinding:
+  // 'bound'` has been told an IRI matched, and every capability in the roster came out of the
+  // table behind it — which is what residual gap 10 was. `RoleTableAuthority` travels with them
+  // because `roleTableBinding: 'bound'` means two very different things depending on it.
+  RoleProfileDocument, RoleTableEvidence, RoleTableBinding, RoleTableAuthority, RoleDefinition,
 };

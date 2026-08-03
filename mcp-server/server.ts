@@ -649,10 +649,17 @@ async function toolPublishContext(args: {
   /**
    * When true, this descriptor is "compliance grade" — used for
    * regulatory audit trails (EU AI Act, NIST RMF, SOC 2). Forces:
-   * trust level upgraded to HighAssurance, modal status
+   * trust level upgraded to CryptographicallyVerified, modal status
    * Asserted/Counterfactual only (no Hypothetical), evidence
    * citations (e.g. soc2:satisfiesControl) recorded in the graph
    * content. The response carries a compliance check report.
+   *
+   * ★ Said "HighAssurance" here and in two other places in this file,
+   * over code that has always written CryptographicallyVerified.
+   * HighAssurance is @interego/registry's issuer-standing vocabulary,
+   * not a iep:trustLevel — the published SHACL shape's sh:in would
+   * reject it — so a reader filtering on the documented value matched
+   * nothing this server publishes.
    */
   compliance?: boolean;
   /**
@@ -761,8 +768,10 @@ async function toolPublishContext(args: {
 .semiotic(preprocessed.semiotic)
 .trust(await (async () => {
       const baseTrust = {
-        // Compliance grade upgrades trust to HighAssurance; otherwise default
-        // SelfAsserted (caller's own claim, no third-party attestation).
+        // Compliance grade upgrades trust to CryptographicallyVerified — the top rung of
+        // iep:TrustLevelEnum; otherwise default SelfAsserted (caller's own claim, no
+        // third-party attestation). The comment used to name a "HighAssurance" tier this
+        // line has never written and the published shape would reject.
         trustLevel: (args.compliance ? 'CryptographicallyVerified' : 'SelfAsserted') as 'CryptographicallyVerified' | 'SelfAsserted',
         issuer: MY_OWNER_WEBID,
         verifiableCredential: `${podUrl}credentials/${encodeURIComponent(MY_AGENT_ID)}.jsonld` as IRI,
@@ -2649,7 +2658,7 @@ const handleListTools = async () => ({
           },
           compliance: {
             type: 'boolean',
-            description: 'When true, publish as compliance-grade evidence (regulatory audit trail). Forces trust to HighAssurance, requires non-Hypothetical modal status, validates against compliance shapes. Response includes a compliance check report.',
+            description: 'When true, publish as compliance-grade evidence (regulatory audit trail). Upgrades iep:trustLevel to CryptographicallyVerified and adds an ECDSA signature over the descriptor, requires non-Hypothetical modal status, validates against compliance shapes. Response includes a compliance check report.',
           },
           compliance_framework: {
             type: 'string',

@@ -83,15 +83,30 @@ JSON array:`;
     }
     if (!jsonMatch) return structuralFactExtraction(text);
 
-    const parsed = JSON.parse(jsonMatch[0]) as any[];
-    const facts: Fact[] = parsed
-      .filter(f => f.entity && f.relation && f.value)
+    // ★ AN LLM'S OUTPUT GOING THROUGH JSON.parse — the least trustworthy input in the
+    // package — and `as any[]` asserted a shape over it without checking one field. The
+    // per-element narrowing below is the substance: `entity` / `relation` / `value` are
+    // now proved to be present before `String()` runs on them, and `timestamp` /
+    // `modality` are checked to be strings instead of whatever the model emitted being
+    // written straight into a `Fact`.
+    //
+    // The `Array.isArray` line is a type-level necessity, NOT a bug fix, and it is worth
+    // saying so rather than dressing it up: `jsonMatch[0]` came from `/\[[\s\S]*\]/`, so
+    // the text always starts with `[` and `JSON.parse` either throws — caught below, which
+    // is where a malformed answer already fell back to `structuralFactExtraction` — or
+    // yields an array. The guard closes the residual case and gives `unknown` something to
+    // narrow on; do not write it up as a defect that was happening.
+    const parsedRaw: unknown = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsedRaw)) return structuralFactExtraction(text);
+    const facts: Fact[] = (parsedRaw as unknown[])
+      .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object')
+      .filter(f => !!f['entity'] && !!f['relation'] && !!f['value'])
       .map(f => ({
-        entity: normalize(f.entity),
-        relation: normalize(f.relation),
-        value: normalize(f.value),
-        timestamp: f.timestamp ?? undefined,
-        modality: f.modality ?? 'asserted',
+        entity: normalize(String(f['entity'])),
+        relation: normalize(String(f['relation'])),
+        value: normalize(String(f['value'])),
+        timestamp: typeof f['timestamp'] === 'string' ? f['timestamp'] : undefined,
+        modality: typeof f['modality'] === 'string' ? (f['modality'] as Fact['modality']) : 'asserted',
         source: 'llm',
       }));
 

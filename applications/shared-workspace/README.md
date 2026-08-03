@@ -56,13 +56,18 @@ the fold attested those grants against is the one the **workspace's own record**
 > roster can be `recordFieldBinding: 'bound'` with `convenerBinding: 'unchecked'`, which is
 > every caller that has not asked.
 >
-> ★ **What has been run.** `verify-can-live.ts` §§1–11 were run against production with two
-> real bearers on 2026-08-03 (UTC) and passed **77/77** (§§1–8: 45 sites, §9: 18, §10: 7, §11: 7).
-> §9 is the gap-6 **close**, §10 the gap-8 close, §11 the gap-9 close. Nothing in the file is
-> unrun *at this count* — which is the only form of that claim worth writing, and the reason
-> the source file now carries a numbered roster of its sections in its own header. The bare
-> adjective has gone stale three times: "§§6–8 remain unrun" after they had run, "§9 is unrun"
-> after §9 had, and "nothing in this file is unrun" one round before §10 was added.
+> ★ **What has been run, and what has not.** `verify-can-live.ts` §§1–11 were run against
+> production with two real bearers on 2026-08-03 (UTC) and passed **77/77** (§§1–8: 45 sites,
+> §9: 18, §10: 7, §11: 7). §9 is the gap-6 **close**, §10 the gap-8 close, §11 the gap-9 close.
+> **§12 — the gap-10 close — is UNRUN**: the round that wrote it had no bearer tokens, and it is
+> marked UNRUN in the source file's own numbered section roster. That roster is the mitigation the
+> previous version of this note proposed, and this is the first round to test it: the bare
+> adjective had already gone stale three times ("§§6–8 remain unrun" after they had run, "§9 is
+> unrun" after §9 had, "nothing in this file is unrun" one round before §10 was added), and
+> "nothing is unrun at this count" went stale the moment §12 landed. What stands in for §12's run
+> is a **41-mutant sweep** over every guard the round added — all killed, six of them only after
+> the tests they exposed as inadequate were written — plus the bearer-free half of §12 measured
+> live and anonymously. Neither is a substitute for running it.
 >
 > ★ **§10 did not merely go unrun — it FAILED the first time it was run**, and for a reason its
 > own doubles get right. Its rogue role profile declared `#Contributor` while §8's published
@@ -868,14 +873,15 @@ nothing:
   the other's verdict cannot satisfy both rows.
 
 **What it still does not mean — and this claim is shorter than the other two bindings'.**
-`RoleProfile.profile` is the caller's own statement of where its `roles` came from. `roster.ts`
-is pure, so the profile **document** is never fetched and the role table behind that IRI is
-never compared with it. `'bound'` says the caller's table *claims* to be the declared profile;
-it does not say it **is**. A caller that writes the declared IRI over an invented set of permits
-passes — the same self-certification `FieldProvenance` carried until `membership.ts` existed to
-produce it, and the same next step: a reader for the profile document. That is **residual
-gap 10** below. The gap is genuinely smaller than gap 8 was: a caller must now lie about
-provenance rather than merely differ.
+`RoleProfile.profile` is the caller's own statement of where its `roles` came from, so
+`roleProfileBinding: 'bound'` says the caller's table *claims* to be the declared profile; it does
+not say it **is**. A caller that writes the declared IRI over an invented set of permits passes
+this check. That was **residual gap 10**, and it is closed one section down by a second, separate
+verdict — `roleTableBinding`, off a different document — rather than by strengthening this one.
+The two stay apart on purpose: which document governs and what is inside it are different faults
+with different repairs, and a fold can legitimately report `('bound','unchecked')` (the right
+profile named, nobody having read it) or `('unchecked','bound')` (a table faithfully read from a
+document nobody has shown governs this workspace).
 
 `verify-can-live.ts` **§10** demonstrates it live — the rogue profile is folded against the two
 real §8 records, shown to widen bee beyond what alice's governance permits, then refused by the
@@ -909,26 +915,80 @@ the evidence was read from to the workspace IRI it claims, the way `proofBindsTo
 already relates a proof to its descriptor. That is a change to `src/roster.ts` and it is not
 made in the round that found it, for the reason gap 8 gives one paragraph up.
 
-**10. The role TABLE behind the profile IRI is still the caller's.** The residue of closing
-gap 8, stated here rather than folded into the sentence that says gap 8 is closed.
+**10. The role TABLE behind the profile IRI was still the caller's.** The residue of closing
+gap 8, and the last of the family. **Closed in this round**; the two things that remain are
+stated at the end of this section rather than folded into the sentence that says it is closed.
 
 `refuseRoleProfileAuthority` compares `WorkspaceRecord.roleProfile` with `RoleProfile.profile`:
-an **IRI** against an **IRI**. `roster.ts` is pure — it performs no I/O, which is what keeps
-authorization out of a second place — so the profile *document* is never fetched and the
-`roles` array behind that IRI is never compared with anything. A caller that writes the
-declared IRI over an invented set of permits reports `roleProfileBinding: 'bound'`.
+an **IRI** against an **IRI**. So did gap 6 (a convener) and gap 9 (a descriptor URL). All three
+compare **names**, and the thing every capability in the roster is computed from is the role
+**table** those names point at — `permitsOf` is built from `RoleProfile.roles`. Measured before
+the check existed: `convenerBinding: 'bound'`, `roleProfileBinding: 'bound'`,
+`recordFieldBinding: 'bound'`, `unattested: []`, and an `#Observer` holding `grant` and `revoke`,
+because `{profile: <the declared IRI>, roles: [anything]}` agrees with every name anybody
+compares.
 
-This is the same self-certification `FieldProvenance` carried until `membership.ts` existed to
-produce it: a claim about where a value came from, made by the party supplying the value. It
-closes the same way — a reader for the profile document, which is the **fourth** record in this
-vertical with no producer — and the pattern by now is clear enough to name: *every time this
-layer moves a value from the caller to a record, the new residue is the record one hop further
-out.*
+`dereferenceRoleProfile` is the producer — it asks the IRI — and `refuseRoleTableAuthority`
+compares what came back with what the fold used, role for role and capability for capability,
+under `normaliseRoleTable`, which is **literally the function that builds `permitsOf`** rather
+than a second copy of its rule. Any difference refuses, including one that narrows: an omitted
+role moves `knownRole`, which is the label printed beside a member's capabilities, in a direction
+no subset check can see.
 
-What it is **not** is a restatement of gap 8. Gap 8 was reachable by a caller who merely
-**differed**; gap 10 requires one who **lies about provenance**, and every honest caller is now
-checked. Both are true, and stating only the first would overclaim while stating only the
-second would understate.
+**Two paths, because a role profile is not always a pod record.** A profile at
+`<relay>/ns/<owner>/<slug>` is resolved through the pod its owner segment names — the same route
+gap 9 closed on — and comes back as a signed record read through the digested region. Anything
+else is an ordinary HTTPS document. The distinction is carried in `RoleTableAuthority` rather
+than smoothed over, and three guards ride the second path: `https:` only (deliberately stricter
+than the shape's `^https?://`, because for a document nobody signs the transport is the entire
+evidence), a cross-origin redirect refuses (the origin **is** the authority), and any non-200 is
+`'unreadable'`, which refuses to confer.
+
+### What this grade is actually worth — and it is smaller than the other three
+
+A workspace IRI names a **pod**, and the substrate refuses everyone but its holder a write there;
+that is what made gap 9 closable by *sourcing* rather than by trusting a record. A role profile
+IRI names a **host**. The profile every workspace in this repo declares is a static file on
+GitHub Pages, and it **cannot carry an authorship proof at all** — nothing published it, there is
+no descriptor for a proof to bind to, and no digested region for a signature to cover. Saying it
+plainly rather than leaving it to be inferred:
+
+> For that document, `roleTableBinding: 'bound'` means *this origin served these bytes at this
+> URL at the moment of the read*. Nobody signed them. Nothing about them is checkable afterwards,
+> offline, or by anyone who was not present at the fetch, and a host that changes the file changes
+> the governance with no signature to notice it by.
+
+So no policy flag demands a signed role table. A rule that did would refuse the only role table in
+existence — the same failure direction `descriptorBindingBasis` records the decision not to take.
+What is done instead is that the grade **travels**: `Roster.attributionNote` says in words which
+of the two it was, because a three-valued enum cannot carry the difference and a caller reading
+`'bound'` beside a Pages file would otherwise reasonably hear "signed".
+
+### And the declared IRI does not dereference
+
+Measured anonymously on 2026-08-03: `<…/wsp-roles-default>` answers **404**, and only
+`<…/wsp-roles-default.ttl>` answers 200. The name every `wsp:roleProfile` in this repo declares
+has never resolved to anything — the same class of finding as §9's `/ns/maintainer` 404, on the
+other side of the same record.
+
+The reader refuses rather than guessing `<IRI>.ttl`, because guessing a URL on the workspace's
+behalf is exactly what `nsOwnerSegmentOf` refuses to do one document over. The consequence is
+concrete: **the full workspace → profile → table chain cannot close against the deployed artifact
+today.** A fold that asks both questions of it reports `roleProfileBinding: 'bound'` beside
+`roleTableBinding: 'refused'` and confers nothing, which is the right answer over a broken
+artifact and is not the same as a working chain. The fix is one line of Pages configuration in
+`docs/`, and it is named in the open table rather than performed here.
+
+`verify-can-live.ts` **§12** carries the demonstration and the control, and is marked **UNRUN** in
+that file's own section roster: the round that wrote it had no bearer tokens. Two things stand in
+for the live run, and neither is a substitute for it. A **41-mutant sweep** across
+`refuseRoleTableAuthority`, `compareRoleTables`, `normaliseRoleTable`, the fold's wiring and
+`dereferenceRoleProfile` — every one killed, six of them only after the tests they exposed as
+inadequate were written. And the parts of §12 that need no bearer were measured against the live
+document anonymously: the 404, the refusal, the five parsed roles, the `'transport-only'` grade,
+and — the fragile part, and the one §10 got wrong by copying a shape — that §12's own
+`DECLARED_TABLE` literal matches the published file **exactly**, so the control cannot pass
+vacuously.
 
 ## Where authority can actually be enforced
 
@@ -953,7 +1013,8 @@ author, at its own URL — and `authorizeView` excludes it and says why.
 Two layers refuse, and they refuse different things. Both are demonstrated live by
 [`tools/verify-can-live.ts`](tools/verify-can-live.ts) (**77/77 live** across §§1–11 on
 2026-08-03 (UTC), which supersedes the earlier 13/13 over §§1–5, the 46/46 over §§1–8 and the 63/63
-over §§1–9 — each of those numbers was the file as it stood at *that* run).
+over §§1–9 — each of those numbers was the file as it stood at *that* run; **§12 is not in that
+count and has not been run**).
 
 **And 77 is likewise the file as it stood at *that* run.** The same caveat applied to 13/13,
 46/46 and 63/63 one sentence ago applies here, and applying it only backwards is how these
@@ -1160,10 +1221,10 @@ All six increments are built. What is verified, and what is not:
 
 | | state |
 |---|---|
-| 1 roster, two-sided membership | built; **signer-checked, content-bound, field-bound, convener-checked and now governance-checked** — under `requireFieldBinding` every field is parsed from **the region of the record the digest covers**, and under `workspaceEvidence` both the convener and the role profile come from the workspace instead of the caller. Doubles: six workspace suites, 76,800-configuration monotonicity enumeration across **nine** axes. Live: **77/77** on 2026-08-03 (UTC), §§1–11 (45 sites in §§1–8, 18 in §9, 7 in §10, 7 in §11) |
+| 1 roster, two-sided membership | built; **signer-checked, content-bound, field-bound, convener-checked and now governance-checked all the way to the table** — under `requireFieldBinding` every field is parsed from **the region of the record the digest covers**, under `workspaceEvidence` both the convener and the role-profile IRI come from the workspace instead of the caller, and under `roleTableEvidence` the role table itself comes from the document that IRI names. Doubles: six workspace suites, 76,800-configuration monotonicity enumeration across **ten** axes, and a 41-mutant sweep on the newest one. Live: **77/77** on 2026-08-03 (UTC), §§1–11 (45 sites in §§1–8, 18 in §9, 7 in §10, 7 in §11); **§12 unrun** |
 | 2 per-participant stream | built, **20/20 live** (the live run predates `sign_authorship`) |
 | 3 composed cross-pod view | built, **14/14 live** across two identities on two pods |
-| 4 authority at the fold | **77/77 live**, §§1–11, on 2026-08-03 (UTC) with two real bearers — the forgery refused for the right reason, the manufactured participant refused by the reader, gaps 6, 8 and 9 each shown open at full strength and then closed against real records, and the inversion (evidence must never widen) held at every one of them. §9's first run opened **residual gap 9**; §11 closes it |
+| 4 authority at the fold | **77/77 live**, §§1–11, on 2026-08-03 (UTC) with two real bearers — the forgery refused for the right reason, the manufactured participant refused by the reader, gaps 6, 8 and 9 each shown open at full strength and then closed against real records, and the inversion (evidence must never widen) held at every one of them. §9's first run opened **residual gap 9**; §11 closes it. **§12 closes residual gap 10 and is UNRUN** — a 41-mutant sweep and an anonymous measurement of the published profile stand in for it, and the same anonymous measurement found that the declared profile IRI **404s**, so the full chain cannot close against the deployed artifact until `docs/` serves it |
 | 5 engagement `gone` + injectable engine | built, 11 assertions, deployed |
 | 6 independent SHACL agreement | built, **in CI** — `@interego/core` vs pySHACL |
 | 7 membership records: serialize → publish → read → parse | built (`src/membership.ts`), **live** as part of the 77/77: the shape gate accepted both halves, the deferred-publish wait was needed and worked, and `get_descriptor` returned `graph.content` for them |
@@ -1230,13 +1291,15 @@ time this file changes.
 
 | | severity |
 |---|---|
-| ★ **the role TABLE behind the profile IRI is still the caller's** — residual gap 10, the residue of closing gap 8, and it is named here rather than absorbed into the row that says gap 8 is closed. `refuseRoleProfileAuthority` compares `WorkspaceRecord.roleProfile` with `RoleProfile.profile`: an IRI against an IRI. `roster.ts` is pure, so the profile **document** is never fetched and the `roles` behind that IRI are never compared with it — a caller that writes the declared IRI over an invented set of permits reports `roleProfileBinding: 'bound'`. Structurally identical to what `FieldProvenance` was before `membership.ts` existed to produce it, and closable the same way: a reader for the profile document, which is the fourth record with no producer. Smaller than gap 8, and the difference is not cosmetic — a caller must now **lie about provenance** rather than merely differ, and every honest caller is now checked | medium |
+| ★★ **the profile IRI every workspace here declares does not dereference** — `<https://…/applications/shared-workspace/wsp-roles-default>` answers **404**; only `<…/wsp-roles-default.ttl>` answers 200. Measured anonymously on 2026-08-03, and it is the same class of finding as §9's `/ns/maintainer` 404: a name the code asserts is resolvable, never once resolved. It is a defect in the **deployed artifact** (`docs/`), not in the reader — `dereferenceRoleProfile` refuses rather than guessing `<IRI>.ttl`, because guessing a URL on the workspace's behalf is what `nsOwnerSegmentOf` refuses to do one document over. The consequence is concrete and measured: the full **workspace → profile → table** chain cannot close against the live artifact today. A fold that asks both questions of it reports `roleProfileBinding: 'bound'` beside `roleTableBinding: 'refused'` and confers nothing, which is correct behaviour over a broken artifact. Fixing it means serving the file at the extensionless IRI (a redirect, or a second copy) — one line of Pages configuration, in a directory this round does not own | medium |
+| ★ **`roleTableBinding: 'bound'` over a Pages file means a TLS fetch, not a signature** — the residue of closing gap 10, and it is a ceiling rather than an oversight. A static GitHub Pages document cannot carry an `iep:authorshipProof`: nothing published it, there is no descriptor to bind a proof to, and no digested region. So for the profile this repo actually declares, `'bound'` means *this origin served these bytes at this URL at the moment of the read*, defended by TLS and by whoever holds the host, and re-checkable by nobody afterwards. `RoleTableAuthority` carries which of the two grades was reached and `Roster.attributionNote` states it in words, because a three-valued enum cannot. **No policy flag demands the stronger grade**, deliberately: a rule requiring a signed role table would refuse the only role table in existence, which is the `exact-url` mistake under another name. A profile published to `<relay>/ns/<owner>/<slug>` *is* a signed pod record and gets the stronger reading — the path exists, and nothing in this repo uses it yet | medium |
+| ★ **the role-table evidence is still the CALLER'S claim** — the same residue `EvidenceProvenance` and `FieldProvenance` carried before they were branded, one document further out. `roster.ts` is pure, so `RoleTableEvidence` is the caller's statement that it performed the dereference; what the fold can check — and does — is that the IRI dereferenced is the profile its own table claims, that the tables agree role for role, and that the document is not self-contradictory about how it was obtained. A caller that hand-writes a `RoleProfileDocument` beside an invented table passes. Closable the same way the other two were: brand `RoleProfileDocument` on a non-exported private-membered class so only `membership.ts` can mint one. Not done in this round, because that mechanism landed in a **different, concurrent** round and adopting it half-informed in the diff that adds its fourth instance is the move this area has shipped a defect on repeatedly | medium |
 | ★ **the evidence's provenance is still the CALLER'S claim** — the residue of closing gap 9, named here rather than absorbed into the row that says gap 9 is closed. `refuseEvidenceProvenance` checks two relations it can check without trusting anybody — the IRI dereferenced is the workspace being folded, and the document that dereference resolved to is the record's own `head` — and `roster.ts` is pure, so it cannot fetch and cannot verify that a dereference happened at all. A caller that hand-writes both fields beside a record it forged passes. Structurally identical to what `FieldProvenance` was before `membership.ts` existed to produce it, and closed the same way and to the same degree: there is now a producer (`dereferenceWorkspaceRecord`), and the substrate refuses everyone but a pod's holder a write there. What the flag cannot do is make a liar honest | medium |
 | `tools/shacl-agreement/fixtures/` pins **two** of the **seven** patterned terms against pySHACL: three fixtures (`acceptance-urn-member` → `wsp:member`; `grant-urn-principal` and `grant-did-principal` → `wsp:grantedTo`) exercising two distinct terms. This row said "three of the eight … the other five" and was wrong at both ends — the shape patterns **seven** terms, not eight (`wsp:stream` carries none, as the closed row below states correctly), and three fixtures are not three terms. 2 + 5 = 7. The reader side of all seven is covered by the drift test; the two engines agreeing on the other **five** is assumed rather than measured | low |
 | `Member.stream` can legitimately differ between two configurations of the same fold: naming the stream is a conferring act, so refusing an acceptance re-picks the head. No authority moves with it, and it is never silent — both configurations raise the `acceptance` divergence — but a caller that reads `stream` without reading `divergences` will go to a different pod under a stricter policy | low-med |
 | `proofBindsToDescriptorUrl` compares **a URN-form id** on its terminal segment only, and every `descriptor_id` the relay mints is a URN — so a party who controls a pod and chooses a colliding epoch reaches `bound: true, basis: 'slug-only'` on any host. A URL-form id **is** compared in full, host included, and nothing in this tree mints one. What this leaves reachable, measured: not any conferred value, but `head` — the URL an operator dereferences to audit the record and the URL printed in `unattested` and every `divergence` — residual gap 1 | medium |
 | `wsp:seq` has no producer: `ManifestEntry` carries no `seq`, so the sequence check is inert on every real read — residual gap 5 | low-med |
-| **every section of `verify-can-live.ts` has now been run — §§1–11, 77/77 on 2026-08-03 (UTC)** — and the row stays open because the *claim* is what keeps going stale, not the sections. Its four predecessors each went stale in a different direction: "§§6–8 remain unrun" after they had run, "§9 is unrun" after §9 had, "nothing in this file is unrun" one round before §10 was added, and "§10 is unrun" one round before §10 was run **and failed**. The pattern is the finding: **a claim about the whole file goes stale when the file grows, and a claim about a numbered section goes stale when that section runs.** Two mitigations rather than a better adjective — the source file's header now carries a numbered roster of its sections, so adding one without updating the claim leaves a visible gap; and every count is written with its section list attached | low-med *(honesty, not behaviour)* |
+| ★ **`verify-can-live.ts` §12 is UNRUN** — §§1–11 were run 77/77 on 2026-08-03 (UTC); §12 was added by a round with no bearer tokens and has not been executed once. It is marked UNRUN in that file's own numbered section roster, which is the mitigation the previous version of this row proposed and this round is the first test of. **The prediction in that row came true immediately**, exactly as written: "a claim about the whole file goes stale when the file grows". Its five predecessors each went stale differently — "§§6–8 remain unrun" after they had run, "§9 is unrun" after §9 had, "nothing in this file is unrun" one round before §10 was added, "§10 is unrun" one round before §10 was run **and failed**, and "every section has now been run" one round before §12 was added. What stands in for the run, and neither is a substitute: a **41-mutant sweep** over every guard the round added, all killed; and the bearer-free parts of §12 measured against the live document anonymously, including that its `DECLARED_TABLE` literal matches the published file exactly — which is the specific way §10 failed | low-med *(honesty, not behaviour)* |
 | a `Grant` or `Acceptance` refused for naming **two** grantees takes any revocation on it out of the fold entirely. Refusing is the only honest reading — the record does not say who it grants to — but the cost is real and is paid in the restricting direction, which is the direction this module otherwise protects | low-med |
 | `headOf` on a forked chain throws rather than returning a value; `appendEntry` converts it to a named `conflict` first, so the shipped path is safe and a direct caller must catch | low |
 
@@ -1244,6 +1307,8 @@ time this file changes.
 
 | | where |
 |---|---|
+| ★★★ **residual gap 10** — the last of the gap-6 family, and the first check in it that opens a **document** rather than comparing a **name**. Gaps 6, 8 and 9 established, in order: the convener must match the workspace's own record, the role-profile IRI must match the one that record declares, and the evidence must be the record `<WS>` actually dereferences to. All three compare names. The thing every capability in a roster is computed from is the role **table** those names point at — `permitsOf` is built from `RoleProfile.roles` — and that array was the caller's. Measured before the check existed: `convenerBinding: 'bound'`, `roleProfileBinding: 'bound'`, `recordFieldBinding: 'bound'`, `unattested: []`, and an `#Observer` holding `grant` and `revoke`. Closed by `dereferenceRoleProfile` (the producer, in `membership.ts`) + `RoleProfileDocument` / `RoleTableEvidence` + `refuseRoleTableAuthority` + `AttestationPolicy.roleTableEvidence` + `Roster.roleTableBinding`, copying gap 6's three directions **deliberately**: the document is evidence and never a source (there is no `profile.roles = document.roles`, and the substitution is worse here than for the convener — a caller with a *narrower* table would be handed the published one and start conferring more), the refusal is in the grant filter's `??` chain **only**, and `'unchecked'` is a third value distinct from `'refused'`. `normaliseRoleTable` is **the same function** that builds `permitsOf`, extracted rather than copied, so `'bound'` cannot mean "these agree under a rule the fold does not use". Two residues named rather than absorbed, in the open table above | `workspace-adversarial` AXIS J (five role-table shapes across all 76,800 configurations, four of them refusing, with a **per-shape** non-vacuity counter), "AXIS J closes RESIDUAL GAP 10", "AXIS J is not vacuous", "any difference refuses", "the comparison uses the fold's OWN normalisation", "the document's table is EVIDENCE and never a SOURCE", "the authority label cannot be used to SKIP the signature check", "a table refusal never lands on the ACCEPTANCE side", the revocation/withdrawal pair, and the JSON-shape guards; `workspace-membership` "dereferenceRoleProfile" (13 cases) — and a **41-mutant sweep**, all killed |
+| ★★ **six mutants survived the first sweep, and each one was a hole in the tests rather than in the code** — recorded because the sweep is the only reason they are not shipped. (1) The `'unreadable'` branch and (2) the wrong-IRI branch were covered by the 76,800-case lattice and by no fast case, so deleting either passed everything a reviewer would actually run. (3) `normaliseRoleTable`'s duplicate fixture was ordered **wide-then-narrow only**, and last-write-wins yields the same answer for that ordering — a test written to pin the intersection rule could not distinguish it from the rule it exists to forbid, which is this file's own "generator only produces agreement" failure reached from inside a test written to prevent it. (4) Substituting the document's table for the caller's — the escalation the design forbids — is *observationally invisible* while the comparison is total, and shows only where the two tables agree on what they permit but differ in **shape** (a duplicated role in the document produces a `role` divergence the caller's governance does not have). (5) Adding the table refusal to the **acceptance** filter is monotone, so every ⊆ assertion held; what it does is accuse the member of the convener's fault. (6) Parsing the whole served document instead of `payloadOf`'s digested region — the manufactured-participant hole one document out, and on a governance document it forges a **capability for every member at once** rather than one membership | `workspace-adversarial` + `workspace-membership`, one case per survivor; `scratchpad/mutate-gap10.mjs` |
 | ★★★ **residual gap 9** — `refuseConvenerAuthority` asked a `ConvenerEvidence` three questions (is its subject *this* workspace, does it name *this* policy's convener, does it hold up as a signed content-bound record) and never asked where the evidence came from. Measured against production with two real bearers: **bee** published a `wsp:Workspace` for **alice's** workspace IRI, on **her own** pod, naming herself convener — it published, parsed with `problems: []`, content-bound, and the same fold that refuses her self-convened membership on alice's record reported `convenerBinding: 'bound'` and **admitted her**, `members: 1`. The subject is a triple its writer chooses, so no forger fails the first question. What closes it is that a workspace **is** a dereferenceable URL and exactly one party decides what it returns: `<relay>/ns/<owner>/<slug>` resolves against the pod its OWNER SEGMENT names (`resolveNsGraph`, `deploy/mcp-relay/server.ts:11657`) and against no other. Same run: an anonymous `GET <WS>` returned alice's record with bee's absent, `get_current_head{urn, pod_name: <owner>}` returned alice's descriptor unforked, and bee writing to alice's pod was refused `403 scope_violation`. Closed by `EvidenceProvenance` + `refuseEvidenceProvenance` + `AttestationPolicy.requireEvidenceProvenance` + `Roster.evidenceProvenanceBinding`, with `dereferenceWorkspaceRecord` as the producer — copying gap 6's three directions deliberately: evidence refuses and never supplies, the refusal is in the grant filter's `??` chain **only**, and `'unchecked'` is a third value distinct from `'refused'`. Residue named rather than absorbed, in the open table above | `workspace-adversarial` AXIS I (four evidence shapes across all 76,800 configurations, three of them forged, with a **per-shape** non-vacuity counter), "AXIS I is not vacuous", "AXIS I closes RESIDUAL GAP 9", the revocation/withdrawal pair, and the direct-call guard case; `verify-can-live.ts` §11, run live |
 | ★ **`roleProfileBinding: 'bound'` was reachable from a workspace record nobody with authority over the workspace wrote** — a diagnostic-integrity defect, not an escalation. `refuseConvenerAuthority` reaches its authorship check only after proving `ws.convener === policy.convener`; `refuseRoleProfileAuthority` had no such precondition and validated the record against `ws.convener`, the value the record declares about **itself**. Reproduced through the real reader and live: a stranger's self-consistent record naming the true `wsp:roleProfile`, signed by her own registered agent, produced `convenerBinding: 'refused'` beside `roleProfileBinding: 'bound'`, whose contract reads "the governance these capabilities were computed under is the governance the workspace publishes". No capability moved — both refusals sit in the same `??` chain — so what was wrong was the **claim**, in a non-omittable security output. The pair `('refused','bound')` is now unreachable and the prose that called it "a coherent and expected pair" is gone | `workspace-adversarial` "roleProfileBinding is never `bound` off a record a stranger wrote" (which also re-asserts that the pair matrix still discriminates), the `conveneVerdicts` table, the eleven-shape table's `names-another` row at all three rungs, and the direct-call case |
 | ★★★ **residual gap 8** — `foldRoster` took its `RoleProfile` from its caller while the workspace record declared one, and `permitsOf` is built from the caller's. Measured before anything was written: a rival profile that redeclares the declared profile's own `#Observer` with `grant` and `revoke` produced `convenerBinding: 'bound'`, `recordFieldBinding: 'bound'`, `unattested: []` and an Observer holding all four capabilities. Closed by `refuseRoleProfileAuthority` + `Roster.roleProfileBinding`, copying gap 6's three directions deliberately: evidence refuses and never supplies, the refusal is in the grant filter's `??` chain **only**, and `'unchecked'` is a third value. Residue named as **gap 10** rather than absorbed | `workspace-adversarial` AXIS H (lattice + `profileRefused` non-vacuity counter), "AXIS H is the ESCALATION it looks like", "two blanks do not agree", "both fields disagree", and the revocation/withdrawal pair; `workspace-membership` "an unreadable role profile"; `verify-can-live.ts` §10 |

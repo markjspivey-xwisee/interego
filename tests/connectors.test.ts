@@ -35,6 +35,28 @@ describe('createConnector — type dispatch', () => {
       ).toThrow(/Unknown connector type/);
     },
   );
+
+  // ★ THE REQUIRED FIELD EACH FACTORY CANNOT DO WITHOUT, WHICH `createConnector` USED TO
+  // DROP. Its signature is `ConnectorConfig & Record<string, unknown>` and it dispatched
+  // through `as any`, so `{ type: 'slack', name: 'x' }` compiled, ran, and produced a
+  // connector that polled `channels.history?channel=undefined` on every tick. Both
+  // directions pinned: the refusal, and that a config carrying the field still builds —
+  // a guard that refuses everything would pass the first assertion on its own.
+  it('refuses a slack connector with no channelId, and builds one with it', () => {
+    expect(() =>
+      createConnector({ type: 'slack', name: 'no-channel', apiKey: 'tok' }),
+    ).toThrow(/requires 'channelId'/);
+    expect(
+      createConnector({ type: 'slack', name: 'ok', apiKey: 'tok', channelId: 'C1' }),
+    ).toBeTruthy();
+  });
+
+  it('refuses a web connector with no urls (and with an empty list), and builds one with them', () => {
+    expect(() => createConnector({ type: 'web', name: 'no-urls' })).toThrow(/requires 'urls'/);
+    // An empty array is the same defect wearing a value: a poller with nothing to poll.
+    expect(() => createConnector({ type: 'web', name: 'empty', urls: [] })).toThrow(/requires 'urls'/);
+    expect(createConnector({ type: 'web', name: 'ok', urls: ['https://example.com'] })).toBeTruthy();
+  });
 });
 
 describe('createWebConnector', () => {

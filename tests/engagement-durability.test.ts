@@ -36,12 +36,39 @@ const BOB = 'did:ethr:0xbob';
 
 // ── a minimal Express double, same shape the relay's own mount test uses ─────
 
-type Handler = (req: any, res: any) => unknown;
+// ★ THE DOUBLE IS DESCRIBED BY TYPES NOW, NOT BY `any`.
+//
+// Every one of the nine `any`s in this file was in the fake Express, and a double built
+// out of `any` is the one place they cost the most: the double is a MODEL of the real
+// surface, and nothing was checking the model against anything. A handler could read
+// `req.paramz`, or `mkRes()` could stop returning itself from `.status()`, and the tests
+// would keep passing over a res object that no longer chains — silently asserting on a
+// `statusCode` that never got set. These interfaces are the model, written down.
+interface FakeReq {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  query: Record<string, string>;
+  body?: unknown;
+  params: Record<string, string>;
+}
+interface FakeRes {
+  statusCode: number;
+  body: unknown;
+  headers: Record<string, string>;
+  status(c: number): FakeRes;
+  json(b: unknown): FakeRes;
+  send(b: unknown): FakeRes;
+  type(): FakeRes;
+  setHeader(k: string, v: string): void;
+  end(): FakeRes;
+}
+type Handler = (req: FakeReq, res: FakeRes) => unknown;
 interface Route { method: string; path: string | RegExp; handler: Handler }
 
-function mkRes() {
-  const r: any = {
-    statusCode: 200, body: undefined as any, headers: {} as Record<string, string>,
+function mkRes(): FakeRes {
+  const r: FakeRes = {
+    statusCode: 200, body: undefined, headers: {},
     status(c: number) { r.statusCode = c; return r; },
     json(b: unknown) { r.body = b; return r; },
     send(b: unknown) { r.body = b; return r; },
@@ -52,6 +79,11 @@ function mkRes() {
   return r;
 }
 
+/** `res.body` is `unknown`; read a member off it without reintroducing a cast per site. */
+function bodyMember(body: unknown, key: string): unknown {
+  return body != null && typeof body === 'object' ? (body as Record<string, unknown>)[key] : undefined;
+}
+
 /** One mounted relay "process". A second one over the same store IS the restart. */
 function boot(
   store: EngagementRecordStore | null,
@@ -59,11 +91,11 @@ function boot(
     engine?: EngagementEngine;
     /** Supplied where a test needs the mount to actually PERFORM a capability — the path
      *  that carries the post-open error exits. */
-    invokeCapability?: (args: { capability: string; caller: string; parts: readonly any[] }) => Promise<any>;
+    invokeCapability?: (args: { capability: string; caller: string; parts: readonly unknown[] }) => Promise<unknown>;
   } = {},
 ) {
   const routes: Route[] = [];
-  const app: any = {
+  const app = {
     get: (p: string | RegExp, h: Handler) => routes.push({ method: 'GET', path: p, handler: h }),
     post: (p: string | RegExp, h: Handler) => routes.push({ method: 'POST', path: p, handler: h }),
     delete: (p: string | RegExp, h: Handler) => routes.push({ method: 'DELETE', path: p, handler: h }),
@@ -72,7 +104,11 @@ function boot(
   const logs: string[] = [];
   let caller: string | undefined = ALICE;
 
-  mountAgentInterop(app, {
+  // The one remaining cast, and it is narrow on purpose: `mountAgentInterop` takes an
+  // `Express`, which a three-method literal cannot structurally satisfy. Everything the
+  // mount actually touches — get/post/delete and the req/res shapes above — IS typed, so
+  // this cast admits only the methods the double deliberately does not implement.
+  mountAgentInterop(app as unknown as Parameters<typeof mountAgentInterop>[0], {
     publicBase: BASE,
     engine,
     engagementStore: store,
@@ -99,7 +135,12 @@ function boot(
   const dispatch = async (method: string, url: string, body?: unknown, params?: Record<string, string>) => {
     const chosen = routes.find(r => r.method === method && matches(r.path, url));
     if (!chosen) throw new Error(`no route for ${method} ${url}`);
-    const captured = chosen.path instanceof RegExp ? { 0: (chosen.path.exec(url) ?? [])[1] ?? '' } : {};
+    // Annotated so the two branches unify: express exposes a RegExp route's capture as
+    // the numeric key `'0'`, and the untyped literal narrowed to `{0: string}|{}`, which
+    // is not a `Record<string, string>`. The mount reads `params['0']`.
+    const captured: Record<string, string> = chosen.path instanceof RegExp
+      ? { 0: (chosen.path.exec(url) ?? [])[1] ?? '' }
+      : {};
     const res = mkRes();
     await chosen.handler(
       { method, url, headers: {}, query: {}, body, params: { ...captured, ...(params ?? {}) } },
@@ -126,7 +167,7 @@ async function open(relay: ReturnType<typeof boot>, text = 'hello', capability?:
 async function listIds(relay: ReturnType<typeof boot>): Promise<string[]> {
   const res = await relay.dispatch('GET', relay.pathFor('listEngagements'));
   const member = relay.profile.responseEnvelope?.listEngagements ?? 'items';
-  const items = (res.body?.[member] ?? []) as Array<{ id?: string }>;
+  const items = (bodyMember(res.body, member) ?? []) as Array<{ id?: string }>;
   return items.map(x => String(x.id ?? ''));
 }
 
@@ -137,9 +178,11 @@ async function resolve(relay: ReturnType<typeof boot>, id: string) {
   return relay.dispatch('GET', `/engagements/${tail}`, undefined, { id: tail });
 }
 
-function idOf(res: any): string {
-  const body = res.body?.result ?? res.body;
-  const inner = body?.id ?? body?.task?.id ?? body?.engagement?.id;
+function idOf(res: FakeRes): string {
+  const body = bodyMember(res.body, 'result') ?? res.body;
+  const inner = bodyMember(body, 'id')
+    ?? bodyMember(bodyMember(body, 'task'), 'id')
+    ?? bodyMember(bodyMember(body, 'engagement'), 'id');
   return String(inner ?? '');
 }
 
@@ -519,7 +562,9 @@ describe('the cache never answers for something the store does not have', () => 
     const res = await resolve(relay, id);
     expect(res.statusCode).toBe(200);
     // The rendered state name is the profile's, so assert through the engine's own view.
-    expect(relay.engine.get(id, ALICE).ok && (relay.engine.get(id, ALICE) as any).value.state).toBe('completed');
+    const view = relay.engine.get(id, ALICE);
+    expect(view.ok).toBe(true);
+    expect(view.ok && view.value.state).toBe('completed');
   });
 });
 

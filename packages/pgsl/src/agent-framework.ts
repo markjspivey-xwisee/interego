@@ -763,6 +763,20 @@ export interface PersonalBroker {
 }
 
 /**
+ * `PersonalBroker` with the three fields the mutators below write, made writable.
+ *
+ * The broker is deliberately mutated in place — callers hold one handle across a session
+ * and expect `startConversation` / `sendMessage` / `setPresence` to be visible through it —
+ * so a cast is genuinely required. `as any` was six casts too wide: it also erased the
+ * VALUE being assigned, so `presence` could be set to any string rather than a
+ * `PresenceStatus`, and `memory` to an object missing one of its three counts. Both would
+ * have surfaced only as a wrong number in a later `getMemoryStats` read.
+ */
+type MutableBrokerState = {
+  -readonly [K in 'conversations' | 'memory' | 'presence']: PersonalBroker[K]
+};
+
+/**
  * Create a new personal broker for an agent.
  *
  * @param agentId - Unique agent identifier
@@ -819,13 +833,13 @@ export function startConversation(
     startedAt: new Date().toISOString(),
   };
 
-  (broker as any).conversations = [
+  (broker as MutableBrokerState).conversations = [
     ...broker.conversations,
     conversation,
   ];
 
   // Update episodic memory
-  (broker as any).memory = {
+  (broker as MutableBrokerState).memory = {
     ...broker.memory,
     episodicSize: broker.conversations.length,
   };
@@ -870,10 +884,10 @@ export function addMessage(
 
   const updatedConversations = [...broker.conversations];
   updatedConversations[convIndex] = updatedConv;
-  (broker as any).conversations = updatedConversations;
+  (broker as MutableBrokerState).conversations = updatedConversations;
 
   // Update semantic memory count (content words as rough proxy)
-  (broker as any).memory = {
+  (broker as MutableBrokerState).memory = {
     ...broker.memory,
     semanticSize: broker.pgsl.atoms.size,
   };
@@ -894,11 +908,17 @@ export function getMemoryStats(broker: PersonalBroker): AgentMemory {
   // Count constraints (procedural memory) by counting paradigm constraints
   // in the PGSL instance if available
   let proceduralSize = 0;
-  const pgsl = broker.pgsl as any;
-  if (pgsl.constraints && typeof pgsl.constraints.size === 'number') {
-    proceduralSize = pgsl.constraints.size;
-  } else if (pgsl.constraints && Array.isArray(pgsl.constraints)) {
-    proceduralSize = pgsl.constraints.length;
+  // A duck-typed probe for a field `PGSLInstance` does not declare — some deployments
+  // attach a paradigm-constraint collection, as a Set/Map (`.size`) or an array
+  // (`.length`). `Record<string, unknown>` rather than `any` keeps the probe honest: the
+  // two shape tests below stay mandatory instead of being decorative, and the assignments
+  // into `proceduralSize` are checked to be numbers rather than whatever the field held.
+  const pgsl = broker.pgsl as unknown as Record<string, unknown>;
+  const constraints = pgsl['constraints'];
+  if (constraints && typeof (constraints as { size?: unknown }).size === 'number') {
+    proceduralSize = (constraints as { size: number }).size;
+  } else if (Array.isArray(constraints)) {
+    proceduralSize = constraints.length;
   }
 
   const stats: AgentMemory = {
@@ -907,7 +927,7 @@ export function getMemoryStats(broker: PersonalBroker): AgentMemory {
     proceduralSize,
   };
 
-  (broker as any).memory = stats;
+  (broker as MutableBrokerState).memory = stats;
   return stats;
 }
 
@@ -918,7 +938,7 @@ export function getMemoryStats(broker: PersonalBroker): AgentMemory {
  * @param status - New presence status
  */
 export function setPresence(broker: PersonalBroker, status: PresenceStatus): void {
-  (broker as any).presence = status;
+  (broker as MutableBrokerState).presence = status;
 }
 
 // ══════════════════════════════════════════════════════════════

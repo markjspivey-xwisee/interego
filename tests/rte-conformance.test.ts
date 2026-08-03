@@ -17,9 +17,56 @@ import { dirname, resolve } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const RTE_SRC = readFileSync(resolve(here, '../deploy/foxxi-scorm-player/site/scorm-rte.js'), 'utf8');
 
-function loadRte(): { api2004: any; api12: any } {
+/**
+ * ★ THE TWO API SURFACES, WRITTEN DOWN — which in a CONFORMANCE test is not decoration.
+ *
+ * Both were `any`, and the whole point of this file is that the player installs the eight
+ * functions each standard mandates, with the signatures each standard mandates. Under
+ * `any` the assertions below could not tell `SetValue(k, v)` from `SetValue(k)`, could not
+ * catch a method name drifting, and — the one that matters — `typeof api[f]` over a plain
+ * `string[]` would answer `'undefined'` for a name misspelt IN THE TEST, reporting a
+ * conformance failure against the player for a typo in the checklist. The `as const` on
+ * those arrays now ties each name to these interfaces.
+ */
+/** IEEE 1484.11.2 / SCORM 2004 4th Ed. All eight return strings, per §3.1. */
+interface Api2004 {
+  Initialize(param: string): string;
+  Terminate(param: string): string;
+  GetValue(element: string): string;
+  SetValue(element: string, value: string): string;
+  Commit(param: string): string;
+  GetLastError(): string;
+  GetErrorString(code: string): string;
+  GetDiagnostic(code: string): string;
+}
+/** ADL CMI001 / SCORM 1.2 — the same eight under the LMS* names. */
+interface Api12 {
+  LMSInitialize(param: string): string;
+  LMSFinish(param: string): string;
+  LMSGetValue(element: string): string;
+  LMSSetValue(element: string, value: string): string;
+  LMSCommit(param: string): string;
+  LMSGetLastError(): string;
+  LMSGetErrorString(code: string): string;
+  LMSGetDiagnostic(code: string): string;
+}
+
+/**
+ * The jsdom global the player script installs itself onto. One cast, at the boundary
+ * where an untyped `eval` writes into a window — replacing `dom.window as any`, which
+ * spread `any` through every read that followed it.
+ */
+interface RteHost {
+  fetch: unknown;
+  parent: RteHost;
+  eval(src: string): void;
+  API_1484_11?: Api2004;
+  API?: Api12;
+}
+
+function loadRte(): { api2004: Api2004 | undefined; api12: Api12 | undefined } {
   const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { runScripts: 'outside-only', url: 'https://player.example/' });
-  const w = dom.window as any;
+  const w = dom.window as unknown as RteHost;
   w.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' });
   w.parent = w; // SCOs discover the API via window.parent
   w.eval(RTE_SRC);
@@ -27,12 +74,14 @@ function loadRte(): { api2004: any; api12: any } {
 }
 
 describe('SCORM 2004 4th Ed RTE — IEEE 1484.11.2 (API_1484_11)', () => {
-  let api: any;
-  beforeEach(() => { api = loadRte().api2004; });
+  // Non-null after the first assertion in the first test; the installer either ran or the
+  // whole suite is meaningless, so a bare `!` here beats threading undefined through 8 tests.
+  let api: Api2004;
+  beforeEach(() => { api = loadRte().api2004!; });
 
   it('installs API_1484_11 with all 8 functions', () => {
     expect(api).toBeTruthy();
-    for (const f of ['Initialize', 'Terminate', 'GetValue', 'SetValue', 'Commit', 'GetLastError', 'GetErrorString', 'GetDiagnostic']) {
+    for (const f of ['Initialize', 'Terminate', 'GetValue', 'SetValue', 'Commit', 'GetLastError', 'GetErrorString', 'GetDiagnostic'] as const) {
       expect(typeof api[f], f).toBe('function');
     }
   });
@@ -94,12 +143,12 @@ describe('SCORM 2004 4th Ed RTE — IEEE 1484.11.2 (API_1484_11)', () => {
 });
 
 describe('SCORM 1.2 RTE — ADL CMI001 (window.API, LMS*)', () => {
-  let api: any;
-  beforeEach(() => { api = loadRte().api12; });
+  let api: Api12;
+  beforeEach(() => { api = loadRte().api12!; });
 
   it('installs the SCORM 1.2 API with the 8 LMS* functions', () => {
     expect(api).toBeTruthy();
-    for (const f of ['LMSInitialize', 'LMSFinish', 'LMSGetValue', 'LMSSetValue', 'LMSCommit', 'LMSGetLastError', 'LMSGetErrorString', 'LMSGetDiagnostic']) {
+    for (const f of ['LMSInitialize', 'LMSFinish', 'LMSGetValue', 'LMSSetValue', 'LMSCommit', 'LMSGetLastError', 'LMSGetErrorString', 'LMSGetDiagnostic'] as const) {
       expect(typeof api[f], f).toBe('function');
     }
   });
