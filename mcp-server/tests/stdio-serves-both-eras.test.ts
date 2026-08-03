@@ -50,8 +50,17 @@ async function connect(mode: 'legacy' | 'auto') {
     } as Record<string, string>,
     stderr: 'ignore',
   });
-  const client = new Client({ name: 'stdio-era-test', version: '1.0.0' });
-  await client.connect(transport, mode === 'auto' ? { versionNegotiation: { mode: 'auto' } } : undefined);
+  // ★ `versionNegotiation` is a CONSTRUCTOR option (`ClientOptions`), not a `connect()` one.
+  // It used to be passed as `connect`'s second argument, where `ConnectOptions` has no such
+  // property — so the SDK ignored it, `mode` defaulted to `'legacy'`, and BOTH iterations of
+  // the loop below ran the identical plain-2025 handshake. The `server/discover` probe-and-
+  // fallback path, which is the exact path this file's header says a factory bug would break
+  // and nothing else covers, was never taken by the test written to take it.
+  const client = new Client(
+    { name: 'stdio-era-test', version: '1.0.0' },
+    mode === 'auto' ? { versionNegotiation: { mode: 'auto' } } : undefined,
+  );
+  await client.connect(transport);
   return { client, transport };
 }
 
