@@ -111,14 +111,21 @@
  * `dereferenceWorkspaceRecord` in `membership.ts` is the producer — it resolves the workspace
  * through its own owner segment's pod, which is what bee cannot reach.
  *
- * ★ AND THE PAIR IS STILL THE CALLER'S CLAIM, exactly as `FieldProvenance` is. This module is
- * pure and fetches nothing. What it checks is the two relations that are not self-certifying —
- * the IRI dereferenced is the workspace being folded, and the document that dereference
- * resolved to is the record's own `head` — which catch the realistic failure, a composer
- * holding one workspace record per pod it read and attaching the wrong one. A caller that
- * hand-writes the pair beside a forged record is not caught, and cannot be by a function that
- * cannot fetch. That residue is the producer's to carry, and it is named in the field's own
- * contract rather than left to be discovered.
+ * ★ AND THE PAIR IS STILL THE CALLER'S CLAIM AT RUNTIME, exactly as `FieldProvenance` is. This
+ * module is pure and fetches nothing. What it checks is the two relations that are not
+ * self-certifying — the IRI dereferenced is the workspace being folded, and the document that
+ * dereference resolved to is the record's own `head` — which catch the realistic failure, a
+ * composer holding one workspace record per pod it read and attaching the wrong one.
+ *
+ * ★★ WHAT USED TO STAND HERE SAID A CALLER HAND-WRITING THE PAIR BESIDE A FORGED RECORD "IS
+ * NOT CAUGHT, AND CANNOT BE", and filed it as the producer's residue. The premise was that the
+ * only place to intervene is the check, and it is not: a claim nobody can WRITE never reaches
+ * one. Both `EvidenceProvenance` and `FieldProvenance` are now BRANDED — each intersects a
+ * non-exported ambient class with a private member, so the hand-written literal is a COMPILE
+ * ERROR rather than a runtime pass, and only `membership.ts` mints either. Read those two
+ * types for the exact guarantee, including the three escape hatches (`as`, `Object.assign`,
+ * and anything arriving as `any` from JSON) that a compile-time brand does not and cannot
+ * close — which is why every runtime check below stays exactly where it was.
  *
  * ★★★★★ AND THE ROLE PROFILE IS THE SAME QUESTION ONE FIELD OVER.
  *
@@ -137,16 +144,46 @@
  * SOURCE (there is no `profile = ws.roleProfile ?? args.profile`, for the same reason there is
  * no such line for the convener), and a disagreement refuses on the CONFERRING TRACK ALONE.
  *
- * ★ AND WHAT IT ESTABLISHES IS AN IRI, NOT A ROLE TABLE — read this before relying on it.
- * `RoleProfile.profile` is the caller's own claim about where its `roles` came from, exactly
- * as `FieldProvenance` is a record's own claim about where its fields came from, and this
- * module is pure so it cannot fetch the document and check. `'bound'` therefore means *the
- * caller's role table CLAIMS to be the profile <workspace> declares*. A caller that fabricates
- * `{profile: <the declared IRI>, roles: [anything]}` is not caught here and cannot be: closing
- * that means reading the profile document the way `membership.ts` reads the other three, which
- * is the next record with no producer. It is residual gap 10 — 9 was the separate question of
- * where the workspace EVIDENCE itself came from, and is closed above — and it is smaller than
- * gap 8 was: a caller must now lie about provenance rather than merely differ.
+ * ★ AND WHAT IT ESTABLISHES IS AN IRI, NOT A ROLE TABLE — which was residual gap 10, and it is
+ * closed one paragraph down rather than here. `RoleProfile.profile` is the caller's own claim
+ * about where its `roles` came from, so `roleProfileBinding: 'bound'` means *the caller's role
+ * table CLAIMS to be the profile <workspace> declares* and nothing more. A caller that writes
+ * `{profile: <the declared IRI>, roles: [anything]}` agrees with every IRI anybody compares.
+ *
+ * ★★★★★★★ SO THE TABLE IS READ TOO — RESIDUAL GAP 10, AND THE LAST OF THE GAP-6 FAMILY.
+ *
+ * Four checks now stand between a caller and a membership, and every one of them compares a
+ * NAME: the convener the workspace declares, the profile IRI it declares, the descriptor the
+ * workspace dereferences to. Not one of them had ever opened the document those names point at,
+ * and that document decides more than any of them — `permitsOf` is built from `profile.roles`,
+ * so every `effective` capability in the roster comes out of a table the caller typed. Measured
+ * before the check existed: `convenerBinding: 'bound'`, `roleProfileBinding: 'bound'`,
+ * `recordFieldBinding: 'bound'`, `unattested: []`, and an `#Observer` holding `grant` and
+ * `revoke`.
+ *
+ * `dereferenceRoleProfile` in `membership.ts` is the producer — it asks the IRI — and
+ * {@link refuseRoleTableAuthority} compares what came back with what the fold used, role for
+ * role and capability for capability, under {@link normaliseRoleTable}, which is literally the
+ * function that builds `permitsOf` rather than a second copy of its rule. The three directions
+ * gaps 6, 8 and 9 established are copied unchanged and are not re-derived here: the document is
+ * EVIDENCE and never a SOURCE (there is no `profile.roles = document.roles`, and the
+ * substitution is worse here than for the convener because a caller with a NARROWER table would
+ * be handed the published one and start conferring more), a disagreement refuses on the
+ * CONFERRING TRACK ALONE, and `'unchecked'` is a third value distinct from `'refused'`.
+ *
+ * ★ AND THE GRADE IS SMALLER THAN THE OTHER THREE — say this before anyone reads
+ * {@link Roster.roleTableBinding} as a proof. A workspace IRI names a POD, and the substrate
+ * refuses everyone but its holder a write there, which is what made gap 9 closable by sourcing.
+ * A role profile IRI names a HOST. The profile every workspace here declares is a static file
+ * on GitHub Pages: it cannot carry an `iep:authorshipProof`, it has no digested region, and no
+ * signer exists to compare anything against — so for that document `'bound'` means *this origin
+ * served these bytes at this URL at the moment of the read*, defended by TLS and by whoever
+ * holds the host, and by nothing that can be re-checked afterwards by a third party.
+ * {@link RoleTableAuthority} carries which of the two grades was reached and
+ * {@link Roster.attributionNote} states it in words, because the enum cannot. A profile
+ * published to `<relay>/ns/<owner>/<slug>` IS a signed pod record and gets the stronger reading;
+ * the deployed one is not, and no policy flag demands it, because a rule that refused the only
+ * role table in existence is the `exact-url` mistake with a different name.
  *
  * Without that policy the fold still works exactly as before, and says so:
  * {@link Roster.membershipGrade} is `'asserted'` and {@link Roster.attributionNote} states
@@ -488,6 +525,30 @@ export interface AttestationPolicy {
    * content binding for a reason that has nothing to do with its provenance.
    */
   readonly requireEvidenceProvenance?: boolean;
+  /**
+   * The ROLE TABLE read out of the document {@link RoleProfile.profile} names, so the fold's
+   * `roles` can be checked against something other than the caller's own opinion of them.
+   *
+   * ★ THE ONLY EVIDENCE FIELD HERE THAT IS NOT ABOUT THE WORKSPACE RECORD. `workspaceEvidence`
+   * answers who may grant and which profile governs; both come off one `wsp:Workspace`. This is
+   * the document that profile IRI NAMES, and it is what decides every capability in the roster
+   * — `permitsOf` is built from `profile.roles` and nothing had ever fetched the document those
+   * roles claim to have come from. That was residual gap 10.
+   *
+   * Optional, and absent means exactly one thing: this fold was not asked. It reports
+   * {@link Roster.roleTableBinding} as `'unchecked'` and behaves as it always did — a role table
+   * the caller typed, agreeing with the workspace on an IRI and on nothing else. Every caller
+   * that predates this field is in that state and must keep being told so.
+   *
+   * ★ THIS IS EVIDENCE, NOT A SOURCE — the third time this file has had to say it, and the
+   * reason it is said again rather than cross-referenced is that the substitution is MORE
+   * tempting here than it was for the convener. The fold holds the whole document, so
+   * `profile.roles = evidence.document.roles` is one line and it looks like a fix. It is the
+   * escalation: a caller folding against a table narrower than the published one would start
+   * conferring everything the published one permits, so supplying evidence would WIDEN
+   * authority. This field can refuse the caller's table; it can never replace it.
+   */
+  readonly roleTableEvidence?: RoleTableEvidence;
 }
 
 /**
@@ -604,12 +665,60 @@ export type ConvenerEvidence =
  * IRI dereferenced must be the workspace being folded, and the descriptor that dereference
  * resolved to must be the record's own `head`. Those catch the realistic failure, which is not
  * a liar but a federated composer holding one workspace record per pod it read and attaching
- * the wrong one to this roster. A caller that hand-writes both fields beside a record it
- * forged is not caught here and cannot be — the same residue `FieldProvenance` carried until
- * `membership.ts` existed to produce it, and it is closed the same way: by there being a
- * producer, and by the substrate refusing to let bee be what `<WS>` returns.
+ * the wrong one to this roster.
+ *
+ * ★★ AND THE HAND-WRITTEN PAIR IS NOW UNWRITABLE, WHICH IS WHAT THE PARAGRAPH ABOVE THIS ONE
+ * USED TO CONCEDE.
+ *
+ * What stood here said a caller hand-writing both fields beside a forged record "is not caught
+ * here and cannot be", and filed it as the residue of residual gap 9. The first half stays true
+ * — this function still cannot fetch — and the second half was false, because the check was
+ * never the only place to intervene. A claim nobody can WRITE never reaches a check.
+ *
+ * So this type is BRANDED: it intersects {@link ObtainedByDereferencingTheWorkspace}, an
+ * ambient class with a PRIVATE member, and the class is not exported. TypeScript's rule for a
+ * private member is nominal — only declarations originating in that one class body are ever
+ * compatible — so no module outside this one can produce a value of this type structurally.
+ * `{dereferenced: <WS>, resolvedTo: <forged descriptor>}` is a compile error at the point of
+ * writing, and so is the same literal nested inside a {@link ConvenerEvidence}. Both forms are
+ * pinned as `@ts-expect-error` cases in `tests/workspace-adversarial.test.ts`, so the day the
+ * brand stops refusing them the TYPECHECK GATE fails on an unused directive rather than the
+ * suite going quietly green over a reopened gap.
+ *
+ * ★ PRIVATE-MEMBER NOMINALITY RATHER THAN A `unique symbol` KEY, AND THE DIFFERENCE WAS
+ * MEASURED. Both refuse the bare literal. A symbol brand does NOT refuse
+ * `{...honest, resolvedTo: <forged>}` — an object spread carries the phantom key along, so a
+ * caller holding ONE honestly dereferenced provenance could rewrite either field and keep the
+ * brand, which is the whole forgery with an extra keystroke. The private member refuses that
+ * spread, because the result is an object literal and object literals have no declaration
+ * inside the class body.
+ *
+ * ★ WHAT IT DOES NOT DO, SAID HERE SO IT IS NOT DISCOVERED LATER. A brand is a compile-time
+ * property and nothing more:
+ *
+ *   — `as EvidenceProvenance` still converts, because a type assertion succeeds whenever
+ *     EITHER type is assignable to the other and the branded type is assignable to the bare
+ *     pair. There is no spelling of a brand in TypeScript that refuses an assertion. What the
+ *     brand buys is that the forgery can no longer be written by ACCIDENT or in passing: it
+ *     costs a cast, a cast is greppable, and `tests/workspace-adversarial.test.ts` pins the
+ *     set of files allowed to contain one.
+ *   — `Object.assign({}, honest, {resolvedTo: x})` also converts, because the standard
+ *     library types its return as an intersection that inherits the brand. Same class of
+ *     escape hatch, same answer.
+ *   — a value that arrived as JSON is unaffected, because `JSON.parse` returns `any` and `any`
+ *     satisfies everything. That path is exactly why {@link refuseEvidenceProvenance} keeps
+ *     every runtime string check it had; the brand is a second line, never a replacement for
+ *     the first. A RUNTIME registry (mint into a `WeakSet`, check membership here) would close
+ *     the JSON path too and was deliberately not built: it makes this module's verdict depend
+ *     on hidden process-global state, which is the one property the header promises it does
+ *     not have, and it would refuse honestly-obtained evidence the moment a composer sent it
+ *     across a process.
+ *
+ * So the honest statement of the guarantee is: the pair cannot be PAIRED WITH A RECORD IT DID
+ * NOT COME FROM in any TypeScript that does not contain a deliberate assertion, and the one
+ * assertion that mints it lives in `dereferenceWorkspaceRecord`'s file and nowhere else.
  */
-export interface EvidenceProvenance {
+export type EvidenceProvenance = ObtainedByDereferencingTheWorkspace & {
   /**
    * The IRI that was DEREFERENCED to obtain this record. MUST be the workspace being folded:
    * a caller that dereferenced somewhere else established nothing about this workspace.
@@ -620,7 +729,121 @@ export interface EvidenceProvenance {
    * {@link refuseEvidenceProvenance}.
    */
   readonly resolvedTo: string;
+};
+
+/**
+ * The nominal half of {@link EvidenceProvenance}. Not exported, and that is the whole mechanism.
+ *
+ * `declare` so it is AMBIENT: no constructor exists at runtime, nothing is emitted, and this
+ * module stays the pure one its header describes. The private member is never read and never
+ * written — its only job is to be a declaration that lives in this class body, which is the
+ * one thing TypeScript will not let another file reproduce.
+ *
+ * ★ THE MEMBER'S NAME IS THE ERROR MESSAGE. tsc reports the refusal as `Property
+ * 'mintedOnlyByDereferenceWorkspaceRecord' is missing`, so whoever hits it is told what to call
+ * instead of being told a brand exists. Renaming it degrades the diagnostic and nothing else.
+ */
+declare class ObtainedByDereferencingTheWorkspace {
+  private readonly mintedOnlyByDereferenceWorkspaceRecord: void;
 }
+
+/**
+ * How the bytes a role table was parsed from were obtained, and therefore what they are worth.
+ *
+ * ★★ THIS ENUM EXISTS BECAUSE THE PROFILE EVERY WORKSPACE HERE DECLARES CANNOT CARRY A PROOF,
+ * and writing the check as though it could would be the overclaim this file has undone three
+ * times already. `<…/applications/shared-workspace/wsp-roles-default>` is a static file on
+ * GitHub Pages. No `publish_context` wrote it, so there is no `iep:authorshipProof`, no
+ * `iep:describes`, no digested region and no signer — the substrate has never seen it. A policy
+ * that demanded a signature on a role table would refuse the only role table in existence,
+ * which is the failure direction {@link Attestation.descriptorBindingBasis} records the
+ * decision NOT to take.
+ *
+ *   signed-record   the profile lives at a `<relay>/ns/<owner>/<slug>` IRI, so it is a pod
+ *                   record: read through `get_descriptor`, roles parsed out of the region the
+ *                   substrate digested, an authorship proof beside them. Held to whatever
+ *                   strength the rest of the policy demands, and checkable afterwards by anyone.
+ *   transport-only  the profile is an ordinary HTTPS document. The whole of the evidence is
+ *                   that THIS ORIGIN SERVED THESE BYTES AT THIS URL, over TLS, at the moment of
+ *                   the read. Nobody signed them. Nothing about them is checkable afterwards,
+ *                   offline, or by anyone who was not present at the fetch, and a host that
+ *                   changes the file changes the governance with no signature to notice it by.
+ *
+ * ★ AND NO POLICY FLAG REFUSES `'transport-only'` — DECIDED, NOT OVERLOOKED. The tempting rule
+ * is "`requireFieldBinding` implies a signed role table". It fails closed on the deployed
+ * artifact and on every profile anybody publishes to a plain web server, which is most of the
+ * point of roles being DATA. What is done instead is that the value travels: it is rendered
+ * into {@link Roster.attributionNote}, so `roleTableBinding: 'bound'` can never be read as "the
+ * table was signed" by a caller who has been handed the note beside it.
+ */
+export type RoleTableAuthority = 'signed-record' | 'transport-only';
+
+/**
+ * The role table itself, as READ from the document the profile IRI names.
+ *
+ * ★ THE FOURTH RECORD, AND THE FIRST THAT IS NOT ABOUT MEMBERSHIP. `Grant` says who was offered
+ * what, `Acceptance` says who agreed, `WorkspaceRecord` says who was entitled to offer and
+ * which document governs — and this is that document. It decides what every role in the roster
+ * PERMITS, which is more than any of the other three decide, and it was the last of the four
+ * still supplied entirely by the caller.
+ *
+ * Produced by `readRoleProfileRecord` and `dereferenceRoleProfile` in `membership.ts`.
+ */
+export interface RoleProfileDocument {
+  /**
+   * The URL the bytes were actually read from: a descriptor URL for a pod record, the FINAL URL
+   * of the fetch (after any same-origin redirect) for a web document. Diagnostic — it is what
+   * an operator opens to see what this fold compared against.
+   */
+  readonly head: string;
+  /**
+   * The IRI that was DEREFERENCED to obtain them, and the field the fold actually checks.
+   *
+   * ★ GAP 9'S LESSON, APPLIED WITHOUT RE-DERIVING IT. A role profile document declares its own
+   * subject, and that subject is a triple its writer chose — exactly as a `wsp:Workspace`'s is,
+   * and exactly as unusable for the same reason. What makes a governance document THIS
+   * workspace's governance is that the IRI the workspace declares dereferences to it, so this
+   * is the value {@link refuseRoleTableAuthority} compares and the subject is not compared at
+   * all. A document served at the declared IRI that calls itself something else is still what
+   * that IRI returns; a document that calls itself the declared profile and was fetched from
+   * somewhere else is not.
+   */
+  readonly dereferenced: string;
+  /**
+   * Every `wsp:Role` the document declares, with its `wsp:permits`, in document order.
+   *
+   * Not normalised here: {@link normaliseRoleTable} is what normalises, and it is the same
+   * function `foldRoster` builds `permitsOf` with. A reader that pre-normalised would be a
+   * second implementation of the duplicate-role rule, and the two drifting is how a table could
+   * compare equal to one the fold reads differently.
+   */
+  readonly roles: readonly RoleDefinition[];
+  /** See {@link RoleTableAuthority}. Never inferred from the absence of an attestation. */
+  readonly authority: RoleTableAuthority;
+  /**
+   * What the substrate's verifier said about the profile document, where there is one to say
+   * anything about. Present only on `'signed-record'`; a `'transport-only'` document carrying
+   * one is a contradiction and {@link refuseRoleTableAuthority} refuses it as such.
+   */
+  readonly attestation?: Attestation;
+}
+
+/**
+ * What a caller found when it went and read the document its role table claims to come from.
+ *
+ * Two members for the reason {@link ConvenerEvidence} has two, and it is the same failure: a
+ * bare optional document would collapse "I did not ask" and "I asked and could not read it"
+ * into one absent field, and the second silently reopens the gap the first honestly reports as
+ * open. A profile IRI that 404s — which is the state the DEPLOYED one is in, measured — must
+ * not read as a fold that never asked.
+ */
+export type RoleTableEvidence =
+  | { readonly kind: 'declared'; readonly document: RoleProfileDocument }
+  | {
+      readonly kind: 'unreadable';
+      /** Why the profile document could not be read. Rendered into every refusal it causes. */
+      readonly why: string;
+    };
 
 /** What {@link foldRoster} was able to establish about the policy's convener. */
 export type ConvenerBinding = 'bound' | 'refused' | 'unchecked';
@@ -645,6 +868,17 @@ export type EvidenceProvenanceBinding = 'bound' | 'refused' | 'unchecked';
  * read as a guarantee it does not carry — the pairing is asserted in the tests instead.
  */
 export type RoleProfileBinding = 'bound' | 'refused' | 'unchecked';
+
+/**
+ * What {@link foldRoster} was able to establish about the role TABLE it computed capabilities
+ * from — as distinct from the IRI that table claims, which is {@link RoleProfileBinding}.
+ *
+ * A fifth identical union and a fifth separate name, for the reason the fourth has one and with
+ * the same admission attached: TypeScript is structural, so this buys nothing at the compiler
+ * and a transposition of the two fields still compiles. The pair `('bound','refused')` — the
+ * declared IRI, the wrong table behind it — is what the tests assert to hold them apart.
+ */
+export type RoleTableBinding = 'bound' | 'refused' | 'unchecked';
 
 /**
  * Why this record cannot be attributed to `expected`, or null when it can.
@@ -761,14 +995,34 @@ export function refuseAttestation(
  * readers parse every field out of the payload `get_descriptor` served, in the same response
  * the binding verdict came from.
  *
- * ★ AND IT IS STILL A CLAIM THIS PURE MODULE CANNOT CHECK, exactly like `Attestation`. A
- * caller can hand-build `{source: 'payload', descriptor: head}` beside invented fields, and
- * nothing here can tell. What the fold CAN do — and does, in {@link refuseFieldBinding} — is
- * the one check that is not self-certifying: `descriptor` must be the record's own `head`.
- * That catches the realistic failure, which is not a liar but a composer reading many pods
- * and attaching one record's parsed fields to another record's head.
+ * ★ AND IT IS STILL A CLAIM THIS PURE MODULE CANNOT CHECK AT RUNTIME, exactly like
+ * `Attestation`. What the fold CAN do — and does, in {@link refuseFieldBinding} — is the one
+ * check that is not self-certifying: `descriptor` must be the record's own `head`. That catches
+ * the realistic failure, which is not a liar but a composer reading many pods and attaching one
+ * record's parsed fields to another record's head.
+ *
+ * ★★ AND HAND-BUILDING `{source: 'payload', descriptor: head}` BESIDE INVENTED FIELDS IS NOW A
+ * COMPILE ERROR, which is what this paragraph used to concede was undetectable.
+ *
+ * The same closure {@link EvidenceProvenance} carries, applied to the same shape of claim one
+ * layer down, and applied in the same round DELIBERATELY: these two are the family, they were
+ * conceded in identical words, and closing one and filing the other would leave the weaker of
+ * the two holding the whole gate. `requireFieldBinding` is the flag `requireEvidenceProvenance`
+ * does NOT imply and is not implied by, so a policy can rest on either alone.
+ *
+ * The type intersects {@link ParsedFromTheRecordsOwnPayload}, a non-exported ambient class with
+ * a private member, so a literal written anywhere but `membership.ts` does not typecheck — and
+ * neither does `{...honest, descriptor: <another record>}`, which is the version a symbol brand
+ * would have let through. Read {@link EvidenceProvenance} for the measured comparison and for
+ * the three escape hatches a compile-time brand does not close; every word of it applies here
+ * unchanged, which is why it is not restated.
+ *
+ * ★ AND `refuseFieldBinding` KEEPS ITS `source !== 'payload'` GUARD, which the brand now makes
+ * look like dead code. It is not. That branch exists for a value that arrived as JSON, and JSON
+ * arrives as `any` — the one thing no brand narrows. Deleting it because the type "cannot" hold
+ * another source is how the guard would come off.
  */
-export interface FieldProvenance {
+export type FieldProvenance = ParsedFromTheRecordsOwnPayload & {
   /**
    * `'payload'` — every field on this record was parsed from the record's own bytes.
    *
@@ -781,6 +1035,26 @@ export interface FieldProvenance {
    * {@link refuseFieldBinding}.
    */
   readonly descriptor: string;
+};
+
+/**
+ * The nominal half of {@link FieldProvenance}. Not exported; see
+ * {@link ObtainedByDereferencingTheWorkspace} for why the mechanism is a private member on an
+ * ambient class rather than a `unique symbol` key, and for what it does not buy.
+ *
+ * ★ A SECOND CLASS RATHER THAN A SHARED ONE, and the honest reason is the DIAGNOSTIC, not
+ * assignability. The two types' public fields (`source`/`descriptor` versus
+ * `dereferenced`/`resolvedTo`) already share no name, so one brand over both would not make
+ * them interchangeable today and the separation buys nothing at the compiler — the same
+ * admission {@link EvidenceProvenanceBinding} makes about its own separate name. What it buys
+ * is the error text: a reader who writes the wrong literal is told
+ * `mintedOnlyByTheReadersInMembership` rather than a name covering two unrelated claims, and
+ * the two are carried side by side on one {@link ConvenerEvidence} (`evidence.provenance` and
+ * `evidence.record.fieldProvenance`) where a message naming the wrong one would send them to
+ * the wrong producer.
+ */
+declare class ParsedFromTheRecordsOwnPayload {
+  private readonly mintedOnlyByTheReadersInMembership: void;
 }
 
 /** Half a membership, from the convener's pod. `head` is the descriptor URL of this version. */
@@ -1497,6 +1771,50 @@ export interface Roster {
    * this check, and cannot be caught by a function that cannot fetch.
    */
   readonly evidenceProvenanceBinding: EvidenceProvenanceBinding;
+  /**
+   * Whether the role TABLE this fold computed every capability from is the table the document
+   * at `profile.profile` actually contains.
+   *
+   *   bound       `attestation.roleTableEvidence` carried a role profile document, it was
+   *               obtained by dereferencing the IRI this fold's `RoleProfile` claims, and the
+   *               roles it declares are — role for role, capability for capability, under the
+   *               same duplicate-intersection rule `permitsOf` applies — the roles this fold
+   *               used. The capabilities below are the capabilities that document publishes.
+   *   refused     the policy asked and did NOT get that. Either the two tables differ, or the
+   *               document was fetched from a different IRI, or one of the two named no IRI, or
+   *               the document contradicts itself about how it was obtained, or a signed
+   *               profile's own authorship did not hold up, or the caller asked and the read
+   *               failed. NO GRANT CONFERRED — every one is in `unattested` with the reason —
+   *               and every revocation and withdrawal still applied.
+   *   unchecked   no policy, or a policy that passed no role-table evidence. `profile.roles` is
+   *               a table the caller typed and nothing compared it with the document it claims
+   *               to have come from. This is what every caller written before this field does,
+   *               and the roster it produces is indistinguishable from a checked one except
+   *               through this field.
+   *
+   * Non-omittable, for the reason the five fields above are.
+   *
+   * ★ WHAT `'bound'` DOES NOT MEAN, AND THE FIRST CLAUSE IS THE ONE MOST AT RISK OF BEING
+   * OVER-READ. It does NOT mean the table was signed. The profile every workspace in this repo
+   * declares is a static file on GitHub Pages and CANNOT be signed — see
+   * {@link RoleTableAuthority} — so for that document `'bound'` means *these are the bytes that
+   * origin served at that URL at the moment of the read*, and no more. Which of the two grades
+   * was reached is stated in words in {@link attributionNote}, because a caller reading a
+   * three-valued enum has not been told the difference between a TLS fetch and a proof.
+   *
+   * ★ AND IT DOES NOT MEAN THE WORKSPACE DECLARES THIS PROFILE. That is
+   * {@link roleProfileBinding}, off a different record, and the two are independent inputs: a
+   * fold given role-table evidence and no workspace evidence reports `('unchecked','bound')` —
+   * a table faithfully read from a document nobody has shown governs this workspace.
+   *
+   * ★ AND THE RESIDUE IS THE ONE THE OTHER FOUR CARRY. This module is pure and fetches nothing,
+   * so `RoleTableEvidence` is the CALLER'S statement that it performed that dereference, in
+   * exactly the sense {@link Attestation} is its statement about a verifier's answer. What the
+   * statement is worth is what its producer is worth — `dereferenceRoleProfile` in
+   * `membership.ts` — and unlike a workspace IRI, whose owner segment names a pod the substrate
+   * defends, a web IRI is defended only by TLS and by whoever holds the host.
+   */
+  readonly roleTableBinding: RoleTableBinding;
 }
 
 const uniqueSorted = (xs: readonly string[]): string[] => [...new Set(xs)].sort();
@@ -1516,6 +1834,276 @@ function groupBy<T>(xs: readonly T[], key: (x: T) => string): Map<string, T[]> {
     if (g) g.push(x); else m.set(k, [x]);
   }
   return m;
+}
+
+/**
+ * A role table, reduced to what it actually PERMITS: one entry per role, capabilities unique
+ * and sorted, a role declared more than once INTERSECTED rather than overwritten.
+ *
+ * ★ EXTRACTED FROM `foldRoster`, AND SHARING IT IS THE POINT RATHER THAN THE TIDINESS. This was
+ * the nine lines that built `permitsOf`, and {@link refuseRoleTableAuthority} has to compare two
+ * tables under exactly the rule the fold reads them under. A second implementation — even a
+ * correct one — would mean `roleTableBinding: 'bound'` asserts "these two tables agree under MY
+ * normalisation" while every capability below is computed under ANOTHER, and the pair drifting
+ * is a disagreement the fold reports as agreement. That is the defect class this whole file is a
+ * record of, so the two are one function.
+ *
+ * The intersection rule itself is not new and its reason is unchanged: a profile declaring
+ * `#Observer` narrow then wide gave the Observer append, grant and revoke; reversed, none of the
+ * three; `divergences` was empty both ways. Order-dependent privilege in a published governance
+ * document, decided by which triple the parser emitted last.
+ *
+ * `duplicated` comes back beside the table because the fold REPORTS duplicates as a divergence
+ * and a caller that only got the reduced map could not. Returning both is what let the
+ * extraction be a move rather than a rewrite.
+ */
+export function normaliseRoleTable(roles: readonly RoleDefinition[]): {
+  readonly permits: ReadonlyMap<string, readonly Capability[]>;
+  readonly duplicated: ReadonlySet<string>;
+} {
+  const permits = new Map<string, string[]>();
+  const duplicated = new Set<string>();
+  for (const r of roles) {
+    const caps = uniqueSorted([...r.permits]);
+    const prior = permits.get(r.role);
+    if (prior === undefined) { permits.set(r.role, caps); continue; }
+    duplicated.add(r.role);
+    permits.set(r.role, intersect(prior, caps));
+  }
+  return { permits, duplicated };
+}
+
+/**
+ * How the caller's role table differs from the document's, or null when it does not.
+ *
+ * ★ ANY DIFFERENCE IS A DIFFERENCE, INCLUDING THE ONES THAT NARROW, and that is a decision
+ * rather than laziness. The escalating direction — the caller permitting something the document
+ * does not — is the attack, and reporting only it would be enough to stop the attack. Two things
+ * argue for the stricter rule. `knownRole` picks the NARROWEST-permits role among a principal's
+ * grant heads, so a caller that merely OMITS a role changes the label printed beside a member's
+ * capabilities: an omission moves a security output, in a direction a subset check cannot see.
+ * And `'bound'`'s contract is "the capabilities below are the capabilities that document
+ * publishes" — a claim that is only literally true when the tables are equal, and this file's
+ * standing complaint is about claims that are nearly true.
+ *
+ * ★ THE MESSAGE LEADS WITH THE WIDENING. An operator holding both a widening and a narrowing
+ * needs the widening first: it is the one that conferred authority nobody published, and the
+ * other is a roster that under-privileges somebody who will say so within the hour.
+ */
+function compareRoleTables(
+  callers: readonly RoleDefinition[], documents: readonly RoleDefinition[],
+): string | null {
+  const mine = normaliseRoleTable(callers).permits;
+  const theirs = normaliseRoleTable(documents).permits;
+  const widened: string[] = [];
+  const narrowed: string[] = [];
+  for (const role of uniqueSorted([...mine.keys()])) {
+    const a = mine.get(role) ?? [];
+    const b = theirs.get(role);
+    if (b === undefined) {
+      // A role the caller declares and the document does not. Counted as a widening, because
+      // that is what it is: the fold will confer this role's capabilities on any grant naming
+      // it, and the published governance says the role does not exist.
+      widened.push(`<${role}> is not declared by the document at all, and this fold gives it `
+        + `[${a.join(', ')}]`);
+      continue;
+    }
+    const extra = a.filter(c => !b.includes(c));
+    const absent = b.filter(c => !a.includes(c));
+    if (extra.length > 0) widened.push(`<${role}> is given [${extra.join(', ')}] here and is not given it there`);
+    if (absent.length > 0) narrowed.push(`<${role}> is given [${absent.join(', ')}] there and not here`);
+  }
+  for (const role of uniqueSorted([...theirs.keys()]).filter(r => !mine.has(r))) {
+    narrowed.push(`<${role}> is declared by the document and not by this fold`);
+  }
+  if (widened.length === 0 && narrowed.length === 0) return null;
+  return [
+    ...(widened.length > 0 ? [`it PERMITS MORE than the document does — ${widened.join('; ')}`] : []),
+    ...(narrowed.length > 0 ? [`it permits less than the document does — ${narrowed.join('; ')}`] : []),
+  ].join(', and ');
+}
+
+/**
+ * Why the role table this fold computed capabilities from cannot be treated as the table the
+ * document at its own profile IRI contains, or null when it can.
+ *
+ * ── WHAT THIS IS FOR: RESIDUAL GAP 10 ────────────────────────────────────────
+ *
+ * {@link refuseRoleProfileAuthority} one function up compares an IRI with an IRI. It establishes
+ * that the caller's table CLAIMS to be the profile the workspace declares, and `roster.ts` is
+ * pure, so nothing had ever read the document behind that claim. Measured: a fold reporting
+ * `convenerBinding: 'bound'`, `roleProfileBinding: 'bound'`, `recordFieldBinding: 'bound'` and
+ * an empty `unattested` handed an `#Observer` the `grant` and `revoke` capabilities, because
+ * `{profile: <the declared IRI>, roles: [anything]}` agrees on every IRI anybody compares.
+ *
+ * ── THE THREE DIRECTIONS, COPIED DELIBERATELY ────────────────────────────────
+ *
+ * This is the fourth guard in this family and the shape is the one that survived four reviews.
+ * It is copied rather than improvised, and copied WITH its reasons so a later edit cannot
+ * mistake any of the three for an accident:
+ *
+ *   EVIDENCE, NEVER A SOURCE. There is no `profile.roles = document.roles`, for the reason there
+ *   is no `convener = ws.convener`. The substitution is more tempting here — the fold holds the
+ *   whole document, so it is one line — and it is the same escalation: a caller folding against
+ *   a narrower table than the published one would start conferring everything the published one
+ *   permits, so supplying evidence would WIDEN authority. See
+ *   {@link AttestationPolicy.roleTableEvidence}.
+ *
+ *   THE CONFERRING TRACK ALONE, enforced by the caller and not here. This returns a string;
+ *   {@link foldRoster} puts it at the end of the grant filter's `??` chain and nowhere else, so
+ *   a table this fold will not accept removes the power to make members and leaves every
+ *   revocation, withdrawal and divergence exactly where a fold with no evidence at all leaves
+ *   them. Round 3 shipped the inversion of that at a narrower gate and had to undo it.
+ *
+ *   ASKING AND GETTING NOTHING IS A REFUSAL. `'unreadable'` refuses. This matters more here than
+ *   it did for the workspace record, because the deployed profile IRI 404s: the honest state of
+ *   the live artifact lands on this branch, and a branch that passed would report the strictest
+ *   check in the policy as satisfied by a document nobody could read.
+ *
+ * ★ AND THE SUBJECT IS NOT COMPARED — see {@link RoleProfileDocument.dereferenced} for why, and
+ * do not add it back as a "free" extra check. A document's own subject is a triple its writer
+ * chose, which gap 9 established the hard way; requiring it buys nothing against any attack and
+ * refuses the ordinary case where a governance document is served at a URL that is not the name
+ * it goes by.
+ *
+ * Every branch refuses. The only path to null is a document obtained by dereferencing the IRI
+ * this fold's table claims, declaring exactly the roles and exactly the capabilities this fold
+ * used, coherent about how it was obtained, and — where it is a pod record — holding up as one
+ * at whatever strength the rest of the policy demands.
+ */
+export function refuseRoleTableAuthority(args: {
+  readonly evidence: RoleTableEvidence;
+  /**
+   * The caller's own table AND its claimed IRI, passed whole rather than as two arguments: the
+   * comparison is between a (IRI, table) pair and a document, and splitting it would let a
+   * caller's IRI be checked against one thing and its roles against another.
+   */
+  readonly profile: RoleProfile;
+  readonly signerOf?: SignerResolver;
+  readonly requireContentBinding?: boolean;
+}): string | null {
+  const { evidence, profile } = args;
+  // Read before the narrowing erases it, for the reason all three siblings do: this arrives as
+  // JSON through `can.ts` in a federated composer, where the type guarantees nothing about a
+  // value the compiler did not see written.
+  const tag: string = evidence.kind;
+  if (evidence.kind === 'unreadable') {
+    return 'the role profile document that would say what these roles permit could not be read '
+      + `(${evidence.why}). This policy ASKED, and an unanswered question about what a role `
+      + 'permits is not the same as never having asked — so nothing CONFERS. Every revocation '
+      + 'and withdrawal still applies, because refusing to confer is not deleting a record';
+  }
+  if (tag !== 'declared') {
+    return `the role table evidence is tagged '${tag}', which is neither 'declared' nor `
+      + "'unreadable'. An unknown tag establishes nothing about what any role permits, and a tag "
+      + 'that fell through to the declared branch is how a third value once reported a binding '
+      + 'off the back of nothing';
+  }
+  const doc: RoleProfileDocument | undefined = evidence.document;
+  if (doc === undefined) {
+    return "the role table evidence is tagged 'declared' and carries no document. A declaration "
+      + 'with nothing in it declares no role table';
+  }
+  // ★ BOTH EMPTIES REFUSED BEFORE THE COMPARISON, AND THAT ORDER IS THE GUARD — the same lesson
+  // `refuseRoleProfileAuthority` learned one function up, where two blank profile IRIs compared
+  // equal and the fold reported the governance as bound because neither side named any. A
+  // caller with no `profile` IRI and a producer that recorded no dereference both arrive as
+  // `''`, and left to the `!==` below they would MATCH.
+  if (typeof profile.profile !== 'string' || profile.profile === '') {
+    return 'this fold was handed a RoleProfile that names no profile IRI at all, so there is no '
+      + 'document its role table could be shown to have come from. An unnamed table cannot be '
+      + 'checked against anything, however faithfully something else was read';
+  }
+  if (typeof doc.dereferenced !== 'string' || doc.dereferenced === '') {
+    return `this fold folded against the role profile <${profile.profile}> and the document `
+      + 'offered as evidence states no IRI it was obtained by dereferencing, so nothing relates '
+      + 'it to that profile. Obtain it with dereferenceRoleProfile in membership.ts, which '
+      + 'records the IRI it asked for';
+  }
+  if (doc.dereferenced !== profile.profile) {
+    // The realistic failure, and it is not a liar: a composer that has read several governance
+    // documents holds one per IRI, and attaching the one it fetched for <a> to a fold against
+    // <b> produces a table that is genuine, correctly parsed, and about somewhere else.
+    return `this fold folded against the role profile <${profile.profile}> and the document `
+      + `offered as evidence was obtained by dereferencing <${doc.dereferenced}>. Reading one `
+      + 'governance document establishes nothing about another, however faithfully it was read '
+      + '— and a document\'s own subject is not consulted, because that is a triple its writer '
+      + 'chose';
+  }
+  // ★ THE HEADLINE REFUSAL, AND IT REFUSES RATHER THAN CORRECTING. Adopting `doc.roles` would be
+  // the convener inversion in the field that decides every capability in the roster: a caller
+  // whose table is NARROWER than the published one would be handed the published one and start
+  // conferring more than it asked for, so supplying evidence would grant.
+  const disagreement = compareRoleTables(profile.roles, doc.roles);
+  if (disagreement !== null) {
+    return `the role table this fold computed capabilities from is not the table `
+      + `<${doc.dereferenced}> contains: ${disagreement}. The document decides what every role `
+      + 'here permits, so no grant CONFERS — a roster folded against a table nobody published '
+      + 'reports capabilities nobody published. The document\'s table is NOT substituted for the '
+      + 'caller\'s, because a caller folding against a narrower table would then be handed the '
+      + 'wider one, and supplying evidence would grant';
+  }
+  // ── how the bytes were obtained, checked for self-consistency ──
+  //
+  // ★ THIS IS NOT A SIGNER CHECK AND THERE IS NO PRINCIPAL TO COMPARE AGAINST. A grant is
+  // attested against the convener and an acceptance against its member, because each names the
+  // party it must come from. A role profile names none: governance is published at an IRI, and
+  // what makes it this workspace's governance is that the workspace's own record points there —
+  // which `refuseRoleProfileAuthority` already checked, against the record's own convener.
+  // Inventing an expected signer here would mean deciding who is entitled to publish a role
+  // profile, which is a question the model does not ask and this function must not answer.
+  const authority: string = doc.authority;
+  if (authority !== 'signed-record' && authority !== 'transport-only') {
+    return `the role profile document at <${doc.head}> states how it was obtained as `
+      + `'${authority}', which is neither 'signed-record' nor 'transport-only'. An unrecognised `
+      + 'provenance is not a weak one — it is an unread one, and reading it as the weaker value '
+      + 'would let a future producer widen what `bound` means by writing a word this fold does '
+      + 'not know';
+  }
+  if (authority === 'transport-only' && doc.attestation !== undefined) {
+    // ★ THE ONE PLACE THE AUTHORITY LABEL IS CHECKED RATHER THAN BELIEVED, and it exists because
+    // the label selects which checks run. Without it, a caller holding a POD record whose
+    // authorship does not hold up could relabel it `'transport-only'` and skip the branch below.
+    // The producer that makes transport-only documents attaches no attestation and cannot — a
+    // plain HTTPS GET returns no proof — so a document carrying both contradicts itself about
+    // where it came from, and a contradiction is refused rather than resolved in either
+    // direction.
+    return `the role profile document at <${doc.head}> says it was obtained by an ordinary `
+      + 'HTTPS fetch and carries an authorship attestation, which a fetch cannot produce. The '
+      + 'document contradicts itself about where it came from, and the reading that would '
+      + 'resolve the contradiction is the one that skips the signature check';
+  }
+  if (authority === 'signed-record') {
+    if (doc.attestation === undefined) {
+      return `the role profile document at <${doc.head}> says it is a signed pod record and `
+        + 'carries no attestation at all, so nobody read its authorship proof. An unchecked '
+        + 'record is not a verified one, and the label is the only thing claiming it is either';
+    }
+    if (!doc.attestation.authorshipVerified) {
+      return `the role profile document at <${doc.head}> is a pod record whose `
+        + `iep:authorshipProof did not verify (${doc.attestation.reason ?? 'no reason given'}). `
+        + 'A declaration of what a role permits is worth exactly what its own authorship is '
+        + 'worth';
+    }
+    if (!doc.attestation.boundToDescriptor) {
+      // Refused without accusing, for the reason `refuseAttestation` gives: four situations set
+      // this flag false and only one of them is a forgery.
+      return `the role profile document at <${doc.head}> is a pod record whose authorship proof `
+        + 'does not name this descriptor'
+        + (doc.attestation.reason !== undefined ? ` (${doc.attestation.reason})` : '')
+        + ' — either the proof was minted for another record and copied in, or this record does '
+        + 'not follow the naming convention the binding is compared on. Both are refused; only '
+        + 'one of them is a forgery, and this layer cannot tell which';
+    }
+    if (args.requireContentBinding === true && doc.attestation.contentBinding !== 'bound') {
+      const observed = doc.attestation.contentBinding ?? 'unbound';
+      return `the role profile document at <${doc.head}> is a pod record and this policy `
+        + `requires its proof to have been checked against the bytes served for it, which came `
+        + `back '${observed}'. The roles above were parsed out of a payload nobody re-digested, `
+        + 'so they are whatever the document says now rather than what its signer signed';
+    }
+  }
+  return null;
 }
 
 /**
@@ -1550,15 +2138,13 @@ export function foldRoster(args: {
   // of the three; `divergences` was empty both ways and `explain()` affirmed whichever
   // answer came out. Order-dependent privilege in a published governance document, decided
   // by which triple the parser emitted last.
-  const permitsOf = new Map<string, string[]>();
-  const duplicatedRoles = new Set<string>();
-  for (const r of profile.roles) {
-    const permits = uniqueSorted([...r.permits]);
-    const prior = permitsOf.get(r.role);
-    if (prior === undefined) { permitsOf.set(r.role, permits); continue; }
-    duplicatedRoles.add(r.role);
-    permitsOf.set(r.role, intersect(prior, permits));
-  }
+  //
+  // ★★ AND IT IS NOW `normaliseRoleTable`, WHICH IS THE SAME NINE LINES MOVED AND NOT A REWRITE.
+  // `refuseRoleTableAuthority` compares the caller's table with the published one and has to do
+  // it under exactly this rule; a second copy of it there would mean `roleTableBinding: 'bound'`
+  // asserts an agreement under one normalisation while every capability below is computed under
+  // another. Sharing is the guarantee, not the tidiness.
+  const { permits: permitsOf, duplicated: duplicatedRoles } = normaliseRoleTable(profile.roles);
   // ★ A PRINCIPAL APPEARING TWICE IS INTERSECTED, NOT OVERWRITTEN.
   //
   // `new Map(scopes.map(...))` silently last-wins, which is last-write-wins on a
@@ -1670,6 +2256,47 @@ export function foldRoster(args: {
   const evidenceProvenanceBinding: EvidenceProvenanceBinding = !askedForEvidenceProvenance
     ? 'unchecked'
     : evidenceRefusal === null ? 'bound' : 'refused';
+  // ★ THE FOURTH CONSTANT REFUSAL, AND THE ONLY ONE THAT IS NOT ABOUT THE WORKSPACE RECORD. The
+  // three above all read one `wsp:Workspace`; this reads the document that record's
+  // `wsp:roleProfile` NAMES, which is what decides every capability below. Computed here beside
+  // them and for the same two reasons: it is a fact about the POLICY and identical for every
+  // grant, so evaluating it per row would cost N times as much and would invite a later edit to
+  // make a policy-level gate depend on the row.
+  //
+  // ★ GATED ON THE EVIDENCE BEING PRESENT RATHER THAN ON A FLAG, like the convener's and the
+  // profile's and unlike `requireEvidenceProvenance`. A caller that went and read the document
+  // has already paid the cost the flag would be protecting; comparing what came back is free,
+  // and refusing more is always safe. `roleTableBinding` reports whether anybody asked.
+  const roleTableEvidence = args.attestation?.roleTableEvidence;
+  const tableRefusal = args.attestation === undefined || roleTableEvidence === undefined
+    ? null
+    : refuseRoleTableAuthority({
+        evidence: roleTableEvidence, profile, signerOf,
+        // The governance document is held to the SAME strength as the records it governs, for
+        // the reason the workspace record is. `requireFieldBinding` is deliberately NOT passed
+        // through: a role profile carries no `FieldProvenance` — see `RoleProfileDocument` —
+        // because the only producer that could mint one is the pod-record path, and demanding
+        // it would refuse every profile served from an ordinary web host, which is the deployed
+        // one and most of the point of roles being data.
+        requireContentBinding: requireBinding,
+      });
+  const roleTableBinding: RoleTableBinding =
+    args.attestation === undefined || roleTableEvidence === undefined
+      ? 'unchecked'
+      : tableRefusal === null ? 'bound' : 'refused';
+  // ★ THE GRADE IN WORDS, AND IT IS A NAMED CONST BECAUSE THE NOTE IS ALREADY FOUR TERNARIES
+  // DEEP. A fifth, nested inside a template literal inside the fourth, is how a sentence ends up
+  // rendered on the wrong branch — and this is the sentence that keeps `roleTableBinding:
+  // 'bound'` from being read as "somebody signed this". Rendered only in the `'bound'` branch,
+  // where the evidence is present by construction; the `else` is the value that claims least, so
+  // an evidence shape this expression does not recognise cannot upgrade the claim.
+  const roleTableGrade = roleTableEvidence !== undefined
+    && roleTableEvidence.kind === 'declared'
+    && roleTableEvidence.document.authority === 'signed-record'
+    ? 'as a SIGNED POD RECORD, so its authorship was checked and anyone can check it again'
+    : 'by an ORDINARY HTTPS FETCH, so the whole of the evidence is that this origin served '
+      + 'these bytes at that URL at the moment of the read — nobody signed them, and nobody '
+      + 'who was not present at the fetch can check them';
   if (args.attestation) {
     const convener = args.attestation.convener;
     conferringGrants = inWorkspaceGrants.filter(g => {
@@ -1699,11 +2326,19 @@ export function foldRoster(args: {
       // the operator with more than one wants the republishable fault named first, and a fold
       // whose evidence came from the wrong place confers nothing even once the other two are
       // settled.
+      //
+      // ★ AND THE ROLE TABLE IS LAST OF ALL, BEHIND ALL THREE. Same reasoning one step further,
+      // and the order between it and the profile IRI is load-bearing rather than arbitrary:
+      // WHICH document governs must be settled before WHAT is inside it is worth comparing. A
+      // fold whose workspace declares one profile while the caller folded against another would
+      // otherwise report a table disagreement, and send an operator to reconcile two governance
+      // documents when the repair is to fold against the declared one and re-read.
       const why = refuseAttestation(g.attestation, convener, signerOf, requireBinding)
         ?? refuseFieldBinding(g.fieldProvenance, g.head, requireFields)
         ?? convenerRefusal
         ?? profileRefusal
-        ?? evidenceRefusal;
+        ?? evidenceRefusal
+        ?? tableRefusal;
       if (why === null) return true;
       unattested.push({
         kind: 'grant', head: g.head, principal: g.grantedTo, because: why,
@@ -1711,11 +2346,12 @@ export function foldRoster(args: {
       });
       return false;
     });
-    // ★ AND NONE OF `convenerRefusal`, `profileRefusal` OR `evidenceRefusal` IS IN THIS CHAIN.
-    // A convener disagreement is about who may GRANT, a profile disagreement is about what a
-    // granted role permits, and an evidence-provenance refusal is about how this fold was
+    // ★ AND NONE OF `convenerRefusal`, `profileRefusal`, `evidenceRefusal` OR `tableRefusal` IS
+    // IN THIS CHAIN. A convener disagreement is about who may GRANT, a profile disagreement is
+    // about which document governs, a table disagreement is about what is inside that document,
+    // and an evidence-provenance refusal is about how this fold was
     // assembled; an acceptance is a member's own statement about their own pod and is no
-    // less theirs because the policy got any of the three wrong. Adding them here would
+    // less theirs because the policy got any of the four wrong. Adding them here would
     // refuse strictly more — monotone, so not unsafe — and would print a line accusing every
     // member of something the CONVENER's side got wrong, in the one channel operators are told
     // to watch. It also buys nothing: a member needs a conferring grant AND a conferring
@@ -2093,6 +2729,33 @@ export function foldRoster(args: {
               + `<${workspace}> returns. Read it with dereferenceWorkspaceRecord in `
               + 'membership.ts and pass `requireEvidenceProvenance` to close it. See '
               + '`evidenceProvenanceBinding`.')
+        // ★ AND A FOURTH SENTENCE, BECAUSE THE THREE ABOVE ARE ALL ABOUT ONE RECORD AND NONE OF
+        // THEM IS ABOUT THE DOCUMENT THAT DECIDES WHAT A ROLE PERMITS. The profile sentence
+        // says an IRI matched; this says whether anybody read what is behind it. It also
+        // carries the GRADE in words, because `roleTableBinding` is a three-valued enum and the
+        // difference between a signed pod record and a TLS fetch of a static file is not
+        // expressible in it — and the profile this repo publishes can only ever be the second.
+        + (roleTableBinding === 'bound'
+          ? ' The ROLE TABLE was read from the document it claims: '
+            + `<${profile.profile}> was dereferenced, and the roles it declares are role for `
+            + 'role and capability for capability the roles these capabilities were computed '
+            + `from. That document was obtained ${roleTableGrade}. Residual: this fold is pure `
+            + 'and fetched nothing, so that is the caller\'s statement about a read it '
+            + 'performed. See `roleTableBinding`.'
+          : roleTableBinding === 'refused'
+            ? ' The ROLE TABLE was read from the document it claims and did NOT match, so '
+              + 'nothing here confers: every grant is listed in `unattested`, and `members` is '
+              + 'empty of anyone who needed one. The document decides what every role permits, '
+              + 'so a roster folded against a table nobody published would report capabilities '
+              + 'nobody published. Revocations and withdrawals still applied — refusing to '
+              + 'confer is not deleting a record. See `roleTableBinding`.'
+            : ' RESIDUAL, and it is the one under the profile sentence above: nothing read the '
+              + `document <${profile.profile}> names. What was compared there is an IRI; the `
+              + 'role TABLE behind it is this fold\'s own, and every capability above was '
+              + 'computed from it, so a table claiming the declared IRI over an invented set of '
+              + 'permits reports exactly this roster. Read it with dereferenceRoleProfile in '
+              + 'membership.ts and pass `roleTableEvidence` to close it. See '
+              + '`roleTableBinding`.')
       : 'Membership is ASSERTED, not attested: no grant or acceptance was checked for an '
         + 'authorship proof, so a convener who holds both records could have written both '
         + 'halves and this list would look identical. Pass `attestation` to foldRoster to '
@@ -2127,6 +2790,11 @@ export function foldRoster(args: {
     // a stranger published for this workspace IRI on their own pod, which is what residual gap
     // 9 was; this reports whether anybody asked.
     evidenceProvenanceBinding,
+    // A SIXTH, and the first that is not about the workspace record at all. The four above can
+    // every one of them be `'bound'` over a fold whose `#Observer` permits `grant` and `revoke`,
+    // because they compare a convener, an IRI and a descriptor URL and never the role table
+    // those IRIs name. That was residual gap 10; this reports whether anybody read it.
+    roleTableBinding,
   };
 }
 

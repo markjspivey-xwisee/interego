@@ -334,7 +334,41 @@ describe('OODA Loop (Boyd)', () => {
     cycle = orient(cycle, fullProfile, state);
 
     expect(cycle.orientation.affordanceCache.size).toBe(1);
-    expect(cycle.orientation.trustedSources.size).toBeGreaterThanOrEqual(0);
+    // `buildAssertedDescriptor` carries no AgentFacet, so there is no asserting agent to
+    // key a trusted source on. Pinned at EXACTLY 0 rather than `>= 0`, which is what this
+    // line used to say — see the test below for what that vacuity was covering.
+    expect(cycle.orientation.trustedSources.size).toBe(0);
+  });
+
+  // ★ THE TEST THE VACUOUS `toBeGreaterThanOrEqual(0)` ABOVE WAS STANDING IN FOR.
+  //
+  // `orient()` keys `trustedSources` by the observation's own asserting agent, and it read
+  // that agent off `assertingAgent.agentIdentity` — the RDF PREDICATE name. The TypeScript
+  // property is `identity`. The read was `undefined` for every descriptor ever observed,
+  // the `if` never fired, and the map was always empty. Nothing failed, because the only
+  // assertion on it passed on zero and the one fixture in this file has no AgentFacet at
+  // all. Both halves are needed: a descriptor that HAS an asserting agent, and an equality
+  // rather than a floor.
+  it('orient keys trustedSources by the observation\'s asserting agent', () => {
+    const withAgent = ContextDescriptor.create('urn:iep:test:authored' as IRI)
+      .describes('urn:graph:test:data' as IRI)
+      .temporal({ validFrom: '2026-01-01T00:00:00Z' })
+      .asserted(0.9)
+      .agent('did:web:carol.example' as IRI, 'Author')
+      .selfAsserted('did:web:carol.example' as IRI)
+      .version(1)
+      .build();
+
+    let cycle = createOODACycle();
+    cycle = observe(cycle, [withAgent]);
+    cycle = orient(cycle, fullProfile, createAgentState(fullProfile));
+
+    expect([...cycle.orientation.trustedSources.keys()]).toEqual(['did:web:carol.example']);
+    // And the VALUE is the descriptor's own trust evaluation, not a placeholder — a fix
+    // that populated the map with the right key and the wrong evaluation would otherwise
+    // pass. `selfAsserted` above puts SelfAsserted on the Trust facet.
+    expect(cycle.orientation.trustedSources.get('did:web:carol.example' as IRI)?.trustLevel)
+      .toBe('SelfAsserted');
   });
 
   it('decide selects affordances matching desires', () => {

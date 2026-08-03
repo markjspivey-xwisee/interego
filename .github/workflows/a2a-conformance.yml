@@ -95,8 +95,10 @@ env:
 #      CORE-SEND-003 — "SendMessage returns ContentTypeNotSupportedError for
 #      unsupported media"
 #
-#    Its RequirementSpec sets no `expected_error` (CORE-SEND-002, three entries above it
-#    in the same file, does). Without one, `_validate_response` falls through to the
+#    Its RequirementSpec sets no `expected_error` (CORE-SEND-002, the entry IMMEDIATELY
+#    above it in the same file, does — this said "three entries above", which is wrong and
+#    is corrected rather than deleted because the value of this block is that its every
+#    claim is checkable). Without one, `_validate_response` falls through to the
 #    generic `if not response.success` branch, so ANY error fails and only a 2xx passes —
 #    from a requirement whose own title and description say an error MUST be returned.
 #    A previous round attributed this to our inline-bytes divergence and published that
@@ -154,8 +156,62 @@ env:
 #        declare `urn:a2a:tck:required-extension` — an extension URI owned by the
 #        suite — as required. Closable only by recognising the examiner.
 #
+#        ★ AND THAT LAST SENTENCE IS NOW A PROOF, NOT A PREFERENCE. It reads like taste
+#        until you look at `_send_and_validate`, which is the whole of the mechanism:
+#        it sends ONE fixed payload — role ROLE_USER, a single text part reading "TCK
+#        prerequisite task creation" — and then checks only the resulting task state.
+#        It does not check that any scenario was recognised. So a reader could
+#        reasonably conclude the 4 COMPLETED skips are closable honestly, by completing
+#        simple tasks synchronously. They are not: `create_working_task` sends the
+#        IDENTICAL payload and requires TASK_STATE_INPUT_REQUIRED. The two groups differ
+#        in exactly one byte-range — `messageId: tck-complete-task-<s>` versus
+#        `tck-input-required-<s>` — so no single deterministic behaviour over the request
+#        CONTENT can satisfy both. Reading the messageId is not one way to pass these;
+#        it is the only way. (Completing everything synchronously would un-skip 4 and
+#        leave 3 skipped, and those 4 would then have to PASS or this ratchet drops.)
+#
 #   104 + 64 + 9 = 177. If that stops adding up, the suite changed and the number
 #   above it is describing something else.
+#
+# ── ★ RE-VERIFIED, AND THIS TIME BY RE-RUNNING RATHER THAN BY RE-READING. Accounts in
+#   this repo have repeatedly been found stale while still reading plausibly, so every
+#   clause above was checked against a LIVE run — TCK at TCK_REF, SUT booted from HEAD —
+#   not against the artifact it was originally written from. Result: 235 collected /
+#   51 passed / 7 failed / 177 skipped, the same seven names, and a skip-message histogram
+#   identical term for term to the breakdown above (42+15 jsonrpc, 27+15 grpc, 3+2 older
+#   phrasing = 104; 30 push + 16+12 streaming + 3+3 agent-card = 64; 4+3 task-state + 2
+#   extension = 9). The per-transport slice reproduces too: http_json 14/6/30 of 50,
+#   untagged 37/1/36 of 74. Also re-checked at the source, one clause at a time:
+#
+#     — CORE-SEND-003 has no `expected_error` while CORE-SEND-002 does, and
+#       `_validate_response` returns early only when it is set. Confirmed in
+#       tck/requirements/core_operations.py and tests/.../test_requirements.py.
+#     — HTTP_JSON-SSE-001's crash reproduced IN THE LIVE RUN, with the traceback naming
+#       `httpx.ResponseNotRead` out of `_extract_error`'s `response.json()`. It escapes
+#       because `ResponseNotRead` subclasses RuntimeError, and the except clause catches
+#       only `(json.JSONDecodeError, ValueError)` — measured, not read off the MRO diagram.
+#     — `_CAPABILITY_TAG_TO_CARD_KEY['agent-card'] == 'extendedAgentCard'`. Confirmed.
+#     — `create_completed_task` uses prefix `complete-task`. Confirmed.
+#     — backlog/tasks/task-29 does say "CARD-EXT-001/002 were correctly skipped (not a
+#       gap)". Confirmed verbatim.
+#     — the SUT's card really does serve `capabilities: {streaming:false,
+#       pushNotifications:false, stateTransitionHistory:false}` with no extendedAgentCard
+#       key and one supportedInterfaces entry. Confirmed by curling the booted SUT.
+#     — the spec does NOT require serving all three bindings: §5.1's functional-equivalence
+#       MUSTs are conditioned on "When an agent supports multiple protocols", and §5.2
+#       requires declaring the supported set, not implementing it. So the 104 are correct
+#       declines, not a gap.
+#     — ★ "the pin is already at its tip" is the one clause here with a shelf life, and it
+#       still holds: `git ls-remote` puts refs/heads/main at 5996b79 — the same commit
+#       TCK_REF names. Re-check this specific clause, not the block, when it next matters.
+#
+#   NO RATCHET MOVEMENT. Nothing in the 177 is a conformance gap this implementation
+#   could close: 168 are the suite declining to test bindings and optional capabilities
+#   the card does not offer, and the remaining 9 are reachable only by keying on the
+#   suite's own messageId prefixes. Nor is anything among the 7 failures: five of them
+#   (the four artifact cases plus DM-MSG-001) are that same fixture protocol wearing a
+#   FAIL instead of a SKIP, and the other two are the suite's own two defects. 51/7/235
+#   stands, unchanged.
 #
 #   So the skip count is NOT a conformance gap hiding behind a fixture: 168 of the 177
 #   are the suite correctly declining to test bindings and capabilities this agent

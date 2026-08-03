@@ -17,6 +17,7 @@ import type {
   AccessControlPolicyData,
   ContextDescriptorData,
   ContextFacetData,
+  TrustFacetData,
   IRI,
 } from '@interego/core';
 // ABAC primitives now live in `@interego/abac`; importing directly
@@ -34,6 +35,7 @@ import {
   type PolicyContext,
   type PolicyPredicateShape,
   type AttributeGraph,
+  type AmtaTrustFacetData,
 } from '@interego/abac';
 
 // ── Fixtures ─────────────────────────────────────────────────
@@ -59,14 +61,33 @@ function makeContext(attrs: AttributeGraph, action: IRI = ACTION): PolicyContext
   };
 }
 
-const highTrustFacet: ContextFacetData = {
+// ★ THESE READ `CryptographicallyVerified`, NOT `HighAssurance`, AND THAT IS THE FIX.
+//
+// Every fixture below used to carry the registry's ISSUER-STANDING vocabulary
+// (`HighAssurance` / `PeerAttested`) in `TrustFacetData.trustLevel`, which holds
+// `@interego/core`'s CLAIM-BACKING vocabulary and is pinned by the published SHACL
+// shape's `sh:in`. The `as IRI` on each value is what let it through: `IRI` is
+// `string & { … }`, so the cast does not convert the literal, it only widens it back to
+// `string` — enough to stop tsc comparing it against `TrustLevel`. Four of the seven
+// sites were still caught (tsc's assignment check is stricter than its `as`
+// comparability check); the other three sat behind a wider `as ContextFacetData[]` on
+// the enclosing array and were invisible even to the gate that pinned this file.
+//
+// The translation is meaning-preserving on both axes: `HighAssurance` → the strongest
+// tier the substrate has, `CryptographicallyVerified`; `PeerAttested` on a facet where
+// bob or carol vouches for alice → `ThirdPartyAttested`, which spec/architecture.md
+// defines as exactly "another agent vouches". Nothing about what these tests exercise
+// changes — the evaluator compares strings — but the fixtures are now descriptors the
+// system could actually publish. See the note on `TrustLevel` in
+// `packages/core/src/model/types.ts` for why this vocabulary is the canonical one.
+const highTrustFacet: TrustFacetData = {
   type: 'Trust',
-  trustLevel: 'HighAssurance' as IRI,
+  trustLevel: 'CryptographicallyVerified',
   issuer: 'urn:agent:authority' as IRI,
 };
-const lowTrustFacet: ContextFacetData = {
+const lowTrustFacet: TrustFacetData = {
   type: 'Trust',
-  trustLevel: 'SelfAsserted' as IRI,
+  trustLevel: 'SelfAsserted',
   issuer: 'urn:agent:alice' as IRI,
 };
 const assertedSemioticFacet: ContextFacetData = {
@@ -81,7 +102,7 @@ const assertedSemioticFacet: ContextFacetData = {
 const highTrustShape: PolicyPredicateShape = {
   iri: 'urn:shape:HighTrust' as IRI,
   constraints: [
-    { path: 'iep:trustLevel', minCount: 1, hasValue: 'HighAssurance' },
+    { path: 'iep:trustLevel', minCount: 1, hasValue: 'CryptographicallyVerified' },
   ],
 };
 
@@ -209,6 +230,44 @@ describe('ABAC attribute resolver', () => {
     expect(graph.sources.get(assertedSemioticFacet)).toBe(d2.id);
   });
 
+  // ★ CLAUSE (b) OF `resolveAttributes`, WHICH HAD NEVER RUN. The resolver reads the
+  // asserting agent off `AgentDescription.identity`; it used to read `.agentIdentity` —
+  // the RDF predicate name — through an inline cast, so the property was always
+  // `undefined` and this whole branch was dead. Nothing here failed, because a descriptor
+  // skipped by clause (b) is indistinguishable from one that was never eligible.
+  //
+  // Both directions are pinned. The positive case is the one that was broken; the negative
+  // case is what stops a future "simplification" of the identity read from turning the
+  // clause into "any descriptor with any Agent facet contributes to anyone's graph".
+  it('includes a descriptor because its AgentFacet attributes it to the subject', () => {
+    const authoredByAlice: ContextDescriptorData = {
+      id: 'urn:desc:alice-authored' as IRI,
+      // Deliberately describes something OTHER than alice: clause (a) must not be what
+      // admits this, or the test would pass with the resolver still broken.
+      describes: ['urn:graph:unrelated' as IRI],
+      facets: [
+        { type: 'Agent', assertingAgent: { identity: SUBJECT } },
+        highTrustFacet,
+      ],
+    };
+    const graph = resolveAttributes(SUBJECT, [authoredByAlice]);
+    expect(graph.facets).toHaveLength(2);
+    expect(extractAttribute(graph, 'iep:agentIdentity')).toEqual([SUBJECT]);
+    expect(extractAttribute(graph, 'iep:trustLevel')).toEqual(['CryptographicallyVerified']);
+  });
+
+  it('does NOT include a descriptor whose AgentFacet names a different agent', () => {
+    const authoredByMallory: ContextDescriptorData = {
+      id: 'urn:desc:mallory-authored' as IRI,
+      describes: ['urn:graph:unrelated' as IRI],
+      facets: [
+        { type: 'Agent', assertingAgent: { identity: 'urn:agent:mallory' as IRI } },
+        highTrustFacet,
+      ],
+    };
+    expect(resolveAttributes(SUBJECT, [authoredByMallory]).facets).toHaveLength(0);
+  });
+
   it('skips descriptors that do not describe or attribute to the subject', () => {
     const unrelated: ContextDescriptorData = {
       id: 'urn:desc:unrelated' as IRI,
@@ -221,16 +280,20 @@ describe('ABAC attribute resolver', () => {
 
   it('extractAttribute reads semiotic and trust paths correctly', () => {
     const graph = makeAttributeGraph([highTrustFacet, assertedSemioticFacet]);
-    expect(extractAttribute(graph, 'iep:trustLevel')).toEqual(['HighAssurance']);
+    expect(extractAttribute(graph, 'iep:trustLevel')).toEqual(['CryptographicallyVerified']);
     expect(extractAttribute(graph, 'iep:epistemicConfidence')).toEqual([0.95]);
     expect(extractAttribute(graph, 'iep:modalStatus')).toEqual(['Asserted']);
   });
 
   it('extractAttribute reads AMTA-style reputation axes from Trust facets', () => {
-    const trustWithAmta = {
+    // No cast: `AmtaTrustFacetData` is `TrustFacetData & { amtaAxes? }`, which IS a
+    // `ContextFacetData`. The `as ContextFacetData` this replaces was rejected outright
+    // by tsc — a fresh literal with an undeclared property is not comparable to the
+    // union — and the field it was smuggling in is the one `extractAttribute` reads.
+    const trustWithAmta: AmtaTrustFacetData = {
       ...highTrustFacet,
       amtaAxes: { codeQuality: 0.88, trustworthiness: 0.9 },
-    } as ContextFacetData;
+    };
     const graph = makeAttributeGraph([trustWithAmta]);
     expect(extractAttribute(graph, 'amta:codeQuality')).toEqual([0.88]);
     expect(extractAttribute(graph, 'amta:trustworthiness')).toEqual([0.9]);
@@ -295,8 +358,8 @@ describe('ABAC decision cache', () => {
 
 describe('ABAC — filterAttributeGraph (sybil resistance)', () => {
   it('drops facets whose source does not satisfy the predicate', () => {
-    const trusted = { type: 'Trust', trustLevel: 'HighAssurance', issuer: 'urn:agent:bob' } as ContextFacetData;
-    const untrusted = { type: 'Trust', trustLevel: 'SelfAsserted', issuer: 'urn:agent:sybil' } as ContextFacetData;
+    const trusted: TrustFacetData = { type: 'Trust', trustLevel: 'CryptographicallyVerified', issuer: 'urn:agent:bob' as IRI };
+    const untrusted: TrustFacetData = { type: 'Trust', trustLevel: 'SelfAsserted', issuer: 'urn:agent:sybil' as IRI };
     const trustedSrc = 'urn:desc:bob-signed' as IRI;
     const untrustedSrc = 'urn:desc:sybil-signed' as IRI;
     const graph: AttributeGraph = {
@@ -313,12 +376,17 @@ describe('ABAC — filterAttributeGraph (sybil resistance)', () => {
   it('sybil-flood attack is blocked by issuer-trust filter', () => {
     // Make 5 sybil attestations + 0 real — policy fires without filter,
     // fails with filter.
-    const sybilFacets = Array.from({ length: 5 }, (_, i) => ({
+    // ★ One of the three sites the pinned typecheck error UNDERCOUNTED. `as IRI` on the
+    // value plus `as ContextFacetData[]` on the array was two casts deep, and tsc's
+    // comparability check passes on the outer one because `TrustLevel` is comparable to
+    // the widened `string`. So these carried `PeerAttested` — an issuer-standing token
+    // that is not a legal `iep:trustLevel` — with no diagnostic at all.
+    const sybilFacets: AmtaTrustFacetData[] = Array.from({ length: 5 }, (_, i) => ({
       type: 'Trust' as const,
-      trustLevel: 'PeerAttested' as IRI,
+      trustLevel: 'ThirdPartyAttested' as const,
       issuer: `urn:agent:sybil${i}` as IRI,
       amtaAxes: { codeQuality: 0.95 + i * 0.005 },
-    })) as ContextFacetData[];
+    }));
     const sybilDescs = sybilFacets.map((f, i) => ({
       id: `urn:desc:sybil${i}->alice` as IRI,
       describes: [SUBJECT],
@@ -372,25 +440,33 @@ describe('ABAC — cross-pod attribute scenario', () => {
       describes: [SUBJECT],
       facets: [lowTrustFacet],
     };
+    // Bound to a named `AmtaTrustFacetData` rather than written inline: inside
+    // `facets: [...]` the contextual type is `ContextFacetData`, so an object literal
+    // there is excess-property-checked against a union that has no `amtaAxes` and a
+    // trailing `satisfies` cannot rescue it. Naming the value first is also what makes
+    // the assignment into `facets` cast-free — the old `as ContextFacetData` here was
+    // erasing the very field the assertions below read back out.
+    const bobAxes: AmtaTrustFacetData = {
+      type: 'Trust',
+      trustLevel: 'ThirdPartyAttested',
+      issuer: 'urn:agent:bob' as IRI,
+      amtaAxes: { codeQuality: 0.85 },
+    };
+    const carolAxes: AmtaTrustFacetData = {
+      type: 'Trust',
+      trustLevel: 'ThirdPartyAttested',
+      issuer: 'urn:agent:carol' as IRI,
+      amtaAxes: { codeQuality: 0.9 },
+    };
     const bobAttestation: ContextDescriptorData = {
       id: 'urn:desc:bob-attests-alice' as IRI,
       describes: [SUBJECT],
-      facets: [{
-        type: 'Trust',
-        trustLevel: 'PeerAttested' as IRI,
-        issuer: 'urn:agent:bob' as IRI,
-        amtaAxes: { codeQuality: 0.85 },
-      } as ContextFacetData],
+      facets: [bobAxes],
     };
     const carolAttestation: ContextDescriptorData = {
       id: 'urn:desc:carol-attests-alice' as IRI,
       describes: [SUBJECT],
-      facets: [{
-        type: 'Trust',
-        trustLevel: 'PeerAttested' as IRI,
-        issuer: 'urn:agent:carol' as IRI,
-        amtaAxes: { codeQuality: 0.9 },
-      } as ContextFacetData],
+      facets: [carolAxes],
     };
     const graph = resolveAttributes(SUBJECT, [aliceSelfAssertion, bobAttestation, carolAttestation]);
     expect(graph.facets).toHaveLength(3);

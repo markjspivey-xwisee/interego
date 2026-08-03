@@ -126,9 +126,11 @@ function buildDecoratorContext(
   if (!node) throw new Error(`Node not found: ${uri}`);
   return {
     uri,
-    value: node.kind === 'Atom' ? (node as any).value : undefined,
-    kind: node.kind as 'Atom' | 'Fragment',
-    level: node.kind === 'Atom' ? 0 : (node as any).level,
+    // `Node` is a discriminated union on `kind`, so the ternary already narrows; the
+    // `as any` these replace threw that away and would have accepted `.valeu` silently.
+    value: node.kind === 'Atom' ? node.value : undefined,
+    kind: node.kind,
+    level: node.kind === 'Atom' ? 0 : node.level,
     resolved: pgslResolve(pgsl, uri),
     items: [],
     sourceOptions: [],
@@ -766,14 +768,19 @@ describe('Scenario 4: Personal Broker Memory', () => {
     let containingFragments = 0;
     for (const [, node] of pgsl.nodes) {
       if (node.kind === 'Fragment') {
-        const items = (node as any).items as IRI[];
+        // All five `as any` here are replaced by the narrowing the `kind` checks on the
+        // same lines already perform. `items[0]` is now `IRI | undefined` under
+        // noUncheckedIndexedAccess, which is why the wrapper branch guards it — the cast
+        // was hiding a real (if unreachable-in-practice) undefined read.
+        const items = node.items;
         // Check if any item resolves to auth-module's URI (directly or via wrapper)
         if (items.some(i => {
           const itemNode = pgsl.nodes.get(i);
-          if (itemNode?.kind === 'Atom') return (itemNode as any).value === 'auth-module';
-          if (itemNode?.kind === 'Fragment' && (itemNode as any).items.length === 1) {
-            const inner = pgsl.nodes.get((itemNode as any).items[0]);
-            return inner?.kind === 'Atom' && (inner as any).value === 'auth-module';
+          if (itemNode?.kind === 'Atom') return itemNode.value === 'auth-module';
+          if (itemNode?.kind === 'Fragment' && itemNode.items.length === 1) {
+            const innerUri = itemNode.items[0];
+            const inner = innerUri === undefined ? undefined : pgsl.nodes.get(innerUri);
+            return inner?.kind === 'Atom' && inner.value === 'auth-module';
           }
           return false;
         })) {

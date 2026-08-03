@@ -11,10 +11,20 @@
  *   RAILWAY_PROJECT_TOKEN=... node tools/railway-redeploy.mjs <service> <40-hex-sha>
  *   ... --verify-url https://relay.interego.xwisee.com/health
  *
+ * Valid service names, and the image each one runs: `node tools/railway-services.mjs list`.
+ * What every service is pinned to RIGHT NOW: `node tools/railway-pins.mjs`.
+ *
  * ─────────────────────────────────────────────────────────────────────────────
  * EVERY GUARD BELOW EXISTS BECAUSE AN ADVERSARIAL REVIEW FOUND THE FAILURE IT
  * PREVENTS. None of them are defensive habit; each is a specific way this deploy
  * goes wrong silently.
+ *
+ *   THE IMAGE NAME IS NOT THE SERVICE NAME. This used to compute `interego-${service}`,
+ *   which is right for thirteen of the sixteen services and wrong for three — and the
+ *   day it mattered it blocked a legitimate `css` pin for a naming reason wearing a
+ *   safety reason's clothes. The mapping is now enumerated data in
+ *   tools/railway-services.mjs, an unknown name is refused with the valid list before
+ *   any network call, and the two datastores are refused by name rather than by luck.
  *
  *   HTTP 200 IS NOT SUCCESS. Railway's GraphQL API answers 200 with an `errors`
  *   array for every failure, including auth failure. A shell step using `curl -f`
@@ -51,8 +61,9 @@
  *   only assertion that distinguishes the new container from the old one.
  */
 
+import { resolveImageRepo } from './railway-services.mjs';
+
 const EP = 'https://backboard.railway.com/graphql/v2';
-const IMAGE_PREFIX = 'ghcr.io/markjspivey-xwisee';
 
 const argv = process.argv.slice(2);
 const flag = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
@@ -67,7 +78,19 @@ if (!service) die('usage: railway-redeploy.mjs <service> <40-hex-sha> [--verify-
 // full image ref taken from input would let a dispatcher point production at any
 // registry. Only a commit sha from this repo is accepted.
 if (!/^[0-9a-f]{40}$/.test(tag ?? '')) die(`tag must be a 40-hex commit sha, got: ${tag}`);
-if (!/^[a-z0-9-]{1,40}$/.test(service)) die(`implausible service name: ${service}`);
+
+/**
+ * The service name is resolved to an image repository from the tracked table, before any
+ * network call, so an unrecognised name is refused with the list of valid ones rather
+ * than after two round trips.
+ *
+ * This REPLACES a `/^[a-z0-9-]{1,40}$/` plausibility check. That check let through every
+ * wrong name that merely looked like a right one — which is the whole population of names
+ * that get typed by mistake — and the derivation it protected (`interego-${service}`) was
+ * itself wrong for three of the sixteen services. See tools/railway-services.mjs.
+ */
+const resolved = resolveImageRepo(service);
+if (!resolved.ok) die(resolved.reason);
 
 function die(msg) { console.error(`error: ${msg}`); process.exit(2); }
 
@@ -109,7 +132,7 @@ if (matches.length !== 1) {
 }
 const serviceId = matches[0].id;
 
-const image = `${IMAGE_PREFIX}/interego-${service}:${tag}`;
+const image = `${resolved.repo}:${tag}`;
 
 // ── 2. Snapshot, so we can tell OUR deployment from the one already running.
 const q = 'query($s:String!,$e:String!){ serviceInstance(serviceId:$s,environmentId:$e){ source{image} latestDeployment{ id status } } }';
@@ -121,32 +144,33 @@ if (before.serviceInstance.source?.image === image) {
 }
 
 /**
- * ★ THE IMAGE NAME IS NOT THE SERVICE NAME, AND THIS SCRIPT ASSUMES IT IS.
+ * ★ THE TABLE IS NOT EVIDENCE. THE RUNNING SERVICE IS.
  *
- * `interego-${service}` holds for thirteen of the sixteen services and is wrong for
- * three, so the assumption is invisible until the day it isn't:
+ * tools/railway-services.mjs now supplies the image repository, which removes the
+ * `interego-${service}` derivation that was wrong for three of the sixteen services. It
+ * does NOT remove the need for this check, and deleting it as "already handled upstream"
+ * would be the mistake: the table is a tracked file, it is maintained by hand, and it can
+ * be wrong in precisely the way the derivation was — by being plausible. A service
+ * renamed in Railway, a row copied from the wrong line, a new service added to the table
+ * with a guessed image name all produce a confident, well-formatted, wrong pin.
  *
- *   css      is `interego-css-pgsl`, not `interego-css`. `interego-css:<sha>` has never
- *            existed at any sha, and still does not: build-ghcr.yml now DOES carry a
- *            matrix leg for it (`interego-css-pgsl`, with a `prebuild` step for
- *            `packages/pgsl-store/dist`), but under the real name. This sentence used to
- *            say the service had no entry in that matrix at all, and that leg's own
- *            comment points the reader here — so the note it cites was made false by the
- *            change that added it. The conclusion is unaffected: the derivation
- *            `interego-${service}` is still wrong for this service.
- *   postgres and redis are upstream images (`postgres:16`, `redis:7-alpine`). Pointing
- *            either at an interego image would replace a datastore with an application.
+ * And a wrong name does not fail loudly. Railway accepts the pin, cannot pull the image,
+ * and leaves the PREVIOUS container serving — /health keeps answering 200 from the old
+ * code while the service is pinned to something that does not exist, exactly the landmine
+ * `restorePin` below was written for. Here it is prevented instead of cleaned up.
  *
- * And a wrong name does not fail loudly. Railway accepts the pin, cannot pull the
- * image, and leaves the PREVIOUS container serving — /health keeps answering 200 from
- * the old code while the service is pinned to something that does not exist, exactly
- * the landmine `restorePin` below was written for. Here it is prevented instead of
- * cleaned up: a redeploy changes the TAG, never which image is being run, so if the
- * repository we derived is not the repository already deployed, the derivation is the
- * thing that is wrong.
+ * The invariant is what makes this checkable without a registry lookup: a redeploy
+ * changes the TAG, never which image is being run. So if the repository we resolved is
+ * not the repository already deployed, something is wrong regardless of which of the two
+ * is right, and the answer is never "proceed and find out".
  *
  * Deliberately not overridable. An escape hatch on this guard is the same command
  * typed with one more flag, at the moment somebody is already sure they are right.
+ *
+ * ★ IT DOES NOT FIRE ON A FIRST PIN. `currentRepo` is empty for a service that has never
+ * had a source image, and there is nothing to contradict then. That is why the css repoint
+ * from `interego-css-pgsl:redis6` to a sha is allowed today: the repository matches and
+ * only the tag moves, which is the one thing a redeploy is for.
  */
 const repoOf = (ref) => String(ref ?? '').replace(/:[^:/]*$/, '');
 const currentRepo = repoOf(before.serviceInstance.source?.image);

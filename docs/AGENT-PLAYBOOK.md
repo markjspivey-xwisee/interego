@@ -114,11 +114,12 @@ Don't propose this until the user actually has a cross-device need — Tier 1 (l
 
 When you read a descriptor, inspect:
 
-- **`iep:trustLevel`**: `HighAssurance` > `PeerAttested` > `SelfAsserted`. Take action confidently on HighAssurance; surface uncertainty on SelfAsserted.
+- **`iep:trustLevel`**: `CryptographicallyVerified` > `ThirdPartyAttested` > `SelfAsserted`. Take action confidently on `CryptographicallyVerified`; surface uncertainty on `SelfAsserted`. Those three are the *only* values — the published SHACL shape's `sh:in` rejects anything else — so treat an unrecognised value as no trust signal at all rather than as a high one.
 - **`iep:modalStatus`**: weight Asserted higher than Hypothetical. Flag Counterfactual as "explicitly negated."
 - **`iep:epistemicConfidence`**: a number in [0,1]. Low confidence + high modal status = a contradiction; flag it.
 - **`prov:wasAttributedTo`**: name the source. The user trusts attestations from people they trust.
 - **`amta:Attestation`** axes (when present): per-axis ratings (honesty, competence, recency, relevance). A high overall trust with low honesty is a red flag.
+- **Don't confuse the two "trust levels."** A registry's `issuerTrustLevel` (`HighAssurance` / `PeerAttested` / `SelfAsserted`) grades *who is vouching* and is only ever a weight inside a reputation aggregation. `iep:trustLevel` grades *how the claim itself is backed*. This list said the opposite until it was checked against the producers: no descriptor in this system has ever carried `HighAssurance`, so an agent looking for it found nothing and downgraded its confidence on exactly the descriptors that had been cryptographically verified.
 
 If you're computing on a Hypothetical or low-confidence descriptor, **say so in your output** to the user. Don't launder uncertainty.
 
@@ -143,7 +144,7 @@ If a tool returns "denied" or "indeterminate" for an action, an `abac:Policy` is
 
 1. Tell the user clearly: "an access policy is gating this; it requires <X>."
 2. Don't try to bypass. Don't loop on the same action.
-3. If the user has the credentials to satisfy the policy (e.g., HighAssurance trust), suggest they invoke the action under that capability.
+3. If the user has the credentials to satisfy the policy (e.g., a `CryptographicallyVerified` trust facet — see §7 for why this used to read "HighAssurance"), suggest they invoke the action under that capability.
 
 ABAC policies are public descriptors — `discover_context` filtered to `iep:AccessControlPolicy` will surface them.
 

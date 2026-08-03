@@ -21,7 +21,7 @@
  *   - meet() — find structural overlap between two PGSL fragments
  */
 
-import type { IRI } from '@interego/core';
+import type { ContextTypeName, IRI, WebSocketConstructor } from '@interego/core';
 import type { FetchFn, DiscoverFilter, Subscription, ManifestEntry, ContextChangeEvent } from './types.js';
 import type { IpfsConfig } from '@interego/core';
 import { ContextDescriptor } from '@interego/core';
@@ -47,8 +47,16 @@ export interface ContextGraphsConfig {
   ipfs?: IpfsConfig;
   /** Custom fetch function */
   fetch?: FetchFn;
-  /** WebSocket constructor (for Node.js: import { WebSocket } from 'ws') */
-  WebSocket?: any;
+  /**
+   * WebSocket constructor (for Node.js: `import { WebSocket } from 'ws'`).
+   *
+   * `WebSocketConstructor` is the type `@interego/core/http`'s `getDefaultWebSocket`
+   * already returns and the type `subscribe()` in client.ts already expects, so `any` here
+   * was the one gap in an otherwise typed chain — a caller could pass an INSTANCE instead
+   * of the constructor and get "WS is not a constructor" at subscription time rather than
+   * at the call they made the mistake in.
+   */
+  WebSocket?: WebSocketConstructor;
 }
 
 export interface PublishOptions {
@@ -69,8 +77,15 @@ export interface PublishOptions {
 export interface SearchOptions {
   /** Maximum results (default: 10) */
   limit?: number;
-  /** Filter by facet type */
-  facetType?: string;
+  /**
+   * Filter by facet type.
+   *
+   * `ContextTypeName`, not `string`: it is passed straight into `DiscoverFilter.facetType`,
+   * which is already that union, and the `as any` at the call site was the only thing
+   * bridging them. A caller passing `'trust'` or `'Semiotics'` got a filter that silently
+   * matched no descriptor and an empty result set that looks exactly like "nothing found".
+   */
+  facetType?: ContextTypeName;
   /** Filter: valid at or after this datetime */
   validFrom?: string;
   /** Filter: valid at or before this datetime */
@@ -227,7 +242,7 @@ export class ContextGraphsSDK {
     // Discover all descriptors
     const filter: DiscoverFilter | undefined = options.facetType || options.validFrom || options.validUntil
       ? {
-          facetType: options.facetType as any,
+          facetType: options.facetType,
           validFrom: options.validFrom,
           validUntil: options.validUntil,
         }

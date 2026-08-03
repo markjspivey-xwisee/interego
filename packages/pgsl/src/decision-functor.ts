@@ -24,6 +24,7 @@
  *   - types.ts: all PGSL types
  */
 
+import type { IRI } from '@interego/core';
 import type { PGSLInstance, Fragment } from './types.js';
 import type { CoherenceCertificate } from './coherence.js';
 import { resolve } from './lattice.js';
@@ -357,7 +358,9 @@ export function decide(
 
     // Track which observations are grounded by this decision
     if (affordance.type === 'read' || affordance.type === 'verify') {
-      const atomNode = pgsl.nodes.get(affordance.target as any);
+      // `as IRI`, not `as any`: `nodes` is keyed by IRI and `affordance.target` is a
+      // string. The wide cast also accepted a target that was not a string at all.
+      const atomNode = pgsl.nodes.get(affordance.target as IRI);
       if (atomNode?.kind === 'Atom') {
         groundedAtoms.add(String(atomNode.value));
       }

@@ -8,7 +8,7 @@
  *   - Pearl: causal affordances as interventional queries
  */
 
-import type { ContextDescriptorData, IRI } from '../model/types.js';
+import type { ContextDescriptorData, ContextFacetData, ContextTypeName, IRI } from '../model/types.js';
 import { DEFAULT_EPISTEMIC_CONFIDENCE } from '../model/types.js';
 import type {
   AgentProfile,
@@ -30,6 +30,30 @@ import type {
   ReconsiderationTrigger,
 } from './types.js';
 import { computeAffordances } from './compute.js';
+
+/**
+ * Pull one facet out of a descriptor, narrowed to that facet's own interface.
+ *
+ * `Array.prototype.find` with an ordinary predicate returns the whole union, so every one
+ * of the eleven call sites this replaces ended `as any` — and an `as any` on a facet is not
+ * a small thing here. Every property this file reads off a facet drives a number that ends
+ * up in a trust evaluation or a surprise score: `trustLevel`, `epistemicConfidence`,
+ * `modalStatus`, `causalModel`, `wasAttributedTo`. Under `as any` a typo in any of those
+ * reads `undefined` and silently takes the default branch — 0.7 confidence, 'Asserted',
+ * 'unknown' source — which is indistinguishable from a descriptor that genuinely said so.
+ *
+ * The `f is` predicate is what makes the narrowing real rather than asserted; `Extract`
+ * keeps it tied to the union, so a facet type added to `ContextFacetData` is reachable here
+ * with no change and a facet type removed breaks the call site rather than the reads.
+ */
+type FacetOf<T extends ContextTypeName> = Extract<ContextFacetData, { type: T }>;
+
+function facetOf<T extends ContextTypeName>(
+  descriptor: ContextDescriptorData,
+  type: T,
+): FacetOf<T> | undefined {
+  return descriptor.facets.find((f): f is FacetOf<T> => f.type === type);
+}
 
 // ═════════════════════════════════════════════════════════════
 //  Agent State Management (BDI)
@@ -154,9 +178,17 @@ export function orient(
   const trustedSources = new Map(cycle.orientation.trustedSources);
   for (const desc of cycle.observations) {
     const trust = evaluateTrust(desc);
-    const agentFacet = desc.facets.find(f => f.type === 'Agent') as any;
-    if (agentFacet?.assertingAgent?.agentIdentity) {
-      trustedSources.set(agentFacet.assertingAgent.agentIdentity as IRI, trust);
+    const agentFacet = facetOf(desc, 'Agent');
+    // ★ `.identity`, NOT `.agentIdentity` — AND THIS IS A DEFECT THE `as any` WAS HIDING,
+    // not a rename. `agentIdentity` is the RDF PREDICATE (`iep:agentIdentity`, emitted by
+    // rdf/serializer.ts FROM this field); the TypeScript property has always been
+    // `identity`. Read through `as any` it was `undefined` at every one of the three sites
+    // in this file, so this `if` never once fired: the orient phase's `trustedSources` map
+    // was populated only by `updateOrientation`, never by an observation's own asserting
+    // agent, for as long as the affordance engine has existed. Nothing was red, because
+    // "no Agent facet" and "Agent facet whose identity I misspelt" are the same `undefined`.
+    if (agentFacet?.assertingAgent?.identity) {
+      trustedSources.set(agentFacet.assertingAgent.identity, trust);
     }
   }
 
@@ -285,8 +317,8 @@ export function evaluateSurprise(
   let pragmaticValue = 0;
   let epistemicValue = 0;
 
-  const semiotic = descriptor.facets.find(f => f.type === 'Semiotic') as any;
-  const trust = descriptor.facets.find(f => f.type === 'Trust') as any;
+  const semiotic = facetOf(descriptor, 'Semiotic');
+  const trust = facetOf(descriptor, 'Trust');
   const confidence = semiotic?.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
   const trustLevel = trust?.trustLevel ?? 'SelfAsserted';
 
@@ -296,11 +328,11 @@ export function evaluateSurprise(
   for (const [, belief] of state.beliefs) {
     if (belief.descriptor.describes.some(g => descriptor.describes.includes(g))) {
       // Same graph described — check for conflict
-      const existingConf = (belief.descriptor.facets.find(f => f.type === 'Semiotic') as any)?.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
+      const existingConf = (facetOf(belief.descriptor, 'Semiotic'))?.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
       const confDelta = Math.abs(confidence - existingConf);
       surprise += confDelta * 2; // confidence disagreement is surprising
 
-      const existingModal = (belief.descriptor.facets.find(f => f.type === 'Semiotic') as any)?.modalStatus ?? 'Asserted';
+      const existingModal = (facetOf(belief.descriptor, 'Semiotic'))?.modalStatus ?? 'Asserted';
       const newModal = semiotic?.modalStatus ?? 'Asserted';
       if (existingModal !== newModal) {
         surprise += 0.5; // modal disagreement is moderately surprising
@@ -309,8 +341,11 @@ export function evaluateSurprise(
   }
 
   // 2. Unknown source?
-  const agentFacet = descriptor.facets.find(f => f.type === 'Agent') as any;
-  const sourceAgent = agentFacet?.assertingAgent?.agentIdentity as IRI | undefined;
+  const agentFacet = facetOf(descriptor, 'Agent');
+  // Same misspelling as in `orient()` above: `sourceAgent` was permanently `undefined`, so
+  // this whole factor was dead. Every descriptor scored as though it had no asserting agent
+  // at all — never "unknown source", and never the +0.4 epistemic value for meeting one.
+  const sourceAgent = agentFacet?.assertingAgent?.identity;
   if (sourceAgent && !state.orientation.trustedSources.has(sourceAgent)) {
     surprise += 0.3; // unknown source is mildly surprising
     epistemicValue += 0.4; // but high epistemic value — new information source
@@ -407,7 +442,7 @@ export function updateStigmergicField(
   let delegatedTrust = 0;
   let cryptographicallyVerified = 0;
   for (const desc of descriptors) {
-    const trust = desc.facets.find(f => f.type === 'Trust') as any;
+    const trust = facetOf(desc, 'Trust');
     if (trust?.trustLevel === 'CryptographicallyVerified') cryptographicallyVerified++;
     else if (trust?.trustLevel === 'ThirdPartyAttested') delegatedTrust++;
     else selfAsserted++;
@@ -537,8 +572,8 @@ function createOrientation(): Orientation {
 }
 
 function evaluateTrust(descriptor: ContextDescriptorData): TrustEvaluation {
-  const trust = descriptor.facets.find(f => f.type === 'Trust') as any;
-  const provenance = descriptor.facets.find(f => f.type === 'Provenance') as any;
+  const trust = facetOf(descriptor, 'Trust');
+  const provenance = facetOf(descriptor, 'Provenance');
 
   // Absence of a Trust facet is semantically distinct from positively
   // asserting 'SelfAsserted': trustLevel is undefined and confidence
@@ -573,7 +608,7 @@ function updateOrientation(
   trustedSources.set(trust.source, trust);
 
   const causalModels = new Map(orientation.causalModels);
-  const causalFacet = descriptor.facets.find(f => f.type === 'Causal') as any;
+  const causalFacet = facetOf(descriptor, 'Causal');
   if (causalFacet?.causalModel) {
     causalModels.set(descriptor.id, causalFacet.causalModel as IRI);
   }
@@ -591,7 +626,7 @@ function reconsiderIntentions(
   intentions: readonly CommittedAffordance[],
   newDescriptor: ContextDescriptorData,
 ): readonly CommittedAffordance[] {
-  const semiotic = newDescriptor.facets.find(f => f.type === 'Semiotic') as any;
+  const semiotic = facetOf(newDescriptor, 'Semiotic');
   const isRetraction = semiotic?.modalStatus === 'Retracted';
 
   if (!isRetraction) return intentions;

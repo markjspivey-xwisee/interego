@@ -78,7 +78,9 @@ import {
 } from './stream.js';
 import type {
   Attestation, Grant, Acceptance, Principal, WorkspaceRecord, ConvenerEvidence,
+  RoleDefinition, RoleProfileDocument, RoleTableEvidence,
   FieldProvenance as FieldProvenanceValue,
+  EvidenceProvenance as EvidenceProvenanceValue,
 } from './roster.js';
 
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
@@ -97,6 +99,16 @@ export const WSP_TERMS = {
    * membership halves one round earlier: the shape described a record no code produced.
    */
   Workspace: `${WSP}Workspace`,
+  /**
+   * ★ THE FOURTH CLASS, AND THE ONE THE OTHER THREE ALL POINT AT WITHOUT ANYBODY READING IT.
+   * `wsp:roleProfile` names a document; `permitsOf` in the fold is built from a table the CALLER
+   * supplies and claims came from it. Nothing had ever opened that document, which was residual
+   * gap 10. Unlike the other three, this class is NOT written by anything here — a role profile
+   * is published governance, not a record this layer mints — so only the reading half exists.
+   */
+  RoleProfile: `${WSP}RoleProfile`,
+  Role: `${WSP}Role`,
+  permits: `${WSP}permits`,
   convener: `${WSP}convener`,
   roleProfile: `${WSP}roleProfile`,
   workspace: `${WSP}workspace`,
@@ -505,9 +517,39 @@ export type {
   // `FieldProvenance` is produced here and by nothing else: it is a statement about an act of
   // reading, and only the thing that did the reading can make it honestly.
   EvidenceProvenance,
+  // The fourth document, and the only one this module reads without ever writing: a role
+  // profile is published governance, not a record this layer mints. See `dereferenceRoleProfile`.
+  RoleProfileDocument, RoleTableEvidence,
 } from './roster.js';
 
 const problem = (s: string): string => s;
+
+/**
+ * ★★ THE ONE PLACE A {@link FieldProvenance} COMES INTO EXISTENCE IN THIS REPOSITORY.
+ *
+ * `FieldProvenance` is a branded type: it intersects a private-membered ambient class that
+ * `roster.ts` does not export, so the literal `{source: 'payload', descriptor}` does not
+ * typecheck anywhere — including here. Somebody has to make the first one, and this assertion
+ * is that somebody. It is deliberately the ONLY one, so "who can claim a record's fields were
+ * parsed from its own bytes" is answerable by grepping for `FieldProvenanceValue` rather than
+ * by auditing every construction site of a `Grant`, an `Acceptance` and a `WorkspaceRecord`.
+ *
+ * ★ THE ARGUMENT IS THE DESCRIPTOR THE BYTES WERE ACTUALLY READ FROM, and every caller below
+ * passes the `descriptorUrl` its own `fetchDescriptor` was given. Passing anything else is the
+ * forgery, one call frame in from where the brand stopped it, and no type can prevent that here
+ * — this file is the trusted producer, which is exactly what makes it worth keeping small.
+ * `refuseFieldBinding` in `roster.ts` still compares the value against the row's `head`, so a
+ * mismatch introduced here is caught there, in the ordinary way, by the check that predates
+ * this brand.
+ */
+function parsedFromPayload(descriptor: string): FieldProvenanceValue {
+  // `as unknown as` where a bare `as` would also compile — the branded type is assignable to
+  // the plain pair, so tsc calls the two "comparable" and permits the shorter form. Neither
+  // spelling is checked by anything, so the longer one is chosen for being unmistakable in a
+  // diff: this is the line that manufactures the guarantee, and it should not read like a tidy
+  // annotation.
+  return { source: 'payload', descriptor } as unknown as FieldProvenanceValue;
+}
 
 /**
  * A {@link FieldProvenance} for a record whose conferring field WAS readable, and nothing
@@ -522,7 +564,7 @@ function provenanceUnless(
   conferringFieldMissing: boolean,
   descriptor: string,
 ): { fieldProvenance?: FieldProvenanceValue } {
-  return conferringFieldMissing ? {} : { fieldProvenance: { source: 'payload', descriptor } };
+  return conferringFieldMissing ? {} : { fieldProvenance: parsedFromPayload(descriptor) };
 }
 
 /** Every object of `predicate` on `subject`, so multiplicity is visible rather than silently resolved. */
@@ -773,6 +815,90 @@ function subjectIriOf(subject: ParsedSubject): string | null {
 }
 
 /**
+ * The role table a `wsp:RoleProfile` document declares, or a reason there is none to read.
+ *
+ * ★ THE ROLES ARE COLLECTED FROM THE WHOLE DOCUMENT, NOT FROM THE PROFILE SUBJECT'S PROPERTIES,
+ * and that is what the deployed artifact actually looks like rather than what would be tidy.
+ * `docs/applications/shared-workspace/wsp-roles-default.ttl` declares its five `wsp:Role`s as
+ * TOP-LEVEL SUBJECTS with no predicate linking them back to the `wsp:RoleProfile` — `wspr:
+ * Convener a wsp:Role ; wsp:permits …`, and nothing on the profile pointing at it. A reader that
+ * walked outwards from the profile subject would parse the published profile as declaring NO
+ * ROLES AT ALL, refuse every honest fold, and be indistinguishable from a working check until
+ * somebody read the file.
+ *
+ * ★ AND EXACTLY ONE `wsp:RoleProfile` IS REQUIRED, WHICH IS WHAT MAKES THIS A ROLE PROFILE AT
+ * ALL. Without it any Turtle document carrying a `wsp:Role` would answer the question — the same
+ * branch `oneSubjectOfType` calls "the one that kills the manufactured participant", one class
+ * over. Two of them is refused rather than resolved: which profile the document IS cannot be
+ * decided by a reader, and picking one would let the author choose by ordering.
+ *
+ * ★ A NON-IRI `wsp:permits` REFUSES THE WHOLE DOCUMENT rather than being skipped. Skipping would
+ * silently NARROW the published table, and a narrower document makes the caller's table look
+ * WIDER than it is — so a malformed capability would manufacture the exact disagreement this
+ * check reports, on an honest profile. Refusing is loud; dropping is a wrong answer that looks
+ * like a right one.
+ */
+function roleTableOf(content: string): { roles: RoleDefinition[] } | { why: string } {
+  let doc;
+  try {
+    doc = parseTrig(content);
+  } catch (err) {
+    return { why: problem(`its payload is not parseable Turtle: ${err instanceof Error ? err.message : String(err)}`) };
+  }
+  const profiles = findSubjectsOfType(doc, WSP_TERMS.RoleProfile as never);
+  if (profiles.length === 0) {
+    return { why: problem(
+      `it declares no <${WSP_TERMS.RoleProfile}>, so it is not a role profile at all. A document `
+      + 'can be perfectly good Turtle, served from exactly the right URL, and still not be the '
+      + 'governance this workspace declares — an HTML error page and somebody else\'s ontology '
+      + 'both land here',
+    ) };
+  }
+  if (profiles.length > 1) {
+    return { why: problem(
+      `it declares ${profiles.length} <${WSP_TERMS.RoleProfile}> subjects. Which profile the `
+      + 'document IS cannot be decided by a reader, and picking one would let the author choose '
+      + 'the answer by ordering',
+    ) };
+  }
+  const roleSubjects = findSubjectsOfType(doc, WSP_TERMS.Role as never);
+  if (roleSubjects.length === 0) {
+    return { why: problem(
+      `it declares a <${WSP_TERMS.RoleProfile}> and not one <${WSP_TERMS.Role}>, so it permits `
+      + 'nothing to anybody. An empty table is not read as a permissive one — every grant in the '
+      + 'workspace would name a role it does not declare',
+    ) };
+  }
+  const roles: RoleDefinition[] = [];
+  for (const subject of roleSubjects) {
+    const iri = subjectIriOf(subject);
+    if (iri === null) {
+      return { why: problem(
+        'one of its roles is a blank node, so it names no role at all. A grant names a role by '
+        + 'IRI and the fold matches on that IRI; a role with no URL can never be the one a grant '
+        + 'names, and reading the table around it would report a profile with a row nothing can '
+        + 'reach',
+      ) };
+    }
+    const terms = termsOf(subject, WSP_TERMS.permits);
+    const nonIri = terms.filter(t => t.kind !== 'iri');
+    if (nonIri.length > 0) {
+      return { why: problem(
+        `<${iri}> has a <${WSP_TERMS.permits}> value that is not an IRI, so what it permits is `
+        + 'not a capability anything can be compared against. The whole document is refused '
+        + 'rather than the value skipped: skipping narrows the published table, which makes an '
+        + 'honest fold look as though it had widened it',
+      ) };
+    }
+    roles.push({
+      role: iri,
+      permits: terms.map(t => (t as Extract<ParsedTerm, { kind: 'iri' }>).iri),
+    });
+  }
+  return { roles };
+}
+
+/**
  * Read a `wsp:Workspace` back off a pod and parse who it says convenes it.
  *
  * ★ WHAT THIS EXISTS TO ANSWER. `AttestationPolicy.convener` is the principal every grant is
@@ -858,7 +984,7 @@ export async function readWorkspaceRecord(
       // Everything reaching this line stated its convener inside the digested region, so
       // there is no case where the record survives without provenance — and writing
       // `provenanceUnless(false, …)` would imply one exists.
-      fieldProvenance: { source: 'payload', descriptor: descriptorUrl },
+      fieldProvenance: parsedFromPayload(descriptorUrl),
     },
     problems,
     attestation,
@@ -932,6 +1058,15 @@ export function nsOwnerSegmentOf(workspaceIri: string): string | null {
  * obtained some other way, which is the forgery with an extra step. There is no honest way to
  * build the pair except by having done the dereference, so the pair is only ever built here.
  *
+ * ★★ AND "ONLY EVER BUILT HERE" IS NOW THE COMPILER'S STATEMENT RATHER THAN THIS COMMENT'S.
+ * The sentence above was true of the code as written and asserted nothing about the code
+ * anybody else writes: `EvidenceProvenance` was a plain pair of strings, so a caller could put
+ * one beside a record it forged and `refuseEvidenceProvenance` would pass it. That was residual
+ * gap 9's remaining medium row. The type is now branded on a private-membered class `roster.ts`
+ * does not export, so that literal is a COMPILE ERROR at the point of writing and
+ * {@link dereferencedFrom} below is the only assertion in the tree that mints one. See
+ * `EvidenceProvenance` in `roster.ts` for what a compile-time brand does not close.
+ *
  * ★ AND EVERY FAILING BRANCH IS `'unreadable'`, WHICH REFUSES. A workspace IRI with no owner
  * segment, a missing dependency, a substrate error, a forked chain and an absent head all mean
  * the same thing to the fold: this policy asked what `<workspace>` dereferences to and did not
@@ -1003,7 +1138,268 @@ export async function dereferenceWorkspaceRecord(
   return {
     kind: 'declared',
     record: read.record,
-    provenance: { dereferenced: workspaceIri, resolvedTo: descriptorUrl },
+    // ★ BOTH ARGUMENTS COME FROM THE DEREFERENCE THIS FUNCTION JUST PERFORMED, and that is the
+    // whole content of the claim. `workspaceIri` is what the caller asked for and what
+    // `get_current_head` was given; `descriptorUrl` is what came back from the pod the IRI's
+    // own owner segment names. `read.record.head` is `descriptorUrl` by construction —
+    // `readWorkspaceRecord` sets `head` to the URL it was handed — so the two are not compared
+    // here. `refuseEvidenceProvenance` compares them anyway, and must keep doing so: it is
+    // guarding against a caller that is not this function.
+    provenance: dereferencedFrom(workspaceIri, descriptorUrl),
+  };
+}
+
+/**
+ * ★★ THE ONE PLACE AN {@link EvidenceProvenance} COMES INTO EXISTENCE IN THIS REPOSITORY, and
+ * the sibling of {@link parsedFromPayload} above.
+ *
+ * Local to `dereferenceWorkspaceRecord` in every sense that matters — not exported, called
+ * once, and defined immediately below its only caller so the two are read together. A shared
+ * "mint a provenance" helper serving both brands was considered and rejected: it would take the
+ * brand as a parameter, and a producer that can be pointed at either claim is a producer that
+ * can be pointed at the wrong one.
+ *
+ * ★ WHY IT TAKES TWO STRINGS AND NOT THE RECORD. Handing it the `WorkspaceRecord` and reading
+ * `resolvedTo` off its `head` would make the pair SELF-CERTIFYING — `provenance.resolvedTo`
+ * would equal `ws.head` for any record at all, and `refuseEvidenceProvenance`'s second check
+ * would become a tautology that passes for the forged record as readily as the real one. The
+ * two values must come from the act of dereferencing, which is why only a function that has
+ * just performed one can supply them.
+ */
+function dereferencedFrom(dereferenced: string, resolvedTo: string): EvidenceProvenanceValue {
+  // See `parsedFromPayload` for why the assertion is spelled the long way.
+  return { dereferenced, resolvedTo } as unknown as EvidenceProvenanceValue;
+}
+
+/**
+ * Read a `wsp:RoleProfile` back off a POD and parse its role table from the digested region.
+ *
+ * The signed half of {@link dereferenceRoleProfile}, and the same treatment the other three
+ * records get: ONE `get_descriptor`, the table out of `payloadOf` and therefore out of the bytes
+ * the substrate re-digested, the verifier's answer carried beside it. A profile published to
+ * `<relay>/ns/<owner>/<slug>` is a pod record like any other, so there is no reason for it to be
+ * read any more weakly than the grant it governs.
+ *
+ * ★ `dereferenced` IS A PARAMETER RATHER THAN THE DESCRIPTOR URL, and that is the whole reason
+ * this is not simply exported for callers to point wherever they like. The descriptor URL is
+ * where the BYTES were; the IRI is what the fold compares against the profile its table claims.
+ * Only a function that has just dereferenced that IRI knows both, which is why the honest way in
+ * is {@link dereferenceRoleProfile} and why this one is not exported.
+ */
+async function readRoleProfileRecord(
+  descriptorUrl: string,
+  dereferenced: string,
+  deps: StreamDeps,
+): Promise<MembershipRead<RoleProfileDocument>> {
+  const got = await fetchDescriptor(descriptorUrl, deps);
+  if ('why' in got) {
+    return { record: null, problems: [got.why], attestation: got.attestation };
+  }
+  const { res, attestation } = got;
+
+  const payload = payloadOf(res);
+  if ('why' in payload) return { record: null, problems: [payload.why], attestation };
+  const table = roleTableOf(payload.content);
+  if ('why' in table) return { record: null, problems: [table.why], attestation };
+
+  return {
+    record: {
+      head: descriptorUrl,
+      dereferenced,
+      roles: table.roles,
+      // ★ SET HERE AND NOWHERE ELSE, so the label cannot be attached to bytes that did not come
+      // through `payloadOf`. `refuseRoleTableAuthority` reads it to decide whether to run the
+      // authorship branch at all, which makes it the one field on this document whose value
+      // selects a check — and a producer that could stamp it onto a plain fetch would be
+      // claiming a signature nobody made.
+      authority: 'signed-record',
+      attestation,
+    },
+    // No `problems` half-record here, unlike the two membership readers: a role profile has no
+    // restricting field to preserve. Every failure above returned null, so anything reaching
+    // this line parsed completely.
+    problems: [],
+    attestation,
+  };
+}
+
+/**
+ * Obtain the ROLE TABLE by dereferencing the profile IRI, and say how.
+ *
+ * ★★ THE PRODUCER RESIDUAL GAP 10 NEEDED, and it is `membership.ts`'s job for the fourth time.
+ * `refuseRoleProfileAuthority` in `roster.ts` compares the IRI the workspace declares with the
+ * IRI the caller's table claims — an IRI against an IRI — and the fold is pure, so nothing had
+ * ever opened the document. `{profile: <the declared IRI>, roles: [anything]}` agreed with every
+ * check that existed, and `permitsOf` is built from `roles`.
+ *
+ * ── TWO PATHS, BECAUSE A ROLE PROFILE IS NOT ALWAYS A POD RECORD ─────────────
+ *
+ * `<relay>/ns/<owner>/<slug>` is resolved through the pod its owner segment names, exactly as
+ * {@link dereferenceWorkspaceRecord} resolves a workspace, and what comes back is a SIGNED
+ * record. Anything else is fetched over HTTPS and is worth what an HTTPS fetch is worth. The
+ * distinction is carried in `RoleProfileDocument.authority` rather than smoothed over, because
+ * they are not the same evidence and reporting them identically would be the overclaim.
+ *
+ * ★ AND THE DEPLOYED PROFILE IS THE SECOND KIND, AND CANNOT BE THE FIRST.
+ * `<…github.io/interego/applications/shared-workspace/wsp-roles-default>` is a static file. No
+ * `publish_context` wrote it, so it carries no `iep:authorshipProof` and there is no key to
+ * check one against — not because nobody has got round to signing it, but because a Pages file
+ * has nowhere to put a proof that a reader could bind to the document. What this function can
+ * establish about it is exactly: THIS ORIGIN SERVED THESE BYTES AT THIS URL. That is the honest
+ * ceiling and `roster.ts` renders it into the roster's own note.
+ *
+ * ── THE THREE GUARDS ON THE FETCH, AND WHY EACH ONE ─────────────────────────
+ *
+ * ★ `https:` ONLY, AND `http:` REFUSED THOUGH THE PUBLISHED SHAPE ALLOWS IT. `wsp-shapes.ttl`
+ * patterns `wsp:roleProfile` as `^https?://`, so a workspace may legally declare a cleartext
+ * profile — and for a document whose ENTIRE evidence is the transport, a cleartext fetch is
+ * evidence of nothing at all. Anyone on the path chooses what a role permits. This is the one
+ * place the reader is deliberately stricter than the contract, and it is stated out loud
+ * because `PUBLISHED_IRI_PATTERN` exists precisely to stop the two drifting silently.
+ *
+ * ★ A CROSS-ORIGIN REDIRECT REFUSES. The authority here IS the origin; following a redirect off
+ * it hands the answer to a different party while the caller still believes it asked the declared
+ * one. Same-origin redirects are allowed, because a host serving `/x` as `/x.ttl` has not
+ * changed who is answering.
+ *
+ * ★ EVERY FAILING BRANCH IS `'unreadable'`, WHICH REFUSES TO CONFER. A missing dependency, a
+ * non-200, a redirect off the origin, an unparseable body, a document that is not a role profile
+ * — all of them mean the same thing to the fold: this policy asked what the profile IRI returns
+ * and did not get an answer. Asking and getting silence is not the same as not asking, and it
+ * matters more here than anywhere else in this file, because the deployed IRI answers 404.
+ */
+export async function dereferenceRoleProfile(
+  profileIri: string,
+  deps: StreamDeps,
+): Promise<RoleTableEvidence> {
+  const unreadable = (why: string): RoleTableEvidence => ({ kind: 'unreadable', why });
+
+  // ── the pod-hosted path ──
+  const owner = nsOwnerSegmentOf(profileIri);
+  if (owner !== null) {
+    if (deps.currentHead === undefined) {
+      return unreadable(
+        `<${profileIri}> is a <relay>/ns/<owner>/<slug> IRI and no \`currentHead\` dependency `
+        + 'was supplied, so nothing dereferenced it. Reading a document at a caller-chosen URL '
+        + 'instead would be reporting a check that did not happen',
+      );
+    }
+    let res: Record<string, unknown>;
+    try {
+      res = await deps.currentHead({ urn: profileIri, pod_name: owner });
+    } catch (e) {
+      return unreadable(`get_current_head on <${profileIri}> threw: ${(e as Error).message}`);
+    }
+    if (res.error !== undefined) {
+      return unreadable(
+        `get_current_head on <${profileIri}> at pod '${owner}' failed: `
+        + String(res.message ?? res.error),
+      );
+    }
+    if (res.forked === true) {
+      // The same rule the fold applies to a forked grant chain and `dereferenceWorkspaceRecord`
+      // applies to a forked workspace: two unresolved heads mean the IRI states two role tables,
+      // and picking either would let whichever descriptor sorted first decide what a role
+      // permits.
+      const heads = Array.isArray(res.heads) ? res.heads.length : 2;
+      return unreadable(
+        `<${profileIri}> has ${heads} unresolved chain heads on pod '${owner}', so it does not `
+        + 'state one role table — it states several, and choosing one would make what a role '
+        + 'permits depend on which descriptor the walk reached first. Republish a single clean '
+        + 'head',
+      );
+    }
+    const head = res.head as { descriptorUrl?: unknown } | undefined | null;
+    const descriptorUrl = typeof head?.descriptorUrl === 'string' ? head.descriptorUrl : '';
+    if (descriptorUrl === '') {
+      return unreadable(
+        `nothing is published at <${profileIri}> on pod '${owner}' — the IRI resolves to no role `
+        + 'profile, so the governance the workspace names does not exist there',
+      );
+    }
+    const read = await readRoleProfileRecord(descriptorUrl, profileIri, deps);
+    if (read.record === null) {
+      return unreadable(
+        read.problems.length > 0
+          ? read.problems.join('; ')
+          : `<${profileIri}> resolved to <${descriptorUrl}> and the read produced no role `
+            + 'profile and no reason, which is itself a reason not to confer anything',
+      );
+    }
+    return { kind: 'declared', document: read.record };
+  }
+
+  // ── the ordinary-web path ──
+  if (!profileIri.startsWith('https://')) {
+    return unreadable(
+      `<${profileIri}> is neither a <relay>/ns/<owner>/<slug> IRI nor an https:// URL, so there `
+      + 'is nothing this reader can dereference. A role profile served over cleartext is refused '
+      + 'DELIBERATELY even though the published shape permits http:// — nobody signs these '
+      + 'documents, so the transport is the entire evidence, and a fetch anyone on the path can '
+      + 'rewrite is evidence that anyone on the path decides what a role permits',
+    );
+  }
+  if (deps.fetchDocument === undefined) {
+    return unreadable(
+      'no `fetchDocument` dependency was supplied, so nothing dereferenced the role profile. '
+      + 'The same posture `currentHead` takes: a caller that does not want this check is not '
+      + 'obliged to supply the dependency, and a caller that asks for it without one gets a '
+      + 'refusal rather than a silent pass — see `StreamDeps.fetchDocument`',
+    );
+  }
+  let res: { status: number; url: string; contentType: string | null; body: string };
+  try {
+    res = await deps.fetchDocument(profileIri);
+  } catch (e) {
+    return unreadable(`fetching <${profileIri}> threw: ${(e as Error).message}`);
+  }
+  if (res.status !== 200) {
+    return unreadable(
+      `<${profileIri}> answered ${res.status}, so the profile the workspace declares does not `
+      + 'dereference. A role profile IRI that returns nothing states no governance — measured '
+      + 'against the deployed artifact on 2026-08-03, which is exactly this case',
+    );
+  }
+  // ★ COMPARED ON ORIGIN, NOT ON THE WHOLE URL. A host that serves the extensionless name as a
+  // file has redirected honestly and is still the party the IRI names; a redirect that leaves
+  // the origin has handed the answer to somebody else while the caller still believes it asked
+  // this one.
+  let landedElsewhere = false;
+  try {
+    landedElsewhere = new URL(res.url).origin !== new URL(profileIri).origin;
+  } catch {
+    // An unparseable final URL is not a same-origin answer, and reading it as one would make a
+    // malformed response the way past this guard.
+    landedElsewhere = true;
+  }
+  if (landedElsewhere) {
+    return unreadable(
+      `dereferencing <${profileIri}> ended at <${res.url}>, which is a different origin. A role `
+      + 'profile carries no signature, so its origin IS its authority — following a redirect off '
+      + 'it would let whoever controls the destination decide what every role in this workspace '
+      + 'permits, while the fold reported the declared profile as read',
+    );
+  }
+  const table = roleTableOf(res.body);
+  if ('why' in table) {
+    return unreadable(
+      `<${profileIri}> answered 200 with ${res.contentType ?? 'no stated content type'} and `
+      + `${table.why}`,
+    );
+  }
+  return {
+    kind: 'declared',
+    document: {
+      // The FINAL url, so an operator following this field sees the bytes the table came from
+      // rather than the name they were asked for. The two differ on any same-origin redirect.
+      head: res.url,
+      dereferenced: profileIri,
+      roles: table.roles,
+      // ★ NEVER `'signed-record'` ON THIS PATH, and the value is written rather than defaulted:
+      // a plain GET returns no proof, so there is nothing an attestation could be built from,
+      // and `refuseRoleTableAuthority` refuses a `'transport-only'` document that carries one.
+      authority: 'transport-only',
+    },
   };
 }
 

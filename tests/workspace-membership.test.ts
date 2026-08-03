@@ -24,12 +24,13 @@ import {
   workspaceTurtle, readWorkspaceRecord, convenerEvidenceOf,
   publishMembershipRecord, WSP_TERMS, WSP_PUBLISHED_IRI_PATTERNS,
   MEMBERSHIP_VISIBILITY_BUDGET_MS,
-  dereferenceWorkspaceRecord, nsOwnerSegmentOf,
+  dereferenceWorkspaceRecord, nsOwnerSegmentOf, dereferenceRoleProfile,
 } from '../applications/shared-workspace/src/membership.js';
 import {
   foldRoster, refuseFieldBinding, type Grant, type Acceptance, type Attestation,
+  type FieldProvenance,
 } from '../applications/shared-workspace/src/roster.js';
-import { entryTurtle, type StreamDeps } from '../applications/shared-workspace/src/stream.js';
+import { entryTurtle, WSP, type StreamDeps } from '../applications/shared-workspace/src/stream.js';
 import {
   scopesFromRegistry, signerIndexFromRegistry, CAPS, type RoleProfile, type RegisteredAgent,
 } from '../applications/shared-workspace/src/can.js';
@@ -61,6 +62,28 @@ const REGISTRY: { principal: string; agents: RegisteredAgent[] }[] = [
 ];
 const scopes = scopesFromRegistry(REGISTRY);
 const signerOf = signerIndexFromRegistry(REGISTRY);
+
+/**
+ * ★★ THE HAND-BUILT `FieldProvenance` THIS FILE EXISTS TO PROVE IS WORTHLESS — and which no
+ * longer typechecks without this cast.
+ *
+ * `FieldProvenance` intersects a private-membered ambient class that `roster.ts` does not
+ * export, so the literal `{source: 'payload', descriptor}` is a compile error outside
+ * `membership.ts`. That closes the residue this file's header describes: a caller can no longer
+ * put the claim beside invented fields by writing it. The suite still has to be able to,
+ * because `refuseFieldBinding`'s whole job is to answer questions about rows a producer would
+ * never make, and a rung that can only be fed honest input tests nothing.
+ *
+ * ★ SO THE ONE CAST LIVES HERE AND IS NAMED `forge`, for the reason
+ * `tests/workspace-adversarial.test.ts` gives at greater length: a grep for the cast should
+ * find the honest producer and the two suites that lie on purpose, and nothing else. Anything
+ * that reads like the honest producer gets copied as one.
+ *
+ * `source` is a plain `string` so the JSON-boundary case (`'trust-me'`) does not need a second,
+ * differently-spelled cast of its own.
+ */
+const forgeFieldProvenance = (source: string, descriptor: string): FieldProvenance =>
+  ({ source, descriptor } as unknown as FieldProvenance);
 
 /** The graph IRI the relay would mint for a record served at this descriptor URL. */
 const graphIriFor = (url: string): string =>
@@ -150,6 +173,13 @@ const descriptorDeps = (
 
 const GRANT_TTL = grantTurtle({
   grantIri: 'https://conv.test/g/1', workspace: WS, grantedTo: bee, role: `${P}#Contributor`,
+});
+// ★ THE ROLE THE `dereferenceRoleProfile` CASES GRANT, and it has to be the one the role tables
+// down there actually declare. `verify-can-live.ts` §10 shipped a demonstration that measured
+// `0 > 1` because its rogue document named a role its own grant never mentioned; the same
+// mistake here would make the closing case pass on an empty roster.
+const OBSERVER_GRANT_TTL = grantTurtle({
+  grantIri: 'https://conv.test/g/obs', workspace: WS, grantedTo: bee, role: `${P}#Observer`,
 });
 const ACCEPT_TTL = acceptanceTurtle({
   acceptanceIri: 'https://bee.test/a/1', workspace: WS, member: bee,
@@ -611,7 +641,7 @@ describe('reading a membership record back', () => {
         head: ACCEPT_URL, workspace: WS, member: bee, accepts: GRANT_URL,
         stream: 'https://bee.test/s',
         attestation: { authorshipVerified: true, signedBy: BEE_KEY, boundToDescriptor: true, contentBinding: 'bound' },
-        fieldProvenance: { source: 'payload', descriptor: ACCEPT_URL },
+        fieldProvenance: forgeFieldProvenance('payload', ACCEPT_URL),
       }],
       attestation: { convener: CONV, signerOf, requireFieldBinding: true },
     });
@@ -898,7 +928,7 @@ describe('reading a membership record back (continued)', () => {
 // ── the gate ─────────────────────────────────────────────────────────────────
 
 describe('refuseFieldBinding', () => {
-  const prov = { source: 'payload' as const, descriptor: GRANT_URL };
+  const prov = forgeFieldProvenance('payload', GRANT_URL);
 
   it('permits everything when the policy did not ask', () => {
     expect(refuseFieldBinding(undefined, GRANT_URL, false)).toBeNull();
@@ -1483,5 +1513,395 @@ describe('dereferenceWorkspaceRecord — asking the workspace instead of the cal
       'urn:example:ws',
       'ftp://relay.test/ns/a/b',
     ]) expect(nsOwnerSegmentOf(bad), bad).toBeNull();
+  });
+});
+
+// ── the producer: dereferencing a PROFILE IRI to find its role table ─────────
+//
+// ★★ THE DOUBLE'S TWO SOURCES ANSWER DIFFERENTLY, AND THAT IS THE WHOLE DESIGN OF IT. The last
+// round's lesson, recorded one describe block up: `dereferenceWorkspaceRecord` was written, run
+// green against production and reviewed, and three mutants still survived because the
+// `get_current_head` double returned "the" head for any input — so dropping the owner segment
+// changed nothing observable. A live run exercises the honest path and nothing else.
+//
+// So `roleProfileDeps` below serves a DIFFERENT TABLE at every URL it knows and 404s at every
+// URL it does not, and its `currentHead` serves a different descriptor per pod. Fetching the
+// wrong URL, following a redirect, or asking the wrong pod each produces a table this file can
+// distinguish from the right one — which is what makes the refusals测 testable rather than
+// merely present.
+describe('dereferenceRoleProfile — reading the document the profile IRI names', () => {
+  const NS_PROFILE = 'https://relay.test/ns/u-eth-alice/wsp-roles-x';
+  const PROFILE_DESC = 'https://alice.test/c/roles.ttl';
+  const RIVAL_DESC = 'https://bee.test/c/roles.ttl';
+
+  /** A role profile document, in the shape the DEPLOYED artifact is actually written in. */
+  const profileTtl = (subject: string, rows: readonly [string, readonly string[]][]): string =>
+    `@prefix wsp: <${WSP}> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\n`
+    + `<${subject}> a wsp:RoleProfile ; rdfs:label "roles" .\n\n`
+    + rows.map(([role, permits]) =>
+      `<${role}> a wsp:Role ;\n  wsp:permits ${permits.map(c => `<${c}>`).join(', ')} .\n`).join('\n');
+
+  const NARROW = profileTtl(P, [[`${P}#Observer`, [CAPS.read]]]);
+  const WIDE = profileTtl(P, [[`${P}#Observer`, [CAPS.read, CAPS.grant, CAPS.revoke]]]);
+
+  /**
+   * A web where every URL answers with something DIFFERENT, and unknown URLs 404.
+   *
+   * `redirects` maps a requested URL onto the URL the response actually came from — the only
+   * way to express "the fetch landed somewhere else", which is the single guard a double that
+   * echoed the request back could not test at all.
+   */
+  const roleProfileDeps = (
+    web: Record<string, { status?: number; body?: string; contentType?: string; landedAt?: string }>,
+    over: {
+      throws?: boolean; heads?: Record<string, string>; forked?: boolean;
+      /** Triples put in the DEFAULT graph of the pod record — outside the digested block. */
+      outsideBlock?: string;
+      /** Also serve the payload at the TOP LEVEL of the response, beside `graph`. */
+      topLevelContent?: boolean;
+      /** Serve this instead of NARROW inside the digested block. */
+      podBody?: string;
+    } = {},
+  ) => {
+    const asked: string[] = [];
+    const headCalls: Record<string, unknown>[] = [];
+    const deps = {
+      ...descriptorDeps({
+        [PROFILE_DESC]: {
+          content: over.podBody ?? NARROW, signedBy: CONV_KEY,
+          ...(over.outsideBlock === undefined ? {} : { outsideBlock: over.outsideBlock }),
+          ...(over.topLevelContent === true ? { topLevelContent: true } : {}),
+        },
+        [RIVAL_DESC]: { content: WIDE, signedBy: BEE_KEY },
+      }),
+      fetchDocument: vi.fn(async (url: string) => {
+        asked.push(url);
+        if (over.throws === true) throw new Error('socket hang up');
+        const r = web[url];
+        if (r === undefined) {
+          return { status: 404, url, contentType: 'text/html', body: '<!doctype html><h1>404</h1>' };
+        }
+        return {
+          status: r.status ?? 200,
+          url: r.landedAt ?? url,
+          contentType: r.contentType ?? 'text/turtle',
+          body: r.body ?? '',
+        };
+      }),
+      currentHead: vi.fn(async (args: Record<string, unknown>) => {
+        headCalls.push(args);
+        if (over.forked === true) {
+          return { forked: true, heads: [{ descriptorUrl: PROFILE_DESC }, { descriptorUrl: RIVAL_DESC }] };
+        }
+        const url = (over.heads ?? { 'u-eth-alice': PROFILE_DESC, 'u-eth-bee': RIVAL_DESC })[String(args.pod_name ?? '')];
+        return url === undefined ? { forked: false } : { forked: false, head: { descriptorUrl: url } };
+      }),
+    } as unknown as StreamDeps;
+    return { deps, asked, headCalls };
+  };
+
+  it('★ reads the table out of the document at the IRI, and records the IRI it asked for', async () => {
+    const { deps, asked } = roleProfileDeps({ [P]: { body: NARROW } });
+    const evidence = await dereferenceRoleProfile(P, deps);
+    expect(evidence.kind).toBe('declared');
+    if (evidence.kind !== 'declared') return;
+    expect(evidence.document.dereferenced).toBe(P);
+    expect(evidence.document.roles).toEqual([{ role: `${P}#Observer`, permits: [CAPS.read] }]);
+    // ★ NEVER `'signed-record'` ON THIS PATH. A plain GET returns no proof, and the label is
+    // what decides whether `refuseRoleTableAuthority` runs its signature branch at all.
+    expect(evidence.document.authority).toBe('transport-only');
+    expect(evidence.document.attestation).toBeUndefined();
+    // The ARGUMENT, not only the outcome: it asked for exactly the declared IRI. A producer
+    // that helpfully appended `.ttl` would pass every assertion above against a document the
+    // workspace never named.
+    expect(asked).toEqual([P]);
+  });
+
+  it('★★ the roles are collected from the WHOLE document, the way the deployed profile is written', async () => {
+    // ★ MEASURED AGAINST THE REAL FILE, NOT AGAINST A CONVENIENT ONE.
+    // `docs/applications/shared-workspace/wsp-roles-default.ttl` declares its five `wsp:Role`s
+    // as TOP-LEVEL subjects with NO predicate linking them back to the `wsp:RoleProfile`. A
+    // reader that walked outwards from the profile subject would read the published profile as
+    // declaring no roles at all, refuse every honest fold, and look exactly like a working
+    // check until somebody opened the file.
+    const published = readFileSync(
+      fileURLToPath(new URL('../docs/applications/shared-workspace/wsp-roles-default.ttl', import.meta.url)),
+      'utf8',
+    );
+    const { deps } = roleProfileDeps({ [P]: { body: published } });
+    const evidence = await dereferenceRoleProfile(P, deps);
+    expect(evidence.kind).toBe('declared');
+    if (evidence.kind !== 'declared') return;
+    const table = Object.fromEntries(evidence.document.roles.map(r => [r.role, [...r.permits].sort()]));
+    expect(Object.keys(table).sort()).toEqual([
+      `${P}#Contributor`, `${P}#Convener`, `${P}#Delegate`, `${P}#Observer`, `${P}#Steward`,
+    ]);
+    expect(table[`${P}#Observer`]).toEqual([CAPS.read]);
+    expect(table[`${P}#Convener`]).toEqual(
+      [CAPS.admit, CAPS.append, CAPS.assign, CAPS.grant, CAPS.read, CAPS.revoke].sort(),
+    );
+    // …and the `wsp:Capability` subjects beside them are NOT roles. A reader that collected
+    // every subject would hand the fold six phantom roles permitting nothing.
+    expect(evidence.document.roles).toHaveLength(5);
+  });
+
+  it('★★ the DEPLOYED profile IRI does not dereference, and that is a refusal rather than a pass', async () => {
+    // ★ MEASURED AGAINST PRODUCTION ON 2026-08-03, and it is the same class of finding as §9's:
+    // `GET <https://…/wsp-roles-default>` answers 404 and only `<…/wsp-roles-default.ttl>`
+    // answers 200. So the IRI every `wsp:roleProfile` in this repo declares does not resolve to
+    // anything, and a fold that asks for its table gets nothing.
+    //
+    // The honest handling is a REFUSAL — the caller asked and there is no answer — and the fix
+    // is to the deployed artifact, not to this reader. A producer that fell back to `<IRI>.ttl`
+    // would be guessing a URL on the workspace's behalf, which is what `nsOwnerSegmentOf`
+    // refuses to do one document over.
+    const { deps, asked } = roleProfileDeps({ [`${P}.ttl`]: { body: NARROW } });
+    const evidence = await dereferenceRoleProfile(P, deps);
+    expect(evidence.kind).toBe('unreadable');
+    if (evidence.kind === 'unreadable') expect(evidence.why).toMatch(/answered 404/);
+    // …and it did not go looking. The `.ttl` twin is RIGHT THERE in this double's web and was
+    // never asked for, which is the assertion that would fail if a fallback were added.
+    expect(asked).toEqual([P]);
+  });
+
+  it('★ a redirect OFF THE ORIGIN refuses; one that stays on it is followed', async () => {
+    // A role profile carries no signature, so its ORIGIN is the whole of its authority.
+    // Following a redirect off it hands the answer to a different party while the fold still
+    // reports the declared profile as read — and the double answers differently at the two
+    // URLs, so this is observable rather than merely asserted.
+    const off = roleProfileDeps({ [P]: { body: WIDE, landedAt: 'https://evil.test/roles.ttl' } });
+    const refused = await dereferenceRoleProfile(P, off.deps);
+    expect(refused.kind).toBe('unreadable');
+    if (refused.kind === 'unreadable') expect(refused.why).toMatch(/is a different origin/);
+    // …and the CONTROL: same-origin is fine, and `head` reports where the bytes really came
+    // from rather than the name that was asked for.
+    const same = roleProfileDeps({ [P]: { body: NARROW, landedAt: `${P}.ttl` } });
+    const ok = await dereferenceRoleProfile(P, same.deps);
+    expect(ok.kind).toBe('declared');
+    if (ok.kind !== 'declared') return;
+    expect(ok.document.head).toBe(`${P}.ttl`);
+    expect(ok.document.dereferenced).toBe(P);
+  });
+
+  it('★ a cleartext profile IRI is refused, deliberately stricter than the published shape', async () => {
+    // `wsp-shapes.ttl` patterns `wsp:roleProfile` as `^https?://`, so a workspace may legally
+    // declare an http:// profile — and for a document whose entire evidence is the transport, a
+    // cleartext fetch is evidence of nothing. This is the one place the reader is stricter than
+    // the contract, which `PUBLISHED_IRI_PATTERN` exists to stop happening silently, so it is
+    // pinned here and stated in the reader's own docstring.
+    const { deps, asked } = roleProfileDeps({ 'http://roles.test/x': { body: NARROW } });
+    const evidence = await dereferenceRoleProfile('http://roles.test/x', deps);
+    expect(evidence.kind).toBe('unreadable');
+    if (evidence.kind === 'unreadable') expect(evidence.why).toMatch(/cleartext/);
+    expect(asked).toEqual([]);
+    // …and the same fail-closed answer for anything that is neither an /ns IRI nor https.
+    for (const bad of ['urn:example:roles', '', 'ftp://roles.test/x']) {
+      expect((await dereferenceRoleProfile(bad, deps)).kind, bad).toBe('unreadable');
+    }
+  });
+
+  it('★ a document that is not a role profile refuses, and so does one that declares two', async () => {
+    const notAProfile = roleProfileDeps({ [P]: { body: GRANT_TTL } });
+    const wrongType = await dereferenceRoleProfile(P, notAProfile.deps);
+    expect(wrongType.kind).toBe('unreadable');
+    if (wrongType.kind === 'unreadable') expect(wrongType.why).toMatch(/declares no <.*wsp#RoleProfile>/);
+
+    // An HTML error page served with a 200 — the shape a misconfigured host produces, and the
+    // one a reader that only checked the status would parse as an empty table.
+    const html = roleProfileDeps({ [P]: { body: '<!doctype html><h1>Not found</h1>', contentType: 'text/html' } });
+    expect((await dereferenceRoleProfile(P, html.deps)).kind).toBe('unreadable');
+
+    const two = roleProfileDeps({ [P]: { body: `${NARROW}\n<${P}#other> a wsp:RoleProfile .\n` } });
+    const twoRead = await dereferenceRoleProfile(P, two.deps);
+    expect(twoRead.kind).toBe('unreadable');
+    if (twoRead.kind === 'unreadable') expect(twoRead.why).toMatch(/declares 2 <.*wsp#RoleProfile> subjects/);
+
+    // A profile with no roles at all is refused rather than read as permitting nothing: every
+    // grant in the workspace would name a role it does not declare, and "the table is empty" and
+    // "the document is not a role profile" are answers an operator acts on differently.
+    const empty = roleProfileDeps({ [P]: { body: `@prefix wsp: <${WSP}> .\n<${P}> a wsp:RoleProfile .` } });
+    const emptyRead = await dereferenceRoleProfile(P, empty.deps);
+    expect(emptyRead.kind).toBe('unreadable');
+    if (emptyRead.kind === 'unreadable') expect(emptyRead.why).toMatch(/not one <.*wsp#Role>/);
+  });
+
+  it('★★ a malformed wsp:permits refuses the DOCUMENT rather than being skipped', async () => {
+    // ★ THE DIRECTION IS THE POINT. Skipping the bad value narrows the published table, and a
+    // narrower document makes an honest caller's table look WIDER than it is — so a typo in the
+    // governance document would manufacture exactly the disagreement this whole check reports,
+    // against a fold that had done nothing wrong. Refusing is loud; dropping is a wrong answer
+    // wearing a right one's clothes.
+    const literal = `@prefix wsp: <${WSP}> .\n<${P}> a wsp:RoleProfile .\n`
+      + `<${P}#Observer> a wsp:Role ; wsp:permits <${CAPS.read}>, "read" .\n`;
+    const { deps } = roleProfileDeps({ [P]: { body: literal } });
+    const evidence = await dereferenceRoleProfile(P, deps);
+    expect(evidence.kind).toBe('unreadable');
+    if (evidence.kind === 'unreadable') expect(evidence.why).toMatch(/is not an IRI/);
+
+    // …and a blank-node role, which can never be the role a grant names.
+    const bnode = `@prefix wsp: <${WSP}> .\n<${P}> a wsp:RoleProfile .\n`
+      + `[] a wsp:Role ; wsp:permits <${CAPS.read}> .\n`;
+    const bn = await dereferenceRoleProfile(P, roleProfileDeps({ [P]: { body: bnode } }).deps);
+    expect(bn.kind).toBe('unreadable');
+    if (bn.kind === 'unreadable') expect(bn.why).toMatch(/is a blank node/);
+  });
+
+  it('★ a missing fetchDocument dependency refuses loudly instead of falling back', async () => {
+    // The posture `getDescriptor` and `currentHead` take. Returning a table from anywhere else
+    // when the dependency is absent would report a check that did not happen.
+    const noDep = descriptorDeps({});
+    const evidence = await dereferenceRoleProfile(P, noDep);
+    expect(evidence.kind).toBe('unreadable');
+    if (evidence.kind === 'unreadable') expect(evidence.why).toMatch(/no `fetchDocument` dependency/);
+    // …and a fetch that THROWS is a refusal, not an exception out of the authorization path.
+    const throws = await dereferenceRoleProfile(P, roleProfileDeps({}, { throws: true }).deps);
+    expect(throws.kind).toBe('unreadable');
+    if (throws.kind === 'unreadable') expect(throws.why).toMatch(/threw: socket hang up/);
+  });
+
+  it('★★ a POD-HOSTED profile takes the substrate path, resolves through its OWN owner segment, and is SIGNED', async () => {
+    // ★ THE POD DOUBLE ANSWERS DIFFERENTLY PER POD, which is the mutant that survived on
+    // `dereferenceWorkspaceRecord`: alice's pod serves the NARROW table and bee's serves the
+    // WIDE one at the same IRI. Dropping `pod_name` from the call, or naming the wrong pod,
+    // cannot return alice's table here.
+    const { deps, headCalls, asked } = roleProfileDeps({});
+    const evidence = await dereferenceRoleProfile(NS_PROFILE, deps);
+    expect(evidence.kind).toBe('declared');
+    if (evidence.kind !== 'declared') return;
+    expect(evidence.document.roles).toEqual([{ role: `${P}#Observer`, permits: [CAPS.read] }]);
+    expect(evidence.document.head).toBe(PROFILE_DESC);
+    expect(evidence.document.dereferenced).toBe(NS_PROFILE);
+    // ★ THE GRADE IS THE STRONGER ONE HERE, and it is the only path that can honestly claim it:
+    // the table came out of `payloadOf`, so out of the region the substrate digested, with the
+    // verifier's answer beside it.
+    expect(evidence.document.authority).toBe('signed-record');
+    expect(evidence.document.attestation?.authorshipVerified).toBe(true);
+    expect(headCalls).toEqual([{ urn: NS_PROFILE, pod_name: 'u-eth-alice' }]);
+    // …and it never went to the open web for an IRI the substrate answers for.
+    expect(asked).toEqual([]);
+  });
+
+  it('★★ PARSE SCOPE MUST EQUAL DIGEST SCOPE for a role profile too — the widened role outside the block is not read', async () => {
+    // ★★ FOUND BY MUTATION, AND IT IS THE MANUFACTURED PARTICIPANT ONE DOCUMENT OUT. Replacing
+    // `payloadOf(res)` with `res.graph.content` — the whole served document — survived every
+    // other case in this describe block, because none of them put anything outside the digested
+    // block for the wider parse to find.
+    //
+    // The attack is the same one that cost this module its headline property for a round: the
+    // relay digests only the `<graphIri> { … }` region, so a `wsp:Role` written into the DEFAULT
+    // graph beside a verbatim copy of a real signed profile is content-bound at full strength
+    // and says whatever its writer likes. On a governance document that is not a forged
+    // membership — it is a forged CAPABILITY, on every member of the workspace at once.
+    const widenedOutside =
+      `<${P}#Observer> a <${WSP}Role> ; <${WSP}permits> <${CAPS.grant}>, <${CAPS.revoke}> .\n`;
+    const { deps } = roleProfileDeps({}, { outsideBlock: widenedOutside });
+    const evidence = await dereferenceRoleProfile(NS_PROFILE, deps);
+    expect(evidence.kind).toBe('declared');
+    if (evidence.kind !== 'declared') return;
+    // The digested block says `#Observer` permits `read`, and that is the whole of what is read.
+    expect(evidence.document.roles).toEqual([{ role: `${P}#Observer`, permits: [CAPS.read] }]);
+
+    // ★ AND NO FALLBACK TO THE TOP-LEVEL `content`, which is the other half of the same hole and
+    // was itself a surviving mutant on the membership readers. `get_descriptor` digests
+    // `graph.content` and nothing else, so a record served only as top-level content has no
+    // covered region and must be refused rather than read.
+    const noGraph = {
+      ...descriptorDeps({}),
+      getDescriptor: vi.fn(async () => ({
+        url: PROFILE_DESC,
+        turtle: `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n<${PROFILE_DESC}> a iep:ContextDescriptor .\n`,
+        content: WIDE,
+        authorship: { authorshipVerified: true, signedBy: CONV_KEY, contentBinding: 'bound' },
+      })),
+      currentHead: vi.fn(async () => ({ forked: false, head: { descriptorUrl: PROFILE_DESC } })),
+    } as unknown as StreamDeps;
+    const refused = await dereferenceRoleProfile(NS_PROFILE, noGraph);
+    expect(refused.kind).toBe('unreadable');
+  });
+
+  it('★ the rival table on another pod is never what the /ns dereference returns', async () => {
+    // The control that makes the case above a measurement: bee's document is readable, parses
+    // clean, is signed by her own registered agent, and gives `#Observer` `grant` and `revoke`.
+    // It is simply on the wrong pod.
+    const { deps } = roleProfileDeps({});
+    const rival = await dereferenceRoleProfile(
+      'https://relay.test/ns/u-eth-bee/wsp-roles-x', deps,
+    );
+    expect(rival.kind).toBe('declared');
+    if (rival.kind !== 'declared') return;
+    expect(rival.document.roles[0]!.permits).toContain(CAPS.revoke);
+    const mine = await dereferenceRoleProfile(NS_PROFILE, deps);
+    expect(mine.kind === 'declared' && mine.document.roles[0]!.permits).not.toContain(CAPS.revoke);
+  });
+
+  it('★ a FORKED profile chain refuses rather than picking a table', async () => {
+    // The same rule the fold applies to a forked grant chain and `dereferenceWorkspaceRecord`
+    // applies to a forked workspace: two unresolved heads mean the IRI states two role tables,
+    // and picking one would make what a role permits depend on the order of a supersedes walk.
+    const { deps } = roleProfileDeps({}, { forked: true });
+    const evidence = await dereferenceRoleProfile(NS_PROFILE, deps);
+    expect(evidence.kind).toBe('unreadable');
+    if (evidence.kind === 'unreadable') {
+      expect(evidence.why).toMatch(/2 unresolved chain heads/);
+      expect(evidence.why).toMatch(/Republish a single clean head/);
+    }
+    // …an empty chain, and a missing currentHead, refuse too.
+    const none = await dereferenceRoleProfile(NS_PROFILE, roleProfileDeps({}, { heads: {} }).deps);
+    expect(none.kind).toBe('unreadable');
+    if (none.kind === 'unreadable') expect(none.why).toMatch(/nothing is published at/);
+    const noDep = await dereferenceRoleProfile(NS_PROFILE, descriptorDeps({}));
+    expect(noDep.kind).toBe('unreadable');
+    if (noDep.kind === 'unreadable') expect(noDep.why).toMatch(/no `currentHead` dependency/);
+  });
+
+  it('★★ end to end: the read table refuses the widened fold and ADMITS the published one', async () => {
+    // ★ THE CONTROL FIRST, for the reason this file states at the top: a suite where every
+    // configuration is refused establishes nothing, and that is exactly how §6 of
+    // verify-can-live.ts used to pass.
+    // ★ THE TWO DOUBLES ARE COMPOSED IN THIS ORDER ON PURPOSE. `roleProfileDeps` carries its own
+    // `getDescriptor` (which knows only the two profile descriptors), so spreading it SECOND
+    // would silently replace the one that serves the grant and the acceptance — and every read
+    // below would fail for a reason having nothing to do with the role table. Only
+    // `fetchDocument` is taken from it.
+    const grant = OBSERVER_GRANT_TTL;
+    const deps = {
+      ...descriptorDeps({
+        [WORKSPACE_URL]: { content: WORKSPACE_TTL, signedBy: CONV_KEY },
+        [GRANT_URL]: { content: grant, signedBy: CONV_KEY },
+        [ACCEPT_URL]: { content: ACCEPT_TTL, signedBy: BEE_KEY },
+      }),
+      fetchDocument: roleProfileDeps({ [P]: { body: NARROW } }).deps.fetchDocument,
+    } as unknown as StreamDeps;
+    const roleTableEvidence = await dereferenceRoleProfile(P, deps);
+    const base = {
+      workspace: WS, scopes,
+      grants: [(await readGrantRecord(GRANT_URL, deps)).record!],
+      acceptances: [(await readAcceptanceRecord(ACCEPT_URL, deps)).record!],
+    };
+    const policy = {
+      convener: CONV, signerOf, requireFieldBinding: true,
+      workspaceEvidence: convenerEvidenceOf(await readWorkspaceRecord(WORKSPACE_URL, deps)),
+    };
+    // The published table, read off the wire, folded against a caller that agrees with it.
+    const honest: RoleProfile = { profile: P, roles: [{ role: `${P}#Observer`, permits: [CAPS.read] }] };
+    const admitted = foldRoster({ ...base, profile: honest, attestation: { ...policy, roleTableEvidence } });
+    expect(admitted.members).toHaveLength(1);
+    expect(admitted.roleTableBinding).toBe('bound');
+    expect(admitted.members[0]!.effective).toEqual([CAPS.read]);
+
+    // …and residual gap 10, closed against a document nobody in this test wrote by hand: the
+    // caller claims the same IRI and gives `#Observer` three more capabilities.
+    const widened: RoleProfile = {
+      profile: P, roles: [{ role: `${P}#Observer`, permits: [CAPS.read, CAPS.append, CAPS.grant] }],
+    };
+    const open = foldRoster({ ...base, profile: widened, attestation: policy });
+    expect(open.members).toHaveLength(1);
+    expect(open.roleProfileBinding).toBe('bound');
+    expect(open.members[0]!.effective.length).toBeGreaterThan(1);
+    const closed = foldRoster({ ...base, profile: widened, attestation: { ...policy, roleTableEvidence } });
+    expect(closed.members).toHaveLength(0);
+    expect(closed.roleTableBinding).toBe('refused');
+    expect(closed.unattested[0]!.because).toMatch(/it PERMITS MORE than the document does/);
+    expect(closed.convenerBinding).toBe('bound');
   });
 });

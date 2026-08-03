@@ -13,12 +13,22 @@
  * measured against a double measures the double.
  */
 import { describe, it, expect, vi } from 'vitest';
+// ★ Read the application's own source, never a copy of it — see the mint-site scan at the end
+// of the AXIS I block. A test that asserts something about source it restated asserts nothing.
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+// The compiler's own parser, so the scan reads CODE rather than the prose that describes it.
+// It is already a dependency — `tools/typecheck-gate.mjs` runs it as the suite's globalSetup.
+import ts from 'typescript';
 import { entryTurtle } from '../applications/shared-workspace/src/stream.js';
 import {
   foldRoster, may, explain, refuseConvenerAuthority, refuseRoleProfileAuthority,
-  refuseEvidenceProvenance,
+  refuseEvidenceProvenance, refuseFieldBinding, refuseRoleTableAuthority, normaliseRoleTable,
   type Roster, type Grant, type Acceptance, type Attestation,
   type WorkspaceRecord, type ConvenerEvidence,
+  type FieldProvenance, type EvidenceProvenance,
+  type RoleDefinition, type RoleProfileDocument, type RoleTableEvidence,
 } from '../applications/shared-workspace/src/roster.js';
 import { composeWorkspace, isUnder, describeCoverage, type ComposableMember } from '../applications/shared-workspace/src/compose.js';
 import {
@@ -40,6 +50,42 @@ const PROFILE: RoleProfile = {
     { role: `${P}#Observer`, permits: [CAPS.read] },
   ],
 };
+
+// ── ★★ the two forgeries this suite is required to be able to write ──────────
+
+/**
+ * ★★ `FieldProvenance` AND `EvidenceProvenance` ARE BRANDED, AND THESE TWO LINES ARE HOW A
+ * TEST GETS PAST THE BRAND. Read this before copying either of them anywhere else.
+ *
+ * Both types intersect a private-membered ambient class that `roster.ts` does not export, so
+ * `{source: 'payload', descriptor}` and `{dereferenced, resolvedTo}` are COMPILE ERRORS
+ * everywhere outside `membership.ts` — which is the point, and which is asserted directly in
+ * `★ the brand refuses the forgery at compile time` below. A `as unknown as` cast is the one
+ * escape hatch a compile-time brand cannot close, and this file needs it: a suite that can only
+ * build honest provenance cannot test what happens to a dishonest one, and `sourceRefused` and
+ * `provenanceShapes` exist precisely to feed the fold rows no producer would ever make.
+ *
+ * ★ SO THE CASTS ARE CENTRALISED HERE RATHER THAN SPRINKLED, and the names say `forge`. Two
+ * reasons, both about the next round rather than this one:
+ *
+ *   — a grep for `as unknown as FieldProvenance` across the tree should return `membership.ts`
+ *     (which mints honestly) and this file (which mints dishonestly on purpose), and any third
+ *     hit is a caller that has quietly re-opened the gap. Scattering the cast across forty
+ *     construction sites would make that grep useless.
+ *   — the fold's guarantee is about what a caller CAN WRITE. A test helper called
+ *     `fieldProvenance(...)` would read like the honest producer and would be copied as one.
+ *
+ * They deliberately take `source` and `dereferenced` as plain `string`, not as the narrow types
+ * the real fields carry: `provenanceShapes`' `unknown-source` case exists to feed
+ * `refuseFieldBinding` a value the type says is impossible, and a helper that could not express
+ * it would put that case back behind its own separate cast.
+ */
+const forgeFieldProvenance = (source: string, descriptor: string): FieldProvenance =>
+  ({ source, descriptor } as unknown as FieldProvenance);
+
+/** The sibling for AXIS I. See {@link forgeFieldProvenance} — every word of it applies. */
+const forgeEvidenceProvenance = (dereferenced: string, resolvedTo: string): EvidenceProvenance =>
+  ({ dereferenced, resolvedTo } as unknown as EvidenceProvenance);
 
 // ── ★★ the invariant that kills the class, not the instance ──────────────────
 
@@ -71,6 +117,7 @@ const PROFILE: RoleProfile = {
  *   G  the convener the WORKSPACE declares ⊆ the convener the CALLER named
  *   H  the role profile the WORKSPACE declares ⊆ the profile the CALLER folded against
  *   I  the record the workspace DEREFERENCES TO ⊆ a record about it the caller was handed
+ *   J  the role table the PROFILE DOCUMENT contains ⊆ the table the CALLER folded against
  *
  * ★ G AND H RIDE THE SAME EVIDENCE AND ARE STILL TWO AXES. One `wsp:Workspace` record answers
  * both questions — who may grant, and what a granted role permits — so there is no separate
@@ -88,6 +135,15 @@ const PROFILE: RoleProfile = {
  * generates the four states evidence can arrive in, three of them forged, so the rung has
  * something to refuse as well as something to admit; per-shape counters after the enumeration
  * assert each forgery actually took a member away.
+ *
+ * ★ AXIS J IS THE ONE THAT FINALLY OPENS A DOCUMENT. G, H and I all compare a NAME — a convener,
+ * a profile IRI, a descriptor URL — and the thing every capability in the roster is computed
+ * from is the role TABLE those names point at, which was the caller's own array. Measured before
+ * the check existed: `convenerBinding: 'bound'`, `roleProfileBinding: 'bound'`,
+ * `recordFieldBinding: 'bound'`, `unattested: []`, and an `#Observer` holding `grant` and
+ * `revoke`. `tableShapes` generates the five states the document can arrive in, four of them
+ * refusing, and it rides the whole lattice on top of the AGREEING workspace record so the three
+ * verdicts below it can be asserted NOT to move.
  *
  * ★ AXIS F IS NOT AN ORDERING, AND THAT IS DELIBERATE. `exact-url` and `slug-only` are not a
  * strong and a weak policy — they are two answers the substrate gives about the SAME record,
@@ -309,8 +365,8 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
   const provenanceOf = (shape: typeof provenanceShapes[number], head: string) => {
     switch (shape) {
       case 'none': return {};
-      case 'self': return { fieldProvenance: { source: 'payload' as const, descriptor: head } };
-      case 'other-record': return { fieldProvenance: { source: 'payload' as const, descriptor: 'https://elsewhere.test/x.ttl' } };
+      case 'self': return { fieldProvenance: forgeFieldProvenance('payload', head) };
+      case 'other-record': return { fieldProvenance: forgeFieldProvenance('payload', 'https://elsewhere.test/x.ttl') };
       case 'unknown-source': return { fieldProvenance: { source: 'trust-me' } as never };
     }
   };
@@ -328,7 +384,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
   ): WorkspaceRecord => ({
     head: WS_RECORD, workspace: WS, convener, roleProfile: P,
     attestation: contentBound(signer),
-    fieldProvenance: { source: 'payload', descriptor: WS_RECORD },
+    fieldProvenance: forgeFieldProvenance('payload', WS_RECORD),
     ...over,
   });
 
@@ -444,9 +500,83 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     const record = workspaceRecord(CONV, CONV_KEY);
     switch (shape) {
       case 'none': return { kind: 'declared', record };
-      case 'honest': return { kind: 'declared', record, provenance: { dereferenced: WS, resolvedTo: WS_RECORD } };
-      case 'other-iri': return { kind: 'declared', record, provenance: { dereferenced: 'https://other.test/ws', resolvedTo: WS_RECORD } };
-      case 'other-record': return { kind: 'declared', record, provenance: { dereferenced: WS, resolvedTo: 'https://elsewhere.test/x.ttl' } };
+      case 'honest': return { kind: 'declared', record, provenance: forgeEvidenceProvenance(WS, WS_RECORD) };
+      case 'other-iri': return { kind: 'declared', record, provenance: forgeEvidenceProvenance('https://other.test/ws', WS_RECORD) };
+      case 'other-record': return { kind: 'declared', record, provenance: forgeEvidenceProvenance(WS, 'https://elsewhere.test/x.ttl') };
+    }
+  };
+
+  // ── ★ AXIS J — the role TABLE behind the profile IRI ────────────────────────
+
+  /**
+   * ★ THE GENERATOR RESIDUAL GAP 10 NEEDED, and it is AXIS E's, G's, H's and I's lesson a FIFTH
+   * time. The rule is now old enough to state as a rule: A RUNG CROSSED ONLY AGAINST ROWS THAT
+   * AGREE WITH IT REFUSES NOTHING AND PASSES. It has happened three times in this file, twice
+   * undetected until a counter was added after the loop, so this axis was written counter-first.
+   *
+   * The caller's table throughout the enumeration is {@link PROFILE} — three roles. These are
+   * the five states the document behind its IRI can arrive in:
+   *
+   *   `honest`          the document declares exactly {@link PROFILE}'s three roles with exactly
+   *                     its capabilities. Must ADMIT, and must change nothing but the report.
+   *   `caller-widened`  the document gives `#Contributor` only `read` where the fold gives it
+   *                     `read` and `append`. THE ATTACK, in its smallest honest form: every
+   *                     other check in the policy passes at full strength, the profile IRI
+   *                     agrees, and the fold is conferring a capability the published governance
+   *                     does not grant.
+   *   `other-iri`       a genuine, correctly parsed table, obtained by dereferencing somewhere
+   *                     else — the federated composer holding one governance document per IRI it
+   *                     has met and attaching the wrong one. The same shape as AXIS I's
+   *                     `other-iri`, one document further out.
+   *   `unreadable`      the caller asked and got nothing. Not hypothetical: the profile IRI the
+   *                     deployed workspace record declares answers 404, measured 2026-08-03, so
+   *                     this is the state a fold against the REAL artifact lands in today.
+   *   `mislabelled`     a document claiming `'transport-only'` while carrying an attestation.
+   *                     The relabelling move: `authority` is the one field on the document whose
+   *                     value SELECTS a check, so a pod record whose authorship does not hold up
+   *                     could otherwise be downgraded past the branch that would have caught it.
+   *
+   * ★★ AND `caller-widened` MOVES A CAPABILITY THE LATTICE ACTUALLY CONFERS, which is the part
+   * §10 of `verify-can-live.ts` got wrong when it named a role its own grants never mentioned.
+   * Every configuration here grants `#Contributor` to alice, and `#Contributor` is the role whose
+   * permits this shape narrows — so `onFields` really does hold `append` and the refusal really
+   * does take it away. A shape that moved `#Steward` would ride all 76,800 points refusing
+   * nothing.
+   */
+  const ROLE_DOC = 'https://roles.test/wsp-roles-default.ttl';
+  /**
+   * A row whose fields were parsed from its own record — what every honest reader produces, and
+   * what AXIS J's cases need so that `requireFieldBinding: true` is not the thing refusing them.
+   * Built through {@link forgeFieldProvenance} because the brand refuses the literal; see that
+   * helper for why every cast in this file goes through a name that says `forge`.
+   */
+  const selfProvenance = (head: string): { fieldProvenance: FieldProvenance } =>
+    ({ fieldProvenance: forgeFieldProvenance('payload', head) });
+  const tableShapes = ['honest', 'caller-widened', 'other-iri', 'unreadable', 'mislabelled'] as const;
+  /** {@link PROFILE}'s own table, restated as what a document would declare. */
+  const declaredRoles: readonly RoleDefinition[] = [
+    { role: `${P}#Convener`, permits: [CAPS.read, CAPS.append, CAPS.grant, CAPS.revoke] },
+    { role: `${P}#Contributor`, permits: [CAPS.read, CAPS.append] },
+    { role: `${P}#Observer`, permits: [CAPS.read] },
+  ];
+  const roleDocument = (over: Partial<RoleProfileDocument> = {}): RoleProfileDocument => ({
+    head: ROLE_DOC, dereferenced: P, roles: declaredRoles, authority: 'transport-only', ...over,
+  });
+  const tableEvidence = (shape: typeof tableShapes[number]): RoleTableEvidence => {
+    switch (shape) {
+      case 'honest': return { kind: 'declared', document: roleDocument() };
+      case 'caller-widened': return {
+        kind: 'declared',
+        document: roleDocument({
+          roles: declaredRoles.map(r => (r.role === `${P}#Contributor` ? { role: r.role, permits: [CAPS.read] } : r)),
+        }),
+      };
+      case 'other-iri': return { kind: 'declared', document: roleDocument({ dereferenced: OTHER_PROFILE }) };
+      case 'unreadable': return { kind: 'unreadable', why: `<${P}> answered 404` };
+      case 'mislabelled': return {
+        kind: 'declared',
+        document: roleDocument({ authority: 'transport-only', attestation: contentBound(CONV_KEY) }),
+      };
     }
   };
 
@@ -499,15 +629,16 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
    * this one test while leaving every future long synchronous loop free to do it again.
    * Yielding fixes the actual fault: a worker that cannot answer is a worker nobody can hear.
    *
-   * {@link YIELD_EVERY} configurations per turn puts 300 yields across the lattice and keeps
-   * the longest uninterrupted block between roughly 475 ms and 660 ms — measured, not budgeted,
-   * and quoted as a RANGE because two runs of the same tree on the same box came in at 142,475
-   * ms and 196,693 ms. Over 300 chunks that is 475 ms and 656 ms. Up from ~220 ms when there
-   * were ten folds per configuration rather than eighteen. Against the 60 s deadline the worse
-   * of the two still leaves a 91x margin on a single 256-case chunk, so this holds on a CI
-   * runner far slower than this box rather than only on a fast one. The single figure that
-   * stood here was the faster run, and this file's own rule about numbers that cannot be
-   * distinguished from the noise applies to its own measurements first.
+   * {@link YIELD_EVERY} configurations per turn puts `76,800 / YIELD_EVERY` yields across the
+   * lattice. At 256, with eighteen folds per configuration, the longest uninterrupted block
+   * measured between roughly 475 ms and 660 ms — measured, not budgeted, and quoted as a RANGE
+   * because two runs of the same tree on the same box came in at 142,475 ms and 196,693 ms. Over
+   * 300 chunks that is 475 ms and 656 ms. Up from ~220 ms when there were ten folds per
+   * configuration rather than eighteen. Against the 60 s deadline the worse of the two left a
+   * 91x margin on a single 256-case chunk, so this holds on a CI runner far slower than this box
+   * rather than only on a fast one. The single figure that stood here was the faster run, and
+   * this file's own rule about numbers that cannot be distinguished from the noise applies to
+   * its own measurements first.
    *
    * ★ AND THAT MARGIN IS WHAT A NEW AXIS SPENDS, so it is written down in the same units the
    * next one will need. Adding a rung inside this loop multiplies the chunk, not the total: the
@@ -515,13 +646,37 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
    * eighteen folds inside one uninterrupted turn. Lower {@link YIELD_EVERY} before the chunk
    * approaches the deadline; do not raise the deadline, and do not trim the lattice.
    *
+   * ★★ AND AXIS J SPENT MORE OF IT THAN THE ARITHMETIC SAID, WHICH IS WHY THE FIGURE BELOW IS
+   * MEASURED RATHER THAN PROJECTED. Five more folds per configuration is +36% on the folds; the
+   * three subset comparisons per shape are +83% on the comparisons, which is where the time
+   * actually goes. Estimated at "roughly a third more"; MEASURED at 432,199 ms and 545,902 ms on
+   * two runs of the same tree on this box, against 142,475 ms and 196,693 ms before it. That is
+   * 2.8–3.0x, not 1.3x, and the estimate is left in the sentence rather than quietly replaced
+   * because the next person adding a rung will reach for the same arithmetic and should see it
+   * be wrong first.
+   *
+   * {@link YIELD_EVERY} is 128, halving the chunk and doubling the yields to 600. Measured, the
+   * longest uninterrupted turn is 432,199 / 600 ≈ 720 ms to 545,902 / 600 ≈ 910 ms — a 66x to
+   * 83x margin on the 60 s birpc deadline, comparable to the 91x the previous lattice held. The
+   * whole cost of a yield is one return through the timers phase, and this file has already
+   * recorded that 300 of them could not be distinguished from run-to-run noise. Doing it the
+   * other way round — leaving the chunk to grow because the margin "is still large" — is how the
+   * 66.8 s block got to 66.8 s.
+   *
+   * The `it()` timeout moves from 600 s to 1,800 s, and the number is chosen against the
+   * MEASUREMENT rather than rounded up from it: the slower of the two runs needs roughly a 3x
+   * headroom to survive a CI runner slower than this one, which is the margin the 600 s timeout
+   * gave the previous lattice. 900 s was the first value written here and it was wrong — 1.65x
+   * against the slower run — which is exactly how a green suite starts failing on whichever
+   * runner happens to be loaded.
+   *
    * The overhead is not quoted, because it could not be measured apart from the noise: three
    * runs of this file came in at 66.8 s (before), 72.4 s and 55.0 s (after). 300 returns
    * through the timers phase is arithmetically sub-second; run-to-run variance here is tens of
    * seconds, and a number that cannot be distinguished from the noise should not be written
    * down as if it had been.
    */
-  const YIELD_EVERY = 256;
+  const YIELD_EVERY = 128;
 
   /**
    * A MACROTASK, and a microtask will not do. `await Promise.resolve()` drains the microtask
@@ -532,7 +687,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
   const yieldToEventLoop = (): Promise<void> =>
     new Promise<void>(resolve => { setTimeout(resolve, 0); });
 
-  it('★ AXIS A — enumerating every grant × acceptance × revoked × withdrawn × second grant head × acceptance count × field provenance × descriptor-binding basis × declared convener × declared role profile × evidence provenance', async () => {
+  it('★ AXIS A — enumerating every grant × acceptance × revoked × withdrawn × second grant head × acceptance count × field provenance × descriptor-binding basis × declared convener × declared role profile × evidence provenance × role table', async () => {
     let cases = 0;
     // AXIS G's and AXIS H's non-vacuity counters. See the assertions after the loop.
     let conveneCases = 0, agreeAdmitted = 0, disagreeRefused = 0, profileRefused = 0;
@@ -541,6 +696,12 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     // lattice untested — which is the vacuity this file keeps re-finding, one level finer.
     let sourceCases = 0, sourceAdmitted = 0;
     const sourceRefused: Record<string, number> = { none: 0, 'other-iri': 0, 'other-record': 0 };
+    // AXIS J's, per forged shape for the reason AXIS I's are: one shape doing all the refusing
+    // behind a single non-zero total leaves the others riding the lattice untested.
+    let tableCases = 0, tableAdmitted = 0;
+    const tableRefused: Record<string, number> = {
+      'caller-widened': 0, 'other-iri': 0, unreadable: 0, mislabelled: 0,
+    };
     for (const gAtt of attKeys) {
       for (const aAtt of attKeys) {
         for (const revoked of [false, true]) {
@@ -579,7 +740,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
                   // Always self-bound, so the second head can survive AXIS E while the first
                   // is refused by it — which is the pairing that makes the stream re-pick,
                   // the divergence report and the role label observable at this rung too.
-                  fieldProvenance: { source: 'payload', descriptor: 'https://alice.test/a2' },
+                  fieldProvenance: forgeFieldProvenance('payload', 'https://alice.test/a2'),
                   // A DIFFERENT stream, so re-picking the head is observable at all.
                   stream: 'https://alice.test/s2',
                   // Refusable = signed by a stranger, so every policy drops it and only the
@@ -715,6 +876,11 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
               // because that is where it sits on the ladder — evidence can only ever refuse
               // more — so the chain the lattice must satisfy at every point is now
               // convened ⊆ fields ⊆ bound ⊆ attested ⊆ asserted.
+              // Hoisted out of the loop below so AXIS J can sit on top of the AGREEING rung
+              // rather than beside it — evidence can only ever refuse more, so a role-table
+              // check built on a workspace record that already disagrees would be measuring the
+              // convener's refusal and calling it the table's.
+              let onConvenedAgrees: Roster | undefined;
               for (const convene of conveneShapes) {
                 const onConvened = foldRoster({
                   ...args,
@@ -752,6 +918,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
                   expect(decisions(onConvened), `${glabel}: agreeing evidence changed a decision`)
                     .toBe(decisions(onFields));
                   agreeAdmitted += onConvened.members.length;
+                  onConvenedAgrees = onConvened;
                 } else {
                   // A disagreement removes the power to make members — on EITHER field, since
                   // both refusals sit in the grant filter's `??` chain and nowhere else. It
@@ -810,6 +977,59 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
                   if (onFields.members.length > 0) sourceRefused[source] = (sourceRefused[source] ?? 0) + 1;
                 }
                 sourceCases++;
+              }
+
+              // ★ AXIS J, THE EIGHTH RUNG: the same field-bound policy, the same AGREEING
+              // workspace record, and the question of what is actually inside the document that
+              // record's `wsp:roleProfile` names. It sits above AXIS G and H on the ladder —
+              // reading the table can only ever refuse more — so the chain the lattice must
+              // satisfy at every point is now table ⊆ convened ⊆ fields ⊆ bound ⊆ attested ⊆
+              // asserted.
+              //
+              // ★★ AND THE THREE VERDICTS BELOW IT MUST NOT MOVE, which is what makes this an
+              // independence claim rather than five more refusals. The workspace evidence here
+              // is `conveneEvidence.agrees` in all five shapes, so `convenerBinding` and
+              // `roleProfileBinding` are `'bound'` throughout and only `roleTableBinding` goes
+              // to `'refused'`. A fold that let a table refusal print as a profile fault would
+              // send an operator to republish a workspace record that already declares exactly
+              // the right IRI — the standing complaint this file makes about every diagnostic it
+              // has had to fix, and the one gap 8's round had to fix in this very pair.
+              for (const table of tableShapes) {
+                const onTable = foldRoster({
+                  ...args,
+                  attestation: {
+                    convener: CONV,
+                    signerOf: signerIndexFromRegistry(registry(false)),
+                    requireFieldBinding: true,
+                    workspaceEvidence: conveneEvidence.agrees,
+                    roleTableEvidence: tableEvidence(table),
+                  },
+                });
+                const jlabel = `table=${table} ${label}`;
+                expect(onTable.roleTableBinding, `${jlabel}: roleTableBinding`)
+                  .toBe(table === 'honest' ? 'bound' : 'refused');
+                expect(onTable.convenerBinding, `${jlabel}: a table verdict leaked into convenerBinding`).toBe('bound');
+                expect(onTable.roleProfileBinding, `${jlabel}: a table verdict leaked into roleProfileBinding`).toBe('bound');
+                // …and passing a role table answers nothing about where the WORKSPACE record
+                // came from. Two different documents, two different questions.
+                expect(onTable.evidenceProvenanceBinding, `${jlabel}: a table verdict leaked into evidenceProvenanceBinding`).toBe('unchecked');
+                assertNoWiderThan(onTable, onConvenedAgrees!, jlabel);
+                assertNoWiderThan(onTable, onFields, `${jlabel} vs fields`);
+                assertNoWiderThan(onTable, off, `${jlabel} vs off`);
+                if (table === 'honest') {
+                  // The half a subset check cannot see, for the reason AXIS G and I state it: a
+                  // rung that refused everything satisfies every ⊆ assertion on an empty set.
+                  // Reading the document and finding it agrees must change the REPORT and
+                  // nothing else.
+                  expect(decisions(onTable), `${jlabel}: an agreeing role table changed a decision`)
+                    .toBe(decisions(onConvenedAgrees!));
+                  tableAdmitted += onTable.members.length;
+                } else {
+                  expect(onTable.members, `${jlabel}: a refused role table still conferred`).toHaveLength(0);
+                  expect(onTable.pendingInvitations, `${jlabel}: a refused role table still invited`).toHaveLength(0);
+                  if (onFields.members.length > 0) tableRefused[table] = (tableRefused[table] ?? 0) + 1;
+                }
+                tableCases++;
               }
               cases++;
               // Hand the turn back so the worker can answer the main process. See
@@ -883,14 +1103,43 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
         + 'saw it. A shape that cannot refuse is decoration',
       ).toBeGreaterThan(0);
     }
-    // 76,800 configurations × 18 subset comparisons (6 on the four original rungs, 2 more on
+    // ★ AND AXIS J'S, WHICH ARE THE FIFTH SET AND WERE WRITTEN BEFORE THE AXIS WAS. Four of the
+    // five `tableShapes` exist only to be refused, and a generator that produced agreement in all
+    // five would ride all 76,800 points, refuse nothing, and satisfy every assertion above on an
+    // untouched set — the exact failure this file has now caught three times and pre-empted
+    // twice. `tableAdmitted` says the rung does not fail closed on an honest document;
+    // the four per-shape counters say each forgery actually took a member away.
+    expect(tableCases).toBe(cases * tableShapes.length);
+    expect(
+      tableAdmitted,
+      'AXIS J admitted no member anywhere: a role table identical to the one the fold used '
+      + 'refused every configuration in the lattice, so every subset assertion above held on an '
+      + 'empty set',
+    ).toBeGreaterThan(0);
+    for (const shape of ['caller-widened', 'other-iri', 'unreadable', 'mislabelled'] as const) {
+      expect(
+        tableRefused[shape],
+        `AXIS J shape '${shape}' refused nothing anywhere: no configuration had a member for `
+        + 'this role table to withhold, so the generator produced it and the rung never saw it. '
+        + 'A shape that cannot refuse is decoration — and `caller-widened` in particular is the '
+        + 'whole of residual gap 10, so a zero here means the gap is untested rather than closed',
+      ).toBeGreaterThan(0);
+    }
+    // 76,800 configurations × 33 subset comparisons (6 on the four original rungs, 2 more on
     // each of the three workspace-evidence shapes, 2 more on each of the four evidence-
-    // provenance shapes), plus 2 basis-invariance comparisons on each of the two thirds that
-    // carry a basis. The timeout is raised rather than the enumeration trimmed: every axis here
+    // provenance shapes, 3 more on each of the five role-table shapes), plus 2 basis-invariance
+    // comparisons on each of the two thirds that carry a basis. The timeout is raised rather
+    // than the enumeration trimmed: every axis here
     // was added because a defect was unreachable without it, and sampling the lattice is how
     // the 1296-case version missed two escalations. A few minutes of CI is the cheaper side of
-    // that trade — AXIS G's, H's and I's generators exist because a rung crossed against rows
-    // that all agree with it is a rung that refuses nothing.
+    // that trade — AXIS G's, H's, I's and J's generators exist because a rung crossed against
+    // rows that all agree with it is a rung that refuses nothing.
+    //
+    // ★ AXIS J TAKES THREE SUBSET COMPARISONS WHERE I TAKES TWO, and the third is the one worth
+    // paying for: `assertNoWiderThan(onTable, onConvenedAgrees)` is the only comparison that
+    // isolates the table's own contribution, because `onFields` differs from it by the workspace
+    // evidence as well. Comparing only against `onFields` and `off` would still hold if reading
+    // the table quietly widened something the convener check had narrowed.
     //
     // ★ A FOURTH `conveneShape` (both fields wrong at once) IS DELIBERATELY NOT HERE. It would
     // multiply the lattice by a third again for one property — that the constant refusals
@@ -898,8 +1147,11 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     // any axis this loop crosses. It is pinned once, below, in `both fields disagree`. AXIS I's
     // four shapes ride the lattice for the opposite reason: `requireEvidenceProvenance` is a
     // POLICY FLAG, so its interaction with every rung of the ladder is exactly the thing a
-    // separate case would have to guess at.
-  }, 600_000);
+    // separate case would have to guess at. AXIS J's five ride it for a third reason again: the
+    // table refusal sits LAST in the grant filter's `??` chain, so every other refusal in the
+    // policy can mask it, and "does it still fire under this rung" is a question about the chain
+    // rather than about the table.
+  }, 1_800_000);
 
   it('★ AXIS E is not vacuous — field binding really does admit and really does refuse', () => {
     // A subset assertion over a rung that refuses EVERYTHING holds trivially, and that is
@@ -914,7 +1166,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       grants: [{
         head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
         role: `${P}#Contributor`, attestation: bound(CONV_KEY),
-        fieldProvenance: { source: 'payload' as const, descriptor: 'https://conv.test/g1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g1'),
       }],
     };
     const acceptance = {
@@ -929,7 +1181,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     // ADMITS: both halves parsed from their own records.
     const admitted = foldRoster({
       ...base,
-      acceptances: [{ ...acceptance, fieldProvenance: { source: 'payload' as const, descriptor: acceptance.head } }],
+      acceptances: [{ ...acceptance, fieldProvenance: forgeFieldProvenance('payload', acceptance.head) }],
       attestation: policy,
     });
     expect(admitted.members).toHaveLength(1);
@@ -957,13 +1209,13 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       grants: [{
         head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
         role: `${P}#Contributor`, attestation: contentBound(CONV_KEY),
-        fieldProvenance: { source: 'payload' as const, descriptor: 'https://conv.test/g1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g1'),
       }],
       acceptances: [{
         head: 'https://alice.test/a1', workspace: WS, member: alice,
         accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
         attestation: contentBound(ALICE_KEY),
-        fieldProvenance: { source: 'payload' as const, descriptor: 'https://alice.test/a1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://alice.test/a1'),
       }],
     };
     const policy = {
@@ -997,13 +1249,13 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     grants: [{
       head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
       role: `${P}#Contributor`, attestation: contentBound(CONV_KEY),
-      fieldProvenance: { source: 'payload' as const, descriptor: 'https://conv.test/g1' },
+      fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g1'),
     }],
     acceptances: [{
       head: 'https://alice.test/a1', workspace: WS, member: alice,
       accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
       attestation: contentBound(ALICE_KEY),
-      fieldProvenance: { source: 'payload' as const, descriptor: 'https://alice.test/a1' },
+      fieldProvenance: forgeFieldProvenance('payload', 'https://alice.test/a1'),
     }],
   });
   const fieldBound = () => ({
@@ -1151,12 +1403,12 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       {
         head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
         attestation: contentBound(CONV_KEY),
-        fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g1'),
       },
       {
         head: 'https://conv.test/g2', workspace: WS, grantedTo: alice, role: `${P}#Observer`,
         revoked: true, attestation: contentBound(CONV_KEY),
-        fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g2' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g2'),
       },
     ];
     const args = { ...honestArgs(), grants: revoking };
@@ -1327,20 +1579,20 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     const beesOwnRecord: WorkspaceRecord = {
       head: 'https://bee.test/c/ws.ttl', workspace: WS, convener: BEE, roleProfile: P,
       attestation: contentBound(ALICE_KEY),
-      fieldProvenance: { source: 'payload', descriptor: 'https://bee.test/c/ws.ttl' },
+      fieldProvenance: forgeFieldProvenance('payload', 'https://bee.test/c/ws.ttl'),
     };
     const selfConvened = {
       workspace: WS, profile: PROFILE, scopes,
       grants: [{
         head: 'https://bee.test/g1', workspace: WS, grantedTo: BEE, role: `${P}#Contributor`,
         attestation: contentBound(ALICE_KEY),
-        fieldProvenance: { source: 'payload' as const, descriptor: 'https://bee.test/g1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://bee.test/g1'),
       }],
       acceptances: [{
         head: 'https://bee.test/a1', workspace: WS, member: BEE,
         accepts: 'https://bee.test/g1', stream: 'https://bee.test/s',
         attestation: contentBound(ALICE_KEY),
-        fieldProvenance: { source: 'payload' as const, descriptor: 'https://bee.test/a1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://bee.test/a1'),
       }],
     };
     const policy = {
@@ -1379,12 +1631,187 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
         ...policy, requireEvidenceProvenance: true,
         workspaceEvidence: {
           kind: 'declared', record: beesOwnRecord,
-          provenance: { dereferenced: WS, resolvedTo: beesOwnRecord.head },
+          provenance: forgeEvidenceProvenance(WS, beesOwnRecord.head),
         },
       },
     });
     expect(honestlySourced.members).toHaveLength(1);
     expect(honestlySourced.evidenceProvenanceBinding).toBe('bound');
+  });
+
+  it('★★ AXIS I\'s RESIDUE: the forged pair is now UNWRITABLE, and the compiler is the assertion', () => {
+    // ★★ WHAT AXIS I STILL COULD NOT REACH, AND WHY THIS TEST IS MOSTLY NOT `expect`s.
+    //
+    // Every case above hands the fold evidence and asks what it decides. That is the only
+    // question a runtime check can be asked, and it left one shape standing:
+    // `EvidenceProvenance` was a plain `{dereferenced, resolvedTo}`, so a caller could WRITE
+    // the pair beside a record it forged and `refuseEvidenceProvenance` would pass it — both
+    // of its comparisons are satisfied by a liar who fills in the two fields consistently.
+    // The medium open row said so in as many words. It is asserted below, deliberately, as a
+    // `toBeNull()`: the runtime gate cannot see this forgery and never could.
+    //
+    // What closes it is that the claim can no longer be EXPRESSED. Both provenance types
+    // intersect a private-membered ambient class `roster.ts` does not export, and TypeScript's
+    // private members are nominal — only declarations originating in that class body are
+    // compatible — so an object literal written anywhere else is a type error.
+    //
+    // ★ SO THE ASSERTIONS THAT MATTER HERE ARE THE `@ts-expect-error` DIRECTIVES, AND THEY ARE
+    // CHECKED BY `tools/typecheck-gate.mjs`, NOT BY VITEST. If the brand ever stops refusing
+    // the line under one of them, tsc reports TS2578 `Unused '@ts-expect-error' directive`
+    // against this file, this file is not on the gate's LEGACY list, and the gate fails.
+    // vitest would run the file unchanged either way — esbuild strips types without checking
+    // them — which is precisely the blindness that gate exists for. Reproduce by deleting a
+    // brand from `roster.ts` and running `node tools/typecheck-gate.mjs`.
+    const forgedRecord: WorkspaceRecord = {
+      head: 'https://bee.test/c/ws.ttl', workspace: WS, convener: alice, roleProfile: P,
+      attestation: contentBound(ALICE_KEY),
+      fieldProvenance: forgeFieldProvenance('payload', 'https://bee.test/c/ws.ttl'),
+    };
+
+    // ── 1. THE BARE PAIR ──────────────────────────────────────────────────────
+    // @ts-expect-error EvidenceProvenance is branded: only `dereferenceWorkspaceRecord` mints one.
+    const bare: EvidenceProvenance = { dereferenced: WS, resolvedTo: forgedRecord.head };
+
+    // ── 2. RESIDUAL GAP 9'S FORGERY IN FULL ───────────────────────────────────
+    // The pair written beside a record nobody dereferenced — the exact shape the open row
+    // described, in the exact position `foldRoster` reads it from.
+    const paired: ConvenerEvidence = {
+      kind: 'declared',
+      record: forgedRecord,
+      // @ts-expect-error the pair cannot be paired with a record it did not come from.
+      provenance: { dereferenced: WS, resolvedTo: forgedRecord.head },
+    };
+
+    // ── 3. THE MUTANT A `unique symbol` BRAND WOULD HAVE LET THROUGH ──────────
+    // Measured before choosing the mechanism: a phantom symbol KEY survives an object spread,
+    // so `{...honest, resolvedTo: <anything>}` would keep the brand and typecheck — the whole
+    // forgery, one keystroke longer, available to anyone who had honestly dereferenced any
+    // workspace at all. A private class member does not survive a spread, because the result
+    // is an object literal and object literals declare nothing inside that class body.
+    const honest = forgeEvidenceProvenance(WS, WS_RECORD);
+    // @ts-expect-error a spread of an honest provenance is an object literal, and loses the brand.
+    const spread: EvidenceProvenance = { ...honest, resolvedTo: forgedRecord.head };
+
+    // ── 4. THE SAME TWO QUESTIONS FOR `FieldProvenance` ───────────────────────
+    // The sibling claim one layer down, closed in the same round for the reason `roster.ts`
+    // gives: the two were conceded in identical words, and closing one leaves the other
+    // holding the gate on its own whenever `requireFieldBinding` is the flag that is set.
+    // @ts-expect-error FieldProvenance is branded: only the readers in membership.ts mint one.
+    const bareFields: FieldProvenance = { source: 'payload', descriptor: forgedRecord.head };
+    // @ts-expect-error and the spread loses it here too.
+    const spreadFields: FieldProvenance = { ...forgeFieldProvenance('payload', WS_RECORD), descriptor: forgedRecord.head };
+
+    // ── 5. THE CONTROL, AND IT IS NOT OPTIONAL ────────────────────────────────
+    // ★ Five satisfied `@ts-expect-error`s are also what `type EvidenceProvenance = never`
+    // produces, and that would refuse the honest producer too — a brand that admits nothing is
+    // the type-level version of the "gate that refuses everything passes every subset check on
+    // an empty set" failure this file exists to catch. These two lines carry NO directive, so
+    // they must compile: an honestly minted provenance is still assignable, and still lands in
+    // the field the fold reads.
+    const stillAssignable: EvidenceProvenance = honest;
+    const stillFits: ConvenerEvidence = { kind: 'declared', record: forgedRecord, provenance: stillAssignable };
+
+    // ── 6. AND THE RUNTIME IS EXACTLY AS BLIND AS IT WAS ──────────────────────
+    // ★ THIS `toBeNull()` IS THE POINT OF THE WHOLE TEST. Case 2 is the forgery, and the
+    // runtime gate ADMITS it: `dereferenced` is the workspace and `resolvedTo` is the record's
+    // own head, because a caller writing both fields writes them consistently. Nothing that
+    // cannot fetch was ever going to catch this, which is why the closure had to be at the
+    // type. Asserted rather than argued, so that a future round which "hardens"
+    // `refuseEvidenceProvenance` and deletes the brand is told immediately what it gave up.
+    expect(
+      refuseEvidenceProvenance({ evidence: paired, workspace: WS, requireEvidenceProvenance: true }),
+      'the runtime gate started catching the hand-written pair — if that is real, say how; if it '
+      + 'is not, the brand is still the only thing standing between a caller and gap 9',
+    ).toBeNull();
+    // The same admission one layer down, and for the same reason.
+    expect(refuseFieldBinding(bareFields, forgedRecord.head, true)).toBeNull();
+
+    // ★ AND THE BRAND IS NOT LOAD-BEARING AT RUNTIME, ASSERTED SO NOTHING STARTS TREATING IT AS
+    // IF IT WERE. A minted provenance carries the two string fields and NOTHING else — no
+    // marker property, no symbol, nothing serialisation would drop. So a value that arrived as
+    // JSON is indistinguishable from a minted one at runtime, `refuseEvidenceProvenance` must
+    // keep every string comparison it has, and a future `if (isBranded(p))` would be checking
+    // a property that does not exist. See `EvidenceProvenance` in `roster.ts` for why a
+    // WeakSet registry that WOULD close the JSON path was rejected.
+    expect(Object.keys(honest)).toEqual(['dereferenced', 'resolvedTo']);
+    expect(Object.getOwnPropertySymbols(honest)).toHaveLength(0);
+    expect(JSON.parse(JSON.stringify(honest))).toEqual({ dereferenced: WS, resolvedTo: WS_RECORD });
+
+    // The forged values are ordinary objects too — bound so the linter sees them used, and
+    // checked so they are not merely bound. Each carries what its literal said, which is what
+    // makes cases 1, 3 and 4 forgeries rather than typos.
+    expect([bare.resolvedTo, spread.resolvedTo, spreadFields.descriptor])
+      .toEqual([forgedRecord.head, forgedRecord.head, forgedRecord.head]);
+    expect(stillFits.kind).toBe('declared');
+  });
+
+  it('★ and `membership.ts` is the only place in the application that mints either brand', () => {
+    // ★ THE HALF A BRAND CANNOT ASSERT ABOUT ITSELF. A type assertion is the one escape hatch
+    // no branded type in TypeScript can refuse — `as EvidenceProvenance` converts, because an
+    // assertion succeeds whenever either type is assignable to the other and the branded type
+    // is assignable to the bare pair. So the guarantee is not "nobody can mint one"; it is
+    // "minting one costs a deliberate, greppable cast", and a guarantee whose enforcement is
+    // "somebody will notice the grep" is not enforced at all.
+    //
+    // This is the grep, run as a test. It reads the application's own source — never a copy —
+    // and asserts that the set of files producing either branded value is exactly the producer.
+    // A new mint site anywhere else fails here and has to argue for itself.
+    // ★ PARSED, NOT GREPPED, AND THE FIRST VERSION OF THIS TEST IS WHY. A regex over the file
+    // text reported `src/roster.ts` as a minting site on its first run — it had matched the
+    // words `as EvidenceProvenance` inside the doc comment that WARNS a cast is possible. A
+    // scan that cannot tell code from prose either cries wolf on every comment about itself or
+    // gets "fixed" by loosening it until it matches nothing. Stripping comments by regex is no
+    // better: every URL in this tree contains `//`, so a line-comment stripper would eat real
+    // code and hide a real mint. So the check uses the compiler's own parser, which knows what
+    // a comment is and what a string is, and looks at assertion NODES.
+    const src = fileURLToPath(new URL('../applications/shared-workspace/', import.meta.url));
+    const files = readdirSync(join(src, 'src')).filter(f => f.endsWith('.ts')).map(f => join('src', f))
+      .concat(readdirSync(join(src, 'tools')).filter(f => f.endsWith('.ts')).map(f => join('tools', f)));
+    /** Both brands, under either name — `membership.ts` imports them aliased to `…Value`. */
+    const BRANDED = /^(?:EvidenceProvenance|FieldProvenance)(?:Value)?$/;
+    /**
+     * Every `x as T`, `<T>x` and `x satisfies T` in one file whose T is a branded provenance.
+     *
+     * `as unknown as T` is two nested nodes and counts ONCE, because only the outer one names
+     * a brand — which is the number a reader cares about: how many places claim to have made
+     * one of these.
+     */
+    const mintsIn = (text: string, name: string): number => {
+      let n = 0;
+      const visit = (node: ts.Node): void => {
+        if ((ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isTypeAssertionExpression(node))
+          && BRANDED.test(node.type.getText())) n += 1;
+        ts.forEachChild(node, visit);
+      };
+      // `setParentNodes: true` — `getText()` walks to the source file through the parent chain
+      // and returns '' without it, which would make every count zero and every assertion pass.
+      visit(ts.createSourceFile(name, text, ts.ScriptTarget.ES2022, true));
+      return n;
+    };
+    const found = new Map<string, number>();
+    for (const rel of files) {
+      const n = mintsIn(readFileSync(join(src, rel), 'utf8'), rel);
+      if (n > 0) found.set(rel.split('\\').join('/'), n);
+    }
+    expect(
+      [...found.keys()].sort(),
+      'a file other than the producer now manufactures a provenance. That is residual gap 9 '
+      + 'being re-opened by hand: the brand only guarantees the forgery costs a cast, and this '
+      + 'is what counts the casts',
+    ).toEqual(['src/membership.ts']);
+    // Two: `parsedFromPayload` and `dereferencedFrom`, one per brand. A third inside the same
+    // file is still a new way to make the claim, and still has to be looked at.
+    expect(found.get('src/membership.ts'), 'membership.ts grew a third minting site').toBe(2);
+
+    // ★ AND THE CONTROLS THIS FILE'S OWN DISCIPLINE DEMANDS: a scan that can never fire passes
+    // the assertion above the moment the path, the listing or the walker breaks — the
+    // `MIN_FILES` failure `tools/lint-gate.mjs` was written for, in miniature. So the file list
+    // must be the real one, the walker must count the four spellings it claims to count, and it
+    // must NOT count the prose that broke the first version.
+    expect(files.length, 'the source scan found no files: the path or the listing broke').toBeGreaterThan(4);
+    expect(mintsIn('const a = x as unknown as EvidenceProvenanceValue;', 'p.ts')).toBe(1);
+    expect(mintsIn('const a = x as FieldProvenance;\nconst b = y satisfies EvidenceProvenance;', 'p.ts')).toBe(2);
+    expect(mintsIn('// a comment saying `as EvidenceProvenance` still converts\nconst s = "as FieldProvenance";', 'p.ts')).toBe(0);
   });
 
   it('★ a refused evidence provenance does not erase a revocation or a withdrawal', () => {
@@ -1399,7 +1826,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       {
         head: 'https://conv.test/g2', workspace: WS, grantedTo: alice, role: `${P}#Observer`,
         revoked: true, attestation: contentBound(CONV_KEY),
-        fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g2' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g2'),
       },
     ];
     const refused = foldRoster({
@@ -1446,6 +1873,432 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     expect(refuseEvidenceProvenance({ evidence: sourced('none'), workspace: WS })).toBeNull();
   });
 
+  // ── ★ AXIS J's own cases: the role TABLE, residual gap 10 ───────────────────
+
+  it('★★ AXIS J closes RESIDUAL GAP 10: the declared IRI over an invented table confers nothing', () => {
+    // ★ THE GAP, AT FULL STRENGTH AND IN ITS OWN CASE, because the lattice above can only show
+    // the difference between two rungs and this is the shape somebody would actually ship.
+    //
+    // The caller's table claims `P` — the profile the workspace really does declare — and gives
+    // `#Observer` the `grant` and `revoke` capabilities that the published document reserves for
+    // a Convener. Every check that existed before this round passes at full strength: the
+    // convener agrees, the profile IRI agrees, the records are field-bound and content-bound,
+    // and `unattested` is empty.
+    const ROGUE: RoleProfile = {
+      profile: P,
+      roles: [{ role: `${P}#Observer`, permits: [CAPS.read, CAPS.append, CAPS.grant, CAPS.revoke] }],
+    };
+    const base = {
+      workspace: WS, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Observer`,
+        attestation: contentBound(CONV_KEY), ...selfProvenance('https://conv.test/g1'),
+      }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+        attestation: contentBound(ALICE_KEY), ...selfProvenance('https://alice.test/a1'),
+      }],
+    };
+    const policy = {
+      convener: CONV, signerOf: signerIndexFromRegistry(registry(false)),
+      requireFieldBinding: true, workspaceEvidence: conveneEvidence.agrees,
+    };
+
+    const open = foldRoster({ ...base, profile: ROGUE, attestation: policy });
+    expect(open.members).toHaveLength(1);
+    expect(open.convenerBinding).toBe('bound');
+    expect(open.roleProfileBinding).toBe('bound');
+    expect(open.recordFieldBinding).toBe('bound');
+    expect(open.unattested).toHaveLength(0);
+    // ★ THE MEASUREMENT, AND IT IS A COMPARISON RATHER THAN `includes(revoke)` — the same
+    // lesson `verify-can-live.ts` §10 records. Effective capability is `permits ∩ scope`, so
+    // asserting a literal capability would make this case depend on the registry rather than on
+    // the gap. What the gap IS, at any ceiling, is that the caller's table confers more than the
+    // published one does.
+    const declaredCaps = foldRoster({ ...base, profile: PROFILE, attestation: policy })
+      .members[0]?.effective ?? [];
+    expect(open.members[0]!.effective.length).toBeGreaterThan(declaredCaps.length);
+    // …and `roleTableBinding` says, in a value the other four fields cannot express, that
+    // nobody read the document those capabilities claim to come from.
+    expect(open.roleTableBinding).toBe('unchecked');
+    expect(open.attributionNote).toMatch(/the role TABLE behind it is this fold's own/);
+
+    // ★ AND CLOSED. Same records, same policy, one field: the document actually read.
+    const closed = foldRoster({
+      ...base, profile: ROGUE,
+      attestation: { ...policy, roleTableEvidence: tableEvidence('honest') },
+    });
+    expect(closed.members).toHaveLength(0);
+    expect(closed.roleTableBinding).toBe('refused');
+    const why = closed.unattested.find(u => u.kind === 'grant')?.because ?? '';
+    expect(why).toMatch(/it PERMITS MORE than the document does/);
+    expect(why).toContain(`${P}#Observer`);
+    expect(why).toContain(CAPS.grant);
+    // ★ AND NOT BECAUSE ANYTHING ELSE FAILED, which is what makes it the table's own refusal
+    // rather than gap 6's or gap 8's check firing under a new name.
+    expect(closed.convenerBinding).toBe('bound');
+    expect(closed.roleProfileBinding).toBe('bound');
+    expect(why).not.toMatch(/entitled to grant|The two disagree|does not hold up/);
+  });
+
+  it('★ AXIS J is not vacuous — the read table really does admit, and admits UNCHANGED', () => {
+    // A rung that refused everything satisfies every subset assertion in this file. The honest
+    // document must ADMIT, and — the half a subset check cannot see — must change nothing but
+    // the report.
+    const base = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
+        attestation: contentBound(CONV_KEY), ...selfProvenance('https://conv.test/g1'),
+      }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+        attestation: contentBound(ALICE_KEY), ...selfProvenance('https://alice.test/a1'),
+      }],
+    };
+    const policy = {
+      convener: CONV, signerOf: signerIndexFromRegistry(registry(false)),
+      requireFieldBinding: true, workspaceEvidence: conveneEvidence.agrees,
+    };
+    const without = foldRoster({ ...base, attestation: policy });
+    const withTable = foldRoster({
+      ...base, attestation: { ...policy, roleTableEvidence: tableEvidence('honest') },
+    });
+    expect(withTable.members).toHaveLength(1);
+    expect(withTable.roleTableBinding).toBe('bound');
+    expect(JSON.stringify(withTable.members)).toBe(JSON.stringify(without.members));
+    expect(without.roleTableBinding).toBe('unchecked');
+    // ★ THE GRADE IS IN THE NOTE, because a three-valued enum cannot carry the difference
+    // between a signed pod record and a TLS fetch of a static file — and the profile this repo
+    // publishes can only ever be the second. A `'bound'` that reads as "signed" is the overclaim
+    // this whole family of checks exists to avoid making.
+    expect(withTable.attributionNote).toMatch(/obtained by an ORDINARY HTTPS FETCH/);
+    expect(withTable.attributionNote).not.toMatch(/obtained as a SIGNED POD RECORD/);
+    const signed = foldRoster({
+      ...base,
+      attestation: {
+        ...policy,
+        roleTableEvidence: {
+          kind: 'declared',
+          document: roleDocument({ authority: 'signed-record', attestation: contentBound(CONV_KEY) }),
+        },
+      },
+    });
+    expect(signed.roleTableBinding).toBe('bound');
+    expect(signed.attributionNote).toMatch(/obtained as a SIGNED POD RECORD/);
+  });
+
+  it('★ any difference refuses — including the one that NARROWS, and the message leads with the widening', () => {
+    // ★ REFUSING A NARROWER TABLE IS A DECISION, NOT AN ACCIDENT. An omitted role moves
+    // `knownRole`, which picks the narrowest-permits role among a principal's grant heads — so a
+    // caller that merely leaves a role out changes the LABEL printed beside a member's
+    // capabilities, in a direction no subset check can see. And `'bound'`'s contract is that the
+    // capabilities ARE the document's, which is only literally true when the tables are equal.
+    const at = (roles: readonly RoleDefinition[], docRoles: readonly RoleDefinition[]): string | null =>
+      refuseRoleTableAuthority({
+        evidence: { kind: 'declared', document: roleDocument({ roles: docRoles }) },
+        profile: { profile: P, roles },
+      });
+    // The caller omits a role the document declares: narrowing only.
+    const narrower = at(declaredRoles.filter(r => r.role !== `${P}#Observer`), declaredRoles);
+    expect(narrower).toMatch(/it permits less than the document does/);
+    expect(narrower).toContain(`${P}#Observer`);
+    expect(narrower).not.toMatch(/PERMITS MORE/);
+    // The caller declares a role the document does not: counted as a WIDENING, because the fold
+    // will confer that role's capabilities on any grant naming it.
+    const invented = at(
+      [...declaredRoles, { role: `${P}#Emperor`, permits: [CAPS.revoke] }], declaredRoles,
+    );
+    expect(invented).toMatch(/PERMITS MORE/);
+    expect(invented).toMatch(/is not declared by the document at all/);
+    // Both at once, and the widening is stated FIRST: an operator holding both needs the one
+    // that conferred authority nobody published, not the one that will be complained about.
+    const both = at(
+      [{ role: `${P}#Observer`, permits: [CAPS.read, CAPS.grant] }],
+      [{ role: `${P}#Observer`, permits: [CAPS.read, CAPS.append] }],
+    );
+    expect(both).toMatch(/^the role table[\s\S]*it PERMITS MORE than the document does[\s\S]*and it permits less than the document does/);
+    // …and the control: identical tables in a different ORDER, with capabilities in a different
+    // order too, agree. A comparison that was sensitive to either would refuse every honest
+    // profile whose parser emitted its triples in a different sequence.
+    expect(at(
+      [...declaredRoles].reverse().map(r => ({ role: r.role, permits: [...r.permits].reverse() })),
+      declaredRoles,
+    )).toBeNull();
+  });
+
+  it('★★ the comparison uses the fold\'s OWN normalisation — a duplicated role is intersected on both sides', () => {
+    // ★ THE REASON `normaliseRoleTable` IS SHARED RATHER THAN COPIED, asserted rather than
+    // argued. `foldRoster` intersects a role declared twice, so a document declaring `#Observer`
+    // wide then narrow PERMITS the intersection — and a comparison with its own normalisation
+    // (or none) would report a disagreement against a caller whose single row already IS that
+    // intersection. The fold would then refuse a table it computes identically to the document's.
+    // ★★ BOTH ORDERS, AND THE SECOND ONE IS THE WHOLE CASE. This test first shipped with the
+    // wide-then-narrow fixture ALONE, and a mutation sweep walked straight through it: under
+    // LAST-WRITE-WINS that ordering also yields `[read]`, so the assertion held while the rule it
+    // claims to pin was gone. A duplicate fixture in one order cannot distinguish intersection
+    // from last-write-wins — which is the same "generator only produces agreement" failure this
+    // file records three times, reached from inside a test written to prevent it.
+    const wideThenNarrow: readonly RoleDefinition[] = [
+      { role: `${P}#Observer`, permits: [CAPS.read, CAPS.append, CAPS.grant] },
+      { role: `${P}#Observer`, permits: [CAPS.read] },
+    ];
+    const narrowThenWide: readonly RoleDefinition[] = [...wideThenNarrow].reverse();
+    for (const [order, rows] of [['wide-first', wideThenNarrow], ['narrow-first', narrowThenWide]] as const) {
+      expect(refuseRoleTableAuthority({
+        evidence: { kind: 'declared', document: roleDocument({ roles: rows }) },
+        profile: { profile: P, roles: [{ role: `${P}#Observer`, permits: [CAPS.read] }] },
+      }), `${order}: the document's duplicate was not intersected`).toBeNull();
+      // …and the same rule on the CALLER'S side, so neither is normalised by a different rule.
+      expect(refuseRoleTableAuthority({
+        evidence: { kind: 'declared', document: roleDocument({ roles: [{ role: `${P}#Observer`, permits: [CAPS.read] }] }) },
+        profile: { profile: P, roles: rows },
+      }), `${order}: the caller's duplicate was not intersected`).toBeNull();
+      // ★ AND THE HELPER ITSELF, IN BOTH ORDERS. Last-write-wins gives `[read]` for wide-first
+      // and `[read, append, grant]` for narrow-first; intersection gives `[read]` for both, and
+      // only the pair can tell them apart.
+      expect(
+        [...normaliseRoleTable(rows).permits.get(`${P}#Observer`)!],
+        `${order}: normaliseRoleTable did not intersect`,
+      ).toEqual([CAPS.read]);
+      expect(normaliseRoleTable(rows).duplicated.has(`${P}#Observer`)).toBe(true);
+    }
+  });
+
+  it('★★ the document\'s table is EVIDENCE and never a SOURCE — supplying it changes no capability', () => {
+    // ★★ THE ESCALATION, AND IT SURVIVED A MUTATION SWEEP UNTIL THIS CASE EXISTED. Replacing
+    // `normaliseRoleTable(profile.roles)` with the DOCUMENT'S roles is the one-line "fix" the
+    // header warns about, and while the comparison above is total it is observationally
+    // invisible: the tables either agree (so substitution is a no-op) or disagree (so nothing
+    // confers). Every assertion in this file held with the substitution in place.
+    //
+    // It is a defect anyway, and this is where it shows: the two tables can AGREE on what they
+    // permit while differing in SHAPE. A document that declares `#Observer` twice, intersecting
+    // to exactly the caller's single row, is accepted — and a fold that built `permitsOf` from
+    // the document would report a `role` DIVERGENCE the caller's own governance does not have,
+    // sending an operator to repair a published profile over a duplicate that changes nothing.
+    // It also matters more than that reads: it is what stops the substitution being ALREADY
+    // THERE the day somebody relaxes the comparison to the widening direction alone.
+    const duplicatedInDocument: readonly RoleDefinition[] = [
+      { role: `${P}#Contributor`, permits: [CAPS.read, CAPS.append, CAPS.grant] },
+      { role: `${P}#Contributor`, permits: [CAPS.read, CAPS.append] },
+    ];
+    const caller: RoleProfile = {
+      profile: P, roles: [{ role: `${P}#Contributor`, permits: [CAPS.read, CAPS.append] }],
+    };
+    const base = {
+      workspace: WS, profile: caller, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
+        attestation: contentBound(CONV_KEY), ...selfProvenance('https://conv.test/g1'),
+      }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+        attestation: contentBound(ALICE_KEY), ...selfProvenance('https://alice.test/a1'),
+      }],
+    };
+    const policy = {
+      convener: CONV, signerOf: signerIndexFromRegistry(registry(false)),
+      requireFieldBinding: true, workspaceEvidence: conveneEvidence.agrees,
+    };
+    const without = foldRoster({ ...base, attestation: policy });
+    const withDoc = foldRoster({
+      ...base,
+      attestation: {
+        ...policy,
+        roleTableEvidence: { kind: 'declared', document: roleDocument({ roles: duplicatedInDocument }) },
+      },
+    });
+    // The tables agree once normalised, so the table is accepted…
+    expect(withDoc.roleTableBinding).toBe('bound');
+    expect(withDoc.members).toHaveLength(1);
+    // …and NOTHING the fold decides moved. `divergences` is the field that catches the
+    // substitution: the document's duplicate is the document's business, not this roster's.
+    expect(withDoc.divergences).toEqual(without.divergences);
+    expect(withDoc.divergences.filter(d => d.kind === 'role')).toHaveLength(0);
+    expect(JSON.stringify(withDoc.members)).toBe(JSON.stringify(without.members));
+  });
+
+  it('★ a table refusal never lands on the ACCEPTANCE side', () => {
+    // ★ FOUND BY MUTATION: adding `?? tableRefusal` to the acceptance filter refuses strictly
+    // MORE, so it is monotone and every ⊆ assertion in this file holds with it in place. What it
+    // does is print a line in `unattested` accusing the MEMBER of something the convener's side
+    // got wrong, in the one channel operators are told to watch — and an acceptance is a
+    // member's own statement about their own pod, no less theirs because the policy folded
+    // against the wrong governance. The same argument the fold's own comment makes for the other
+    // three constant refusals; this is the one that is pinned.
+    const refused = foldRoster({
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
+        attestation: contentBound(CONV_KEY), ...selfProvenance('https://conv.test/g1'),
+      }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+        attestation: contentBound(ALICE_KEY), ...selfProvenance('https://alice.test/a1'),
+      }],
+      attestation: {
+        convener: CONV, signerOf: signerIndexFromRegistry(registry(false)),
+        requireFieldBinding: true, workspaceEvidence: conveneEvidence.agrees,
+        roleTableEvidence: tableEvidence('caller-widened'),
+      },
+    });
+    expect(refused.roleTableBinding).toBe('refused');
+    expect(refused.unattested.filter(u => u.kind === 'grant')).toHaveLength(1);
+    expect(refused.unattested.filter(u => u.kind === 'acceptance')).toHaveLength(0);
+  });
+
+  it('★ two blanks do not agree on a role table either, and neither does a JSON-shaped surprise', () => {
+    // The same lesson `refuseRoleProfileAuthority` learned one document out: `''` on both sides
+    // is what a caller with no profile IRI and a producer that recorded no dereference both
+    // arrive as, and left to `!==` they MATCH — reporting the table as bound off two blanks.
+    const doc = (over: Partial<RoleProfileDocument>) =>
+      ({ kind: 'declared' as const, document: roleDocument(over) });
+    expect(refuseRoleTableAuthority({
+      evidence: doc({ dereferenced: '' }), profile: { profile: '', roles: declaredRoles },
+    })).toMatch(/names no profile IRI at all/);
+    expect(refuseRoleTableAuthority({
+      evidence: doc({ dereferenced: '' }), profile: { profile: P, roles: declaredRoles },
+    })).toMatch(/states no IRI it was obtained by dereferencing/);
+    // Off the JSON boundary — `RoleTableEvidence` is exported through `can.ts` for federated
+    // composers, so every one of these is reachable and the compiler has guaranteed nothing.
+    expect(refuseRoleTableAuthority({
+      evidence: { kind: 'whatever' } as unknown as RoleTableEvidence,
+      profile: { profile: P, roles: declaredRoles },
+    })).toMatch(/tagged 'whatever'/);
+    expect(refuseRoleTableAuthority({
+      evidence: { kind: 'declared' } as unknown as RoleTableEvidence,
+      profile: { profile: P, roles: declaredRoles },
+    })).toMatch(/carries no document/);
+    expect(refuseRoleTableAuthority({
+      evidence: doc({ dereferenced: 42 as unknown as string }),
+      profile: { profile: P, roles: declaredRoles },
+    })).toMatch(/states no IRI it was obtained by dereferencing/);
+    expect(refuseRoleTableAuthority({
+      evidence: doc({}), profile: { profile: 42 as unknown as string, roles: declaredRoles },
+    })).toMatch(/names no profile IRI at all/);
+    expect(refuseRoleTableAuthority({
+      evidence: doc({ authority: 'trust-me' as unknown as 'transport-only' }),
+      profile: { profile: P, roles: declaredRoles },
+    })).toMatch(/which is neither 'signed-record' nor 'transport-only'/);
+    // ★ ASKED AND GOT NOTHING IS A REFUSAL, and it is asserted HERE rather than only inside the
+    // 76,800-case enumeration because a mutation sweep found it: returning null from this branch
+    // survived every fast case in the file. It is also not hypothetical — the deployed profile
+    // IRI answers 404, so this is the branch a fold against the real artifact lands on today.
+    expect(refuseRoleTableAuthority({
+      evidence: { kind: 'unreadable', why: `<${P}> answered 404` },
+      profile: { profile: P, roles: declaredRoles },
+    })).toMatch(/could not be read \(<.*> answered 404\)/);
+    // ★ AND THE TABLE READ FROM SOMEWHERE ELSE, same reason: the enumeration covers it and the
+    // fast set did not, so `if (doc.dereferenced !== profile.profile)` deleted survived. This is
+    // the federated composer holding one governance document per IRI it has met.
+    expect(refuseRoleTableAuthority({
+      evidence: doc({ dereferenced: OTHER_PROFILE }),
+      profile: { profile: P, roles: declaredRoles },
+    })).toMatch(/was obtained by dereferencing <https:\/\/rival.test\/roles>/);
+    // …and the control, without which every line above is satisfied by a function that refuses
+    // everything.
+    expect(refuseRoleTableAuthority({
+      evidence: doc({}), profile: { profile: P, roles: declaredRoles },
+    })).toBeNull();
+  });
+
+  it('★★ the authority label cannot be used to SKIP the signature check', () => {
+    // ★ `authority` IS THE ONE FIELD ON THE DOCUMENT WHOSE VALUE SELECTS A CHECK, which makes
+    // downgrading it the move. A pod record whose authorship does not hold up, relabelled
+    // `'transport-only'`, would otherwise walk past the branch that would have caught it — so a
+    // document claiming an ordinary fetch while carrying an attestation is refused as the
+    // contradiction it is, in the direction that keeps the check rather than the one that skips
+    // it.
+    const at = (over: Partial<RoleProfileDocument>): string | null => refuseRoleTableAuthority({
+      evidence: { kind: 'declared', document: roleDocument(over) },
+      profile: { profile: P, roles: declaredRoles },
+    });
+    expect(at({ authority: 'transport-only', attestation: contentBound(CONV_KEY) }))
+      .toMatch(/contradicts itself about where it came from/);
+    // The other direction: a document claiming to be a signed record and carrying nothing.
+    expect(at({ authority: 'signed-record' })).toMatch(/carries no attestation at all/);
+    expect(at({
+      authority: 'signed-record',
+      attestation: { authorshipVerified: false, signedBy: CONV_KEY, boundToDescriptor: true, reason: 'bad sig' },
+    })).toMatch(/did not verify \(bad sig\)/);
+    expect(at({
+      authority: 'signed-record',
+      attestation: { authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: false },
+    })).toMatch(/does not name this descriptor/);
+    // ★ AND NO SIGNER IS COMPARED, DELIBERATELY. A grant is attested against the convener and an
+    // acceptance against its member because each names the party it must come from; a role
+    // profile names none. A STRANGER'S key on a profile document is not a fault this layer can
+    // report, because nothing in the model says who is entitled to publish governance — what
+    // makes it this workspace's governance is `refuseRoleProfileAuthority`, one document back.
+    // Asserted so that adding a signer comparison here is a deliberate change to the model
+    // rather than a tightening somebody thought was free.
+    expect(at({ authority: 'signed-record', attestation: contentBound(STRANGER_KEY) })).toBeNull();
+    // Content binding rides the policy, exactly as it does for the records the profile governs.
+    const declared: Attestation = {
+      authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: true, contentBinding: 'declared',
+    };
+    expect(refuseRoleTableAuthority({
+      evidence: { kind: 'declared', document: roleDocument({ authority: 'signed-record', attestation: declared }) },
+      profile: { profile: P, roles: declaredRoles },
+    })).toBeNull();
+    expect(refuseRoleTableAuthority({
+      evidence: { kind: 'declared', document: roleDocument({ authority: 'signed-record', attestation: declared }) },
+      profile: { profile: P, roles: declaredRoles },
+      requireContentBinding: true,
+    })).toMatch(/came back 'declared'/);
+  });
+
+  it('★ a disagreeing role table refuses to CONFER and erases neither a revocation nor a withdrawal', () => {
+    // ★ THE CONFERRING-TRACK RULE, AT THE FOURTH GATE. Round 3 shipped the inversion of this at
+    // a narrower gate — a refused record was filtered out BEFORE the revocation check, so
+    // turning the policy on granted more than leaving it off. Both directions are pinned here
+    // because the enumeration above can only observe them where a member survives.
+    const grant = (over: Partial<Grant> = {}): Grant => ({
+      head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
+      attestation: contentBound(CONV_KEY), ...selfProvenance('https://conv.test/g1'), ...over,
+    });
+    const acceptance = (over: Partial<Acceptance> = {}): Acceptance => ({
+      head: 'https://alice.test/a1', workspace: WS, member: alice,
+      accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+      attestation: contentBound(ALICE_KEY), ...selfProvenance('https://alice.test/a1'), ...over,
+    });
+    const fold = (grants: Grant[], acceptances: Acceptance[], table: boolean): Roster => foldRoster({
+      workspace: WS, profile: PROFILE, scopes, grants, acceptances,
+      attestation: {
+        convener: CONV, signerOf: signerIndexFromRegistry(registry(false)),
+        requireFieldBinding: true, workspaceEvidence: conveneEvidence.agrees,
+        ...(table ? { roleTableEvidence: tableEvidence('caller-widened') } : {}),
+      },
+    });
+    // A revocation still removes, and the refused row says the restriction took effect anyway.
+    const revoked = fold([grant({ revoked: true })], [acceptance()], true);
+    expect(revoked.members).toHaveLength(0);
+    expect(revoked.roleTableBinding).toBe('refused');
+    expect(revoked.unattested.find(u => u.kind === 'grant')?.restrictionStillApplied).toBe(true);
+    // A withdrawal still removes, and does NOT become a pending invitation — the shape the
+    // monotonicity enumeration found when a refused acceptance made a member who had LEFT look
+    // like one who had never answered.
+    const withdrawn = fold([grant()], [acceptance({ withdrawn: true })], true);
+    expect(withdrawn.members).toHaveLength(0);
+    expect(withdrawn.pendingInvitations).toHaveLength(0);
+    // …and the control: the identical inputs with a table the fold accepts confer a member, so
+    // the two assertions above are about the refusal rather than about the records.
+    expect(fold([grant()], [acceptance()], false).members).toHaveLength(1);
+    expect(foldRoster({
+      workspace: WS, profile: PROFILE, scopes, grants: [grant()], acceptances: [acceptance()],
+      attestation: {
+        convener: CONV, signerOf: signerIndexFromRegistry(registry(false)),
+        requireFieldBinding: true, workspaceEvidence: conveneEvidence.agrees,
+        roleTableEvidence: tableEvidence('honest'),
+      },
+    }).members).toHaveLength(1);
+  });
+
   it('★★ THE INVERSION: supplying evidence must never admit what the policy alone refuses', () => {
     // ★ THE DEFECT THIS AXIS EXISTS TO MAKE UNWRITABLE, stated as its own case because it is
     // the one a reasonable person would ship. Reading the convener from the workspace and
@@ -1462,13 +2315,13 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       grants: [{
         head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
         role: `${P}#Contributor`, attestation: contentBound(CONV_KEY),
-        fieldProvenance: { source: 'payload' as const, descriptor: 'https://conv.test/g1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g1'),
       }],
       acceptances: [{
         head: 'https://alice.test/a1', workspace: WS, member: alice,
         accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
         attestation: contentBound(ALICE_KEY),
-        fieldProvenance: { source: 'payload' as const, descriptor: 'https://alice.test/a1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://alice.test/a1'),
       }],
     };
     const signerOf = signerIndexFromRegistry(registry(false));
@@ -1519,12 +2372,12 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       {
         head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
         attestation: contentBound(CONV_KEY),
-        fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g1'),
       },
       {
         head: 'https://conv.test/g2', workspace: WS, grantedTo: alice, role: `${P}#Observer`,
         revoked: true, attestation: contentBound(CONV_KEY),
-        fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g2' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g2'),
       },
     ];
     const args = {
@@ -1533,7 +2386,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
         head: 'https://alice.test/a1', workspace: WS, member: alice,
         accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
         attestation: contentBound(ALICE_KEY),
-        fieldProvenance: { source: 'payload' as const, descriptor: 'https://alice.test/a1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://alice.test/a1'),
       }],
     };
     const signerOf = signerIndexFromRegistry(registry(false));
@@ -1575,13 +2428,13 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       grants: [{
         head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
         attestation: contentBound(CONV_KEY),
-        fieldProvenance: { source: 'payload' as const, descriptor: 'https://conv.test/g1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g1'),
       }],
       acceptances: [{
         head: 'https://alice.test/a1', workspace: WS, member: alice,
         accepts: 'https://conv.test/g1', stream: 'https://alice.test/s', withdrawn: true,
         attestation: contentBound(ALICE_KEY),
-        fieldProvenance: { source: 'payload' as const, descriptor: 'https://alice.test/a1' },
+        fieldProvenance: forgeFieldProvenance('payload', 'https://alice.test/a1'),
       }],
     };
     const signerOf = signerIndexFromRegistry(registry(false));
@@ -1669,7 +2522,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
         evidence: {
           kind: 'declared',
           record: workspaceRecord(CONV, CONV_KEY, {
-            fieldProvenance: { source: 'payload', descriptor: 'https://elsewhere.test/x.ttl' },
+            fieldProvenance: forgeFieldProvenance('payload', 'https://elsewhere.test/x.ttl'),
           }),
         },
         attested: ['bound', 'bound'], content: ['bound', 'bound'], fields: ['refused', 'refused'],
@@ -1689,13 +2542,13 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
               const grants: Grant[] = [{
                 head: 'https://conv.test/g1', workspace: WS, grantedTo: alice,
                 role: `${P}#Contributor`, revoked, attestation: attestations[gAtt],
-                fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g1' },
+                fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g1'),
               }];
               const acceptances: Acceptance[] = [{
                 head: 'https://alice.test/a1', workspace: WS, member: alice,
                 accepts: 'https://conv.test/g1', stream: 'https://alice.test/s', withdrawn,
                 attestation: attestations[aAtt],
-                fieldProvenance: { source: 'payload', descriptor: 'https://alice.test/a1' },
+                fieldProvenance: forgeFieldProvenance('payload', 'https://alice.test/a1'),
               }];
               const args = { workspace: WS, profile: PROFILE, grants, acceptances, scopes };
               const label = `ws=${name} grant=${gAtt} accept=${aAtt} revoked=${revoked} withdrawn=${withdrawn}`;
@@ -1911,13 +2764,13 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       head: `https://alice.test/${n}`, workspace: WS, member: alice,
       accepts: 'https://conv.test/g1', stream: `https://alice.test/s-${n}`,
       attestation: contentBound(ALICE_KEY),
-      fieldProvenance: { source: 'payload' as const, descriptor: `https://alice.test/${n}` },
+      fieldProvenance: forgeFieldProvenance('payload', `https://alice.test/${n}`),
       ...over,
     }));
     const oneGrant: Grant[] = [{
       head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
       attestation: contentBound(CONV_KEY),
-      fieldProvenance: { source: 'payload', descriptor: 'https://conv.test/g1' },
+      fieldProvenance: forgeFieldProvenance('payload', 'https://conv.test/g1'),
     }];
 
     /**

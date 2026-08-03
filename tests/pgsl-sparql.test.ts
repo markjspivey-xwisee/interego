@@ -226,8 +226,8 @@ describe('PGSL SPARQL Engine', () => {
       const stats = latticeStats(pgsl);
       if (stats.maxLevel >= 2) {
         for (const node of pgsl.nodes.values()) {
-          if (node.kind === 'Fragment' && (node as any).left) {
-            const query = sparqlNeighbors((node as any).left);
+          if (node.kind === 'Fragment' && node.left) {
+            const query = sparqlNeighbors(node.left);
             const result = sparqlQueryPGSL(pgsl, query);
             // Should find at least the right neighbor
             expect(result.bindings.length).toBeGreaterThanOrEqual(0);
@@ -239,7 +239,7 @@ describe('PGSL SPARQL Engine', () => {
 
     it('sparqlPullbackOf works for fragment with constituents', () => {
       for (const node of pgsl.nodes.values()) {
-        if (node.kind === 'Fragment' && (node as any).left) {
+        if (node.kind === 'Fragment' && node.left) {
           const query = sparqlPullbackOf(node.uri);
           const result = sparqlQueryPGSL(pgsl, query);
           if (result.bindings.length > 0) {

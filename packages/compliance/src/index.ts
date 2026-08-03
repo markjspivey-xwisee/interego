@@ -4,7 +4,11 @@
  *
  *   "Compliance grade" means a descriptor satisfies a stricter
  *   superset of requirements suitable for regulatory audit:
- *     - HighAssurance trust level (default is SelfAsserted)
+ *     - CryptographicallyVerified trust level (default is SelfAsserted).
+ *       Compliance PROSE calls this tier "HighAssurance"; the L1 type and
+ *       the published SHACL shape do not have that value, so it is not
+ *       written anywhere. See checkComplianceInputs below, and the note on
+ *       TrustLevel in packages/core/src/model/types.ts.
  *     - Cryptographic signature (ECDSA) over the descriptor
  *     - Anchoring (IPFS CID computed; can be pinned externally)
  *     - Validation against the relevant framework's SHACL shapes
@@ -29,7 +33,7 @@ export interface ComplianceCheckResult {
  * Pre-publish compliance check. Returns whether the inputs satisfy
  * compliance-grade requirements + a list of violations + a list of
  * facet upgrades the caller should apply (e.g., bump trustLevel from
- * SelfAsserted → HighAssurance, add ECDSA signature).
+ * SelfAsserted → CryptographicallyVerified, add ECDSA signature).
  */
 export function checkComplianceInputs(args: {
   modalStatus?: string;

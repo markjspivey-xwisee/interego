@@ -8138,7 +8138,14 @@ const TOOL_SCHEMAS = [
         },
         compliance: {
           type: 'boolean',
-          description: 'When true, publish as compliance-grade evidence (regulatory audit trail). Forces trust to HighAssurance, requires non-Hypothetical modal status. Response carries a complianceCheck report.',
+          // ★ "Forces trust to HighAssurance" is what this said, and it was false in three
+          // ways at once: the handler writes iep:trustLevel CryptographicallyVerified (there
+          // is no HighAssurance value — the published SHACL shape's sh:in has exactly three
+          // and that is not one of them); it does not FORCE anything, it downgrades to
+          // SelfAsserted when the delegation chain fails to verify; and a caller who read
+          // this and then filtered readers on 'HighAssurance' would match nothing this
+          // relay has ever published.
+          description: 'When true, publish as compliance-grade evidence (regulatory audit trail). Upgrades iep:trustLevel to CryptographicallyVerified IF the calling agent\'s signed delegation chain verifies end-to-end (otherwise it stays SelfAsserted and the reason is logged), adds an operator-grade ECDSA signature over the whole descriptor turtle, and requires non-Hypothetical modal status. Response carries a complianceCheck report.',
         },
         compliance_framework: {
           type: 'string',
@@ -8815,25 +8822,40 @@ MODAL STATUS (don't drift to "Asserted for safety"):
 - Counterfactual: explicitly negated / retracted. Rare.
 
 TRUST TIER (don't drift to "SelfAsserted by omission" when a verifier is reading):
-The substrate has a trust-level ladder. The body's iep:trustLevel is a CLAIM;
-what readers actually see is effectiveTrustLevel, which the relay computes
-when proofs verify. Pick the tier on PURPOSE based on who will read your
-descriptor and what they need to be sure of:
+The substrate has a trust-level ladder with exactly three rungs —
+SelfAsserted < ThirdPartyAttested < CryptographicallyVerified. The published
+SHACL shape's sh:in admits no others, so a value outside them is not a
+higher tier, it is an invalid descriptor. The body's iep:trustLevel is a
+CLAIM; what readers actually see is effectiveTrustLevel, which the relay
+computes when proofs verify. Pick the tier on PURPOSE based on who will read
+your descriptor and what they need to be sure of:
 - SelfAsserted (default — no extra arg): the descriptor body declares who
   the agent is, but no cryptographic proof. The relay's OAuth gate already
   authenticated the principal, so for memory / scratchpad / inferences this
   is the right tier (and matches Hypothetical's neutrality discipline).
-- CryptographicallyVerified — pass \`sign_authorship: true\` on publish_context.
-  The relay embeds a iep:authorshipProof signed with the calling agent's
-  delegation key (ECDSA-secp256k1). The proof verifies from the descriptor
-  ALONE — readers don't need to trust pod storage. USE THIS when: another
-  agent will verify this came from YOU (not just your pod), you are
-  publishing into an audit trail, or you are entering/ratifying a contract
-  (odrl:Agreement, rules-of-engagement) that requires a verified principal.
-- HighAssurance — pass \`compliance: true\` (and a compliance_framework).
-  Adds an operator-grade signature over the WHOLE descriptor turtle. For
-  regulated evidence (EU AI Act, NIST RMF, SOC 2) and high-stakes attestations.
-  Requires non-Hypothetical modal status.
+- ThirdPartyAttested: another agent vouches for the claim. Emitted by the
+  attestation-issuing verticals (lrs-adapter, learner-performer-companion)
+  rather than requested by an arg on publish_context.
+- CryptographicallyVerified — the TOP rung, reached two independent ways:
+  * \`sign_authorship: true\` embeds a iep:authorshipProof signed with the
+    calling agent's delegation key (ECDSA-secp256k1), verifiable from the
+    descriptor ALONE — readers don't need to trust pod storage. USE THIS
+    when another agent will verify this came from YOU (not just your pod),
+    or you are entering/ratifying a contract (odrl:Agreement,
+    rules-of-engagement) that requires a verified principal.
+  * \`compliance: true\` (plus a compliance_framework) additionally adds an
+    operator-grade signature over the WHOLE descriptor turtle and a
+    framework conformance report, for regulated evidence (EU AI Act, NIST
+    RMF, SOC 2). Requires non-Hypothetical modal status. NOTE it upgrades
+    the tier only when the agent's signed delegation chain verifies
+    end-to-end; otherwise the descriptor lands SelfAsserted and the relay
+    logs why. Do not assume the upgrade happened — read it back.
+  This block used to describe a fourth rung, "HighAssurance", above
+  CryptographicallyVerified and reachable via compliance: true. No such
+  value exists: HighAssurance is @interego/registry's ISSUER-STANDING
+  vocabulary (how much an attestation's issuer counts, a weight in a
+  reputation aggregation), not a iep:trustLevel. Filtering readers on it
+  matches nothing.
 
 CONTRACTS MAY REQUIRE A MINIMUM TIER. When publishing into an existing
 odrl:Agreement, ttt:Game, ratification flow, or similar policy, READ the

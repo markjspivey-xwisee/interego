@@ -29,6 +29,20 @@ function answer(turtle: string, t: InterrogativeType) {
   return r.answers[0]!;
 }
 
+/**
+ * Read a dotted path out of an answer's `values` bag. Same helper, and the same reason
+ * for it, as `tests/interrogative-router.test.ts`: `values` is
+ * `Record<string, unknown> | undefined`, and the `(a.values as any).x.y` this replaces
+ * disabled checking of the WHOLE expression — including `values` being absent, which is
+ * precisely what the `status: 'full'` assertion on the line above is claiming cannot
+ * happen. Under the cast that case threw a TypeError instead of failing an assertion.
+ */
+const valueAt = (a: { values?: Record<string, unknown> }, path: string): unknown =>
+  path.split('.').reduce<unknown>(
+    (acc, key) => (acc == null ? undefined : (acc as Record<string, unknown>)[key]),
+    a.values,
+  );
+
 describe('projectHolon typedFacets → interrogative router', () => {
   it('lights up Who/When/WhatKind = full, Why/How/Whether = partial', () => {
     const { pgsl, node } = build();
@@ -36,15 +50,15 @@ describe('projectHolon typedFacets → interrogative router', () => {
 
     const who = answer(ttl, 'Who');
     expect(who.status).toBe('full');
-    expect((who.values as any).assertingAgent.identity).toBe('did:ethr:0xabc');
+    expect(valueAt(who, 'assertingAgent.identity')).toBe('did:ethr:0xabc');
 
     const when = answer(ttl, 'When');
     expect(when.status).toBe('full');
-    expect((when.values as any).validFrom).toBe('2026-06-18T00:00:00.000Z');
+    expect(valueAt(when, 'validFrom')).toBe('2026-06-18T00:00:00.000Z');
 
     const wk = answer(ttl, 'WhatKind');
     expect(wk.status).toBe('full');
-    expect((wk.values as any).interpretationFrame).toBe('urn:iep:contenttype:foxxi%3AVerification');
+    expect(valueAt(wk, 'interpretationFrame')).toBe('urn:iep:contenttype:foxxi%3AVerification');
 
     expect(answer(ttl, 'Why').status).toBe('partial');
     expect(answer(ttl, 'How').status).toBe('partial');
@@ -52,7 +66,7 @@ describe('projectHolon typedFacets → interrogative router', () => {
     const whether = answer(ttl, 'Whether');
     expect(whether.status).toBe('partial');
     // Demo holons are unsigned → SelfAsserted, NEVER CryptographicallyVerified.
-    expect((whether.values as any).trustLevel).toBe(`${CG}SelfAsserted`);
+    expect(valueAt(whether, 'trustLevel')).toBe(`${CG}SelfAsserted`);
   });
 
   it('default OFF → no typed facets, manifest unchanged, descriptorUrl invariant', () => {

@@ -84,11 +84,16 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT = join(ROOT, 'tsconfig.check.json');
 
 /**
- * The remaining debt: 4 errors in 1 file, down from 97 in 28.
+ * ★ EMPTY. The debt is zero: every file in this program compiles, down from 97 errors in 28
+ * files when the compiler was first turned on.
  *
- * Deleting a line from this list is how a file becomes permanently gated, and every deletion
- * was earned by a fix — never by an exclusion, and never by a cast that moved the error out of
- * tsc's sight without changing what the code does.
+ * An empty list means the ratchet has become an absolute: ANY type error in ANY file this
+ * program includes now fails, because `pinned === undefined` is the unconditional-failure
+ * branch below. Do not add a line back to buy time. Adding one re-opens a file that is
+ * currently closed, and the only thing this file has ever been used for is closing them.
+ *
+ * Every deletion was earned by a fix — never by an exclusion, and never by a cast that moved
+ * the error out of tsc's sight without changing what the code does.
  *
  * ── WHAT THE 93 TURNED OUT TO BE ─────────────────────────────────────────────
  *
@@ -141,34 +146,69 @@ const PROJECT = join(ROOT, 'tsconfig.check.json');
  *       `tamperedZip` nobody used, and two ambient `.d.ts` files that exist in the tree and
  *       were simply not in this program.
  *
- * ── WHY THESE FOUR ARE STILL HERE ────────────────────────────────────────────
+ * ── ★ THE LAST FOUR, AND HOW THE ACCOUNT OF THEM WAS WRONG ───────────────────
  *
- * All four are `tests/abac.test.ts`, and all four are the same finding: THE REPO HAS TWO
- * INCOMPATIBLE TRUST VOCABULARIES AND THE TYPE ENCODES THE ONE NOTHING USES.
+ * They were all `tests/abac.test.ts`, and the note here called them "TWO INCOMPATIBLE TRUST
+ * VOCABULARIES AND THE TYPE ENCODES THE ONE NOTHING USES", pinned as a governance question
+ * too large to settle in a cleanup. Both halves of that framing turned out to be false, and
+ * settling it took reading the producers rather than the documentation.
  *
- *   packages/core/src/model/types.ts   TrustLevel = 'SelfAsserted' | 'ThirdPartyAttested'
- *                                                 | 'CryptographicallyVerified'
- *   packages/registry/src/index.ts     issuerTrustLevel?: 'HighAssurance' | 'PeerAttested'
- *                                                       | 'SelfAsserted'
- *   docs/AGENT-PLAYBOOK.md L117        "HighAssurance > PeerAttested > SelfAsserted"
- *   deploy/mcp-relay/server.ts L8141   advertises "Forces trust to HighAssurance"
+ *   — THEY ARE NOT TWO VOCABULARIES FOR ONE SLOT. THEY ARE TWO AXES.
+ *     `TrustLevel` grades how a CLAIM is backed; `AttestationInput.issuerTrustLevel` grades
+ *     an attestation ISSUER's standing, is consumed only as a numeric weight by
+ *     `aggregateReputation`, and never reaches a facet or the wire. They collide on one
+ *     token, `SelfAsserted`, and mean different things by it.
  *
- * Only `SelfAsserted` is common to both. `TrustFacetData.trustLevel` is typed with core's
- * union, but the vocabulary the relay advertises, the docs document, the registry weights,
- * and this test exercises is the other one — so `trustLevel: 'HighAssurance'` cannot be
- * written without a cast, and the two `as IRI` casts at L64/L69 are what was hiding it.
- * A fourth-of-the-same: L232 constructs `amtaAxes` on a Trust facet, which
- * `packages/abac/src/attribute-resolver.ts:129` reads back out through its own inline
- * `(f as { amtaAxes?: ... })` cast because `TrustFacetData` never declared the field.
+ *   — THE TYPE ENCODES THE ONE *EVERYTHING* USES. Not one producer in the tree has ever
+ *     written `HighAssurance` into a Trust facet: relay, `mcp-server`, `lrs-adapter`,
+ *     `learner-performer-companion`, `foxxi-content-intelligence` and `oauth-client-store`
+ *     all emit core's three. `system-ontology.ts` declares `iep:trustLevel` an
+ *     `owl:FunctionalProperty` ranged on an `owl:oneOf` of those three, the published WD
+ *     ships a SHACL `sh:in` over the same three, and all three ranking tables
+ *     (`sparql/patterns.ts`, `@interego/solid`'s `TRUST_RANK`, the SPARQL `VALUES` block)
+ *     score exactly those three 1/2/3. `@interego/compliance` had already recorded the
+ *     decision in prose — "Compliance vocabulary calls this HighAssurance but the L1 type
+ *     uses CryptographicallyVerified".
  *
- * Making the test compile means either changing it to stop exercising the vocabulary the
- * system actually ships, or changing a core substrate type. Both are decisions about which
- * vocabulary is canonical, not cleanups, so the errors stay pinned and VISIBLE rather than
- * being cast away. Pinning is the honest state here; a cast would delete the question.
+ *   ★ WHAT WAS ACTUALLY BROKEN WAS THE DOCUMENTATION, IN FOUR AGENT-FACING PLACES, AND THE
+ *     PIN WAS PROTECTING IT. `docs/AGENT-PLAYBOOK.md` told agents `iep:trustLevel` ranked
+ *     `HighAssurance > PeerAttested > SelfAsserted` — a ladder omitting both values the
+ *     substrate actually emits, so an agent following it surfaces uncertainty on
+ *     `CryptographicallyVerified`, the strongest tier. The relay's `publish_context` schema
+ *     and its long-form publishing prompt both said `compliance: true` "forces trust to
+ *     HighAssurance" while the handler four thousand lines above writes
+ *     `CryptographicallyVerified`, and only when the delegation chain verifies; the prompt
+ *     additionally inverted the ladder, putting `CryptographicallyVerified` beneath a tier
+ *     that cannot be emitted. `mcp-server/server.ts` carried the same false line three
+ *     times over code that is correct. All four are fixed, and the decision is now written
+ *     where each vocabulary is DEFINED — `packages/core/src/model/types.ts` and
+ *     `packages/registry/src/index.ts` — rather than only at a point of use.
+ *
+ *   ★ AND THE PIN UNDERCOUNTED. It named the `as IRI` casts at L64/L69 as "what was hiding
+ *     it", which reads as though the four errors WERE the problem. Counted exactly:
+ *     `TrustFacetData.trustLevel` was assigned a registry-vocabulary value at FIVE sites
+ *     (L64 `HighAssurance`; L298 `HighAssurance`; L318, L380, L390 `PeerAttested`), and
+ *     only TWO of the five produced a diagnostic. The other three escaped because `IRI` is
+ *     `string & {…}`, so `as IRI` widens the literal back to `string`, and where the
+ *     enclosing value ALSO took an `as ContextFacetData[]` / `as ContextFacetData`, tsc's
+ *     `as` comparability check — looser than its assignment check — accepts `string` against
+ *     `TrustLevel`. A cast pair defeated the gate that was pinning the file. (The other two
+ *     of the four pinned errors were not wrong-vocabulary at all: L69 is a legitimate
+ *     `SelfAsserted` that only errored because of its own `as IRI`, and L232 is the
+ *     undeclared `amtaAxes` described below.) Two further mentions — the `hasValue` in the
+ *     predicate shape at L84 and the `toEqual` at L224 — are bare strings that no type
+ *     reaches, and they are corrected too, since a shape that can never match anything the
+ *     substrate emits is a test asserting against a fiction.
+ *
+ * The fourth error was a different finding of the same shape: `amtaAxes` on a Trust facet,
+ * read by `packages/abac/src/attribute-resolver.ts` through an inline anonymous
+ * `(f as { amtaAxes?: … })` written at the point of use, so no writer could import what the
+ * reader expected. It is now `AmtaTrustFacetData` in `@interego/abac`'s public types —
+ * declared beside its consumer rather than added to the core facet union, since `amta:` is
+ * an L2 attestation vocabulary and widening `TrustFacetData` would push it into the union
+ * every vertical compiles against.
  */
-const LEGACY = {
-  'tests/abac.test.ts': 4,
-};
+const LEGACY = {};
 
 /** `path/to/file.ts(12,3): error TS1234: …` — the only line shape tsc reports errors on. */
 const ERROR_LINE = /^(.+?)\((\d+),(\d+)\): error TS\d+:/;
@@ -222,6 +262,13 @@ export function runTypecheckGate() {
 /** The message a human or a CI log sees. Kept out of the checker so vitest can reuse it. */
 export function typecheckGateReport(result) {
   if (result.ok) {
+    // The zero-debt case gets its own sentence. "0 known error(s) across 0 legacy file(s)"
+    // reads like a gate that examined nothing — the same ambiguity `tools/lint-gate.mjs`'s
+    // MIN_FILES floor exists to remove — so say what actually happened instead.
+    if (Object.keys(LEGACY).length === 0) {
+      return 'typecheck gate: clean — no legacy pins remain, so any type error anywhere in '
+        + 'tsconfig.check.json now fails this gate.';
+    }
     return `typecheck gate: ${result.total} known error(s) across ${Object.keys(LEGACY).length} `
       + 'legacy file(s), none anywhere else.';
   }

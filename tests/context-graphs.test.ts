@@ -38,6 +38,7 @@ import {
 import type {
   ContextDescriptorData,
   IRI,
+  ModalStatus,
   SemioticFacetData,
   TemporalFacetData,
 } from '@interego/core';
@@ -401,7 +402,12 @@ describe('Validation', () => {
       describes: ['urn:graph:g1' as IRI],
       facets: [{
         type: 'Semiotic',
-        modalStatus: 'InvalidStatus' as any,
+        // Deliberately a value the type system forbids — the point of the test is that the
+        // RUNTIME validator rejects it too. `as unknown as ModalStatus` rather than
+        // `as any`: the lie is confined to this one property instead of switching off
+        // checking of the whole facet literal, so a genuine mistake in a sibling field
+        // still fails to compile.
+        modalStatus: 'InvalidStatus' as unknown as ModalStatus,
       }],
     };
     const result = validate(bad);

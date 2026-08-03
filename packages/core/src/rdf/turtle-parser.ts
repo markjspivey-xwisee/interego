@@ -329,12 +329,25 @@ interface ParserState {
 
 const MAX_NESTING_DEPTH = 256;
 
+/** `type/value` for a parse-error message, handling the two Tok members with no `value`. */
+function describeTok(t: Tok): string {
+  switch (t.type) {
+    case 'pname': return `pname/${t.prefix}:${t.local}`;
+    case 'bnode': return `bnode/${t.id}`;
+    default: return `${t.type}/${String(t.value)}`;
+  }
+}
+
 function peek(s: ParserState, offset = 0): Tok | undefined { return s.tokens[s.index + offset]; }
 function consume(s: ParserState): Tok | undefined { return s.tokens[s.index++]; }
 function expectPunct(s: ParserState, value: string): void {
   const t = consume(s);
   if (!t || t.type !== 'punct' || t.value !== value) {
-    throw new ParseError(`expected '${value}', got ${t ? `${t.type}/${(t as any).value ?? ''}` : 'EOF'}`, t?.pos ?? -1);
+    // `describeTok` instead of `(t as any).value`: two members of `Tok` have no `value`
+    // at all (`pname` carries prefix/local, `bnode` carries id), and the cast printed
+    // `pname/undefined` for them — the least useful thing a parse error can say about the
+    // token it choked on. Reported through the discriminant so every member says something.
+    throw new ParseError(`expected '${value}', got ${t ? describeTok(t) : 'EOF'}`, t?.pos ?? -1);
   }
 }
 
@@ -651,7 +664,12 @@ export function parseTrig(src: string): ParsedDocument {
       if (next?.type === 'punct' && next.value === '{') {
         consume(state); // graph IRI — we don't track per-graph parentage
         consume(state); // {
-        while (peek(state) && !(peek(state)!.type === 'punct' && (peek(state) as any).value === '}')) {
+        for (;;) {
+          // Bound once instead of calling peek() three times. The repeated calls lost the
+          // discriminant narrowing between them, which is the only reason the third needed
+          // an `as any` to reach `.value` — on a union where two members have no `value`.
+          const inner = peek(state);
+          if (!inner || (inner.type === 'punct' && inner.value === '}')) break;
           parseTriplesBlock(state);
         }
         expectPunct(state, '}');
@@ -675,7 +693,10 @@ export function parseTrig(src: string): ParsedDocument {
       }
       // Default-graph form: `GRAPH { ... }` (no name) — also tolerated.
       expectPunct(state, '{');
-      while (peek(state) && !(peek(state)!.type === 'punct' && (peek(state) as any).value === '}')) {
+      for (;;) {
+        // Same rebind as the IRI-prefix form above, same reason.
+        const inner = peek(state);
+        if (!inner || (inner.type === 'punct' && inner.value === '}')) break;
         parseTriplesBlock(state);
       }
       expectPunct(state, '}');

@@ -64,7 +64,11 @@ export interface DecoratorContext {
   readonly sourceOptions: Array<{ uri: IRI; resolved: string }>;
   readonly targetOptions: Array<{ uri: IRI; resolved: string }>;
   /** Active constraints affecting this node */
-  readonly constraints: readonly any[];
+  // `unknown`, not `any`: this is the server-side ParadigmConstraint shape, which this
+  // module never looks inside — the only use is `.length` in the prompt builder. `any`
+  // advertised that a decorator MAY reach into it untyped, which is the opposite of what
+  // an opaque pass-through field should say.
+  readonly constraints: readonly unknown[];
   /** Containers this node appears in */
   readonly containers: Array<{ uri: IRI; resolved: string; level: number; position: number }>;
   /** The PGSL instance (for queries) */
@@ -80,7 +84,9 @@ export interface DecoratedAffordance {
   readonly title: string;
   readonly method: string;
   readonly href: string;
-  readonly fields?: readonly any[];
+  // Hypermedia form fields, passed through verbatim to the HMD renderer and never read
+  // here. `unknown` keeps it opaque instead of inviting untyped access.
+  readonly fields?: readonly unknown[];
   /** Decorator attribution */
   readonly decoratorId: string;
   readonly decoratorName: string;
@@ -118,6 +124,16 @@ export interface DecoratorRegistry {
   readonly decorators: readonly AffordanceDecorator[];
 }
 
+/**
+ * The registry with its one field made writable. `register`/`remove` mutate a `readonly`
+ * property in place — deliberately, so a handle held elsewhere sees the change — and the
+ * five `(registry as any)` casts that expressed it also erased the ELEMENT type, so
+ * `registerDecorator` would have accepted a sort comparator over the wrong field, or a
+ * filter that produced something other than decorators, with no diagnostic. This names
+ * exactly the one liberty being taken and nothing else.
+ */
+type MutableDecoratorRegistry = { -readonly [K in keyof DecoratorRegistry]: AffordanceDecorator[] };
+
 /** Create an empty decorator registry. */
 export function createDecoratorRegistry(): DecoratorRegistry {
   return { decorators: [] };
@@ -128,9 +144,9 @@ export function registerDecorator(
   registry: DecoratorRegistry,
   decorator: AffordanceDecorator,
 ): void {
-  const decorators = [...(registry as any).decorators, decorator]
+  const decorators = [...registry.decorators, decorator]
     .sort((a, b) => a.priority - b.priority);
-  (registry as any).decorators = decorators;
+  (registry as MutableDecoratorRegistry).decorators = decorators;
 }
 
 /** Remove a decorator by ID. */
@@ -138,8 +154,8 @@ export function removeDecorator(
   registry: DecoratorRegistry,
   decoratorId: string,
 ): void {
-  (registry as any).decorators = (registry as any).decorators
-    .filter((d: AffordanceDecorator) => d.id !== decoratorId);
+  (registry as MutableDecoratorRegistry).decorators = registry.decorators
+    .filter(d => d.id !== decoratorId);
 }
 
 /**
@@ -186,7 +202,7 @@ export function makeAffordance(
   href: string,
   confidence: number,
   rationale?: string,
-  fields?: readonly any[],
+  fields?: readonly unknown[],
 ): DecoratedAffordance {
   return {
     rel, title, method, href, fields,
