@@ -21,7 +21,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   act,
-  createEncryptedEnvelope,
   generateKeyPair,
   openEncryptedEnvelope,
 } from '@interego/core';

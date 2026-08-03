@@ -319,6 +319,13 @@ describe('THE ADVERSARIAL AUDIT — Interego self-defense demonstration', () => 
       // attack, the attacker would have to pre-date the original to make
       // it look like the new one came first. But the ORIGINAL was signed
       // at a real wall-clock time recorded inside the SignedDescriptor.
+      // ★ The replay descriptor was built and then never looked at: the only assertion here
+      // compared two date literals, which is true whatever `buildIncidentEvent` returns. Attack
+      // 4 counted itself DETECTED without consulting the artifact it forged. Assert the
+      // paragraph above instead — the replay lands on a DIFFERENT graph IRI, so it cannot
+      // overwrite or impersonate the original.
+      expect(replay.graph_iri).not.toBe(original.graph_iri);
+      expect(replay.graph_iri).toContain('2027-01-01');
       const originalSignedAt = sig.signedAt;
       const replayDetectedAt = '2027-01-01T00:00:00Z';
       expect(new Date(replayDetectedAt).getTime()).toBeGreaterThan(new Date(originalSignedAt).getTime());
@@ -349,6 +356,14 @@ describe('THE ADVERSARIAL AUDIT — Interego self-defense demonstration', () => 
       // the ACTUAL rotation timestamps (created on rotateComplianceWallet
       // calls). The fake compromise event is just a free-text descriptor
       // and conflicts with the persisted history.
+      // ★ Same shape of hole as attack 4: `fakeCompromise` was built and never inspected, so
+      // every assertion below held whether or not the forgery had been constructed at all.
+      // Pin what makes it a forgery — it names the real signer as retired, and it is backdated
+      // to before the incident — so the contradiction with the persisted history is asserted
+      // against the forged document rather than merely described in a comment.
+      expect(fakeCompromise.graph_content).toContain(sig.signerAddress);
+      expect(fakeCompromise.graph_iri).toContain('2026-01-01');
+
       expect(stage.rotationEvents).toBeDefined();
       const realRotations = stage.rotationEvents!;
       // None of the real rotations claim a pre-incident timestamp.

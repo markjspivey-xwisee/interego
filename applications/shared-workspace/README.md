@@ -56,12 +56,31 @@ the fold attested those grants against is the one the **workspace's own record**
 > roster can be `recordFieldBinding: 'bound'` with `convenerBinding: 'unchecked'`, which is
 > every caller that has not asked.
 >
-> ★ **And the run state is no longer "unrun".** `verify-can-live.ts` §§1–8 were run against
-> production with two real bearers on 2026-08-02 and passed **46/46**, including the
-> manufactured-participant refusal and §8's closing demonstration that gap 6 was open. What is
-> unrun is smaller and newer: §9, the gap-6 **close**, which publishes a real `wsp:Workspace`
-> and folds against it. Said as two facts rather than one, because collapsing them is how a
-> stale "unverified" survives a round.
+> ★ **What has been run.** `verify-can-live.ts` §§1–11 were run against production with two
+> real bearers on 2026-08-03 (UTC) and passed **77/77** (§§1–8: 45 sites, §9: 18, §10: 7, §11: 7).
+> §9 is the gap-6 **close**, §10 the gap-8 close, §11 the gap-9 close. Nothing in the file is
+> unrun *at this count* — which is the only form of that claim worth writing, and the reason
+> the source file now carries a numbered roster of its sections in its own header. The bare
+> adjective has gone stale three times: "§§6–8 remain unrun" after they had run, "§9 is unrun"
+> after §9 had, and "nothing in this file is unrun" one round before §10 was added.
+>
+> ★ **§10 did not merely go unrun — it FAILED the first time it was run**, and for a reason its
+> own doubles get right. Its rogue role profile declared `#Contributor` while §8's published
+> grant to bee names `#Observer`, so the rogue table had no row for bee's role, conferred
+> nothing, and the escalation comparison came out `0 > 1`. A section written to demonstrate a
+> widening, failing because its rogue document never mentioned the role it was widening.
+> `tests/workspace-adversarial.test.ts` uses `#Observer` **and** rewrites the grant to match;
+> the live section copied the shape and named the other role. Fixed and now green.
+>
+> ★ **And §9's first run found the thing it was written not to check.** Its comment claimed the
+> graph IRI made `<WS>` dereference through the relay's `/ns/:owner/:slug` route, and excused
+> itself from asserting it. It did not: the file built `WS` under `/ns/maintainer/…`, that
+> owner segment selects the pod literally named `maintainer`, and **both** principals are
+> refused write to it (403 `scope_violation`, measured both ways) — so `<WS>` answered **404**
+> for every run this file has ever done. The URL is now built from the convener's own pod, the
+> dereference is asserted rather than described, and the discovery cost nothing but running the
+> assertion the section declined to write. That discovery is **residual gap 9**, and §11 now
+> closes it.
 
 > ★ **An independent review refuted the original claim, and it was right.** `Grant` and
 > `Acceptance` carried no provenance: the only cross-checks were that the acceptance names
@@ -100,7 +119,7 @@ field that gets left out.
 > Fixed as a rule the whole fold obeys, not as a patch on one branch: **a record that fails
 > attestation loses its power to confer and keeps its power to restrict.** The fold reads two
 > tracks — *conferring* (gated) and *restricting* (every row) — and
-> `tests/workspace-adversarial.test.ts` enumerates **76,800 configurations across seven axes**
+> `tests/workspace-adversarial.test.ts` enumerates **76,800 configurations across nine axes**
 > and asserts, literally, that no stronger configuration admits anything a weaker one
 > withholds, reports a wider role than it reported, or raises fewer divergences. The sixth
 > axis is the descriptor-binding **basis**, and it asserts an *invariance* rather than an
@@ -112,23 +131,40 @@ field that gets left out.
 > give the rung something to admit as well as something to refuse, and a separate case asserts
 > it really does both.
 > The seventh is the **declared convener** (gap 6), and it learned that lesson directly rather
-> than by repeating it. The rung is crossed at every one of the 76,800 points against **two**
-> generated workspace records — one naming the policy's convener, one naming somebody else —
-> so 153,600 convener comparisons sit on top of the lattice. Both directions are counted
-> during the loop and asserted non-zero after it: a rung that admitted nothing would satisfy
-> every subset check on an empty set, and one that refused nothing would satisfy them on an
-> untouched one. Agreeing evidence must also change the report and **nothing else**, which the
-> subset direction cannot see, so the two rosters' decisions are compared whole.
+> than by repeating it. Both directions are counted during the loop and asserted non-zero after
+> it: a rung that admitted nothing would satisfy every subset check on an empty set, and one
+> that refused nothing would satisfy them on an untouched one. Agreeing evidence must also
+> change the report and **nothing else**, which the subset direction cannot see, so the two
+> rosters' decisions are compared whole.
+> The eighth is the **declared role profile** (gap 8), off the *same* record, so there is no
+> separate policy flag to turn it on — what makes it an axis is the generator. The ninth is
+> **where that record came from** (gap 9), and it is the one axis of the nine that does have
+> its own flag, because it is not a question about the record: `requireEvidenceProvenance`
+> demands that the evidence be what `<WS>` dereferences to, and a record's own contents cannot
+> answer that however well signed they are. The three
+> generated workspace records move the declared convener and the declared profile **one field
+> at a time**, crossed at every one of the 76,800 points, so 230,400 evidence comparisons sit
+> on top of the lattice and each field's verdict is observed while the other agrees. A fold
+> that answered either question with the other's verdict fails one of the two shapes.
 >
 > The disagreeing record names `alice`, deliberately: `signed-by-alice` is one of the generated
 > attestations, so the tempting implementation — read the convener out of the workspace and
 > *use* it — turns evidence into a **source** of authority and is caught by `assertNoWiderThan`
 > at every point where a grant carries alice's signature. A disagreeing record naming a
 > principal no attestation is signed by would have made the axis look complete and tested
-> nothing. Seven further workspace-record shapes (about another workspace, signed by a
-> stranger, unattested, content-unbound, no provenance, provenance elsewhere, unreadable) are
-> crossed separately against grant × acceptance × revoked × withdrawn × rung, because three of
-> them are evidence at one rung and refused at a higher one.
+> nothing. **Eight** further workspace-record shapes (about another workspace, signed by a
+> stranger, unattested, content-unbound, no provenance, provenance elsewhere, unreadable, and
+> declares-no-profile) are crossed separately against grant × acceptance × revoked ×
+> withdrawn × rung, because three of them are evidence at one rung and refused at a higher one.
+> The list said "seven" and omitted `declares-no-profile`, which the gap-8 round added; the
+> table has eleven entries, three of which ride the lattice, so eight is the arithmetic.
+>
+> ★ A **ninth** axis (I) rides the lattice on top of those: where the evidence itself came
+> from. `sourceShapes` generates four states — no provenance at all, an honest dereference, a
+> dereference of a *different* IRI, and a dereference that resolved to a *different* document —
+> so 307,200 further comparisons sit above the convener ones, and each of the three forged
+> shapes has its own non-vacuity counter. One total would be satisfied by one shape doing all
+> the refusing while the other two rode the lattice untested.
 > Honouring an unattestable revocation does let anyone who can get a row into `grants` evict
 > a member; that is a denial of service the `asserted` configuration already permits in full,
 > and it is the strictly lesser evil.
@@ -181,7 +217,7 @@ notices; over-privileging is a failure nobody notices.
 
 | file | what it is |
 |---|---|
-| [`src/roster.ts`](src/roster.ts) | the two-sided fold: `foldRoster`, `may`, `explain`, `refuseAttestation`, `refuseFieldBinding`, `refuseConvenerAuthority`. Pure. |
+| [`src/roster.ts`](src/roster.ts) | the two-sided fold: `foldRoster`, `may`, `explain`, `refuseAttestation`, `refuseFieldBinding`, `refuseConvenerAuthority`, `refuseRoleProfileAuthority`. Pure. |
 | [`src/membership.ts`](src/membership.ts) | the three records: `workspaceTurtle` / `readWorkspaceRecord` (who may grant), `grantTurtle` / `readGrantRecord` (who was offered what), `acceptanceTurtle` / `readAcceptanceRecord` (who agreed), plus `publishMembershipRecord` and `convenerEvidenceOf`. The producer residual gaps 0 and 6 were both waiting on. |
 | [`src/stream.ts`](src/stream.ts) | one participant's log: `appendEntry`, `readStream`, `verifyChain`, `readAttestation`. |
 | [`src/compose.ts`](src/compose.ts) | many pods read as one workspace: `composeWorkspace`, `resolveCitations`. |
@@ -430,15 +466,16 @@ Three details are load-bearing rather than decorative:
 - **`requireFieldBinding` forces `requireContentBinding` on, in code.** Fields parsed from
   bytes nobody re-digested are fields somebody may have edited after signing, and the parse
   would report the edit faithfully. The combination that checks half is not reachable.
-- **A reader refuses more than the shape does, and never drops a restriction — with one
-  measured exception.** Two `wsp:grantedTo` triples are refused rather than resolved
-  first-match; an unreadable `wsp:revoked` reads as **set**; a record damaged in a
-  non-identifying field still reaches the fold, because it may carry a revocation and
-  deleting it would reinstate a removed member. The exception is `wsp:member`: the published
-  shape now constrains it to `^https?://|^did:` and `oneIri` applies no scheme pattern, so a
-  `urn:` member is refused by the **shape** and admitted by the **reader**. The publish gate
-  validates first, so nothing gets in — but the sentence does not hold in both directions on
-  that field and is not written as though it did.
+- **A reader refuses more than the shape does, and never drops a restriction — and on scheme
+  it refuses EXACTLY what the shape does.** Two `wsp:grantedTo` triples are refused rather than
+  resolved first-match; an unreadable `wsp:revoked` reads as **set**; a record damaged in a
+  non-identifying field still reaches the fold, because it may carry a revocation and deleting
+  it would reinstate a removed member. The scheme clause used to carry an exception on
+  `wsp:member`, and the exception was seven fields wide — see the closed row. `oneIri` now
+  consults `PUBLISHED_IRI_PATTERN`, a verbatim copy of the deployed `sh:pattern` for each of the
+  eight terms it reads, and a test parses `wsp-shapes.ttl` and compares the two. **Equality is
+  the requirement in both directions here**: `wsp:stream` carries no pattern in the shape, so
+  the reader applies none, and refusing there would be the same defect pointing the other way.
 
 **What it still does not mean.** *"bee is a field-bound member"* means **two records, each
 signed by the party it claims to come from, each stating this membership in the region of its
@@ -521,6 +558,12 @@ reason: `'bound'` on the first must never be readable as covering the second.
 *was the party these records came from entitled to grant here*, which neither of the other two
 touches, and it has **three** values rather than two because "the caller did not ask" and "the
 caller asked and the answer was no" are different facts and only one of them is a refusal.
+`roleProfileBinding` is a **fourth**, off the *same record* as the third and still its own
+field, because it answers *did the governance that decided these capabilities come from the
+workspace* — which the convener's verdict does not touch. A record can name the right profile
+and the wrong convener, or the reverse, and the eleven-shape table asserts exactly those two
+pairings. Collapsing them would also collapse the repair: one republishes a workspace record,
+the other re-folds against the declared governance.
 
 **★ And `bound` covers ONE REGION of a served document, not the document.** This is the
 sentence the first version of this close did not have, and its absence defeated the whole
@@ -728,9 +771,12 @@ caller handed a URL holds the first. Structurally the same residue as `head` und
 `slug-only` binding — **gap 1** — and it is why the live verifier publishes the workspace
 record at graph IRI `<WS>` rather than at a name minted beside it.
 
-**And one new gap fell out of building it — gap 8, below.** `foldRoster` still takes its
-`RoleProfile` from its caller, exactly as it used to take the convener, and the workspace
-record declares one. The value is parsed and handed over; nothing compares them.
+**And one new gap fell out of building it — gap 8, below, now closed in the round after it.**
+`foldRoster` took its `RoleProfile` from its caller, exactly as it used to take the convener,
+off a record that declares one. The deferral was deliberate and it was the right call: the
+comparison turned out to need two guards that had nothing to do with the convener's — an
+emptiness rule above the equality test, and a generator axis without which the new rung would
+have ridden the whole lattice refusing nothing.
 
 **7. `wsp:member` is enforced by this reader, not by the published shape — CLOSED.**
 `wspsh:MembershipAcceptanceShape` constrained `wsp:accepts`, `wsp:stream`, `wsp:workspace` and
@@ -748,24 +794,141 @@ refusing memberless acceptances within a minute. Pinned by `acceptance-no-member
 where our engine and pySHACL must agree on the verdict, and by the byte-for-byte drift diff
 between the published file and its fixture copy.
 
-One consequence, recorded because it inverts a sentence stated elsewhere in this document:
-`oneIri` applies no scheme pattern, so a `urn:` member is now refused by the **shape** and
-admitted by the **reader** — the only field where the shape is the stricter of the two.
+One consequence was recorded here, because it inverted a sentence stated elsewhere in this
+document: `oneIri` applied no scheme pattern, so a `urn:` member was refused by the **shape**
+and admitted by the **reader** — "the only field where the shape is the stricter of the two".
 
-**8. The role profile is caller-supplied and unchecked — gap 6 one field over.** Found while
-closing gap 6, and named rather than folded into it. `wspsh:WorkspaceShape` requires exactly
-one `wsp:roleProfile`, `readWorkspaceRecord` parses it, and `WorkspaceRecord.roleProfile`
-carries it — but `foldRoster` takes its `RoleProfile` from `args.profile`, which is whatever
-the caller passed. So a roster can have `convenerBinding: 'bound'` and still be folded against
-governance the workspace never declared, which decides every capability in it.
+★ **That sentence was wrong about its own scope, and the correction is the finding.** It was
+never one field. `wsp-shapes.ttl` patterns `wsp:convener`, `wsp:roleProfile`, `wsp:workspace`,
+`wsp:grantedTo`, `wsp:role`, `wsp:member` and `wsp:accepts` — seven of the eight terms `oneIri`
+reads — and the reader applied none of them: a grant naming `<urn:example:ws>`,
+`<urn:example:who>` and `<urn:example:role>` parsed with an **empty** `problems` array, and so
+did a workspace record declaring `<urn:example:conv>` and `<urn:example:roles>`. Measuring it
+rather than re-reading the row is what surfaced that, which is the discipline this document's
+own ledger prescribes two sections down and had not applied here.
 
-It is deliberately **not** closed in the same round as the gap it resembles. Comparing them
-means deciding what happens when they differ, and that decision has the same two-track hazard
-the convener check has: refusing to confer is safe, and adopting the workspace's profile is
-the escalating version of exactly the mistake gap 6's implementation notes are about. Doing it
-by reflex, in the diff that closes its twin, is how this area has shipped a new defect in each
-of the last five rounds. `verify-can-live.ts` §9 asserts the parsed value equals the profile
-the file folds against, so the evidence is shown to be real and its non-use is visible.
+Closed by `PUBLISHED_IRI_PATTERN` in `membership.ts`: one table, keyed by predicate, consulted
+by `oneIri` for every term so no call site can forget, holding the deployed patterns verbatim
+and matched with SHACL's own partial-match semantics rather than a re-anchored regex. Two
+mechanisms keep it from drifting: the **type** makes a term with no entry a compile error, and
+a test parses the deployed `wsp-shapes.ttl` and asserts the table equals it. The remaining
+asymmetry is deliberate and is the other direction — `wsp:stream` has no `sh:pattern`, so the
+reader constrains nothing there, and a `urn:` stream is admitted by both.
+
+**8. The role profile was caller-supplied and unchecked — gap 6 one field over. CLOSED.**
+Found while closing gap 6, deferred one round on purpose, and closed here.
+`wspsh:WorkspaceShape` requires exactly one `wsp:roleProfile`, `readWorkspaceRecord` parses it,
+and `WorkspaceRecord.roleProfile` carried it — while `foldRoster` took its `RoleProfile` from
+`args.profile`, which is whatever the caller passed. `permitsOf` is built from that document,
+so it decides **every capability in the roster**.
+
+**What was actually reachable, measured before anything was written.** Role IRIs are strings,
+so a rival profile can redeclare the *declared* profile's own `#Observer` with `grant` and
+`revoke` on it. Folded that way, the roster reported `convenerBinding: 'bound'`,
+`recordFieldBinding: 'bound'`, `unattested: []` — and an Observer holding
+`read, append, grant, revoke`. Every guard this layer had passed at full strength; the
+capabilities came out of a document the workspace never published.
+
+**What closes it.** The same signed record already carries the answer.
+`refuseRoleProfileAuthority` compares `WorkspaceRecord.roleProfile` against
+`RoleProfile.profile` and `Roster.roleProfileBinding` reports `'bound'` / `'refused'` /
+`'unchecked'`, non-omittable, beside `convenerBinding`. It is a **second** function rather than
+two more branches in the convener's, and a **fourth** field rather than a value folded into the
+third, because the two are repaired differently: one republishes a workspace record, the other
+re-folds against the declared governance.
+
+Gap 6's three load-bearing directions are copied deliberately rather than re-derived, and each
+was available here too:
+
+- **Evidence can refuse a profile; it can never supply one.** There is no
+  `profile = ws.roleProfile ?? args.profile`, for the same reason there is no such line for the
+  convener — and here the substitution could not even be written honestly, since the fold holds
+  an **IRI** and not the document.
+- **A disagreement refuses on the conferring track only.** `profileRefusal` sits in the grant
+  filter's `??` chain and nowhere else, so a revocation still revokes, a withdrawal still
+  withdraws, `restrictionStillApplied` still says so, and the fork report is still raised. It is
+  **not** in the acceptance chain either: a member's own statement about their own pod is no
+  less theirs because the convener's side named the wrong governance.
+- **Three values, not two.** `'unchecked'` is what every caller written before this field gets,
+  and it is a different fact from `'refused'`.
+
+Two things the round added that gap 6's did not, both because a rung can pass while doing
+nothing:
+
+- **The enumeration has a matching GENERATOR axis.** Every workspace record the two convener
+  shapes generate declares `P`, and the fold is always handed `PROFILE` whose `.profile` is `P`
+  — so a profile rung crossed against only those shapes agrees at all 76,800 points and refuses
+  nothing. `'declares-another-profile'` is the third shape, `profileRefused` counts the refusing
+  direction during the loop, and it is asserted non-zero after it. That failure has happened
+  twice in this file (AXIS E at 6,400 cases; AXIS G before its own generator), which is why it
+  is now written down as the rule rather than the anecdote.
+- **Each shape moves exactly ONE field, so the table asserts independence.**
+  `'names-another'` must report the convener `'refused'` and the profile `'bound'`;
+  `'declares-another-profile'` must do the opposite. A fold that answered either question with
+  the other's verdict cannot satisfy both rows.
+
+**What it still does not mean — and this claim is shorter than the other two bindings'.**
+`RoleProfile.profile` is the caller's own statement of where its `roles` came from. `roster.ts`
+is pure, so the profile **document** is never fetched and the role table behind that IRI is
+never compared with it. `'bound'` says the caller's table *claims* to be the declared profile;
+it does not say it **is**. A caller that writes the declared IRI over an invented set of permits
+passes — the same self-certification `FieldProvenance` carried until `membership.ts` existed to
+produce it, and the same next step: a reader for the profile document. That is **residual
+gap 10** below. The gap is genuinely smaller than gap 8 was: a caller must now lie about
+provenance rather than merely differ.
+
+`verify-can-live.ts` **§10** demonstrates it live — the rogue profile is folded against the two
+real §8 records, shown to widen bee beyond what alice's governance permits, then refused by the
+workspace's own declaration *for the right reason* (`convenerBinding` stays `'bound'`, so it is
+the profile's own refusal and not gap 6's check firing twice) — with the agreement CONTROL
+asserted after it.
+
+**9. The fold checks the evidence and never asks where it came from.** Found by running §9 for
+the first time, which is the point: gap 6's close had been reviewed against doubles for a round
+and this is not visible in a double, because a double hands the fold whatever record the test
+constructs and the question is *which record a reader would find*.
+
+`refuseConvenerAuthority` asks a `ConvenerEvidence` three questions — is its subject this
+workspace, does it name this policy's convener, does it hold up as a signed, content-bound
+record. Bee writes a `wsp:MembershipGrant`-shaped attack in gap 6's terms and it is refused.
+Bee writes a **`wsp:Workspace`** for alice's workspace, on her own pod, naming herself
+convener, and it answers all three: the subject is a triple she chose, and the signature is
+hers over her own claim. Measured live — `verify-can-live.ts` §9's closing pair — the fold that
+refused her self-convened membership two assertions earlier reports `convenerBinding: 'bound'`
+and admits her.
+
+Nothing here is wrong about what the fold *says*: `ConvenerEvidence` is documented as evidence
+the caller supplies, and a caller that supplies bee's record gets an answer about bee's record.
+What was wrong is the scope the closure was read at. It holds for a reader who obtained the
+evidence by **dereferencing `<WS>`**, and until this round `<WS>` did not dereference at all —
+the tool built it under `/ns/maintainer/…`, a pod neither principal can write to, so the URL
+answered 404 on every run and the comment saying otherwise had never been checked.
+
+It is closable by **sourcing** rather than by trusting the record — relate the descriptor URL
+the evidence was read from to the workspace IRI it claims, the way `proofBindsToDescriptorUrl`
+already relates a proof to its descriptor. That is a change to `src/roster.ts` and it is not
+made in the round that found it, for the reason gap 8 gives one paragraph up.
+
+**10. The role TABLE behind the profile IRI is still the caller's.** The residue of closing
+gap 8, stated here rather than folded into the sentence that says gap 8 is closed.
+
+`refuseRoleProfileAuthority` compares `WorkspaceRecord.roleProfile` with `RoleProfile.profile`:
+an **IRI** against an **IRI**. `roster.ts` is pure — it performs no I/O, which is what keeps
+authorization out of a second place — so the profile *document* is never fetched and the
+`roles` array behind that IRI is never compared with anything. A caller that writes the
+declared IRI over an invented set of permits reports `roleProfileBinding: 'bound'`.
+
+This is the same self-certification `FieldProvenance` carried until `membership.ts` existed to
+produce it: a claim about where a value came from, made by the party supplying the value. It
+closes the same way — a reader for the profile document, which is the **fourth** record in this
+vertical with no producer — and the pattern by now is clear enough to name: *every time this
+layer moves a value from the caller to a record, the new residue is the record one hop further
+out.*
+
+What it is **not** is a restatement of gap 8. Gap 8 was reachable by a caller who merely
+**differed**; gap 10 requires one who **lies about provenance**, and every honest caller is now
+checked. Both are true, and stating only the first would overclaim while stating only the
+second would understate.
 
 ## Where authority can actually be enforced
 
@@ -788,16 +951,16 @@ author, at its own URL — and `authorizeView` excludes it and says why.
 | who can audit it | nobody — it is a promise about a server | anyone who can read the records, member or not |
 
 Two layers refuse, and they refuse different things. Both are demonstrated live by
-[`tools/verify-can-live.ts`](tools/verify-can-live.ts) (**46/46 live** across §§1–8 on
-2026-08-02, which supersedes the earlier 13/13 over §§1–5 — that number was the file as it
-stood at *that* run, and the two assertions §3 gained afterwards, that the relay did not
-publish either entry unsigned, are covered by the 46).
+[`tools/verify-can-live.ts`](tools/verify-can-live.ts) (**77/77 live** across §§1–11 on
+2026-08-03 (UTC), which supersedes the earlier 13/13 over §§1–5, the 46/46 over §§1–8 and the 63/63
+over §§1–9 — each of those numbers was the file as it stood at *that* run).
 
-**And 46 is likewise the file as it stood at *that* run.** The same caveat applied to 13/13
-one sentence ago applies here, and applying it only backwards is how these numbers go stale.
-§9 was added afterwards and §8's closing `wrongConvener` assertion moved into it, so §§1–8
-now carry **45** assertion sites and a re-run of them today reports **45/45**. That is the
-move, not a regression:
+**And 77 is likewise the file as it stood at *that* run.** The same caveat applied to 13/13,
+46/46 and 63/63 one sentence ago applies here, and applying it only backwards is how these
+numbers go stale. Of the 77, §§1–8 hold **45** sites — 46 minus the `wrongConvener` assertion
+that moved into §9 — §9 holds **18**, §10 **7** and §11 **7**. The caveat has now cashed out
+twice: 63 went stale when §10 was added, and 63-plus-"§10 unrun" went stale when §10 was run —
+and §10 FAILED that first run, which is the other thing a bare count cannot tell you:
 
 ```
 the substrate  bee writes to alice's pod       -> 403 scope_violation, nothing lands
@@ -814,14 +977,12 @@ acceptance from bee's own session *and* a forged one for bee from alice's, read 
 record's `iep:authorshipProof` back through the relay's verifier, and require the fold to
 admit the first and refuse the second.
 
-★ **Those sections have now been run.** `verify-can-live.ts` §§1–8 were run against production
-with two real bearers on 2026-08-02 and passed **46/46** — including the forgery refused *for
-the right reason*, the manufactured-participant refused by the reader, and §8's closing
-demonstration that residual gap 6 was open. The paragraph that stood here said they were
-"code, not a result"; they are a result. What is unrun is **§9**, the gap-6 close, added after
-that run: a real `wsp:Workspace` published at the workspace's own URL, read back by the *other*
-party, and folded against. Whether the live shape gate accepts a `wsp:Workspace` at a `/ns/…`
-graph IRI is read off the published shape, not observed.
+★ **Those sections have now been run, and so have §§9–11.** `verify-can-live.ts` §§1–11
+were run against production with two real bearers on 2026-08-03 (UTC) and passed **77/77** — including the
+forgery refused *for the right reason*, the manufactured-participant refused by the reader,
+gap 6 shown open and then closed against a real `wsp:Workspace`, and the record read back by
+the *other* party. Whether the live shape gate accepts a `wsp:Workspace` at a `/ns/…` graph IRI
+is no longer read off the published shape: it accepts it, observed.
 
 > ★★ **And as written, section 6's two headline assertions could not have failed.**
 > `publish_context` is deferred unless `compliance`, `sync` or `if_match` is set —
@@ -840,9 +1001,10 @@ graph IRI is read off the published shape, not observed.
 > fails loudly, if it does not); the refusal **reason** is asserted rather than logged; and
 > both sections carry an explicit **CONTROL** assertion — the genuine half must be *admitted*
 > — so a run in which everything is refused reports itself as having established nothing.
-> ★ **And they hold.** The 46/46 production run put every one of those assertions in a state
-> where it could fail, including both CONTROLs, and none did. The sentence here used to say
-> that whether they hold "is unknown"; it was true when written and it is not now.
+> ★ **And they hold.** The 46/46, then the 63/63, then the 77/77 production runs put every one of those
+> assertions in a state where it could fail, including all three CONTROLs, and none did. The
+> sentence here used to say that whether they hold "is unknown"; it was true when written and
+> it is not now.
 
 > ★★★ **And section 6 still did not bind a record to the fields claimed for it.** Its three
 > published records carry a single `dct:description`; the `Grant` and `Acceptance` it folds
@@ -872,8 +1034,37 @@ graph IRI is read off the published shape, not observed.
 > `convenerBinding: 'refused'` and the disagreement as the reason, then the same policy
 > *without* the evidence is folded to prove the evidence never widened anything.
 >
-> **Section 9 is unrun.** Sections 1–8 passed 46/46 on 2026-08-02, as the file then stood;
-> §8's closing assertion has since moved into §9, so re-running §§1–8 today reports 45/45.
+> **Section 9 has been run.** It passed **18/18** on 2026-08-03 (UTC) as part of a whole-file 77/77,
+> two real bearers, distinct pods. Its first run is also what found residual gap 9: `<WS>` had
+> never dereferenced, and the section said in a comment that it did.
+>
+> ★ **Section 10 closes gap 8, and it has now been run — after being fixed.** It is written in
+> §9's shape and reuses §9's published records: fold the two real §8 records against a rogue
+> role profile that redeclares the *declared* profile's own `#Observer` with `grant` and
+> `revoke`, show it widens bee
+> beyond what alice's governance permits, then hand the fold the workspace record and require
+> the membership to vanish — with `convenerBinding` still `'bound'`, so it is the profile's own
+> refusal and not gap 6's check firing twice. The agreement CONTROL is asserted after it, and a
+> second control requires agreeing evidence to change the report and *nothing else*. One
+> assertion is written as a **comparison** rather than as `effective.includes(revoke)` on
+> purpose: effective capability is `role.permits ∩ delegatedScope` and the delegation comes
+> from the live registry, so a run where bee's agent happens to be `PublishOnly` would fail
+> that assertion for a reason with nothing to do with gap 8 — and a reader would be told the
+> gap was closed by the thing that hid it.
+>
+> ★ **Section 11 closes gap 9, and it is the one section that had to ask the substrate a new
+> question.** §§8–10 all check what a workspace record SAYS; §11 checks that it is the
+> workspace's record. `dereferenceWorkspaceRecord` resolves `<WS>` through the pod its own
+> `/ns` owner segment names (`get_current_head{urn, pod_name}`) and stamps the result with an
+> `EvidenceProvenance`; `requireEvidenceProvenance` refuses anything without one. The section
+> asserts, live and against the same forged record §9 admitted: the dereference returns
+> **alice's** record; it is a **different document** from bee's, which is still published and
+> still parses; bee's confers nothing under the flag; and — the half that makes it a
+> measurement — `convenerBinding` and `roleProfileBinding` are both still `'bound'` on that
+> fold, because bee's record agrees with bee's policy on both, which is exactly what made gap 9
+> a gap. Two controls follow: the honestly dereferenced evidence must ADMIT and must change the
+> report and *nothing else*, and a fold that did not ask must read `'unchecked'` rather than
+> `'refused'`.
 
 The ceiling is not invented here: `scopesFromRegistry` reads the `ReadWrite` /
 `PublishOnly` / `ReadOnly` scope the substrate's own agent registry records — the same one
@@ -928,8 +1119,14 @@ IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
 # wsp:MembershipGrant / wsp:MembershipAcceptance documents whose FIELDS are parsed back out of
 # the bytes, with the manufactured-participant attack run against both the new policy and the
 # old one; and §9, where the CONVENER comes out of a real wsp:Workspace instead of out of this
-# file. §§1–8 passed 46/46 against production on 2026-08-02. §9 is new and UNRUN — running it
-# is the next thing this needs.
+# file; §10, where the ROLE PROFILE comes out of that same wsp:Workspace; and §11, where the
+# EVIDENCE must be the record <WS> actually dereferences to. §§1–11 passed 77/77 against
+# production on 2026-08-03 UTC (§§1–8: 45, §9: 18, §10: 7, §11: 7).
+#
+# ★ The two bearers must resolve to DIFFERENT pods or the tool exits 2 saying "same pod —
+# proves nothing", and the token that goes in IEP_BEARER is the CONVENER's: §9 builds the
+# workspace URL under that principal's own /ns owner segment, because that is the pod the
+# relay's /ns route reads when a stranger dereferences <WS>. Tokens TTL at 1h.
 IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
   npx tsx applications/shared-workspace/tools/verify-can-live.ts
 ```
@@ -963,22 +1160,31 @@ All six increments are built. What is verified, and what is not:
 
 | | state |
 |---|---|
-| 1 roster, two-sided membership | built; **signer-checked, content-bound, field-bound, and now convener-checked** — under `requireFieldBinding` every field is parsed from **the region of the record the digest covers**, and under `workspaceEvidence` the convener comes from the workspace instead of the caller. Doubles: six workspace suites, 76,800-configuration monotonicity enumeration across seven axes. Live: **46/46**, §§1–8 as the file stood on 2026-08-02 (45 sites there today; one moved into §9) |
+| 1 roster, two-sided membership | built; **signer-checked, content-bound, field-bound, convener-checked and now governance-checked** — under `requireFieldBinding` every field is parsed from **the region of the record the digest covers**, and under `workspaceEvidence` both the convener and the role profile come from the workspace instead of the caller. Doubles: six workspace suites, 76,800-configuration monotonicity enumeration across **nine** axes. Live: **77/77** on 2026-08-03 (UTC), §§1–11 (45 sites in §§1–8, 18 in §9, 7 in §10, 7 in §11) |
 | 2 per-participant stream | built, **20/20 live** (the live run predates `sign_authorship`) |
 | 3 composed cross-pod view | built, **14/14 live** across two identities on two pods |
-| 4 authority at the fold | **46/46 live**, §§1–8, on 2026-08-02 with two real bearers — the forgery refused for the right reason, the manufactured participant refused by the reader, and gap 6 demonstrated open. §9 (the gap-6 **close**) was written after that run and is **unrun** |
+| 4 authority at the fold | **77/77 live**, §§1–11, on 2026-08-03 (UTC) with two real bearers — the forgery refused for the right reason, the manufactured participant refused by the reader, gaps 6, 8 and 9 each shown open at full strength and then closed against real records, and the inversion (evidence must never widen) held at every one of them. §9's first run opened **residual gap 9**; §11 closes it |
 | 5 engagement `gone` + injectable engine | built, 11 assertions, deployed |
 | 6 independent SHACL agreement | built, **in CI** — `@interego/core` vs pySHACL |
-| 7 membership records: serialize → publish → read → parse | built (`src/membership.ts`), **live** as part of the 46/46: the shape gate accepted both halves, the deferred-publish wait was needed and worked, and `get_descriptor` returned `graph.content` for them |
-| 8 the workspace record: who may grant | built (`workspaceTurtle` / `readWorkspaceRecord` / `convenerEvidenceOf`), verified **against doubles only** — `verify-can-live.ts` §9 is written and **unrun** |
+| 7 membership records: serialize → publish → read → parse | built (`src/membership.ts`), **live** as part of the 77/77: the shape gate accepted both halves, the deferred-publish wait was needed and worked, and `get_descriptor` returned `graph.content` for them |
+| 8 the workspace record: who may grant | built (`workspaceTurtle` / `readWorkspaceRecord` / `convenerEvidenceOf`) and **live** on 2026-08-02 — the shape gate accepted a `wsp:Workspace` at a `/ns/…` graph IRI, the *other* party read it back content-bound, and `<WS>` dereferences for an anonymous reader. What the fold did **not** check was where the evidence came from — **residual gap 9**, closed this round by `dereferenceWorkspaceRecord` + `requireEvidenceProvenance` and demonstrated live in §11 |
+| 9 the same record: what a role permits | built (`refuseRoleProfileAuthority` / `Roster.roleProfileBinding`), closing **gap 8**. Doubles: the enumeration's AXIS H — the third workspace-evidence shape across all 76,800 configurations, with the refusing direction counted during the loop and asserted non-zero after it — plus the eleven-shape table, which now asserts a **pair** of verdicts per cell so neither question can be answered with the other's. `verify-can-live.ts` §10 has now been **run** (7/7) — and failed its first run, because its rogue profile declared `#Contributor` while §8's grant to bee names `#Observer`, so the rogue table conferred nothing and the escalation comparison was `0 > 1`. The doubles had it right; the live section copied the shape and named the other role |
 
 ★ **The one thing to carry away from this table** — and it has been rewritten, because the
 sentence that stood here ("nothing on the field-binding row has met the live substrate") is no
 longer true and a stale "unverified" is as much a defect as a stale "fixed". The field-binding
 path HAS met the substrate: the live gate accepted `wsp:member`, and `get_descriptor` returned
-`graph.content` for these records. What has not met it is **row 8** — a `wsp:Workspace`
-published at a `/ns/…` graph IRI, and whether the live shape gate accepts it. That is assumed
-on the strength of reading `wspsh:WorkspaceShape`, not on the strength of having run it.
+`graph.content` for these records. **Row 8 has now met it too** — the live gate accepted a
+`wsp:Workspace` at a `/ns/…` graph IRI, which until 2026-08-02 was assumed on the strength of
+reading `wspsh:WorkspaceShape` rather than running it.
+
+★ **And the sentence that replaced it is a warning about itself.** Every rewrite of this
+paragraph has moved one item from "assumed" to "observed" and left the *rest* of the sentence
+unexamined. What running row 8 actually established is narrower than "the workspace record
+works": it established that the record publishes, parses, content-binds, and dereferences. It
+established nothing about the record being the one a reader would *find*, and that turned out
+to be the open question — **residual gap 9**, closed in this round by asking the workspace
+instead of the caller.
 
 ### Substrate changes needed to finish the job
 
@@ -1024,13 +1230,13 @@ time this file changes.
 
 | | severity |
 |---|---|
-| **the role profile is caller-supplied and unchecked** — residual gap 8, and the binding one now that gap 6 is closed. It is gap 6 one field over: `foldRoster` takes `args.profile` from its caller, the workspace record declares `wsp:roleProfile`, and nothing compares them — so a roster can report `convenerBinding: 'bound'` and be folded against governance the workspace never declared, which decides every capability in it. The value IS parsed and carried on `WorkspaceRecord.roleProfile`; only the comparison is missing, and it is missing deliberately — see gap 8 | **high** |
-| **the workspace record has never met the live substrate.** Gap 6 is closed against doubles: `tests/workspace-membership.test.ts` plus the enumeration's seventh axis. `verify-can-live.ts` §9 is written and **unrun**, so whether the live shape gate accepts a `wsp:Workspace` published at a `/ns/…` graph IRI is **read off the published shape, not observed** | **high** *(unverified, not known-broken)* |
-| `oneIri` applies no scheme pattern to `wsp:member`, and the published shape now does (`^https?://|^did:`) — so on this one field the **shape** refuses more than the **reader**, the opposite of the rule stated at the top of this document. The publish gate validates first, so no `urn:` member reaches a pod; what is open is the inconsistency itself, and it is the tail of gap 7 rather than gap 7 | low |
+| ★ **the role TABLE behind the profile IRI is still the caller's** — residual gap 10, the residue of closing gap 8, and it is named here rather than absorbed into the row that says gap 8 is closed. `refuseRoleProfileAuthority` compares `WorkspaceRecord.roleProfile` with `RoleProfile.profile`: an IRI against an IRI. `roster.ts` is pure, so the profile **document** is never fetched and the `roles` behind that IRI are never compared with it — a caller that writes the declared IRI over an invented set of permits reports `roleProfileBinding: 'bound'`. Structurally identical to what `FieldProvenance` was before `membership.ts` existed to produce it, and closable the same way: a reader for the profile document, which is the fourth record with no producer. Smaller than gap 8, and the difference is not cosmetic — a caller must now **lie about provenance** rather than merely differ, and every honest caller is now checked | medium |
+| ★ **the evidence's provenance is still the CALLER'S claim** — the residue of closing gap 9, named here rather than absorbed into the row that says gap 9 is closed. `refuseEvidenceProvenance` checks two relations it can check without trusting anybody — the IRI dereferenced is the workspace being folded, and the document that dereference resolved to is the record's own `head` — and `roster.ts` is pure, so it cannot fetch and cannot verify that a dereference happened at all. A caller that hand-writes both fields beside a record it forged passes. Structurally identical to what `FieldProvenance` was before `membership.ts` existed to produce it, and closed the same way and to the same degree: there is now a producer (`dereferenceWorkspaceRecord`), and the substrate refuses everyone but a pod's holder a write there. What the flag cannot do is make a liar honest | medium |
+| `tools/shacl-agreement/fixtures/` pins **two** of the **seven** patterned terms against pySHACL: three fixtures (`acceptance-urn-member` → `wsp:member`; `grant-urn-principal` and `grant-did-principal` → `wsp:grantedTo`) exercising two distinct terms. This row said "three of the eight … the other five" and was wrong at both ends — the shape patterns **seven** terms, not eight (`wsp:stream` carries none, as the closed row below states correctly), and three fixtures are not three terms. 2 + 5 = 7. The reader side of all seven is covered by the drift test; the two engines agreeing on the other **five** is assumed rather than measured | low |
 | `Member.stream` can legitimately differ between two configurations of the same fold: naming the stream is a conferring act, so refusing an acceptance re-picks the head. No authority moves with it, and it is never silent — both configurations raise the `acceptance` divergence — but a caller that reads `stream` without reading `divergences` will go to a different pod under a stricter policy | low-med |
 | `proofBindsToDescriptorUrl` compares **a URN-form id** on its terminal segment only, and every `descriptor_id` the relay mints is a URN — so a party who controls a pod and chooses a colliding epoch reaches `bound: true, basis: 'slug-only'` on any host. A URL-form id **is** compared in full, host included, and nothing in this tree mints one. What this leaves reachable, measured: not any conferred value, but `head` — the URL an operator dereferences to audit the record and the URL printed in `unattested` and every `divergence` — residual gap 1 | medium |
 | `wsp:seq` has no producer: `ManifestEntry` carries no `seq`, so the sequence check is inert on every real read — residual gap 5 | low-med |
-| `verify-can-live.ts` **§9** is unrun. §§1–8 passed 46/46 against production on 2026-08-02 **as the file then stood**; §9 was added afterwards and took §8's closing `wrongConvener` assertion with it, so §§1–8 hold **45** sites today and a re-run reports 45/45. The row above this one used to read "§§6–8 remain unrun" and stayed after they had been run, which is the same staleness in the other direction — and dropping the "as it then stood" caveat from 46 while keeping it on 13 was this row doing it again | low-med *(honesty, not behaviour)* |
+| **every section of `verify-can-live.ts` has now been run — §§1–11, 77/77 on 2026-08-03 (UTC)** — and the row stays open because the *claim* is what keeps going stale, not the sections. Its four predecessors each went stale in a different direction: "§§6–8 remain unrun" after they had run, "§9 is unrun" after §9 had, "nothing in this file is unrun" one round before §10 was added, and "§10 is unrun" one round before §10 was run **and failed**. The pattern is the finding: **a claim about the whole file goes stale when the file grows, and a claim about a numbered section goes stale when that section runs.** Two mitigations rather than a better adjective — the source file's header now carries a numbered roster of its sections, so adding one without updating the claim leaves a visible gap; and every count is written with its section list attached | low-med *(honesty, not behaviour)* |
 | a `Grant` or `Acceptance` refused for naming **two** grantees takes any revocation on it out of the fold entirely. Refusing is the only honest reading — the record does not say who it grants to — but the cost is real and is paid in the restricting direction, which is the direction this module otherwise protects | low-med |
 | `headOf` on a forked chain throws rather than returning a value; `appendEntry` converts it to a named `conflict` first, so the shipped path is safe and a direct caller must catch | low |
 
@@ -1038,6 +1244,12 @@ time this file changes.
 
 | | where |
 |---|---|
+| ★★★ **residual gap 9** — `refuseConvenerAuthority` asked a `ConvenerEvidence` three questions (is its subject *this* workspace, does it name *this* policy's convener, does it hold up as a signed content-bound record) and never asked where the evidence came from. Measured against production with two real bearers: **bee** published a `wsp:Workspace` for **alice's** workspace IRI, on **her own** pod, naming herself convener — it published, parsed with `problems: []`, content-bound, and the same fold that refuses her self-convened membership on alice's record reported `convenerBinding: 'bound'` and **admitted her**, `members: 1`. The subject is a triple its writer chooses, so no forger fails the first question. What closes it is that a workspace **is** a dereferenceable URL and exactly one party decides what it returns: `<relay>/ns/<owner>/<slug>` resolves against the pod its OWNER SEGMENT names (`resolveNsGraph`, `deploy/mcp-relay/server.ts:11657`) and against no other. Same run: an anonymous `GET <WS>` returned alice's record with bee's absent, `get_current_head{urn, pod_name: <owner>}` returned alice's descriptor unforked, and bee writing to alice's pod was refused `403 scope_violation`. Closed by `EvidenceProvenance` + `refuseEvidenceProvenance` + `AttestationPolicy.requireEvidenceProvenance` + `Roster.evidenceProvenanceBinding`, with `dereferenceWorkspaceRecord` as the producer — copying gap 6's three directions deliberately: evidence refuses and never supplies, the refusal is in the grant filter's `??` chain **only**, and `'unchecked'` is a third value distinct from `'refused'`. Residue named rather than absorbed, in the open table above | `workspace-adversarial` AXIS I (four evidence shapes across all 76,800 configurations, three of them forged, with a **per-shape** non-vacuity counter), "AXIS I is not vacuous", "AXIS I closes RESIDUAL GAP 9", the revocation/withdrawal pair, and the direct-call guard case; `verify-can-live.ts` §11, run live |
+| ★ **`roleProfileBinding: 'bound'` was reachable from a workspace record nobody with authority over the workspace wrote** — a diagnostic-integrity defect, not an escalation. `refuseConvenerAuthority` reaches its authorship check only after proving `ws.convener === policy.convener`; `refuseRoleProfileAuthority` had no such precondition and validated the record against `ws.convener`, the value the record declares about **itself**. Reproduced through the real reader and live: a stranger's self-consistent record naming the true `wsp:roleProfile`, signed by her own registered agent, produced `convenerBinding: 'refused'` beside `roleProfileBinding: 'bound'`, whose contract reads "the governance these capabilities were computed under is the governance the workspace publishes". No capability moved — both refusals sit in the same `??` chain — so what was wrong was the **claim**, in a non-omittable security output. The pair `('refused','bound')` is now unreachable and the prose that called it "a coherent and expected pair" is gone | `workspace-adversarial` "roleProfileBinding is never `bound` off a record a stranger wrote" (which also re-asserts that the pair matrix still discriminates), the `conveneVerdicts` table, the eleven-shape table's `names-another` row at all three rungs, and the direct-call case |
+| ★★★ **residual gap 8** — `foldRoster` took its `RoleProfile` from its caller while the workspace record declared one, and `permitsOf` is built from the caller's. Measured before anything was written: a rival profile that redeclares the declared profile's own `#Observer` with `grant` and `revoke` produced `convenerBinding: 'bound'`, `recordFieldBinding: 'bound'`, `unattested: []` and an Observer holding all four capabilities. Closed by `refuseRoleProfileAuthority` + `Roster.roleProfileBinding`, copying gap 6's three directions deliberately: evidence refuses and never supplies, the refusal is in the grant filter's `??` chain **only**, and `'unchecked'` is a third value. Residue named as **gap 10** rather than absorbed | `workspace-adversarial` AXIS H (lattice + `profileRefused` non-vacuity counter), "AXIS H is the ESCALATION it looks like", "two blanks do not agree", "both fields disagree", and the revocation/withdrawal pair; `workspace-membership` "an unreadable role profile"; `verify-can-live.ts` §10 |
+| ★★ **the vacuity that was available while closing it** — a policy rung whose generator only ever produces agreement refuses nothing and passes every subset assertion on an untouched set. It has happened twice in this file (AXIS E at 6,400 cases; AXIS G before its own generator), so the third instance was written as a rule: the generator moves the declared profile as well as the declared convener, **one field at a time**, the refusing direction is counted *during* the 76,800-case loop, and the count is asserted non-zero after it. The one-field-at-a-time part is what makes the shape table an assertion about **independence** — `'names-another'` must report convener `refused` / profile `bound` and `'declares-another-profile'` the exact opposite, so a fold that answered either question with the other's verdict fails one of the two rows | `workspace-adversarial` AXIS H + the eleven-shape table |
+| ★ **two blank profiles compared equal** — `readWorkspaceRecord` carries `''` when the record states no readable `wsp:roleProfile` (a `problem`, not a refusal, since a workspace record's conferring field is its convener), and a caller with no `profile` IRI arrives as `''` too. Left to `!==` those two blanks MATCH, and the fold would have reported the governance as bound because neither side named any. Both emptiness guards sit **above** the comparison, and a non-string `roleProfile` off the JSON boundary is refused explicitly rather than by happening-to | `workspace-adversarial` "two blanks do not agree", "a non-string roleProfile"; `workspace-membership` "an unreadable role profile" |
+| ★ **the reader and the published contract refused different values, on seven fields and not one** — the row this replaces said `oneIri` applied no scheme pattern to `wsp:member` and called that "the one field where the shape is the stricter of the two". Reproduced against the readers rather than re-read: `wsp-shapes.ttl` patterns `wsp:convener`, `wsp:roleProfile`, `wsp:workspace`, `wsp:grantedTo`, `wsp:role`, `wsp:member` **and** `wsp:accepts`, and a grant naming `<urn:example:ws>`, `<urn:example:who>` and `<urn:example:role>` parsed with an **empty** `problems` array. A ledger row that understates its own scope sevenfold is the staleness this section keeps apologising for, in the section. Closed by `PUBLISHED_IRI_PATTERN`, consulted centrally by `oneIri`, with SHACL's own partial-match semantics; `wsp:stream` stays unconstrained because the shape leaves it so — tightening it would be the same defect pointing the other way | `workspace-membership` "oneIri applies the published shape's own sh:pattern" — the drift case parses the deployed `wsp-shapes.ttl` and compares it with the table, and the type makes an unlisted term a compile error |
 | ★★★ **residual gap 6** — `AttestationPolicy.convener` was named by the caller, so a field-bound, content-bound, signer-checked roster could be about entirely the wrong memberships. Closed by the same treatment gap 0 got, applied to the record that was missing: `workspaceTurtle` / `readWorkspaceRecord` write and parse a `wsp:Workspace`, `workspaceEvidence` carries it in, `refuseConvenerAuthority` compares subject, convener, authorship and provenance, and `convenerBinding` reports which of the three answers came back. The direction is the whole of it — evidence can refuse a convener and can never supply one, and a disagreement refuses on the conferring track only | `workspace-membership` "the workspace record"; `workspace-adversarial` axis G, plus "THE INVERSION" and the revocation/withdrawal cases |
 | ★★ **the inversion that was available while closing it**: `convener = workspaceRecord.convener ?? policy.convener` is the obvious implementation and it turns evidence into a **source** of authority — a policy naming a stranger, handed a workspace naming the real convener, starts admitting grants it was refusing. Caught by generating the disagreeing record as `alice`, whose key is one of the enumerated signers, so `assertNoWiderThan` reaches it at every lattice point | `workspace-adversarial` axis G + "THE INVERSION" |
 | ★ **residual gap 7** — `wspsh:MembershipAcceptanceShape` did not constrain `wsp:member`, so the publish gate admitted an acceptance attributed to nobody and only `readAcceptanceRecord` refused it. A conformant reader elsewhere, validating the same record against the same published shape, would have admitted it. Closed by `sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:pattern "^https?://\|^did:"` on the **deployed** shape (`wsp.ttl`'s `rdfs:comment` updated to match), which changes what the live gate accepts within one 60s shape-cache TTL of merge | `tools/shacl-agreement` fixtures `acceptance-no-member`, `acceptance-two-members`, `acceptance-urn-member` — both engines must agree; plus the byte-for-byte drift diff against the published file |
@@ -1076,6 +1288,71 @@ assurance that goes stale the moment a guard is added — which is exactly what 
 covering them. The mutants that reinstate the monotonicity defects are each caught by the
 enumeration itself, which names the exact failing configuration rather than a symptom.
 
+**The gap-9 round: 10 mutants, 10 killed — and three of them survived the first sweep,
+which is the finding.** `dereferenceWorkspaceRecord` had been written, wired into
+`verify-can-live.ts` §11 and run **green against production** — and the whole double suite
+still passed with the owner segment deleted from its `get_current_head` call, with its
+forked-chain refusal removed, and with its `/ns/<owner>/<slug>` matcher replaced by a regex
+accepting any string at all. A live run exercises the honest path and nothing else; the four
+refusals and the one *argument* that makes the honest path honest had no double at all. Eight
+cases in `workspace-membership` now cover them, including a substrate double whose two pods
+answer **differently** — a double that returned "the" head for any pod would let the producer
+drop the owner segment and still pass, which is precisely the mutant that survived.
+
+| mutant | killed by |
+|---|---|
+| accept evidence carrying no provenance (residual gap 9 itself) | 5 |
+| do not compare the dereferenced IRI against the workspace | 2 |
+| do not compare the resolved descriptor against the record's `head` | 2 |
+| `requireEvidenceProvenance` with no evidence at all passes | 2 |
+| ★ put the evidence refusal on the **restricting** track too (the round-3 inversion, again) | 1 |
+| report `'bound'` where nobody asked — collapse "did not ask" into "asked and yes" | 3 |
+| ★ remove the convener precondition from `refuseRoleProfileAuthority` | 4 |
+| ★ producer drops `pod_name`, asking no pod in particular | 1 — **survivor** until the cases above existed |
+| ★ producer accepts a **forked** workspace chain | 1 — **survivor** until then |
+| ★ producer derives an owner segment from any IRI at all | 3 — **survivor** until then |
+
+Two of the ten had to be re-written before they measured anything. Deleting a branch condition
+(`if (false as boolean)`) left `provenance` possibly-undefined downstream, so the mutant died
+at the **typecheck gate** before a single test ran — a kill, but by the wrong instrument, and
+one that says nothing about whether the suite would have noticed. Re-expressed as
+`return null` they keep the program well-typed and ask the question the sweep is for; both
+then died on tests (5 and 2 failures). The first sweep also reported four `ANCHOR NOT UNIQUE`
+misses, because every source file here is CRLF and the anchors were written with `
+`.
+
+**The gap-8 round: 9 mutants, 9 killed, and two of the kills are the ones worth reading.**
+Each was applied alone, with `node_modules/.vite` cleared between mutants — a stale transform
+cache produced a false SURVIVOR in an earlier round, so the clear is part of the procedure and
+not hygiene.
+
+| mutant | killed by |
+|---|---|
+| drop `profileRefusal` from the grant filter's `??` chain | 5 — the lattice plus four cases |
+| remove the record-side emptiness guard (`ws.roleProfile === ''`) | 3 — behaviour survives on the *caller-side* guard, so the kill is on the message; recorded rather than counted as a behavioural kill |
+| remove **both** emptiness guards | 4, across 2 files — the both-blank case now admits, which is the escalation the pair exists for |
+| ★ make the refusal **erase** the restricting track instead of refusing conferral (the round-3 inversion) | 2 — the lattice fails in 66 ms |
+| add `profileRefusal` to the **acceptance** chain | 1 — and *not* the lattice, correctly: it refuses strictly more, so it is a wrongness rather than an escalation, and only the "the acceptance was not blamed" assertion sees it |
+| report `'bound'` where nothing was checked | 4 |
+| ★★ delete the `'declares-another-profile'` **generator** shape | 1 — `profileRefused === 0`, *after* all 76,800 × 10 subset comparisons passed |
+| `oneIri` applies no `sh:pattern` | 1 |
+| the table gives `wsp:stream` a pattern the shape does not publish | 2 — the drift case **and** the does-not-refuse-more case |
+| remove `wsp:accepts` from the table | the **compiler**, naming the exact missing IRI |
+
+The second starred row is the whole reason the generator axis exists, and it is the only
+mutant here whose kill message is about the *test* rather than the code: with the third shape
+deleted, every subset assertion in the enumeration still held, the suite still ran 76,800
+configurations, and the only thing that failed was the counter saying the rung had never once
+refused. That is precisely the shape AXIS E had at 6,400 cases and AXIS G had before its own
+generator — three instances now, which is why it is written up as a rule above rather than as
+an anecdote here.
+
+The third row is recorded because it is *not* a clean kill. Removing one of the two emptiness
+guards leaves the behaviour correct, because the other one catches the same case; only
+removing both admits two blanks. A pair of guards that each mask the other's absence is worth
+knowing about, and quietly reporting "9 of 9" without it would be the assurance-that-goes-stale
+this section warns about two paragraphs up.
+
 **The field-binding round: 14 guards mutated, 13 killed, and the fourteenth is the finding.**
 Deleting the bail-out in `readAcceptanceRecord` that refuses an acceptance naming no member
 left the whole workspace suite green. `tsc` catches it — the reader's `{iri} | {why}` union
@@ -1087,10 +1364,12 @@ keeps the record, so a future tightening cannot silently start deleting revocati
 Re-mutated afterwards: it now dies. Recorded here rather than quietly fixed, because a guard
 whose mutation kills nothing is the finding, not the footnote.
 
-> ★ The count in this paragraph used to be "all **237** tests green". The six workspace files
-> hold **254**. The figure was stale in the same way, and for the same reason, as the "25 of
-> 25" line dissected two paragraphs above — a number written once and never recomputed. It is
-> removed rather than corrected: the count moves every round and the sentence does not need it.
+> ★ The count in this paragraph used to be "all **237** tests green"; by the next round the six
+> workspace files held **254**, and they hold **290** now. The figure was stale in the same way,
+> and for the same reason, as the "25 of 25" line dissected two paragraphs above — a number
+> written once and never recomputed. It is removed rather than corrected: the count moves every
+> round and the sentence does not need it. The three figures are kept here only as the evidence
+> for that, and this note is the one place in the document where a stale number is the point.
 
 **And the cause of that survivor is now itself closed.** `tests/**` and
 `applications/shared-workspace/**` were in **no tsconfig in the repo**. Every other

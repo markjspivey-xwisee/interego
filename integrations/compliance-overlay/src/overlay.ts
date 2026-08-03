@@ -40,6 +40,12 @@ import {
   formatSensitivityWarning,
   screenForSensitiveContent,
   shouldBlockOnSensitivity,
+  // Named here rather than reached for inline off `@interego/core`, which is what the three
+  // uses below used to do. Core has no such export, so all three annotations resolved to an
+  // error type and the flags this module hands back to callers — the record of what sensitive
+  // content was detected in a compliance descriptor — were never checked against anything.
+  // It is declared by `@interego/privacy`, the package the screening functions come from.
+  type SensitivityFlag,
 } from '@interego/privacy';
 import {
   publish,
@@ -99,14 +105,29 @@ export interface BuildEventResult {
    * With `onSensitiveArgs: 'block'` (the default), construction
    * throws on HIGH flags rather than returning them here.
    */
-  readonly sensitivityFlags?: readonly import('@interego/core').SensitivityFlag[];
+  readonly sensitivityFlags?: readonly SensitivityFlag[];
 }
 
 export interface OverlayConfig {
   readonly podUrl: string;
   /** Default citation when the per-event call doesn't override. */
   readonly defaultCitation: ComplianceCitation;
-  /** Optional default delegates for E2EE share. */
+  /**
+   * Default delegates for E2EE share, for the RELAY publish path only.
+   *
+   * ★ It is NOT applied by `recordAgentAction` below, and the claim that it was is deleted
+   * rather than left standing. That function passed `{ shareWith: … }` as a fourth argument to
+   * `publish()`, whose `PublishOptions` has no such property — TypeScript said so
+   * ("has no properties in common with type 'PublishOptions'") and the option was dropped on
+   * the floor. An operator who set this got a plaintext pod write and no delegate, with
+   * nothing anywhere saying so.
+   *
+   * `publish()` cannot honour it: its encryption path needs a sender X25519 keypair that a
+   * substrate-pure integration does not hold. Encrypted share goes through the relay's
+   * `publish_context` `share_with` argument, which does. The field stays for that path — the
+   * same resolution `integrations/openclaw-memory/src/bridge.ts` reached for the identical
+   * no-op, which was fixed there and left here.
+   */
   readonly defaultShareWith?: readonly IRI[];
   /**
    * Default true: include the full args object in the descriptor's
@@ -196,7 +217,7 @@ export function buildAgentActionDescriptor(
   // messages) — these are the most common shapes for a secrets-in-
   // audit-log leak.
   // Screening is unconditional — compliance evidence cannot opt out.
-  let sensitivityFlags: readonly import('@interego/core').SensitivityFlag[] = [];
+  let sensitivityFlags: readonly SensitivityFlag[] = [];
   const screenInput = [
     recordArgs ? argsCanonical : '',
     event.resultSummary ?? '',
@@ -326,10 +347,9 @@ export async function recordAgentAction(
     recordArgs: config.recordArgs,
     onSensitiveArgs: config.onSensitiveArgs,
   });
-  const publishOpts = config.defaultShareWith && config.defaultShareWith.length > 0
-    ? { shareWith: config.defaultShareWith }
-    : undefined;
-  const r = await publish(built.descriptor, built.graphContent, config.podUrl, publishOpts);
+  // No options argument: see `OverlayConfig.defaultShareWith` for why the `{ shareWith }` that
+  // used to be built here was a no-op `publish()` discarded.
+  const r = await publish(built.descriptor, built.graphContent, config.podUrl);
   return {
     eventIri: built.eventIri,
     descriptorUrl: r.descriptorUrl,

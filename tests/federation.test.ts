@@ -108,7 +108,12 @@ describe('PodDirectory', () => {
 describe('WebFinger', () => {
 
   it('should parse acct: URI domain', async () => {
-    const mockFetch = async (url: string) => ({
+    // ★ The URL the resolver builds is the ONLY observable effect of parsing the domain out of
+    // an `acct:` URI, and this mock used to discard it — every assertion below just read the
+    // canned JRD back out, so the test named "parse acct: URI domain" passed for any domain the
+    // parser produced, including a wrong one. Capture it and assert the endpoint.
+    let requestedUrl = '';
+    const mockFetch = async (url: string) => (requestedUrl = url, {
       ok: true,
       status: 200,
       statusText: 'OK',
@@ -129,6 +134,10 @@ describe('WebFinger', () => {
       fetch: mockFetch,
     });
 
+    expect(requestedUrl).toBe(
+      'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/.well-known/webfinger'
+      + '?resource=acct%3Amarkj%40interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+    );
     expect(result.subject).toBe('acct:markj@interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io');
     expect(result.podUrl).toBe('https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/');
     expect(result.links).toHaveLength(1);

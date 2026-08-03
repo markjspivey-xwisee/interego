@@ -561,7 +561,7 @@ export function createSelectiveDisclosure(
       if (req.type === 'confidence-threshold') {
         const semioticFacet = facets.find(f => f.type === 'Semiotic');
         if (semioticFacet) {
-          const confidence = (semioticFacet.data as any).epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
+          const confidence = (semioticFacet.data as { epistemicConfidence?: number }).epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
           try {
             const { proof } = proveConfidenceAboveThreshold(confidence, req.threshold);
             proofs.push(proof);

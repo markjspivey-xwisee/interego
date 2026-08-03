@@ -158,7 +158,7 @@ export function verifyCoherence(
       for (let i = 0; i < node.items.length; i++) {
         if (i === pos) continue;
         const itemNode = pgsl.nodes.get(node.items[i]!);
-        if (itemNode?.kind === 'Atom') coItems.push(String((itemNode as any).value));
+        if (itemNode?.kind === 'Atom') coItems.push(String((itemNode as { value?: unknown }).value));
         else coItems.push(resolve(pgsl, node.items[i]!));
       }
       contexts.push({ position: pos, coItems: coItems.sort() });

@@ -48,20 +48,52 @@
  * read back and PARSED, with the manufactured-participant attack run live against both the
  * new policy and the old one so the gap is shown to have been real.
  *
- * ★ SECTIONS 6, 7 AND 8 HAVE NOW BEEN RUN AGAINST PRODUCTION, with two real bearers, and the
- * file passed 46/46 — including the manufactured-participant refusal and §8's closing
- * demonstration that residual gap 6 was open. The sentence that stood here said they were
- * unrun and that whether the assertions hold was unknown. It is known.
+ * ── WHAT IS HERE, AND WHAT HAS ACTUALLY BEEN RUN ─────────────────────────────
  *
- * ★ AND WHAT IS UNRUN IS NOW A SMALLER, DIFFERENT THING, SAID PRECISELY RATHER THAN GLOSSED.
- * The 46 assertions that ran are the ones this file carried at that moment — §§1–8 now carry
- * 45, because §8's closing `wrongConvener` assertion moved into §9. A re-run of §§1–8 today
- * reports 45/45, and that is the move rather than a regression. Section 8's
- * closing block has since been rewritten: the gap-6 DEMONSTRATION it ended on is replaced by a
- * gap-6 CLOSE — a real `wsp:Workspace` record published at the workspace's own URL, read back,
- * parsed, and fed to the fold as `workspaceEvidence`. Those assertions have NOT been run. In
- * particular, whether the live shape gate accepts a `wsp:Workspace` at a `/ns/…` graph IRI is
- * read off the published shape rather than observed.
+ * ★ THE LIST IS HERE SO THE CLAIM BESIDE IT CAN BE CHECKED. The sentence that stood here read
+ * "Nothing here is unrun", and it was false the moment §10 was added — by a different round,
+ * which corrected the README's eight copies of the claim and left the source file's. The
+ * header never mentioned §10 at all, so nothing about the file made the omission visible. A
+ * roster of sections does: adding one without touching this block leaves a gap a reader can
+ * see, and the run line below states a count that stops matching.
+ *
+ *    1  the delegated scope comes from the substrate's own agent registry
+ *    2  the substrate refuses a write to another principal's pod (403 scope_violation)
+ *    3  an Observer's own-pod write succeeds and is not COUNTED
+ *    4  the view is composed from what the roster admits
+ *    5  a revoked grant stops conferring
+ *    6  a forged acceptance is refused and the genuine one admitted, on real proofs
+ *    7  the delegation ceiling narrows a role that permits more
+ *    8  the FIELDS come from the record — real grant/acceptance documents, parsed
+ *    9  the CONVENER comes from the workspace (residual gap 6), and gap 9 shown OPEN
+ *   10  the ROLE PROFILE comes from the workspace (residual gap 8)
+ *   11  the EVIDENCE must be the record <WS> dereferences to (residual gap 9, closed)
+ *
+ * ★ RUN AGAINST PRODUCTION on 2026-08-03 UTC with two real bearers: §§1–8 = 45 assertions,
+ * §9 = 18, §10 = 7, §11 = 7 — 77 of 77. Everything in the list above has been executed against
+ * the live substrate. Two sections were fixed by being run rather than by being read:
+ *
+ *   §9 was written around a `WS` constant of `${RELAY}/ns/maintainer/…`, and <WS> answered 404
+ *   for every run this file had ever done, because the /ns owner segment selects a POD and
+ *   neither principal can write to the one named `maintainer` (403 scope_violation, measured
+ *   both ways). §9's comment asserted that dereference in prose and excused itself from
+ *   checking it. The workspace URL is now built from the convener's own pod, <WS> resolves for
+ *   an anonymous reader, and the property is asserted rather than described.
+ *
+ *   §10 did not merely go unrun — it FAILED when run, and for a reason its own doubles get
+ *   right. Its rogue role profile declared `#Contributor` while §8's published grant to bee
+ *   names `#Observer`, so the rogue table had no row for bee's role, conferred nothing, and the
+ *   escalation comparison was `0 > 1`. A section written to show a widening, failing because
+ *   its rogue document never mentioned the role it was widening.
+ *
+ * ★ AND RESIDUAL GAP 9 IS NOW CLOSED IN §11 RATHER THAN REPORTED IN §9. `refuseConvenerAuthority`
+ * asked whether the evidence names this workspace, names this convener, and holds up as a
+ * record — and never asked where the evidence came from. A `wsp:Workspace` bee writes for
+ * alice's workspace on her own pod answers all three, and §9 measures the fold admitting her at
+ * `convenerBinding: 'bound'`. §11 asks the workspace instead: `dereferenceWorkspaceRecord`
+ * resolves <WS> through the pod its own owner segment names, `requireEvidenceProvenance`
+ * refuses evidence that does not claim to have come from there, and bee's record — still live,
+ * still signed, still naming <WS> as its subject — confers nothing.
  *
  * Usage:
  *   IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
@@ -73,6 +105,7 @@ import { composeWorkspace, type ComposableMember } from '../src/compose.js';
 import {
   grantTurtle, acceptanceTurtle, workspaceTurtle, publishMembershipRecord,
   readGrantRecord, readAcceptanceRecord, readWorkspaceRecord, convenerEvidenceOf,
+  dereferenceWorkspaceRecord,
 } from '../src/membership.js';
 import type { Acceptance } from '../src/roster.js';
 import {
@@ -104,7 +137,6 @@ const BEARER = requiredEnv('IEP_BEARER');
 const BEARER_B = requiredEnv('IEP_BEARER_B');
 
 const RUN = process.argv[2] ?? String(Date.now());
-const WS = `${RELAY}/ns/maintainer/wsp-can-${RUN}`;
 const P = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default';
 
 let pass = 0, fail = 0;
@@ -132,6 +164,10 @@ const deps = (bearer: string): StreamDeps => ({
   publish: a => callAs(bearer, 'publish_context', a),
   discover: a => callAs(bearer, 'discover_context', a),
   getDescriptor: a => callAs(bearer, 'get_descriptor', a),
+  // §11's dependency, and the only one of the four that is not about a URL somebody handed
+  // this file. `get_current_head` takes the /ns owner segment as `pod_name`, so
+  // `dereferenceWorkspaceRecord` asks the pod the workspace IRI itself names.
+  currentHead: a => callAs(bearer, 'get_current_head', a),
 });
 
 const PROFILE: RoleProfile = {
@@ -150,6 +186,21 @@ async function main(): Promise<void> {
   const alice = String(sa.webId);
   const bee = String(sb.webId);
   if (podA === podB) { console.error('same pod — proves nothing'); process.exit(2); }
+
+  // ★ THE WORKSPACE URL LIVES IN THE CONVENER'S OWN /ns NAMESPACE, AND IT USED TO BE A CONSTANT
+  // THAT NAMED SOMEBODY ELSE'S. This was `${RELAY}/ns/maintainer/wsp-can-${RUN}`, and §9's
+  // comment said that graph IRI is what makes <WS> dereference to the workspace record. Run
+  // against production, it does not: `resolveNsGraph` (deploy/mcp-relay/server.ts:11655) reads
+  // `podUrl = CSS_URL + <owner segment> + '/'`, so /ns/maintainer/… serves the pod literally
+  // named `maintainer` — which is not alice's `u-eth-8f3b8e939600`, and which BOTH principals
+  // are refused write to (403 scope_violation on `pod_name: 'maintainer'`, measured both ways).
+  // So <WS> answered 404 for every run this file has ever done, and the one thing a third party
+  // needs in order to check who convenes here did not exist.
+  //
+  // Deriving the owner segment from the convener's own pod is what makes the claim true rather
+  // than deleting it, and the property is now asserted below instead of asserted in prose.
+  const ownerA = podA.replace(/.*\/([^/]+)\/$/, '$1');
+  const WS = `${RELAY}/ns/${ownerA}/wsp-can-${RUN}`;
 
   console.log(`\nworkspace: ${WS}\nalice: ${alice}\n  pod: ${podA}\nbee:   ${bee}\n  pod: ${podB}\n`);
 
@@ -188,7 +239,7 @@ async function main(): Promise<void> {
   const crossPod = await callAs(BEARER_B, 'publish_context', {
     graph_iri: `${WS}/stream/alice`,
     graph_content: `<${WS}/stream/alice/e/0> <http://purl.org/dc/terms/description> "bee writing into alice's pod" .`,
-    visibility: 'public', auto_supersede_prior: false, pod_name: podA.replace(/.*\/([^/]+)\/$/, '$1'),
+    visibility: 'public', auto_supersede_prior: false, pod_name: ownerA,
   });
   ok(
     crossPod.code === 403 || crossPod.error !== undefined,
@@ -592,8 +643,13 @@ async function main(): Promise<void> {
   // ★ THE GRAPH IRI IS <WS> ITSELF, and so is the subject. Both matter and for different
   // reasons: the subject is what makes this a record OF this workspace rather than one ABOUT
   // it (the fold compares it), and the graph IRI is what makes <WS> dereference to this record
-  // through the relay's /ns/:owner/:slug route — which is the half a reader needs and the half
-  // no assertion here can make on its own behalf.
+  // through the relay's /ns/:owner/:slug route — which is the half a reader needs.
+  //
+  // ★ AND THAT SECOND HALF USED TO BE PROSE, AND THE PROSE WAS FALSE. It said "no assertion
+  // here can make it on its own behalf", which excused never checking it; the first live run of
+  // this section measured <WS> at 404, for the reason recorded where `WS` is built. It is
+  // asserted below now, over plain HTTP with no bearer, because a reader who cannot resolve
+  // <WS> has no way to obtain the evidence the rest of this section turns on.
   const wsPub = await publishMembershipRecord({
     graphIri: WS,
     graphContent: workspaceTurtle({
@@ -629,14 +685,38 @@ async function main(): Promise<void> {
     + 'is the convener alice signed',
     JSON.stringify(readWs.record.attestation),
   );
-  // Parsed and handed over, deliberately NOT gated on — the fold still takes its role profile
-  // from this file. Asserted so the evidence is shown to be real, and named as a residual gap
-  // in the README rather than quietly conflated with the convener.
+  // ★ AND THE SECOND FIELD ON THE SAME RECORD, WHICH THIS ASSERTION USED TO END ON. It read
+  // "which this fold does NOT check against `profile` — parsed and handed over, and named as a
+  // residual gap". That was residual gap 8, and §10 below closes it: the same record declares
+  // the governance, and `refuseRoleProfileAuthority` now compares it.
   ok(
     readWs.record.roleProfile === P,
-    'the workspace also declares its role profile, which this fold does NOT check against '
-    + '`profile` — parsed and handed over, and named as a residual gap',
+    '★ and the workspace declares its ROLE PROFILE in the same signed record — the value §10 '
+    + 'folds against',
     `roleProfile = ${readWs.record.roleProfile}`,
+  );
+
+  // ★ AND THE HALF A STRANGER NEEDS: <WS> RESOLVES, WITH NO BEARER AT ALL. Every read above
+  // went through `get_descriptor` with a token, which is a member's path. Someone who holds
+  // nothing but the workspace URL — the auditor this whole design is addressed to — has only
+  // the IRI, and if it does not resolve then "the workspace names alice" is a sentence about a
+  // document only members can find. Retried against the same budget the publishes use, because
+  // the /ns route reads the pod's manifest and that lands after the descriptor does.
+  const dereference = async (): Promise<{ status: number; body: string }> => {
+    const started = Date.now();
+    for (;;) {
+      const r = await fetch(WS, { headers: { Accept: 'text/turtle' } });
+      const body = await r.text();
+      if (r.status === 200 || Date.now() - started >= VISIBILITY_BUDGET_MS) return { status: r.status, body };
+      await new Promise(res => setTimeout(res, 1000));
+    }
+  };
+  const deref = await dereference();
+  ok(
+    deref.status === 200 && deref.body.includes(alice),
+    '★★ <WS> DEREFERENCES for an anonymous reader, and the bytes name alice as convener — the '
+    + 'half that was prose until this section was first run, and false when it was',
+    `status = ${deref.status}, ${deref.body.slice(0, 200)}`,
   );
 
   const evidence: ConvenerEvidence = convenerEvidenceOf(readWs);
@@ -653,10 +733,18 @@ async function main(): Promise<void> {
   // the two assertions after this one would establish nothing at all.
   const rightConvener = convened(alice);
   ok(
-    rightConvener.members.length === 1 && rightConvener.convenerBinding === 'bound',
-    '★★ the CONTROL holds: naming the convener the WORKSPACE names admits bee as a member, '
-    + 'and the fold reports the convener as checked',
-    JSON.stringify({ members: rightConvener.members.length, binding: rightConvener.convenerBinding, unattested: rightConvener.unattested }),
+    rightConvener.members.length === 1 && rightConvener.convenerBinding === 'bound'
+    // ★ AND THE PROFILE VERDICT IS PART OF THE CONTROL, because both refusals now sit in the
+    // same grant chain: a roster emptied by the ROLE PROFILE would satisfy every "refused"
+    // assertion below while this control failed for a reason nothing here names. `PROFILE.profile`
+    // is `P`, which is what alice published, so agreement is the expected answer.
+    && rightConvener.roleProfileBinding === 'bound',
+    '★★ the CONTROL holds: naming the convener the WORKSPACE names admits bee as a member, and '
+    + 'the fold reports BOTH the convener and the role profile as checked against the record',
+    JSON.stringify({
+      members: rightConvener.members.length, binding: rightConvener.convenerBinding,
+      profile: rightConvener.roleProfileBinding, unattested: rightConvener.unattested,
+    }),
   );
 
   // ── the attack gap 6 actually permitted: BEE CONVENES ALICE'S WORKSPACE ──
@@ -772,6 +860,324 @@ async function main(): Promise<void> {
     '★ and a policy that passes no evidence still says so — the gap is reported open, not '
     + 'silently closed by a field somebody forgot to set',
     `binding = ${inversionWithout.convenerBinding}`,
+  );
+
+  // ── RESIDUAL GAP 9: the fold checks the evidence, and nothing checks the EVIDENCE'S SOURCE ──
+  //
+  // Numbered 9 because 7 is taken and closed (the `wsp:member` shape gap) and 8 is the open
+  // role-profile one. A gap that reuses a closed gap's number reads, to anyone grepping, as the
+  // closed one having reopened.
+  //
+  // ★ THE ATTACK THE ASSERTIONS ABOVE DO NOT REACH, MEASURED RATHER THAN WORRIED ABOUT.
+  // `refuseConvenerAuthority` (src/roster.ts:731) asks three questions of a `ConvenerEvidence`:
+  // is its subject THIS workspace, does it name THIS policy's convener, and does it hold up as
+  // a signed, content-bound record. A `wsp:Workspace` bee writes for alice's workspace, on her
+  // own pod, naming HERSELF, answers all three — the subject is a triple she chose, and the
+  // signature is hers over her own claim. Nothing in the fold relates the descriptor URL the
+  // evidence was read from to <WS>. The caller picks that URL, and this file picks it honestly.
+  //
+  // So the closure above is real but its scope is narrower than it reads: it holds for a reader
+  // who obtained the evidence by DEREFERENCING <WS>, and the assertion two blocks up is what
+  // makes that route exist. Shown here at full strength, in the shape §8 and §9 already use for
+  // gaps that are open, and CLOSED in §11 — which is the same records, the same policy and one
+  // more flag.
+  const usurpPub = await publishMembershipRecord({
+    graphIri: WS,
+    graphContent: workspaceTurtle({
+      workspaceIri: WS, convener: bee, roleProfile: P,
+      title: 'bee, claiming to convene alice\'s workspace',
+    }),
+  }, wsDeps(BEARER_B));
+  ok(
+    usurpPub.outcome === 'published',
+    'bee publishes a competing wsp:Workspace for alice\'s workspace IRI, on HER OWN pod',
+    JSON.stringify(usurpPub).slice(0, 240),
+  );
+  // Hoisted so §11 can close the gap against the SAME forged record this section opened it
+  // with. Re-publishing a second one there would leave two heads on the workspace's chain and
+  // let §11 pass against a record §9 never showed to be dangerous.
+  let usurpEvidence: ConvenerEvidence | null = null;
+  if (usurpPub.outcome === 'published') {
+    const usurpRead = await readWorkspaceRecord(usurpPub.descriptorUrl, wsDeps(BEARER));
+    usurpEvidence = convenerEvidenceOf(usurpRead);
+    const usurped = foldRoster({
+      ...selfArgs,
+      attestation: {
+        convener: bee, signerOf, requireFieldBinding: true,
+        workspaceEvidence: convenerEvidenceOf(usurpRead),
+      },
+    });
+    ok(
+      usurpRead.record?.convener === bee && usurped.members.length === 1
+      && usurped.convenerBinding === 'bound',
+      '★★ RESIDUAL GAP 9: handed bee\'s OWN workspace record as evidence, the same fold that '
+      + 'refused her two blocks up reports the convener as BOUND and admits her — the fold '
+      + 'checks the evidence and never asks where it came from (src/roster.ts:731)',
+      JSON.stringify({ convener: usurpRead.record?.convener, members: usurped.members.length, binding: usurped.convenerBinding }),
+    );
+    // …and the one thing that does discriminate is the URL, not the record. Same IRI, same
+    // shape, same strength of signature — and <WS> still answers with alice's, because the
+    // owner segment of a /ns IRI is a pod bee cannot write to (403, measured).
+    const after = await fetch(WS, { headers: { Accept: 'text/turtle' } });
+    const afterBody = await after.text();
+    ok(
+      after.status === 200 && afterBody.includes(alice) && !afterBody.includes(bee),
+      '★★ but <WS> STILL dereferences to ALICE\'s record — the owner segment binds the IRI to a '
+      + 'pod bee cannot write to, which is what makes gap 9 closable by sourcing rather than by '
+      + 'trusting the record',
+      `status = ${after.status}, alice? ${afterBody.includes(alice)}, bee? ${afterBody.includes(bee)}`,
+    );
+  }
+
+  // ── 10. the ROLE PROFILE, checked against the workspace instead of against the caller ──
+  //
+  // ★ WHAT §9 USED TO HAND OVER AND NOT USE. The same signed record declares `wsp:roleProfile`,
+  // and `foldRoster` took its `RoleProfile` from `PROFILE` at the top of this file. That is
+  // residual gap 8, and it decides more than the convener does: `permitsOf` is built from the
+  // caller's profile, so the caller's document names every capability in the roster. A roster
+  // could report `convenerBinding: 'bound'` and `recordFieldBinding: 'bound'` with an empty
+  // `unattested` over an Observer who could revoke.
+  //
+  // ★ AND THE ROGUE PROFILE REDECLARES THE DECLARED PROFILE'S OWN ROLE IRI, which is what makes
+  // this an escalation rather than a mismatch. Role IRIs are strings; nothing stops a rival
+  // document from declaring `<…wsp-roles-default#Contributor>` with `grant` and `revoke` on it.
+  // The grant §8 published names exactly that role, is signed by alice, content-bound and
+  // parsed — so every check this layer had before this round passes at full strength and the
+  // capabilities come out of a document alice never published.
+  console.log('\n10. the role profile comes from the WORKSPACE — the record that says what a role permits');
+
+  // ★ `#Observer`, AND THE ROLE HAS TO BE THE ONE §8 ACTUALLY GRANTED. This read `#Contributor`
+  // and §8's published grant to bee (above) names `#Observer`, so the rogue table had no row
+  // for bee's role, conferred nothing, and the comparison below was `0 > 1`. Measured live:
+  //   FAIL ★★ RESIDUAL GAP 8, at full strength … {"rogue":[],"declared":["…#read"]}
+  // — a section written to demonstrate an escalation, failing because its rogue document did
+  // not mention the role it was supposed to widen. The doubles get this right
+  // (`tests/workspace-adversarial.test.ts` uses `#Observer` and rewrites the grant to match);
+  // the live section copied the shape and named the other role.
+  const ROGUE_PROFILE: RoleProfile = {
+    profile: `${RELAY}/ns/rogue/wsp-roles-${RUN}`,
+    roles: [{ role: `${P}#Observer`, permits: [CAPS.read, CAPS.append, CAPS.grant, CAPS.revoke] }],
+  };
+  const foldWithProfile = (profile: RoleProfile, evidenceOn: boolean) => foldRoster({
+    workspace: WS, profile, scopes,
+    grants: [readGrant.record!],
+    acceptances: [readAccept.record!],
+    attestation: {
+      convener: alice, signerOf, requireFieldBinding: true,
+      ...(evidenceOn ? { workspaceEvidence: evidence } : {}),
+    },
+  });
+
+  // ★ THE GAP, LIVE, AT FULL STRENGTH — and reported honestly by the roster that permits it.
+  //
+  // ★★ THE ASSERTION IS A COMPARISON, NOT `includes(revoke)`, AND THE REASON IS THE CEILING.
+  // Effective capability is `role.permits ∩ delegatedScope`, and the delegation comes from the
+  // LIVE registry — this file does not choose it. Written as "bee holds revoke", this assertion
+  // would fail on a run where bee's agent happens to be `PublishOnly`, for a reason that has
+  // nothing whatever to do with residual gap 8, and a reader would be told the gap was closed.
+  // What the gap actually is, at any ceiling, is that the caller's document WIDENED what the
+  // workspace's own governance allows — so that is what is measured, and the ceiling is printed
+  // beside it. If the two ever come out equal the run FAILS and says the demonstration was
+  // inert, which is the honest report and the one §6 had to learn to make.
+  const profileGapOpen = foldWithProfile(ROGUE_PROFILE, false);
+  const declaredCaps = foldWithProfile(PROFILE, false).members[0]?.effective ?? [];
+  const rogueCaps = profileGapOpen.members[0]?.effective ?? [];
+  ok(
+    profileGapOpen.members.length === 1
+    && rogueCaps.length > declaredCaps.length
+    && profileGapOpen.recordFieldBinding === 'bound'
+    && profileGapOpen.roleProfileBinding === 'unchecked',
+    '★★ RESIDUAL GAP 8, at full strength: with no workspace evidence, bee holds MORE in alice\'s '
+    + 'workspace than alice\'s own governance permits, on the strength of a role profile alice '
+    + 'never declared — a field-bound, content-bound, convener-checked membership governed by '
+    + 'the caller\'s own document',
+    JSON.stringify({
+      members: profileGapOpen.members.length, rogue: rogueCaps, declared: declaredCaps,
+      f: profileGapOpen.recordFieldBinding, p: profileGapOpen.roleProfileBinding,
+    }),
+  );
+
+  // ★ AND CLOSED. Same records, same policy, the evidence §9 already read.
+  const profileGapClosed = foldWithProfile(ROGUE_PROFILE, true);
+  ok(
+    profileGapClosed.members.length === 0 && profileGapClosed.roleProfileBinding === 'refused',
+    '★★ RESIDUAL GAP 8, CLOSED: <' + WS + '> declares a different role profile, so nothing the '
+    + 'rogue document permits CONFERS',
+    JSON.stringify({ members: profileGapClosed.members.length, binding: profileGapClosed.roleProfileBinding }),
+  );
+  const profileWhy = profileGapClosed.unattested.find(u => u.kind === 'grant')?.because ?? '';
+  ok(
+    /The two disagree/.test(profileWhy) && profileWhy.includes(ROGUE_PROFILE.profile),
+    '★ and refused for the RIGHT REASON — the fold names both profiles and says they differ',
+    `because = ${profileWhy}`,
+  );
+  ok(
+    // ★ THE HALF THAT MAKES IT A MEASUREMENT RATHER THAN A REFUSAL. The convener on this fold is
+    // correct and its record is beyond reproach, so `convenerBinding` must still read `'bound'`.
+    // If it did not, this section would be pinning gap 6's check a second time under a new name
+    // and the profile comparison would never have run.
+    profileGapClosed.convenerBinding === 'bound'
+    && !/entitled to grant|could not be read|another workspace|acts for/.test(profileWhy),
+    '★ and NOT because the convener, the record or the signature failed — every one of those '
+    + 'checks PASSED, which is what makes this the role profile\'s own refusal',
+    `convener = ${profileGapClosed.convenerBinding}, because = ${profileWhy}`,
+  );
+
+  // ★ THE CONTROL, LAST AND EXPLICIT. Every assertion above is satisfied by a fold that refuses
+  // whenever evidence is present, and this file has shipped exactly that shape before — §6's
+  // two headline assertions once passed because NOTHING was readable. The genuine profile,
+  // against the same evidence, must be ADMITTED.
+  const profileAgrees = foldWithProfile(PROFILE, true);
+  ok(
+    profileAgrees.members.length === 1 && profileAgrees.roleProfileBinding === 'bound',
+    '★★ the CONTROL holds: folding against the profile the WORKSPACE declares admits bee, and '
+    + 'the fold reports the governance as checked',
+    JSON.stringify({
+      members: profileAgrees.members.length, binding: profileAgrees.roleProfileBinding,
+      unattested: profileAgrees.unattested,
+    }),
+  );
+  ok(
+    // A second control, in the direction a subset assertion cannot see: agreeing evidence must
+    // change the REPORT and nothing else. Same members, same capabilities as the rung below.
+    JSON.stringify(profileAgrees.members) === JSON.stringify(foldWithProfile(PROFILE, false).members),
+    '★ and agreeing evidence changed nothing but the report — same members, same capabilities '
+    + 'as the same fold without it',
+    JSON.stringify(profileAgrees.members),
+  );
+
+  // ★ AND THE INVERSION, ONE FIELD OVER. Adopting the workspace's declared profile would be the
+  // convener substitution in the field that decides capabilities. It cannot even be written
+  // honestly here — the fold holds an IRI, not the document — so what is asserted is the
+  // observable consequence: supplying the evidence never adds a member or a capability.
+  const rogueWithout = foldWithProfile(ROGUE_PROFILE, false);
+  ok(
+    profileGapClosed.members.length <= rogueWithout.members.length
+    && profileGapClosed.members.every(m => rogueWithout.members.some(
+      w => w.principal === m.principal && m.effective.every(c => w.effective.includes(c)),
+    )),
+    '★★ and supplying the evidence never GRANTS: every member and every capability under the '
+    + 'checked fold is present under the unchecked one',
+    JSON.stringify({ with: profileGapClosed.members.length, without: rogueWithout.members.length }),
+  );
+
+  // ── 11. residual gap 9, closed: the evidence must be the record <WS> DEREFERENCES TO ──
+  //
+  // ★ WHAT §9 SHOWED AND COULD NOT FIX AT THE TIME. §§8–10 check what the workspace record
+  // SAYS; nothing checked whether it is the workspace's record. Bee's own `wsp:Workspace` for
+  // alice's IRI answers every one of those questions, because its subject is a triple she
+  // wrote — §9 measured it admitting her at `convenerBinding: 'bound'`.
+  //
+  // The closure is that a workspace IS a dereferenceable URL and exactly one party decides
+  // what it returns. `<relay>/ns/<owner>/<slug>` resolves against the pod its OWNER SEGMENT
+  // names (`resolveNsGraph`, deploy/mcp-relay/server.ts:11657) and against no other, and §2
+  // above has already measured the substrate refusing a cross-pod write. So
+  // `dereferenceWorkspaceRecord` asks THAT pod, and `requireEvidenceProvenance` refuses
+  // anything that does not claim to have come from there.
+  console.log('\n11. the evidence must be the record the WORKSPACE dereferences to');
+
+  const derefEvidence = await dereferenceWorkspaceRecord(WS, wsDeps(BEARER));
+  ok(
+    derefEvidence.kind === 'declared' && derefEvidence.record.convener === alice
+    && derefEvidence.provenance?.dereferenced === WS
+    && derefEvidence.provenance?.resolvedTo === derefEvidence.record.head,
+    '★ dereferencing <WS> through its own owner segment returns ALICE\'s record, and the '
+    + 'evidence carries where it came from',
+    JSON.stringify(derefEvidence).slice(0, 300),
+  );
+  // ★ AND IT IS NOT THE SAME DOCUMENT BEE PUBLISHED, asserted rather than assumed. Both records
+  // exist on the substrate right now, both are signed, both parse, both name <WS> as their
+  // subject — so "the dereference returned a record" establishes nothing until it is shown to
+  // have returned the OTHER one.
+  const usurpHead = usurpEvidence?.kind === 'declared' ? usurpEvidence.record.head : '';
+  ok(
+    usurpHead !== '' && derefEvidence.kind === 'declared'
+    && derefEvidence.record.head !== usurpHead,
+    '★★ and it is a DIFFERENT document from the one bee published for the same IRI — both are '
+    + 'live, and only one of them is what the workspace answers with',
+    JSON.stringify({
+      dereferenced: derefEvidence.kind === 'declared' ? derefEvidence.record.head : null,
+      bee: usurpHead,
+    }),
+  );
+
+  if (usurpEvidence !== null) {
+    // THE ATTACK, refused. Same forged record §9 admitted, same policy naming bee, one flag.
+    const gap9Closed = foldRoster({
+      ...selfArgs,
+      attestation: {
+        convener: bee, signerOf, requireFieldBinding: true,
+        workspaceEvidence: usurpEvidence, requireEvidenceProvenance: true,
+      },
+    });
+    const gap9Why = gap9Closed.unattested.find(u => u.kind === 'grant')?.because ?? '';
+    ok(
+      gap9Closed.members.length === 0
+      && gap9Closed.evidenceProvenanceBinding === 'refused'
+      && /no statement of where it came from/.test(gap9Why),
+      '★★ RESIDUAL GAP 9, CLOSED: bee\'s own record for alice\'s workspace IRI confers nothing '
+      + 'once the fold asks where the evidence came from',
+      JSON.stringify({
+        members: gap9Closed.members.length, binding: gap9Closed.evidenceProvenanceBinding,
+        because: gap9Why.slice(0, 160),
+      }),
+    );
+    ok(
+      // ★ THE HALF THAT MAKES IT A MEASUREMENT. The convener and profile answers on this fold
+      // are `'bound'` — bee's record agrees with a policy naming bee, exactly as §9 showed —
+      // so if this refusal were coming from either of them, §11 would be re-pinning §9's
+      // check under a new name and the provenance question would never have been asked.
+      gap9Closed.convenerBinding === 'bound' && gap9Closed.roleProfileBinding === 'bound',
+      '★ and NOT because the convener or the profile failed — bee\'s record agrees with bee\'s '
+      + 'policy on both, which is what made gap 9 a gap',
+      JSON.stringify({ c: gap9Closed.convenerBinding, p: gap9Closed.roleProfileBinding }),
+    );
+  }
+
+  // ★ THE CONTROL, and §6's lesson: every assertion above is satisfied by a fold that refuses
+  // whenever the flag is set. The honestly dereferenced evidence, under a policy naming the
+  // convener that record declares, must ADMIT — and admit exactly what the rung below it does.
+  const sourcedArgs = {
+    workspace: WS, profile: PROFILE, scopes,
+    grants: [readGrant.record!], acceptances: [readAccept.record!],
+  };
+  const sourcedOn = foldRoster({
+    ...sourcedArgs,
+    attestation: {
+      convener: alice, signerOf, requireFieldBinding: true,
+      workspaceEvidence: derefEvidence, requireEvidenceProvenance: true,
+    },
+  });
+  const sourcedOff = foldRoster({
+    ...sourcedArgs,
+    attestation: {
+      convener: alice, signerOf, requireFieldBinding: true, workspaceEvidence: derefEvidence,
+    },
+  });
+  ok(
+    sourcedOn.members.length === 1 && sourcedOn.evidenceProvenanceBinding === 'bound',
+    '★★ the CONTROL holds: the record <WS> actually dereferences to admits bee, and the fold '
+    + 'reports the evidence\'s own provenance as checked',
+    JSON.stringify({
+      members: sourcedOn.members.length, binding: sourcedOn.evidenceProvenanceBinding,
+      unattested: sourcedOn.unattested,
+    }),
+  );
+  ok(
+    JSON.stringify(sourcedOn.members) === JSON.stringify(sourcedOff.members),
+    '★ and asking the question changed nothing but the report — same members, same '
+    + 'capabilities as the same fold without the flag',
+    JSON.stringify({ on: sourcedOn.members, off: sourcedOff.members }),
+  );
+  ok(
+    // The report must distinguish "nobody asked" from "asked and the answer was no". Without
+    // this, a caller could read the closed configuration and the residual-gap-9 one as the
+    // same roster — which is the whole reason the field is non-omittable.
+    sourcedOff.evidenceProvenanceBinding === 'unchecked'
+    && /RESIDUAL, and it is the one the two sentences above rest on/.test(sourcedOff.attributionNote),
+    '★ and a fold that did NOT ask says so, in a value distinct from `refused` — the gap is '
+    + 'reported open, not silently closed by a flag somebody forgot to set',
+    `binding = ${sourcedOff.evidenceProvenanceBinding}`,
   );
 
   console.log(`\n${pass} passed, ${fail} failed`);

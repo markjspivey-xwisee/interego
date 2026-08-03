@@ -15,10 +15,16 @@
  * how §6 of verify-can-live.ts used to pass.
  */
 import { describe, it, expect, vi } from 'vitest';
+// The published shape is read from disk rather than restated, so the reader's copy of its
+// constraints can be compared with the file we actually deploy. See the last describe block.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   grantTurtle, acceptanceTurtle, readGrantRecord, readAcceptanceRecord,
   workspaceTurtle, readWorkspaceRecord, convenerEvidenceOf,
-  publishMembershipRecord, WSP_TERMS, MEMBERSHIP_VISIBILITY_BUDGET_MS,
+  publishMembershipRecord, WSP_TERMS, WSP_PUBLISHED_IRI_PATTERNS,
+  MEMBERSHIP_VISIBILITY_BUDGET_MS,
+  dereferenceWorkspaceRecord, nsOwnerSegmentOf,
 } from '../applications/shared-workspace/src/membership.js';
 import {
   foldRoster, refuseFieldBinding, type Grant, type Acceptance, type Attestation,
@@ -320,11 +326,16 @@ describe('the workspace record — who convenes here', () => {
     expect(read.problems[0]).toMatch(/blank node/);
   });
 
-  it('an unreadable role profile is a PROBLEM, not a refusal — nothing in the fold reads it', async () => {
+  it('an unreadable role profile is a PROBLEM, not a refusal — and the FOLD is what refuses on it', async () => {
     // The other direction of the same rule: the conferring field of a workspace record is its
-    // convener, so refusing the whole record over a field no code consults would withhold a
-    // convener the record does state. Reported instead, so a caller that wants to compare the
-    // profile can see it did not get one.
+    // convener, so refusing the whole record over a second field would withhold a convener the
+    // record does state. Reported instead, and the record still answers the convener question.
+    //
+    // ★ THE SECOND HALF OF THIS CASE IS NEW, AND THE SENTENCE IT REPLACES WAS "nothing in the
+    // fold reads it". Something does now: `refuseRoleProfileAuthority` compares the declared
+    // profile against the one the fold was handed, so `''` has to be refused EXPLICITLY rather
+    // than left to an equality test — a caller whose own `RoleProfile.profile` is also `''`
+    // would otherwise compare equal to this record and be reported as bound off two blanks.
     const noProfile = workspaceTurtle({ workspaceIri: WS, convener: CONV, roleProfile: P, title: 'x' })
       .replace(/\n  wsp:roleProfile <[^>]+> ;/, '');
     const deps = descriptorDeps({ [WORKSPACE_URL]: { content: noProfile, signedBy: CONV_KEY } });
@@ -333,6 +344,16 @@ describe('the workspace record — who convenes here', () => {
     expect(read.record!.convener).toBe(CONV);
     expect(read.record!.roleProfile).toBe('');
     expect(read.problems.join(' ')).toMatch(/roleProfile/);
+
+    const blankBoth = foldRoster({
+      workspace: WS, scopes, grants: [], acceptances: [],
+      profile: { profile: '', roles: PROFILE.roles },
+      attestation: { convener: CONV, signerOf, workspaceEvidence: convenerEvidenceOf(read) },
+    });
+    expect(blankBoth.roleProfileBinding).toBe('refused');
+    // …and the convener the record DOES state is still checked and still bound, so the two
+    // questions are not answered with one another's verdict.
+    expect(blankBoth.convenerBinding).toBe('bound');
   });
 
   it('one of the convener\'s own signed records is NOT readable as a workspace declaration', async () => {
@@ -1122,5 +1143,345 @@ describe('publishMembershipRecord', () => {
 
   it('the visibility budget is a real number of milliseconds', () => {
     expect(MEMBERSHIP_VISIBILITY_BUDGET_MS).toBeGreaterThanOrEqual(20_000);
+  });
+});
+
+// ── ★ the reader and the published contract must refuse the same values ──────
+//
+// ★ THE RECORDED DEFECT WAS ONE FIELD AND IT WAS SEVEN. The ledger said "`oneIri` applies no
+// scheme pattern to `wsp:member`, and the published shape now does — so on this ONE field the
+// shape refuses more than the reader". Reproduced against the readers rather than re-read: a
+// grant naming `<urn:example:ws>`, `<urn:example:who>` and `<urn:example:role>` parsed with an
+// EMPTY `problems` array, and so did a workspace record declaring `<urn:example:conv>` and
+// `<urn:example:roles>`. `wsp-shapes.ttl` patterns seven of the eight terms `oneIri` reads.
+//
+// Not exploitable through our own publish path — the gate validates first — and the readers
+// are pointed at pods we do not control, which is the whole reason a reader exists rather than
+// a trust assumption. Two mechanisms hold the two in step now: the TYPE makes a term with no
+// table entry a compile error, and the first case below compares the table with the published
+// file byte for byte.
+describe('★ oneIri applies the published shape\'s own sh:pattern', () => {
+  const SHAPES_TTL = readFileSync(
+    fileURLToPath(new URL('../docs/applications/shared-workspace/wsp-shapes.ttl', import.meta.url)),
+    'utf8',
+  );
+
+  /** Every `sh:path wsp:NAME` property block in the published file, with its pattern or null. */
+  const publishedPatterns = (): Map<string, (string | null)[]> => {
+    const found = new Map<string, (string | null)[]>();
+    for (const block of SHAPES_TTL.split('sh:property [').slice(1)) {
+      const body = block.slice(0, block.indexOf(']'));
+      const path = /sh:path\s+wsp:(\w+)/.exec(body);
+      if (path === null) continue;
+      const pattern = /sh:pattern\s+"([^"]*)"/.exec(body);
+      const prior = found.get(`${WSP_TERMS.workspace.replace(/workspace$/, '')}${path[1]!}`) ?? [];
+      prior.push(pattern === null ? null : pattern[1]!);
+      found.set(`${WSP_TERMS.workspace.replace(/workspace$/, '')}${path[1]!}`, prior);
+    }
+    return found;
+  };
+
+  it('★★ the table in membership.ts IS what wsp-shapes.ttl publishes — checked, not asserted in prose', () => {
+    // ★ THE DRIFT CHECK, AND IT IS THE POINT OF THE WHOLE TABLE. A hand-copied constraint is a
+    // second source of truth that goes stale the first time the published file moves, which is
+    // exactly how the gap this closes was created: `wsp:member` gained `sh:pattern` in the
+    // deployed shape and nothing in the reader moved with it. This fails on the next such
+    // change instead of a paragraph nobody re-greps.
+    const published = publishedPatterns();
+    // A sanity floor first: a regex that matched nothing would make every assertion below
+    // vacuous, which is the failure mode this repo names most often.
+    expect(published.size).toBeGreaterThanOrEqual(6);
+
+    for (const [term, expected] of Object.entries(WSP_PUBLISHED_IRI_PATTERNS)) {
+      const occurrences = published.get(term);
+      expect(occurrences, `<${term}> is in the reader's table and in no sh:property of the published shape`).toBeDefined();
+      for (const actual of occurrences!) {
+        expect(
+          actual,
+          `<${term}>: the reader applies ${JSON.stringify(expected)} and wsp-shapes.ttl `
+          + `publishes ${JSON.stringify(actual)}. One of the two moved without the other — `
+          + 'which is the defect this table exists to make impossible',
+        ).toBe(expected);
+      }
+    }
+  });
+
+  it('★ a urn: value is refused on every term the shape patterns — measured one field at a time', async () => {
+    // Each of these parsed CLEAN before the table existed. `wsp:stream` is the control in the
+    // other direction and lives in its own case below.
+    const urnGrant = await readGrantRecord(GRANT_URL, descriptorDeps({
+      [GRANT_URL]: {
+        content: grantTurtle({
+          grantIri: 'https://conv.test/g/1', workspace: WS, grantedTo: bee, role: `${P}#Contributor`,
+        }).replace(`<${bee}>`, '<urn:example:who>'),
+      },
+    }));
+    // `wsp:grantedTo` is identifying, so the whole record goes: a revocation naming nobody
+    // revokes nothing. Same cost, and the same reading, as a grant naming TWO grantees.
+    expect(urnGrant.record).toBeNull();
+    expect(urnGrant.problems.join(' ')).toMatch(/urn:example:who.*sh:pattern/);
+
+    const urnRole = await readGrantRecord(GRANT_URL, descriptorDeps({
+      [GRANT_URL]: {
+        content: grantTurtle({
+          grantIri: 'https://conv.test/g/1', workspace: WS, grantedTo: bee, role: `${P}#Contributor`,
+          revoked: true,
+        }).replace(`<${P}#Contributor>`, '<urn:example:role>'),
+      },
+    }));
+    // ★ AND THE TWO-TRACK RULE SURVIVES THE TIGHTENING, which is the half a refusal test alone
+    // would miss. `wsp:role` is the grant's CONFERRING field, so a refused role empties it and
+    // withholds the provenance — and the record still reaches the fold carrying its REVOCATION.
+    expect(urnRole.record).not.toBeNull();
+    expect(urnRole.record!.role).toBe('');
+    expect(urnRole.record!.revoked).toBe(true);
+    expect(urnRole.record!.fieldProvenance).toBeUndefined();
+
+    const urnMember = await readAcceptanceRecord(ACCEPT_URL, descriptorDeps({
+      [ACCEPT_URL]: {
+        content: acceptanceTurtle({
+          acceptanceIri: 'https://bee.test/a/1', workspace: WS, member: bee,
+          accepts: GRANT_URL, stream: 'https://bee.test/s',
+        }).replace(`wsp:member <${bee}>`, 'wsp:member <urn:example:nobody>'),
+      },
+    }));
+    expect(urnMember.record).toBeNull();
+    expect(urnMember.problems.join(' ')).toMatch(/urn:example:nobody/);
+
+    const urnConvener = await readWorkspaceRecord(WORKSPACE_URL, descriptorDeps({
+      [WORKSPACE_URL]: {
+        content: WORKSPACE_TTL.replace(`wsp:convener <${CONV}>`, 'wsp:convener <urn:example:conv>'),
+      },
+    }));
+    expect(urnConvener.record).toBeNull();
+    expect(urnConvener.problems.join(' ')).toMatch(/urn:example:conv/);
+
+    // ★ AND THE ROLE PROFILE, which is the term residual gap 8's check compares. A `urn:`
+    // profile admitted here would be a governance document nobody outside this pod can fetch,
+    // offered as the thing `roleProfileBinding` reports as bound.
+    const urnProfile = await readWorkspaceRecord(WORKSPACE_URL, descriptorDeps({
+      [WORKSPACE_URL]: {
+        content: WORKSPACE_TTL.replace(`wsp:roleProfile <${P}>`, 'wsp:roleProfile <urn:example:roles>'),
+      },
+    }));
+    // Non-identifying, like `wsp:role`: the record survives with the field emptied, the problem
+    // named, and `refuseRoleProfileAuthority` refusing to confer on a profile it cannot read.
+    expect(urnProfile.record).not.toBeNull();
+    expect(urnProfile.record!.roleProfile).toBe('');
+    expect(urnProfile.problems.join(' ')).toMatch(/urn:example:roles/);
+  });
+
+  it('★ and the reader does NOT refuse more than the contract — the other direction of the same defect', async () => {
+    // ★ MUTATED BOTH WAYS, because a guard that only ever refuses is an outage rather than a
+    // guard. A single reader-wide `^https?://|^did:` would have looked strict and been wrong
+    // twice over: `wsp:stream` carries NO pattern in the published shape, and `wsp:member`
+    // carries one that ADMITS `did:`. Both are asserted here so that tightening the table
+    // further cannot be done by reflex.
+    const didMember = await readAcceptanceRecord(ACCEPT_URL, descriptorDeps({
+      [ACCEPT_URL]: {
+        content: acceptanceTurtle({
+          acceptanceIri: 'https://bee.test/a/1', workspace: WS, member: 'did:ethr:0xabc',
+          accepts: GRANT_URL, stream: 'https://bee.test/s',
+        }),
+      },
+    }));
+    expect(didMember.record).not.toBeNull();
+    expect(didMember.record!.member).toBe('did:ethr:0xabc');
+    expect(didMember.problems).toEqual([]);
+
+    // `wsp:stream` is unconstrained by the shape, so the reader constrains nothing either.
+    const oddStream = await readAcceptanceRecord(ACCEPT_URL, descriptorDeps({
+      [ACCEPT_URL]: {
+        content: acceptanceTurtle({
+          acceptanceIri: 'https://bee.test/a/1', workspace: WS, member: bee,
+          accepts: GRANT_URL, stream: 'urn:example:stream',
+        }),
+      },
+    }));
+    expect(oddStream.record).not.toBeNull();
+    expect(oddStream.record!.stream).toBe('urn:example:stream');
+    expect(oddStream.problems).toEqual([]);
+    // …and it still confers, which is what "no pattern" has to mean if it means anything.
+    expect(oddStream.record!.fieldProvenance).toBeDefined();
+
+    // The ordinary record, unchanged. Without this the three cases above are satisfied by a
+    // reader that refuses everything with a scheme.
+    const honest = await readAcceptanceRecord(ACCEPT_URL, descriptorDeps({ [ACCEPT_URL]: { content: ACCEPT_TTL } }));
+    expect(honest.record).not.toBeNull();
+    expect(honest.problems).toEqual([]);
+  });
+});
+
+// ── the producer: dereferencing a workspace to FIND its record ───────────────
+//
+// ★★ THESE CASES EXIST BECAUSE THREE MUTANTS SURVIVED WITHOUT THEM, and the survivors were
+// found the way this file's other survivors were: by breaking the thing and watching nothing
+// go red. `dereferenceWorkspaceRecord` was written, wired into `verify-can-live.ts` §11 and run
+// green against production — and the entire double suite still passed with the owner segment
+// deleted from its `get_current_head` call, with its forked-chain refusal removed, and with its
+// `/ns/<owner>/<slug>` matcher replaced by a regex accepting any string at all. A live run
+// exercises the honest path; nothing exercised the four refusals, or the one ARGUMENT that
+// makes the honest path honest.
+describe('dereferenceWorkspaceRecord — asking the workspace instead of the caller', () => {
+  // A workspace IRI of the shape the relay actually serves. The rest of this file uses
+  // `https://relay.test/ws/alpha`, which carries no owner segment and is therefore the
+  // fail-closed case below rather than the honest one.
+  const NS_WS = 'https://relay.test/ns/u-eth-alice/wsp-alpha';
+  const ALICE_DESC = 'https://alice.test/c/ws.ttl';
+  const BEE_DESC = 'https://bee.test/c/ws.ttl';
+  const NS_WORKSPACE_TTL = workspaceTurtle({
+    workspaceIri: NS_WS, convener: CONV, roleProfile: P, title: 'alpha',
+  });
+  const BEE_WORKSPACE_TTL = workspaceTurtle({
+    workspaceIri: NS_WS, convener: bee, roleProfile: P, title: 'bee claims alpha',
+  });
+
+  /**
+   * A substrate where BOTH principals have published a `wsp:Workspace` at the SAME graph IRI,
+   * each on their own pod — which is the live situation residual gap 9 was measured in.
+   *
+   * ★ THE DOUBLE KEYS ON `pod_name`, AND THAT IS THE WHOLE POINT OF IT. A double that ignored
+   * the pod and returned "the" head would let the producer drop the owner segment and still
+   * pass, which is exactly the mutant that survived. Here the two pods answer differently, so
+   * asking the wrong one — or asking none — cannot return alice's record.
+   */
+  const twoPods = (over: { forked?: boolean; error?: string; noHead?: boolean } = {}) => {
+    const calls: Record<string, unknown>[] = [];
+    const heads: Record<string, string> = { 'u-eth-alice': ALICE_DESC, 'u-eth-bee': BEE_DESC };
+    const deps = {
+      ...descriptorDeps({
+        [ALICE_DESC]: { content: NS_WORKSPACE_TTL, signedBy: CONV_KEY },
+        [BEE_DESC]: { content: BEE_WORKSPACE_TTL, signedBy: BEE_KEY },
+      }),
+      currentHead: vi.fn(async (args: Record<string, unknown>) => {
+        calls.push(args);
+        if (over.error !== undefined) return { error: over.error, message: over.error };
+        if (over.forked === true) {
+          return { urn: args.urn, forked: true, heads: [{ descriptorUrl: ALICE_DESC }, { descriptorUrl: BEE_DESC }] };
+        }
+        if (over.noHead === true) return { urn: args.urn, forked: false };
+        // An unknown pod holds nothing at this IRI — which is what the substrate answers, and
+        // what a producer that forgot to name the pod would be asking for.
+        const url = heads[String(args.pod_name ?? '')];
+        return url === undefined
+          ? { urn: args.urn, forked: false }
+          : { urn: args.urn, forked: false, head: { descriptorUrl: url } };
+      }),
+    } as unknown as StreamDeps;
+    return { deps, calls };
+  };
+
+  it('★ resolves the workspace through the pod its own /ns owner segment names', async () => {
+    const { deps, calls } = twoPods();
+    const evidence = await dereferenceWorkspaceRecord(NS_WS, deps);
+    expect(evidence.kind).toBe('declared');
+    if (evidence.kind !== 'declared') return;
+    // ALICE's record, and both principals have published at this IRI in this substrate.
+    expect(evidence.record.convener).toBe(CONV);
+    expect(evidence.record.head).toBe(ALICE_DESC);
+    // ★ AND THE ARGUMENT IS ASSERTED, NOT ONLY THE OUTCOME. `pod_name` IS the security property
+    // here: the /ns owner segment selects a pod, and asking any other pod — or asking without
+    // naming one — is asking a party with no authority over this IRI. Dropping it from the call
+    // was a surviving mutant.
+    expect(calls).toEqual([{ urn: NS_WS, pod_name: 'u-eth-alice' }]);
+    // The provenance names this dereference and this document, not anything a caller chose.
+    expect(evidence.provenance).toEqual({ dereferenced: NS_WS, resolvedTo: ALICE_DESC });
+  });
+
+  it('★ the rival record at the same IRI is never what the dereference returns', async () => {
+    // The control that makes the case above a measurement: bee's record is readable, parses
+    // clean, and is signed by her own registered agent — it is simply on the wrong pod.
+    const { deps } = twoPods();
+    const bees = await readWorkspaceRecord(BEE_DESC, deps);
+    expect(bees.record).not.toBeNull();
+    expect(bees.problems).toEqual([]);
+    expect(bees.record!.convener).toBe(bee);
+    expect(bees.record!.workspace).toBe(NS_WS);
+    const evidence = await dereferenceWorkspaceRecord(NS_WS, deps);
+    expect(evidence.kind === 'declared' && evidence.record.head).not.toBe(BEE_DESC);
+  });
+
+  it('★ an IRI with no owner segment fails CLOSED rather than guessing a pod', async () => {
+    // Guessing an authority for an IRI that names none would be choosing whose record to
+    // believe, which is the whole of what this function exists not to do. `'unreadable'`
+    // refuses to confer, so the failure direction is the safe one.
+    const { deps, calls } = twoPods();
+    for (const bad of [WS, 'https://relay.test/ns/only-one-segment', 'urn:example:ws', '']) {
+      const evidence = await dereferenceWorkspaceRecord(bad, deps);
+      expect(evidence.kind, `<${bad}> was accepted as an /ns IRI`).toBe('unreadable');
+      if (evidence.kind === 'unreadable') expect(evidence.why).toMatch(/is not a <relay>\/ns\/<owner>\/<slug> IRI/);
+    }
+    // …and nothing was asked of the substrate, because there was no pod to ask.
+    expect(calls).toEqual([]);
+  });
+
+  it('★ a FORKED workspace chain refuses rather than picking a head', async () => {
+    // Two unresolved heads mean the workspace states two conveners. Picking either would make
+    // who-may-grant depend on which descriptor the supersedes walk reached first — the same
+    // rule the fold applies to a forked grant chain, one record earlier.
+    const { deps } = twoPods({ forked: true });
+    const evidence = await dereferenceWorkspaceRecord(NS_WS, deps);
+    expect(evidence.kind).toBe('unreadable');
+    if (evidence.kind === 'unreadable') {
+      expect(evidence.why).toMatch(/2 unresolved chain heads/);
+      expect(evidence.why).toMatch(/Republish a single clean head/);
+    }
+  });
+
+  it('a substrate error, an empty chain and a non-workspace document all refuse', async () => {
+    const failed = await dereferenceWorkspaceRecord(NS_WS, twoPods({ error: 'pod unreachable' }).deps);
+    expect(failed.kind).toBe('unreadable');
+    if (failed.kind === 'unreadable') expect(failed.why).toMatch(/failed: pod unreachable/);
+
+    const empty = await dereferenceWorkspaceRecord(NS_WS, twoPods({ noHead: true }).deps);
+    expect(empty.kind).toBe('unreadable');
+    if (empty.kind === 'unreadable') expect(empty.why).toMatch(/nothing is published at/);
+
+    // The head resolves and the document at it is a grant rather than a workspace.
+    const notAWorkspace = {
+      ...descriptorDeps({ [ALICE_DESC]: { content: GRANT_TTL } }),
+      currentHead: vi.fn(async () => ({ forked: false, head: { descriptorUrl: ALICE_DESC } })),
+    } as unknown as StreamDeps;
+    const wrongType = await dereferenceWorkspaceRecord(NS_WS, notAWorkspace);
+    expect(wrongType.kind).toBe('unreadable');
+    if (wrongType.kind === 'unreadable') expect(wrongType.why).toMatch(/declares no <.*wsp#Workspace>/);
+  });
+
+  it('★ a missing currentHead dependency refuses loudly instead of falling back', async () => {
+    // The same posture `getDescriptor` takes. Returning the record at a caller-chosen URL when
+    // the dereference dependency is absent would report a check that did not happen — which is
+    // residual gap 9 wearing the closed gap's report.
+    const noDep = descriptorDeps({ [ALICE_DESC]: { content: NS_WORKSPACE_TTL, signedBy: CONV_KEY } });
+    const evidence = await dereferenceWorkspaceRecord(NS_WS, noDep);
+    expect(evidence.kind).toBe('unreadable');
+    if (evidence.kind === 'unreadable') expect(evidence.why).toMatch(/no `currentHead` dependency/);
+  });
+
+  it('★ a currentHead that THROWS is a refusal, not an exception out of the authorization path', async () => {
+    const throws = {
+      ...descriptorDeps({}),
+      currentHead: vi.fn(async () => { throw new Error('socket hang up'); }),
+    } as unknown as StreamDeps;
+    const evidence = await dereferenceWorkspaceRecord(NS_WS, throws);
+    expect(evidence.kind).toBe('unreadable');
+    if (evidence.kind === 'unreadable') expect(evidence.why).toMatch(/threw: socket hang up/);
+  });
+
+  it('nsOwnerSegmentOf reads exactly the segment the deployed route reads, and nothing else', () => {
+    // A verbatim copy of a deployed derivation is only worth something if it stays verbatim.
+    // `resolveNsGraph` matches `/ns/<owner>/<slug>` and percent-decodes the owner; replacing
+    // the matcher with one that accepts anything was a surviving mutant.
+    expect(nsOwnerSegmentOf('https://relay.test/ns/u-eth-alice/wsp-alpha')).toBe('u-eth-alice');
+    expect(nsOwnerSegmentOf('http://relay.test/ns/a/b')).toBe('a');
+    expect(nsOwnerSegmentOf('https://relay.test/ns/u%2Deth/x')).toBe('u-eth');
+    // …and every shape that is NOT that route.
+    for (const bad of [
+      'https://relay.test/ns/a/b/c',   // three segments — /ns/pgsl/:kind/:hash is a different route
+      'https://relay.test/ns/a',       // one
+      'https://relay.test/nss/a/b',    // not /ns
+      'https://relay.test/a/b',        // no /ns at all
+      'urn:example:ws',
+      'ftp://relay.test/ns/a/b',
+    ]) expect(nsOwnerSegmentOf(bad), bad).toBeNull();
   });
 });

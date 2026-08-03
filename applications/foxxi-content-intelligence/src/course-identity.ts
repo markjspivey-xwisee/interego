@@ -47,7 +47,7 @@ export function courseIdOf(iri: string): string | null {
   if (typeof iri !== 'string') return null;
   if (iri.startsWith(LEGACY_COURSE_PREFIX)) return iri.slice(LEGACY_COURSE_PREFIX.length) || null;
   const m = /\/agent\/scorm\/course\/([^/?#]+)/.exec(iri);
-  if (m) { try { return decodeURIComponent(m[1]); } catch { return m[1]; } }
+  if (m?.[1]) { try { return decodeURIComponent(m[1]); } catch { return m[1]; } }
   return null;
 }
 

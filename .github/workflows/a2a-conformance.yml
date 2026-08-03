@@ -128,6 +128,42 @@ env:
 #    stopped being true. The measured figure is 51 passed / 7 failed / 177 skipped of
 #    235 collected. The counts published in docs/ns/a2a.ttl (51 / 7) are the right ones.
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# ★ AND WHICH 177 SKIP. BASELINE_COLLECTED pins the skip count by arithmetic and
+# nothing accounted for it, which is the condition the block above warns about one
+# line at a time: an unexplained gap invites someone to "close" it. Counted from the
+# junitreport.xml this job uploads (run 30772304950, artifact `a2a-tck-report`), by
+# the suite's own pytest.skip message:
+#
+#   104  a transport we do not serve. 42 + 15 jsonrpc, 27 + 15 grpc, plus 3 + 2 phrased
+#        differently by the older tests. The TCK collects the MUST tier for all three
+#        bindings and skips the ones the card does not offer; `--transport http_json`
+#        accounts for the 30 that say "(filtered by --transport)". NOT a gap: A2A
+#        requires an agent to serve at least one defined transport, not all three.
+#    64  an optional capability declared false. 30 pushNotifications, 28 streaming
+#        (16 + 12, the two phrasings), 6 extendedAgentCard (3 + 3 — the tag
+#        `agent-card` maps to the card key `extendedAgentCard` in the suite's
+#        _CAPABILITY_TAG_TO_CARD_KEY). NOT a gap, and the TCK says so itself: its
+#        backlog task-29 records "CARD-EXT-001/002 were correctly skipped (not a
+#        gap)" for a SUT that does not declare the capability. Declaring any of these
+#        true un-skips cases that must then PASS or this ratchet drops — see the
+#        streaming argument above; the same applies to push notifications.
+#     9  the fixture protocol, and only these 9. 7 are the task-state helpers already
+#        described above (4 COMPLETED + 3 INPUT_REQUIRED); 2 more want the card to
+#        declare `urn:a2a:tck:required-extension` — an extension URI owned by the
+#        suite — as required. Closable only by recognising the examiner.
+#
+#   104 + 64 + 9 = 177. If that stops adding up, the suite changed and the number
+#   above it is describing something else.
+#
+#   So the skip count is NOT a conformance gap hiding behind a fixture: 168 of the 177
+#   are the suite correctly declining to test bindings and capabilities this agent
+#   does not offer. The measured http_json slice is 14 passed / 6 failed / 30 skipped
+#   of 50 transport-tagged cases, plus 37 / 1 / 36 of the 74 that carry no transport
+#   suffix. Do not lower BASELINE_COLLECTED to "just the http_json ones": the total is
+#   what proves TCK_REF still points at the suite these baselines were measured on.
+# ─────────────────────────────────────────────────────────────────────────────
 
 jobs:
   tck:

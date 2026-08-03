@@ -134,7 +134,10 @@ function temporalStrategy(
   }
 
   // Final fallback to ontological
-  return factualStrategy(null as any, question, sessions);
+  // `factualStrategy` already declares its first parameter `PGSLInstance | null`, so the
+  // `null as any` here was noise — and noise that would have hidden the parameter later
+  // becoming a required instance.
+  return factualStrategy(null, question, sessions);
 }
 
 function factualStrategy(

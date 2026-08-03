@@ -24,7 +24,7 @@
  * BEHAVIOURAL — it calls diagnose() with both performer kinds and compares.
  */
 import { describe, it, expect } from 'vitest';
-import { diagnose } from '../src/performance-architecture.js';
+import { diagnose, recommendInterventions } from '../src/performance-architecture.js';
 import type { AgentTrajectory } from '../src/agent-trajectory.js';
 
 /** An Emergent-shaped run: 2 of 10 steps counterfactual (exploration 0.2 >= 0.12). */
@@ -95,13 +95,21 @@ describe('the regime read is not species-gated', () => {
     expect(d.domain).toBe('Knowable');
   });
 
+  // ★ This assertion used to read `d.plan?.interventions ?? []`. `Diagnosis` has no `plan`
+  // property and never had one — the plan is built by `recommendInterventions`, a separate
+  // call. So the optional chain was always `undefined`, `selected` was always `[]`, and
+  // `expect([]).not.toEqual(['instruction'])` passed without ever consulting the router. The
+  // one test in this file that checks WHERE Emergent work is routed was checking nothing, and
+  // vitest could not say so because it strips the types that would have.
   it('does not offer an instruction-only plan for Emergent work, for either performer', () => {
     for (const kind of ['human', 'agent'] as const) {
-      const d = diagnose({ situation: situationFor(kind), trajectories: emergentTrajectory('did:ethr:0x1') });
-      const selected = (d.plan?.interventions ?? [])
-        .filter((i: { selected?: boolean }) => i.selected)
-        .map((i: { type?: string }) => i.type);
+      const situation = situationFor(kind);
+      const d = diagnose({ situation, trajectories: emergentTrajectory('did:ethr:0x1') });
+      const plan = recommendInterventions({ diagnosis: d, situation });
+      const selected = plan.selected.map(o => o.type);
+      expect(selected.length, `${kind}: the router must actually select something`).toBeGreaterThan(0);
       expect(selected, `${kind}: Emergent work must not route to instruction alone`).not.toEqual(['instruction']);
+      expect(selected, `${kind}: Emergent work must not route to instruction at all`).not.toContain('instruction');
     }
   });
 });

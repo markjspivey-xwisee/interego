@@ -194,7 +194,10 @@ describe('Tier 8 — lrs-adapter production end-to-end', () => {
       const lrs = new LrsClient({ endpoint: LRSQL_ENDPOINT, auth: LRSQL_AUTH, preferredVersion: '2.0.0' });
       const stored = await lrs.getStatement(result.statementId!);
       expect(stored).not.toBeNull();
-      expect((stored as Record<string, { id?: string }>).verb.id).toBe('http://adlnet.gov/expapi/verbs/observed');
+      // Cast to the shape being read, not to `Record<string, …>` — an index signature makes
+      // every lookup optional, so `.verb` was `{ id?: string } | undefined` and the property
+      // access after it was unchecked.
+      expect((stored as { verb: { id?: string } }).verb.id).toBe('http://adlnet.gov/expapi/verbs/observed');
     } finally {
       await cleanup();
     }
@@ -284,7 +287,7 @@ describe('Tier 8 — lrs-adapter production end-to-end', () => {
       const lrs = new LrsClient({ endpoint: LRSQL_ENDPOINT, auth: LRSQL_AUTH, preferredVersion: '2.0.0' });
       const stored = await lrs.getStatement(result.statementId!);
       expect(stored).not.toBeNull();
-      const extensions = (stored as Record<string, { extensions: Record<string, unknown> }>).result.extensions;
+      const extensions = (stored as { result: { extensions: Record<string, unknown> } }).result.extensions;
       expect(extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives']).toEqual(narratives);
       expect(extensions['https://markjspivey-xwisee.github.io/interego/ns/iep#projectionLossy']).toBe(true);
     } finally {

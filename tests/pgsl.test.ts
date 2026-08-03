@@ -12,13 +12,8 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  ContextDescriptor,
-} from '@interego/core';
-import {
-  ancestorFragments,
   constituents,
   countUniquePGSL,
-  descendantNodes,
   fiber,
   isSubFragment,
   maxLevel,

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   addMessage,
   addRule,
@@ -42,7 +42,6 @@ import type {
   // annotation contradicted both the literal above it and the call below it — 19 of the
   // typecheck gate's pinned errors were this single wrong import path.
   PolicyContext,
-  PolicyRule,
   ProvTrace,
 } from '@interego/pgsl';
 import type {
@@ -655,6 +654,10 @@ describe('Personal Broker', () => {
     const conv1 = startConversation(broker, ['agent:bob'], 'Topic A');
     const conv2 = startConversation(broker, ['agent:carol'], 'Topic B');
     expect(broker.conversations.length).toBe(2);
+    // Tie the returned handles to the slots: without this, `conv1` is created only for its
+    // side effect and the ordering assertions below hold on topic strings alone.
+    expect(broker.conversations[0]!.id).toBe(conv1.id);
+    expect(broker.conversations[1]!.id).toBe(conv2.id);
     expect(broker.conversations[0]!.topic).toBe('Topic A');
     expect(broker.conversations[1]!.topic).toBe('Topic B');
     // Messages go to correct conversation

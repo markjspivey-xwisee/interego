@@ -43,6 +43,16 @@ const ACME_DID  = 'did:web:acme-training.example' as IRI;
 const JANE_DID  = 'did:web:jane.example' as IRI;
 const HR_ISSUER = 'did:web:hr.acme.example' as IRI;
 
+// `createPGSL` requires a NodeProvenance — it is the `defaultProvenance` every minted node
+// falls back to. The call below used to pass nothing, which left `defaultProvenance` undefined
+// on the instance; the atom assertions here only read the content-addressed IRI, so they never
+// noticed, but any lattice operation that reads `pgsl.defaultProvenance.wasAttributedTo` would
+// have thrown on a fixture built this way.
+const PGSL_PROV = {
+  wasAttributedTo: 'did:web:lpc-test.example' as IRI,
+  generatedAtTime: '2026-01-01T00:00:00.000Z',
+};
+
 // ── Builders ─────────────────────────────────────────────────────────
 
 function buildCredential() {
@@ -80,7 +90,7 @@ function buildPerformanceRecord() {
     .temporal({ validFrom: '2026-04-20T16:00:00Z' })
     .asserted(0.95)
     .agent(JANE_DID)                                                  // ASSERTED BY MANAGER
-    .provenance({ wasAttributedTo: [JANE_DID] })                      // attributed to Jane
+    .provenance({ wasAttributedTo: JANE_DID })                        // attributed to Jane
     .trust({ issuer: HR_ISSUER, trustLevel: 'ThirdPartyAttested' })
     .build();
 }
@@ -121,9 +131,12 @@ describe('learner-performer-companion — descriptor shape', () => {
 
   it('performance record provenance attributes to MANAGER (not user)', () => {
     const rec = buildPerformanceRecord();
+    // `ProvenanceFacetData.wasAttributedTo` is a single IRI, not a list. The builder above was
+    // handing it `[JANE_DID]` and this read it back as an array — and `.toContain` on the
+    // resulting string still passes on any substring, so neither half of the mismatch showed up.
     const prov = rec.facets.find(f => f.type === 'Provenance') as
-      { wasAttributedTo?: readonly IRI[] };
-    expect(prov?.wasAttributedTo).toContain(JANE_DID);
+      { wasAttributedTo?: IRI };
+    expect(prov?.wasAttributedTo).toBe(JANE_DID);
 
     // The trust facet should point at the HR issuer (not at Mark)
     const trust = rec.facets.find(f => f.type === 'Trust') as { issuer?: IRI };
@@ -137,7 +150,7 @@ describe('learner-performer-companion — descriptor shape', () => {
     expect(validate(content).conforms).toBe(true);
 
     const passage = 'When a customer makes second contact, acknowledge their frustration first.';
-    const pgsl = createPGSL();
+    const pgsl = createPGSL(PGSL_PROV);
     const atomIri1 = mintAtom(pgsl, passage);
     const atomIri2 = mintAtom(pgsl, passage);
 

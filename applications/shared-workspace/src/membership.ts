@@ -119,12 +119,14 @@ export const WSP_TERMS = {
    * `acceptance-no-member`, `acceptance-two-members` and `acceptance-urn-member` in
    * `tools/shacl-agreement/fixtures/`, where both engines must agree.
    *
-   * ★ AND THE ASYMMETRY NOW RUNS BOTH WAYS ON THIS ONE FIELD. {@link oneIri} checks only that
-   * the term is an IRI; it applies no scheme pattern. So a `urn:` member is refused by the
-   * published SHAPE and admitted by this READER — the opposite direction from every other
-   * field, where the reader is the stricter of the two. Not a hole, because the publish gate
-   * validates first and refuses it there, but the general sentence "a reader refuses more
-   * than the shape does" is false here and is not repeated as though it held.
+   * ★ AND THE ASYMMETRY THAT USED TO RUN BOTH WAYS IS CLOSED — ON THIS FIELD AND ON SIX MORE.
+   * What stood here said `oneIri` applied no scheme pattern, so a `urn:` member was refused by
+   * the published SHAPE and admitted by this READER, and called it the one field where the
+   * shape is the stricter of the two. Measured rather than re-read, it was never one field:
+   * the shape patterns `wsp:convener`, `wsp:roleProfile`, `wsp:workspace`, `wsp:grantedTo`,
+   * `wsp:role` and `wsp:accepts` too, and the reader admitted `urn:` on all of them. See
+   * {@link PUBLISHED_IRI_PATTERN}, which is now consulted for every term `oneIri` reads and
+   * is compared against the published file by a test.
    */
   member: `${WSP}member`,
   accepts: `${WSP}accepts`,
@@ -497,7 +499,13 @@ export interface MembershipRead<T> {
  * from WHICH record" are different claims and only the pair is worth anything. See
  * `refuseFieldBinding` in roster.ts for what the fold does with it.
  */
-export type { FieldProvenance, WorkspaceRecord, ConvenerEvidence } from './roster.js';
+export type {
+  FieldProvenance, WorkspaceRecord, ConvenerEvidence,
+  // Produced here by `dereferenceWorkspaceRecord` and by nothing else, for the reason
+  // `FieldProvenance` is produced here and by nothing else: it is a statement about an act of
+  // reading, and only the thing that did the reading can make it honestly.
+  EvidenceProvenance,
+} from './roster.js';
 
 const problem = (s: string): string => s;
 
@@ -535,7 +543,60 @@ function termsOf(subject: ParsedSubject, predicate: string): readonly ParsedTerm
  * written through a publish path that ran the gate, and a reader that assumed every record
  * it meets came through its own front door would be assuming away the attack.
  */
-function oneIri(subject: ParsedSubject, predicate: string, label: string): { iri: string } | { why: string } {
+/** Every predicate {@link oneIri} is asked for — the IRI-valued half of {@link WSP_TERMS}. */
+type IriValuedTerm =
+  | typeof WSP_TERMS.convener | typeof WSP_TERMS.roleProfile | typeof WSP_TERMS.workspace
+  | typeof WSP_TERMS.grantedTo | typeof WSP_TERMS.role | typeof WSP_TERMS.member
+  | typeof WSP_TERMS.accepts | typeof WSP_TERMS.stream;
+
+/**
+ * The `sh:pattern` the PUBLISHED shape puts on each of these predicates, copied verbatim.
+ *
+ * ★ WHY THIS TABLE EXISTS: THE READER AND THE CONTRACT DISAGREED, ON SEVEN FIELDS.
+ *
+ * The recorded defect was one field — "a `urn:` member passes `oneIri` where
+ * `wspsh:MembershipAcceptanceShape` refuses it" — and it was filed low because the publish
+ * gate validates first, so no such record reaches a pod through our own front door. Measured
+ * before this table was written, against the readers rather than against the sentence, it was
+ * never one field: `wsp-shapes.ttl` puts a scheme pattern on `wsp:convener`, `wsp:roleProfile`,
+ * `wsp:workspace`, `wsp:grantedTo`, `wsp:role`, `wsp:member` AND `wsp:accepts`, and `oneIri`
+ * applied none of them. A grant naming `<urn:example:ws>`, `<urn:example:who>` and
+ * `<urn:example:role>` parsed clean with no problems at all, and so did a workspace record
+ * declaring `<urn:example:conv>` and `<urn:example:roles>`. The row that said "this one field"
+ * understated its own scope sevenfold — which is the same staleness the README's own ledger
+ * keeps apologising for, in the ledger.
+ *
+ * ★ AND WHY IT IS A TABLE AND NOT ONE PATTERN. A single reader-wide rule would reintroduce the
+ * disagreement pointing the other way: `wsp:role`, `wsp:accepts`, `wsp:workspace` and
+ * `wsp:roleProfile` are `^https?://` only, so admitting `did:` on them would be looser than
+ * the contract, and `wsp:stream` carries NO pattern at all, so refusing anything on it would
+ * be stricter than the contract. Both directions are the same defect. The values are the
+ * shape's own strings so the comparison is exact, and `tests/workspace-membership.test.ts`
+ * parses `docs/applications/shared-workspace/wsp-shapes.ttl` and asserts this table equals what
+ * is published — the drift is a test failure rather than a paragraph nobody re-checks.
+ *
+ * `null` means the published shape constrains the scheme of this term and nothing else. It is
+ * written out rather than omitted so that "the contract says nothing here" and "somebody
+ * forgot this term" are different states; the type makes the second a compile error.
+ */
+const PUBLISHED_IRI_PATTERN: Record<IriValuedTerm, string | null> = {
+  [WSP_TERMS.convener]: '^https?://|^did:',
+  [WSP_TERMS.roleProfile]: '^https?://',
+  [WSP_TERMS.workspace]: '^https?://',
+  [WSP_TERMS.grantedTo]: '^https?://|^did:',
+  [WSP_TERMS.role]: '^https?://',
+  [WSP_TERMS.member]: '^https?://|^did:',
+  [WSP_TERMS.accepts]: '^https?://',
+  // No `sh:pattern` on `wsp:stream` in the published shape. A stream is named by whatever the
+  // member's pod serves it at, and the shape deliberately does not narrow it — so neither does
+  // this reader.
+  [WSP_TERMS.stream]: null,
+};
+
+/** Exported for the drift test only; see {@link PUBLISHED_IRI_PATTERN}. */
+export const WSP_PUBLISHED_IRI_PATTERNS: Readonly<Record<string, string | null>> = PUBLISHED_IRI_PATTERN;
+
+function oneIri(subject: ParsedSubject, predicate: IriValuedTerm, label: string): { iri: string } | { why: string } {
   const terms = termsOf(subject, predicate);
   const iris = terms.filter((t): t is Extract<ParsedTerm, { kind: 'iri' }> => t.kind === 'iri');
   if (terms.length === 0) return { why: problem(`it carries no <${predicate}>, so it does not state ${label}`) };
@@ -549,7 +610,23 @@ function oneIri(subject: ParsedSubject, predicate: string, label: string): { iri
   if (iris.length !== 1) {
     return { why: problem(`its <${predicate}> is not an IRI, so ${label} is not dereferenceable`) };
   }
-  return { iri: iris[0]!.iri };
+  const iri = iris[0]!.iri;
+  const pattern = PUBLISHED_IRI_PATTERN[predicate];
+  // `new RegExp(p).test(v)` and not an anchored match, because that is SHACL's own semantics
+  // for `sh:pattern`: the constraint holds where the regex finds a match anywhere in the
+  // lexical form. The published patterns anchor themselves with `^` on each alternative, so
+  // the effect is a prefix test — but re-anchoring here would make this reader refuse a value
+  // the gate admits, which is the disagreement one direction over.
+  if (pattern !== null && !new RegExp(pattern).test(iri)) {
+    return { why: problem(
+      `its <${predicate}> is <${iri}>, which the published shape refuses (sh:pattern `
+      + `"${pattern}"), so ${label} is not stated in a form anyone else can resolve. The gate `
+      + 'refuses this at publish; a reader that admitted it would be checking less than the '
+      + 'contract we publish, and a record read from a pod we do not control never passed that '
+      + 'gate',
+    ) };
+  }
+  return { iri };
 }
 
 /**
@@ -811,6 +888,126 @@ export function convenerEvidenceOf(read: MembershipRead<WorkspaceRecord>): Conve
 }
 
 /**
+ * The `/ns/<owner>/<slug>` owner segment of a workspace IRI, or null if it has none.
+ *
+ * ★ A VERBATIM COPY OF THE DEPLOYED ROUTE'S OWN DERIVATION, and it is here rather than in
+ * `roster.ts` for the same reason {@link PUBLISHED_IRI_PATTERN} is here: this file is the one
+ * that talks to the substrate, and the fold is pure. `resolveNsGraph`
+ * (`deploy/mcp-relay/server.ts:11653-11657`) matches the same two segments and builds
+ * `podUrl = CSS_URL + owner + '/'`, and `handleResolveLinkedData` parses an IRI with
+ * `/\/ns\/([^/]+)\/([^/?#]+)/`. That is the whole reason a workspace IRI names an authority:
+ * the owner segment IS a pod segment, and the substrate refuses everyone but its holder a
+ * write there.
+ *
+ * Null for any other IRI shape, and the caller fails closed on it — see
+ * {@link dereferenceWorkspaceRecord}. Guessing a pod for an IRI whose authority we cannot read
+ * would be the substitution this whole layer exists to stop making.
+ */
+export function nsOwnerSegmentOf(workspaceIri: string): string | null {
+  const m = /^https?:\/\/[^/]+\/ns\/([^/?#]+)\/([^/?#]+)$/.exec(workspaceIri);
+  if (m === null) return null;
+  try { return decodeURIComponent(m[1]!); } catch { return m[1]!; }
+}
+
+/**
+ * Obtain the workspace record by DEREFERENCING the workspace, and say so.
+ *
+ * ★★ THE PRODUCER RESIDUAL GAP 9 NEEDED, and it is `membership.ts`'s job for the third time.
+ * `readWorkspaceRecord` above is handed a descriptor URL and reads it; it does not and cannot
+ * say the URL is the one the workspace answers with. Measured live: bee published a
+ * `wsp:Workspace` for alice's workspace IRI on her own pod, and a fold handed it reported
+ * `convenerBinding: 'bound'` and admitted her. Every check the fold had passes on that record,
+ * because its subject is a triple bee wrote.
+ *
+ * What this does instead is ask the workspace. `<relay>/ns/<owner>/<slug>` resolves against the
+ * pod its owner segment names and no other, so `get_current_head{urn: <workspace>, pod_name:
+ * <owner>}` returns whatever THAT pod publishes at that IRI — alice's record, and nothing bee
+ * writes can become it (`403 scope_violation`, measured both ways). The returned
+ * {@link ConvenerEvidence} carries the resulting {@link EvidenceProvenance}, and
+ * `refuseEvidenceProvenance` in `roster.ts` refuses evidence without one.
+ *
+ * ★ IT RETURNS THE EVIDENCE, NOT THE RECORD PLUS A CLAIM, and that shape is the point — the
+ * same point `convenerEvidenceOf` makes one function up. A signature returning
+ * `{record, provenance}` separately invites a caller to attach this provenance to a record it
+ * obtained some other way, which is the forgery with an extra step. There is no honest way to
+ * build the pair except by having done the dereference, so the pair is only ever built here.
+ *
+ * ★ AND EVERY FAILING BRANCH IS `'unreadable'`, WHICH REFUSES. A workspace IRI with no owner
+ * segment, a missing dependency, a substrate error, a forked chain and an absent head all mean
+ * the same thing to the fold: this policy asked what `<workspace>` dereferences to and did not
+ * get an answer. Asking and getting silence is not the same as not asking.
+ */
+export async function dereferenceWorkspaceRecord(
+  workspaceIri: string,
+  deps: StreamDeps,
+): Promise<ConvenerEvidence> {
+  const unreadable = (why: string): ConvenerEvidence => ({ kind: 'unreadable', why });
+  const owner = nsOwnerSegmentOf(workspaceIri);
+  if (owner === null) {
+    return unreadable(
+      `<${workspaceIri}> is not a <relay>/ns/<owner>/<slug> IRI, so this reader cannot tell `
+      + 'which pod has authority over it. The owner segment is what makes a workspace IRI name '
+      + 'an authority — it selects the pod the relay resolves the IRI against — and guessing '
+      + 'one for an IRI that carries none would be choosing whose record to believe, which is '
+      + 'the whole of what this function exists not to do',
+    );
+  }
+  if (deps.currentHead === undefined) {
+    return unreadable(
+      'no `currentHead` dependency was supplied, so nothing dereferenced the workspace. '
+      + 'Returning the record at a caller-chosen URL instead would be reporting a check that '
+      + 'did not happen — see `StreamDeps.currentHead`',
+    );
+  }
+  let res: Record<string, unknown>;
+  try {
+    res = await deps.currentHead({ urn: workspaceIri, pod_name: owner });
+  } catch (e) {
+    return unreadable(`get_current_head on <${workspaceIri}> threw: ${(e as Error).message}`);
+  }
+  if (res.error !== undefined) {
+    return unreadable(
+      `get_current_head on <${workspaceIri}> at pod '${owner}' failed: `
+      + String(res.message ?? res.error),
+    );
+  }
+  if (res.forked === true) {
+    // The same rule the fold applies to a forked grant chain, one record earlier: under
+    // disagreement the weaker reading is the only safe one, and here there is no weaker
+    // reading — two unresolved heads mean the workspace states two conveners and picking
+    // either would let whichever descriptor sorted first decide who may grant.
+    const heads = Array.isArray(res.heads) ? res.heads.length : 2;
+    return unreadable(
+      `<${workspaceIri}> has ${heads} unresolved chain heads on pod '${owner}', so it does not `
+      + 'state who convenes it — it states several, and choosing one would make the answer '
+      + 'depend on which descriptor the walk reached first. Republish a single clean head',
+    );
+  }
+  const head = res.head as { descriptorUrl?: unknown } | undefined | null;
+  const descriptorUrl = typeof head?.descriptorUrl === 'string' ? head.descriptorUrl : '';
+  if (descriptorUrl === '') {
+    return unreadable(
+      `nothing is published at <${workspaceIri}> on pod '${owner}' — the IRI resolves to no `
+      + 'workspace record, so the workspace has not declared who convenes it',
+    );
+  }
+  const read = await readWorkspaceRecord(descriptorUrl, deps);
+  if (read.record === null) {
+    return unreadable(
+      read.problems.length > 0
+        ? read.problems.join('; ')
+        : `<${workspaceIri}> resolved to <${descriptorUrl}> and the read produced no workspace `
+          + 'record and no reason, which is itself a reason not to confer anything',
+    );
+  }
+  return {
+    kind: 'declared',
+    record: read.record,
+    provenance: { dereferenced: workspaceIri, resolvedTo: descriptorUrl },
+  };
+}
+
+/**
  * Read a `wsp:MembershipGrant` back off a pod and parse its fields from the payload.
  *
  * ONE `get_descriptor`. The returned `Grant` carries `head` = the descriptor URL it was read
@@ -910,10 +1107,11 @@ export async function readGrantRecord(
  *     still a value the CALLER types and a stranger who signs a grant is refused only because
  *     the caller named someone else as convener. With it, the policy's convener must be the
  *     one <w>'s own record declares, in bytes that record's signer signed.
- *   — that a `urn:` member would be refused. The published shape constrains `wsp:member` to
- *     `^https?://|^did:`; {@link oneIri} checks only that the term is an IRI, so on this one
- *     field the SHAPE is the stricter of the two and the publish gate is what refuses. See
- *     {@link WSP_TERMS.member}.
+ *   — that the role profile the fold computed capabilities from is the one <w> declares,
+ *     unless the caller passed the same `workspaceEvidence`. `refuseRoleProfileAuthority`
+ *     compares the declared `wsp:roleProfile` against `RoleProfile.profile` — an IRI against
+ *     an IRI. Neither this reader nor the fold fetches the profile DOCUMENT, so the role table
+ *     itself remains the caller's; see `Roster.roleProfileBinding`.
  *   — anything about a record whose `contentBinding` is not `'bound'`. Fields parsed from
  *     bytes nobody re-digested are fields that may have been changed after signing, which
  *     is why `requireFieldBinding` forces `requireContentBinding` on in the fold rather

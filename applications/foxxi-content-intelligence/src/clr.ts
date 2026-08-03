@@ -253,9 +253,9 @@ async function fetchCredential(entry: ManifestEntry, config: FetchClrConfig): Pr
 
 function extractDistributionTarget(descTurtle: string): string | null {
   const m = descTurtle.match(/hydra:target\s+<([^>]+)>/);
-  if (m) return m[1];
+  if (m?.[1]) return m[1];
   const m2 = descTurtle.match(/dcat:accessURL\s+<([^>]+)>/);
-  return m2 ? m2[1] : null;
+  return m2?.[1] ?? null;
 }
 
 function extractCredentialJson(trig: string): VerifiableCredentialJson {
@@ -263,7 +263,7 @@ function extractCredentialJson(trig: string): VerifiableCredentialJson {
   // credential graph parses regardless of which foxxi namespace base it
   // was published under (current bridge-served base + any legacy base).
   const m = trig.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
-  if (!m) {
+  if (!m?.[1]) {
     throw new Error('graph has no fxs:bundleJson literal');
   }
   const b64 = m[1].replace(/\s+/g, '');
@@ -291,8 +291,8 @@ function canonicalAgentId(id: string | undefined): string {
   const s = String(id ?? '').trim().toLowerCase();
   if (!s) return '';
   const didWeb = s.match(/:agents:([a-z0-9._-]+)$/);
-  if (didWeb) return didWeb[1];
+  if (didWeb?.[1]) return didWeb[1];
   const urlPath = s.match(/\/agents\/([a-z0-9._-]+)(?:[/#?]|$)/);
-  if (urlPath) return urlPath[1];
+  if (urlPath?.[1]) return urlPath[1];
   return s;
 }

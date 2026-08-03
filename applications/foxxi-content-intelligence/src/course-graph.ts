@@ -81,7 +81,7 @@ export function agentScormToAgenticCourse(course: AgentScormCourseLike, opts: { 
 /** Pull every <file href="..."> out of the manifest (the resource file list). */
 export function extractFileHrefs(manifestXml: string): string[] {
   const out: string[] = [];
-  for (const m of manifestXml.matchAll(/<file\s+href="([^"]+)"/gi)) out.push(m[1]);
+  for (const m of manifestXml.matchAll(/<file\s+href="([^"]+)"/gi)) if (m[1]) out.push(m[1]);
   return out;
 }
 
@@ -133,8 +133,8 @@ export function manifestToAgenticCourse(args: ManifestToCourseArgs): ManifestCou
   // Topics = first path segment of each content file (folder), excluding non-content folders.
   const topicOf = (path: string): string | null => {
     const parts = path.split('/');
-    if (parts.length < 2) return null;
-    const top = parts[0];
+    const top = parts.length < 2 ? undefined : parts[0];
+    if (top === undefined) return null;
     if (/^(shared|common|lib|js|css|assets|images?|img|fonts?|meta)$/i.test(top)) return null;
     return top;
   };
@@ -192,7 +192,8 @@ export function manifestToAgenticCourse(args: ManifestToCourseArgs): ManifestCou
       if (hasPre && a.parent) {
         const sib = a.parent.children;
         const idx = sib.indexOf(a);
-        if (idx > 0) prereq_edges.push({ from: slug(sib[idx - 1].title || sib[idx - 1].id), to: slug(a.title || a.id), confidence: 0.5 });
+        const prev = idx > 0 ? sib[idx - 1] : undefined;
+        if (prev) prereq_edges.push({ from: slug(prev.title || prev.id), to: slug(a.title || a.id), confidence: 0.5 });
       }
     }
   }

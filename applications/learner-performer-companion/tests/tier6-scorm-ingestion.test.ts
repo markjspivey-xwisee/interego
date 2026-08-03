@@ -38,6 +38,16 @@ import {
   createPGSL,
   mintAtom,
 } from '@interego/pgsl';
+import type { IRI } from '@interego/core';
+
+// `createPGSL` requires a NodeProvenance — the `defaultProvenance` every minted node falls back
+// to. The three calls below used to pass nothing, leaving it undefined on the instance. The
+// atom assertions only read the content-addressed IRI so they never noticed, but any lattice
+// operation reading `pgsl.defaultProvenance.wasAttributedTo` would throw on such a fixture.
+const PGSL_PROV = {
+  wasAttributedTo: 'did:web:lpc-test.example' as IRI,
+  generatedAtTime: '2026-01-01T00:00:00.000Z',
+};
 
 // ── Real SCORM 1.2-flavored HTML lesson content ──────────────────────
 //
@@ -145,7 +155,7 @@ describe('Tier 6 — SCORM/cmi5 content ingestion pipeline', () => {
     const extraction = await extract(SCORM_LESSON_HTML, { filename: 'lesson4.html' });
     const passage = extraction.text;
 
-    const pgsl = createPGSL();
+    const pgsl = createPGSL(PGSL_PROV);
     const atomIri1 = mintAtom(pgsl, passage);
     const atomIri2 = mintAtom(pgsl, passage);
 
@@ -162,7 +172,7 @@ describe('Tier 6 — SCORM/cmi5 content ingestion pipeline', () => {
     const corrected = 'When the customer makes second contact, acknowledge their frustration first.';
     expect(original).not.toBe(corrected);
 
-    const pgsl = createPGSL();
+    const pgsl = createPGSL(PGSL_PROV);
     const iri1 = mintAtom(pgsl, original);
     const iri2 = mintAtom(pgsl, corrected);
 
@@ -192,7 +202,7 @@ describe('Tier 6 — SCORM/cmi5 content ingestion pipeline', () => {
     //   3. Assistant gets a query, retrieves the atom by content hash,
     //      cites the passage by IRI
     //   4. Later, same query is asked again → must produce same citation
-    const pgsl = createPGSL();
+    const pgsl = createPGSL(PGSL_PROV);
 
     const ingestion1 = await extract(SCORM_LESSON_HTML);
     const atom1 = mintAtom(pgsl, ingestion1.text);

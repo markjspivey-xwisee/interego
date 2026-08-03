@@ -50,7 +50,13 @@ jobs:
 
       - name: Install isolated accessor deps (@solid/community-server + tsx)
         working-directory: integrations/pgsl-css-accessor
-        run: npm install
+        # `npm ci` so this job exercises the dependency tree the image ships. Under
+        # `npm install` the caret ranges re-resolved per run, so a green result here
+        # described whatever npm happened to pick that morning, not the deployable —
+        # and a break introduced by a transitive upgrade would land as a mystery
+        # failure on an unrelated push. Kept in step with the Dockerfile's `npm ci`
+        # and with pgsl-css-server.yml.
+        run: npm ci
 
       - name: Run the PgslDataAccessor integration against real FoundationDB
         working-directory: integrations/pgsl-css-accessor

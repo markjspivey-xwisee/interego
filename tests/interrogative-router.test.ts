@@ -117,57 +117,74 @@ describe('projection (derefBnode recovers nested substance)', () => {
   };
   const answer = (t: InterrogativeType) => route([t]).answers[0]!;
 
+  /**
+   * Read a dotted path out of an answer's `values` bag (array indices are just path segments,
+   * e.g. `authorizations.0.agent`).
+   *
+   * `values` is declared `Record<string, unknown> | undefined`, and every assertion below used
+   * to drill into it through a cast to `any`. That switched off checking for the
+   * WHOLE expression, not just the one unknown property — including the `values` being
+   * `undefined`, which is exactly the case `status: 'full'` is supposed to rule out and which
+   * would surface as a TypeError rather than a readable assertion failure. Returning `unknown`
+   * keeps every `expect(...)` matcher usable while nothing downstream gets an `any`.
+   */
+  const valueAt = (a: { values?: Record<string, unknown> }, path: string): unknown =>
+    path.split('.').reduce<unknown>(
+      (acc, key) => (acc == null ? undefined : (acc as Record<string, unknown>)[key]),
+      a.values,
+    );
+
   it('Who: recovers the asserting agent IDENTITY from the nested bnode (full)', () => {
     const a = answer('Who');
     expect(a.status).toBe('full');
-    expect((a.values as any).assertingAgent.identity).toBe('did:ethr:0xabc');
-    expect((a.values as any).assertingAgent.label).toBe('Agent Smith');
-    expect((a.values as any).onBehalfOf).toBe('did:web:owner');
+    expect(valueAt(a, 'assertingAgent.identity')).toBe('did:ethr:0xabc');
+    expect(valueAt(a, 'assertingAgent.label')).toBe('Agent Smith');
+    expect(valueAt(a, 'onBehalfOf')).toBe('did:web:owner');
   });
   it('Whose: recovers acl:agent + acl:mode from the nested authorization bnode', () => {
     const a = answer('Whose');
     expect(a.status).toBe('full');
-    expect((a.values as any).authorizations[0].agent).toBe('did:web:owner');
-    expect((a.values as any).authorizations[0].mode).toEqual(expect.arrayContaining([
+    expect(valueAt(a, 'authorizations.0.agent')).toBe('did:web:owner');
+    expect(valueAt(a, 'authorizations.0.mode')).toEqual(expect.arrayContaining([
       'http://www.w3.org/ns/auth/acl#Read', 'http://www.w3.org/ns/auth/acl#Write',
     ]));
   });
   it('When: flat temporal facet (full)', () => {
     const a = answer('When');
     expect(a.status).toBe('full');
-    expect((a.values as any).validFrom).toContain('2026-01-01');
+    expect(valueAt(a, 'validFrom')).toContain('2026-01-01');
   });
   it('Where: flat federation + nested distribution (full)', () => {
     const a = answer('Where');
     expect(a.status).toBe('full');
-    expect((a.values as any).origin).toBe('https://pod.example/');
-    expect((a.values as any).distribution.accessURL).toBe('https://pod.example/g.ttl');
+    expect(valueAt(a, 'origin')).toBe('https://pod.example/');
+    expect(valueAt(a, 'distribution.accessURL')).toBe('https://pod.example/g.ttl');
   });
   it('WhatKind: semiotic facet (full)', () => {
     const a = answer('WhatKind');
     expect(a.status).toBe('full');
-    expect((a.values as any).modalStatus).toContain('Asserted');
-    expect((a.values as any).epistemicConfidence).toBe(0.9);
+    expect(valueAt(a, 'modalStatus')).toContain('Asserted');
+    expect(valueAt(a, 'epistemicConfidence')).toBe(0.9);
   });
   it('Why: causal provenance from nested activity (partial, shares facet with How)', () => {
     const a = answer('Why');
     expect(a.status).toBe('partial');
     expect(a.sharesFacetWith).toContain('How');
-    expect((a.values as any).activity.agent).toBe('did:ethr:0xabc');
+    expect(valueAt(a, 'activity.agent')).toBe('did:ethr:0xabc');
     expect(a.nextStep?.tool).toBe('pgsl_decide');
   });
   it('How: production method, shares the same provenance facet as Why', () => {
     const a = answer('How');
     expect(a.status).toBe('partial');
     expect(a.sharesFacetWith).toContain('Why');
-    expect((a.values as any).productionActivity.agent).toBe('did:ethr:0xabc');
+    expect(valueAt(a, 'productionActivity.agent')).toBe('did:ethr:0xabc');
   });
   it('Whether: certainty from Trust/Semiotic + substrate authorship; permission -> pointer', () => {
     const r = routeInterrogatives({ turtle: FIXTURE, interrogatives: ['Whether'], target: 'urn:desc:1', authorship: { effectiveTrustLevel: 'CryptographicallyVerified', authorshipVerified: true } });
     if (!r.ok) throw new Error(r.error);
     const a = r.answers[0]!;
     expect(a.status).toBe('partial');
-    expect((a.values as any).effectiveTrustLevel).toBe('CryptographicallyVerified');
+    expect(valueAt(a, 'effectiveTrustLevel')).toBe('CryptographicallyVerified');
     expect(a.nextStep?.tool).toBe('pgsl_decide');
   });
   it('What: pointer to the substrate (iep:describes), not a descriptor facet', () => {
@@ -175,7 +192,7 @@ describe('projection (derefBnode recovers nested substance)', () => {
     expect(a.status).toBe('pointer');
     expect(a.nextStep?.tool).toBe('pgsl_resolve');
     expect(a.nextStep?.target).toBe('urn:graph:thing:42');
-    expect((a.values as any).describes).toEqual(['urn:graph:thing:42']);
+    expect(valueAt(a, 'describes')).toEqual(['urn:graph:thing:42']);
   });
   it('Which: pointer to the decision functor', () => {
     expect(answer('Which').status).toBe('pointer');
@@ -205,8 +222,8 @@ describe('gating + routing', () => {
     const r = routeInterrogatives({ turtle: FIXTURE, question: 'who made this and why', target: 'urn:desc:1' });
     if (!r.ok) throw new Error(r.error);
     expect(r.classification.method).toBe('lexical');
-    expect((r.act as any)['@type']).toBe('ie:Act');
-    expect((r.response as any)['@type']).toBe('ie:Response');
+    expect((r.act as Record<string, unknown>)['@type']).toBe('ie:Act');
+    expect((r.response as Record<string, unknown>)['@type']).toBe('ie:Response');
     expect(r.caveats.join(' ')).toContain('ProvenanceFacet');
   });
   it('not-parseable turtle -> structured error, never a throw', () => {

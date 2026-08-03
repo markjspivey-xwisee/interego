@@ -98,7 +98,7 @@ describe('fingerprintAuthoringTool — real per-tool file-tree signatures', () =
     const fileList = ['story.html', 'story_content/x.js', 'html5/data/js/data.js'];
     const r = fingerprintAuthoringTool({ fileList });
     expect(r.candidates.length).toBeGreaterThanOrEqual(1);
-    expect(r.candidates[0].toolId).toBe('articulate-storyline');
+    expect(r.candidates[0]?.toolId).toBe('articulate-storyline');
     expect(r.signals.length).toBeGreaterThan(0);
     expect(r.signals.every(s => typeof s.weight === 'number')).toBe(true);
   });

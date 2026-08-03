@@ -24,7 +24,16 @@ COPY integrations/pgsl-css-accessor ./integrations/pgsl-css-accessor
 RUN echo '{"name":"pgsl-deploy-root","private":true}' > package.json \
  && npm install --no-save pg@8
 WORKDIR /app/integrations/pgsl-css-accessor
-RUN npm install \
+# `npm ci`, not `npm install`: every dependency here is a caret range over a
+# 757-package tree (CSS 7 pulls the whole Comunica stack), so a bare install
+# re-resolved them on every build and two images built from the SAME commit sha
+# could contain different code. That defeats the point of tagging the image with
+# the sha at all — `interego-css-pgsl:<sha>` named a build, not a reconstructable
+# one. `npm ci` also FAILS on package.json/lock drift where install would quietly
+# rewrite the lock inside the image and carry on.
+# No COPY needed: `COPY integrations/pgsl-css-accessor` above brings the whole
+# directory, package-lock.json included.
+RUN npm ci \
  && npm run build \
  # build-time-only deps must NOT survive into runtime: componentsjs-generator
  # brings a newer @comunica/componentsjs that collides with CSS's at load time.

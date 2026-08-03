@@ -62,34 +62,70 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TARGETS = ['packages', 'tests'];
 
 /**
- * Files that had errors the day the config was recovered, with the exact count each
- * produced. Nothing here is new code; every entry predates the config existing at all.
+ * The remaining debt: 155 errors in 30 files, down from 222 in 47.
  *
- * 169 of the 222 are `@typescript-eslint/no-explicit-any` and 49 are unused imports and
- * bindings in tests — hygiene, not defects, and pinned rather than mass-edited across 47
- * files in a change that is about making the signal work. The genuine finds were fixed
- * instead of pinned: a no-op expression statement standing in for a mock repair in
- * `tests/connectors.test.ts`, a load-bearing `console.warn` in `packages/core/src/crypto/
- * ipfs.ts` that now says why it is exempt, five redundant character-class escapes, five stale
- * `eslint-disable` directives, and a `let s` that is never reassigned in `mdvault/src/paths.ts`.
+ * Nothing here is new code; every entry predates the config existing at all.
  *
- * Three of those five directives name a rule this config does not enable (`no-unnecessary-
- * condition` twice in `core/src/http/fetch.ts`, `no-undef` in `solid/src/did.ts`); the other
- * two — `no-unused-vars` in `pgsl/src/runtime-eval.ts`, `no-constant-condition` in
- * `mdvault/src/paths.ts` — name rules that ARE enabled and simply had nothing to suppress.
- * The sentence here said all five were the first kind. Both kinds are dead directives and
- * both were removed; the count was right and the characterisation was not.
+ * ── WHAT THE 67 THAT ARE GONE TURNED OUT TO BE ───────────────────────────────
  *
- * `tests/workspace-*.test.ts` entries are pinned and NOT fixed because another change owns
- * those files; the four `no-regex-spaces` in `workspace-membership.test.ts` are real and
- * left for that owner.
+ * The note here used to write off all 49 `no-unused-vars` as "hygiene, not defects". That was
+ * wrong about roughly a fifth of them, and the ones it was wrong about were the interesting
+ * ones — an unused local in a TEST is very often an assertion that was dropped. All 49 sat in
+ * `tests/**`; 47 are fixed (two live in `tests/workspace-*.test.ts`, which another change
+ * owns). Of those 47:
+ *
+ *   ★  `tests/adversarial-audit.test.ts` built the attack artifact for "Attack 4: replay with
+ *      a future timestamp" and for "Attack 5: claim pre-incident wallet compromise", then
+ *      asserted nothing about either. Attack 4's only check compared two date literals. Both
+ *      scenarios incremented `attacksRejected` and printed "✗ DETECTED" regardless.
+ *   ★  `tests/multi-agent-integration.test.ts` computed `createAtomAffs` and never read it.
+ *      Asserting it — see that file — showed the test's TITLE was false: the AAT decorator
+ *      chain is additive, appending `denied` markers while leaving the actionable
+ *      `POST create-atom` in place. The test now pins the real behaviour, both directions.
+ *   ★  `tests/federation.test.ts`'s WebFinger mock discarded the URL it was called with, so
+ *      the test named "should parse acct: URI domain" could not observe the parsed domain at
+ *      all. It now asserts the `.well-known/webfinger` endpoint the resolver builds.
+ *       — `tests/p2p-mirror.test.ts` constructed a `strangerClient` that published nowhere,
+ *      left over from an approach two lines below replaced (deleted), and dropped a caught
+ *      error that is now the thrown error's `cause`.
+ *       — the rest were genuinely hygiene: 31 unused imports, three over-destructured
+ *      `{ state: sA, op }` bindings, one dead `const`.
+ *
+ * The other 16 were `no-explicit-any`. `tests/interrogative-router.test.ts` reached into an
+ * answer's `values` bag through `(a.values as any).x.y` fifteen times; a single `valueAt`
+ * helper returning `unknown` replaces all of them and no longer suppresses the check that
+ * `values` is present at all. Five more under `packages` were casts with nothing behind
+ * them — including `factualStrategy(null as any, …)` against a parameter already declared
+ * `PGSLInstance | null`, and a decorator whose `decorate(context: any)` is handed a
+ * `DecoratorContext` by the same registry as every other decorator.
+ *
+ * ── WHAT IS LEFT, AND WHY ────────────────────────────────────────────────────
+ *
+ * All 155 remaining are `no-explicit-any` except six: five in
+ * `tests/workspace-membership.test.ts` (four `no-regex-spaces`, one unused import) which
+ * another change owns, and one unused LOCAL in `tests/workspace-can.test.ts`, same owner.
+ *
+ * ★ "LOCAL", NOT "IMPORT", AND THE CORRECTION IS THE POINT OF THE PARAGRAPH FIFTY LINES UP.
+ * That paragraph is a long argument that an unused local in a TEST is very often an assertion
+ * somebody dropped — and then this line mislabelled the one remaining instance of exactly that
+ * shape as an import, which would have been harmless. `tests/workspace-can.test.ts:459` is
+ * `const roster = rosterOf([...])`: computed, and discarded while the test builds a hand-rolled
+ * `as unknown as` object instead. Measured, not restated: `npx eslint` reports it as
+ * `'roster' is assigned a value but never used`.
+ *
+ * The `any`s that remain are load-bearing at genuine dynamic boundaries and each needs a
+ * design decision rather than a substitution — `model/registry.ts` (23) is an OPEN facet
+ * registry whose whole contract is accepting third-party facet shapes; `affordance/compute.ts`
+ * and `engine.ts` (24) walk heterogeneous facet unions; `pgsl-store`'s (7) are `await import()`
+ * of optional native dependencies that are absent from most environments. Converting these to
+ * `unknown` cascades narrowing changes through core substrate that `npm run build` and every
+ * dependent vertical compile against. Pinned, visible, and only ever going down.
  */
 const BASELINE = {
   'packages/connectors/src/index.ts': 7,
   'packages/core/src/affordance/compute.ts': 13,
   'packages/core/src/affordance/engine.ts': 11,
   'packages/core/src/crypto/wallet.ts': 1,
-  'packages/core/src/crypto/zk/proofs.ts': 1,
   'packages/core/src/model/registry.ts': 23,
   'packages/core/src/rdf/turtle-parser.ts': 3,
   'packages/extractors/src/index.ts': 1,
@@ -97,41 +133,25 @@ const BASELINE = {
   'packages/pgsl-store/src/pg-store.ts': 1,
   'packages/pgsl/src/affordance-decorators.ts': 7,
   'packages/pgsl/src/agent-framework.ts': 7,
-  'packages/pgsl/src/coherence.ts': 1,
   'packages/pgsl/src/decision-functor.ts': 1,
   'packages/pgsl/src/fact-extraction.ts': 1,
   'packages/pgsl/src/infrastructure.ts': 8,
   'packages/pgsl/src/lattice.ts': 1,
-  'packages/pgsl/src/question-router.ts': 1,
-  'packages/pgsl/src/runtime-eval.ts': 1,
   'packages/pgsl/src/tools.ts': 3,
   'packages/pgsl/src/virtualized-layer.ts': 3,
   'packages/solid/src/sdk.ts': 2,
-  'tests/adversarial-audit.test.ts': 2,
-  'tests/affordance.test.ts': 1,
-  'tests/agent-framework.test.ts': 5,
-  'tests/causality.test.ts': 3,
+  'tests/agent-framework.test.ts': 2,
   'tests/context-graphs.test.ts': 1,
   'tests/derivation.test.ts': 12,
   'tests/engagement-durability.test.ts': 9,
-  'tests/federation.test.ts': 1,
-  'tests/infrastructure.test.ts': 8,
-  'tests/interrogative-router.test.ts': 16,
-  'tests/multi-agent-integration.test.ts': 22,
-  'tests/p2p-mirror.test.ts': 2,
+  'tests/multi-agent-integration.test.ts': 7,
   'tests/pgsl-cas-persistence.test.ts': 2,
-  'tests/pgsl-coherence.test.ts': 1,
-  'tests/pgsl-shacl.test.ts': 1,
-  'tests/pgsl-sparql.test.ts': 4,
-  'tests/pgsl.test.ts': 8,
+  'tests/pgsl-sparql.test.ts': 3,
+  'tests/pgsl.test.ts': 5,
   'tests/projection-facets.test.ts': 4,
-  'tests/render-view-affordance.test.ts': 1,
   'tests/rte-conformance.test.ts': 5,
-  'tests/sharing.test.ts': 1,
-  'tests/solid.test.ts': 2,
   'tests/workspace-can.test.ts': 1,
   'tests/workspace-membership.test.ts': 5,
-  'tests/xapi-conformance.test.ts': 2,
 };
 
 /**

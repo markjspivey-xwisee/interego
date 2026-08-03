@@ -84,31 +84,62 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT = join(ROOT, 'tsconfig.check.json');
 
 /**
- * The remaining debt: 97 errors in 28 files. Read as two separate numbers, because they moved
- * for opposite reasons and averaging them would hide both.
+ * The remaining debt: 4 errors in 1 file, down from 97 in 28.
  *
- *   4 in 1 file, down from the 60 in 20 files this gate shipped with. The other 19 files are
- *   gone from this list because they are gone from the output — deleting a line here is how a
- *   file becomes permanently gated, and every deletion below was earned by a fix, never by an
- *   exclusion.
+ * Deleting a line from this list is how a file becomes permanently gated, and every deletion
+ * was earned by a fix — never by an exclusion, and never by a cast that moved the error out of
+ * tsc's sight without changing what the code does.
  *
- *   93 in 27 files, which are not new errors and not a regression: they are what appeared when
- *   `tsconfig.check.json` was made to include the globs it already CLAIMED to include. See the
- *   block above that group in {@link LEGACY}.
+ * ── WHAT THE 93 TURNED OUT TO BE ─────────────────────────────────────────────
  *
- * ── WHAT THE OTHER 56 TURNED OUT TO BE ───────────────────────────────────────
+ * They arrived when `tsconfig.check.json` was made to include the globs it already CLAIMED to
+ * include, so a third of the suite got a compiler for the first time. The previous note here
+ * predicted most of them were "stricter-setting artifacts" in source each vertical's own bridge
+ * tsconfig compiles more loosely. That was true of about half, and wrong about the rest —
+ * recorded because the next person will want to know the base rate.
  *
- * Worth recording, because the split was not what the counts suggested. The single largest
- * entry (agent-framework.test.ts, 19) was ONE wrong import path: `PolicyContext` taken from
- * '@interego/abac' when every function it was passed to came from '@interego/pgsl', which
- * declares a different interface under the same name. Six more were tests naming types
- * their package genuinely did not export — and in the DKG case the package was at fault:
- * '@interego/core' exported `dkgRound1/2/3` while exporting none of their parameter or
- * return types, so no external caller could name the argument to a function it could call.
- * Nine were `Object is possibly 'undefined'` on indexed access; several of those sat under
- * assertions that would have passed vacuously on an empty result, and now assert a length
- * first. Two were genuine stricter-setting artifacts in transitively-pulled source (see
- * below). None was noise.
+ *   29  ONE wrong `Wallet`. `applications/_shared/tests/aggregate-privacy.test.ts` bound the
+ *       bare name `Wallet` to the ethers CLASS, while every signing entry point it calls takes
+ *       `@interego/core`'s `Wallet` record. 15 `as unknown as Wallet` casts (5 more in
+ *       `compliance-overlay/tests/aggregate-bridge.test.ts`) forced core wallets across, which
+ *       did not convert anything — it only stopped the arguments being checked at all.
+ *
+ *   27  `noUncheckedIndexedAccess` in `foxxi-content-intelligence/src`, almost all of it regex
+ *       group-1 reads behind an `if (m)` that does not narrow the group. Genuine artifacts of a
+ *       setting that vertical's bridge tsconfig does not turn on — fixed by narrowing on the
+ *       group (`if (m?.[1])`) rather than asserting, because an assertion here would have to be
+ *       re-audited every time the pattern changes.
+ *
+ *   ★ 6 A REAL DEFECT, and the reason this gate is worth its cost.
+ *       `AgentActionEvent.agentDid` is required; all six wrappers in
+ *       `compliance-overlay/src/aggregate-bridge.ts` omitted it. `buildAgentActionDescriptor`
+ *       interpolates it unguarded, so every compliance descriptor the bridge produced ended
+ *       `prov:wasAttributedTo <undefined> ; prov:wasAssociatedWith <undefined> .` — an audit
+ *       record whose whole purpose is naming who ran an aggregate query, naming nobody.
+ *       Reproduced by running the builder before fixing it.
+ *
+ *   3   Two more wrong-import-path finds of the same shape as the `Wallet` one:
+ *       `SensitivityFlag` reached for off `@interego/core` (it is `@interego/privacy`'s) in
+ *       `compliance-overlay/src/overlay.ts`, twice — so the sensitivity flags that module hands
+ *       back were an error type — plus a `{ shareWith }` option passed to `publish()`, which
+ *       has no such property and silently dropped it. That last one was ALREADY found and
+ *       fixed in `openclaw-memory/src/bridge.ts`, whose comment says so, and left standing
+ *       here; the claim is now deleted rather than repaired, since `publish()` cannot honour it.
+ *
+ *   2   Tests that asserted nothing. `regime-read-is-not-species-gated.test.ts` read
+ *       `d.plan?.interventions ?? []` off a `Diagnosis` that has no `plan` — always `[]`, so
+ *       the one assertion checking WHERE Emergent work routes could not fail. And
+ *       `mcp-server/tests/stdio-serves-both-eras.test.ts` passed `versionNegotiation` to
+ *       `connect()` instead of the `Client` constructor, so both iterations of its "both eras"
+ *       loop ran the identical legacy handshake and the probe-and-fallback path the file was
+ *       written for was never taken.
+ *
+ *   26  The rest: indexed access under assertions that would pass vacuously on an empty
+ *       result (now length-checked first), `createPGSL()` called with none of its one required
+ *       argument in 8 places, a `wasAttributedTo: [did]` where the facet takes a single IRI
+ *       (read back through an array cast, so `.toContain` passed on the substring), a dead
+ *       `tamperedZip` nobody used, and two ambient `.d.ts` files that exist in the tree and
+ *       were simply not in this program.
  *
  * ── WHY THESE FOUR ARE STILL HERE ────────────────────────────────────────────
  *
@@ -137,49 +168,6 @@ const PROJECT = join(ROOT, 'tsconfig.check.json');
  */
 const LEGACY = {
   'tests/abac.test.ts': 4,
-
-  // ── ★ THE 93 THAT ARRIVED WITH THE GLOBS, NOT WITH A CHANGE ─────────────────
-  //
-  // `tsconfig.check.json` claimed its include list was "deliberately the same globs
-  // `vitest.config.ts` runs", under a warning that a divergence between the two reopens the
-  // gap. It had diverged: vitest also runs `applications/**/tests/**`,
-  // `integrations/**/tests/**` and `mcp-server/tests/**`, which is 66 of the 185 files it
-  // executes. A third of the suite ran with no compiler behind it, and the comment said
-  // otherwise.
-  //
-  // Closing the divergence surfaced these. Every one predates it; none is in this round's
-  // surface. They are pinned rather than excluded for the reason the whole ratchet exists —
-  // an exclusion is permanent and silent, a pin is visible and only ever goes down. The
-  // `src/` entries are transitively pulled in by the tests above them and are stricter-setting
-  // artifacts: those files ARE compiled by their own bridge tsconfig, which does not turn on
-  // everything `tsconfig.base.json` does.
-  'applications/_shared/tests/aggregate-privacy.test.ts': 24,
-  'applications/_shared/vc-jwt/bbs-2023.ts': 1,
-  'applications/agentic-performance-practice/tests/regime-read-is-not-species-gated.test.ts': 1,
-  'applications/foxxi-content-intelligence/dashboard-app/src/types.ts': 1,
-  'applications/foxxi-content-intelligence/src/clr.ts': 5,
-  'applications/foxxi-content-intelligence/src/content-forms.ts': 1,
-  'applications/foxxi-content-intelligence/src/course-graph.ts': 5,
-  'applications/foxxi-content-intelligence/src/course-identity.ts': 2,
-  'applications/foxxi-content-intelligence/src/course-skill-bridge.ts': 7,
-  'applications/foxxi-content-intelligence/src/pod-snapshot-publisher.ts': 1,
-  'applications/foxxi-content-intelligence/src/pod-statement-store.ts': 1,
-  'applications/foxxi-content-intelligence/src/ssrf-guard.ts': 4,
-  'applications/foxxi-content-intelligence/tests/course-skill-bridge.test.ts': 4,
-  'applications/foxxi-content-intelligence/tests/round13-remediation.test.ts': 1,
-  'applications/foxxi-content-intelligence/tests/round4-remediation.test.ts': 1,
-  'applications/foxxi-content-intelligence/tests/round45-remediation.test.ts': 2,
-  'applications/foxxi-content-intelligence/tests/round7-remediation.test.ts': 3,
-  'applications/foxxi-content-intelligence/tests/scorm-fingerprint.test.ts': 1,
-  'applications/learner-performer-companion/tests/integration.test.ts': 2,
-  'applications/learner-performer-companion/tests/tier6-scorm-ingestion.test.ts': 3,
-  'applications/learner-performer-companion/tests/tier6b-scorm-zip.test.ts': 5,
-  'applications/lrs-adapter/tests/tier8-real-pod-end-to-end.test.ts': 2,
-  'integrations/compliance-overlay/src/aggregate-bridge.ts': 6,
-  'integrations/compliance-overlay/src/overlay.ts': 3,
-  'integrations/compliance-overlay/tests/aggregate-bridge.test.ts': 5,
-  'integrations/openclaw-memory/tests/bridge.test.ts': 1,
-  'mcp-server/tests/stdio-serves-both-eras.test.ts': 1,
 };
 
 /** `path/to/file.ts(12,3): error TS1234: …` — the only line shape tsc reports errors on. */
@@ -241,8 +229,8 @@ export function typecheckGateReport(result) {
     '',
     '★ TYPECHECK GATE FAILED — tsconfig.check.json',
     '',
-    'vitest does not typecheck. This gate is the compiler for `tests/**` and',
-    '`applications/shared-workspace/**`, and it just found something the suite cannot see:',
+    'vitest does not typecheck. This gate is the compiler for every file vitest executes',
+    '(see tsconfig.check.json), and it just found something the suite cannot see:',
     '',
     ...result.failures,
     '',

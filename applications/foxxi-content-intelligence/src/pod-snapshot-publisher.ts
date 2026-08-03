@@ -324,7 +324,7 @@ export async function loadLatestSnapshot<T>(surface: string): Promise<T | null> 
     });
     if (ttl === null) return null;
     const m = ttl.match(/foxxi:bundleJson\s+"([^"]+)"\^\^xsd:base64Binary/);
-    if (!m) return null;
+    if (!m?.[1]) return null;
     return JSON.parse(Buffer.from(m[1], 'base64').toString('utf8')) as T;
   } catch (err) {
     console.error(`[pod-snapshot/${surface}] hydrate failed:`, (err as Error).message);

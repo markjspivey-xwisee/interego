@@ -18,8 +18,6 @@ import {
   mintAtom,
 } from '@interego/pgsl';
 import {
-  computeCoverage,
-  getCertificates,
   verifyCoherence,
 } from '@interego/pgsl';
 import type {
@@ -36,27 +34,20 @@ import {
   AnalystAAT,
   ArbiterAAT,
   createAATDecorator,
-  createAATRegistry,
   createPersonalBroker,
   createPolicyEngine,
   createTraceStore,
   defaultPolicies,
   evaluatePolicy,
   ExecutorAAT,
-  filterAffordancesByAAT,
-  FullAccessAAT,
   getMemoryStats,
   getTraces,
   ObserverAAT,
   recordTrace,
-  registerAAT,
   startConversation,
   validateAction,
 } from '@interego/pgsl';
 import type {
-  PersonalBroker,
-  PolicyRule,
-  ProvTrace,
   TraceStore,
 } from '@interego/pgsl';
 
@@ -71,10 +62,8 @@ import {
   createOp,
   diffCheckpoints,
   enclaveStats,
-  forkEnclave,
   freezeEnclave,
   getPendingOps,
-  incrementClock,
   markSynced,
   mergeEnclave,
   restoreCheckpoint,
@@ -97,13 +86,11 @@ import {
 // Decision functor — the bare `decide` from @interego/core is the
 // affordance OODA-loop decide (cycle args). The pgsl decision-functor
 // `decide` is exported separately as `decideFromObservations` to
-// avoid that collision.
-import {
-  computeAffordances as computeDecisionAffordances,
-} from '@interego/core';
+// avoid that collision. (Core's `computeAffordances` was aliased in here
+// as `computeDecisionAffordances` and never called; the empty
+// `import {} from '@interego/core'` it left behind is removed with it.)
 import {
   extractObservations,
-  selectStrategy,
 } from '@interego/pgsl';
 import {
   decide as decideFromObservations,
@@ -111,7 +98,6 @@ import {
 
 // Decorators
 import {
-  coreSystemDecorator,
   createDefaultRegistry,
   decorateNode,
   registerDecorator,
@@ -177,7 +163,7 @@ describe('Scenario 1: Agent Team with AAT Enforcement', () => {
     expect(validation.allowed).toBe(true);
   });
 
-  it('Observer AAT decorator filters out write affordances from the chain', () => {
+  it('Observer AAT decorator ADDS denied markers and leaves the actionable writes in place', () => {
     const pgsl = makePgsl('observer');
     const atomUri = mintAtom(pgsl, 'finding-1');
     const policy = createPolicyEngine();
@@ -190,11 +176,41 @@ describe('Scenario 1: Agent Team with AAT Enforcement', () => {
     const ctx = buildDecoratorContext(pgsl, atomUri);
     const result = decorateNode(registry, ctx);
 
-    // Observer should NOT have create-atom or add-source affordances
-    // that are actionable — only denied markers
-    const createAtomAffs = result.affordances.filter(a => a.rel === 'create-atom' && a.decoratorId !== `aat-decorator:${ObserverAAT.id}`);
+    // ★ THIS TEST'S NAME AND ITS OLD COMMENT WERE BOTH WRONG, AND NOTHING SAID SO.
+    //
+    // It was titled "filters out write affordances from the chain" and the comment claimed
+    // "Observer should NOT have create-atom or add-source affordances that are actionable —
+    // only denied markers". It then computed `createAtomAffs` and never looked at it, asserting
+    // only that SOMETHING was denied. Asserting the claim instead makes it fail: the decorator
+    // chain is ADDITIVE. `createAATDecorator` APPENDS `rel: 'denied'` advisories and leaves
+    // core-system's actionable `POST create-atom` / `add-source` / `add-target` / `wrap-group`
+    // in the list untouched. Removal is a separate function, `filterAffordancesByAAT`, which
+    // nothing in this repo composes with `decorateNode`.
+    //
+    // No live bypass follows from this today — the one server that calls `decorateNode`
+    // (`examples/pgsl-browser/server.ts`) registers no AAT decorator at all, so there is no
+    // denial there to bypass; it imports `filterAffordancesByAAT` and never calls it. But the
+    // shape is worth pinning both ways, so that a caller who reads this list as an
+    // authorization decision, or a change that makes the decorator subtractive, trips a test.
+    const writeRels = ['create-atom', 'add-source', 'add-target', 'wrap-group'];
+    const aatDecoratorId = `aat-decorator:${ObserverAAT.id}`;
+    const actionableWrites = result.affordances.filter(
+      a => writeRels.includes(a.rel) && a.decoratorId !== aatDecoratorId,
+    );
     const deniedAffs = result.affordances.filter(a => a.rel === 'denied');
-    expect(deniedAffs.length).toBeGreaterThan(0);
+
+    // Every write the Observer cannot perform is marked denied …
+    expect(deniedAffs.map(a => a.title).sort()).toEqual([
+      'Denied: Add source link', 'Denied: Add target link',
+      'Denied: Create new atom', 'Denied: Wrap in group',
+    ]);
+    expect(deniedAffs.every(a => a.decoratorId === aatDecoratorId)).toBe(true);
+
+    // … and the actionable versions are STILL PRESENT beside the markers. `decorateNode` does
+    // not gate; if this ever starts returning 0, the decorator became subtractive and the
+    // callers that rely on it being additive need re-reading.
+    expect(actionableWrites.map(a => a.rel).sort()).toEqual([...writeRels].sort());
+    expect(actionableWrites.every(a => a.method === 'POST')).toBe(true);
   });
 
   it('Analyst AAT decorator allows create-atom and records PROV trace', () => {
