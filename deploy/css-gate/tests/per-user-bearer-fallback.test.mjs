@@ -28,10 +28,11 @@
 //      secret (gate↔relay introspection auth) — wrong secret = no
 //      relay accept (we verify by inspecting the captured headers).
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer as createHttpServer } from 'node:http';
 import { Pool } from 'undici';
+import { listenLoopback } from './loopback.mjs';
 
 // Required env BEFORE importing server.mjs (it reads env at module load).
 process.env.WRITE_SECRET = 'test-write-secret';
@@ -46,30 +47,31 @@ process.env.USER_BEARER_CACHE_TTL_MS = '60000';
 
 // Loopback identity + relay verifiers. We point the gate at these
 // via env vars BEFORE importing server.mjs.
-function startVerifier(handler) {
-  return new Promise((resolve) => {
-    const received = [];
-    const srv = createHttpServer((req, res) => {
-      const chunks = [];
-      req.on('data', (c) => chunks.push(c));
-      req.on('end', () => {
-        const body = Buffer.concat(chunks).toString('utf8');
-        received.push({
-          method: req.method,
-          url: req.url,
-          headers: { ...req.headers },
-          body,
-        });
-        const reply = handler(body, req);
-        res.writeHead(reply.status, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(reply.body));
+//
+// Every listener here goes through listenLoopback, which unrefs the handle and destroys
+// the keep-alive sockets fetch() leaves behind before closing. Without the unref, a run
+// that never reaches the teardown does not leak a socket — it leaks a PROCESS that cannot
+// exit because of one, which is how these suites were found still holding ports days
+// later. See tests/loopback.mjs.
+async function startVerifier(handler) {
+  const received = [];
+  const srv = createHttpServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks).toString('utf8');
+      received.push({
+        method: req.method,
+        url: req.url,
+        headers: { ...req.headers },
+        body,
       });
-    });
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address();
-      resolve({ srv, received, base: `http://127.0.0.1:${addr.port}` });
+      const reply = handler(body, req);
+      res.writeHead(reply.status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(reply.body));
     });
   });
+  return { ...(await listenLoopback(srv)), received };
 }
 
 // Identity logic: returns valid for token "good-id-token-for-alice",
@@ -121,47 +123,44 @@ process.env.RELAY_INTROSPECTION_SECRET = RELAY_SECRET;
 // Now import the gate. server.mjs reads env at module load.
 const { server: gateServer, _setUpstreamPool } = await import('../server.mjs');
 
-function startUpstream() {
-  return new Promise((resolve) => {
-    const received = [];
-    const srv = createHttpServer((req, res) => {
-      const chunks = [];
-      req.on('data', (c) => chunks.push(c));
-      req.on('end', () => {
-        received.push({
-          method: req.method,
-          url: req.url,
-          headers: { ...req.headers },
-          body: Buffer.concat(chunks).toString('utf8'),
-        });
-        res.writeHead(201, { 'content-type': 'text/turtle' });
-        res.end(`OK ${req.method} ${req.url}`);
+async function startUpstream() {
+  const received = [];
+  const srv = createHttpServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      received.push({
+        method: req.method,
+        url: req.url,
+        headers: { ...req.headers },
+        body: Buffer.concat(chunks).toString('utf8'),
       });
-    });
-    srv.listen(0, '127.0.0.1', () => resolve({ srv, received }));
-  });
-}
-
-function startGate() {
-  return new Promise((resolve) => {
-    gateServer.listen(0, '127.0.0.1', () => {
-      const addr = gateServer.address();
-      resolve(`http://127.0.0.1:${addr.port}`);
+      res.writeHead(201, { 'content-type': 'text/turtle' });
+      res.end(`OK ${req.method} ${req.url}`);
     });
   });
-}
-
-function closeServer(srv) {
-  return new Promise((resolve) => srv.close(() => resolve()));
+  return { ...(await listenLoopback(srv)), received };
 }
 
 const upstream = await startUpstream();
-const upstreamAddr = upstream.srv.address();
-const upstreamOrigin = `http://127.0.0.1:${upstreamAddr.port}`;
+const upstreamOrigin = upstream.base;
 const testPool = new Pool(upstreamOrigin, { connections: 4 });
 _setUpstreamPool(process.env.CSS_INTERNAL_URL, testPool);
 
-const gateBase = await startGate();
+const gate = await listenLoopback(gateServer);
+const gateBase = gate.base;
+
+// ★ `after`, not a trailing `test('teardown')`. An `after` hook runs when the file is
+// done however it got there — including after a failing assertion — whereas a teardown
+// written as the last test only runs if the file reaches it, and registers only if the
+// top-level setup above it did not throw first.
+after(async () => {
+  await testPool.close();
+  await gate.close();
+  await upstream.close();
+  await identity.close();
+  await relay.close();
+});
 
 test('identity-valid bearer passes; relay is not called', async () => {
   upstream.received.length = 0;
@@ -289,12 +288,4 @@ test('relay-valid bearer cache warm: second hit does NOT re-call relay', async (
   assert.equal(r2.status, 201);
   assert.equal(relay.received.length, callsAfterFirst,
     'second cached-warm call must not produce another relay /verify-token roundtrip');
-});
-
-test('teardown', async () => {
-  await testPool.close();
-  await closeServer(gateServer);
-  await closeServer(upstream.srv);
-  await closeServer(identity.srv);
-  await closeServer(relay.srv);
 });

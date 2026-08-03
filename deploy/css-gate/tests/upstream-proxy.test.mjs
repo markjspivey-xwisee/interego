@@ -16,10 +16,11 @@
 //   6. Operator-bearer writes pass through AND the bearer is stripped
 //      before forwarding (CSS must not see Authorization).
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer as createHttpServer } from 'node:http';
 import { Pool } from 'undici';
+import { listenLoopback } from './loopback.mjs';
 
 // Required env BEFORE importing server.mjs (it reads env at module load).
 process.env.WRITE_SECRET = 'test-write-secret';
@@ -33,45 +34,35 @@ process.env.IDENTITY_URL = '';
 const { server: gateServer, _setUpstreamPool } = await import('../server.mjs');
 
 // ── Loopback "upstream" that records what the gate forwarded. ───────
-function startUpstream() {
-  return new Promise((resolve) => {
-    const received = [];
-    const srv = createHttpServer((req, res) => {
-      const chunks = [];
-      req.on('data', (c) => chunks.push(c));
-      req.on('end', () => {
-        received.push({
-          method: req.method,
-          url: req.url,
-          headers: { ...req.headers },
-          body: Buffer.concat(chunks).toString('utf8'),
-        });
-        // Echo a known status + body so the test can assert pass-through.
-        res.writeHead(201, { 'content-type': 'text/turtle', 'x-upstream-token': 'echoed' });
-        res.end(`OK ${req.method} ${req.url}`);
+//
+// Every listener here goes through listenLoopback, which unrefs the handle and destroys
+// the keep-alive sockets fetch() leaves behind before closing. Without the unref, a run
+// that never reaches the teardown does not leak a socket — it leaks a PROCESS that cannot
+// exit because of one, which is how these suites were found still holding ports days
+// later. See tests/loopback.mjs.
+async function startUpstream() {
+  const received = [];
+  const srv = createHttpServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      received.push({
+        method: req.method,
+        url: req.url,
+        headers: { ...req.headers },
+        body: Buffer.concat(chunks).toString('utf8'),
       });
-    });
-    srv.listen(0, '127.0.0.1', () => resolve({ srv, received }));
-  });
-}
-
-function startGate() {
-  return new Promise((resolve) => {
-    gateServer.listen(0, '127.0.0.1', () => {
-      const addr = gateServer.address();
-      resolve(`http://127.0.0.1:${addr.port}`);
+      // Echo a known status + body so the test can assert pass-through.
+      res.writeHead(201, { 'content-type': 'text/turtle', 'x-upstream-token': 'echoed' });
+      res.end(`OK ${req.method} ${req.url}`);
     });
   });
-}
-
-function closeServer(srv) {
-  return new Promise((resolve) => srv.close(() => resolve()));
+  return { ...(await listenLoopback(srv)), received };
 }
 
 // ── Test harness setup. ─────────────────────────────────────────────
 const upstream = await startUpstream();
-const upstreamAddr = upstream.srv.address();
-const upstreamOrigin = `http://127.0.0.1:${upstreamAddr.port}`;
+const upstreamOrigin = upstream.base;
 
 // Point the gate's pool at our loopback upstream. The Pool is keyed
 // by the origin of CSS_INTERNAL_URL — we override that key so the
@@ -84,7 +75,18 @@ const upstreamOrigin = `http://127.0.0.1:${upstreamAddr.port}`;
 const testPool = new Pool(upstreamOrigin, { connections: 4 });
 _setUpstreamPool(process.env.CSS_INTERNAL_URL, testPool);
 
-const gateBase = await startGate();
+const gate = await listenLoopback(gateServer);
+const gateBase = gate.base;
+
+// ★ `after`, not a trailing `test('teardown')`. An `after` hook runs when the file is
+// done however it got there — including after a failing assertion — whereas a teardown
+// written as the last test only runs if the file reaches it, and registers only if the
+// top-level setup above it did not throw first.
+after(async () => {
+  await testPool.close();
+  await gate.close();
+  await upstream.close();
+});
 
 test('GET passes through anonymously and bubbles status + body 1:1', async () => {
   upstream.received.length = 0;
@@ -144,11 +146,4 @@ test('query string is preserved on the forwarded path', async () => {
   const r = await fetch(`${gateBase}/markj/x.ttl?slug=foo&depth=1`);
   assert.equal(r.status, 201);
   assert.equal(upstream.received[0].url, '/markj/x.ttl?slug=foo&depth=1');
-});
-
-// ── Teardown. ───────────────────────────────────────────────────────
-test('teardown', async () => {
-  await testPool.close();
-  await closeServer(gateServer);
-  await closeServer(upstream.srv);
 });

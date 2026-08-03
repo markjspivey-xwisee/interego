@@ -37,7 +37,7 @@
  */
 
 import express from 'express';
-import type { AddressInfo } from 'node:net';
+import { listenLoopback } from './listen-loopback.js';
 import { corsMiddleware, MCP_ALLOW_HEADERS } from '../cors-allowlist.js';
 
 let pass = 0, fail = 0;
@@ -58,9 +58,10 @@ app.use(corsMiddleware({
   exposeHeaders: 'mcp-session-id, mcp-protocol-version',
 }));
 app.post('/mcp', (_req, res) => { res.json({ ok: true }); });
-const server = app.listen(0);
-await new Promise<void>(r => server.once('listening', () => r()));
-const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+// `app.listen(0)` with no host bound `::` — every interface — for the life of the run.
+// See tests/listen-loopback.ts; the close in the finally below is unchanged.
+const server = await listenLoopback(app);
+const base = server.base;
 
 console.log('\n/mcp preflight: the modern era is reachable from a browser');
 
@@ -101,7 +102,7 @@ try {
     'the served list is EXACTLY the exported constant (no second literal has crept back in)',
     `served: ${allow}\n        constant: ${MCP_ALLOW_HEADERS.toLowerCase()}`);
 } finally {
-  server.close();
+  await server.close();
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

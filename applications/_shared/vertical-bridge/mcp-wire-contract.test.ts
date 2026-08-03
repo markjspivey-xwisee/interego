@@ -29,6 +29,7 @@
  * Run: npx tsx applications/_shared/vertical-bridge/mcp-wire-contract.test.ts
  */
 import { createVerticalBridge } from './index.js';
+import { listenLoopback } from './listen-loopback.js';
 import type { Affordance } from '../affordance-mcp/index.js';
 
 let failures = 0;
@@ -37,8 +38,19 @@ const check = (name: string, cond: boolean, detail = ''): void => {
   failures++; console.error(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`);
 };
 
-const PORT = 6098;
-const BASE = `http://localhost:${PORT}`;
+/**
+ * ★ The URL this bridge SAYS it lives at, which is not the one this test dials.
+ *
+ * These were one constant — `http://localhost:6098` — used as both the mount's
+ * `deploymentUrl` (asserted below, inside an externally-routed tool's refusal message) and
+ * the fetch target, which is what forced a FIXED port: it had to be known before
+ * `createVerticalBridge` was called, and therefore before anything had bound.
+ * `app.listen(6098)` then bound `{ address: "::" }` — every interface — for the whole run.
+ *
+ * Splitting them is also the truer model: a deployed bridge's published identity is its
+ * public URL, while the socket it is reached on is whatever the proxy in front of it dialled.
+ */
+const DEPLOYMENT_URL = 'https://wire-contract-test.example';
 
 const affordances = [
   {
@@ -82,7 +94,7 @@ const app = createVerticalBridge({
     'demo.ping': async (a: Record<string, unknown>) => ({ pong: a.msg, sawToken: a.__caller_token ?? null }),
     'demo.explode': async () => { throw new Error('deliberate handler failure'); },
   },
-  deploymentUrl: BASE,
+  deploymentUrl: DEPLOYMENT_URL,
   // ★ MODEL THE REAL COMPOSITION, NOT THE COMPONENT.
   //
   // This test used to boot the mount ALONE and passed 29 of 29 checks — while the
@@ -113,11 +125,15 @@ const app = createVerticalBridge({
     });
   },
 });
-const server = app.listen(PORT);
+// Loopback, ephemeral, unref'd, and closed with its connections DESTROYED — this file's
+// teardown was `finally { server.close(); }`, which stops accepting new connections and
+// then waits for the keep-alive sockets `fetch()` leaves behind, so it could never
+// complete. See ./listen-loopback.ts.
+const listener = await listenLoopback(app);
 
 /** Post exactly what our existing clients post: bare JSON-RPC, no Accept header. */
 const rpc = async (method: string, params?: Record<string, unknown>, headers: Record<string, string> = {}) => {
-  const r = await fetch(`${BASE}/mcp`, {
+  const r = await fetch(`${listener.base}/mcp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) }),
@@ -217,7 +233,7 @@ try {
   check('…and the message names the HTTP method to use instead',
     /PUT/.test(String(ext.json?.error?.message)), String(ext.json?.error?.message));
   check('…and the resolved target, not a {base} template',
-    String(ext.json?.error?.message).includes(`${BASE}/demo/upload`), String(ext.json?.error?.message));
+    String(ext.json?.error?.message).includes(`${DEPLOYMENT_URL}/demo/upload`), String(ext.json?.error?.message));
 
   // ── initialize ───────────────────────────────────────────────────────────
   // MIGRATION DELTA, RESOLVED — and this one was the point of the exercise.
@@ -291,7 +307,7 @@ try {
   check('a call violating the declared schema is NOT refused today',
     unvalidated.json?.result !== undefined, JSON.stringify(unvalidated.json));
 } finally {
-  server.close();
+  await listener.close();
 }
 
 console.log(failures === 0

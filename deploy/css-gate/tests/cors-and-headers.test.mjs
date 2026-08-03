@@ -22,7 +22,12 @@
  *      (`<http://css.railway.internal:3456/...>; rel="acl"`) — an address that
  *      resolves nowhere off the private network, over plain http on an https page.
  *
- * Run: node deploy/css-gate/cors-and-headers.test.mjs
+ * ★ MOVED INTO tests/ FROM THE PACKAGE ROOT. It was the one suite living outside the test
+ * directory, which is why `npm test` had to name it by hand — and naming files by hand is
+ * what let a file added to tests/ run nowhere while the suite still reported green. With
+ * every suite in one place, `node --test "tests/*.test.mjs"` is complete by construction.
+ *
+ * Run: node --test deploy/css-gate/tests/cors-and-headers.test.mjs
  */
 
 // The module starts its listener at import unless told not to — it already has the
@@ -32,7 +37,7 @@ process.env.CSS_INTERNAL_URL ??= 'http://css.railway.internal:3456';
 process.env.PUBLIC_BASE_URL ??= 'https://gate.interego.xwisee.com';
 process.env.WRITE_SECRET ??= 'test-only';
 
-const { corsHeadersFor } = await import('./server.mjs');
+const { corsHeadersFor } = await import('../server.mjs');
 
 let failures = 0;
 const check = (name, cond, detail = '') => {

@@ -90,3 +90,11 @@ examples/tic-tac-toe-tournament/last-run.json
 # does nothing.
 deploy/railway/*
 !deploy/railway/services.json
+
+# ★ Agent working material: probes, mutation scripts, captured run logs. Never tracked —
+# `git ls-tree HEAD scratchpad` is empty across the whole history — but it was never
+# IGNORED either, so it showed up as untracked noise in every `git status` and made
+# `git add -A` unsafe. Rounds therefore staged from remembered path lists instead, and one
+# of them shipped green-locally / red-in-CI by forgetting a file that way. Ignoring it is
+# what makes "stage everything you changed" the safe instruction it should always have been.
+scratchpad/
