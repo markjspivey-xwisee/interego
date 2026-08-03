@@ -38,8 +38,15 @@ jobs:
       - name: Install workspace + build the @interego deps the barrel imports
         run: |
           npm ci
-          npm run build --workspace @interego/core
-          npm run build --workspace @interego/abac
+          # ★ FULL workspace build, not a two-package subset. The typecheck gate now runs
+          # from vitest's globalSetup, so it runs in THIS job too — and it typechecks the
+          # whole `tsconfig.check.json` program, which reaches `@interego/solid` through
+          # `applications/_shared`. Building only core+abac left that unresolvable and the
+          # gate failed with `TS2307: Cannot find module '@interego/solid'` — a real gap in
+          # the job, not in the code: a typecheck that cannot resolve workspace packages is
+          # not a typecheck. Cheaper to build everything than to teach the gate to be
+          # partially blind, which is how a gate stops meaning anything.
+          npm run build
       - name: Install node-postgres (pure JS)
         run: npm install --no-save pg@8
       - name: Run the FULL pgsl-store stack against real Postgres
