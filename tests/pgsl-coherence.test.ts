@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeCoverage,
-  getCertificates,
   getCoherenceStatus,
   verifyCoherence,
 } from '@interego/pgsl';

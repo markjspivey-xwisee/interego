@@ -18,14 +18,12 @@ import {
   getProfile,
   ingestWithProfile,
   materializeTriples,
-  sparqlQueryPGSL,
   validateAllPGSL,
 } from '@interego/pgsl';
 import {
   createPGSL,
   latticeStats,
   matchPattern,
-  resolve,
 } from '@interego/pgsl';
 import type {
   IRI,

@@ -35,9 +35,19 @@ describe('round-45 — EvaluationRegistry is bounded against any-signed-wallet D
     }
     const cand = reg.findCandidateByAgent(ev.id, 'did:ethr:0xC');
     expect(cand?.runs.length).toBe(RUNS_MAX);
+    // `runId` is NOT a field of `CandidateRun` — it is a marker this test attaches (via the
+    // `as never` above) so an individual run is identifiable after eviction, and the registry
+    // stores whatever object it is handed. The two reads used to be `as { runId: string }`,
+    // which asserted the marker was part of the real type and would have gone on "passing"
+    // against `undefined` had the run list been empty. Read it as the extra it is, and check
+    // it arrived before comparing.
+    const runIdOf = (r: unknown): string | undefined => (r as { runId?: string } | undefined)?.runId;
+    const first = runIdOf(cand?.runs[0]);
+    const last = runIdOf(cand?.runs.at(-1));
+    expect(first, 'the eviction marker must survive the round trip').toBeDefined();
     // Oldest evicted, newest retained (evict-oldest, not reject-newest).
-    expect((cand?.runs[0] as { runId: string }).runId).not.toBe('run-0');
-    expect((cand?.runs[cand.runs.length - 1] as { runId: string }).runId).toBe(`run-${RUNS_MAX + 24}`);
+    expect(first).not.toBe('run-0');
+    expect(last).toBe(`run-${RUNS_MAX + 24}`);
   }, 30_000);
 
   it('a cohort rejects new candidates past its cap (id monotonicity preserved)', () => {

@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   domainShapesToTurtle,
-  PGSL_NS,
   PGSLClass,
   PGSLProp,
   validateAllPGSL,

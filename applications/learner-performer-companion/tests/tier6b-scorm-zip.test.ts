@@ -42,6 +42,16 @@ import {
   createPGSL,
   mintAtom,
 } from '@interego/pgsl';
+import type { IRI } from '@interego/core';
+
+// `createPGSL` requires a NodeProvenance — the `defaultProvenance` every minted node falls back
+// to. The four calls below used to pass nothing, leaving it undefined on the instance. The atom
+// assertions only read the content-addressed IRI so they never noticed, but any lattice
+// operation reading `pgsl.defaultProvenance.wasAttributedTo` would throw on such a fixture.
+const PGSL_PROV = {
+  wasAttributedTo: 'did:web:lpc-test.example' as IRI,
+  generatedAtTime: '2026-01-01T00:00:00.000Z',
+};
 
 // ── Fixtures: build real SCORM zips in-memory ────────────────────────
 
@@ -196,7 +206,7 @@ describe('Tier 6b — SCORM/cmi5 zip-package unwrapping', () => {
     expect(extraction.format).toBe('html');
     expect(extraction.text).toContain('acknowledge their frustration');
 
-    const pgsl = createPGSL();
+    const pgsl = createPGSL(PGSL_PROV);
     const atomIri = mintAtom(pgsl, extraction.text);
     expect(atomIri.length).toBeGreaterThan(20);
   });
@@ -204,14 +214,14 @@ describe('Tier 6b — SCORM/cmi5 zip-package unwrapping', () => {
   it('citation stability invariant: SAME passage cited from a zip vs raw HTML produces SAME atom IRI', async () => {
     // Path A: raw HTML straight to extractor
     const extractionRaw = await extract(LESSON_HTML, { filename: 'lesson4.html' });
-    const pgslA = createPGSL();
+    const pgslA = createPGSL(PGSL_PROV);
     const atomFromRaw = mintAtom(pgslA, extractionRaw.text);
 
     // Path B: same HTML via SCORM zip
     const pkg = unwrapScormPackage(buildScorm2004Zip());
     const lessonContent = launchableLessons(pkg)[0]!.content as string;
     const extractionViaZip = await extract(lessonContent, { filename: 'lesson4.html' });
-    const pgslB = createPGSL();
+    const pgslB = createPGSL(PGSL_PROV);
     const atomFromZip = mintAtom(pgslB, extractionViaZip.text);
 
     // Content-addressing means the atom IRI is identical regardless of
@@ -224,13 +234,13 @@ describe('Tier 6b — SCORM/cmi5 zip-package unwrapping', () => {
     const pkg1 = unwrapScormPackage(buildScorm2004Zip());
     const lesson1 = launchableLessons(pkg1)[0]!.content as string;
 
-    // Build a second zip with a one-character edit (typo in the lesson)
+    // Build a second zip with a one-character edit (typo in the lesson).
+    //
+    // A first `tamperedZip` used to be assembled here and then never used — `z2` below is what
+    // the assertions actually run against. It was also the one line in this file tsc rejected
+    // (`addFile` takes a Buffer, and the ternary's `: ''` arm is a string), which is the tell:
+    // dead code cannot be wrong in a way anything notices. Deleted rather than repaired.
     const tamperedHtml = LESSON_HTML.replace('frustration', 'fruztration');
-    const tamperedZip = new AdmZip();
-    tamperedZip.addFile('imsmanifest.xml', buildScorm2004Zip()
-      ? unwrapScormPackage(buildScorm2004Zip()).manifestRaw
-      : '');
-    // Reconstruct the zip with the tampered HTML
     const manifestBuf = Buffer.from(unwrapScormPackage(buildScorm2004Zip()).manifestRaw);
     const z2 = new AdmZip();
     z2.addFile('imsmanifest.xml', manifestBuf);
@@ -244,7 +254,7 @@ describe('Tier 6b — SCORM/cmi5 zip-package unwrapping', () => {
     const e2 = await extract(tamperedContent);
     expect(e1.contentHash).not.toBe(e2.contentHash);
 
-    const pgsl = createPGSL();
+    const pgsl = createPGSL(PGSL_PROV);
     const a1 = mintAtom(pgsl, e1.text);
     const a2 = mintAtom(pgsl, e2.text);
     expect(a1).not.toBe(a2);

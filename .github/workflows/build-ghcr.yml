@@ -35,15 +35,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check the requested image against the matrix
+        # Through the environment, not `${{ }}` interpolated into the script body.
+        # The dispatch input is arbitrary text; pasted straight into `req='…'` a value
+        # containing a single quote closes the string and the rest runs as shell.
+        env:
+          REQ: ${{ inputs.image }}
         run: |
-          req='${{ inputs.image }}'
+          req="$REQ"
           [ -z "$req" ] && { echo "no image requested — building all"; exit 0; }
           # Read the names out of this file so the check cannot drift from the matrix.
           # sed, not `grep -oP`: PCRE mode aborts under a non-UTF-8 locale, and a
           # guard that errors out is a guard that silently stops guarding.
           known=$(sed -n 's/^[[:space:]]*- {[[:space:]]*image:[[:space:]]*\([a-z0-9-]*\).*/\1/p' .github/workflows/build-ghcr.yml)
           [ -n "$known" ] || { echo "::error::could not read the image matrix"; exit 1; }
-          if printf '%s\n' "$known" | grep -qx "$req"; then
+          # -F, because without it this guard did not hold. `grep -qx "$req"` treats the
+          # request as a REGULAR EXPRESSION, so `-f image='.*'` matched every line of the
+          # list and passed validation — and the per-leg gate below is a literal `!=`
+          # string comparison, so all fourteen legs then skipped and the run went green
+          # having built nothing. That is precisely the failure this job was added to
+          # prevent, reintroduced by the matcher underneath it. The request must be
+          # compared as the literal image name it is.
+          if printf '%s\n' "$known" | grep -qxF "$req"; then
             echo "ok — '$req' is a known image"
           else
             echo "::error::unknown image '$req' — nothing would be built. Valid images:"
@@ -105,8 +117,12 @@ jobs:
     steps:
       - name: Should this matrix leg run?
         id: gate
+        # Same reason as validate-input: the dispatch input reaches the script as data.
+        # (`matrix.image` is read out of this file, so it is not untrusted the same way.)
+        env:
+          REQ: ${{ inputs.image }}
         run: |
-          req='${{ inputs.image }}'
+          req="$REQ"
           if [ -n "$req" ] && [ "$req" != '${{ matrix.image }}' ]; then
             echo 'skip=true' >> "$GITHUB_OUTPUT"
             echo "skipping ${{ matrix.image }} (only building $req)"

@@ -216,6 +216,23 @@ export interface StreamDeps {
    * unverified result.
    */
   readonly getDescriptor?: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /**
+   * `get_current_head`. Needed ONLY by `dereferenceWorkspaceRecord` in `membership.ts`, which
+   * is what makes a workspace record's provenance checkable — see `EvidenceProvenance` in
+   * `roster.ts` for the gap that exists without it.
+   *
+   * ★ NOT `discover`, THOUGH `discover` COULD ALMOST DO IT. `discover_context` takes a
+   * `pod_url`; `get_current_head` takes a `pod_name`, which is exactly the `/ns/<owner>/<slug>`
+   * owner segment a workspace IRI carries, so the caller does not have to reconstruct a CSS
+   * host it has no business knowing. It also does the supersedes walk and reports `forked`,
+   * and a workspace whose record has two unresolved heads must refuse rather than pick one —
+   * the same rule the fold applies to a forked grant chain.
+   *
+   * Optional and refused loudly at the point of use, the same posture as `getDescriptor`: a
+   * caller who does not need the check is not obliged to supply the dependency, and a caller
+   * who asks for the check without it gets a refusal rather than a silent pass.
+   */
+  readonly currentHead?: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   /** Injected so tests do not sleep and so a caller can back off differently. */
   readonly sleep?: (ms: number) => Promise<void>;
   /** Injected so `visibleAfterMs` is measurable without a real clock. */

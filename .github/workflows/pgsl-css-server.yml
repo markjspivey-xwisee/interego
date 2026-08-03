@@ -63,6 +63,12 @@ jobs:
           cp -r integrations/pgsl-css-accessor/config "$APP/integrations/pgsl-css-accessor/config"
           cp -r integrations/pgsl-css-accessor/test "$APP/integrations/pgsl-css-accessor/test"
           cp integrations/pgsl-css-accessor/package.json "$APP/integrations/pgsl-css-accessor/package.json"
+          # The lockfile comes too, or the `npm ci` below has nothing to install from.
+          # This job's whole claim is that it "validates the real deployable"; without
+          # the lock it validated a tree resolved fresh at run time while the image
+          # shipped one resolved fresh at build time — two different trees, and the
+          # green tick would have been about neither of them.
+          cp integrations/pgsl-css-accessor/package-lock.json "$APP/integrations/pgsl-css-accessor/package-lock.json"
           cp integrations/pgsl-css-accessor/tsconfig.json "$APP/integrations/pgsl-css-accessor/tsconfig.json"
 
       - name: Install pg at the tree ROOT (resolvable from packages/pgsl-store/dist)
@@ -76,7 +82,7 @@ jobs:
         working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
         run: |
           set -euxo pipefail
-          npm install
+          npm ci
           npm run build
           # componentsjs-generator is BUILD-TIME ONLY: its newer @comunica/componentsjs
           # collide with CSS's at runtime. Remove it (the Docker runtime stage does the same).

@@ -13,7 +13,6 @@ import {
   createPGSL,
   ingest,
   latticeStats,
-  matchPattern as sparqlMatchPattern,
 } from '@interego/pgsl';
 import {
   matchPattern,

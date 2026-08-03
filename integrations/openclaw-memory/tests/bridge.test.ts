@@ -101,7 +101,9 @@ describe('buildMemoryDescriptor — substrate-pure', () => {
     expect(text).toBe('tagged fact');
     // Tags use dct:subject (W3C/DCMI) — no new substrate vocab
     const tags = readStringValues(subj, 'http://purl.org/dc/terms/subject' as IRI);
-    expect(tags.sort()).toEqual(['project:owl', 'team:beta']);
+    // Copy before sorting: `readStringValues` hands back a readonly array, and `.sort()` is an
+    // in-place mutator that would be reordering the bridge's own value.
+    expect([...tags].sort()).toEqual(['project:owl', 'team:beta']);
   });
 
   it('rejects empty memory text', () => {

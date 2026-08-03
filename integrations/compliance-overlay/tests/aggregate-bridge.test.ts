@@ -72,6 +72,7 @@ describe('compliance-aggregate bridge: v3 homomorphic sum → compliance descrip
   it('cites framework default controls when caller does not override', () => {
     const bundle = mkBundle();
     const r = buildAggregateQueryComplianceDescriptor({
+      agentDid: AGGREGATOR,
       bundle,
       queryArgs: { cohort_iri: COHORT, metric: 'completion-count' },
       toolName: 'lpc.aggregate_cohort_query',
@@ -84,6 +85,7 @@ describe('compliance-aggregate bridge: v3 homomorphic sum → compliance descrip
   it('cites caller-supplied controls when present', () => {
     const bundle = mkBundle();
     const r = buildAggregateQueryComplianceDescriptor({
+      agentDid: AGGREGATOR,
       bundle,
       queryArgs: { cohort_iri: COHORT, metric: 'completion-count' },
       toolName: 'lpc.aggregate_cohort_query',
@@ -95,6 +97,7 @@ describe('compliance-aggregate bridge: v3 homomorphic sum → compliance descrip
   it('embeds the attestation material in the descriptor for auditor re-verification', () => {
     const bundle = mkBundle();
     const r = buildAggregateQueryComplianceDescriptor({
+      agentDid: AGGREGATOR,
       bundle,
       queryArgs: { cohort_iri: COHORT, metric: 'completion-count' },
       toolName: 'lpc.aggregate_cohort_query',
@@ -111,6 +114,7 @@ describe('compliance-aggregate bridge: v3 homomorphic sum → compliance descrip
     const bundle = mkBundle();
     expect(bundle.trueSum).toBe(70n); // sanity — bundle DOES contain it
     const r = buildAggregateQueryComplianceDescriptor({
+      agentDid: AGGREGATOR,
       bundle,
       queryArgs: { cohort_iri: COHORT, metric: 'completion-count' },
       toolName: 'lpc.aggregate_cohort_query',
@@ -131,6 +135,7 @@ describe('compliance-aggregate bridge: v3 homomorphic sum → compliance descrip
     const bundle = mkBundle();
     for (const framework of ['soc2', 'eu-ai-act', 'nist-rmf'] as const) {
       const r = buildAggregateQueryComplianceDescriptor({
+        agentDid: AGGREGATOR,
         bundle,
         queryArgs: { cohort_iri: COHORT, metric: 'completion-count' },
         toolName: 'lpc.aggregate_cohort_query',
@@ -152,6 +157,7 @@ describe('compliance-aggregate bridge: v2 Merkle attestation → compliance desc
       cohortIri: COHORT, aggregatorDid: AGGREGATOR, participations: mkParticipations(), value: 2,
     });
     const r = buildMerkleAttestationComplianceDescriptor({
+      agentDid: AGGREGATOR,
       attestation,
       queryArgs: { cohort_iri: COHORT, metric: 'completion-count', privacy_mode: 'merkle-attested-opt-in' },
       toolName: 'lpc.aggregate_cohort_query',
@@ -172,6 +178,7 @@ describe('compliance-aggregate bridge: v3.3 signed budget audit log → complian
     const signerDid = `did:ethr:${wallet.address}` as IRI;
     const signed = await signBudgetAuditLog({ budget, signerWallet: wallet, signerDid });
     const r = buildBudgetAuditComplianceDescriptor({
+      agentDid: AGGREGATOR,
       signed,
       citation: { framework: 'soc2' },
     });
@@ -193,6 +200,7 @@ describe('compliance-aggregate bridge: v3.3 signed budget audit log → complian
       signedAt: new Date().toISOString(),
     };
     const r = buildBudgetAuditComplianceDescriptor({
+      agentDid: AGGREGATOR,
       signed,
       citation: { framework: 'nist-rmf' },
     });
@@ -224,7 +232,7 @@ describe('compliance-aggregate bridge: v4-partial committee reconstruction attes
         claimedTrueSum: bundle.trueSum!,
         committeeDids: dids,
         reconstructedAt,
-        signerWallet: w1 as unknown as import('ethers').Wallet,
+        signerWallet: w1,
         signerDid: dids[0]!,
       }),
       await signCommitteeReconstruction({
@@ -232,7 +240,7 @@ describe('compliance-aggregate bridge: v4-partial committee reconstruction attes
         claimedTrueSum: bundle.trueSum!,
         committeeDids: dids,
         reconstructedAt,
-        signerWallet: w2 as unknown as import('ethers').Wallet,
+        signerWallet: w2,
         signerDid: dids[1]!,
       }),
     ];
@@ -248,6 +256,7 @@ describe('compliance-aggregate bridge: v4-partial committee reconstruction attes
   it('embeds committee membership + sum-commitment + reconstructedAt; cites framework defaults', async () => {
     const attestation = await mkAttestation();
     const r = buildCommitteeReconstructionComplianceDescriptor({
+      agentDid: AGGREGATOR,
       attestation,
       citation: { framework: 'soc2' },
     });
@@ -265,6 +274,7 @@ describe('compliance-aggregate bridge: v4-partial committee reconstruction attes
   it('does NOT embed individual signatures in the descriptor body (live in pod artifact)', async () => {
     const attestation = await mkAttestation();
     const r = buildCommitteeReconstructionComplianceDescriptor({
+      agentDid: AGGREGATOR,
       attestation,
       citation: { framework: 'eu-ai-act' },
     });
@@ -277,6 +287,7 @@ describe('compliance-aggregate bridge: v4-partial committee reconstruction attes
   it('default toolName is the committee-reveal tool', async () => {
     const attestation = await mkAttestation();
     const r = buildCommitteeReconstructionComplianceDescriptor({
+      agentDid: AGGREGATOR,
       attestation,
       citation: { framework: 'nist-rmf' },
     });
@@ -294,9 +305,10 @@ describe('compliance-aggregate bridge: v4-partial committee authorization → co
       authorizedDids: dids,
       threshold: { n: 3, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as import('ethers').Wallet,
+      operatorWallet: operatorWallet,
     });
     const r = buildCommitteeAuthorizationComplianceDescriptor({
+      agentDid: AGGREGATOR,
       authorization,
       citation: { framework: 'eu-ai-act' },
     });
@@ -318,9 +330,10 @@ describe('compliance-aggregate bridge: v4-partial committee authorization → co
       authorizedDids: ['did:test:x' as IRI, 'did:test:y' as IRI],
       threshold: { n: 2, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as import('ethers').Wallet,
+      operatorWallet: operatorWallet,
     });
     const r = buildCommitteeAuthorizationComplianceDescriptor({
+      agentDid: AGGREGATOR,
       authorization,
       citation: { framework: 'soc2' },
     });
@@ -335,9 +348,10 @@ describe('compliance-aggregate bridge: v4-partial committee authorization → co
       authorizedDids: ['did:test:p' as IRI, 'did:test:q' as IRI],
       threshold: { n: 2, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as import('ethers').Wallet,
+      operatorWallet: operatorWallet,
     });
     const r = buildCommitteeAuthorizationComplianceDescriptor({
+      agentDid: AGGREGATOR,
       authorization,
       citation: { framework: 'nist-rmf' },
     });
@@ -365,6 +379,7 @@ describe('compliance-aggregate bridge: v3 zk-distribution → compliance descrip
   it('embeds per-bucket noisy counts + scheme + bucketSumCommitment bytes for auditor re-verification', () => {
     const bundle = mkBundle();
     const r = buildDistributionQueryComplianceDescriptor({
+      agentDid: AGGREGATOR,
       bundle,
       queryArgs: { cohort_iri: COHORT, metric: 'score-distribution', privacy_mode: 'zk-distribution' },
       toolName: 'lpc.aggregate_cohort_query',
@@ -390,6 +405,7 @@ describe('compliance-aggregate bridge: v3 zk-distribution → compliance descrip
     const bundle = mkBundle();
     expect(bundle.trueBucketCounts).toBeDefined();
     const r = buildDistributionQueryComplianceDescriptor({
+      agentDid: AGGREGATOR,
       bundle,
       queryArgs: { cohort_iri: COHORT, metric: 'score-distribution', privacy_mode: 'zk-distribution' },
       toolName: 'lpc.aggregate_cohort_query',
@@ -404,12 +420,66 @@ describe('compliance-aggregate bridge: v3 zk-distribution → compliance descrip
     const bundle = mkBundle();
     for (const framework of ['soc2', 'eu-ai-act', 'nist-rmf'] as const) {
       const r = buildDistributionQueryComplianceDescriptor({
+        agentDid: AGGREGATOR,
         bundle,
         queryArgs: { cohort_iri: COHORT, metric: 'score-distribution' },
         toolName: 'lpc.aggregate_cohort_query',
         citation: { framework },
       });
       expect(r.cited.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+/**
+ * ★ Regression guard for the defect the typecheck gate surfaced: all six wrappers omitted
+ * the required `agentDid`, so `buildAgentActionDescriptor` interpolated `undefined` and every
+ * descriptor claimed `prov:wasAttributedTo <undefined>`. Every test above supplies an agent,
+ * which means none of them would notice the field being dropped again on the way through the
+ * bridge — they assert on the payload, not on who acted. These assert the identity SURVIVES
+ * the wrapper, and that the literal string `<undefined>` never appears in an audit record.
+ */
+describe('compliance-aggregate bridge: the acting agent reaches the audit record', () => {
+  const bounds = { min: 0n, max: 100n };
+
+  function sumBundle() {
+    const contributions = [30n, 40n].map((value, i) => buildCommittedContribution({
+      contributorPodUrl: `https://c${i}/`, value, bounds, blindingSeed: `s${i}`, blindingLabel: 'l',
+    }));
+    return buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR, contributions, epsilon: 1.0, includeAuditFields: true,
+    });
+  }
+
+  it('names the acting agent in prov:wasAssociatedWith and prov:wasAttributedTo', () => {
+    const r = buildAggregateQueryComplianceDescriptor({
+      agentDid: AGGREGATOR,
+      bundle: sumBundle(),
+      queryArgs: { cohort_iri: COHORT },
+      toolName: 'lpc.aggregate_cohort_query',
+      citation: { framework: 'soc2' },
+    });
+    expect(r.graphContent).toContain(`<http://www.w3.org/ns/prov#wasAssociatedWith> <${AGGREGATOR}>`);
+    expect(r.graphContent).toContain(`<http://www.w3.org/ns/prov#wasAttributedTo> <${AGGREGATOR}>`);
+  });
+
+  it('no wrapper can emit an <undefined> agent into an audit record', async () => {
+    const wallet = await createWallet('agent', 'undef-guard');
+    const signerDid = `did:ethr:${wallet.address}` as IRI;
+    const budget = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    budget.consume({ queryDescription: 'q', epsilon: 0.1 });
+    const built = [
+      buildAggregateQueryComplianceDescriptor({
+        agentDid: AGGREGATOR, bundle: sumBundle(), queryArgs: {}, toolName: 't', citation: { framework: 'soc2' },
+      }),
+      buildBudgetAuditComplianceDescriptor({
+        agentDid: AGGREGATOR,
+        signed: await signBudgetAuditLog({ budget, signerWallet: wallet, signerDid }),
+        citation: { framework: 'soc2' },
+      }),
+    ];
+    for (const r of built) {
+      expect(r.graphContent).not.toContain('<undefined>');
     }
   });
 });

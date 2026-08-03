@@ -4,7 +4,7 @@
  * Covers: publish, discover, subscribe — all with mocked HTTP/WebSocket.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   ContextDescriptor,
   generateKeyPair,
@@ -19,7 +19,6 @@ import {
 
 import type {
   IRI,
-  ManifestEntry,
 } from '@interego/core';
 import type {
   ContextChangeEvent,

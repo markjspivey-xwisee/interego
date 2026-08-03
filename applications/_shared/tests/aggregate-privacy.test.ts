@@ -86,8 +86,19 @@ import {
 } from '@interego/core';
 import type {
   IRI,
+  Wallet,
 } from '@interego/core';
-import { Wallet } from 'ethers';
+// ★ Aliased, and NOT named `Wallet`. Every signing entry point in
+// `../aggregate-privacy/index.js` takes `@interego/core`'s `Wallet` — a plain
+// `{address, type, provider, chainId}` record that `signMessageRaw` looks the private key
+// up by. This file used to bind the bare name `Wallet` to the ethers CLASS, so the core
+// wallets `createWallet` returns had to be forced across with `as unknown as Wallet` at 24
+// call sites. Those casts did not convert anything; they only stopped the compiler from
+// checking the argument at all, so a genuinely wrong wallet object would have reached
+// `signCommitteeReconstruction`/`signCommitteeAuthorization` unremarked. The ethers class is
+// still needed for `createRandom()` in the raw-signature tests below, so it keeps a name of
+// its own rather than shadowing the type the module under test actually accepts.
+import { Wallet as EthersWallet } from 'ethers';
 
 const COHORT = 'urn:lpc:cohort:aws-saa-q2-2026' as IRI;
 const AGGREGATOR = 'did:web:learning.acme.example' as IRI;
@@ -432,7 +443,7 @@ describe('aggregate-privacy v3.1: signed-bounds attestations', () => {
   });
 
   it('verifySignedBounds accepts an honest signature', async () => {
-    const wallet = Wallet.createRandom();
+    const wallet = EthersWallet.createRandom();
     const did = `did:ethr:${wallet.address}` as IRI;
     const contrib = buildCommittedContribution({
       contributorPodUrl: 'https://y.example/', value: 70n, bounds,
@@ -451,7 +462,7 @@ describe('aggregate-privacy v3.1: signed-bounds attestations', () => {
   });
 
   it('verifySignedBounds REJECTS a signature over a different commitment', async () => {
-    const wallet = Wallet.createRandom();
+    const wallet = EthersWallet.createRandom();
     const did = `did:ethr:${wallet.address}` as IRI;
     const c1 = buildCommittedContribution({
       contributorPodUrl: 'https://z1.example/', value: 50n, bounds,
@@ -474,7 +485,7 @@ describe('aggregate-privacy v3.1: signed-bounds attestations', () => {
   });
 
   it('verifySignedBounds REJECTS a signature whose recovered address does not appear in the DID', async () => {
-    const realWallet = Wallet.createRandom();
+    const realWallet = EthersWallet.createRandom();
     const decoyDid = 'did:ethr:0x0000000000000000000000000000000000000000' as IRI;
     const contrib = buildCommittedContribution({
       contributorPodUrl: 'https://w.example/', value: 25n, bounds,
@@ -506,7 +517,7 @@ describe('aggregate-privacy v3.1: signed-bounds attestations', () => {
   });
 
   it('requireSignedBounds mode ACCEPTS contributions with valid attestations', async () => {
-    const wallet = Wallet.createRandom();
+    const wallet = EthersWallet.createRandom();
     const did = `did:ethr:${wallet.address}` as IRI;
     const c = buildCommittedContribution({
       contributorPodUrl: 'https://q.example/', value: 30n, bounds,
@@ -1119,9 +1130,7 @@ describe('aggregate-privacy v4-partial: committee-reconstruction attestation (ch
     const dids: IRI[] = [];
     for (let i = 0; i < size; i++) {
       const w = await createWallet('agent', `committee-member-${i}`);
-      // ethers Wallet shape via type-compatibility; the createWallet here
-      // returns the same Wallet object signMessageRaw accepts.
-      wallets.push(w as unknown as Wallet);
+      wallets.push(w);
       dids.push(`did:ethr:${w.address.toLowerCase()}` as IRI);
     }
     return { wallets, dids };
@@ -1560,7 +1569,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
         claimedTrueSum: bundle.trueSum!,
         committeeDids,
         reconstructedAt,
-        signerWallet: members[i]!.wallet as unknown as Wallet,
+        signerWallet: members[i]!.wallet,
         signerDid: members[i]!.did,
       }),
     ));
@@ -1595,7 +1604,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids,
       threshold: { n: 3, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     });
 
     const authCheck = verifyCommitteeAuthorization({ authorization });
@@ -1610,7 +1619,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
         claimedTrueSum: bundle.trueSum!,
         committeeDids: revealDids,
         reconstructedAt,
-        signerWallet: m1 as unknown as Wallet,
+        signerWallet: m1,
         signerDid: revealDids[0]!,
       }),
       await signCommitteeReconstruction({
@@ -1618,7 +1627,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
         claimedTrueSum: bundle.trueSum!,
         committeeDids: revealDids,
         reconstructedAt,
-        signerWallet: m2 as unknown as Wallet,
+        signerWallet: m2,
         signerDid: revealDids[1]!,
       }),
     ];
@@ -1642,7 +1651,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids: ['did:test:a' as IRI, 'did:test:b' as IRI],
       threshold: { n: 3, t: 2 }, // mismatch
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     })).rejects.toThrow(/must equal threshold\.n/);
   });
 
@@ -1654,7 +1663,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids: ['did:test:a' as IRI, 'did:test:b' as IRI],
       threshold: { n: 2, t: 3 }, // t > n
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     })).rejects.toThrow(/threshold\.t/);
   });
 
@@ -1668,7 +1677,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids: dids,
       threshold: { n: 3, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     });
     // Sock-puppet reveal attestation: claims dids[0] + 'did:test:sockpuppet'.
     const attestation: CommitteeReconstructionAttestation = {
@@ -1693,7 +1702,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids: dids,
       threshold: { n: 2, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     });
     const attestation: CommitteeReconstructionAttestation = {
       bundleSumCommitment: 'deadbeef' + bundle.sumCommitment.bytes.slice(8), // tampered
@@ -1717,7 +1726,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids: dids,
       threshold: { n: 3, t: 3 }, // need all 3
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     });
     const attestation: CommitteeReconstructionAttestation = {
       bundleSumCommitment: bundle.sumCommitment.bytes,
@@ -1815,7 +1824,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids: recipients.map(r => r.did),
       threshold: { n: 3, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     });
     const distributions = encryptSharesForCommittee({
       shares: bundle.thresholdShares!,
@@ -1838,7 +1847,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids,
       threshold: { n: 3, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     });
     // Operator authorized A,B,C — but ships to A,B,SOCKPUPPET (skipping C).
     const distributions = encryptSharesForCommittee({
@@ -1867,7 +1876,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids,
       threshold: { n: 3, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     });
     // Ships to only 2 of the 3 authorized recipients.
     const distributions = encryptSharesForCommittee({
@@ -1895,7 +1904,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids,
       threshold: { n: 3, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     });
     // Three distributions, but two go to drop-a (drop-c silently absent),
     // matching distributions.length but not coverage.
@@ -1923,7 +1932,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
       authorizedDids: ['did:test:m1' as IRI, 'did:test:m2' as IRI, 'did:test:m3' as IRI],
       threshold: { n: 3, t: 2 },
       operatorDid,
-      operatorWallet: operatorWallet as unknown as Wallet,
+      operatorWallet: operatorWallet,
     });
 
     const stored = new Map<string, string>();

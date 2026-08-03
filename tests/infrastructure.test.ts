@@ -10,7 +10,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createPGSL,
-  embedInPGSL,
   ingest,
   latticeStats,
   mintAtom,
@@ -26,7 +25,6 @@ import type {
 import {
   abandonEnclave,
   applyOp,
-  checkpointStats,
   crdtStats,
   createCheckpoint,
   createCheckpointStore,
@@ -38,13 +36,11 @@ import {
   enclaveStats,
   forkEnclave,
   freezeEnclave,
-  getCheckpoint,
   getEnclave,
   getPendingOps,
   happensBefore,
   incrementClock,
   listCheckpoints,
-  listEnclaves,
   markSynced,
   mergeClock,
   mergeEnclave,
@@ -52,7 +48,6 @@ import {
 } from '@interego/pgsl';
 import type {
   CheckpointStore,
-  CRDTState,
   EnclaveRegistry,
   VectorClock,
 } from '@interego/pgsl';
@@ -471,7 +466,7 @@ describe('CRDT Sync', () => {
 
     it('applyOp applies mint-atom to PGSL', () => {
       const state = createCRDTState('peer-A');
-      const { state: sA, op } = createOp(state, 'mint-atom', {
+      const { op } = createOp(state, 'mint-atom', {
         value: 'hello',
         provenance: TEST_PROV,
       });
@@ -484,7 +479,7 @@ describe('CRDT Sync', () => {
 
     it('applyOp applies ingest-chain to PGSL', () => {
       const state = createCRDTState('peer-A');
-      const { state: sA, op } = createOp(state, 'ingest-chain', {
+      const { op } = createOp(state, 'ingest-chain', {
         sequence: ['hello', 'world'],
         provenance: TEST_PROV,
       });
@@ -512,7 +507,7 @@ describe('CRDT Sync', () => {
 
     it('applyOp merges clocks', () => {
       const stateA = createCRDTState('peer-A');
-      const { state: updatedA, op } = createOp(stateA, 'mint-atom', {
+      const { op } = createOp(stateA, 'mint-atom', {
         value: 'sync-test',
         provenance: TEST_PROV,
       });

@@ -218,7 +218,12 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
           && b.every(s => s.state === 'connected');
       }, 4000);
     } catch (err) {
-      throw new Error(`Connections never established. Status log: ${JSON.stringify(statusLog)}; A=${JSON.stringify(mirrorA.status())}; B=${JSON.stringify(mirrorB.status())}`);
+      // `cause` rather than dropping it: the wait can fail for reasons the status log does not
+      // show (a timeout vs. a throw inside the predicate), and that distinction was being lost.
+      throw new Error(
+        `Connections never established. Status log: ${JSON.stringify(statusLog)}; A=${JSON.stringify(mirrorA.status())}; B=${JSON.stringify(mirrorB.status())}`,
+        { cause: err },
+      );
     }
 
     const bobInbox: { descriptorId: string; publisher: string }[] = [];
@@ -345,7 +350,10 @@ describe('WebSocketRelayMirror — inbound author allow-list (default outbound-o
     // Pre-seed the relay with an event from someone else, so a
     // hypothetical broad subscription would have something to receive.
     const stranger = importWallet('0x' + 'aa'.repeat(32), 'agent', 'stranger');
-    const strangerClient = new P2pClient(new InMemoryRelay(), stranger);
+    // A `strangerClient` over a bare InMemoryRelay used to be constructed here and never used —
+    // a leftover from an approach the next two lines replaced. It published nowhere, so it
+    // could not have seeded the relay this test needs seeded.
+    //
     // Manually craft an event-shaped object the relay will store.
     // Use a separate mirror that DOES subscribe to push it in.
     const seedInner = new InMemoryRelay();

@@ -15,7 +15,7 @@ const conforms = (r: { violations: unknown[] }) => r.violations.length === 0;
 // unparseable. Path-structured / illegal names must be emitted as full <...> IRIs instead.
 const illegalCuries = (ttl: string, prefix: string): string[] =>
   [...ttl.matchAll(new RegExp(`(?:^|[\\s;,\\[])${prefix}:([^\\s;,\\]<>"]+)`, 'g'))]
-    .map(m => m[1]).filter(local => /[/\s]/.test(local) || /^[-.]/.test(local));
+    .map(m => m[1] ?? '').filter(local => /[/\s]/.test(local) || /^[-.]/.test(local));
 
 describe('round-7 — hand-rolled Turtle renderers emit only valid prefixed names', () => {
   it('/ns/foxxi (renderVocabTurtle): path-structured verb/activity terms are NOT illegal CURIEs', () => {

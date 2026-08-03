@@ -51,7 +51,11 @@ describe('round-13 — BBS+ verifier ignores a tampered displayValue (selective-
     });
     const presentation = await deriveCompletionPresentation({ issued, revealPaths: issued.claimIndex.map(c => c.path) });
     // Corrupt the proof bytes → verification must fail and disclose nothing.
-    const badProof = new Uint8Array(presentation.proof); badProof[0] ^= 0xff;
+    // Assert the proof is non-empty first: on a zero-length proof the flip below is a no-op and
+    // the "verification must fail" assertion would pass on an uncorrupted presentation.
+    const badProof = new Uint8Array(presentation.proof);
+    expect(badProof.length).toBeGreaterThan(0);
+    badProof[0] = (badProof[0] ?? 0) ^ 0xff;
     const result = await verifyCompletionPresentation({ presentation: { ...presentation, proof: badProof } });
     expect(result.verified).toBe(false);
     expect(result.disclosed).toEqual([]);

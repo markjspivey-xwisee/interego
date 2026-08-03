@@ -190,7 +190,7 @@ function buildStatementGraph(args: {
 // real parseTrig is wired in, swap this for that.
 function decodeStatementFromGraphTurtle(turtle: string): Record<string, unknown> | null {
   const m = turtle.match(/foxxi:bundleJson\s+"([^"]+)"\^\^xsd:base64Binary/);
-  if (!m) return null;
+  if (!m?.[1]) return null;
   try {
     const json = Buffer.from(m[1], 'base64').toString('utf8');
     return JSON.parse(json);

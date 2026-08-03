@@ -42,7 +42,8 @@ import {
   type Roster, type RoleProfile, type Capability, type Principal, type DelegatedScope,
   type SignerResolver, type SignerFinding, type Attestation, type AttestationPolicy,
   type AttributionGrade, type ContentBinding, type FieldProvenance,
-  type WorkspaceRecord, type ConvenerEvidence, type ConvenerBinding,
+  type WorkspaceRecord, type ConvenerEvidence, type ConvenerBinding, type RoleProfileBinding,
+  type EvidenceProvenance, type EvidenceProvenanceBinding,
 } from './roster.js';
 import type { ComposedView, ComposedEntry, ComposableMember } from './compose.js';
 
@@ -467,6 +468,14 @@ export type {
   SignerResolver, SignerFinding, Attestation, AttestationPolicy, AttributionGrade,
   ContentBinding, FieldProvenance,
   // The convener evidence a caller assembles from `readWorkspaceRecord` and hands to
-  // `AttestationPolicy.workspaceEvidence`, plus what the fold reports back about it.
-  WorkspaceRecord, ConvenerEvidence, ConvenerBinding,
+  // `AttestationPolicy.workspaceEvidence`, plus what the fold reports back about it. ONE
+  // record answers two questions — who may grant, and what a granted role permits — so both
+  // verdicts are exported beside it; a consumer that reads only the first has been told
+  // nothing about the document every capability was computed from.
+  // …and a THIRD question off the same record, which is whether it is the record the
+  // workspace actually dereferences to. Exported beside the other two because a consumer
+  // holding `convenerBinding: 'bound'` without `evidenceProvenanceBinding` has been told that
+  // SOME record agrees, not that the workspace's own does — which is what residual gap 9 was.
+  WorkspaceRecord, ConvenerEvidence, ConvenerBinding, RoleProfileBinding,
+  EvidenceProvenance, EvidenceProvenanceBinding,
 };

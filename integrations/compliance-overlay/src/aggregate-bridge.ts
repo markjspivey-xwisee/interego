@@ -29,6 +29,7 @@ import {
   type ComplianceCitation,
   type BuildEventResult,
 } from './overlay.js';
+import type { IRI } from '@interego/core';
 import type {
   AttestedHomomorphicSumResult,
   AttestedHomomorphicDistributionResult,
@@ -37,6 +38,26 @@ import type {
   CommitteeReconstructionAttestation,
   CommitteeAuthorization,
 } from '../../../applications/_shared/aggregate-privacy/index.js';
+
+/**
+ * ★ WHO RAN THE QUERY. `AgentActionEvent.agentDid` is required, and until this file was
+ * typechecked all six wrappers below omitted it. `buildAgentActionDescriptor` interpolates it
+ * unguarded, so every descriptor this bridge produced ended:
+ *
+ *   <http://www.w3.org/ns/prov#wasAttributedTo> <undefined> ;
+ *   <http://www.w3.org/ns/prov#wasAssociatedWith> <undefined> .
+ *
+ * — and `.agent()` / `.selfAsserted()` / `.generatedBy()` on the descriptor took `undefined`
+ * too. An audit record whose entire purpose is "show the regulator who ran this aggregate
+ * query" named nobody, and the suite could not see it because vitest strips the types.
+ *
+ * It is a REQUIRED caller argument rather than something inferred from the payload. Three of
+ * these artifacts do carry a DID — `signed.signerDid`, `authorization.operatorDid`,
+ * `attestation.committeeDids` — but the signer of a budget log is not necessarily the agent
+ * that ran the query, and a committee has no single actor. Guessing would put a plausible
+ * wrong name in a compliance record, which is worse than making the caller say.
+ */
+type ActingAgent = { agentDid: IRI };
 
 /**
  * Map aggregate-privacy concerns onto canonical compliance controls.
@@ -86,7 +107,7 @@ export function buildAggregateQueryComplianceDescriptor(args: {
   toolName: string;
   citation: ComplianceCitation;
   startedAt?: string;
-}): BuildEventResult {
+} & ActingAgent): BuildEventResult {
   const cited: ComplianceCitation = {
     framework: args.citation.framework,
     controls: (args.citation.controls && args.citation.controls.length > 0
@@ -110,6 +131,7 @@ export function buildAggregateQueryComplianceDescriptor(args: {
   });
 
   return buildAgentActionDescriptor({
+    agentDid: args.agentDid,
     toolName: args.toolName,
     args: args.queryArgs,
     resultSummary,
@@ -132,7 +154,7 @@ export function buildMerkleAttestationComplianceDescriptor(args: {
   toolName: string;
   citation: ComplianceCitation;
   startedAt?: string;
-}): BuildEventResult {
+} & ActingAgent): BuildEventResult {
   const cited: ComplianceCitation = {
     framework: args.citation.framework,
     controls: (args.citation.controls && args.citation.controls.length > 0
@@ -149,6 +171,7 @@ export function buildMerkleAttestationComplianceDescriptor(args: {
   });
 
   return buildAgentActionDescriptor({
+    agentDid: args.agentDid,
     toolName: args.toolName,
     args: args.queryArgs,
     resultSummary,
@@ -169,7 +192,7 @@ export function buildBudgetAuditComplianceDescriptor(args: {
   signed: SignedBudgetAuditLog;
   citation: ComplianceCitation;
   toolName?: string;
-}): BuildEventResult {
+} & ActingAgent): BuildEventResult {
   const cited: ComplianceCitation = {
     framework: args.citation.framework,
     controls: (args.citation.controls && args.citation.controls.length > 0
@@ -187,6 +210,7 @@ export function buildBudgetAuditComplianceDescriptor(args: {
   });
 
   return buildAgentActionDescriptor({
+    agentDid: args.agentDid,
     toolName: args.toolName ?? 'aggregate-privacy.epsilon-budget-audit',
     args: { cohortIri: args.signed.snapshot.cohortIri, maxEpsilon: args.signed.snapshot.maxEpsilon },
     resultSummary,
@@ -220,7 +244,7 @@ export function buildCommitteeReconstructionComplianceDescriptor(args: {
   attestation: CommitteeReconstructionAttestation;
   citation: ComplianceCitation;
   toolName?: string;
-}): BuildEventResult {
+} & ActingAgent): BuildEventResult {
   const cited: ComplianceCitation = {
     framework: args.citation.framework,
     controls: (args.citation.controls && args.citation.controls.length > 0
@@ -238,6 +262,7 @@ export function buildCommitteeReconstructionComplianceDescriptor(args: {
   });
 
   return buildAgentActionDescriptor({
+    agentDid: args.agentDid,
     toolName: args.toolName ?? 'aggregate-privacy.committee-threshold-reveal',
     args: {
       bundleSumCommitment: args.attestation.bundleSumCommitment,
@@ -266,7 +291,7 @@ export function buildCommitteeAuthorizationComplianceDescriptor(args: {
   authorization: CommitteeAuthorization;
   citation: ComplianceCitation;
   toolName?: string;
-}): BuildEventResult {
+} & ActingAgent): BuildEventResult {
   const cited: ComplianceCitation = {
     framework: args.citation.framework,
     controls: (args.citation.controls && args.citation.controls.length > 0
@@ -285,6 +310,7 @@ export function buildCommitteeAuthorizationComplianceDescriptor(args: {
   });
 
   return buildAgentActionDescriptor({
+    agentDid: args.agentDid,
     toolName: args.toolName ?? 'aggregate-privacy.committee-authorization',
     args: {
       bundleSumCommitment: args.authorization.bundleSumCommitment,
@@ -316,7 +342,7 @@ export function buildDistributionQueryComplianceDescriptor(args: {
   toolName: string;
   citation: ComplianceCitation;
   startedAt?: string;
-}): BuildEventResult {
+} & ActingAgent): BuildEventResult {
   const cited: ComplianceCitation = {
     framework: args.citation.framework,
     controls: (args.citation.controls && args.citation.controls.length > 0
@@ -338,6 +364,7 @@ export function buildDistributionQueryComplianceDescriptor(args: {
   });
 
   return buildAgentActionDescriptor({
+    agentDid: args.agentDid,
     toolName: args.toolName,
     args: args.queryArgs,
     resultSummary,

@@ -15,10 +15,14 @@ export default defineConfig({
       enabled: true,
     },
     // ★ THE COMPILER, RUN BEFORE COLLECTION. `tools/typecheck-gate.mjs` compiles
-    // `tsconfig.check.json` — `tests/**` plus `applications/shared-workspace/**`, the two
-    // programs no tsconfig in the repo reached — and throws on any error outside a pinned
-    // legacy list. Wired here rather than into an npm script because the command people type
-    // is `npx vitest run tests/`, which never reads package.json. ~6s per invocation.
+    // `tsconfig.check.json` — the compiler for every file vitest executes — and throws on any
+    // error outside a pinned legacy list. That include list was two globs when this sentence
+    // was written (`tests/**` plus `applications/shared-workspace/**`) and is now seven; the
+    // identical sentence in `tools/typecheck-gate.mjs` was generalised when the list grew and
+    // this copy was not, so it is generalised here rather than re-enumerated — read the
+    // `include` array for the current set. Wired here rather than into an npm script because
+    // the command people type is `npx vitest run tests/`, which never reads package.json.
+    // ~6s per invocation.
     globalSetup: ['./tools/vitest-typecheck-setup.mjs'],
     // ★ THE CHECK THAT THE SUITE RAN AT ALL, and it is here rather than in a workflow for the
     // same reason globalSetup is: the command people type is `npx vitest run tests/`, which

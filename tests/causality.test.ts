@@ -23,7 +23,6 @@ import {
   doIntervention,
   evaluateCounterfactual,
   findBackdoorSet,
-  hasCycle,
   intersection,
   isDSeparated,
   parents,
@@ -40,8 +39,6 @@ import {
   resetComposedIdCounter,
 } from '@interego/core';
 import type {
-  CausalEdge,
-  CausalVariable,
   IRI,
   StructuralCausalModel,
 } from '@interego/core';

@@ -27,6 +27,11 @@
 
 // PGSLInstance used indirectly via latticeStats
 import { latticeStats } from './lattice.js';
+// The decorator below is registered into the same chain every other decorator is, so its
+// `decorate` argument is a `DecoratorContext`. It was typed `any`, which is why the optional
+// chains in its body (`context.containers?.length`) read as defensive: nothing told it that
+// `containers`, `sourceOptions` and `targetOptions` are all non-optional on that interface.
+import type { DecoratorContext } from './affordance-decorators.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -328,7 +333,7 @@ export function createRuntimeEvalDecorator(_config: RuntimeEvalConfig = DEFAULT_
     domain: 'system',
     trustLevel: 'system' as const,
     priority: 99, // runs last — evaluates what other decorators produced
-    decorate(context: any) {
+    decorate(context: DecoratorContext) {
       const pgslStats = latticeStats(context.pgsl);
       const confidence = computeConfidence({
         sessionsMatched: context.containers?.length ?? 0,

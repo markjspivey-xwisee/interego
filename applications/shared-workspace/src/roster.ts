@@ -86,13 +86,67 @@
  * workspace cannot erase a revocation or a withdrawal by disagreeing — it removes the power to
  * make members, not the records that unmake them.
  *
- * ★ WHAT REMAINS OPEN AFTER IT, stated here rather than absorbed: the descriptor URL the
- * workspace record was read from is chosen by whoever assembled the fold. What is established
- * is "a record whose subject is <workspace> says X convenes, signed by an agent X's own
- * registry vouches for, over bytes the substrate re-digested" — not "that record is what
- * <workspace> dereferences to". Structurally the same residue as `head` under a `slug-only`
- * binding, and it is closed the same way: by dereferencing <workspace> to obtain the URL
- * rather than being handed one.
+ * ★★★★★★ AND THE EVIDENCE'S OWN PROVENANCE WAS THE HOLE UNDER ALL OF IT — RESIDUAL GAP 9.
+ *
+ * What stood here said the descriptor URL was chosen by whoever assembled the fold, and filed
+ * that as a residue. It was an escalation, and it undid the close above. Measured against
+ * production with two real bearers: BEE published a `wsp:Workspace` for ALICE'S workspace IRI,
+ * on HER OWN pod, naming herself convener. It published, parsed with no problems, content-
+ * bound. Handed to the fold as evidence, the same fold that refuses her self-convened
+ * membership on alice's record reported `convenerBinding: 'bound'` and ADMITTED her. The
+ * subject is a triple its writer chooses, so "is this record about this workspace" is not a
+ * question anybody fails.
+ *
+ * What closes it is that a workspace IS a dereferenceable URL and only one party can decide
+ * what it returns. `<relay>/ns/<owner>/<slug>` resolves against the pod named by its OWNER
+ * SEGMENT (`resolveNsGraph`, `deploy/mcp-relay/server.ts:11657`) and against no other, and the
+ * substrate refuses everyone else a write there. Same run: an anonymous `GET <WS>` returned
+ * alice's record with bee's absent, `get_current_head{urn, pod_name: <owner>}` returned alice's
+ * descriptor unforked, and bee writing to alice's pod was refused `403 scope_violation`.
+ *
+ * So {@link EvidenceProvenance} carries which IRI was dereferenced and which document that
+ * resolved to, {@link refuseEvidenceProvenance} refuses evidence that is not the record
+ * `<workspace>` answers with, {@link AttestationPolicy.requireEvidenceProvenance} turns it on
+ * and {@link Roster.evidenceProvenanceBinding} reports which of its three answers came back.
+ * `dereferenceWorkspaceRecord` in `membership.ts` is the producer — it resolves the workspace
+ * through its own owner segment's pod, which is what bee cannot reach.
+ *
+ * ★ AND THE PAIR IS STILL THE CALLER'S CLAIM, exactly as `FieldProvenance` is. This module is
+ * pure and fetches nothing. What it checks is the two relations that are not self-certifying —
+ * the IRI dereferenced is the workspace being folded, and the document that dereference
+ * resolved to is the record's own `head` — which catch the realistic failure, a composer
+ * holding one workspace record per pod it read and attaching the wrong one. A caller that
+ * hand-writes the pair beside a forged record is not caught, and cannot be by a function that
+ * cannot fetch. That residue is the producer's to carry, and it is named in the field's own
+ * contract rather than left to be discovered.
+ *
+ * ★★★★★ AND THE ROLE PROFILE IS THE SAME QUESTION ONE FIELD OVER.
+ *
+ * `wspsh:WorkspaceShape` has always required exactly one `wsp:roleProfile` beside the
+ * `wsp:convener`, and the same record carries both. The convener decides WHO may grant; the
+ * profile decides WHAT a granted role permits — `permitsOf` above is built from it and it
+ * feeds every `effective` capability in the roster. `args.profile` was the caller's, and
+ * {@link WorkspaceRecord.roleProfile} sat beside it uncompared: measured, a roster reporting
+ * `convenerBinding: 'bound'` and `recordFieldBinding: 'bound'` with an empty `unattested`
+ * handed an `#Observer` the `grant` and `revoke` capabilities, because the caller folded
+ * against a profile document the workspace never declared.
+ *
+ * {@link refuseRoleProfileAuthority} compares the two and {@link Roster.roleProfileBinding}
+ * reports which of its three answers came back. Everything the convener check learned applies
+ * unchanged and is not re-derived here: the workspace's profile is EVIDENCE and never a
+ * SOURCE (there is no `profile = ws.roleProfile ?? args.profile`, for the same reason there is
+ * no such line for the convener), and a disagreement refuses on the CONFERRING TRACK ALONE.
+ *
+ * ★ AND WHAT IT ESTABLISHES IS AN IRI, NOT A ROLE TABLE — read this before relying on it.
+ * `RoleProfile.profile` is the caller's own claim about where its `roles` came from, exactly
+ * as `FieldProvenance` is a record's own claim about where its fields came from, and this
+ * module is pure so it cannot fetch the document and check. `'bound'` therefore means *the
+ * caller's role table CLAIMS to be the profile <workspace> declares*. A caller that fabricates
+ * `{profile: <the declared IRI>, roles: [anything]}` is not caught here and cannot be: closing
+ * that means reading the profile document the way `membership.ts` reads the other three, which
+ * is the next record with no producer. It is residual gap 10 — 9 was the separate question of
+ * where the workspace EVIDENCE itself came from, and is closed above — and it is smaller than
+ * gap 8 was: a caller must now lie about provenance rather than merely differ.
  *
  * Without that policy the fold still works exactly as before, and says so:
  * {@link Roster.membershipGrade} is `'asserted'` and {@link Roster.attributionNote} states
@@ -411,6 +465,29 @@ export interface AttestationPolicy {
    * escalation rather than a fix.
    */
   readonly workspaceEvidence?: ConvenerEvidence;
+  /**
+   * Also require that {@link workspaceEvidence} is the record `<workspace>` DEREFERENCES TO,
+   * and not merely a record about it — {@link EvidenceProvenance} present, naming this
+   * workspace and this record.
+   *
+   * ★ THIS IS RESIDUAL GAP 9'S GATE, and without it every check above is only as strong as the
+   * caller's choice of which workspace record to believe. Anyone can mint one: measured live,
+   * bee published a `wsp:Workspace` for alice's workspace IRI on her own pod and the fold
+   * reported `convenerBinding: 'bound'` and admitted her.
+   *
+   * Off by default, and it has to be: every caller written before this field hands the fold a
+   * descriptor URL it chose, so turning it on by default would refuse them all at once.
+   * Turning it on only ever refuses MORE — see the monotonicity rule in this module's header —
+   * and the fold reports in {@link Roster.evidenceProvenanceBinding} whether it was on.
+   *
+   * ★ AND IT DOES NOT IMPLY {@link requireContentBinding} OR {@link requireFieldBinding}, WHERE
+   * THOSE TWO IMPLY EACH OTHER. Those two compose — fields parsed from bytes nobody re-digested
+   * are worthless — and this one is orthogonal: it says where the document came from, not what
+   * is inside it. A caller may reasonably demand the dereferenced record while still admitting
+   * historical proofs, and ORing them here would refuse a workspace whose record predates
+   * content binding for a reason that has nothing to do with its provenance.
+   */
+  readonly requireEvidenceProvenance?: boolean;
 }
 
 /**
@@ -443,15 +520,15 @@ export interface WorkspaceRecord {
   /**
    * `wsp:roleProfile`, the governance document the workspace declares.
    *
-   * ★ CARRIED AND NOT CONSULTED, and the gap is named rather than papered over. `foldRoster`
-   * takes its {@link RoleProfile} from its caller exactly as it used to take the convener, so
-   * a roster can still be folded against a profile the workspace never declared. Comparing the
-   * two is a second change with a second failure mode and it is not made in the same round;
-   * the value is parsed and handed over so a caller CAN compare, and the README carries the
-   * non-comparison as a residual gap.
+   * ★ NOW CONSULTED, BY {@link refuseRoleProfileAuthority}, and the direction is the convener's
+   * direction: it can refuse the caller's {@link RoleProfile} and it can never supply one. What
+   * it is compared against is `RoleProfile.profile` — an IRI, not a role table — so see that
+   * function and this module's header for the half that stays open.
    *
    * Empty string where the record stated none readably — reported in `problems`, and never a
-   * profile IRI anything will match.
+   * profile IRI anything will match. The empty case is refused EXPLICITLY rather than left to
+   * the comparison, because a caller whose own `RoleProfile.profile` is also empty would
+   * otherwise compare equal to it and be reported as bound off two blanks.
    */
   readonly roleProfile: string;
   /** What the substrate's verifier said about who signed the workspace's own declaration. */
@@ -474,15 +551,100 @@ export interface WorkspaceRecord {
  * confer. Asking and getting silence is not the same as not asking.
  */
 export type ConvenerEvidence =
-  | { readonly kind: 'declared'; readonly record: WorkspaceRecord }
+  | {
+      readonly kind: 'declared';
+      readonly record: WorkspaceRecord;
+      /**
+       * How the caller came by this record. Absent means it was HANDED a descriptor URL —
+       * which is residual gap 9 — and {@link AttestationPolicy.requireEvidenceProvenance}
+       * refuses it. See {@link EvidenceProvenance}.
+       */
+      readonly provenance?: EvidenceProvenance;
+    }
   | {
       readonly kind: 'unreadable';
       /** Why the workspace record could not be read. Rendered into every refusal it causes. */
       readonly why: string;
     };
 
+/**
+ * How a caller came by the workspace record it is offering as evidence.
+ *
+ * ★★ RESIDUAL GAP 9, AND IT UNDID GAP 6'S CLOSE. {@link refuseConvenerAuthority} asks a
+ * {@link ConvenerEvidence} three questions — is its subject THIS workspace, does it name THIS
+ * policy's convener, does it hold up as a signed content-bound record — and never asked where
+ * the evidence came from. Measured against production on 2026-08-02, with two real bearers:
+ * BEE published a `wsp:Workspace` for ALICE'S workspace IRI, on HER OWN pod, naming herself
+ * convener. It published, it parsed with `problems: []`, it content-bound. Handed to the fold
+ * as evidence, the same fold that refuses her self-convened membership on alice's record
+ * reported `convenerBinding: 'bound'` and ADMITTED her — `members: 1`. The subject is a triple
+ * the writer chooses and the signature is over her own claim, so all three questions answer
+ * yes for a record nobody with authority over the workspace wrote.
+ *
+ * ★ WHAT "AUTHORITY OVER A WORKSPACE IRI" ACTUALLY MEANS HERE, measured rather than argued.
+ * A workspace IS a dereferenceable URL. `<https://relay…/ns/<owner>/<slug>>` resolves through
+ * the relay's `/ns/:owner/:slug` route, and `owner` is a POD SEGMENT — `resolveNsGraph` builds
+ * `podUrl = CSS_URL + owner + '/'` (`deploy/mcp-relay/server.ts:11657`) and reads that pod and
+ * no other. So the IRI names the one pod whose holder can decide what it dereferences to.
+ * Measured on the same run: an anonymous `GET <WS>` returned 200 with ALICE named and bee
+ * absent while both records existed; `get_current_head{urn: <WS>, pod_name: <owner>}` returned
+ * alice's descriptor with `forked: false`; and bee writing to alice's pod was refused
+ * `403 scope_violation`. Bee can publish a rival record all day and it is never what `<WS>`
+ * returns.
+ *
+ * So the closure is: THE EVIDENCE MUST BE THE RECORD `<WS>` ACTUALLY DEREFERENCES TO. This
+ * pair is the caller's statement that it is — which IRI was dereferenced, and which descriptor
+ * that dereference resolved to. `dereferenceWorkspaceRecord` in `membership.ts` is what makes
+ * the statement honestly, by doing the dereference through the owner segment's own pod.
+ *
+ * ★ AND IT IS STILL A CLAIM THIS PURE MODULE CANNOT CHECK, exactly like {@link Attestation}
+ * and {@link FieldProvenance}, and saying otherwise would be the third over-read this file has
+ * had to correct. The fold cannot fetch. What it CAN check — and does, in
+ * {@link refuseEvidenceProvenance} — are the two relations that are not self-certifying: the
+ * IRI dereferenced must be the workspace being folded, and the descriptor that dereference
+ * resolved to must be the record's own `head`. Those catch the realistic failure, which is not
+ * a liar but a federated composer holding one workspace record per pod it read and attaching
+ * the wrong one to this roster. A caller that hand-writes both fields beside a record it
+ * forged is not caught here and cannot be — the same residue `FieldProvenance` carried until
+ * `membership.ts` existed to produce it, and it is closed the same way: by there being a
+ * producer, and by the substrate refusing to let bee be what `<WS>` returns.
+ */
+export interface EvidenceProvenance {
+  /**
+   * The IRI that was DEREFERENCED to obtain this record. MUST be the workspace being folded:
+   * a caller that dereferenced somewhere else established nothing about this workspace.
+   */
+  readonly dereferenced: string;
+  /**
+   * The descriptor URL that dereference resolved to. MUST equal the record's own `head`; see
+   * {@link refuseEvidenceProvenance}.
+   */
+  readonly resolvedTo: string;
+}
+
 /** What {@link foldRoster} was able to establish about the policy's convener. */
 export type ConvenerBinding = 'bound' | 'refused' | 'unchecked';
+
+/**
+ * What {@link foldRoster} was able to establish about where its workspace evidence came from.
+ *
+ * Its own name rather than a reuse of {@link ConvenerBinding}, for the reason
+ * {@link RoleProfileBinding} has one: they answer different questions and a reader following
+ * the type should arrive at the right one. It buys nothing at the compiler — the unions are
+ * identical and TypeScript is structural — so the pairing is asserted in the tests instead.
+ */
+export type EvidenceProvenanceBinding = 'bound' | 'refused' | 'unchecked';
+
+/**
+ * What {@link foldRoster} was able to establish about the role profile it folded against.
+ *
+ * Its own NAME rather than a reuse of {@link ConvenerBinding}, because the two answer
+ * different questions and a reader following the type should arrive at the right one. It buys
+ * nothing at the compiler: TypeScript is structural, the unions are identical, and a
+ * transposition of the two fields still compiles. Said out loud so the separate name is not
+ * read as a guarantee it does not carry — the pairing is asserted in the tests instead.
+ */
+export type RoleProfileBinding = 'bound' | 'refused' | 'unchecked';
 
 /**
  * Why this record cannot be attributed to `expected`, or null when it can.
@@ -805,6 +967,270 @@ export function refuseConvenerAuthority(args: {
   return null;
 }
 
+/**
+ * Why the workspace evidence cannot be treated as what dereferencing the workspace returns,
+ * or null when it can.
+ *
+ * The fourth question about the same record, and a THIRD function rather than more branches
+ * inside either of the two above, for the reason that split already exists: who may grant,
+ * what a granted role permits, and where this record came from are different faults with
+ * different repairs, and one verdict over all three cannot say which failed. This one's repair
+ * is not to republish anything — it is to obtain the record by dereferencing the workspace
+ * instead of being handed a URL.
+ *
+ * ★ AND IT REFUSES ON THE CONFERRING TRACK ONLY — enforced by the caller, not here, exactly as
+ * {@link refuseRoleProfileAuthority} is. This returns a string; {@link foldRoster} puts it at
+ * the end of the grant filter's `??` chain and nowhere else, so a provenance the fold will not
+ * accept removes the power to make members and leaves every revocation, withdrawal and
+ * divergence where a fold with no evidence at all leaves them.
+ *
+ * ★ OFF UNLESS ASKED FOR, and the first line is the whole of that. Every caller written before
+ * this field hands the fold a descriptor URL it chose, so defaulting the check ON would refuse
+ * every existing evidence-bearing fold at once — the same reason
+ * {@link AttestationPolicy.requireContentBinding} and `requireFieldBinding` default off.
+ * Turning it on only ever refuses MORE, and {@link Roster.evidenceProvenanceBinding} reports
+ * whether it was on.
+ *
+ * ★ AND ASKING WITH NO EVIDENCE AT ALL IS A REFUSAL, NOT A PASS. A policy that demands the
+ * record `<workspace>` dereferences to and passes none has not been given it. Returning null
+ * there would make the strictest flag in the policy silently inert whenever the field beside
+ * it was forgotten — which is precisely how a transient read failure once turned a checked
+ * roster back into an unchecked one.
+ *
+ * Every branch refuses, including the two where the caller asked and got nothing back.
+ */
+export function refuseEvidenceProvenance(args: {
+  readonly evidence: ConvenerEvidence | undefined;
+  /** The workspace being folded. The IRI the caller dereferenced must be this. */
+  readonly workspace: string;
+  readonly requireEvidenceProvenance?: boolean;
+}): string | null {
+  const { evidence, workspace } = args;
+  if (args.requireEvidenceProvenance !== true) return null;
+  if (evidence === undefined) {
+    return `this policy requires the workspace record that <${workspace}> dereferences to and `
+      + 'was passed no `workspaceEvidence` at all, so there is nothing whose provenance could '
+      + 'be checked. A demand nobody supplied evidence for is not a demand that was met';
+  }
+  // Read the tag out before the narrowing erases it, for the reason both siblings do: this
+  // arrives as JSON through `can.ts` in a federated composer and the compiler is guaranteeing
+  // nothing about a value it did not see written.
+  const tag: string = evidence.kind;
+  if (evidence.kind === 'unreadable') {
+    return 'the workspace record that would say who convenes here could not be read '
+      + `(${evidence.why}), so nothing was obtained by dereferencing <${workspace}> and there `
+      + 'is no provenance to check. This policy ASKED, and an unanswered question is not an '
+      + 'answer — so nothing CONFERS, and every revocation and withdrawal still applies';
+  }
+  if (tag !== 'declared') {
+    return `the workspace evidence is tagged '${tag}', which is neither 'declared' nor `
+      + "'unreadable'. An unknown tag establishes nothing about where this record was obtained";
+  }
+  const ws: WorkspaceRecord | undefined = evidence.record;
+  if (ws === undefined) {
+    return "the workspace evidence is tagged 'declared' and carries no record, so there is no "
+      + 'record whose provenance could be checked';
+  }
+  const provenance: EvidenceProvenance | undefined = evidence.provenance;
+  if (provenance === undefined) {
+    // ★ RESIDUAL GAP 9, REFUSED. This is the shape that was measured live: bee's own
+    // `wsp:Workspace` for alice's workspace IRI, on bee's pod, handed straight to the fold. It
+    // answers every other question yes, because the subject is a triple its writer chose. The
+    // only thing that distinguishes it from alice's is that <workspace> does not dereference
+    // to it — so a record with no statement of having been dereferenced at all is refused
+    // rather than read.
+    return `it carries no statement of where it came from, so nothing relates it to `
+      + `<${workspace}> beyond a subject triple its own writer chose. Anyone may publish a `
+      + 'wsp:Workspace for anybody\'s workspace IRI on their own pod — measured live: it '
+      + 'publishes, it parses, it content-binds, and the fold admitted its author as convener. '
+      + 'Obtain the record with dereferenceWorkspaceRecord in membership.ts, which resolves '
+      + '<workspace> through the pod its own owner segment names';
+  }
+  if (provenance.dereferenced !== workspace) {
+    // A composer reading many pods holds one workspace record per workspace it has met.
+    // Attaching the one it fetched for <a> to the roster for <b> produces evidence that is
+    // genuine, well signed, and about somewhere else — visible here without trusting anybody.
+    return `it was obtained by dereferencing <${provenance.dereferenced}> and this roster is `
+      + `<${workspace}> — resolving one workspace establishes nothing about another, however `
+      + 'well the record that came back is signed';
+  }
+  if (provenance.resolvedTo !== ws.head) {
+    // ★ THE ONE CHECK HERE THAT IS NOT SELF-CERTIFYING, the same shape `refuseFieldBinding`
+    // makes one layer down: the dereference resolved to one document and the record handed in
+    // is another. Two genuine reads, one of them not the one this workspace answers with.
+    return `dereferencing <${workspace}> resolved to <${provenance.resolvedTo}> and the record `
+      + `offered as evidence is <${ws.head}> — the workspace answered with one document and `
+      + 'this fold was handed a different one, so neither states what the other says';
+  }
+  return null;
+}
+
+/**
+ * Why the role profile this fold was handed cannot be treated as this workspace's governance,
+ * or null when it can.
+ *
+ * The sibling of {@link refuseConvenerAuthority}, one field over on the same record, and
+ * deliberately a SECOND function rather than two more branches inside that one. They answer
+ * different questions — who may grant, versus what a granted role permits — and a single
+ * verdict over both would produce one string that cannot say which half failed, the same
+ * reason {@link refuseFieldBinding} is not folded into {@link refuseAttestation}. It also
+ * keeps a profile disagreement from being reported as a convener fault, which is this file's
+ * standing complaint about its own diagnostics.
+ *
+ * ★ THE DUPLICATION BELOW IS DELIBERATE AND IS THE CHEAPER SIDE OF THE TRADE. The tag, record
+ * and subject guards here are the same three the convener refusal makes. Sharing them would
+ * mean editing that function, whose branch ORDER is load-bearing — its convener comparison
+ * sits ABOVE the authorship check so that a disagreement reports the disagreement rather than
+ * a signature problem, and `verify-can-live.ts` and two suites pin that string. Refactoring a
+ * guard that survived review, in the diff that adds its sibling, is the move this area has
+ * shipped a defect on in each of the last six rounds. The two are pinned by the same
+ * direct-call cases so a divergence surfaces as a test failure rather than as a silence.
+ *
+ * ★ AND IT REFUSES ON THE CONFERRING TRACK ONLY — enforced by the caller, not here. This
+ * function returns a string; {@link foldRoster} puts it in the grant filter's `??` chain and
+ * nowhere else, so a disagreement removes the power to make members and leaves every
+ * revocation, withdrawal and divergence exactly where a fold with no evidence at all leaves
+ * them. Round 3 shipped the inversion of that at a narrower gate and had to undo it.
+ *
+ * Every branch refuses, including the one where the caller asked and got nothing back. The
+ * only path to null is a workspace record that IS this workspace, NAMES THIS POLICY'S CONVENER,
+ * declares a non-empty `wsp:roleProfile` equal to the IRI the caller's profile claims, and
+ * holds up as a record at whatever strength the rest of the policy demands.
+ *
+ * ★ THE CONVENER BRANCH IS A PRECONDITION HERE, NOT THE OTHER FUNCTION'S QUESTION BORROWED.
+ * What it establishes is that this record's `wsp:roleProfile` is worth reading at all, which
+ * the profile comparison below silently assumed. It refuses; it never answers the convener's
+ * question in `roleProfileBinding` — the two verdicts stay separate and the pair matrix in
+ * `tests/workspace-adversarial.test.ts` is what holds them apart.
+ */
+export function refuseRoleProfileAuthority(args: {
+  readonly evidence: ConvenerEvidence;
+  /** The workspace being folded. The record's own subject must be this. */
+  readonly workspace: string;
+  /**
+   * `RoleProfile.profile` — the IRI the caller's role table claims to have come from. Never
+   * replaced by the record's: see this module's header for why substitution is the escalating
+   * version of this check, and for what comparing IRIs does and does not establish.
+   */
+  readonly profile: string;
+  /**
+   * The principal the policy treats as entitled to grant. Not compared against the caller's
+   * profile — it is here so that a record naming SOMEBODY ELSE as convener is refused before
+   * its `wsp:roleProfile` is believed. See the branch that reads it.
+   */
+  readonly convener: Principal;
+  readonly signerOf?: SignerResolver;
+  readonly requireContentBinding?: boolean;
+  readonly requireFieldBinding?: boolean;
+}): string | null {
+  const { evidence, workspace, profile } = args;
+  // Read before the narrowing erases it, for the reason `refuseConvenerAuthority` does: the
+  // compiler believes the tag can only be `'declared'` after the branch below, and this value
+  // arrives as JSON through `can.ts` in a federated composer where the type guarantees nothing.
+  const tag: string = evidence.kind;
+  if (evidence.kind === 'unreadable') {
+    return 'the workspace record that would say which role profile governs here could not be '
+      + `read (${evidence.why}). This policy ASKED, and an unanswered question about what a `
+      + 'role permits is not the same as never having asked — so nothing CONFERS. Every '
+      + 'revocation and withdrawal still applies, because refusing to confer is not deleting a '
+      + 'record';
+  }
+  if (tag !== 'declared') {
+    return `the workspace evidence is tagged '${tag}', which is neither 'declared' nor `
+      + "'unreadable'. An unknown tag establishes nothing about which role profile governs "
+      + 'here, and a tag that fell through to the declared branch is how a third value once '
+      + 'reported a binding off the back of nothing';
+  }
+  const ws: WorkspaceRecord | undefined = evidence.record;
+  if (ws === undefined) {
+    return "the workspace evidence is tagged 'declared' and carries no record. A declaration "
+      + 'with nothing in it declares no role profile';
+  }
+  if (ws.workspace !== workspace) {
+    // First, for the same reason as on the convener side: a record about somewhere else can
+    // neither agree nor disagree with this fold, and reporting a profile mismatch on it would
+    // send an operator to reconcile two governance documents that were never in conflict.
+    return `the workspace record at <${ws.head}> declares the role profile of <${ws.workspace}> `
+      + `and this roster is <${workspace}> — a record of another workspace says nothing about `
+      + 'what a role permits in this one, however well signed it is';
+  }
+  if (ws.convener !== args.convener) {
+    // ★ REFUSED BEFORE THE PROFILE IS COMPARED, AND IT IS A DIAGNOSTIC FIX RATHER THAN AN
+    // ESCALATION FIX. Reproduced live on 2026-08-02 and independently through the real reader:
+    // a record whose subject is this workspace, naming a STRANGER as convener and the true
+    // `wsp:roleProfile`, signed by that stranger's own agent, produced
+    // `convenerBinding: 'refused'` beside `roleProfileBinding: 'bound'` — and `'bound'`'s own
+    // contract says "the governance these capabilities were computed under is the governance
+    // the workspace publishes". Nothing held up. The only thing checked was that a stranger's
+    // self-consistent record agreed with the caller, and this field is a non-omittable SECURITY
+    // output. No capability moves — both refusals sit in the same `??` chain, so conferral
+    // needs both null and `convenerBinding` is `'refused'` on every input that reaches here —
+    // which is exactly why it had to be fixed as a claim rather than as a hole.
+    //
+    // The message names the CONVENER question rather than the profile one, so an operator is
+    // not sent to reconcile two governance documents that never disagreed. The pair stays
+    // separable: a record with the right convener and the wrong profile still reports
+    // `('bound','refused')`, which is the row a fold that answered one question with the
+    // other's verdict cannot satisfy alongside this one.
+    return `the workspace record at <${ws.head}> names ${ws.convener} as convener and this `
+      + `policy treats ${args.convener} as entitled to grant. What a role permits here is `
+      + 'whatever the party who convenes this workspace published, so a record written by '
+      + 'somebody else declares no governance for this roster — the profile IRI on it is not '
+      + 'compared at all, because agreeing with a stranger establishes nothing. Settle the '
+      + 'convener first: see `convenerBinding`';
+  }
+  // ★ BOTH EMPTIES REFUSED BEFORE THE COMPARISON, AND THAT ORDER IS THE GUARD. `''` is what
+  // `readWorkspaceRecord` carries when the record stated no readable `wsp:roleProfile`, and a
+  // caller that passed a profile with no `profile` IRI arrives as `''` too. Left to the
+  // equality test below, those two blanks would MATCH and this fold would report the
+  // governance as bound because neither side named any.
+  if (typeof ws.roleProfile !== 'string' || ws.roleProfile === '') {
+    return `the workspace record at <${ws.head}> states no readable wsp:roleProfile, so it `
+      + 'declares no governance for this roster to be checked against. The published '
+      + 'WorkspaceShape requires exactly one; a record without one answers the question by not '
+      + 'asking it';
+  }
+  if (typeof profile !== 'string' || profile === '') {
+    return `<${workspace}> declares the role profile <${ws.roleProfile}> and this fold was `
+      + 'handed a RoleProfile that names no profile IRI at all, so there is nothing to compare '
+      + 'it with. An unnamed role table cannot be shown to be the one this workspace publishes';
+  }
+  if (ws.roleProfile !== profile) {
+    // ★ THE HEADLINE REFUSAL, AND IT REFUSES RATHER THAN CORRECTING. Adopting `ws.roleProfile`
+    // would be the convener inversion in the field that decides capabilities: the fold holds
+    // the caller's ROLE TABLE and only the declared IRI, so "adopting" could relabel the
+    // caller's own permits with the workspace's name and confer them — evidence that widens.
+    return `this fold was handed the role profile <${profile}> and <${workspace}> declares `
+      + `<${ws.roleProfile}>. The two disagree, so no grant here CONFERS: the profile decides `
+      + 'what every role in this roster permits, and a roster folded against governance the '
+      + 'workspace never declared reports capabilities nobody published. The declared profile '
+      + 'is not substituted for the caller\'s — the fold holds an IRI, not the document — so a '
+      + 'disagreement is refused rather than resolved';
+  }
+  // Held to the same standard as the grants it governs, and against the party the record
+  // itself names as convener — the party a record of this workspace must have come from. That
+  // this is also the policy's convener is the OTHER refusal's question, deliberately not
+  // re-asked here: answering it twice would make a convener disagreement print as a profile
+  // fault in `roleProfileBinding`.
+  const badSignature = refuseAttestation(
+    ws.attestation, ws.convener, args.signerOf, args.requireContentBinding === true,
+  );
+  if (badSignature !== null) {
+    return `the workspace record at <${ws.head}> declares the role profile <${ws.roleProfile}> `
+      + `and that record itself does not hold up: ${badSignature}. A declaration of what a role `
+      + 'permits is worth exactly what its own authorship is worth, and anybody can write one '
+      + 'about anybody';
+  }
+  const badFields = refuseFieldBinding(
+    ws.fieldProvenance, ws.head, args.requireFieldBinding === true,
+  );
+  if (badFields !== null) {
+    return `the workspace record at <${ws.head}> declares the role profile <${ws.roleProfile}> `
+      + `and that value was not read from the record: ${badFields}`;
+  }
+  return null;
+}
+
 /** A record the fold refused to use, and why. Reported so a refusal is diagnosable. */
 export interface UnattestedRecord {
   readonly kind: 'grant' | 'acceptance';
@@ -989,6 +1415,88 @@ export interface Roster {
    * header.
    */
   readonly convenerBinding: ConvenerBinding;
+  /**
+   * Whether the role profile this fold computed capabilities from is the profile the WORKSPACE
+   * declares.
+   *
+   *   bound       `attestation.workspaceEvidence` carried a workspace record, its subject is
+   *               this workspace, its `wsp:roleProfile` is the IRI `profile.profile` names, and
+   *               the record held up as a record at whatever strength the rest of the policy
+   *               demanded. The governance these capabilities were computed under is the
+   *               governance the workspace publishes.
+   *   refused     evidence was supplied and did NOT establish that. Either the two name
+   *               different profiles, or one of them named none, or the record is of another
+   *               workspace, or its own authorship or fields did not hold up, or the caller
+   *               asked and the substrate could not answer. NO GRANT CONFERRED — every one is
+   *               in `unattested` with the reason — and every revocation and withdrawal still
+   *               applied.
+   *   unchecked   no policy, or a policy that passed no evidence. `profile` is a document the
+   *               caller chose and nothing compared it to anything, while `permitsOf` was built
+   *               from it and it decided every `effective` capability below.
+   *
+   * Non-omittable, for the reason {@link convenerBinding} and `crossStreamOrderIsAdvisory`
+   * are: the three rosters look identical, and a caller must not be able to read `members`
+   * without having been handed the difference.
+   *
+   * ★ WHAT `'bound'` DOES NOT MEAN, AND IT IS A SHORTER CLAIM THAN THE OTHER TWO BINDINGS.
+   * `RoleProfile.profile` is the caller's own statement of where its `roles` came from. This
+   * module is pure, so the profile document is never fetched and the role table behind that
+   * IRI is never checked against it. `'bound'` says the caller's table CLAIMS to be the
+   * declared profile; it does not say it IS. A caller that writes the declared IRI over an
+   * invented set of permits passes this check — that is residual gap 10, and it is the same
+   * kind of self-certification {@link FieldProvenance} carried until `membership.ts` existed
+   * to produce it.
+   *
+   * ★ AND IT IS A SEPARATE QUESTION FROM {@link convenerBinding}, WHICH IS NOT THE SAME AS
+   * BEING INDEPENDENT OF IT. What stood here said `'refused'` there beside `'bound'` here was
+   * "a coherent and expected pair: the workspace's own record declares the governance you
+   * folded against and does NOT name the convener you did". That pair is now unreachable, and
+   * the sentence was the thing a review falsified: a record naming a STRANGER as convener and
+   * the true `wsp:roleProfile`, signed by that stranger, produced exactly it — so `'bound'`,
+   * whose contract two paragraphs up is "the governance these capabilities were computed under
+   * is the governance the workspace publishes", was asserting something an unauthorised party
+   * controlled. {@link refuseRoleProfileAuthority} now refuses before comparing when the record
+   * names somebody other than the policy's convener.
+   *
+   * What remains separate is the direction that matters: `('bound','refused')` — the right
+   * convener, the wrong profile — is still reachable and is still the row a fold that answered
+   * one question with the other's verdict cannot satisfy alongside `('refused','refused')`.
+   * Conferral requires both, and each refusal still names its own fault so neither is repaired
+   * by fixing the other.
+   */
+  readonly roleProfileBinding: RoleProfileBinding;
+  /**
+   * Whether the workspace evidence this fold read is the record `<workspace>` DEREFERENCES TO.
+   *
+   *   bound       the policy asked, and `attestation.workspaceEvidence` carried an
+   *               {@link EvidenceProvenance} saying it was obtained by dereferencing THIS
+   *               workspace and resolving to THIS record. The two other bindings above are
+   *               statements about a document; this is the statement that it is the right one.
+   *   refused     the policy asked and did NOT get that. Either the evidence carries no
+   *               provenance at all — the residual-gap-9 shape, a record somebody chose — or
+   *               a different IRI was dereferenced, or the dereference resolved to a different
+   *               document, or the policy demanded provenance and was passed no evidence. NO
+   *               GRANT CONFERRED, and every revocation and withdrawal still applied.
+   *   unchecked   `requireEvidenceProvenance` was not set. The descriptor URL the workspace
+   *               record was read from is whatever whoever assembled this fold chose, and
+   *               anybody may publish a `wsp:Workspace` for anybody's workspace IRI on their
+   *               own pod. This is what every caller written before the flag does.
+   *
+   * Non-omittable, for the reason the four fields above are: the rosters look identical, and
+   * `'unchecked'` and `'refused'` must never be the same absent field — "nobody asked where
+   * this came from" and "somebody asked and it came from the wrong place" are the two states
+   * this whole gap is made of.
+   *
+   * ★ WHAT `'bound'` DOES NOT MEAN. This module is pure and does not dereference anything, so
+   * the pair it checked is the CALLER'S statement, in exactly the sense `FieldProvenance` is a
+   * record's own statement about its fields. What makes the statement worth something is that
+   * there is a producer that makes it honestly — `dereferenceWorkspaceRecord` in
+   * `membership.ts`, which resolves the workspace through the pod its own `/ns` owner segment
+   * names — and that the substrate refuses anyone else a write there (`403 scope_violation`,
+   * measured both ways). A caller that hand-writes the pair beside a record it forged passes
+   * this check, and cannot be caught by a function that cannot fetch.
+   */
+  readonly evidenceProvenanceBinding: EvidenceProvenanceBinding;
 }
 
 const uniqueSorted = (xs: readonly string[]): string[] => [...new Set(xs)].sort();
@@ -1127,6 +1635,41 @@ export function foldRoster(args: {
     args.attestation === undefined || evidence === undefined
       ? 'unchecked'
       : convenerRefusal === null ? 'bound' : 'refused';
+  // ★ THE SAME RECORD, THE OTHER FIELD, AND A SEPARATE VERDICT. Computed here beside the
+  // convener's and for the same reasons — it is a fact about the POLICY, identical for every
+  // grant, so evaluating it per row would cost N times as much and invite a later edit to make
+  // a policy-level gate depend on the row. Kept a distinct call and a distinct field because a
+  // profile disagreement and a convener disagreement are different faults with different
+  // repairs: one republishes a workspace record, the other re-folds against the declared
+  // governance.
+  const profileRefusal = args.attestation === undefined || evidence === undefined
+    ? null
+    : refuseRoleProfileAuthority({
+        evidence, workspace, profile: profile.profile, convener: args.attestation.convener,
+        signerOf, requireContentBinding: requireBinding, requireFieldBinding: requireFields,
+      });
+  const roleProfileBinding: RoleProfileBinding =
+    args.attestation === undefined || evidence === undefined
+      ? 'unchecked'
+      : profileRefusal === null ? 'bound' : 'refused';
+  // ★ THE THIRD QUESTION OFF THE SAME EVIDENCE, AND THE ONLY ONE GATED ON A FLAG RATHER THAN ON
+  // THE EVIDENCE BEING PRESENT. The two above turn on the moment a caller passes evidence,
+  // because comparing what it says costs nothing and refusing more is always safe. This one
+  // demands the caller have obtained the record a particular way, which no existing caller
+  // does — so it is opted into, like `requireContentBinding` and `requireFieldBinding`, and
+  // `evidenceProvenanceBinding` reports whether it was.
+  //
+  // ★ AND ITS `undefined` EVIDENCE CASE IS A REFUSAL, WHICH IS WHY `evidence` GOES IN RATHER
+  // THAN BEING GUARDED OUT HERE. A policy that demands the dereferenced record and passes none
+  // has not met the demand; letting the missing field make the flag inert is how a strict
+  // policy quietly becomes a weak one.
+  const askedForEvidenceProvenance = args.attestation?.requireEvidenceProvenance === true;
+  const evidenceRefusal = !askedForEvidenceProvenance
+    ? null
+    : refuseEvidenceProvenance({ evidence, workspace, requireEvidenceProvenance: true });
+  const evidenceProvenanceBinding: EvidenceProvenanceBinding = !askedForEvidenceProvenance
+    ? 'unchecked'
+    : evidenceRefusal === null ? 'bound' : 'refused';
   if (args.attestation) {
     const convener = args.attestation.convener;
     conferringGrants = inWorkspaceGrants.filter(g => {
@@ -1142,9 +1685,25 @@ export function foldRoster(args: {
       // reports the policy fault and every bad one still reports its own, in a single fold —
       // and the policy fault is stated once at roster scope, where it belongs, in
       // `convenerBinding` and `attributionNote` rather than N times at record scope.
+      //
+      // ★ AND THE PROFILE REFUSAL IS LAST OF ALL, BEHIND THE CONVENER'S. Both are constant, so
+      // both belong after the per-record diagnoses for the reason above; between the two, who
+      // may grant here is the more fundamental question and the one whose repair comes first.
+      // A workspace whose record disagrees on BOTH reports the convener, because re-folding
+      // against the declared profile would still confer nothing until the convener is settled.
+      //
+      // ★ AND THE EVIDENCE'S OWN PROVENANCE IS LAST OF ALL, BEHIND BOTH. Same reasoning one
+      // step further: all three are constant across rows, so all three sit after the per-record
+      // diagnoses. Between them, who may grant and what a role permits are faults in the
+      // WORKSPACE'S published record, and this one is a fault in how THIS FOLD was assembled —
+      // the operator with more than one wants the republishable fault named first, and a fold
+      // whose evidence came from the wrong place confers nothing even once the other two are
+      // settled.
       const why = refuseAttestation(g.attestation, convener, signerOf, requireBinding)
         ?? refuseFieldBinding(g.fieldProvenance, g.head, requireFields)
-        ?? convenerRefusal;
+        ?? convenerRefusal
+        ?? profileRefusal
+        ?? evidenceRefusal;
       if (why === null) return true;
       unattested.push({
         kind: 'grant', head: g.head, principal: g.grantedTo, because: why,
@@ -1152,9 +1711,11 @@ export function foldRoster(args: {
       });
       return false;
     });
-    // ★ AND `convenerRefusal` IS DELIBERATELY NOT IN THIS CHAIN. A convener disagreement is
-    // about who may GRANT; an acceptance is a member's own statement about their own pod and
-    // is no less theirs because the policy misidentified the convener. Adding it here would
+    // ★ AND NONE OF `convenerRefusal`, `profileRefusal` OR `evidenceRefusal` IS IN THIS CHAIN.
+    // A convener disagreement is about who may GRANT, a profile disagreement is about what a
+    // granted role permits, and an evidence-provenance refusal is about how this fold was
+    // assembled; an acceptance is a member's own statement about their own pod and is no
+    // less theirs because the policy got any of the three wrong. Adding them here would
     // refuse strictly more — monotone, so not unsafe — and would print a line accusing every
     // member of something the CONVENER's side got wrong, in the one channel operators are told
     // to watch. It also buys nothing: a member needs a conferring grant AND a conferring
@@ -1485,6 +2046,53 @@ export function foldRoster(args: {
               + `<${workspace}> to confirm it, so these are the right memberships only if the `
               + 'right principal was named. Pass `workspaceEvidence`, read with '
               + 'readWorkspaceRecord in membership.ts, to close it. See `convenerBinding`.')
+        // ★ ITS OWN SENTENCE, OUTSIDE THE CONVENER'S TERNARY, for the reason that one is
+        // outside the field-binding ternary: they are different questions off the same record,
+        // and a reader told only about the convener has been told nothing about the document
+        // that decided every capability printed below.
+        + (roleProfileBinding === 'bound'
+          ? ` The ROLE PROFILE was checked against the workspace: <${workspace}> declares `
+            + `<${profile.profile}>, which is the profile these capabilities were computed `
+            + 'from. Residual: what was compared is an IRI. The profile DOCUMENT is not fetched '
+            + 'here — this fold is pure — so the role table itself is still the caller\'s, and '
+            + '`bound` means it claims to be the declared profile rather than that it is. See '
+            + '`roleProfileBinding`.'
+          : roleProfileBinding === 'refused'
+            ? ' The ROLE PROFILE was checked against the workspace and did NOT agree, so '
+              + 'nothing here confers: every grant is listed in `unattested`, and `members` is '
+              + 'empty of anyone who needed one. The profile decides what every role permits, '
+              + 'so a roster folded against governance the workspace never declared would '
+              + 'report capabilities nobody published. Revocations and withdrawals still '
+              + 'applied — refusing to confer is not deleting a record. See '
+              + '`roleProfileBinding`.'
+            : ' RESIDUAL, alongside the convener and for the same reason: nothing checked that '
+              + `the role profile this fold used (${profile.profile}) is the one <${workspace}> `
+              + 'declares. It is a document the caller chose, and every capability above was '
+              + 'computed from it. Pass `workspaceEvidence` to close it — the same record '
+              + 'carries both. See `roleProfileBinding`.')
+        // ★ AND A THIRD SENTENCE, BECAUSE THE TWO ABOVE BOTH READ OFF ONE RECORD AND NEITHER
+        // SAYS WHERE THAT RECORD CAME FROM. A reader told the convener and the profile were
+        // checked has been told nothing about whether the document both answers came out of is
+        // the one the workspace answers with — which is the whole of residual gap 9.
+        + (evidenceProvenanceBinding === 'bound'
+          ? ' The EVIDENCE ITSELF was checked: the record above was obtained by dereferencing '
+            + `<${workspace}> and is the document that dereference resolved to, so the two `
+            + 'answers came off the workspace\'s own record rather than off a record somebody '
+            + 'chose. Residual: this fold is pure and fetches nothing, so that pair is the '
+            + 'CALLER\'S statement — worth what its producer is worth. See '
+            + '`evidenceProvenanceBinding`.'
+          : evidenceProvenanceBinding === 'refused'
+            ? ' The EVIDENCE ITSELF was checked and is NOT what this workspace dereferences to, '
+              + 'so nothing here confers: every grant is listed in `unattested`. Revocations '
+              + 'and withdrawals still applied. See `evidenceProvenanceBinding`.'
+            : ' RESIDUAL, and it is the one the two sentences above rest on: the workspace '
+              + 'record they read was found at a descriptor URL whoever assembled this fold '
+              + 'chose. Anybody may publish a wsp:Workspace for anybody\'s workspace IRI on '
+              + 'their own pod — measured live, and the fold admitted its author as convener — '
+              + `so a record that agrees about <${workspace}> is not yet the record `
+              + `<${workspace}> returns. Read it with dereferenceWorkspaceRecord in `
+              + 'membership.ts and pass `requireEvidenceProvenance` to close it. See '
+              + '`evidenceProvenanceBinding`.')
       : 'Membership is ASSERTED, not attested: no grant or acceptance was checked for an '
         + 'authorship proof, so a convener who holds both records could have written both '
         + 'halves and this list would look identical. Pass `attestation` to foldRoster to '
@@ -1509,6 +2117,16 @@ export function foldRoster(args: {
     // `unchecked` — every record perfectly parsed, and no evidence at all that the party they
     // came from was entitled to grant here.
     convenerBinding,
+    // A FOURTH, off the same record as the third and reporting the other half of it. Folded
+    // into `convenerBinding` it would make "the workspace disagrees about who convenes" and
+    // "the workspace disagrees about what a role permits" the same value, and they are
+    // repaired differently.
+    roleProfileBinding,
+    // A FIFTH, and it is not a third reading of the same record — it is the question of whether
+    // that record is the right one at all. The two above can both be `'bound'` over a document
+    // a stranger published for this workspace IRI on their own pod, which is what residual gap
+    // 9 was; this reports whether anybody asked.
+    evidenceProvenanceBinding,
   };
 }
 

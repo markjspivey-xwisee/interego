@@ -40,12 +40,12 @@ describe('parseSkillMd', () => {
     expect(p.name).toBe('extend-a-standard');
     expect(p.description).toMatch(/extend a standard/i);
     expect(p.sections.map(s => s.heading)).toEqual(['Discover guidance', 'Call the affordance']);
-    expect(p.sections[1].body).toContain('extend_standards');
+    expect(p.sections[1]?.body).toContain('extend_standards');
   });
   it('handles a body with no sections', () => {
     const p = parseSkillMd(`---\nname: x\ndescription: y\n---\nJust a flat instruction with no headings.`);
     expect(p.sections.length).toBe(1);
-    expect(p.sections[0].body).toContain('flat instruction');
+    expect(p.sections[0]?.body).toContain('flat instruction');
   });
 });
 
@@ -71,12 +71,12 @@ describe('parseSkillMd robustness (adversarial-review regressions)', () => {
   });
   it('does NOT strip a mid-section `# ` line (only a leading title)', () => {
     const p = parseSkillMd(`---\nname: s\ndescription: d\n---\n## Setup\nlorem\n# Important: never skip\nthen continue.\n## Teardown\ntear`);
-    expect(p.sections[0].body).toContain('Important: never skip');
+    expect(p.sections[0]?.body).toContain('Important: never skip');
   });
   it('does NOT treat `## ` inside a fenced code block as a heading', () => {
     const p = parseSkillMd('---\nname: s\ndescription: d\n---\n## Real\nbefore\n```md\n## not a real heading\n```\nafter\n## Second\nx');
     expect(p.sections.map(s => s.heading)).toEqual(['Real', 'Second']);
-    expect(p.sections[0].body).toContain('not a real heading'); // the fenced content is preserved in the body
+    expect(p.sections[0]?.body).toContain('not a real heading'); // the fenced content is preserved in the body
   });
   it('symbol-only headings do not collapse onto one id', () => {
     const r = skillMdToAgenticCourse('---\nname: s\ndescription: d\n---\n## ***\nalpha\n## ---\nbeta', { courseIri: 'u', authoritativeSource: 'u' });

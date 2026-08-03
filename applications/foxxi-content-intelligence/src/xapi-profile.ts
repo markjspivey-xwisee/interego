@@ -639,7 +639,10 @@ export interface ProfileTemplateResult {
   verb: string;
   /** Is the statement's verb a declared concept of this profile? */
   verbDeclared: boolean;
-  /** Did any statement template apply (verb-matched)? If false, `conforms` is not meaningful. */
+  /** Did any statement template apply (verb-matched)? If false, an empty `violations` means
+   *  "nothing was checked", not "it passed". There is no `conforms` field — the doc here used
+   *  to name one, and a test in `round4-remediation.test.ts` read `r.conforms ?? …` on the
+   *  strength of it. Conformance is `applicable && violations.length === 0`. */
   applicable: boolean;
   matchedTemplates: string[];
   violations: Array<{ template: string; location: string; message: string }>;

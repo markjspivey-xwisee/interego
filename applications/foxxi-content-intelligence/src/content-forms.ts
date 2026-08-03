@@ -103,7 +103,7 @@ function safeHref(s: string): string {
   // scheme, so strip them before testing (defeats "java\tscript:" bypasses).
   const collapsed = t.replace(/[\x00-\x20]+/g, '');
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(collapsed);
-  if (scheme && !/^(https?|mailto)$/i.test(scheme[1])) return '#';
+  if (scheme?.[1] && !/^(https?|mailto)$/i.test(scheme[1])) return '#';
   return t;
 }
 

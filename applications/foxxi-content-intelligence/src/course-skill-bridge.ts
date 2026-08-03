@@ -85,7 +85,7 @@ export function parseSkillMd(md: string): ParsedSkill {
   let name = '', description = '', body = md;
   const fm = md.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
   if (fm) {
-    const front = fm[1]; body = fm[2];
+    const front = fm[1] ?? ''; body = fm[2] ?? '';
     // [ \t] (not \s) around the value so an EMPTY field can't swallow the next line; (.*) allows ''.
     name = oneLine((front.match(/^[ \t]*name:[ \t]*(.*)$/m) ?? [, ''])[1]).replace(/^["']|["']$/g, '');
     description = oneLine((front.match(/^[ \t]*description:[ \t]*(.*)$/m) ?? [, ''])[1]).replace(/^["']|["']$/g, '');
@@ -98,11 +98,10 @@ export function parseSkillMd(md: string): ParsedSkill {
   const re = /^##\s+(.+)$/gm;
   const heads: Array<{ heading: string; index: number; end: number }> = [];
   let m: RegExpExecArray | null;
-  while ((m = re.exec(scan)) !== null) heads.push({ heading: oneLine(m[1]), index: m.index + m[0].length, end: m.index });
-  for (let i = 0; i < heads.length; i++) {
-    const start = heads[i].index;
-    const stop = i + 1 < heads.length ? heads[i + 1].end : body.length;
-    sections.push({ heading: heads[i].heading, body: oneLine(body.slice(start, stop)) }); // slice the ORIGINAL body (keeps code)
+  while ((m = re.exec(scan)) !== null) heads.push({ heading: oneLine(m[1] ?? ''), index: m.index + m[0].length, end: m.index });
+  for (const [i, h] of heads.entries()) {
+    const stop = heads[i + 1]?.end ?? body.length;
+    sections.push({ heading: h.heading, body: oneLine(body.slice(h.index, stop)) }); // slice the ORIGINAL body (keeps code)
   }
   if (sections.length === 0 && body.trim()) sections.push({ heading: name || 'Overview', body: oneLine(body).slice(0, 4000) });
   return { name, description, sections };

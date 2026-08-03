@@ -18,7 +18,10 @@ describe('round-4 — profile production templates discriminate on contextKind (
       verb: { id: COMPLETED },
       object: { id: 'https://ex.org/a', objectType: 'Activity', definition: { type: COURSE } },
     });
-    expect(r.conforms ?? r.violations.length === 0).toBe(false);
+    // `ProfileTemplateResult` has no `conforms` field. This read `r.conforms ?? …`, which was
+    // always the fallback arm — harmless, but it advertised a result field that does not exist
+    // and that the interface's own doc comment for `applicable` still referred to.
+    expect(r.violations.length === 0).toBe(false);
     expect(r.violations.length).toBeGreaterThan(0);
   });
 

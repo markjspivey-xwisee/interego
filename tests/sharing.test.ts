@@ -141,7 +141,6 @@ describe('resolveRecipients', () => {
  * deploy/mcp-relay/server.ts and mcp-server/server.ts.
  */
 describe('publish_context recipient-set computation (share-with-author fix)', () => {
-  const ALICE_POD = 'https://host/alice/';
   const BOB_POD = 'https://host/bob/';
   const AUTHOR_KEY = 'KEY_AUTHOR_ALICE';
   const AUTHOR_AGENT = 'urn:agent:author-alice';

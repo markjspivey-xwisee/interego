@@ -38,7 +38,11 @@ function expandIpv6(h: string): number[] | null {
   // A trailing embedded dotted-decimal IPv4 (mapped / compat / NAT64) → fold into two hex groups.
   const dotted = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
   if (dotted) {
-    const q = [Number(dotted[2]), Number(dotted[3]), Number(dotted[4]), Number(dotted[5])];
+    // `as const` makes this a 4-tuple rather than number[], so the four indexed reads below
+    // are `number` and not `number | undefined`. Without it the `<<`/`|` arithmetic that folds
+    // the dotted quad into two hex groups is typed against undefined, and the only way to
+    // silence that is a cast that would also hide a genuine mis-indexing.
+    const q = [Number(dotted[2]), Number(dotted[3]), Number(dotted[4]), Number(dotted[5])] as const;
     if (q.some(n => n > 255)) return null;
     s = dotted[1] + (((q[0] << 8) | q[1]).toString(16)) + ':' + (((q[2] << 8) | q[3]).toString(16));
   }
