@@ -451,23 +451,39 @@ describe('★ enforcement happens at the FOLD, because it cannot happen at the w
     expect(view.complete).toBe(true);
   });
 
-  it('★ describeCoverage names `disallowed` and `notRead`, which it used to silently drop', () => {
+  it('★ describeCoverage names `disallowed` and `notRead`, which it used to silently drop', async () => {
     // Typed on ComposedView, it dropped both from every AuthorizedView — which is assignable,
     // and which both live verifiers pipe straight in. So the one function whose stated job is
     // that a view can describe its own gaps rendered a workspace with a member writing
     // entries that do not count as "1 entries from 2 of 2 streams", with no hint at all.
+    //
+    // ★ AND THE VIEW IS COMPOSED, NOT HAND-ROLLED, WHICH IS THE WHOLE POINT.
+    // This test built `roster` and then never read it, standing up an `as unknown as` object
+    // literal in place of the pipeline instead. What it therefore asserted was that
+    // describeCoverage can render two fields somebody typed out by hand — true, and
+    // unfalsifiable by anything that could actually break. authorizeView could stop
+    // populating `disallowed`, stop setting `authorizedHere`, or stop producing `notRead`
+    // altogether, and this test would still pass. Reading bee (an Observer, so her entries
+    // do not count) while never reading alice (a Contributor, so her absence is a hole)
+    // makes the composition produce one of each, for real.
     const roster = rosterOf([
       { principal: alice, role: 'Contributor', scope: 'ReadWrite' },
       { principal: bee, role: 'Observer', scope: 'ReadWrite' },
     ]);
-    const withDisallowed = {
-      workspace: WS, entries: [], streams: [], unavailable: [], unverified: [],
-      misattributed: [], unmatched: [], unattested: [], complete: true,
-      crossStreamOrderIsAdvisory: true, attributionGrade: 'asserted', descriptorReads: 0,
-      disallowed: [{ entry: { principal: bee }, because: 'x' }],
-      notRead: [{ principal: alice, because: 'y', authorizedHere: true }],
-    } as unknown as Parameters<typeof describeCoverage>[0];
-    const line = describeCoverage(withDisallowed);
+    const view = authorizeView(
+      await composeWorkspace(
+        { workspace: WS, members: [mem(bee, 'https://bee.test/')] },
+        deps({ 'https://bee.test/': [{ url: 'https://bee.test/c/1.ttl', at: '2026-08-01T11:00:00Z' }] }),
+      ),
+      roster,
+    );
+    // Pinned before rendering: if these are empty the sentence assertions below pass
+    // vacuously against a describeCoverage that simply omitted both clauses.
+    expect(view.disallowed.map(d => d.entry.principal)).toEqual([bee]);
+    expect(view.notRead.map(u => u.principal)).toEqual([alice]);
+    expect(view.notRead[0]!.authorizedHere).toBe(true);
+
+    const line = describeCoverage(view);
     expect(line).toMatch(/NOT counted as workspace content/);
     expect(line).toContain(bee);
     expect(line).toMatch(/AUTHORIZED member\(s\) never read/);

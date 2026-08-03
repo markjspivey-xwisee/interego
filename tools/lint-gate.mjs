@@ -3,7 +3,7 @@
  *
  * ── WHAT WAS BROKEN ──────────────────────────────────────────────────────────
  *
- * `npm run lint` has been `eslint packages/*​/src/ tests/` since the initial commit, and
+ * `npm run lint` has been `eslint packages/*\/src/ tests/` since the initial commit, and
  * the repo has never contained an eslint config in ANY format — no `.eslintrc*`, no
  * `eslint.config.*`, nothing in git history. `eslint@^9` treats a missing flat config as
  * a hard error, so for an unknown span of time the script's entire output was:
@@ -28,7 +28,7 @@
  *
  * 2. ★ THE FILE COUNT — the failure mode that produced this whole task. `eslint` exits 0
  *    when it lints nothing. A config whose `ignores` swallow the tree, a `files` glob that
- *    stops matching after a directory move, a shell that fails to expand `packages/*​/src/`:
+ *    stops matching after a directory move, a shell that fails to expand `packages/*\/src/`:
  *    every one of those is a silent, green, total loss of coverage, indistinguishable from
  *    success. {@link MIN_FILES} is the floor. If the linter examines fewer files than it did
  *    the day this was written, that is not a clean run, and this fails and says so.
@@ -38,7 +38,7 @@
  * and `npm run lint` is this file rather than a bare `eslint` invocation.
  *
  * Run: node tools/lint-gate.mjs
- * Reproduce the raw output: npx eslint packages/*​/src/ tests/
+ * Reproduce the raw output: npx eslint packages/*\/src/ tests/
  *
  * ── NO SHEBANG ───────────────────────────────────────────────────────────────
  * Only because nothing needs one: this file is run as `node tools/lint-gate.mjs` and never
@@ -56,15 +56,51 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /**
  * The lint surface, matching the `lint` script's historical targets. These are passed to
  * eslint as directories rather than shell globs so the gate does not depend on the calling
- * shell expanding `packages/*​/src/` — cmd.exe does not, and a Windows run would otherwise
+ * shell expanding `packages/*\/src/` — cmd.exe does not, and a Windows run would otherwise
  * lint nothing and pass.
+ *
+ * ── ★ WHAT THIS SURFACE DOES NOT COVER, MEASURED ─────────────────────────────
+ *
+ * `tools/` is not on it, so THE GATES LINT EVERYTHING EXCEPT THEMSELVES. Measured with
+ * `npx eslint tools`: 19 files, 7 errors, all pre-existing, and one of them is a question
+ * this file is the wrong place to answer:
+ *
+ *   ★ `tools/derivation-lint.mjs` imports `readdirSync` and never calls it. Its
+ *     `L2_L3_FILES` is a hand-maintained list of 15 names; `docs/ns/` holds 30 `.ttl`
+ *     files. The unused import is the evidence that enumeration was the intent, and the
+ *     gap is real: `a2a.ttl`, `hmd.ttl`, `vault-ld.ttl`, `wks.ttl`, `harness.ttl` and
+ *     `alignment.ttl` are published L2/L3 ontologies that no derivation check has ever
+ *     looked at. Whether they ground is UNKNOWN — enumerating could turn that gate red,
+ *     which is a decision with its own audit, not a side effect of a lint sweep.
+ *     `tools/ontology-lint.mjs`'s dead `EXTERNAL_PREFIXES` is the harmless kind by
+ *     contrast (the scanner already restricts its regex to owned prefixes, so there is
+ *     nothing for it to filter), and `tools/walkthrough-v6-distributed-values.ts` has one
+ *     unused local.
+ *
+ * Adding `'tools'` here is the right end state and belongs to the change that answers the
+ * derivation-lint question, so that the gate goes green on a decision rather than on a
+ * deleted import. Until then this paragraph is the account: seven errors, named, in a
+ * directory this gate does not read.
  */
 const TARGETS = ['packages', 'tests'];
 
 /**
- * The remaining debt: 38 errors in 7 files, down from 222 in 47.
+ * The remaining debt: NONE. 0 errors in 0 files, down from 222 in 47.
  *
- * Nothing here is new code; every entry predates the config existing at all.
+ * ★ AN EMPTY BASELINE IS THE STRONGEST STATE THIS FILE HAS, AND IT IS ALSO THE STRICTEST:
+ * with nothing pinned, the "not on the baseline" branch below now fires on the FIRST lint
+ * error anywhere under `packages/` or `tests/`. Do not add an entry back. If a rule is
+ * genuinely wrong for this codebase, turn it off ONCE in eslint.config.js with a comment
+ * saying why — a decision somebody can review — rather than pinning the count it produces,
+ * which is a decision nobody ever revisits.
+ *
+ * The history below is kept because each round of it was the same lesson: the count is not
+ * the finding. Every batch written off in this comment as "hygiene" or as "load-bearing at
+ * a genuine dynamic boundary" contained at least one live defect, and the last batch — the
+ * four `any`s at dynamic imports, the ones this file called "not statically resolvable even
+ * in principle" — contained the worst one in the whole sequence.
+ *
+ * Nothing here was new code; every entry predated the config existing at all.
  *
  * ── WHAT THE 67 THAT ARE GONE TURNED OUT TO BE ───────────────────────────────
  *
@@ -161,53 +197,74 @@ const TARGETS = ['packages', 'tests'];
  *         `projection-facets.test.ts` — replaced by the same `valueAt` helper
  *         `interrogative-router.test.ts` already uses, and for the same reason.
  *
- * ── WHAT IS LEFT, AND WHY, FILE BY FILE ──────────────────────────────────────
+ * ── AND WHAT THE LAST 38 TURNED OUT TO BE ────────────────────────────────────
  *
- *   23  `packages/core/src/model/registry.ts` — the ONE file the old note described
- *       correctly. It is an open facet registry: `executeMerge` and `facetFingerprint`
- *       operate on third-party facet shapes by design, and every read is a bare
- *       `f.validFrom` / `f.causalConfidence` / `f.bindings` on a value with no declared
- *       type. `unknown` is the right type and it is not a substitution — each of ~12 reads
- *       needs its own narrowing, and two of them (`(f.causalConfidence ?? 0) > (best…)`,
- *       the string-sorted `validFrom` comparisons) change merge SEMANTICS if narrowed
- *       carelessly. That is a change to the composition operators with its own test
- *       surface, not a lint cleanup, and doing it inside one is how the wrong answer ships.
- *    6  `packages/pgsl-store/src/fdb-real.ts` — `await import('foundationdb')`, an optional
- *       native dependency installed only by `pgsl-store-fdb.yml`. No types are resolvable
- *       in a normal tree, so there is nothing to narrow TO; the same reason this file
- *       already has its own `ban-ts-comment` exception in eslint.config.js.
- *    1  `packages/pgsl-store/src/pg-store.ts` — `await import('pg')`, same story.
- *    1  `packages/extractors/src/index.ts` — `await import('pdf-parse')`, same story.
- *    1  `packages/core/src/crypto/wallet.ts` — `await import(moduleName)`, a runtime-named
- *       AgentKit module. Not statically resolvable even in principle.
- *    5  `tests/workspace-membership.test.ts` (four `no-regex-spaces`, one unused import) and
- *    1  `tests/workspace-can.test.ts` (one unused LOCAL) — another change owns both files.
+ * The note here used to say the four dynamic-import `any`s could not be fixed because there
+ * is "nothing to narrow TO", and that `registry.ts` needed a design decision rather than a
+ * lint cleanup. Both were wrong, and the first was wrong in the expensive direction.
  *
- * ★ "LOCAL", NOT "IMPORT", AND THE CORRECTION IS THE POINT OF THE PARAGRAPH ABOVE.
- * That paragraph is a long argument that an unused local in a TEST is very often an assertion
- * somebody dropped — and then this line mislabelled the one remaining instance of exactly that
- * shape as an import, which would have been harmless. `tests/workspace-can.test.ts:459` is
- * `const roster = rosterOf([...])`: computed, and discarded while the test builds a hand-rolled
- * `as unknown as` object instead. Measured, not restated: `npx eslint` reports it as
- * `'roster' is assigned a value but never used`.
+ *   23  `packages/core/src/model/registry.ts`. The premise was right — `registerFacetType`
+ *       is open, so a strategy branch can receive a facet shape it was not written for — and
+ *       the conclusion did not follow: that is what `'validFrom' in f` SAYS, and unlike
+ *       `any` it says it to the compiler. `('x' in f ? f.x : undefined)` and
+ *       `('x' in f ? f.x ?? [] : [])` evaluate identically to the reads they replace,
+ *       including for a foreign facet, so the merge arithmetic is untouched — the
+ *       lexicographic `latestFrom > earliestUntil` the note singled out as semantics-
+ *       sensitive needs no cast at all once the `&&` chain narrows both sides to `string`.
+ *       `executeMerge` and `registerFacetType` appeared in NO test file, so
+ *       `tests/facet-registry.test.ts` now covers them: 33 mutants of the arithmetic and
+ *       the early-outs, each killed, including "filter the input to the type this branch
+ *       expects" — the change the compiler most wants you to make, and the one that would
+ *       have silently dropped a foreign facet out of every composition.
+ *
+ *   ★★ 1 `packages/extractors/src/index.ts` — AND THIS ONE WAS LIVE, AND TOTAL.
+ *       `await import('pdf-parse') as any` was called "same story" as the optional native
+ *       deps. It is not: `pdf-parse` is a DECLARED DEPENDENCY of that package, pinned at
+ *       `^2.4.5`, with types of its own. There was nothing unresolvable to cast around; the
+ *       `as any` was switching the compiler off. Underneath it, `extractPdf` called the v1
+ *       API (`mod.default ?? mod`, then `pdfParse(buffer)`) against v2, which has no default
+ *       export and whose namespace object is not callable. Measured against the installed
+ *       module with a real one-page PDF: `extract()` returned the STRING
+ *       `"[PDF extraction failed: pdfParse is not a function]"` with `format: 'pdf'`, a
+ *       valid `contentHash`, and `metadata.extractor: 'pdf-parse'` — every PDF ever pushed
+ *       through the extractor ingested that sentence instead of its contents, and nothing
+ *       downstream could tell. `pdf` was also the ONLY branch of `extract()`'s switch with
+ *       no test; the other five all had one. Both facts have the same single cause.
+ *
+ *    6  `packages/pgsl-store/src/fdb-real.ts` and
+ *    1  `packages/pgsl-store/src/pg-store.ts`. Genuinely absent types, genuinely fixable:
+ *       what the adapter needs is not the vendor's `.d.ts` but a statement of the calls it
+ *       makes, and that can be written down. The `@ts-ignore` still covers the unresolvable
+ *       specifier and now covers ONLY that. Verified both ways — a fake `foundationdb`
+ *       installed with an incompatible shape still compiles (so the Linux integration job
+ *       is unaffected), and renaming `getRangeAll` to the binding's other, iterator-returning
+ *       `getRange` now fails tsc where it used to compile and throw in CI. `pg-store.ts`
+ *       additionally had `new Pool(...)` on a possibly-undefined `pg.Pool ?? pg.default.Pool`.
+ *
+ *    1  `packages/core/src/crypto/wallet.ts` — `await import(moduleName)` where the
+ *       specifier is a variable, so "not statically resolvable even in principle" is true
+ *       of the IMPORT and says nothing about the three members read from it. Declared.
+ *
+ *    5  `tests/workspace-membership.test.ts` — four `no-regex-spaces` (`/\n  wsp:role …/`
+ *       → `/\n {2}wsp:role …/`, exact) and one unused `type Attestation`, now annotating the
+ *       one hand-written Attestation in the file: a `toEqual` expectation, which takes
+ *       `unknown` and was therefore the only such literal not already checked.
+ *    1  `tests/workspace-can.test.ts` — the `roster` computed and discarded. Fixed by
+ *       deleting the `as unknown as` object literal it was displaced by and composing the
+ *       view for real, which is what made the test falsifiable: `authorizeView` could have
+ *       stopped populating `disallowed`, `notRead`, or `authorizedHere` and the old
+ *       assertions would all still have passed.
  */
-const BASELINE = {
-  'packages/core/src/crypto/wallet.ts': 1,
-  'packages/core/src/model/registry.ts': 23,
-  'packages/extractors/src/index.ts': 1,
-  'packages/pgsl-store/src/fdb-real.ts': 6,
-  'packages/pgsl-store/src/pg-store.ts': 1,
-  'tests/workspace-can.test.ts': 1,
-  'tests/workspace-membership.test.ts': 5,
-};
+const BASELINE = {};
 
 /**
- * The floor on how many files eslint must actually examine. 304 were linted the day this
- * was written; the allowance below it absorbs ordinary file deletion without letting a
- * coverage collapse through. Raise it when the tree grows — a floor that drifts far below
- * reality stops being a floor.
+ * The floor on how many files eslint must actually examine. 308 are linted today (304 the
+ * day this was written); the allowance below it absorbs ordinary file deletion without
+ * letting a coverage collapse through. Raised with the tree — a floor that drifts far below
+ * reality stops being a floor, and at 280 it had 28 files of slack, enough to hide a whole
+ * package's `src/` disappearing from the run.
  */
-const MIN_FILES = 280;
+const MIN_FILES = 300;
 
 export async function runLintGate() {
   // The programmatic API rather than the CLI: `eslint`'s package `exports` does not expose
@@ -253,7 +310,15 @@ export async function runLintGate() {
   for (const [file, count] of [...counts].sort()) {
     const pinned = BASELINE[file];
     if (pinned === undefined) {
-      failures.push(`  ${file}: ${count} lint error(s), and this file is not on the baseline.\n      ${samples.get(file)}`);
+      // With BASELINE now empty this is the branch every error takes, so it has to say what
+      // to do rather than name a list that no longer exists. "Add it to BASELINE" is exactly
+      // the repair this gate exists to prevent.
+      failures.push(
+        `  ${file}: ${count} lint error(s).\n      ${samples.get(file)}\n`
+        + '      Fix it. The baseline is EMPTY and stays empty — if the rule is wrong for\n'
+        + '      this codebase, turn it off once in eslint.config.js with a comment saying\n'
+        + '      why, which is reviewable. A pin and a per-line disable are not.',
+      );
     } else if (count > pinned) {
       failures.push(`  ${file}: ${count} lint errors, pinned at ${pinned}. Existing debt may not grow.\n      ${samples.get(file)}`);
     }
@@ -275,8 +340,16 @@ export async function runLintGate() {
 /** The message a human or a CI log sees. Kept out of the checker so callers can reuse it. */
 export function lintGateReport(result) {
   if (result.ok) {
-    return `lint gate: ${result.files} file(s) linted, ${result.total} known error(s) across `
-      + `${Object.keys(BASELINE).length} baselined file(s), none anywhere else.`;
+    // The zero case gets its own sentence: "0 known error(s) across 0 baselined file(s)" is
+    // technically true and reads like a gate that checked nothing, which is the one thing
+    // this file must never be mistaken for. The file COUNT is in both, because that is the
+    // number that distinguishes a clean run from a collapsed one.
+    const pinned = Object.keys(BASELINE).length;
+    return pinned === 0
+      ? `lint gate: ${result.files} file(s) linted, 0 errors, 0 baselined files — the `
+        + 'baseline is empty, so any error anywhere now fails this gate.'
+      : `lint gate: ${result.files} file(s) linted, ${result.total} known error(s) across `
+        + `${pinned} baselined file(s), none anywhere else.`;
   }
   if (result.fatal) {
     return ['', '★ LINT GATE FAILED — eslint could not run', '', result.fatal, ''].join('\n');

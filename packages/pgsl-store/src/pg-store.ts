@@ -49,10 +49,49 @@ export interface PgStoreOptions {
 // safety though READ COMMITTED does not raise it). Both are safe to retry whole.
 const RETRYABLE = new Set(['40P01', '40001']);
 
+/**
+ * The slice of node-postgres this adapter uses.
+ *
+ * Declared rather than `any` for the same reason as `fdb-real.ts`: an optional dependency
+ * has no resolvable `.d.ts` in a normal tree, but the eight calls made against it can still
+ * be written down, and writing them down is what makes them checkable. `@ts-ignore` still
+ * covers the unresolvable specifier on the import line and nothing after it.
+ *
+ * `query` is generic in the ROW so each call site names the columns it selected. Under
+ * `any` both `r.rows[0].v` and `row.k` were unchecked, and a `SELECT v` whose reader asks
+ * for `.value` — or a column rename in the `CREATE TABLE` above — produced `undefined`
+ * passed to `new Uint8Array(undefined)`, i.e. an empty array where the stored bytes should
+ * be. That is a silent-wrong-answer failure in the durable store, not a crash.
+ */
+interface PgModule {
+  Pool?: PgPoolCtor;
+  default?: { Pool?: PgPoolCtor };
+}
+type PgPoolCtor = new (config: { connectionString?: string }) => PgPool;
+interface PgPool {
+  connect(): Promise<PgClient>;
+  query(text: string): Promise<unknown>;
+  end(): Promise<void>;
+}
+interface PgClient {
+  query<R = never>(text: string, values?: readonly unknown[]): Promise<{ rows: R[] }>;
+  release(): void;
+}
+
 export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
   // @ts-ignore optional dependency (pure-JS node-postgres), installed where used.
-  const pg: any = await import('pg');
+  const pg: PgModule = await import('pg');
   const Pool = pg.Pool ?? pg.default?.Pool;
+  // Both spellings are checked because `pg` ships CJS and the interop shape depends on how
+  // the consumer's bundler wrapped it. If neither is there the install is broken, and
+  // saying so beats `new undefined()`'s "Pool is not a constructor" — which is what the
+  // `any` produced, from a line that mentions neither `pg` nor the install.
+  if (!Pool) {
+    throw new Error(
+      "pgsl-store: the 'pg' module exports no Pool (neither pg.Pool nor pg.default.Pool). "
+      + "Install node-postgres where openPgStore() is used.",
+    );
+  }
   const table = (opts.table ?? 'pgsl_kv').replace(/[^a-zA-Z0-9_]/g, '');
   const pool = new Pool(opts.connectionString ? { connectionString: opts.connectionString } : {});
   if (opts.ensureSchema !== false) {
@@ -74,7 +113,8 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           const txn: FdbTxn = {
             get: async (key: Key) => {
               await flush();
-              const r = await client.query(`SELECT v FROM ${table} WHERE k = $1`, [buf(key)]);
+              const r = await client.query<{ v: Buffer }>(
+                `SELECT v FROM ${table} WHERE k = $1`, [buf(key)]);
               return r.rows[0] ? new Uint8Array(r.rows[0].v) : undefined;
             },
             set: (key: Key, value: Key) => {
@@ -93,11 +133,11 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
             },
             getRange: async (begin: Key, end: Key): Promise<KeyValue[]> => {
               await flush();
-              const r = await client.query(
+              const r = await client.query<{ k: Buffer; v: Buffer }>(
                 `SELECT k, v FROM ${table} WHERE k >= $1 AND k < $2 ORDER BY k`,
                 [buf(begin), buf(end)],
               );
-              return r.rows.map((row: { k: Buffer; v: Buffer }) => ({
+              return r.rows.map(row => ({
                 key: new Uint8Array(row.k),
                 value: new Uint8Array(row.v),
               }));

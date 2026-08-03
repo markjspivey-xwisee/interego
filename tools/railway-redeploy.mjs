@@ -196,6 +196,51 @@ const deployId = dep.serviceInstanceDeployV2;
 console.log(`deploy triggered: ${deployId}`);
 
 /**
+ * A FAILED DEPLOY IS USUALLY NOT A BROKEN IMAGE — IT IS AN ABSENT ONE.
+ *
+ * Railway resolves the image reference to a digest before it starts anything. When that
+ * resolution fails — the tag was never pushed, or this service's stored registry
+ * credential can no longer read the package — the deployment goes FAILED in about two
+ * seconds with no build logs, no deploy logs, and no `imageDigest` in its meta. Empty
+ * logs read like "the container died before it could say anything", which sends the
+ * reader looking for a runtime cause that does not exist. The absent digest is what
+ * distinguishes the two, and it is the only thing that does.
+ *
+ * ★ THE MISLEADING SIGNAL IS NOT RAILWAY'S — IT IS THE BUILD'S. This was diagnosed the
+ * long way once: `css` was pinned to a sha whose image had never been pushed, while
+ * build-ghcr.yml's `interego-css-pgsl` job for that exact commit was GREEN. That run had
+ * been dispatched with `-f image=interego-relay`, and every other matrix leg gates itself
+ * out in a step-level `if` — so it reports SUCCESS having built and pushed nothing. A
+ * green job proves a leg RAN, never that it PUSHED. Tell them apart by duration (a real
+ * build is minutes, a gated one is ~4 seconds) or by its log line
+ * "skipping <image> (only building <other>)".
+ *
+ * This only ever explains; it never decides. It is wrapped so that a diagnosis which
+ * throws cannot stop the rollback below, which is the part that protects production.
+ */
+async function diagnoseFailure() {
+  try {
+    const d = await gql('query($id:String!){ deployment(id:$id){ meta } }', { id: deployId }, { tolerant: true });
+    const meta = d?._transient ? null : d?.deployment?.meta;
+    // A resolved digest means the image WAS pulled, so the failure is the application's
+    // and the deploy logs are the right place to look. Say nothing rather than guess.
+    if (!meta || meta.imageDigest) return;
+    console.error(`
+Railway never resolved ${image} to a digest, so nothing was ever pulled: the
+failure is BEFORE the container, which is why the deploy logs are empty. Either the
+tag does not exist in the registry, or this service's stored registry credential
+cannot read that package.
+
+  Check that the image was actually PUSHED. In build-ghcr.yml, a matrix leg skipped
+  by \`-f image=<a different image>\` still reports SUCCESS — look at the job's
+  duration (seconds means it skipped) or its log line "skipping ...".`);
+  } catch {
+    // A diagnosis that fails must never mask the failure it was explaining, and must
+    // never come between a FAILED deploy and the rollback that un-pins it.
+  }
+}
+
+/**
  * A FAILED DEPLOY MUST NOT LEAVE THE SERVICE PINNED TO THE IMAGE THAT FAILED.
  *
  * ★ Learned by doing it. I repointed a service at a commit sha for which that
@@ -243,6 +288,7 @@ while (Date.now() < deadline) {
     die('NEEDS_APPROVAL — a human must approve this deploy in the Railway UI');
   }
   if (BAD.has(status)) {
+    await diagnoseFailure();
     await restorePin(`deployment ${status}`);
     die(`deployment ${status}${status === 'REMOVED' ? ' — a newer deploy superseded it' : ''}`);
   }

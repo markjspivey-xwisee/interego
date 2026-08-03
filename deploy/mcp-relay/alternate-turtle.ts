@@ -24,17 +24,24 @@
  * `graphIriFromDescriptorTurtle` after it left the relay for @interego/solid when a reader
  * outside the relay turned out to need it.
  *
- * ★ WHAT IS NOT RE-EXPORTED HERE, DELIBERATELY. @interego/core also carries
- * `alternateTurtleUrl` (resolve relative, refuse cross-origin) and `followAlternateTurtle` (one
- * bounded hop). `fetchShapeBody` in `server.ts` still does its own hop, because its hop is
- * entangled with the shape cache's last-known-good fallback and its fetch is
- * `guardedInvokeFetch` — the SSRF guard every caller-URL fetch in that file goes through.
- * Rewiring a live publish gate is a change with its own blast radius and its own test surface;
- * what mattered was that the two readers share ONE parser of the markup, which they now do.
- * A round that moves the relay onto the bounded follower should note that the follower refuses
- * a cross-origin alternate and `fetchShapeBody` currently does not.
+ * ★ THE HOP IS RE-EXPORTED TOO, AND THAT IS NEW. This file used to carry only the two
+ * predicates, because `fetchShapeBody` in `server.ts` still followed the alternate with an
+ * inline copy of the hop — entangled with the shape cache's last-known-good fallback and with
+ * `guardedInvokeFetch`, the SSRF guard every caller-URL fetch in that file goes through. The
+ * note that stood here said a later round should record that the shared follower refuses a
+ * cross-origin alternate and `fetchShapeBody` did not. It did not, and a shape whose HTML page
+ * advertised a FOREIGN ORIGIN's Turtle had that document fetched and used as the publish gate.
+ *
+ * `deploy/mcp-relay/shape-body.ts` is that entanglement lifted out of the listener-starting
+ * module and composed onto `followAlternateTurtle`, so the relay now has ONE follower rather
+ * than a second one that had quietly lost a guard. Everything the relay needs to follow a page
+ * to its Turtle comes through this file, which keeps the relay's import surface for the whole
+ * concern in one place.
  */
 export {
   alternateTurtleHref,
+  alternateTurtleUrl,
+  followAlternateTurtle,
   looksLikeHtml,
+  type FetchedRepresentation,
 } from '@interego/core';

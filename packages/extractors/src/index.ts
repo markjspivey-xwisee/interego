@@ -126,16 +126,47 @@ export async function extract(
 
 /**
  * Extract text from PDF using pdf-parse.
+ *
+ * ★★ THIS EXTRACTED NOTHING, EVER, AND THE `as any` IS WHY.
+ *
+ * The body was `const mod = await import('pdf-parse') as any; const pdfParse = mod.default
+ * ?? mod; const data = await pdfParse(buffer); return data.text` — the pdf-parse v1 API.
+ * `packages/extractors/package.json` pins `pdf-parse: ^2.4.5`, and v2 is a CLASS module: it
+ * has no default export and its namespace object is not callable. So `mod.default ?? mod`
+ * fell through to the namespace, calling it threw `TypeError: pdfParse is not a function`,
+ * and the `catch` below turned that into a STRING.
+ *
+ * Measured against the installed module with a real one-page PDF, before this change:
+ *
+ *   typeof mod.default  : undefined
+ *   exported keys       : AbortException, …, PDFParse, …, getException
+ *   extract().text      : "[PDF extraction failed: pdfParse is not a function]"
+ *
+ * — a 51-character string with a valid `contentHash`, an `extractedAt`, and
+ * `metadata.extractor = 'pdf-parse'`, indistinguishable downstream from a successfully
+ * extracted document. Every PDF ever pushed through `extract()` ingested that sentence
+ * instead of its contents.
+ *
+ * The cast is gone rather than replaced. `pdf-parse` is a declared dependency of this
+ * package with types of its own, so there was never anything unresolvable here to cast
+ * around — `as any` was simply switching the compiler off over the one call that mattered.
+ * `import()` stays dynamic because pdf-parse pulls in pdfjs-dist, which no other format
+ * needs to load.
  */
 async function extractPdf(content: string | Buffer): Promise<string> {
+  const buffer = typeof content === 'string' ? Buffer.from(content, 'binary') : content;
+  let parser: import('pdf-parse').PDFParse | undefined;
   try {
-    const mod = await import('pdf-parse') as any;
-    const pdfParse = mod.default ?? mod;
-    const buffer = typeof content === 'string' ? Buffer.from(content, 'binary') : content;
-    const data = await pdfParse(buffer);
-    return data.text;
+    const { PDFParse } = await import('pdf-parse');
+    parser = new PDFParse({ data: buffer });
+    const result = await parser.getText();
+    return result.text;
   } catch (err) {
     return `[PDF extraction failed: ${(err as Error).message}]`;
+  } finally {
+    // pdfjs holds a worker and the transferred buffer until the document is destroyed;
+    // without this every extracted PDF leaks one for the life of the process.
+    await parser?.destroy();
   }
 }
 

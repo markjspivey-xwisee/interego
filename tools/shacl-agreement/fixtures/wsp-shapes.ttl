@@ -79,7 +79,13 @@ wspsh:MembershipGrantShape a sh:NodeShape ;
     sh:minCount 1 ; sh:maxCount 1 ;
     sh:nodeKind sh:IRI ;
     sh:pattern "^https?://" ;
-    sh:message "wsp:role must be exactly one role IRI drawn from the workspace's published role profile." ;
+    # The message used to read "drawn from the workspace's published role profile", which
+    # describes a check this shape does not perform and cannot: validation runs over the
+    # grant alone and never fetches the profile document. A stranger reading that message
+    # would conclude the gate refuses an invented role; measured, it publishes. Say what is
+    # enforced here and name where the real rule lives, or the published contract promises
+    # a gate that does not exist.
+    sh:message "wsp:role must be exactly one https role IRI. Whether that role is one the workspace's role profile actually declares is NOT checked here — this shape never opens that document — so an undeclared role publishes and is worth no capabilities at the fold instead." ;
   ] ;
   sh:property [
     sh:path wsp:workspace ;
