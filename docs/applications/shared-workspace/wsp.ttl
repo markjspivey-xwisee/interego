@@ -80,7 +80,7 @@
 wsp:Workspace a owl:Class ;
   rdfs:label "Workspace" ;
   rdfs:comment
-    "A named place where several principals work together. Its identifier is the dereferenceable URL of the descriptor that declares it, so the workspace can be read, audited and replayed by anyone who can GET that URL — including someone who is not a member and has no account anywhere." ;
+    "A named place where several principals work together, readable by anyone who can GET its URL — including someone who is not a member and has no account anywhere. Its identifier is a GRAPH IRI of the form <relay>/ns/<owner>/<slug>, not the URL of the descriptor that currently declares it; this sentence used to say the descriptor URL and that was wrong in the one way that costs a reader something. The owner segment is the whole point: the relay resolves such an IRI against the pod that segment names and against no other, so exactly one party decides what the workspace returns, and a forged workspace record on a rival pod is unreachable rather than merely outvoted. A descriptor URL carries no such segment, so it cannot say whose record is authoritative — and dereferenceWorkspaceRecord refuses one outright rather than guessing a pod for it. The descriptor URL still exists and still matters, as the head that IRI resolves to and the thing an operator opens to audit; it is a result of the dereference, never the name of the workspace." ;
   rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
 
 wsp:convener a owl:ObjectProperty ;
@@ -145,7 +145,7 @@ wsp:grantedTo a owl:ObjectProperty ;
 
 wsp:role a owl:ObjectProperty ;
   rdfs:label "role" ;
-  rdfs:comment "The role offered. MUST be declared by the workspace's role profile; a grant naming an undeclared role is refused at publish." ;
+  rdfs:comment "The role offered, named by the IRI the workspace's role profile gives it. NOT refused at publish if the profile never declares it — this sentence used to claim it was, and the deployed shape disproves it: wspsh:MembershipGrantShape checks one https IRI and nothing else, because a SHACL shape validating a grant never sees the profile document. Measured against wsp-shapes.ttl, a grant naming an invented role and a grant naming a role on an unrelated host both conform. Where the rule actually bites is the fold, and it bites more softly than a refusal: capabilities are read out of the profile's own table, an undeclared role matches no row in it, and the principal is admitted as a member carrying that role name with an EMPTY effective capability set. Conferring nothing is the safe direction, but it is not the same as the record never existing, and a reader who trusted the refusal would not go looking for the member it lets through." ;
   rdfs:domain wsp:MembershipGrant ; rdfs:range wsp:Role ;
   rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
 

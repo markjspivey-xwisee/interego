@@ -44,7 +44,7 @@ export {
   getRegisteredTypes,
   executeMerge,
 } from './registry.js';
-export type { MergeStrategy, FacetRegistryEntry } from './registry.js';
+export type { MergeStrategy, FacetRegistryEntry, FacetMerge } from './registry.js';
 export {
   toPresheaf,
   fromPresheaf,

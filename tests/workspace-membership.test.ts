@@ -333,7 +333,7 @@ describe('the workspace record — who convenes here', () => {
     // would hand the fold a row whose `convener: ''` matched no policy for reasons nobody
     // could see in `problems`.
     const noConvener = workspaceTurtle({ workspaceIri: WS, convener: CONV, roleProfile: P, title: 'x' })
-      .replace(/\n  wsp:convener <[^>]+> ;/, '');
+      .replace(/\n {2}wsp:convener <[^>]+> ;/, '');
     const deps = descriptorDeps({ [WORKSPACE_URL]: { content: noConvener, signedBy: CONV_KEY } });
     const read = await readWorkspaceRecord(WORKSPACE_URL, deps);
     expect(read.record).toBeNull();
@@ -367,7 +367,7 @@ describe('the workspace record — who convenes here', () => {
     // than left to an equality test — a caller whose own `RoleProfile.profile` is also `''`
     // would otherwise compare equal to this record and be reported as bound off two blanks.
     const noProfile = workspaceTurtle({ workspaceIri: WS, convener: CONV, roleProfile: P, title: 'x' })
-      .replace(/\n  wsp:roleProfile <[^>]+> ;/, '');
+      .replace(/\n {2}wsp:roleProfile <[^>]+> ;/, '');
     const deps = descriptorDeps({ [WORKSPACE_URL]: { content: noProfile, signedBy: CONV_KEY } });
     const read = await readWorkspaceRecord(WORKSPACE_URL, deps);
     expect(read.record).not.toBeNull();
@@ -519,21 +519,29 @@ describe('reading a membership record back', () => {
     const deps = descriptorDeps({ [GRANT_URL]: { content: GRANT_TTL } });
     const read = await readGrantRecord(GRANT_URL, deps);
     expect(read.problems).toEqual([]);
+    // ★ ANNOTATED, BECAUSE `toEqual` TAKES `unknown` AND CHECKS NOTHING AT COMPILE TIME.
+    // `Attestation` was imported when this file was written and then used nowhere, and this
+    // is the one place in it where an Attestation is spelled out by hand rather than
+    // contextually typed by a `foldRoster` argument. Inside the `toEqual` literal a field
+    // renamed in roster.ts, or a `contentBinding: 'bounded'` typo, is a runtime diff whose
+    // obvious repair is to edit the expectation until it matches — and the type is what makes
+    // the wrong repair fail. `boundToDescriptor` is required, so dropping it fails here too.
+    const attestation: Attestation = {
+      authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: true,
+      // ★ ASSERTED, NOT MERELY TOLERATED. `boundToDescriptor: true` on its own covers both
+      // "host, pod, container and name matched" and "one path segment matched and the host
+      // was never looked at". The relay mints `urn:` descriptor ids, so every real record
+      // lands on the weak basis — which is a fact about the substrate a reader must be able
+      // to see, and used to be discarded at the boundary.
+      descriptorBindingBasis: 'slug-only',
+      contentBinding: 'bound',
+    };
     expect(read.record).toEqual({
       head: GRANT_URL,
       workspace: WS,
       grantedTo: bee,
       role: `${P}#Contributor`,
-      attestation: {
-        authorshipVerified: true, signedBy: CONV_KEY, boundToDescriptor: true,
-        // ★ ASSERTED, NOT MERELY TOLERATED. `boundToDescriptor: true` on its own covers both
-        // "host, pod, container and name matched" and "one path segment matched and the host
-        // was never looked at". The relay mints `urn:` descriptor ids, so every real record
-        // lands on the weak basis — which is a fact about the substrate a reader must be able
-        // to see, and used to be discarded at the boundary.
-        descriptorBindingBasis: 'slug-only',
-        contentBinding: 'bound',
-      },
+      attestation,
       fieldProvenance: { source: 'payload', descriptor: GRANT_URL },
     });
     // ONE call. The payload and the verdict about the payload come from the same read, which
@@ -625,7 +633,7 @@ describe('reading a membership record back', () => {
     // member — the failure shape of four consecutive rounds), and keeping the provenance
     // would confer from a record that says nothing.
     const noRole = grantTurtle({ grantIri: 'https://c/g', workspace: WS, grantedTo: bee, role: `${P}#Observer`, revoked: true })
-      .replace(/\n  wsp:role <[^>]*> ;/, '');
+      .replace(/\n {2}wsp:role <[^>]*> ;/, '');
     const read = await readGrantRecord(GRANT_URL, descriptorDeps({ [GRANT_URL]: { content: noRole } }));
     expect(read.record).not.toBeNull();
     expect(read.record!.revoked).toBe(true);       // …restricts
@@ -869,7 +877,7 @@ describe('reading a membership record back (continued)', () => {
     const noStream = acceptanceTurtle({
       acceptanceIri: 'https://bee.test/a/3', workspace: WS, member: bee,
       accepts: GRANT_URL, stream: 'https://bee.test/s', withdrawn: true,
-    }).replace(/\n  wsp:stream <[^>]*> ;/, '');
+    }).replace(/\n {2}wsp:stream <[^>]*> ;/, '');
     const read = await readAcceptanceRecord(ACCEPT_URL, descriptorDeps({
       [ACCEPT_URL]: { content: noStream, signedBy: BEE_KEY },
     }));

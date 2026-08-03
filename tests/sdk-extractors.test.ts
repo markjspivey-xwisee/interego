@@ -39,6 +39,37 @@ describe('Format Detection', () => {
   });
 });
 
+/**
+ * A genuinely valid one-page PDF that draws `text` with the base-14 Helvetica font.
+ *
+ * Hand-assembled — five objects, a real xref table with real byte offsets, and a trailer —
+ * because the point of the test below is to run the actual pdfjs parse. A stub or a
+ * pre-canned "the answer" fixture would pass over the broken code path just as happily as
+ * over the fixed one.
+ */
+function minimalPdf(text: string): Buffer {
+  const objs = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]'
+      + ' /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
+    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+  ];
+  const stream = `BT /F1 24 Tf 72 700 Td (${text}) Tj ET`;
+  objs.push(`5 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`);
+
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [0];
+  for (const o of objs) { offsets.push(pdf.length); pdf += o; }
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= objs.length; i++) {
+    pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+  }
+  pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf, 'binary');
+}
+
 // ═════════════════════════════════════════════════════════════
 //  Extraction
 // ═════════════════════════════════════════════════════════════
@@ -83,6 +114,43 @@ describe('Content Extraction', () => {
     expect(result.text).not.toContain('alert');
     expect(result.text).not.toContain('<script');
     expect(result.text).not.toContain('body{}');
+  });
+
+  // ★★ THE FORMAT THAT HAD NO TEST WAS THE FORMAT THAT DID NOT WORK.
+  //
+  // Every other branch of extract()'s switch is asserted above. `pdf` was not, and `pdf`
+  // was broken outright: `extractPdf` called the pdf-parse v1 API (`(await
+  // import('pdf-parse')).default(buffer)`) against the v2 pinned in package.json, which has
+  // no default export and whose namespace object is not callable. The TypeError was caught
+  // and returned AS THE EXTRACTED TEXT, so `extract()` resolved successfully with
+  // `format: 'pdf'`, a 64-char contentHash over the error sentence, and
+  // `metadata.extractor: 'pdf-parse'` — nothing downstream could tell it apart from a real
+  // document. It survived because `as any` switched the compiler off over the one call site
+  // that mattered and nothing here ever ran it.
+  //
+  // Built rather than fixtured: a checked-in binary is a thing nobody reads or updates, and
+  // the whole point is that this path executes the real pdfjs pipeline.
+  it('★ extracts real text from a real PDF', async () => {
+    const marker = 'INTEREGO PDF PROBE';
+    const result = await extract(minimalPdf(marker), { filename: 'probe.pdf' });
+    expect(result.format).toBe('pdf');
+    expect(result.metadata.extractor).toBe('pdf-parse');
+    expect(result.text).toContain(marker);
+    // The specific regression: the failure sentence must never be the answer. Asserted
+    // separately from the `toContain` above because a future breakage returns a STRING, and
+    // a test that only checks the happy substring would still report a clean failure
+    // message while the substring check is what actually fails.
+    expect(result.text).not.toContain('PDF extraction failed');
+  });
+
+  it('reports a corrupt PDF as a failure rather than as content', async () => {
+    // Detected as PDF by the %PDF magic, then rejected by the parser. The extractor's
+    // contract for this case is the bracketed sentence — pinned so the previous behaviour
+    // (EVERY pdf taking this path) cannot come back disguised as intentional.
+    const result = await extract(Buffer.from('%PDF-1.4\nnot actually a pdf\n', 'binary'),
+      { filename: 'broken.pdf' });
+    expect(result.format).toBe('pdf');
+    expect(result.text).toMatch(/^\[PDF extraction failed: .+\]$/);
   });
 
   it('extracts labels from Turtle', async () => {

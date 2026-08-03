@@ -94,19 +94,30 @@ jobs:
           - { image: interego-foxxi-scorm-player, dockerfile: deploy/Dockerfile.foxxi-scorm-player }
           # ★ THE ONE SERVICE THAT HAD NO BUILD PATH AT ALL.
           #
-          # CSS runs `interego-css-pgsl:redis6` — a genuinely mutable tag. It was
+          # CSS ran `interego-css-pgsl:redis6` — a genuinely mutable tag. It was
           # "managed out-of-band", which in practice meant no sha-tagged image of it
-          # had ever been built by anything, so the running code is identified by a
-          # name that can be repointed and a rollback has nothing to roll back TO.
-          # Every other service in the fleet is pinned to an immutable sha; this one
-          # was pinned to a promise.
+          # had ever been built by anything, so the running code was identified by a
+          # name that could be repointed and a rollback had nothing to roll back TO.
+          # Every other service in the fleet was pinned to an immutable sha; this one
+          # was pinned to a promise. This leg is what ended that, and css was pinned to
+          # a commit sha on 2026-08-03 — the live pin is Railway's to state, so ask
+          # `node tools/railway-pins.mjs` rather than believing this comment.
           #
-          # The image name is `interego-css-pgsl`, NOT `interego-css` — the service is
-          # named `css` and tools/railway-redeploy.mjs derives `interego-${service}`,
-          # so THAT SCRIPT CANNOT REDEPLOY THIS SERVICE (it dies on its own
-          # repository-mismatch guard, which is the correct outcome). Renaming the
-          # image to satisfy the script would orphan the package that is actually
-          # deployed; the pin has to be moved by hand. See the note in that file.
+          # The image name is `interego-css-pgsl`, NOT `interego-css`, while the Railway
+          # service is named `css`. tools/railway-redeploy.mjs used to derive
+          # `interego-${service}` and so could not deploy this service at all; the
+          # mapping is now enumerated in tools/railway-services.mjs and `css` redeploys
+          # like anything else. Renaming the IMAGE to match the service would orphan the
+          # package that is actually deployed, so the names stay different on purpose.
+          #
+          # ★ A SKIPPED LEG REPORTS SUCCESS, AND FOR THIS IMAGE THAT WAS THE ONLY SIGNAL
+          # ANYONE HAD. The first attempt to pin css to a sha failed because the tag had
+          # never been pushed — the run it was taken from had been dispatched with
+          # `-f image=interego-relay`, so the gate below skipped this leg in a step-level
+          # `if` and the job still went green. Railway then failed the deploy in two
+          # seconds with empty logs, which reads like a broken image rather than a
+          # missing one. Before pinning ANY service, check that its leg actually built:
+          # seconds of runtime means it skipped.
           #
           # `prebuild` names a workspace artifact the Dockerfile expects to ALREADY
           # EXIST in the build context: it COPYs `packages/pgsl-store/dist`, which is

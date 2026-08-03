@@ -181,7 +181,28 @@ env:
 #   identical term for term to the breakdown above (42+15 jsonrpc, 27+15 grpc, 3+2 older
 #   phrasing = 104; 30 push + 16+12 streaming + 3+3 agent-card = 64; 4+3 task-state + 2
 #   extension = 9). The per-transport slice reproduces too: http_json 14/6/30 of 50,
-#   untagged 37/1/36 of 74. Also re-checked at the source, one clause at a time:
+#   untagged 37/1/36 of 74.
+#
+#     ★ AND THE PREDICATE THAT SLICE USES IS PART OF THE FIGURE — write it down, because a
+#     later re-verifier reproduced everything else on this page and then spent real effort
+#     concluding these four numbers were stale. They are not; the obvious stricter reading
+#     is. `http_json` here means the testcase NAME CONTAINS the substring `http_json`
+#     anywhere, and `untagged` means it contains none of the three transport tokens. Slice
+#     instead on a transport in trailing brackets — `[http_json]` or `-http_json]`, which
+#     is what the parametrisation looks like — and you get a perfectly defensible
+#     48/48/48/91 that also sums to 235, with passed and failed IDENTICAL (14/6 and 37/1)
+#     and only the totals and skips moved. The two extra cases the substring form catches
+#     are `TestCapabilityExtensionRequired::test_missing_required_extension_returns_error_
+#     http_json` and `TestExtendedCardNotConfigured::test_extended_card_not_configured_
+#     http_json` — http_json-specific tests that are not parametrised, so their transport
+#     sits in the METHOD name where a bracket match cannot see it. (Enumerated from the
+#     report, not reasoned about: the first draft of this paragraph guessed "and its
+#     jsonrpc twin" and was wrong, which is the failure this whole block exists to make
+#     expensive.) Neither slicing is wrong. Only one of them
+#     is the one these numbers were measured with, and a figure whose predicate is
+#     unstated is a figure the next round rewrites.
+#
+#   Also re-checked at the source, one clause at a time:
 #
 #     — CORE-SEND-003 has no `expected_error` while CORE-SEND-002 does, and
 #       `_validate_response` returns early only when it is set. Confirmed in
@@ -204,6 +225,29 @@ env:
 #     — ★ "the pin is already at its tip" is the one clause here with a shelf life, and it
 #       still holds: `git ls-remote` puts refs/heads/main at 5996b79 — the same commit
 #       TCK_REF names. Re-check this specific clause, not the block, when it next matters.
+#
+#   ★★ RE-VERIFIED AGAIN, INDEPENDENTLY, and the point of saying so is that NOTHING MOVED.
+#   A second reviewer re-cloned the suite at TCK_REF, rebuilt the venv, booted the SUT from
+#   HEAD and re-ran the tier from scratch rather than reading this block: 235 collected /
+#   51 passed / 7 failed / 177 skipped, the same seven failure names, and a skip histogram
+#   equal term for term. `_task_helpers` was re-read and the fixture-protocol proof holds
+#   exactly as stated — `create_completed_task` and `create_working_task` both call
+#   `_send_and_validate` with the identical body (`role: ROLE_USER`, one text part reading
+#   "TCK prerequisite task creation") and differ ONLY in the messageId prefix, so the
+#   claim that no behaviour over request CONTENT can satisfy both is a fact about the
+#   helper and not a preference. `httpx.ResponseNotRead` was confirmed to subclass
+#   RuntimeError via StreamError and NOT ValueError, so it escapes `_extract_error`'s
+#   `except (json.JSONDecodeError, ValueError)`. CORE-SEND-002 carries
+#   `expected_error=UNSUPPORTED_OPERATION_ERROR` and CORE-SEND-003 carries none, in that
+#   order in the same file. The two `urn:a2a:tck:required-extension` skips were read at
+#   the source: `TestCapabilityExtensionRequired._has_required_tck_extension` wants that
+#   URI in `capabilities.extensions` with `required: true`, so closing them means
+#   publishing the SUITE'S OWN extension URI — a `urn:` at that — on a production card.
+#   That is the examiner-recognition case at its most literal, and it is declined.
+#
+#   ONE CLAUSE WAS FOUND IMPRECISE AND IS FIXED ABOVE: the per-transport slice was correct
+#   but its predicate was unstated, and reproducing it took longer than reproducing
+#   anything else on this page. Nothing else changed, and no number moved.
 #
 #   NO RATCHET MOVEMENT. Nothing in the 177 is a conformance gap this implementation
 #   could close: 168 are the suite declining to test bindings and optional capabilities

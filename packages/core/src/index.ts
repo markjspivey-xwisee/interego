@@ -190,6 +190,10 @@ export type {
   Sign,
   MergeStrategy,
   FacetRegistryEntry,
+  // Nameable so a third-party registrant can declare its custom merge against the same
+  // type the registry stores. `FacetRegistryEntry` alone leaves the merge signature
+  // inline-only, which is how all three copies of it drifted to `any[] => any[]`.
+  FacetMerge,
   DescriptorPresheaf,
   NaturalityWitness,
   LatticeLawProof,

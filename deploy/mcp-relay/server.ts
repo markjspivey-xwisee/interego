@@ -299,7 +299,14 @@ import type { NodeProvenance } from '@interego/pgsl';
 // The relay's PUBLISHED PGSL node commons — see pgsl-node-store.ts for the
 // publish-then-resolve invariant this module exists to enforce.
 import * as publishedNodes from './pgsl-node-store.js';
-import { alternateTurtleHref, looksLikeHtml } from './alternate-turtle.js';
+// The conformance gate's shape fetch — cache, last-known-good fallback and the ONE bounded,
+// same-origin `rel=alternate` hop. Extracted so it can be unit-tested: this module opens a
+// listener on import, and a live run only ever exercises the honest path.
+import {
+  fetchShapeBodyWith,
+  type ShapeBodyCacheEntry,
+  type FetchedShapeRepresentation,
+} from './shape-body.js';
 import {
   supersessionFrontier, classifyCasRequest, casRefusal,
   priorVersionsFor, reDecidedSupersedes,
@@ -932,22 +939,46 @@ function assertInvokeTargetAllowed(url: string): void {
  * Follow redirects MANUALLY and re-screen EVERY hop (the same discipline
  * amep-session-bridge.ts already uses with redirect:'manual'). Because this is the
  * shared wrapper, fixing it here re-arms every existing guarded caller at once.
+ *
+ * This paragraph describes `guardedInvokeFetchLanded` below and, through it,
+ * `guardedInvokeFetch` — which is that function with the landed URL dropped. There is one
+ * loop, so "re-screen every hop" cannot become true of one caller and false of another.
  */
 const GUARDED_MAX_REDIRECTS = 5;
-const guardedInvokeFetch: FetchFn = async (url, init) => {
+/**
+ * The same guarded fetch, plus the URL the bytes LANDED at.
+ *
+ * ★ WHY THE LANDED URL IS EXPOSED AT ALL. `FetchResponse` (the substrate's minimal HTTP
+ * surface) carries no `url`, so a caller that has to reason about WHERE a body came from
+ * cannot. The shape gate is exactly that caller: it resolves a page's advertised
+ * `rel=alternate` href and refuses a cross-origin one, and both operations are anchored on
+ * the URL the page was served from. Two things make the URL asked for the wrong anchor —
+ * `normalizeCssUrl` rewrites a legacy public CSS host to its `.internal.` form (a DIFFERENT
+ * ORIGIN), and the loop below follows redirects. Anchoring on the URL asked for would have
+ * made every pod-hosted shape look cross-origin and refused it.
+ *
+ * The redirect loop is not duplicated for this: `guardedInvokeFetch` is a projection of this
+ * function, so there is one screen-every-hop implementation and it cannot drift.
+ */
+async function guardedInvokeFetchLanded(
+  url: string,
+  init?: Parameters<FetchFn>[1],
+): Promise<{ response: Awaited<ReturnType<FetchFn>>; landedUrl: string }> {
   let target = normalizeCssUrl(url);
   for (let hop = 0; hop <= GUARDED_MAX_REDIRECTS; hop++) {
     assertInvokeTargetAllowed(target);
     const r = await solidFetch(target, { ...(init as Record<string, unknown>), redirect: 'manual' } as typeof init);
-    if (r.status < 300 || r.status >= 400) return r;
+    if (r.status < 300 || r.status >= 400) return { response: r, landedUrl: target };
     const loc = r.headers.get('location');
-    if (!loc) return r;
+    if (!loc) return { response: r, landedUrl: target };
     // Resolve relative Locations against the CURRENT hop, then re-screen on the
     // next iteration — a relative redirect must not escape the guard either.
     target = normalizeCssUrl(new URL(loc, target).toString());
   }
   throw new Error('invoke: too many redirects');
-};
+}
+const guardedInvokeFetch: FetchFn = async (url, init) =>
+  (await guardedInvokeFetchLanded(url, init)).response;
 
 /**
  * Is `target` a real, safe HTTP(S) endpoint a graph-declared HMD control may point
@@ -1802,7 +1833,7 @@ const KNOWN_GOOD_TTL_MS = 24 * 60 * 60 * 1000;
 const PUBLIC_SHAPE_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#shape';
 const CONTAINER_SHAPE_CACHE_MAX = 256;
 const containerShapeCache = new Map<string, { shapes: readonly string[]; expiresAt: number }>();
-const shapeBodyCache = new Map<string, { body: string; expiresAt: number; knownGoodUntil: number }>();
+const shapeBodyCache = new Map<string, ShapeBodyCacheEntry>();
 
 async function fetchContainerShapes(podUrl: string): Promise<readonly string[]> {
   const cached = containerShapeCache.get(podUrl);
@@ -1869,127 +1900,66 @@ async function fetchContainerShapes(podUrl: string): Promise<readonly string[]> 
 const SHAPE_ACCEPT_HEADER =
   'text/turtle, application/trig;q=0.9, application/n-quads;q=0.8, application/ld+json;q=0.7';
 
-async function fetchShapeBody(shapeIri: string): Promise<string | null> {
-  const cached = shapeBodyCache.get(shapeIri);
-  if (cached && cached.expiresAt > Date.now()) return cached.body;
-  // ★ DO NOT DELETE the stale entry — it is the last-known-good fallback used below.
-  // Deleting here made that fallback dead code, so fail-closed would have shipped with
-  // no mitigation at all: one transient blip on a shape host would 422 every publish
-  // to that pod for as long as it lasted.
-
-  let body: string | null = null;
-  let warnReason: string | null = null;
-  // Only a TRANSIENT failure may fall back to a stale body. A 404/403/410 is the shape
-  // owner deleting or tightening the shape, and honouring a cached permissive copy for
-  // 24h after that would be worse than the bug this fixes.
-  let transient = false;
-  try {
-    // ★ guardedInvokeFetch, NOT solidFetch. shapeIri comes from the caller's
-    // `conforms_to_shapes` argument, so an unguarded fetch here is a caller-directed
-    // SSRF that runs BEFORE the scope gate — loopback, `.internal` hosts and cloud
-    // metadata endpoints were all reachable. Same guard every other caller-URL fetch
-    // in this file already uses.
-    const r = await guardedInvokeFetch(shapeIri, { method: 'GET', headers: { 'Accept': SHAPE_ACCEPT_HEADER } });
-    if (r.ok) {
-      const text = await r.text();
-      if (text && text.trim().length > 0) {
-        body = text;
-      } else {
-        warnReason = `empty body (HTTP ${r.status})`;
-      }
-    } else {
-      warnReason = `HTTP ${r.status} ${r.statusText}`;
-      transient = r.status >= 500 || r.status === 429 || r.status === 408;
-    }
-  } catch (err) {
-    transient = true;   // network throw / timeout / DNS
-    // Network failures → treat as missing shape, but record the cause
-    // so a misconfigured / unreachable shape can't masquerade as "no
-    // shape declared". WARN-logged below, NOT silently swallowed.
-    warnReason = `fetch threw: ${err instanceof Error ? err.message : String(err)}`;
-  }
-
-  // ★ Follow the alternate link rather than giving up on HTML — see alternateTurtleHref.
-  //
-  // GitHub Pages ignores Accept and serves text/html for our own ontology IRIs, so a
-  // perfectly good shape looked unreachable — and an owl:imports of one corrupted the
-  // graph it was glued into. The reflex is to append `.ttl` and move on. That would be
-  // reinventing a mechanism that already exists AND is already published: every generated
-  // page here carries
-  //
-  //     <link rel="alternate" type="text/turtle" href="iep.ttl" />
-  //
-  // The publishing side was already standards-correct. We simply were not reading it.
-  // Following the advertised link works for any publisher that does the same thing, where
-  // guessing an extension only ever works for ours.
-  if (body !== null && looksLikeHtml(body)) {
-    const href = alternateTurtleHref(body);
-    if (href) {
-      try {
-        const target = new URL(href, shapeIri).toString();
-        const r2 = await guardedInvokeFetch(target, { method: 'GET', headers: { 'Accept': SHAPE_ACCEPT_HEADER } });
-        if (r2.ok) {
-          const t2 = await r2.text();
-          if (t2.trim().length > 0) {
-            log(`conformance gate: ${shapeIri} served HTML; followed its rel=alternate to ${target}`);
-            body = t2;
-            warnReason = null;
-          }
-        }
-      } catch (err) {
-        log(`WARN conformance gate: ${shapeIri} alternate-link fetch failed: ${(err as Error).message}`);
-      }
-    }
-    if (body !== null && looksLikeHtml(body)) {
-      warnReason = 'served HTML with no usable rel=alternate text/turtle link';
-      body = null;
-    }
-  }
-
-  if (body === null && warnReason !== null) {
-    // ★ This sentence used to read "Publish will proceed UNVALIDATED against this shape."
-    // That was true when the gate failed OPEN; it has failed CLOSED since PR #210, and the
-    // caller now gets a 422 carrying iep:shapeUnfetchable. Caught by reading the live logs
-    // beside the live response and seeing them contradict each other. A security gate whose
-    // log states the opposite of what it did is worse than one that logs nothing — it tells
-    // whoever is debugging an outage to go looking in precisely the wrong place.
-    log(`WARN conformance gate could not fetch shape ${shapeIri} — ${warnReason}. Publish is REFUSED (422 shapeUnfetchable); the gate fails closed.`);
-  }
-
-  // ★ NEVER CACHE A FAILURE. Storing `body: null` memoised "this shape does not
-  // constrain anything" for the whole TTL, so one transient blip disabled a contract
-  // for every subsequent publish without even retrying. Only successes are cached.
-  //
-  // A cached success also doubles as LAST-KNOWN-GOOD: if a later fetch fails we fall
-  // back to the body we previously verified rather than refusing the publish, so a
-  // network blip degrades to "validated against a slightly stale shape" instead of an
-  // outage. The fallback is deliberately generous (KNOWN_GOOD_TTL_MS) because the
-  // alternative — failing the publish — is the worse error for a transient fault.
-  if (body === null) {
-    if (transient && cached?.body && cached.knownGoodUntil > Date.now()) {
-      log(`WARN conformance gate: ${shapeIri} unreachable (${warnReason}); validating against last-known-good body`);
-      return cached.body;
-    }
-    // A permanent failure evicts, so a deleted shape stops being honoured.
-    if (!transient && cached) shapeBodyCache.delete(shapeIri);
-    return null;
-  }
-  // ★ Only stamp known-good on a body that actually PARSES as a shapes graph. Any
-  // non-empty 200 used to qualify — including an HTML error page, which is not
-  // hypothetical: GitHub Pages ignores Accept and serves HTML for our own shape IRIs.
-  // Pinning that for 24h would be pinning a shape that constrains nothing.
-  const parses = validateAgainstShape('', body).results
-    .every(r => r.constraintComponent !== `${'http://www.w3.org/ns/shacl#'}ShapeGraphParseFailure`);
-  if (shapeBodyCache.size >= CONTAINER_SHAPE_CACHE_MAX) {
-    const oldestKey = shapeBodyCache.keys().next().value;
-    if (oldestKey !== undefined) shapeBodyCache.delete(oldestKey);
-  }
-  shapeBodyCache.set(shapeIri, {
+/**
+ * One shape representation, fetched through the SSRF screen and carrying the URL it
+ * LANDED at.
+ *
+ * ★ THE LANDED URL IS THE POINT. `fetchShapeBodyWith` resolves the page's advertised
+ * `rel=alternate` href against this URL and refuses an alternate on a different origin.
+ * Handing it `shapeIri` instead would be wrong in BOTH directions: `normalizeCssUrl`
+ * rewrites a legacy public CSS host to its `.internal.` form, so every pod-hosted shape
+ * would look cross-origin and be refused, and a redirect chain would be invisible to the
+ * origin comparison it exists to make.
+ */
+async function fetchShapeRepresentation(url: string): Promise<FetchedShapeRepresentation> {
+  const { response, landedUrl } = await guardedInvokeFetchLanded(
+    url, { method: 'GET', headers: { 'Accept': SHAPE_ACCEPT_HEADER } },
+  );
+  // ★ THE ERROR BODY IS NOT READ, AND THAT IS NOT TIDINESS. `shapeIri` is a caller argument,
+  // so the host answering it is caller-chosen; `solidFetch` bounds the request by TIME but not
+  // by SIZE. Buffering the body of a 500 would let any caller point the gate at a host that
+  // streams an arbitrarily large error page and have the relay hold it in memory — on a relay
+  // whose OOM shows up as generic 502s with empty logs. Nothing downstream reads it either:
+  // a non-ok first response never becomes a shape body, and the follower refuses any hop that
+  // is not exactly 200 before it touches `body`.
+  const body = response.ok ? await response.text() : '';
+  return {
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    url: landedUrl,
+    contentType: response.headers?.get('content-type') ?? null,
     body,
-    expiresAt: Date.now() + CONTAINER_SHAPE_CACHE_TTL_MS,
-    knownGoodUntil: parses ? Date.now() + KNOWN_GOOD_TTL_MS : 0,
+  };
+}
+
+/**
+ * The shape body the conformance gate validates against.
+ *
+ * ★ THE WHOLE OF THIS FUNCTION LIVES IN `shape-body.ts`. It followed a page's
+ * `rel=alternate` with an inline copy of the hop that did NOT refuse a cross-origin
+ * alternate — a shape whose HTML page advertised a FOREIGN ORIGIN's Turtle had that
+ * document fetched and used as the publish gate. Fixing it in place was not enough: this
+ * module opens a listener on import, so no unit test can reach anything defined here, and a
+ * live run against production only ever exercises the honest path. The cache, the
+ * last-known-good fallback, the transient/permanent split and the hop moved out together —
+ * they are one behaviour — and this is now the binding that supplies them with the relay's
+ * guarded fetch and SHACL parser.
+ */
+async function fetchShapeBody(shapeIri: string): Promise<string | null> {
+  return fetchShapeBodyWith(shapeIri, {
+    fetchRepresentation: fetchShapeRepresentation,
+    // ★ Only a body that actually PARSES as a shapes graph earns known-good status. Any
+    // non-empty 200 used to qualify — including an HTML error page, which is not
+    // hypothetical: GitHub Pages ignores Accept and serves HTML for our own shape IRIs.
+    parsesAsShapesGraph: (body: string) => validateAgainstShape('', body).results
+      .every(r => r.constraintComponent !== `${'http://www.w3.org/ns/shacl#'}ShapeGraphParseFailure`),
+    log,
+    cache: shapeBodyCache,
+    cacheMax: CONTAINER_SHAPE_CACHE_MAX,
+    freshTtlMs: CONTAINER_SHAPE_CACHE_TTL_MS,
+    knownGoodTtlMs: KNOWN_GOOD_TTL_MS,
   });
-  return body;
 }
 
 /**

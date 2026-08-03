@@ -576,6 +576,31 @@ export async function verifySiweSignature(
 // ═════════════════════════════════════════════════════════════
 
 /**
+ * The three members of `@coinbase/agentkit` this file actually touches.
+ *
+ * The module is not a dependency of this package and is not present in `node_modules`, so
+ * there is nothing to `import type` from and the specifier is deliberately held in a
+ * variable to keep bundlers from trying to resolve it. That made `as any` look inevitable,
+ * and it is not: what the cast was standing in for is exactly this — a local declaration of
+ * the surface we consume. Written out, it is checked. Under `any`, `walletData` could have
+ * been renamed, `exportWallet` could have become a property, and `defaultAddressId` could
+ * have been typo'd, and every one of those would have compiled and then produced a `Wallet`
+ * whose `address` is `undefined` at runtime — silently, because the enclosing `catch` only
+ * sees throws, not wrong shapes.
+ *
+ * This is a claim about the vendor API, not a guarantee from it. If AgentKit's shape moves,
+ * the honest failure is here, at the one place that says what we expect.
+ */
+interface AgentKitModule {
+  readonly AgentKit?: {
+    readonly from?: (opts: {
+      cdpApiKeyName?: string;
+      cdpApiKeyPrivate?: string;
+    }) => Promise<{ exportWallet(): Promise<{ defaultAddressId?: string }> }>;
+  };
+}
+
+/**
  * Create an agent wallet via Coinbase AgentKit.
  * Falls back to ethers.js if AgentKit is not installed.
  */
@@ -586,7 +611,7 @@ export async function createAgentKitWallet(
   // Try to load AgentKit dynamically
   try {
     const moduleName = '@coinbase/agentkit';
-    const agentkit = await import(moduleName) as any;
+    const agentkit = await import(moduleName) as AgentKitModule;
     if (agentkit?.AgentKit?.from) {
       const kit = await agentkit.AgentKit.from({
         cdpApiKeyName: process.env['CDP_API_KEY_NAME'],

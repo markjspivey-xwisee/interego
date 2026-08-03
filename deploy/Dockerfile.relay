@@ -113,6 +113,7 @@ COPY deploy/mcp-relay/agent-interop-mount.ts ./
 COPY deploy/mcp-relay/activitypub.ts ./
 COPY deploy/mcp-relay/reachability.ts ./
 COPY deploy/mcp-relay/alternate-turtle.ts ./
+COPY deploy/mcp-relay/shape-body.ts ./
 COPY deploy/mcp-relay/supersession-frontier.ts ./
 COPY deploy/mcp-relay/interop-principal.ts ./
 COPY deploy/mcp-relay/amep.ts ./

@@ -23,7 +23,10 @@
  *   IMAGE      the live pin: `serviceInstance.source.image`, the authoritative answer.
  *   TAG        `sha` (immutable, a 40-hex commit) or ★ `mutable` — a mutable tag means
  *              the running code cannot be identified from the pin at all, and a restart
- *              can silently change it. `css` is pinned to `interego-css-pgsl:redis6`.
+ *              can silently change it. WHICH services are in that state is the report's
+ *              answer, not this comment's: the sentence here used to name `css` and its
+ *              `redis6` tag, and it went stale the moment css was repinned — inside the
+ *              file whose entire argument is that a transcribed pin goes stale.
  *   DEPLOYED   status + date of the deployment that produced it, so "pinned in July and
  *              never redeployed" is visible rather than inferred.
  *   REPO       agreement with tools/railway-services.mjs. This is the half that keeps the
