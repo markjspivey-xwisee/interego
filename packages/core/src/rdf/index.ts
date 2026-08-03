@@ -18,6 +18,15 @@ export {
   type ParsedIri,
   type ParsedBNode,
 } from './turtle-parser.js';
+// Following a page's own advertised Turtle. Here rather than in the relay because two
+// independent readers of the same non-negotiating web need it — see the module header.
+export {
+  looksLikeHtml,
+  alternateTurtleHref,
+  alternateTurtleUrl,
+  followAlternateTurtle,
+} from './alternate-turtle.js';
+export type { FetchedRepresentation } from './alternate-turtle.js';
 // Serialization-stable graph digest — what an authorship proof's contentHash is over.
 export {
   canonicalGraphDigest,

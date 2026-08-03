@@ -253,6 +253,15 @@ export interface StreamDeps {
    * dependency that returned only the body could not express that, and the check would be
    * unwritable rather than merely unwritten.
    *
+   * ★ IT MAY BE CALLED TWICE FOR ONE PROFILE, AND A SECOND CALL IS NOT A RETRY. Our own pages
+   * do not content-negotiate: GitHub Pages ignores Accept and serves the human-readable
+   * projection at an extensionless IRI, advertising its Turtle with
+   * `<link rel="alternate" type="text/turtle">`. `dereferenceRoleProfile` follows that link
+   * exactly once, through `followAlternateTurtle`, so a fetch of `<…/wsp-roles-default>` is
+   * followed by a fetch of `<…/wsp-roles-default.ttl>` — the URL the PAGE named, never one this
+   * reader guessed. A dependency that refused a second call, or that memoised on the first URL,
+   * would make the published governance unreadable.
+   *
    * Optional and refused loudly at the point of use, the same posture as `getDescriptor` and
    * `currentHead`: a caller who does not need the check is not obliged to supply the dependency,
    * and a caller who asks for the check without it gets a refusal rather than a silent pass.

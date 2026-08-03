@@ -56,18 +56,26 @@ the fold attested those grants against is the one the **workspace's own record**
 > roster can be `recordFieldBinding: 'bound'` with `convenerBinding: 'unchecked'`, which is
 > every caller that has not asked.
 >
-> ★ **What has been run, and what has not.** `verify-can-live.ts` §§1–11 were run against
-> production with two real bearers on 2026-08-03 (UTC) and passed **77/77** (§§1–8: 45 sites,
-> §9: 18, §10: 7, §11: 7). §9 is the gap-6 **close**, §10 the gap-8 close, §11 the gap-9 close.
-> **§12 — the gap-10 close — is UNRUN**: the round that wrote it had no bearer tokens, and it is
-> marked UNRUN in the source file's own numbered section roster. That roster is the mitigation the
-> previous version of this note proposed, and this is the first round to test it: the bare
-> adjective had already gone stale three times ("§§6–8 remain unrun" after they had run, "§9 is
-> unrun" after §9 had, "nothing in this file is unrun" one round before §10 was added), and
-> "nothing is unrun at this count" went stale the moment §12 landed. What stands in for §12's run
-> is a **41-mutant sweep** over every guard the round added — all killed, six of them only after
-> the tests they exposed as inadequate were written — plus the bearer-free half of §12 measured
-> live and anonymously. Neither is a substitute for running it.
+> ★ **What has been run.** `verify-can-live.ts` §§1–12 were run against production with two real
+> bearers and passed **88/88** (§§1–8: 45 sites, §9: 18, §10: 7, §11: 7, §12: 11). §9 is the
+> gap-6 **close**, §10 the gap-8 close, §11 the gap-9 close, §12 the gap-10 close. Nothing in the
+> file's own numbered section roster is unrun at this count — and the count is quoted here, as it
+> is there, precisely so this sentence stops matching when a section is added. The bare adjective
+> without a count has already gone stale four times ("§§6–8 remain unrun" after they had run,
+> "§9 is unrun" after §9 had, "nothing in this file is unrun" one round before §10 was added, and
+> "nothing is unrun at this count" the moment §12 landed).
+>
+> ★★ **And §12 failed the first time it was run — because the world underneath it changed, not
+> because the section was wrong.** It was written by a round with no bearers, standing on a
+> 41-mutant sweep and one bearer-free measurement: `<…/wsp-roles-default>` answered **404** and
+> only `<…/wsp-roles-default.ttl>` answered 200. The section encoded that 404 as its **expected
+> state**. Then `docs/applications/shared-workspace/wsp-roles-default.html` shipped so the
+> vocabulary's extensionless IRIs would resolve, and the assertions went on asserting a defect
+> that had been fixed. The same change broke the reader: `dereferenceRoleProfile` had only ever
+> seen a 404 at that IRI, got `text/html`, and reported the only published role profile in
+> existence as `unreadable … unknown bareword "Default"`. **A mutation sweep cannot find either
+> of these.** Both are facts about the world, and only running the section against the world
+> found them.
 >
 > ★ **§10 did not merely go unrun — it FAILED the first time it was run**, and for a reason its
 > own doubles get right. Its rogue role profile declared `#Contributor` while §8's published
@@ -233,6 +241,7 @@ notices; over-privileging is a failure nobody notices.
 | [`../../docs/applications/shared-workspace/wsp.ttl`](../../docs/applications/shared-workspace/wsp.ttl) | the vocabulary |
 | [`../../docs/applications/shared-workspace/wsp-shapes.ttl`](../../docs/applications/shared-workspace/wsp-shapes.ttl) | SHACL, enforced at publish |
 | [`../../docs/applications/shared-workspace/wsp-roles-default.ttl`](../../docs/applications/shared-workspace/wsp-roles-default.ttl) | five roles, as **data** |
+| `../../docs/applications/shared-workspace/{wsp,wsp-shapes,wsp-roles-default}.html` | what the three IRIs above **dereference to**. GitHub Pages serves no extensionless path and falls back to `<name>.html`, so these pages are why `<…/wsp-roles-default>` answers 200 instead of 404 — and each carries `<link rel="alternate" type="text/turtle">` pointing at the `.ttl` beside it, which is how a machine gets from the name to the document. Same convention as `docs/ns/*.html`. `dereferenceRoleProfile` follows that link; see `followAlternateTurtle` in `@interego/core` |
 
 Roles are data: a workspace wanting different governance publishes a different profile, not
 a new release.
@@ -939,10 +948,12 @@ no subset check can see.
 `<relay>/ns/<owner>/<slug>` is resolved through the pod its owner segment names — the same route
 gap 9 closed on — and comes back as a signed record read through the digested region. Anything
 else is an ordinary HTTPS document. The distinction is carried in `RoleTableAuthority` rather
-than smoothed over, and three guards ride the second path: `https:` only (deliberately stricter
+than smoothed over, and four guards ride the second path: `https:` only (deliberately stricter
 than the shape's `^https?://`, because for a document nobody signs the transport is the entire
-evidence), a cross-origin redirect refuses (the origin **is** the authority), and any non-200 is
-`'unreadable'`, which refuses to confer.
+evidence), a cross-origin **redirect** refuses (the origin **is** the authority), a cross-origin
+**`rel=alternate`** refuses (a separate guard, because a redirect is the *server* choosing where
+the answer comes from and an alternate link is the *document* choosing — a claim written by
+whoever can write the page), and any non-200 is `'unreadable'`, which refuses to confer.
 
 ### What this grade is actually worth — and it is smaller than the other three
 
@@ -964,31 +975,55 @@ What is done instead is that the grade **travels**: `Roster.attributionNote` say
 of the two it was, because a three-valued enum cannot carry the difference and a caller reading
 `'bound'` beside a Pages file would otherwise reasonably hear "signed".
 
-### And the declared IRI does not dereference
+### The declared IRI dereferences now, and the reader follows the page's own link
 
-Measured anonymously on 2026-08-03: `<…/wsp-roles-default>` answers **404**, and only
-`<…/wsp-roles-default.ttl>` answers 200. The name every `wsp:roleProfile` in this repo declares
-has never resolved to anything — the same class of finding as §9's `/ns/maintainer` 404, on the
-other side of the same record.
+This section used to be headed *"And the declared IRI does not dereference"*, and it was an
+accurate measurement: `<…/wsp-roles-default>` answered **404**, only `<…/wsp-roles-default.ttl>`
+answered 200, and the full workspace → profile → table chain therefore could not close against
+the deployed artifact. `docs/applications/shared-workspace/wsp-roles-default.html` fixed that,
+and the fix immediately produced a second defect one layer up.
 
-The reader refuses rather than guessing `<IRI>.ttl`, because guessing a URL on the workspace's
-behalf is exactly what `nsOwnerSegmentOf` refuses to do one document over. The consequence is
-concrete: **the full workspace → profile → table chain cannot close against the deployed artifact
-today.** A fold that asks both questions of it reports `roleProfileBinding: 'bound'` beside
-`roleTableBinding: 'refused'` and confers nothing, which is the right answer over a broken
-artifact and is not the same as a working chain. The fix is one line of Pages configuration in
-`docs/`, and it is named in the open table rather than performed here.
+GitHub Pages serves no extensionless path. It falls back to `<name>.html`, so the declared IRI
+now answers **200 `text/html`** — the human-readable projection, carrying
+`<link rel="alternate" type="text/turtle">` beside it, exactly as `docs/ns/*.html` do.
+`dereferenceRoleProfile` had only ever seen a 404 at that IRI, so it handed the HTML to the
+Turtle parser and reported the only published role profile in existence as *unreadable — unknown
+bareword `"Default"`*. The document was there, at the IRI the workspace declares, and the only
+reader of it could not see it.
 
-`verify-can-live.ts` **§12** carries the demonstration and the control, and is marked **UNRUN** in
-that file's own section roster: the round that wrote it had no bearer tokens. Two things stand in
-for the live run, and neither is a substitute for it. A **41-mutant sweep** across
+**The follower already existed, in the relay.** Our ontology IRIs have never content-negotiated,
+and `deploy/mcp-relay/alternate-turtle.ts` was written because that bit the publish path three
+separate times. The fix is composition, not a second implementation: `looksLikeHtml` and
+`alternateTurtleHref` moved to **`@interego/core`** — the one package both the relay and
+`applications/` already depend on — together with two functions that had lived inline in
+`server.ts`, `alternateTurtleUrl` (resolve the href against the page's own URL; refuse a
+cross-origin one) and `followAlternateTurtle` (one hop, bounded). The relay **re-exports** them,
+so its import surface is unchanged; that is the same move `graphIriFromDescriptorTurtle` and
+`digestedGraphRegion` made into `@interego/solid` when a reader outside the relay needed them.
+
+**It still does not guess.** Appending `.ttl` remains refused, for the reason that stood here
+when the IRI 404'd: choosing a URL on the workspace's behalf is what `nsOwnerSegmentOf` refuses
+to do one document over. What is followed is what the **page says about itself**, and a page
+advertising no Turtle is `'unreadable'` with the `.ttl` twin never asked for. A live run cannot
+tell following from guessing — our page advertises the same name a guesser would derive — so the
+separation is pinned by doubles: `tests/workspace-membership.test.ts` serves a page whose
+alternate names a *differently-named* Turtle and requires that one to be fetched.
+
+**And the hop buys no grade.** `authority` is `'transport-only'` on both sides of the link,
+because a static Pages file carries no authorship proof and no digested region either way; the
+same-origin refusal is what stops the hop making the evidence *weaker*. `verify-can-live.ts` §12
+asserts the grade explicitly beside the closed chain, so a later round cannot let four bound
+gates add up to a signature.
+
+`verify-can-live.ts` **§12** carries the demonstration, the control, and — new this round — the
+whole chain with every gate on at once: convener, profile IRI, evidence provenance, role table
+and record fields all `'bound'` against the deployed artifact, with the `attributionNote` still
+saying *ordinary HTTPS fetch*. Run live, **11/11**. The **41-mutant sweep** across
 `refuseRoleTableAuthority`, `compareRoleTables`, `normaliseRoleTable`, the fold's wiring and
-`dereferenceRoleProfile` — every one killed, six of them only after the tests they exposed as
-inadequate were written. And the parts of §12 that need no bearer were measured against the live
-document anonymously: the 404, the refusal, the five parsed roles, the `'transport-only'` grade,
-and — the fragile part, and the one §10 got wrong by copying a shape — that §12's own
-`DECLARED_TABLE` literal matches the published file **exactly**, so the control cannot pass
-vacuously.
+`dereferenceRoleProfile` still stands and every mutant is still killed — and it is worth being
+precise about what it was worth here, since it stood in for the run: it could not have found
+either of this round's two defects, because both were facts about the world rather than about the
+guard.
 
 ## Where authority can actually be enforced
 
@@ -1011,17 +1046,18 @@ author, at its own URL — and `authorizeView` excludes it and says why.
 | who can audit it | nobody — it is a promise about a server | anyone who can read the records, member or not |
 
 Two layers refuse, and they refuse different things. Both are demonstrated live by
-[`tools/verify-can-live.ts`](tools/verify-can-live.ts) (**77/77 live** across §§1–11 on
-2026-08-03 (UTC), which supersedes the earlier 13/13 over §§1–5, the 46/46 over §§1–8 and the 63/63
-over §§1–9 — each of those numbers was the file as it stood at *that* run; **§12 is not in that
-count and has not been run**).
+[`tools/verify-can-live.ts`](tools/verify-can-live.ts) (**88/88 live** across §§1–12, which
+supersedes the earlier 13/13 over §§1–5, the 46/46 over §§1–8, the 63/63 over §§1–9 and the 77/77
+over §§1–11 — each of those numbers was the file as it stood at *that* run).
 
-**And 77 is likewise the file as it stood at *that* run.** The same caveat applied to 13/13,
-46/46 and 63/63 one sentence ago applies here, and applying it only backwards is how these
-numbers go stale. Of the 77, §§1–8 hold **45** sites — 46 minus the `wrongConvener` assertion
-that moved into §9 — §9 holds **18**, §10 **7** and §11 **7**. The caveat has now cashed out
-twice: 63 went stale when §10 was added, and 63-plus-"§10 unrun" went stale when §10 was run —
-and §10 FAILED that first run, which is the other thing a bare count cannot tell you:
+**And 88 is likewise the file as it stood at *that* run.** The same caveat applied to 13/13,
+46/46, 63/63 and 77/77 one sentence ago applies here, and applying it only backwards is how these
+numbers go stale. Of the 88, §§1–8 hold **45** sites — 46 minus the `wrongConvener` assertion
+that moved into §9 — §9 holds **18**, §10 **7**, §11 **7** and §12 **11**. The caveat has now
+cashed out three times: 63 went stale when §10 was added, 63-plus-"§10 unrun" went stale when §10
+was run, and 77-plus-"§12 unrun" went stale when §12 was run. Two of those first runs FAILED,
+which is the other thing a bare count cannot tell you — §10 because the section was wrong, §12
+because the world it measured had been repaired underneath it:
 
 ```
 the substrate  bee writes to alice's pod       -> 403 scope_violation, nothing lands
@@ -1038,8 +1074,8 @@ acceptance from bee's own session *and* a forged one for bee from alice's, read 
 record's `iep:authorshipProof` back through the relay's verifier, and require the fold to
 admit the first and refuse the second.
 
-★ **Those sections have now been run, and so have §§9–11.** `verify-can-live.ts` §§1–11
-were run against production with two real bearers on 2026-08-03 (UTC) and passed **77/77** — including the
+★ **Those sections have now been run, and so have §§9–12.** `verify-can-live.ts` §§1–12
+were run against production with two real bearers and passed **88/88** — including the
 forgery refused *for the right reason*, the manufactured-participant refused by the reader,
 gap 6 shown open and then closed against a real `wsp:Workspace`, and the record read back by
 the *other* party. Whether the live shape gate accepts a `wsp:Workspace` at a `/ns/…` graph IRI
@@ -1062,7 +1098,7 @@ is no longer read off the published shape: it accepts it, observed.
 > fails loudly, if it does not); the refusal **reason** is asserted rather than logged; and
 > both sections carry an explicit **CONTROL** assertion — the genuine half must be *admitted*
 > — so a run in which everything is refused reports itself as having established nothing.
-> ★ **And they hold.** The 46/46, then the 63/63, then the 77/77 production runs put every one of those
+> ★ **And they hold.** The 46/46, then the 63/63, then the 77/77, then the 88/88 production runs put every one of those
 > assertions in a state where it could fail, including all three CONTROLs, and none did. The
 > sentence here used to say that whether they hold "is unknown"; it was true when written and
 > it is not now.
@@ -1095,9 +1131,9 @@ is no longer read off the published shape: it accepts it, observed.
 > `convenerBinding: 'refused'` and the disagreement as the reason, then the same policy
 > *without* the evidence is folded to prove the evidence never widened anything.
 >
-> **Section 9 has been run.** It passed **18/18** on 2026-08-03 (UTC) as part of a whole-file 77/77,
-> two real bearers, distinct pods. Its first run is also what found residual gap 9: `<WS>` had
-> never dereferenced, and the section said in a comment that it did.
+> **Section 9 has been run.** It passed **18/18** as part of a whole-file 88/88, two real
+> bearers, distinct pods. Its first run is also what found residual gap 9: `<WS>` had never
+> dereferenced, and the section said in a comment that it did.
 >
 > ★ **Section 10 closes gap 8, and it has now been run — after being fixed.** It is written in
 > §9's shape and reuses §9's published records: fold the two real §8 records against a rogue
@@ -1180,9 +1216,11 @@ IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
 # wsp:MembershipGrant / wsp:MembershipAcceptance documents whose FIELDS are parsed back out of
 # the bytes, with the manufactured-participant attack run against both the new policy and the
 # old one; and §9, where the CONVENER comes out of a real wsp:Workspace instead of out of this
-# file; §10, where the ROLE PROFILE comes out of that same wsp:Workspace; and §11, where the
-# EVIDENCE must be the record <WS> actually dereferences to. §§1–11 passed 77/77 against
-# production on 2026-08-03 UTC (§§1–8: 45, §9: 18, §10: 7, §11: 7).
+# file; §10, where the ROLE PROFILE comes out of that same wsp:Workspace; §11, where the
+# EVIDENCE must be the record <WS> actually dereferences to; and §12, where the ROLE TABLE comes
+# out of the document that profile IRI resolves to — reached by following the published page's
+# own rel=alternate, because the IRI serves text/html. §§1–12 passed 88/88 against production
+# (§§1–8: 45, §9: 18, §10: 7, §11: 7, §12: 11).
 #
 # ★ The two bearers must resolve to DIFFERENT pods or the tool exits 2 saying "same pod —
 # proves nothing", and the token that goes in IEP_BEARER is the CONVENER's: §9 builds the
@@ -1221,13 +1259,13 @@ All six increments are built. What is verified, and what is not:
 
 | | state |
 |---|---|
-| 1 roster, two-sided membership | built; **signer-checked, content-bound, field-bound, convener-checked and now governance-checked all the way to the table** — under `requireFieldBinding` every field is parsed from **the region of the record the digest covers**, under `workspaceEvidence` both the convener and the role-profile IRI come from the workspace instead of the caller, and under `roleTableEvidence` the role table itself comes from the document that IRI names. Doubles: six workspace suites, 76,800-configuration monotonicity enumeration across **ten** axes, and a 41-mutant sweep on the newest one. Live: **77/77** on 2026-08-03 (UTC), §§1–11 (45 sites in §§1–8, 18 in §9, 7 in §10, 7 in §11); **§12 unrun** |
+| 1 roster, two-sided membership | built; **signer-checked, content-bound, field-bound, convener-checked and now governance-checked all the way to the table** — under `requireFieldBinding` every field is parsed from **the region of the record the digest covers**, under `workspaceEvidence` both the convener and the role-profile IRI come from the workspace instead of the caller, and under `roleTableEvidence` the role table itself comes from the document that IRI names. Doubles: six workspace suites, 76,800-configuration monotonicity enumeration across **ten** axes, a 41-mutant sweep on the newest one, and `tests/alternate-turtle.test.ts` on the follower the reader composes. Live: **88/88**, §§1–12 (45 sites in §§1–8, 18 in §9, 7 in §10, 7 in §11, 11 in §12) — including the whole chain with every gate on at once |
 | 2 per-participant stream | built, **20/20 live** (the live run predates `sign_authorship`) |
 | 3 composed cross-pod view | built, **14/14 live** across two identities on two pods |
-| 4 authority at the fold | **77/77 live**, §§1–11, on 2026-08-03 (UTC) with two real bearers — the forgery refused for the right reason, the manufactured participant refused by the reader, gaps 6, 8 and 9 each shown open at full strength and then closed against real records, and the inversion (evidence must never widen) held at every one of them. §9's first run opened **residual gap 9**; §11 closes it. **§12 closes residual gap 10 and is UNRUN** — a 41-mutant sweep and an anonymous measurement of the published profile stand in for it, and the same anonymous measurement found that the declared profile IRI **404s**, so the full chain cannot close against the deployed artifact until `docs/` serves it |
+| 4 authority at the fold | **88/88 live**, §§1–12, with two real bearers — the forgery refused for the right reason, the manufactured participant refused by the reader, gaps 6, 8, 9 and 10 each shown open at full strength and then closed against real records, and the inversion (evidence must never widen) held at every one of them. §9's first run opened **residual gap 9**; §11 closes it. §12's first run found that its own first three assertions had gone stale — they encoded the declared profile IRI's **404** as the expected state, and `docs/` had since fixed it — and that the fix had broken the reader, which got `text/html` and called the published governance unparseable. Both repaired; the **full chain now closes** against the deployed artifact with convener, profile IRI, evidence provenance, role table and record fields all bound |
 | 5 engagement `gone` + injectable engine | built, 11 assertions, deployed |
 | 6 independent SHACL agreement | built, **in CI** — `@interego/core` vs pySHACL |
-| 7 membership records: serialize → publish → read → parse | built (`src/membership.ts`), **live** as part of the 77/77: the shape gate accepted both halves, the deferred-publish wait was needed and worked, and `get_descriptor` returned `graph.content` for them |
+| 7 membership records: serialize → publish → read → parse | built (`src/membership.ts`), **live** as part of the 88/88: the shape gate accepted both halves, the deferred-publish wait was needed and worked, and `get_descriptor` returned `graph.content` for them |
 | 8 the workspace record: who may grant | built (`workspaceTurtle` / `readWorkspaceRecord` / `convenerEvidenceOf`) and **live** on 2026-08-02 — the shape gate accepted a `wsp:Workspace` at a `/ns/…` graph IRI, the *other* party read it back content-bound, and `<WS>` dereferences for an anonymous reader. What the fold did **not** check was where the evidence came from — **residual gap 9**, closed this round by `dereferenceWorkspaceRecord` + `requireEvidenceProvenance` and demonstrated live in §11 |
 | 9 the same record: what a role permits | built (`refuseRoleProfileAuthority` / `Roster.roleProfileBinding`), closing **gap 8**. Doubles: the enumeration's AXIS H — the third workspace-evidence shape across all 76,800 configurations, with the refusing direction counted during the loop and asserted non-zero after it — plus the eleven-shape table, which now asserts a **pair** of verdicts per cell so neither question can be answered with the other's. `verify-can-live.ts` §10 has now been **run** (7/7) — and failed its first run, because its rogue profile declared `#Contributor` while §8's grant to bee names `#Observer`, so the rogue table conferred nothing and the escalation comparison was `0 > 1`. The doubles had it right; the live section copied the shape and named the other role |
 
@@ -1291,7 +1329,7 @@ time this file changes.
 
 | | severity |
 |---|---|
-| ★★ **the profile IRI every workspace here declares does not dereference** — `<https://…/applications/shared-workspace/wsp-roles-default>` answers **404**; only `<…/wsp-roles-default.ttl>` answers 200. Measured anonymously on 2026-08-03, and it is the same class of finding as §9's `/ns/maintainer` 404: a name the code asserts is resolvable, never once resolved. It is a defect in the **deployed artifact** (`docs/`), not in the reader — `dereferenceRoleProfile` refuses rather than guessing `<IRI>.ttl`, because guessing a URL on the workspace's behalf is what `nsOwnerSegmentOf` refuses to do one document over. The consequence is concrete and measured: the full **workspace → profile → table** chain cannot close against the live artifact today. A fold that asks both questions of it reports `roleProfileBinding: 'bound'` beside `roleTableBinding: 'refused'` and confers nothing, which is correct behaviour over a broken artifact. Fixing it means serving the file at the extensionless IRI (a redirect, or a second copy) — one line of Pages configuration, in a directory this round does not own | medium |
+| ★ **the relay's shape gate follows a `rel=alternate` without the two guards the shared follower applies** — the residue of moving the follower into `@interego/core`. `fetchShapeBody` in `deploy/mcp-relay/server.ts` still does its hop inline: it resolves the href relative to the shape IRI (correct) and stops after one hop (correct, structurally — there is no loop), but it does **not** refuse a cross-origin alternate, so a shape host that advertises a foreign origin's Turtle has its `owl:imports` and `sh:` constraints taken from that origin. Not moved onto `followAlternateTurtle` in this round because that hop is entangled with the shape cache's last-known-good fallback and uses `guardedInvokeFetch` — the SSRF guard every caller-URL fetch in that file goes through — and rewiring a live publish gate is a change with its own blast radius and its own test surface. What was fixed here is the thing that matters most: there is now **one** parser of the markup, not two. Named in `deploy/mcp-relay/alternate-turtle.ts` as well as here, so the next round to touch that file finds it | medium |
 | ★ **`roleTableBinding: 'bound'` over a Pages file means a TLS fetch, not a signature** — the residue of closing gap 10, and it is a ceiling rather than an oversight. A static GitHub Pages document cannot carry an `iep:authorshipProof`: nothing published it, there is no descriptor to bind a proof to, and no digested region. So for the profile this repo actually declares, `'bound'` means *this origin served these bytes at this URL at the moment of the read*, defended by TLS and by whoever holds the host, and re-checkable by nobody afterwards. `RoleTableAuthority` carries which of the two grades was reached and `Roster.attributionNote` states it in words, because a three-valued enum cannot. **No policy flag demands the stronger grade**, deliberately: a rule requiring a signed role table would refuse the only role table in existence, which is the `exact-url` mistake under another name. A profile published to `<relay>/ns/<owner>/<slug>` *is* a signed pod record and gets the stronger reading — the path exists, and nothing in this repo uses it yet | medium |
 | ★ **the role-table evidence is still the CALLER'S claim** — the same residue `EvidenceProvenance` and `FieldProvenance` carried before they were branded, one document further out. `roster.ts` is pure, so `RoleTableEvidence` is the caller's statement that it performed the dereference; what the fold can check — and does — is that the IRI dereferenced is the profile its own table claims, that the tables agree role for role, and that the document is not self-contradictory about how it was obtained. A caller that hand-writes a `RoleProfileDocument` beside an invented table passes. Closable the same way the other two were: brand `RoleProfileDocument` on a non-exported private-membered class so only `membership.ts` can mint one. Not done in this round, because that mechanism landed in a **different, concurrent** round and adopting it half-informed in the diff that adds its fourth instance is the move this area has shipped a defect on repeatedly | medium |
 | ★ **the evidence's provenance is still the CALLER'S claim** — the residue of closing gap 9, named here rather than absorbed into the row that says gap 9 is closed. `refuseEvidenceProvenance` checks two relations it can check without trusting anybody — the IRI dereferenced is the workspace being folded, and the document that dereference resolved to is the record's own `head` — and `roster.ts` is pure, so it cannot fetch and cannot verify that a dereference happened at all. A caller that hand-writes both fields beside a record it forged passes. Structurally identical to what `FieldProvenance` was before `membership.ts` existed to produce it, and closed the same way and to the same degree: there is now a producer (`dereferenceWorkspaceRecord`), and the substrate refuses everyone but a pod's holder a write there. What the flag cannot do is make a liar honest | medium |
@@ -1299,7 +1337,7 @@ time this file changes.
 | `Member.stream` can legitimately differ between two configurations of the same fold: naming the stream is a conferring act, so refusing an acceptance re-picks the head. No authority moves with it, and it is never silent — both configurations raise the `acceptance` divergence — but a caller that reads `stream` without reading `divergences` will go to a different pod under a stricter policy | low-med |
 | `proofBindsToDescriptorUrl` compares **a URN-form id** on its terminal segment only, and every `descriptor_id` the relay mints is a URN — so a party who controls a pod and chooses a colliding epoch reaches `bound: true, basis: 'slug-only'` on any host. A URL-form id **is** compared in full, host included, and nothing in this tree mints one. What this leaves reachable, measured: not any conferred value, but `head` — the URL an operator dereferences to audit the record and the URL printed in `unattested` and every `divergence` — residual gap 1 | medium |
 | `wsp:seq` has no producer: `ManifestEntry` carries no `seq`, so the sequence check is inert on every real read — residual gap 5 | low-med |
-| ★ **`verify-can-live.ts` §12 is UNRUN** — §§1–11 were run 77/77 on 2026-08-03 (UTC); §12 was added by a round with no bearer tokens and has not been executed once. It is marked UNRUN in that file's own numbered section roster, which is the mitigation the previous version of this row proposed and this round is the first test of. **The prediction in that row came true immediately**, exactly as written: "a claim about the whole file goes stale when the file grows". Its five predecessors each went stale differently — "§§6–8 remain unrun" after they had run, "§9 is unrun" after §9 had, "nothing in this file is unrun" one round before §10 was added, "§10 is unrun" one round before §10 was run **and failed**, and "every section has now been run" one round before §12 was added. What stands in for the run, and neither is a substitute: a **41-mutant sweep** over every guard the round added, all killed; and the bearer-free parts of §12 measured against the live document anonymously, including that its `DECLARED_TABLE` literal matches the published file exactly — which is the specific way §10 failed | low-med *(honesty, not behaviour)* |
+| ★ **an assertion that encodes a defect goes stale the moment somebody fixes the defect, and nothing in this repo notices** — §12's first three assertions were correct measurements of a broken artifact (`<…/wsp-roles-default>` answers 404) written as the section's *expected state*. `docs/` fixed the artifact in a different round and the assertions kept asserting the breakage; they were rewritten only because somebody ran the file. The mitigation the last row proposed (a numbered section roster carrying a run **count**) worked for the question it was aimed at — "which sections are unrun" — and is blind to this one. No mechanism here distinguishes *this fails because the code regressed* from *this fails because the world was repaired*, and the only signal is a human reading the failure text. Cheap partial fix, not taken this round: mark such assertions in the source with a convention a grep can find, so a round touching `docs/` can be pointed at the assertions that describe `docs/` | low-med *(honesty, not behaviour)* |
 | a `Grant` or `Acceptance` refused for naming **two** grantees takes any revocation on it out of the fold entirely. Refusing is the only honest reading — the record does not say who it grants to — but the cost is real and is paid in the restricting direction, which is the direction this module otherwise protects | low-med |
 | `headOf` on a forked chain throws rather than returning a value; `appendEntry` converts it to a named `conflict` first, so the shipped path is safe and a direct caller must catch | low |
 
@@ -1307,6 +1345,7 @@ time this file changes.
 
 | | where |
 |---|---|
+| ★★ **the published governance was unreadable to the only reader of it, and the cause was the round that made its IRI resolve** — `docs/applications/shared-workspace/wsp-roles-default.html` shipped so the vocabulary's extensionless IRIs would dereference instead of 404ing. GitHub Pages serves no extensionless path and falls back to `<name>.html`, so `<…/wsp-roles-default>` began answering **200 `text/html`** — and `dereferenceRoleProfile`, which had only ever seen a 404 there, handed the page to the Turtle parser and reported the deployed role profile as `unreadable … unknown bareword "Default"`. Closed by **composing the follower that already existed** rather than writing a second one: `looksLikeHtml` / `alternateTurtleHref` moved from `deploy/mcp-relay/alternate-turtle.ts` into `@interego/core`, joined by `alternateTurtleUrl` (resolve the href against the page's own URL; refuse a cross-origin one; refuse an opaque origin on either side) and `followAlternateTurtle` (one hop, bounded by a constant; the landed URL re-checked so a redirect cannot reach what a foreign href is refused for). The relay re-exports the two predicates, so its import surface is unchanged — the `graphIriFromDescriptorTurtle` precedent. **The grade does not move**: `authority` is `'transport-only'` either side of the link, asserted live | `tests/alternate-turtle.test.ts` (10 cases: relative resolution incl. `..`/root-relative/absolute, cross-origin by host **and** port **and** scheme, opaque origins, the real `docs/` page read off disk, Turtle passed through with zero fetches, the differently-named alternate, the one-hop bound asserted on the FETCH COUNT, redirect-off-origin with its same-origin control, and absent/404/throwing); `tests/workspace-membership.test.ts` "the DEPLOYED shape … is FOLLOWED", "it follows the href the PAGE names", "a page that advertises NO Turtle is refused, and the `.ttl` twin is still not guessed", "a CROSS-ORIGIN alternate is refused, and a chain of pages is not chased"; `verify-can-live.ts` §12, run live |
 | ★★★ **residual gap 10** — the last of the gap-6 family, and the first check in it that opens a **document** rather than comparing a **name**. Gaps 6, 8 and 9 established, in order: the convener must match the workspace's own record, the role-profile IRI must match the one that record declares, and the evidence must be the record `<WS>` actually dereferences to. All three compare names. The thing every capability in a roster is computed from is the role **table** those names point at — `permitsOf` is built from `RoleProfile.roles` — and that array was the caller's. Measured before the check existed: `convenerBinding: 'bound'`, `roleProfileBinding: 'bound'`, `recordFieldBinding: 'bound'`, `unattested: []`, and an `#Observer` holding `grant` and `revoke`. Closed by `dereferenceRoleProfile` (the producer, in `membership.ts`) + `RoleProfileDocument` / `RoleTableEvidence` + `refuseRoleTableAuthority` + `AttestationPolicy.roleTableEvidence` + `Roster.roleTableBinding`, copying gap 6's three directions **deliberately**: the document is evidence and never a source (there is no `profile.roles = document.roles`, and the substitution is worse here than for the convener — a caller with a *narrower* table would be handed the published one and start conferring more), the refusal is in the grant filter's `??` chain **only**, and `'unchecked'` is a third value distinct from `'refused'`. `normaliseRoleTable` is **the same function** that builds `permitsOf`, extracted rather than copied, so `'bound'` cannot mean "these agree under a rule the fold does not use". Two residues named rather than absorbed, in the open table above | `workspace-adversarial` AXIS J (five role-table shapes across all 76,800 configurations, four of them refusing, with a **per-shape** non-vacuity counter), "AXIS J closes RESIDUAL GAP 10", "AXIS J is not vacuous", "any difference refuses", "the comparison uses the fold's OWN normalisation", "the document's table is EVIDENCE and never a SOURCE", "the authority label cannot be used to SKIP the signature check", "a table refusal never lands on the ACCEPTANCE side", the revocation/withdrawal pair, and the JSON-shape guards; `workspace-membership` "dereferenceRoleProfile" (13 cases) — and a **41-mutant sweep**, all killed |
 | ★★ **six mutants survived the first sweep, and each one was a hole in the tests rather than in the code** — recorded because the sweep is the only reason they are not shipped. (1) The `'unreadable'` branch and (2) the wrong-IRI branch were covered by the 76,800-case lattice and by no fast case, so deleting either passed everything a reviewer would actually run. (3) `normaliseRoleTable`'s duplicate fixture was ordered **wide-then-narrow only**, and last-write-wins yields the same answer for that ordering — a test written to pin the intersection rule could not distinguish it from the rule it exists to forbid, which is this file's own "generator only produces agreement" failure reached from inside a test written to prevent it. (4) Substituting the document's table for the caller's — the escalation the design forbids — is *observationally invisible* while the comparison is total, and shows only where the two tables agree on what they permit but differ in **shape** (a duplicated role in the document produces a `role` divergence the caller's governance does not have). (5) Adding the table refusal to the **acceptance** filter is monotone, so every ⊆ assertion held; what it does is accuse the member of the convener's fault. (6) Parsing the whole served document instead of `payloadOf`'s digested region — the manufactured-participant hole one document out, and on a governance document it forges a **capability for every member at once** rather than one membership | `workspace-adversarial` + `workspace-membership`, one case per survivor; `scratchpad/mutate-gap10.mjs` |
 | ★★★ **residual gap 9** — `refuseConvenerAuthority` asked a `ConvenerEvidence` three questions (is its subject *this* workspace, does it name *this* policy's convener, does it hold up as a signed content-bound record) and never asked where the evidence came from. Measured against production with two real bearers: **bee** published a `wsp:Workspace` for **alice's** workspace IRI, on **her own** pod, naming herself convener — it published, parsed with `problems: []`, content-bound, and the same fold that refuses her self-convened membership on alice's record reported `convenerBinding: 'bound'` and **admitted her**, `members: 1`. The subject is a triple its writer chooses, so no forger fails the first question. What closes it is that a workspace **is** a dereferenceable URL and exactly one party decides what it returns: `<relay>/ns/<owner>/<slug>` resolves against the pod its OWNER SEGMENT names (`resolveNsGraph`, `deploy/mcp-relay/server.ts:11657`) and against no other. Same run: an anonymous `GET <WS>` returned alice's record with bee's absent, `get_current_head{urn, pod_name: <owner>}` returned alice's descriptor unforked, and bee writing to alice's pod was refused `403 scope_violation`. Closed by `EvidenceProvenance` + `refuseEvidenceProvenance` + `AttestationPolicy.requireEvidenceProvenance` + `Roster.evidenceProvenanceBinding`, with `dereferenceWorkspaceRecord` as the producer — copying gap 6's three directions deliberately: evidence refuses and never supplies, the refusal is in the grant filter's `??` chain **only**, and `'unchecked'` is a third value distinct from `'refused'`. Residue named rather than absorbed, in the open table above | `workspace-adversarial` AXIS I (four evidence shapes across all 76,800 configurations, three of them forged, with a **per-shape** non-vacuity counter), "AXIS I is not vacuous", "AXIS I closes RESIDUAL GAP 9", the revocation/withdrawal pair, and the direct-call guard case; `verify-can-live.ts` §11, run live |
@@ -1352,6 +1391,25 @@ assurance that goes stale the moment a guard is added — which is exactly what 
 `descriptorWriteCollisionRefusal` and the manifest fail-closed and was still being read as
 covering them. The mutants that reinstate the monotonicity defects are each caught by the
 enumeration itself, which names the exact failing configuration rather than a symptom.
+
+**The alternate-link round: 10 mutants, 10 killed, and the interesting ones are the two that
+are not about the new code.** Eight were applied to `packages/core/src/rdf/alternate-turtle.ts`,
+each alone, with `@interego/core` rebuilt (tests resolve it to `dist/`) and
+`node_modules/.vite` cleared between them; two to the composition point in
+`dereferenceRoleProfile`.
+
+| mutant | killed by |
+|---|---|
+| hop budget raised from 1 to **2** — still terminates, still refuses | `alternate-turtle` "HOPS EXACTLY ONCE": the assertion is on the FETCH COUNT, not the outcome, which is the only thing that can see a weakened bound |
+| the hop bound removed entirely | same test, as a timeout — an unbounded follower spins on a self-pointing page forever |
+| relative resolution dropped (`new URL(href)`) | `alternate-turtle` relative-resolution case, and the one that reads the real `docs/` page off disk. Every page we publish writes a relative href, so this mutant fetches nothing in production |
+| relative resolution done by concatenating the origin | same, on the `../vocab/roles.ttl` case — a concatenation gets the right answer for the flat case and the wrong one for any other |
+| cross-origin alternate admitted | `alternate-turtle` cross-origin case (host, port **and** scheme) and `workspace-membership` "a CROSS-ORIGIN alternate is refused" |
+| opaque-origin guard removed | `alternate-turtle` opaque-origin case. `data:` and `file:` both report origin `'null'`, so a bare `!==` reads them as same-origin |
+| landed-origin check on the hop removed | `alternate-turtle` "a REDIRECT off the origin on the hop is refused". A same-origin href that redirects away is the case an href check structurally cannot see |
+| a non-200 alternate read anyway | `alternate-turtle` absent/404/throwing case |
+| ★ **the follow skipped entirely** — the reader exactly as it stood before this round | four `workspace-membership` cases. This is the mutant that says the round did something: it reproduces the live defect |
+| ★★ **the reflex fix — guess `<IRI>.ttl` instead of following the advertised link** | three `workspace-membership` cases, led by "it follows the href the PAGE names". The double serves a page advertising a *differently-named* Turtle and puts a WIDER table at the guessable URL, so the guesser does not fail — it silently confers `grant` and `revoke` off a document the workspace never named. No live run can make this distinction, because our own page advertises the name a guesser would derive |
 
 **The gap-9 round: 10 mutants, 10 killed — and three of them survived the first sweep,
 which is the finding.** `dereferenceWorkspaceRecord` had been written, wired into

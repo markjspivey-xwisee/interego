@@ -68,30 +68,35 @@
  *    9  the CONVENER comes from the workspace (residual gap 6), and gap 9 shown OPEN
  *   10  the ROLE PROFILE comes from the workspace (residual gap 8)
  *   11  the EVIDENCE must be the record <WS> dereferences to (residual gap 9, closed)
- *   12  the ROLE TABLE comes from the profile DOCUMENT (residual gap 10, closed) — UNRUN
+ *   12  the ROLE TABLE comes from the profile DOCUMENT (residual gap 10, closed)
  *
  * ★ RUN AGAINST PRODUCTION on 2026-08-03 UTC with two real bearers: §§1–8 = 45 assertions,
- * §9 = 18, §10 = 7, §11 = 7 — 77 of 77.
+ * §9 = 18, §10 = 7, §11 = 7, §12 = 11 — 88 of 88. Nothing in the roster above is unrun at this
+ * count, and the count is stated so the sentence stops matching the moment a section is added.
  *
- * ★★ §12 HAS NOT BEEN RUN, AND IT IS MARKED UNRUN IN THE ROSTER ABOVE RATHER THAN LEFT FOR
- * SOMEBODY TO DISCOVER. The round that wrote it had no bearer tokens. Say it plainly, because
- * this file's own history is the argument: §10 was written by copying §8's shape, went unrun for
- * a round, and then FAILED the first time it was executed — its rogue profile named `#Contributor`
- * while the grant it was folding named `#Observer`, so the escalation it was written to
- * demonstrate compared `0 > 1`. An unrun section is not a passing one. What §12 has instead is a
- * mutation sweep: 41 mutants across `refuseRoleTableAuthority`, `compareRoleTables`,
- * `normaliseRoleTable`, the fold's wiring and `dereferenceRoleProfile`, every one of them killed
- * by `tests/workspace-adversarial.test.ts` and `tests/workspace-membership.test.ts`. That is a
- * stronger check of the GUARD than a live run, and no check at all of the SUBSTRATE.
+ * ★★ §12 WAS THE UNRUN ONE, AND RUNNING IT IS WHAT FOUND THAT ITS FIRST THREE ASSERTIONS HAD
+ * GONE STALE. The round that wrote it had no bearer tokens, so it stood on a 41-mutant sweep and
+ * on one bearer-free measurement: an anonymous `GET <https://…/wsp-roles-default>` answered 404,
+ * and only `<…/wsp-roles-default.ttl>` answered 200. The section encoded that 404 as its
+ * EXPECTED state — "the profile IRI the workspace DECLARES does not dereference", and "the full
+ * chain cannot close against the deployed artifact today".
  *
- * ★ ONE PART OF §12 WAS MEASURED WITHOUT BEARERS, because it needs none: an anonymous
- * `GET <https://…/wsp-roles-default>` — the profile IRI every `wsp:roleProfile` in this repo
- * declares — answers 404, and only `<…/wsp-roles-default.ttl>` answers 200. So the declared
- * profile does not dereference, §12's first assertion is about that, and the full
- * workspace→profile→table chain cannot close against the deployed artifact until the published
- * file is served at the extensionless IRI. That is a defect in `docs/`, not in the reader.
+ * Then `docs/applications/shared-workspace/wsp-roles-default.html` shipped so the vocabulary's
+ * extensionless IRIs would resolve, and both sentences became false. Two things followed. The
+ * assertions failed, which is what an assertion encoding a defect does when somebody fixes the
+ * defect. And `dereferenceRoleProfile` — which had never seen anything but a 404 at that IRI —
+ * got `text/html` and reported the only published role profile in existence as
+ * `unreadable … unknown bareword "Default"`. Both were found by running the section, neither by
+ * reading it.
  *
- * Two sections were fixed by being run rather than by being read:
+ * ★ WHAT THE FIX WAS, BECAUSE IT IS THE SAME MECHANISM THE RELAY ALREADY HAD. Our pages do not
+ * content-negotiate — GitHub Pages ignores Accept and falls back to `<name>.html` — and every
+ * one of them advertises `<link rel="alternate" type="text/turtle">`. The relay's shape gate has
+ * followed that link since the identical problem bit the publish path three times. The follower
+ * moved to `@interego/core` (`alternateTurtleUrl` / `followAlternateTurtle`), the relay
+ * re-exports it, and the reader composes it — one parser of the markup rather than two.
+ *
+ * Three sections were fixed by being run rather than by being read:
  *
  *   §9 was written around a `WS` constant of `${RELAY}/ns/maintainer/…`, and <WS> answered 404
  *   for every run this file had ever done, because the /ns owner segment selects a POD and
@@ -105,6 +110,12 @@
  *   names `#Observer`, so the rogue table had no row for bee's role, conferred nothing, and the
  *   escalation comparison was `0 > 1`. A section written to show a widening, failing because
  *   its rogue document never mentioned the role it was widening.
+ *
+ *   §12 failed on its first run too, and differently from both: not a mistake in the section but
+ *   a fact underneath it that had changed. Its assertions were correct measurements of a broken
+ *   artifact, and they kept asserting the breakage after it was repaired. The third of the three
+ *   ways this file has been wrong — wrong about itself, wrong about the fold, and now wrong
+ *   about the world.
  *
  * ★ AND RESIDUAL GAP 9 IS NOW CLOSED IN §11 RATHER THAN REPORTED IN §9. `refuseConvenerAuthority`
  * asked whether the evidence names this workspace, names this convener, and holds up as a
@@ -120,6 +131,10 @@
  *     npx tsx applications/shared-workspace/tools/verify-can-live.ts [run-id]
  */
 
+// ★ §12 ASKS THE SUBSTRATE'S OWN FOLLOWER ABOUT THE LIVE MARKUP. These are the two functions
+// `dereferenceRoleProfile` composes, so the section's first assertion checks the mechanism the
+// reader depends on rather than a status code that would pass over any 200.
+import { alternateTurtleUrl, looksLikeHtml } from '@interego/core';
 import { appendEntry, readAttestation, type StreamDeps } from '../src/stream.js';
 import { composeWorkspace, type ComposableMember } from '../src/compose.js';
 import {
@@ -1223,68 +1238,117 @@ async function main(): Promise<void> {
   // table claiming the RIGHT one walks past all three.
   console.log('\n12. the role table comes from the DOCUMENT the profile IRI names');
 
-  // ★★ AND THE FIRST THING THIS SECTION MEASURES IS THAT THE DECLARED IRI DOES NOT DEREFERENCE.
-  // Not an aside — it is the finding, and it is the same class as §9's `/ns/maintainer` 404.
-  // `<…/wsp-roles-default>` is what every `wsp:roleProfile` in this repo declares, including the
-  // record §9 published, and GitHub Pages serves the file at `<…/wsp-roles-default.ttl>` only.
+  // ★★ AND THE FIRST THING THIS SECTION MEASURES IS THAT THE DECLARED IRI DEREFERENCES — WHICH
+  // IS THE OPPOSITE OF WHAT IT USED TO MEASURE, AND THE REWRITE IS THE POINT. What stood here
+  // asserted `<P>` answers 404 and only `<P>.ttl` answers 200, called that "the finding", and
+  // was right on the day it was written. A page then shipped under `docs/` at the extensionless
+  // name (`wsp-roles-default.html`) so the IRI every `wsp:roleProfile` in this repo declares
+  // would resolve, and this section went on asserting the 404 as the expected state. An
+  // assertion that encodes a defect as a fact fails the moment somebody fixes the defect, which
+  // is the one time it should stay quiet.
+  //
+  // ★ AND THE ASSERTION IS THE MECHANISM, NOT THE STATUS CODE. GitHub Pages serves no
+  // extensionless path and falls back to `<name>.html`, so `<P>` answers 200 `text/html` — a
+  // status-only assertion would pass on that page whether or not it led anywhere, and would go
+  // on passing over an error page, over the wrong document, and over a page advertising somebody
+  // else's Turtle. The reader below depends on exactly three properties of these bytes: that
+  // they ARE html, that they name a Turtle alternate, and that the alternate is on this origin.
+  // `alternateTurtleUrl` is the same function the reader composes, asked here about the live
+  // bytes rather than about a fixture.
   const declaredHead = await fetch(P, { headers: { Accept: 'text/turtle' } });
+  const declaredBody = await declaredHead.text();
+  const advertised = alternateTurtleUrl(P, declaredBody);
   const ttlHead = await fetch(`${P}.ttl`, { headers: { Accept: 'text/turtle' } });
   ok(
-    declaredHead.status === 404 && ttlHead.status === 200,
-    '★★ the profile IRI the workspace DECLARES does not dereference — <P> answers 404 and only '
-    + '<P>.ttl answers 200. The name is not the document, and until the deployed artifact serves '
-    + 'the extensionless IRI the full chain cannot close against it',
-    `<P> = ${declaredHead.status}, <P>.ttl = ${ttlHead.status}`,
+    declaredHead.status === 200 && looksLikeHtml(declaredBody)
+    && 'url' in advertised && advertised.url === `${P}.ttl`
+    && ttlHead.status === 200
+    && (ttlHead.headers.get('content-type') ?? '').includes('text/turtle'),
+    '★★ the profile IRI the workspace DECLARES now dereferences — <P> answers 200 text/html and '
+    + 'advertises a SAME-ORIGIN rel=alternate at <P>.ttl, which answers 200 text/turtle. The '
+    + 'name reaches the document through the page\'s own link, not through a guess',
+    JSON.stringify({
+      p: declaredHead.status, html: looksLikeHtml(declaredBody), advertised,
+      ttl: ttlHead.status, ct: ttlHead.headers.get('content-type'),
+    }),
   );
 
-  // …and the reader says so rather than guessing. A producer that helpfully appended `.ttl`
-  // would be choosing a URL on the workspace's behalf, which is what `nsOwnerSegmentOf` refuses
-  // to do one document over — so this is `'unreadable'`, which REFUSES.
-  const declaredTable = await dereferenceRoleProfile(P, wsDeps(BEARER));
-  ok(
-    declaredTable.kind === 'unreadable' && /answered 404/.test(declaredTable.why),
-    '★ and dereferenceRoleProfile refuses rather than guessing <P>.ttl — asking and getting '
-    + 'nothing is not the same as not asking',
-    JSON.stringify(declaredTable).slice(0, 240),
-  );
-
-  // ★ THE COMPOSITION, MEASURED AND REPORTED OPEN. The workspace record §9 published declares
-  // <P>; <P> does not resolve; so a fold that asks BOTH questions of the deployed artifact gets
-  // `roleProfileBinding: 'bound'` and `roleTableBinding: 'refused'`, and confers nothing. That
-  // is the correct behaviour and it is also a live artifact defect — the residue this round
-  // reports rather than papering over.
-  const chainToday = foldRoster({
-    workspace: WS, profile: PROFILE, scopes,
-    grants: [readGrant.record!], acceptances: [readAccept.record!],
-    attestation: {
-      convener: alice, signerOf, requireFieldBinding: true,
-      workspaceEvidence: evidence, roleTableEvidence: declaredTable,
-    },
-  });
-  ok(
-    chainToday.roleProfileBinding === 'bound' && chainToday.roleTableBinding === 'refused'
-    && chainToday.members.length === 0,
-    '★★ so the FULL chain cannot close against the deployed artifact today: the workspace names '
-    + 'the right profile and that profile answers nothing, so the fold confers nothing. The fix '
-    + 'is to the published document, not to the reader',
-    JSON.stringify({ p: chainToday.roleProfileBinding, t: chainToday.roleTableBinding, m: chainToday.members.length }),
-  );
-
-  // ── the gap itself, against the URL that DOES resolve ──
+  // …and the reader FOLLOWS that link, where it used to call the published governance
+  // unreadable. `dereferenceRoleProfile` got `text/html` and reported
+  // `not parseable Turtle: unknown bareword "Default"` — the document was there, at the declared
+  // IRI, and the only reader of it could not see it. It composes `followAlternateTurtle` from
+  // @interego/core now, which is the same follower the relay's shape gate has used since the
+  // identical problem bit the publish path three times.
   //
-  // ★ THE FOLDS BELOW PASS NO `workspaceEvidence`, AND THAT IS FORCED RATHER THAN CHOSEN. The
-  // workspace declares <P> and these tables claim <P>.ttl, so gap 8's check would refuse them
-  // first and every measurement would be about the IRI rather than about the table. The two
-  // questions are independent by construction — `roleTableEvidence` is a different document —
-  // and the assertion above is what states the composition honestly.
-  const T = `${P}.ttl`;
+  // ★ IT STILL DOES NOT GUESS. Appending `.ttl` would be choosing a URL on the workspace's
+  // behalf, which is what `nsOwnerSegmentOf` refuses to do one document over. What is followed
+  // is what the PAGE says about itself.
+  //
+  // ★★ AND THE HOP IS OBSERVED RATHER THAN INFERRED, which is why this fold gets its own fetch
+  // dependency. `asked` records every URL the dependency was handed: two of them, the second the
+  // URL the page advertised. `head` records where the bytes came from and is NOT the IRI asked
+  // for. A reader handed Turtle at <P> directly would show one fetch and `head === P`, so the
+  // assertion fails if the hop stops happening.
+  //
+  // ★ WHAT A LIVE RUN CANNOT DISTINGUISH, SAID PLAINLY RATHER THAN LEFT TO BE ASSUMED. Our page
+  // advertises `wsp-roles-default.ttl` and a `.ttl`-guesser would derive the same URL, so no
+  // assertion against THIS artifact separates following from guessing. That separation is a
+  // double's job and is pinned in `tests/workspace-membership.test.ts`: a page whose alternate
+  // names a differently-named Turtle must be followed to THAT name, and a page with no alternate
+  // must be refused rather than `.ttl`-guessed.
+  const asked: string[] = [];
+  const followingDeps: StreamDeps = {
+    ...wsDeps(BEARER),
+    fetchDocument: async (url: string) => {
+      asked.push(url);
+      const r = await fetch(url, { headers: { Accept: 'text/turtle' } });
+      return {
+        status: r.status, url: r.url, contentType: r.headers.get('content-type'),
+        body: await r.text(),
+      };
+    },
+  };
+  const readTable = await dereferenceRoleProfile(P, followingDeps);
+  ok(
+    readTable.kind === 'declared' && readTable.document.dereferenced === P
+    && readTable.document.head === `${P}.ttl`
+    && readTable.document.roles.length === 5
+    && readTable.document.authority === 'transport-only'
+    && readTable.document.attestation === undefined
+    && JSON.stringify(asked) === JSON.stringify([P, `${P}.ttl`]),
+    '★★ and dereferenceRoleProfile FOLLOWS the advertised alternate: two fetches, the second the '
+    + 'URL the page named, five roles parsed out of the document <P> resolves to — and STILL '
+    + 'graded TRANSPORT-ONLY, because a static Pages file carries no authorship proof and no '
+    + 'digested region on either side of the link. The extra hop is transport and buys no grade',
+    JSON.stringify({
+      asked,
+      ...(readTable.kind === 'declared'
+        ? {
+            head: readTable.document.head, roles: readTable.document.roles.length,
+            authority: readTable.document.authority,
+          }
+        : { readTable }),
+    }),
+  );
+
+  // ── the gap itself, against the IRI the workspace declares ──
+  //
+  // ★ THE FOLDS BELOW PASS NO `workspaceEvidence`, AND THE REASON HAS CHANGED. It used to be
+  // FORCED: these tables claimed `<P>.ttl` because that was the only URL that resolved, the
+  // workspace declares `<P>`, and gap 8's check would have refused them before the table was
+  // ever compared. `<P>` resolves now, so the tables claim `<P>` and nothing forces the
+  // omission. It is a CHOICE, for the ordinary reason: this section's variable is the TABLE, §10
+  // already measures the IRI, and a fold with both gates on cannot say which one refused. The
+  // composition with everything on at once is asserted at the END of this section, where it
+  // belongs.
+  //
   // ★ WRITTEN OUT, NOT READ BACK FROM THE FETCH. Folding against the table the evidence carries
   // would make the CONTROL circular: it would agree with itself no matter what the document
   // said. This is an independent statement of what the published profile declares, and if the
   // deployed file ever changes, the control below FAILS — which is the point. A caller must
   // track the governance it folds against.
   const DECLARED_TABLE: RoleProfile = {
-    profile: T,
+    profile: P,
     roles: [
       { role: `${P}#Convener`, permits: [CAPS.read, CAPS.append, CAPS.grant, CAPS.revoke, CAPS.admit, CAPS.assign] },
       { role: `${P}#Steward`, permits: [CAPS.read, CAPS.append, CAPS.grant, CAPS.admit, CAPS.assign] },
@@ -1297,23 +1361,11 @@ async function main(): Promise<void> {
   // and had to be told about by a live run. A rogue table that widened `#Steward` would confer
   // nothing here and the escalation comparison would be `0 > 0`.
   const ROGUE_TABLE: RoleProfile = {
-    profile: T,
+    profile: P,
     roles: DECLARED_TABLE.roles.map(r => (r.role === `${P}#Observer`
       ? { role: r.role, permits: [CAPS.read, CAPS.append, CAPS.grant, CAPS.revoke] }
       : r)),
   };
-
-  const readTable = await dereferenceRoleProfile(T, wsDeps(BEARER));
-  ok(
-    readTable.kind === 'declared' && readTable.document.dereferenced === T
-    && readTable.document.roles.length === 5
-    && readTable.document.authority === 'transport-only'
-    && readTable.document.attestation === undefined,
-    '★ the document at <P>.ttl is read and its five roles parsed — and it is graded '
-    + 'TRANSPORT-ONLY, because a static Pages file carries no authorship proof and no digested '
-    + 'region. That grade is the honest ceiling for it, not a missing step',
-    JSON.stringify(readTable).slice(0, 300),
-  );
 
   const foldWithTable = (profile: RoleProfile, tableOn: boolean) => foldRoster({
     workspace: WS, profile, scopes,
@@ -1405,6 +1457,62 @@ async function main(): Promise<void> {
     '★★ and reading the document never GRANTS: every member and every capability under the '
     + 'checked fold is present under the unchecked one',
     JSON.stringify({ with: tableGapClosed.members.length, without: tableGapOpen.members.length }),
+  );
+
+  // ── the whole chain, every gate on at once, against the deployed artifact ──
+  //
+  // ★★ THE ASSERTION THAT USED TO SAY THE OPPOSITE. What stood in this section reported that the
+  // FULL chain "cannot close against the deployed artifact today" — the workspace named the
+  // right profile and that profile answered nothing, so the fold conferred nothing, and the fix
+  // was named as belonging to `docs/`. `docs/` shipped the fix. This is the same composition
+  // re-asked, and it is the first time every gate in the gap-6 family has been on at once
+  // against real records and the real published governance:
+  //
+  //   §9   the CONVENER comes from <WS>'s own record, not from the caller
+  //   §10  the ROLE PROFILE IRI comes from that record, not from the caller
+  //   §11  the EVIDENCE is what <WS> actually dereferences to, not a record handed in
+  //   §12  the ROLE TABLE comes from the document that IRI resolves to, not from the caller
+  //
+  // Nothing here is a new guard; the whole content of the assertion is that the four compose
+  // without any of them refusing an honest fold. A chain of gates each proven in isolation can
+  // still be a chain that never passes.
+  const wholeChain = foldRoster({
+    workspace: WS, profile: DECLARED_TABLE, scopes,
+    grants: [readGrant.record!], acceptances: [readAccept.record!],
+    attestation: {
+      convener: alice, signerOf, requireFieldBinding: true,
+      workspaceEvidence: derefEvidence, requireEvidenceProvenance: true,
+      roleTableEvidence: readTable,
+    },
+  });
+  ok(
+    wholeChain.members.length === 1
+    && wholeChain.convenerBinding === 'bound'
+    && wholeChain.roleProfileBinding === 'bound'
+    && wholeChain.evidenceProvenanceBinding === 'bound'
+    && wholeChain.roleTableBinding === 'bound'
+    && wholeChain.recordFieldBinding === 'bound',
+    '★★ THE FULL CHAIN CLOSES against the deployed artifact: convener, profile IRI, evidence '
+    + 'provenance, role table and record fields all bound, and bee is admitted at the '
+    + 'capabilities alice\'s published governance actually permits',
+    JSON.stringify({
+      members: wholeChain.members.length, c: wholeChain.convenerBinding,
+      p: wholeChain.roleProfileBinding, e: wholeChain.evidenceProvenanceBinding,
+      t: wholeChain.roleTableBinding, f: wholeChain.recordFieldBinding,
+      unattested: wholeChain.unattested,
+    }),
+  );
+  ok(
+    // ★ AND THE CEILING TRAVELS WITH IT. Closing the chain is not an upgrade in what the
+    // evidence is worth: the role table still came off a static file over TLS, and the note
+    // beside `roleTableBinding: 'bound'` must still say so. This is the assertion that would
+    // catch a later round deciding that four bound gates add up to a signature.
+    /obtained by an ORDINARY HTTPS FETCH/.test(wholeChain.attributionNote)
+    && !/obtained as a SIGNED POD RECORD/.test(wholeChain.attributionNote),
+    '★ and the closed chain claims no more than the open one did — the governance was still read '
+    + 'by an ordinary HTTPS fetch, and following the page\'s rel=alternate did not make it a '
+    + 'proof',
+    wholeChain.attributionNote.slice(-320),
   );
 
   console.log(`\n${pass} passed, ${fail} failed`);

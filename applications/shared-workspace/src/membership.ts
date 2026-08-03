@@ -66,6 +66,12 @@
 import {
   escapeTurtleLiteral, turtleIriRef, turtlePrefixedLocal,
   parseTrig, findSubjectsOfType,
+  // ★ THE SAME FOLLOWER THE RELAY'S SHAPE GATE USES, composed rather than reimplemented. Our
+  // own ontology IRIs answer 200 `text/html` — GitHub Pages ignores Accept — and every page we
+  // publish advertises its Turtle with a `rel=alternate`. A second regex over untrusted markup
+  // here is the duplication `alternate-turtle.ts` was carved out of the relay to prevent; see
+  // the hop in `dereferenceRoleProfile`.
+  followAlternateTurtle,
   type ParsedSubject, type ParsedTerm,
 } from '@interego/core';
 // ★ THE SAME FUNCTION THE RELAY'S DIGESTER CALLS. See `payloadOf`: a reader that decided the
@@ -1248,7 +1254,14 @@ async function readRoleProfileRecord(
  * establish about it is exactly: THIS ORIGIN SERVED THESE BYTES AT THIS URL. That is the honest
  * ceiling and `roster.ts` renders it into the roster's own note.
  *
- * ── THE THREE GUARDS ON THE FETCH, AND WHY EACH ONE ─────────────────────────
+ * ★ AND THAT IRI ANSWERS `text/html`, WHICH IS NOT A DEFECT AND USED TO BE READ AS ONE.
+ * GitHub Pages serves no extensionless path and falls back to `<name>.html`, so the declared
+ * IRI returns the human-readable projection with `<link rel="alternate" type="text/turtle">`
+ * pointing at the Turtle beside it. The hop below follows that link. What this function returns
+ * on the ordinary-web path is therefore the table out of `wsp-roles-default.ttl`, reached from
+ * the IRI the workspace actually declares, at `'transport-only'` either way.
+ *
+ * ── THE FOUR GUARDS ON THE FETCH, AND WHY EACH ONE ──────────────────────────
  *
  * ★ `https:` ONLY, AND `http:` REFUSED THOUGH THE PUBLISHED SHAPE ALLOWS IT. `wsp-shapes.ttl`
  * patterns `wsp:roleProfile` as `^https?://`, so a workspace may legally declare a cleartext
@@ -1262,11 +1275,18 @@ async function readRoleProfileRecord(
  * one. Same-origin redirects are allowed, because a host serving `/x` as `/x.ttl` has not
  * changed who is answering.
  *
+ * ★ A CROSS-ORIGIN `rel=alternate` REFUSES FOR THE SAME REASON, and it is a SEPARATE guard from
+ * the one above rather than the same one restated. A redirect is the server choosing where the
+ * answer comes from; an alternate link is the DOCUMENT choosing, which is a claim written by
+ * whoever can write the page. Both routes end somewhere the declared origin does not vouch for,
+ * so both are refused — and the follower checks the landed URL of the hop too, because a
+ * same-origin href that redirects away would otherwise reach what a foreign href cannot.
+ *
  * ★ EVERY FAILING BRANCH IS `'unreadable'`, WHICH REFUSES TO CONFER. A missing dependency, a
- * non-200, a redirect off the origin, an unparseable body, a document that is not a role profile
- * — all of them mean the same thing to the fold: this policy asked what the profile IRI returns
- * and did not get an answer. Asking and getting silence is not the same as not asking, and it
- * matters more here than anywhere else in this file, because the deployed IRI answers 404.
+ * non-200, a redirect off the origin, a page that advertises no Turtle, an unparseable body, a
+ * document that is not a role profile — all of them mean the same thing to the fold: this policy
+ * asked what the profile IRI returns and did not get an answer. Asking and getting silence is
+ * not the same as not asking.
  */
 export async function dereferenceRoleProfile(
   profileIri: string,
@@ -1356,8 +1376,8 @@ export async function dereferenceRoleProfile(
   if (res.status !== 200) {
     return unreadable(
       `<${profileIri}> answered ${res.status}, so the profile the workspace declares does not `
-      + 'dereference. A role profile IRI that returns nothing states no governance — measured '
-      + 'against the deployed artifact on 2026-08-03, which is exactly this case',
+      + 'dereference. A role profile IRI that returns nothing states no governance — which was '
+      + 'the state of the DEPLOYED artifact until docs/ shipped a page at the extensionless IRI',
     );
   }
   // ★ COMPARED ON ORIGIN, NOT ON THE WHOLE URL. A host that serves the extensionless name as a
@@ -1380,7 +1400,38 @@ export async function dereferenceRoleProfile(
       + 'permits, while the fold reported the declared profile as read',
     );
   }
-  const table = roleTableOf(res.body);
+  /**
+   * ★★ THE PAGE'S OWN ADVERTISED TURTLE, FOLLOWED — AND THE COMPOSED FOLLOWER, NOT A NEW ONE.
+   *
+   * The deployed profile IRI answered 404 until `wsp-roles-default.html` shipped so the
+   * vocabulary's extensionless IRIs would dereference. It now answers 200 `text/html`, because
+   * GitHub Pages ignores Accept and falls back to `<name>.html` — and this reader called the
+   * only role profile in existence `unreadable: … unknown bareword "Default"`. The published
+   * governance was there, at the declared IRI, and the reader could not see it.
+   *
+   * ★ AND IT IS STILL NOT A GUESS. Appending `.ttl` remains refused, for the reason this
+   * docstring gave when the IRI 404'd: choosing a URL on the workspace's behalf is what
+   * `nsOwnerSegmentOf` refuses to do one document over. What is followed is what the PAGE
+   * says about itself — `<link rel="alternate" type="text/turtle">`, which every page we
+   * publish carries and which the relay's shape gate has followed since the same problem bit
+   * the publish path. `followAlternateTurtle` is that follower, moved to @interego/core so
+   * there is one parser of the markup rather than two.
+   *
+   * ★ THE HOP CHANGES NOTHING ABOUT THE GRADE, AND MUST NOT. `authority` below is
+   * `'transport-only'` whether or not a hop happened: a static Pages file carries no
+   * authorship proof and no digested region at either end of the link, and the follower's
+   * same-origin refusal is what keeps the hop from making the evidence WEAKER than the fetch
+   * that preceded it. A reader that graded a followed document above an unfollowed one would
+   * be reporting a guarantee nobody made.
+   */
+  const followed = await followAlternateTurtle(res, deps.fetchDocument);
+  if ('why' in followed) {
+    return unreadable(
+      `<${profileIri}> answered 200 with ${res.contentType ?? 'no stated content type'} and `
+      + `${followed.why}`,
+    );
+  }
+  const table = roleTableOf(followed.representation.body);
   if ('why' in table) {
     return unreadable(
       `<${profileIri}> answered 200 with ${res.contentType ?? 'no stated content type'} and `
@@ -1390,9 +1441,11 @@ export async function dereferenceRoleProfile(
   return {
     kind: 'declared',
     document: {
-      // The FINAL url, so an operator following this field sees the bytes the table came from
-      // rather than the name they were asked for. The two differ on any same-origin redirect.
-      head: res.url,
+      // The url the TABLE's bytes came from, so an operator following this field opens what
+      // this fold compared against rather than the name it was asked for. The two differ on any
+      // same-origin redirect and on every followed `rel=alternate` — which, against the
+      // deployed artifact, is every read: the declared IRI serves the human-readable page.
+      head: followed.representation.url,
       dereferenced: profileIri,
       roles: table.roles,
       // ★ NEVER `'signed-record'` ON THIS PATH, and the value is written rather than defaulted:

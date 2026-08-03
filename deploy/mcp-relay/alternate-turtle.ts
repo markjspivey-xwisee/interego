@@ -1,54 +1,40 @@
 /**
- * Following a page's own advertised Turtle representation.
+ * Following a page's own advertised Turtle representation — re-exported, not redefined.
  *
- * ★ WHY THIS IS ITS OWN MODULE. Our ontology IRIs do not content-negotiate: GitHub Pages
- * ignores Accept and serves `text/html` for `https://…/ns/iep`. That bit the publish path
- * three separate times — a good shape looked unreachable, an `owl:imports` of one corrupted
- * the graph it was glued into, and last-known-good had to distrust any body that did not
- * parse.
+ * ★ WHY THE PREDICATES LEFT THIS FILE. They were written here because our ontology IRIs do not
+ * content-negotiate: GitHub Pages ignores Accept and serves `text/html` for
+ * `https://…/ns/iep`, and that bit the publish path three separate times — a good shape looked
+ * unreachable, an `owl:imports` of one corrupted the graph it was glued into, and
+ * last-known-good had to distrust any body that did not parse.
  *
- * These two predicates are the fragile part of the fix (regexes over untrusted markup), so
- * they live apart from `server.ts`, which starts an HTTP listener on import and therefore
- * cannot be pulled into a unit test.
+ * Then it bit a SECOND reader. `docs/applications/shared-workspace/wsp-roles-default.html`
+ * shipped so the workspace vocabulary's extensionless IRIs would finally dereference, and
+ * `dereferenceRoleProfile` in `applications/shared-workspace/src/membership.ts` — which fetches
+ * the role-profile IRI a workspace declares and parses the body as Turtle — started answering
+ * `unreadable: … unknown bareword "Default"` for the only role profile in existence.
+ *
+ * The reflex fix there was a second regex over untrusted markup, which is exactly the
+ * duplication this module was carved out of `server.ts` to prevent: two copies of a predicate
+ * over HTML drift in the way that is invisible until a page is written the other way round. So
+ * the implementation moved to `@interego/core`, which both the relay and `applications/`
+ * already depend on, and this file re-exports it so the relay's import surface is unchanged.
+ *
+ * Same move, same reason, and the same shape of file as
+ * `deploy/mcp-relay/authorship-content-binding.ts`, which re-exports
+ * `graphIriFromDescriptorTurtle` after it left the relay for @interego/solid when a reader
+ * outside the relay turned out to need it.
+ *
+ * ★ WHAT IS NOT RE-EXPORTED HERE, DELIBERATELY. @interego/core also carries
+ * `alternateTurtleUrl` (resolve relative, refuse cross-origin) and `followAlternateTurtle` (one
+ * bounded hop). `fetchShapeBody` in `server.ts` still does its own hop, because its hop is
+ * entangled with the shape cache's last-known-good fallback and its fetch is
+ * `guardedInvokeFetch` — the SSRF guard every caller-URL fetch in that file goes through.
+ * Rewiring a live publish gate is a change with its own blast radius and its own test surface;
+ * what mattered was that the two readers share ONE parser of the markup, which they now do.
+ * A round that moves the relay onto the bounded follower should note that the follower refuses
+ * a cross-origin alternate and `fetchShapeBody` currently does not.
  */
-
-/**
- * A body is HTML if it OPENS as HTML. Leading whitespace, a BOM, and a leading comment are
- * tolerated.
- *
- * ★ The dangerous direction here is a false positive, not a false negative: Turtle is full
- * of angle brackets (`<https://…> a <…> .`), and a loose predicate would send a perfectly
- * good shape down the HTML path and drop it. Hence an explicit HTML opener rather than
- * "starts with `<`".
- */
-export function looksLikeHtml(body: string): boolean {
-  return /^﻿?\s*<(?:!doctype\s+html|html[\s>]|!--)/i.test(body);
-}
-
-/**
- * The Turtle representation a page advertises for itself, or null.
- *
- * The reflex fix for a non-negotiating IRI is to append `.ttl`. That reinvents a mechanism
- * that already exists AND is already published — every generated page in `docs/ns` carries
- * its own `<link rel="alternate" type="text/turtle">`. The publishing side was already
- * standards-correct; we simply were not reading it. Following the advertised link works for
- * ANY publisher that does the same thing, where guessing an extension only ever works for
- * ours.
- *
- * ★ `rel` and `type` are matched independently inside one tag rather than in a fixed
- * sequence: HTML does not fix attribute order, and an ordered rel-then-type regex passes a
- * hand-written test while missing real markup that spells the attributes the other way.
- *
- * Only `alternate` and `describedby` qualify. `rel=preload` also names a Turtle file, but it
- * is a resource to go fetch rather than an encoding of THIS resource — following one would
- * glue an unrelated graph into the shapes graph.
- */
-export function alternateTurtleHref(html: string): string | null {
-  for (const tag of html.match(/<link\b[^>]*>/gi) ?? []) {
-    if (!/\btype\s*=\s*["']?text\/turtle["']?/i.test(tag)) continue;
-    if (!/\brel\s*=\s*["']?(?:alternate|describedby)["']?/i.test(tag)) continue;
-    const href = tag.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]?.trim();
-    if (href) return href;
-  }
-  return null;
-}
+export {
+  alternateTurtleHref,
+  looksLikeHtml,
+} from '@interego/core';

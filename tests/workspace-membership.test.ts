@@ -1545,6 +1545,20 @@ describe('dereferenceRoleProfile — reading the document the profile IRI names'
   const WIDE = profileTtl(P, [[`${P}#Observer`, [CAPS.read, CAPS.grant, CAPS.revoke]]]);
 
   /**
+   * The human-readable projection GitHub Pages serves at an extensionless IRI, written the way
+   * `docs/applications/shared-workspace/wsp-roles-default.html` writes it.
+   *
+   * ★ A RELATIVE HREF, BECAUSE THAT IS WHAT THE DEPLOYED PAGE CARRIES. An absolute one here
+   * would let a follower that never resolved against the page URL pass every case below, and
+   * that follower fetches nothing at all in production. `tests/alternate-turtle.test.ts` pins
+   * the resolution itself against the real file on disk.
+   */
+  const pageAdvertising = (href: string): string =>
+    '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8" />\n'
+    + `<link rel="alternate" type="text/turtle" href="${href}" />\n`
+    + '</head>\n<body><h1>Default workspace role profile</h1></body>\n</html>\n';
+
+  /**
    * A web where every URL answers with something DIFFERENT, and unknown URLs 404.
    *
    * `redirects` maps a requested URL onto the URL the response actually came from — the only
@@ -1645,16 +1659,15 @@ describe('dereferenceRoleProfile — reading the document the profile IRI names'
     expect(evidence.document.roles).toHaveLength(5);
   });
 
-  it('★★ the DEPLOYED profile IRI does not dereference, and that is a refusal rather than a pass', async () => {
-    // ★ MEASURED AGAINST PRODUCTION ON 2026-08-03, and it is the same class of finding as §9's:
-    // `GET <https://…/wsp-roles-default>` answers 404 and only `<…/wsp-roles-default.ttl>`
-    // answers 200. So the IRI every `wsp:roleProfile` in this repo declares does not resolve to
-    // anything, and a fold that asks for its table gets nothing.
-    //
-    // The honest handling is a REFUSAL — the caller asked and there is no answer — and the fix
-    // is to the deployed artifact, not to this reader. A producer that fell back to `<IRI>.ttl`
-    // would be guessing a URL on the workspace's behalf, which is what `nsOwnerSegmentOf`
-    // refuses to do one document over.
+  it('★★ a profile IRI that does not dereference at all is a refusal rather than a pass', async () => {
+    // ★ THIS USED TO BE A STATEMENT ABOUT THE DEPLOYED ARTIFACT, AND IT IS NOT ONE ANY MORE.
+    // What stood here said `GET <https://…/wsp-roles-default>` answers 404 while only
+    // `<…/wsp-roles-default.ttl>` answers 200 — measured, true when written, and made false by
+    // `docs/applications/shared-workspace/wsp-roles-default.html`. The BEHAVIOUR it pins is
+    // unchanged and still worth pinning: an IRI that returns nothing states no governance, and a
+    // producer that fell back to `<IRI>.ttl` would be guessing a URL on the workspace's behalf,
+    // which is what `nsOwnerSegmentOf` refuses to do one document over. The case is simply
+    // hypothetical now instead of live. The deployed shape is the test below.
     const { deps, asked } = roleProfileDeps({ [`${P}.ttl`]: { body: NARROW } });
     const evidence = await dereferenceRoleProfile(P, deps);
     expect(evidence.kind).toBe('unreadable');
@@ -1662,6 +1675,99 @@ describe('dereferenceRoleProfile — reading the document the profile IRI names'
     // …and it did not go looking. The `.ttl` twin is RIGHT THERE in this double's web and was
     // never asked for, which is the assertion that would fail if a fallback were added.
     expect(asked).toEqual([P]);
+  });
+
+  it('★★ the DEPLOYED shape — 200 text/html advertising its Turtle — is FOLLOWED, and the roles parsed', async () => {
+    // ★★ THE REGRESSION THIS CLOSES, MEASURED. The day the `.html` page shipped so the
+    // vocabulary's extensionless IRIs would dereference, this reader started answering
+    // `unreadable: … answered 200 with text/html … unknown bareword "Default"` for the only role
+    // profile in existence. GitHub Pages serves no extensionless path and falls back to
+    // `<name>.html`, so the declared IRI returns the human-readable projection — with
+    // `<link rel="alternate" type="text/turtle">` pointing at the Turtle beside it, which is the
+    // mechanism the relay's shape gate has followed since the identical problem bit the publish
+    // path three times.
+    const { deps, asked } = roleProfileDeps({
+      [P]: { body: pageAdvertising('wsp-roles-default.ttl'), contentType: 'text/html' },
+      [`${P}.ttl`]: { body: NARROW },
+    });
+    const evidence = await dereferenceRoleProfile(P, deps);
+    expect(evidence.kind).toBe('declared');
+    if (evidence.kind !== 'declared') return;
+    expect(evidence.document.roles).toEqual([{ role: `${P}#Observer`, permits: [CAPS.read] }]);
+    // TWO fetches, the second the URL the page named. `dereferenced` is still the IRI the
+    // workspace declares; `head` is where the bytes came from, and the two differing is the hop.
+    expect(asked).toEqual([P, `${P}.ttl`]);
+    expect(evidence.document.dereferenced).toBe(P);
+    expect(evidence.document.head).toBe(`${P}.ttl`);
+    // ★ AND THE GRADE DOES NOT MOVE. Following an advertised link is transport and nothing more:
+    // a static page carries no authorship proof and no digested region at either end of it. A
+    // reader that graded a followed document above an unfollowed one would be reporting a
+    // guarantee nobody made.
+    expect(evidence.document.authority).toBe('transport-only');
+    expect(evidence.document.attestation).toBeUndefined();
+  });
+
+  it('★★ it follows the href the PAGE names, which is what makes it a follower and not a guesser', async () => {
+    // ★ THE CASE THE LIVE RUN CANNOT MAKE. Our own page advertises `wsp-roles-default.ttl`,
+    // which is also what appending `.ttl` derives, so production cannot tell following from
+    // guessing. Here the advertised name is DIFFERENT and the guessable URL answers with a WIDER
+    // table, so a guesser does not fail — it silently confers `grant` and `revoke` on the
+    // strength of a document the workspace never named.
+    const { deps, asked } = roleProfileDeps({
+      [P]: { body: pageAdvertising('governance-v2.ttl'), contentType: 'text/html' },
+      [`${P}.ttl`]: { body: WIDE },
+      'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/governance-v2.ttl':
+        { body: NARROW },
+    });
+    const evidence = await dereferenceRoleProfile(P, deps);
+    expect(evidence.kind).toBe('declared');
+    if (evidence.kind !== 'declared') return;
+    expect(evidence.document.roles).toEqual([{ role: `${P}#Observer`, permits: [CAPS.read] }]);
+    expect(asked[1]).toBe(
+      'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/governance-v2.ttl',
+    );
+    expect(asked).toHaveLength(2);
+  });
+
+  it('★★ a page that advertises NO Turtle is refused, and the `.ttl` twin is still not guessed', async () => {
+    // The guard that keeps the hop from becoming the fallback it was introduced instead of. An
+    // HTML body with no alternate is the shape a misconfigured host and a soft-404 both produce,
+    // and the `.ttl` sitting beside it in this double's web is never asked for.
+    const { deps, asked } = roleProfileDeps({
+      [P]: { body: '<!doctype html><html><body><h1>Not found</h1></body></html>', contentType: 'text/html' },
+      [`${P}.ttl`]: { body: NARROW },
+    });
+    const evidence = await dereferenceRoleProfile(P, deps);
+    expect(evidence.kind).toBe('unreadable');
+    if (evidence.kind === 'unreadable') expect(evidence.why).toMatch(/advertises no <link rel="alternate"/);
+    expect(asked).toEqual([P]);
+  });
+
+  it('★★ a CROSS-ORIGIN alternate is refused, and a chain of pages is not chased', async () => {
+    // A role profile carries no signature, so its origin IS its authority — and an alternate
+    // link is the DOCUMENT choosing where the answer comes from, which is a claim written by
+    // whoever can write the page. Refused on the same grounds as the cross-origin redirect one
+    // test up, and separately from it, because they are different parties choosing.
+    const foreign = roleProfileDeps({
+      [P]: { body: pageAdvertising('https://evil.test/roles.ttl'), contentType: 'text/html' },
+      'https://evil.test/roles.ttl': { body: WIDE },
+    });
+    const refused = await dereferenceRoleProfile(P, foreign.deps);
+    expect(refused.kind).toBe('unreadable');
+    if (refused.kind === 'unreadable') expect(refused.why).toMatch(/different origin/);
+    expect(foreign.asked).toEqual([P]);
+
+    // …and a page whose alternate is ANOTHER page stops after one hop rather than being chased
+    // for as long as its publisher keeps the chain going. Asserted on the fetch COUNT, because
+    // the refusal alone is satisfied by any bound at all.
+    const chain = roleProfileDeps({
+      [P]: { body: pageAdvertising('wsp-roles-default.ttl'), contentType: 'text/html' },
+      [`${P}.ttl`]: { body: pageAdvertising('wsp-roles-default.ttl'), contentType: 'text/html' },
+    });
+    const chained = await dereferenceRoleProfile(P, chain.deps);
+    expect(chained.kind).toBe('unreadable');
+    if (chained.kind === 'unreadable') expect(chained.why).toMatch(/bounded at 1 hop/);
+    expect(chain.asked).toEqual([P, `${P}.ttl`]);
   });
 
   it('★ a redirect OFF THE ORIGIN refuses; one that stays on it is followed', async () => {
