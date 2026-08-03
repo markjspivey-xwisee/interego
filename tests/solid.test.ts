@@ -1057,13 +1057,28 @@ describe('discover', () => {
   it('throws on non-404 HTTP error after exhausting retries', async () => {
     // Post-fix behavior: discover() promotes 5xx responses to throws
     // inside the retry lambda so withTransientRetry actually retries
-    // them (6 attempts at 0.5s base, ~31s ceiling). The eventual throw
-    // still surfaces "Failed to fetch manifest" so callers see the
+    // them (6 attempts at 0.5s base). The eventual throw still surfaces
+    // "Failed to fetch manifest" so callers see the
     // underlying server error after retries exhaust. Test timeout
     // bumped to 35s to accommodate the full retry schedule (was 5s,
     // assumed instant-throw on 5xx response which silently masked the
     // f-shin-collection-adjacent finding: 5xx responses weren't retried
     // before the rev-188 fix).
+    //
+    // ★ THE CEILING THIS USED TO CLAIM WAS "~31s" AND THAT IS ONE BACKOFF TOO MANY, which
+    // made a comfortable bound read as a tight one. `withTransientRetry` sleeps BETWEEN
+    // attempts, so 6 attempts is 5 sleeps, not 6: 500 + 1 000 + 2 000 + 4 000 + 8 000 =
+    // 15 500 ms. There is no jitter in `packages/core/src/http/retry.ts` — the schedule is
+    // `baseMs * 2^(attempt-1)` exactly — so this is a floor and a ceiling at once, and the
+    // whole-suite measurement agrees to within the mock's own cost: 15 643 ms.
+    //
+    // That is why 35 s stays where it is rather than being trimmed toward the measurement.
+    // 15 643/35 000 looks like a 2.24x margin, which is the band this file was swept for,
+    // but the number it is 2.24x of barely moves. A CPU- or filesystem-bound case stretches
+    // in PROPORTION to load; a chain of `setTimeout`s can only overshoot by however late the
+    // event loop is, and nothing else runs in this worker while it awaits. The ~19 s of
+    // slack is close to absolute rather than proportional, which is why it is left alone.
+    // `tests/cas-split.test.ts` has the identical shape at 15 627 ms against 30 s.
     const fetch500 = vi.fn(async () =>
       mockResponse('', { status: 500, ok: false }),
     ) as unknown as typeof globalThis.fetch;

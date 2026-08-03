@@ -157,7 +157,28 @@ describe('publish — opt-in PGSL-primary (Foundation-first Stage 5)', () => {
     // The on-pod descriptor resource, the manifest entry, and the returned
     // descriptorUrl all reference the SAME content-addressed IRI.
     expect(r.entryDescriptorUrl).toBe(r.resultDescriptorUrl);
-  });
+    // ★ THE ONLY TEST IN THIS FILE THAT NEEDS A BOUND, because it is the only one that
+    // pays for a whole second Node process. `runDriver` spawns `process.execPath` and has
+    // it import the built `dist` — see the NOTE at the top of the file for why that is not
+    // optional — so its cost is process startup plus module resolution, which is the most
+    // load-sensitive thing a test can do here. Two whole-suite `npx vitest run` runs on the
+    // same tree measured 1 003 ms and 4 822 ms for this one case: a 4.8x spread, and the
+    // slow end cleared the default 5 000 ms bound by 178 ms. It has not been seen to fail,
+    // and that is the point — a case that survives by 3.6% of its budget is not passing,
+    // it is waiting for a busier day.
+    //
+    // 30 s, ~6x the worst measurement rather than the typical one.
+    //
+    // ★ AND BE CLEAR WHAT THIS BOUND CAN AND CANNOT DO, because `runDriver` is SYNCHRONOUS.
+    // `execFileSync` blocks the worker thread outright, so vitest's timer cannot fire while
+    // it runs and cannot interrupt it — the bound is only compared against the elapsed time
+    // once the call has already returned. Its entire job here is therefore to stop a spawn
+    // that was merely slow from being REPORTED as a failure. A child that wedges and never
+    // exits is a different hazard and this number does nothing about it; the only thing that
+    // would is `execFileSync`'s own `timeout` option, which is not set and is left alone
+    // rather than guessed at in a change about flakes. The two cases below run in-process in
+    // single-digit ms and are deliberately left on the default.
+  }, 30_000);
 
   it('projectHolon is deterministic — same (node, descriptorBase) → byte-identical descriptorTurtle', () => {
     const { pgsl, node } = buildLatticeNode('determinism payload');

@@ -28,6 +28,7 @@
  * Run: npx tsx applications/_shared/vertical-bridge/affordance-manifest.test.ts
  */
 import { createVerticalBridge } from './index.js';
+import { listenLoopback } from './listen-loopback.js';
 import type { Affordance } from '../affordance-mcp/index.js';
 
 let failures = 0;
@@ -36,8 +37,20 @@ const check = (name: string, cond: boolean, detail = ''): void => {
   failures++; console.error(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`);
 };
 
-const PORT = 6099;
-const BASE = `http://localhost:${PORT}`;
+/**
+ * ★ The URL this bridge SAYS it lives at, which is not the one this test dials.
+ *
+ * These were one constant — `http://localhost:6099` — used as both the manifest's
+ * `deploymentUrl` and the fetch target, which is what forced a FIXED port: the projected
+ * `target` is asserted below, so the port had to be known before `createVerticalBridge`
+ * was called, and therefore before anything had bound. `app.listen(6099)` then bound
+ * `{ address: "::" }` — every interface — for the whole run.
+ *
+ * Splitting them is also the truer model: a deployed bridge's published identity is its
+ * public URL, while the socket it is reached on is whatever the proxy in front of it dialled.
+ * The manifest assertions below check the PUBLISHED identity; the requests go to loopback.
+ */
+const DEPLOYMENT_URL = 'https://manifest-test.example';
 
 const affordances = [{
   action: 'urn:iep:action:demo:ping',
@@ -54,12 +67,15 @@ const app = createVerticalBridge({
   verticalName: 'manifest-test',
   affordances,
   handlers: { 'demo.ping': async (a: Record<string, unknown>) => ({ pong: a.msg }) },
-  deploymentUrl: BASE,
+  deploymentUrl: DEPLOYMENT_URL,
 });
-const server = app.listen(PORT);
+// Loopback, ephemeral, unref'd, and closed with its connections destroyed — see
+// ./listen-loopback.ts for the `::`-binding and never-completing-close defects this
+// replaces. Both were live in this file.
+const listener = await listenLoopback(app);
 
 const get = async (path: string, accept?: string) => {
-  const r = await fetch(BASE + path, accept ? { headers: { Accept: accept } } : undefined);
+  const r = await fetch(listener.base + path, accept ? { headers: { Accept: accept } } : undefined);
   return { status: r.status, type: r.headers.get('content-type') ?? '', vary: r.headers.get('vary') ?? '', body: await r.text() };
 };
 
@@ -98,7 +114,7 @@ try {
     Array.isArray(one?.expects?.required) && one.expects.required.includes('msg'),
     JSON.stringify(one?.expects));
   check('…and their descriptions', one?.expects?.properties?.msg?.description === 'What to echo.');
-  check('the target is resolved, not a {base} template', one?.target === `${BASE}/demo/ping`, String(one?.target));
+  check('the target is resolved, not a {base} template', one?.target === `${DEPLOYMENT_URL}/demo/ping`, String(one?.target));
 
   // ── The two surfaces must not drift ──────────────────────────────────────
   const entry = JSON.parse((await get('/', 'application/ld+json')).body);
@@ -106,7 +122,7 @@ try {
     JSON.stringify(entry.affordances?.[0]) === JSON.stringify(one),
     'a second copy of the projection is how they start disagreeing');
 } finally {
-  server.close();
+  await listener.close();
 }
 
 if (failures > 0) { console.error(`\n${failures} assertion(s) failed\n`); process.exit(1); }

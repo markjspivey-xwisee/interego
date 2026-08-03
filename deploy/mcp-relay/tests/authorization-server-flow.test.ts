@@ -26,7 +26,7 @@
  */
 
 import express from 'express';
-import type { AddressInfo } from 'node:net';
+import { listenLoopback } from './listen-loopback.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { interegoOAuthRouter } from '../oauth-router.js';
 import { InteregoOAuthProvider, type ResolvedIdentity } from '../oauth-provider.js';
@@ -60,9 +60,10 @@ const provider = new InteregoOAuthProvider({
 
 const app = express();
 app.use(interegoOAuthRouter({ provider, issuerUrl: ISSUER }));
-const server = app.listen(0);
-await new Promise<void>(r => server.once('listening', () => r()));
-const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+// `app.listen(0)` with no host bound `::` — every interface — for the life of the run.
+// See tests/listen-loopback.ts; the close in the finally below is unchanged.
+const server = await listenLoopback(app);
+const base = server.base;
 
 const form = (o: Record<string, string>) => new URLSearchParams(o).toString();
 const postForm = (path: string, body: Record<string, string>) =>
@@ -217,7 +218,7 @@ try {
       `HTTP ${r.status} ${r.headers.get('location') ?? ''}`);
   }
 } finally {
-  server.close();
+  await server.close();
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

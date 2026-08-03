@@ -32,7 +32,7 @@
  */
 
 import express from 'express';
-import type { AddressInfo } from 'node:net';
+import { listenLoopback } from './listen-loopback.js';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import type { AuthInfo, Tool } from '@modelcontextprotocol/server';
 import { Server } from '@modelcontextprotocol/server';
@@ -116,10 +116,10 @@ app.delete('/mcp-correct', (req, res) => {
 // asserting a claim about it. Express passes `next` as the third argument.
 app.post('/mcp-mounted-bare', nodeHandler as unknown as express.RequestHandler);
 
-const server = app.listen(0);
-await new Promise<void>((r) => server.once('listening', () => r()));
-const port = (server.address() as AddressInfo).port;
-const base = `http://127.0.0.1:${port}`;
+// `app.listen(0)` with no host bound `::` — every interface — for the life of the run.
+// See tests/listen-loopback.ts; the close in the finally below is unchanged.
+const server = await listenLoopback(app);
+const base = server.base;
 
 type Res = { status: number; ct: string; text: string; json?: Record<string, unknown> };
 async function post(path: string, body: unknown, headers: Record<string, string> = {}): Promise<Res> {
@@ -233,7 +233,7 @@ try {
     'server/discover advertises 2026-07-28 from the same factory',
     modern.text.slice(0, 200));
 } finally {
-  server.close();
+  await server.close();
 }
 
 console.log(failures === 0

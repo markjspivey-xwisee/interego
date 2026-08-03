@@ -17,6 +17,7 @@
 
 import express from 'express';
 import { corsMiddleware } from '../cors-allowlist.js';
+import { listenLoopback } from './listen-loopback.js';
 
 let failures = 0;
 function check(name: string, cond: boolean, detail = ''): void {
@@ -60,38 +61,42 @@ for (const p of ['/.well-known/agent-card.json', '/.well-known/interego-agents.j
 }
 app.get('/private', (_req, res) => res.json({ ok: true }));
 
-const srv = app.listen(0);
-await new Promise(r => srv.once('listening', r));
-const B = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+// Loopback-bound and closed from a `finally`: `srv.close()` used to be the last statement
+// of this block, so every throwing path above it — a rejected fetch, a header that is not
+// there — left the listener bound. See tests/listen-loopback.ts.
+const srv = await listenLoopback(app);
+const B = srv.base;
 
-for (const p of ['/.well-known/agent-card.json', '/.well-known/interego-agents.json', '/ns/maintainer/hmd']) {
-  const r = await fetch(`${B}${p}`, { headers: { Origin: 'https://stranger.example' } });
-  const acao = r.headers.get('access-control-allow-origin');
-  const exposed = (r.headers.get('access-control-expose-headers') ?? '').toLowerCase();
+try {
+  for (const p of ['/.well-known/agent-card.json', '/.well-known/interego-agents.json', '/ns/maintainer/hmd']) {
+    const r = await fetch(`${B}${p}`, { headers: { Origin: 'https://stranger.example' } });
+    const acao = r.headers.get('access-control-allow-origin');
+    const exposed = (r.headers.get('access-control-expose-headers') ?? '').toLowerCase();
 
-  check(`${p} is readable by ANY origin`, acao === '*', String(acao));
-  check(`${p} exposes Link so the client can follow it`,
-    exposed.includes('link'), exposed || '<unset>');
-  check(`${p} exposes ETag so the client can revalidate`,
-    exposed.includes('etag'), exposed || '<unset>');
-  // The point of the whole file: the handler's own attempt lost to the freeze.
-  check(`${p} — the ROUTE's attempt to set it was silently dropped (proves it must be upstream)`,
-    !exposed.includes('x-should-not-win'), exposed);
+    check(`${p} is readable by ANY origin`, acao === '*', String(acao));
+    check(`${p} exposes Link so the client can follow it`,
+      exposed.includes('link'), exposed || '<unset>');
+    check(`${p} exposes ETag so the client can revalidate`,
+      exposed.includes('etag'), exposed || '<unset>');
+    // The point of the whole file: the handler's own attempt lost to the freeze.
+    check(`${p} — the ROUTE's attempt to set it was silently dropped (proves it must be upstream)`,
+      !exposed.includes('x-should-not-win'), exposed);
+  }
+
+  // The carve-out must stay a carve-out: a non-public path is still allowlisted.
+  const priv = await fetch(`${B}/private`, { headers: { Origin: 'https://stranger.example' } });
+  check('a non-carve-out path does NOT become world-readable',
+    priv.headers.get('access-control-allow-origin') !== '*',
+    String(priv.headers.get('access-control-allow-origin')));
+
+  // Credentials must never be combined with the wildcard.
+  const cardR = await fetch(`${B}/.well-known/agent-card.json`, { headers: { Origin: 'https://stranger.example' } });
+  check('no Allow-Credentials is emitted alongside the wildcard',
+    !cardR.headers.get('access-control-allow-credentials'),
+    String(cardR.headers.get('access-control-allow-credentials')));
+} finally {
+  await srv.close();
 }
-
-// The carve-out must stay a carve-out: a non-public path is still allowlisted.
-const priv = await fetch(`${B}/private`, { headers: { Origin: 'https://stranger.example' } });
-check('a non-carve-out path does NOT become world-readable',
-  priv.headers.get('access-control-allow-origin') !== '*',
-  String(priv.headers.get('access-control-allow-origin')));
-
-// Credentials must never be combined with the wildcard.
-const cardR = await fetch(`${B}/.well-known/agent-card.json`, { headers: { Origin: 'https://stranger.example' } });
-check('no Allow-Credentials is emitted alongside the wildcard',
-  !cardR.headers.get('access-control-allow-credentials'),
-  String(cardR.headers.get('access-control-allow-credentials')));
-
-srv.close();
 
 if (failures > 0) { console.error(`\n${failures} assertion(s) failed\n`); process.exit(1); }
 console.log('\nPublic CORS carve-out holds.\n');

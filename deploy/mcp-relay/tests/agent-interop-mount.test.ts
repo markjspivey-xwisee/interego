@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mountAgentInterop } from '../agent-interop-mount.js';
 import { PROFILES, EngagementEngine, isEngineError } from '@interego/agent-interop';
+import { listenLoopback } from './listen-loopback.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 let failures = 0;
@@ -278,10 +279,11 @@ console.log('\n7. the mount registers on REAL Express (route compilation is exer
   }
   if (booted) {
     check('every profile route compiles under real Express', true);
-    const srv = realApp.listen(0);
-    await new Promise(r => srv.once('listening', r));
-    const port = (srv.address() as any).port;
-    const B = `http://127.0.0.1:${port}`;
+    // Loopback-bound + unref'd: `listen(0)` with no host bound `::` (every interface), and
+    // a listening handle alone keeps the process alive forever when a close() is skipped.
+    // See tests/listen-loopback.ts.
+    const srv = await listenLoopback(realApp as never);
+    const B = srv.base;
 
     const card = await fetch(`${B}/.well-known/agent-card.json`);
     check('the card is served over HTTP', card.status === 200, String(card.status));
@@ -371,7 +373,7 @@ console.log('\n7. the mount registers on REAL Express (route compilation is exer
     check('an unparseable request media type is 415, not 400',
       wrongType.status === 415, String(wrongType.status));
 
-    srv.close();
+    await srv.close();
   }
 }
 
@@ -387,9 +389,8 @@ console.log('\n8. HYPERMEDIA — a representation carries its own followable nex
     verifyCaller: async () => 'did:ethr:0xAAA',
     log: () => {},
   });
-  const srv = a.listen(0);
-  await new Promise(r => srv.once('listening', r));
-  const B = `http://127.0.0.1:${(srv.address() as any).port}`;
+  const srv = await listenLoopback(a as never);   // loopback + unref'd; see tests/listen-loopback.ts
+  const B = srv.base;
 
   const open = await fetch(`${B}/a2a/v1/message:send`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -435,7 +436,7 @@ console.log('\n8. HYPERMEDIA — a representation carries its own followable nex
     Array.isArray(iobody['iep:affordance']) && iobody['iep:affordance'].length > 0
     && iobody['iep:affordance'][0]['@type'] === 'iep:Affordance'
     && typeof iobody['iep:affordance'][0]['hydra:target'] === 'string');
-  srv.close();
+  await srv.close();
 }
 
 
@@ -450,9 +451,8 @@ console.log('\n9. MULTI-TURN — a continuation appends, it does not fork a new 
     verifyCaller: async (req: any) => (req.headers['x-who'] as string) || 'did:ethr:0xAAA',
     log: () => {},
   });
-  const srv = a.listen(0);
-  await new Promise(r => srv.once('listening', r));
-  const B = `http://127.0.0.1:${(srv.address() as any).port}`;
+  const srv = await listenLoopback(a as never);   // loopback + unref'd; see tests/listen-loopback.ts
+  const B = srv.base;
   const J = { 'content-type': 'application/json' };
 
   // send wraps in the profile's envelope member; unwrap to the resource.
@@ -480,7 +480,7 @@ console.log('\n9. MULTI-TURN — a continuation appends, it does not fork a new 
     method: 'POST', headers: J, body: JSON.stringify({ parts: [{ text: 'new' }] }),
   })).json());
   check('a send with no ref still opens a NEW engagement', fresh.id !== first.id);
-  srv.close();
+  await srv.close();
 }
 
 console.log('\n10. ROUTE SHADOWING — only a DECLARED url may reach a handler');
@@ -494,9 +494,8 @@ console.log('\n10. ROUTE SHADOWING — only a DECLARED url may reach a handler')
     verifyCaller: async () => 'did:ethr:0xAAA',
     log: () => {},
   });
-  const srv = a.listen(0);
-  await new Promise(r => srv.once('listening', r));
-  const B = `http://127.0.0.1:${(srv.address() as any).port}`;
+  const srv = await listenLoopback(a as never);   // loopback + unref'd; see tests/listen-loopback.ts
+  const B = srv.base;
   const J = { 'content-type': 'application/json' };
   const body = JSON.stringify({ message: { parts: [{ text: 'probe' }] } });
 
@@ -561,7 +560,7 @@ console.log('\n10. ROUTE SHADOWING — only a DECLARED url may reach a handler')
   check('...and a genuinely empty parts array still says THAT',
     /at least one content part/i.test(String(epBody?.error?.detail)), String(epBody?.error?.detail));
 
-  srv.close();
+  await srv.close();
 }
 
 console.log("\n11. THE CARD'S PROMISE — an advertised capability is actually PERFORMED");
@@ -589,9 +588,8 @@ console.log("\n11. THE CARD'S PROMISE — an advertised capability is actually P
     },
     log: () => {},
   });
-  const srv2 = a.listen(0);
-  await new Promise(r => srv2.once('listening', r));
-  const B2 = `http://127.0.0.1:${(srv2.address() as any).port}`;
+  const srv2 = await listenLoopback(a as never);  // loopback + unref'd; see tests/listen-loopback.ts
+  const B2 = srv2.base;
   const J2 = { 'content-type': 'application/json' };
   const send = (skillId: string | undefined, text: string) => fetch(`${B2}/a2a/v1/message:send`, {
     method: 'POST', headers: J2,
@@ -696,7 +694,7 @@ console.log("\n11. THE CARD'S PROMISE — an advertised capability is actually P
     polluted?.task?.status?.state === 'TASK_STATE_SUBMITTED' && !polluted?.task?.artifacts,
     JSON.stringify(polluted?.task?.status));
 
-  srv2.close();
+  await srv2.close();
 }
 
 

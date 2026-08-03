@@ -49,7 +49,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
-        with: { node-version: '20' }
+        # ★ 22, not 20, and the css-gate step below is why.
+        #
+        # `node --test` changed how it reads its positional arguments between these two
+        # majors, and the two forms are mutually exclusive — measured, both ways:
+        #
+        #     node 20:  `--test tests/`               collects the directory
+        #     node 22:  `--test tests/`               Error: Cannot find module '…/tests'
+        #     node 22:  `--test "tests/*.test.mjs"`   collects every suite
+        #
+        # So there is no single script string that discovers on both. `deploy/css-gate`
+        # runs on 22 locally and its `npm test` uses the glob; pinning this job to 20
+        # would mean CI ran a command nobody can run on a dev machine, which is how a
+        # green workflow stops meaning anything. The other steps here are plain scripts
+        # and `tsc`, and neither is version-sensitive in this range.
+        with: { node-version: '22' }
 
       # css-gate's server imports undici, and the bridge imports @interego/*, so
       # nothing below runs without an installed + built workspace. This step used to
@@ -61,10 +75,23 @@ jobs:
           npm run build
 
       # css-gate: the LDP control headers a cross-origin Solid client cannot work
-      # without, the write headers preflight must permit, and that a retired Azure
-      # origin is refused. Needs only the module — no install.
-      - name: css-gate — CORS + response-header invariants
-        run: node deploy/css-gate/cors-and-headers.test.mjs
+      # without, the write headers preflight must permit, that a retired Azure origin is
+      # refused, and the upstream-proxy + per-user-bearer behaviour.
+      #
+      # ★ THIS RUNS THE WHOLE SUITE, NOT ONE FILE. It used to name
+      # `deploy/css-gate/cors-and-headers.test.mjs` directly, which meant the package's
+      # other two suites — upstream-proxy and per-user-bearer-fallback — ran in NO
+      # workflow at all. Calling the package's own `npm test` means a suite added to
+      # `deploy/css-gate/tests/` is covered here the moment it exists, with no second
+      # place to remember. That script globs rather than enumerates, and
+      # `tests/suite-discovery.test.mjs` fails if anyone changes it back.
+      #
+      # css-gate is not a root workspace, so there is no per-package install: its only
+      # dependency (undici) resolves upward from the root node_modules the step above
+      # populated. That is why this needs the install, and why it must stay after it.
+      - name: css-gate — CORS, headers, proxy, per-user bearer
+        run: npm test
+        working-directory: deploy/css-gate
 
       # acme-id: every URL an identity document publishes must resolve, and every
       # term a WebID profile asserts must be defined in the namespace it cites.

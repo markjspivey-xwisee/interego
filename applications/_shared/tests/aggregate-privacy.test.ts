@@ -2586,7 +2586,28 @@ describe('aggregate-privacy v6: operator never sees individual values OR blindin
     expect((c as unknown as Record<string, unknown>).value).toBeUndefined();
   });
 
-  it('full v6 flow: operator reveals trueSum via committee, never sees individual values', async () => {
+  // ★ THE TWO HEAVIEST CASES IN THIS DESCRIBE CARRY A BOUND; THE REST DO NOT, and the split
+  // is by measurement rather than by suite. Measured across all 187 modules of a whole-suite
+  // `npx vitest run`, against the default 5 000 ms:
+  //
+  //   4 033 ms   every t-subset … trueSum AND trueBlinding   (1.24x — 967 ms of headroom)
+  //   2 062 ms   full v6 flow                                (2.4x)
+  //   1 644 ms   audit verifier REJECTS … claimedTrueSum wrong
+  //   1 228 ms / 1 133 ms / 846 ms   the next three
+  //
+  // A case clearing its bound by 967 ms is not passing on merit; it is passing because the
+  // machine happened not to be busy. The cost is real secp256k1 work — the t-subset case runs
+  // all C(5,3) = 10 committee subsets and does a full Lagrange reconstruct plus a bundle
+  // verify inside each — so this is duration that is EARNED, unlike a retry sleep or a
+  // runaway loop, and the right move is to say how much of it there is. 30 s matches the
+  // `{ timeout: 30_000 }` already on the two `verifyContributorRangeProofs` tampering cases
+  // above, for the same reason: bit-decomposition range proofs and committee reconstruction
+  // are the two places in this file where the elliptic curve, not the assertion, sets the pace.
+  //
+  // The lighter cases stay on the default deliberately. At 846 ms they have 5.9x of headroom,
+  // and if one of them ever reaches 5 s something has changed about the curve arithmetic that
+  // a raised bound would only hide.
+  it('full v6 flow: operator reveals trueSum via committee, never sees individual values', { timeout: 30_000 }, async () => {
     const committee = await mkCommittee(5);
     const cohort = await mkCohortV6([10n, 20n, 30n, 40n, 50n], committee, 3);
     const allShares = committee.map(m => aggregatePseudoAggregatorSharesV6({
@@ -2712,7 +2733,8 @@ describe('aggregate-privacy v6: operator never sees individual values OR blindin
     expect(audit.reason).toMatch(/does not open/);
   });
 
-  it('every t-subset of n committee shares yields the same trueSum AND trueBlinding', async () => {
+  // The 4 033 ms case — see the note above `full v6 flow` for the measurements and why 30 s.
+  it('every t-subset of n committee shares yields the same trueSum AND trueBlinding', { timeout: 30_000 }, async () => {
     const committee = await mkCommittee(5);
     const cohort = await mkCohortV6([7n, 14n, 21n, 28n], committee, 3);
     const allShares = committee.map(m => aggregatePseudoAggregatorSharesV6({

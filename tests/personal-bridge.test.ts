@@ -8,9 +8,76 @@
  *
  * For an actual HTTP smoke (curl + JSON-RPC), see the README's Quick
  * start section — that's a manual / CI-deployment-time check.
+ *
+ * ── ★★ WHY THE `vi.hoisted` BELOW IS LOAD-BEARING ────────────────────────────
+ *
+ * This test used to run against the DEVELOPER'S REAL BRIDGE STORE. Importing
+ * `server.js` constructs the relay at module scope, and with no override that is a
+ * `FileBackedRelay` on `~/.interego-bridge/events.jsonl` — the same file a locally
+ * run bridge accumulates events in. On this machine, measured the day this was
+ * written:
+ *
+ *   [bridge] Replayed 2832 event(s) from C:\Users\…\.interego-bridge\events.jsonl
+ *            (skipped 3663 malformed)
+ *   50.7 MB, 6 500 lines
+ *
+ * ★ AND THE TEST FEEDS IT. `publish_p2p` and `share_encrypted` below APPEND to that
+ * file, so every run makes the next run slower, forever, on a path no `clean` script
+ * touches and no `.gitignore` mentions. The cost showed up exactly where you would
+ * expect: 'share_encrypted → query_my_inbox → decrypt_share' measured 4 977 ms in a
+ * full `npx vitest run` against the default 5 000 ms bound — it passed by 23 ms — and
+ * 'decrypt_share returns ok=false for an unknown event id', which does nothing but
+ * fail to find one id, took 2 374 ms. Re-running this file on its own while another
+ * vitest run was in progress took the first one to 9 589 ms and it FAILED — so this
+ * is a reproduced flake, not a projected one.
+ *
+ * ★ SO THE FIX IS NOT A TIMEOUT, AND A TIMEOUT WOULD HAVE BEEN THE WRONG ANSWER
+ * TWICE OVER. The duration here IS the defect: it is unbounded, it grows without
+ * limit, and any bound picked today is one that a few hundred more runs walk past. It
+ * is also silent in CI — a fresh container has no such file, so the replay is empty,
+ * the suite is fast and green, and the failure only ever happens on the machine of
+ * whoever has been running the bridge. Worse, `query_my_inbox` was searching 2 832
+ * events of REAL LOCAL HISTORY, so what the assertions were actually exercising
+ * depended on the developer's own data.
+ *
+ * `BRIDGE_PERSIST=0` is the switch `examples/personal-bridge/server.ts` already
+ * documents for exactly this ("set BRIDGE_PERSIST=0 to fall back to the volatile
+ * InMemoryRelay (useful for tests)"), and `demos/scenarios/04-multi-agent-teaching-
+ * transfer.ts` already passes it to the bridges it spawns for the same reason. Nothing
+ * is lost: `FileBackedRelay`'s own persistence, encryption-at-rest and NIP-33
+ * replaceability are covered by `tests/file-backed-relay.test.ts` against a temp file,
+ * and what THIS file tests is the tool surface, which is identical on either relay.
+ *
+ * Measured after: 4 977 ms → 21 ms, 2 374 ms → 6 ms, no `Replayed …` line at all, and
+ * `events.jsonl` unchanged at 6 504 lines across a run that previously added three.
+ *
+ * ★★ AND IT HAS TO BE `vi.hoisted`, WHICH IS THE PART THAT IS EASY TO GET WRONG. The
+ * relay is built while `server.js` is being imported, so the variable must be set
+ * BEFORE that import runs — and a bare `process.env[…] = '0'` written above the import
+ * does not do it. Vite's `ssrTransform` HOISTS every import to the top of the module,
+ * above any statement preceding it in the source, so the assignment lands after the
+ * relay already exists. That is not a guess: written that way first, this file still
+ * logged `Replayed 2838 event(s)` and `~/.interego-bridge/events.jsonl` still grew by
+ * three lines across the run. `vi.hoisted` is the one documented hook that runs ahead
+ * of the hoisted imports.
+ *
+ * ★ AND `applications/foxxi-content-intelligence/tests/public-memory-commons.test.ts`
+ * IS NOT THE SAME CASE, THOUGH IT LOOKS IDENTICAL. It opens with a bare
+ * `process.env.FOXXI_WALLET_SEED ||=` above its imports, which the hoist likewise
+ * moves after them — and it still works, because `bridgeEncryptionKeypair()` in
+ * `src/foundation-holon-altitude.ts` reads that variable LAZILY, on first call, from
+ * inside a test. The distinguishing question is not where the assignment sits; it is
+ * whether the module reads the variable while being imported. This one does, at
+ * `server.ts`'s top-level `const innerRelay = BRIDGE_PERSIST ? …`, which is why it
+ * needs the stronger hook and that file does not.
+ *
+ * `??=` rather than `=` so a deliberate `BRIDGE_PERSIST=1` from the command line still
+ * wins, and because `process.env` is shared by every module in vitest's single worker
+ * — this file must not be the reason some other file sees a value it did not set.
+ * Only `examples/personal-bridge/server.ts` reads it, and only this file imports that.
  */
-
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+vi.hoisted(() => { process.env['BRIDGE_PERSIST'] ??= '0'; });
 import { tools, bridgeStatus, client, serveMcpOverHttp } from '../examples/personal-bridge/server.js';
 import {
   generateKeyPair,

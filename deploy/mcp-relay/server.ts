@@ -317,6 +317,7 @@ import {
   descriptorWriteCollisionRefusal,
 } from './supersession-frontier.js';
 import { resolveInteropPrincipal } from './interop-principal.js';
+import { ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js';
 import {
   observedGraphDigest,
   contentBindingNote,
@@ -2301,6 +2302,38 @@ async function runScopeGate(
 }
 
 async function handlePublishContext(args: ToolArgs): Promise<string> {
+  // ★ A PUBLISH WITH NO USABLE GRAPH IS REFUSED HERE — BEFORE ANY POD IS TOUCHED.
+  //
+  // "No usable graph" is two cases, and the second is the worse one. Omitting
+  // `graph_iri` or `graph_content` used to return `{"published": true, "status":
+  // "pending"}` and then fail on the background task with `TypeError: The "string" argument
+  // must be of type string … Received undefined`. So the caller was told the publish
+  // succeeded and the actual refusal arrived later, out of band, naming no argument. With
+  // `graph_iri` absent the descriptor was built with `describes: [null]` and the failure was
+  // even further downstream — eight manifest-CAS retries ending in "concurrent writer
+  // clobbered us", which blames a writer that does not exist.
+  //
+  // Both are `required` in the inputSchema and `tools/call` validates nothing, so the schema
+  // was never the guard it looked like — the same gap that let an `if_match` with no
+  // `graph_iri` silently disable the CAS head check one increment earlier.
+  //
+  // ★ AND THE SECOND CASE, WHICH DOES NOT THROW AT ALL. A `graph_iri` that is present but
+  // not a string is SERIALIZED rather than rejected — `{}` becomes
+  // `iep:describes <[object%20Object]>` — so the publish RESOLVES and commits a fabricated
+  // IRI to the pod, content-addressed and, on the compliance path, pinned. Meanwhile
+  // `claimedGraphIri` below narrows the same value to `undefined`, so the collision gate is
+  // told this publish names no graph while the bytes on the pod claim it describes one.
+  // That is why the refusal checks the TYPE and not merely the presence.
+  //
+  // This sits ABOVE the pod-bootstrap PUT and the per-pod mutex on purpose: a call that can
+  // never write should not create a container or hold the write lock while being refused.
+  // The registry gate below refuses the same call for every wire transport; this one also
+  // covers `handleRemember` and `handleRecordTrajectoryStep`, which call this handler
+  // directly and so never pass through the registry.
+  {
+    const refusal = requiredArgsRefusal('publish_context', args);
+    if (refusal) return JSON.stringify(refusal);
+  }
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
   const agentId = callerAgentId(args) ?? 'urn:agent:remote:unknown';
@@ -7308,7 +7341,78 @@ async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
   }
 }
 
-const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => Promise<string> }> = {
+type ToolEntry = { description: string; handler: (args: ToolArgs) => Promise<string> };
+
+/**
+ * Put the required-argument refusal in front of every gated handler, once — for an argument
+ * that is ABSENT and equally for one that arrived as something the tool cannot use.
+ *
+ * ★ WHY THE REGISTRY AND NOT NINETEEN HANDLER ENTRIES.
+ *
+ * FOUR transports dispatch tool calls — `/mcp` (`setRequestHandler('tools/call')`), the
+ * `act`/verb router, `/tool/:name`, and `/messages` — and all four resolve the handler the
+ * same way: `TOOLS[name] ?? dynamicTools.get(name)`, then call `.handler(args)`. Wrapping
+ * once here is therefore the only edit that cannot be transport-shaped: a guard added to
+ * one dispatcher would have left the other three answering with the TypeError, which is
+ * exactly the class of half-applied fix this file keeps re-learning.
+ *
+ * ★ AND IT WRAPS AFTER WHATEVER EACH DISPATCHER INJECTS — WHICH IS NOT THE SAME THING.
+ *
+ * Wrapping the handler means the gate sees exactly the args the handler sees, whatever the
+ * transport put there. That is the property being relied on, and it is the ONLY one: the
+ * four dispatchers do NOT agree about what they inject, and an earlier version of this
+ * comment claimed they did.
+ *
+ * Measured, per dispatcher, for the five gated tools that key on `pod_url`
+ * (discover_context, subscribe_to_pod, unsubscribe_from_pod, add_pod, remove_pod):
+ *
+ *   /mcp             fills `pod_url` from the auth context when absent — the ONE site that
+ *                    does it, and the only `args.pod_url =` in this file.
+ *   /tool/:name      fills `agent_id` / `owner_webid` / `pod_name` only. Deliberately NOT
+ *                    `pod_url` — on this path `pod_url` is a TARGET, not "my pod" (see the
+ *                    autoRegisterAgentCard comment on that route), and defaulting it to the
+ *                    caller's own pod would mis-address notify_agent / read_inbox.
+ *   /messages        `agent_id` / `owner_webid` / `pod_name` only, same as /tool.
+ *   interop invokeCapability   injects nothing; `args` is the raw `data` part with the
+ *                    reserved wire fields stripped.
+ *
+ * So on three of the four transports a caller who omits `pod_url` IS refused by this gate.
+ * That is correct rather than a regression: those handlers never defaulted it either —
+ * `handleDiscoverContext` reads `args.pod_url as string` with no fallback — so the same
+ * calls already failed, just with `TypeError: Cannot read properties of undefined (reading
+ * 'endsWith')` instead of a sentence naming the argument.
+ *
+ * ★ WHAT THE NEXT PERSON TO EDIT THE TABLE NEEDS FROM THIS. Do not add a tool whose handler
+ * DEFAULTS `pod_url` from `pod_name`. `handleGetCurrentHead` is that shape today — it reads
+ * `args.pod_url` and falls back to CSS_URL + pod_name — and gating it would refuse, on
+ * three transports, calls the handler could have served perfectly well.
+ * Such a tool needs the injection unified across the dispatchers FIRST — which is a
+ * behaviour change to what `pod_url` means per transport, not a comment.
+ *
+ * Only names in `ENFORCED_REQUIRED_ARGS` are wrapped; everything else is passed through
+ * with the identical entry object, so the gate's blast radius is exactly that table and a
+ * reader can see it in one place. Dynamic (pod-authored) tools never go through here.
+ */
+function gateRequiredArgs(tools: Record<string, ToolEntry>): Record<string, ToolEntry> {
+  for (const name of Object.keys(ENFORCED_REQUIRED_ARGS)) {
+    const entry = tools[name];
+    // A table entry naming a tool that does not exist would be a guard that silently
+    // guards nothing — the failure mode this whole module is about. Fail the boot.
+    if (!entry) throw new Error(`ENFORCED_REQUIRED_ARGS names an unregistered tool: ${name}`);
+    const inner = entry.handler;
+    tools[name] = {
+      description: entry.description,
+      handler: async (args: ToolArgs): Promise<string> => {
+        const refusal = requiredArgsRefusal(name, args);
+        if (refusal) return JSON.stringify(refusal);
+        return inner(args);
+      },
+    };
+  }
+  return tools;
+}
+
+const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   // ── Kernel verbs (first-class substrate access) ──
   // These delegate straight to @interego/core kernel exports. The 27
   // named tools below remain wire-compatible compatibility shims.
@@ -7371,7 +7475,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   invoke_affordance: { description: 'Invoke a vertical affordance by descriptor URL + iep:action IRI', handler: handleInvokeAffordance },
   // Linked-data dereference for MCP-only clients (the tool-equivalent of GET <relay>/ns/<owner>/<slug>)
   resolve_linked_data: { description: 'Resolve a published /ns ontology/graph as content-negotiated linked data (Turtle/JSON-LD) — for MCP-only clients that cannot GET the URL directly', handler: handleResolveLinkedData },
-};
+});
 
 // ── Tier-4: dynamic relay-tool registry over ac:AgentTool ────
 //
