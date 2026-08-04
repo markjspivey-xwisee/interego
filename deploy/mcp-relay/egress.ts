@@ -34,7 +34,7 @@
  * inside a redirect loop 200 lines from its declaration, which is what hid the last
  * one.
  */
-import { Agent } from 'undici';
+import { Agent, fetch as undiciFetch } from 'undici';
 import type { FetchFn } from '@interego/core';
 import { normalizeCssUrl, assertPublicPodUrl, bareAddressHost, screeningEgressLookup } from './url-rewrite.js';
 
@@ -54,12 +54,22 @@ export interface EgressConfig {
    * attempts) and wrong in the Railway container, whose resolver neither reproduction
    * could observe from outside Railway.
    *
-   * So this is a flag rather than a constant because the missing evidence can only be
-   * taken from a real deploy: set `RELAY_ADDRESS_SCREEN=1` on the service, publish one
-   * shape-gated graph, read `cause.code` out of the WARN log — `ERR_EGRESS_PRIVATE_ADDRESS`
-   * confirms the ULA hypothesis at the top of `guardedInvokeFetchLanded`, anything else
-   * refutes it — then turn it off. That is a bounded experiment against the one
-   * environment that has ever disagreed, instead of a third guess shipped to production.
+   * ★ THE MEASUREMENT WAS TAKEN, AND IT REFUTED EVERY NETWORK THEORY. 2026-08-04, flag on,
+   * one shape-gated publish, straight out of the relay's WARN log:
+   *
+   *     cause=UND_ERR_INVALID_ARG: invalid onRequestStart method
+   *
+   * Not DNS, not routing, not Railway's ULA prefixes — an undici handler-protocol
+   * mismatch, because an `Agent` from node_modules was being driven by the RUNTIME's
+   * bundled `fetch`. Both dead theories (`list[0]` collapsing the address list; ULA
+   * addresses tripping `PRIVATE_IPV6_RE`) were about the network and both were wrong.
+   * The fix is at the dispatch site in `guardedInvokeFetchLanded`.
+   *
+   * The flag stays because the default should change on EVIDENCE FROM THE IMAGE, not on a
+   * fix that typechecks. Two rounds of "correct everywhere I could reproduce it" reached
+   * production; this one gets confirmed in the container before it becomes the default.
+   * To re-verify: `RELAY_ADDRESS_SCREEN=1`, publish a shape-gated graph, expect it to
+   * SUCCEED, and run the four live verifiers.
    *
    * It is NOT a licence to leave the screen off forever. `assertPublicPodUrl` still
    * screens the NAME on every request; what is unattached is the ADDRESS half, and the
@@ -168,7 +178,34 @@ export function createEgress(config: EgressConfig): Egress {
       // Narrowing this to a hand-picked field list detaches the address screen from
       // every guarded caller at once, silently, and `tests/egress-dns-screen.test.ts`
       // is what would report it.
-      const resp = await fetch(target, { ...(init as RequestInit), signal: ac.signal });
+      // ★ AN npm-undici DISPATCHER MUST BE DRIVEN BY npm-undici's OWN `fetch`.
+      //
+      // This is the whole outage, measured at last. Node's global `fetch` is the undici
+      // BUNDLED IN THE RUNTIME; `guardedEgressAgent` is an `Agent` from the `undici`
+      // package in node_modules. Handing the second to the first crosses two copies, and
+      // the npm Agent then validates the handler the built-in fetch gave it:
+      //
+      //     cause=UND_ERR_INVALID_ARG: invalid onRequestStart method
+      //
+      // taken from the relay's own WARN log on 2026-08-04 with RELAY_ADDRESS_SCREEN=1.
+      // `onRequestStart` is undici v7's handler protocol; the runtime's bundled copy is
+      // older and supplies the previous shape. Every request through the guarded pool
+      // fails before a packet leaves — which is why it presented as `shapeUnfetchable`
+      // and read exactly like a network problem.
+      //
+      // It is NOT a network problem, and that is why three reproductions could not find
+      // it: this box is Node 22.22.2, the image is distroless/nodejs22 — same MAJOR,
+      // different bundled undici. The skew is invisible unless you run it in the image.
+      // The two dead theories (`list[0]` collapsing the address list, Railway ULA
+      // addresses tripping PRIVATE_IPV6_RE) were both about the network and both wrong.
+      //
+      // So: when a dispatcher is attached, dispatch with the SAME copy that owns it.
+      // Requests with no dispatcher stay on the global fetch exactly as before, so this
+      // changes nothing for CSS reads/writes.
+      const dispatching = (init as { dispatcher?: unknown } | undefined)?.dispatcher !== undefined;
+      const resp = dispatching
+        ? await (undiciFetch as unknown as typeof fetch)(target, { ...(init as RequestInit), signal: ac.signal })
+        : await fetch(target, { ...(init as RequestInit), signal: ac.signal });
       return {
         ok: resp.ok,
         status: resp.status,
