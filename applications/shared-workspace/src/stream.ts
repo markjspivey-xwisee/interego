@@ -174,7 +174,32 @@ export type AppendResult =
       readonly currentHead: string | null;
       readonly message: string;
     }
-  | { readonly outcome: 'refused'; readonly code: number; readonly message: string };
+  | {
+      readonly outcome: 'refused';
+      readonly code: number;
+      readonly message: string;
+      /**
+       * ★ THE CONSTRAINT, NOT JUST THE VERDICT. A 422 from the shape gate carries
+       * `violations[].constraint`, and this mapper used to drop all of it — so every
+       * refusal reached the caller as the bare word `shape_violation`.
+       *
+       * That is not a cosmetic loss. Measured 2026-08-04: a relay change made an
+       * off-origin shape UNFETCHABLE, and the gate correctly refused with
+       * `iep:shapeUnfetchable`. Through this mapper it was indistinguishable from an
+       * entry that genuinely violated the shape — so a live verifier reported "an
+       * entry with no wsp:seq is refused (got 422)" as a PASS while the real cause was
+       * that no shape had been fetched at all. The instrument said the same word for
+       * "your data is wrong" and "I could not check your data".
+       *
+       * Undefined when the refusal is not a shape refusal.
+       */
+      readonly violations?: readonly {
+        readonly constraint: string;
+        readonly message: string;
+        readonly focusNode?: string;
+        readonly path?: string;
+      }[];
+    };
 
 /** One row as the reader sees it, before any interpretation. */
 export interface StreamRow {
@@ -1023,7 +1048,21 @@ export async function appendEntry(
     };
   }
   if (res.error !== undefined) {
-    return { outcome: 'refused', code: code ?? 0, message: String(res.message ?? res.error) };
+    // Carry the constraint through. See `AppendResult`'s `violations` for why losing it
+    // made an unfetchable shape read exactly like a violated one.
+    const raw = Array.isArray(res['violations']) ? res['violations'] as Record<string, unknown>[] : undefined;
+    const violations = raw?.map(v => ({
+      constraint: String(v['constraint'] ?? ''),
+      message: String(v['message'] ?? ''),
+      ...(v['focusNode'] === undefined ? {} : { focusNode: String(v['focusNode']) }),
+      ...(v['path'] === undefined ? {} : { path: String(v['path']) }),
+    }));
+    return {
+      outcome: 'refused',
+      code: code ?? 0,
+      message: String(res.message ?? res.error),
+      ...(violations && violations.length > 0 ? { violations } : {}),
+    };
   }
 
   const descriptorUrl = String(res.descriptorUrl ?? '');

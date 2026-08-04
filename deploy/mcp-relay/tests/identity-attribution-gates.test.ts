@@ -249,12 +249,23 @@ check('it bounds the hop count',
   /GUARDED_MAX_REDIRECTS/.test(EGRESS) && /too many redirects/.test(EGRESS));
 check('relative Location values are resolved against the current hop',
   /new URL\(loc, target\)/.test(EGRESS));
-// ★ AND THE ADDRESS SCREEN IS ON THE DISPATCHER THE LOOP DIALS THROUGH. This is the
-// property #260/#261 turned on and off; it is MEASURED over a real socket in
-// tests/egress-dns-screen.test.ts, and named here because this is the file a reviewer
-// reads for "what does the egress guard cover".
-check('the public branch dispatches through the address-screening pool',
-  /mode === 'public' \? \{ dispatcher: guardedEgressAgent \}/.test(EGRESS_CODE));
+// ★ AND THE ADDRESS SCREEN IS ELIGIBLE ON THE DISPATCHER THE LOOP DIALS THROUGH — but it
+// is GATED, and this file must not imply otherwise. #260 turned it on and broke every
+// shape-gated publish; #261 unwound it; #263 turned it on again and broke them again,
+// caught by a live probe returning `iep:shapeUnfetchable`. It now sits behind
+// `screenAddresses`, default OFF, so that the one missing measurement can be taken from a
+// real deploy instead of guessed a third time — see `EgressConfig.screenAddresses`.
+//
+// This is a SOURCE-TEXT check, which is the weak kind: a regex exactly like this one was
+// satisfied while the dispatcher was fully detached, and that is how M5 shipped. The real
+// coverage is over a live socket in tests/egress-dns-screen.test.ts, including the DEFAULT
+// being off. What this line is for is the reviewer who reads this file to answer "what
+// does the egress guard cover" — the honest answer is "the name, always; the address, only
+// when RELAY_ADDRESS_SCREEN=1".
+check('the public branch is wired to the address-screening pool, gated by screenAddresses',
+  /mode === 'public' && screenAddresses \? \{ dispatcher: guardedEgressAgent \}/.test(EGRESS_CODE));
+check('and that gate defaults OFF in the relay, so production runs on the NAME screen alone',
+  /screenAddresses:\s*process\.env\['RELAY_ADDRESS_SCREEN'\] === '1'/.test(SERVER));
 
 console.log('\n15. R4 — caller-supplied URLs no longer reach raw solidFetch');
 check('get_descriptor fetches through the guard',

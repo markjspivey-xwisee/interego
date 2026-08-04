@@ -43,6 +43,29 @@ export interface EgressConfig {
   cssUrl: string;
   /** The relay's own public base (AMEP acts loop back through it). '' when unset. */
   publicBaseUrl: string;
+  /**
+   * ★ Attach the address screen to caller-supplied egress. DEFAULT OFF, and the default
+   * is the whole point.
+   *
+   * Wiring this on has now taken shape-gated publish down TWICE — #260, unwound by #261,
+   * and again on the deploy of #263, caught by a direct probe returning
+   * `iep:shapeUnfetchable` and rolled back the same hour. Both times the code was correct
+   * everywhere it could be reproduced (Windows, `node:22-slim`, three independent
+   * attempts) and wrong in the Railway container, whose resolver neither reproduction
+   * could observe from outside Railway.
+   *
+   * So this is a flag rather than a constant because the missing evidence can only be
+   * taken from a real deploy: set `RELAY_ADDRESS_SCREEN=1` on the service, publish one
+   * shape-gated graph, read `cause.code` out of the WARN log — `ERR_EGRESS_PRIVATE_ADDRESS`
+   * confirms the ULA hypothesis at the top of `guardedInvokeFetchLanded`, anything else
+   * refutes it — then turn it off. That is a bounded experiment against the one
+   * environment that has ever disagreed, instead of a third guess shipped to production.
+   *
+   * It is NOT a licence to leave the screen off forever. `assertPublicPodUrl` still
+   * screens the NAME on every request; what is unattached is the ADDRESS half, and the
+   * gap that leaves is measured and stated at `guardedEgressAgent`.
+   */
+  screenAddresses: boolean;
 }
 
 export interface Egress {
@@ -64,7 +87,7 @@ export interface Egress {
 export const GUARDED_MAX_REDIRECTS = 5;
 
 export function createEgress(config: EgressConfig): Egress {
-  const { cssUrl, publicBaseUrl } = config;
+  const { cssUrl, publicBaseUrl, screenAddresses } = config;
 
   // ── Outbound HTTP keep-alive pool ───────────────────────────
   //
@@ -299,7 +322,11 @@ export function createEgress(config: EgressConfig): Egress {
       const r = await solidFetch(target, {
         ...(init as Record<string, unknown>),
         redirect: 'manual',
-        ...(mode === 'public' ? { dispatcher: guardedEgressAgent } : {}),
+        // `screenAddresses` gates the ADDRESS half only, and defaults off — see
+        // `EgressConfig.screenAddresses` for the two outages that made it a flag and for
+        // the one measurement that will settle it. `mode` still decides which pool a
+        // request is ELIGIBLE for, so a pinned target is never screened either way.
+        ...(mode === 'public' && screenAddresses ? { dispatcher: guardedEgressAgent } : {}),
       } as typeof init);
       if (r.status < 300 || r.status >= 400) return { response: r, landedUrl: target };
       // `headers` is optional on the substrate's minimal `FetchResponse`, and this line

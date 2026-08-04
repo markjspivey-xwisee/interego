@@ -244,7 +244,7 @@ describe('★ the address screen is WIRED: a socket, from the far side', () => {
 
       // ── THE PRODUCTION PATH ────────────────────────────────────────────────
       connections = 0;
-      egress = createEgress({ cssUrl: 'https://css.pinned.example/', publicBaseUrl: '' });
+      egress = createEgress({ cssUrl: 'https://css.pinned.example/', publicBaseUrl: '', screenAddresses: true });
       let code: unknown;
       let status: number | undefined;
       try {
@@ -324,7 +324,7 @@ describe('★ the address screen is WIRED: a socket, from the far side', () => {
         cb(null, DEAD[0]!.address, DEAD[0]!.family);
       });
       net.setDefaultAutoSelectFamily(false);
-      egress = createEgress({ cssUrl: 'https://css.pinned.example/', publicBaseUrl: '' });
+      egress = createEgress({ cssUrl: 'https://css.pinned.example/', publicBaseUrl: '', screenAddresses: true });
 
       // ★ ASSERT THE PIN WHERE IT IS OBSERVABLE, NOT THROUGH A SOCKET RACE.
       //
@@ -375,6 +375,44 @@ describe('★ the address screen is WIRED: a socket, from the far side', () => {
     // whether a correct implementation is allowed to report. If this ever approaches the
     // ceiling, the answer is a different unroutable target, never a bigger number.
   }, 45_000);
+
+  /**
+   * ★ THE DEFAULT IS OFF, AND THAT IS A CLAIM ABOUT PRODUCTION, NOT A CONFIG DETAIL.
+   *
+   * Every other test in this block passes `screenAddresses: true`, which is correct —
+   * they are about whether the screen WORKS. None of them says anything about whether it
+   * is switched on, and the relay ships it off (`RELAY_ADDRESS_SCREEN` unset). Without
+   * this test the suite would read as "the address screen is covered" while production
+   * runs without it, which is a milder version of exactly the mistake that let a detached
+   * dispatcher ship green: a green suite standing in for a live property.
+   *
+   * So the gap is pinned rather than implied. When the screen is turned on for good, this
+   * test fails, and its failure is the reminder to state the new default here.
+   */
+  it('DEFAULTS OFF — the address screen is not attached unless asked for', async () => {
+    const restore = setEgressResolverForTests((_h, options, cb) => {
+      if (options['all']) { cb(null, [{ address: '127.0.0.1', family: 4 }]); return; }
+      cb(null, '127.0.0.1', 4);
+    });
+    const egress = createEgress({ cssUrl: 'https://css.pinned.example/', publicBaseUrl: '' , screenAddresses: false });
+    try {
+      let refusedByScreen = false;
+      try {
+        await egress.guardedInvokeFetch('https://loopback.example/shape.ttl', { method: 'GET' });
+      } catch (err) {
+        refusedByScreen = (err as { cause?: { code?: string } }).cause?.code === 'ERR_EGRESS_PRIVATE_ADDRESS';
+      }
+      // The connect fails either way — nothing is listening. What this pins is WHY: with
+      // the screen off, a private address is not what refused it.
+      expect(refusedByScreen,
+        'the address screen fired with screenAddresses:false — the default is no longer off, '
+        + 'so the comment on EgressConfig.screenAddresses and the relay call site are now wrong',
+      ).toBe(false);
+    } finally {
+      restore();
+      await egress.close();
+    }
+  });
 
   /**
    * The pass-through contract, stated directly on the screen: same length, same order,
