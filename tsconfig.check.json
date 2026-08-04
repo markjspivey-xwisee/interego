@@ -67,6 +67,18 @@
     "applications/**/tests/**/*.ts",
     "integrations/**/tests/**/*.ts",
     "mcp-server/tests/**/*.ts",
+    // ★ THE SECURITY GUARDS THAT WERE IN NO TSC PROGRAM AT ALL.
+    //
+    // `applications/*/checks/**` holds the credential-issuer-binding, evidence-pointers and
+    // statement-pagination guards. They are not matched by the `tests/**` globs above, and
+    // not by any bridge tsconfig either — those include `../src/**/*.ts`, and `checks/` is a
+    // SIBLING of `src/`, not a child. CI runs them with `npx tsx`, which strips types.
+    //
+    // Measured: appending `const _probe: number = "not a number";` to
+    // `foxxi-content-intelligence/checks/credential-issuer-binding.check.ts` left
+    // `tools/typecheck-gate.mjs`, every bridge tsc, and the lint gate ALL exit 0. A type
+    // error in the guard that checks credential forgery merged green.
+    "applications/**/checks/**/*.ts",
     // ★ AMBIENT DECLARATIONS. Nothing imports these, so they reach a program by inclusion or
     // not at all — and the globs above only name `.ts` under `tests/`. Each vertical's own
     // bridge tsconfig picks them up incidentally (its `../src/**/*.ts` matches `.d.ts` too),

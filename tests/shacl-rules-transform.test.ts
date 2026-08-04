@@ -43,6 +43,28 @@ ex:Projection a sh:NodeShape ;
             sh:object [ sh:path ex:status ] ] .
 `;
 
+/** The same projection, with the rule switched off. Must infer NOTHING, not everything. */
+const PROJECT_DEACTIVATED_RULE = `${PREFIXES}
+ex:Projection a sh:NodeShape ;
+  sh:targetClass ex:Record ;
+  sh:rule [ a sh:TripleRule ; sh:deactivated true ;
+            sh:subject sh:this ; sh:predicate ex:status ; sh:object [ sh:path ex:status ] ] .
+`;
+
+/** Same again, switched off at the node shape rather than the rule. Same meaning. */
+const PROJECT_DEACTIVATED_SHAPE = `${PREFIXES}
+ex:Projection a sh:NodeShape ;
+  sh:targetClass ex:Record ;
+  sh:deactivated true ;
+  sh:rule [ a sh:TripleRule ;
+            sh:subject sh:this ; sh:predicate ex:status ; sh:object [ sh:path ex:status ] ] .
+`;
+
+/** A shape declaring no rule at all — the ONE case that legitimately means "merge". */
+const PLAIN_MERGE = `${PREFIXES}
+ex:Plain a sh:NodeShape ; sh:targetClass ex:Record ; sh:property [ sh:path ex:status ] .
+`;
+
 describe('runShaclRules — executing sh:TripleRule', () => {
   it('constructs only what the rule declares', () => {
     const run = runShaclRules(RECORD_DATA, PROJECT_STATUS);
@@ -95,19 +117,27 @@ ex:Plain a sh:NodeShape ; sh:targetClass ex:Record ; sh:property [ sh:path ex:st
 `;
     const run = runShaclRules(RECORD_DATA, noRules);
     expect(run.ruleCount).toBe(0);
+    // ★ The number the kernel actually reads. 0 here — and ONLY here — licenses the merge.
+    expect(run.declaredRules).toBe(0);
     expect(run.turtle).toBe('');
   });
 
-  it('honours sh:deactivated on the rule', () => {
-    const off = `${PREFIXES}
-ex:Projection a sh:NodeShape ;
-  sh:targetClass ex:Record ;
-  sh:rule [ a sh:TripleRule ; sh:deactivated true ;
-            sh:subject sh:this ; sh:predicate ex:status ; sh:object [ sh:path ex:status ] ] .
-`;
-    const run = runShaclRules(RECORD_DATA, off);
+  it('honours sh:deactivated on the rule WITHOUT looking like a shape that declares none', () => {
+    const run = runShaclRules(RECORD_DATA, PROJECT_DEACTIVATED_RULE);
     expect(run.ruleCount).toBe(0);
     expect(run.tripleCount).toBe(0);
+    // ★ THE ASSERTION THE OLD TEST WAS MISSING, and its absence is why the leak shipped.
+    // The old test asserted `ruleCount === 0` and stopped — pinning the exact return value
+    // that made `applyReducerStep` union the raw link body. The shape DECLARES a rule; it
+    // is switched off. Those are different facts and the caller needs both.
+    expect(run.declaredRules).toBe(1);
+  });
+
+  it('honours sh:deactivated on the NODE SHAPE the same way', () => {
+    const run = runShaclRules(RECORD_DATA, PROJECT_DEACTIVATED_SHAPE);
+    expect(run.ruleCount).toBe(0);
+    expect(run.declaredRules).toBe(1);
+    expect(run.turtle).toBe('');
   });
 });
 
@@ -148,6 +178,96 @@ ex:P sh:targetClass ex:Record ;
   sh:rule [ a sh:TripleRule ; sh:subject sh:this ; sh:predicate ex:status ; sh:object [ sh:path ex:status ] ] .
 `;
     expect(() => runShaclRules(RECORD_DATA, notAShape)).toThrow(/not a compiled sh:NodeShape/);
+  });
+
+  // ★ THE OFF SWITCH IS NOT A SKIP-THE-CHECKS SWITCH.
+  //
+  // `sh:deactivated` used to `continue` above the well-formedness check (though below the
+  // type check), so the ill-formed fixture two tests up — the one this suite pins as
+  // REFUSED — became silently acceptable the moment its author added one keyword. Combined
+  // with the ruleCount conflation it then folded the ENTIRE link body. Whether a rule is
+  // well-formed is a property of the shape as written, not of whether it is switched on.
+  it('still refuses an ill-formed rule that is ALSO marked sh:deactivated', () => {
+    const badAndOff = `${PREFIXES}
+ex:P a sh:NodeShape ; sh:targetClass ex:Record ;
+  sh:rule [ a sh:TripleRule ; sh:deactivated true ; sh:subject sh:this ; sh:predicate ex:status ] .
+`;
+    expect(() => runShaclRules(RECORD_DATA, badAndOff)).toThrow(/sh:subject, sh:predicate and sh:object/);
+  });
+
+  it('still refuses an ill-formed rule under a DEACTIVATED node shape', () => {
+    const badUnderOffShape = `${PREFIXES}
+ex:P a sh:NodeShape ; sh:targetClass ex:Record ; sh:deactivated true ;
+  sh:rule [ a sh:TripleRule ; sh:subject sh:this ; sh:predicate ex:status ] .
+`;
+    expect(() => runShaclRules(RECORD_DATA, badUnderOffShape)).toThrow(/sh:subject, sh:predicate and sh:object/);
+  });
+
+  it('still refuses an unknown sh: property on a deactivated rule node', () => {
+    const condAndOff = `${PREFIXES}
+ex:P a sh:NodeShape ; sh:targetClass ex:Record ;
+  sh:rule [ a sh:TripleRule ; sh:deactivated true ; sh:condition ex:SomeShape ;
+            sh:subject sh:this ; sh:predicate ex:status ; sh:object [ sh:path ex:status ] ] .
+`;
+    expect(() => runShaclRules(RECORD_DATA, condAndOff)).toThrow(/unsupported/);
+  });
+});
+
+// ── Term resolution: what a rule constructs must be what the rule says ──
+//
+// ★ THESE FORMS DID NOT THROW AND DID NOT CONSTRUCT FEWER TRIPLES. They FABRICATED a
+// wrong one: `asIri` returned undefined for a complex path, `objPath` stayed undefined,
+// and the code fell through to emitting the term itself — putting `_:_anon1`, a blank-node
+// label from the SHAPE document, into the constructed data graph and into the hashed
+// headStateCid the substrate presents as independently verifiable. A triple naming a node
+// that exists in neither graph is worse than a missing triple.
+describe('runShaclRules — refuses fabricating a term it cannot resolve', () => {
+  const PROJECT_WITH = (sPart: string, oPart: string): string => `${PREFIXES}
+ex:P a sh:NodeShape ; sh:targetClass ex:Record ;
+  sh:rule [ a sh:TripleRule ; sh:subject ${sPart} ; sh:predicate ex:status ; sh:object ${oPart} ] .
+`;
+
+  it('throws on a complex sh:path (sh:inversePath) under sh:object', () => {
+    expect(() => runShaclRules(RECORD_DATA, PROJECT_WITH('sh:this', '[ sh:path [ sh:inversePath ex:status ] ]')))
+      .toThrow(/complex sh:path expression/);
+  });
+
+  it('throws on a sequence-path collection under sh:object', () => {
+    expect(() => runShaclRules(RECORD_DATA, PROJECT_WITH('sh:this', '[ sh:path ( ex:status ex:ssn ) ]')))
+      .toThrow(/complex sh:path expression/);
+  });
+
+  it('throws on a blank node with no sh:path at all under sh:object', () => {
+    expect(() => runShaclRules(RECORD_DATA, PROJECT_WITH('sh:this', '[ ex:unrelated "x" ]')))
+      .toThrow(/blank node without sh:path/);
+  });
+
+  it('throws on a blank node with no sh:path under sh:subject', () => {
+    expect(() => runShaclRules(RECORD_DATA, PROJECT_WITH('[ ex:unrelated "x" ]', '"closed"')))
+      .toThrow(/blank node without sh:path/);
+  });
+
+  // ★ SHACL-AF: AN IRI IS ALWAYS A CONSTANT. The value-path lookup used to accept
+  // `oTerm.kind === 'iri'` too and resolve it against every subject in the shape document,
+  // so ONE unrelated triple elsewhere in the same file — `ex:Redacted sh:path ex:ssn .` —
+  // silently converted `sh:object ex:Redacted` from "emit the constant ex:Redacted" into
+  // "emit the values of ex:ssn at the focus node". The rule a reviewer reads was not the
+  // rule that ran, and the divergence leaked in exactly the direction the fix prevents.
+  it('does not let a stray sh:path elsewhere in the shape hijack an IRI constant', () => {
+    const hijack = `${PREFIXES}
+ex:Redacted sh:path ex:ssn .
+ex:P a sh:NodeShape ; sh:targetClass ex:Record ;
+  sh:rule [ a sh:TripleRule ; sh:subject sh:this ; sh:predicate ex:status ; sh:object ex:Redacted ] .
+`;
+    const run = runShaclRules(RECORD_DATA, hijack);
+    expect(run.turtle).toContain('<https://example.org/Redacted>');
+    expect(run.turtle).not.toContain('111-22-3333');
+    // Identical to the same shape without the stray triple — that IS the property.
+    const clean = `${PREFIXES}
+ex:P a sh:NodeShape ; sh:targetClass ex:Record ;
+  sh:rule [ a sh:TripleRule ; sh:subject sh:this ; sh:predicate ex:status ; sh:object ex:Redacted ] .
+`;
+    expect(run.turtle).toBe(runShaclRules(RECORD_DATA, clean).turtle);
   });
 });
 
@@ -198,5 +318,60 @@ ex:Plain a sh:NodeShape ; sh:targetClass ex:Record ; sh:property [ sh:path ex:st
     const projected = await reduce(HEAD, { fetch: f, reducerSpec: { kind: 'shacl-transform', shape: PROJECT_STATUS } });
     const merged = await reduce(HEAD, { fetch: f, reducerSpec: { kind: 'shacl-transform', shape: merge } });
     expect(projected.replayProof.headStateCid).not.toBe(merged.replayProof.headStateCid);
+  });
+
+  // ★ THE LEAK ONE KEYWORD AWAY, AT THE LAYER WHERE IT ACTUALLY BIT.
+  //
+  // `runShaclRules` was tested in isolation, where `ruleCount === 0` is not yet
+  // load-bearing, so the deactivation case looked correct there and was a disclosure here.
+  // These assert the FOLD, which is the thing with the security property.
+  it('a DEACTIVATED projection contributes nothing — it does not fall back to the union', async () => {
+    const result = await reduce(HEAD, {
+      fetch: fetcherFor({ [HEAD]: RECORD_DATA }),
+      reducerSpec: { kind: 'shacl-transform', shape: PROJECT_DEACTIVATED_RULE },
+    });
+    // SHACL-AF: a deactivated rule infers NOTHING. Switching a redaction rule off must
+    // narrow the fold, never widen it back to the raw link body.
+    expect(result.head).not.toContain('111-22-3333');
+    expect(result.head).toBe('');
+  });
+
+  it('a DEACTIVATED node shape contributes nothing either', async () => {
+    const result = await reduce(HEAD, {
+      fetch: fetcherFor({ [HEAD]: RECORD_DATA }),
+      reducerSpec: { kind: 'shacl-transform', shape: PROJECT_DEACTIVATED_SHAPE },
+    });
+    expect(result.head).not.toContain('111-22-3333');
+    expect(result.head).toBe('');
+  });
+
+  it('deactivated-projection, plain-merge and honest-projection are three distinct headStateCids', async () => {
+    const f = fetcherFor({ [HEAD]: RECORD_DATA });
+    const spec = (shape: string) => ({ fetch: f, reducerSpec: { kind: 'shacl-transform' as const, shape } });
+    const off = await reduce(HEAD, spec(PROJECT_DEACTIVATED_RULE));
+    const offShape = await reduce(HEAD, spec(PROJECT_DEACTIVATED_SHAPE));
+    const merged = await reduce(HEAD, spec(PLAIN_MERGE));
+    const projected = await reduce(HEAD, spec(PROJECT_STATUS));
+    // All three used to be ONE CID — the exact "two different shapes, one headStateCid"
+    // failure the projecting-vs-merge test above was written to close, reopened by
+    // `sh:deactivated`. A CID that cannot tell a redaction from a disclosure is not a proof.
+    expect(new Set([
+      off.replayProof.headStateCid,
+      merged.replayProof.headStateCid,
+      projected.replayProof.headStateCid,
+    ]).size).toBe(3);
+    // Off-at-the-rule and off-at-the-shape mean the same thing, so they agree.
+    expect(offShape.replayProof.headStateCid).toBe(off.replayProof.headStateCid);
+  });
+
+  it('an ill-formed shape marked sh:deactivated still REFUSES rather than folding the body', async () => {
+    const badAndOff = `${PREFIXES}
+ex:P a sh:NodeShape ; sh:targetClass ex:Record ;
+  sh:rule [ a sh:TripleRule ; sh:deactivated true ; sh:subject sh:this ; sh:predicate ex:status ] .
+`;
+    await expect(reduce(HEAD, {
+      fetch: fetcherFor({ [HEAD]: RECORD_DATA }),
+      reducerSpec: { kind: 'shacl-transform', shape: badAndOff },
+    })).rejects.toThrow(/could not be executed/);
   });
 });

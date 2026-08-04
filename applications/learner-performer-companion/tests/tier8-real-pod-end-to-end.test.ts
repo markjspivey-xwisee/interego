@@ -44,10 +44,9 @@ import type {
 // ── Config ────────────────────────────────────────────────────────────
 
 // CSS is no longer publicly reachable; route through the public css-gate FQDN.
-// Override with AZURE_CSS_BASE for local CSS or alternate gate deployments.
-const AZURE_CSS_BASE = process.env.AZURE_CSS_BASE ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const TEST_POD_BASE = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;
-const REACHABILITY_TIMEOUT_MS = 8000;
+// ★ The default host was the Azure CSS gate, deliberately destroyed in the Railway move.
+// See applications/_shared/tests/pod-target.ts.
+import { TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, probePod } from '../../_shared/tests/pod-target.js';
 
 // Each test uses its own sub-container so manifest writes don't race
 // with other test files hitting the same pod. CSS auto-creates the
@@ -64,19 +63,6 @@ const MARK_DID = 'did:web:tier8-test.example' as IRI;
 const ARIA_DID = 'did:web:tier8-assistant.example' as IRI;
 
 // ── Reachability + cleanup tracking ──────────────────────────────────
-
-async function isPodReachable(): Promise<boolean> {
-  if (process.env.SKIP_AZURE_TESTS === '1') return false;
-  try {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), REACHABILITY_TIMEOUT_MS);
-    const r = await fetch(TEST_POD_BASE, { signal: ac.signal });
-    clearTimeout(t);
-    return r.ok;
-  } catch {
-    return false;
-  }
-}
 
 const cleanupUrls: string[] = [];
 
@@ -180,16 +166,19 @@ function buildScormZip(uniqueSuffix: string): Buffer {
 
 let podReachable = false;
 
+let skipReason = '';
 beforeAll(async () => {
-  podReachable = await isPodReachable();
+  const availability = await probePod();
+  podReachable = availability.usable;
+  skipReason = availability.reason;
 });
 
 describe('Tier 8 — production end-to-end against real Azure CSS', () => {
   it('reachability probe (skips remaining tests when pod is down)', () => {
     if (!podReachable) {
-      console.warn(`Azure CSS at ${AZURE_CSS_BASE} is unreachable; remaining Tier 8 tests skipped`);
+      console.warn(`LPC Tier 8 skipped — ${skipReason} (host: ${AZURE_CSS_BASE})`);
     }
-    expect(typeof podReachable).toBe('boolean');
+    expect(skipReason).not.toBe('');
   });
 
   it('full production lifecycle: ingest → import → record → record → load → ask → cite → ask-no-data → cleanup', { timeout: 90000 }, async (ctx) => {

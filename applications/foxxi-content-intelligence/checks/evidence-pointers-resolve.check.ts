@@ -57,10 +57,14 @@ check('a refused statement returns null, not its id',
   'returning the id is what made the refusal invisible');
 
 // ── 2. Callers must not report a refused statement as recorded ─────────────
+// `as const` is load-bearing under noUncheckedIndexedAccess: without it TypeScript widens
+// these rows to `string[]`, destructuring yields `string | undefined`, and `split(marker)`
+// has no matching overload. This file was in NO tsc program, so that error sat here
+// undetected while `npx tsx` stripped the types and ran it anyway.
 for (const [label, marker] of [
   ['foxxi.record_performance', 'the performance was not recorded'],
   ['/agent/record-performance', 'the performance was not recorded'],
-]) {
+] as const) {
   const count = server.split(marker).length - 1;
   check(`${label} refuses to claim success when nothing was stored`, count >= 1);
 }

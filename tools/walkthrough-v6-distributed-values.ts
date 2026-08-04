@@ -43,7 +43,6 @@ const AGGREGATOR = 'did:web:operator.v6-demo' as IRI;
 const L_V6 = 7237005577332262213973186563042994240857116359379907606001950938285454250989n;
 
 function header(t: string): void { console.log('\n' + '─'.repeat(72)); console.log(t); console.log('─'.repeat(72)); }
-function step(n: number, t: string): void { console.log(`\n  [${n}] ${t}`); }
 function ok(t: string): void { console.log(`      ✓ ${t}`); }
 function info(t: string): void { console.log(`      · ${t}`); }
 

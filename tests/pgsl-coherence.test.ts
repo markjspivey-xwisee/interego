@@ -80,8 +80,11 @@ describe('Coherence Verification', () => {
       expect(cert.semanticProfile.length).toBeGreaterThan(0);
       for (const profile of cert.semanticProfile) {
         expect(profile.atom).toBeTruthy();
-        expect(profile.usagesA).toBeGreaterThanOrEqual(0);
-        expect(profile.usagesB).toBeGreaterThanOrEqual(0);
+        // ★ `usages >= 0` is vacuous — a usage COUNT cannot be negative, so both lines
+        // passed on a profile where the atom appeared in neither lattice. An atom only
+        // reaches the semantic profile by being used, so at least one side must be non-zero.
+        // (The `overlap` bounds below are a genuine [0,1] range check and stay as they are.)
+        expect(profile.usagesA + profile.usagesB).toBeGreaterThan(0);
         expect(profile.overlap).toBeGreaterThanOrEqual(0);
         expect(profile.overlap).toBeLessThanOrEqual(1);
       }

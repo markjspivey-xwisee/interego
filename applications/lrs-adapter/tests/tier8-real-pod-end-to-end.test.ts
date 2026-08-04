@@ -42,9 +42,9 @@ const SCORM_CLOUD_KEY = process.env['SCORM_CLOUD_KEY'];
 const SCORM_CLOUD_SECRET = process.env['SCORM_CLOUD_SECRET'];
 
 // CSS is no longer publicly reachable; route through the public css-gate FQDN.
-// Override with AZURE_CSS_BASE for local CSS or alternate gate deployments.
-const AZURE_CSS_BASE = process.env.AZURE_CSS_BASE ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const TEST_POD_BASE = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;
+// ★ The default host was the Azure CSS gate, deliberately destroyed in the Railway move.
+// See applications/_shared/tests/pod-target.ts.
+import { TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, probePod } from '../../_shared/tests/pod-target.js';
 
 const USER_DID = 'did:web:lrs-tier8.example' as IRI;
 
@@ -68,14 +68,7 @@ async function lrsqlReachable(): Promise<boolean> {
 }
 
 async function podReachable(): Promise<boolean> {
-  if (process.env.SKIP_AZURE_TESTS === '1') return false;
-  try {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 8000);
-    const r = await fetch(TEST_POD_BASE, { signal: ac.signal });
-    clearTimeout(t);
-    return r.ok;
-  } catch { return false; }
+  return (await probePod()).usable;
 }
 
 const cleanupUrls: string[] = [];

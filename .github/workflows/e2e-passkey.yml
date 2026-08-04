@@ -23,27 +23,12 @@ concurrency:
   group: e2e-passkey-${{ github.ref }}
   cancel-in-progress: true
 
+# The identity UNIT tests used to live here as a second job. They now have their own
+# push/PR-triggered workflow (.github/workflows/identity-tests.yml), because this file is
+# dispatch-only and a unit test that only runs when someone remembers to click Run is not a
+# gate. Only the live-deployment Playwright job — which genuinely cannot run before a
+# deploy — is dispatch-only now.
 jobs:
-  identity-unit:
-    name: Identity unit tests (WebFinger)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node 20
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-
-      - name: Install workspace deps
-        run: npm ci --no-audit --no-fund
-
-      - name: Run identity unit tests
-        run: npm test --workspace @interego/identity
-
   playwright:
     name: Passkey OAuth (Playwright, virtual authenticator)
     runs-on: ubuntu-latest

@@ -63,7 +63,9 @@ const SH_MESSAGE = `${SHACL}message` as IRI;
 const SH_IN = `${SHACL}in` as IRI;
 const SH_CLOSED = `${SHACL}closed` as IRI;
 const SH_SPARQL = `${SHACL}sparql` as IRI;
-const SH_REIFIER_SHAPE = `${SHACL}reifierShape` as IRI;
+// sh:reifierShape needs no constant: it is absent from IMPLEMENTED_SHACL_PREDICATES, so the
+// allowlist sweep reports it like any other construct this engine cannot run. That is the
+// point of an allowlist — a term stops needing to be named individually to be caught.
 const SH_REIFICATION_REQUIRED = `${SHACL}reificationRequired` as IRI;
 const SH_NODE = `${SHACL}node` as IRI;
 const SH_QUALIFIED_VALUE_SHAPE = `${SHACL}qualifiedValueShape` as IRI;
@@ -86,6 +88,68 @@ const SH_DISJOINT = `${SHACL}disjoint` as IRI;
 const SH_LESS_THAN = `${SHACL}lessThan` as IRI;
 const SH_LESS_THAN_OR_EQUALS = `${SHACL}lessThanOrEquals` as IRI;
 const SH_IGNORED_PROPERTIES = `${SHACL}ignoredProperties` as IRI;
+
+/**
+ * ★ EVERY sh: PREDICATE THIS ENGINE ACTUALLY HONOURS — an ALLOWLIST, deliberately, because
+ * the denylist it replaced failed OPEN.
+ *
+ * `fullyChecked` was lowered by exactly three hard-coded probes (sh:sparql, sh:reifierShape,
+ * a blank-node sh:path) — the three someone had happened to notice. The SHACL **Core**
+ * logical constraint components `sh:not` / `sh:or` / `sh:and` / `sh:xone` are not
+ * implemented by this engine at all and had no constant in this file, so they were parsed,
+ * ignored, and never reported. Measured: a graph that VIOLATES a `sh:not` returned
+ * `conforms: true, fullyChecked: true` — the documented fail-closed predicate
+ * `conforms && fullyChecked` accepting the one graph the shape exists to reject — while
+ * `sh:datatype` on the identical data and target fired a Violation, proving the shape did
+ * select the focus node. `unsupportedConstructs: 'violation'`, the strictest mode offered,
+ * did not help: it only escalated the same three notes.
+ *
+ * A denylist has to be edited every time the spec grows and is silent when it is not. This
+ * list is the inverse: anything sh:-namespaced and absent from it is REPORTED. The same
+ * discipline `TRIPLE_RULE_KNOWN` uses for rule nodes, applied to constraints.
+ */
+const IMPLEMENTED_SHACL_PREDICATES: ReadonlySet<string> = new Set<string>([
+  // targets
+  SH_TARGET_CLASS, SH_TARGET_NODE, SH_TARGET_SUBJECTS_OF, SH_TARGET_OBJECTS_OF,
+  // structure
+  SH_PROPERTY, SH_PATH, SH_NODE, SH_QUALIFIED_VALUE_SHAPE,
+  SH_QUALIFIED_MIN_COUNT, SH_QUALIFIED_MAX_COUNT,
+  SH_CLOSED, SH_IGNORED_PROPERTIES, SH_DEACTIVATED, SH_SEVERITY, SH_MESSAGE,
+  // cardinality + value type
+  SH_MIN_COUNT, SH_MAX_COUNT, SH_DATATYPE, SH_NODE_KIND, SH_CLASS,
+  // value range
+  SH_MIN_INCLUSIVE, SH_MAX_INCLUSIVE, SH_MIN_EXCLUSIVE, SH_MAX_EXCLUSIVE,
+  // string
+  SH_MIN_LENGTH, SH_MAX_LENGTH, SH_PATTERN, SH_LANGUAGE_IN, SH_UNIQUE_LANG,
+  // value enumeration
+  SH_IN, SH_HAS_VALUE,
+  // property pairs
+  SH_EQUALS, SH_DISJOINT, SH_LESS_THAN, SH_LESS_THAN_OR_EQUALS,
+  // SHACL-AF rules — executed by runShaclRules, which refuses every form it cannot run
+  `${SHACL}rule`, `${SHACL}subject`, `${SHACL}predicate`, `${SHACL}object`,
+]);
+
+/**
+ * sh: predicates that constrain NOTHING, so ignoring one skips no check and must not lower
+ * `fullyChecked`. Two groups:
+ *
+ *   1. SHACL's own non-validating characteristics (§ "Non-Validating Property Shape
+ *      Characteristics") — documentation and UI ordering.
+ *   2. The interior of a `sh:sparql` constraint node (sh:select / sh:ask / sh:prefixes and
+ *      the prefix-declaration vocabulary). The ENCLOSING `sh:sparql` is already reported as
+ *      unsupported; reporting its parts again would be the same gap counted five times,
+ *      and `docs/ns/iep-shapes.ttl` carries enough of them to bury the real findings.
+ */
+const NON_VALIDATING_SHACL_PREDICATES: ReadonlySet<string> = new Set<string>([
+  `${SHACL}name`, `${SHACL}description`, `${SHACL}order`, `${SHACL}group`,
+  `${SHACL}defaultValue`, `${SHACL}labelTemplate`,
+  `${SHACL}select`, `${SHACL}ask`, `${SHACL}prefixes`,
+  `${SHACL}declare`, `${SHACL}prefix`, `${SHACL}namespace`,
+  // Value-sensitive: reported explicitly below rather than by absence, because
+  // `sh:reificationRequired false` requires nothing and two thirds of the shapes in
+  // docs/ns/iep-shapes-1.2.ttl are exactly that.
+  SH_REIFICATION_REQUIRED,
+]);
 
 const RDF_FIRST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first' as IRI;
 const RDF_REST  = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest'  as IRI;
@@ -808,7 +872,20 @@ function evaluatePropertyShape(
   if (ps.deactivated) return results;
   const values = focus.properties.get(ps.path) ?? [];
   const focusNode = subjectKey(focus);
-  /** Severity for THIS shape: the property shape's own, else the node shape's. */
+  /**
+   * Severity for THIS shape: the property shape's own, else the node shape's.
+   *
+   * ★ EVERY constraint component below must use this. Eight of them — minCount, maxCount,
+   * nodeKind, datatype, class, pattern, in, hasValue, i.e. the oldest and by far the most
+   * used half of the engine — hardcoded `severity: 'Violation'` while the twelve newer ones
+   * routed through here. So `sh:severity sh:Info` on a property shape was honoured or
+   * ignored depending on which constraint you happened to write under it, and an author who
+   * downgraded a check watched it keep failing the gate. Measured: `sh:datatype` under
+   * `sh:severity sh:Info` reported Violation and flipped `conforms` to false.
+   *
+   * That split is also why the unsupported-construct cap below could not be believed: it
+   * promised to respect a severity the engine itself only half respected.
+   */
   const sev: ShaclSeverity = ps.severity ?? shape.severity;
   const fail = (path: IRI, component: string, message: string, value?: ParsedTerm): void => {
     results.push({
@@ -959,7 +1036,7 @@ function evaluatePropertyShape(
       path: ps.path,
       sourceShape: shape.id,
       constraintComponent: `${SHACL}MinCountConstraintComponent`,
-      severity: 'Violation',
+      severity: sev,
       message: ps.message ?? `Value count ${values.length} is below sh:minCount ${ps.minCount} for ${ps.path}`,
     });
   }
@@ -969,7 +1046,7 @@ function evaluatePropertyShape(
       path: ps.path,
       sourceShape: shape.id,
       constraintComponent: `${SHACL}MaxCountConstraintComponent`,
-      severity: 'Violation',
+      severity: sev,
       message: ps.message ?? `Value count ${values.length} exceeds sh:maxCount ${ps.maxCount} for ${ps.path}`,
     });
   }
@@ -982,7 +1059,7 @@ function evaluatePropertyShape(
         value: termValue(v),
         sourceShape: shape.id,
         constraintComponent: `${SHACL}NodeKindConstraintComponent`,
-        severity: 'Violation',
+        severity: sev,
         message: ps.message ?? `Value does not match sh:nodeKind ${ps.nodeKind}`,
       });
     }
@@ -993,7 +1070,7 @@ function evaluatePropertyShape(
         value: termValue(v),
         sourceShape: shape.id,
         constraintComponent: `${SHACL}DatatypeConstraintComponent`,
-        severity: 'Violation',
+        severity: sev,
         message: ps.message ?? `Value does not match sh:datatype ${ps.datatype}`,
       });
     }
@@ -1004,7 +1081,7 @@ function evaluatePropertyShape(
         value: termValue(v),
         sourceShape: shape.id,
         constraintComponent: `${SHACL}ClassConstraintComponent`,
-        severity: 'Violation',
+        severity: sev,
         message: ps.message ?? `Value is not an instance of sh:class ${ps.clazz}`,
       });
     }
@@ -1034,7 +1111,7 @@ function evaluatePropertyShape(
             value: termValue(v),
             sourceShape: shape.id,
             constraintComponent: `${SHACL}PatternConstraintComponent`,
-            severity: 'Violation',
+            severity: sev,
             message: ps.message ?? `Value does not match sh:pattern /${ps.pattern}/`,
           });
         }
@@ -1050,7 +1127,7 @@ function evaluatePropertyShape(
           value: termValue(v),
           sourceShape: shape.id,
           constraintComponent: `${SHACL}InConstraintComponent`,
-          severity: 'Violation',
+          severity: sev,
           message: ps.message ?? `Value is not in the sh:in enumeration`,
         });
       }
@@ -1065,7 +1142,7 @@ function evaluatePropertyShape(
         path: ps.path,
         sourceShape: shape.id,
         constraintComponent: `${SHACL}HasValueConstraintComponent`,
-        severity: 'Violation',
+        severity: sev,
         message: ps.message ?? `Required sh:hasValue ${termValue(ps.hasValue)} is missing`,
       });
     }
@@ -1291,25 +1368,51 @@ export function validateAgainstShape(
   // its owner's. These are the same three predicates compileShapes traverses, so every
   // subject reachable here is a subject that was compiled.
   const ownerSeverity = new Map<string, ShaclSeverity>();
+  /** Strictness order, so "the stricter of" and "capped at" are one comparison. */
+  const SEVERITY_RANK: Readonly<Record<ShaclSeverity, number>> = { Info: 0, Warning: 1, Violation: 2 };
+  const stricter = (a: ShaclSeverity, b: ShaclSeverity): ShaclSeverity =>
+    SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b;
+  const laxer = (a: ShaclSeverity, b: ShaclSeverity): ShaclSeverity =>
+    SEVERITY_RANK[a] <= SEVERITY_RANK[b] ? a : b;
+  /** `sh:severity` declared on ANY subject, not just the ones that compiled to node shapes. */
+  const declaredOn = (key: string): ShaclSeverity | undefined => {
+    const subj = subjectsByKey.get(key);
+    if (!subj) return undefined;
+    const iri = asIri(subj.properties.get(SH_SEVERITY)?.[0]);
+    return iri === `${SHACL}Warning` ? 'Warning'
+      : iri === `${SHACL}Info` ? 'Info'
+      : iri === `${SHACL}Violation` ? 'Violation' : undefined;
+  };
   for (const rootId of liveShapeIds) {
     const rootSeverity = declaredSeverity.get(rootId) ?? 'Violation';
-    const stack: string[] = [rootId];
+    // ★ THE CAP HAD TO BE CARRIED DOWN, NOT STAMPED. This walk used to write
+    // `ownerSeverity.set(key, rootSeverity)` for every reachable subject, so the severity
+    // applied was always the ROOT node shape's and never the shape actually carrying the
+    // construct. A nested property shape its author explicitly downgraded with
+    // `sh:severity sh:Info` was promoted to Violation whenever the enclosing node shape
+    // declared none (default Violation) — the exact over-enforcement the doc comment on
+    // `unsupportedConstructs` says cannot happen. The existing test passed only because it
+    // put `sh:severity` on the ROOT, the one position where root and carrier coincide.
+    const stack: Array<readonly [string, ShaclSeverity]> = [[rootId, rootSeverity]];
     const seen = new Set<string>();
     while (stack.length > 0) {
-      const key = stack.pop()!;
+      const [key, inherited] = stack.pop()!;
       if (seen.has(key)) continue;
       seen.add(key);
+      // A shape cannot be made STRICTER by its parent: `sh:severity sh:Info` on this
+      // subject caps it at Info however the enclosing shape is marked. Absent its own
+      // declaration it inherits.
+      const own = declaredOn(key);
+      const effective = own === undefined ? inherited : laxer(inherited, own);
       // Reachable from two live shapes ⇒ unenforceable for both ⇒ the stricter one decides.
       const prior = ownerSeverity.get(key);
-      if (prior === undefined || (prior !== 'Violation' && rootSeverity === 'Violation')) {
-        ownerSeverity.set(key, rootSeverity);
-      }
+      ownerSeverity.set(key, prior === undefined ? effective : stricter(prior, effective));
       const subj = subjectsByKey.get(key);
       if (!subj) continue;
       for (const pred of [SH_PROPERTY, SH_NODE, SH_QUALIFIED_VALUE_SHAPE]) {
         for (const t of subj.properties.get(pred) ?? []) {
           const k = refKey(t);
-          if (k !== undefined) stack.push(k);
+          if (k !== undefined) stack.push([k, effective]);
         }
       }
     }
@@ -1343,21 +1446,36 @@ export function validateAgainstShape(
   };
   for (const subj of shapeDoc.subjects) {
     const id = subjectKey(subj);
-    if (subj.properties.has(SH_SPARQL)) {
-      noteUnsupported(id, 'sh:sparql', 'the SPARQL constraint was skipped entirely');
+    // ★ THE ALLOWLIST SWEEP. Every sh:-namespaced predicate on this shape that the engine
+    // does not honour is reported — including the ones nobody has thought of yet. This is
+    // what makes `sh:not` / `sh:or` / `sh:and` / `sh:xone` visible; they were previously
+    // parsed, dropped, and reported by nothing, so a graph violating a sh:not prohibition
+    // came back conforms:true, fullyChecked:true.
+    for (const p of subj.properties.keys()) {
+      if (!p.startsWith(SHACL)) continue;
+      if (IMPLEMENTED_SHACL_PREDICATES.has(p)) continue;
+      if (NON_VALIDATING_SHACL_PREDICATES.has(p)) continue;
+      noteUnsupported(
+        id,
+        `sh:${p.slice(SHACL.length)}`,
+        p === SH_SPARQL
+          ? 'the SPARQL constraint was skipped entirely'
+          : 'the constraint was not evaluated',
+      );
     }
     // `sh:reificationRequired false` on its own REQUIRES nothing, so ignoring it skips
     // nothing — and two of the three shapes in docs/ns/iep-shapes-1.2.ttl are exactly
-    // that. Only a reifier shape (constraints on the annotation) or an explicit `true`
-    // is a real gap.
+    // that. Only an explicit `true` is a real gap, which is why this one predicate is
+    // value-sensitive instead of being caught by its absence from the allowlist above.
+    // (`sh:reifierShape` is NOT in either list, so the sweep already reports it.)
     const reifRequired = subj.properties.get(SH_REIFICATION_REQUIRED)?.[0];
-    if (subj.properties.has(SH_REIFIER_SHAPE)
-      || (reifRequired?.kind === 'literal' && reifRequired.value === 'true')) {
-      noteUnsupported(id, 'sh:reifierShape / sh:reificationRequired', 'RDF 1.2 reification constraints were skipped');
+    if (reifRequired?.kind === 'literal' && reifRequired.value === 'true') {
+      noteUnsupported(id, 'sh:reificationRequired true', 'RDF 1.2 reification constraints were skipped');
     }
-    // A complex path expression is a blank node under sh:path. compilePropertyShape
-    // returns null for these, so the WHOLE property shape silently vanishes — the most
-    // dangerous of the three, because the omission is not visible in the shape at all.
+    // A complex path expression is a blank node under sh:path. sh:path IS implemented — for
+    // a single predicate — so the allowlist cannot see this one: it is the VALUE that is
+    // out of range, not the term. compilePropertyShape returns null for these, so the WHOLE
+    // property shape silently vanishes, and the omission is not visible in the shape at all.
     const pathTerm = subj.properties.get(SH_PATH)?.[0];
     if (pathTerm && pathTerm.kind === 'bnode') {
       noteUnsupported(id, 'a complex sh:path expression', 'the entire property shape was dropped');
@@ -1394,6 +1512,17 @@ export function validateAgainstShape(
 //  returning fewer triples: a rule engine that silently skips a rule
 //  reports "0 constructed" for "I refused to look", and the kernel's
 //  reduce verb cannot tell those apart.
+//
+//  ★ AND THE REFUSALS ARE EVALUATED ON THE SHAPE AS WRITTEN, not on
+//  the shape as switched on. `sh:deactivated` used to `continue` above
+//  the well-formedness checks (though below the type checks), so the
+//  ill-formed rule this engine refuses became acceptable the moment its
+//  author added `sh:deactivated true` — and, because the old
+//  `ruleCount` could not distinguish "declared no rules" from "declared
+//  rules, all off", the kernel then folded the entire link body. One
+//  keyword turned a redaction reducer into a full disclosure. Structure
+//  is checked first; the off switch is consulted last and only decides
+//  whether the rule EMITS.
 // ═══════════════════════════════════════════════════════════════
 
 const SH_RULE = `${SHACL}rule` as IRI;
@@ -1418,11 +1547,27 @@ const TRIPLE_RULE_KNOWN: ReadonlySet<string> = new Set<string>([
 
 export interface ShaclRuleRun {
   /**
-   * Number of sh:rule nodes actually executed. 0 means the shape declares NO rule — the
-   * caller may then treat the shape as a merge declaration. It never means "rules were
-   * present but skipped"; every skip path in this function throws instead.
+   * Number of sh:rule nodes actually EXECUTED. Strictly `<= declaredRules`; the difference
+   * is the rules switched off with `sh:deactivated`.
+   *
+   * ★ DO NOT USE THIS TO DETECT "the shape declares no rule" — that is `declaredRules`, and
+   * conflating the two was a disclosure. `applyReducerStep` keyed its merge fallback on
+   * `ruleCount === 0`, so adding ONE triple — `sh:deactivated true` — to a projecting
+   * redaction reducer made it indistinguishable from a shape with no rules at all, and the
+   * fold emitted the entire link body: measured, `ex:ssn "111-22-3333"` back in the head,
+   * under the identical headStateCid as the plain-merge shape. Switching a redaction rule
+   * OFF must not turn a projection into a full disclosure.
    */
   readonly ruleCount: number;
+  /**
+   * Number of well-formed sh:rule nodes the shape DECLARES, counted before
+   * `sh:deactivated` is consulted. 0 — and only 0 — means the shape declares no rule at
+   * all, so a caller may treat it as a merge declaration.
+   *
+   * SHACL-AF says a deactivated rule infers NOTHING, so `declaredRules > 0` with
+   * `ruleCount === 0` means "contribute the empty set", never "contribute everything".
+   */
+  readonly declaredRules: number;
   readonly tripleCount: number;
   /** Constructed triples, deduped and sorted, as full-IRI Turtle. */
   readonly turtle: string;
@@ -1480,7 +1625,7 @@ export function runShaclRules(dataSrc: string, shapeSrc: string): ShaclRuleRun {
   // No sh:rule anywhere: there is no transform to run. Report 0 and let the caller decide
   // (reduce treats it as a merge declaration). Parsing the data graph would be wasted work
   // and could throw on a shape that never intended to transform anything.
-  if (ruleBearing.length === 0) return { ruleCount: 0, tripleCount: 0, turtle: '' };
+  if (ruleBearing.length === 0) return { ruleCount: 0, declaredRules: 0, tripleCount: 0, turtle: '' };
 
   let dataDoc: ParsedDocument;
   try {
@@ -1495,6 +1640,59 @@ export function runShaclRules(dataSrc: string, shapeSrc: string): ShaclRuleRun {
 
   const lines: string[] = [];
   let ruleCount = 0;
+  let declaredRules = 0;
+
+  /**
+   * Resolve a `sh:subject` / `sh:object` term into either a VALUE PATH (the values of a
+   * predicate at the focus node) or a CONSTANT, refusing every form in between.
+   *
+   * ★ SHACL-AF: an IRI is ALWAYS a constant. Only a blank node bearing `sh:path` is a
+   * value path. Applying the value-path lookup to IRIs too — which is what this did —
+   * resolved the constant against every subject in the shape document, so one unrelated
+   * `ex:Redacted sh:path ex:ssn .` triple anywhere in the same file silently converted
+   * `sh:object ex:Redacted` from "emit the constant" into "emit the SSN". Measured: the
+   * rule a reviewer reads emitted `<r1> ex:status "111-22-3333"`. The rule that runs must
+   * be the rule that is written.
+   *
+   * ★ AND A BLANK NODE IS NEVER A CONSTANT HERE. `asIri` returned undefined for a complex
+   * path (`sh:inversePath`, a sequence collection) and for a bnode carrying no `sh:path`
+   * at all, and the code then fell through to emitting the term itself — fabricating
+   * `_:_anon1`, a SHAPE-GRAPH blank-node label, into the constructed data graph and into
+   * the hashed headStateCid. That is worse than constructing fewer triples: it is a triple
+   * pointing at a node that exists in neither graph, presented as independently verifiable.
+   * It is also the cross-document identifier collision this function is careful to avoid
+   * for @prefix and was not avoiding for `_:`. Every such form now throws.
+   */
+  const resolveRuleTerm = (
+    term: ParsedTerm,
+    role: 'sh:subject' | 'sh:object',
+    shapeId: string,
+  ): { readonly path: IRI } | { readonly constant: ParsedTerm } => {
+    if (term.kind !== 'bnode') return { constant: term };
+    const k = refKey(term);
+    const node = k === undefined ? undefined : nodesByKey.get(k);
+    if (!node) {
+      throw new ShaclRuleError(
+        `${role} on <${shapeId}> is a blank node that declares nothing; `
+        + 'a blank node is only meaningful here as [ sh:path <predicate> ]',
+      );
+    }
+    const pathTerm = getOne(node, SH_PATH);
+    if (!pathTerm) {
+      throw new ShaclRuleError(
+        `${role} on <${shapeId}> is a blank node without sh:path; `
+        + 'a blank node is only meaningful here as [ sh:path <predicate> ]',
+      );
+    }
+    const pathIri = asIri(pathTerm);
+    if (!pathIri) {
+      throw new ShaclRuleError(
+        `${role} on <${shapeId}> declares a complex sh:path expression `
+        + '(inverse, sequence or alternative); this engine evaluates single-predicate paths only',
+      );
+    }
+    return { path: pathIri };
+  };
 
   for (const shapeSubj of ruleBearing) {
     const compiled = ruleById.get(subjectKey(shapeSubj));
@@ -1506,8 +1704,16 @@ export function runShaclRules(dataSrc: string, shapeSrc: string): ShaclRuleRun {
         `sh:rule declared on <${subjectKey(shapeSubj)}> which is not a compiled sh:NodeShape`,
       );
     }
-    if (compiled.deactivated) continue; // sh:deactivated is the author's own off switch
-    const focus = findFocusNodes(dataDoc, compiled);
+    // ★ THE OFF SWITCH IS NOT A SKIP-THE-CHECKS SWITCH. `sh:deactivated` used to `continue`
+    // here, ABOVE every structural check below, so `sh:deactivated true` on the node shape
+    // also bypassed the refusal guard: the ill-formed rule the suite pins as REFUSED became
+    // silently acceptable, and — via the ruleCount conflation — folded the whole link body.
+    // Whether a rule is well-formed is a property of the shape as written; whether it runs
+    // is a separate question, answered further down.
+    const shapeOff = compiled.deactivated;
+    // Focus nodes are only needed to EMIT. Computing them for a switched-off shape is
+    // wasted work over a data graph the rules will never read.
+    const focus = shapeOff ? [] : findFocusNodes(dataDoc, compiled);
     for (const ruleRef of shapeSubj.properties.get(SH_RULE) ?? []) {
       const key = refKey(ruleRef);
       const ruleNode = key === undefined ? undefined : nodesByKey.get(key);
@@ -1530,9 +1736,6 @@ export function runShaclRules(dataSrc: string, shapeSrc: string): ShaclRuleRun {
           throw new ShaclRuleError(`sh:TripleRule on <${compiled.id}> declares unsupported ${p}`);
         }
       }
-      const deact = getOne(ruleNode, SH_DEACTIVATED);
-      if (deact?.kind === 'literal' && deact.value === 'true') continue;
-      ruleCount++;
       const sTerm = getOne(ruleNode, SH_SUBJECT);
       const pTerm = getOne(ruleNode, SH_PREDICATE);
       const oTerm = getOne(ruleNode, SH_OBJECT);
@@ -1547,32 +1750,33 @@ export function runShaclRules(dataSrc: string, shapeSrc: string): ShaclRuleRun {
       const pIri = asIri(pTerm);
       if (!pIri) throw new ShaclRuleError(`sh:predicate on <${compiled.id}> must be an IRI`);
       // sh:object may be a constant term OR `[ sh:path <p> ]`, which means "the values of
-      // <p> at the focus node".
-      let objPath: IRI | undefined;
-      if (oTerm.kind === 'bnode' || oTerm.kind === 'iri') {
-        const k = refKey(oTerm);
-        const objNode = k === undefined ? undefined : nodesByKey.get(k);
-        const pathIri = objNode ? asIri(getOne(objNode, SH_PATH)) : undefined;
-        if (pathIri) objPath = pathIri;
-      }
-      let subjPath: IRI | undefined;
+      // <p> at the focus node". resolveRuleTerm refuses every other form; see its comment.
       const sIsThis = sTerm.kind === 'iri' && sTerm.iri === SH_THIS;
-      if (!sIsThis && (sTerm.kind === 'bnode' || sTerm.kind === 'iri')) {
-        const k = refKey(sTerm);
-        const sNode = k === undefined ? undefined : nodesByKey.get(k);
-        const pathIri = sNode ? asIri(getOne(sNode, SH_PATH)) : undefined;
-        if (pathIri) subjPath = pathIri;
-      }
+      const oIsThis = oTerm.kind === 'iri' && oTerm.iri === SH_THIS;
+      const sResolved = sIsThis ? undefined : resolveRuleTerm(sTerm, 'sh:subject', compiled.id);
+      const oResolved = oIsThis ? undefined : resolveRuleTerm(oTerm, 'sh:object', compiled.id);
+
+      // ★ COUNTED HERE — after every structural check, before the off switch. This is what
+      // tells `applyReducerStep` "this shape is a transform, not a merge declaration", and
+      // it must stay true of a transform whose rules are switched off.
+      declaredRules++;
+      const deact = getOne(ruleNode, SH_DEACTIVATED);
+      const ruleOff = deact?.kind === 'literal' && deact.value === 'true';
+      // SHACL-AF: a deactivated rule infers NOTHING. It contributes no triples — which,
+      // with declaredRules already incremented, the caller reads as the empty set rather
+      // than as a licence to union the raw body.
+      if (shapeOff || ruleOff) continue;
+      ruleCount++;
       for (const f of focus) {
         const subjects: ParsedTerm[] = sIsThis
           ? [ruleSubjectTerm(f)]
-          : subjPath
-            ? [...getAll(f, subjPath)]
+          : sResolved && 'path' in sResolved
+            ? [...getAll(f, sResolved.path)]
             : [sTerm];
-        const objects: ParsedTerm[] = objPath
-          ? [...getAll(f, objPath)]
-          : oTerm.kind === 'iri' && oTerm.iri === SH_THIS
-            ? [ruleSubjectTerm(f)]
+        const objects: ParsedTerm[] = oIsThis
+          ? [ruleSubjectTerm(f)]
+          : oResolved && 'path' in oResolved
+            ? [...getAll(f, oResolved.path)]
             : [oTerm];
         for (const s of subjects) {
           if (s.kind === 'literal') continue; // a literal cannot be a subject
@@ -1585,5 +1789,5 @@ export function runShaclRules(dataSrc: string, shapeSrc: string): ShaclRuleRun {
   }
 
   const unique = [...new Set(lines)].sort();
-  return { ruleCount, tripleCount: unique.length, turtle: unique.join('\n') };
+  return { ruleCount, declaredRules, tripleCount: unique.length, turtle: unique.join('\n') };
 }

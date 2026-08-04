@@ -35,8 +35,9 @@ import type {
   IRI,
 } from '@interego/core';
 
-const AZURE_CSS_BASE = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const TEST_POD_BASE = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;
+// ★ The default host was the Azure CSS gate, deliberately destroyed in the Railway move.
+// See applications/_shared/tests/pod-target.ts.
+import { TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, probePod } from '../../_shared/tests/pod-target.js';
 
 function uniquePodUrl(): string {
   return `${TEST_POD_BASE}adp-tier8-${Date.now()}-${Math.random().toString(36).slice(2, 8)}/`;
@@ -65,23 +66,17 @@ async function cleanup(): Promise<void> {
   }
 }
 
-async function isPodReachable(): Promise<boolean> {
-  if (process.env.SKIP_AZURE_TESTS === '1') return false;
-  try {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 8000);
-    const r = await fetch(TEST_POD_BASE, { signal: ac.signal });
-    clearTimeout(t);
-    return r.ok;
-  } catch { return false; }
-}
-
 let reachable = false;
-beforeAll(async () => { reachable = await isPodReachable(); });
+let skipReason = '';
+beforeAll(async () => {
+  const availability = await probePod();
+  reachable = availability.usable;
+  skipReason = availability.reason;
+});
 
 describe('Tier 8 — agent-development-practice production end-to-end', () => {
   it('reachability probe', () => {
-    if (!reachable) console.warn('Azure CSS unreachable; ADP Tier 8 skipped');
+    if (!reachable) console.warn(`ADP Tier 8 skipped — ${skipReason} (host: ${AZURE_CSS_BASE})`);
     expect(typeof reachable).toBe('boolean');
   });
 

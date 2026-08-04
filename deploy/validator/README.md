@@ -5,6 +5,17 @@ federation as a first-class `iep:AuthorizedAgent` (role `Validator`) rather
 than acting as an out-of-band gatekeeper. See `spec/LAYERS.md` — this is a
 Layer 3 reference implementation; the protocol does not mandate it.
 
+> **This package has no tests, and that is a stated position rather than an
+> oversight.** `package.json` declares `build` and `start` and no `test`; no
+> vitest `include` glob reaches `deploy/validator/`, and no workflow runs
+> anything here. It is also not built into any image — it is absent from
+> `build-ghcr.yml` — so nothing in the live fleet runs this code.
+>
+> It is a reference sketch for operators who want to wire their own SHACL
+> engine in. If it ever becomes a deployed service, it needs a test script and
+> a workflow before it ships, not after. Recorded here so "no test script" is
+> a decision someone can disagree with rather than a gap that reads as green.
+
 ## Bring your own SHACL engine
 
 This container runs **no SHACL engine in-process** and has **no RDF or SHACL

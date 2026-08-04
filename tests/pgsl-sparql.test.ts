@@ -222,19 +222,22 @@ describe('PGSL SPARQL Engine', () => {
     });
 
     it('sparqlNeighbors works for fragment with constituents', () => {
-      // Find a fragment at level 2+ that has constituents
+      // ★ DOUBLY VACUOUS BEFORE. The whole body sat inside `if (stats.maxLevel >= 2)`, so a
+      // lattice that never reached level 2 asserted NOTHING and passed; and the assertion
+      // itself read `bindings.length >= 0` directly under a comment saying "should find at
+      // least the right neighbor" — the comment said >= 1, the code said >= 0. Both halves
+      // are closed: the precondition is now asserted rather than used as a silent guard,
+      // and the assertion is the one the comment states.
       const stats = latticeStats(pgsl);
-      if (stats.maxLevel >= 2) {
-        for (const node of pgsl.nodes.values()) {
-          if (node.kind === 'Fragment' && node.left) {
-            const query = sparqlNeighbors(node.left);
-            const result = sparqlQueryPGSL(pgsl, query);
-            // Should find at least the right neighbor
-            expect(result.bindings.length).toBeGreaterThanOrEqual(0);
-            break;
-          }
-        }
-      }
+      expect(stats.maxLevel).toBeGreaterThanOrEqual(2);
+      // `Node` is a discriminated union on `kind`; a plain `.find(...)` predicate does not
+      // narrow it, so the callback needs to be a type guard for `.left` to exist at all.
+      const fragment = [...pgsl.nodes.values()]
+        .find((n): n is Extract<typeof n, { kind: 'Fragment' }> => n.kind === 'Fragment' && Boolean(n.left));
+      expect(fragment).toBeDefined();
+      const query = sparqlNeighbors(fragment!.left!);
+      const result = sparqlQueryPGSL(pgsl, query);
+      expect(result.bindings.length).toBeGreaterThan(0);
     });
 
     it('sparqlPullbackOf works for fragment with constituents', () => {

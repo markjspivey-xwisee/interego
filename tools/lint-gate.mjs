@@ -77,12 +77,19 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  *     nothing for it to filter), and `tools/walkthrough-v6-distributed-values.ts` has one
  *     unused local.
  *
- * Adding `'tools'` here is the right end state and belongs to the change that answers the
- * derivation-lint question, so that the gate goes green on a decision rather than on a
- * deleted import. Until then this paragraph is the account: seven errors, named, in a
- * directory this gate does not read.
+ * ★ `'tools'` IS NOW IN. It was "the right end state" here for a round while the ESLint
+ * check NAME claimed "zero-error" over a scope chosen to exclude three live errors — a
+ * different false claim in the same slot the round had just emptied of one. The three were
+ * dead code and are deleted, not pinned: an unused `readdirSync` import in
+ * derivation-lint.mjs, an unused `step()` in walkthrough-v6, and an `EXTERNAL_PREFIXES` set
+ * in ontology-lint.mjs that only LOOKED like it excluded foreign vocabularies — that linter
+ * iterates OWNED_NAMESPACES and never sees another prefix, so the exclusion is structural
+ * and the list was a second, drift-prone statement of it.
+ *
+ * The gate now reads the directory its own tooling lives in, so a lint error in the code
+ * that enforces lint can no longer merge.
  */
-const TARGETS = ['packages', 'tests'];
+const TARGETS = ['packages', 'tests', 'tools'];
 
 /**
  * The remaining debt: NONE. 0 errors in 0 files, down from 222 in 47.
@@ -264,7 +271,10 @@ const BASELINE = {};
  * reality stops being a floor, and at 280 it had 28 files of slack, enough to hide a whole
  * package's `src/` disappearing from the run.
  */
-const MIN_FILES = 300;
+// Ratcheted 300 -> 320 when `tools` joined TARGETS (310 -> 329 files). A floor that stays
+// far below the real count stops being a collapse detector: at 300 the gate would have
+// shrugged off `tools` silently dropping back out.
+const MIN_FILES = 320;
 
 export async function runLintGate() {
   // The programmatic API rather than the CLI: `eslint`'s package `exports` does not expose
@@ -361,8 +371,11 @@ export function lintGateReport(result) {
     ...result.failures,
     '',
     `(${result.files} file(s) linted; ${result.total} error(s) total.)`,
-    'Reproduce: npx eslint packages tests',
-    'Autofixable subset: npx eslint --fix packages tests',
+    // Derived from TARGETS, not retyped. These two lines said `packages tests` while the
+    // gate read a third directory would be the same class of drift as the check name that
+    // advertised a scope it did not have.
+    `Reproduce: npx eslint ${TARGETS.join(' ')}`,
+    `Autofixable subset: npx eslint --fix ${TARGETS.join(' ')}`,
     '',
   ].join('\n');
 }

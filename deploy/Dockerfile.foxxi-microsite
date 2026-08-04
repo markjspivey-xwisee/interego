@@ -53,6 +53,12 @@ FROM public.ecr.aws/docker/library/nginx:1.27-alpine
 # nginx config lives in deploy/nginx-spa.conf — a real file, not an escaped printf.
 # It 404s missing assets instead of returning the SPA shell with a 200, and sets HSTS.
 COPY deploy/nginx-spa.conf /etc/nginx/conf.d/default.conf
+# Bake the commit into /health so a redeploy of THIS image can be verified the same way
+# the relay is: GET /health and compare the sha. build-ghcr.yml already passes GIT_SHA to
+# every image; before this, only the relay consumed it and every static SPA answered
+# /health with the HTML shell — a 200 that meant nothing.
+ARG GIT_SHA=unset
+RUN sed -i "s|__BUILD_SHA__|${GIT_SHA}|g" /etc/nginx/conf.d/default.conf
 # ★ Validate at BUILD time. An nginx syntax error otherwise surfaces only when the
 # container starts: the image builds green, CI passes, and the service crash-loops on
 # deploy. `nginx -t` turns that into a failed build, where it belongs.

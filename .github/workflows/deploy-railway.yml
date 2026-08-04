@@ -33,8 +33,8 @@ on:
         required: false
         default: ''
       verify_url:
-        description: 'Health URL polled until it reports the deployed sha. Blank = skip (not recommended).'
-        required: false
+        description: 'Health URL polled until it reports the deployed sha. REQUIRED — every service now serves /health with its build sha.'
+        required: true
         default: 'https://relay.interego.xwisee.com/health'
 
 # A second dispatch must QUEUE, never run alongside: re-triggering a deploy while one
@@ -98,6 +98,21 @@ jobs:
             echo "::error::RAILWAY_PROJECT_TOKEN is not set. Add it as a repository secret (a Railway PROJECT token)."
             exit 1
           fi
-          ARGS="$SERVICE $TAG"
-          [ -n "$VERIFY_URL" ] && ARGS="$ARGS --verify-url $VERIFY_URL"
-          node tools/railway-redeploy.mjs $ARGS
+          # ★ VERIFICATION IS NO LONGER OPTIONAL.
+          #
+          # `--verify-url` was an opt-in that degraded to a printed caveat: without it
+          # railway-redeploy.mjs exits 0 after announcing "Railway reports success, but
+          # nothing has confirmed the new code is actually serving". A deploy step that
+          # can report success without a single request to the deployed thing is how a
+          # stale image goes unnoticed — measured this round on the css-gate, which had
+          # been serving a build predating its own HSTS fix.
+          #
+          # It could not be mandatory before, because the static SPA images answered
+          # /health with the HTML shell and there was no sha to compare. deploy/nginx-spa.conf
+          # now serves real JSON with the build sha baked in, so every service in the fleet
+          # can be verified and none of them gets to skip it.
+          if [ -z "$VERIFY_URL" ]; then
+            echo "::error::verify_url is required. Every service serves /health with its build sha; a deploy nothing confirmed is not a deploy."
+            exit 1
+          fi
+          node tools/railway-redeploy.mjs "$SERVICE" "$TAG" --verify-url "$VERIFY_URL"
