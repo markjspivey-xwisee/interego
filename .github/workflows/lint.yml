@@ -28,7 +28,14 @@ permissions:
 
 jobs:
   eslint:
-    name: "Flat-config lint + ratcheted baseline (47 files pinned)"
+    # The name is the only thing a reader sees on a PR's check list, so it must not state a
+    # number that has stopped being true. It said "47 files pinned" long after the baseline
+    # was taken to `{}` — advertising 47 accepted failures on a gate that now accepts none,
+    # which reads as "this check tolerates errors" and invites the next person to add a pin
+    # rather than fix the error. The count is deliberately gone rather than updated: a
+    # literal here has to be re-edited every time the baseline moves, and it silently
+    # decays between those edits. lint-gate.mjs prints the live counts in its own output.
+    name: "Flat-config lint + ratcheted baseline (zero-error, empty baseline)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

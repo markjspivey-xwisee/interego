@@ -40,7 +40,7 @@ The hosted relay is exposed as a remote MCP server, so GUI clients can mount it 
 
 If a client only supports the older SSE-style endpoint, swap `/mcp` for `/sse` on the same host. Everything else stays identical.
 
-> **Status: reference implementation.** Hosted on the maintainer's free Azure instance for evaluation. Self-host (`examples/personal-bridge/`) before you depend on it. The compliance + audit-trail work in this repo is *infrastructure for* SOC 2 / EU AI Act / NIST RMF evidence — it is not an attested control environment by itself.
+> **Status: reference implementation.** Hosted on the maintainer's Railway project for evaluation. Self-host (`examples/personal-bridge/`) before you depend on it. The compliance + audit-trail work in this repo is *infrastructure for* SOC 2 / EU AI Act / NIST RMF evidence — it is not an attested control environment by itself.
 
 > **L1 protocol: Last Call Working Draft (2026-05-16).** Wire format and core vocabulary (`iep:` / `ieh:` / `pgsl:` / `ie:` / `align:`) are frozen for v1.0 pending Candidate Recommendation. Editors commit no breaking changes through 2027-05-16 without a deprecation cycle. See [`spec/STABILITY.md`](spec/STABILITY.md) for the practical adopter-facing commitment, and [`spec/architecture.md`](spec/architecture.md) for the normative spec. Second implementations (any language) are warmly welcomed — open an issue and we will work with you.
 
@@ -455,36 +455,40 @@ cd mcp-server
 npm install ../interego-core-*.tgz --no-save
 npm run build
 
-# Deploy to your own Azure (one-time)
-./deploy/azure-deploy.sh
 ```
 
-CI auto-deploys **five** container apps on every push to `master` that touches their inputs ([workflow](.github/workflows/deploy-azure.yml)): `interego-dashboard`, `interego-pgsl-browser`, `interego-relay`, `interego-identity`, `interego-css`. Per-image path filters mean an unrelated change to one image's inputs won't rebuild the others.
-
-The remaining container apps are **deployed manually** — they aren't wired into the workflow's matrix:
-
-- `interego-foxxi-bridge` (Dockerfile: [`deploy/Dockerfile.foxxi-bridge`](deploy/Dockerfile.foxxi-bridge))
-- `interego-css-gate` (Dockerfile: [`deploy/Dockerfile.css-gate`](deploy/Dockerfile.css-gate))
-- `interego-foxxi-microsite` (Dockerfile: [`deploy/Dockerfile.foxxi-microsite`](deploy/Dockerfile.foxxi-microsite))
-- `interego-foxxi-dashboard` (Dockerfile: [`deploy/Dockerfile.foxxi-dashboard`](deploy/Dockerfile.foxxi-dashboard))
-- `interego-foxxi-scorm-player` (Dockerfile: [`deploy/Dockerfile.foxxi-scorm-player`](deploy/Dockerfile.foxxi-scorm-player))
-- `interego-main` (Dockerfile: [`deploy/Dockerfile.interego-main`](deploy/Dockerfile.interego-main))
-
-Manual deploy for any of those uses the standard two-step ACR build + container-app update:
+**Deployment is two explicit, manually-dispatched steps — building does not deploy.**
 
 ```bash
-# Build the image in ACR from the current checkout, SHA-tagged for clean rollback.
-az acr build \
-  --registry contextgraphsacr \
-  --image <name>:<tag> \
-  -f deploy/Dockerfile.<name> .
+# 1. Build one image and push it to GHCR. Takes the IMAGE name (interego-relay),
+#    which is not always the Railway SERVICE name (relay).
+gh workflow run build-ghcr.yml -f image=interego-relay --ref master
 
-# Point the running container app at the new image.
-az containerapp update \
-  -n <containerapp-name> \
-  -g context-graphs-rg \
-  --image contextgraphsacr.azurecr.io/<name>:<tag>
+# 2. Pin the Railway service to that image and poll /health until it reports the sha.
+gh workflow run deploy-railway.yml -f service=relay -f tag=<40-hex-sha> \
+  -f verify_url=https://relay.interego.xwisee.com/health
 ```
+
+> This section previously described a `deploy-azure.yml` that auto-deployed five
+> container apps on every push to `master`. That workflow was deleted when the stack
+> moved off Azure, and the registry it pushed to (`contextgraphsacr`) no longer exists —
+> so the README was documenting a pipeline that could not run, linking to a file that is
+> not in the tree, and telling a reader that merging to `master` ships. It does not.
+> Nothing deploys without the second dispatch above.
+
+Every service goes through the same two dispatches — there is no auto-deploy tier and no
+manually-built tier. The image names `build-ghcr.yml` accepts are read out of its own
+matrix by its `validate-input` job, so a name that is not in the matrix fails the dispatch
+rather than skipping every leg and reporting success:
+
+- `interego-relay`, `interego-identity`, `interego-css-gate`, `interego-css-pgsl`
+- `interego-dashboard`, `interego-pgsl-browser`, `interego-main`, `interego-microsite`, `interego-bridge`, `interego-acme-id`
+- `interego-foxxi-bridge`, `interego-foxxi-dashboard`, `interego-foxxi-microsite`, `interego-foxxi-scorm-player`
+
+> The `az acr build` / `az containerapp update` recipe that stood here is not a fallback —
+> `contextgraphsacr` was deleted with the rest of the Azure footprint, so both commands
+> fail at the registry. Keeping them printed as the manual path meant the documented
+> escape hatch for a broken CI deploy was itself broken.
 
 Tagging a release as `vX.Y.Z` triggers npm publish for both packages ([workflow](.github/workflows/publish-npm.yml)).
 
@@ -997,13 +1001,21 @@ The system adds value on structural tasks (counting, temporal reasoning, knowled
 CG_BASE_URL=http://localhost:3456/ npx tsx mcp-server/server.ts
 ```
 
-### Azure Container Apps
+### The hosted fleet (Railway)
 
 ```bash
-cd deploy && bash azure-deploy.sh
+gh workflow run build-ghcr.yml  -f image=interego-relay --ref master
+gh workflow run deploy-railway.yml -f service=relay -f tag=<40-hex-sha> \
+  -f verify_url=https://relay.interego.xwisee.com/health
 ```
 
-Deploys: CSS (Solid server), Dashboard (observation UI), MCP Relay (HTTP bridge), Identity Server (WebID + DID + SIWE).
+Runs: CSS (Solid server), Dashboard (observation UI), MCP Relay (HTTP bridge), Identity
+Server (WebID + DID + SIWE), and the Foxxi vertical's own services.
+
+`cd deploy && bash azure-deploy.sh` used to be documented here. The Azure resource group
+and container registry are gone, so that command now fails partway through having already
+run — which is worse than not being documented, because the reader finds out only after it
+has started making changes.
 
 ---
 

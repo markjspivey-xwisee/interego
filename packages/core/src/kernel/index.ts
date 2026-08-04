@@ -71,6 +71,7 @@ import {
 // installed dep (production). If `@interego/solid` isn't reachable,
 // `dereference` surfaces a clear error pointing at the missing package.
 import { parseTrig } from '../rdf/turtle-parser.js';
+import { runShaclRules, ShaclRuleError } from '../validation/shacl-engine.js';
 
 interface SolidModule {
   fetchGraphContent: (iri: string, options?: unknown) => Promise<{
@@ -1729,13 +1730,20 @@ function readReducerIri(headBody: string): IRI | undefined {
  *     materialized result. The new state is the union of the prior
  *     state and the materialization — set-of-triples-style merge.
  *
- *   - `'shacl-transform'`: as a substrate-honest MVP we treat the
- *     SHACL shape as a "merge" declaration — the new state is the
- *     prior state ∪ the current link's body. Richer transforms
- *     (sh:rule / sh:construct dispatched through the SHACL engine)
- *     are scoped as a follow-up; the ReplayProof's reducerCid still
- *     anchors the declared shape so a future engine yields the same
- *     CID chain.
+ *   - `'shacl-transform'`: the shape's `sh:rule`s are EXECUTED
+ *     (`runShaclRules`) over the current link and the constructed
+ *     triples — and only those — are unioned into the state. A shape
+ *     declaring no `sh:rule` at all still means "merge", which is the
+ *     only case the old union-everything fold was right about.
+ *
+ *     ★ WHY THIS IS NOT A REFINEMENT. The old fold returned
+ *     `prior ∪ current` for EVERY shape, so a reducer whose whole job
+ *     was to narrow — the repro: a shape projecting only `ex:status` —
+ *     left `ex:secret ex:ssn "111-22-3333"` sitting in the folded head
+ *     and in every downstream ReplayProof checkpoint. A transform that
+ *     is declared to drop a field and instead keeps it is a disclosure,
+ *     not a coarse approximation, and the reducerCid anchoring did not
+ *     help: it pinned the shape we were NOT running.
  *
  * The fold is intentionally pure — same (prior, current, reducer) →
  * same next state — so the ReplayProof is deterministic.
@@ -1758,12 +1766,25 @@ function applyReducerStep(
     // the fold reproducible.
     return prior ? `${prior}\n${materialized}` : materialized;
   }
-  // shacl-transform — MVP fold is union of prior + current. The
-  // declared shape is anchored in the ReplayProof's reducerCid so
-  // future engines can refine the fold without breaking the proof
-  // shape (a richer engine would emit the same chain of state-CIDs
-  // as long as the rule is shape-monotone, which the union fold is).
-  return prior ? `${prior}\n${currentBody}` : currentBody;
+  // shacl-transform — run the shape's sh:rules and fold in what they
+  // CONSTRUCT, never the raw link body.
+  let run;
+  try {
+    run = runShaclRules(currentBody, spec.shape);
+  } catch (e) {
+    if (e instanceof ShaclRuleError) {
+      // Rethrow, do NOT fall back to the union. Falling back is what made an
+      // unparseable shape and a valid one produce the same headStateCid, so a
+      // typo'd redaction rule redacted nothing and the proof still verified.
+      throw new TypeError(`reduce() shacl-transform reducer could not be executed: ${e.message}`);
+    }
+    throw e;
+  }
+  // No sh:rule anywhere in the shape: the shape is a merge declaration and the
+  // union IS the intended fold. This is the only surviving union path.
+  const contribution = run.ruleCount === 0 ? currentBody : run.turtle;
+  if (!contribution) return prior;
+  return prior ? `${prior}\n${contribution}` : contribution;
 }
 
 /**

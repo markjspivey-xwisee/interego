@@ -71,12 +71,20 @@
  */
 
 /**
- * The floor on how many test modules a whole-tree run must plan. 185 match the config's
- * `include` globs the day this was written; the allowance below absorbs ordinary file
- * deletion without letting a coverage collapse through. Raise it as the tree grows — a floor
- * that drifts far below reality stops being a floor.
+ * The floor on how many test modules a whole-tree run must plan. The allowance below the
+ * true tree total absorbs ordinary file deletion without letting a coverage collapse
+ * through. Raise it as the tree grows — a floor that drifts far below reality stops being
+ * a floor.
+ *
+ * Ratcheted 175 → 179. 175 was set when the globs matched 185 (a 10-module allowance);
+ * the tree has since grown to 189, so the untouched floor had silently widened to a
+ * 14-module allowance. That is not a smaller version of the same guard: a glob that
+ * stopped matching an entire directory of 12 suites would have planned 177, agreed with
+ * itself, cleared the floor, and reported a green whole-tree run over a tree missing a
+ * directory. The allowance is held at 10 deliberately rather than pinned to the exact
+ * total, so deleting one obsolete suite does not require editing this file.
  */
-const MIN_TEST_MODULES = 175;
+const MIN_TEST_MODULES = 179;
 
 /**
  * States that mean the module was actually taken to a conclusion. `pending` and `queued` are
