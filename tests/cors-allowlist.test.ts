@@ -28,6 +28,7 @@ import {
   corsMiddleware,
   isAllowedOrigin,
 } from '../deploy/mcp-relay/cors-allowlist.js';
+import { stripComments } from '../deploy/mcp-relay/tests/strip-comments.js';
 
 // The services' own origins on the LIVE stack. These were Azure FQDNs, which quietly
 // weakened several assertions below: buildCorsAllowlist always adds `ownOrigin`, so
@@ -255,6 +256,31 @@ describe('CORS allowlist — sync across mcp-relay / identity / css-gate', () =>
   const identitySrc = readFileSync(IDENTITY_FILE, 'utf8');
   const cssGateSrc = readFileSync(CSS_GATE_FILE, 'utf8');
 
+  /**
+   * ★ THE STRIPPER THESE GUARDS READ THROUGH, AND WHY IT IS NO LONGER LOCAL.
+   *
+   * Two checks below matched against source with comments removed, each with its own
+   * `src.replace(/\/\*[\s\S]*?\*\//g, '')` over RAW text. Those two characters are
+   * ordinary characters, and `deploy/mcp-relay/server.ts` contains them inside `//`
+   * comments (`// ── /amep/* — AMEP engine …`, `// CORS (ACAO:*) via the /ns/* carve-out`)
+   * and inside string literals. Each one opened a phantom block comment that ran to the
+   * next real star-slash and took the code between with it — six spans, ~596 lines.
+   *
+   * MEASURED, not argued: a real
+   * `app.use((_req,res,next)=>{res.setHeader('Access-Control-Allow-Credentials','true');
+   * next();});` inserted at server.ts:12264 (inside one of those spans) left
+   * "does NOT enable Access-Control-Allow-Credentials in any deploy server" GREEN with
+   * three occurrences of the header literal in the file. The identical line at :883 —
+   * outside every span — failed it correctly. The guard worked everywhere except where a
+   * comment had blinded it.
+   *
+   * `stripComments` now parses instead of pattern-matching, is shared with the two relay
+   * suites that had the same copy, and has its own gate
+   * (deploy/mcp-relay/tests/strip-comments.test.ts) that reconstructs that exploit and
+   * requires the OLD implementation to fail it.
+   */
+  const codeOf = (src: string, file: string): string => stripComments(src, file);
+
   it('lists the canonical sibling FQDNs in every copy', () => {
     for (const sibling of CANONICAL_SIBLINGS) {
       expect(relaySrc, `relay missing ${sibling}`).toContain(sibling);
@@ -276,13 +302,12 @@ describe('CORS allowlist — sync across mcp-relay / identity / css-gate', () =>
    * the pattern to explain it, and a guard that fires on its own explanation gets deleted.
    */
   it('grants cross-origin trust to no hostname we have released', () => {
-    const stripComments = (s: string) =>
-      s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
     const RELEASED = /azurecontainerapps\.io|azurewebsites\.net|\.azureedge\.net/;
-    for (const [name, src] of [
-      ['relay', relaySrc], ['identity', identitySrc], ['css-gate', cssGateSrc],
+    for (const [name, src, file] of [
+      ['relay', relaySrc, RELAY_FILE], ['identity', identitySrc, IDENTITY_FILE],
+      ['css-gate', cssGateSrc, CSS_GATE_FILE],
     ] as const) {
-      const offending = stripComments(src)
+      const offending = codeOf(src, file)
         .split('\n')
         .filter(l => RELEASED.test(l));
       expect(offending, `${name} still trusts a released hostname:\n  ${offending.join('\n  ')}`)
@@ -321,20 +346,54 @@ describe('CORS allowlist — sync across mcp-relay / identity / css-gate', () =>
   });
 
   it('does NOT enable Access-Control-Allow-Credentials in any deploy server', () => {
-    // Strip JS/TS comments before scanning so that warnings like
-    // "// Deliberately no Access-Control-Allow-Credentials." in our own
-    // rationale don't trip the check. We forbid the header literal
-    // appearing anywhere in executable code paths.
-    const stripComments = (src: string): string =>
-      src
-        .replace(/\/\*[\s\S]*?\*\//g, '')   // block comments
-        .replace(/^\s*\*.*$/gm, '')          // jsdoc continuation lines
-        .replace(/\/\/.*$/gm, '');           // line comments
+    // Comments are stripped before scanning so that warnings like "// Deliberately no
+    // Access-Control-Allow-Credentials." in our own rationale don't trip the check. The
+    // header literal is forbidden anywhere in executable code. See `codeOf` above for the
+    // measured reason this no longer uses a regex to do it.
+    // ★ THE SERVERS, NOT THE ALLOWLIST MODULES. `RELAY_FILE`/`IDENTITY_FILE` above are
+    // `cors-allowlist.ts`; this check is about what the Express apps actually write, and
+    // pointing it at the allowlist module would leave server.ts unscanned while staying
+    // green (the allowlist module names the header only in prose).
+    const relayServerFile = join(REPO_ROOT, 'deploy', 'mcp-relay', 'server.ts');
+    const identityServerFile = join(REPO_ROOT, 'deploy', 'identity', 'server.ts');
+    const relayServer = codeOf(readFileSync(relayServerFile, 'utf8'), relayServerFile);
+    const identityServer = codeOf(readFileSync(identityServerFile, 'utf8'), identityServerFile);
+    const cssGateCode = codeOf(cssGateSrc, CSS_GATE_FILE);
+    // A stripper that returned '' would satisfy the assertion below and report nothing.
+    // These three files are 30-40% comment, so a view under a third of the source is a
+    // stripper eating code — which is exactly what the regex version did. The precise
+    // guard against that is deploy/mcp-relay/tests/strip-comments.test.ts; this is the
+    // vacuity floor that keeps THIS assertion from passing on an empty string.
+    for (const [name, code, src] of [
+      ['relay', relayServer, readFileSync(relayServerFile, 'utf8')],
+      ['identity', identityServer, readFileSync(identityServerFile, 'utf8')],
+      ['css-gate', cssGateCode, cssGateSrc],
+    ] as const) {
+      expect(code.length, `${name}: stripped view is ${code.length} of ${src.length} chars — the stripper is eating code`)
+        .toBeGreaterThan(src.length * 0.33);
+      expect(code, `${name}: the stripped view lost the express/http app entirely`)
+        .toMatch(/createServer|express\(\)|http\.createServer/);
+    }
+    // ★ THE ONE PLACE THE NAME MAY APPEAR, AND IT IS A DEFENCE, NOT AN EMISSION.
+    //
+    // server.ts:10394 holds `FROZEN_CORS_HEADERS`, a Set the relay consults to make
+    // `res.setHeader()` a NO-OP for those names, so the MCP SDK's own `router.use(cors())`
+    // cannot re-open the wildcard. It sits at line 10,394 — inside the span the old regex
+    // stripper ate (10,382-10,437) — so this assertion has never seen it. Un-blinding the
+    // stripper surfaced it immediately.
+    //
+    // Elided by MATCHING THE SET rather than by a name-based skip, and the elision is
+    // paired with a positive requirement: the set must exist and must still freeze the
+    // credentials header. Deleting the freeze does not quietly satisfy the scan.
+    const FROZEN = /const FROZEN_CORS_HEADERS = new Set\(\[[^\]]*\]\)/;
+    const frozen = FROZEN.exec(relayServer)?.[0];
+    expect(frozen, 'relay no longer freezes the CORS response headers against the SDK router')
+      .toBeDefined();
+    expect(frozen, 'FROZEN_CORS_HEADERS stopped freezing the credentials header')
+      .toContain('access-control-allow-credentials');
+    const relayScan = relayServer.replace(FROZEN, 'FROZEN_CORS_HEADERS_ELIDED');
 
-    const relayServer = stripComments(readFileSync(join(REPO_ROOT, 'deploy', 'mcp-relay', 'server.ts'), 'utf8'));
-    const identityServer = stripComments(readFileSync(join(REPO_ROOT, 'deploy', 'identity', 'server.ts'), 'utf8'));
-    const cssGateCode = stripComments(cssGateSrc);
-    for (const src of [relayServer, identityServer, cssGateCode]) {
+    for (const src of [relayScan, identityServer, cssGateCode]) {
       expect(src).not.toMatch(/Access-Control-Allow-Credentials/i);
     }
   });

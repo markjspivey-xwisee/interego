@@ -104,7 +104,11 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // self-test that fails whenever the thing it tests is legitimately tightened is a self-test
 // people edit to match rather than read. Two sources of truth for one number, and the gate's
 // whole purpose is to have one.
-export const MIN_TEST_MODULES = 205;
+// 205 -> 206: the ratchet the check above asks for, not a bound raised to make a red go
+// away. The tree grew to 216 modules (tests/line-endings-are-normalised.test.ts landed with
+// the .gitattributes normalisation), which put the floor 11 below reality and past
+// FLOOR_ALLOWANCE, so the reporter failed the run and named the number to write.
+export const MIN_TEST_MODULES = 206;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

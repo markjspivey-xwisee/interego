@@ -112,12 +112,17 @@ jobs:
       # to be re-checked by hand gets re-checked once.
       - name: Docs describe the live fleet, not a dead one
         run: node tools/docs-drift-lint.mjs
-      # ★ THE OTHER HALF OF THE SAME CLASS. docs-drift-lint above bans a dead platform named
-      # in the present tense; this one asserts that every relative link and every named
-      # workflow actually resolves on disk. They are separate because the failures are
-      # separate: STATUS.md still pointed a reader at `.github/workflows/deploy-azure.yml`
-      # in a paragraph that reads as live CI, and no banned-string rule can see a path that
-      # simply no longer exists. It carries file AND link floors, so a mistyped scan list
-      # fails rather than reporting a confident pass over nothing.
-      - name: Docs claims resolve (relative links + named workflows)
-        run: node tools/docs-claim-lint.mjs
+      # ★ THE OTHER HALF OF THE SAME CLASS NOW RUNS IN lint.yml, NOT HERE.
+      #
+      # `tools/docs-claim-lint.mjs` asserts that every relative link and every named
+      # workflow in the top-level documents resolves ON DISK. That makes its subject the
+      # LINK TARGETS, not the linking documents — 82 targets, of which 64 matched no
+      # pattern in this job's `paths:` list. Deleting `docs/ARCHITECTURAL-FOUNDATIONS.md`
+      # breaks two links and matches none of `docs/ns/**`, `docs/applications/**`,
+      # `tools/**`, `packages/**`, `applications/_shared/**` or the five named markdown
+      # files, so the gate that catches it would never have started. Verified by deleting
+      # that file: the linter reports both breaks correctly — it simply was not run.
+      #
+      # A link gate cannot live behind a path filter over the linking side, so it moved to
+      # `lint.yml`, the one push/PR workflow with no `paths:` at all — beside the
+      # conformance runner, which is there for the same reason.

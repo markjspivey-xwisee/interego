@@ -187,13 +187,35 @@ export function privateAddressReason(host: string): string | null {
  * `10-0-0-5.nip.io` -> 10.0.0.5 and `localtest.me` -> 127.0.0.1 both returned
  * ACCEPTED here AND from server.ts's full invoke egress guard.
  *
- * It also named an out-of-repo egress firewall as the mitigation, and nothing
- * in the tree asserted that firewall exists. The mitigation is now IN TREE:
- * `screeningEgressLookup` below re-applies `privateAddressReason` to every
- * address DNS returns, AT CONNECT TIME, as the resolver undici actually uses —
- * so the address screened is the address dialed and there is no window between
- * them. Keep BOTH: this function rejects a bad literal before a socket is
- * opened at all; the lookup rejects a bad resolution.
+ * ★ THE ADDRESS SCREEN IS NOT IN FORCE. THIS FUNCTION IS THE ONLY DEFENCE.
+ *
+ * (That sentence is load-bearing text, not prose: the last describe block in
+ * tests/egress-dns-screen.test.ts reads the wiring out of server.ts and requires
+ * it to be present exactly while `guardedEgressAgent` dispatches nothing — and
+ * requires it GONE the moment the wiring returns.)
+ *
+ * The paragraph that stood here said the mitigation was "now IN TREE" and that
+ * `screeningEgressLookup` below is "the resolver undici actually uses", and told
+ * the reader to "keep BOTH". That became false in #261 and was not corrected
+ * here: `guardedEgressAgent` in server.ts is now `void guardedEgressAgent;` and
+ * is the dispatcher for no fetch at all, so `screeningEgressLookup` resolves
+ * nothing. Re-measured against the live module at that commit —
+ *
+ *     ACCEPTED  https://10-0-0-5.nip.io/x                     -> 10.0.0.5
+ *     ACCEPTED  https://localtest.me/x                        -> ::1, 127.0.0.1
+ *     ACCEPTED  https://169-254-169-254.nip.io/latest/meta-data/
+ *
+ * — all three reach a socket today. A publicly-resolvable NAME that simply IS a
+ * record for private space passes, and the relay is deployed at this commit.
+ *
+ * What DOES hold: no IP literal, no `.internal` label, no non-https scheme, and
+ * (where a caller passes one) no host outside the suffix allowlist. Callers that
+ * need the address screen must supply their own network policy; do not read this
+ * header as covering it.
+ *
+ * The re-landing conditions live at `guardedInvokeFetchLanded` in server.ts, and
+ * the incident note there is the one that must be corrected before anyone acts
+ * on them.
  */
 export function assertPublicPodUrl(
   url: string,
@@ -242,15 +264,28 @@ export function assertPublicPodUrl(
 /**
  * A `dns.lookup` drop-in that refuses to hand back a private address.
  *
- * ★ WHY IT IS A LOOKUP AND NOT A PRE-CHECK. Resolving the hostname ourselves and
- * then calling `fetch` leaves a real window: `fetch` resolves AGAIN, and a TTL-0
- * record can differ between the two. Handing this function to undici as the
- * connect-time resolver removes the window entirely — the addresses screened are
- * the addresses the socket is opened to, because there is only one resolution.
+ * ★ IT IS EXPORTED, IT IS CORRECT, AND IT IS THE RESOLVER FOR NOTHING.
  *
- * Wired ONLY onto the guarded-egress dispatcher in server.ts, never onto the
- * global one: the relay's own CSS and identity hosts resolve to private
- * addresses BY DESIGN and must not be screened. See `guardedEgressAgent`.
+ * This header used to say it was attached to the guarded-egress dispatcher in
+ * server.ts. #261 unwired that dispatcher (`void guardedEgressAgent;`) after one
+ * production deploy took every shape-gated publish down, and this file was not
+ * touched — so the module that DEFINES the screen went on claiming it was live.
+ * A comment asserting coverage the code lacks is worse than the gap, and worse
+ * again on a security boundary, because it tells the reader to stop looking.
+ *
+ * The function itself is exercised by `tests/egress-dns-screen.test.ts` and its
+ * predicate mutants are killed; what is missing is a CALLER. Until it has one,
+ * nothing in this process screens a resolved address.
+ *
+ * ★ WHY IT IS A LOOKUP AND NOT A PRE-CHECK, for whoever re-lands it. Resolving
+ * the hostname ourselves and then calling `fetch` leaves a real window: `fetch`
+ * resolves AGAIN, and a TTL-0 record can differ between the two. As a
+ * connect-time resolver there is only one resolution, so the addresses screened
+ * are the addresses the socket is opened to.
+ *
+ * It must go on a dedicated dispatcher, never the global one: the relay's own CSS
+ * and identity hosts resolve to private addresses BY DESIGN. See
+ * `guardedEgressAgent` and the re-landing note at `guardedInvokeFetchLanded`.
  */
 export function screeningEgressLookup(
   hostname: string,
