@@ -326,19 +326,41 @@ describe('★ the address screen is WIRED: a socket, from the far side', () => {
       net.setDefaultAutoSelectFamily(false);
       egress = createEgress({ cssUrl: 'https://css.pinned.example/', publicBaseUrl: '' });
 
-      let cause: (Error & { errors?: unknown[] }) | undefined;
-      try {
-        await egress.guardedInvokeFetch(`https://dead-host.example/shape.ttl`, { method: 'GET' });
-      } catch (err) {
-        cause = (err as { cause?: Error & { errors?: unknown[] } }).cause;
-      }
-      expect(cause, 'the guarded fetch did not fail at connect at all').toBeDefined();
-      // Collapse the list to `[list[0]]`, filter it, or drop the `autoSelectFamily` pin,
-      // and this is a plain Error with no members.
-      expect(cause!.name, 'Node took the SINGLE-connect path — the address list was collapsed to one entry')
-        .toBe('AggregateError');
-      expect(cause!.errors, 'fewer candidates reached the connector than the resolver returned')
-        .toHaveLength(DEAD.length);
+      // ★ ASSERT THE PIN WHERE IT IS OBSERVABLE, NOT THROUGH A SOCKET RACE.
+      //
+      // This first tried to read the pin off the FAILURE: an AggregateError carrying one
+      // member per candidate proves Node took the multi-connect path. It does — but only
+      // when the candidates span two FAMILIES. Measured in CI: with an all-IPv4 list Node
+      // does not race at all, it connects to the first address, that SYN goes unanswered
+      // behind the runner's default gateway, and undici's own connectTimeout surfaces a
+      // `ConnectTimeoutError` long before any list is exhausted. The assertion was reading
+      // a property of the routing table and calling it a property of the Agent.
+      //
+      // What the pin actually controls is which CALLBACK SHAPE Node asks the lookup for,
+      // and that is deterministic on every platform: `all: true` only when autoSelectFamily
+      // is on. The process-global is set false above, so if the Agent's pin is dropped this
+      // records `all` falsy and the assertion fails — which is the mutation that matters.
+      // The connect outcome is deliberately not asserted; it is the environment's business.
+      const asked: Record<string, unknown>[] = [];
+      restoreResolver?.();
+      restoreResolver = setEgressResolverForTests((_h, options, cb) => {
+        asked.push({ ...options });
+        if (options['all']) { cb(null, DEAD); return; }
+        cb(null, DEAD[0]!.address, DEAD[0]!.family);
+      });
+      // Do not WAIT on a dead SYN — that is the environment-dependence being removed. The
+      // lookup fires at the start of the connect, so what this asserts exists long before
+      // the socket resolves either way. (`FetchFn`'s init carries no `signal`: the
+      // substrate's type is narrower than the DOM's, so the race is the abort.)
+      const inFlight = egress.guardedInvokeFetch(`https://dead-host.example/shape.ttl`, { method: 'GET' })
+        .then(() => undefined, () => undefined);   // settle it here; `close()` drains the socket
+      await Promise.race([inFlight, new Promise(r => setTimeout(r, 500))]);
+
+      expect(asked.length, 'the guarded dispatcher never resolved at all — the lookup was not wired')
+        .toBeGreaterThan(0);
+      expect(asked.some(o => o['all'] === true),
+        'Node was asked for ONE address: the Agent\'s autoSelectFamily pin did not override the process-global',
+      ).toBe(true);
     } finally {
       net.setDefaultAutoSelectFamily(previousAutoSelect);
       net.setDefaultAutoSelectFamilyAttemptTimeout(previousAttemptTimeout);
