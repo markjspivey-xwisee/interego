@@ -196,6 +196,40 @@ function embeddedIpv4(bare: string): string | null {
 }
 
 /**
+ * `err.cause.code` when the connect-time resolver refused a target because the name
+ * RESOLVED into private space (`screeningEgressLookup`, below).
+ *
+ * ★ THIS STRING IS THE ONLY CHANNEL THAT SEPARATES "I REFUSED" FROM "IT BROKE".
+ * WHATWG `fetch` flattens every network-layer outcome to the message `fetch failed`, so
+ * a refusal, a DNS miss and a TLS mismatch are byte-identical above `cause` — measured
+ * in the relay's own runtime image (#260). Declared as an exported constant rather than
+ * spelled at each site because two consumers now compare against it: this module raises
+ * it and `shape-body.ts` classifies on it to decide WHICH constraint component the
+ * publish gate's 422 carries. A typo in either copy would silently downgrade a refusal
+ * to a generic "unfetchable", which is the exact conflation that fix removes.
+ */
+export const ERR_EGRESS_PRIVATE_ADDRESS = 'ERR_EGRESS_PRIVATE_ADDRESS';
+
+/**
+ * `err.code` when the egress screen refused a target SYNTACTICALLY — before any
+ * resolution — because the URL itself names loopback, an `internal` DNS label, an IP
+ * literal in private space, or anything else `assertPublicPodUrl` rejects.
+ *
+ * Deliberately NOT named "private address": this half also refuses a plain-`http` target
+ * and an off-allowlist host, and a code that overstated what it covers would be read as
+ * evidence of private-space access that never happened. What it does assert is the fact
+ * every one of those throws share — THE RELAY DECLINED TO SEND THE REQUEST — which is
+ * exactly the fact a caller needs distinguished from "the request was sent and failed".
+ *
+ * A DIFFERENT code from {@link ERR_EGRESS_PRIVATE_ADDRESS} because the two are different
+ * events for an operator reading a log: one says a public name resolved somewhere it
+ * should not, the other says the target was refusable on sight. They collapse to the SAME
+ * caller-facing answer, and `shape-body.ts` treats both as an egress refusal — the
+ * distinction survives in the WARN line, not in the public envelope.
+ */
+export const ERR_EGRESS_TARGET_REFUSED = 'ERR_EGRESS_TARGET_REFUSED';
+
+/**
  * The SINGLE address screen. Returns a human-readable reason if `host` is a
  * private/loopback/link-local/IMDS address in any spelling, else null.
  *
@@ -379,7 +413,7 @@ export function screeningEgressLookup(
       if (reason) {
         callback(Object.assign(
           new Error(`egress blocked: ${hostname} resolves to a ${reason}`),
-          { code: 'ERR_EGRESS_PRIVATE_ADDRESS' },
+          { code: ERR_EGRESS_PRIVATE_ADDRESS },
         ));
         return;
       }

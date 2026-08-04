@@ -77,6 +77,10 @@ import {
   followAlternateTurtle,
   type FetchedRepresentation,
 } from './alternate-turtle.js';
+import {
+  ERR_EGRESS_PRIVATE_ADDRESS,
+  ERR_EGRESS_TARGET_REFUSED,
+} from './url-rewrite.js';
 
 /**
  * One cached shape body. `expiresAt` is freshness; `knownGoodUntil` is how long the body may
@@ -101,6 +105,62 @@ export interface FetchedShapeRepresentation extends FetchedRepresentation {
   readonly statusText: string;
 }
 
+/**
+ * WHY the gate could not obtain a shape body.
+ *
+ * ★ THE FACT THE 422 USED TO THROW AWAY. `fetchShapeBodyWith` returns `string | null`, so
+ * everything it learned about the failure died at the boundary and every cause reached the
+ * caller as the identical `shapeUnfetchable` envelope. Measured on the live relay:
+ * `conforms_to_shapes: ["https://10-0-0-5.nip.io/s.ttl"]` and a plain 404 produced
+ * BYTE-IDENTICAL responses, while the discriminating fact — the egress screen refusing to
+ * open a socket to private space — survived only in a WARN log the caller cannot read.
+ *
+ * That is the same defect the shared-workspace stream mapper had one layer up: an
+ * instrument that says the same word for "your input is wrong" and "I could not check your
+ * input" is evidence for neither, and a verifier reading it reports a PASS for the wrong
+ * reason. `reason` is for the operator, `egressRefused` is the machine-readable split.
+ */
+export interface ShapeFetchFailure {
+  /**
+   * The operator-facing rendering — the same text the WARN line carries. MAY name resolved
+   * addresses, internal hosts and CSS paths, so it is for the log, NEVER for the envelope.
+   */
+  readonly reason: string;
+  /**
+   * True only when the relay REFUSED to send the request because the target is in, or
+   * resolves into, private/internal address space — as opposed to the request being sent
+   * and failing. Determined from the error's `code`, never from its message: WHATWG `fetch`
+   * flattens every network outcome to the message `fetch failed`, so the message cannot
+   * tell a refusal from a DNS miss.
+   */
+  readonly egressRefused: boolean;
+}
+
+/**
+ * Did the egress screen REFUSE this target, rather than the request being sent and failing?
+ *
+ * Reads `code` at both levels the two screen halves raise it:
+ *  - the SYNTACTIC screen throws directly, so the code is on the error itself;
+ *  - the connect-time RESOLVER refuses inside `fetch`, which wraps it — WHATWG `fetch`
+ *    reports `TypeError: fetch failed` and hangs the real error off `cause`.
+ *
+ * `cause.errors` is walked too: exhausting Happy Eyeballs' candidate list yields an
+ * AggregateError whose MEMBERS carry the per-address codes, so a refusal on a multi-homed
+ * name is only visible one level further down.
+ */
+export function isEgressRefusal(err: unknown): boolean {
+  const codes = new Set<string>([ERR_EGRESS_PRIVATE_ADDRESS, ERR_EGRESS_TARGET_REFUSED]);
+  const codeOf = (e: unknown): string | undefined =>
+    typeof e === 'object' && e !== null
+      ? (e as NodeJS.ErrnoException).code
+      : undefined;
+  if (codes.has(codeOf(err) ?? '')) return true;
+  const cause = (err as { cause?: unknown } | null)?.cause;
+  if (codes.has(codeOf(cause) ?? '')) return true;
+  const members = (cause as { errors?: unknown } | undefined)?.errors;
+  return Array.isArray(members) && members.some(m => codes.has(codeOf(m) ?? ''));
+}
+
 export interface ShapeBodyDeps {
   /** The SSRF-screened fetch, reporting the URL the bytes landed at. */
   readonly fetchRepresentation: (url: string) => Promise<FetchedShapeRepresentation>;
@@ -113,6 +173,25 @@ export interface ShapeBodyDeps {
   readonly freshTtlMs: number;
   /** How long a previously-VERIFIED body stays usable after a transient failure. */
   readonly knownGoodTtlMs: number;
+  /**
+   * Called EXACTLY when this function is about to return null — i.e. when the gate will
+   * refuse the publish — with why.
+   *
+   * ★ A CALLBACK RATHER THAN MODULE STATE, ON PURPOSE. The reflex fix for "the reason
+   * cannot escape a `string | null` return" is a module-level map keyed by shape IRI. Two
+   * concurrent publishes naming the same shape would then race, and the loser would attach
+   * the winner's reason to its own 422 — a WRONG attribution, which for a security-relevant
+   * refusal is worse than the no-attribution state this replaces. The callback closes over
+   * the caller's own stack frame, so a second publish structurally cannot read the first's.
+   *
+   * Optional so every existing `ShapeBodyDeps` literal still type-checks; a caller that
+   * does not pass it gets exactly the previous behaviour.
+   *
+   * NOT called when a transient failure falls back to a last-known-good body: nothing is
+   * refused on that path, and reporting a failure for a publish that SUCCEEDED would put
+   * the same class of lie back in, pointing the other way.
+   */
+  readonly recordFailure?: (failure: ShapeFetchFailure) => void;
 }
 
 /**
@@ -170,6 +249,10 @@ export async function fetchShapeBodyWith(
   let page: FetchedShapeRepresentation | null = null;
   let body: string | null = null;
   let warnReason: string | null = null;
+  // Set only by the catch below. A non-ok HTTP status or a failed alternate hop means the
+  // request WAS sent, so neither can be an egress refusal — the screen fires before a
+  // socket exists.
+  let egressRefused = false;
   // Only a TRANSIENT failure may fall back to a stale body. A 404/403/410 is the shape
   // owner deleting or tightening the shape, and honouring a cached permissive copy for
   // 24h after that would be worse than the bug this fixes.
@@ -198,6 +281,10 @@ export async function fetchShapeBodyWith(
     // misconfigured / unreachable shape can't masquerade as "no shape declared".
     // WARN-logged below, NOT silently swallowed.
     warnReason = `fetch threw: ${describeFetchFailure(err)}`;
+    // ★ Classified HERE, off the live error object, not later off the rendered string.
+    // `warnReason` is prose assembled for humans; re-parsing it downstream would make a
+    // reword silently reclassify a security refusal as a generic outage.
+    egressRefused = isEgressRefusal(err);
   }
 
   // ★ FOLLOW THE PAGE'S OWN ADVERTISED TURTLE — through the SHARED follower.
@@ -274,6 +361,11 @@ export async function fetchShapeBodyWith(
     }
     // A permanent failure evicts, so a deleted shape stops being honoured.
     if (!transient && cached) deps.cache.delete(shapeIri);
+    // The refusal is now final, so hand the caller WHY. Guarded on `warnReason` because a
+    // reason it does not have must not be invented: every path that nulls `body` sets one,
+    // and if a future one does not, the gate falls back to the generic constraint rather
+    // than reporting a confident-looking empty string.
+    if (warnReason !== null) deps.recordFailure?.({ reason: warnReason, egressRefused });
     return null;
   }
   // ★ Only stamp known-good on a body that actually PARSES as a shapes graph. Any
@@ -291,4 +383,94 @@ export async function fetchShapeBodyWith(
     knownGoodUntil: parses ? Date.now() + deps.knownGoodTtlMs : 0,
   });
   return body;
+}
+
+/**
+ * Namespace for gate-emitted constraint components. A dereferenceable URL, not a `urn:` —
+ * the same principle the substrate applies to every other identifier it mints. Every local
+ * name concatenated below is declared in `docs/ns/iep.ttl`, which is what this URL serves.
+ *
+ * ★ IT ENDS AT THE `#`, AND THAT IS NOT COSMETIC. It used to end at `…#shape` with the call
+ * sites spelling only the tail (a template literal over the constant plus `Unfetchable`).
+ * The IRIs came out identical, so nothing was WRONG at runtime — but
+ * `tools/ontology-lint.mjs` reads template emissions over a namespace constant to check
+ * every owned-namespace term is declared, and
+ * a constant carrying half the local name made the real term name unspellable to it. Both
+ * pre-existing components were therefore invisible to the gate that exists to catch exactly
+ * this, and neither was declared anywhere. Splitting at the `#` makes the emitted local name
+ * literal in the source, so the lint can see it and CI fails if it is not in the ontology.
+ */
+export const PUBLIC_SHAPE_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
+
+/** One SHACL-style result body: the machine-readable constraint plus its sentence. */
+export interface ShapeUnfetchableViolation {
+  readonly constraintComponent: string;
+  readonly message: string;
+}
+
+/**
+ * What the caller is told when a declared shape could not be read — WITH the cause.
+ *
+ * ── WHY THE CAUSE GETS ITS OWN CONSTRAINT COMPONENT ──────────────────────────
+ *
+ * Three different facts, three different operator responses, and a message tweak would not
+ * carry any of them across a machine boundary:
+ *
+ *   shapeUnfetchableScheme        the IRI can NEVER be fetched (not https). A configuration
+ *                                 error in the caller's own declaration; fix the IRI.
+ *   shapeUnfetchable              the request was SENT and did not yield a shape — 404, 5xx,
+ *                                 timeout, a page whose advertised Turtle is gone. Either
+ *                                 the shape host is down or the shape was withdrawn.
+ *   shapeUnfetchableEgressRefused NO REQUEST WAS SENT. The relay's SSRF screen refused the
+ *                                 target because it is in, or resolves into, private space.
+ *                                 Nothing about the shape host is known or implied, and no
+ *                                 amount of waiting or retrying changes it.
+ *
+ * The third is the one this function was written for. It is not a variant of the second: a
+ * caller retrying "an outage" forever, and an operator hunting a network fault that never
+ * happened, are both consequences of collapsing a refusal into an outage.
+ *
+ * ── WHAT AN ANONYMOUS CALLER LEARNS, DELIBERATELY BOUNDED ────────────────────
+ *
+ * The message names the shape IRI — which is the CALLER'S OWN INPUT — and the class of
+ * refusal. It carries NO resolved address, NO internal hostname and NO CSS path. Those live
+ * in `ShapeFetchFailure.reason`, which goes to the WARN log only.
+ *
+ * The tempting exception — echoing the resolved address when the caller "already knows" it,
+ * as with `10-0-0-5.nip.io` — is declined. It is only already-known for names that ENCODE
+ * their address; for `something.railway.internal`, or for a DNS-rebinding probe pointed at a
+ * name the attacker does not control the records of, the resolved address is precisely the
+ * internal-topology fact they came to learn. Telling the two apart needs a heuristic, and a
+ * heuristic that is wrong once is a disclosure with no way back. The caller loses nothing:
+ * they can resolve their own hostname. So the CONSTRAINT discriminates and the MESSAGE stays
+ * topology-free.
+ */
+export function shapeUnfetchableViolation(
+  shapeIri: string,
+  failure: ShapeFetchFailure | null,
+): ShapeUnfetchableViolation {
+  // Scheme first, and unchanged: a non-https IRI is unfetchable for a reason that makes
+  // every other classification moot — no screen and no network was ever consulted.
+  if (!/^https:\/\//i.test(shapeIri)) {
+    return {
+      constraintComponent: `${PUBLIC_SHAPE_NS}shapeUnfetchableScheme`,
+      message: `Declared shape ${shapeIri} could not be fetched, so conformance cannot be asserted. `
+        + 'The publish was refused rather than proceeding unvalidated.',
+    };
+  }
+  if (failure?.egressRefused === true) {
+    return {
+      constraintComponent: `${PUBLIC_SHAPE_NS}shapeUnfetchableEgressRefused`,
+      message: `Declared shape ${shapeIri} was NOT fetched: this relay refused to connect to it `
+        + 'because its host is, or resolves into, private or internal address space. No request '
+        + 'was sent, so nothing is known about that host. This is not an outage and retrying will '
+        + 'not clear it — declare a shape on a publicly reachable host. The publish was refused '
+        + 'rather than proceeding unvalidated.',
+    };
+  }
+  return {
+    constraintComponent: `${PUBLIC_SHAPE_NS}shapeUnfetchable`,
+    message: `Declared shape ${shapeIri} could not be fetched, so conformance cannot be asserted. `
+      + 'The publish was refused rather than proceeding unvalidated.',
+  };
 }

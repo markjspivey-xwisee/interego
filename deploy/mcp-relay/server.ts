@@ -308,7 +308,13 @@ import * as publishedNodes from './pgsl-node-store.js';
 // listener on import, and a live run only ever exercises the honest path.
 import {
   fetchShapeBodyWith,
+  // The gate's 422 body. Declared beside the fetch it describes because a decision written
+  // in THIS file cannot be executed by any test — server.ts opens a listener on import —
+  // and "which constraint component does a caller get" is precisely the kind of decision
+  // that was silently wrong for two causes at once.
+  shapeUnfetchableViolation,
   type ShapeBodyCacheEntry,
+  type ShapeFetchFailure,
   type FetchedShapeRepresentation,
 } from './shape-body.js';
 import {
@@ -1757,11 +1763,9 @@ const CONTAINER_SHAPE_CACHE_TTL_MS = 60 * 1000;
  * gate fails closed.
  */
 const KNOWN_GOOD_TTL_MS = 24 * 60 * 60 * 1000;
-/**
- * Namespace for gate-emitted constraint components. A dereferenceable URL, not a
- * `urn:` — the same principle the substrate applies to every other identifier it mints.
- */
-const PUBLIC_SHAPE_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#shape';
+// The namespace for gate-emitted constraint components moved to `shape-body.ts` with the
+// violation constructor that spells them, so the emitted local names are literal in a file
+// a test can import and `tools/ontology-lint.mjs` can read.
 const CONTAINER_SHAPE_CACHE_MAX = 256;
 const containerShapeCache = new Map<string, { shapes: readonly string[]; expiresAt: number }>();
 const shapeBodyCache = new Map<string, ShapeBodyCacheEntry>();
@@ -1877,8 +1881,25 @@ async function fetchShapeRepresentation(url: string): Promise<FetchedShapeRepres
  * they are one behaviour — and this is now the binding that supplies them with the relay's
  * guarded fetch and SHACL parser.
  */
-async function fetchShapeBody(shapeIri: string): Promise<string | null> {
-  return fetchShapeBodyWith(shapeIri, {
+/**
+ * A shape body, plus WHY there is not one.
+ *
+ * ★ THE PAIR, NOT A SHARED SLOT. `failure` has to reach `runConformanceGate` so the 422 can
+ * say which cause it hit, and the reflex plumbing for that — a module-level map keyed by
+ * shape IRI — races: two concurrent publishes naming the same shape can read each other's
+ * reason, and a MISATTRIBUTED security refusal is worse than the missing one it replaces.
+ * Returning the pair keeps the reason on the caller's own stack, where a second publish
+ * structurally cannot see it.
+ */
+interface FetchedShapeBody {
+  readonly body: string | null;
+  /** Non-null only when `body` is null AND the fetch layer recorded a cause. */
+  readonly failure: ShapeFetchFailure | null;
+}
+
+async function fetchShapeBody(shapeIri: string): Promise<FetchedShapeBody> {
+  let failure: ShapeFetchFailure | null = null;
+  const body = await fetchShapeBodyWith(shapeIri, {
     fetchRepresentation: fetchShapeRepresentation,
     // ★ Only a body that actually PARSES as a shapes graph earns known-good status. Any
     // non-empty 200 used to qualify — including an HTML error page, which is not
@@ -1890,7 +1911,10 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
     cacheMax: CONTAINER_SHAPE_CACHE_MAX,
     freshTtlMs: CONTAINER_SHAPE_CACHE_TTL_MS,
     knownGoodTtlMs: KNOWN_GOOD_TTL_MS,
+    // Fires only on the paths that return null, i.e. only when the gate will refuse.
+    recordFailure: f => { failure = f; },
   });
+  return { body, failure };
 }
 
 /**
@@ -1927,7 +1951,10 @@ async function withImports(shapeTurtle: string | null, shapeIri: string): Promis
   if (targets.length === 0) return shapeTurtle;
   const parts = [shapeTurtle];
   for (const t of targets) {
-    const body = await fetchShapeBody(t);
+    // An import's failure REASON is deliberately dropped: losing an import is non-fatal
+    // (see the header), so there is no refusal for it to explain. The log line below is
+    // the whole of the operator's signal here.
+    const { body } = await fetchShapeBody(t);
     // ★ AN IMPORT THAT IS NOT TURTLE MUST BE DROPPED, NOT APPENDED.
     //
     // Content negotiation does not save us: GitHub Pages ignores Accept and serves HTML
@@ -1997,27 +2024,32 @@ async function runConformanceGate(
   if (allShapes.length === 0) return { conforms: true, resolvedShapes: [] };
   const resolvedShapes: { shapeIri: string; shapeTurtle: string }[] = [];
   for (const shapeIri of allShapes) {
-    const shapeTurtle = await withImports(await fetchShapeBody(shapeIri), shapeIri);
+    // Per-iteration, per-call: `failure` never leaves this frame, so a concurrent publish
+    // cannot read it. See `FetchedShapeBody`.
+    const fetched = await fetchShapeBody(shapeIri);
+    const shapeTurtle = await withImports(fetched.body, shapeIri);
     if (!shapeTurtle) {
       // ★ FAIL CLOSED. This used to `continue`, so a declared shape that 404'd,
       // timed out, or was simply unreachable was skipped and the publish returned
       // conforms:true — every contract was optional at the discretion of whoever
       // could make a shape unfetchable. You cannot claim conformance to a shape you
       // could not read.
+      //
+      // ★ AND IT NOW SAYS WHICH. Every cause used to arrive as one constraint component
+      // with one sentence, so "I could not reach the shape host" and "I REFUSED to, the
+      // target is private space" were byte-identical to the caller — measured live against
+      // a nip.io shape IRI and a plain 404 on a public host. The reason is chosen from the
+      // failure the fetch layer recorded, in a function a unit test can execute.
+      const violation = shapeUnfetchableViolation(shapeIri, fetched.failure);
       return {
         conforms: false,
         shape: shapeIri,
         violations: [{
           focusNode: shapeIri,
           sourceShape: shapeIri,
-          constraintComponent: /^https:\/\//i.test(shapeIri)
-            ? `${PUBLIC_SHAPE_NS}Unfetchable`
-            // A non-https shape IRI can NEVER be fetched — that is a configuration
-            // error, not an outage, and the operator response is completely different.
-            : `${PUBLIC_SHAPE_NS}UnfetchableScheme`,
+          constraintComponent: violation.constraintComponent,
           severity: 'Violation',
-          message: `Declared shape ${shapeIri} could not be fetched, so conformance cannot be asserted. `
-            + 'The publish was refused rather than proceeding unvalidated.',
+          message: violation.message,
         }],
       };
     }
