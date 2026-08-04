@@ -1,9 +1,10 @@
 {
-  "_comment": "Example MCP configuration for Claude Code, Claude Desktop, Cursor, or any MCP client. Copy the relevant entries into your client's mcp config and remove this comment block. Both bridges expose Streamable HTTP at POST /mcp.",
+  "_comment": "Example MCP configuration for Claude Code, Claude Desktop, Cursor, or any MCP client. Copy the relevant entries into your client's mcp config and remove this comment block. Both bridges expose Streamable HTTP at POST /mcp. Replace REPLACE_WITH_YOUR_BRIDGE_TOKEN with the BRIDGE_TOKEN from quickstart/.env — the personal-bridge rejects unauthenticated requests with 401.",
   "mcpServers": {
     "personal-bridge": {
       "type": "http",
-      "url": "http://localhost:5050/mcp"
+      "url": "http://localhost:5050/mcp",
+      "headers": { "Authorization": "Bearer REPLACE_WITH_YOUR_BRIDGE_TOKEN" }
     },
     "owm-bridge": {
       "type": "http",

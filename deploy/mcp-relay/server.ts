@@ -118,7 +118,7 @@ import {
   reconstructRequestUrl,
 } from './dpop.js';
 import { corsMiddleware, MCP_ALLOW_HEADERS } from './cors-allowlist.js';
-import { normalizeCssUrl, assertPublicPodUrl } from './url-rewrite.js';
+import { normalizeCssUrl, assertPublicPodUrl, bareAddressHost, screeningEgressLookup } from './url-rewrite.js';
 import { withAmepSession, principalIri, stampAmepProof, type AmepSigner } from './amep-session-bridge.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
@@ -321,6 +321,10 @@ import { ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js'
 import {
   observedGraphDigest,
   contentBindingNote,
+  // The one place `authorshipVerified` can be answered `true`. Declared outside server.ts
+  // because this file opens a listener on import, so a decision written here could only be
+  // pinned by a regex over its own source; this one is executed by the suite.
+  authorshipVerdict,
   type ReadContentBinding,
 } from './authorship-content-binding.js';
 
@@ -851,6 +855,28 @@ const outboundAgent = new Agent({
 });
 setGlobalDispatcher(outboundAgent);
 
+// ── Guarded-egress dispatcher (caller-supplied URLs ONLY) ───
+//
+// Same pool settings as `outboundAgent`, plus a connect-time resolver that
+// refuses private addresses. It is deliberately NOT the global dispatcher:
+// css.railway.internal and IDENTITY_URL resolve to private addresses BY DESIGN,
+// and screening them would take the relay off its own pod. Only
+// `guardedInvokeFetchLanded` uses it, and only for targets that are not the
+// pinned CSS / PUBLIC_BASE origins.
+//
+// This is the in-tree half of the SSRF screen. assertPublicPodUrl screens the
+// NAME; this screens the ADDRESS, at the moment of connect, so there is no
+// window in which a hostname's A-record can change between check and dial —
+// and, more importantly, a name that STATICALLY points at private space
+// (measured: 10-0-0-5.nip.io -> 10.0.0.5) no longer gets a socket at all.
+const guardedEgressAgent = new Agent({
+  keepAliveTimeout: 30_000,
+  keepAliveMaxTimeout: 120_000,
+  connections: 64,
+  pipelining: 1,
+  connect: { lookup: screeningEgressLookup as never },
+});
+
 // ── Fetch wrapper ───────────────────────────────────────────
 
 const solidFetch: FetchFn = async (url, init) => {
@@ -896,15 +922,20 @@ const solidFetch: FetchFn = async (url, init) => {
 // exactly what assertPublicPodUrl rejects), (b) the relay's own public base
 // (AMEP acts), (c) any public host passing the same RFC1918/link-local/
 // loopback/IMDS screen the /ns + /audit routes enforce (federation stays open).
-function assertInvokeTargetAllowed(url: string): void {
+// Returns 'pinned' for the two origins the relay owns (their private resolution
+// is intended), 'public' for everything else — which is what tells the caller to
+// dial through `guardedEgressAgent`. Returning the mode rather than
+// re-computing the origins at the call site keeps ONE authority for "is this
+// ours"; two copies would drift the day CSS_URL changes.
+function assertInvokeTargetAllowed(url: string): 'pinned' | 'public' {
   let u: URL;
   try { u = new URL(url); } catch { throw new Error(`invoke: unparseable URL: ${url}`); }
   try {
     const cssOrigin = new URL(CSS_URL).origin;
-    if (u.origin === cssOrigin) return;
+    if (u.origin === cssOrigin) return 'pinned';
   } catch { /* CSS_URL malformed — fall through to the public screen */ }
   try {
-    if (PUBLIC_BASE_URL && u.origin === new URL(PUBLIC_BASE_URL).origin) return;
+    if (PUBLIC_BASE_URL && u.origin === new URL(PUBLIC_BASE_URL).origin) return 'pinned';
   } catch { /* ignore */ }
   // LOOPBACK — the relay's OWN process + sidecars. assertPublicPodUrl (below)
   // exempts `http://localhost` (it's not an IP literal), so screen it HERE, in the
@@ -913,7 +944,10 @@ function assertInvokeTargetAllowed(url: string): void {
   // and PUBLIC_BASE_URL same-origin cases already returned above, so a legitimate
   // dev PUBLIC_BASE_URL=localhost still works; any OTHER loopback is a relay-to-self
   // SSRF and is rejected.
-  const hn = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  // Same bracket-stripping as url-rewrite.ts, imported rather than re-spelled —
+  // the two copies had DIFFERENT behaviour, which is exactly how `[::1]` was
+  // caught here and `[fd00::1]` was not caught anywhere.
+  const hn = bareAddressHost(u.hostname);
   if (hn === 'localhost' || hn === '::1' || /^127\./.test(hn) || /^::ffff:127\./.test(hn)) {
     throw new Error(`invoke: loopback host not allowed: ${u.hostname}`);
   }
@@ -926,6 +960,7 @@ function assertInvokeTargetAllowed(url: string): void {
     throw new Error(`invoke: internal-labeled host not allowed: ${u.hostname}`);
   }
   assertPublicPodUrl(url);
+  return 'public';
 }
 
 /**
@@ -967,8 +1002,16 @@ async function guardedInvokeFetchLanded(
 ): Promise<{ response: Awaited<ReturnType<FetchFn>>; landedUrl: string }> {
   let target = normalizeCssUrl(url);
   for (let hop = 0; hop <= GUARDED_MAX_REDIRECTS; hop++) {
-    assertInvokeTargetAllowed(target);
-    const r = await solidFetch(target, { ...(init as Record<string, unknown>), redirect: 'manual' } as typeof init);
+    const mode = assertInvokeTargetAllowed(target);
+    // Per-hop, not once: a redirect can leave the pinned origins for a public
+    // host (or arrive at one), and the dispatcher must track the hop actually
+    // being dialed. `solidFetch` spreads init into the RequestInit, so undici
+    // picks `dispatcher` up.
+    const r = await solidFetch(target, {
+      ...(init as Record<string, unknown>),
+      redirect: 'manual',
+      ...(mode === 'public' ? { dispatcher: guardedEgressAgent } : {}),
+    } as typeof init);
     if (r.status < 300 || r.status >= 400) return { response: r, landedUrl: target };
     const loc = r.headers.get('location');
     if (!loc) return { response: r, landedUrl: target };
@@ -4442,7 +4485,19 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
         delegationVerifier,
         observedContentHash !== undefined ? { contentHash: observedContentHash } : undefined,
       );
-      if (verifyResult.valid) {
+      // ★ A VERIFIED SIGNATURE IS NOT AN ATTESTATION OF THIS RECORD. `descriptorBinding` was
+      // computed above and only REPORTED — no branch read `.bound` — so a descriptor copied
+      // wholesale to a URL its signer never named answered `authorshipVerified: true` with
+      // `contentBinding: 'bound'` and that signer's DID, measured live on build 7c9124a.
+      // The `if` is a bare read of `verdict.verified` on purpose: the decision belongs in a
+      // module a test can call, and leaving any part of it inline here would put that part
+      // back out of reach.
+      const verdict = authorshipVerdict({
+        signatureValid: verifyResult.valid,
+        signatureReason: verifyResult.reason,
+        descriptorBinding,
+      });
+      if (verdict.verified) {
         let effective: 'CryptographicallyVerified' | 'SelfAsserted' = 'SelfAsserted';
         try {
           // Find the pod URL for this descriptor — strip back to the
@@ -4484,16 +4539,20 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
           authorshipVerified: false,
           signedBy: parsedProof.issuer,
           verificationMethod: parsedProof.verificationMethod,
-          reason: verifyResult.reason ?? 'verification returned false',
+          // Two refusals reach here now and they are not interchangeable: the signature
+          // failed, or the signature held and the proof is about some other record. The
+          // verdict carries whichever it was; flattening them back to the verifier's reason
+          // would report an intact signature as a broken one.
+          reason: verdict.reason ?? 'verification returned false',
           contentBinding: verifyResult.contentBinding,
-          // `signatureVerified: false` — except on the one failure that IS a content
-          // verdict. A mismatch means the signature verified and the digest did not, and
-          // the note has to say the content was checked, not that the signature failed
-          // before reaching it.
+          // `signatureVerified: false` — except on the two failures where the signature DID
+          // verify: a digest mismatch (checked and differed), and a proof that does not name
+          // this record (never about it). Passing false on either makes the note say the
+          // signature failed before the content was reached, which is untrue of both.
           contentBindingNote: contentBindingNote(
             verifyResult.contentBinding,
             parsedProof.contentHash,
-            verifyResult.contentBinding === 'mismatched',
+            verifyResult.valid || verifyResult.contentBinding === 'mismatched',
           ),
           descriptorBinding,
         };
@@ -7832,7 +7891,7 @@ const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
     },
     authorship: {
       type: 'object',
-      description: 'When the descriptor embeds a iep:authorshipProof, the relay automatically re-derives the canonical authorship payload and runs the delegation verifier from the descriptor turtle alone. authorshipVerified=true means the signature matched and the named agent really signed the AgentFacet. When BOTH the authorship proof and the delegation chain verify, effectiveTrustLevel becomes CryptographicallyVerified even if the descriptor body shipped SelfAsserted. ★ authorshipVerified alone says WHO SIGNED A DESCRIPTOR — read contentBinding to learn whether the signature also covers the graph served with it; the two are separate questions and a proof can verify while covering nothing.',
+      description: 'When the descriptor embeds a iep:authorshipProof, the relay automatically re-derives the canonical authorship payload and runs the delegation verifier from the descriptor turtle alone. authorshipVerified=true means BOTH that the signature matched and that the proof names the record it was served with (descriptorBinding.bound) — a proof lifted onto another record now answers false with the binding diagnostic as its reason, because the signature alone verifies wherever the block is pasted. When BOTH the authorship proof and the delegation chain verify, effectiveTrustLevel becomes CryptographicallyVerified even if the descriptor body shipped SelfAsserted. ★ authorshipVerified alone says WHO SIGNED A DESCRIPTOR — read contentBinding to learn whether the signature also covers the graph served with it; the two are separate questions and a proof can verify while covering nothing.',
       properties: {
         authorshipVerified: { type: 'boolean' },
         signedBy: { type: 'string', description: 'Agent IRI claimed in the proof' },
@@ -9707,6 +9766,21 @@ app.use(corsMiddleware({
 //
 // Two corrections to what this comment used to claim:
 //   - /revoke is NOT mounted. The provider implements no revokeToken.
+//
+//     ★ ACCEPTED RISK, STATED SO IT IS A DECISION AND NOT AN OVERSIGHT. Revocation is
+//     the only control that bounds a leaked credential to less than its own lifetime,
+//     so with no /revoke the ceiling on a leaked bearer is its TTL: 1 hour for an access
+//     token, 14 DAYS for a refresh token. Nothing shortens either. `revocation_endpoint`
+//     is correspondingly absent from /.well-known/oauth-authorization-server, so a client
+//     cannot discover what is not there — but the startup banner DID advertise
+//     `/revoke` until this change, which made the gap look closed.
+//
+//     Mounting it is not a comment edit: RFC 7009 §2.1 requires the same client
+//     authentication as /token (the LIVE claude.ai / ChatGPT path), and a correct
+//     implementation needs a revocation tombstone rather than a map delete, because
+//     verifyAccessToken and exchangeRefreshToken both READ THROUGH to the pod on a map
+//     miss and promote what they find back into the maps. That is a substrate-security
+//     change with a maintainer decision in front of it, not an applier's call.
 //   - the two /.well-known documents are NOT served by the router here. Our own routes
 //     for both are registered EARLIER in this file, and Express dispatches first-match,
 //     so ours answer every GET. That is deliberate: ours carry the JSON-LD @context /
@@ -10575,8 +10649,17 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
 // Evidence for "single-replica today", so this stays a latent limit and not a
 // live bug: Railway serviceInstance(relay).numReplicas is null (unset ⇒ platform
 // default 1), neither deploy/railway/services.json nor deploy/railway/deploy.mjs
-// ever sets it, and CSS itself is pinned to one replica anyway (Dockerfile.css:
-// the Redis-locker multi-replica variant FAILED a concurrent-write torture test).
+// ever sets it, and CSS itself runs at one replica too.
+// ★ THAT LAST CLAUSE USED TO CITE deploy/Dockerfile.css, AND THAT CITATION WAS
+// DEAD TWICE OVER: nothing builds that Dockerfile any more (build-ghcr.yml builds
+// css from integrations/pgsl-css-accessor/Dockerfile), and the reason it gave —
+// "the Redis-locker variant failed a concurrent-write torture test" — was a
+// STORAGE failure on the AzureFile volume that no longer exists, so read
+// literally it discharged its own prohibition. The live authority is
+// integrations/pgsl-css-accessor/config/pgsl-server-redis.json: CSS's
+// RedisLocker.clearLocks() does KEYS <prefix>* + DEL over the whole namespace
+// from initialize() AND finalize(), and namespacePrefix defaults to "", so a
+// second replica deletes the first's live locks. Cite that file, not the image.
 // ★ Turning on relay replicas without the lock above silently un-fixes if_match.
 const podWriteMutexes = new Map<string, Promise<unknown>>();
 
@@ -12459,9 +12542,12 @@ app.get('/audit/compliance/:framework', bearerVerifyLimiter, async (req, res) =>
     : undefined;
   try {
     const entries = await discover(podUrl, undefined, { fetch: solidFetch });
-    // Map manifest entries → AuditableDescriptor. v1: derive evidence
-    // citations from a (currently absent) iep:evidenceForControl predicate;
-    // for now the heuristic is the dct:conformsTo array (pre-existing).
+    // Map manifest entries → AuditableDescriptor. dct:conformsTo IS the evidence
+    // citation: publishers mirror cited control IRIs onto the descriptor via
+    // ContextDescriptor.conformsTo(), the manifest indexes them, and discover()
+    // surfaces them here. This is the contract, not a placeholder — calling it a
+    // heuristic hid the fact that compliance-overlay never performed the mirror,
+    // so this array was ALWAYS empty and the report always scored 0.
     const auditable: AuditableDescriptor[] = entries.map(e => ({
       id: e.descriptorUrl as IRI,
       publishedAt: e.validFrom ?? '',
@@ -14202,7 +14288,11 @@ app.listen(PORT, () => {
   log(`  GET  /.well-known/oauth-authorization-server  OAuth metadata`);
   log(`  GET  /.well-known/oauth-protected-resource    Resource metadata`);
   log(`  GET  /.well-known/operations                  Substrate-operation catalog`);
-  log(`  */authorize /token /register /revoke           OAuth endpoints (SDK)`);
+  // ★ `/revoke` used to be in this line and it 404s. The banner is the first thing an
+  // operator reads on every boot, and it advertised an RFC 7009 endpoint that does not
+  // exist — so the one control that bounds a leaked bearer to less than its TTL looked
+  // present. It is not: see the accepted-risk note at the OAuth-routes comment above.
+  log(`  */authorize /token /register                  OAuth endpoints (SDK)`);
   log(`  GET  /amep  |  POST /amep/acts                 AMEP engine (reference impl)`);
 });
 

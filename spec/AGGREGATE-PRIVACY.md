@@ -9,10 +9,26 @@ research pooling of sensitive data.
 
 ## Status
 
-**Design doc — Layer 2 pattern (forthcoming as `aggregate:` ontology).**
-Sketch of how this composes existing ZK primitives in
-`src/crypto/zk/` with new aggregation rules. Reference runtime is a
-follow-up.
+**Shipped — the runtime exists and its vocabulary is published.**
+The reference runtime is
+`applications/_shared/aggregate-privacy/index.ts`, exercised by
+`applications/_shared/tests/aggregate-privacy.test.ts`; the adopter's
+guide to the layered modes is
+[`docs/AGGREGATE-PRIVACY-MODES.md`](../docs/AGGREGATE-PRIVACY-MODES.md).
+The ZK primitives it composes are in `packages/core/src/crypto`.
+
+The shipped prefix is **`agg:`**, not the `aggregate:` this document
+sketches, and it dereferences at
+<https://markjspivey-xwisee.github.io/interego/applications/_shared/aggregate-privacy#>.
+The `aggregate:` spelling below is retained as the original design
+sketch and is NOT what a pod will contain — read `agg:` wherever the
+Turtle examples say `aggregate:`. Renaming the shipped IRI to match
+this document would break every descriptor already published under it.
+
+This block said "Reference runtime is a follow-up" for as long as the
+runtime has existed. Nothing re-reads a Status paragraph, and the
+top-level src/crypto/zk path it pointed at had not existed since the
+tree moved under `packages/`.
 
 ## The problem
 
@@ -47,7 +63,7 @@ The aggregator:
 1. Verifies every ZK proof.
 2. Sums the commitments using a homomorphic commitment scheme
    (Pedersen commitments over an elliptic curve subgroup — out of
-   scope of the current `src/crypto/zk/` runtime; future).
+   scope of the current `packages/core/src/crypto/zk/` runtime; future).
 3. Adds DP noise calibrated to ε.
 4. Returns the noised aggregate + a proof bundle for the requester
    to re-verify.
@@ -97,7 +113,7 @@ aggregate:proofBundle a owl:ObjectProperty ;
 
 ## Zero-knowledge proofs
 
-The existing `src/crypto/zk/` already provides:
+The existing `packages/core/src/crypto/zk/` already provides:
 - `proveConfidenceAboveThreshold(value, threshold)` — proves
   `value >= threshold` without revealing `value`.
 - `commit(value)` — Pedersen-style commitment.
@@ -119,7 +135,7 @@ sees the values (defeats the purpose) or the protocol degrades to
 "per-contributor count only."
 
 **Path to full implementation:**
-1. Add Pedersen commitments to `src/crypto/zk/` (built on
+1. Add Pedersen commitments to `packages/core/src/crypto/zk/` (built on
    `@noble/secp256k1` or similar, ~500 LoC).
 2. Implement range proofs via Bulletproofs (an off-the-shelf library
    like `bulletproofs-js`, ~few-hundred LoC of integration).
@@ -168,10 +184,17 @@ piece has known good implementations in adjacent ecosystems
 
 ## Implementation roadmap
 
-1. **Phase 1:** Pedersen commitments + range proofs in
-   `src/crypto/zk/`.
-2. **Phase 2:** `aggregate:Query` ontology + reference aggregator
-   handling SUM/COUNT/MEAN over bounded scalars.
-3. **Phase 3:** DP-budget tracking per pod with refusal semantics.
-4. **Phase 4:** Sybil pre-filter + multi-coordinator aggregation
-   for fault-tolerance.
+1. **Phase 1 — shipped.** Pedersen commitments + range proofs in
+   `packages/core/src/crypto` (`pedersen.ts`, `range-proof.ts`, `zk/`).
+2. **Phase 2 — shipped, under `agg:` not `aggregate:`.** The reference
+   aggregator computes attested sums and distributions; see
+   `buildAttestedHomomorphicSum` and
+   `buildAttestedHomomorphicDistribution`.
+3. **Phase 3 — shipped.** DP-budget tracking with refusal semantics:
+   `EpsilonBudget` pre-flight aborts before producing a bundle, and
+   `packages/core/src/crypto/dp-accountant.ts` accounts the spend.
+4. **Phase 4 — partial.** Multi-coordinator aggregation ships as
+   threshold-committee reveal with Feldman VSS
+   (`packages/core/src/crypto/shamir.ts`,
+   `packages/core/src/crypto/feldman-vss.ts`). The Sybil pre-filter is
+   not implemented.

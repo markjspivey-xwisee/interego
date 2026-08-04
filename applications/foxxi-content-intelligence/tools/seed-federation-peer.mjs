@@ -15,6 +15,7 @@
  */
 
 import { publishFoxxiEntity, FOXXI_TYPES } from '../src/outcome-descriptor-publisher.js';
+import { gateWriteFetch } from '../src/gate-write-fetch.ts';
 import { Wallet } from 'ethers';
 import { createHash } from 'node:crypto';
 
@@ -22,6 +23,18 @@ const PEER_POD = process.env.PEER_POD_URL
   ?? 'https://gate.interego.xwisee.com/foxxi/federation-peer/';
 const PEER_AUTHORITATIVE_SOURCE = process.env.PEER_AUTHORITATIVE_SOURCE
   ?? 'did:web:peer-academy.example';
+
+// ★ Without this every publish below 401s at the css-gate and the peer pod stays
+// a 404 — the exact state the live deployment was found in. The bridge attaches
+// this bearer from a fetch patch inside bridge/server.ts, which a standalone tsx
+// script never loads, so the capability had to be extracted to be reusable.
+// Patching globalThis here is safe ONLY because this is a one-shot script; never
+// do it from a test (vitest shares one realm).
+if (!process.env.FOXXI_POD_WRITE_SECRET) {
+  console.error('  FOXXI_POD_WRITE_SECRET is unset — every write to the live css-gate 401s. Set it to the gate WRITE_SECRET.');
+  process.exit(1);
+}
+globalThis.fetch = gateWriteFetch(PEER_POD, process.env.FOXXI_POD_WRITE_SECRET);
 
 // Federation peer needs a real signing identity — the bridge's federation
 // loader (Option D) drops any outcome whose graph doesn't carry a

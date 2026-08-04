@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AGG — Aggregate Privacy 1.0 Ontology</title>
+<!-- RDF clients that follow their nose from an agg: term to this namespace base get the
+     machine-readable Turtle; browsers get this human-readable page. This file is also what
+     makes the extensionless base IRI resolve at all: GitHub Pages serves `.../aggregate-privacy`
+     from `aggregate-privacy.html`, and without it the base 404s while eleven terms under it
+     are live on participant pods. -->
+<link rel="alternate" type="text/turtle" href="aggregate-privacy.ttl" />
+<link rel="describedby" type="text/turtle" href="aggregate-privacy.ttl" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 52rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.2rem; color: #6b7385; text-transform: uppercase; letter-spacing: 0.04em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; }
+  a { color: #0a6b64; } @media (prefers-color-scheme: dark) { a { color: #45d6cc; } }
+  .sub { color: #6b7385; font-size: 0.95em; }
+  .term { border-top: 1px solid #8884; padding: 0.55rem 0; }
+  .term code { font-weight: 600; }
+  .kind { color: #6b7385; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.03em; margin-left: 0.4rem; }
+  .c { color: #444a56; margin-top: 0.2rem; } @media (prefers-color-scheme: dark) { .c { color: #b9c0cc; } }
+  .ns { color: #6b7385; font-weight: 400; }
+</style>
+</head>
+<body>
+  <h1>AGG — Aggregate Privacy 1.0 Ontology <span class="mono ns">agg:</span></h1>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/applications/_shared/aggregate-privacy#</code> &middot; version 1.0 &middot; 11 terms.</p>
+  <p>Shared vocabulary for privacy-preserving cohort aggregation across pods: opt-in participation, Merkle-attested counts, homomorphic Pedersen sum and distribution bundles, differential-privacy budget audit logs, and threshold-committee authorization and reconstruction records. Payload terms are carried inside Interego (iep:) typed context descriptors — the descriptor layer supplies identity, provenance, temporal validity and access control; agg: supplies the aggregation domain.</p>
+  <p><strong>Machine-readable form:</strong> <a href="aggregate-privacy.ttl" rel="alternate">aggregate-privacy.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>agg:cohort</code> = <code>https://markjspivey-xwisee.github.io/interego/applications/_shared/aggregate-privacy#cohort</code>).</p>
+  <h2>Terms</h2>
+  <div id="AttestedHomomorphicDistributionBundle" class="term"><code>agg:AttestedHomomorphicDistributionBundle</code> <span class="kind">Class</span><div class="c">A published zk-distribution result: per-bucket homomorphic Pedersen sums and per-bucket DP-noised counts over a one-hot bucketing scheme, structurally verifiable bucket by bucket.</div></div>
+  <div id="AttestedHomomorphicSumBundle" class="term"><code>agg:AttestedHomomorphicSumBundle</code> <span class="kind">Class</span><div class="c">A published zk-aggregate result: a homomorphic Pedersen sum over per-contributor commitments plus DP-Laplace noise calibrated to a declared epsilon. Re-verifiable by any auditor against the contributor commitments.</div></div>
+  <div id="CohortParticipation" class="term"><code>agg:CohortParticipation</code> <span class="kind">Class</span><div class="c">A participant's self-asserted, revocable opt-in to a cohort aggregation. Published on the participant's own pod so the aggregator must discover consent rather than assume it; revoked by re-publishing a Counterfactual descriptor at the same IRI.</div></div>
+  <div id="CommitteeAuthorization" class="term"><code>agg:CommitteeAuthorization</code> <span class="kind">Class</span><div class="c">An operator's signed pre-commitment to the n authorized committee DIDs and the (n, t) threshold, published BEFORE shares are distributed. Cross-checked at audit time against the actual reveal committee, which is what catches an operator improvising a sock-puppet committee.</div></div>
+  <div id="CommitteeReconstructionAttestation" class="term"><code>agg:CommitteeReconstructionAttestation</code> <span class="kind">Class</span><div class="c">The chain-of-custody record of a threshold reveal: each participating committee member's signature over the bundle commitment, the claimed true sum, the member set and the reveal time, so a regulator can see who actually reconstructed and on which bundle.</div></div>
+  <div id="EncryptedShareDistribution" class="term"><code>agg:EncryptedShareDistribution</code> <span class="kind">Class</span><div class="c">A verifiable Shamir share wrapped in an X25519/nacl envelope keyed to one intended pseudo-aggregator, published as an ordinary descriptor so the recipient collects it through standard pod discovery instead of an out-of-band channel.</div></div>
+  <div id="SignedBudgetAuditLog" class="term"><code>agg:SignedBudgetAuditLog</code> <span class="kind">Class</span><div class="c">An operator-signed snapshot of an epsilon budget: the per-query consumption log plus the cumulative spend, signed so the accounting itself is tamper-evident rather than merely honest.</div></div>
+  <div id="bundleJson" class="term"><code>agg:bundleJson</code> <span class="kind">Datatype property</span><div class="c">The verifiable bundle serialized as a single JSON literal. Deliberately opaque to the triple store: the verifier re-hashes these exact bytes, so decomposing them into triples would let a round-trip through any normalizing store silently break every signature over the bundle.</div></div>
+  <div id="cohort" class="term"><code>agg:cohort</code> <span class="kind">Object property</span><div class="c">The cohort this participation opts into.</div></div>
+  <div id="participant" class="term"><code>agg:participant</code> <span class="kind">Object property</span><div class="c">The DID of the agent or person opting in. Also the asserting agent and issuer of the descriptor — participation is self-asserted by construction.</div></div>
+  <div id="policy" class="term"><code>agg:policy</code> <span class="kind">Object property</span><div class="c">The cohort-aggregation policy descriptor the participant is consenting to. Optional: absent means the participant opted in without binding themselves to a published policy.</div></div>
+</body>
+</html>

@@ -90,6 +90,7 @@ import {
   createMarketplace, registerListing, removeListing, discoverByCapability,
   discoverByType, marketplaceToHydra, marketplaceStats,
   generateMetagraph, ingestMetagraph, validateMetagraph, queryMetagraph,
+  descriptorsFromManifestEntries,
 } from '@interego/pgsl';
 
 // Get the xAPI profile for direct transform calls
@@ -222,7 +223,37 @@ async function rebuildFromPod() {
 }
 
 const app = express();
+
+// ★ HSTS FIRST — BEFORE express.json(), and that ORDER is load-bearing.
+//
+// Measured against real express: with the parser registered first, a POST carrying a
+// malformed body makes body-parser throw, express jumps straight to the error handler, and
+// EVERY middleware registered after the parser is skipped — the 400 ships with no header.
+//   json-then-hsts -> malformed 400, HSTS ABSENT
+//   hsts-then-json -> malformed 400, HSTS present
+// A live smoke test never sees this: it always sends valid JSON, so the honest path proves
+// nothing here.
+//
+// Measured live 2026-08-03, this origin served no Strict-Transport-Security on any path —
+// same class and same cause as the dashboard: the HSTS gate enumerated its surfaces by
+// hand and this one was never in the list.
+//
+// max-age only: includeSubDomains would bind every *.interego.xwisee.com including any not
+// fully on HTTPS, and preload is close to irreversible. Separate decisions.
+app.use((_req, res, next) => {
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  next();
+});
+
 app.use(express.json());
+
+// Build identity for tools/railway-redeploy.mjs, whose verify poll reads exactly `j.build`.
+// GET /health here used to answer "Cannot GET /health", so a rollout of this service could
+// not be confirmed: Railway calls a deploy SUCCESS as soon as the container binds a port,
+// and on a tag missing from the registry the OLD container keeps answering 200.
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset' });
+});
 
 // ── Paradigm Constraints ──
 // Operations on paradigm sets at syntagmatic positions.
@@ -1620,7 +1651,17 @@ app.get('/api/shacl', (_req, res) => {
 function getSystemState() {
   return {
     pgsl,
-    descriptors: [] as ContextDescriptorData[], // TODO: collect from pod registry
+    // ★ THIS WAS `[] as ContextDescriptorData[] // TODO: collect from pod registry`, and the
+    // TODO was not harmless: `pods` two lines down publishes a per-pod `descriptorCount`
+    // off the SAME registry, so /dump.ttl, /dump.jsonld and both /sparql methods emitted
+    // `iep:descriptorCount N` while naming zero `iep:ContextDescriptor` subjects. A
+    // consumer reads that as "N descriptors exist and none is describable", which is a
+    // different and wrong answer from "this surface has not been wired up".
+    //
+    // `descriptorsFromManifestEntries` is the shared reader and already skips a manifest
+    // row naming no graph, so one sparse row cannot take all four routes down together.
+    descriptors: [...podRegistry.values()]
+      .flatMap(p => descriptorsFromManifestEntries(p.url as IRI, p.entries)),
     certificates: getCertificates(),
     constraints: constraintRegistry,
     pods: [...podRegistry.values()].map(p => ({

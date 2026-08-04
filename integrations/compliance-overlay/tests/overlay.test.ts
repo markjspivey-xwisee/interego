@@ -125,6 +125,55 @@ describe('buildAgentActionDescriptor — substrate construction', () => {
     expect(conformsCount).toBe(2);
   });
 
+  /**
+   * ★ THE TEST ABOVE GREPS `graphContent` ONLY, AND THAT IS EXACTLY WHY THE MIRROR WAS
+   * MISSING FOR SO LONG.
+   *
+   * `dct:conformsTo` has to appear in TWO places to do anything: in the named graph, which
+   * the test above checks, and on the DESCRIPTOR, which nothing checked. The manifest
+   * indexer reads it off the descriptor; `discover()` returned `conformsTo: undefined`, the
+   * relay mapped that to `evidenceForControls: []`, and `GET /audit/compliance/<framework>`
+   * reported every control `missing` with `overallScore 0` for a pod whose descriptors did
+   * cite them. The graph half was right the whole time, so the whole-graph grep was green
+   * through the entire outage.
+   *
+   * Removing `.conformsTo(...cited)` from the builder, or passing `...[]` to it, is caught
+   * here and nowhere else. The IRIs are compared by VALUE rather than counted, so a mirror
+   * that carried the right number of wrong controls also fails.
+   */
+  it('mirrors every cited control onto the DESCRIPTOR, not only into the graph', () => {
+    const c1 = 'https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act#Article15' as IRI;
+    const c2 = 'https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act#Article10' as IRI;
+    const out = buildAgentActionDescriptor(baseEvent(), { framework: 'eu-ai-act', controls: [c1, c2] });
+    expect(out.descriptor.conformsTo).toEqual([c1, c2]);
+  });
+
+  /**
+   * The control for the assertion above: the mirror must carry the RESOLVED citation, not a
+   * constant. Without this, `.conformsTo(SOME_FIXED_LIST)` satisfies the mirror test while
+   * making every descriptor claim controls it has no evidence for — a compliance report that
+   * is confidently wrong rather than empty.
+   *
+   * ★ AND `controls: []` DOES NOT MEAN "cite nothing" — it means "cite every default control
+   * for the framework" (`resolveControls`, and `ComplianceCitation.controls`' own docstring).
+   * The first version of this test asserted `[]` and failed against a correct implementation
+   * with 8 defaulted controls. Pinning the mirror against `out.cited`, the builder's own
+   * resolved list, is what states the real contract: the two must not be able to disagree.
+   */
+  it('the descriptor mirror equals the resolved citation, defaulted or explicit', () => {
+    const defaulted = buildAgentActionDescriptor(baseEvent(), { framework: 'eu-ai-act', controls: [] });
+    expect(defaulted.cited.length).toBeGreaterThan(1); // else the check below is near-vacuous
+    expect(defaulted.descriptor.conformsTo).toEqual([...defaulted.cited]);
+
+    const explicit = buildAgentActionDescriptor(
+      baseEvent(),
+      { framework: 'soc2', controls: ['https://markjspivey-xwisee.github.io/interego/ns/soc2#CC7.2' as IRI] },
+    );
+    expect(explicit.descriptor.conformsTo).toEqual([...explicit.cited]);
+    // Different frameworks must not converge on one hard-coded list.
+    expect(explicit.descriptor.conformsTo).not.toEqual(defaulted.descriptor.conformsTo);
+  });
+
   it('records error message on failure (carried via dct:description; modal=Counterfactual disambiguates)', () => {
     const out = buildAgentActionDescriptor(
       baseEvent({ outcome: 'failure', errorMessage: 'connection refused on port 443' }),

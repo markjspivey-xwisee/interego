@@ -45,11 +45,19 @@
  * aggregate primitives (`buildAttestedHomomorphicSum`,
  * `buildAttestedHomomorphicDistribution`, `buildAttestedHomomorphicSumV5`,
  * `buildAttestedHomomorphicSumV6`) accept an `epsilonBudget?:
- * EpsilonBudget` slot today; that slot is widened in a follow-up
- * to accept any `PrivacyAccountant`. Until that wiring lands, these
- * accountants are usable directly by the caller (compute the
- * tighter ε' at end of a query session; verify against the cohort
- * cap).
+ * PrivacyAccountant` slot — all four of them, so any accountant on
+ * this page plugs straight in.
+ *
+ * ★ THIS PARAGRAPH USED TO SAY THE SLOT WAS `EpsilonBudget` AND WOULD BE
+ * "widened in a follow-up". It was not a follow-up anybody had chosen to
+ * defer, it was a slot NOTHING ELSE COULD EVER FILL: `EpsilonBudget`
+ * declares a `private _spent`, which makes its class type nominal, so
+ * every other accountant failed with TS2739 demanding `cohortIri` /
+ * `remaining` / `toJSON` that none of the four builders read. The
+ * interface was also absent from the `@interego/core` barrel, so no
+ * caller outside this package could even name the widened type. Both
+ * are fixed; `signBudgetAuditLog` deliberately still takes the concrete
+ * class, because it calls `toJSON()`.
  *
  * No new crypto primitives, no new ontology terms. Substrate-pure
  * math layer.

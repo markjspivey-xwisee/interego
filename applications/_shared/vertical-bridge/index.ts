@@ -117,7 +117,45 @@ export interface VerticalBridgeOptions {
 
 export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
   const app = express();
+
+  // ★ HSTS FIRST — before express.json() AND before opts.middleware. BOTH orderings are
+  // load-bearing, and both were measured rather than reasoned about.
+  //
+  // Before express.json(): a POST with a malformed body makes body-parser throw and express
+  // jumps to the error handler, skipping every middleware registered AFTER the parser.
+  // Booting this factory with HSTS installed via the `middleware` hook (i.e. after the
+  // parser) and posting `{ not json` to /mcp produced `400, HSTS ABSENT`, while GET /,
+  // OPTIONS /mcp, an unrouted 404 and a well-formed tools/list all carried it.
+  //
+  // Before opts.middleware: several verticals' hooks short-circuit the CORS preflight with
+  // `res.status(204).end()` and never call next(), so anything registered after them does
+  // not run for an OPTIONS request.
+  //
+  // Here rather than in each vertical because SEVEN bridges share this factory —
+  // foxxi-bridge, which mints tenant session tokens, among them — and measured live
+  // 2026-08-03 the deployed one served no Strict-Transport-Security.
+  //
+  // max-age only: includeSubDomains would bind every *.interego.xwisee.com including any
+  // not fully on HTTPS, and preload is close to irreversible. Separate decisions.
+  app.use((_req, res, next) => {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+    next();
+  });
+
   app.use(express.json({ limit: '50mb' }));
+
+  // Build identity, mounted BEFORE opts.middleware so a vertical's own hook cannot end up
+  // in front of it. tools/railway-redeploy.mjs polls exactly `j.build` and Railway calls a
+  // deploy SUCCESS as soon as the container binds a port, so without this a rollout of any
+  // of the seven bridges cannot be distinguished from the old container still serving.
+  //
+  // ★ It must stay ABOVE per-route auth. foxxi-bridge runs with FOXXI_REQUIRE_AUTH=true;
+  // its auth is per-route today, so this route answers unauthenticated. If a future global
+  // auth middleware is added to this factory, this healthcheck 401s and every deploy of
+  // every vertical stops being verifiable — put it before that middleware, not after.
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok', build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset' });
+  });
 
   if (opts.middleware) opts.middleware(app);
 

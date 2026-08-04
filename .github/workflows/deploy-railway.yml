@@ -32,10 +32,14 @@ on:
         description: 'Image tag: the 40-hex commit sha built by build-ghcr.yml. Defaults to this ref.'
         required: false
         default: ''
-      verify_url:
-        description: 'Health URL polled until it reports the deployed sha. REQUIRED — every service now serves /health with its build sha.'
-        required: true
-        default: 'https://relay.interego.xwisee.com/health'
+      # ★ NO verify_url INPUT, AND NO DEFAULT. It used to be a free-text field pre-filled
+      # with RELAY's /health — for every service. Dispatching service=identity at a sha
+      # relay happened to be running polled RELAY, read relay's matching build, printed
+      # "serving … — verified" and exited 0 while identity still ran an older image: the
+      # one assertion this repo has that a rollout landed, passing for a service it never
+      # contacted. tools/railway-redeploy.mjs now DERIVES the URL from the service being
+      # deployed (Railway's own `domains` answer + that service's health path from
+      # tools/railway-services.mjs), so there is nothing left here to type wrong.
 
 # A second dispatch must QUEUE, never run alongside: re-triggering a deploy while one
 # is in flight SIGTERMs the healthy container, and the successors die before logging.
@@ -54,6 +58,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
+        with:
+          # ★ FULL HISTORY, and the post-deploy check below is why. `railway-pins.mjs
+          # --check` dates each pinned sha (`git show -s --format=%cI`) and counts the
+          # commits between it and HEAD. actions/checkout's default `fetch-depth: 1` has
+          # neither, so every sha-pinned service reports UNKNOWN-COMMIT and the step goes
+          # red for a reason that has nothing to do with production — which is how a check
+          # gets read as broken and then ignored.
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with: { node-version: '20' }
 
@@ -78,9 +90,19 @@ jobs:
       # the rollout looks fine. Catch it before touching production.
       - name: Verify the image exists in GHCR
         env:
-          IMAGE: ghcr.io/markjspivey-xwisee/interego-${{ inputs.service }}
+          # ★ ASKED, NOT DERIVED. This step used to interpolate the service name into
+          # "interego-<service>". That is right for thirteen of the sixteen services and
+          # WRONG for css, whose image is `interego-css-pgsl` — the exact inline derivation
+          # tools/railway-services.mjs was created to delete, still spelled out here long
+          # after. Asking the tracked table means this step can never disagree with the
+          # deploy step below about which image is being checked.
+          # (The literal form is spelled with angle brackets above on purpose:
+          # tests/build-sha-is-verifiable.test.ts greps this file for the real interpolation
+          # and a comment quoting it verbatim would defeat the guard.)
+          SERVICE: ${{ inputs.service }}
           TAG: ${{ steps.t.outputs.tag }}
         run: |
+          IMAGE="$(node tools/railway-services.mjs image "$SERVICE")"
           if ! docker buildx imagetools inspect "$IMAGE:$TAG" > /dev/null 2>&1; then
             echo "::error::$IMAGE:$TAG is not in the registry. Run build-ghcr.yml for this commit first."
             exit 1
@@ -92,27 +114,35 @@ jobs:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
           SERVICE: ${{ inputs.service }}
           TAG: ${{ steps.t.outputs.tag }}
-          VERIFY_URL: ${{ inputs.verify_url }}
         run: |
           if [ -z "$RAILWAY_PROJECT_TOKEN" ]; then
             echo "::error::RAILWAY_PROJECT_TOKEN is not set. Add it as a repository secret (a Railway PROJECT token)."
             exit 1
           fi
-          # ★ VERIFICATION IS NO LONGER OPTIONAL.
+          # ★ VERIFICATION IS NEITHER OPTIONAL NOR CONFIGURABLE FROM HERE.
           #
-          # `--verify-url` was an opt-in that degraded to a printed caveat: without it
-          # railway-redeploy.mjs exits 0 after announcing "Railway reports success, but
-          # nothing has confirmed the new code is actually serving". A deploy step that
-          # can report success without a single request to the deployed thing is how a
-          # stale image goes unnoticed — measured this round on the css-gate, which had
-          # been serving a build predating its own HSTS fix.
-          #
-          # It could not be mandatory before, because the static SPA images answered
-          # /health with the HTML shell and there was no sha to compare. deploy/nginx-spa.conf
-          # now serves real JSON with the build sha baked in, so every service in the fleet
-          # can be verified and none of them gets to skip it.
-          if [ -z "$VERIFY_URL" ]; then
-            echo "::error::verify_url is required. Every service serves /health with its build sha; a deploy nothing confirmed is not a deploy."
-            exit 1
-          fi
-          node tools/railway-redeploy.mjs "$SERVICE" "$TAG" --verify-url "$VERIFY_URL"
+          # It was an opt-in that degraded to a printed caveat: without --verify-url,
+          # railway-redeploy.mjs exited 0 after announcing "Railway reports success, but
+          # nothing has confirmed the new code is actually serving". Making it required
+          # was not enough, because the field it required was pre-filled with RELAY's
+          # /health for every service — so a deploy of identity could poll relay, match
+          # relay's build against the tag, and print "verified" without contacting
+          # identity once. The URL is now derived inside the tool from the service being
+          # deployed, and there is no input here to get wrong.
+          node tools/railway-redeploy.mjs "$SERVICE" "$TAG"
+
+      # The resource floors live in tools/railway-services.mjs, but a floor nothing reads
+      # is a comment. This is the only workflow holding a Railway credential, so it is the
+      # only place the live check can run at all.
+      #
+      # It runs AFTER the deploy and does not gate it: a cap set below a floor, a pin
+      # behind master, or an unshipped pin is not CAUSED by this deploy, and blocking a
+      # rollout on one would be the wrong lever. What it does is make those conditions
+      # impossible to hold silently. ★ Expect it to be red whenever master has moved past
+      # the tag just deployed — `--check` asks "is production running master", and one
+      # commit after a merge the honest answer is no. That is the tool working.
+      - name: Check Railway pins, floors and the singleton invariant against the live API
+        if: always()
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        run: node tools/railway-pins.mjs --check

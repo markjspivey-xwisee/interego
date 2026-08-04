@@ -95,13 +95,24 @@ The list is not exhaustive. Additions go through the same PR gate as any other L
 
 ## Running the suite
 
-Once populated, the suite ships a small runner that takes an implementation endpoint (or a library entry point) and a manifest file, and produces a pass/fail report. The runner itself is Layer 3 tooling; the protocol does not require any particular runner, only that the fixtures and expected outcomes are honored.
+The runner is `runner.mjs` in this directory. It is Layer 3 tooling; the protocol does not require any particular runner, only that the fixtures and expected outcomes are honored.
 
-Draft runner command (not yet implemented):
+```bash
+# L1 fixture checks over the built-in tree
+node spec/conformance/runner.mjs
 
+# the same checks over YOUR serialized output
+node spec/conformance/runner.mjs --fixtures <dir-of-your-own-turtle-output>
+
+# L1 fixtures plus the L2 live checks against a running implementation
+INTEREGO_CONFORMANCE_ENDPOINT=https://your-pod-url/ node spec/conformance/runner.mjs
 ```
-interego-conformance run --impl <endpoint-or-module> --manifest ./manifest.json
-```
+
+Exit codes: `0` conformant for what was exercised, `1` a fixture or a live rule failed, `2` the run could not be trusted (an unrecognised fixture subdirectory, a declared category with nothing in it, an unreadable fixtures directory, or the removed `--expected` flag).
+
+This section previously described a "draft runner command (not yet implemented)" — `interego-conformance run --impl <endpoint-or-module> --manifest ./manifest.json`. There is no `interego-conformance` binary and no `manifest.json`; neither has ever existed, while `runner.mjs` beside this file did.
+
+Without `INTEREGO_CONFORMANCE_ENDPOINT` the runner makes no L2 claim and says so. It implements no L3 check at all, so an L3 badge is not obtainable from it.
 
 ## Versioning
 

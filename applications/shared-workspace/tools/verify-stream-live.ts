@@ -118,8 +118,16 @@ async function main(): Promise<void> {
 
   // ── 3. a stale precondition must be refused, and nothing may land ──
   console.log('\n3. a stale precondition');
-  const staleHead = headOf(verifyChain(rows).ordered.slice(0, 2)).url;
-  if (!staleHead) { ok(false, 'could not derive a stale head to assert with'); }
+  // The first two rows of an already-verified chain: a prefix of a valid chain is a valid
+  // chain, so this derives cleanly on a healthy run. Branched rather than asserted, because
+  // `headOf` reports a divergence as a value now — and a live tool that read `.url` off the
+  // refusing member would print `undefined` as the stale head and assert against nothing.
+  const derived = headOf(verifyChain(rows).ordered.slice(0, 2));
+  const staleHead = derived.outcome === 'head' ? derived.url : null;
+  if (!staleHead) {
+    ok(false, 'could not derive a stale head to assert with',
+      derived.outcome === 'diverged' ? derived.message : 'the prefix verified but named no head');
+  }
   const before = (await readStream(alice, deps)).length;
   const stale = await call('publish_context', {
     graph_iri: alice.graphIri,

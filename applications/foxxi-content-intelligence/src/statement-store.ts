@@ -9,7 +9,12 @@
  * the source of truth and Foxxi as the read-through cache.
  *
  * Pick which one runs at boot via `FOXXI_LRS_BACKEND`:
- *   memory                 ← default (no persistence; lost on restart)
+ *   memory                 ← default AND what production currently sets (deploy/railway/
+ *                            services.json). No persistence, lost on restart, and bounded
+ *                            by a process-wide statement budget that EVICTS — so a
+ *                            statement id already published as a credential's
+ *                            rawDataLocation can stop resolving. Durable deployments use
+ *                            file: or pod.
  *   file:/path/to/dir      ← append-only JSONL with index file
  *   forward:<endpoint>     ← every write forwarded; reads from local cache
  *
@@ -28,6 +33,7 @@
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { getHeapStatistics } from 'node:v8';
 import {
   withTransientRetry,
 } from '@interego/solid';
@@ -231,14 +237,127 @@ function statementBodyEqual(a: Record<string, unknown>, b: Record<string, unknow
   return JSON.stringify(drop(a)) === JSON.stringify(drop(b));
 }
 
+// ── Process-wide resident-statement budget ───────────────────────────
+//
+// ★ WHY THE BOUND IS GLOBAL AND NOT PER-STORE.
+// Two earlier rounds each capped one axis, and the two caps do not compose:
+//   round-36  InMemoryStatementStore.MAX = 50_000  statements PER TENANT
+//   round-38  TenantPartition.MAX        = 20_000  tenant partitions
+// What exhausts the heap is the PRODUCT — 20_000 × 50_000 = 1_000_000_000 resident
+// statements. Measured against these exact classes a representative xAPI 2.0 statement
+// costs ~845 B of heap, so the bridge's 3072 MiB heap (NODE_OPTIONS
+// --max-old-space-size=3072) is gone at ~3.8 M statements: 262x BELOW what the caps
+// allow. Neither cap can fire first — 20_000 tenants x 191 statements OOMs the process
+// with the per-tenant cap untouched, and 77 tenants x 50_000 OOMs it with the tenant cap
+// untouched. Both guards were unreachable on the path they were written for, which is why
+// a bridge OOM has only ever surfaced as an unrelated-looking boot failure.
+//
+// The bound therefore has to be on the total, shared by every in-memory store alive in the
+// process. Eviction takes from the LARGEST live store: under the abuse shape (many
+// throwaway lens:<wallet> tenants) that spreads pressure evenly instead of letting a
+// per-tenant cap shield each one, and under a single hot tenant it takes from the hog
+// rather than from a quiet tenant's records.
+//
+// Registry entries are WeakRefs: a store dropped without dispose() — or held only by a
+// finished test, since vitest runs every file in ONE realm here — must not be pinned alive
+// by the budget that is supposed to be protecting memory.
+const liveMemoryStores = new Set<WeakRef<InMemoryStatementStore>>();
+let residentStatements = 0;
+
+/** Statements the process may hold across ALL in-memory stores. Derived from the real heap
+ *  limit rather than a hand-picked constant — a constant with no relationship to the heap
+ *  it protects is exactly what failed above. 1 KiB/statement is the measured ~845 B plus
+ *  Map-entry overhead; 40 % of the heap leaves room for everything else the bridge holds. */
+function defaultResidentBudget(): number {
+  const override = Number(process.env.FOXXI_LRS_MEMORY_MAX_STATEMENTS ?? '');
+  if (Number.isFinite(override) && override > 0) return Math.floor(override);
+  return Math.max(10_000, Math.floor((getHeapStatistics().heap_size_limit * 0.4) / 1024));
+}
+let residentBudget = defaultResidentBudget();
+
+/** The budget and the count charged against it. Exported for /xapi/about and for tests,
+ *  which must be able to pin a small budget instead of allocating a real heap's worth. */
+export function residentStatementBudget(): number { return residentBudget; }
+export function residentStatementCount(): number { return residentStatements; }
+export function setResidentStatementBudget(n?: number): void {
+  residentBudget = n === undefined ? defaultResidentBudget() : n;
+}
+/** Test seam: forget every registered store. vitest runs all files in one realm, so a store
+ *  left registered by an earlier file is otherwise a candidate victim for a later file's
+ *  eviction, and that file's assertions would depend on run order. Fix the polluter. */
+export function resetResidentBudgetRegistryForTest(): void {
+  liveMemoryStores.clear();
+  residentStatements = 0;
+}
+
+/** Live stores with their sizes, pruning dead WeakRefs as it walks. */
+function liveStoresWithSizes(): Array<{ store: InMemoryStatementStore; size: number }> {
+  const out: Array<{ store: InMemoryStatementStore; size: number }> = [];
+  for (const ref of liveMemoryStores) {
+    const store = ref.deref();
+    if (store === undefined) { liveMemoryStores.delete(ref); continue; }
+    out.push({ store, size: store.residentSize() });
+  }
+  return out;
+}
+
+function evictToBudget(): void {
+  if (residentStatements <= residentBudget) return;
+  // RESYNC BEFORE EVICTING. `residentStatements` is maintained incrementally, so it drifts
+  // upward whenever a store is collected or dropped without dispose(). Uncorrected drift
+  // would eventually make every put evict something. Recomputing from the live registry is
+  // O(live stores) and runs only while we are over budget.
+  const live = liveStoresWithSizes();
+  residentStatements = live.reduce((n, e) => n + e.size, 0);
+  while (residentStatements > residentBudget) {
+    let victim: { store: InMemoryStatementStore; size: number } | null = null;
+    for (const e of live) if (victim === null || e.size > victim.size) victim = e;
+    // Nothing left to take — a budget smaller than the live-store count cannot be met by
+    // eviction. Stop rather than spin.
+    if (victim === null || victim.size === 0) return;
+    victim.store.evictOldest();
+    victim.size--;
+    residentStatements--;
+  }
+}
+
 export class InMemoryStatementStore implements StatementStore {
   private readonly store = new Map<string, StoredStatement>();
-  /** Bound the ephemeral (single-replica, lost-on-restart) in-memory store so an
-   *  any-signed-wallet writer (e.g. /agent/mesh-event with a fresh id per envelope)
-   *  cannot grow it without limit into an OOM (round-36). Evict oldest (insertion
-   *  order) past the cap — acceptable because this store is already non-durable; the
-   *  durable LRS is Pod/File-backed. */
-  private static readonly MAX = 50_000;
+  /** Whether this instance draws on the process-wide budget. A FileStatementStore's
+   *  snapshot opts OUT: it is the read path for data that IS on disk, so evicting from it
+   *  would make get() answer null for a statement the file still holds. Stores that are
+   *  themselves the only copy (the LRS backend, the primary-forward cache) opt in. */
+  private readonly budgeted: boolean;
+  private readonly selfRef: WeakRef<InMemoryStatementStore>;
+
+  constructor(opts: { budgeted?: boolean } = {}) {
+    this.budgeted = opts.budgeted !== false;
+    this.selfRef = new WeakRef(this);
+    if (this.budgeted) liveMemoryStores.add(this.selfRef);
+  }
+
+  /** Entries held right now — the budget's unit of account. */
+  residentSize(): number { return this.store.size; }
+
+  /** Drop the oldest entry (insertion order). Only evictToBudget calls this; it settles
+   *  `residentStatements` itself so the count and the loop stay consistent. */
+  evictOldest(): void {
+    const oldest = this.store.keys().next().value;
+    if (oldest !== undefined) this.store.delete(oldest);
+  }
+
+  /** Leave the process-wide budget. TenantPartition calls this when it drops a partition —
+   *  without it the budget keeps charging every later write for statements that nothing can
+   *  read again, and the bridge throttles itself to death on phantom occupancy. */
+  dispose(): void {
+    liveMemoryStores.delete(this.selfRef);
+    // Return the entries EAGERLY. evictToBudget() resyncs from the live registry, but only
+    // once already over budget — so without this the counter stays inflated by every
+    // dropped partition until the next over-budget write, and the first thing that write
+    // does is evict a LIVE tenant's oldest records to pay for statements nothing can read.
+    if (this.budgeted) residentStatements = Math.max(0, residentStatements - this.store.size);
+    this.store.clear();
+  }
 
   async put(record: StoredStatement): Promise<void> {
     const prior = this.store.get(record.id);
@@ -250,11 +369,8 @@ export class InMemoryStatementStore implements StatementStore {
     // re-POSTs. Caller's idempotent re-POSTs return 200 / 204 without
     // mutating the stored body.
     if (prior) return;
-    if (this.store.size >= InMemoryStatementStore.MAX) {
-      const oldest = this.store.keys().next().value;
-      if (oldest !== undefined) this.store.delete(oldest);
-    }
     this.store.set(record.id, record);
+    if (this.budgeted) { residentStatements++; evictToBudget(); }
   }
   async get(id: string): Promise<StoredStatement | null> { return this.store.get(id) ?? null; }
   async markVoided(id: string, voidingStatementId: string): Promise<void> {
@@ -277,8 +393,18 @@ export class InMemoryStatementStore implements StatementStore {
   }
   async listAll(): Promise<StoredStatement[]> { return [...this.store.values()]; }
   async count(): Promise<number> { return this.store.size; }
-  async clear(): Promise<void> { this.store.clear(); }
-  backendDescription(): string { return 'in-memory (single-replica; lost on restart)'; }
+  async clear(): Promise<void> {
+    // Return the entries to the budget, or a clear() leaves the process permanently
+    // charged for statements that no longer exist.
+    if (this.budgeted) residentStatements = Math.max(0, residentStatements - this.store.size);
+    this.store.clear();
+  }
+  /** Reports the budget, not just the backend name: an evicted statement is indistinguishable
+   *  from a fabricated one to anyone following a rawDataLocation pointer, so /xapi/about has
+   *  to say how close this LRS is to dropping records. */
+  backendDescription(): string {
+    return `in-memory (single-replica; lost on restart; ${residentStatements}/${residentBudget} statements resident process-wide)`;
+  }
 }
 
 // ── File-backed implementation ───────────────────────────────────────
@@ -289,7 +415,9 @@ export class InMemoryStatementStore implements StatementStore {
 // memory snapshot. Survives restarts; cheap; single-process.
 
 export class FileStatementStore implements StatementStore {
-  private readonly memory = new InMemoryStatementStore();
+  // Opts out of the process-wide budget: this snapshot is the READ PATH for statements the
+  // JSONL file still holds, so evicting from it would make get() answer null for durable data.
+  private readonly memory = new InMemoryStatementStore({ budgeted: false });
   private loaded = false;
 
   constructor(private readonly dir: string) {}

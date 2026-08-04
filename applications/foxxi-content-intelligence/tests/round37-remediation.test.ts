@@ -8,27 +8,45 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { InMemoryStatementStore } from '../src/statement-store.js';
+import {
+  InMemoryStatementStore,
+  residentStatementBudget,
+  setResidentStatementBudget,
+  resetResidentBudgetRegistryForTest,
+} from '../src/statement-store.js';
 import { addForwardingTarget } from '../src/lrs-forwarding.js';
 import { DEFAULT_TENANT, type TenantId } from '../src/tenant-context.js';
 
 describe('round-37 — unbounded shared-state stores are capped', () => {
-  it('InMemoryStatementStore evicts oldest past its cap (bounded memory)', async () => {
+  it('InMemoryStatementStore evicts oldest past the PROCESS-WIDE budget', async () => {
+    // The bound is no longer a per-store constant: a per-store constant multiplied by
+    // TenantPartition's own cap allowed 262x the heap. Pin a small budget, isolate the
+    // registry, and restore both — vitest runs every file in one realm, so a leaked budget
+    // or a leaked registration silently changes another file's evictions.
+    resetResidentBudgetRegistryForTest();
+    const previous = residentStatementBudget();
+    setResidentStatementBudget(50_000);
     const store = new InMemoryStatementStore();
-    const N = 50_010; // MAX is 50_000
-    for (let i = 0; i < N; i++) {
-      await store.put({
-        id: `urn:uuid:stmt-${i}`,
-        statement: { id: `urn:uuid:stmt-${i}`, actor: { objectType: 'Agent' }, verb: { id: 'http://x/v' }, object: { id: 'http://x/o' } },
-        stored: new Date(0).toISOString(),
-        voided: false,
-      } as never);
+    try {
+      const N = 50_010;
+      for (let i = 0; i < N; i++) {
+        await store.put({
+          id: `urn:uuid:stmt-${i}`,
+          statement: { id: `urn:uuid:stmt-${i}`, actor: { objectType: 'Agent' }, verb: { id: 'http://x/v' }, object: { id: 'http://x/o' } },
+          stored: new Date(0).toISOString(),
+          voided: false,
+        } as never);
+      }
+      const count = await store.count();
+      expect(count).toBeLessThanOrEqual(50_000);
+      // The oldest was evicted; the newest is retained.
+      expect(await store.get('urn:uuid:stmt-0')).toBeNull();
+      expect(await store.get(`urn:uuid:stmt-${N - 1}`)).not.toBeNull();
+    } finally {
+      store.dispose();
+      setResidentStatementBudget(previous);
+      resetResidentBudgetRegistryForTest();
     }
-    const count = await store.count();
-    expect(count).toBeLessThanOrEqual(50_000);
-    // The oldest was evicted; the newest is retained.
-    expect(await store.get('urn:uuid:stmt-0')).toBeNull();
-    expect(await store.get(`urn:uuid:stmt-${N - 1}`)).not.toBeNull();
   });
 
   it('addForwardingTarget returns null once the per-tenant cap (200) is reached', () => {

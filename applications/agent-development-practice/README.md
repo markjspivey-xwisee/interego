@@ -221,7 +221,8 @@ Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) ve
 
 | What's verified (real code paths) | What's still deferred |
 |---|---|
-| Real `ContextDescriptor` builder produces conforming shape for every adp: class | Vertical content (`adp:coherentNarrative`, `adp:contextSignifier`, etc.) lives in the described graph, not in the descriptor metadata — graph-side content not yet validated end-to-end |
+| Real `ContextDescriptor` builder produces conforming shape for every adp: class | Graph-side conformance is checked against [`ontology/adp-shapes.ttl`](ontology/adp-shapes.ttl), which constrains only the 7 node types `src/pod-publisher.ts` emits — a hand-written graph using other `adp:` terms is unconstrained |
+| Real graph payload from every publisher (`build*Graph`) validated against `adp-shapes.ttl` by the real SHACL engine, offline — [`tests/graph-content-conforms.test.ts`](tests/graph-content-conforms.test.ts). Includes rejection cases, because `validateAgainstShape` returns `conforms=true` on a graph with zero focus nodes | Publishers do not yet validate their own graph at publish time; the shape is enforced in test, and the TS `if` guards remain the runtime gate |
 | Real `validate()` returns conforms=true for all 9+ descriptors in the cycle | No live signature verification chain after publish (Tier 1 deferred) |
 | Real `toTurtle()` round-trip preserves descriptor IRIs | No external Nostr public-relay test (Tier 4) |
 | Modal discipline holds: probes + fragments + syntheses all `iep:Hypothetical`; operator evolution decisions `iep:Asserted` | |
@@ -229,6 +230,8 @@ Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) ve
 | **Tier 5** (cross-vertical applicability) — [`learner-performer-companion/tests/tier5-vc-roundtrip.test.ts`](../learner-performer-companion/tests/tier5-vc-roundtrip.test.ts) verifies real ECDSA `signDescriptor` + `verifyDescriptorSignature` over descriptor turtle, with tamper-detection + forgery-detection. Same primitives apply to `adp:CapabilityEvolution` events — the `passport:LifeEvent` biographical record carries cryptographically committed humility-forward clauses. | |
 
 **Real finding from testing**: the L1 `iep:SemioticFacet` has no `content` field — content lives in the *described graph*, not in the descriptor metadata. The print-only example walks descriptor metadata; production usage requires emitting the graph turtle alongside.
+
+**Second finding, from shaping that graph**: because the payload was a template string handed to `publish()` as an opaque body, and its only read-back was the pod-gated Tier 8 test, nothing could see that `adp:timeBound` and `adp:nextRevisitAt` were emitted as plain `xsd:string` literals against the `rdfs:range xsd:dateTime` [`ontology/adp.ttl`](ontology/adp.ttl) declares for both. `rdfs:range` is an entailment, not a constraint — no processor rejects on it. Fixed, and pinned by a shape.
 
 ## What this is NOT
 

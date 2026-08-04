@@ -426,9 +426,20 @@ agent's report.
 
 - **boozer's third-seat owner-decrypt** — his durable key is already a recipient of the holon;
   needs him holding his durable *private* key across sessions.
-- **johnny's pod cleanup** — re-emit + void the pre-fix cleartext record `rec-76593c72…`.
-- **Agent-side durable keys** — derive a durable X25519 key from an agent-specific stable secret
-  (the `f-ephemeral-agent-encryption-key` finding; maintainer side is closed).
+- **johnny's pod cleanup — closed by decommission.** The pre-fix cleartext record
+  `rec-76593c72…` was never re-emitted or voided, and cannot be: it lived on johnny's pod on
+  the retired Azure substrate whose endpoints §14 lists, and pod data was never migrated.
+  Checked 2026-08-04 — `https://gate.interego.xwisee.com/u-pk-00181cd5dbee/` returns a CSS
+  `NotFoundHttpError` (404, `H404`) where `/foxxi/` and the maintainer pod return 200 through
+  the same gate, and the Azure hosts accept no connection. Not shown: that the bytes were
+  deleted — only that neither the record nor its pod is reachable.
+- **Agent-side durable keys** — a relay-mediated agent generates its X25519 pair in-session and
+  keeps nothing, so it cannot owner-decrypt later (the `f-ephemeral-agent-encryption-key`
+  finding; the maintainer side is closed by an on-disk key file). The obvious fix is unsafe as
+  once stated here: the relay is single-signer, so deriving off its compliance wallet yields ONE
+  keypair shared by every agent. A durable agent key must be domain-separated per principal —
+  `deriveEncryptionKeyPair` takes a `principal` argument for exactly that. Closing this still
+  needs a relay-side per-agent durable key; the primitive is now safe to build it on.
 - **Optional deeper fix** — extend the durable-key recipient path to `publish_context` so the
   rich signed graph itself (not just the record-performance twin) is confidential-by-recipients.
 

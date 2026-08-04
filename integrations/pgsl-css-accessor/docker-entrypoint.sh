@@ -13,9 +13,17 @@ if [ -z "${PGSL_PG_CONNSTR:-}" ]; then
   exit 1
 fi
 
-# Locker selection: REDIS_ADDR set (a redis:// URL) -> shared Redis locker
-# (safe multi-replica over the coherent Postgres backend); otherwise the
-# process-local memory locker (single replica; also used by CI/local tests).
+# Locker selection: REDIS_ADDR set -> shared Redis locker; otherwise the
+# process-local memory locker (also used by CI/local tests).
+#
+# BOTH branches are single-replica today, and the Redis branch is NOT a licence
+# to scale out: RedisLocker.clearLocks() does KEYS <prefix>* + DEL over the whole
+# shared namespace on every boot AND every shutdown, so a second replica deletes
+# the first one's live locks. See config/pgsl-server-redis.json.
+#
+# NOT a redis:// URL, whatever the old comment here said: the shipped
+# RedisLocker.createRedisClient matches /^(?:([^:]+):)?(\d{4,5})$/ and THROWS on
+# anything else, so the value must be host:port (redis.railway.internal:6379).
 CONFIG=config/pgsl-server.json
 if [ -n "${REDIS_ADDR:-}" ]; then
   CONFIG=config/pgsl-server-redis.json

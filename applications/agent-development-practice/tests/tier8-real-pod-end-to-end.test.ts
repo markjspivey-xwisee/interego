@@ -37,7 +37,14 @@ import type {
 
 // ★ The default host was the Azure CSS gate, deliberately destroyed in the Railway move.
 // See applications/_shared/tests/pod-target.ts.
-import { TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, probePod } from '../../_shared/tests/pod-target.js';
+// ★ Gated through real-pod-gate.ts rather than probePod() directly: probePod() folded a
+// DECLARED opt-out and a DISCOVERED failure (unreachable, 404 container, refused write) into
+// one `usable: false` and both reached ctx.skip(), which is green. openRealPod() throws on the
+// discovered kind, so a pod that has stopped existing reds this file instead of emptying it.
+import {
+  TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, podWriteHeaders,
+  openRealPod, DECLARED_SKIPS, type PodGate,
+} from '../../_shared/tests/real-pod-gate.js';
 
 function uniquePodUrl(): string {
   return `${TEST_POD_BASE}adp-tier8-${Date.now()}-${Math.random().toString(36).slice(2, 8)}/`;
@@ -55,29 +62,39 @@ async function cleanup(): Promise<void> {
     const m = /^(.*\/adp-tier8-[^/]+\/)/.exec(url);
     if (m) containerRoots.add(m[1]!);
   }
+  // DELETE is a write, and the css-gate answers an unauthenticated write with
+  // `401 anonymous writes denied`. Without the bearer every one of these silently 401s inside
+  // the `catch {}` and the run leaves its fixtures on a real pod — the same omission
+  // agent-collective's cleanup() had already fixed.
   for (const url of cleanupUrls.splice(0)) {
-    try { await fetch(url, { method: 'DELETE' }); } catch {}
+    try { await fetch(url, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
   }
   for (const root of containerRoots) {
-    try { await fetch(`${root}.well-known/context-graphs`, { method: 'DELETE' }); } catch {}
-    try { await fetch(`${root}context-graphs/`, { method: 'DELETE' }); } catch {}
-    try { await fetch(`${root}.well-known/`, { method: 'DELETE' }); } catch {}
-    try { await fetch(root, { method: 'DELETE' }); } catch {}
+    try { await fetch(`${root}.well-known/context-graphs`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(`${root}context-graphs/`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(`${root}.well-known/`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(root, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
   }
 }
 
+// Seeded with a DECLARED skip so a beforeAll that throws cannot leave a value resembling a
+// legitimate opt-out; vitest fails every body in a file whose beforeAll throws, which is the
+// intent.
+let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1' };
 let reachable = false;
-let skipReason = '';
 beforeAll(async () => {
-  const availability = await probePod();
-  reachable = availability.usable;
-  skipReason = availability.reason;
+  pod = await openRealPod();
+  reachable = pod.ok;
 });
 
 describe('Tier 8 — agent-development-practice production end-to-end', () => {
-  it('reachability probe', () => {
-    if (!reachable) console.warn(`ADP Tier 8 skipped — ${skipReason} (host: ${AZURE_CSS_BASE})`);
-    expect(typeof reachable).toBe('boolean');
+  it('real-pod precondition: skipping is allowed only for a DECLARED reason', () => {
+    // Was `expect(typeof reachable).toBe('boolean')` — true of `false`, so the one test that
+    // "passed" in this file passed for every possible state of the pod, including the two
+    // years in which the host it probed did not exist.
+    if (pod.ok) return;
+    console.warn(`ADP Tier 8 skipped — ${pod.declaredSkip} (host: ${AZURE_CSS_BASE})`);
+    expect(DECLARED_SKIPS).toContain(pod.declaredSkip);
   });
 
   it('full probe cycle: capability → probes → fragments → synthesis → evolution → constraint → capability evolution', { timeout: 300000 }, async (ctx) => {

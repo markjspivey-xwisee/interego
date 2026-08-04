@@ -1643,7 +1643,6 @@ function buildWebIdProfile(identity: Identity): string {
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json());
 
 /**
  * Transport-security headers.
@@ -1667,6 +1666,20 @@ app.use((_req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   next();
 });
+
+// ★ AFTER the headers, not before — and this line USED to sit above them, which made the
+// block above dead on the one path that most needs it. body-parser throws on a malformed
+// body and express jumps straight to the error handler, skipping every middleware
+// registered after the parser. Measured live 2026-08-03:
+//
+//   POST https://identity.interego.xwisee.com/  body `{ not json`
+//     -> 400 Bad Request, NO Strict-Transport-Security
+//
+// while the relay, which already registers its HSTS middleware before its parser, returned
+// 400 WITH it. This host mints and accepts bearer tokens, and a smoke test never sees this
+// because a smoke test always sends valid JSON. Nothing but a JSDoc comment sat between the
+// two lines, so no route's ordering changed; `app.set('trust proxy', 1)` stays above both.
+app.use(express.json());
 
 // CORS: explicit allowlist, never wildcard. See cors-allowlist.ts for the
 // full rationale (the same fix is applied in deploy/mcp-relay/server.ts).
@@ -1921,6 +1934,16 @@ app.get('/health', (_req, res) => {
     // to report. Caller can still trust signature + expiry + sessionEpoch.
     tokenSigningKeyOrigin: process.env['TOKEN_SIGNING_KEY'] ? 'env' : 'ephemeral',
     base: BASE_URL,
+    // ★ The field is named `build` and nothing more descriptive because
+    // tools/railway-redeploy.mjs reads exactly `j.build` from --verify-url, and that poll
+    // is the ONLY assertion distinguishing the new container from the old one still
+    // serving: Railway calls a deploy SUCCESS as soon as the container binds a port, and
+    // on a tag that does not exist in the registry the previous container keeps answering
+    // 200. Without this field every other key in this body was byte-identical before and
+    // after every deploy, so nothing could tell a landed rollout from a skipped one —
+    // which is how identity sat pinned to a commit it was demonstrably not running.
+    // Matches deploy/mcp-relay/server.ts.
+    build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset',
   });
 });
 

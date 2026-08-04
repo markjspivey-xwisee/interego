@@ -31,7 +31,11 @@
  * functional copy-on-write (matching the codebase convention).
  */
 
-import type { IRI } from '@interego/core';
+// Import `AccessControlPolicyData` ONLY. Core also exports a `DeonticMode`
+// (`'Permit'|'Deny'|'Duty'`); pulling that in would shadow this module's own
+// `DeonticMode` (`'permit'|'deny'|'duty'`, declared below) and re-export the
+// wrong union from packages/pgsl/src/index.ts to every downstream consumer.
+import type { AccessControlPolicyData, IRI } from '@interego/core';
 import type { PGSLInstance } from './types.js';
 import type {
   AffordanceDecorator,
@@ -483,6 +487,100 @@ export function defaultPolicies(): PolicyRule[] {
       description: 'All agents may read unless explicitly denied',
     },
   ];
+}
+
+// ══════════════════════════════════════════════════════════════
+// 2b. ABAC → deontic-engine bridge
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * How a bridged ABAC policy decides whether it APPLIES to a request.
+ *
+ * ★ THIS PARAMETER IS THE WHOLE REASON THE CONVERTER IS NOT `policyToDeonticRule(policy)`,
+ * the one-argument signature the deferral note named. `AccessControlPolicyData` carries no
+ * subject and no target: an ABAC policy applies when the subject's federated
+ * `AttributeGraph` satisfies `policyPredicateShape`. Nothing in this engine's
+ * `PolicyContext` (`agentId`, `agentAAT`, `nodeUri`, `nodeValue`, `action`) can reach that
+ * graph, and `@interego/pgsl` cannot import `@interego/abac` to reuse `validateAgainstShape`
+ * — abac builds AFTER pgsl in the root `build:leaves` chain and pgsl depends on
+ * `@interego/core` alone, so the import would invert the build order. The satisfaction test
+ * is therefore injected by the caller, where both are in scope.
+ *
+ * ★ THE FAILURE A ONE-ARGUMENT SIGNATURE PRODUCES, measured against the built packages
+ * before this function existed: bridge a Deny policy whose predicate the subject does NOT
+ * satisfy, with the predicate dropped. `@interego/abac`'s `evaluate` returns
+ * `Indeterminate` — the policy did not apply. The predicate-less rule has `subject: '*'`
+ * and no condition, so it matches everything and `evaluate` below returns `allowed: false`.
+ * A policy that governed nobody becomes a blanket deny. Mirror-image on Permit: a
+ * predicate-less Permit grants exactly what the predicate withheld.
+ */
+export interface DeonticBridgeOptions {
+  /**
+   * True when the policy's `policyPredicateShape` is satisfied for this request. Wire it to
+   * `validateAgainstShape(resolveAttributes(ctx.agentId, descriptors), shape).length === 0`
+   * at the call site. Passing a constant here defeats the parameter's entire purpose.
+   */
+  readonly predicateHolds: (policy: AccessControlPolicyData, context: PolicyContext) => boolean;
+  /** Node-URI pattern to scope the emitted rules to. Defaults to '*'. */
+  readonly target?: string;
+}
+
+/**
+ * Convert one `iep:AccessControlPolicy` descriptor into the deontic rules this engine
+ * evaluates. Named `policyToDeonticRule` in the deferral note; it returns a LIST because a
+ * faithful conversion is not always 1:1 — see the Duty case.
+ *
+ * Mapping:
+ *   - `governedAction` → `action`. ABAC matches actions by strict equality and so does
+ *     `actionMatches` for every value except the literal `'*'`, which no IRI is.
+ *   - `subject` → `'*'`, `target` → `options.target ?? '*'`. An ABAC policy names neither;
+ *     narrowing either here would refuse requests the policy admits.
+ *   - `deonticMode` `'Permit'`/`'Deny'` → one `'permit'`/`'deny'` rule.
+ *   - `deonticMode` `'Duty'` → ONE RULE PER ENTRY IN `duties`.
+ *   - `predicateHolds` → `condition` on every emitted rule.
+ *
+ * ★ THE DUTY FAN-OUT IS NOT COSMETIC. This engine's duty channel is `rule.description`
+ * (`evaluate` does `duties.push(rule.description)`), a single string; ABAC's is
+ * `policy.duties`, an array of duty IRIs. Emitting one rule with a prose description turns
+ * `['…/cite-provenance', '…/notify-arbiter']` into `['Duty policy https://…/merge-gate']` —
+ * the obligations an agent must discharge become an unactionable sentence, and the caller
+ * reports success having discharged none. Measured, not assumed.
+ *
+ * A Duty policy with no `duties` still APPLIED and still allowed under ABAC, so it emits a
+ * single `permit` rule rather than nothing: emitting nothing would hand the outcome to this
+ * engine's no-rule-matched default, which is a different fact that happens to agree.
+ *
+ * ★ CALLER'S REMAINING OBLIGATION — the converter cannot close this and does not pretend to.
+ * The two engines disagree on the empty case in OPPOSITE directions: `@interego/abac`'s
+ * `evaluate` returns `Indeterminate` when nothing matches, this engine's returns
+ * `allowed: true`. Bridging a Deny-only policy set therefore turns "undecided" into
+ * "allowed". A caller wanting closed-world behaviour must add its own default-deny rule.
+ */
+export function policyToDeonticRules(
+  policy: AccessControlPolicyData,
+  options: DeonticBridgeOptions,
+): PolicyRule[] {
+  const target = options.target ?? '*';
+  const condition = (context: PolicyContext): boolean => options.predicateHolds(policy, context);
+  const base = { subject: '*', action: policy.governedAction, target, condition };
+
+  switch (policy.deonticMode) {
+    case 'Permit':
+      return [{ ...base, id: policy.id, mode: 'permit' as const,
+        description: `Permit by policy ${policy.id}` }];
+    case 'Deny':
+      return [{ ...base, id: policy.id, mode: 'deny' as const,
+        description: `Deny by policy ${policy.id}` }];
+    case 'Duty': {
+      const duties = policy.duties ?? [];
+      if (duties.length === 0) {
+        return [{ ...base, id: policy.id, mode: 'permit' as const,
+          description: `Duty policy ${policy.id} declares no duties` }];
+      }
+      return duties.map((duty, i) => ({ ...base, id: `${policy.id}#duty-${i}`,
+        mode: 'duty' as const, description: duty }));
+    }
+  }
 }
 
 // ══════════════════════════════════════════════════════════════

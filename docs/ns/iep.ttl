@@ -977,6 +977,14 @@ iep:Federation a iep:ContextType ;
     rdfs:label "Federation" ;
     rdfs:comment "Context type for federation and distribution metadata.".
 
+iep:Causal a iep:ContextType ;
+    rdfs:label "Causal" ;
+    rdfs:comment "Context type for causal-structure metadata (Pearl SCM). Emitted as CGContextType.Causal by packages/core/src/rdf/namespaces.ts; it was allowlisted as known drift rather than declared, so a context type the code already emits did not resolve at its own authority.".
+
+iep:Projection a iep:ContextType ;
+    rdfs:label "Projection" ;
+    rdfs:comment "Context type for vocabulary-projection metadata. Emitted as CGContextType.Projection by packages/core/src/rdf/namespaces.ts; declared here for the same reason as iep:Causal.".
+
 # ── Composition Operators ─────────────────────────────────────
 
 iep:union a iep:CompositionOperator ;

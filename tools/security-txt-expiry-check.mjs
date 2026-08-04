@@ -25,23 +25,54 @@
  * `.github/workflows/ontology-lint.yml` now runs this alongside the other tools/ linters.
  * A guard nothing runs is a comment.
  *
+ * ★ AND THE PATH IS RESOLVED FROM import.meta.url, NOT FROM process.cwd(). Correcting the
+ * literal left half the defect standing: `readFileSync('packages/security-txt/src/index.ts')`
+ * is resolved against the CALLER's directory, so running this from `tools/` looked for
+ * `tools/packages/security-txt/src/index.ts` and exited 2 again — measured, on this tree,
+ * after the path fix had landed. Every other gate here already anchors on import.meta.url
+ * (lint-gate.mjs, typecheck-gate.mjs, derivation-lint.mjs, ontology-lint.mjs); this one did
+ * not, and "exit 2 from the wrong directory" reads identically to "the helper moved again".
+ *
+ * ★ AND A BAD --days VALUE IS FATAL, NOT SILENTLY DISABLING. `parseInt('soon', 10)` is NaN
+ * and `daysToExpiry < NaN` is false for EVERY input, so `--days soon` (or `--days` with no
+ * value) printed the ✓ line and exited 0 for any expiry date whatsoever — measured. A guard
+ * that can be switched off by a typo, while still looking like it ran, is the fail-open shape
+ * this file's own header is about.
+ *
  * Usage: node tools/security-txt-expiry-check.mjs [--days N]
  *
- * Exit codes: 0 = OK; 1 = within threshold (refresh required); 2 = parse error.
+ * Exit codes: 0 = OK; 1 = within threshold (refresh required); 2 = cannot check.
  */
 
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/** This file lives in `tools/`, so its parent directory is the repo root. */
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Single source of the path, so a future move breaks one line and not four messages. */
 const SOURCE = 'packages/security-txt/src/index.ts';
+const SOURCE_PATH = join(ROOT, SOURCE);
 
 const args = process.argv.slice(2);
 const dayThresholdIdx = args.indexOf('--days');
-const dayThreshold = dayThresholdIdx >= 0 ? parseInt(args[dayThresholdIdx + 1], 10) : 30;
+let dayThreshold = 30;
+if (dayThresholdIdx >= 0) {
+  dayThreshold = parseInt(args[dayThresholdIdx + 1], 10);
+  if (!Number.isFinite(dayThreshold) || dayThreshold < 0) {
+    console.error(
+      `Invalid --days value: ${JSON.stringify(args[dayThresholdIdx + 1])}. Expected a non-negative integer.`,
+    );
+    console.error('  Refusing to run: NaN compares false against every date, so an unparsed');
+    console.error('  threshold would have disabled this guard while still printing its ✓ line.');
+    process.exit(2);
+  }
+}
 
 let src;
 try {
-  src = readFileSync(SOURCE, 'utf8');
+  src = readFileSync(SOURCE_PATH, 'utf8');
 } catch (err) {
   console.error(`Could not read ${SOURCE}:`, err.message);
   console.error('  The helper moved. Update SOURCE in tools/security-txt-expiry-check.mjs —');

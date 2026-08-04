@@ -175,7 +175,7 @@ An inventory of the primary artifacts and their layers, for review and gradual c
 | `spec/paradigm-constraints.md` | L1 | Extension spec. Check for domain examples. |
 | `spec/progressive-persistence.md` | L1 | Extension spec. Check for implementation specifics. |
 | `spec/presentation-notes.md` | L3 | Talk/speaker notes. Not normative. |
-| `spec/conformance/` | L1 (once populated) | The operational definition of conformance. Highest-priority missing artifact. |
+| `spec/conformance/` | L1 | The operational definition of conformance. Present but PARTIAL, and no longer "missing": `runner.mjs` exercises one of the ten fixture families the directory's own README enumerates (`revocation/`, covering L1.1, L1.2 and L1.4). It now refuses to claim a level it did not exercise, refuses a fixture directory it does not recognise, and refuses a declared category with nothing behind it — each of which used to produce a green run and the maximal badge. Populating the remaining families is the highest-priority spec work; the runner naming them as unexercised is what keeps that visible. |
 | `docs/ns/cg.ttl`, `cgh.ttl`, `pgsl.ttl`, `ie.ttl`, `align.ttl` | L1 | Core protocol ontologies. `iep:` terms MUST NOT carry domain semantics. |
 | `docs/ns/hyprcat.ttl`, `hypragent.ttl` | L2 | Federation-pattern ontologies. |
 | `docs/ns/hela.ttl`, `sat.ttl`, `cts.ttl`, `olke.ttl`, `amta.ttl` | L3 (adjacent) | Domain/framework ontologies. May later be spun out to separate repositories. |
@@ -202,7 +202,7 @@ Grounding means one of:
   (d) Explicit primitive marker (`rdfs:comment` contains "primitive")
 
 `tools/derivation-lint.mjs` enforces (a)-(d) across every L2/L3
-`.ttl`. CI blocks on ungrounded classes. Current status: **41/41
+`.ttl`. CI blocks on ungrounded classes. Current status: **97/97
 classes grounded**.
 
 Why: the whole point of L1 being the normative protocol is that

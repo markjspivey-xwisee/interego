@@ -285,6 +285,7 @@ export {
   ObserverAAT, AnalystAAT, ExecutorAAT, ArbiterAAT, ArchivistAAT, FullAccessAAT,
   createAATRegistry, registerAAT, getAAT, filterAffordancesByAAT, validateAction,
   createPolicyEngine, addRule, removeRule, evaluate as evaluatePolicy, defaultPolicies,
+  policyToDeonticRules,
   createTraceStore, recordTrace, getTraces, traceToTurtle, wrapWithTracing,
   createPersonalBroker, startConversation, addMessage, getMemoryStats, setPresence,
   createAATDecorator,
@@ -294,6 +295,7 @@ export {
 export type {
   AbstractAgentType, AATRegistry,
   DeonticMode, PolicyRule, PolicyContext, PolicyDecision, PolicyEngine,
+  DeonticBridgeOptions,
   ProvTrace, TraceStore, TraceFilter, TracedAffordance,
   PersonalBroker, Conversation, ConversationMessage, AgentMemory, PresenceStatus,
 } from './agent-framework.js';
@@ -406,6 +408,7 @@ export type { CognitiveStrategy } from './cognitive-strategy.js';
 // Virtualized RDF layer over PGSL (lifts the structural index into a
 // fully materialized triple view + supports SPARQL Protocol round-trip)
 export {
+  descriptorsFromManifestEntries,
   materializeSystem,
   executeSparqlProtocol,
   writeBackTriples,
@@ -426,6 +429,12 @@ export {
   normalizeInterrogatives,
   resolveRequestedInterrogatives,
   routeInterrogatives,
+  // The gap predicate. `routeInterrogatives` already takes `requiredToAct` and calls this
+  // internally, so nothing in-tree needs the barrel line — but an external consumer wanting
+  // to ask "is this descriptor enough to act on?" without routing had no way to name it,
+  // because it was exported from the module and not from the package. Exporting the module
+  // and not the barrel is the same shape as a published constraint nothing evaluates.
+  evaluateContextGap,
   CANONICAL_ORDER,
 } from './interrogative-router.js';
 export { INTERROGATIVE_TABLE } from './interrogative-table.generated.js';
@@ -440,4 +449,6 @@ export type {
   RouteResult,
   RouteError,
   RouteOptions,
+  ContextGapEvaluation,
+  GapAction,
 } from './interrogative-router.js';

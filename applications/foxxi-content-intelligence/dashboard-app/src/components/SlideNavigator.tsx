@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Card, Pill, Button } from './common.js';
+import { conceptSpans } from '../lib/concept-spans.js';
 import type { CourseContent, CourseSlide, CourseConcept, CoursePrereqEdge } from '../types.js';
 
 interface AggregatedEdge {
@@ -215,52 +216,29 @@ function HighlightedTranscript({
   onSelectConcept: (cid: string) => void;
 }) {
   if (!text) return null;
-  // Build (regex, conceptId) pairs sorted by label length desc to prefer longest match.
-  const sortedConcepts = [...concepts]
-    .filter(c => c.label && c.label.length >= 3)
-    .sort((a, b) => b.label.length - a.label.length);
-
-  // Walk the text, greedily wrapping the longest matching concept at each position.
-  const parts: React.ReactNode[] = [];
-  let i = 0;
-  const lower = text.toLowerCase();
-  while (i < text.length) {
-    let matchedConcept: CourseConcept | null = null;
-    let matchedEnd = i;
-    for (const c of sortedConcepts) {
-      const label = c.label.toLowerCase();
-      // Word-boundary-ish: previous char (if any) must not be alpha; same for trailing char.
-      if (lower.startsWith(label, i)) {
-        const prevOk = i === 0 || !/[a-z]/i.test(text[i - 1]);
-        const trailIdx = i + label.length;
-        const trailOk = trailIdx === text.length || !/[a-z]/i.test(text[trailIdx]);
-        if (prevOk && trailOk) {
-          matchedConcept = c;
-          matchedEnd = trailIdx;
-          break;
-        }
-      }
-    }
-    if (matchedConcept) {
-      parts.push(
+  // ★ THE SCAN LIVES IN `../lib/concept-spans` AND THIS RENDERS ITS RESULT.
+  //
+  // It used to be inlined here, inside a component nothing in this repo renders, which is
+  // how it carried a real defect — a plain-text advance to the next SPACE, so a concept
+  // behind any other delimiter was never matched — with no test able to see it. The scan is
+  // pure and dependency-free now, so `tests/concept-nav-graph.test.ts` table-tests it
+  // directly. Keep rendering FROM the shared function: re-inlining a copy here would put the
+  // component back outside the only guard it has.
+  const spans = conceptSpans(text, concepts);
+  return (
+    <>
+      {spans.map(s => (s.kind === 'concept' ? (
         <mark
-          key={`m-${i}`}
-          className={`concept${selectedConceptId === matchedConcept.id ? ' selected' : ''}`}
-          onClick={() => onSelectConcept(matchedConcept!.id)}
-          title={`Tier ${matchedConcept.tier} · confidence ${matchedConcept.confidence.toFixed(2)}`}
-        >{text.slice(i, matchedEnd)}</mark>
-      );
-      i = matchedEnd;
-    } else {
-      // Walk until the next char that COULD start a concept match — for now just consume one char.
-      // Batching plain text would be more efficient but the React keying is simpler this way.
-      const nextSpace = text.indexOf(' ', i);
-      const chunk = nextSpace === -1 ? text.slice(i) : text.slice(i, nextSpace + 1);
-      parts.push(<React.Fragment key={`t-${i}`}>{chunk}</React.Fragment>);
-      i += chunk.length;
-    }
-  }
-  return <>{parts}</>;
+          key={`m-${s.start}`}
+          className={`concept${selectedConceptId === s.concept.id ? ' selected' : ''}`}
+          onClick={() => onSelectConcept(s.concept.id)}
+          title={`Tier ${s.concept.tier} · confidence ${s.concept.confidence.toFixed(2)}`}
+        >{s.text}</mark>
+      ) : (
+        <React.Fragment key={`t-${s.start}`}>{s.text}</React.Fragment>
+      )))}
+    </>
+  );
 }
 
 function SlideDetail({

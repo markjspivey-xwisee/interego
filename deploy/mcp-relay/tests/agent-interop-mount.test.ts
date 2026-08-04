@@ -708,14 +708,19 @@ console.log('\n9. an evicted engagement is GONE, not "never existed"');
   //
   // Same defect class as the 404 fixed in 5b above, one layer down: there the route was
   // missing, here the record is. Both made a minted URL lie.
+  // ★ `kind` is REQUIRED on `Part` — it is the engine's own discriminator, and a profile
+  // maps it to whatever member name its wire format uses. `EngagementEngine.open` does not
+  // validate it, so the five turns below went in with no discriminator at all and the
+  // eviction assertions passed anyway. Nothing reported it because these files were in no
+  // tsc program until `tsconfig.tests.json` existed.
   const tiny = new EngagementEngine('https://relay.test', { maxEngagements: 2 });
-  const A = tiny.open({ caller: 'did:ethr:0xAAA', parts: [{ text: 'first' }] });
-  const B = tiny.open({ caller: 'did:ethr:0xAAA', parts: [{ text: 'second' }] });
+  const A = tiny.open({ caller: 'did:ethr:0xAAA', parts: [{ kind: 'text', text: 'first' }] });
+  const B = tiny.open({ caller: 'did:ethr:0xAAA', parts: [{ kind: 'text', text: 'second' }] });
   check('two engagements fit', A.ok && B.ok);
   const firstId = A.ok ? A.value.id : '';
 
   // The third open evicts the first.
-  tiny.open({ caller: 'did:ethr:0xAAA', parts: [{ text: 'third' }] });
+  tiny.open({ caller: 'did:ethr:0xAAA', parts: [{ kind: 'text', text: 'third' }] });
 
   const evicted = tiny.get(firstId, 'did:ethr:0xAAA');
   check('★ the OWNER is told it was evicted, not that it never existed',
@@ -740,7 +745,7 @@ console.log('\n9. an evicted engagement is GONE, not "never existed"');
   const capped = new EngagementEngine('https://relay.test', { maxEngagements: 1, maxTombstones: 1 });
   const ids: string[] = [];
   for (let i = 0; i < 4; i++) {
-    const r = capped.open({ caller: 'did:ethr:0xAAA', parts: [{ text: `e${i}` }] });
+    const r = capped.open({ caller: 'did:ethr:0xAAA', parts: [{ kind: 'text', text: `e${i}` }] });
     if (r.ok) ids.push(r.value.id);
   }
   const oldestGone = capped.get(ids[0]!, 'did:ethr:0xAAA');
@@ -759,7 +764,7 @@ console.log('\n10. the engine is injectable, so durability needs no second chang
   // resolving. A deployment that needs cited engagements to keep resolving supplies its
   // own; the seam is what makes that possible without touching the mount again.
   const injected = new EngagementEngine('https://relay.test');
-  const pre = injected.open({ caller: 'did:ethr:0xAAA', parts: [{ text: 'from before the restart' }] });
+  const pre = injected.open({ caller: 'did:ethr:0xAAA', parts: [{ kind: 'text', text: 'from before the restart' }] });
   check('an engagement exists in the injected engine before mounting', pre.ok);
 
   // Every verb the mount can register, for the same reason the first double carries

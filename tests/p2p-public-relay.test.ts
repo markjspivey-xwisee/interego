@@ -1,9 +1,12 @@
 /**
  * P2P transport against a real public Nostr relay.
  *
- * This test hits actual public Nostr infrastructure (relay.damus.io
- * by default, override with RUN_PUBLIC_RELAY env var). It's gated
- * behind RUN_PUBLIC_RELAY because:
+ * This test hits actual public Nostr infrastructure. There is NO
+ * default — `RUN_PUBLIC_RELAY` is read raw and the suite skips when it
+ * is unset. (This comment used to claim "relay.damus.io by default",
+ * which is why nobody noticed the suite had never run: the var was set
+ * in no workflow and no npm script from the day the file landed.) It is
+ * gated because:
  *   - CI shouldn't hammer public relays (rate limits, courtesy)
  *   - The test depends on internet + the chosen relay being up
  *   - It produces a small public footprint (one signed event per run)
@@ -99,17 +102,22 @@ describeOrSkip(`P2P transport — real public Nostr relay (${RELAY_URL ?? 'SKIPP
       const local = await inner.query({ kinds: [KIND_DESCRIPTOR] });
       expect(local.length).toBeGreaterThanOrEqual(1);
 
-      // Best-effort: wait for the public relay to accept + echo back.
-      // Some relays don't echo to the publisher; others do. A
-      // successful publish is the minimum bar.
+      // Wait for the relay's NIP-01 verdict, not for our own send. `eventsOut`
+      // increments right after ws.send() with no reference to the reply, so the old
+      // assertion here passed against an in-process relay that answered
+      // ["OK", id, false, "blocked: not on whitelist"] to every publish — measured.
+      // Waiting on EITHER counter means a refusal fails fast with a readable reason
+      // instead of timing out, and the `.catch()` swallow is gone: a wait this test
+      // cannot fail on is a wait that proves nothing.
       await waitFor(
-        () => mirror.status().some(s => s.eventsOut >= 1),
-        5000,
-      ).catch(() => {/* publication may have failed silently; status will show */});
+        () => mirror.status().some(s => s.eventsAccepted >= 1 || s.eventsRejected >= 1),
+        15000,
+      );
 
       const status = mirror.status()[0]!;
       expect(status.state).toBe('connected');
-      expect(status.eventsOut).toBeGreaterThanOrEqual(1);
+      expect(status.eventsRejected, status.lastError ?? 'no reason given').toBe(0);
+      expect(status.eventsAccepted).toBeGreaterThanOrEqual(1);
 
       sub.close();
     } finally {

@@ -107,6 +107,7 @@ import {
   observedGraphDigest,
   graphIriFromDescriptorTurtle,
   contentBindingNote,
+  authorshipVerdict,
 } from '../authorship-content-binding.js';
 
 let pass = 0;
@@ -540,6 +541,33 @@ last""" .
     bindingDecl > 0 && bindingDecl < tryAfterProof,
     '★★ the binding is computed BEFORE the try, so all three exits can report it',
   );
+  // ★★ AND IT IS NOW ACTED ON. Every assertion above this one passed while the handler
+  // computed the binding, reported it on all three exits, and entered the success branch on
+  // `if (verifyResult.valid)` alone — the field was a report and the verdict was decided
+  // without it.
+  ok(
+    /const verdict = authorshipVerdict\(\{[\s\S]{0,240}descriptorBinding,\s*\r?\n\s*\}\);\s*\r?\n\s*if \(verdict\.verified\) \{/.test(SERVER),
+    '★★ the read path GATES on the verdict, and the gate is a bare read of verdict.verified',
+  );
+  ok(
+    (SERVER.match(/^\s*authorshipVerified: true,\r?$/gm) ?? []).length === 1,
+    '★ exactly ONE place in the file can answer authorshipVerified: true',
+    `found ${(SERVER.match(/^\s*authorshipVerified: true,\r?$/gm) ?? []).length}`,
+  );
+  // Counts every ASSIGNMENT of the field, not just the `effective` spelling. Written that
+  // way after the obvious version survived its own mutant: pinning `effectiveTrustLevel:
+  // effective,` at 1 let `effectiveTrustLevel: 'SelfAsserted' as const,` be added to the
+  // REFUSAL branch and still pass — a refused binding carrying a trust level, which is
+  // exactly the half of the defect this line exists for. The type declaration at :4387 and
+  // the JSON-schema property at :7860 are excluded by requiring a value that is an
+  // identifier or a quoted literal followed by a comma.
+  const trustAssignments = SERVER.match(/^\s*effectiveTrustLevel: (?:[A-Za-z_$][\w$]*|'[^']*')(?: as const)?,\r?$/gm) ?? [];
+  ok(
+    trustAssignments.length === 1,
+    '★ and effectiveTrustLevel is ASSIGNED in exactly one place, so a refused binding cannot '
+    + 'carry a trust upgrade — the second half of the same defect',
+    `found ${trustAssignments.length}: ${trustAssignments.map(t => t.trim()).join(' | ')}`,
+  );
   ok(
     (SERVER.match(/^\s*descriptorBinding,$/gm) ?? []).length >= 3,
     'all three outcome branches (verified, refused, threw) carry it',
@@ -598,6 +626,69 @@ last""" .
   ok(
     /reported as `mismatched`, never here/.test(contentBindingNote('declared')),
     'the declared note names the value that a failed check would have produced instead',
+  );
+
+  console.log('\n★ a proof that is not about this record is not authorship of it');
+
+  // ★ MEASURED LIVE ON BUILD 7c9124a BEFORE THIS GATE EXISTED. One public descriptor's
+  // bytes — proof, iep:describes, distribution link — re-served at a URL its signer never
+  // named answered authorshipVerified:true, contentBinding:'bound', naming that signer,
+  // with descriptorBinding {bound:false, basis:'none'} reported beside it and read by
+  // nothing. contentBinding does not narrow it: the payload was lifted with the proof, so
+  // the digest recomputes and matches.
+  const lifted = authorshipVerdict({
+    signatureValid: true,
+    descriptorBinding: {
+      bound: false, basis: 'none',
+      note: 'the proof names <urn:iep:alice:9> and the record is served at <https://evil.example/9>',
+    },
+  });
+  ok(
+    lifted.verified === false,
+    '★★ a valid signature on a proof that does not name this record is NOT verified authorship',
+  );
+  ok(
+    /urn:iep:alice:9/.test(lifted.reason ?? '') && /evil\.example/.test(lifted.reason ?? ''),
+    'and the reason carries the binding diagnostic, naming both identifiers',
+  );
+  ok(
+    /cannot tell which/.test(lifted.reason ?? '') && /signature is intact/.test(lifted.reason ?? ''),
+    '★ the reason does not state forgery as fact — a publisher that names its descriptors '
+    + 'some other way reaches this verdict too, and accusing its author is how a true report '
+    + 'stops being believed',
+  );
+  // ★★ THE HONEST-DATA DIRECTION, WITH THE NUMBER BEHIND IT. 272 live pods swept on
+  // 2026-08-03: 1,375 descriptors read, 134 carrying a proof, 134/134 bound `slug-only`,
+  // 0 `exact-url`, 0 unbound. Every descriptor_id the substrate mints is a URN and a URN
+  // can only ever reach `slug-only`, so a gate on the BASIS refuses all 134 honest records
+  // — the fail-closed-on-live-data direction this area has already shipped once.
+  ok(
+    authorshipVerdict({
+      signatureValid: true,
+      descriptorBinding: { bound: true, basis: 'slug-only', note: 'only the terminal segment matched' },
+    }).verified === true,
+    '★★ a slug-only binding STILL verifies — gating on basis rather than on bound refuses '
+    + '134/134 live proofs',
+  );
+  ok(
+    authorshipVerdict({
+      signatureValid: true, descriptorBinding: { bound: true, basis: 'exact-url' },
+    }).verified === true,
+    'an exact-url binding verifies',
+  );
+  ok(
+    authorshipVerdict({
+      signatureValid: false, signatureReason: 'signature did not recover',
+      descriptorBinding: { bound: true, basis: 'slug-only' },
+    }).reason === 'signature did not recover',
+    '★ a FAILED signature still reports the verifier\'s own reason — the two refusals are '
+    + 'different facts and must not be flattened into one another',
+  );
+  ok(
+    authorshipVerdict({
+      signatureValid: false, descriptorBinding: { bound: false, basis: 'none' },
+    }).reason === 'verification returned false',
+    'and the default reason is preserved when the verifier gave none',
   );
 
   console.log('\n★ the four outcomes are four, everywhere they are enumerated');

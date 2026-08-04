@@ -59,7 +59,13 @@ export class TenantPartition<T> {
    *  the cap (partitions are derived, rebuildable views; the durable data is the pod). */
   private static readonly MAX = 20_000;
 
-  constructor(private readonly factory: (tenant: TenantId) => T) {}
+  /** `onEvict` is handed each partition this registry drops. A partition that registered
+   *  itself in a process-wide budget (the in-memory statement store does) MUST be told, or
+   *  the budget goes on charging every later write for statements nothing can reach. */
+  constructor(
+    private readonly factory: (tenant: TenantId) => T,
+    private readonly onEvict?: (store: T, tenant: TenantId) => void,
+  ) {}
 
   /** The store for one tenant — created on first use. */
   for(tenant: TenantId): T {
@@ -67,7 +73,11 @@ export class TenantPartition<T> {
     if (store === undefined) {
       if (this.byTenant.size >= TenantPartition.MAX) {
         const oldest = this.byTenant.keys().next().value;
-        if (oldest !== undefined) this.byTenant.delete(oldest);
+        if (oldest !== undefined) {
+          const dropped = this.byTenant.get(oldest);
+          this.byTenant.delete(oldest);
+          if (dropped !== undefined) this.onEvict?.(dropped, oldest);
+        }
       }
       store = this.factory(tenant);
       this.byTenant.set(tenant, store);

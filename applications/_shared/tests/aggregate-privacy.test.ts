@@ -24,6 +24,11 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  AdvancedCompositionAccountant,
+  RenyiAccountant,
+  type PrivacyAccountant,
+} from '@interego/core';
+import {
   participationDescriptorIri,
   participationGraphIri,
   buildAttestedAggregateResult,
@@ -636,6 +641,67 @@ describe('aggregate-privacy v3.2: cumulative ε-budget tracking', () => {
     // spend (consume throws before incrementing).
     expect(budget.spent).toBeCloseTo(0.4, 9);
     expect(budget.log.length).toBe(1);
+  });
+
+  it('accepts an AdvancedCompositionAccountant in the epsilonBudget slot and drives it', () => {
+    const acct = new AdvancedCompositionAccountant({ maxNaiveEpsilon: 1.0 });
+    const contribs = [
+      buildCommittedContribution({
+        contributorPodUrl: 'https://p1/', value: 5n,
+        bounds: { min: 0n, max: 10n }, blindingSeed: 'p1', blindingLabel: 'l',
+      }),
+    ];
+    buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 0.5,
+      epsilonBudget: acct, queryDescription: 'adv-comp-query',
+    });
+    expect(acct.spent).toBeCloseTo(0.5, 9);
+    expect(acct.queryCount).toBe(1);
+    expect(acct.log[0]?.queryDescription).toBe('adv-comp-query');
+    // The point of the tighter accountant: a DRV-tightened ε' the old
+    // `EpsilonBudget`-only slot had no way to report at all.
+    expect(acct.tightenedEpsilon(1e-6)).toBeGreaterThan(0);
+  });
+
+  it('a RenyiAccountant in the slot REFUSES the query when cumulative ρ would exceed its cap', () => {
+    const rhoOne = RenyiAccountant.rhoForEpsilonDP(8, 0.4);
+    // Cap at 1.5 ρ: the first query fits, the second cannot.
+    const acct = new RenyiAccountant({ alpha: 8, maxRho: rhoOne * 1.5 });
+    const contribs = [
+      buildCommittedContribution({
+        contributorPodUrl: 'https://p1/', value: 5n,
+        bounds: { min: 0n, max: 10n }, blindingSeed: 'p1', blindingLabel: 'l',
+      }),
+    ];
+    buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 0.4, epsilonBudget: acct,
+    });
+    expect(acct.spentRho).toBeCloseTo(rhoOne, 12);
+    expect(() => buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 0.4, epsilonBudget: acct,
+    })).toThrow();
+    // consume() throws BEFORE incrementing, same contract as EpsilonBudget.
+    expect(acct.spentRho).toBeCloseTo(rhoOne, 12);
+    expect(acct.log.length).toBe(1);
+  });
+
+  it('all four aggregate primitives accept any PrivacyAccountant in the epsilonBudget slot', () => {
+    // ★ COMPILE-TIME ASSERTION, AND THAT IS THE POINT. The defect this pins is a TYPE
+    // defect — `EpsilonBudget` has a `private _spent`, so its class type is NOMINAL and no
+    // other accountant can ever satisfy it — so no runtime assertion can catch a
+    // regression. v5/v6 have no cheap runtime fixture in this block, so their slots are
+    // pinned here instead. `tools/typecheck-gate.mjs` compiles this file at a ZERO pin from
+    // vitest's globalSetup, so narrowing any one of the four slots back to the concrete
+    // class fails the ENTIRE suite before collection.
+    const acct: PrivacyAccountant = new RenyiAccountant({ alpha: 8, maxRho: 1 });
+    const sumSlot: Parameters<typeof buildAttestedHomomorphicSum>[0]['epsilonBudget'] = acct;
+    const distSlot: Parameters<typeof buildAttestedHomomorphicDistribution>[0]['epsilonBudget'] = acct;
+    const v5Slot: Parameters<typeof buildAttestedHomomorphicSumV5>[0]['epsilonBudget'] = acct;
+    const v6Slot: Parameters<typeof buildAttestedHomomorphicSumV6>[0]['epsilonBudget'] = acct;
+    expect([sumSlot, distSlot, v5Slot, v6Slot].every((s) => s === acct)).toBe(true);
   });
 });
 

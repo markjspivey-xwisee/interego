@@ -69,10 +69,14 @@ function decodeOutcomeFromGraphTurtle(turtle: string): OutcomeRecord | null {
   const authorMatch = turtle.match(/prov:wasGeneratedBy\s+<([^>]+)>/);
   if (!sigMatch || !authorMatch) return null;
   try {
-    const json = Buffer.from(bundleMatch[1], 'base64').toString('utf8');
+    // `!` on the capture groups: each regex has exactly one group and the match
+    // objects are already null-checked above, so group 1 is always present. These
+    // were bare index reads that compiled only because nothing in tsconfig.check.json
+    // reached this module until a test imported it.
+    const json = Buffer.from(bundleMatch[1]!, 'base64').toString('utf8');
     const verdict = verifySignature({
-      signature: sigMatch[1],
-      agentDid: authorMatch[1],
+      signature: sigMatch[1]!,
+      agentDid: authorMatch[1]!,
       payloadJson: json,
     });
     if (!verdict.verified) return null;
@@ -86,6 +90,24 @@ interface CacheEntry {
   loadedAt: number;
   manifestEtag?: string;
 }
+
+/**
+ * Why a pod contributed nothing. A configured-but-ABSENT peer and a
+ * configured-and-EMPTY peer were the same observable: discover() returns []
+ * for a 404 manifest by design (packages/solid/src/client.ts — a shard-only
+ * pod legitimately has no monolith), so loadAll()'s catch never fires and
+ * nothing is logged. That is exactly how the pod named by
+ * FOXXI_FEDERATION_PODS sat unprovisioned (404) in production while
+ * /performance/calibration reported `usingSeedFallback: true` — the same
+ * value it reports when no peers are configured at all. This names the
+ * difference so the fault can be seen.
+ */
+export type PodOutcomeStatus =
+  | 'ok'            // >=1 signed outcome decoded
+  | 'no-manifest'   // discover() returned zero entries: pod absent (404) or empty
+  | 'no-outcomes'   // manifest exists but carries no foxxi:Outcome entries
+  | 'all-rejected'  // outcome entries exist but every one failed fetch or the signature gate
+  | 'error';        // discover() itself threw
 
 export interface FederationLoaderConfig {
   /** Cache TTL (ms). Default 60s — fresh enough for live demos, cheap enough for prod. */
@@ -101,6 +123,7 @@ export interface FederationLoaderConfig {
  */
 export class FederationOutcomeLoader {
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly podStatus = new Map<string, PodOutcomeStatus>();
   private readonly ttlMs: number;
   private readonly fetchFn: typeof globalThis.fetch;
 
@@ -120,10 +143,17 @@ export class FederationOutcomeLoader {
         continue;
       }
       try {
-        const fresh = await this.loadFromPod(podUrl);
+        const { outcomes: fresh, status } = await this.loadFromPod(podUrl);
+        this.podStatus.set(podUrl, status);
         this.cache.set(podUrl, { outcomes: fresh, loadedAt: now });
         out.push(...fresh);
+        // A configured peer that yields nothing is a provisioning fault, not a
+        // quiet no-op. Without this line a 404 peer pod produced ZERO log output
+        // (discover() swallows 404 into []), so the only trace was an unchanged
+        // seed profile that nobody reads as an error.
+        if (status !== 'ok') console.warn(`[federation-loader] ${podUrl}: ${status}`);
       } catch (err) {
+        this.podStatus.set(podUrl, 'error');
         console.error(`[federation-loader] ${podUrl}: ${(err as Error).message}`);
         // Fall back to whatever cache we have for this pod (even stale)
         if (cached) out.push(...cached.outcomes);
@@ -132,13 +162,22 @@ export class FederationOutcomeLoader {
     return out;
   }
 
-  private async loadFromPod(podUrl: string): Promise<OutcomeRecord[]> {
+  /** Per-pod diagnosis from the most recent non-cached load. */
+  podStatuses(): Record<string, PodOutcomeStatus> {
+    return Object.fromEntries(this.podStatus);
+  }
+
+  private async loadFromPod(podUrl: string): Promise<{ outcomes: OutcomeRecord[]; status: PodOutcomeStatus }> {
     // transient-network retry now provided by @interego/core's discover
     const entries = await discover(podUrl, {}, { fetch: this.fetchFn });
+    // discover() maps a 404 manifest to [] rather than throwing, so this is the
+    // ONLY place an absent pod is observable at all.
+    if (entries.length === 0) return { outcomes: [], status: 'no-manifest' };
     const outcomeEntries = entries.filter(e => {
       const ct = (e as { conformsTo?: readonly IRI[] }).conformsTo;
       return Array.isArray(ct) && ct.some(t => String(t) === FOXXI_OUTCOME);
     });
+    if (outcomeEntries.length === 0) return { outcomes: [], status: 'no-outcomes' };
     const outcomes: OutcomeRecord[] = [];
     // Each outcome's graph URL is deterministic from its slug; but the
     // manifest carries it explicitly. Read the manifest's `graph` (or
@@ -165,7 +204,7 @@ export class FederationOutcomeLoader {
         if (o) outcomes.push(o);
       } catch { /* skip this entry; partial peer is OK */ }
     }
-    return outcomes;
+    return { outcomes, status: outcomes.length > 0 ? 'ok' : 'all-rejected' };
   }
 
   private guessGraphUrl(podUrl: string, graphIri: string): string | null {
@@ -177,7 +216,7 @@ export class FederationOutcomeLoader {
   }
 
   /** Clear the cache. Useful for tests or admin-triggered refresh. */
-  clear(): void { this.cache.clear(); }
+  clear(): void { this.cache.clear(); this.podStatus.clear(); }
 }
 
 /** Parse FOXXI_FEDERATION_PODS into a clean list. */

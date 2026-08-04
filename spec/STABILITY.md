@@ -102,12 +102,23 @@ The conformance suite ships under
 runs:
 
 ```bash
-node spec/conformance/runner.mjs --fixtures spec/conformance/fixtures \
-                                  --expected spec/conformance/expected
+node spec/conformance/runner.mjs --fixtures <dir-of-your-own-turtle-output>
 ```
 
-against its own descriptor output, then reports which Level 1
-invariants pass. The suite is intentionally dependency-free
+Each directory under `--fixtures` must correspond to a declared
+category in the runner's `CATEGORY_CHECKS` (today: `revocation/`); the
+runner exits 2 on a subdirectory it does not recognise rather than
+skipping it. Run with no flags to validate the built-in tree.
+
+There is no `--expected`. This block used to name one, alongside
+`--fixtures`, and the runner read `process.argv` for NEITHER — so the
+documented command silently validated OUR fixtures and returned a pass
+a reader would take as a verdict on their own implementation. Both
+flags are now real; `--expected` is refused outright, because there is
+no `expected/` tree in this repo and a flag whose effect is nothing is
+worse than an unrecognised one.
+
+Running it reports which Level 1 invariants pass. The suite is intentionally dependency-free
 (string-level Turtle parsing); a future revision will swap in a full
 SHACL engine without changing the fixtures.
 

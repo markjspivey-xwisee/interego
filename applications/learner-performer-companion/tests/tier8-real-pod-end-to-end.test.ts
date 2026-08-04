@@ -46,7 +46,14 @@ import type {
 // CSS is no longer publicly reachable; route through the public css-gate FQDN.
 // ★ The default host was the Azure CSS gate, deliberately destroyed in the Railway move.
 // See applications/_shared/tests/pod-target.ts.
-import { TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, probePod } from '../../_shared/tests/pod-target.js';
+// ★ Gated through real-pod-gate.ts rather than probePod() directly: probePod() folded a
+// DECLARED opt-out and a DISCOVERED failure (unreachable, 404 container, refused write) into
+// one `usable: false` and both reached ctx.skip(), which is green. openRealPod() throws on the
+// discovered kind, so a pod that has stopped existing reds this file instead of emptying it.
+import {
+  TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, podWriteHeaders,
+  openRealPod, DECLARED_SKIPS, type PodGate,
+} from '../../_shared/tests/real-pod-gate.js';
 
 // Each test uses its own sub-container so manifest writes don't race
 // with other test files hitting the same pod. CSS auto-creates the
@@ -79,14 +86,17 @@ async function cleanup(): Promise<void> {
     if (m) containerRoots.add(m[1]!);
   }
 
+  // DELETE is a write, and the css-gate answers an unauthenticated write with
+  // `401 anonymous writes denied`. Without the bearer every one of these silently 401s inside
+  // the `catch {}` and the run leaves its fixtures on a real pod.
   for (const url of cleanupUrls.splice(0)) {
-    try { await fetch(url, { method: 'DELETE' }); } catch { /* best-effort */ }
+    try { await fetch(url, { method: 'DELETE', headers: podWriteHeaders() }); } catch { /* best-effort */ }
   }
   for (const root of containerRoots) {
-    try { await fetch(`${root}.well-known/context-graphs`, { method: 'DELETE' }); } catch {}
-    try { await fetch(`${root}context-graphs/`, { method: 'DELETE' }); } catch {}
-    try { await fetch(`${root}.well-known/`, { method: 'DELETE' }); } catch {}
-    try { await fetch(root, { method: 'DELETE' }); } catch {}
+    try { await fetch(`${root}.well-known/context-graphs`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(`${root}context-graphs/`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(`${root}.well-known/`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(root, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
   }
 }
 
@@ -164,21 +174,24 @@ function buildScormZip(uniqueSuffix: string): Buffer {
 
 // ─────────────────────────────────────────────────────────────────────
 
+// Seeded with a DECLARED skip so a beforeAll that throws cannot leave a value resembling a
+// legitimate opt-out; vitest fails every body in a file whose beforeAll throws, which is the
+// intent.
+let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1' };
 let podReachable = false;
 
-let skipReason = '';
 beforeAll(async () => {
-  const availability = await probePod();
-  podReachable = availability.usable;
-  skipReason = availability.reason;
+  pod = await openRealPod();
+  podReachable = pod.ok;
 });
 
-describe('Tier 8 — production end-to-end against real Azure CSS', () => {
-  it('reachability probe (skips remaining tests when pod is down)', () => {
-    if (!podReachable) {
-      console.warn(`LPC Tier 8 skipped — ${skipReason} (host: ${AZURE_CSS_BASE})`);
-    }
-    expect(skipReason).not.toBe('');
+describe('Tier 8 — production end-to-end against the live css-gate pod', () => {
+  it('real-pod precondition: skipping is allowed only for a DECLARED reason', () => {
+    // Was `expect(skipReason).not.toBe('')`, which every probePod() return path satisfies by
+    // construction — an assertion no state of the pod could fail.
+    if (pod.ok) return;
+    console.warn(`LPC Tier 8 skipped — ${pod.declaredSkip} (host: ${AZURE_CSS_BASE})`);
+    expect(DECLARED_SKIPS).toContain(pod.declaredSkip);
   });
 
   it('full production lifecycle: ingest → import → record → record → load → ask → cite → ask-no-data → cleanup', { timeout: 90000 }, async (ctx) => {

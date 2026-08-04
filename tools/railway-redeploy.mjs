@@ -9,7 +9,12 @@
  *
  * Usage:
  *   RAILWAY_PROJECT_TOKEN=... node tools/railway-redeploy.mjs <service> <40-hex-sha>
- *   ... --verify-url https://relay.interego.xwisee.com/health
+ *   ... [--verify-url <url on a host Railway reports for THIS service>]
+ *
+ * The verify URL is DERIVED from the service being deployed — Railway's own `domains`
+ * answer plus that service's health path from tools/railway-services.mjs. `--verify-url`
+ * is an OVERRIDE for the unusual case (a *.up.railway.app host, a custom domain not yet in
+ * DNS) and is refused unless its host is one Railway reports for this service. See §1b.
  *
  * Valid service names, and the image each one runs: `node tools/railway-services.mjs list`.
  * What every service is pinned to RIGHT NOW: `node tools/railway-pins.mjs`.
@@ -57,11 +62,18 @@
  *   calls it SUCCESS once the container binds a port — this stack has shipped a
  *   SUCCESS whose app 502'd on every request. And if the tag does not exist in the
  *   registry, the PREVIOUS container keeps serving and its /health keeps returning
- *   200. --verify-url polls until /health reports the sha we deployed, which is the
- *   only assertion that distinguishes the new container from the old one.
+ *   200. The verify poll waits until /health reports the sha we deployed, which is
+ *   the only assertion that distinguishes the new container from the old one.
+ *
+ *   VERIFYING THE WRONG SERVICE PASSES. The verify URL used to be a free-text flag,
+ *   and deploy-railway.yml pre-filled it with RELAY's /health for every service.
+ *   Deploying identity at a sha relay already ran polled relay, matched, and printed
+ *   "verified" without ever contacting identity. The URL is now derived from the
+ *   service being deployed and an override is refused unless Railway reports its host
+ *   for that service. See §1b.
  */
 
-import { resolveImageRepo } from './railway-services.mjs';
+import { resolveImageRepo, verifyUrlFor } from './railway-services.mjs';
 
 const EP = 'https://backboard.railway.com/graphql/v2';
 
@@ -69,7 +81,9 @@ const argv = process.argv.slice(2);
 const flag = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
 const positional = argv.filter((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--')));
 const [service, tag] = positional;
-const verifyUrl = flag('--verify-url');
+// NOT the verify URL — only an OVERRIDE for it. The URL itself is DERIVED from the service
+// being deployed, at §1b below, once Railway has told us that service's own domains.
+const verifyUrlOverride = flag('--verify-url');
 
 const TOKEN = process.env.RAILWAY_PROJECT_TOKEN;
 if (!TOKEN) die('RAILWAY_PROJECT_TOKEN is not set (a Railway PROJECT token — not an account token)');
@@ -131,6 +145,35 @@ if (matches.length !== 1) {
       ` (available: ${proj.project.services.edges.map(e => e.node.name).join(', ')})`);
 }
 const serviceId = matches[0].id;
+
+/**
+ * ── 1b. THE VERIFY TARGET IS DERIVED FROM THE DEPLOY TARGET, NEVER TYPED ──────
+ *
+ * ★ THE FALSE-GREEN THIS KILLS, measured 2026-08-03. `.github/workflows/deploy-railway.yml`
+ * declared `verify_url` as a free-text dispatch input pre-filled with RELAY's /health — for
+ * every service. Dispatching `service=identity tag=7c9124af…` with that default left in
+ * place polls RELAY, reads relay's build (which really was 7c9124af…), finds it EQUAL to
+ * the tag, prints "serving … — verified" and exits 0, while identity is still running an
+ * older image. The one assertion this repository has that a rollout landed could pass for a
+ * service it never contacted. It is the same class of defect tools/railway-services.mjs was
+ * created to kill — except here the derivation was not merely wrong, it was ABSENT, so a
+ * human typed the coupling and could type it wrong.
+ *
+ * `projectId` is REQUIRED on this query; omitting it returns a GraphQL error rather than an
+ * empty list, so it is passed explicitly.
+ */
+const dom = await gql(
+  'query($p:String!,$s:String!,$e:String!){ domains(projectId:$p,serviceId:$s,environmentId:$e){ serviceDomains{ domain } customDomains{ domain } } }',
+  { p: projectId, s: serviceId, e: environmentId });
+const hosts = [
+  ...(dom?.domains?.customDomains ?? []),
+  ...(dom?.domains?.serviceDomains ?? []),
+].map((d) => d.domain).filter(Boolean);
+
+const verify = verifyUrlFor(service, hosts, verifyUrlOverride);
+if (!verify.ok) die(verify.reason);
+const verifyUrl = verify.url;
+console.log(`verify target: ${verifyUrl}${verifyUrlOverride ? ' (override accepted — host belongs to this service)' : ' (derived)'}`);
 
 const image = `${resolved.repo}:${tag}`;
 
@@ -310,30 +353,34 @@ if (!okImage || !okDeploy) die('post-deploy state does not match what we asked f
 
 // ── 7. Prove the NEW code is answering. Everything above is Railway's opinion;
 //       this is the application's.
-if (verifyUrl) {
-  console.log(`\nverifying ${verifyUrl} reports build ${tag.slice(0, 12)}…`);
-  const until = Date.now() + 3 * 60_000;
-  let seen = '(none)';
-  while (Date.now() < until) {
-    try {
-      const r = await fetch(verifyUrl, { headers: { 'cache-control': 'no-cache' } });
-      const j = await r.json();
-      seen = j.build ?? '(no build field)';
-      if (seen === tag) { console.log(`  serving ${seen} — verified`); process.exit(0); }
-      console.log(`  still ${String(seen).slice(0, 12)}… (rolling replace)`);
-    } catch (e) {
-      console.log(`  … ${e.message}`);
-    }
-    await sleep(6000);
+//
+// NOT optional any more, and not skippable: §1b either derived a URL or died. The old
+// shape was `if (verifyUrl) { … }` followed by a printed caveat — "Railway reports
+// success, but nothing has confirmed the new code is actually serving" — and exit 0. A
+// deploy step that can report success without a single request to the deployed thing is
+// how a stale image goes unnoticed, and the caveat was the branch people took, because
+// most services had no `build` field to poll and the loop could only ever time out.
+console.log(`\nverifying ${verifyUrl} reports build ${tag.slice(0, 12)}…`);
+const until = Date.now() + 3 * 60_000;
+let seen = '(none)';
+while (Date.now() < until) {
+  try {
+    const r = await fetch(verifyUrl, { headers: { 'cache-control': 'no-cache' } });
+    const j = await r.json();
+    seen = j.build ?? '(no build field)';
+    if (seen === tag) { console.log(`  serving ${seen} — verified`); process.exit(0); }
+    console.log(`  still ${String(seen).slice(0, 12)}… (rolling replace)`);
+  } catch (e) {
+    console.log(`  … ${e.message}`);
   }
-  console.error(`\n${verifyUrl} never reported build ${tag}. Last saw: ${seen}`);
-  console.error('Railway called the deploy SUCCESS, so the container bound a port —');
-  console.error('but the running code is not the code you deployed. Check the image');
-  console.error('tag exists in the registry and read the deployment logs.');
-  process.exit(1);
+  await sleep(6000);
 }
-
-console.log('\n(no --verify-url given: Railway reports success, but nothing has confirmed');
-console.log(' the new code is actually serving)');
+console.error(`\n${verifyUrl} never reported build ${tag}. Last saw: ${seen}`);
+console.error('Railway called the deploy SUCCESS, so the container bound a port —');
+console.error('but the running code is not the code you deployed. Check the image');
+console.error('tag exists in the registry and read the deployment logs.');
+console.error('If it says "(no build field)", the image predates this service consuming');
+console.error('the GIT_SHA build-arg: rebuild it before deploying, do not blank the check.');
+process.exit(1);
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

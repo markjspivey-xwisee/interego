@@ -31,7 +31,16 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'performer_iri', type: 'string', required: false, description: 'IRI of the agp:Performer (human, agent, or team).' },
       { name: 'direction', type: 'string', required: false, description: 'Performance direction.', enum: ['H2H', 'H2A', 'A2H', 'A2A'] },
       { name: 'regime', type: 'string', required: false, description: 'Work regime, if asserted. Prefer leaving unset so it is derived from evidence.', enum: ['Evident', 'Knowable', 'Emergent', 'Turbulent'] },
-      { name: 'regime_source', type: 'string', required: false, description: 'Provenance of the regime placement.', enum: ['derived', 'asserted', 'default', 'unclassified'] },
+      // `regime_source` was declared here as a caller input with the enum
+      // ['derived','asserted','default','unclassified'] — two defects in one line.
+      // Its 'default' value never existed (agp-shapes.ttl's pattern is
+      // derived|asserted|default-gap-intent|unclassified, so anything published
+      // with it would fail the shape), and more importantly regimeSource is
+      // ENGINE-DERIVED provenance: 'derived' is reserved for trajectory evidence
+      // and is the only source permitted to gap-analyse or accrue calibration
+      // authority. Letting a caller name it is a one-field backdoor into both, so
+      // the input is REMOVED rather than corrected. The handler returns the
+      // engine's value.
       ...POD_INPUTS,
     ],
     outputs: {
@@ -160,6 +169,12 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'intervention_iri', type: 'string', required: true, description: 'IRI of the agp:Intervention being evaluated.' },
       { name: 'outcome_success', type: 'boolean', required: false, description: 'Whether the targeted performance outcome improved, if observed.' },
       { name: 'note', type: 'string', required: false, description: 'Evaluation note; may include an explicit-claim-not-made statement.' },
+      // The four-level engine (evaluateIntervention) dereferences plan.diagnosis
+      // and situation.observed, so it cannot run without them. They were never
+      // declared, which is part of why this affordance stayed a stub.
+      { name: 'plan', type: 'object', required: false, description: 'Inline agp:InterventionPlan the evaluation judges — { diagnosis, selected[] }. Required to run the four-level engine.' },
+      { name: 'situation', type: 'object', required: false, description: 'The agp:PerformanceSituation the plan targeted (required alongside an inline plan).' },
+      { name: 'new_observed', type: 'string', required: false, description: 'The re-measured observed performance after the intervention. Supply only if actually re-measured — without it the verdict is honestly "too-early".' },
       ...POD_INPUTS,
     ],
     outputs: {

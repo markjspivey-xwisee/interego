@@ -65,4 +65,33 @@ describe.skipIf(!RUN)('pgsl-store: REAL FoundationDB integration', () => {
     await store.cpDelete('accounts', id);
     expect(await store.cpGet('accounts', id)).toBeNull();
   });
+
+  it('compareAndSet: two overlapping transactions, exactly one lands', async () => {
+    // The THIRD implementation of the seam. FDB transactions are genuinely serializable,
+    // so `doTransaction` retries the loser and its re-read makes the compare fail — but
+    // that is asserted here rather than argued, so this binding is not the untested one.
+    const enc = new TextEncoder(); const dec = new TextDecoder();
+    const k = enc.encode(`cas:${ns}:overlap`);
+    await fdb.transact(async (txn) => txn.compareAndSet(k, null, enc.encode('v0')));
+
+    const [a, b] = await Promise.all([
+      fdb.transact(async (txn) => {
+        const seen = await txn.get(k);
+        return txn.compareAndSet(k, seen ?? null, enc.encode('vA'));
+      }),
+      fdb.transact(async (txn) => {
+        const seen = await txn.get(k);
+        return txn.compareAndSet(k, seen ?? null, enc.encode('vB'));
+      }),
+    ]);
+    expect([a, b].filter(Boolean).length).toBeGreaterThanOrEqual(1);
+    const final = await fdb.transact(async (txn) => txn.get(k));
+    expect(['vA', 'vB']).toContain(dec.decode(final!));
+
+    // A stale expectation is refused and writes nothing.
+    const stale = enc.encode('v0');
+    expect(await fdb.transact(async (txn) => txn.compareAndSet(k, stale, enc.encode('vC')))).toBe(false);
+    const after = await fdb.transact(async (txn) => txn.get(k));
+    expect(dec.decode(after!)).toBe(dec.decode(final!));
+  });
 });

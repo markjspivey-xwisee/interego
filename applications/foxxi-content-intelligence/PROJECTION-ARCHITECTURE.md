@@ -173,11 +173,19 @@ hot cache that fronts it.
 
 ### 1. Real cross-pod federation
 
-The federation read path currently composes the tenant profile with a
-seeded peer corpus (`SAMPLE_PEER_OUTCOMES`). The architecture supports
-real federation — `iep:FederationFacet` is populated, `composeCalibrationProfiles`
-is symmetric, descriptors are dereferenceable across pods — but no
-second deployed bridge instance + second pod is provisioned today.
+The federation read path is wired to real pods: `performance-routes.ts`
+reads `FOXXI_FEDERATION_PODS` and `federation-outcome-loader.ts` does a
+real `discover()` per peer on a 60s TTL. `SAMPLE_PEER_OUTCOMES` is only
+the dev / first-run fallback seed. What is missing is PROVISIONING: the
+configured peer pod is not populated, so the loader returns zero outcomes
+and the seed stays in the composed profile. `/performance/calibration`
+reports which case you are in under
+`provenance.federation.seedFallbackReason` and `.podStatus`.
+
+Note the scope correction: a peer pod does NOT require a second deployed
+bridge or new DNS. The loader reads a pod over HTTP, so a second container
+path on the same css-gate is a sufficient second logical pod — which is
+what `deploy/railway/services.json` already configures.
 
 The reader-side filter that gates admission to the federated
 calibration profile already runs in production:
@@ -196,18 +204,21 @@ To turn it on:
    descriptors carry a recoverable `did:key:0x<addr>#bridge` —
    without this, the loader will reject them as unsigned/unverifiable
    and the calibration profile will compose with an empty peer set.
-3. Replace the `SAMPLE_PEER_OUTCOMES` seed with `discover()` calls
-   against the peer pod, filtered by `conformsTo foxxi:Outcome` and
-   passed through the same signature-verifying loader the local
-   tenant uses.
-4. Each pod publishes its own signed outcomes; each bridge composes
+3. Each pod publishes its own signed outcomes; each bridge composes
    both; the calibration profile becomes a real two-org composition
    that only counts descriptors whose `foxxi:agentSignature` recovers
    to the claimed author DID.
 
-Scope: a second container app + DNS + ~50 lines of refactor in
-`performance-routes.ts` to swap the seed for a real fetch through the
-existing signature-verifying loader.
+(The former step 3 — "replace the `SAMPLE_PEER_OUTCOMES` seed with
+`discover()` calls" — is DONE and has been for some time; leaving it
+listed as pending is what kept the real blocker, an unprovisioned pod,
+out of view.)
+
+Scope: run `tools/provision-federation-peer.mjs` then
+`tools/seed-federation-peer.mjs` with `FOXXI_POD_WRITE_SECRET` set to the
+css-gate WRITE_SECRET. No second container app, no DNS, no redeploy —
+`FOXXI_FEDERATION_PODS` is already configured and the loader re-reads on
+its 60s TTL.
 
 ### 2. Dashboard as linked-data browser
 

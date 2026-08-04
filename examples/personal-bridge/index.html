@@ -149,12 +149,31 @@
   </div>
 
   <script>
+    // The bridge gates every route on `Authorization: Bearer <BRIDGE_TOKEN>` when
+    // BRIDGE_TOKEN is set. This page is served BY that gate, so it can only have
+    // been loaded with a valid `?access_token=` — stash it, strip it out of the
+    // address bar so it does not survive in history or a screenshot, and put it
+    // back on every call this page makes. Without this the UI renders and then
+    // shows nothing: three header-less fetches and one EventSource, all 401.
+    const TOKEN = (() => {
+      const fromUrl = new URLSearchParams(location.search).get('access_token');
+      if (fromUrl) {
+        sessionStorage.setItem('bridge-token', fromUrl);
+        history.replaceState(null, '', location.pathname);
+        return fromUrl;
+      }
+      return sessionStorage.getItem('bridge-token') || '';
+    })();
+    const authHeaders = (extra) => TOKEN ? { ...extra, Authorization: 'Bearer ' + TOKEN } : { ...extra };
+    // EventSource cannot set a request header, hence the query form (RFC 6750 §2.3).
+    const withToken = (path) => TOKEN ? path + (path.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(TOKEN) : path;
+
     function pre(obj) {
       return '<pre>' + JSON.stringify(obj, null, 2).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>';
     }
 
     async function refresh() {
-      const r = await fetch('/status');
+      const r = await fetch('/status', { headers: authHeaders({}) });
       const j = await r.json();
       const isLocal = !j.externalRelays || j.externalRelays.length === 0;
       document.getElementById('sharing-mode').className = 'pill ' + (isLocal ? 'local' : 'warn');
@@ -178,7 +197,7 @@
         summary: document.getElementById('pub-summary').value || undefined,
       };
       const r = await fetch('/api/publish', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body),
       });
       document.getElementById('pub-result').innerHTML = pre(await r.json());
@@ -187,14 +206,14 @@
 
     async function queryAll() {
       const r = await fetch('/api/query', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({}),
       });
       document.getElementById('pub-result').innerHTML = pre(await r.json());
     }
 
     function startFeed() {
-      const ev = new EventSource('/events');
+      const ev = new EventSource(withToken('/events'));
       const feed = document.getElementById('feed');
       ev.addEventListener('descriptor', (e) => {
         const d = JSON.parse(e.data);

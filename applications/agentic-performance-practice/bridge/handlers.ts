@@ -1,0 +1,297 @@
+/**
+ * agp bridge capability handlers.
+ *
+ * ★ EXTRACTED FROM server.ts BECAUSE server.ts CALLS app.listen() AT MODULE SCOPE.
+ * Importing it to exercise a handler binds a port, so nothing could ever test the
+ * real handlers — which is a large part of why six of them stayed stubs and the
+ * seventh published SHACL-invalid nodes unnoticed. The factory takes the fetch it
+ * publishes with, so a test drives the REAL handler + the REAL publisher + the
+ * REAL shapes and inspects the bytes that would have reached a pod. The network
+ * is the only thing doubled.
+ */
+import { diagnose, recommendInterventions, evaluateIntervention } from '../src/performance-architecture.js';
+import { AGP_ONTOLOGY_IRI } from '../src/ontology.js';
+import { proposeStandardsExtension, type ExtensionKind } from '../src/standards-extension.js';
+import {
+  coerceSituation, coerceDiagnosis, coercePlan, fetchJson,
+  publishAgpArtifact, deterministicIri, AGP,
+  type AgpProperty,
+} from './pod-helpers.js';
+
+const REGIME_IRI: Record<string, string> = {
+  Evident: `${AGP}Evident`, Knowable: `${AGP}Knowable`,
+  Emergent: `${AGP}Emergent`, Turbulent: `${AGP}Turbulent`,
+};
+const METHOD_IRI: Record<string, string> = {
+  'apply-practice': `${AGP}ApplyPractice`, 'gap-analysis': `${AGP}GapAnalysis`,
+  'dispositional-read': `${AGP}DispositionalRead`, 'stabilise-first': `${AGP}StabiliseFirst`,
+  'classify-first': `${AGP}ClassifyFirst`,
+};
+
+/**
+ * A stub must name the blocker that is ACTUALLY unmet.
+ *
+ * ★ The previous factory hard-coded `pending: 'stage-2'` and the sentence
+ * "Publisher + regime engine arrive in Stage 2, when the performance engine is
+ * moved out of Foxxi". That move SHIPPED (the engine's canonical home is
+ * src/performance-architecture.ts and Foxxi re-exports it via a shim), and the
+ * sentence stayed, because it was a string literal derived from nothing — no
+ * test, lint or probe could observe that a stated precondition had become false.
+ * The reason is now a required argument at each call site, so a stale one cannot
+ * be copy-pasted in from a sibling.
+ */
+function pendingHandler(toolName: string, required: string[], blocker: string, reason: string) {
+  return async (args: Record<string, unknown>) => {
+    const missing = required.filter(k => args[k] === undefined || args[k] === null || args[k] === '');
+    if (missing.length) throw new Error(`${toolName}: missing required input(s): ${missing.join(', ')}`);
+    return { pending: blocker, tool: toolName, note: reason, ontology: AGP_ONTOLOGY_IRI, received: args };
+  };
+}
+
+const str = (v: unknown): string => String(v ?? '');
+const strList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String).filter(Boolean) : []);
+
+export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record<string, (a: Record<string, unknown>) => Promise<unknown>> {
+  // The double is passed as an ARGUMENT, never assigned to globalThis.fetch:
+  // vitest shares one globalThis here, and a global fetch patch in this file
+  // would break unrelated pod-touching suites in a full run only.
+  const pub = (a: Parameters<typeof publishAgpArtifact>[0]): Promise<string | null> =>
+    publishAgpArtifact(deps.fetchFn ? { ...a, fetchFn: deps.fetchFn } : a);
+  const readJson = (iri: string, podUrl?: string): Promise<unknown | null> =>
+    fetchJson(iri, podUrl, deps.fetchFn ?? globalThis.fetch);
+
+  return {
+    'agp.contextualize_situation': async (args) => {
+      const statement = str(args.situation_statement);
+      if (!statement) throw new Error('agp.contextualize_situation: missing required input(s): situation_statement');
+      const situationIri = deterministicIri('situation', `${statement}|${str(args.performer_iri)}`);
+      // Run the REAL engine to place the regime. A caller-supplied `regime` becomes
+      // situation.domain, which diagnose() records as regimeSource 'asserted'.
+      const d = diagnose({
+        situation: {
+          id: situationIri,
+          performer: { id: args.performer_iri ? str(args.performer_iri) : 'urn:agp:performer:anon', kind: 'agent' },
+          workContext: statement,
+          competency: statement,
+          observed: statement,
+          frequency: 'occasional',
+          criticality: 'moderate',
+          modalStatus: 'Hypothetical',
+          provenance: str(args.operator_did) || 'agp.contextualize_situation',
+          ...(args.regime ? { domain: args.regime as 'Evident' | 'Knowable' | 'Emergent' | 'Turbulent' } : {}),
+        },
+      });
+      // ★ regimeSource is ENGINE-DERIVED and must never be caller-asserted.
+      // 'derived' is the one provenance the model reserves for trajectory
+      // evidence, and only a derived regime may gap-analyse or accrue
+      // calibration authority — honouring args.regime_source would be a
+      // one-field backdoor into both.
+      const regimeSource = d.regimeSource;
+      if (!d.domain) {
+        // PerformanceSituationShape requires agp:regime minCount 1. Publishing
+        // here would emit an invalid node; saying so is the honest answer.
+        return {
+          situationIri, regime: null, regimeSource, method: d.method,
+          descriptorUrl: null, persisted: false,
+          pending: 'no-regime-evidence',
+          note: 'Situation not published: a conformant agp:PerformanceSituation MUST carry a regime, and no evidence placed one. Assert `regime`, or diagnose with trajectories/factor evidence first.',
+        };
+      }
+      const properties: AgpProperty[] = [
+        { predicate: `${AGP}regime`, object: { iri: REGIME_IRI[d.domain]! } },
+        { predicate: `${AGP}regimeSource`, object: { literal: regimeSource } },
+      ];
+      let descriptorUrl: string | null = null;
+      if (args.pod_url) {
+        descriptorUrl = await pub({
+          iri: situationIri, typeIri: `${AGP}PerformanceSituation`, label: statement,
+          podUrl: str(args.pod_url), properties,
+          author: args.operator_did ? { id: str(args.operator_did), kind: 'agent', role: 'performance consultant' } : undefined,
+          slug: `situation-${situationIri.split(':').pop()}`,
+        });
+      }
+      return { situationIri, regime: d.domain, regimeSource, method: d.method, descriptorUrl, persisted: !!descriptorUrl, pending: null };
+    },
+
+    'agp.define_capability': async (args) => {
+      const name = str(args.name);
+      if (!name) throw new Error('agp.define_capability: missing required input(s): name');
+      const composedOf = [...strList(args.skill_iris), ...strList(args.tool_iris)];
+      if (composedOf.length === 0) {
+        // CapabilityShape rejects an empty capability. Minting one anyway would
+        // be a fabricated capability, so REFUSE rather than publish-and-fail.
+        throw new Error('agp.define_capability: a capability MUST be composed of at least one constituent — supply skill_iris and/or tool_iris. An empty capability is not productive (agpsh:CapabilityShape).');
+      }
+      const capabilityIri = deterministicIri('capability', `${name}|${composedOf.join(',')}`);
+      let descriptorUrl: string | null = null;
+      if (args.pod_url) {
+        descriptorUrl = await pub({
+          iri: capabilityIri, typeIri: `${AGP}Capability`, label: name, podUrl: str(args.pod_url),
+          properties: composedOf.map(iri => ({ predicate: `${AGP}composedOf`, object: { iri } })),
+          author: args.operator_did ? { id: str(args.operator_did), kind: 'agent' } : undefined,
+          slug: `capability-${capabilityIri.split(':').pop()}`,
+        });
+      }
+      return { capabilityIri, composedOf, descriptorUrl, persisted: !!descriptorUrl, pending: null };
+    },
+
+    'agp.map_affordance': async (args) => {
+      const missing = ['situation_iri', 'affordance_statement', 'requires_capability_iri'].filter(k => !args[k]);
+      if (missing.length) throw new Error(`agp.map_affordance: missing required input(s): ${missing.join(', ')}`);
+      const statement = str(args.affordance_statement);
+      const requiresCapability = str(args.requires_capability_iri);
+      const affordanceIri = deterministicIri('affordance', `${str(args.situation_iri)}|${statement}`);
+      let descriptorUrl: string | null = null;
+      if (args.pod_url) {
+        descriptorUrl = await pub({
+          iri: affordanceIri, typeIri: `${AGP}PerformanceAffordance`, label: statement, podUrl: str(args.pod_url),
+          properties: [{ predicate: `${AGP}requiresCapability`, object: { iri: requiresCapability } }],
+          author: args.operator_did ? { id: str(args.operator_did), kind: 'agent' } : undefined,
+          slug: `affordance-${affordanceIri.split(':').pop()}`,
+        });
+      }
+      return { affordanceIri, requiresCapability, descriptorUrl, persisted: !!descriptorUrl, pending: null };
+    },
+
+    'agp.actualize': async (args) => {
+      const missing = ['situation_iri', 'capability_iri', 'affordance_iri', 'performance_statement'].filter(k => !args[k]);
+      if (missing.length) throw new Error(`agp.actualize: missing required input(s): ${missing.join(', ')}`);
+      const statement = str(args.performance_statement);
+      const performanceIri = deterministicIri('performance', `${str(args.situation_iri)}|${statement}`);
+      const actualizationIri = deterministicIri('actualization', `${str(args.capability_iri)}|${str(args.affordance_iri)}|${performanceIri}`);
+      let descriptorUrl: string | null = null;
+      if (args.pod_url) {
+        descriptorUrl = await pub({
+          iri: actualizationIri, typeIri: `${AGP}Actualization`, label: statement, podUrl: str(args.pod_url),
+          // All four triples ActualizationShape requires. This is the productive
+          // join; an actualization missing any of them denotes nothing.
+          properties: [
+            { predicate: `${AGP}engages`, object: { iri: str(args.capability_iri) } },
+            { predicate: `${AGP}inSituation`, object: { iri: str(args.situation_iri) } },
+            { predicate: `${AGP}actualizes`, object: { iri: str(args.affordance_iri) } },
+            { predicate: `${AGP}yields`, object: { iri: performanceIri } },
+          ],
+          author: args.operator_did ? { id: str(args.operator_did), kind: 'agent' } : undefined,
+          slug: `actualization-${actualizationIri.split(':').pop()}`,
+        });
+      }
+      // xapiStatementId stays null: projecting to Foxxi's LRS from here would
+      // invert the dependency arrow (it is foxxi → agp, never the reverse). It is
+      // not in the affordance's outputs.required, so null is honest, not missing.
+      return { actualizationIri, performanceIri, xapiStatementId: null, descriptorUrl, persisted: !!descriptorUrl, pending: null };
+    },
+
+    // REAL: run the regime engine. Accepts an inline `situation` object (preferred)
+    // OR a resolvable situation_iri + pod_url; honestly degrades if the situation
+    // cannot be resolved. Honours the engine's regime-honesty contract (a named
+    // factor ONLY for the Knowable regime).
+    'agp.diagnose': async (args) => {
+      const raw = args.situation ?? (args.situation_iri ? await readJson(str(args.situation_iri), args.pod_url ? str(args.pod_url) : undefined) : null);
+      const situation = coerceSituation(raw);
+      if (!situation) {
+        return { pending: 'situation-not-resolvable', tool: 'agp.diagnose', note: 'Pass an inline `situation` object, or a `situation_iri` resolvable against `pod_url`. The engine ran nothing because no situation could be resolved.', received: args };
+      }
+      const factorEvidence = (args.factor_evidence ?? args.factorEvidence) as Record<string, { adequate: boolean; evidence: string }> | undefined;
+      const d = diagnose({
+        situation,
+        exemplary: args.exemplary ? str(args.exemplary) : undefined,
+        factorEvidence,
+        trajectories: Array.isArray(args.trajectories) ? args.trajectories as never : undefined,
+        couldPerformUnderIdealConditions: typeof args.could_perform_under_ideal_conditions === 'boolean' ? args.could_perform_under_ideal_conditions : undefined,
+        performedWellBefore: typeof args.performed_well_before === 'boolean' ? args.performed_well_before : undefined,
+      });
+      const diagnosisIri = deterministicIri('diagnosis', `${situation.id}|${d.regimeSource}|${d.method}`);
+      let descriptorUrl: string | null = null;
+      if (args.pod_url) {
+        descriptorUrl = await pub({
+          iri: diagnosisIri, typeIri: `${AGP}Diagnosis`, label: `Diagnosis of ${situation.id}`, podUrl: str(args.pod_url),
+          // ★ The pre-existing live defect: this call published a label-only graph,
+          // which fails DiagnosisShape on both agp:diagnoses and agp:method. Every
+          // agp:Diagnosis this bridge has written to a pod is invalid.
+          properties: [
+            { predicate: `${AGP}diagnoses`, object: { iri: situation.id } },
+            { predicate: `${AGP}method`, object: { iri: METHOD_IRI[d.method]! } },
+          ],
+          author: args.operator_did ? { id: str(args.operator_did), kind: 'agent', role: 'performance consultant' } : undefined,
+          slug: `diagnosis-${diagnosisIri.split(':').pop()}`,
+        });
+      }
+      return {
+        diagnosisIri, regime: d.domain ?? null, regimeSource: d.regimeSource, method: d.method,
+        ...(d.domain === 'Knowable' && d.rootCauses.length ? { factor: d.rootCauses[0] } : {}),
+        skillDeficiency: d.skillDeficiency, exemplary: d.exemplary ?? null, reasoning: d.reasoning,
+        caveat: d.caveat ?? null, descriptorUrl, persisted: !!descriptorUrl, pending: null,
+      };
+    },
+
+    // REAL: emit a regime-appropriate intervention plan. Accepts an inline
+    // `diagnosis` (+ `situation`) OR a resolvable diagnosis_iri.
+    'agp.plan_intervention': async (args) => {
+      const rawDiag = args.diagnosis ?? (args.diagnosis_iri ? await readJson(str(args.diagnosis_iri), args.pod_url ? str(args.pod_url) : undefined) : null);
+      const diagnosis = coerceDiagnosis(rawDiag);
+      const situation = coerceSituation(args.situation ?? null);
+      if (!diagnosis || !situation) {
+        return { pending: 'inputs-not-resolvable', tool: 'agp.plan_intervention', note: 'Pass an inline `diagnosis` AND `situation` object (or a resolvable diagnosis_iri + the situation). The engine ran nothing.', received: args };
+      }
+      const author = args.operator_did ? { id: str(args.operator_did), kind: 'agent' as const, role: 'performance consultant' } : undefined;
+      const plan = recommendInterventions({ diagnosis, situation, author });
+      const planIri = deterministicIri('plan', `${diagnosis.situationId}|${plan.selected.map(o => o.type).join(',')}`);
+      let descriptorUrl: string | null = null;
+      if (args.pod_url) {
+        // InterventionPlan is the one publishable class with no shape declared in
+        // agp-shapes.ttl, so it needs no domain triples to conform. Left as-is
+        // rather than inventing predicates the ontology does not require.
+        descriptorUrl = await pub({ iri: planIri, typeIri: `${AGP}InterventionPlan`, label: `Intervention plan for ${diagnosis.situationId}`, podUrl: str(args.pod_url), author, slug: `plan-${planIri.split(':').pop()}` });
+      }
+      return {
+        planIri, interventions: plan.selected.map(o => ({ type: o.type, rationale: o.rationale })),
+        contentWarranted: plan.contentWarranted, direction: plan.direction, summary: plan.summary,
+        descriptorUrl, persisted: !!descriptorUrl, pending: null,
+      };
+    },
+
+    // REAL: run the four-level evaluation engine (evaluateIntervention has been
+    // exported from the engine module this bridge already imports the whole time).
+    'agp.evaluate_intervention': async (args) => {
+      if (!args.intervention_iri) throw new Error('agp.evaluate_intervention: missing required input(s): intervention_iri');
+      const plan = coercePlan(args.plan ?? null);
+      const situation = coerceSituation(args.situation ?? null);
+      if (!plan || !situation) {
+        return { pending: 'inputs-not-resolvable', tool: 'agp.evaluate_intervention', note: 'Pass an inline `plan` (an agp:InterventionPlan with its `diagnosis` and `selected`) AND the `situation` it targeted. The engine ran nothing and nothing was published.', received: args };
+      }
+      const ev = evaluateIntervention({
+        plan, situation,
+        ...(args.note ? { response: { favourable: args.outcome_success === true, note: str(args.note) } } : {}),
+        ...(typeof args.new_observed === 'string' ? { newObserved: args.new_observed } : {}),
+      });
+      const evaluationIri = deterministicIri('evaluation', `${str(args.intervention_iri)}|${ev.verdict}|${situation.id}`);
+      let descriptorUrl: string | null = null;
+      if (args.pod_url) {
+        descriptorUrl = await pub({
+          iri: evaluationIri, typeIri: `${AGP}InterventionEvaluation`, label: `Evaluation of ${str(args.intervention_iri)}`, podUrl: str(args.pod_url),
+          properties: [{ predicate: `${AGP}evaluates`, object: { iri: str(args.intervention_iri) } }],
+          author: args.operator_did ? { id: str(args.operator_did), kind: 'agent' } : undefined,
+          slug: `evaluation-${evaluationIri.split(':').pop()}`,
+        });
+      }
+      return { evaluationIri, verdict: ev.verdict, levels: ev.levels, supersedes: ev.supersedes, nextAction: ev.nextAction, descriptorUrl, persisted: !!descriptorUrl, pending: null };
+    },
+
+    'agp.list_practice': pendingHandler(
+      'agp.list_practice', [], 'no-container-enumeration',
+      'Not published/read: this bridge has no pod container-enumeration helper — bridge/pod-helpers.ts exposes only fetchJson (a single-resource GET), so the operator\'s agp: state cannot be listed without fabricating it. Blocked on a container-listing read, NOT on the engine move (that shipped).',
+    ),
+
+    // REAL: pure + composes Foxxi's standards, so it needs no pod write to produce
+    // a conformant, self-descriptive, guided artifact.
+    'agp.extend_standards': async (args) => proposeStandardsExtension({
+      kind: str(args.kind) as ExtensionKind,
+      name: str(args.name),
+      definition: str(args.definition),
+      label: args.label as string | undefined,
+      extendsStandard: args.extends_standard as string | undefined,
+      subClassOf: args.subclass_of as string | undefined,
+      buildsCapability: args.builds_capability as string | undefined,
+    }),
+  };
+}

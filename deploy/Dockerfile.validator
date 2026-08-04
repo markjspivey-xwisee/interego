@@ -34,4 +34,13 @@ COPY --from=build /app/package.json ./
 
 EXPOSE 9090
 
+# The commit this image was built from, surfaced at /health so a deploy can be VERIFIED
+# rather than assumed. build-ghcr.yml appends GIT_SHA to every image's build-args; without
+# this ARG Docker drops it with a warning and the image builds green. This service is not
+# on Railway today, so this is pre-emptive — but the alternative is an exemption list, and
+# an exemption list is exactly the hand-maintained inclusion list that let five public
+# surfaces go uncovered. Runtime stage: ARG does not cross a FROM.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
 CMD ["dist/server.js"]

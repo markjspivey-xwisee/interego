@@ -8,6 +8,13 @@ import { HMD_APP_LOGIC_JS } from './hmd-app-logic.js';
 import { HMD_APP_HTML } from './hmd-app.js';
 import { noteToHyperMarkdown, viewerControls } from './note-view.js';
 import { parseHypermediaMarkdown } from '@interego/core';
+// `ShapeField` is declared in `@interego/core`'s kernel types but not re-exported by name
+// from the package root, so it is named here through the exported surface that carries it:
+// `HypermediaControl.fields`. Derived rather than re-declared — a hand-written copy would
+// drift the moment a field is added, which is the whole class this file's compiler exists
+// to catch.
+import type { HypermediaControl } from '@interego/core';
+type ShapeField = NonNullable<HypermediaControl['fields']>[number];
 
 /* eslint-disable @typescript-eslint/no-implied-eval */
 const L = new Function(`${HMD_APP_LOGIC_JS}\nreturn {escapeHtml,sanitizeHref,safeMarkdown,classifyAction,inputModel,validateValue,collectPayload,localName,isRequired,isHmdDoc,shouldRehydrate};`)() as {
@@ -15,11 +22,15 @@ const L = new Function(`${HMD_APP_LOGIC_JS}\nreturn {escapeHtml,sanitizeHref,saf
   sanitizeHref: (s: unknown) => string;
   safeMarkdown: (s: unknown) => string;
   classifyAction: (iri: string, method?: string) => 'read' | 'mutate';
-  inputModel: (f: Record<string, unknown>) => { kind: string };
-  validateValue: (f: Record<string, unknown>, raw: unknown) => string;
-  collectPayload: (fields: Array<Record<string, unknown>>, values: Record<string, unknown>) => Record<string, unknown>;
+  // ★ `ShapeField`, not `Record<string, unknown>`. The real callers pass the fields
+  // `parseHypermediaMarkdown` hands back, and `ShapeField` has no index signature, so the
+  // looser model forced an `as Array<Record<string, unknown>>` at the one call site that
+  // used a real document — a cast that stopped the argument being checked at all.
+  inputModel: (f: ShapeField) => { kind: string };
+  validateValue: (f: ShapeField, raw: unknown) => string;
+  collectPayload: (fields: readonly ShapeField[], values: Record<string, unknown>) => Record<string, unknown>;
   localName: (iri: string) => string;
-  isRequired: (f: Record<string, unknown>) => boolean;
+  isRequired: (f: ShapeField) => boolean;
   isHmdDoc: (d: unknown) => boolean;
   shouldRehydrate: (current: unknown, next: unknown) => boolean;
 };
@@ -169,7 +180,7 @@ check('HMD_APP_HTML references no external origins (self-contained)', !/https?:\
   check('render_hmd shape: control carries action + method for the widget', !!askC && askC.method === 'POST');
   check('render_hmd shape: control carries inline fields (form is buildable)', !!askC?.fields && askC.fields[0]!.path === `${IEP}question` && askC.fields[0]!.name === 'Question');
   check('render_hmd shape: a POST action requires confirmation (mutate), never direct fire', L.classifyAction(askC!.action, askC!.method) === 'mutate');
-  check('render_hmd shape: a required field validates + payload keys by local name', L.validateValue(askC!.fields![0]!, '') !== '' && 'question' in L.collectPayload(askC!.fields! as Array<Record<string, unknown>>, { question: 'hi' }));
+  check('render_hmd shape: a required field validates + payload keys by local name', L.validateValue(askC!.fields![0]!, '') !== '' && 'question' in L.collectPayload(askC!.fields!, { question: 'hi' }));
   // Descriptor transport affordances (canDecrypt/renderView) are filtered; remaining
   // controls are marked executable (real target) vs declarative (shape-only).
   const vc = viewerControls(doc.controls);

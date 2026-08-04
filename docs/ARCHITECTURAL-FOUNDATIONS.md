@@ -257,8 +257,10 @@ What stays in `@interego/core`:
 | `validation/` | Shape conformance / SHACL primitives — substrate algebra over the descriptor model. |
 | `sparql/` | SPARQL pattern builders — standards-compliant substrate query layer. |
 | `crypto/` primitives | Abstract signing/verification + ZK primitives. The concrete ethers/nacl-backed wallet impls ship here for now; a follow-up `@interego/crypto-impls` split is planned once the abstract surface stabilizes. |
-| `naming/` | Naming conventions (URN minting + L2 attestation-based naming). |
-| `solid/`, `pgsl/` | Currently still inside core. The kernel composes against both, and `rdf/system-ontology` + `rdf/virtualized-layer` back-reference PGSL. Splitting these into `@interego/solid` and `@interego/pgsl` requires lifting those back-references through dependency-injection points; the split is on the roadmap. |
+| `lattice/` | The pluggable lattice-adapter seam. `@interego/pgsl` registers itself here at module load; core ships a pure-hash fallback, so the kernel mints without it. |
+| `http/`, `manifest/`, `mcp/` | Substrate fetch/retry transport, manifest types + assembly, and the MCP HTTP mount + output-schema helpers. |
+
+`solid/`, `pgsl/` and `naming/` are no longer in core — they were extracted into `@interego/solid` and `@interego/pgsl` (`naming.ts` shipped with Solid). This table asserted the opposite until now, and named a blocker that no longer exists: `rdf/virtualized-layer` moved into `@interego/pgsl`, and `rdf/system-ontology` imports only `./namespaces.js`. Core depends on neither package statically; `kernel/index.ts` dynamic-imports `@interego/solid` and `lattice/adapter.ts` is the PGSL seam.
 
 What's a vertical now lives in its own package:
 

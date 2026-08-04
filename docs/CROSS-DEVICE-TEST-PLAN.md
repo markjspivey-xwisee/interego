@@ -1,10 +1,12 @@
 # Cross-device test plan — actual phone + actual desktop
 
-What's tested in CI is real code on real WebSocket transport, but it all runs in one process. The protocol-level correctness is proven there. **What CI cannot prove is the cross-device deployment**: an actual phone running claude.ai or ChatGPT mobile, an actual desktop running Claude Code, both connected to one personal-bridge, exchanging real memory.
+What's tested in CI is real code on real WebSocket transport, but it all runs in one process. **What CI cannot prove is the cross-device deployment**: an actual phone running claude.ai or ChatGPT mobile, an actual desktop running Claude Code, both connected to one personal-bridge, exchanging real memory.
 
 That test happens on your hardware. This document is the runbook.
 
-If you publish a passing run of this against your own kit, that's the empirical proof — not anything in the test suite.
+Read the split precisely, because the earlier wording here overstated it. The suite already proves the protocol layer and those runs are evidence: `tests/p2p.test.ts` exercises publish → query → live subscribe between two clients that share nothing but a relay, `tests/personal-bridge.test.ts` exercises all six bridge tools through the same handlers `/mcp` dispatches to, and `tests/file-backed-relay.test.ts` exercises restart replay against a temp file. What no in-process run can substitute for is the physical boundary: two separate devices, two vendor MCP clients we do not control, and a real network between them. This runbook covers that residue and nothing wider.
+
+**No run of this has been published yet.** Until one is, treat the cross-device claim as untested rather than proven, and record what you get in [Recorded runs](#recorded-runs) below.
 
 ---
 
@@ -31,7 +33,12 @@ npm run build
 cd examples/personal-bridge
 npm install
 npm run build
-PORT=5050 BRIDGE_KEY=0x<your-private-key> node dist/server.js
+# A phone has to reach this bridge, so it binds past loopback — which REQUIRES a
+# credential. The bridge refuses to start on a non-loopback BIND without one, because
+# it holds the X25519 key derived from BRIDGE_KEY: anyone who can reach the port
+# could otherwise list your encrypted inbox and decrypt it.
+export BRIDGE_TOKEN=$(openssl rand -hex 32)
+BIND=0.0.0.0 PORT=5050 BRIDGE_KEY=0x<your-private-key> BRIDGE_TOKEN=$BRIDGE_TOKEN node dist/server.js
 ```
 
 You should see:
@@ -40,10 +47,11 @@ You should see:
 @interego/personal-bridge running
   Bind:           http://0.0.0.0:5050
   Bridge pubkey:  0x...
+  Auth:           Bearer token required (BRIDGE_TOKEN)
   ...
 ```
 
-Open `http://localhost:5050/` in any browser on the same machine — the admin UI should load.
+Open `http://localhost:5050/?access_token=$BRIDGE_TOKEN` in any browser on the same machine — the admin UI should load, and the address bar should end up with the token stripped out of it.
 
 ### 2. Make the bridge reachable from your phone
 
@@ -61,19 +69,20 @@ Add to your `.mcp.json`:
 {
   "mcpServers": {
     "personal-bridge": {
-      "url": "http://localhost:5050/mcp"
+      "url": "http://localhost:5050/mcp",
+      "headers": { "Authorization": "Bearer <your BRIDGE_TOKEN>" }
     }
   }
 }
 ```
 
-(Or the same Tailscale/public URL the phone uses, if the bridge is on a different machine.)
+(Or the same Tailscale/public URL the phone uses, if the bridge is on a different machine.) The `headers` entry is not optional once `BRIDGE_TOKEN` is set — without it every call returns `401 {"error":"bridge credential required"}`.
 
 Restart Claude Code. You should see `personal-bridge` show up in the MCP servers list with 6 tools (publish_p2p, query_p2p, share_encrypted, query_my_inbox, decrypt_share, bridge_status).
 
 ### 4. Connect your phone (claude.ai or ChatGPT)
 
-Open the app, go to settings → custom MCP connectors → add new. URL: the bridge URL from step 2.
+Open the app, go to settings → custom MCP connectors → add new. URL: the bridge URL from step 2, plus an `Authorization: Bearer <your BRIDGE_TOKEN>` header if the client supports custom headers. If it does not, this is the point at which the runbook stops — do not work around it by unsetting `BRIDGE_TOKEN`, because a bridge reachable from a phone with no credential is reachable by anything else on that path too. Record the client and its limitation in [Recorded runs](#recorded-runs).
 
 The app should successfully connect and discover the same 6 tools.
 
@@ -136,9 +145,11 @@ Requires a second person with their own bridge.
 
 ### Test 6 — restart resilience
 
-Restart the bridge process. Reconnect from phone + desktop. Verify previously-published events are gone (in v1; events are in-memory) but new publishes work without re-pairing.
+Restart the bridge process. Reconnect from phone + desktop, then re-run the Test 1 query.
 
-If you want event persistence across restarts, that's v1.2 (pluggable backing store).
+**PASS** if the descriptor published before the restart is still returned, with the same `eventId`, and new publishes work without re-pairing.
+
+Persistence is on by default: the bridge appends to `BRIDGE_DATA_DIR/events.jsonl` (default `~/.interego-bridge`), encrypted at rest under a key derived from `BRIDGE_KEY`, and replays the file on boot. `GET /status` reports `persistence.mode: "file-backed"` when it is on. Set `BRIDGE_PERSIST=0` for the volatile in-memory relay, in which case the same restart does leave the descriptor gone — that is the opt-in, not the default.
 
 ---
 
@@ -150,6 +161,16 @@ If all 6 tests pass on your kit:
 2. Local-first is real — Tests 1-4 prove no data leaves your network.
 3. Cross-bridge federation is real — Test 5 proves it works against actual public Nostr infrastructure (when opted in).
 4. The bridge does what it says.
+
+---
+
+## Recorded runs
+
+| Date | Operator | Bridge host | Phone client | Tests 1-4 | Test 5 | Test 6 | Notes |
+| ---- | -------- | ----------- | ------------ | --------- | ------ | ------ | ----- |
+| _(none yet)_ | | | | | | | |
+
+This is the ledger the header points at. An empty table means the cross-device path has never been run end-to-end on real hardware by anyone, which is the current state. Add a row when you run it, including failures — a recorded failure is worth more than an absent row.
 
 ---
 

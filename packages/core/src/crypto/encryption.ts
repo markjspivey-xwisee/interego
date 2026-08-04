@@ -97,16 +97,41 @@ export function generateKeyPair(): EncryptionKeyPair {
  * Why derive instead of persist + load: zero new state to manage,
  * zero key file to back up separately, no possibility of the
  * X25519 keypair drifting from the wallet that signs your events.
- * The wallet IS the identity, all the way down.
+ *
+ * `principal` is REQUIRED whenever one wallet stands in for more than
+ * one identity, and omitting it there is the failure this parameter
+ * exists to prevent. The original docstring here read "The wallet IS
+ * the identity, all the way down" — true of a bridge (one wallet, one
+ * identity), false of the relay, which is single-signer:
+ * `getDelegationSigner()` hands every agent the SAME compliance wallet.
+ * Deriving relay-mediated agents off that root without a principal
+ * returned one keypair for all of them — measured, johnny and boozer both
+ * got `3xeZVVgoS3f0F5UMJPPgtUufKl6pWSJjKiCpZZCpxDI=`, so either could
+ * owner-decrypt the other's confidential holon. Folding the principal into
+ * the pre-image gives each identity an independent scalar off the shared
+ * root.
+ *
+ * Omitting `principal` reproduces the pre-existing bytes EXACTLY. The Foxxi
+ * bridge (FOXXI_WALLET_SEED), examples/personal-bridge (BRIDGE_KEY) and
+ * `deriveAdminKeyPair` have already wrapped envelopes with those keys; a
+ * changed pre-image would orphan every one of them with no error, only
+ * silent decrypt failure — `openEncryptedEnvelope` returns null, it does
+ * not throw. tests/derive-encryption-keypair.test.ts pins the vector.
  *
  * @param privateKeyHex secp256k1 private key, hex (with or without 0x)
+ * @param principal stable identity string (e.g. an agent DID) to scope the
+ *   key to, when the private key is shared across identities. Omit for a
+ *   single-identity wallet.
  * @returns EncryptionKeyPair (base64-encoded publicKey + secretKey)
  */
-export function deriveEncryptionKeyPair(privateKeyHex: string): EncryptionKeyPair {
+export function deriveEncryptionKeyPair(privateKeyHex: string, principal?: string): EncryptionKeyPair {
   // Domain-separated derivation. Different from the storage key
   // (which uses ':interego-bridge-storage-v1') so a leak of one
   // doesn't compromise the other.
-  const seed = privateKeyHex.toLowerCase().replace(/^0x/, '') + ':interego-bridge-encryption-v1';
+  const stem = privateKeyHex.toLowerCase().replace(/^0x/, '');
+  const seed = principal
+    ? `${stem}:interego-agent-encryption-v1:${principal}`
+    : `${stem}:interego-bridge-encryption-v1`;
   const secretBytes = createHash('sha256').update(seed, 'utf8').digest();
   // tweetnacl reduces this to a valid Curve25519 scalar internally.
   const kp = nacl.box.keyPair.fromSecretKey(secretBytes);

@@ -35,7 +35,11 @@ mountAmep(fakeApp, { ...deps, solidFetch: async (url: string) => {
 }});
 
 const seed = await buildSeedState(deps);
-console.log(`built seed: ${seed.order.length} acts, currentHead=${seed.currentHead}`);
+// `currentHead` was the v0 single-tip field; state now carries the OPEN-HEAD SET (see
+// amep.ts, "Old v0 docs carried `currentHead`; readState migrates them"). This line printed
+// `currentHead=undefined` on every run for as long as that has been true, and no compiler
+// was in the program to say so.
+console.log(`built seed: ${seed.order.length} acts, openHeads=[${seed.openHeads.join(', ')}]`);
 
 // Validate each act's projection by calling the exchange route for each head.
 let pass = 0, fail = 0;

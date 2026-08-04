@@ -23,6 +23,22 @@ export default defineConfig({
     // `include` array for the current set. Wired here rather than into an npm script because
     // the command people type is `npx vitest run tests/`, which never reads package.json.
     // ~6s per invocation.
+    //
+    // ★ AND IT IS THE ONLY THING HERE THAT READS `packages/*/src`. THE TESTS DO NOT.
+    //
+    // Every `packages/*/package.json` points its `exports` at `dist/`, so a `tests/` file
+    // importing `@interego/core` or `@interego/p2p` executes the BUILT artifact. Editing
+    // `packages/core/src/rdf/jsonld.ts` and re-running the suite measures the PREVIOUS
+    // build. CI is safe — `bridge-typecheck.yml` runs `npm run build` before
+    // `npx vitest run`, and `dist/` is gitignored so that build is always fresh — but a
+    // local run is not, and this produced two wrong measurements in one session: a real
+    // defect reintroduced into `packages/p2p/src` reported GREEN, and on another run RED
+    // for an unrelated timing reason, both against a stale `dist/`.
+    //
+    // So: after touching anything under `packages/*/src`, run
+    // `npm run build --workspace <pkg>` before believing the suite. The gate below reads
+    // source directly and still catches TYPE errors, which is precisely why a green
+    // typecheck beside a green suite is not evidence the suite ran your change.
     globalSetup: ['./tools/vitest-typecheck-setup.mjs'],
     // ★ THE CHECK THAT THE SUITE RAN AT ALL, and it is here rather than in a workflow for the
     // same reason globalSetup is: the command people type is `npx vitest run tests/`, which

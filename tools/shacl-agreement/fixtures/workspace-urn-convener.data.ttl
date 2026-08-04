@@ -1,0 +1,14 @@
+# shape: wsp-shapes.ttl
+# expect: violates
+# pins: wsp:convener
+# why: sh:pattern "^https?://|^did:" on wsp:convener. ONE EDIT from workspace-valid, so the verdict can only turn on this term. A convener nobody outside this organisation can resolve is the party who issues every first grant in the workspace — the one principal it is least acceptable to be unable to look up. This is also a sh:pattern-on-IRI case, so only a second engine can see it if ours ever narrows sh:pattern to literals again.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://relay.test/ws/a>
+  a wsp:Workspace ;
+  dct:title "Alpha" ;
+  wsp:convener <urn:example:conv> ;
+  wsp:roleProfile <https://roles.test/p> .

@@ -98,6 +98,10 @@ const statementStores = new TenantPartition<StatementStore>(
   (tenant) => createStatementStore(
     isDerivedViewTenant(String(tenant)) ? 'memory' : process.env.FOXXI_LRS_BACKEND,
   ),
+  // A dropped partition must leave the process-wide statement budget. Without this the
+  // budget counts statements from partitions that were evicted long ago, and the bridge
+  // starts evicting live tenants' records to make room for ghosts.
+  (store) => { (store as { dispose?: () => void }).dispose?.(); },
 );
 
 // ── Config ──────────────────────────────────────────────────────────

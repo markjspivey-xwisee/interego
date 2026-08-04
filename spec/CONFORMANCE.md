@@ -129,10 +129,27 @@ The runner emits one of:
 
 ## Running against a third-party implementation
 
-Drop the third-party's serialized output into a directory under
-`spec/conformance/fixtures/<their-impl-name>/` and re-run. The runner
-operates on Turtle files at the directory level, so any implementation
-that can serialize valid Turtle can be tested.
+Point the runner at the third-party's serialized output with
+`--fixtures <dir>`:
+
+```bash
+node spec/conformance/runner.mjs --fixtures <dir-of-your-own-turtle-output>
+```
+
+That directory must contain one subdirectory per declared category
+(today: `revocation/`). The runner exits 2 on any subdirectory it does
+not recognise, and on a declared category with no fixtures in it,
+rather than skipping either.
+
+**This section used to say "drop the third-party's serialized output
+into a directory under `spec/conformance/fixtures/<their-impl-name>/`
+and re-run".** That did not work and produced a FALSE PASS: the runner
+iterates its declared categories, not the filesystem, so a directory
+that is not a category was never opened. A fixture placed there
+violating both L1.1 and L1.2 was never read, and the run reported a
+clean pass and exit 0. `--fixtures` is the supported path, and the
+unrecognised-subdirectory refusal above is what makes the mistake
+loud instead of green.
 
 For the L2/L3 federation tests, the runner needs an HTTP endpoint to
 query against. Set `INTEREGO_CONFORMANCE_ENDPOINT=https://your-pod-url/`

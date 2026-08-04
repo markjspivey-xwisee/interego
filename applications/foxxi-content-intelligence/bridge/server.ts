@@ -129,9 +129,9 @@ import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadCourseFromLattice, resolvePublicNode, markLatticePublic, isLabelPublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
-import { manifestToAgenticCourse, agentScormToAgenticCourse, type AgentScormCourseLike } from '../src/course-graph.js';
+import { manifestToAgenticCourse, agentScormToAgenticCourse, buildConceptNavGraph, type AgentScormCourseLike } from '../src/course-graph.js';
 import { courseToSkillMd, skillMdToAgenticCourse } from '../src/course-skill-bridge.js';
-import { routeInterrogatives, describeNode } from '@interego/pgsl';
+import { routeInterrogatives, normalizeInterrogatives, describeNode } from '@interego/pgsl';
 import { skillBundleToDescriptor, descriptorGraphToSkillMd } from '@interego/skills';
 import { mintSessionToken, deriveUserWallet } from '../src/auth.js';
 import { sendServerError } from '../src/http-errors.js';
@@ -1210,9 +1210,10 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
 /**
  * A capability that is declared but not implemented must SAY SO in its result.
  *
- * ★ Five handlers returned a success-shaped body for work they never did:
+ * ★ Five handlers returned a success-shaped body for work they never did. FOUR still
+ * do — `foxxi.explore_concept_map` is now implemented (it reads the on-pod
+ * fxa:CoursePackageBundle via autoFetchCourse + buildConceptNavGraph):
  *
- *     foxxi.explore_concept_map        -> { concepts: [], edges: [], note: 'stub: …' }
  *     foxxi.consume_lesson             -> { consumed: false, note: 'stub: …' }
  *     foxxi.connect_lms                -> { note: 'stub: …' }
  *     foxxi.publish_concept_map        -> { note: 'stub: …' }
@@ -1451,10 +1452,30 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   },
 
   'foxxi.explore_concept_map': async (args) => {
-    // Real implementation fetches fxk: descriptors + builds nav graph.
-    // NOTE the previous shape: an empty concepts/edges pair reads as 'this course has
-    // no concept map', which is a different and wrong answer.
-    return notImplemented('foxxi.explore_concept_map', 'Wiring pulls the published fxk: concept-map descriptors and builds the navigation graph.');
+    // Pod-authoritative, and the SAME pair the two sibling retrieval handlers above
+    // use (courseIdFrom + autoFetchCourse): the concept map, prerequisite edges and
+    // modifier-of relations are already published in the course's fxa:CoursePackageBundle,
+    // so this reads what ingest wrote rather than a second, drifting copy.
+    //
+    // Gated on resolveCaller like foxxi.retrieve_course_context. It is a read, but it
+    // makes the BRIDGE fetch a caller-named pod server-side; every sibling that does
+    // that is authenticated, and an unauthenticated egress trigger is the class this
+    // vertical has been bitten by before.
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return { error: resolved.error };
+    const courseId = courseIdFrom(args);
+    if (!courseId) {
+      return { error: 'course_iri required — the ingested course IRI (…/courses/<course_id>#package), or pass course_id directly.' };
+    }
+    const payload = await autoFetchCourse(args, courseId);
+    if (!payload) {
+      // Not the same answer as "this course has no concepts": say which it is.
+      return { error: `no fxa:CoursePackageBundle for course_id="${courseId}" on ${(args.tenant_pod_url as string) || tenantPodUrl} — ingest it first via foxxi.ingest_content_package.` };
+    }
+    return buildConceptNavGraph(payload, {
+      focusConceptId: typeof args.focus_concept_id === 'string' ? args.focus_concept_id : undefined,
+      maxDepth: typeof args.max_depth === 'number' ? args.max_depth : undefined,
+    });
   },
 
   // ── Admin-side ───────────────────────────────────────────────────────
@@ -3131,7 +3152,16 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       contactEndpoint: args.contact_endpoint,
       registeredAt: new Date().toISOString(),
     };
-    return { descriptor: { '@type': ['fxa:TutorAgentProfile'], ...profile }, note: 'Publish this descriptor to your own pod via publish_context to make it discoverable by foxxi.find_tutor_for_competency.' };
+    // The type must be an ABSOLUTE URL composed from FOXXI_NS, exactly like every sibling
+    // descriptor type (composed-extensions.ts: TenantMetadata, AdaptiveSequencingPolicy,
+    // PackageUpload). This was the hardcoded literal 'fxa:TutorAgentProfile'. `fxa:` named
+    // vocab.foxximediums.com, which cd143e9 retired and eea4b9d deleted; that sweep repointed
+    // BASE URLs, and a prefixed name carries no base, so this one site survived it. It does not
+    // fail loudly: measured with the jsonld processor, `{'@type':['fxa:TutorAgentProfile']}`
+    // with no sibling @context expands to the triple `?s rdf:type <fxa:TutorAgentProfile>` — an
+    // IRI under an invented scheme, denoting nothing, and the note below tells the caller to
+    // publish it, so it lands permanently in a pod graph.
+    return { descriptor: { '@type': [`${FOXXI_NS}TutorAgentProfile`], ...profile }, note: 'Publish this descriptor to your own pod via publish_context to make it discoverable by foxxi.find_tutor_for_competency.' };
   },
 
   'foxxi.find_tutor_for_competency': async (args) => {
@@ -5280,7 +5310,16 @@ app.get('/agent/lattice/:label/interrogate', async (req, res) => {
   const turtle = projectAs(label, holon, 'rdf');
   if (typeof turtle !== 'string') { res.status(404).json({ ok: false, error: 'holon not found in this lattice' }); return; }
   const all = !question && (!interrogatives || interrogatives.length === 0);
-  const result = routeInterrogatives({ turtle, question, interrogatives, all, target: holon });
+  // `?required=Who,Why` — the interrogatives the CALLER must have grounded to act.
+  // Supplying it turns this read into a safe-stop decision: the response carries
+  // `gap` = { action: proceed | abstain | escalate, absent, unresolvedPointers }.
+  // Omitted = no `gap` field at all; the bridge must not invent a requirement on
+  // the caller's behalf and hand back a decision it never asked for. Note
+  // `?required=` (empty) normalizes to [] and answers 'abstain' — fail-closed by
+  // design; do not "fix" it to proceed.
+  const requiredToAct = typeof req.query.required === 'string'
+    ? normalizeInterrogatives(req.query.required) : undefined;
+  const result = routeInterrogatives({ turtle, question, interrogatives, all, target: holon, requiredToAct });
   if (!result.ok) { res.status(400).json(result); return; }
   // Resolve-depth (local, honest): walk the pointers the bridge CAN satisfy.
   const resolved: Record<string, unknown> = {};

@@ -1,0 +1,43 @@
+// ★ THE PROGRAM THE RELAY'S TEST FILES WERE IN AND WERE NOT.
+//
+// `tsconfig.json` next to this file is a BUILD program: it has `outDir`/`rootDir` and no
+// `noEmit`, and `deploy/Dockerfile.relay` runs it (`RUN npx tsc`) to produce the production
+// image. That is exactly why its `include` is a hand-listed set of 11 production entry
+// points — adding `tests/**` there would write `dist/tests/*.js` into the shipped image.
+//
+// So the tests were in no program at all. `npm test` runs them under `tsx`, which strips
+// types without checking them, and nothing imports a test file, so no test was reachable
+// from any root either. relay-tests.yml's "Typecheck the relay" step ran that same emitting
+// config and therefore compiled source only.
+//
+// MEASURED, NOT ASSUMED. Turning this on found pre-existing errors, one of them live:
+// `_amep-seed-test.ts` printed `built seed: 3 acts, currentHead=undefined` on every run,
+// because `ExchangeState.currentHead` was replaced by `openHeads` (see amep.ts, "Old v0
+// docs carried `currentHead`; readState migrates them") and no compiler was in the loop to
+// say TS2339. Five more passed a `Part` with no `kind` to `EngagementEngine.open`; six were
+// `@ts-expect-error` directives sitting over lines that do not error — a directive that
+// reports nothing today, and that would MUTE a real error tomorrow if one of those private
+// members were renamed.
+//
+// This is the same remedy `tsconfig.check.json` is at the repo root: a separate program that
+// exists to be checked and never to be built. `noEmit` is what keeps the two apart.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  // `include` in a child config REPLACES the parent's — the 11 production entry points are
+  // deliberately not repeated here; `tsconfig.json` already checks them, and every source
+  // module a test touches is pulled in transitively through the test's own imports.
+  //
+  // Globs, not a list. The relay's `test` script is a hand-maintained `&&` chain and a file
+  // has already been written, committed, and silently left out of it (see relay-tests.yml's
+  // header on publish-gates.test.ts). A glob means a NEW test file is compiled the day it
+  // lands rather than the day someone remembers this file.
+  "include": [
+    "tests/**/*.ts",
+    "_*-test.ts",
+    "playwright.config.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

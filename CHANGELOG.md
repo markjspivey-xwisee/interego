@@ -8,6 +8,34 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-08-04 — `iep:AccessControlPolicy` reaches the deontic engine
+
+### Added
+- **`policyToDeonticRules(policy, options)`** in
+  `packages/pgsl/src/agent-framework.ts` — maps an `iep:AccessControlPolicy` onto the
+  agent framework's `PolicyRule[]`. `Permit` and `Deny` map one-to-one; **`Duty` maps to
+  one rule PER declared duty**, which is why the name is plural, and a `Duty` policy
+  declaring no duties degrades to a permit rather than vanishing.
+- The condition predicate is **injected** (`options.predicateHolds`), not imported.
+  `@interego/pgsl` does not depend on `@interego/abac`, and adding that dependency to
+  bridge two type systems would make the direction of the dependency an accident of which
+  file was written first. Injection also lets a caller substitute a stricter evaluator
+  without forking the mapping.
+
+### Known divergence, not closed by this change
+- The two engines disagree on the **no-match default**: `@interego/abac`'s `evaluate`
+  returns `Indeterminate`, this engine's returns `allowed: true`. Bridging a Deny-only
+  policy set therefore turns *undecided* into *allowed*. A caller wanting closed-world
+  behaviour must add its own default-deny rule; the function's docstring says so at the
+  point of use. Closing it means picking a default for both engines, which is a semantics
+  decision this bridge does not have standing to make.
+- **Nothing in-tree calls it yet.** It is a new exported affordance covered by its own
+  tests (`tests/abac-deontic-bridge.test.ts`) and by nothing else — no runtime path
+  currently bridges a published `iep:AccessControlPolicy` into the deontic engine, so the
+  integration it enables is unexercised.
+
+---
+
 ## 2026-06-14 — Foxxi: regime-first performance architecture + reflexive engagement (wi-001)
 
 A complexity-aware performance-management layer on the Foxxi vertical, built

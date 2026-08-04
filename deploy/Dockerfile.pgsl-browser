@@ -69,4 +69,12 @@ ENV PORT=5000
 # override POD_NAME with the operator's actual pod slug.
 ENV POD_NAME=example-pod
 
+# The commit this image was built from, surfaced at /health so a deploy can be VERIFIED
+# rather than assumed. build-ghcr.yml already appends GIT_SHA to every image's build-args;
+# without this ARG Docker drops it with a warning and the image builds green, which is how
+# twelve of thirteen services ended up unable to report their own build. Runtime stage on
+# purpose: ARG does not cross a FROM, and earlier would bust the cache on every commit.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
 CMD ["dist/server.js"]

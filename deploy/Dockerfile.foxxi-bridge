@@ -154,4 +154,13 @@ ENV FOXXI_POD_WRITE_SECRET=
 # back to a live signer. Override at deploy time for stable identity.
 ENV FOXXI_BRIDGE_PRIVATE_KEY=
 
+# The commit this image was built from, surfaced at /health (mounted by the shared
+# createVerticalBridge factory) so a deploy can be VERIFIED rather than assumed.
+# build-ghcr.yml already appends GIT_SHA to every image's build-args; without this ARG
+# Docker drops it with a warning and the image builds green, so a rollout of this bridge
+# could not be distinguished from the old container still serving. Runtime stage on
+# purpose: ARG does not cross a FROM, and earlier would bust the cache on every commit.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
 CMD ["npx", "tsx", "applications/foxxi-content-intelligence/bridge/server.ts"]

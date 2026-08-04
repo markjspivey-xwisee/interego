@@ -11,6 +11,11 @@ on:
       - 'packages/pgsl-store/**'
       - 'tests/pgsl-store-pg-integration.test.ts'
       - '.github/workflows/pgsl-store-pg.yml'
+      # The engagement compare-and-swap is pinned in the test above and its SUBJECT lives
+      # here. Without this line a change to engagement-store.ts would not run the only job
+      # that can observe a Postgres isolation level, and the guard would be checked only
+      # when some unrelated pgsl-store file happened to move.
+      - 'deploy/mcp-relay/engagement-store.ts'
   workflow_dispatch:
 
 jobs:

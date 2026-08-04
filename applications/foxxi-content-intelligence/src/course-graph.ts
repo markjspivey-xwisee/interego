@@ -14,7 +14,9 @@
  * no pre-conditions get no edges; we don't invent an order the manifest is silent on.
  */
 import { parseManifest, type ScormActivityTree, type Activity } from './scorm-sequencing.js';
-import type { FoxxiAgenticCourse } from './agentic-rag.js';
+// `import type` is LOAD-BEARING, not a style choice: bridge/server.ts imports both this
+// module and agentic-rag.js, so a value import here would close a real runtime cycle.
+import type { FoxxiAgenticCourse, FoxxiAgenticPayload } from './agentic-rag.js';
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'x';
 
@@ -227,4 +229,118 @@ export function manifestToAgenticCourse(args: ManifestToCourseArgs): ManifestCou
       fileCount: files.length,
     },
   };
+}
+
+// ── Concept-map navigation graph ─────────────────────────────────────
+//
+// The pure half of foxxi.explore_concept_map. Pure and exported ON PURPOSE: the
+// handler's own dependency (autoFetchCourse → a live pod) cannot be stood in for
+// without the double replacing the thing under test, so the traversal is tested
+// here against a real payload literal and the handler stays a composition thin
+// enough to read.
+//
+// ★ AN UNKNOWN FOCUS CONCEPT IS AN ERROR, NOT AN EMPTY GRAPH. This capability
+// previously answered every call with { concepts: [], edges: [] }, which a
+// consumer reads as "this course has no concept map" — a different and wrong
+// answer. Returning an empty graph for a focus id the course does not contain
+// would reintroduce exactly that, one layer down.
+export interface ConceptNavNode {
+  readonly id: string;
+  readonly label: string;
+  readonly tier: number;
+  readonly confidence: number;
+  /** Slide ids that TAUGHT this concept — the "see the slides that taught it" half. */
+  readonly taughtInSlides: readonly string[];
+  /** Hop distance from focusConceptId; 0 is the focus. Absent when unfocused. */
+  readonly depth?: number;
+}
+export interface ConceptNavEdge {
+  readonly from: string;
+  readonly to: string;
+  readonly kind: 'prerequisite' | 'modifier-of';
+  readonly confidence?: number;
+}
+export interface ConceptNavGraph {
+  readonly courseIri: string;
+  readonly courseId: string;
+  readonly title: string;
+  readonly concepts: readonly ConceptNavNode[];
+  readonly edges: readonly ConceptNavEdge[];
+  readonly slides: ReadonlyArray<{ id: string; title: string; sequence_index: number }>;
+  readonly focusConceptId?: string;
+  readonly maxDepth?: number;
+  /** True when a focus + depth limit excluded concepts the full graph contains. */
+  readonly truncated: boolean;
+}
+
+export function buildConceptNavGraph(
+  payload: FoxxiAgenticPayload,
+  opts: { focusConceptId?: string; maxDepth?: number } = {},
+): ConceptNavGraph | { error: string } {
+  const allEdges: ConceptNavEdge[] = [
+    ...(payload.prereq_edges ?? []).map(e => ({
+      from: e.from, to: e.to, kind: 'prerequisite' as const,
+      ...(e.confidence != null ? { confidence: e.confidence } : {}),
+    })),
+    ...(payload.modifier_pairs ?? []).map(m => ({
+      from: m.modifier, to: m.target, kind: 'modifier-of' as const,
+    })),
+  ];
+  const byId = new Map(payload.concepts.map(c => [c.id, c]));
+  const node = (id: string, depth?: number): ConceptNavNode => {
+    const c = byId.get(id)!;
+    return {
+      id: c.id, label: c.label, tier: c.tier ?? 3, confidence: c.confidence,
+      taughtInSlides: c.taught_in_slides ?? [],
+      ...(depth != null ? { depth } : {}),
+    };
+  };
+  const base = {
+    courseIri: `${payload.packageMeta.federation_iri_base}#package`,
+    courseId: payload.packageMeta.course_id,
+    title: payload.packageMeta.title,
+    slides: payload.slides.map(s => ({ id: s.id, title: s.title, sequence_index: s.sequence_index })),
+  };
+
+  const focus = (opts.focusConceptId ?? '').trim();
+  if (!focus) {
+    return { ...base, concepts: payload.concepts.map(c => node(c.id)), edges: allEdges, truncated: false };
+  }
+  if (!byId.has(focus)) {
+    // Honest null. See the ★ above: [] here would read as "no concept map".
+    return { error: `focus_concept_id "${focus}" is not a concept in course ${payload.packageMeta.course_id} — it has ${payload.concepts.length} concept(s). Omit focus_concept_id for the full graph.` };
+  }
+  // Prerequisite edges are traversed UNDIRECTED: the affordance promises "follow
+  // prerequisite edges up/down", so a focus must reach both what it requires and
+  // what requires it. Following `from → to` only answers half the question asked.
+  const adj = new Map<string, string[]>();
+  const link = (a: string, b: string): void => {
+    const cur = adj.get(a);
+    if (cur) cur.push(b);
+    else adj.set(a, [b]);
+  };
+  for (const e of allEdges) {
+    if (!byId.has(e.from) || !byId.has(e.to)) continue; // dangling edge: not a node
+    link(e.from, e.to);
+    link(e.to, e.from);
+  }
+  const maxDepth = Number.isFinite(Number(opts.maxDepth)) && Number(opts.maxDepth) >= 0 ? Number(opts.maxDepth) : 3;
+  const depthOf = new Map<string, number>([[focus, 0]]);
+  let frontier = [focus];
+  for (let d = 1; d <= maxDepth && frontier.length; d++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const n of adj.get(id) ?? []) {
+        if (depthOf.has(n)) continue;
+        depthOf.set(n, d);
+        next.push(n);
+      }
+    }
+    frontier = next;
+  }
+  const concepts = [...depthOf.entries()]
+    .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+    .map(([id, d]) => node(id, d));
+  const edges = allEdges.filter(e => depthOf.has(e.from) && depthOf.has(e.to));
+  return { ...base, concepts, edges, focusConceptId: focus, maxDepth, truncated: concepts.length < payload.concepts.length };
 }

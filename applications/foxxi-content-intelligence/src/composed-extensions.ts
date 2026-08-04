@@ -56,6 +56,14 @@ import type {
 import { TENANT_TYPES } from './tenant-publisher.js';
 import type { AuditChain } from './composed-flows.js';
 import type { CohortIntelligence } from './cohort-intel.js';
+// SCORM parsing, in-process. Every one of these is ALREADY resident in this bridge —
+// server.ts imports scorm-fingerprint + course-graph directly, and adm-zip arrives via
+// content-delivery.ts -> content-package.ts — so section H stops deferring to an
+// out-of-process runner without adding one runtime dependency.
+import AdmZip from 'adm-zip';
+import { unwrapScormPackage, type ScormPackageFormat } from '../../_shared/scorm/index.js';
+import { fingerprintAuthoringTool, type ScormStandardInfo } from './scorm-fingerprint.js';
+import { manifestToAgenticCourse, type ManifestCourseResult } from './course-graph.js';
 
 // ── A. Multi-tenant onboarding ────────────────────────────────
 
@@ -550,22 +558,99 @@ async function fetchVcFromEntry(descriptorUrl: string, fetchFn: FetchFn): Promis
 
 // ── H. SCORM upload pipeline ─────────────────────────────────
 
+export interface ScormParseResult {
+  packageId: string;
+  parsedAt: string;
+  /** `identifier` on the manifest root — the publisher's own id for the package. */
+  packageIdentifier: string;
+  packageTitle: string;
+  format: ScormPackageFormat;
+  standard: ScormStandardInfo;
+  authoringTool: {
+    tool: string; toolId: string; vendor: string;
+    confidence: number; version?: string; summary: string;
+  };
+  structure: ManifestCourseResult['structure'];
+  resourceCount: number;
+  launchable: string[];
+}
+
 export interface ScormUploadResult {
-  status: 'queued' | 'parsed' | 'failed';
+  /** No 'queued' member. There is no queue and no runner to drain one, and leaving
+   *  the member in the union is how the old implementation stayed plausible: a caller
+   *  reads 'queued' as "someone will finish this", and nobody would. */
+  status: 'parsed' | 'failed';
   packageId?: string;
   packageTitle?: string;
+  /** The Hypothetical fxs:PackageUpload receipt. Published whether or not the parse succeeds. */
   descriptorUrl?: string;
+  /** The Asserted fxs:ParsedPackage that supersedes the receipt. Present only on 'parsed'. */
+  parsedDescriptorUrl?: string;
+  parsed?: ScormParseResult;
   error?: string;
   note?: string;
 }
 
+/** Base64 chars accepted. The bridge's own express body limit is 50mb, so a larger
+ *  payload never came through that route — the cap is here because uploadScormPackage
+ *  is a plain exported function and the route is not its only possible caller. */
+const MAX_ZIP_BASE64_CHARS = 64 * 1024 * 1024;
+/** A decompression bomb is a small zip whose central directory DECLARES an enormous
+ *  expansion. The queued stub never inflated anything, so inflating is new surface and
+ *  the guard ships with it. Real SCORM packages (HTML/JS/CSS/media) stay far under
+ *  100:1; the declared sizes are read from the central directory, so a refused bomb
+ *  costs zero inflated bytes. Without this, one admin-role upload OOMs a bridge shared
+ *  across tenants — and a foxxi-bridge OOM surfaces as an unrelated error, never as
+ *  "your upload was too big". */
+const MAX_EXPANSION_RATIO = 100;
+/** Floor, so a legitimately tiny package is never refused on ratio alone. */
+const MIN_UNCOMPRESSED_BUDGET_BYTES = 8 * 1024 * 1024;
+/** Absolute ceiling regardless of ratio. */
+const MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024;
+
+/** Total bytes the zip's central directory SAYS it will produce. Reads headers only —
+ *  nothing is inflated, which is the whole point. Exported so the guard can be tested
+ *  against a real bomb instead of a mock of one. */
+export function declaredUncompressedBytes(zipBuffer: Buffer): number {
+  let total = 0;
+  for (const entry of new AdmZip(zipBuffer).getEntries()) {
+    if (!entry.isDirectory) total += entry.header.size;
+  }
+  return total;
+}
+
+/** The inflation budget allowed to a zip of this compressed size. */
+export function uncompressedBudget(zipBytes: number): number {
+  return Math.min(
+    MAX_UNCOMPRESSED_BYTES,
+    Math.max(MIN_UNCOMPRESSED_BUDGET_BYTES, zipBytes * MAX_EXPANSION_RATIO),
+  );
+}
+
 /**
- * Accept a base64-encoded SCORM zip + queue it for the Python parser.
- * Since the parser runs out-of-process (Articulate Storyline parser is
- * Python), this affordance returns a "queued" status that the operator
- * polls. For now we ship a stub that records the package metadata as
- * a descriptor with parse_status=queued; the real parser-runner is a
- * separate Azure Function deploy.
+ * Accept a base64-encoded SCORM / cmi5 zip, PARSE IT IN-PROCESS, and publish the result
+ * as an Asserted descriptor that supersedes the upload receipt.
+ *
+ * ★ WHAT WAS WRONG. This function decoded four bytes of the zip to check for a PK
+ * header, published a descriptor carrying the package's SIZE and `status: 'queued'`,
+ * and deferred the parse to "a separate Azure Function deploy". That runner was never
+ * written; NOTHING in this repo reads a fxs:PackageUpload descriptor; and the Azure host
+ * it named is retired (probed: it answers nothing). Every upload therefore left a
+ * permanently-Hypothetical record naming only its own byte count, and the iep:supersedes
+ * promotion this affordance advertises to every agent that reads the manifest could not
+ * happen. Measured on a real Storyline SCORM 2004 zip: the title, the standard, the two
+ * SCOs and the authoring tool were all in the bytes and all discarded.
+ *
+ * ★ NOTHING OUT-OF-PROCESS IS NEEDED. unwrapScormPackage (adm-zip),
+ * fingerprintAuthoringTool and manifestToAgenticCourse are in-repo, pure and
+ * synchronous — the same three POST /agent/course/analyze already composes. That route
+ * relies on the BROWSER to unzip (microsite CourseIntel.tsx, fflate); the unzip is the
+ * only step it does not do, and unwrapScormPackage is that step.
+ *
+ * ★ TWO DESCRIPTORS, STILL. The Hypothetical receipt is published FIRST and kept even
+ * when the parse fails — that is what makes a rejected upload auditable: bytes arrived,
+ * nothing was asserted about them. Only a successful parse publishes the Asserted
+ * fxs:ParsedPackage over the same graph with `supersedes` pointing at the receipt.
  */
 export async function uploadScormPackage(args: {
   tenantPodUrl: string;
@@ -574,19 +659,26 @@ export async function uploadScormPackage(args: {
   uploaderDid: string;
   fetch?: FetchFn;
 }): Promise<ScormUploadResult> {
+  if (args.zipBase64.length > MAX_ZIP_BASE64_CHARS) {
+    return { status: 'failed', error: `Payload too large (${args.zipBase64.length} base64 chars; max ${MAX_ZIP_BASE64_CHARS}).` };
+  }
   // Light header inspection — read the first 512 bytes for a PK signature.
   const head = Buffer.from(args.zipBase64.slice(0, 1024), 'base64').slice(0, 4);
   if (head[0] !== 0x50 || head[1] !== 0x4B) {
     return { status: 'failed', error: 'Payload does not look like a zip file (no PK header).' };
   }
+  const zipBuffer = Buffer.from(args.zipBase64, 'base64');
   const packageId = `scorm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const graphIri = `urn:foxxi:upload:${packageId}` as IRI;
-  const descriptor: ContextDescriptorData = {
+  const uploadedAt = new Date().toISOString();
+
+  // 1) The receipt. Hypothetical: bytes arrived, nothing has been read out of them yet.
+  const receiptDescriptor: ContextDescriptorData = {
     id: `${graphIri}#descriptor` as IRI,
     describes: [graphIri],
     conformsTo: [`${FOXXI_NS}PackageUpload` as IRI],
     facets: [
-      { type: 'Temporal', validFrom: new Date().toISOString() },
+      { type: 'Temporal', validFrom: uploadedAt },
       { type: 'Provenance', wasAttributedTo: args.uploaderDid as IRI },
       { type: 'Semiotic', modalStatus: 'Hypothetical' }, // until parsed
     ],
@@ -594,28 +686,102 @@ export async function uploadScormPackage(args: {
   const meta = {
     packageId,
     hintedTitle: args.hintedTitle,
-    sizeBytes: Math.floor(args.zipBase64.length * 0.75),
-    uploadedAt: new Date().toISOString(),
+    sizeBytes: zipBuffer.length,   // the DECODED size; the old field was a b64-length estimate
+    uploadedAt,
     uploaderDid: args.uploaderDid,
-    status: 'queued',
+    status: 'received',
   };
-  const b64 = Buffer.from(JSON.stringify(meta), 'utf8').toString('base64');
-  const graph = `<${iesc(graphIri)}> a <${FOXXI_NS}PackageUpload> ;
+  const receiptB64 = Buffer.from(JSON.stringify(meta), 'utf8').toString('base64');
+  const receiptGraph = `<${iesc(graphIri)}> a <${FOXXI_NS}PackageUpload> ;
     <http://www.w3.org/ns/prov#wasAttributedTo> <${iesc(args.uploaderDid)}> ;
-    <${FOXXI_NS}bundleJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
+    <${FOXXI_NS}bundleJson> "${receiptB64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
-  const result = await publish(descriptor, graph, args.tenantPodUrl, {
+  const receipt = await publish(receiptDescriptor, receiptGraph, args.tenantPodUrl, {
     fetch: args.fetch,
     containerPath: 'foxxi-uploads/',
     descriptorSlug: packageId,
     graphSlug: `${packageId}-graph`,
   });
+
+  // 2) The parse. In-process, synchronous, no runner.
+  let parsed: ScormParseResult;
+  try {
+    const declared = declaredUncompressedBytes(zipBuffer);
+    const budget = uncompressedBudget(zipBuffer.length);
+    if (declared > budget) {
+      throw new Error(`zip declares ${declared} uncompressed bytes against a budget of ${budget} — refused as a decompression bomb before inflating anything.`);
+    }
+    const pkg = unwrapScormPackage(zipBuffer);
+    const fileList = ['imsmanifest.xml', ...pkg.resources.map(r => r.path)];
+    const fileText: Record<string, string> = {};
+    for (const r of pkg.resources) {
+      if (typeof r.content === 'string') fileText[r.path] = r.content.slice(0, 4000);
+    }
+    const fingerprint = fingerprintAuthoringTool({ manifestXml: pkg.manifestRaw, fileList, fileContents: fileText });
+    const built = manifestToAgenticCourse({
+      manifestXml: pkg.manifestRaw, fileList, fileText,
+      courseIri: graphIri, authoritativeSource: graphIri,
+    });
+    parsed = {
+      packageId,
+      parsedAt: new Date().toISOString(),
+      packageIdentifier: pkg.identifier,
+      // The manifest's own title wins. The uploader's hint is a fallback, never an override —
+      // what the package SAYS it is outranks what the uploader typed.
+      packageTitle: pkg.title !== 'untitled' ? pkg.title : (args.hintedTitle ?? pkg.title),
+      format: pkg.format,
+      standard: fingerprint.standard,
+      authoringTool: {
+        tool: fingerprint.tool, toolId: fingerprint.toolId, vendor: fingerprint.vendor,
+        confidence: fingerprint.confidence, version: fingerprint.version, summary: fingerprint.summary,
+      },
+      structure: built.structure,
+      resourceCount: pkg.resources.length,
+      launchable: pkg.resources.filter(r => r.isLaunchable).map(r => r.path),
+    };
+  } catch (err) {
+    return {
+      status: 'failed',
+      packageId,
+      packageTitle: args.hintedTitle,
+      descriptorUrl: receipt.descriptorUrl,
+      error: `SCORM parse failed: ${(err as Error).message}`,
+      note: 'The upload receipt is on the pod as a Hypothetical fxs:PackageUpload and stays that way. Nothing was asserted about the package because it could not be read.',
+    };
+  }
+
+  // 3) The promotion. Same graph, Asserted, superseding the receipt.
+  const parsedDescriptor: ContextDescriptorData = {
+    id: `${graphIri}#parsed` as IRI,
+    describes: [graphIri],
+    conformsTo: [`${FOXXI_NS}ParsedPackage` as IRI],
+    supersedes: [`${graphIri}#descriptor` as IRI],
+    facets: [
+      { type: 'Temporal', validFrom: parsed.parsedAt },
+      { type: 'Provenance', wasAttributedTo: args.uploaderDid as IRI },
+      { type: 'Semiotic', modalStatus: 'Asserted' },
+    ],
+  };
+  const parsedB64 = Buffer.from(JSON.stringify(parsed), 'utf8').toString('base64');
+  const parsedGraph = `<${iesc(graphIri)}> a <${FOXXI_NS}ParsedPackage> ;
+    <http://www.w3.org/ns/prov#wasAttributedTo> <${iesc(args.uploaderDid)}> ;
+    <${FOXXI_NS}bundleJson> "${parsedB64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
+`;
+  const promoted = await publish(parsedDescriptor, parsedGraph, args.tenantPodUrl, {
+    fetch: args.fetch,
+    containerPath: 'foxxi-uploads/',
+    descriptorSlug: `${packageId}-parsed`,
+    graphSlug: `${packageId}-parsed-graph`,
+  });
+
   return {
-    status: 'queued',
+    status: 'parsed',
     packageId,
-    packageTitle: args.hintedTitle,
-    descriptorUrl: result.descriptorUrl,
-    note: 'Upload received + descriptor published with modalStatus:Hypothetical. The Python parser-runner (separate Azure Function) reads PackageUpload descriptors, parses the zip, then publishes the resulting fxs:Package + concept graph and sets modalStatus:Asserted via supersedes.',
+    packageTitle: parsed.packageTitle,
+    descriptorUrl: receipt.descriptorUrl,
+    parsedDescriptorUrl: promoted.descriptorUrl,
+    parsed,
+    note: 'Parsed in-process — no external runner. The Asserted fxs:ParsedPackage descriptor supersedes the Hypothetical fxs:PackageUpload receipt over the same graph.',
   };
 }
 

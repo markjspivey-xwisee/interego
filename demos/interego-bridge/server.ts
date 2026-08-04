@@ -756,7 +756,33 @@ const tools: Record<string, ToolDef> = {
 // ── Express server ─────────────────────────────────────────────
 
 const app = express();
+
+// ★ HSTS FIRST — BEFORE express.json(), and that ORDER is load-bearing.
+//
+// With the parser registered first, a malformed body makes body-parser throw and express
+// jumps to the error handler, skipping every middleware after it: the 400 goes out with no
+// header. Measured against real express (json-then-hsts -> 400 HSTS ABSENT; hsts-then-json
+// -> 400 HSTS present). A smoke test always sends valid JSON, so it never walks that path.
+//
+// This surface exposes sign_message and the zk_* tools, and measured live 2026-08-03 it
+// served no Strict-Transport-Security at all.
+//
+// max-age only: includeSubDomains would bind every *.interego.xwisee.com including any not
+// fully on HTTPS, and preload is close to irreversible. Separate decisions.
+app.use((_req, res, next) => {
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  next();
+});
+
 app.use(express.json({ limit: '50mb' }));
+
+// Build identity for tools/railway-redeploy.mjs, whose verify poll reads exactly `j.build`.
+// GET /health here used to answer "Cannot GET /health", so no rollout of this service could
+// be confirmed — Railway reports SUCCESS once the container binds a port, and on a tag that
+// is not in the registry the OLD container keeps serving and keeps answering 200.
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset' });
+});
 // Browser-reachable substrate surface: permissive CORS. Reads + writes are
 // signature-gated (rev-196 envelopes), not origin-gated — Interego's zero-trust
 // stance (trust lives at the verifier, not the transport).

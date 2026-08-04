@@ -12,6 +12,13 @@ name: E2E — Passkey OAuth flow
 # Container Apps" was removed when that pipeline was retired (the stack
 # moved to GHCR -> Railway, which has no GitHub "deploy finished"
 # signal to hang this suite on). Run it manually after a deploy.
+#
+# The PRE-MERGE half of the gate is deploy/mcp-relay/tests/e2e-collection.test.ts,
+# which runs on every PR via relay-tests.yml. It cannot check the live flow, but it
+# proves the suite still LOADS and still contains the passkey test. That property
+# had silently been lost: with testMatch unset, Playwright swept in this directory's
+# self-exiting tsx scripts and exited 0 having registered zero tests, so this
+# workflow reported success without exercising WebAuthn at all.
 
 on:
   workflow_dispatch:

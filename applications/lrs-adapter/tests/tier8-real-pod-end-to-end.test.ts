@@ -44,7 +44,14 @@ const SCORM_CLOUD_SECRET = process.env['SCORM_CLOUD_SECRET'];
 // CSS is no longer publicly reachable; route through the public css-gate FQDN.
 // ★ The default host was the Azure CSS gate, deliberately destroyed in the Railway move.
 // See applications/_shared/tests/pod-target.ts.
-import { TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, probePod } from '../../_shared/tests/pod-target.js';
+// ★ Gated through real-pod-gate.ts rather than probePod() directly: probePod() folded a
+// DECLARED opt-out and a DISCOVERED failure (unreachable, 404 container, refused write) into
+// one `usable: false` and both reached ctx.skip(), which is green. openRealPod() throws on the
+// discovered kind, so a pod that has stopped existing reds this file instead of emptying it.
+import {
+  TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, podWriteHeaders,
+  openRealPod, DECLARED_SKIPS, type PodGate,
+} from '../../_shared/tests/real-pod-gate.js';
 
 const USER_DID = 'did:web:lrs-tier8.example' as IRI;
 
@@ -67,9 +74,6 @@ async function lrsqlReachable(): Promise<boolean> {
   } catch { return false; }
 }
 
-async function podReachable(): Promise<boolean> {
-  return (await probePod()).usable;
-}
 
 const cleanupUrls: string[] = [];
 function track(...urls: (string | undefined)[]): void {
@@ -81,20 +85,34 @@ async function cleanup(): Promise<void> {
     const m = /^(.*\/lrs-tier8-[^/]+\/)/.exec(url);
     if (m) containerRoots.add(m[1]!);
   }
+  // DELETE is a write, and the css-gate answers an unauthenticated write with
+  // `401 anonymous writes denied`. Without the bearer every one of these silently 401s inside
+  // the `catch {}` and the run leaves its fixtures on a real pod.
   for (const url of cleanupUrls.splice(0)) {
-    try { await fetch(url, { method: 'DELETE' }); } catch {}
+    try { await fetch(url, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
   }
   for (const root of containerRoots) {
-    try { await fetch(`${root}.well-known/context-graphs`, { method: 'DELETE' }); } catch {}
-    try { await fetch(`${root}context-graphs/`, { method: 'DELETE' }); } catch {}
-    try { await fetch(`${root}.well-known/`, { method: 'DELETE' }); } catch {}
-    try { await fetch(root, { method: 'DELETE' }); } catch {}
+    try { await fetch(`${root}.well-known/context-graphs`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(`${root}context-graphs/`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(`${root}.well-known/`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(root, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
   }
 }
 
+// ★ TWO SERVICES, TWO SEPARATE DECISIONS. These used to be `&&`-ed into one `canRun`, so
+// "no Lrsql on this laptop" and "the pod stopped existing" were the same value — and the one
+// test guarding it asserted `typeof canRun === 'boolean'`, true of `false`. Lrsql is a
+// genuine localhost dependency whose absence is a legitimate skip; the pod is not, once a
+// write credential says somebody meant these round-trips to run. Keeping them apart is what
+// lets the pod half fail loudly while the LRS half still skips honestly.
+let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1' };
+let lrsUp = false;
 let canRun = false;
 beforeAll(async () => {
-  canRun = (await lrsqlReachable()) && (await podReachable());
+  lrsUp = await lrsqlReachable();
+  // Throws when a credential is configured and the pod is not usable.
+  pod = await openRealPod();
+  canRun = lrsUp && pod.ok;
 });
 
 // ── Helper: seed an xAPI Statement directly into Lrsql ──────────────
@@ -117,9 +135,17 @@ async function seedStatement(stmt: Record<string, unknown>): Promise<string> {
 // ── Tests ────────────────────────────────────────────────────────────
 
 describe('Tier 8 — lrs-adapter production end-to-end', () => {
-  it('reachability probe (skips when LRS or pod down)', () => {
-    if (!canRun) console.warn('Tier 8 LRS skipped: Lrsql or Azure pod unreachable');
-    expect(typeof canRun).toBe('boolean');
+  it('real-pod precondition: skipping is allowed only for a DECLARED reason', () => {
+    // Was `expect(typeof canRun).toBe('boolean')` — true of `false`, so the only test in this
+    // file that ever "passed" passed for every possible state of both dependencies.
+    if (!lrsUp) {
+      console.warn(`Tier 8 LRS skipped: no Lrsql at ${LRSQL_ENDPOINT} `
+        + '(a localhost dependency — set SKIP_LRSQL_TESTS=1 to say so explicitly)');
+      return;
+    }
+    if (pod.ok) return;
+    console.warn(`Tier 8 LRS skipped — ${pod.declaredSkip} (pod host: ${AZURE_CSS_BASE})`);
+    expect(DECLARED_SKIPS).toContain(pod.declaredSkip);
   });
 
   it('ingest single Statement: real LRS → real pod → audit', { timeout: 60000 }, async (ctx) => {

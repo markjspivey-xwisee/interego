@@ -70,21 +70,42 @@
  * the gate.
  */
 
+import { relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/** This file lives in `tools/`, so its parent directory is the repo root. */
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+
 /**
- * The floor on how many test modules a whole-tree run must plan. The allowance below the
- * true tree total absorbs ordinary file deletion without letting a coverage collapse
- * through. Raise it as the tree grows — a floor that drifts far below reality stops being
- * a floor.
+ * The floor on how many test modules a whole-tree run must plan, and how far below the real
+ * tree it is allowed to sit. The allowance absorbs ordinary file deletion without letting a
+ * coverage collapse through.
  *
- * Ratcheted 175 → 179. 175 was set when the globs matched 185 (a 10-module allowance);
- * the tree has since grown to 189, so the untouched floor had silently widened to a
- * 14-module allowance. That is not a smaller version of the same guard: a glob that
- * stopped matching an entire directory of 12 suites would have planned 177, agreed with
- * itself, cleared the floor, and reported a green whole-tree run over a tree missing a
- * directory. The allowance is held at 10 deliberately rather than pinned to the exact
- * total, so deleting one obsolete suite does not require editing this file.
+ * Ratcheted 175 → 179 by hand once already: 175 was set when the globs matched 185, and by
+ * the time anyone looked the tree was 189, so the untouched floor had silently widened to a
+ * 14-module allowance. A glob that stopped matching an entire directory of 12 suites would
+ * have planned 177, agreed with itself, cleared the floor, and reported a green whole-tree
+ * run over a tree missing a directory.
+ *
+ * ★ THAT CORRECTION IS NO LONGER SOMETHING ANYONE HAS TO REMEMBER. `treeTotal` was already
+ * computed a few lines below and used ONLY to decide whether the run had been narrowed —
+ * never compared against this number. So the floor could only ever be corrected by a human
+ * noticing, and drift in the safe-looking direction was invisible by construction. The
+ * drift check below closes that, in the same spirit as `typecheck-gate.mjs`'s per-file pins
+ * and `lint-gate.mjs`'s baseline: a pin that only tightens when somebody remembers is a pin
+ * that never tightens. The failure names the number to write, so the fix is a one-line
+ * commit.
  */
-const MIN_TEST_MODULES = 179;
+// ★ EXPORTED SO THE SELF-TEST DERIVES ITS FIXTURES INSTEAD OF RESTATING THESE NUMBERS.
+//
+// tests/vitest-run-integrity.test.ts used to hard-code 200 / 400 / "to 390" to match the
+// floor of the day. Raising the floor 200 -> 205 then turned its own control case red — the
+// honest-whole-tree fixture built exactly 200 modules, which is now BELOW the floor — and a
+// self-test that fails whenever the thing it tests is legitimately tightened is a self-test
+// people edit to match rather than read. Two sources of truth for one number, and the gate's
+// whole purpose is to have one.
+export const MIN_TEST_MODULES = 205;
+export const FLOOR_ALLOWANCE = 10;
 
 /**
  * States that mean the module was actually taken to a conclusion. `pending` and `queued` are
@@ -165,10 +186,23 @@ export default class RunIntegrityReporter {
       );
     }
 
+    // ★ SCOPED TO THE REPO ROOT, BECAUSE THE FLOOR IS A FACT ABOUT THIS REPO'S TREE AND NOT
+    // ABOUT WHATEVER ROOT VITEST RESOLVED. `npx vitest run --root mcp-server` still loads
+    // this config — vitest walks up to find it — so the reporter runs with `include`
+    // re-resolved against mcp-server/, where `tests/**` matches 2 files and the other three
+    // globs match nothing. With no filename that is planned=2, treeTotal=2,
+    // `planned >= treeTotal`, and the floor fires claiming a 200-module tree "shrank" to 2.
+    // `.github/workflows/bridge-typecheck.yml` escapes that only because the line happens to
+    // name a file (planned=1 < treeTotal=2) — deleting that filename would turn CI red for a
+    // defect that does not exist.
+    const atRepoRoot = resolve(this.vitest.config.root) === resolve(REPO_ROOT);
+
+    let treeSpecs;
     let treeTotal;
     try {
       // No arguments: the config's `include` globs across the whole tree, CLI filters ignored.
-      treeTotal = (await this.vitest.globTestSpecifications()).length;
+      treeSpecs = await this.vitest.globTestSpecifications();
+      treeTotal = treeSpecs.length;
     } catch (err) {
       // Fail closed. If the guard cannot establish how big the tree is, it cannot say the run
       // covered it, and "could not check" must not read the same as "checked and fine".
@@ -176,10 +210,11 @@ export default class RunIntegrityReporter {
         'the tree total could not be established, so the floor below could not be applied: '
         + `${err instanceof Error ? err.message : String(err)}`,
       );
+      treeSpecs = undefined;
       treeTotal = undefined;
     }
 
-    if (treeTotal !== undefined && planned >= treeTotal && planned < MIN_TEST_MODULES) {
+    if (atRepoRoot && treeTotal !== undefined && planned >= treeTotal && planned < MIN_TEST_MODULES) {
       failures.push(
         `this run planned ${planned} test module(s) — the whole tree, so nothing narrowed it — `
         + `and the floor is ${MIN_TEST_MODULES}. Either the tree really did shrink that far, in `
@@ -187,6 +222,55 @@ export default class RunIntegrityReporter {
         + "an `include` glob in vitest.config.ts stopped matching and most of the suite is no "
         + 'longer being collected at all.',
       );
+    }
+
+    // ★ THE RATCHET THE FLOOR NEVER HAD. The number above is hand-written, and until now the
+    // only thing keeping it honest was somebody remembering — it reached 14 modules of slack
+    // that way, more than the two smallest `include` roots put together. The tree size is
+    // already in hand on every whole-tree run, so the staleness is CHECKED rather than
+    // trusted, and the message carries the replacement number.
+    if (atRepoRoot && treeTotal !== undefined && treeTotal - MIN_TEST_MODULES > FLOOR_ALLOWANCE) {
+      failures.push(
+        `the tree holds ${treeTotal} test module(s) but MIN_TEST_MODULES is ${MIN_TEST_MODULES} `
+        + `— ${treeTotal - MIN_TEST_MODULES} below it, past the ${FLOOR_ALLOWANCE} of slack this `
+        + 'floor is allowed. A floor that drifts far below reality stops being a floor. Raise '
+        + `MIN_TEST_MODULES in tools/vitest-run-integrity.mjs to ${treeTotal - FLOOR_ALLOWANCE}.`,
+      );
+    }
+
+    // ★ AND THE CHECK NO SCALAR FLOOR CAN MAKE, AT ANY VALUE. `include` is four globs, and
+    // two of them match a handful of modules each. A broken glob shrinks `planned` and
+    // `treeTotal` TOGETHER — that is stated in this file's header as the design's strength —
+    // so the scalar floor is the only remaining defence, and any floor with enough slack to
+    // absorb ordinary deletion carries more slack than the two smallest roots combined.
+    // Measured on this reporter: `integrations/**` and `mcp-server/tests/**` could BOTH stop
+    // matching entirely and the gate stayed silent. That is exactly the "an `include` glob
+    // stopped matching after a directory move" case check 3 names as its whole purpose, so
+    // presence is checked per glob, where the signal is unambiguous.
+    if (atRepoRoot && treeSpecs !== undefined) {
+      for (const pattern of (this.vitest.projects ?? []).flatMap(p => p.config.include ?? [])) {
+        // The literal leading segments — everything before the first wildcard — i.e. the
+        // directory the glob is rooted at. Matching whole globs would mean a second copy of
+        // vitest's glob semantics drifting against the first, which this file already refuses.
+        const segments = pattern.split('/');
+        const firstWildcard = segments.findIndex(s => s.includes('*'));
+        const prefix = (firstWildcard === -1 ? segments.slice(0, -1) : segments.slice(0, firstWildcard)).join('/');
+        // A glob rooted at the top of the tree names no directory of its own; the floor and
+        // the drift check already cover it, and treating '' as a prefix matches everything.
+        if (prefix === '') continue;
+        const matched = treeSpecs.some(s => {
+          const rel = relative(this.vitest.config.root, s.moduleId).split(sep).join('/');
+          return rel === prefix || rel.startsWith(`${prefix}/`);
+        });
+        if (!matched) {
+          failures.push(
+            `the \`include\` glob \`${pattern}\` in vitest.config.ts matches no test module at `
+            + 'all, so nothing under it is being collected. It is one of the smaller roots, '
+            + 'which is why the total can stay above the floor while every test it named is '
+            + 'gone — the silent, green coverage loss this file exists to refuse.',
+          );
+        }
+      }
     }
 
     if (failures.length === 0) return;

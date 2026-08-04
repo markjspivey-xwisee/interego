@@ -47,4 +47,21 @@ EXPOSE 8090
 ENV PORT=8090
 ENV CSS_URL=http://css:3456/
 
+# The commit this image was built from, surfaced at /health so a deploy can be VERIFIED
+# rather than assumed.
+#
+# ★ build-ghcr.yml ALREADY appends GIT_SHA=${{ github.sha }} to EVERY image's build-args.
+# Without a matching ARG here Docker drops it — an unconsumed build-arg is a WARNING, not
+# an error — so this image was handed its own commit sha on every build and threw it away,
+# and `tools/railway-redeploy.mjs --verify-url` could only ever read "(no build field)" and
+# time out. That is why every identity deploy in this stack's history was unverified, and
+# it is how identity came to sit pinned to a commit whose deployment had been created forty
+# hours BEFORE that commit existed, with nothing able to say so.
+#
+# Declared in the RUNTIME stage on purpose: ARG does not cross a FROM, and declaring it
+# earlier would invalidate the npm-install and tsc layers on every commit. Same placement
+# and same reason as deploy/Dockerfile.relay.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
 CMD ["dist/server.js"]

@@ -110,6 +110,10 @@ const app = createVerticalBridge({
     ontologyIri: 'https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp',
     namespace: 'https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#',
     ontologyTurtle: () => readFileSync(new URL('../ontology/adp.ttl', import.meta.url), 'utf8'),
+    // The adpsh: shape IRIs are `.../adp/shapes#…`; this route is what makes
+    // them dereference. A shape namespace with no document at the path it
+    // names is the failure tests/shape-namespaces-resolve.test.ts exists for.
+    shapesTurtle: () => readFileSync(new URL('../ontology/adp-shapes.ttl', import.meta.url), 'utf8'),
   }),
 });
 app.listen(PORT, () => {

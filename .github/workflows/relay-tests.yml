@@ -62,9 +62,20 @@ jobs:
 
       # Typecheck first: tsx strips types without checking them, so a type error
       # would otherwise sail through the whole suite unnoticed.
-      - name: Typecheck the relay
+      #
+      # TWO programs, because there are two. `tsconfig.json` is the EMITTING build config
+      # Dockerfile.relay runs, so its include is the 11 production entry points and cannot
+      # carry tests. `tsconfig.tests.json` is the no-emit program for the test files that
+      # were in NO program until it existed — and that landed with 15 pre-existing errors,
+      # including a `_amep-seed-test.ts` line that had been printing `currentHead=undefined`
+      # on every run. Both are named here as their own step as well as inside `npm test`,
+      # so neither is reachable only through the other.
+      - name: Typecheck the relay (build program)
         working-directory: deploy/mcp-relay
-        run: npx tsc --noEmit -p .
+        run: npx tsc --noEmit -p tsconfig.json
+      - name: Typecheck the relay TESTS (the program that did not exist)
+        working-directory: deploy/mcp-relay
+        run: npx tsc --noEmit -p tsconfig.tests.json
 
       - name: Run relay test suite
         working-directory: deploy/mcp-relay

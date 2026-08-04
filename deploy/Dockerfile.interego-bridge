@@ -69,4 +69,12 @@ ENV PORT=6050
 ENV NODE_NO_WARNINGS=1
 ENV INTEREGO_DEFAULT_AGENT_DID=did:web:interego-demo
 ENV BRIDGE_DEPLOYMENT_URL=https://bridge.interego.xwisee.com
+
+# The commit this image was built from, surfaced at /health so a deploy can be VERIFIED
+# rather than assumed. build-ghcr.yml already appends GIT_SHA to every image's build-args;
+# without this ARG Docker drops it with a warning and the image builds green. Runtime stage
+# on purpose: ARG does not cross a FROM, and earlier would bust the cache on every commit.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
 CMD ["npx", "tsx", "demos/interego-bridge/server.ts"]

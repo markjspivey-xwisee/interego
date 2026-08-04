@@ -34,6 +34,15 @@ const SC_AUTH = SC_KEY && SC_SECRET
   ? 'Basic ' + Buffer.from(`${SC_KEY}:${SC_SECRET}`).toString('base64')
   : null;
 
+// ★ SUPPLYING THE CREDENTIALS IS THE DECLARATION THAT THIS LRS EXISTS.
+// `probeReachability()` returns false for every way a request can fail, and each of those
+// became `ctx.skip()` — so a rotated secret, a typo'd endpoint or an expired sandbox emptied
+// all six bodies and the run stayed green, indistinguishable from "we have no SCORM Cloud
+// account". The only thing that tells those two apart is whether someone configured one.
+// No workflow can stand a third-party commercial LRS up, so absent credentials stays a
+// legitimate skip; present-but-broken credentials must not be.
+const SC_CONFIGURED = Boolean(SC_AUTH && SC_ENDPOINT);
+
 // SCORM Cloud's LRS uses xAPI 1.0.3 only.
 const XAPI_VERSION = '1.0.3';
 
@@ -63,14 +72,24 @@ let reachable = false;
 
 beforeAll(async () => {
   reachable = await probeReachability();
+  if (SC_CONFIGURED && !reachable) {
+    throw new Error(
+      'SCORM_CLOUD_KEY / SCORM_CLOUD_SECRET / SCORM_CLOUD_ENDPOINT are all set, so '
+      + `GET ${SC_ENDPOINT}/about must answer 2xx for xAPI ${XAPI_VERSION} — it did not. `
+      + 'Refusing to skip: credentials that stopped working must red the job, not empty it.',
+    );
+  }
 });
 
 describe('Tier 3c — SCORM Cloud (proprietary LRS, xAPI 1.0.3)', () => {
-  it('reachability probe (skips remaining tests when env vars unset or pod down)', () => {
-    if (!SC_AUTH || !SC_ENDPOINT) {
+  it('reachability probe (skips remaining tests when env vars unset or pod down)', (ctx) => {
+    // Was `expect(typeof reachable).toBe('boolean')` — true of `false`, and the other half of
+    // the "2 passed" that made an entirely un-run trio of files look like a result.
+    if (!SC_CONFIGURED) {
       console.warn('SCORM_CLOUD_KEY / SCORM_CLOUD_SECRET / SCORM_CLOUD_ENDPOINT unset; Tier 3c skipped');
+      return ctx.skip();
     }
-    expect(typeof reachable).toBe('boolean');
+    expect(reachable).toBe(true);
   });
 
   it('about endpoint reports xAPI 1.0.3 (NOT 2.0.0 — real-world finding)', { timeout: 15000 }, async (ctx) => {

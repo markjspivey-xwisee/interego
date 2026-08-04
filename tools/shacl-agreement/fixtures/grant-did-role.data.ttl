@@ -1,0 +1,14 @@
+# shape: wsp-shapes.ttl
+# expect: violates
+# pins: wsp:role
+# why: sh:pattern "^https?://" on wsp:role. ONE EDIT from grant-valid, so the verdict turns on this term alone. A role is a published DOCUMENT fragment in a role profile, not a party — it has to be fetchable, so did: is refused here even though the same grant's wsp:grantedTo accepts it. That asymmetry between two terms in one shape is exactly the kind of thing two engines can read differently, and nothing had ever asked a second one.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://conv.test/g1>
+  a wsp:MembershipGrant ;
+  wsp:grantedTo <https://alice.test/profile#me> ;
+  wsp:role <did:web:roles.test:Contributor> ;
+  wsp:workspace <https://relay.test/ws/a> .

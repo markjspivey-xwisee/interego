@@ -14,6 +14,7 @@
  */
 
 import type { FdbLike, FdbTxn, Key, KeyValue } from './fdb-like.js';
+import { sameBytes } from './fdb-like.js';
 
 export interface FdbRealOptions {
   /** Path to fdb.cluster; omit to use the FDB default. */
@@ -94,6 +95,17 @@ export async function openRealFdb(opts: FdbRealOptions = {}): Promise<FdbLike> {
       return v == null ? undefined : new Uint8Array(v);
     },
     set: (key, value) => { tn.set(toBuf(key), toBuf(value)); },
+    compareAndSet: async (key, expected, value) => {
+      // FDB transactions ARE serializable and this read joins the transaction's read
+      // conflict range, so `doTransaction` retries the whole `fn` if the key moved before
+      // commit. Under THIS binding a read-then-set genuinely is a compare-and-swap — the
+      // method exists because the Postgres adapter's is not, and the seam must not offer
+      // two different guarantees under one name.
+      const cur = await tn.get(toBuf(key));
+      if (!sameBytes(cur == null ? undefined : new Uint8Array(cur), expected)) return false;
+      tn.set(toBuf(key), toBuf(value));
+      return true;
+    },
     clear: (key) => { tn.clear(toBuf(key)); },
     clearRange: (begin, end) => { tn.clearRange(toBuf(begin), toBuf(end)); },
     getRange: async (begin, end) => {

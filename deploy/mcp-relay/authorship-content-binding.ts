@@ -32,7 +32,12 @@
  * Lives outside server.ts because server.ts opens a listener on import, so nothing defined
  * inside it can be exercised by a test.
  */
-import { canonicalGraphDigest, digestAlgorithmOf, GRAPH_DIGEST_ALGORITHM } from '@interego/core';
+import {
+  canonicalGraphDigest,
+  digestAlgorithmOf,
+  GRAPH_DIGEST_ALGORITHM,
+  type DescriptorBindingBasis,
+} from '@interego/core';
 import { digestedGraphRegion, graphIriFromDescriptorTurtle } from '@interego/solid';
 
 /**
@@ -133,4 +138,74 @@ export function contentBindingNote(
     + `${why}. Treat this exactly as an unverified content claim — it is neither an `
     + 'attestation of the content nor evidence against it. A digest that WAS checked and '
     + 'failed is reported as `mismatched`, never here.';
+}
+
+/**
+ * Is a verified signature enough to call this record authored?
+ *
+ * ★ THE DEFECT THIS CLOSES, AND WHY IT IS NOT THE CONTENT-BINDING ONE AGAIN. A proof block
+ * is signed over its OWN fields — issuer, ownerWebId, descriptorId, created, contentHash —
+ * so `verifySignedAuthorship` re-derives the payload from the block and checks the
+ * signature against that. The computation is closed over the block and cannot fail because
+ * of where the block sits. Measured live on build 7c9124a, before this function existed:
+ * one public descriptor's bytes re-served at a URL its signer never named answered
+ * `authorshipVerified: true`, `contentBinding: 'bound'`, naming that signer — every field a
+ * consumer reads saying attested, and the one field that dissented,
+ * `descriptorBinding.bound`, reported beside them and read by no branch.
+ *
+ * `contentBinding` is deliberately NOT folded into the verdict, and that is not this. It
+ * REFINES a true statement — this signer signed this record, and here is what the signature
+ * does and does not cover. `bound: false` FALSIFIES the statement.
+ *
+ * ★ THE GATE IS `bound`, NEVER `basis`, AND THE DIFFERENCE IS MEASURED. Every descriptor_id
+ * the substrate mints is a `urn:`, which can only ever bind `slug-only`. A sweep of 272
+ * live pods on 2026-08-03 read 1,375 descriptors; 134 carried a proof; 134 bound
+ * `slug-only`, 0 bound `exact-url`, 0 were unbound. So refusing on `bound === false`
+ * refuses nothing that is live, and the obvious tightening — demanding `exact-url` —
+ * refuses all 134 honest records. That is the fail-closed-on-honest-data direction this
+ * area has already shipped once.
+ *
+ * ★ THE REASON DOES NOT ACCUSE. `bound: false` has readings that are not forgeries: a
+ * publisher that names its descriptors some other way reaches it too (the PGSL-primary
+ * projection writes `holon-<hash>.ttl`). Stating forgery as fact in the one channel
+ * operators are told to watch is how a true report stops being believed, so this withholds
+ * the attestation and names both readings.
+ *
+ * Lives here, not in server.ts, for the reason at the top of this file: server.ts opens a
+ * listener on import, so a decision declared there can only ever be pinned by a regex over
+ * its own source. This one can be executed.
+ */
+export function authorshipVerdict(args: {
+  /** What `verifySignedAuthorship` decided about the SIGNATURE alone. */
+  readonly signatureValid: boolean;
+  /** Its own diagnostic, used verbatim when the signature is what failed. */
+  readonly signatureReason?: string;
+  /** The relay's `{bound, basis, note}`, built from `proofBindsToDescriptorUrl`. */
+  readonly descriptorBinding: {
+    readonly bound: boolean;
+    readonly basis: DescriptorBindingBasis;
+    readonly note?: string;
+  };
+}): { readonly verified: boolean; readonly reason?: string } {
+  // Signature first: when it failed, nothing was established about the signer, and the
+  // binding diagnostic would mislead by implying the signature had been reached.
+  if (!args.signatureValid) {
+    return { verified: false, reason: args.signatureReason ?? 'verification returned false' };
+  }
+  if (!args.descriptorBinding.bound) {
+    return {
+      verified: false,
+      reason:
+        'the authorship proof\'s signature is intact, but the proof is not about this '
+        + 'record: '
+        + (args.descriptorBinding.note
+          ?? 'it does not name the URL this document was served from')
+        + '. A proof block is signed over its own fields, so it verifies wherever it is '
+        + 'pasted; this says only that it was not written for the document served here. '
+        + 'Two readings fit — a proof lifted off another record, or a publisher that names '
+        + 'its descriptors some other way — and this layer cannot tell which, so it '
+        + 'withholds the attestation rather than naming a forger.',
+    };
+  }
+  return { verified: true };
 }

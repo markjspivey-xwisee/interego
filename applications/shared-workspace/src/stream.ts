@@ -844,6 +844,25 @@ function readContentBinding(raw: unknown): ContentBinding {
 // ── Appending ────────────────────────────────────────────────────────────────
 
 /**
+ * The precondition token for the next append, or the reason there is none.
+ *
+ * ★ TWO MEMBERS, BECAUSE "THERE IS NO HEAD" IS AN ANSWER AND NOT AN ACCIDENT. A divergent
+ * stream is an ordinary racing outcome — it is what a lost CAS looks like from the reader's
+ * side — and every refusal in this module that describes DATA rather than a programming
+ * error is already a value: `AppendResult`'s `'conflict'`, {@link Attestation}'s
+ * `authorshipVerified: false`, {@link ChainReport}'s `intact: false`. `headOf` alone
+ * signalled it by throwing, so it was the one reader whose refusal a caller could meet only
+ * with a `try`/`catch`, and whose CAUSE was reachable only by matching prose out of a
+ * message — which this module's own tests did (`toThrow(/dangling link/)`,
+ * `toThrow(/sequence mismatch/)`). Carrying the {@link ChainReport} makes a fork, a merge, a
+ * truncated head and a removed-and-linked-around row separable by the caller instead of by a
+ * regular expression.
+ */
+export type HeadResult =
+  | { readonly outcome: 'head'; readonly url: string | null; readonly seq: number }
+  | { readonly outcome: 'diverged'; readonly report: ChainReport; readonly message: string };
+
+/**
  * The precondition token for the next append, derived from a verified chain.
  *
  * ★ AN UNVERIFIABLE CHAIN MUST NOT LOOK LIKE AN EMPTY ONE — the same rule as
@@ -856,27 +875,71 @@ function readContentBinding(raw: unknown): ContentBinding {
  * two other entries already claim, gated on nothing — the exact failure `if_match` exists
  * to prevent, produced by the helper whose docstring promised a verified chain.
  *
- * {@link appendEntry} guards before it gets here, so the shipped path never throws. This
- * function is exported, and the next caller will not have that guard, so the refusal lives
- * where the wrong answer was rather than in each caller's discipline.
+ * ★ THE REFUSAL IS A VALUE NOW, AND THE COMPILER IS WHAT MAKES IT UNIGNORABLE. It threw,
+ * which stopped a careless caller at RUNTIME and only then. `HeadResult`'s `'diverged'`
+ * member carries no `url` and no `seq`, so `headOf(rows).url` does not compile — and every
+ * caller of this function in this repo is compiled, `tools/` included, by
+ * `tsconfig.check.json`, which `vitest.config.ts` runs in `globalSetup`. What is traded away
+ * is stated rather than hidden: a caller reaching this from plain JavaScript now gets
+ * `undefined` where it used to get an exception. It is not silent even there — an
+ * `undefined` seq reaches {@link entryTurtle}, which refuses a seq that is not a
+ * non-negative integer — but it is one step further from the mistake than a throw was.
  */
-export function headOf(rows: readonly StreamRow[]): { url: string | null; seq: number } {
+export function headOf(rows: readonly StreamRow[]): HeadResult {
   // An empty stream is the one case where "no head, start at 0" is the truth rather than a
   // failure to determine it, and it is why the two were confusable in the first place.
-  if (rows.length === 0) return { url: null, seq: 0 };
+  if (rows.length === 0) return { outcome: 'head', url: null, seq: 0 };
 
   const report = verifyChain(rows);
   if (!report.intact) {
-    throw new Error(
-      `headOf: refusing to derive a head from a stream that does not verify — ${report.heads.length} `
-      + `head(s), ${report.merges.length} merge(s), ${report.danglingLinks.length} dangling link(s), `
-      + `${report.seqMismatches.length} sequence mismatch(es). There is no head to gate on, and the `
-      + 'answer for an empty stream — seq 0 with no precondition — would append onto the divergence '
-      + 'instead of surfacing it. Call verifyChain, repair, then derive.',
-    );
+    return {
+      outcome: 'diverged',
+      // The whole report, not four counts lifted out of it. The counts were all that
+      // survived the throw, and they cannot tell a caller WHICH rows forked.
+      report,
+      message:
+        `headOf: refusing to derive a head from a stream that does not verify — ${report.heads.length} `
+        + `head(s), ${report.merges.length} merge(s), ${report.danglingLinks.length} dangling link(s), `
+        + `${report.seqMismatches.length} sequence mismatch(es). There is no head to gate on, and the `
+        + 'answer for an empty stream — seq 0 with no precondition — would append onto the divergence '
+        + 'instead of surfacing it. Call verifyChain, repair, then derive.',
+    };
   }
   const head = report.ordered[report.ordered.length - 1]!;
-  return { url: head.descriptorUrl, seq: report.ordered.length };
+  return { outcome: 'head', url: head.descriptorUrl, seq: report.ordered.length };
+}
+
+/**
+ * The stream IRI a live verifier writes its own side under.
+ *
+ * ★ IT REFUSES A CLOCK, AND THAT IS THE WHOLE FUNCTION. `verify-cross-org-live.ts` derived this
+ * inline as `${workspace}/stream/${userId}-${Date.now()}`, and a per-invocation IRI is not a
+ * cosmetic choice: the stream is EMPTY on every run, so `appendEntry` takes the empty path,
+ * derives seq 0, sends no `if_match`, and the catch-up-across-runs the append exists to exercise
+ * is never performed once. Every assertion downstream still passes, because a chain of length
+ * one verifies trivially — which is why nine runs shipped green while checking nothing.
+ *
+ * The second cost is permanent. Each run leaves an abandoned single-entry chain at a
+ * dereferenceable IRI that nothing can delete, because descriptors are immutable and the pod has
+ * no retraction verb. Nine such IRIs existed under one workspace when this guard was written.
+ *
+ * A workspace IRI that is itself per-run is fine and is what the other three verifiers do; this
+ * is for the case where the workspace is FIXED — org B's is committed to git — and only the
+ * stream segment is ours to choose.
+ */
+export function verifierStreamIri(workspace: string, userId: string, epoch: string): string {
+  if (epoch.length === 0) throw new Error('verifierStreamIri: epoch must not be empty.');
+  // 9+ digits is Date.now()/1000 and up; a hand-chosen epoch that is nine digits of decimal is
+  // a clock by another name. Anchored so `v2` and `2026-08-run3` pass and `1785787853079` does not.
+  if (/^\d{9,}$/.test(epoch)) {
+    throw new Error(
+      `verifierStreamIri: refusing the epoch "${epoch}" — it is a clock. A per-invocation stream `
+      + 'IRI makes every run a fresh, trivially-verifying chain, so the append never exercises '
+      + 'catch-up, and it mints one permanent abandoned chain on the pod per run. Use a constant, '
+      + 'and bump it deliberately when a chain has been forked beyond repair.',
+    );
+  }
+  return `${workspace}/stream/${userId}-${epoch}`;
 }
 
 /**
@@ -893,23 +956,27 @@ export async function appendEntry(
   deps: StreamDeps,
 ): Promise<AppendResult> {
   const rows = await readStream(ref, deps);
-  const report = verifyChain(rows);
-  // Also what keeps the headOf below from throwing: a divergence is an ordinary racing
-  // outcome for a caller of appendEntry, so it is returned as a named value here rather
-  // than left to surface as an exception from a helper two lines further down.
-  if (rows.length > 0 && !report.intact) {
+  const head = headOf(rows);
+  // ★ ONE DECISION, NOT TWO THAT COULD DISAGREE. This used to run its own `verifyChain` and
+  // its own `!intact` test ABOVE the call, for the sole stated reason that it "keeps the
+  // headOf below from throwing" — two copies of the same rule, two message texts, and a
+  // second O(n) walk of the same rows, all to avoid a channel rather than to decide
+  // anything. Now that the refusal is a value, the branch that reports the conflict IS the
+  // branch that failed to derive a head, so the two cannot drift apart. Equivalent by
+  // construction: `headOf` answers `'head'` for `rows.length === 0` and `'diverged'` for
+  // exactly `!verifyChain(rows).intact`, which is the condition that was written here.
+  if (head.outcome === 'diverged') {
     return {
       outcome: 'conflict',
-      currentHead: report.heads[0] ?? null,
+      currentHead: head.report.heads[0] ?? null,
       message:
-        `Refusing to append to a stream that does not verify: ${report.heads.length} head(s), `
-        + `${report.merges.length} merge(s), ${report.danglingLinks.length} dangling link(s). `
+        `Refusing to append to a stream that does not verify: ${head.report.heads.length} head(s), `
+        + `${head.report.merges.length} merge(s), ${head.report.danglingLinks.length} dangling link(s). `
         + 'Appending onto an unverified chain would bury the divergence under a new entry '
         + 'instead of surfacing it. Repair the chain first.',
     };
   }
 
-  const head = headOf(rows);
   const seq = head.seq;
   const entryIri = `${ref.graphIri}/e/${seq}`;
 

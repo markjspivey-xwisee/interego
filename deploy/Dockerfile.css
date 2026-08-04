@@ -1,3 +1,22 @@
+# ★ DEAD FILE. NOTHING BUILDS THIS.
+#
+# .github/workflows/build-ghcr.yml builds the live css service as `interego-css-pgsl` from
+# integrations/pgsl-css-accessor/Dockerfile. There is no build leg for this Dockerfile in
+# any workflow. It is the legacy AzureFile file-backed CSS image.
+#
+# ★ AND ITS maxReplicas=1 RATIONALE BELOW IS STALE — the pin it argues for still holds, but
+# NOT for the reason given. That paragraph makes the prohibition conditional ("until/unless
+# the storage backend is re-platformed off the AzureFile file-backend"), and that condition
+# HAS BEEN MET: storage is now the coherent Postgres-backed PGSL lattice. Read literally,
+# this file now DISCHARGES the very prohibition it is cited for — and
+# deploy/mcp-relay/server.ts still cites it as current evidence.
+#
+# CSS must stay at one replica because of a LOCKER-level blocker this file knows nothing
+# about: CSS's RedisLocker.clearLocks() does KEYS <prefix>* + DEL across the whole shared
+# namespace and runs on every replica boot AND shutdown (namespacePrefix defaults to ''),
+# so a second replica deletes the first one's live locks. The authority for the pin is
+# integrations/pgsl-css-accessor/config/pgsl-server-redis.json, not the text below.
+#
 # NODE_BASE: Docker Hub by default (local builds), ACR-imported copy in
 # CI via --build-arg — see deploy-azure.yml / Dockerfile.identity.
 ARG NODE_BASE=node:20-slim

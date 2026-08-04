@@ -1,0 +1,15 @@
+# shape: wsp-shapes.ttl
+# expect: violates
+# pins: wsp:accepts
+# why: sh:pattern "^https?://" on wsp:accepts. ONE EDIT from acceptance-valid. wsp:accepts is the link between the two halves of a membership, so an acceptance whose grant cannot be fetched answers an offer nobody can read; the halves are joined by content, and content has to be retrievable. did: rather than urn: so this fixture distinguishes "^https?://" from the principal pattern "^https?://|^did:" — a urn: violates under both and would not tell a widening of this term apart.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://alice.test/a1>
+  a wsp:MembershipAcceptance ;
+  wsp:member <https://alice.test/profile/card#me> ;
+  wsp:accepts <did:web:conv.test:g1> ;
+  wsp:stream <https://alice.test/ws/a/stream> ;
+  wsp:workspace <https://relay.test/ws/a> .

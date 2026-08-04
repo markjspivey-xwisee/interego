@@ -49,3 +49,13 @@ jobs:
       # looks like from the outside.
       - name: Lint gate
         run: node tools/lint-gate.mjs
+      # ★ THE CONFORMANCE RUNNER WAS CALLED BY NOTHING. It gates Candidate Recommendation
+      # per STATUS.md and is what spec/STABILITY.md points a second implementation at, yet
+      # no workflow, no npm script and no test invoked it — so it printed
+      # "Interego L1+L2+L3 (Core + Federation + Advanced)" over five fixtures in one of the
+      # ten categories its own README enumerates, for as long as it has existed, with
+      # nothing able to notice. It lives in THIS job rather than behind a `paths:` filter
+      # for the same reason the header above gives: a filter would let exactly the commits
+      # that break it skip the check.
+      - name: Conformance runner (claims no level it did not exercise)
+        run: node spec/conformance/runner.mjs

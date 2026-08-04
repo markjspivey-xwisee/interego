@@ -20,7 +20,7 @@
  * listing: test files and unimported modules are correctly absent from the image, and a
  * check that demanded every .ts file would cry wolf until someone deleted it.
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -75,6 +75,57 @@ const missing = [...reachable].filter(f => !copiedByDockerfile(f));
 ok(missing.length === 0,
   `all ${reachable.size} modules reachable from server.ts are in the COPY list`,
   missing.length ? `MISSING: ${missing.join(', ')}` : '');
+
+/**
+ * ★ AND NOTHING LIVES OUTSIDE THE GRAPH.
+ *
+ * The walk above is only as good as its starting point. The header of this file calls an
+ * unimported module "correctly absent from the image" — true of the image, and false of
+ * everything else. tsconfig.json builds the relay's tsc program the same way: an
+ * `include` list of roots, plus whatever those roots import. So the one property that
+ * excuses a file from the COPY list also excuses it from the COMPILER.
+ *
+ * deploy/mcp-relay/subscription-client.ts sat here from April to August in no import
+ * graph, no COPY line and no test script — and `npx tsc --noEmit -p . --listFiles` never
+ * once mentioned it. Nothing compiled it, so nothing could report that it had rotted,
+ * while its header advertised a live Solid Notifications subscription whose only named
+ * consumer logs "stub — wire real subscription client in follow-up". It was deleted;
+ * this check is what makes the next one visible on the commit that adds it.
+ *
+ * So every root-level .ts must be ACCOUNTED FOR: reachable from server.ts (and therefore
+ * COPY-checked above), run by an npm script, or a tool config the tool loads by filename.
+ * That is this repo's "register it in BOTH places" rule stated as a check. It is NOT
+ * "every .ts must be COPY'd" — the header above explains why that one would cry wolf.
+ */
+const TOOL_CONFIGS = new Set([
+  // Playwright resolves this by filename convention: no import reaches it and no script
+  // names it, yet `npm run test:e2e` is broken without it.
+  'playwright.config.ts',
+]);
+{
+  const scripts = Object.values(
+    (JSON.parse(readFileSync(join(relayDir, 'package.json'), 'utf8')) as {
+      scripts?: Record<string, string>;
+    }).scripts ?? {},
+  ).join(' ');
+  // Whole-token match, not `includes`: a plain substring test would let a new orphan named
+  // `view-test.ts` pass on the strength of `_note-view-test.ts` already being in the script.
+  const runByScript = (f: string): boolean =>
+    new RegExp(`(^|[\\s/])${f.replace(/\./g, '\\.')}(\\s|$)`).test(scripts);
+
+  // Root level only, and non-recursive: `tests/` holds fixtures that are imported by test
+  // files or launched by a GitHub workflow rather than an npm script (tck-sut.ts,
+  // listen-loopback.ts, passkey-oauth.spec.ts). Reaching into it would cry wolf on all three.
+  const orphans = readdirSync(relayDir)
+    .filter(f => f.endsWith('.ts'))
+    .filter(f => !reachable.has(f) && !runByScript(f) && !TOOL_CONFIGS.has(f));
+
+  ok(orphans.length === 0,
+    'every root-level relay .ts is reachable from server.ts, run by a script, or a tool config',
+    orphans.length
+      ? `ORPHANED — in no import graph, so in no image, no tsc program and no test: ${orphans.join(', ')}`
+      : '');
+}
 
 // The vendored AMEP validator is loaded by PATH at runtime rather than imported, so the
 // import walk cannot see it. Pinned separately because a missing directory there is a

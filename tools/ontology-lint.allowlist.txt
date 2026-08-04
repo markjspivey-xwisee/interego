@@ -1,58 +1,24 @@
 # Known-drift allowlist for ontology-lint.
 #
-# Entries are `prefix:Term` that the lint would otherwise fail on.
-# Migrate OUT by either (a) defining the term in docs/ns/<prefix>.ttl
-# or (b) renaming the code to use an existing term or a non-owned
-# namespace. A growing list is a signal to schedule an ontology pass.
-
-# ── code: ──
-# False positive from regex tokenization: the string
-# `urn:agent:claude-code:local` embeds the literal "code:" inside a
-# URN, not an RDF CURIE reference. The URN itself is a default env
-# var identifier, not a code: ontology term.
-code:local
-
-# ── soc2: ──
-# False positives from regex tokenization. SOC 2 control IRIs use
-# dotted identifiers (CC6.1, P1.1, etc.) but the lint's term regex
-# stops at the dot, reporting the prefix as "soc2:CC6". The actual
-# fully-qualified terms (soc2:CC6.1, etc.) ARE defined in
-# docs/ns/soc2.ttl.
-soc2:CC1
-soc2:CC2
-soc2:CC3
-soc2:CC4
-soc2:CC5
-soc2:CC6
-soc2:CC7
-soc2:CC8
-soc2:CC9
-soc2:C1
-soc2:P1
-# P4.2 referenced in docs/policies for data subject deletion control mapping.
-soc2:P4
-
-# ── iep: ──
-# Reference in a comment in deploy/mcp-relay/server.ts to a
-# placeholder predicate (iep:evidenceForControl) that's mentioned as a
-# future extension to ManifestEntry. Not actually emitted to RDF.
-iep:evidenceForControl
-# CGContextType.Causal / .Projection in packages/core/src/rdf/namespaces.ts
-# are emitted via `${CG}Causal` / `${CG}Projection` template literals.
-# The corresponding iep:CausalFacet / iep:ProjectionFacet classes ARE
-# defined in docs/ns/cg.ttl; the bare context-type individuals are not
-# yet declared. Pre-existing drift surfaced by the template-literal
-# scan extension.
-iep:Causal
-iep:Projection
-
-# ── align: ──
-# False positive from CSS text-align property in HTML style attributes
-# (e.g., style="text-align:center"). The lint's term regex matches
-# `align:center` because the negative lookbehind doesn't reject the
-# hyphen in `text-align`. This is CSS, not an RDF ontology reference.
-align:center
-# PGSL projection-layer terms emitted by packages/pgsl/src/projection.ts +
-# packages/solid/src/client.ts. DECLARED in docs/ns/iep.ttl (PGSL projection
-# vocabulary block) — the foundation-first projection engine's self-description
-# terms now resolve, so these were migrated OUT of the allowlist.
+# ★ EMPTY, AND THAT IS THE POINT. It held 17 entries, and 13 of them were not drift at
+# all — they were artifacts of this lint's own tokenizer, and the comments that pinned
+# them said so out loud ("False positive from regex tokenization"). Two more were already
+# dead: iep:evidenceForControl occurs only inside a `//` comment the scanner strips, and
+# soc2:P4 occurs in no scanned .ts file at all. Fixing the tokenizer — see the two ★
+# comments in ontology-lint.mjs — retired all fifteen, and the remaining ones became real
+# declarations: iep:Causal + iep:Projection in docs/ns/iep.ttl, soc2:CC3.2 + soc2:CC4.2 in
+# docs/ns/soc2.ttl (and in docs/ns/soc2.html, because a declared IRI whose HTML fragment
+# does not resolve is the same 404 one level down).
+#
+# ★ THE LESSON THIS FILE COST: an allowlist keyed on a TRUNCATED token is many-to-one.
+# `soc2:CC3` was pinned as a "regex false positive" for the declared soc2:CC3.1 — and that
+# same pin silently covered soc2:CC3.2, emitted by packages/ops/src/index.ts and declared
+# NOWHERE. Likewise soc2:CC4 over the undeclared soc2:CC4.2. Two SOC 2 control IRIs were
+# masked by entries written to excuse a tokenizer bug. A gate that reports a coarser token
+# than the one it checks cannot be allowlisted safely at all: the entry you write for the
+# term you know about blankets every sibling you do not.
+#
+# Do not add an entry back. If code emits an owned-namespace term, either declare the term
+# in docs/ns/<prefix>.ttl or change the emission. If the lint reports a term that no code
+# emits, the TOKENIZER is wrong — fix it there, and say in a comment which real string
+# misled it.

@@ -17,6 +17,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { InMemoryFdb } from '../packages/pgsl-store/src/index.js';
 // From the PACKAGE, not from src/: the mount imports the built package, and
 // EngagementEngine has private members — so a src-built instance is not assignable to
@@ -783,5 +784,39 @@ describe('the listing order is a property of the records, not of the reads befor
     // Express double above does not parse one; the bound is the engine's, and so is the bug.
     const page = relay.engine.list(ALICE, 2);
     expect(page.ok && (page as { value: Engagement[] }).value.map(e => e.id)).toEqual([ids[2], ids[1]]);
+  });
+});
+
+/**
+ * The document may not deny what this file proves.
+ *
+ * WHY A PROSE ASSERTION SITS IN A BEHAVIOUR SUITE. The shared-workspace README's bullet
+ * "Engagements are still not durable" was written in #241; #248 shipped the store above
+ * and never touched the README, so for two rounds the document told a reader the opposite
+ * of what every test in this file demonstrates. Nothing failed, because no test in the
+ * repo opens that file. The coupling is the point: the suite that pins the behaviour is
+ * now also the suite that fails when the document denies it.
+ */
+describe('the shared-workspace README does not deny the durability pinned above', () => {
+  const README = readFileSync(
+    new URL('../applications/shared-workspace/README.md', import.meta.url), 'utf8');
+  const STORE_SRC = readFileSync(
+    new URL('../deploy/mcp-relay/engagement-store.ts', import.meta.url), 'utf8');
+
+  it('carries no unqualified denial of engagement durability', () => {
+    // The exact sentence #241 left behind. Pinned literally because it is the regression,
+    // not a proxy for one.
+    expect(README).not.toMatch(/Engagements are still not durable/);
+  });
+
+  it('names the switch that actually decides the mode, read out of the module itself', () => {
+    // Derived rather than hardcoded: renaming the env var in engagement-store.ts fails
+    // here until the README is updated too, which is the drift this gate exists to catch.
+    // Anchored on the `CONNSTR` binding rather than on the first `process.env[…] ?? ''` in
+    // the file — `RELAY_PGSL_TABLE` two declarations below has the identical shape, so the
+    // looser pattern would silently retarget if anything were inserted above line 167.
+    const sw = /const CONNSTR = process\.env\['([A-Z_]+)'\]/.exec(STORE_SRC)?.[1];
+    expect(sw).toBe('RELAY_PGSL_PG_CONNSTR');
+    expect(README).toContain(sw!);
   });
 });

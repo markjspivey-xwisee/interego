@@ -153,10 +153,55 @@ for (const r of report) {
   }
 }
 console.log('');
-console.log(`Total: ${totalChecked - totalUngrounded}/${totalChecked} classes grounded`);
+const totalGrounded = totalChecked - totalUngrounded;
+console.log(`Total: ${totalGrounded}/${totalChecked} classes grounded`);
+
+// ── The prose count is a claim ABOUT this gate, and nothing ever checked it. ──
+//
+// Measured: this gate printed 97/97 while `spec/LAYERS.md` said 41/41. That 41/41 was TRUE
+// the day derivation discipline landed and was never touched again, so it sat three months
+// stale while the real number walked to 97. `README.md` carried a second, independently
+// drifting transcription of the same number (91/91 — already wrong on the commit that
+// shipped it) until it was rewritten to point readers at `npm run lint:derivation` instead
+// of restating a figure. That rewrite is the right shape and is why README is not on the
+// list below: there is no number there to drift.
+//
+// Neither stale number was ever produced by running anything. Both were typed by hand, so
+// both went stale the moment a class was added under docs/ns/, and they went stale at
+// different rates because there were two copies and no authority. The gate that PRODUCES
+// the count is the only thing that can honestly assert it, so it asserts it here.
+//
+// Deliberately strict about the sentence shape: if someone rewords the claim out of
+// existence, that is reported too. A claim this gate cannot find is a claim nobody checks,
+// which is the state that produced the drift in the first place. If the wording must
+// change, change DOC_CLAIMS in the same commit — or delete the number the way README did.
+//
+// CHANGELOG.md is deliberately NOT on this list. Its 41/41, 86/86 and 91/91 entries are
+// history and were correct when written; "fixing" them would falsify the record.
+const DOC_CLAIMS = [
+  // `\s+` and not a literal space: LAYERS.md wraps the sentence mid-claim, and this repo
+  // checks out CRLF on Windows, so the separator is "\r\n" there and "\n" in CI. A
+  // literal-space pattern silently never matches and turns this check into a no-op.
+  { file: 'spec/LAYERS.md', re: /Current status: \*\*(\d+)\/(\d+)\s+classes grounded\*\*/ },
+];
+
+let docDrift = 0;
+for (const { file, re } of DOC_CLAIMS) {
+  const claim = readFileSync(join(__dirname, '..', file), 'utf8').match(re);
+  if (!claim) {
+    console.error(`\nFAIL: ${file} no longer states the grounding count where this gate looks for it (${re}). Restore the sentence, or update DOC_CLAIMS to match the new wording.`);
+    docDrift++;
+  } else if (Number(claim[1]) !== totalGrounded || Number(claim[2]) !== totalChecked) {
+    console.error(`\nFAIL: ${file} says ${claim[1]}/${claim[2]} grounded; this run measured ${totalGrounded}/${totalChecked}. Update the prose to the measured number.`);
+    docDrift++;
+  }
+}
 
 if (totalUngrounded > 0) {
   console.error(`\nFAIL: ${totalUngrounded} ungrounded class(es). Add rdfs:subClassOf, owl:equivalentClass, or iep:constructedFrom, or mark primitive.`);
-  process.exit(1);
 }
-console.log('\nPASS: every L2/L3 class is grounded.');
+// BOTH failures are reported before exiting, and BOTH exit non-zero. A gate that prints
+// FAIL and returns 0 is the dead signal this repo has already been bitten by (see the
+// header of tools/lint-gate.mjs).
+if (totalUngrounded > 0 || docDrift > 0) process.exit(1);
+console.log('\nPASS: every L2/L3 class is grounded, and spec/LAYERS.md states the same count.');

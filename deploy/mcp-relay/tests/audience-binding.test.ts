@@ -61,7 +61,9 @@ function makeProvider(resourceIdentifier?: string) {
 /** Drive the pending-authorization → code flow, optionally naming a resource. */
 function issueCode(provider: InteregoOAuthProvider, resource?: string): string {
   const pendingId = randomBytes(8).toString('hex');
-  // @ts-expect-error test-only seam into private state
+  // Element access is the supported way to reach a private member — no directive needed, and
+  // a `@ts-expect-error` here would MUTE the error a rename of this field must produce. One
+  // sat here until `tsconfig.tests.json` put this file in a compiler and reported it unused.
   provider['pendingAuthorizations'].set(pendingId, {
     client: CLIENT,
     params: {

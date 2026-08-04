@@ -72,12 +72,25 @@ function taskForAgent(agent) {
 
 // Pre-create the per-agent workspaces and copy the tests into each
 // (the tests are the spec — every agent runs the same ones).
+//
+// ★ THESE COPIES ARE TRACKED IN GIT AND MACHINE-WRITTEN. `workspace-alpha/tests/` and
+// `workspace-beta/tests/` are overwritten VERBATIM from `task.tests.file` on every run, so
+// they are byte-identical to `workspace/tests/` by construction — and a hand edit to either
+// copy is silently reverted the next time this runs, resurfacing later as a dirty tree
+// nobody can account for. Anything that must be true of the spec has to be edited in
+// `workspace/tests/modalDistribution.test.mjs` and mirrored into both copies in the same
+// change. All three carry a header saying they are demo fixtures and not repo CI gates;
+// that header only survives because it is in the source this loop copies from.
 for (const a of agents) {
   const dir = resolvePath(__dirname, a.workspaceSubdir, 'tests');
   mkdirSync(dir, { recursive: true });
   const testSrc = resolvePath(__dirname, task.tests.file);
   const testDst = resolvePath(dir, 'modalDistribution.test.mjs');
-  // Adjust the import path so the test points at the per-agent impl.
+  // Copied unchanged. (An earlier comment here claimed the import path was rewritten to
+  // point at the per-agent implementation; it never was. The spec's `../modalDistribution.mjs`
+  // is already relative to the per-agent `tests/` dir it lands in, so no rewrite is needed —
+  // and describing one that does not happen is how the next reader looks for a bug that
+  // is not there.)
   const testContent = readFileSync(testSrc, 'utf8');
   writeFileSync(testDst, testContent, 'utf8');
 }

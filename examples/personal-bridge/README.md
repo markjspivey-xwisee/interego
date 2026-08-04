@@ -65,15 +65,20 @@ cd examples/personal-bridge
 npm install
 npm run build
 PORT=5050 BRIDGE_KEY=0xYOUR_PRIVATE_KEY npm start
+
+# To reach it from other devices (LAN / Tailscale) a credential is required —
+# binding wider than loopback without one is refused at startup:
+# BIND=0.0.0.0 BRIDGE_TOKEN=$(openssl rand -hex 32) PORT=5050 BRIDGE_KEY=0x... npm start
 ```
 
 You'll see (on stderr):
 
 ```
 @interego/personal-bridge running
-  Bind:            http://0.0.0.0:5050
+  Bind:            http://127.0.0.1:5050
   Bridge pubkey:   0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
   Signing:         ecdsa
+  Auth:            none — loopback only
   Encryption pk:   ...base64...
   External relays: (none — fully local)
 
@@ -83,14 +88,16 @@ Point your MCP clients at:
 Admin UI:  http://<your-host>:5050/
 ```
 
-Open the admin UI in any browser to verify.
+Open the admin UI in any browser to verify. When `BRIDGE_TOKEN` is set, open `http://<host>:5050/?access_token=<your token>` once — the page moves the token to `sessionStorage` and clears it from the address bar.
 
 ## Configuration
 
 | Env var | Default | What it does |
 |---|---|---|
 | `PORT` | `5050` | TCP port to bind |
-| `BIND` | `0.0.0.0` | Bind address (HTTP mode only). Use `127.0.0.1` to firewall to the local machine. |
+| `BIND` | `127.0.0.1` | Bind address (HTTP mode only). Loopback by default. Any other value (`0.0.0.0`, a LAN or Tailscale address) requires `BRIDGE_TOKEN` — the bridge refuses to start otherwise. |
+| `BRIDGE_TOKEN` | `(empty)` | Bearer credential. When set, every HTTP route except `GET /health` requires `Authorization: Bearer <token>` (or `?access_token=<token>`, which `EventSource` needs because it cannot send a header). REQUIRED whenever `BIND` is not loopback. Generate with `openssl rand -hex 32`. |
+| `BRIDGE_ALLOWED_ORIGINS` | `(empty)` | Comma-separated browser origins permitted to call the bridge cross-origin. Empty means no `Access-Control-Allow-Origin` header is sent at all. Non-browser MCP clients (Claude Code, Cursor, claude.ai connectors) send no `Origin` and are unaffected. |
 | `MCP_TRANSPORT` | `http` | `http` (Express server with admin UI + REST + multi-device) or `stdio` (single-client, JSON-RPC over stdin/stdout, ideal for `.mcp.json` spawn). |
 | `BRIDGE_PERSIST` | `1` | When `1` (default), events are persisted to JSONL and replayed on restart. Set `BRIDGE_PERSIST=0` for the volatile in-memory relay (useful for tests / one-shot demos). |
 | `BRIDGE_DATA_DIR` | `~/.interego-bridge` | Where the events file (`events.jsonl`) lives when persistence is on. |
@@ -109,7 +116,7 @@ Each MCP client points at the same bridge URL — that URL is your permanent ide
 | Desktop Claude Code | `.mcp.json` entry → `{"mcpServers":{"personal-bridge":{"url":"http://localhost:5050/mcp"}}}` (when bridge runs on same machine) or LAN/Tailscale URL when remote. |
 | Cursor / Continue / Cline | Same shape — custom MCP server URL pointing at the bridge. |
 
-For mobile to reach a desktop bridge across networks, **Tailscale is the right answer.** It gives you a stable hostname that works from anywhere, no port-forwarding, no public exposure.
+For mobile to reach a desktop bridge across networks, **Tailscale is the right answer** for the NETWORK layer — a stable hostname that works from anywhere, no port-forwarding, no public exposure. It is not the whole answer: set `BRIDGE_TOKEN` as well and have each client send `Authorization: Bearer <token>` (in `.mcp.json`, a `"headers"` entry alongside `"url"`). Tailscale authenticates the network path; the token authenticates the request, including requests a browser on an already-authorized machine makes on someone else's behalf.
 
 ## Tools the bridge exposes
 
@@ -143,7 +150,7 @@ The relay sees: ciphertext + recipient signing pubkeys + topic. The relay does N
 
 ## Limitations
 
-- **No bridge-level auth** — the bridge listens for whoever can reach the URL. Bind to `127.0.0.1` and access through Tailscale (which authenticates) for the simplest secure setup. Future: add bearer-token auth for direct internet exposure.
+- **Auth is one shared bearer token, not per-device identity** — `BRIDGE_TOKEN` gates every route except `GET /health`. It does not distinguish one of your devices from another, so revoking a single device means rotating the token on all of them; per-client credentials (each device holding its own key, authorized by signature) are not implemented, and neither is rate limiting or an audit of who called what. The default `BIND=127.0.0.1` needs no token; any wider bind refuses to start without one. Note that binding to loopback is not on its own a browser defence — that is why `Access-Control-Allow-Origin` is now an explicit allow-list (`BRIDGE_ALLOWED_ORIGINS`, empty by default) rather than `*`. `?access_token=` also lands in browser history and in any reverse-proxy access log placed in front of the bridge; it is accepted because `EventSource` cannot send a header, and it is a real weakening rather than a free convenience. The stdio transport needs no token: the parent process that spawned it is the trust boundary.
 - **Vertical tools require pod URLs** — the `lpc.*` / `adp.*` / `lrs.*` / `ac.*` tools all need `<VERTICAL>_POD_URL` env vars (or per-call overrides) pointing at the user's Solid pod. Without them the tools throw `XYZ_POD_URL or args.podUrl required`. Bridge alone (without vertical configs) still exposes the 6 core p2p tools.
 
 (Note: external relay forwarding via `EXTERNAL_RELAYS` and file-backed persistence via `BRIDGE_PERSIST=1` are both wired and on by default. See [`tests/p2p-public-relay.test.ts`](../../tests/p2p-public-relay.test.ts) and [`tests/file-backed-relay.test.ts`](../../tests/file-backed-relay.test.ts).)

@@ -1,5 +1,6 @@
 # shape: wsp-shapes.ttl
 # expect: violates
+# pins: wsp:references
 # why: wsp:references must cite a dereferenceable IRI. Citing something unresolvable is indistinguishable from citing nothing — and this is another sh:pattern-on-IRI case.
 
 @prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .

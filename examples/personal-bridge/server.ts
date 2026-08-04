@@ -55,7 +55,7 @@ import {
 } from '@interego/p2p';
 import { homedir } from 'node:os';
 import { join as pathJoin } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -63,10 +63,45 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PORT = parseInt(process.env['PORT'] ?? '5050', 10);
 
-// Bind interface — defaults to all interfaces so Tailscale + LAN
-// devices can reach it. Override to 127.0.0.1 if you want to
-// firewall the bridge to the local machine only.
-const BIND = process.env['BIND'] ?? '0.0.0.0';
+// Bind interface. LOOPBACK by default, not 0.0.0.0.
+//
+// ★ WHY THE DEFAULT MOVED. With `0.0.0.0` and no credential, the README's own
+// quick start put a DECRYPTION ORACLE on every interface. Reproduced against this
+// file: an unauthenticated `POST /api/publish` wrote to the operator's relay, an
+// unauthenticated `POST /api/inbox` listed their encrypted shares, and an
+// unauthenticated `POST /mcp {"method":"tools/call","params":{"name":"decrypt_share"}}`
+// returned the PLAINTEXT of one. No token was checked because no token existed. The
+// bridge holds the X25519 key derived from BRIDGE_KEY (see deriveEncryptionKeyPair
+// below), so "reachable" and "can read your mail" were the same thing.
+// Reaching the LAN / Tailscale case is now an explicit act, and `assertBindIsSafe`
+// makes it conditional on having a credential.
+const BIND = process.env['BIND'] ?? '127.0.0.1';
+
+// Bridge-level credential. When set, every HTTP surface except `GET /health`
+// requires `Authorization: Bearer <BRIDGE_TOKEN>`.
+//
+// Read once at module scope so the startup banner can state the posture. The
+// per-request decision lives in `bridgeAuthDecision`, which is a PURE function
+// precisely because this is module-scope: vitest imports this file once, so a test
+// cannot re-import it with a different value, and both branches have to be
+// reachable from the one instance.
+const BRIDGE_TOKEN = process.env['BRIDGE_TOKEN'] ?? '';
+
+// Browser origins allowed to call the bridge cross-origin. EMPTY by default.
+//
+// ★ THIS USED TO BE A HARD-CODED `*`, AND THAT IS WHAT MADE THE README'S OWN
+// MITIGATION FALSE. "Bind to 127.0.0.1 and reach it over Tailscale" does not stop a
+// browser: the browser is already inside the loopback boundary. With
+// `Access-Control-Allow-Origin: *` and no credential, ANY page the operator visits
+// could POST to `http://127.0.0.1:5050/api/inbox` AND READ THE REPLY, then decrypt
+// it. Reproduced — the preflight from `Origin: https://evil.example` answered 204
+// with `Access-Control-Allow-Origin: *`, and so did the POST.
+// Non-browser MCP clients (Claude Code, Cursor, claude.ai's server-side connector
+// fetch) send no Origin at all and are unaffected by an empty list.
+const ALLOWED_ORIGINS = (process.env['BRIDGE_ALLOWED_ORIGINS'] ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 // Transport: 'http' (default — Express server with /mcp + REST + admin
 // UI) or 'stdio' (JSON-RPC over stdin/stdout, single-client, perfect
@@ -387,16 +422,99 @@ function bridgeStatus(): Record<string, unknown> {
   };
 }
 
+// ── Bridge-level auth ────────────────────────────────────────
+
+/**
+ * Constant-time credential compare.
+ *
+ * `timingSafeEqual` throws on unequal lengths, so the length test has to come
+ * first — and it is deliberately NOT the whole comparison. `===`, `startsWith`, or
+ * a length-only check would leak the token a byte at a time through response
+ * timing. The "wrong token of the SAME LENGTH" test in
+ * tests/personal-bridge.test.ts exists to kill exactly that mutant.
+ */
+function credentialMatches(presented: string, expected: string): boolean {
+  const a = Buffer.from(presented, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * The whole authorization decision, as a pure function.
+ *
+ * Exported and pure so the suite can reach BOTH branches (gated and
+ * open-loopback) from the single module instance vitest imports. The Express
+ * middleware below does nothing but call this — so unit-testing this tests the
+ * DECISION, and the live-listener test in the suite is what proves the middleware
+ * is MOUNTED. Both are needed: a helper that is correct and unwired is the exact
+ * shape of the defect this closes.
+ */
+export function bridgeAuthDecision(input: {
+  method: string;
+  path: string;
+  authorization?: string | undefined;
+  accessToken?: string | undefined;
+  expectedToken: string;
+}): { allow: true } | { allow: false; status: number; error: string } {
+  // Liveness only — `{ok:true}`, no identity, no state. quickstart/docker-compose.yml
+  // healthchecks this; a gated /health makes the bridge unmonitorable by anything
+  // that has no business holding the token.
+  if (input.method === 'GET' && input.path === '/health') return { allow: true };
+  // Preflights carry no Authorization by definition, and the CORS middleware has
+  // already answered them before this runs. Listed anyway so that reordering the
+  // two middlewares cannot silently lock out every browser client.
+  if (input.method === 'OPTIONS') return { allow: true };
+  // No credential configured. Safe only because `assertBindIsSafe` has already
+  // refused to start this process on anything but loopback.
+  if (input.expectedToken === '') return { allow: true };
+
+  const header = input.authorization ?? '';
+  // `?access_token=` per RFC 6750 §2.3, and it is not decoration: the admin UI's
+  // live feed is an `EventSource`, which cannot set a request header at all.
+  const presented = header.startsWith('Bearer ')
+    ? header.slice('Bearer '.length)
+    : (input.accessToken ?? '');
+  if (presented === '') return { allow: false, status: 401, error: 'bridge credential required' };
+  if (!credentialMatches(presented, input.expectedToken)) {
+    return { allow: false, status: 401, error: 'bridge credential rejected' };
+  }
+  return { allow: true };
+}
+
+/**
+ * Startup fail-closed check.
+ *
+ * Binding past loopback with no credential is the configuration that produced the
+ * unauthenticated decrypt above, so the process REFUSES to start in it rather than
+ * warning. A warning is what the README had — in prose — and it stopped nothing.
+ */
+export function assertBindIsSafe(bind: string, token: string): void {
+  const loopback = bind === '127.0.0.1' || bind === '::1' || bind === 'localhost';
+  if (loopback || token !== '') return;
+  throw new Error(
+    `refusing to start: BIND=${bind} exposes the bridge past loopback with no BRIDGE_TOKEN set. ` +
+    `Any caller that can reach this port could publish to your relay, list your encrypted inbox and decrypt it. ` +
+    `Set BRIDGE_TOKEN=<a long random string>, or leave BIND at 127.0.0.1.`,
+  );
+}
+
 // ── Express server ───────────────────────────────────────────
 
 const app = express();
 app.use(express.json({ limit: '4mb' }));
 
-// CORS — allow MCP clients from any origin, since this is your
-// own bridge on your own network. Tighten if you expose it
-// beyond your trust boundary.
+// CORS — explicit allow-list, never `*`. See BRIDGE_ALLOWED_ORIGINS above for
+// what the wildcard cost: it put the bridge inside reach of every page the
+// operator's browser loaded, which is the one path "bind to loopback" does not
+// close.
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    // Without Vary, a shared cache can serve the allow-listed origin's headers
+    // to a request that came from a different one.
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   // Mcp-Method / Mcp-Name are required on protocol revision 2026-07-28, which this
   // bridge now serves; a browser cannot send a header the preflight did not allow.
@@ -413,6 +531,25 @@ app.use((req, res, next) => {
   // syntax, so this cannot break again when the pin moves.
   if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();
+});
+
+// ── The gate ─────────────────────────────────────────────────
+// AFTER the CORS middleware, because a browser sends no Authorization on a
+// preflight and the preflight must still be answered. BEFORE every route, so that
+// a route added below this line is gated by DEFAULT rather than by somebody
+// remembering to gate it — route-by-route was how `/api/inbox` and `/mcp` came to
+// differ from nothing at all.
+app.use((req, res, next) => {
+  const decision = bridgeAuthDecision({
+    method: req.method,
+    path: req.path,
+    authorization: typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
+    accessToken: typeof req.query['access_token'] === 'string' ? req.query['access_token'] : undefined,
+    expectedToken: BRIDGE_TOKEN,
+  });
+  if (decision.allow) { next(); return; }
+  res.setHeader('WWW-Authenticate', 'Bearer realm="interego-personal-bridge"');
+  res.status(decision.status).json({ error: decision.error });
 });
 
 // ── Admin UI ─────────────────────────────────────────────────
@@ -613,24 +750,31 @@ if (process.env['NODE_ENV'] !== 'test') {
   if (mirror) mirror.start();
 
   if (TRANSPORT === 'stdio') {
+    // stdio needs no token: the parent process that spawned it IS the trust boundary,
+    // and there is no port for anyone else to reach.
     void startStdioTransport();
   } else {
+    // Before the listener exists, not after — a bridge that binds and then
+    // complains has already accepted its first request.
+    assertBindIsSafe(BIND, BRIDGE_TOKEN);
     app.listen(PORT, BIND, () => {
       log('');
       log(`@interego/personal-bridge running`);
       log(`  Bind:            http://${BIND}:${PORT}`);
       log(`  Bridge pubkey:   ${client.pubkey}`);
       log(`  Signing:         ${SIGNING_SCHEME}`);
+      log(`  Auth:            ${BRIDGE_TOKEN ? 'Bearer token required (BRIDGE_TOKEN)' : 'none — loopback only'}`);
       log(`  Encryption pk:   ${encryptionKeyPair.publicKey}`);
       log(`  External relays: ${externalRelayUrls.length === 0 ? '(none — fully local)' : externalRelayUrls.join(', ')}`);
       log(``);
       log(`Point your MCP clients at:`);
       log(`  http://<your-host>:${PORT}/mcp`);
       log(``);
-      log(`Admin UI:  http://<your-host>:${PORT}/`);
+      // The token is deliberately NOT interpolated — stderr ends up in logs and screenshots.
+      log(`Admin UI:  http://<your-host>:${PORT}/${BRIDGE_TOKEN ? '?access_token=<your BRIDGE_TOKEN>' : ''}`);
       log(`Status:    http://<your-host>:${PORT}/status`);
     });
   }
 }
 
-export { app, tools, bridgeStatus, client };
+export { app, tools, bridgeStatus, client, BRIDGE_TOKEN };

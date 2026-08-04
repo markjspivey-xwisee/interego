@@ -84,7 +84,12 @@ async function spawnPersonalBridge(
 
   // Wait for GET /status to respond — the personal-bridge exposes
   // bridgeStatus() there as JSON.
-  const url = `http://localhost:${port}`;
+  //
+  // ★ 127.0.0.1, not `localhost`. The bridge now defaults to BIND=127.0.0.1, which is
+  // IPv4-ONLY; `localhost` may resolve to ::1 first, and this readiness probe would then
+  // hang for the full 30s deadline and report as a timeout rather than as what it is.
+  // No BRIDGE_TOKEN is set above, so this demo stays on the open-loopback path.
+  const url = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     try {
