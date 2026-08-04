@@ -46,8 +46,50 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
+/**
+ * ★ COMMENTS ARE STRIPPED BEFORE ANY ASSERTION BELOW MATCHES, AND THAT IS NOT TIDINESS.
+ *
+ * Every check in this file is a regex over source TEXT, and several of them bound the
+ * distance between two tokens (`guardedInvokeFetch[\s\S]{0,900}redirect: 'manual'`). That
+ * makes them sensitive to something that is not behaviour: adding a long explanatory comment
+ * between the two tokens pushes them apart and turns a security assertion RED while the code
+ * it describes is unchanged. That happened — a production-incident note written inside
+ * `guardedInvokeFetchLanded` failed both R4 redirect checks with the redirect handling fully
+ * intact — and the pressure it creates is to shorten the comment, i.e. to delete the
+ * explanation because a test cannot see past it.
+ *
+ * The converse is worse and this repo has already paid for it: a bare `/Strict-Transport-
+ * Security/` was satisfied by a RATIONALE COMMENT left behind after the real `setHeader` was
+ * deleted, so the mutant survived. A comment must be able neither to satisfy nor to defeat an
+ * assertion about code.
+ *
+ * Same stripper as `listen-loopback.test.ts`: block comments, then whole-line `//` and jsdoc
+ * `*` continuations only. Deliberately NOT mid-line `//`, which would eat the `//` in every
+ * `http://…` literal these checks match on.
+ */
+const stripComments = (src: string): string => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split(/\r?\n/)
+  .filter(l => !/^\s*(\/\/|\*)/.test(l))
+  .join('\n');
+
 const SERVER = readFileSync(join(here, '..', 'server.ts'), 'utf8');
 const REACH = readFileSync(join(here, '..', 'reachability.ts'), 'utf8');
+
+/**
+ * ★ TWO VIEWS, ON PURPOSE — and the first attempt at this used only the stripped one and
+ * broke four assertions, which is what taught the distinction.
+ *
+ * Some checks in this file are about PROSE and must read the raw text: "the misleading
+ * 'carry no secret' comment is gone from reachability.ts" and "reachability.ts warns that
+ * non-native values are secrets/PII" are assertions that a WARNING exists. Stripping
+ * comments makes those unsatisfiable no matter what the file says.
+ *
+ * The DISTANCE checks are the opposite: they must not see comments at all. Use `SERVER_CODE`
+ * for any assertion whose meaning is "these two tokens are near each other", and raw `SERVER`
+ * for anything whose subject is the documentation.
+ */
+const SERVER_CODE = stripComments(SERVER);
 
 let failures = 0;
 function check(name: string, cond: boolean, detail = ''): void {
@@ -176,10 +218,15 @@ check('OAuth branch sets _session_agent_did',
 console.log('\n14. R4 — the egress guard screens EVERY redirect hop, not just the first URL');
 // solidFetch calls fetch() with no `redirect` option → undici follows up to 20 hops
 // unscreened, so `302 Location: http://169.254.169.254/…` defeated the guard in one hop.
+// SERVER_CODE, not SERVER: both of these bound the DISTANCE between two tokens, so a long
+// comment between them fails the check with the code unchanged. That is not hypothetical —
+// the production-incident note now sitting inside guardedInvokeFetchLanded (why the
+// guarded-egress dispatcher is built and not wired) failed both of these while the manual
+// redirect loop and the per-hop screen were fully intact.
 check('guardedInvokeFetch follows redirects manually',
-  /guardedInvokeFetch[\s\S]{0,900}redirect: 'manual'/.test(SERVER));
+  /guardedInvokeFetch[\s\S]{0,900}redirect: 'manual'/.test(SERVER_CODE));
 check('it re-screens each hop inside the loop',
-  /for \(let hop = 0; hop <= GUARDED_MAX_REDIRECTS[\s\S]{0,200}assertInvokeTargetAllowed\(target\)/.test(SERVER));
+  /for \(let hop = 0; hop <= GUARDED_MAX_REDIRECTS[\s\S]{0,200}assertInvokeTargetAllowed\(target\)/.test(SERVER_CODE));
 check('it bounds the hop count',
   /GUARDED_MAX_REDIRECTS/.test(SERVER) && /too many redirects/.test(SERVER));
 check('relative Location values are resolved against the current hop',
