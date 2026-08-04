@@ -866,10 +866,13 @@ const {
 } = createEgress({
   cssUrl: CSS_URL,
   publicBaseUrl: PUBLIC_BASE_URL,
-  // OFF unless explicitly switched on for a diagnostic deploy. Turning this on has taken
-  // shape-gated publish down twice, and both times the code was correct in every
-  // environment anyone could reproduce. See `EgressConfig.screenAddresses`.
-  screenAddresses: process.env['RELAY_ADDRESS_SCREEN'] === '1',
+  // ON by default, as of the run that finally measured the cause in the image: with the
+  // undici-copy fix deployed and the screen live, a shape-gated publish SUCCEEDS, a name
+  // resolving to 10.0.0.5 is refused at connect with ERR_EGRESS_PRIVATE_ADDRESS, and the
+  // four live verifiers are 20/20/14/88. `RELAY_ADDRESS_SCREEN=0` remains as an escape
+  // hatch — it turns a security control off, so it should only ever be set while someone
+  // is watching. See `EgressConfig.screenAddresses`.
+  screenAddresses: process.env['RELAY_ADDRESS_SCREEN'] !== '0',
 });
 
 // The GLOBAL dispatcher is the UNGUARDED pool, deliberately: the relay's own CSS

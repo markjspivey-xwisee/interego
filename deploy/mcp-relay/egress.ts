@@ -44,15 +44,14 @@ export interface EgressConfig {
   /** The relay's own public base (AMEP acts loop back through it). '' when unset. */
   publicBaseUrl: string;
   /**
-   * ★ Attach the address screen to caller-supplied egress. DEFAULT OFF, and the default
-   * is the whole point.
+   * ★ Attach the address screen to caller-supplied egress. DEFAULT ON — and it took three
+   * attempts to earn that default, so the history is kept rather than tidied away.
    *
-   * Wiring this on has now taken shape-gated publish down TWICE — #260, unwound by #261,
-   * and again on the deploy of #263, caught by a direct probe returning
-   * `iep:shapeUnfetchable` and rolled back the same hour. Both times the code was correct
-   * everywhere it could be reproduced (Windows, `node:22-slim`, three independent
-   * attempts) and wrong in the Railway container, whose resolver neither reproduction
-   * could observe from outside Railway.
+   * Wiring this on took shape-gated publish down TWICE — #260, unwound by #261, and again
+   * on the deploy of #263, caught by a direct probe returning `iep:shapeUnfetchable` and
+   * rolled back the same hour. Both times the code was correct everywhere it could be
+   * reproduced (Windows, `node:22-slim`, three independent attempts) and wrong in the
+   * Railway container.
    *
    * ★ THE MEASUREMENT WAS TAKEN, AND IT REFUTED EVERY NETWORK THEORY. 2026-08-04, flag on,
    * one shape-gated publish, straight out of the relay's WARN log:
@@ -65,11 +64,20 @@ export interface EgressConfig {
    * addresses tripping `PRIVATE_IPV6_RE`) were about the network and both were wrong.
    * The fix is at the dispatch site in `guardedInvokeFetchLanded`.
    *
-   * The flag stays because the default should change on EVIDENCE FROM THE IMAGE, not on a
-   * fix that typechecks. Two rounds of "correct everywhere I could reproduce it" reached
-   * production; this one gets confirmed in the container before it becomes the default.
-   * To re-verify: `RELAY_ADDRESS_SCREEN=1`, publish a shape-gated graph, expect it to
-   * SUCCEED, and run the four live verifiers.
+   * ★ AND THEN THE DEFAULT WAS EARNED, IN THE IMAGE. With the fix deployed and the screen
+   * live on the real relay:
+   *
+   *     shape-gated publish against GitHub Pages  -> PUBLISHED
+   *     conforms_to_shapes: 10-0-0-5.nip.io       -> refused at connect,
+   *                                                  ERR_EGRESS_PRIVATE_ADDRESS (10.0.0.5)
+   *     verify-stream / cross-org / compose / can -> 20 / 20 / 14 / 88
+   *
+   * That is the screen doing the one thing a NAME screen provably cannot, with no
+   * collateral. So this defaults ON, and `RELAY_ADDRESS_SCREEN=0` is the escape hatch.
+   *
+   * ★ SETTING THAT TO `0` TURNS OFF A SECURITY CONTROL. It exists so an incident can be
+   * bounded in minutes instead of waiting on a build, not as a config knob. If it is set,
+   * something is wrong and someone should be watching.
    *
    * It is NOT a licence to leave the screen off forever. `assertPublicPodUrl` still
    * screens the NAME on every request; what is unattached is the ADDRESS half, and the

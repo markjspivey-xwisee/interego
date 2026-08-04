@@ -377,19 +377,19 @@ describe('★ the address screen is WIRED: a socket, from the far side', () => {
   }, 45_000);
 
   /**
-   * ★ THE DEFAULT IS OFF, AND THAT IS A CLAIM ABOUT PRODUCTION, NOT A CONFIG DETAIL.
+   * ★ OFF IS NOW THE EXPLICIT CHOICE, AND IT MUST STILL BEHAVE.
    *
-   * Every other test in this block passes `screenAddresses: true`, which is correct —
-   * they are about whether the screen WORKS. None of them says anything about whether it
-   * is switched on, and the relay ships it off (`RELAY_ADDRESS_SCREEN` unset). Without
-   * this test the suite would read as "the address screen is covered" while production
-   * runs without it, which is a milder version of exactly the mistake that let a detached
-   * dispatcher ship green: a green suite standing in for a live property.
+   * This test was written when the relay shipped the screen OFF, to stop the suite from
+   * reading as "covered" while production ran without it. The relay now defaults it ON
+   * (`RELAY_ADDRESS_SCREEN !== '0'`, pinned in the relay's own suite), so what is left to
+   * pin here is the ESCAPE HATCH: `screenAddresses: false` must actually detach the
+   * screen, because that is what someone will reach for mid-incident.
    *
-   * So the gap is pinned rather than implied. When the screen is turned on for good, this
-   * test fails, and its failure is the reminder to state the new default here.
+   * A hatch that silently does nothing is worse than no hatch — the operator believes the
+   * control is off, keeps debugging past it, and the real fault stays hidden behind a
+   * refusal they think they disabled.
    */
-  it('DEFAULTS OFF — the address screen is not attached unless asked for', async () => {
+  it('the escape hatch works — screenAddresses:false really does detach the screen', async () => {
     const restore = setEgressResolverForTests((_h, options, cb) => {
       if (options['all']) { cb(null, [{ address: '127.0.0.1', family: 4 }]); return; }
       cb(null, '127.0.0.1', 4);

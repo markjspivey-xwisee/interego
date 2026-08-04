@@ -264,8 +264,8 @@ check('relative Location values are resolved against the current hop',
 // when RELAY_ADDRESS_SCREEN=1".
 check('the public branch is wired to the address-screening pool, gated by screenAddresses',
   /mode === 'public' && screenAddresses \? \{ dispatcher: guardedEgressAgent \}/.test(EGRESS_CODE));
-check('and that gate defaults OFF in the relay, so production runs on the NAME screen alone',
-  /screenAddresses:\s*process\.env\['RELAY_ADDRESS_SCREEN'\] === '1'/.test(SERVER));
+check('and that gate defaults ON in the relay — only an explicit "0" turns the screen off',
+  /screenAddresses:\s*process\.env\['RELAY_ADDRESS_SCREEN'\] !== '0'/.test(SERVER));
 
 console.log('\n15. R4 — caller-supplied URLs no longer reach raw solidFetch');
 check('get_descriptor fetches through the guard',
