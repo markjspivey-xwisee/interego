@@ -855,20 +855,24 @@ const outboundAgent = new Agent({
 });
 setGlobalDispatcher(outboundAgent);
 
-// ── Guarded-egress dispatcher (caller-supplied URLs ONLY) ───
+// ── Guarded-egress dispatcher — BUILT, NOT WIRED ────────────
 //
 // Same pool settings as `outboundAgent`, plus a connect-time resolver that
-// refuses private addresses. It is deliberately NOT the global dispatcher:
-// css.railway.internal and IDENTITY_URL resolve to private addresses BY DESIGN,
-// and screening them would take the relay off its own pod. Only
-// `guardedInvokeFetchLanded` uses it, and only for targets that are not the
-// pinned CSS / PUBLIC_BASE origins.
+// refuses private addresses. It would be the in-tree half of the SSRF screen:
+// `assertPublicPodUrl` screens the NAME, this screens the ADDRESS at the moment
+// of connect, which is what stops a name that STATICALLY points at private
+// space (measured: 10-0-0-5.nip.io -> 10.0.0.5) from ever getting a socket.
 //
-// This is the in-tree half of the SSRF screen. assertPublicPodUrl screens the
-// NAME; this screens the ADDRESS, at the moment of connect, so there is no
-// window in which a hostname's A-record can change between check and dial —
-// and, more importantly, a name that STATICALLY points at private space
-// (measured: 10-0-0-5.nip.io -> 10.0.0.5) no longer gets a socket at all.
+// ★ IT IS NOT ATTACHED TO ANY FETCH. It was, for one deploy, and it took every
+// shape-gated publish down — see the long note at `guardedInvokeFetchLanded`,
+// which is where it was wired and where the diagnosis lives. Kept here, unused
+// and compiling, because it is two-thirds of a correct fix and deleting it would
+// throw away the `screeningEgressLookup` work the predicate mutants do cover;
+// the missing third is address SELECTION (it forces one address and breaks
+// IPv4/IPv6 fallback) plus any way to test the wiring at all.
+//
+// It is referenced by `void guardedEgressAgent` below rather than left dangling,
+// so `noUnusedLocals` cannot decide this decision for us by deleting it.
 const guardedEgressAgent = new Agent({
   keepAliveTimeout: 30_000,
   keepAliveMaxTimeout: 120_000,
@@ -876,6 +880,7 @@ const guardedEgressAgent = new Agent({
   pipelining: 1,
   connect: { lookup: screeningEgressLookup as never },
 });
+void guardedEgressAgent;
 
 // ── Fetch wrapper ───────────────────────────────────────────
 
@@ -1002,15 +1007,46 @@ async function guardedInvokeFetchLanded(
 ): Promise<{ response: Awaited<ReturnType<FetchFn>>; landedUrl: string }> {
   let target = normalizeCssUrl(url);
   for (let hop = 0; hop <= GUARDED_MAX_REDIRECTS; hop++) {
-    const mode = assertInvokeTargetAllowed(target);
-    // Per-hop, not once: a redirect can leave the pinned origins for a public
-    // host (or arrive at one), and the dispatcher must track the hop actually
-    // being dialed. `solidFetch` spreads init into the RequestInit, so undici
-    // picks `dispatcher` up.
+    // ★ THE ADDRESS SCREEN IS NOT WIRED HERE, AND THIS PARAGRAPH IS THE REASON.
+    //
+    // This line read
+    //     ...(mode === 'public' ? { dispatcher: guardedEgressAgent } : {})
+    // for exactly one production deploy. It took every shape-gated publish down:
+    // `fetchShapeRepresentation` reaches GitHub Pages through this function, the
+    // connect failed with an opaque `fetch failed`, and the conformance gate —
+    // correctly failing closed — refused every append with
+    // `422 iep:shapeUnfetchable`. The whole shared-workspace stream path stopped
+    // (verify-stream-live: 8/20). Reverted here, in production, minutes later.
+    //
+    // WHY IT PASSED EVERY CHECK. `screeningEgressLookup` forces `all: true` so it
+    // can screen EVERY address a name resolves to — that part is right and is
+    // covered by four killed mutants. What it then does is hand back
+    // `list[0]` when the caller did not ask for `all`, which replaces Node's own
+    // address selection with "whatever getaddrinfo listed first". For
+    // markjspivey-xwisee.github.io that is `2606:50c0:8003::153` — IPv6 — and
+    // supplying a single address also leaves `autoSelectFamily` with nothing to
+    // fall back to. On a box with IPv6 egress it connects and everything passes;
+    // in the Railway container it does not. Measured both ways.
+    //
+    // NOTHING IN THE SUITE COULD HAVE CAUGHT THIS, and it was flagged as such
+    // before it shipped: server.ts calls app.listen() at module scope, so no unit
+    // test can import this function, and this wiring was recorded as a
+    // review-only seam with a KNOWN-SURVIVING mutant (M5). It survived, and then
+    // it broke production. That is the cost of shipping a seam whose only
+    // verification is a human reading it.
+    //
+    // Re-landing it needs, in its own increment: (a) `screeningEgressLookup` to
+    // preserve Node's selection instead of forcing one address — screen the full
+    // list, return the caller's requested shape, and keep IPv4/IPv6 fallback
+    // alive; and (b) a way to exercise it against a real egress path, which
+    // means the RELAY_NO_LISTEN bootstrap change so this file is importable.
+    // Until then the SSRF defence here is `assertInvokeTargetAllowed` plus
+    // `assertPublicPodUrl` — the NAME screen, whose IPv6-bracket and v4-mapped
+    // holes this same change fixed and which are covered by tests.
+    void assertInvokeTargetAllowed(target);
     const r = await solidFetch(target, {
       ...(init as Record<string, unknown>),
       redirect: 'manual',
-      ...(mode === 'public' ? { dispatcher: guardedEgressAgent } : {}),
     } as typeof init);
     if (r.status < 300 || r.status >= 400) return { response: r, landedUrl: target };
     const loc = r.headers.get('location');
