@@ -863,7 +863,14 @@ const {
   assertInvokeTargetAllowed,
   guardedInvokeFetchLanded,
   guardedInvokeFetch,
-} = createEgress({ cssUrl: CSS_URL, publicBaseUrl: PUBLIC_BASE_URL });
+} = createEgress({
+  cssUrl: CSS_URL,
+  publicBaseUrl: PUBLIC_BASE_URL,
+  // OFF unless explicitly switched on for a diagnostic deploy. Turning this on has taken
+  // shape-gated publish down twice, and both times the code was correct in every
+  // environment anyone could reproduce. See `EgressConfig.screenAddresses`.
+  screenAddresses: process.env['RELAY_ADDRESS_SCREEN'] === '1',
+});
 
 // The GLOBAL dispatcher is the UNGUARDED pool, deliberately: the relay's own CSS
 // and identity hosts resolve to private addresses by design, and every raw
