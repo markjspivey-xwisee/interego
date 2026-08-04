@@ -200,23 +200,51 @@ ex:item3 ex:value "gamma" .
     expect(r.replayProof.chainLength).toBe(1);
   });
 
-  it('classifies a SHACL-shaped reducer body as shacl-transform', async () => {
+  it('classifies a SHACL-shaped reducer body as shacl-transform and RUNS its rule', async () => {
+    // ★ THIS FIXTURE USED TO BE `sh:rule [ a sh:TripleRule ; sh:subject sh:this ]` — a rule
+    // with no sh:predicate and no sh:object, i.e. not a rule at all. It passed, and it
+    // asserted that alpha/beta/gamma all survived the fold. Both facts had the same cause:
+    // the MVP fold returned `prior ∪ current` without ever looking at the shape, so an
+    // ill-formed rule and a working one were indistinguishable. The assertion was
+    // measuring the absence of the feature.
     const shaclReducer = `
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix ex: <https://example.org/test#> .
 ex:MergeShape a sh:NodeShape ;
-    sh:rule [ a sh:TripleRule ; sh:subject sh:this ] .
+    sh:targetSubjectsOf ex:value ;
+    sh:rule [ a sh:TripleRule ;
+              sh:subject sh:this ;
+              sh:predicate ex:value ;
+              sh:object [ sh:path ex:value ] ] .
 `.trim();
     const r = await reduce(G3, {
       fetch: makeFetcher(),
       reducerSpec: { kind: 'shacl-transform', shape: shaclReducer },
     });
     expect(r.replayProof.reducerKind).toBe('shacl-transform');
-    // Under the MVP shacl-transform fold (union), every link's body
-    // ends up in the state.
+    // Every link contributes exactly its ex:value triple, so all three still land — but
+    // now because the rule CONSTRUCTED them, not because the fold copied the whole body.
     expect(r.head).toContain('alpha');
     expect(r.head).toContain('beta');
     expect(r.head).toContain('gamma');
+    // What the union fold could never do: the iep:supersedes back-links are structural
+    // chain plumbing the projection does not select, and they are now absent from the
+    // reduced state.
+    expect(r.head).not.toContain('supersedes');
+  });
+
+  it('refuses an ill-formed sh:TripleRule instead of falling back to the union', async () => {
+    const broken = `
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <https://example.org/test#> .
+ex:MergeShape a sh:NodeShape ;
+    sh:targetSubjectsOf ex:value ;
+    sh:rule [ a sh:TripleRule ; sh:subject sh:this ] .
+`.trim();
+    await expect(reduce(G3, {
+      fetch: makeFetcher(),
+      reducerSpec: { kind: 'shacl-transform', shape: broken },
+    })).rejects.toThrow(/could not be executed/);
   });
 
   it('traversal:"full" vs "shortest" — auto_supersede_prior writes ALL priors per version; full mode recovers the entire lineage, shortest mode sees only the breadth-shortest path', async () => {

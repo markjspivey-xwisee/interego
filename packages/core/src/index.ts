@@ -322,8 +322,11 @@ export {
   getShaclShapesTurtle,
   SHACL_SHAPES_TURTLE,
   validateAgainstShape,
+  runShaclRules,
+  ShaclRuleError,
   type ShaclReport,
   type ShaclResult,
+  type ShaclRuleRun,
   type ShaclSeverity,
   type ValidateAgainstShapeOptions,
 } from './validation/index.js';

@@ -70,14 +70,23 @@ and [`demos/scenarios/25-dual-audience-learning.ts`](demos/scenarios/25-dual-aud
 
 Design discipline: [`docs/DUAL-AUDIENCE.md`](docs/DUAL-AUDIENCE.md).
 
-Deploy mechanism note: `.github/workflows/deploy-azure.yml` auto-deploys five
-images on push (dashboard, pgsl-browser, relay, identity, css). The
-`foxxi-bridge` and `css-gate` containers are deployed manually:
+Deploy mechanism note: nothing deploys on push. `.github/workflows/deploy-azure.yml` is
+not in the tree — it was deleted with the rest of the Azure footprint, along with the
+`contextgraphsacr` registry both commands below used to target. Reading this paragraph as
+written, a maintainer would merge to `master`, believe five images had shipped, and
+believe the two remaining ones could be shipped with `az acr build`. Neither is true, and
+the second fails only after it has started.
+
+Every service takes the same two explicit dispatches:
 
 ```bash
-az acr build --registry contextgraphsacr --image <name>:<tag> -f deploy/Dockerfile.<name> .
-az containerapp update -n <containerapp-name> -g context-graphs-rg --image <full-image-ref>
+gh workflow run build-ghcr.yml     -f image=interego-foxxi-bridge --ref master
+gh workflow run deploy-railway.yml -f service=foxxi-bridge -f tag=<40-hex-sha> \
+  -f verify_url=https://foxxi-bridge.interego.xwisee.com/health
 ```
+
+The `-f image=` flag takes the IMAGE name (`interego-foxxi-bridge`), which is not the
+Railway SERVICE name (`foxxi-bridge`).
 
 ## Aggregate-privacy ladder
 
