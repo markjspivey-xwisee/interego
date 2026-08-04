@@ -302,6 +302,20 @@ describe('★ the address screen is WIRED: a socket, from the far side', () => {
   it('hands the whole address list to Node, in order, with the family pin holding', async () => {
     const DEAD = [{ address: '240.0.0.1', family: 4 }, { address: '240.0.0.2', family: 4 }];
     const previousAutoSelect = net.getDefaultAutoSelectFamily();
+    // ★ BOUND THE ATTEMPT, DO NOT BOUND THE TEST. 240.0.0.0/4 is reserved space, and how a
+    // connect to it fails is a property of the ROUTING TABLE, not of this code: on a host
+    // with no route it is an immediate ENETUNREACH, and on a host with a default gateway —
+    // which every GitHub Actions runner has — the SYN goes out and nothing answers. This
+    // test passed here in 26ms and hit vitest's 5s ceiling in CI for exactly that reason.
+    //
+    // Happy Eyeballs bounds each attempt itself; the default is 250ms, and the two attempts
+    // plus TLS setup can crowd 5s on a loaded runner. Pinning it low makes the timing a
+    // property of this test rather than of the network the test happens to run on, and the
+    // ASSERTIONS are untouched: they are about how many candidates reached the connector,
+    // which is what the family pin is here to prove. Raising the vitest timeout instead
+    // would have left the real variable — the routing table — still in the test.
+    const previousAttemptTimeout = net.getDefaultAutoSelectFamilyAttemptTimeout();
+    net.setDefaultAutoSelectFamilyAttemptTimeout(100);
     let restoreResolver: (() => void) | undefined;
     let egress: ReturnType<typeof createEgress> | undefined;
     try {
@@ -327,6 +341,7 @@ describe('★ the address screen is WIRED: a socket, from the far side', () => {
         .toHaveLength(DEAD.length);
     } finally {
       net.setDefaultAutoSelectFamily(previousAutoSelect);
+      net.setDefaultAutoSelectFamilyAttemptTimeout(previousAttemptTimeout);
       restoreResolver?.();
       await egress?.close();
     }

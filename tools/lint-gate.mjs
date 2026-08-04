@@ -49,6 +49,7 @@
  */
 import { ESLint } from 'eslint';
 import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 
@@ -134,27 +135,32 @@ const TARGETS = ['packages', 'tests', 'tools'];
  */
 /**
  * ★★ AND THE CENSUS BELOW FOUND FIVE MORE THAT THE ITEM NEVER NAMED. The expansion item said
- * "deploy/ + applications/". Asking the tree instead of the item added `benchmarks/` (607
+ * "deploy/ + applications/". Asking the tree instead of the item added `benchmarks/` (193
  * errors), `spec/` (48 in ONE file), `demos/` (48), `mcp-server/` (33 — and that one is a
- * declared npm WORKSPACE, not a scratch directory) and `scripts/` (7). 2,505 errors across
- * 571 files, in seven roots, observed by nothing. That is the argument for the census being a
+ * declared npm WORKSPACE, not a scratch directory) and `scripts/` (7). 1,994 errors across
+ * 509 files, in seven roots, observed by nothing. That is the argument for the census being a
  * check rather than a list: the list was written by someone who knew about two of them.
  */
 const UNLINTED_FRONTIER = {
-  // All measured 2026-08-04 with `npx eslint <root>`.
-  // deploy: dominated by 190 `no-explicit-any` and 101 `no-console`, plus 45 `no-undef` in
-  // `.mjs` — where eslint is the only compiler there is.
+  // All measured 2026-08-04 by `lintTrackedUnder` — i.e. over `git ls-files`, so these are
+  // properties of the COMMIT and reproduce byte-for-byte in CI. The first numbers written
+  // here were taken from `npx eslint <root>`, which walks the disk, and every one of them
+  // was wrong: gitignored files inflated `benchmarks` by 414 errors alone. See
+  // `lintTrackedUnder` for the measurement.
+  //
+  // deploy: dominated by `no-explicit-any` and `no-console`, plus `no-undef` in `.mjs` —
+  // where eslint is the only compiler there is.
   //
   // ★ NOTE FOR WHOEVER SEES THIS ROOT GO RED FIRST. `deploy/mcp-relay/server.ts` alone
-  // carries 24 of the 382 and was under active edit when this number was taken. If that work
+  // carries 24 of the 356 and was under active edit when this number was taken. If that work
   // lands and the count moves past the tolerance, the failure is the ratchet working, not a
   // false alarm: write the new number in and move on.
-  deploy: { errors: 382, files: 107 },
-  // 1,042 of these are `no-console` in vertical bridges and CLI entry points — one config
-  // decision, not 1,042 defects. See the note above.
-  applications: { errors: 1380, files: 367 },
-  benchmarks: { errors: 607, files: 37 },
-  demos: { errors: 48, files: 45 },
+  deploy: { errors: 356, files: 106 },
+  // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
+  // decision, not a thousand defects. See the note above.
+  applications: { errors: 1309, files: 320 },
+  benchmarks: { errors: 193, files: 31 },
+  demos: { errors: 48, files: 37 },
   // A declared npm workspace (see package.json `workspaces`), never linted.
   'mcp-server': { errors: 33, files: 4 },
   scripts: { errors: 7, files: 10 },
@@ -193,6 +199,39 @@ const CENSUS_EXEMPT = new Set([
 
 /** Extensions eslint.config.js's rules apply to. */
 const LINTABLE = /\.(?:[cm]?ts|[cm]?js)$/;
+
+/**
+ * Lint what the REPOSITORY holds under `root`, not what this disk holds.
+ *
+ * ★ WHY NOT `eslint.lintFiles([root])`. That walks the directory, and flat-config eslint
+ * does not read `.gitignore` — so every gitignored file present locally joins the census.
+ * The frontier pins are then a measurement of one machine's working directory, and the
+ * gate reds for a reason the contributor cannot see in the diff.
+ *
+ * Measured, this PR: `benchmarks/` counted 37 files here and 31 in CI. The six are
+ * `benchmarks/locomo/static/js/{bulma-carousel,bulma-slider,fontawesome.all,index}*.js`
+ * — vendored assets, gitignored, on disk only. `deploy/` differed the same way, 382
+ * errors against CI's 356, and the gate correctly refused BOTH directions.
+ *
+ * `git ls-files` makes the number a property of the commit, so it is identical on every
+ * machine and in CI, and a file must be committed before it can move a pin. eslint's own
+ * `ignores` still apply on top, via `isPathIgnored` — the two filters compose rather than
+ * one standing in for the other.
+ */
+async function lintTrackedUnder(eslint, root) {
+  // No `cwd` guard needed: ROOT is this file's parent, which is the repo root by
+  // construction. A git failure THROWS, and the caller fails closed on it — "could not
+  // scan" must never read the same as "scanned and unchanged".
+  const listed = execFileSync('git', ['ls-files', '-z', '--', root], {
+    cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  });
+  const tracked = listed.split('\0').filter(f => f && LINTABLE.test(f));
+  const scannable = [];
+  for (const f of tracked) if (!await eslint.isPathIgnored(f)) scannable.push(f);
+  // `lintFiles([])` throws in eslint 9; an empty root is a legitimate state that the
+  // file-count floor in `frontierFailures` is what judges.
+  return scannable.length ? await eslint.lintFiles(scannable) : [];
+}
 
 /** Directory names never worth descending into when looking for a lintable file. */
 const NEVER_DESCEND = new Set(['node_modules', 'dist', 'build', 'coverage', '.git']);
@@ -667,7 +706,7 @@ export async function runLintGate() {
   for (const [root, pin] of Object.entries(UNLINTED_FRONTIER)) {
     let rootReport;
     try {
-      rootReport = await eslint.lintFiles([root]);
+      rootReport = await lintTrackedUnder(eslint, root);
     } catch (err) {
       // Fail closed. "Could not scan" must not read the same as "scanned and unchanged".
       failures.push(

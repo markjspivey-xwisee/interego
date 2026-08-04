@@ -21,7 +21,7 @@ name: ESLint
 # three had not. Both halves have now been closed rather than described: `tools/` is on the
 # zero-error surface, and every other source root in the tree is on the UN-LINTED FRONTIER —
 # scanned on every run with its error and file counts pinned per root and ratcheted both ways.
-# The frontier is 2,505 errors across seven roots, which nothing observed until the gate's
+# The frontier is 1,994 errors across seven roots, which nothing observed until the gate's
 # root census was asked. It is not the end state; it is the end of the gap being invisible.
 
 on:
