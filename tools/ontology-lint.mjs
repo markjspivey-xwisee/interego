@@ -168,6 +168,13 @@ const TEMPLATE_VAR_TO_PREFIX = {
   EU_AI_ACT: 'eu-ai-act', EU_AI_ACT_NS: 'eu-ai-act', EUAI: 'eu-ai-act', EUAI_NS: 'eu-ai-act',
   NIST_RMF: 'nist-rmf', NIST_RMF_NS: 'nist-rmf', NISTRMF: 'nist-rmf', NISTRMF_NS: 'nist-rmf',
   SOC2: 'soc2', SOC2_NS: 'soc2',
+  // The publish gate's constraint components (deploy/mcp-relay/shape-body.ts). Its two
+  // pre-existing terms were emitted for months and declared nowhere, because the constant
+  // used to carry HALF the local name (`…/iep#shape` + `Unfetchable`) — so the term this
+  // scanner saw was `Unfetchable`, which is not the term the relay emits. A namespace
+  // constant that stops short of the `#` is the one shape this check cannot see through;
+  // the constant was split at the `#` in the same change that added this entry.
+  PUBLIC_SHAPE_NS: 'iep',
 };
 
 function findReferencesInFile(tsPath, prefixes) {

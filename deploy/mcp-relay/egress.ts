@@ -36,7 +36,10 @@
  */
 import { Agent, fetch as undiciFetch } from 'undici';
 import type { FetchFn } from '@interego/core';
-import { normalizeCssUrl, assertPublicPodUrl, bareAddressHost, screeningEgressLookup } from './url-rewrite.js';
+import {
+  normalizeCssUrl, assertPublicPodUrl, bareAddressHost, screeningEgressLookup,
+  ERR_EGRESS_TARGET_REFUSED,
+} from './url-rewrite.js';
 
 export interface EgressConfig {
   /** The pinned CSS pod origin. Resolves into private space BY DESIGN — never screened. */
@@ -269,7 +272,17 @@ export function createEgress(config: EgressConfig): Egress {
     // caught here and `[fd00::1]` was not caught anywhere.
     const hn = bareAddressHost(u.hostname);
     if (hn === 'localhost' || hn === '::1' || /^127\./.test(hn) || /^::ffff:127\./.test(hn)) {
-      throw new Error(`invoke: loopback host not allowed: ${u.hostname}`);
+      // ★ THE CODE, NOT JUST THE MESSAGE. A caller-supplied URL that this screen REFUSES
+      // and one that simply fails to load are different facts with different operator
+      // responses, and above this function they were the same `Error` with a prose
+      // message. `shape-body.ts` classifies on `code` to decide which constraint
+      // component the publish gate's 422 carries; matching on the message text instead
+      // would break the moment anyone reworded it. Same reason the resolver half raises
+      // ERR_EGRESS_PRIVATE_ADDRESS.
+      throw Object.assign(
+        new Error(`invoke: loopback host not allowed: ${u.hostname}`),
+        { code: ERR_EGRESS_TARGET_REFUSED },
+      );
     }
     // assertPublicPodUrl only rejects a TERMINAL `.internal` label, but
     // normalizeCssUrl can synthesize hosts with `.internal.` mid-label from
@@ -277,9 +290,25 @@ export function createEgress(config: EgressConfig): Egress {
     // Any host carrying an `internal` DNS label that is not the pinned CSS
     // origin is rejected outright.
     if (u.hostname.toLowerCase().split('.').includes('internal')) {
-      throw new Error(`invoke: internal-labeled host not allowed: ${u.hostname}`);
+      throw Object.assign(
+        new Error(`invoke: internal-labeled host not allowed: ${u.hostname}`),
+        { code: ERR_EGRESS_TARGET_REFUSED },
+      );
     }
-    assertPublicPodUrl(url);
+    // `assertPublicPodUrl` is shared with every other pod-URL entry point, so its throws
+    // are deliberately left plain there and STAMPED here — at the one call site where the
+    // URL is caller-supplied and the throw means "the relay refused to egress". Stamping
+    // inside it would put an egress-specific code on refusals raised by callers that never
+    // egress at all.
+    try {
+      assertPublicPodUrl(url);
+    } catch (e) {
+      throw Object.assign(
+        e instanceof Error ? e : new Error(String(e)),
+        // Never overwrite a code the inner error already set — the more specific one wins.
+        { code: (e as NodeJS.ErrnoException)?.code ?? ERR_EGRESS_TARGET_REFUSED },
+      );
+    }
     return 'public';
   }
 
