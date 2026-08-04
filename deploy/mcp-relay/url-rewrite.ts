@@ -33,6 +33,57 @@
 // the window between "we checked an address" and "we dialled an address".
 import { lookup as dnsLookup } from 'node:dns';
 
+/**
+ * The shape `node:dns.lookup` presents to `screeningEgressLookup`, and the shape
+ * `screeningEgressLookup` presents to undici. Both are the same callback protocol,
+ * which is the point: this module sits BETWEEN two callers of it.
+ *
+ * `family` is `4 | 6` as a NUMBER. `node:net` tests it with a strict
+ * `addressType === 4 || addressType === 6`, so a string `'IPv6'` is a
+ * `RangeError [ERR_INVALID_ADDRESS_FAMILY]` at connect time, not a soft failure.
+ */
+type ResolvedAddress = { address: string; family: number };
+type OsResolver = (
+  hostname: string,
+  options: Record<string, unknown>,
+  callback: (err: NodeJS.ErrnoException | null, addresses?: unknown, family?: number) => void,
+) => void;
+
+/**
+ * The OS resolver `screeningEgressLookup` screens the answers of. Production is
+ * `node:dns.lookup` and nothing in `deploy/` ever assigns this.
+ *
+ * ★ WHY THE INDIRECTION EXISTS, since a seam nobody can justify is the next thing
+ * deleted. The screen's ONLY interesting property is that it is the resolver of the
+ * dispatcher the relay's guarded fetch path actually dials through — and that is a
+ * property of the WIRING, not of this function. Testing it needs a real Agent
+ * performing a real connect to a real socket, which needs a hostname that resolves
+ * into private space. Every such name is external DNS: `10-0-0-5.nip.io` and
+ * `localtest.me` both work and both were measured FLAKY (`169-254-169-254.nip.io`
+ * returned ENOENT on win32 in the same run that resolved `10-0-0-5.nip.io`), and
+ * `ip6-localhost` does not exist on win32 at all — a gate that silently passes
+ * because the name did not resolve is worse than no gate.
+ *
+ * So the double goes one layer BELOW the unit under test: the test replaces THE
+ * INTERNET, and the screen, the Agent, the connector, the socket and the entry
+ * point all stay production. Injecting a fake lookup into a test-built Agent — the
+ * thing this replaces — is what let the wiring mutant survive review and then take
+ * production down.
+ */
+let egressResolver: OsResolver = dnsLookup as unknown as OsResolver;
+
+/**
+ * Point the egress screen at a stand-in resolver. Returns the restore function;
+ * call it in a `finally`, because vitest runs this repo's suite in ONE thread
+ * (`poolOptions.threads.singleThread`) and a resolver left installed is installed
+ * for every later test file in the run.
+ */
+export function setEgressResolverForTests(resolver: OsResolver): () => void {
+  const previous = egressResolver;
+  egressResolver = resolver;
+  return () => { egressResolver = previous; };
+}
+
 // Match `https://interego-css.livelysky-<hex>.eastus.azurecontainerapps.io`
 // at the start of the URL, followed by `/` or end-of-string.
 //
@@ -184,38 +235,27 @@ export function privateAddressReason(host: string): string | null {
  * A-record", which understated it: NO RACE IS REQUIRED. A name is not an
  * address, so a static, publicly-resolvable name that simply IS an A record
  * for private space defeats this function outright — measured:
- * `10-0-0-5.nip.io` -> 10.0.0.5 and `localtest.me` -> 127.0.0.1 both returned
- * ACCEPTED here AND from server.ts's full invoke egress guard.
- *
- * ★ THE ADDRESS SCREEN IS NOT IN FORCE. THIS FUNCTION IS THE ONLY DEFENCE.
- *
- * (That sentence is load-bearing text, not prose: the last describe block in
- * tests/egress-dns-screen.test.ts reads the wiring out of server.ts and requires
- * it to be present exactly while `guardedEgressAgent` dispatches nothing — and
- * requires it GONE the moment the wiring returns.)
- *
- * The paragraph that stood here said the mitigation was "now IN TREE" and that
- * `screeningEgressLookup` below is "the resolver undici actually uses", and told
- * the reader to "keep BOTH". That became false in #261 and was not corrected
- * here: `guardedEgressAgent` in server.ts is now `void guardedEgressAgent;` and
- * is the dispatcher for no fetch at all, so `screeningEgressLookup` resolves
- * nothing. Re-measured against the live module at that commit —
  *
  *     ACCEPTED  https://10-0-0-5.nip.io/x                     -> 10.0.0.5
  *     ACCEPTED  https://localtest.me/x                        -> ::1, 127.0.0.1
  *     ACCEPTED  https://169-254-169-254.nip.io/latest/meta-data/
  *
- * — all three reach a socket today. A publicly-resolvable NAME that simply IS a
- * record for private space passes, and the relay is deployed at this commit.
+ * All three are still ACCEPTED here, and always will be — a name screen cannot
+ * see an address. What stops them is the OTHER half: `screeningEgressLookup`
+ * below, wired as the connect-time resolver of `guardedEgressAgent` in
+ * `egress.ts`. The mitigation is now IN TREE and in force; keep BOTH, because
+ * each covers what the other structurally cannot — this one refuses an IP
+ * literal, an `.internal` label, a non-https scheme and an off-allowlist suffix
+ * before any resolution happens, and that one refuses the address a public name
+ * actually points at.
  *
- * What DOES hold: no IP literal, no `.internal` label, no non-https scheme, and
- * (where a caller passes one) no host outside the suffix allowlist. Callers that
- * need the address screen must supply their own network policy; do not read this
- * header as covering it.
- *
- * The re-landing conditions live at `guardedInvokeFetchLanded` in server.ts, and
- * the incident note there is the one that must be corrected before anyone acts
- * on them.
+ * ★ AND "WIRED" IS A MEASURED CLAIM, NOT A SENTENCE. It was a sentence once: the
+ * paragraph this replaces said the same thing while `guardedEgressAgent` was
+ * `void guardedEgressAgent;` and the dispatcher for nothing, because #261 unwired
+ * it and edited no comment. The claim is now pinned by a test that stands a
+ * counting socket behind a name the resolver maps into private space and requires
+ * ZERO connections and `ERR_EGRESS_PRIVATE_ADDRESS` — detach the dispatcher and
+ * that test reports the 200 and the body. See `tests/egress-dns-screen.test.ts`.
  */
 export function assertPublicPodUrl(
   url: string,
@@ -264,41 +304,73 @@ export function assertPublicPodUrl(
 /**
  * A `dns.lookup` drop-in that refuses to hand back a private address.
  *
- * ★ IT IS EXPORTED, IT IS CORRECT, AND IT IS THE RESOLVER FOR NOTHING.
+ * Wired ONLY onto the guarded-egress dispatcher in `egress.ts`, which
+ * `guardedInvokeFetchLanded` hands to `fetch` for every target the mode split calls
+ * `'public'`. That dispatcher is what tells the caller to dial through this screen;
+ * this function does nothing on its own, so read the two together.
  *
- * This header used to say it was attached to the guarded-egress dispatcher in
- * server.ts. #261 unwired that dispatcher (`void guardedEgressAgent;`) after one
- * production deploy took every shape-gated publish down, and this file was not
- * touched — so the module that DEFINES the screen went on claiming it was live.
- * A comment asserting coverage the code lacks is worse than the gap, and worse
- * again on a security boundary, because it tells the reader to stop looking.
+ * ★ WHY IT IS A LOOKUP AND NOT A PRE-CHECK. Resolving the hostname ourselves and
+ * then calling `fetch` leaves a real window: `fetch` resolves AGAIN, and a TTL-0
+ * record can differ between the two. As a connect-time resolver there is only one
+ * resolution, so the addresses screened are the addresses the socket is opened to.
  *
- * The function itself is exercised by `tests/egress-dns-screen.test.ts` and its
- * predicate mutants are killed; what is missing is a CALLER. Until it has one,
- * nothing in this process screens a resolved address.
+ * ★ IT MUST GO ON A DEDICATED DISPATCHER, NEVER THE GLOBAL ONE: the relay's own CSS
+ * and identity hosts resolve to private addresses BY DESIGN, and `outboundAgent`
+ * carries those. See `createEgress` in `egress.ts`.
  *
- * ★ WHY IT IS A LOOKUP AND NOT A PRE-CHECK, for whoever re-lands it. Resolving
- * the hostname ourselves and then calling `fetch` leaves a real window: `fetch`
- * resolves AGAIN, and a TTL-0 record can differ between the two. As a
- * connect-time resolver there is only one resolution, so the addresses screened
- * are the addresses the socket is opened to.
+ * ── THE CALLBACK CONTRACT, WHICH IS NODE'S AND NOT UNDICI'S ──────────────────
  *
- * It must go on a dedicated dispatcher, never the global one: the relay's own CSS
- * and identity hosts resolve to private addresses BY DESIGN. See
- * `guardedEgressAgent` and the re-landing note at `guardedInvokeFetchLanded`.
+ * undici does not interpret `connect.lookup` at all — `buildConnector` spreads it
+ * into `tls.connect` / `net.connect` — so the protocol below is `node:net`'s, and
+ * getting it wrong throws inside Node rather than failing this request:
+ *
+ *   - `all: true` asked  → `cb(null, addresses)`, an ARRAY of `{address, family}`
+ *     with `family` a NUMBER. A 3-arg reply here is
+ *     `TypeError [ERR_INVALID_IP_ADDRESS]: Invalid IP address: undefined`.
+ *   - `all` absent       → `cb(null, address: string, family: number)`.
+ *   - refusal            → `cb(err)`, ONE argument. The caller sees `fetch failed`
+ *     with the real error on `err.cause`, so `err.code` is the ONLY channel that
+ *     separates a screen refusal from ENOTFOUND / ECONNREFUSED / ERR_TLS_*.
+ *
+ * ★ LENGTH AND ORDER ARE LOAD-BEARING, AND THIS IS THE "ADDRESS SELECTION" THE
+ * INCIDENT NOTE MEANT. `net.lookupAndConnectMultiple` takes the family of the FIRST
+ * entry as the family tried first and interleaves the rest; Node performs no
+ * RFC-3484 re-sort, so the order is entirely this function's. And at
+ * `toAttempt.length === 1` Node switches BACK to a single connect — no attempt
+ * timer, no next-address retry, no AggregateError. Handing back one address is
+ * therefore not "picking an address", it is turning Happy Eyeballs off, and a
+ * one-entry unreachable list was measured to emit a stray unhandled socket
+ * `'error'` (`ENETUNREACH … - Local (:::0)`) that can kill the process rather than
+ * fail the request. So when `all` was asked the resolver's array is handed back
+ * VERBATIM — same length, same order, never filtered and never sorted.
+ *
+ * ★ WHY THE REFUSAL IS ALL-OR-NOTHING rather than a filter: a hostname answering
+ * with one public and one private address is a rebinding answer, not a partially
+ * usable one. Dropping the private entry and dialling the survivor would let the
+ * next resolution — the one the socket actually uses under a TTL of 0 — be the
+ * private one. Pinned by "refuses the whole hostname when ANY address is private,
+ * rather than filtering" in tests/egress-dns-screen.test.ts, and verified by
+ * replacing this loop with a `.filter()` and watching that test go red.
  */
 export function screeningEgressLookup(
   hostname: string,
   options: Record<string, unknown>,
   callback: (err: NodeJS.ErrnoException | null, address?: unknown, family?: number) => void,
 ): void {
-  // `all: true` unconditionally — a hostname with ONE public and one private
-  // address must be rejected, and a non-`all` lookup would only ever see the
-  // first. The caller's requested shape is restored below.
-  dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
+  const asked = options ?? {};
+  // Whether NODE wanted the list. `all: true` is forced on the resolver either way —
+  // a hostname with one public and one private address must be rejected, and a
+  // non-`all` lookup would only ever see the first — but the REPLY must be in the
+  // shape the caller asked for, so remember which that was.
+  const wantsAll = asked['all'] === true;
+  // `hints` and `family` are passed through untouched. Forcing `hints` breaks win32
+  // outright (`dns.lookup` throws ERR_INVALID_ARG_VALUE on the AI_ADDRCONFIG value
+  // linux passes), and forcing `family` defeats the ADDRCONFIG filtering that is the
+  // reason an IPv6-less container is handed IPv4 answers in the first place.
+  egressResolver(hostname, { ...asked, all: true }, (err, addresses) => {
     if (err) { callback(err); return; }
-    const list = addresses as unknown as { address: string; family: number }[];
-    if (!list || list.length === 0) {
+    const list = Array.isArray(addresses) ? (addresses as ResolvedAddress[]) : [];
+    if (list.length === 0) {
       callback(Object.assign(new Error(`egress: ${hostname} resolved to no addresses`), { code: 'ENOTFOUND' }));
       return;
     }
@@ -312,7 +384,24 @@ export function screeningEgressLookup(
         return;
       }
     }
-    if (options['all']) { callback(null, list); return; }
+    // VERBATIM. Not `list.slice()`, not `list.filter(...)`, not sorted: every
+    // address survived the screen, so the candidate sequence Node gets is the one
+    // getaddrinfo produced, and IPv4/IPv6 fallback is exactly as it would be with no
+    // screen installed at all.
+    if (wantsAll) { callback(null, list); return; }
+    // ── The single-address reply, which the guarded dispatcher never reaches ──
+    //
+    // Node asks without `all` only when `autoSelectFamily` is off, and
+    // `guardedEgressAgent` PINS it on for precisely that reason (measured: with the
+    // pin the lookup is asked `{hints:0, all:true}` even after
+    // `net.setDefaultAutoSelectFamily(false)`; without it, `{hints:0}`). This branch
+    // is kept correct for any other dispatcher built from this export.
+    //
+    // `list[0]` is not a choice this function is making — it is the address a
+    // non-`all` `dns.lookup` returns for the same host under the same result-order
+    // policy. Measured on all three: localhost -> ::1, github.com -> 140.82.113.4,
+    // markjspivey-xwisee.github.io -> 2606:50c0:8001::153, each identical to
+    // `list[0]` of the `all: true` answer.
     callback(null, list[0]!.address, list[0]!.family);
   });
 }

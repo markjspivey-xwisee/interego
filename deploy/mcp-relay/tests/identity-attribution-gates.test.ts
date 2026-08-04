@@ -82,6 +82,16 @@ import { stripComments } from './strip-comments.js';
 
 const SERVER = readFileSync(join(here, '..', 'server.ts'), 'utf8');
 const REACH = readFileSync(join(here, '..', 'reachability.ts'), 'utf8');
+/**
+ * The outbound HTTP layer — pools, `solidFetch`, `assertInvokeTargetAllowed` and the
+ * screen-every-hop redirect loop — moved out of server.ts into `egress.ts` so the SSRF
+ * address screen's WIRING could be exercised by a real test rather than by a regex.
+ * The R4 assertions below follow it: they are about the redirect loop, and the redirect
+ * loop is here now. Concatenated rather than switched over so a check that names a token
+ * from EITHER file keeps working, and so moving a function between the two cannot
+ * silently turn one of these gates off.
+ */
+const EGRESS = readFileSync(join(here, '..', 'egress.ts'), 'utf8');
 
 /**
  * ★ TWO VIEWS, ON PURPOSE — and the first attempt at this used only the stripped one and
@@ -97,6 +107,8 @@ const REACH = readFileSync(join(here, '..', 'reachability.ts'), 'utf8');
  * for anything whose subject is the documentation.
  */
 const SERVER_CODE = stripComments(SERVER, 'server.ts');
+/** The same two views over the egress layer. */
+const EGRESS_CODE = stripComments(EGRESS, 'egress.ts');
 
 let failures = 0;
 function check(name: string, cond: boolean, detail = ''): void {
@@ -225,19 +237,24 @@ check('OAuth branch sets _session_agent_did',
 console.log('\n14. R4 — the egress guard screens EVERY redirect hop, not just the first URL');
 // solidFetch calls fetch() with no `redirect` option → undici follows up to 20 hops
 // unscreened, so `302 Location: http://169.254.169.254/…` defeated the guard in one hop.
-// SERVER_CODE, not SERVER: both of these bound the DISTANCE between two tokens, so a long
+// EGRESS_CODE, not EGRESS: both of these bound the DISTANCE between two tokens, so a long
 // comment between them fails the check with the code unchanged. That is not hypothetical —
-// the production-incident note now sitting inside guardedInvokeFetchLanded (why the
-// guarded-egress dispatcher is built and not wired) failed both of these while the manual
-// redirect loop and the per-hop screen were fully intact.
+// the production-incident note sitting inside guardedInvokeFetchLanded failed both of these
+// while the manual redirect loop and the per-hop screen were fully intact.
 check('guardedInvokeFetch follows redirects manually',
-  /guardedInvokeFetch[\s\S]{0,900}redirect: 'manual'/.test(SERVER_CODE));
+  /guardedInvokeFetch[\s\S]{0,900}redirect: 'manual'/.test(EGRESS_CODE));
 check('it re-screens each hop inside the loop',
-  /for \(let hop = 0; hop <= GUARDED_MAX_REDIRECTS[\s\S]{0,200}assertInvokeTargetAllowed\(target\)/.test(SERVER_CODE));
+  /for \(let hop = 0; hop <= GUARDED_MAX_REDIRECTS[\s\S]{0,200}assertInvokeTargetAllowed\(target\)/.test(EGRESS_CODE));
 check('it bounds the hop count',
-  /GUARDED_MAX_REDIRECTS/.test(SERVER) && /too many redirects/.test(SERVER));
+  /GUARDED_MAX_REDIRECTS/.test(EGRESS) && /too many redirects/.test(EGRESS));
 check('relative Location values are resolved against the current hop',
-  /new URL\(loc, target\)/.test(SERVER));
+  /new URL\(loc, target\)/.test(EGRESS));
+// ★ AND THE ADDRESS SCREEN IS ON THE DISPATCHER THE LOOP DIALS THROUGH. This is the
+// property #260/#261 turned on and off; it is MEASURED over a real socket in
+// tests/egress-dns-screen.test.ts, and named here because this is the file a reviewer
+// reads for "what does the egress guard cover".
+check('the public branch dispatches through the address-screening pool',
+  /mode === 'public' \? \{ dispatcher: guardedEgressAgent \}/.test(EGRESS_CODE));
 
 console.log('\n15. R4 — caller-supplied URLs no longer reach raw solidFetch');
 check('get_descriptor fetches through the guard',

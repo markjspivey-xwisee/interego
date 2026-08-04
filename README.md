@@ -1030,23 +1030,31 @@ npm run test:watch   # Watch mode
 
 ### Test Suites
 
+These nineteen are a selection, not the whole suite (the tree holds far more — run
+`npx vitest run tests/` for the total). **The `Tests` column is checked on every vitest
+run** by `tools/vitest-run-integrity.mjs`: a row whose number stops matching the module's
+real test count fails the run, and so does a row naming a file that no longer exists. It
+is a gate because nine of these nineteen numbers were false at the commit this sentence
+replaced — `solid.test.ts` said 20 against a real 44 — and a hand-typed count has no way
+to stay true.
+
 | Suite | Tests | Coverage |
 |---|---|---|
-| `context-graphs.test.ts` | 44 | Builder, composition, validation, serialization |
-| `solid.test.ts` | 20 | Publish, discover, subscribe, agent registry |
-| `federation.test.ts` | 21 | Pod directory, multi-pod, WebFinger, Hydra |
+| `context-graphs.test.ts` | 46 | Builder, composition, validation, serialization |
+| `solid.test.ts` | 44 | Publish, discover, subscribe, agent registry |
+| `federation.test.ts` | 24 | Pod directory, multi-pod, WebFinger, Hydra |
 | `causality.test.ts` | 38 | SCM, do-calculus, d-separation, counterfactual |
-| `pgsl.test.ts` | 31 | Lattice, category, geometric morphism |
+| `pgsl.test.ts` | 34 | Lattice, category, geometric morphism |
 | `pgsl-sparql.test.ts` | 19 | Triple store, SPARQL execution, existing generators |
 | `pgsl-shacl.test.ts` | 13 | Core/structural/domain SHACL validation |
 | `pgsl-tools.test.ts` | 19 | LLM tools, tool call parsing, tool loop |
 | `projection.test.ts` | 15 | Vocabulary mapping, binding strength |
-| `affordance.test.ts` | 23 | Gibson, Norman, OODA, BDI, Friston, stigmergy |
-| `crypto.test.ts` | 25 | Wallets, ECDSA, delegation, SIWE |
-| `encryption-zk.test.ts` | 30 | NaCl encryption, ZK proofs, selective disclosure |
-| `sdk-extractors.test.ts` | 17 | Category theory, semiotic functor |
+| `affordance.test.ts` | 26 | Gibson, Norman, OODA, BDI, Friston, stigmergy |
+| `crypto.test.ts` | 32 | Wallets, ECDSA, delegation, SIWE |
+| `encryption-zk.test.ts` | 50 | NaCl encryption, ZK proofs, selective disclosure |
+| `sdk-extractors.test.ts` | 19 | Category theory, semiotic functor |
 | `xapi-conformance.test.ts` | 60 | xAPI profile, IFI priority, result/context structure |
-| `pgsl-coherence.test.ts` | 9 | Coherence verification, coverage, certificates |
+| `pgsl-coherence.test.ts` | 10 | Coherence verification, coverage, certificates |
 | `agent-framework.test.ts` | 68 | AAT, Policy, PROV tracing, Personal Broker, AAT Decorator |
 | `infrastructure.test.ts` | 47 | Enclaves, Checkpoints, CRDT sync |
 | `discovery.test.ts` | 50 | Introspection, Virtual Layer, Metagraph, Marketplace |

@@ -3,6 +3,7 @@
 @prefix sat:  <https://markjspivey-xwisee.github.io/interego/ns/sat#> .
 @prefix ieh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
 @prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
@@ -46,6 +47,7 @@
     vann:preferredNamespacePrefix "wks" ;
     vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/wks#" ;
     owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/pgsl> ,
                 <https://markjspivey-xwisee.github.io/interego/ns/sat> .
 
 # ── Classes ───────────────────────────────────────────────────
@@ -57,11 +59,13 @@ wks:WeakSignal a owl:Class ;
 
 wks:NarrativeEvidence a owl:Class ;
     rdfs:label "Narrative Evidence" ;
-    rdfs:comment "A free-form micro-narrative that anchors a wks:WeakSignal. Not a fact-claim — a description of what was observed in observer's own words. Stored as content-addressed pgsl:Atom so two observers producing identical narratives collide on IRI (structural reinforcement at the description layer)." .
+    rdfs:comment "A free-form micro-narrative that anchors a wks:WeakSignal. Not a fact-claim — a description of what was observed in observer's own words. Stored as content-addressed pgsl:Atom so two observers producing identical narratives collide on IRI (structural reinforcement at the description layer)." ;
+    rdfs:subClassOf pgsl:Atom .
 
 wks:Reinforcement a owl:Class ;
     rdfs:label "Reinforcement" ;
-    rdfs:comment "A computed measure of how many independent observers have published wks:WeakSignal descriptors with the same wks:about subject. A summary descriptor that supersedes-chains older counts as new signals arrive. NOT an aggregation of opinions — a count of independent observations." .
+    rdfs:comment "A computed measure of how many independent observers have published wks:WeakSignal descriptors with the same wks:about subject. A summary descriptor that supersedes-chains older counts as new signals arrive. NOT an aggregation of opinions — a count of independent observations." ;
+    rdfs:subClassOf iep:ContextDescriptor .
 
 # ── Properties ────────────────────────────────────────────────
 

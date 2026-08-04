@@ -13,14 +13,28 @@
 // pins the behaviour of the function it names, and a rename in the .mjs alone shows up
 // there as "undefined is not a function".
 
+/** One un-linted frontier root's measurements: see UNLINTED_FRONTIER in lint-gate.mjs. */
+export interface FrontierCounts {
+  errors: number;
+  files: number;
+}
+
 export interface LintGateResult {
   ok: boolean;
   failures: string[];
   files: number;
   total: number;
+  /** Per-root measurements for the un-linted frontier; absent on a fatal result. */
+  frontier?: Record<string, FrontierCounts>;
   fatal?: string | null;
 }
 
 export declare function baselineClaimFailure(workflowText: string, pinned?: number): string | null;
+export declare function frontierFailures(
+  root: string, pin: FrontierCounts, now: FrontierCounts,
+): string[];
+export declare function frontierTolerance(pin: number): number;
+export declare const MIN_FILES: number;
+export declare const FILE_FLOOR_ALLOWANCE: number;
 export declare function runLintGate(): Promise<LintGateResult>;
 export declare function lintGateReport(result: LintGateResult): string;

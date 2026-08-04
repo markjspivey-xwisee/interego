@@ -202,8 +202,14 @@ Grounding means one of:
   (d) Explicit primitive marker (`rdfs:comment` contains "primitive")
 
 `tools/derivation-lint.mjs` enforces (a)-(d) across every L2/L3
-`.ttl`. CI blocks on ungrounded classes. Current status: **97/97
-classes grounded**.
+`.ttl`. It ENUMERATES `docs/ns/` rather than reading a hand-written
+file list — the list it replaced named 14 files in a directory of 30,
+so `wks.ttl`, `vault-ld.ttl`, `a2a.ttl` and `hmd.ttl` had never been
+checked at all — and it refuses any file whose `a owl:Class` count and
+its own parsed-class count disagree, because a file the scanner cannot
+read reports zero ungrounded classes and looks clean. Which prefixes
+are exempt is read out of §3 above, not restated in the tool. CI blocks
+on ungrounded classes. Current status: **101/101 classes grounded**.
 
 Why: the whole point of L1 being the normative protocol is that
 higher constructs EMERGE from it via composition. A

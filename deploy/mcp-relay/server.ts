@@ -20,7 +20,7 @@ import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { WebSocket } from 'ws';
-import { Agent, setGlobalDispatcher } from 'undici';
+import { setGlobalDispatcher } from 'undici';
 import { Wallet as EthersWalletCtor } from 'ethers';
 
 // ── MCP SDK v2 ──────────────────────────────────────────────
@@ -118,7 +118,11 @@ import {
   reconstructRequestUrl,
 } from './dpop.js';
 import { corsMiddleware, MCP_ALLOW_HEADERS } from './cors-allowlist.js';
-import { normalizeCssUrl, assertPublicPodUrl, bareAddressHost, screeningEgressLookup } from './url-rewrite.js';
+import { normalizeCssUrl, assertPublicPodUrl } from './url-rewrite.js';
+// The outbound HTTP layer — pools, solidFetch, and the guarded egress choke point.
+// Extracted so the SSRF address screen's WIRING is importable by a test; see the
+// header of egress.ts for why a regex over this file could never assert it.
+import { createEgress } from './egress.js';
 import { withAmepSession, principalIri, stampAmepProof, type AmepSigner } from './amep-session-bridge.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
@@ -838,259 +842,34 @@ function verifySignedRequest(body: unknown): SignedAuthResult {
 // (`normalizeCssUrl` is imported alongside the other local helpers at the
 // top of the file.)
 
-// ── Outbound HTTP keep-alive pool ───────────────────────────
+// ── Outbound HTTP: pools, fetch wrapper, egress choke point ─
 //
-// Every outbound fetch the relay makes — solidFetch (CSS reads/writes),
-// raw fetch to IDENTITY_URL (token verify, /agents/me, etc.), webhook
-// POST fan-out — flows through Node's global undici dispatcher. Pinning
-// a single shared Agent with keep-alive on lets all of them reuse pooled
-// TCP+TLS sockets to the env-internal CSS/identity envoy instead of
-// handshaking per request. Single source-of-truth: setGlobalDispatcher
-// covers solidFetch + every raw fetch site without per-callsite edits.
-const outboundAgent = new Agent({
-  keepAliveTimeout: 30_000,
-  keepAliveMaxTimeout: 120_000,
-  connections: 64,
-  pipelining: 1,
-});
+// All of it now lives in `egress.ts`, and the reason is the address screen. Its
+// only interesting property — "the fetch this function issues travels through the
+// dispatcher that owns the screen" — is a property of the WIRING, and no test can
+// state a wiring property about a module it cannot import. This file calls
+// `app.listen()` at module scope, so nothing can import it; what stood in for a
+// wiring test was a regex over this file's own source text, and that regex was
+// satisfied by a `dispatcher: guardedEgressAgent` token sitting in code no request
+// reached. It was recorded as a known-surviving mutant (M5) and then it took every
+// shape-gated publish down.
+//
+// Same identifiers, so every `solidFetch` and `guardedInvokeFetch` call site below is
+// untouched — and the same pattern `lazy-pod-init.ts` and `compliance-sign.ts` already
+// follow in this directory.
+const {
+  outboundAgent,
+  solidFetch,
+  assertInvokeTargetAllowed,
+  guardedInvokeFetchLanded,
+  guardedInvokeFetch,
+} = createEgress({ cssUrl: CSS_URL, publicBaseUrl: PUBLIC_BASE_URL });
+
+// The GLOBAL dispatcher is the UNGUARDED pool, deliberately: the relay's own CSS
+// and identity hosts resolve to private addresses by design, and every raw
+// `fetch(IDENTITY_URL…)` in this file rides it. The guarded pool is attached
+// per-request inside `guardedInvokeFetchLanded`, for caller-supplied targets only.
 setGlobalDispatcher(outboundAgent);
-
-// ── Guarded-egress dispatcher — BUILT, NOT WIRED ────────────
-//
-// Same pool settings as `outboundAgent`, plus a connect-time resolver that
-// refuses private addresses. It would be the in-tree half of the SSRF screen:
-// `assertPublicPodUrl` screens the NAME, this screens the ADDRESS at the moment
-// of connect, which is what stops a name that STATICALLY points at private
-// space (measured: 10-0-0-5.nip.io -> 10.0.0.5) from ever getting a socket.
-//
-// ★ IT IS NOT ATTACHED TO ANY FETCH. It was, for one deploy, and it took every
-// shape-gated publish down — see the long note at `guardedInvokeFetchLanded`,
-// which is where it was wired and where the diagnosis lives. Kept here, unused
-// and compiling, because it is two-thirds of a correct fix and deleting it would
-// throw away the `screeningEgressLookup` work the predicate mutants do cover;
-// the missing third is address SELECTION (it forces one address and breaks
-// IPv4/IPv6 fallback) plus any way to test the wiring at all.
-//
-// It is referenced by `void guardedEgressAgent` below rather than left dangling,
-// so `noUnusedLocals` cannot decide this decision for us by deleting it.
-const guardedEgressAgent = new Agent({
-  keepAliveTimeout: 30_000,
-  keepAliveMaxTimeout: 120_000,
-  connections: 64,
-  pipelining: 1,
-  connect: { lookup: screeningEgressLookup as never },
-});
-void guardedEgressAgent;
-
-// ── Fetch wrapper ───────────────────────────────────────────
-
-const solidFetch: FetchFn = async (url, init) => {
-  // Rewrite OLD-host CSS URLs at the HTTP boundary so every code path
-  // (kernel dereference, get_descriptor GET, fetchGraphContent envelope
-  // fetch, verify_agent registry walk, kernelAct affordance follow, ...)
-  // transparently follows the canonical internal-FQDN target. See
-  // `url-rewrite.ts` for the matching regex and rewrite rules.
-  const target = normalizeCssUrl(url);
-  // Bounded connect+headers deadline. Without this, a CSS host that accepts the
-  // TCP connection but stalls before responding blocks on undici's ~300s default
-  // (and, once it surfaces as "fetch failed", is retried 4-6x by withTransientRetry),
-  // riding far past the ACA ingress timeout and surfacing as an opaque 502. An abort
-  // here is non-transient (AbortError doesn't match the retry matcher), so it fails
-  // fast to a bounded, correctly-classified error instead of a multi-minute hang.
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), Number(process.env['NS_FETCH_TIMEOUT_MS'] ?? 15_000));
-  try {
-    const resp = await fetch(target, { ...(init as RequestInit), signal: ac.signal });
-    return {
-      ok: resp.ok,
-      status: resp.status,
-      statusText: resp.statusText,
-      headers: { get: (n: string) => resp.headers.get(n) },
-      text: () => resp.text(),
-      json: () => resp.json(),
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-};
-
-// ── Invoke-path outbound guard ──────────────────────────────
-//
-// Every URL fetched while FOLLOWING a descriptor (invoke_affordance / kernel
-// act): the descriptor itself, the resolved hydra:target, envelope fetches.
-// followAffordance() fires the method at whatever hydra:target the fetched
-// descriptor names — so without a network policy here, an attacker-authored
-// descriptor whose target names an internal-only host (css *.railway.internal,
-// the identity service, IMDS) turns the relay into an authenticated SSRF proxy
-// that echoes the response body back. Allowed: (a) the internal CSS pod space
-// (the normalizeCssUrl rewrite target — checked FIRST because *.internal is
-// exactly what assertPublicPodUrl rejects), (b) the relay's own public base
-// (AMEP acts), (c) any public host passing the same RFC1918/link-local/
-// loopback/IMDS screen the /ns + /audit routes enforce (federation stays open).
-// Returns 'pinned' for the two origins the relay owns (their private resolution
-// is intended), 'public' for everything else. ★ NOBODY READS THE MODE. This
-// sentence used to end by saying the mode routes the caller onto
-// `guardedEgressAgent`; the only caller is `void assertInvokeTargetAllowed(target)`
-// in guardedInvokeFetchLanded and it discards the result, because #261 unwired that
-// dispatcher. The return value is kept — re-landing the address screen needs it,
-// and computing "is this ours" twice would drift the day CSS_URL changes — but a
-// reader must not take it as evidence that a guarded dispatcher exists downstream.
-function assertInvokeTargetAllowed(url: string): 'pinned' | 'public' {
-  let u: URL;
-  try { u = new URL(url); } catch { throw new Error(`invoke: unparseable URL: ${url}`); }
-  try {
-    const cssOrigin = new URL(CSS_URL).origin;
-    if (u.origin === cssOrigin) return 'pinned';
-  } catch { /* CSS_URL malformed — fall through to the public screen */ }
-  try {
-    if (PUBLIC_BASE_URL && u.origin === new URL(PUBLIC_BASE_URL).origin) return 'pinned';
-  } catch { /* ignore */ }
-  // LOOPBACK — the relay's OWN process + sidecars. assertPublicPodUrl (below)
-  // exempts `http://localhost` (it's not an IP literal), so screen it HERE, in the
-  // single egress guard every guardedInvokeFetch caller shares (descriptor follow,
-  // kernel_dereference/act, reduce-chain, the graph-affordance fallback). The CSS
-  // and PUBLIC_BASE_URL same-origin cases already returned above, so a legitimate
-  // dev PUBLIC_BASE_URL=localhost still works; any OTHER loopback is a relay-to-self
-  // SSRF and is rejected.
-  // Same bracket-stripping as url-rewrite.ts, imported rather than re-spelled —
-  // the two copies had DIFFERENT behaviour, which is exactly how `[::1]` was
-  // caught here and `[fd00::1]` was not caught anywhere.
-  const hn = bareAddressHost(u.hostname);
-  if (hn === 'localhost' || hn === '::1' || /^127\./.test(hn) || /^::ffff:127\./.test(hn)) {
-    throw new Error(`invoke: loopback host not allowed: ${u.hostname}`);
-  }
-  // assertPublicPodUrl only rejects a TERMINAL `.internal` label, but
-  // normalizeCssUrl can synthesize hosts with `.internal.` mid-label from
-  // attacker-supplied legacy URLs (…-css.internal.<env>.azurecontainerapps.io).
-  // Any host carrying an `internal` DNS label that is not the pinned CSS
-  // origin is rejected outright.
-  if (u.hostname.toLowerCase().split('.').includes('internal')) {
-    throw new Error(`invoke: internal-labeled host not allowed: ${u.hostname}`);
-  }
-  assertPublicPodUrl(url);
-  return 'public';
-}
-
-/**
- * The egress choke point for every CALLER-SUPPLIED URL.
- *
- * Screening only the INITIAL url was not a guard: solidFetch calls fetch() with no
- * `redirect` option, so undici follows up to 20 hops unscreened. A caller-controlled
- * public host answering `302 Location: http://169.254.169.254/…` defeated the screen
- * in one hop and reached link-local/IMDS and private ranges — the body then echoed
- * back to the caller by dereference / act / invoke_affordance / reduce_chain.
- *
- * Follow redirects MANUALLY and re-screen EVERY hop (the same discipline
- * amep-session-bridge.ts already uses with redirect:'manual'). Because this is the
- * shared wrapper, fixing it here re-arms every existing guarded caller at once.
- *
- * This paragraph describes `guardedInvokeFetchLanded` below and, through it,
- * `guardedInvokeFetch` — which is that function with the landed URL dropped. There is one
- * loop, so "re-screen every hop" cannot become true of one caller and false of another.
- */
-const GUARDED_MAX_REDIRECTS = 5;
-/**
- * The same guarded fetch, plus the URL the bytes LANDED at.
- *
- * ★ WHY THE LANDED URL IS EXPOSED AT ALL. `FetchResponse` (the substrate's minimal HTTP
- * surface) carries no `url`, so a caller that has to reason about WHERE a body came from
- * cannot. The shape gate is exactly that caller: it resolves a page's advertised
- * `rel=alternate` href and refuses a cross-origin one, and both operations are anchored on
- * the URL the page was served from. Two things make the URL asked for the wrong anchor —
- * `normalizeCssUrl` rewrites a legacy public CSS host to its `.internal.` form (a DIFFERENT
- * ORIGIN), and the loop below follows redirects. Anchoring on the URL asked for would have
- * made every pod-hosted shape look cross-origin and refused it.
- *
- * The redirect loop is not duplicated for this: `guardedInvokeFetch` is a projection of this
- * function, so there is one screen-every-hop implementation and it cannot drift.
- */
-async function guardedInvokeFetchLanded(
-  url: string,
-  init?: Parameters<FetchFn>[1],
-): Promise<{ response: Awaited<ReturnType<FetchFn>>; landedUrl: string }> {
-  let target = normalizeCssUrl(url);
-  for (let hop = 0; hop <= GUARDED_MAX_REDIRECTS; hop++) {
-    // ★ THE ADDRESS SCREEN IS NOT WIRED HERE, AND THIS PARAGRAPH IS THE REASON.
-    //
-    // This line read
-    //     ...(mode === 'public' ? { dispatcher: guardedEgressAgent } : {})
-    // for exactly one production deploy. It took every shape-gated publish down:
-    // `fetchShapeRepresentation` reaches GitHub Pages through this function, the
-    // connect failed with an opaque `fetch failed`, and the conformance gate —
-    // correctly failing closed — refused every append with
-    // `422 iep:shapeUnfetchable`. The whole shared-workspace stream path stopped
-    // (verify-stream-live: 8/20). Reverted here, in production, minutes later.
-    //
-    // ★ THE CAUSE IS NOT KNOWN. The paragraph that stood here named one, and four
-    // measurements refute it, so it has been removed rather than left to send the
-    // next engineer at code that is already correct.
-    //
-    // WHAT IT CLAIMED: that `screeningEgressLookup` hands back `list[0]` when the
-    // caller did not ask for `all`, replacing Node's address selection with
-    // "whatever getaddrinfo listed first" — IPv6 for GitHub Pages — and killing
-    // `autoSelectFamily`, which works on a box with IPv6 egress and not in the
-    // Railway container.
-    //
-    // WHY THAT IS WRONG, measured on the relay's own base image (node:22-slim,
-    // undici 7.27.0, the exact Agent shape above):
-    //   1. undici ALWAYS passes `all: true` to a connect-time lookup — observed
-    //      `{hints:32, all:true}` on linux and `{hints:0, all:true}` on win32. The
-    //      `list[0]` branch is unreachable, so the whole list is returned in order
-    //      and Node's selection is preserved.
-    //   2. On linux the lookup is called with AI_ADDRCONFIG (hints 32), so a
-    //      container with no IPv6 route is handed IPv4 addresses only — the
-    //      "IPv6 first" premise does not hold there.
-    //   3. The REAL `screeningEgressLookup` on that image, wired into that Agent,
-    //      fetches https://markjspivey-xwisee.github.io/interego/ -> 200.
-    //   4. Forcing the IPv6-first full list into an IPv4-only container still
-    //      connects — happy-eyeballs falls back in 148 ms.
-    // The screen also does not false-positive on the blamed host: all eight
-    // GitHub Pages addresses pass `privateAddressReason`.
-    //
-    // WHAT REMAINS TRUE. The wiring WAS effective (Node's built-in fetch honours
-    // `init.dispatcher` from this npm undici Agent — verified with a poisoned
-    // lookup), it did take every shape-gated publish down, `fetchShapeRepresentation`
-    // reaches GitHub Pages through this function, the conformance gate failed
-    // closed with `422 iep:shapeUnfetchable`, and verify-stream-live went 8/20.
-    // The mechanism between "guarded dispatcher attached" and "fetch failed" is
-    // unexplained.
-    //
-    // NOTHING IN THE SUITE COULD HAVE CAUGHT IT, and it was flagged as such before
-    // it shipped: server.ts calls app.listen() at module scope, so no unit test can
-    // import this function, and this wiring was recorded as a review-only seam with
-    // a KNOWN-SURVIVING mutant (M5). It survived, and then it broke production.
-    //
-    // RE-LANDING, in order:
-    //   (a) the RELAY_NO_LISTEN bootstrap change, so this file is importable and
-    //       the wiring can be exercised at all. This is the only step that is
-    //       independently justified today.
-    //   (b) REPRODUCE THE OUTAGE before changing the lookup: instrument this
-    //       function in a throwaway deploy, log what `screeningEgressLookup` is
-    //       handed and returns for the shape host, and capture the real `cause`
-    //       code behind `fetch failed` in the container.
-    //   (c) only then correct this note with the cause that was measured.
-    // Do NOT "fix" the `list[0]` branch as a precondition — points 1-4 above say
-    // it is not what broke.
-    //
-    // Until then the SSRF defence here is `assertInvokeTargetAllowed` plus
-    // `assertPublicPodUrl` — the NAME screen only. A publicly-resolvable name that
-    // points at private space (`10-0-0-5.nip.io`, `localtest.me`) passes both.
-    void assertInvokeTargetAllowed(target);
-    const r = await solidFetch(target, {
-      ...(init as Record<string, unknown>),
-      redirect: 'manual',
-    } as typeof init);
-    if (r.status < 300 || r.status >= 400) return { response: r, landedUrl: target };
-    const loc = r.headers.get('location');
-    if (!loc) return { response: r, landedUrl: target };
-    // Resolve relative Locations against the CURRENT hop, then re-screen on the
-    // next iteration — a relative redirect must not escape the guard either.
-    target = normalizeCssUrl(new URL(loc, target).toString());
-  }
-  throw new Error('invoke: too many redirects');
-}
-const guardedInvokeFetch: FetchFn = async (url, init) =>
-  (await guardedInvokeFetchLanded(url, init)).response;
 
 /**
  * Is `target` a real, safe HTTP(S) endpoint a graph-declared HMD control may point

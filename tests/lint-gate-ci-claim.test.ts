@@ -22,7 +22,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { baselineClaimFailure } from '../tools/lint-gate.mjs';
+import { baselineClaimFailure, frontierFailures, frontierTolerance } from '../tools/lint-gate.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOW = join(REPO, '.github', 'workflows', 'lint.yml');
@@ -65,5 +65,76 @@ describe('the ESLint job name describes the real baseline', () => {
     const withHistory = '# It said "47 files pinned" long after the baseline was emptied.\n'
       + '    name: "Flat-config lint + ratcheted baseline (zero-error, empty baseline)"\n';
     expect(baselineClaimFailure(withHistory, 0)).toBeNull();
+  });
+});
+
+/**
+ * ★ THE UN-LINTED FRONTIER — the expansion item, closed as a ceiling instead of as ~185
+ * per-file pins.
+ *
+ * `deploy/` and `applications/` were named in the item; the census in lint-gate.mjs found
+ * five more nobody had named (`benchmarks/`, `demos/`, `mcp-server/`, `scripts/`, `spec/`),
+ * for 2,505 lint errors across 571 files that no gate had ever looked at. The pins are one
+ * number per root, ratcheted BOTH ways with a proportional tolerance, because a per-file
+ * baseline over a concurrently-edited tree reds master on the first incidental cleanup —
+ * which is exactly why the expansion was declined the last time it came up.
+ *
+ * Every fixture below is DERIVED from `frontierTolerance`, never a literal chosen to sit
+ * beside today's value. `tests/vitest-run-integrity.test.ts` had to be rescued from exactly
+ * that mistake: hard-coded fixtures turn the self-test red whenever the thing it guards is
+ * legitimately tightened, and then it gets edited to match instead of read.
+ */
+describe('the un-linted frontier ratchet', () => {
+  const pin = { errors: 1000, files: 300 };
+  const slackErr = frontierTolerance(pin.errors);
+  const slackFiles = frontierTolerance(pin.files);
+
+  it('★ is silent inside the tolerance, in both directions — the control', () => {
+    // Without this, a checker that always fails passes every case below.
+    expect(frontierFailures('x', pin, { errors: pin.errors, files: pin.files })).toEqual([]);
+    expect(frontierFailures('x', pin, {
+      errors: pin.errors + slackErr, files: pin.files + slackFiles,
+    })).toEqual([]);
+    expect(frontierFailures('x', pin, {
+      errors: pin.errors - slackErr, files: pin.files - slackFiles,
+    })).toEqual([]);
+  });
+
+  it('★ fails when the debt grows past the tolerance, and refuses to suggest raising the pin', () => {
+    const out = frontierFailures('applications', pin, {
+      errors: pin.errors + slackErr + 1, files: pin.files,
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatch(/lint error\(s\), pinned at 1000/);
+    expect(out[0]).toMatch(/Fix what you added — do not raise the pin/);
+  });
+
+  it('★ fails when it IMPROVES past the tolerance, and names the number to write', () => {
+    // A gain nobody banks is a gain that can be silently lost again — the same reasoning as
+    // the per-file baseline's improvement branch above.
+    const now = { errors: pin.errors - slackErr - 1, files: pin.files };
+    const out = frontierFailures('deploy', pin, now);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatch(new RegExp(`write errors: ${now.errors} into UNLINTED_FRONTIER`));
+  });
+
+  it('★★ fails when the root falls out of the scan — the case zero errors cannot distinguish', () => {
+    // A root eslint stops examining reports 0 errors, which passes the ceiling and reads
+    // exactly like a root that was cleaned. The file count is the only thing that can tell
+    // them apart, which is why it is checked separately and first.
+    const out = frontierFailures('mcp-server', pin, { errors: 0, files: 0 });
+    expect(out.length).toBeGreaterThanOrEqual(1);
+    expect(out[0]).toMatch(/that is a root falling out of the scan/);
+    // And the improvement branch does NOT get to claim this as a win.
+    expect(out.join('\n')).not.toMatch(/It IMPROVED/);
+  });
+
+  it('★ scales the tolerance with the pin, so a small root is not given a meaningless ceiling', () => {
+    // A fixed tolerance of 30 was the first design and it is larger than the whole of
+    // `scripts/` (7 errors), which would have let that root grow fivefold unobserved.
+    expect(frontierTolerance(7)).toBeLessThan(7 + 5);
+    expect(frontierTolerance(1380)).toBeGreaterThan(frontierTolerance(7));
+    // The floor: never zero, or a one-line change reds the gate.
+    expect(frontierTolerance(0)).toBeGreaterThan(0);
   });
 });

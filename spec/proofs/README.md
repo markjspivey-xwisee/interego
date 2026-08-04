@@ -30,10 +30,34 @@ curl -L -o tla2tools.jar \
 java -jar tla2tools.jar -workers auto -config modal-lattice.cfg modal-lattice.tla
 ```
 
+## What has actually been run over these files
+
+**Nothing, by any TLA+ tool.** Not SANY, not TLC, not TLAPS. This section
+previously said the `.tla` files were "TYPE-CHECKED by TLA+ syntax"; that was
+false, and two defects survived behind it — a transitive closure written with no
+witness constraint (so `THEOREM SupersessionPartialOrder` asserted something the
+module's own definitions refute, in the initial state) and a `LET`-recursive
+operator with no `RECURSIVE` declaration (so the module would not have parsed).
+Both are corrected in `modal-lattice.tla` **by inspection**, and those
+corrections are themselves unparsed.
+
+What IS machine-checked, on every `npx vitest run`, is the mathematics:
+[`tests/modal-lattice-spec.test.ts`](../../tests/modal-lattice-spec.test.ts)
+evaluates every `THEOREM` named in `modal-lattice.tla` exhaustively — the lattice
+laws against `ModalAlgebra` in `@interego/core`, which is the implementation the
+spec exists to constrain, and the supersession laws over bounded `Descriptors`.
+It also **fails if a theorem is added to the `.tla` with nothing executing it**,
+so the spec cannot grow a claim that nothing checks, and it fails if this
+paragraph or the spec's status block starts claiming a verification that did not
+happen.
+
+That is not a substitute for TLC. It is the part of TLC's job that can be done
+without a JVM, made unskippable, so that "we will model-check it later" stops
+being the only thing standing between the file and a false theorem.
+
 ## TLAPS (mechanized proofs)
 
-Proof outlines in `.tla` files are TYPE-CHECKED by TLA+ syntax but
-not yet MECHANIZED. To mechanize:
+To mechanize:
 
 1. Install [TLAPS](http://tla.msr-inria.inria.fr/tlaps/content/Home.html)
 2. Write proof obligations after each `THEOREM`:
