@@ -22,7 +22,8 @@
  * stops gating.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -122,6 +123,60 @@ describe('the workflow that runs the root suite triggers on everything the suite
     }
   });
 
+  /**
+   * ★ THE FILES THE TESTS READ, NOT THE DIRECTORIES VITEST COLLECTS FROM.
+   *
+   * The three assertions above check where the suite is COLLECTED from. They say nothing
+   * about what it READS, and that is a different set: `tests/build-sha-is-verifiable.test.ts`
+   * reads `.github/workflows/deploy-railway.yml`, `tests/lint-gate-ci-claim.test.ts` reads
+   * `lint.yml`, `tests/engagement-report-mirror.test.ts` reads two root documents. Under
+   * the previous lists 17 such files were covered by nothing, so a commit confined to one
+   * of them ran ESLint alone — including the deploy false-green this workflow's own
+   * `deploy/**` entry was widened to prevent.
+   *
+   * Derived the same way as `toolsLoadedByConfig`: literal strings in `tests/**` that
+   * name an existing repo file. Existence is the filter that keeps it honest — a test
+   * mentioning `'foo/bar'` that is not a file is prose, and a test naming a real file is
+   * a test that can go stale when that file changes.
+   */
+  function repoFilesNamedByTests(): string[] {
+    const named = new Set<string>();
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, entry.name);
+        if (entry.isDirectory()) { walk(p); continue; }
+        if (!entry.name.endsWith('.ts')) continue;
+        for (const m of readFileSync(p, 'utf8').matchAll(/'([A-Za-z0-9_.\-/@]+)'/g)) {
+          const s = m[1] ?? '';
+          // Only things shaped like a repo-relative path, and only if one exists.
+          if (s.startsWith('/') || s.startsWith('@')) continue;
+          if (!s.includes('/') && !/\.[a-z]+$/.test(s)) continue;
+          const abs = join(ROOT, s);
+          if (!existsSync(abs) || statSync(abs).isDirectory()) continue;
+          named.add(s.split('\\').join('/'));
+        }
+      }
+    };
+    walk(join(ROOT, 'tests'));
+    return [...named].sort();
+  }
+
+  it('names every repo file the suite reads, not just the directories it collects from', () => {
+    const files = repoFilesNamedByTests();
+    // Guards the guard: a regex that stopped matching would pass this vacuously.
+    expect(files.length, 'no repo file literals found in tests/** — the scan is broken')
+      .toBeGreaterThan(20);
+    for (const block of blocks) {
+      const uncovered = files.filter((f) => !block.some((p) => covers(p, f)));
+      expect(
+        uncovered,
+        'bridge-typecheck.yml paths: covers none of these, yet the root suite reads them. '
+          + 'A commit touching only one of them merges with the assertion about it never run:\n  '
+          + uncovered.join('\n  '),
+      ).toEqual([]);
+    }
+  });
+
   it('names every tools/ file vitest.config.ts loads (globalSetup + reporters)', () => {
     const tools = toolsLoadedByConfig(config);
     expect(tools.length, 'no tools/ module read out of vitest.config.ts — the regex is wrong')
@@ -136,3 +191,56 @@ describe('the workflow that runs the root suite triggers on everything the suite
     }
   });
 });
+
+/**
+ * ★ A GATE WHOSE SUBJECT IS THE WHOLE TREE CANNOT SIT BEHIND A PATH FILTER.
+ *
+ * `tools/docs-claim-lint.mjs` checks that every relative link and every named workflow in
+ * the top-level documents RESOLVES ON DISK. Its subject is therefore the TARGET, not the
+ * document that links to it — and it ran only in `ontology-lint.yml`, whose `paths:`
+ * covered 18 of the 82 targets. Deleting `docs/ARCHITECTURAL-FOUNDATIONS.md` breaks two
+ * links and matches none of that list, so the commit that breaks the gate is exactly the
+ * commit that skips it. Measured: the linter reports both breaks when run; no workflow
+ * would have run it.
+ *
+ * The same argument already put `spec/conformance/runner.mjs` in `lint.yml` (the only
+ * push/PR workflow with no `paths:`), and `lint.yml`'s own header states it for the lint
+ * gate. Nothing asserted it, so the third such tool went to the wrong workflow anyway.
+ */
+describe('whole-tree gates run in a workflow with no paths filter', () => {
+  const WORKFLOW_DIR = fileURLToPath(new URL('../.github/workflows/', import.meta.url));
+
+  /** Every `run:` line reachable on push/pull_request WITHOUT a `paths:` restriction. */
+  function alwaysRunCommands(): string {
+    let all = '';
+    for (const f of readdirSync(WORKFLOW_DIR)) {
+      if (!/\.ya?ml$/.test(f)) continue;
+      const yaml = readFileSync(join(WORKFLOW_DIR, f), 'utf8');
+      const on = yaml.slice(yaml.indexOf('\non:'), yaml.indexOf('\npermissions:') + 1);
+      if (!/^\s{2}(push|pull_request):/m.test(on)) continue;
+      if (/^\s+paths(-ignore)?:/m.test(on)) continue;   // filtered — cannot be relied on
+      all += `\n${yaml}`;
+    }
+    return all;
+  }
+
+  const commands = alwaysRunCommands();
+
+  it('finds an unfiltered push/PR workflow at all', () => {
+    // Guards the guard: if the parse stops finding one, every assertion below passes
+    // vacuously — which is the shape of the defect it exists to catch.
+    expect(commands.length, 'no unfiltered push/PR workflow found — the parse is wrong')
+      .toBeGreaterThan(200);
+  });
+
+  for (const tool of ['tools/docs-claim-lint.mjs', 'tools/lint-gate.mjs', 'spec/conformance/runner.mjs']) {
+    it(`runs ${tool} on every push and pull request`, () => {
+      expect(
+        commands.includes(tool),
+        `${tool} is invoked by no unfiltered workflow. Its subject spans the tree, so a `
+          + 'path filter lets exactly the commits that break it skip the check.',
+      ).toBe(true);
+    });
+  }
+});
+

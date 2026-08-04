@@ -928,10 +928,13 @@ const solidFetch: FetchFn = async (url, init) => {
 // (AMEP acts), (c) any public host passing the same RFC1918/link-local/
 // loopback/IMDS screen the /ns + /audit routes enforce (federation stays open).
 // Returns 'pinned' for the two origins the relay owns (their private resolution
-// is intended), 'public' for everything else — which is what tells the caller to
-// dial through `guardedEgressAgent`. Returning the mode rather than
-// re-computing the origins at the call site keeps ONE authority for "is this
-// ours"; two copies would drift the day CSS_URL changes.
+// is intended), 'public' for everything else. ★ NOBODY READS THE MODE. This
+// sentence used to end by saying the mode routes the caller onto
+// `guardedEgressAgent`; the only caller is `void assertInvokeTargetAllowed(target)`
+// in guardedInvokeFetchLanded and it discards the result, because #261 unwired that
+// dispatcher. The return value is kept — re-landing the address screen needs it,
+// and computing "is this ours" twice would drift the day CSS_URL changes — but a
+// reader must not take it as evidence that a guarded dispatcher exists downstream.
 function assertInvokeTargetAllowed(url: string): 'pinned' | 'public' {
   let u: URL;
   try { u = new URL(url); } catch { throw new Error(`invoke: unparseable URL: ${url}`); }
@@ -1018,31 +1021,60 @@ async function guardedInvokeFetchLanded(
     // `422 iep:shapeUnfetchable`. The whole shared-workspace stream path stopped
     // (verify-stream-live: 8/20). Reverted here, in production, minutes later.
     //
-    // WHY IT PASSED EVERY CHECK. `screeningEgressLookup` forces `all: true` so it
-    // can screen EVERY address a name resolves to — that part is right and is
-    // covered by four killed mutants. What it then does is hand back
-    // `list[0]` when the caller did not ask for `all`, which replaces Node's own
-    // address selection with "whatever getaddrinfo listed first". For
-    // markjspivey-xwisee.github.io that is `2606:50c0:8003::153` — IPv6 — and
-    // supplying a single address also leaves `autoSelectFamily` with nothing to
-    // fall back to. On a box with IPv6 egress it connects and everything passes;
-    // in the Railway container it does not. Measured both ways.
+    // ★ THE CAUSE IS NOT KNOWN. The paragraph that stood here named one, and four
+    // measurements refute it, so it has been removed rather than left to send the
+    // next engineer at code that is already correct.
     //
-    // NOTHING IN THE SUITE COULD HAVE CAUGHT THIS, and it was flagged as such
-    // before it shipped: server.ts calls app.listen() at module scope, so no unit
-    // test can import this function, and this wiring was recorded as a
-    // review-only seam with a KNOWN-SURVIVING mutant (M5). It survived, and then
-    // it broke production. That is the cost of shipping a seam whose only
-    // verification is a human reading it.
+    // WHAT IT CLAIMED: that `screeningEgressLookup` hands back `list[0]` when the
+    // caller did not ask for `all`, replacing Node's address selection with
+    // "whatever getaddrinfo listed first" — IPv6 for GitHub Pages — and killing
+    // `autoSelectFamily`, which works on a box with IPv6 egress and not in the
+    // Railway container.
     //
-    // Re-landing it needs, in its own increment: (a) `screeningEgressLookup` to
-    // preserve Node's selection instead of forcing one address — screen the full
-    // list, return the caller's requested shape, and keep IPv4/IPv6 fallback
-    // alive; and (b) a way to exercise it against a real egress path, which
-    // means the RELAY_NO_LISTEN bootstrap change so this file is importable.
+    // WHY THAT IS WRONG, measured on the relay's own base image (node:22-slim,
+    // undici 7.27.0, the exact Agent shape above):
+    //   1. undici ALWAYS passes `all: true` to a connect-time lookup — observed
+    //      `{hints:32, all:true}` on linux and `{hints:0, all:true}` on win32. The
+    //      `list[0]` branch is unreachable, so the whole list is returned in order
+    //      and Node's selection is preserved.
+    //   2. On linux the lookup is called with AI_ADDRCONFIG (hints 32), so a
+    //      container with no IPv6 route is handed IPv4 addresses only — the
+    //      "IPv6 first" premise does not hold there.
+    //   3. The REAL `screeningEgressLookup` on that image, wired into that Agent,
+    //      fetches https://markjspivey-xwisee.github.io/interego/ -> 200.
+    //   4. Forcing the IPv6-first full list into an IPv4-only container still
+    //      connects — happy-eyeballs falls back in 148 ms.
+    // The screen also does not false-positive on the blamed host: all eight
+    // GitHub Pages addresses pass `privateAddressReason`.
+    //
+    // WHAT REMAINS TRUE. The wiring WAS effective (Node's built-in fetch honours
+    // `init.dispatcher` from this npm undici Agent — verified with a poisoned
+    // lookup), it did take every shape-gated publish down, `fetchShapeRepresentation`
+    // reaches GitHub Pages through this function, the conformance gate failed
+    // closed with `422 iep:shapeUnfetchable`, and verify-stream-live went 8/20.
+    // The mechanism between "guarded dispatcher attached" and "fetch failed" is
+    // unexplained.
+    //
+    // NOTHING IN THE SUITE COULD HAVE CAUGHT IT, and it was flagged as such before
+    // it shipped: server.ts calls app.listen() at module scope, so no unit test can
+    // import this function, and this wiring was recorded as a review-only seam with
+    // a KNOWN-SURVIVING mutant (M5). It survived, and then it broke production.
+    //
+    // RE-LANDING, in order:
+    //   (a) the RELAY_NO_LISTEN bootstrap change, so this file is importable and
+    //       the wiring can be exercised at all. This is the only step that is
+    //       independently justified today.
+    //   (b) REPRODUCE THE OUTAGE before changing the lookup: instrument this
+    //       function in a throwaway deploy, log what `screeningEgressLookup` is
+    //       handed and returns for the shape host, and capture the real `cause`
+    //       code behind `fetch failed` in the container.
+    //   (c) only then correct this note with the cause that was measured.
+    // Do NOT "fix" the `list[0]` branch as a precondition — points 1-4 above say
+    // it is not what broke.
+    //
     // Until then the SSRF defence here is `assertInvokeTargetAllowed` plus
-    // `assertPublicPodUrl` — the NAME screen, whose IPv6-bracket and v4-mapped
-    // holes this same change fixed and which are covered by tests.
+    // `assertPublicPodUrl` — the NAME screen only. A publicly-resolvable name that
+    // points at private space (`10-0-0-5.nip.io`, `localtest.me`) passes both.
     void assertInvokeTargetAllowed(target);
     const r = await solidFetch(target, {
       ...(init as Record<string, unknown>),

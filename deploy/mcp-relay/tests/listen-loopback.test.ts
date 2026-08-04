@@ -57,6 +57,22 @@ import { join, dirname } from 'node:path';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { listenLoopback } from './listen-loopback.js';
+/**
+ * Comments are stripped before the `.listen(` scan below matches. The first draft did not
+ * strip them and reported nine offenders, every one of which was the sentence explaining
+ * WHY the bad form is bad — a check that fails on its own documentation is the kind that
+ * gets deleted rather than obeyed.
+ *
+ * ★ THE STRIPPER USED TO BE A REGEX HERE, AND IT DELETED CODE. `src.replace(/\/\*[\s\S]
+ * *?\*\//g,'')` over raw text treats the two characters in a `//` comment or a string
+ * literal as a block-comment opener; on server.ts that removed ~596 lines of executable
+ * code from the scanned view, i.e. a `.listen(` inside one of those spans would have been
+ * INVISIBLE to this guard. The shared parser-based `stripComments` replaces it, and its
+ * own suite reconstructs the exploit. It removes mid-line `//` too, which the regex
+ * version could not risk: `'http://127.0.0.1'` is a string literal to a parser, so the
+ * reason for the old restriction is gone.
+ */
+import { stripComments } from './strip-comments.js';
 
 let pass = 0;
 let fail = 0;
@@ -140,22 +156,6 @@ async function main(): Promise<void> {
   //
   // So the walk is now the REPOSITORY, over test suites wherever they live.
   {
-    /**
-     * Comments are stripped before matching. The first draft did not strip them and
-     * reported nine offenders, every one of which was the sentence explaining WHY the bad
-     * form is bad — a check that fails on its own documentation is the kind that gets
-     * deleted rather than obeyed.
-     *
-     * Block comments go first, then WHOLE-LINE `//` and jsdoc `*` continuations only:
-     * stripping from a mid-line `//` would eat the `//` in every `http://127.0.0.1` and
-     * could hide a real call, and a scan that can pass by accident is worse than none.
-     */
-    const stripComments = (src: string): string => src
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .split(/\r?\n/)
-      .filter(l => !/^\s*(\/\/|\*)/.test(l))
-      .join('\n');
-
     const repoRoot = join(here, '..', '..', '..');
     /**
      * ★ WHAT IS IN SCOPE, AND WHAT IS DELIBERATELY NOT — stated because a guard that
@@ -220,7 +220,8 @@ async function main(): Promise<void> {
       // the `::` binding rather than assert a claim about it. Exempted by name so the
       // exemption is visible, rather than by a pattern that would quietly cover others.
       if (file.endsWith('listen-loopback.test.ts')) continue;
-      const src = stripComments(readFileSync(file, 'utf8'));
+      // The path is passed so a .mjs/.cjs file is parsed as JavaScript, not TypeScript.
+      const src = stripComments(readFileSync(file, 'utf8'), file);
       for (const m of src.matchAll(/\.listen\(([^)]*)\)/g)) {
         // A host argument is the whole point. `listen-loopback.ts` and `tck-sut.ts` both
         // name it explicitly; anything else is binding the LAN by omission.
@@ -267,7 +268,7 @@ async function main(): Promise<void> {
       : [];
     let smokeUnguarded = 0;
     for (const name of smokeFiles) {
-      const src = stripComments(readFileSync(join(smokeDir, name), 'utf8'));
+      const src = stripComments(readFileSync(join(smokeDir, name), 'utf8'), name);
       for (const m of src.matchAll(/\.listen\(([^)]*)\)/g)) {
         if (!/['"]127\.0\.0\.1['"]/.test(m[1] ?? '')) smokeUnguarded += 1;
       }

@@ -63,15 +63,22 @@ const here = dirname(fileURLToPath(import.meta.url));
  * deleted, so the mutant survived. A comment must be able neither to satisfy nor to defeat an
  * assertion about code.
  *
- * Same stripper as `listen-loopback.test.ts`: block comments, then whole-line `//` and jsdoc
- * `*` continuations only. Deliberately NOT mid-line `//`, which would eat the `//` in every
- * `http://…` literal these checks match on.
+ * ★ AND THE STRIPPER ITSELF COULD DELETE CODE, WHICH IS THE SAME DEFECT INVERTED.
+ *
+ * This file used to carry its own `src.replace(/\/\*[\s\S]*?\*\//g,'')` over raw text.
+ * `/*` is two ordinary characters and server.ts contains them inside `//` comments
+ * (`// ── /amep/* — AMEP engine …`) and inside string literals, each of which opened a
+ * phantom block comment that ran to the next real star-slash: 14,442 lines in, 9,068 out,
+ * ~596 lines of executable code missing from the view these assertions read. So a comment
+ * could no longer SATISFY an assertion but could now DEFEAT one — measured against
+ * `tests/cors-allowlist.test.ts`, whose credentials guard passed with a real
+ * `Access-Control-Allow-Credentials` middleware live inside an eaten span.
+ *
+ * The shared, parser-based stripper is in `./strip-comments.ts`, with its own suite
+ * (`strip-comments.test.ts`) reconstructing that exploit. One implementation, so the next
+ * gate that needs this cannot write a fourth broken copy.
  */
-const stripComments = (src: string): string => src
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .split(/\r?\n/)
-  .filter(l => !/^\s*(\/\/|\*)/.test(l))
-  .join('\n');
+import { stripComments } from './strip-comments.js';
 
 const SERVER = readFileSync(join(here, '..', 'server.ts'), 'utf8');
 const REACH = readFileSync(join(here, '..', 'reachability.ts'), 'utf8');
@@ -89,7 +96,7 @@ const REACH = readFileSync(join(here, '..', 'reachability.ts'), 'utf8');
  * for any assertion whose meaning is "these two tokens are near each other", and raw `SERVER`
  * for anything whose subject is the documentation.
  */
-const SERVER_CODE = stripComments(SERVER);
+const SERVER_CODE = stripComments(SERVER, 'server.ts');
 
 let failures = 0;
 function check(name: string, cond: boolean, detail = ''): void {

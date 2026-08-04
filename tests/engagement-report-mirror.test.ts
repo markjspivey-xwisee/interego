@@ -48,7 +48,19 @@ const DOCS: ReadonlyArray<readonly [string, string]> = [
  * this whole gate could go inert without anything turning red.
  */
 function embeddedSource(html: string): string {
-  const m = /<script id="md-source" type="text\/markdown">\n([\s\S]*?)\n<\/script>/.exec(html);
+  // `\r?\n`, not `\n`, and the difference was a RED GATE ON A CLEAN TREE. The index stores
+  // this file LF; git's `core.autocrlf=true` default writes CRLF into a Windows working
+  // tree; the repo had no .gitattributes to pin either. So the byte after `>` was `\r` on
+  // the maintainer's checkout and `\n` on the Linux runner, and this gate's verdict was a
+  // property of the CHECKOUT HOST rather than of the tree — green in CI, deterministically
+  // red locally, which is the shape that teaches people to stop trusting a local run.
+  // `prose()` below already split on `/\r?\n/`; this line did not.
+  //
+  // The class is closed in .gitattributes (`* text=auto eol=lf`), and
+  // tests/line-endings-are-normalised.test.ts asserts the working tree actually matches.
+  // This regex stays line-ending agnostic anyway: a gate that reads bytes should not
+  // depend on a second gate to be correct.
+  const m = /<script id="md-source" type="text\/markdown">\r?\n([\s\S]*?)\r?\n<\/script>/.exec(html);
   if (!m) throw new Error('ENGAGEMENT-REPORT.html no longer embeds an md-source block');
   return m[1]!;
 }

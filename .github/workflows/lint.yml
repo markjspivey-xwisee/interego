@@ -59,3 +59,13 @@ jobs:
       # that break it skip the check.
       - name: Conformance runner (claims no level it did not exercise)
         run: node spec/conformance/runner.mjs
+      # ★ A LINK GATE'S SUBJECT IS THE TARGET, NOT THE LINKING DOCUMENT. This checks that
+      # every relative link and every named workflow in the top-level documents resolves on
+      # disk. It ran in ontology-lint.yml, whose `paths:` covered 18 of the 82 targets — so
+      # deleting a linked document (docs/ARCHITECTURAL-FOUNDATIONS.md, spec/STABILITY.md,
+      # demos/README.md, tests/p2p.test.ts, …) matched no trigger and merged with the gate
+      # that forbids it never executing. Measured: delete that file and the linter reports
+      # both breaks; no workflow would have run it. Unfiltered here for the same reason the
+      # header gives for the lint gate itself.
+      - name: Docs claims resolve (relative links + named workflows)
+        run: node tools/docs-claim-lint.mjs

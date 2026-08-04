@@ -46,7 +46,15 @@ on:
       # change could not re-run the gate that reads it: the assertions existed and the
       # trigger did not fire.
       - 'deploy/**'
-      - 'docs/ns/**'
+      # ★ THE WHOLE docs/ AND spec/ TREES, NOT `docs/ns/**` AND `spec/conformance/**`.
+      # tests/docs-*.test.ts and tests/spec-*.test.ts read prose files across both trees
+      # (spec/LAYERS.md, spec/AGGREGATE-PRIVACY.md, spec/CRDT-OFFLINE-MERGE.md,
+      # docs/ARCHITECTURAL-FOUNDATIONS.md, docs/AGGREGATE-PRIVACY-MODES.md,
+      # docs/applications/**/*.ttl). Under the narrow globs a commit deleting or
+      # rewriting one of those merged with the assertion about it never executed.
+      - 'docs/**'
+      - 'spec/**'
+      - 'demos/**'
       - 'integrations/**'
       - 'tsconfig.base.json'
       - 'tsconfig.check.json'
@@ -61,14 +69,33 @@ on:
       # MIN_TEST_MODULES back to 3, or deleting the reporter, merged green.
       - 'vitest.config.ts'
       - 'tools/**'
-      - 'spec/conformance/**'
-      # tests/security-txt.test.ts asserts that a workflow with a `schedule:` invokes
-      # tools/security-txt-expiry-check.mjs. Without this entry, deleting the cron from
-      # that workflow would not re-run the assertion that guards it.
-      - '.github/workflows/security-txt-expiry.yml'
+      # ★ THE WHOLE WORKFLOW DIRECTORY, NOT THREE FILES BY NAME.
+      #
+      # This list used to name `security-txt-expiry.yml` and this file, because those were
+      # the two workflows someone remembered a test reads. The root suite reads four more —
+      # deploy-railway.yml (tests/build-sha-is-verifiable.test.ts), build-ghcr.yml
+      # (tests/static-sites-404-and-hsts.test.ts), lint.yml (tests/lint-gate-ci-claim.test.ts)
+      # and the whole directory (tests/workflow-header-matches-triggers.test.ts). Every
+      # other workflow is path-filtered and none listed `.github/workflows/**`, so a pull
+      # request confined to one of those files ran ESLint and nothing else. MEASURED: the
+      # `verify_url` input this repo deliberately removed from deploy-railway.yml can be
+      # re-added and `npx vitest run tests/build-sha-is-verifiable.test.ts` goes red — the
+      # assertion existed, and no job would have executed it.
+      #
+      # The class is "a gate cannot re-run for the file it guards", so the fix is the
+      # DIRECTORY. Naming a seventh file would leave the eighth.
+      - '.github/workflows/**'
+      # Root documents the suite reads byte-for-byte: ENGAGEMENT-REPORT.html is compared
+      # against ENGAGEMENT-REPORT.md, and README/STATUS/CLAUDE carry pinned claims.
+      - 'CLAUDE.md'
+      - 'README.md'
+      - 'STATUS.md'
+      - 'ENGAGEMENT-REPORT.md'
+      - 'ENGAGEMENT-REPORT.html'
+      - 'REFLEXIVE-DOGFOOD.md'
       - 'package.json'
       - 'package-lock.json'
-      - '.github/workflows/bridge-typecheck.yml'
+      - '.gitattributes'
   pull_request:
     branches: [master]
     paths:
@@ -87,7 +114,15 @@ on:
       # change could not re-run the gate that reads it: the assertions existed and the
       # trigger did not fire.
       - 'deploy/**'
-      - 'docs/ns/**'
+      # ★ THE WHOLE docs/ AND spec/ TREES, NOT `docs/ns/**` AND `spec/conformance/**`.
+      # tests/docs-*.test.ts and tests/spec-*.test.ts read prose files across both trees
+      # (spec/LAYERS.md, spec/AGGREGATE-PRIVACY.md, spec/CRDT-OFFLINE-MERGE.md,
+      # docs/ARCHITECTURAL-FOUNDATIONS.md, docs/AGGREGATE-PRIVACY-MODES.md,
+      # docs/applications/**/*.ttl). Under the narrow globs a commit deleting or
+      # rewriting one of those merged with the assertion about it never executed.
+      - 'docs/**'
+      - 'spec/**'
+      - 'demos/**'
       - 'integrations/**'
       - 'tsconfig.base.json'
       - 'tsconfig.check.json'
@@ -102,14 +137,33 @@ on:
       # MIN_TEST_MODULES back to 3, or deleting the reporter, merged green.
       - 'vitest.config.ts'
       - 'tools/**'
-      - 'spec/conformance/**'
-      # tests/security-txt.test.ts asserts that a workflow with a `schedule:` invokes
-      # tools/security-txt-expiry-check.mjs. Without this entry, deleting the cron from
-      # that workflow would not re-run the assertion that guards it.
-      - '.github/workflows/security-txt-expiry.yml'
+      # ★ THE WHOLE WORKFLOW DIRECTORY, NOT THREE FILES BY NAME.
+      #
+      # This list used to name `security-txt-expiry.yml` and this file, because those were
+      # the two workflows someone remembered a test reads. The root suite reads four more —
+      # deploy-railway.yml (tests/build-sha-is-verifiable.test.ts), build-ghcr.yml
+      # (tests/static-sites-404-and-hsts.test.ts), lint.yml (tests/lint-gate-ci-claim.test.ts)
+      # and the whole directory (tests/workflow-header-matches-triggers.test.ts). Every
+      # other workflow is path-filtered and none listed `.github/workflows/**`, so a pull
+      # request confined to one of those files ran ESLint and nothing else. MEASURED: the
+      # `verify_url` input this repo deliberately removed from deploy-railway.yml can be
+      # re-added and `npx vitest run tests/build-sha-is-verifiable.test.ts` goes red — the
+      # assertion existed, and no job would have executed it.
+      #
+      # The class is "a gate cannot re-run for the file it guards", so the fix is the
+      # DIRECTORY. Naming a seventh file would leave the eighth.
+      - '.github/workflows/**'
+      # Root documents the suite reads byte-for-byte: ENGAGEMENT-REPORT.html is compared
+      # against ENGAGEMENT-REPORT.md, and README/STATUS/CLAUDE carry pinned claims.
+      - 'CLAUDE.md'
+      - 'README.md'
+      - 'STATUS.md'
+      - 'ENGAGEMENT-REPORT.md'
+      - 'ENGAGEMENT-REPORT.html'
+      - 'REFLEXIVE-DOGFOOD.md'
       - 'package.json'
       - 'package-lock.json'
-      - '.github/workflows/bridge-typecheck.yml'
+      - '.gitattributes'
 
 permissions:
   contents: read

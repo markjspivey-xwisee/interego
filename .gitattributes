@@ -1,0 +1,87 @@
+# ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
+#
+# Two defects, both measured on a CLEAN tree at master, both invisible in CI.
+#
+# ★ (1) A GATE WHOSE VERDICT WAS A PROPERTY OF THE CHECKOUT HOST.
+#
+# The repo had no .gitattributes, so line endings were decided by each developer's
+# `core.autocrlf` (git's Windows default is `true`). Every blob in the index is LF;
+# a Windows working tree therefore held CRLF. `tests/engagement-report-mirror.test.ts`
+# extracted the embedded markdown with a bare LF anchored right after the script tag,
+# and the byte there was CR. That gate was green on the Linux runner and
+# DETERMINISTICALLY RED on the maintainer's own clean checkout — which is the shape
+# that teaches people to stop trusting a local run, and it generalises to any future
+# assertion that reads bytes.
+#
+# `eol=lf` makes the working tree match the index and the runner on every platform.
+#
+# ★ (2) A SOURCE FILE THAT LANDED WITH NO REVIEWABLE DIFF.
+#
+# `tools/docs-claim-lint.mjs` — a whole new gate — contained a raw NUL byte inside a
+# template literal used as a Set key. git classifies a file with a NUL as binary, so it
+# landed as `Bin 0 -> 10308 bytes`: zero reviewable content on GitHub and locally,
+# `grep` reporting only "Binary file … matches", and every future edit to it —
+# including additions to its own KNOWN_BROKEN pin list — rendering the same way. Four
+# older files had the same shape. All five now spell that character as the
+# six-character JavaScript escape (backslash, u, 0, 0, 0, 0), which denotes exactly the
+# same string, so behaviour is unchanged and the files are text.
+#
+# `text` and `diff` on every source extension is the guard against the next one: `diff`
+# forces git to produce a textual diff even where a control byte appears, so a stray
+# byte shows up in review instead of silently making the file undiffable.
+#
+# NOTE: setting these attributes does NOT rewrite an existing working tree. After
+# changing this file, re-check out (`git checkout-index -a -f`) or the tree keeps the
+# endings it already has. tests/line-endings-are-normalised.test.ts is what notices.
+
+* text=auto eol=lf
+
+# Source: force text classification AND a textual diff.
+*.ts     text eol=lf diff
+*.tsx    text eol=lf diff
+*.mts    text eol=lf diff
+*.cts    text eol=lf diff
+*.js     text eol=lf diff
+*.jsx    text eol=lf diff
+*.mjs    text eol=lf diff
+*.cjs    text eol=lf diff
+*.json   text eol=lf diff
+*.jsonld text eol=lf diff
+*.md     text eol=lf diff
+*.html   text eol=lf diff
+*.css    text eol=lf diff
+*.ttl    text eol=lf diff
+*.shacl  text eol=lf diff
+*.nq     text eol=lf diff
+*.yml    text eol=lf diff
+*.yaml   text eol=lf diff
+*.sh     text eol=lf diff
+*.sql    text eol=lf diff
+*.xml    text eol=lf diff
+*.svg    text eol=lf diff
+*.txt    text eol=lf diff
+Dockerfile*    text eol=lf diff
+*.dockerfile   text eol=lf diff
+
+# ★ CRLF ON PURPOSE. cmd.exe reads batch files line by line and a `goto`/label in an
+# LF-only .bat can be mis-seeked; these are the only files in the tree whose runtime
+# is a Windows shell. Excluded from the normalisation gate by the same extension list.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never converted, never diffed as text.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary
+*.mp4  binary
+*.wasm binary

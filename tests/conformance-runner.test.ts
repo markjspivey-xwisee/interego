@@ -54,8 +54,32 @@ function treeWithRevocation(): string {
   return dir;
 }
 
+/**
+ * ★ A SUBPROCESS SPAWN UNDER VITEST'S 5 s DEFAULT IS A COIN FLIP ON A BUSY RUNNER.
+ *
+ * `vitest.config.ts` sets no `testTimeout`, so every `it` here ran on the 5,000 ms
+ * default while synchronously spawning a whole Node process. MEASURED on one box:
+ * `node spec/conformance/runner.mjs` costs 1.3-2.0 s idle and 5.4-6.3 s under load, and
+ * inside the full suite — which pins `singleThread`/`singleFork`, so all 215 files share
+ * one contended worker — two of these cases timed out at 7,576 ms and 7,367 ms while
+ * passing in isolation. That is a gate whose verdict is decided by machine load, in the
+ * one CI job that runs `npx vitest run`; it is the same shape as the AXIS A incident
+ * `tools/vitest-run-integrity.mjs` was written about, and the run-integrity reporter
+ * cannot help, because a timed-out test still finishes its module.
+ *
+ * 30 s is ~5x the worst time observed rather than a round number, and it is NOT a raised
+ * bound hiding a slow runner: the work is one process spawn whose own cost is pinned
+ * below. The inner `timeout` is the half that matters more — spawnSync BLOCKS, so vitest
+ * cannot interrupt it; without this a genuinely hung runner would hang the whole file
+ * instead of failing it.
+ */
+const SPAWN_BUDGET_MS = 30_000;
+
 function run(args: string[]): { status: number; out: string } {
-  const r = spawnSync(process.execPath, [RUNNER, ...args], { cwd: REPO, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [RUNNER, ...args], {
+    cwd: REPO, encoding: 'utf8', timeout: SPAWN_BUDGET_MS - 5_000,
+  });
+  if (r.error) throw new Error(`runner.mjs did not complete: ${r.error.message}`);
   return { status: r.status ?? -1, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -68,7 +92,7 @@ describe('conformance runner', () => {
     expect(out).not.toContain('L1+L2+L3');
     expect(out).not.toContain('Interego-Full');
     expect(out).toContain('Not exercised by any fixture');
-  });
+  }, SPAWN_BUDGET_MS);
 
   it('★ refuses a fixture directory it does not know about, instead of skipping it', () => {
     // The documented third-party path. Before this the file was never opened and the run
@@ -85,7 +109,7 @@ describe('conformance runner', () => {
     expect(status, out).toBe(2);
     expect(out).toContain('no CATEGORY_CHECKS entry');
     expect(out).toContain('their-impl');
-  });
+  }, SPAWN_BUDGET_MS);
 
   it('★ refuses a declared category with no fixtures behind it', () => {
     const dir = tempTree();
@@ -93,7 +117,7 @@ describe('conformance runner', () => {
     const { status, out } = run(['--fixtures', dir]);
     expect(status, out).toBe(2);
     expect(out).toContain('contributed 0 fixtures');
-  });
+  }, SPAWN_BUDGET_MS);
 
   it('★ --fixtures actually redirects the scan — the flag was documented and ignored', () => {
     // Kills the mutant that reverts FIXTURES_DIR to the built-in constant: both cases above
@@ -102,11 +126,11 @@ describe('conformance runner', () => {
     const { status, out } = run(['--fixtures', dir]);
     expect(status, out).toBe(0);
     expect(out).toContain(dir);
-  });
+  }, SPAWN_BUDGET_MS);
 
   it('refuses --expected rather than accepting a flag that does nothing', () => {
     const { status, out } = run(['--expected', 'spec/conformance/expected']);
     expect(status, out).toBe(2);
     expect(out).toContain('--expected');
-  });
+  }, SPAWN_BUDGET_MS);
 });
