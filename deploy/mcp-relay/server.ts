@@ -648,8 +648,21 @@ const AUTH_REQUIRED_TOOLS = new Set([
   //
   // PURE READS STAY PUBLIC by design: get_descriptor, dereference, discover_all,
   // discover_context are called unauthenticated by live published artifacts, and
-  // R1 (own-pod-only decryption) + R4 (redirect-screening egress) already removed
-  // their teeth. Gating them would break those artifacts for no security gain.
+  // R1 (own-pod-only decryption) + R4 (redirect-screening egress) removed their teeth.
+  // Gating them would break those artifacts for no security gain.
+  //
+  // ★ THAT SENTENCE WAS FALSE FOR THE TWO DISCOVER TOOLS UNTIL NOW, AND THE FALSEHOOD IS
+  // THE POINT. R4 screens whatever goes through `guardedInvokeFetch`. `get_descriptor`
+  // and `dereference` do; `discover_context`/`discover_all` reached their caller-supplied
+  // `pod_url` through `solidFetch` on the global UNSCREENED pool — an unauthenticated
+  // SSRF door sitting next to the screened one, asserted safe by this comment. Found by
+  // an adversarial pass 2026-08-04 that could not break the screen itself and went
+  // looking for what the screen was not on. Both discover paths now use
+  // `guardedInvokeFetch`, so the claim above is true rather than aspirational.
+  //
+  // If you add a tool here, the question is not "is it a pure read" — it is "does every
+  // caller-supplied URL it touches go through `guardedInvokeFetch`". A read that dials
+  // an address of the caller's choosing is not a pure read.
   'discover_directory', 'remove_pod', 'subscribe_all', 'unsubscribe_from_pod',
   'pgsl_ingest',
 ]);
@@ -1390,7 +1403,24 @@ async function getCachedManifest(podUrl: string): Promise<ManifestEntry[]> {
   // union/dedupe by descriptor URL. The monolithic version is
   // preferred on collision (it's the published-and-CAS-verified version).
   const [monolithic, appendOnly] = await Promise.all([
-    discover(podUrl, undefined, { fetch: solidFetch }),
+    // ★ `guardedInvokeFetch`, NOT `solidFetch` — `podUrl` is CALLER-SUPPLIED and this tool
+    // is unauthenticated by design (published artifacts call it anonymously).
+    //
+    // It used to be `solidFetch`, which rides the global unscreened pool, so this was an
+    // unauthenticated SSRF door standing beside the screened one. Measured on the
+    // deployed relay: `POST /tool/discover_context {"pod_url":"https://10-0-0-5.nip.io/"}`
+    // HUNG for 30s — a real connect attempt at 10.0.0.5 — while the guarded path refuses
+    // that same name in ~130ms with ERR_EGRESS_PRIVATE_ADDRESS. The asymmetry was the
+    // proof; the timing difference was itself a reachability oracle.
+    //
+    // The comment at AUTH_REQUIRED_TOOLS claimed R4 "already removed their teeth" for
+    // this tool. It did not — R4 covers `get_descriptor` and `dereference`, which do call
+    // `guardedInvokeFetch`. That claim is corrected there; this line is what makes it true.
+    //
+    // Safe for the relay's own pod too: `assertInvokeTargetAllowed` classifies the pinned
+    // CSS origin as `pinned` and skips the ADDRESS screen for it by design, so internal
+    // discovery keeps working — only caller-supplied public targets get screened.
+    discover(podUrl, undefined, { fetch: guardedInvokeFetch }),
     APPEND_ONLY_ENABLED ? readAppendOnlyEntries(podUrl) : Promise.resolve([] as ManifestEntry[]),
   ]);
   const byUrl = new Map<string, ManifestEntry>();
@@ -5498,7 +5528,11 @@ async function handleDiscoverAll(args: ToolArgs): Promise<string> {
       const entries = await discover(
         pod.url,
         Object.keys(filter).length > 0 ? filter as Parameters<typeof discover>[1] : undefined,
-        { fetch: solidFetch },
+        // Guarded for the same reason as `discoverCached` — see the long note there.
+        // `pod.url` is registry state, and `add_pod` takes it from the caller, so this is
+        // a caller-supplied address arriving by a slower route. An unauthenticated tool
+        // that dials an address of the caller's choosing is not a pure read.
+        { fetch: guardedInvokeFetch },
       );
       results.push({ pod: pod.url, entries });
     } catch (err) {
