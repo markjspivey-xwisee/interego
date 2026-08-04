@@ -345,7 +345,14 @@ describe('★ the address screen is WIRED: a socket, from the far side', () => {
       restoreResolver?.();
       await egress?.close();
     }
-  });
+    // ★ The ceiling is here because the FLOOR is not ours to set. Everything above bounds
+    // what this code controls; what remains is how long the host's network stack takes to
+    // give up on a SYN into 240.0.0.0/4, and that is a routing-table property — 26ms on a
+    // host with no route, and a full TCP retry schedule on one with a default gateway. The
+    // assertions are unchanged and exact: this only stops the ENVIRONMENT from deciding
+    // whether a correct implementation is allowed to report. If this ever approaches the
+    // ceiling, the answer is a different unroutable target, never a bigger number.
+  }, 45_000);
 
   /**
    * The pass-through contract, stated directly on the screen: same length, same order,

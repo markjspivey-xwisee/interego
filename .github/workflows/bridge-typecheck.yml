@@ -187,7 +187,13 @@ jobs:
     name: "MCP surface typecheck (tsx never typechecks it — this is the only guard)"
     runs-on: ubuntu-latest
     steps:
+      # ★ `fetch-depth: 0` IS LOAD-BEARING. This job runs the whole root suite, which
+      # includes `railway-pins-freshness.test.ts` — it reads a real commit date out of this
+      # clone to prove a deployed pin is not stale. Under the default depth-1 clone that
+      # lookup fails and the test reds for a reason that has nothing to do with pins, which
+      # is exactly the kind of red whose obvious "fix" is to weaken the assertion.
       - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v6
         with:
           node-version: '20'
