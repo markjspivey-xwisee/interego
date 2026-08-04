@@ -35,14 +35,77 @@
  *
  * Run with:  node spec/conformance/runner.mjs
  * Exits non-zero on any violation.
+ *
+ * ── ★ TWO VERDICTS THAT DISAGREED, AND ONLY ONE OF THEM SHIPS ────────────────
+ *
+ * This runner parses Turtle with regexes; `validateAgainstShape` in
+ * @interego/core is what actually gates the publish path. They were free to
+ * disagree and did: the runner reported `self-reference-violation.ttl —
+ * expected violations fired ✓`, while the shipped engine returned
+ * `conforms: true` on the same fixture against the same shapes. The fixture's
+ * own header says it MUST be rejected by any conforming implementation. So the
+ * repo held a green conformance report for a rule its implementation does not
+ * enforce — `iep:RevocationConditionNoSelfReferenceShape` is `sh:sparql`, and
+ * this substrate ships no SPARQL evaluator.
+ *
+ * A conformance runner that grades a DIFFERENT implementation than the one that
+ * ships is not measuring conformance. Every fixture is now ALSO put through the
+ * shipped engine (see crossCheckWithEngine). Where the engine reports it could
+ * not evaluate the rule (`fullyChecked: false`), the fixture is counted as
+ * UNVERIFIABLE rather than passed, and its level is withheld from the badge.
+ *
+ * ── ★ AND THE BADGE CLAIMED THREE LEVELS FROM ONE ────────────────────────────
+ *
+ * `l2Pass`/`l3Pass` were computed as "no L2/L3 category FAILED". No L2 or L3
+ * category exists, so both were vacuously true and the runner printed
+ * "Interego Full — L1+L2+L3 (Core + Federation + Advanced)" off 5 fixtures in
+ * 1 of the 10 categories its own README enumerates. A level is now claimed only
+ * if it was actually EXERCISED.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = resolve(__dirname, 'fixtures');
+const REPO_ROOT = resolve(__dirname, '..', '..');
+const SHAPES_FILE = join(REPO_ROOT, 'docs', 'ns', 'iep-shapes.ttl');
+
+/**
+ * Put a fixture through the SHIPPED validator, so this runner cannot certify a
+ * rule the implementation does not enforce.
+ *
+ * Returns null when the engine is unavailable (packages not built — the runner
+ * must stay usable from a bare checkout), otherwise
+ * `{ conforms, fullyChecked, violations }`.
+ */
+async function crossCheckWithEngine(turtle) {
+  // ★ IN CI THIS MAY NOT DEGRADE SILENTLY. A skipped cross-check restores exactly the
+  // divergence this function exists to close — the fixture would go back to counting as a
+  // pass on the regex verdict alone. Locally, from a bare checkout with nothing built,
+  // degrading is the right call; in CI the workflow sets CONFORMANCE_REQUIRE_ENGINE=1 and
+  // an unavailable engine is a hard failure.
+  const required = process.env.CONFORMANCE_REQUIRE_ENGINE === '1';
+  const unavailable = (why) => {
+    if (!required) return null;
+    console.error(`✗ conformance cross-check unavailable and CONFORMANCE_REQUIRE_ENGINE=1: ${why}`);
+    process.exit(2);
+  };
+  if (!existsSync(SHAPES_FILE)) return unavailable(`missing ${SHAPES_FILE}`);
+  let validateAgainstShape;
+  try {
+    ({ validateAgainstShape } = await import('@interego/core'));
+  } catch (err) {
+    return unavailable(`@interego/core did not import (run npm run build): ${err.message}`);
+  }
+  const report = validateAgainstShape(turtle, readFileSync(SHAPES_FILE, 'utf-8'));
+  return {
+    conforms: report.conforms,
+    fullyChecked: report.fullyChecked,
+    violations: report.results.filter(r => r.severity === 'Violation').length,
+  };
+}
 
 // ── Checks ────────────────────────────────────────────────────
 
@@ -152,18 +215,19 @@ const EXPECTED_VIOLATIONS = {
   'revocation/self-reference-violation.ttl': ['Successor query references enclosing graph IRI'],
 };
 
-function runCategory(categoryDir, checks) {
+async function runCategory(categoryDir, checks) {
   const fullDir = join(FIXTURES_DIR, categoryDir);
   let entries;
   try {
     entries = readdirSync(fullDir).filter(f => f.endsWith('.ttl'));
   } catch {
-    return { total: 0, pass: 0, fail: 0, skipped: [`${categoryDir}/ missing`] };
+    return { total: 0, pass: 0, fail: 0, unverifiable: 0, skipped: [`${categoryDir}/ missing`] };
   }
 
   let total = 0;
   let pass = 0;
   let fail = 0;
+  let unverifiable = 0;
   const failures = [];
 
   for (const fixture of entries) {
@@ -188,8 +252,18 @@ function runCategory(categoryDir, checks) {
         selfRefViolations.some(v => v.includes(ex)) || allViolations.some(v => v.msg.includes(ex))
       );
       if (expectedHit) {
-        pass++;
-        console.log(`  ✓ ${fixture} — expected violations fired`);
+        // ★ The regex checks agree. Now ask the implementation that actually ships.
+        const engine = await crossCheckWithEngine(content);
+        if (engine && engine.fullyChecked === false) {
+          unverifiable++;
+          console.log(`  ⚠ ${fixture} — this runner's checks fired, but the SHIPPED validator `
+            + `could not evaluate the rule (fullyChecked=false, conforms=${engine.conforms}).`);
+          console.log('      Counted as UNVERIFIABLE, not as a pass. A conformance report that '
+            + 'grades a different implementation than the one that ships is not a conformance report.');
+        } else {
+          pass++;
+          console.log(`  ✓ ${fixture} — expected violations fired`);
+        }
       } else {
         fail++;
         failures.push({ fixture, expected, got: [...allViolations.map(v => v.msg), ...selfRefViolations] });
@@ -209,7 +283,7 @@ function runCategory(categoryDir, checks) {
       }
     }
   }
-  return { total, pass, fail, failures };
+  return { total, pass, fail, unverifiable, failures };
 }
 
 // ── Conformance levels (per spec/CONFORMANCE.md) ──────────────
@@ -241,42 +315,63 @@ console.log('');
 let grandTotal = 0;
 let grandPass = 0;
 let grandFail = 0;
+let grandUnverifiable = 0;
 const failedLevels = new Set();
+/** Levels a fixture actually RAN for. A level nothing exercised is not a level passed. */
+const exercisedLevels = new Set();
+/** Levels with at least one rule the shipped validator could not evaluate. */
+const unverifiableLevels = new Set();
 
 for (const [category, checks] of Object.entries(CATEGORY_CHECKS)) {
   const mapping = LEVEL_MAPPING[category];
   const levelTag = mapping ? ` [${mapping.level}: ${mapping.rule}]` : '';
   console.log(`Category: ${category}${levelTag}`);
-  const r = runCategory(category, checks);
+  const r = await runCategory(category, checks);
   grandTotal += r.total;
   grandPass += r.pass;
   grandFail += r.fail;
-  console.log(`  ${r.pass}/${r.total} passed`);
+  grandUnverifiable += r.unverifiable ?? 0;
+  console.log(`  ${r.pass}/${r.total} passed`
+    + (r.unverifiable ? `, ${r.unverifiable} unverifiable by the shipped validator` : ''));
+  if (mapping && r.total > 0) exercisedLevels.add(mapping.level);
   if (r.fail > 0 && mapping) failedLevels.add(mapping.level);
+  if ((r.unverifiable ?? 0) > 0 && mapping) unverifiableLevels.add(mapping.level);
   console.log('');
 }
 
 console.log('================================');
-console.log(`TOTAL: ${grandPass}/${grandTotal} passed, ${grandFail} failed`);
+console.log(`TOTAL: ${grandPass}/${grandTotal} passed, ${grandFail} failed`
+  + (grandUnverifiable ? `, ${grandUnverifiable} unverifiable` : ''));
 console.log('');
 
 // ── Conformance badge ──
-const l1Pass = !failedLevels.has('L1');
-const l2Pass = !failedLevels.has('L2');
-const l3Pass = !failedLevels.has('L3');
+//
+// ★ A LEVEL MUST BE EXERCISED TO BE CLAIMED. This used to read "no L2/L3 category
+// failed" — and since no L2 or L3 category exists, both were vacuously true and the
+// runner printed "Interego Full (Core + Federation + Advanced)" from five fixtures in
+// one category. Absence of evidence was being reported as evidence of conformance.
+const claimed = ['L1', 'L2', 'L3'].filter(
+  l => exercisedLevels.has(l) && !failedLevels.has(l) && !unverifiableLevels.has(l),
+);
+const notExercised = ['L1', 'L2', 'L3'].filter(l => !exercisedLevels.has(l));
 
 console.log('── Conformance badge ──');
-if (l1Pass && l2Pass && l3Pass) {
-  console.log('   ✓ Interego L1+L2+L3 (Core + Federation + Advanced)');
-  console.log('   Badge: ![Interego Full](https://img.shields.io/badge/Interego-Full-brightgreen)');
-} else if (l1Pass && l2Pass) {
-  console.log('   ✓ Interego L1+L2 (Core + Federation)');
-  console.log('   Badge: ![Interego L1+L2](https://img.shields.io/badge/Interego-L1%2BL2-green)');
-} else if (l1Pass) {
-  console.log('   ✓ Interego L1 (Core)');
-  console.log('   Badge: ![Interego L1](https://img.shields.io/badge/Interego-L1-blue)');
-} else {
+if (failedLevels.size > 0) {
   console.log('   ✗ Non-conformant. Failed levels: ' + [...failedLevels].join(', '));
+} else if (claimed.length === 0) {
+  console.log('   — No level fully verified by this run.');
+} else {
+  const label = claimed.join('+');
+  console.log(`   ✓ Interego ${label}`);
+  console.log(`   Badge: ![Interego ${label}](https://img.shields.io/badge/Interego-${encodeURIComponent(label)}-blue)`);
+}
+if (unverifiableLevels.size > 0) {
+  console.log(`   ⚠ Partial at ${[...unverifiableLevels].join(', ')}: at least one rule is `
+    + 'declared in the shapes but not evaluable by the shipped validator.');
+}
+if (notExercised.length > 0) {
+  console.log(`   · Not exercised by any fixture: ${notExercised.join(', ')}. `
+    + 'See spec/conformance/README.md for the categories still to be written.');
 }
 console.log('');
 console.log('   See spec/CONFORMANCE.md for level definitions and what');

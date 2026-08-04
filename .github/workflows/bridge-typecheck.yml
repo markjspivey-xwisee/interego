@@ -38,9 +38,21 @@ on:
       - 'tests/**'
       - 'deploy/mcp-relay/**'
       - 'docs/ns/**'
+      - 'integrations/**'
       - 'tsconfig.base.json'
       - 'tsconfig.check.json'
-      - 'tools/typecheck-gate.mjs'
+      # ★ NOT just `tools/typecheck-gate.mjs`. This job is the ONLY workflow that runs
+      # `npx vitest run`, and vitest.config.ts holds the `include` globs, the `globalSetup`
+      # typecheck hook AND the `reporters` wiring for tools/vitest-run-integrity.mjs — the
+      # run-integrity floor that was ratcheted 175 -> 179 precisely so a glob that stopped
+      # matching a directory could not report a green whole-tree run. Neither file was in
+      # this list. The only push/PR workflow with no `paths` filter is lint.yml, whose gate
+      # targets do not read either. So a PR editing ONLY vitest.config.ts, or only
+      # vitest-run-integrity.mjs, got exactly one check — ESLint — and setting
+      # MIN_TEST_MODULES back to 3, or deleting the reporter, merged green.
+      - 'vitest.config.ts'
+      - 'tools/**'
+      - 'spec/conformance/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/bridge-typecheck.yml'
@@ -54,9 +66,21 @@ on:
       - 'tests/**'
       - 'deploy/mcp-relay/**'
       - 'docs/ns/**'
+      - 'integrations/**'
       - 'tsconfig.base.json'
       - 'tsconfig.check.json'
-      - 'tools/typecheck-gate.mjs'
+      # ★ NOT just `tools/typecheck-gate.mjs`. This job is the ONLY workflow that runs
+      # `npx vitest run`, and vitest.config.ts holds the `include` globs, the `globalSetup`
+      # typecheck hook AND the `reporters` wiring for tools/vitest-run-integrity.mjs — the
+      # run-integrity floor that was ratcheted 175 -> 179 precisely so a glob that stopped
+      # matching a directory could not report a green whole-tree run. Neither file was in
+      # this list. The only push/PR workflow with no `paths` filter is lint.yml, whose gate
+      # targets do not read either. So a PR editing ONLY vitest.config.ts, or only
+      # vitest-run-integrity.mjs, got exactly one check — ESLint — and setting
+      # MIN_TEST_MODULES back to 3, or deleting the reporter, merged green.
+      - 'vitest.config.ts'
+      - 'tools/**'
+      - 'spec/conformance/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/bridge-typecheck.yml'
@@ -186,3 +210,14 @@ jobs:
       # pins the envelope so a change to it has to be deliberate and visible in a diff.
       - name: Guard the shared MCP wire contract (the envelope four deployed clients parse)
         run: npx tsx applications/_shared/vertical-bridge/mcp-wire-contract.test.ts
+      # ★ THE CONFORMANCE RUNNER RAN IN NO WORKFLOW AT ALL, and its verdict disagreed with
+      # the shipped validator's: it reported `self-reference-violation.ttl — expected
+      # violations fired ✓` for a fixture `validateAgainstShape` accepts. It now cross-checks
+      # every fixture against @interego/core and counts a rule the engine cannot evaluate as
+      # UNVERIFIABLE rather than passed. It lives in THIS job because it needs `npm run build`
+      # above — CONFORMANCE_REQUIRE_ENGINE=1 makes a missing engine a hard failure rather than
+      # a silent fall back to the regex-only verdict.
+      - name: Spec conformance fixtures, cross-checked against the shipped validator
+        env:
+          CONFORMANCE_REQUIRE_ENGINE: '1'
+        run: node spec/conformance/runner.mjs

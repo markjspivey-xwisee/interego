@@ -17,9 +17,10 @@ on:
       - 'mcp-server/**'
       - 'docs/ns/**'
       - 'docs/applications/**'
-      - 'tools/ontology-lint.mjs'
-      - 'tools/derivation-lint.mjs'
-      - 'tools/check-foxxi-affordances.mjs'
+      # One glob rather than four named files: this job now runs four tools/ linters, and
+      # naming them individually is how `tools/security-txt-expiry-check.mjs` came to be
+      # wired into nothing at all.
+      - 'tools/**'
       - 'applications/foxxi-content-intelligence/affordances.ts'
       # The shared vertical-bridge mount emits iep: terms too (it types the
       # affordance manifest), and was not covered — so a new undeclared term
@@ -36,9 +37,10 @@ on:
       - 'mcp-server/**'
       - 'docs/ns/**'
       - 'docs/applications/**'
-      - 'tools/ontology-lint.mjs'
-      - 'tools/derivation-lint.mjs'
-      - 'tools/check-foxxi-affordances.mjs'
+      # One glob rather than four named files: this job now runs four tools/ linters, and
+      # naming them individually is how `tools/security-txt-expiry-check.mjs` came to be
+      # wired into nothing at all.
+      - 'tools/**'
       - 'applications/foxxi-content-intelligence/affordances.ts'
       # The shared vertical-bridge mount emits iep: terms too (it types the
       # affordance manifest), and was not covered — so a new undeclared term
@@ -51,7 +53,13 @@ permissions:
 
 jobs:
   lint:
-    name: "Owned-namespace consistency (cg cgh pgsl ie align hyprcat hypragent hela sat cts olke amta)"
+    # ★ NO ENUMERATION. This read "(cg cgh pgsl ie align hyprcat hypragent hela sat cts olke
+    # amta)" — twelve prefixes, two of them DEPRECATED aliases, omitting `iep` and `ieh`
+    # (the current names after the rename) and eleven others OWNED_NAMESPACES actually
+    # covers. A hand-maintained list in a check NAME is drift with a green tick next to it;
+    # the authoritative list is OWNED_NAMESPACES in tools/ontology-lint.mjs, which the job
+    # prints. Same argument that deleted the "47 files pinned" literal from the ESLint job.
+    name: "Owned-namespace consistency (every prefix in OWNED_NAMESPACES)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -67,3 +75,16 @@ jobs:
       # could see was broken is indistinguishable from no guard at all.
       - name: Every vertical class grounds into L1 (derivation discipline)
         run: node tools/derivation-lint.mjs
+      # ★ RAN IN NO WORKFLOW AND EXITED 2 ON A CLEAN TREE. It read a path the
+      # security-txt helper moved away from, so it never once evaluated the RFC 9116
+      # Expires value — and `npm run lint:all`, which chains it, was therefore red at
+      # HEAD while CI ran the narrower `npm run lint` and saw nothing. Both halves are
+      # fixed; this step is the half that keeps it visible.
+      - name: security.txt Expires is not within the refresh window (RFC 9116)
+        run: node tools/security-txt-expiry-check.mjs
+      # ★ The Azure→Railway doc sweep was done twice and left residue both times: STATUS.md
+      # asserted three services "live on Azure" with `contextgraphsacr` image pins twenty
+      # lines above its own paragraph explaining that registry was deleted. A claim that has
+      # to be re-checked by hand gets re-checked once.
+      - name: Docs describe the live fleet, not a dead one
+        run: node tools/docs-drift-lint.mjs

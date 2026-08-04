@@ -13,7 +13,7 @@
 // blocks on them. Companion to the namespace-coverage check in
 // tools/ontology-lint.mjs.
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 

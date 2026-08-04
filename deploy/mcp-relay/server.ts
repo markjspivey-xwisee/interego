@@ -2119,6 +2119,28 @@ async function runConformanceGate(
     // ★ Carry the Info notes forward. The engine emits UnsupportedConstraint precisely
     // so `conforms` cannot be mistaken for `was actually checked` — dropping them here
     // would have thrown away the signal one commit after adding it.
+    //
+    // ★ WHY THIS GATE IS NOT `conforms && report.fullyChecked` — RESTATED WITH THE MEASURED
+    // SCOPE, because the previous statement of it was false. It said `fullyChecked` is
+    // "false for every graph against iep-shapes.ttl, so flipping it today refuses
+    // everything". That is not what the code does, and the whole point of grading the scan
+    // against the DATA graph was that it is not blanket. Measured against
+    // `docs/ns/iep-shapes.ttl`:
+    //
+    //     empty graph            fullyChecked=true      a plain dct: note   true
+    //     unrelated graph        true                   iep:SignedAuthorship true
+    //     iep:ContextDescriptor  FALSE                  iep:Affordance       FALSE
+    //     iep:SemioticFacet      FALSE                  iep:TemporalFacet    FALSE
+    //     iep:RevocationCondition FALSE
+    //
+    // The honest statement of the blocker: `fullyChecked` is false for any graph carrying
+    // one of those five classes — which IS every descriptor on this write path, so flipping
+    // the gate would still refuse effectively every publish. The conclusion survives; the
+    // reason given for it did not, and a deferral defended by a false measurement is one
+    // nobody can re-check. The unblock is a SPARQL evaluator (or re-expressing
+    // `iep:RevocationConditionNoSelfReferenceShape` and its siblings in Core SHACL), not a
+    // flag flip. `spec/conformance/runner.mjs` now reports the same gap as UNVERIFIABLE
+    // rather than as a pass, so the two surfaces agree about what is unenforced.
     for (const note of report.results) {
       if (note.constraintComponent === 'urn:iep:shacl:UnsupportedConstraint') {
         log(`WARN conformance gate: ${shapeIri} — ${note.message}`);

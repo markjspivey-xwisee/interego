@@ -1,5 +1,5 @@
 /**
- * Tier 2 — REAL HTTP roundtrip against the deployed Azure CSS.
+ * Tier 2 — REAL HTTP roundtrip against the deployed pod (Railway css-gate).
  *
  * Where Tier 1 (per-vertical integration.test.ts) verifies builder + Turtle
  * + validate in-process, Tier 2 actually:
@@ -10,12 +10,16 @@
  *   5. Asserts the round-trip preserves descriptor IRI + facets
  *   6. Cleans up by DELETEing the test descriptor
  *
- * Pod: https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io
- * Test container: u-pk-6e3bc2f9723c (publicly writable for demos)
+ * Pod: the live css-gate (https://gate.interego.xwisee.com by default) — see
+ * applications/_shared/tests/pod-target.ts. The Azure host this file used to name was
+ * deliberately destroyed in the move to Railway, and probing it timed out and skipped 5 of
+ * these 6 tests while the file reported ✓.
  *
- * Skips automatically if:
- *   - The CSS is unreachable (network failure)
- *   - The env var SKIP_AZURE_TESTS=1 is set (CI without internet)
+ * Skips automatically, ALWAYS STATING WHICH, if:
+ *   - INTEREGO_POD_WRITE_SECRET is unset (the gate requires a bearer on every write;
+ *     the allow-all CSS these were written against no longer exists)
+ *   - The pod is unreachable or absent
+ *   - SKIP_POD_TESTS=1 / SKIP_AZURE_TESTS=1 is set (CI without internet)
  */
 
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
@@ -33,27 +37,11 @@ import type {
 
 // ── Config ────────────────────────────────────────────────────────────
 
-// CSS is no longer publicly reachable; route through the public css-gate FQDN.
-// Override with AZURE_CSS_BASE for local CSS or alternate gate deployments.
-const AZURE_CSS_BASE = process.env.AZURE_CSS_BASE ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const TEST_POD = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;
-const REACHABILITY_TIMEOUT_MS = 8000;
-
-// ── Reachability probe (skips test suite if pod is down) ─────────────
-
-async function isPodReachable(): Promise<boolean> {
-  if (process.env.SKIP_AZURE_TESTS === '1') return false;
-  try {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), REACHABILITY_TIMEOUT_MS);
-    const r = await fetch(TEST_POD, { method: 'GET', signal: ac.signal });
-    clearTimeout(timer);
-    return r.ok;
-  } catch (e) {
-    console.warn('Azure CSS unreachable:', (e as Error).message);
-    return false;
-  }
-}
+// ★ The default host used to be the Azure CSS gate, which was deliberately destroyed in the
+// move to Railway. Probing it timed out after 8s and skipped 5 of 6 tests while reporting ✓.
+// See applications/_shared/tests/pod-target.ts for the full account and the honest skip
+// reasons that replaced it.
+import { TEST_POD_BASE as TEST_POD, POD_HOST, podWriteHeaders, podFetch, probePod } from './pod-target.js';
 
 // ── Cleanup tracking ─────────────────────────────────────────────────
 
@@ -61,7 +49,9 @@ const cleanupUrls: string[] = [];
 
 async function cleanup() {
   for (const url of cleanupUrls.splice(0)) {
-    try { await fetch(url, { method: 'DELETE' }); } catch { /* best-effort */ }
+    // DELETE is a write, so it needs the same bearer the gate requires on PUT — without it
+    // cleanup silently 401s and leaves every fixture behind.
+    try { await fetch(url, { method: 'DELETE', headers: podWriteHeaders() }); } catch { /* best-effort */ }
   }
 }
 
@@ -85,21 +75,26 @@ async function fetchTurtle(url: string): Promise<string | null> {
 // ═════════════════════════════════════════════════════════════════════
 
 let podReachable = false;
+let skipReason = '';
 
 beforeAll(async () => {
-  podReachable = await isPodReachable();
+  const availability = await probePod();
+  podReachable = availability.usable;
+  skipReason = availability.reason;
 });
 
 afterEach(async () => {
   await cleanup();
 });
 
-describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
+describe('Tier 2 — real HTTP roundtrip against the live pod', () => {
   it('pod is reachable (otherwise skip the rest)', () => {
+    // ★ A skip must STATE ITS CAUSE. This used to print "unreachable" naming a host that had
+    // been deliberately deleted — a message that sent anyone reading it to a dead end.
     if (!podReachable) {
-      console.warn(`Azure CSS at ${AZURE_CSS_BASE} is unreachable; remaining Tier 2 tests skipped`);
+      console.warn(`Tier 2 pod tests skipped — ${skipReason} (host: ${POD_HOST})`);
     }
-    expect(typeof podReachable).toBe('boolean');
+    expect(skipReason).not.toBe('');
   });
 
   it('publish + fetch back + parse: agent-development-practice probe descriptor', { timeout: 30000 }, async (ctx) => {
@@ -115,7 +110,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
     const turtle = toTurtle(probe);
     const r = await fetch(url, {
       method: 'PUT',
-      headers: { 'Content-Type': 'text/turtle' },
+      headers: podWriteHeaders({ 'Content-Type': 'text/turtle' }),
       body: turtle,
     });
     cleanupUrls.push(url);
@@ -141,7 +136,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
     const turtle = toTurtle(cred);
     const r = await fetch(url, {
       method: 'PUT',
-      headers: { 'Content-Type': 'text/turtle' },
+      headers: podWriteHeaders({ 'Content-Type': 'text/turtle' }),
       body: turtle,
     });
     cleanupUrls.push(url);
@@ -168,7 +163,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
 
     const graphContent = '<urn:graph:tier2-test:s1> <urn:p> "test value" .';
 
-    const result = await publish(desc, graphContent, TEST_POD);
+    const result = await publish(desc, graphContent, TEST_POD, { fetch: podFetch });
 
     // Track cleanup — publish() writes multiple files
     if (result?.descriptorUrl) cleanupUrls.push(result.descriptorUrl);
@@ -196,7 +191,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
       .build();
 
     const graphContent = '<urn:graph:tier2-manifest:s1> <urn:p> "v" .';
-    const result = await publish(desc, graphContent, TEST_POD);
+    const result = await publish(desc, graphContent, TEST_POD, { fetch: podFetch });
 
     if (result?.descriptorUrl) cleanupUrls.push(result.descriptorUrl);
     if (result?.graphUrl)      cleanupUrls.push(result.graphUrl);
@@ -231,7 +226,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
     const turtle = toTurtle(desc);
     const r = await fetch(url, {
       method: 'PUT',
-      headers: { 'Content-Type': 'text/turtle' },
+      headers: podWriteHeaders({ 'Content-Type': 'text/turtle' }),
       body: turtle,
     });
     cleanupUrls.push(url);

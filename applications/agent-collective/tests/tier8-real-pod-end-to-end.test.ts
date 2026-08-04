@@ -40,9 +40,10 @@ import type {
 } from '@interego/core';
 
 // CSS is no longer publicly reachable; route through the public css-gate FQDN.
-// Override with AZURE_CSS_BASE for local CSS or alternate gate deployments.
-const AZURE_CSS_BASE = process.env.AZURE_CSS_BASE ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const TEST_POD_BASE = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;
+// ★ The default host was the Azure CSS gate, deliberately destroyed in the Railway move —
+// probing it timed out and skipped 3 of 4 tests while reporting ✓. See
+// applications/_shared/tests/pod-target.ts.
+import { TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, podFetch, podWriteHeaders, probePod } from '../../_shared/tests/pod-target.js';
 
 function uniquePodUrl(prefix: string): string {
   return `${TEST_POD_BASE}${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}/`;
@@ -64,34 +65,28 @@ async function cleanup(): Promise<void> {
     if (m) containerRoots.add(m[1]!);
   }
   for (const url of cleanupUrls.splice(0)) {
-    try { await fetch(url, { method: 'DELETE' }); } catch {}
+    try { await fetch(url, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
   }
   for (const root of containerRoots) {
-    try { await fetch(`${root}.well-known/context-graphs`, { method: 'DELETE' }); } catch {}
-    try { await fetch(`${root}context-graphs/`, { method: 'DELETE' }); } catch {}
-    try { await fetch(`${root}.well-known/`, { method: 'DELETE' }); } catch {}
-    try { await fetch(root, { method: 'DELETE' }); } catch {}
+    try { await fetch(`${root}.well-known/context-graphs`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(`${root}context-graphs/`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(`${root}.well-known/`, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
+    try { await fetch(root, { method: 'DELETE', headers: podWriteHeaders() }); } catch {}
   }
-}
-
-async function podReachable(): Promise<boolean> {
-  if (process.env.SKIP_AZURE_TESTS === '1') return false;
-  try {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 8000);
-    const r = await fetch(TEST_POD_BASE, { signal: ac.signal });
-    clearTimeout(t);
-    return r.ok;
-  } catch { return false; }
 }
 
 let reachable = false;
-beforeAll(async () => { reachable = await podReachable(); });
+let skipReason = '';
+beforeAll(async () => {
+  const availability = await probePod();
+  reachable = availability.usable;
+  skipReason = availability.reason;
+});
 
 describe('Tier 8 — agent-collective production end-to-end', () => {
   it('reachability probe', () => {
-    if (!reachable) console.warn('Azure CSS unreachable; AC Tier 8 skipped');
-    expect(typeof reachable).toBe('boolean');
+    if (!reachable) console.warn(`AC Tier 8 skipped — ${skipReason} (host: ${AZURE_CSS_BASE})`);
+    expect(skipReason).not.toBe('');
   });
 
   it('full collective lifecycle: author → attest → promote → bundle → cross-bridge chime + audit', { timeout: 240000 }, async (ctx) => {
@@ -106,7 +101,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
         sourceCode: 'function detectSecondContact(message, history) { /* ... */ return { detected: history.some(h => similarTopic(h, message)) }; }',
         affordanceAction: 'urn:iep:action:detect-second-contact-cue',
         affordanceDescription: 'Detect second-contact cues in customer messages.',
-      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID });
+      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID, fetch: podFetch });
       track(tool.descriptorUrl, tool.graphUrl);
 
       expect(tool.toolIri).toContain('second-contact-detector');
@@ -120,7 +115,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
           axis: i % 2 === 0 ? 'correctness' : 'efficiency',
           rating: 0.85 + Math.random() * 0.10,
           direction: 'Self',
-        }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID });
+        }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID, fetch: podFetch });
         selfAttests.push(a);
         track(a.descriptorUrl, a.graphUrl);
       }
@@ -134,7 +129,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
           axis: 'safety',
           rating: 0.92,
           direction: 'Peer',
-        }, { podUrl: markPod, authoringAgentDid: peer });
+        }, { podUrl: markPod, authoringAgentDid: peer, fetch: podFetch });
         peerAttests.push(a);
         track(a.descriptorUrl, a.graphUrl);
       }
@@ -146,7 +141,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
         selfAttestations: 5,
         peerAttestations: 2,
         axesCovered: ['correctness', 'efficiency', 'safety'],
-      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID });
+      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID, fetch: podFetch });
       track(promoted.descriptorUrl, promoted.graphUrl);
 
       expect(promoted.promotedToolIri).toContain('.attested');
@@ -161,7 +156,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
         synthesisIri: 'urn:iep:synthesis:tone-probe-week-3' as IRI,
         constraintIri: 'urn:iep:constraint:tone-second-contact-acknowledgment:v1' as IRI,
         olkeStage: 'Articulate',
-      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID });
+      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID, fetch: podFetch });
       track(teaching.descriptorUrl, teaching.graphUrl);
 
       expect(teaching.teachingIri).toContain('teaching');
@@ -205,7 +200,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
         auditedAgentDid: MARK_AGENT_DID,
         direction: 'Outbound',
         humanOwnerDid: MARK_HUMAN_DID,
-      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID });
+      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID, fetch: podFetch });
       track(markAudit.descriptorUrl, markAudit.graphUrl);
 
       const davidAudit = await recordCrossAgentAudit({
@@ -213,7 +208,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
         auditedAgentDid: DAVID_AGENT_DID,
         direction: 'Inbound',
         humanOwnerDid: DAVID_HUMAN_DID,
-      }, { podUrl: davidPod, authoringAgentDid: DAVID_AGENT_DID });
+      }, { podUrl: davidPod, authoringAgentDid: DAVID_AGENT_DID, fetch: podFetch });
       track(davidAudit.descriptorUrl, davidAudit.graphUrl);
 
       expect(markAudit.auditIri).toBeTruthy();
@@ -234,7 +229,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
         toolName: 'underAttested',
         sourceCode: 'function noop() {}',
         affordanceAction: 'urn:iep:action:test',
-      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID });
+      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID, fetch: podFetch });
       track(tool.descriptorUrl, tool.graphUrl);
 
       // Only 1 self + 0 peer (well below threshold of 5 + 2)
@@ -243,7 +238,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
         selfAttestations: 1,
         peerAttestations: 0,
         axesCovered: ['correctness'],
-      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID })).rejects.toThrow(/REFUSED/);
+      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID, fetch: podFetch })).rejects.toThrow(/REFUSED/);
 
       // 5 self but only 1 axis
       await expect(promoteTool({
@@ -251,7 +246,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
         selfAttestations: 5,
         peerAttestations: 2,
         axesCovered: ['correctness'],
-      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID })).rejects.toThrow(/REFUSED/);
+      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID, fetch: podFetch })).rejects.toThrow(/REFUSED/);
     } finally {
       await cleanup();
     }
@@ -266,7 +261,7 @@ describe('Tier 8 — agent-collective production end-to-end', () => {
         narrativeFragmentIris: [],   // EMPTY
         synthesisIri: 'urn:iep:synthesis:partial' as IRI,
         olkeStage: 'Articulate',
-      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID })).rejects.toThrow(/narrative fragments/);
+      }, { podUrl: markPod, authoringAgentDid: MARK_AGENT_DID, fetch: podFetch })).rejects.toThrow(/narrative fragments/);
     } finally {
       await cleanup();
     }

@@ -1780,9 +1780,19 @@ function applyReducerStep(
     }
     throw e;
   }
-  // No sh:rule anywhere in the shape: the shape is a merge declaration and the
-  // union IS the intended fold. This is the only surviving union path.
-  const contribution = run.ruleCount === 0 ? currentBody : run.turtle;
+  // No sh:rule anywhere in the shape: the shape is a merge declaration and the union IS
+  // the intended fold. This is the only surviving union path.
+  //
+  // ★ `declaredRules`, NOT `ruleCount` — the two are not the same number and reading the
+  // wrong one was a disclosure. `ruleCount` counts rules that EXECUTED, so a projecting
+  // redaction reducer with `sh:deactivated true` on its rule (or on its node shape)
+  // reported 0 and landed here, unioning the raw link body: measured, the SSN the shape
+  // exists to drop was back in the head, under the identical headStateCid as a
+  // no-rule merge shape and as the ill-formed shape the suite asserts must be REFUSED.
+  // Three shapes meaning three different things, one CID. SHACL-AF says a deactivated
+  // rule infers nothing, so "declared rules, ran none" contributes the EMPTY set —
+  // switching a redaction rule off must narrow the fold, never widen it.
+  const contribution = run.declaredRules === 0 ? currentBody : run.turtle;
   if (!contribution) return prior;
   return prior ? `${prior}\n${contribution}` : contribution;
 }

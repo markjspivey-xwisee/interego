@@ -160,10 +160,15 @@ describe('Tier 0 — library-only (no daemon, no pod, no network)', () => {
       .temporal({ validFrom: '2026-02-01T00:00:00Z' })
       .selfAsserted('did:key:bob' as IRI)
       .build();
+    // ★ `intersection(...).facets.length >= 0` was vacuous — a length is always >= 0, so
+    // this passed whether intersection returned the right facets, the wrong ones, or none.
+    // Measured: union keeps both Trust facets alongside the shared Temporal (3), and
+    // intersection keeps only the facet TYPE both descriptors carry (Temporal, 1). Asserting
+    // the types is what distinguishes the two operations from each other.
     const u = union(a, b);
-    expect(u.facets.length).toBeGreaterThan(0);
+    expect(u.facets.map(f => f.type).sort()).toEqual(['Temporal', 'Trust', 'Trust']);
     const i = intersection(a, b);
-    expect(i.facets.length).toBeGreaterThanOrEqual(0);
+    expect(i.facets.map(f => f.type)).toEqual(['Temporal']);
   });
 });
 

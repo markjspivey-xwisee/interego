@@ -295,7 +295,13 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
     await relay.close();
     await waitFor(() => mirror.status().every(s => s.state === 'closed' || s.state === 'errored' || s.state === 'connecting'));
     const closedStatus = mirror.status();
-    expect(closedStatus[0]!.reconnectAttempts).toBeGreaterThanOrEqual(0);
+    // ★ `reconnectAttempts >= 0` was vacuous — an attempt COUNT cannot be negative, so this
+    // passed even if the mirror had silently stopped tracking the relay entirely. Assert the
+    // thing the test's own comment claims: the relay is reported as down, and the mirror is
+    // still holding a status row for it.
+    expect(closedStatus).toHaveLength(1);
+    expect(['closed', 'errored', 'connecting']).toContain(closedStatus[0]!.state);
+    expect(Number.isInteger(closedStatus[0]!.reconnectAttempts)).toBe(true);
   });
 
   it('events from external relay are signature-verified before injection', async () => {

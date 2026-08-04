@@ -181,8 +181,17 @@ describe('Introspection Agents', () => {
 
     it('generates suggested constraints for required fields', () => {
       const result = introspectJson(jsonSource(), sampleJson);
-      // All non-null fields in the sample are required
-      expect(result.suggestedConstraints.length).toBeGreaterThanOrEqual(0);
+      // ★ `toBeGreaterThanOrEqual(0)` was the ONLY assertion here, under a comment claiming
+      // "all non-null fields in the sample are required". A length is always >= 0, so the
+      // test passed on an empty array — the feature in its own title producing NOTHING was
+      // a pass. Assert the constraints the comment describes.
+      expect(result.suggestedConstraints).toEqual(expect.arrayContaining([
+        'Users requires fields: name, age, active, scores',
+        'department requires fields: name, building',
+        'Users must has-many scores',
+        'Users must has-one department',
+      ]));
+      expect(result.suggestedConstraints).toHaveLength(4);
     });
 
     it('sets sourceId and scannedAt on the result', () => {

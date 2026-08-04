@@ -20,20 +20,36 @@ The suite is the *operational definition of Layer 1*. A change to the protocol i
 
 ## Structure
 
+This block used to describe `expected/` and `manifest.json`, neither of which exists, and
+four `fixtures/` subdirectories of which one exists. It now describes the tree as it is;
+the intended shape is in "Roadmap" below, where a plan belongs.
+
 ```
 conformance/
   README.md                     this file
-  fixtures/                     input artifacts (Turtle, JSON-LD, SPARQL, Manifest JSON)
-    descriptors/                sample ContextDescriptors, both valid and invalid
-    envelopes/                  sample E2EE envelopes with known recipient sets
-    delegation/                 sample agent registries + credentials + revocation traces
+  runner.mjs                    the runner (see "What the runner actually covers")
+  fixtures/
     revocation/                 sample graphs with revocation conditions + trigger graphs
-  expected/                     expected evaluation results
-    shacl-reports/              expected SHACL validation reports per fixture
-    delegation-outcomes/        expected verify_agent outcomes per fixture
-    revocation-outcomes/        expected evaluation outcomes per fixture + trigger pair
-  manifest.json                 index of test cases; binds fixture -> expected
 ```
+
+## What the runner actually covers
+
+`node spec/conformance/runner.mjs` runs **5 fixtures in 1 category** (`revocation`, mapped
+to rule L1.4). It does **not** cover the other categories this document describes, and it
+claims no level it has not exercised — a badge naming L2 or L3 off this fixture set would be
+reporting the absence of a test as a pass.
+
+Every fixture is additionally put through `validateAgainstShape` from `@interego/core`, the
+validator that actually gates the publish path. Where the shipped validator reports it could
+not evaluate a rule (`fullyChecked: false`), the fixture is counted **unverifiable** rather
+than passed. That is currently the case for `self-reference-violation.ttl`:
+`iep:RevocationConditionNoSelfReferenceShape` is expressed with `sh:sparql`, and this
+substrate ships no SPARQL evaluator — so the rule is declared but not enforced, and the
+runner says so instead of printing a green tick over the gap.
+
+The runner is wired into `.github/workflows/bridge-typecheck.yml` with
+`CONFORMANCE_REQUIRE_ENGINE=1`, which turns an unavailable engine into a hard failure rather
+than a silent fall back to the regex-only verdict.
 
 ## Fixture namespaces
 

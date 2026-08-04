@@ -147,3 +147,43 @@ test('query string is preserved on the forwarded path', async () => {
   assert.equal(r.status, 201);
   assert.equal(upstream.received[0].url, '/markj/x.ttl?slug=foo&depth=1');
 });
+
+// ★ HSTS, ON EVERY EXIT PATH, ASSERTED THROUGH THE REAL SERVER.
+//
+// The gate is the ONE public surface that carries `Authorization: Bearer <WRITE_SECRET>`,
+// so it is the one where a first-request protocol downgrade costs a credential rather than
+// a page view — and it was the one surface serving no Strict-Transport-Security in
+// production while relay, identity and dashboard all sent it.
+//
+// The code sets it with a single `res.setHeader` at the top of the handler, which is the
+// right shape, and NOTHING TESTED IT — so it was one deleted line from silently regressing,
+// and the deployed image predated the line entirely. The sibling suite
+// (`cors-and-headers.test.mjs`) could not have caught this: it calls `corsHeadersFor`, a
+// pure function that never touches the response object. A test that stands in for the
+// server cannot verify what the server sets on a response.
+//
+// Each case below is a DIFFERENT exit path — preflight short-circuits, /healthz never
+// proxies, the 401 is written before any upstream call, and the proxied body is streamed —
+// which is exactly the "remember it at every writeHead" pattern the header went missing to.
+test('every response carries Strict-Transport-Security, on all four exit paths', async () => {
+  const hsts = (r) => r.headers.get('strict-transport-security');
+
+  const preflight = await fetch(`${gateBase}/markj/x.ttl`, {
+    method: 'OPTIONS',
+    headers: { origin: 'https://dashboard.interego.xwisee.com', 'access-control-request-method': 'PUT' },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(hsts(preflight), 'max-age=31536000', 'CORS preflight must carry HSTS');
+
+  const health = await fetch(`${gateBase}/healthz`);
+  assert.equal(health.status, 200);
+  assert.equal(hsts(health), 'max-age=31536000', '/healthz must carry HSTS');
+
+  const denied = await fetch(`${gateBase}/markj/x.ttl`, { method: 'PUT', body: 'x' });
+  assert.equal(denied.status, 401);
+  assert.equal(hsts(denied), 'max-age=31536000',
+    'the 401 is the response an unauthenticated client sees FIRST — it must carry HSTS');
+
+  const proxied = await fetch(`${gateBase}/markj/x.ttl`);
+  assert.equal(hsts(proxied), 'max-age=31536000', 'the proxied upstream response must carry HSTS');
+});

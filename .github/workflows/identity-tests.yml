@@ -1,0 +1,49 @@
+name: Identity Server Tests
+
+# ★ THE IDENTITY SERVER'S TESTS GATED NOTHING PRE-MERGE.
+#
+# `deploy/identity` is the WebID / DID / SIWE / passkey server. Its `npm test` script ran in
+# exactly one workflow — `e2e-passkey.yml` — whose trigger block is `workflow_dispatch:` and
+# nothing else. No push trigger, no pull_request trigger, so a change to WebFinger discovery
+# or userid derivation merged without those tests ever running; the last two recorded runs
+# were months old and both FAILED. `deploy/identity` is also matched by no vitest `include`
+# glob, so the whole-tree run does not reach it either.
+#
+# The Playwright half of e2e-passkey.yml stays dispatch-only on purpose: it drives the LIVE
+# deployment, so it cannot run before the code it tests is deployed. The UNIT half has no
+# such dependency and belongs on every PR. That split is why this is a separate file rather
+# than a trigger added to that one.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'deploy/identity/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/identity-tests.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'deploy/identity/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/identity-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  identity-unit:
+    name: "Identity unit tests (WebFinger, userid derivation, target resolution)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Install workspace deps
+        run: npm ci --no-audit --no-fund
+      - name: Run identity unit tests
+        run: npm test --workspace @interego/identity

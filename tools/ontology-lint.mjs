@@ -53,12 +53,11 @@ const OWNED_NAMESPACES = {
   soc2:       'docs/ns/soc2.ttl',
 };
 
-// Known-external prefixes we don't own — references are always valid
-const EXTERNAL_PREFIXES = new Set([
-  'rdf', 'rdfs', 'xsd', 'owl', 'sh', 'skos', 'vann', 'dct', 'dcat',
-  'dprod', 'prov', 'time', 'foaf', 'vc', 'hydra', 'acl', 'solid',
-  'ldp', 'odrl', 'did', 'schema', 'oa', 'as',
-]);
+// There is deliberately no EXTERNAL_PREFIXES list here. One existed and was dead: this
+// linter iterates OWNED_NAMESPACES (line 232) and never looks at any other prefix, so
+// external vocabularies are excluded by CONSTRUCTION, not by an allowlist. A second list
+// naming `rdf`/`sh`/`prov`/... only looked like it was doing that work, and would have
+// drifted out of agreement with the real rule the first time either changed.
 
 const SCAN_PATHS = [
   // Substrate kernel + every per-vertical @interego/* package.

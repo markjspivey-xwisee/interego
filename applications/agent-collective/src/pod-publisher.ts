@@ -50,6 +50,20 @@ function escapeMulti(s: string): string { return s.replace(/\\/g, '\\\\').replac
 export interface PublishConfig {
   readonly podUrl: string;
   readonly authoringAgentDid: IRI;
+  /**
+   * Optional `fetch` used for every pod write, threaded into `publish()`.
+   *
+   * ★ WITHOUT THIS THE VERTICAL COULD ONLY WRITE TO AN ALLOW-ALL POD. The css-gate requires
+   * `Authorization: Bearer <WRITE_SECRET>` on POST/PUT/PATCH/DELETE; the Azure CSS this
+   * vertical was written against did not. So the Tier 8 suite could not exercise the live
+   * pod at all, which is part of why it sat skipping against a decommissioned host and
+   * reporting ✓.
+   *
+   * The credential is supplied by the CALLER rather than read from the environment in here:
+   * a library that sources a pod secret from `process.env` hands ambient authority to every
+   * consumer that imports it.
+   */
+  readonly fetch?: typeof globalThis.fetch;
 }
 
 // ── 1. Author a tool (Hypothetical) ───────────────────────────────────
@@ -109,7 +123,7 @@ export async function authorTool(args: AuthorToolArgs, config: PublishConfig): P
     iep:contentHash "${createHash('sha256').update(args.sourceCode, 'utf8').digest('hex')}" .
 `;
 
-  const result = await publish(desc, graphContent, config.podUrl);
+  const result = await publish(desc, graphContent, config.podUrl, config.fetch ? { fetch: config.fetch } : {});
   return { toolIri, atomIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };
 }
 
@@ -161,7 +175,7 @@ export async function attestTool(args: AttestToolArgs, config: PublishConfig): P
     iep:modalStatus iep:Asserted .
 `;
 
-  const result = await publish(desc, graphContent, config.podUrl);
+  const result = await publish(desc, graphContent, config.podUrl, config.fetch ? { fetch: config.fetch } : {});
   return { attestationIri: attIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };
 }
 
@@ -353,7 +367,7 @@ export async function promoteTool(args: PromoteToolArgs, config: PublishConfig):
     ] .
 `;
 
-  const result = await publish(desc, graphContent, config.podUrl);
+  const result = await publish(desc, graphContent, config.podUrl, config.fetch ? { fetch: config.fetch } : {});
   return { promotedToolIri: promotedIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl, constraintsApplied };
 }
 
@@ -409,7 +423,7 @@ export async function bundleTeachingPackage(args: BundleTeachingPackageArgs, con
     iep:modalStatus iep:Hypothetical .
 `;
 
-  const result = await publish(desc, graphContent, config.podUrl);
+  const result = await publish(desc, graphContent, config.podUrl, config.fetch ? { fetch: config.fetch } : {});
   return { teachingIri: tIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };
 }
 
@@ -453,6 +467,6 @@ export async function recordCrossAgentAudit(args: RecordCrossAgentAuditArgs, con
     iep:modalStatus iep:Asserted .
 `;
 
-  const result = await publish(desc, graphContent, config.podUrl);
+  const result = await publish(desc, graphContent, config.podUrl, config.fetch ? { fetch: config.fetch } : {});
   return { auditIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };
 }
