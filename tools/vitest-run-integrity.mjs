@@ -70,7 +70,8 @@
  * the gate.
  */
 
-import { relative, resolve, sep } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** This file lives in `tools/`, so its parent directory is the repo root. */
@@ -108,7 +109,11 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // away. The tree grew to 216 modules (tests/line-endings-are-normalised.test.ts landed with
 // the .gitattributes normalisation), which put the floor 11 below reality and past
 // FLOOR_ALLOWANCE, so the reporter failed the run and named the number to write.
-export const MIN_TEST_MODULES = 206;
+// 206 -> 208: the same ratchet, fired twice more by the same check as this round's two new
+// self-tests landed — tests/modal-lattice-spec.test.ts (the TLA+ spec's theorems, previously
+// evaluated by nothing) and tests/changelog-lint.test.ts (CHANGELOG.md's claims about itself,
+// checked by nothing). The tree reached 218 and the reporter named 208 both times.
+export const MIN_TEST_MODULES = 208;
 export const FLOOR_ALLOWANCE = 10;
 
 /**
@@ -121,6 +126,110 @@ const FINISHED = new Set(['passed', 'failed', 'skipped']);
 
 /** How many unfinished module paths to print before saying "and N more". */
 const NAME_LIMIT = 10;
+
+/**
+ * ── ★ THE README'S "Test Suites" TABLE, CHECKED AGAINST THE RUN THAT PRODUCES IT ──────
+ *
+ * README.md ships a nineteen-row table of `| suite | Tests | Coverage |`, and the middle
+ * column is a hand-typed count. NINE OF THE NINETEEN WERE FALSE at the commit this check
+ * landed on — measured, not suspected:
+ *
+ *   solid.test.ts          20 -> 44     encryption-zk.test.ts   30 -> 50
+ *   crypto.test.ts         25 -> 32     pgsl.test.ts            31 -> 34
+ *   affordance.test.ts     23 -> 26     federation.test.ts      21 -> 24
+ *   context-graphs.test.ts 44 -> 46     sdk-extractors.test.ts  17 -> 19
+ *   pgsl-coherence.test.ts  9 -> 10
+ *
+ * Nobody mis-edited anything. Every one of those suites simply GREW a test and the table
+ * did not, which is what a hand-maintained number does — the same decay that produced
+ * `lint-gate.mjs`'s "(47 files pinned)" job label and `derivation-lint.mjs`'s 41/41. The
+ * repair for those two was the same as this one: the thing that PRODUCES the number is the
+ * only thing that can honestly assert it, so it asserts it.
+ *
+ * This is the cheapest possible home for the check. The counts exist in `testModules`
+ * already; reading them costs nothing, and this reporter is wired into `vitest.config.ts`
+ * so it runs however vitest was invoked — including `.github/workflows/bridge-typecheck.yml`,
+ * which runs the whole tree and therefore checks every row.
+ *
+ * ★ TWO CHECKS, BECAUSE THEY FAIL FOR DIFFERENT REASONS AND ONE IS BLIND WITHOUT THE OTHER.
+ *
+ *   1. COUNT, for rows whose module actually ran. A narrowed run (`npx vitest run
+ *      tests/crypto.test.ts`) checks the one row it can and says nothing about the rest —
+ *      the same principle as the tree floor above, which declines to fire on a run somebody
+ *      narrowed deliberately. Anything else makes the guard the thing people work around.
+ *
+ *   2. EXISTENCE, for EVERY row, run or not. A suite that is deleted or renamed leaves a
+ *      phantom row that check 1 can never see, because a module that does not exist is a
+ *      module that never runs — the row would sit there being wrong forever, and the run
+ *      would stay green. This is an `fs` stat, so it costs nothing and applies always.
+ *
+ * And the shape check: if the table stops matching the row pattern entirely, that is
+ * reported too. A claim this gate cannot find is a claim nobody checks, which is the state
+ * that produced the nine stale numbers. Reword the table and update `SUITE_ROW` in the same
+ * commit — or delete the column, which is also an honest answer.
+ */
+const README = 'README.md';
+
+/**
+ * A `| `name.test.ts` | 44 | description |` row. Anchored on the backticked filename and a
+ * bare integer so it cannot match the Specifications table further down, whose second cell
+ * is prose. `m` because a markdown table is line-oriented.
+ *
+ * `g` is safe HERE only because the single reader below uses `matchAll`, which clones the
+ * regex. Do not add a `.test()` or `.exec()` caller: a module-level /g regex carries
+ * `lastIndex` between those calls and would silently skip every other row.
+ */
+const SUITE_ROW = /^\|\s*`([A-Za-z0-9._-]+\.test\.ts)`\s*\|\s*(\d+)\s*\|/gm;
+
+/**
+ * The failure paragraphs for the README table, given the rows it states and what the run
+ * measured.
+ *
+ * Text and callbacks in, so `tests/vitest-run-integrity.test.ts` can hand it a stale table
+ * without running nineteen suites; the live call passes the real README and the real module
+ * counts, so the tested function and the running function are the same one rather than a
+ * copy. A double that stood in for this could not express a stale count at all.
+ *
+ * @param {string} readmeText          contents of README.md
+ * @param {Map<string,number>} measured  basename -> tests collected, for modules that ran
+ * @param {(file: string) => boolean} suiteExists  does `tests/<file>` exist on disk
+ * @returns {string[]} failure paragraphs, empty when the table is true
+ */
+export function readmeSuiteFailures(readmeText, measured, suiteExists) {
+  const rows = [...readmeText.matchAll(SUITE_ROW)];
+  if (rows.length === 0) {
+    return [
+      `${README} no longer contains a "Test Suites" table this gate can read (no `
+      + '`| `x.test.ts` | <n> |` row matched). Either the table was reworded — update '
+      + 'SUITE_ROW in tools/vitest-run-integrity.mjs in the same commit — or the counts '
+      + 'were deleted, which is fine, but then delete the rest of this check too. What is '
+      + 'refused is a table of numbers with nothing able to contradict them.',
+    ];
+  }
+  const failures = [];
+  for (const [, file, claimed] of rows) {
+    if (!suiteExists(file)) {
+      failures.push(
+        `${README}'s Test Suites table lists \`${file}\`, and tests/${file} does not exist. `
+        + 'A renamed or deleted suite leaves a row that no run can ever check, because a '
+        + 'module that does not exist is a module that never runs. Fix the row or drop it.',
+      );
+      continue;
+    }
+    const actual = measured.get(file);
+    // Not run in this invocation: existence is all this run can honestly assert.
+    if (actual === undefined) continue;
+    if (actual !== Number(claimed)) {
+      failures.push(
+        `${README} says \`${file}\` has ${claimed} tests; this run collected ${actual}. `
+        + `Write ${actual} in the table. The number is not decoration — nine of these `
+        + 'nineteen rows were stale before this check existed, and every one of them went '
+        + 'stale by a suite growing a test.',
+      );
+    }
+  }
+  return failures;
+}
 
 export default class RunIntegrityReporter {
   onInit(vitest) {
@@ -275,6 +384,41 @@ export default class RunIntegrityReporter {
           );
         }
       }
+    }
+
+    // ★ THE README'S TEST-SUITES TABLE. See readmeSuiteFailures above for what was measured.
+    //
+    // NOT gated on `atRepoRoot`: the claim is about `tests/*.test.ts` in THIS repo, and a
+    // module that ran is a module whose count is known no matter which root vitest resolved.
+    // A run under `--root mcp-server` simply measures none of them and the loop checks
+    // existence only, which is the honest answer for that invocation.
+    const measured = new Map();
+    const TESTS_DIR = join(REPO_ROOT, 'tests');
+    for (const m of testModules) {
+      // `children.allTests()` is the collected-test generator. Guarded because the reporter
+      // is also driven by tests/vitest-run-integrity.test.ts with minimal module doubles, and
+      // because a module vitest never reached has no collection to report — neither is a
+      // README defect and neither may throw out of a reporter.
+      if (typeof m.moduleId !== 'string' || !FINISHED.has(m.state())) continue;
+      if (resolve(dirname(m.moduleId)) !== resolve(TESTS_DIR)) continue;
+      const all = m.children?.allTests?.();
+      if (!all) continue;
+      measured.set(basename(m.moduleId), [...all].length);
+    }
+    try {
+      const readmeText = readFileSync(join(REPO_ROOT, README), 'utf8');
+      failures.push(...readmeSuiteFailures(
+        readmeText,
+        measured,
+        file => existsSync(join(TESTS_DIR, file)),
+      ));
+    } catch (err) {
+      // Fail closed, like the tree-total branch above: "could not check" must not read the
+      // same as "checked and fine".
+      failures.push(
+        `${README} could not be read, so its Test Suites table could not be checked: `
+        + `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     if (failures.length === 0) return;

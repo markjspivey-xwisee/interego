@@ -199,7 +199,12 @@ describe('gitCommitAt refuses anything that is not a 40-hex sha, without spawnin
     if (!facts) return; // no git / not a checkout: nothing to assert against
     const at = gitCommitAt(facts.head);
     expect(at, 'HEAD is in this clone, so its committer date must be readable').toBeTruthy();
-    expect(at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/);
+    // ★ BOTH ZONE SPELLINGS. `Z` and `+00:00` are the same instant and both are ISO-8601;
+    // which one git renders depends on the committer's timezone, so a pattern accepting only
+    // the offset form passes on a developer box and reds on a UTC CI runner. Measured here:
+    // this clone gives `+00:00`, the Actions runner gave `2026-08-04T16:01:20Z`. The
+    // assertion is about the SHAPE being machine-readable, not about which zone it renders.
+    expect(at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/);
   });
 
   it('reads the COMMITTER date, not the author date', () => {

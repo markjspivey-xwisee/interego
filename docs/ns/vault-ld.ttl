@@ -68,7 +68,8 @@ vldp:IngestAffordance
 
 vldp:Profile a owl:Class ;
   rdfs:label "Projection profile" ;
-  rdfs:comment "A named set of knobs (rung ceiling, context source, identity strategy, link grammar, placement predicate) + a conformance shape that make the general Markdown-vault projection engine behave as a specific dialect. Data, not code." .
+  rdfs:comment "A named set of knobs (rung ceiling, context source, identity strategy, link grammar, placement predicate) + a conformance shape that make the general Markdown-vault projection engine behave as a specific dialect. Data, not code." ;
+  rdfs:subClassOf dcterms:Standard .
 
 vldp:maxRung a owl:DatatypeProperty ;
   rdfs:label "maximum rung" ;

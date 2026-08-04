@@ -93,6 +93,13 @@ on:
       - 'ENGAGEMENT-REPORT.md'
       - 'ENGAGEMENT-REPORT.html'
       - 'REFLEXIVE-DOGFOOD.md'
+      # ★ ADDED BY tests/workflow-trigger-covers-the-suite.test.ts, not by anyone noticing.
+      # tests/changelog-lint.test.ts reads CHANGELOG.md and asserts its preamble no longer
+      # claims that its 78 cited commit hashes resolve — none of them do. Without this entry
+      # a commit restoring that sentence, which touches only CHANGELOG.md, would merge with
+      # the assertion about it never executed: exactly the "a gate cannot re-run for the file
+      # it guards" class the `.github/workflows/**` entry above was widened for.
+      - 'CHANGELOG.md'
       - 'package.json'
       - 'package-lock.json'
       - '.gitattributes'
@@ -161,6 +168,13 @@ on:
       - 'ENGAGEMENT-REPORT.md'
       - 'ENGAGEMENT-REPORT.html'
       - 'REFLEXIVE-DOGFOOD.md'
+      # ★ ADDED BY tests/workflow-trigger-covers-the-suite.test.ts, not by anyone noticing.
+      # tests/changelog-lint.test.ts reads CHANGELOG.md and asserts its preamble no longer
+      # claims that its 78 cited commit hashes resolve — none of them do. Without this entry
+      # a commit restoring that sentence, which touches only CHANGELOG.md, would merge with
+      # the assertion about it never executed: exactly the "a gate cannot re-run for the file
+      # it guards" class the `.github/workflows/**` entry above was widened for.
+      - 'CHANGELOG.md'
       - 'package.json'
       - 'package-lock.json'
       - '.gitattributes'
@@ -173,7 +187,13 @@ jobs:
     name: "MCP surface typecheck (tsx never typechecks it — this is the only guard)"
     runs-on: ubuntu-latest
     steps:
+      # ★ `fetch-depth: 0` IS LOAD-BEARING. This job runs the whole root suite, which
+      # includes `railway-pins-freshness.test.ts` — it reads a real commit date out of this
+      # clone to prove a deployed pin is not stale. Under the default depth-1 clone that
+      # lookup fails and the test reds for a reason that has nothing to do with pins, which
+      # is exactly the kind of red whose obvious "fix" is to weaken the assertion.
       - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v6
         with:
           node-version: '20'

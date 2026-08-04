@@ -12,10 +12,17 @@ name: ESLint
 # an eslint run that lints nothing exits 0, and that is the failure mode that hid here.
 #
 # Unfiltered by `paths:` on purpose. The gate's file-count floor is a claim about its lint
-# SURFACE — `TARGETS = ['packages', 'tests']` in lint-gate.mjs, not the whole tree; `deploy/`,
-# `applications/`, `tools/` and `mcp-server/` are linted by nothing. A path filter would let a
-# change to eslint.config.js's `ignores` (or a directory rename) collapse even that coverage
-# in a commit the workflow was configured to skip.
+# SURFACE — `TARGETS` in lint-gate.mjs, which is the zero-error surface and not the whole
+# tree. A path filter would let a change to eslint.config.js's `ignores` (or a directory
+# rename) collapse that coverage in a commit the workflow was configured to skip.
+#
+# ★ THE SENTENCE HERE USED TO SAY `deploy/`, `applications/`, `tools/` and `mcp-server/` "are
+# linted by nothing", and by the time anyone read it `tools/` had joined TARGETS and the other
+# three had not. Both halves have now been closed rather than described: `tools/` is on the
+# zero-error surface, and every other source root in the tree is on the UN-LINTED FRONTIER —
+# scanned on every run with its error and file counts pinned per root and ratcheted both ways.
+# The frontier is 1,994 errors across seven roots, which nothing observed until the gate's
+# root census was asked. It is not the end state; it is the end of the gap being invisible.
 
 on:
   push:
@@ -35,18 +42,28 @@ jobs:
     # rather than fix the error. The count is deliberately gone rather than updated: a
     # literal here has to be re-edited every time the baseline moves, and it silently
     # decays between those edits. lint-gate.mjs prints the live counts in its own output.
-    name: "Flat-config lint + ratcheted baseline (zero-error, empty baseline)"
+    name: "Flat-config lint + ratcheted baseline (zero-error, empty baseline) + un-linted frontier ceiling"
     runs-on: ubuntu-latest
     steps:
+      # ★ `fetch-depth: 0` IS LOAD-BEARING FOR THE CHANGELOG GATE BELOW. The default is a
+      # depth-1 clone, under which every commit hash CHANGELOG.md cites fails to resolve and
+      # the undocumented backlog is uncountable — so the gate would report the worst possible
+      # result for a reason that has nothing to do with the changelog, and the obvious "fix"
+      # would be to raise its pin. That gate refuses a shallow clone outright rather than
+      # degrading, so this line is what keeps it able to run at all.
       - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v6
         with: { node-version: '20' }
       - name: Install
         run: npm ci
       # Fails on: any error in a file not on the baseline; any pinned file whose count
-      # grows; any pinned file whose count IMPROVES without the pin moving; and on eslint
+      # grows; any pinned file whose count IMPROVES without the pin moving; on eslint
       # examining fewer files than the floor, which is what a silently-disabled config
-      # looks like from the outside.
+      # looks like from the outside; on that floor drifting far BELOW the real count, which
+      # is the same decay in the direction nobody notices; on an un-linted frontier root
+      # growing, improving without banking the gain, or falling out of the scan; and on a
+      # top-level source root existing that is in none of those three lists at all.
       - name: Lint gate
         run: node tools/lint-gate.mjs
       # ★ THE CONFORMANCE RUNNER WAS CALLED BY NOTHING. It gates Candidate Recommendation
@@ -69,3 +86,12 @@ jobs:
       # header gives for the lint gate itself.
       - name: Docs claims resolve (relative links + named workflows)
         run: node tools/docs-claim-lint.mjs
+      # ★ CHANGELOG.md's preamble asserted "Commit hashes link back to the git history" over
+      # 78 citations, NONE of which resolve — the history they were written against is not
+      # the one this repository has. That is a false sentence at HEAD in the second paragraph
+      # of the file, and it survived because nothing ever tried to follow a citation. The
+      # gate pins the 78 as unrepairable pre-rewrite history and fails on a 79th, and it
+      # measures the undocumented backlog from git against a ceiling — the figure that lived
+      # in a pull request body, said 235, and had silently become 431.
+      - name: Changelog claims (citations resolve; backlog inside its ceiling)
+        run: node tools/changelog-lint.mjs

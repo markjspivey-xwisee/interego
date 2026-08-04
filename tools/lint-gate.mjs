@@ -48,7 +48,8 @@
  * See that file's header for the measurement, so this does not get re-derived from scratch.
  */
 import { ESLint } from 'eslint';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 
@@ -91,6 +92,175 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  * that enforces lint can no longer merge.
  */
 const TARGETS = ['packages', 'tests', 'tools'];
+
+/**
+ * ── ★ THE EXPANSION, AS A CEILING RATHER THAN AS 185 PER-FILE PINS. ──────────────────────
+ *
+ * `deploy/` and `applications/` are the two source roots the zero-error surface above does
+ * NOT cover. Expanding TARGETS to include them was written down as an item and then declined,
+ * for a reason that was correct as far as it went: the debt is 1,762 errors across 185 files
+ * — measured, `npx eslint deploy applications` — so a per-file EXPANSION_BASELINE would pin
+ * ~185 exact numbers over a tree several agents edit concurrently, and any of them tidying
+ * one `console.log` reds master on a file they did not break.
+ *
+ * ★ BUT "TOO BRITTLE TO PIN PER FILE" IS NOT "LEAVE IT UNMEASURED", AND THAT IS WHAT IT
+ * BECAME. Nothing looked at either root. The debt could double, a whole directory could
+ * arrive un-linted, and every gate in this repo would stay green — which is the same shape as
+ * the two defects at the top of this file (a linter with no config, a linter with no
+ * workflow): a signal wired to nothing.
+ *
+ * So the roots ARE linted on every run, and what is pinned is one number per root instead of
+ * one per file:
+ *
+ *   - the count MAY NOT GROW. New lint debt in `deploy/` or `applications/` fails here.
+ *   - if it FALLS by more than {@link FRONTIER_TOLERANCE}, that fails too, naming the number
+ *     to write — the same both-ways ratchet the per-file baseline had, and for the same
+ *     reason: a pin that only tightens when somebody remembers is a pin that never tightens.
+ *   - the file count per root is a floor, because eslint exits 0 when it lints nothing and a
+ *     root that stops being scanned reports zero errors, which is indistinguishable from a
+ *     root that was cleaned.
+ *
+ * The tolerance is what makes this survivable where a per-file baseline was not: one number
+ * absorbs the ordinary churn of a shared tree, and only a real change of scale moves it. It
+ * is set wide deliberately — `deploy/mcp-relay/server.ts` alone carries 24 of the 382 and is
+ * under active edit as this is written, so a pin with no slack would red on a change nobody
+ * made a mistake in.
+ *
+ * This is NOT the end state. The end state is these roots joining TARGETS with the same empty
+ * baseline as `packages/`, and that means triaging 1,762 errors — of which 1,143 are
+ * `no-console` in bridge and CLI code, which is a config question (does the rule apply to a
+ * server's own stdout?) rather than a debt question, and should be answered once in
+ * eslint.config.js the way every other scoped exception here was. What this refuses is the
+ * gap staying INVISIBLE while that decision waits.
+ */
+/**
+ * ★★ AND THE CENSUS BELOW FOUND FIVE MORE THAT THE ITEM NEVER NAMED. The expansion item said
+ * "deploy/ + applications/". Asking the tree instead of the item added `benchmarks/` (193
+ * errors), `spec/` (48 in ONE file), `demos/` (48), `mcp-server/` (33 — and that one is a
+ * declared npm WORKSPACE, not a scratch directory) and `scripts/` (7). 1,994 errors across
+ * 509 files, in seven roots, observed by nothing. That is the argument for the census being a
+ * check rather than a list: the list was written by someone who knew about two of them.
+ */
+const UNLINTED_FRONTIER = {
+  // All measured 2026-08-04 by `lintTrackedUnder` — i.e. over `git ls-files`, so these are
+  // properties of the COMMIT and reproduce byte-for-byte in CI. The first numbers written
+  // here were taken from `npx eslint <root>`, which walks the disk, and every one of them
+  // was wrong: gitignored files inflated `benchmarks` by 414 errors alone. See
+  // `lintTrackedUnder` for the measurement.
+  //
+  // deploy: dominated by `no-explicit-any` and `no-console`, plus `no-undef` in `.mjs` —
+  // where eslint is the only compiler there is.
+  //
+  // ★ NOTE FOR WHOEVER SEES THIS ROOT GO RED FIRST. `deploy/mcp-relay/server.ts` alone
+  // carries 24 of the 356 and was under active edit when this number was taken. If that work
+  // lands and the count moves past the tolerance, the failure is the ratchet working, not a
+  // false alarm: write the new number in and move on.
+  deploy: { errors: 356, files: 106 },
+  // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
+  // decision, not a thousand defects. See the note above.
+  applications: { errors: 1309, files: 320 },
+  benchmarks: { errors: 193, files: 31 },
+  demos: { errors: 48, files: 37 },
+  // A declared npm workspace (see package.json `workspaces`), never linted.
+  'mcp-server': { errors: 33, files: 4 },
+  scripts: { errors: 7, files: 10 },
+  // 48 errors in a single file. The spec directory is mostly Markdown and Turtle; the one
+  // JavaScript file in it has never been examined by anything.
+  spec: { errors: 48, files: 1 },
+};
+
+/**
+ * How far a frontier count may move before this fails.
+ *
+ * Proportional with a floor, because these roots span two orders of magnitude and one
+ * absolute number cannot serve both: 30 is tight on `applications/` (1,380) and larger than
+ * the whole of `scripts/` (7), which would make that root's ceiling meaningless. 5% absorbs
+ * the ordinary churn of a shared tree in proportion to the root's size; the floor of 5 stops
+ * a small root from having a tolerance of zero, which would red on a one-line change.
+ *
+ * Exported so the self-test derives its fixtures from it instead of restating the numbers —
+ * the mistake `tests/vitest-run-integrity.test.ts` had to be rescued from.
+ */
+export const frontierTolerance = pin => Math.max(5, Math.ceil(pin * 0.05));
+
+/**
+ * Top-level directories that hold no lintable source, or whose source eslint.config.js
+ * deliberately ignores. Anything NOT here, not in TARGETS and not in UNLINTED_FRONTIER fails
+ * the census below — because the failure mode this whole file exists for is coverage that is
+ * absent rather than coverage that is red, and a NEW top-level source root is the largest
+ * version of that. `examples/`, `integrations/` and `interego-main/` are not listed: they are
+ * in eslint.config.js's `ignores`, so the census finds no lintable file in them and they need
+ * no entry here. Two statements of one exclusion is the drift this repo keeps deleting.
+ */
+const CENSUS_EXEMPT = new Set([
+  'node_modules', 'dist', 'build', 'coverage', 'scratchpad', '.git', '.github', '.claude',
+  '.interego', '.vscode', '.husky',
+]);
+
+/** Extensions eslint.config.js's rules apply to. */
+const LINTABLE = /\.(?:[cm]?ts|[cm]?js)$/;
+
+/**
+ * Lint what the REPOSITORY holds under `root`, not what this disk holds.
+ *
+ * ★ WHY NOT `eslint.lintFiles([root])`. That walks the directory, and flat-config eslint
+ * does not read `.gitignore` — so every gitignored file present locally joins the census.
+ * The frontier pins are then a measurement of one machine's working directory, and the
+ * gate reds for a reason the contributor cannot see in the diff.
+ *
+ * Measured, this PR: `benchmarks/` counted 37 files here and 31 in CI. The six are
+ * `benchmarks/locomo/static/js/{bulma-carousel,bulma-slider,fontawesome.all,index}*.js`
+ * — vendored assets, gitignored, on disk only. `deploy/` differed the same way, 382
+ * errors against CI's 356, and the gate correctly refused BOTH directions.
+ *
+ * `git ls-files` makes the number a property of the commit, so it is identical on every
+ * machine and in CI, and a file must be committed before it can move a pin. eslint's own
+ * `ignores` still apply on top, via `isPathIgnored` — the two filters compose rather than
+ * one standing in for the other.
+ */
+async function lintTrackedUnder(eslint, root) {
+  // No `cwd` guard needed: ROOT is this file's parent, which is the repo root by
+  // construction. A git failure THROWS, and the caller fails closed on it — "could not
+  // scan" must never read the same as "scanned and unchanged".
+  const listed = execFileSync('git', ['ls-files', '-z', '--', root], {
+    cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  });
+  const tracked = listed.split('\0').filter(f => f && LINTABLE.test(f));
+  const scannable = [];
+  for (const f of tracked) if (!await eslint.isPathIgnored(f)) scannable.push(f);
+  // `lintFiles([])` throws in eslint 9; an empty root is a legitimate state that the
+  // file-count floor in `frontierFailures` is what judges.
+  return scannable.length ? await eslint.lintFiles(scannable) : [];
+}
+
+/** Directory names never worth descending into when looking for a lintable file. */
+const NEVER_DESCEND = new Set(['node_modules', 'dist', 'build', 'coverage', '.git']);
+
+/**
+ * Does this directory contain at least one file eslint would lint? Stops at the first hit —
+ * this is a presence question, not a count, and walking `applications/` to exhaustion to
+ * answer "is there any TypeScript here" would make the gate pay for the answer twice.
+ *
+ * `isPathIgnored` is asked because a root can be full of `.ts` that eslint.config.js ignores
+ * (`examples/`, `integrations/`), and a census that demanded an entry for those would be
+ * asking for the ignore list to be written down a second time.
+ */
+async function hasLintableSource(eslint, dir, depth = 0) {
+  if (depth > 6) return false;
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+  for (const e of entries) {
+    if (e.name.startsWith('.')) continue;
+    const full = join(dir, e.name);
+    if (e.isDirectory()) {
+      if (NEVER_DESCEND.has(e.name)) continue;
+      if (await hasLintableSource(eslint, full, depth + 1)) return true;
+    } else if (LINTABLE.test(e.name) && !e.name.endsWith('.d.ts')) {
+      if (!await eslint.isPathIgnored(full)) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * The remaining debt: NONE. 0 errors in 0 files, down from 222 in 47.
@@ -275,7 +445,27 @@ const BASELINE = {};
 // Ratcheted 300 -> 320 when `tools` joined TARGETS (310 -> 329 files). A floor that stays
 // far below the real count stops being a collapse detector: at 300 the gate would have
 // shrugged off `tools` silently dropping back out.
-const MIN_FILES = 320;
+//
+// ★ 320 -> 344, AND THIS ONE WAS NOT NOTICED BY A HUMAN — it was found by adding the drift
+// check below. The tree had walked to 354 while the floor sat at 320, i.e. 34 files of slack:
+// MORE THAN THE WHOLE OF `tools/` (19 files). The exact scenario the comment above says the
+// floor exists to prevent had quietly become possible again, by nothing but the tree growing.
+// A floor corrected only when somebody remembers is a floor that is always stale.
+// 344 -> 346 in the same round, fired again by the drift check the moment this round's own
+// two test files and one gate script landed (354 -> 356). That is the ratchet behaving: it
+// caught its author, not just history.
+export const MIN_FILES = 346;
+
+/**
+ * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
+ * Same mechanism, same reasoning and the same number as `tools/vitest-run-integrity.mjs`'s
+ * FLOOR_ALLOWANCE: enough to absorb ordinary file deletion, not enough to hide a directory.
+ *
+ * Exported with MIN_FILES so `tests/lint-gate.test.ts` derives its fixtures from them rather
+ * than restating the numbers — two sources of truth for one number is what the gate exists
+ * to prevent, and a self-test is not exempt from it.
+ */
+export const FILE_FLOOR_ALLOWANCE = 10;
 
 /**
  * The workflow whose job NAME is this gate's public label — the one line about it that a
@@ -352,13 +542,74 @@ export function baselineClaimFailure(workflowText, pinned = Object.keys(BASELINE
     + '      long after the debt reached zero.';
 }
 
+/**
+ * The frontier failures for one root, given what eslint measured and what is pinned.
+ *
+ * Numbers in, so `tests/lint-gate.test.ts` can drive every direction without running eslint
+ * over 474 files; the live call passes the real measurements, so the tested function and the
+ * running function are the same one.
+ *
+ * @param {string} root      'deploy' | 'applications'
+ * @param {{errors:number,files:number}} pin  the entry in UNLINTED_FRONTIER
+ * @param {{errors:number,files:number}} now  what this run measured
+ * @returns {string[]} failure paragraphs
+ */
+export function frontierFailures(root, pin, now) {
+  const out = [];
+  const fileSlack = frontierTolerance(pin.files);
+  const errSlack = frontierTolerance(pin.errors);
+  // ★ FILES FIRST, and separately, exactly as MIN_FILES is above: every error assertion below
+  // is satisfied by scanning nothing, so a root that stopped being scanned reports 0 errors
+  // and reads as a root that was cleaned.
+  const collapsed = now.files < pin.files - fileSlack;
+  if (collapsed) {
+    out.push(
+      `  ${root}/: eslint examined ${now.files} file(s); ${pin.files} were pinned.\n`
+      + '      That is not a smaller root, that is a root falling out of the scan — and a\n'
+      + '      scan of nothing reports zero errors, which passes every count check below.\n'
+      + `      If the shrink is real, write { errors: ${now.errors}, files: ${now.files} } into\n`
+      + '      UNLINTED_FRONTIER in tools/lint-gate.mjs.',
+    );
+  } else if (now.files > pin.files + fileSlack) {
+    out.push(
+      `  ${root}/: eslint examined ${now.files} file(s), pinned at ${pin.files}. The root grew\n`
+      + `      past the ${fileSlack} of slack. Write files: ${now.files} into UNLINTED_FRONTIER\n`
+      + '      in tools/lint-gate.mjs so the floor keeps meaning something.',
+    );
+  }
+  if (now.errors > pin.errors + errSlack) {
+    out.push(
+      `  ${root}/: ${now.errors} lint error(s), pinned at ${pin.errors}. Existing debt on the\n`
+      + '      un-linted frontier may not grow. Fix what you added — do not raise the pin.\n'
+      + `      Reproduce: npx eslint ${root}`,
+    );
+  } else if (now.errors < pin.errors - errSlack && !collapsed) {
+    // ★ `&& !collapsed`, AND THIS WAS A REAL DEFECT CAUGHT BY THE CASE BELOW IT IN
+    // tests/lint-gate-ci-claim.test.ts, not by reading. A root that falls out of the scan
+    // reports 0 files AND 0 errors, so without this it produced BOTH failures at once: the
+    // honest one ("that is a root falling out of the scan") and, directly underneath,
+    // "It IMPROVED — write errors: 0 into UNLINTED_FRONTIER", which instructs the maintainer
+    // to bank a gain that does not exist and to pin the collapse as the new normal. Two
+    // messages pointing in opposite directions, one of which is the repair that erases the
+    // finding.
+    out.push(
+      `  ${root}/: ${now.errors} lint error(s), pinned at ${pin.errors}. It IMPROVED by more\n`
+      + `      than ${errSlack} — write errors: ${now.errors} into UNLINTED_FRONTIER in\n`
+      + '      tools/lint-gate.mjs so the gain cannot be quietly lost again. A pin that only\n'
+      + '      tightens when somebody remembers is a pin that never tightens.',
+    );
+  }
+  return out;
+}
+
 export async function runLintGate() {
   // The programmatic API rather than the CLI: `eslint`'s package `exports` does not expose
   // `bin/eslint.js`, and more importantly a config-resolution failure here THROWS instead of
   // becoming an exit code that a caller could mistake for a clean run.
   let report;
+  let eslint;
   try {
-    const eslint = new ESLint({ cwd: ROOT, errorOnUnmatchedPattern: false });
+    eslint = new ESLint({ cwd: ROOT, errorOnUnmatchedPattern: false });
     report = await eslint.lintFiles(TARGETS);
   } catch (err) {
     return {
@@ -390,6 +641,19 @@ export async function runLintGate() {
       + '      Coverage collapsed — check eslint.config.js `ignores`, the TARGETS list in\n'
       + '      this file, and that the config still matches .ts. An eslint run that lints\n'
       + '      nothing exits 0, which is why this is asserted rather than assumed.',
+    );
+  }
+  // ★ THE RATCHET THE FLOOR NEVER HAD, and it found 34 files of slack the moment it ran. The
+  // number above is hand-written and was corrected only when somebody happened to look, which
+  // is how it came to sit further below the tree than the whole of `tools/`. The real count
+  // is already in hand on every run, so the staleness is CHECKED rather than trusted and the
+  // message carries the replacement number.
+  if (report.length - MIN_FILES > FILE_FLOOR_ALLOWANCE) {
+    failures.push(
+      `  eslint linted ${report.length} file(s) but MIN_FILES is ${MIN_FILES} — `
+      + `${report.length - MIN_FILES} below it, past the ${FILE_FLOOR_ALLOWANCE} of slack this\n`
+      + '      floor is allowed. A floor that drifts far below reality stops being a floor.\n'
+      + `      Raise MIN_FILES in tools/lint-gate.mjs to ${report.length - FILE_FLOOR_ALLOWANCE}.`,
     );
   }
 
@@ -436,8 +700,59 @@ export async function runLintGate() {
     }
   }
 
+  // ── ★ THE UN-LINTED FRONTIER. See UNLINTED_FRONTIER for why this is one number per root
+  // rather than the ~185 per-file pins the expansion item asked for and was declined over.
+  const frontier = {};
+  for (const [root, pin] of Object.entries(UNLINTED_FRONTIER)) {
+    let rootReport;
+    try {
+      rootReport = await lintTrackedUnder(eslint, root);
+    } catch (err) {
+      // Fail closed. "Could not scan" must not read the same as "scanned and unchanged".
+      failures.push(
+        `  ${root}/: eslint could not scan it (${err instanceof Error ? err.message : String(err)}).\n`
+        + '      The frontier pin below is therefore unverified, which is the state this\n'
+        + '      check exists to end.',
+      );
+      continue;
+    }
+    const now = {
+      files: rootReport.length,
+      errors: rootReport.reduce((n, f) => n + f.messages.filter(m => m.severity === 2).length, 0),
+    };
+    frontier[root] = now;
+    failures.push(...frontierFailures(root, pin, now));
+  }
+
+  // ── ★ THE ROOT CENSUS: a NEW un-linted source root must not arrive silently. ────────────
+  //
+  // Every check above — the empty baseline, MIN_FILES, the frontier pins — is a statement
+  // about directories somebody already named. None of them can observe a directory nobody
+  // named. `applications/` itself arrived that way, and by the time anyone looked it held
+  // 1,380 lint errors that no gate had ever seen. So the set of source roots is itself
+  // pinned: a top-level directory with lintable source in it must be in TARGETS, in
+  // UNLINTED_FRONTIER, or in CENSUS_EXEMPT with a reason. Adding a root and continuing is
+  // then a deliberate act with a diff, which is all this asks for.
+  let census;
+  try { census = readdirSync(ROOT, { withFileTypes: true }); } catch { census = []; }
+  const classified = new Set([...TARGETS, ...Object.keys(UNLINTED_FRONTIER), ...CENSUS_EXEMPT]);
+  const unclassified = [];
+  for (const e of census) {
+    if (!e.isDirectory() || classified.has(e.name)) continue;
+    if (e.name.startsWith('.')) continue;
+    if (await hasLintableSource(eslint, join(ROOT, e.name))) unclassified.push(e.name);
+  }
+  if (unclassified.length > 0) {
+    failures.push(
+      `  un-linted source root(s) with no entry anywhere: ${unclassified.join(', ')}\n`
+      + '      Each holds at least one file eslint.config.js would lint, and nothing in this\n'
+      + '      gate knows about it. Put it in TARGETS (and fix its errors), or in\n'
+      + '      UNLINTED_FRONTIER with its measured counts, or in CENSUS_EXEMPT with a reason.\n'
+      + '      `applications/` reached 1,380 unobserved errors by being in none of the three.',
+    );
+  }
   const total = [...counts.values()].reduce((a, b) => a + b, 0);
-  return { ok: failures.length === 0, failures, files: report.length, total, fatal: null };
+  return { ok: failures.length === 0, failures, files: report.length, total, frontier, fatal: null };
 }
 
 /** The message a human or a CI log sees. Kept out of the checker so callers can reuse it. */
@@ -448,11 +763,19 @@ export function lintGateReport(result) {
     // this file must never be mistaken for. The file COUNT is in both, because that is the
     // number that distinguishes a clean run from a collapsed one.
     const pinned = Object.keys(BASELINE).length;
+    // ★ THE FRONTIER IS PRINTED ON SUCCESS, NOT ONLY ON FAILURE. A green line reading "329
+    // files linted, 0 errors" over a repo carrying 1,762 errors in two un-linted roots is
+    // true and misleading in exactly the way this file keeps having to correct. The debt
+    // that is deliberately not fixed yet should be visible on every run that passes.
+    const frontier = Object.entries(result.frontier ?? {})
+      .map(([root, n]) => `${root}/ ${n.errors} err in ${n.files} files`)
+      .join('; ');
+    const tail = frontier === '' ? '' : ` Un-linted frontier, pinned and not growing: ${frontier}.`;
     return pinned === 0
       ? `lint gate: ${result.files} file(s) linted, 0 errors, 0 baselined files — the `
-        + 'baseline is empty, so any error anywhere now fails this gate.'
+        + `baseline is empty, so any error anywhere now fails this gate.${tail}`
       : `lint gate: ${result.files} file(s) linted, ${result.total} known error(s) across `
-        + `${pinned} baselined file(s), none anywhere else.`;
+        + `${pinned} baselined file(s), none anywhere else.${tail}`;
   }
   if (result.fatal) {
     return ['', '★ LINT GATE FAILED — eslint could not run', '', result.fatal, ''].join('\n');

@@ -122,6 +122,40 @@ export interface ShapeBodyDeps {
  * carrying `iep:shapeUnfetchable`. You cannot claim conformance to a shape you could not
  * read, so every path that gives up here fails the publish closed.
  */
+/**
+ * Render a thrown fetch failure so the WARN line says WHICH failure it was.
+ *
+ * ★ THIS IS THE REASON THE #260 OUTAGE COULD NOT BE DIAGNOSED. `err.message` alone
+ * is the string `fetch failed` for every network-layer outcome — measured in the
+ * relay's own runtime image, byte-identical at this call site:
+ *
+ *     the egress address screen firing  ->  "fetch failed", cause.code ERR_EGRESS_PRIVATE_ADDRESS
+ *     DNS failure                       ->  "fetch failed", cause.code ENOTFOUND
+ *     TLS failure                       ->  "fetch failed", cause.code ERR_TLS_CERT_ALTNAME_INVALID
+ *
+ * So the whole log record of an outage that stopped every shape-gated publish was
+ * `fetch threw: fetch failed`, and "the connect failed" was an INFERENCE from a
+ * string that cannot distinguish a broken connect from the SSRF screen correctly
+ * refusing a target. `cause.code` is the only channel that separates them, because
+ * undici puts the real error there and WHATWG `fetch` flattens everything above it.
+ *
+ * `cause.errors` is unwrapped too: exhausting Happy Eyeballs' candidate list yields
+ * an AggregateError whose members carry the per-address codes, and "which addresses
+ * did we actually try" is the question a family-selection regression turns on.
+ */
+export function describeFetchFailure(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = (err as { cause?: unknown }).cause;
+  if (!(cause instanceof Error)) return err.message;
+  const code = (cause as NodeJS.ErrnoException).code;
+  const inner = (cause as { errors?: unknown }).errors;
+  const members = Array.isArray(inner)
+    ? inner.map(e => (e as NodeJS.ErrnoException)?.code ?? String(e)).join(',')
+    : '';
+  return `${err.message} | cause=${code ?? cause.name}: ${cause.message}`
+    + (members ? ` | attempts=[${members}]` : '');
+}
+
 export async function fetchShapeBodyWith(
   shapeIri: string,
   deps: ShapeBodyDeps,
@@ -163,7 +197,7 @@ export async function fetchShapeBodyWith(
     // Network failures → treat as missing shape, but record the cause so a
     // misconfigured / unreachable shape can't masquerade as "no shape declared".
     // WARN-logged below, NOT silently swallowed.
-    warnReason = `fetch threw: ${err instanceof Error ? err.message : String(err)}`;
+    warnReason = `fetch threw: ${describeFetchFailure(err)}`;
   }
 
   // ★ FOLLOW THE PAGE'S OWN ADVERTISED TURTLE — through the SHARED follower.

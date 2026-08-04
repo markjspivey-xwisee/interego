@@ -3,8 +3,28 @@
 Notable changes to @interego/core. Dates are UTC.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) with RFC 2119-style
-capability descriptions. Commit hashes link back to the git history; the README
-describes what the system IS, this file describes what changed and when.
+capability descriptions. The README describes what the system IS, this file describes
+what changed and when.
+
+**This file is curated, not exhaustive**, and two things about it are worth knowing before
+you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which runs in
+`.github/workflows/lint.yml`, rather than described here and left to decay.
+
+- **The cited commit hashes do not resolve against this repository.** This paragraph used
+  to say "Commit hashes link back to the git history". It does not: all 78 short hashes
+  cited below were written against a history this repository no longer has, and `git
+  cat-file` fails on every one. They are kept because the prose around each is still the
+  record of what changed; they are pinned at 78 so that a *new* citation which fails to
+  resolve — a typo, or a hash from someone's local branch — fails the gate the day it is
+  written.
+- **There is a large undocumented backlog.** The marker below names the newest commit
+  through which this file is *continuously* current — entries after it exist (the
+  2026-08-04 one, for instance) but are spot entries, not coverage. 433 commits have landed
+  since that anchor. That count is measured from git on every run and has a ceiling, because
+  the previous statement of it lived in a pull request body, said 235, and had reached 431
+  by the time anyone re-measured.
+
+<!-- documented-through: 2a4f2bb -->
 
 ---
 
