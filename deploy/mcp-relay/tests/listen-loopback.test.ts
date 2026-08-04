@@ -24,7 +24,11 @@
  * fails 3; dropping `unref()` fails 1; reverting a suite to a bare `app.listen(0)` fails
  * the source scan. And, for the widened walk: putting `app.listen(6099)` back into
  * `applications/_shared/vertical-bridge/affordance-manifest.test.ts` — a file the previous
- * version of this scan could not see at all — fails it, naming that path.
+ * version of this scan could not see at all — fails it, naming that path. And for the
+ * MEASURED exemption: restoring the old hand count (`=== 6 && === 6`) fails, reporting
+ * `5 files, 7 sites`; pointing `smokeDir` at a directory that does not exist fails at
+ * `0 files, 0 sites` through ok() rather than an ENOENT stack, which is what proves the
+ * number is read from the directory and not from a literal in this file.
  *
  * ★ TWO mutants SURVIVE, recorded rather than papered over:
  *
@@ -37,13 +41,17 @@
  *     all this file has. The ordering earns its place against an ACTIVE connection —
  *     mcp-transport-wiring's SSE stream — which `close()` waits for and this does not
  *     reproduce. Kept and labelled, not claimed as proven.
+ *   - dropping `stripComments()` from the exemption count changes nothing: measured at 7
+ *     both stripped and raw, because no comment in those five files happens to contain a
+ *     `.listen(` token today. It is kept for the same reason the scan above keeps it — the
+ *     next comment added there could flip the count — but it is not proven by this suite.
  *
  * Run from deploy/mcp-relay/:
  *   npx tsx tests/listen-loopback.test.ts
  */
 
 import express from 'express';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { createServer } from 'node:http';
@@ -163,13 +171,19 @@ async function main(): Promise<void> {
      *     application's `bridge/`, and under `examples/`. Binding every interface is their
      *     JOB: they are reached from outside the box. This guard is about fixtures that
      *     only ever talk to themselves.
-     *   - `applications/foxxi-content-intelligence/tools/*-smoke.ts`. Six of them call
-     *     `app.listen(0)` and so DO bind `::`. They are dev tools, are run by no workflow,
-     *     and do not currently execute at all on this toolchain — each dies at
-     *     `TypeError: pathRegexp is not a function` from a stale express in that package's
-     *     own node_modules, before it ever reaches `listen`. Converting code that cannot be
-     *     run is a change nobody can verify, so they are left, and left VISIBLE here rather
-     *     than covered by a claim.
+     *   - `applications/foxxi-content-intelligence/tools/*-smoke.ts` — FIVE files with
+     *     SEVEN bare `app.listen(0)` sites, which therefore DO bind `::`. Those two numbers
+     *     are DERIVED AND ASSERTED at the end of this block, not hand-counted here: the
+     *     sentence they replace said "Six of them", which matched neither the file count nor
+     *     the site count, because nothing in this file executed over the directory it was
+     *     describing. They are dev tools, are run by no workflow, and their express half
+     *     does not execute on this toolchain — each dies at `TypeError: pathRegexp is not a
+     *     function` at its first route, before it ever reaches `listen`. The cause is not
+     *     "a stale express": that package declares no express at all, and npm deduped
+     *     express@4 flat to satisfy express-rate-limit next to a flat path-to-regexp@8,
+     *     whose export is an object; express 4's `lib/router/layer.js` calls it as a
+     *     function. Converting code that cannot be run is a change nobody can verify, so
+     *     they are left — and left MEASURED below rather than described.
      */
     const skipDir = new Set([
       'node_modules', '.git', 'dist', 'build', 'coverage', 'scratchpad',
@@ -230,6 +244,37 @@ async function main(): Promise<void> {
     ok(offenders.length === 0,
       '★ no test suite ANYWHERE in the repo calls .listen() without naming 127.0.0.1',
       offenders.join('; '));
+
+    // ── The one named exemption is MEASURED, not described ─────────────────────
+    //
+    // ★ The scope note above used to read "Six of them call `app.listen(0)`". At HEAD it is
+    // FIVE files and SEVEN call sites; six is neither, and had not been true for some time.
+    // It could not fail loudly because NO assertion in this file executed over that
+    // directory — the exemption existed only as prose, the files falling out of `suites`
+    // passively by not matching any branch of the walk. A guard whose own scope note drifts
+    // unwatched is committing, inside itself, the defect it exists to catch.
+    //
+    // So the exempted directory is now counted with the SAME strip-and-match machinery as
+    // the scan above, and the note's numbers are asserted. A sixth tool, a new call site, or
+    // one tool converted to `listenLoopback` each fails HERE — which is the point: the day
+    // this hole is closed, or widened, the words describing it must change with the code.
+    const smokeDir = join(repoRoot, 'applications', 'foxxi-content-intelligence', 'tools');
+    // If that directory is ever moved or deleted this must FAIL BY NAME, not crash the run
+    // with a readdir ENOENT stack: the note above would then be documenting a hole that no
+    // longer exists, and it has to be deleted along with this check.
+    const smokeFiles = existsSync(smokeDir)
+      ? readdirSync(smokeDir).filter(n => n.endsWith('-smoke.ts')).sort()
+      : [];
+    let smokeUnguarded = 0;
+    for (const name of smokeFiles) {
+      const src = stripComments(readFileSync(join(smokeDir, name), 'utf8'));
+      for (const m of src.matchAll(/\.listen\(([^)]*)\)/g)) {
+        if (!/['"]127\.0\.0\.1['"]/.test(m[1] ?? '')) smokeUnguarded += 1;
+      }
+    }
+    ok(smokeFiles.length === 5 && smokeUnguarded === 7,
+      '★ the named exemption is exactly the 5 files / 7 unguarded sites the note claims',
+      `${smokeFiles.length} files, ${smokeUnguarded} sites: ${smokeFiles.join(', ')}`);
   }
 
   if (fail > 0) {

@@ -90,6 +90,34 @@ describe('Coherence Verification', () => {
       }
     });
 
+    it('per-atom profile attributes usage to the RIGHT side when the sides differ', () => {
+      // ★ THE FIXTURE THE TEST ABOVE CANNOT BE. Both agents there embed the SAME utterance,
+      // so usagesA === usagesB for every atom and a defect that reported A's count for B
+      // (`usagesB: sigA.size`, coherence.ts:198) is invisible: `usagesA + usagesB > 0` and
+      // the [0,1] overlap bounds all still hold under it. Here B uses 'mark' in strictly
+      // fewer contexts than A, so each side's count, the shared count, and which side owns
+      // the leftover contexts are separately pinned.
+      const pgslA = makePgsl('agent-a');
+      const pgslB = makePgsl('agent-b');
+      embedInPGSL(pgslA, 'mark is human');
+      embedInPGSL(pgslB, 'mark');
+
+      const cert = verifyCoherence(pgslA, pgslB, 'agent-a', 'agent-b', 'test');
+      expect(cert.semanticProfile).toHaveLength(1);
+      const profile = cert.semanticProfile[0]!;
+      expect(profile.atom).toBe('mark');
+      // Counts are asserted RELATIVE to each other rather than pinned to the measured 3 and
+      // 1, so a legitimate change to PGSL's fragment decomposition cannot fail this test for
+      // the wrong reason — only a side-attribution defect can.
+      expect(profile.usagesB).toBeGreaterThanOrEqual(1);
+      expect(profile.usagesA).toBeGreaterThan(profile.usagesB);
+      expect(profile.sharedUsages).toBe(profile.usagesB);
+      expect(profile.uniqueToA).toHaveLength(profile.usagesA - profile.usagesB);
+      expect(profile.uniqueToB).toEqual([]);
+      // overlap is shared / max(A, B) — here max(A, B) is A.
+      expect(profile.overlap).toBeCloseTo(profile.sharedUsages / profile.usagesA, 10);
+    });
+
     it('generates a computation hash for replayability', () => {
       const pgslA = makePgsl('agent-a');
       const pgslB = makePgsl('agent-b');

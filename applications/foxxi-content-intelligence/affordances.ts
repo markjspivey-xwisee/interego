@@ -204,7 +204,11 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:foxxi:explore-concept-map' as IRI,
     toolName: 'foxxi.explore_concept_map',
     title: 'Explore the published concept map for a course',
-    description: 'Fetch the fxk: knowledge-stratum descriptors (concepts, prerequisite edges, modifier-of relations, Peircean Sign/Object/Interpretant tags) for a course. Returns a navigation graph: pick any concept, follow prerequisite edges up/down, see the slides that taught it.',
+    // The deleted clause promised "Peircean Sign/Object/Interpretant tags". No such
+    // field exists on FoxxiAgenticPayload or anywhere on the pod, so it advertised a
+    // shape no caller could ever receive — the same class the two description tests
+    // in tests/declared-but-unimplemented.test.ts exist to catch.
+    description: 'Fetch the concept graph a course PUBLISHED (concepts with tier + confidence, prerequisite edges, modifier-of relations) from its on-pod fxa:CoursePackageBundle, and return it as a navigation graph: pick any concept with focus_concept_id, follow prerequisite edges up AND down to max_depth, and read the slide ids that taught each one. Returns { error } — never an empty graph — when the course is not on the pod or focus_concept_id names no concept in it.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/explore_concept_map',
     annotations: { title: 'Explore the concept map', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -213,6 +217,21 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       { name: 'focus_concept_id', type: 'string', required: false, description: 'Optional concept to center the navigation graph on; default returns the full graph.' },
       { name: 'max_depth', type: 'number', required: false, description: 'Optional depth limit for prerequisite-edge traversal from focus_concept_id (default 3).' },
     ],
+    outputs: {
+      description: 'The course\'s navigation graph, read from its on-pod fxa:CoursePackageBundle. Returns { error } rather than an empty graph when the course is absent or focus_concept_id names no concept — an empty concepts/edges pair would read as "this course has no concept map", which is a different and wrong answer.',
+      properties: {
+        courseIri: { type: 'string', description: 'Resolved course IRI (…#package).' },
+        courseId: { type: 'string', description: 'Resolved course id.' },
+        title: { type: 'string', description: 'Course title.' },
+        concepts: { type: 'array', description: 'Nodes { id, label, tier, confidence, taughtInSlides[], depth? }. depth is hops from focus_concept_id (0 = the focus) and is absent on an unfocused full graph.', items: { type: 'object', additionalProperties: true } },
+        edges: { type: 'array', description: 'Edges { from, to, kind: prerequisite|modifier-of, confidence? }, restricted to the returned node set.', items: { type: 'object', additionalProperties: true } },
+        slides: { type: 'array', description: 'Slide index { id, title, sequence_index } the taughtInSlides ids refer into.', items: { type: 'object', additionalProperties: true } },
+        focusConceptId: { type: 'string', description: 'Echo of the focus, when one was given.' },
+        maxDepth: { type: 'integer', description: 'Traversal depth actually applied (default 3).' },
+        truncated: { type: 'boolean', description: 'True when the focus + depth limit excluded concepts the full graph contains.' },
+        error: { type: 'string', description: 'Set when the course is not published on the pod, or focus_concept_id names no concept in it.' },
+      },
+    },
   },
 
   {
@@ -1772,7 +1791,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:foxxi:upload-scorm-package' as IRI,
     toolName: 'foxxi.upload_scorm_package',
     title: 'Upload a SCORM zip package for ingestion',
-    description: 'Queue a SCORM .zip for the Python parser. Publishes a fxs:PackageUpload descriptor with modalStatus:Hypothetical; the separate parser-runner picks it up, parses, then publishes the resulting fxs:Package via iep:supersedes.',
+    description: 'Upload a SCORM / cmi5 .zip. Parsed IN-PROCESS on arrival — no queue, no external runner: the manifest, course title, standard, SCO list, activity structure and authoring-tool fingerprint are read out of the zip synchronously and returned. Publishes a Hypothetical fxs:PackageUpload receipt, then — only if the parse succeeds — an Asserted fxs:ParsedPackage over the same graph that supersedes it (iep:supersedes). A zip that cannot be read returns status:failed and leaves the receipt Hypothetical: nothing is asserted about a package that could not be parsed.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/upload_scorm_package',
     annotations: { title: 'Upload a SCORM zip package', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },

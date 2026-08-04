@@ -25,6 +25,7 @@ import { entryTurtle } from '../applications/shared-workspace/src/stream.js';
 import {
   foldRoster, may, explain, refuseConvenerAuthority, refuseRoleProfileAuthority,
   refuseEvidenceProvenance, refuseFieldBinding, refuseRoleTableAuthority, normaliseRoleTable,
+  refuseAttestation,
   type Roster, type Grant, type Acceptance, type Attestation,
   type WorkspaceRecord, type ConvenerEvidence,
   type FieldProvenance, type EvidenceProvenance,
@@ -105,8 +106,11 @@ const forgeEvidenceProvenance = (dereferenced: string, resolvedTo: string): Evid
  * because the same person had a second live agent.
  *
  * So the property is stated over the CONFIGURATION LATTICE rather than over an input, and
- * every case is enumerated. Six policy axes, each with an unambiguous weaker side, plus one
- * that asserts an INVARIANCE rather than an ordering:
+ * every case is enumerated. TEN AXES below, one per row: NINE with an unambiguous weaker side,
+ * plus AXIS F, which asserts an INVARIANCE rather than an ordering. Both counts are checked
+ * against the roster by a test at the end of this file, because this sentence read "Six ...
+ * plus one" from the round AXIS G landed until the round AXIS J did: three rounds appended a
+ * row here and left the number above it alone, and the README repeated the stale one:
  *
  *   A  attestation policy PRESENT ⊆ absent
  *   B  a signing key marked REVOKED ⊆ the same key live
@@ -528,9 +532,14 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
    *                     else — the federated composer holding one governance document per IRI it
    *                     has met and attaching the wrong one. The same shape as AXIS I's
    *                     `other-iri`, one document further out.
-   *   `unreadable`      the caller asked and got nothing. Not hypothetical: the profile IRI the
-   *                     deployed workspace record declares answers 404, measured 2026-08-03, so
-   *                     this is the state a fold against the REAL artifact lands in today.
+   *   `unreadable`      the caller asked and got nothing. ★ AND IT IS NO LONGER THE REAL
+   *                     ARTIFACT'S STATE, which is why the old sentence saying so is gone:
+   *                     `<…/wsp-roles-default>` answered 404 when this line was written and
+   *                     answers 200 `text/html` now — and 631e9d7 shipped the page that repaired
+   *                     it in the SAME commit that wrote the sentence denying it. A fold against
+   *                     the deployed profile reaches `'declared'` at `'transport-only'`
+   *                     (verify-can-live.ts §12). What still lands here is a host that is down, a
+   *                     page advertising no Turtle, and a body that does not parse.
    *   `mislabelled`     a document claiming `'transport-only'` while carrying an attestation.
    *                     The relabelling move: `authority` is the one field on the document whose
    *                     value SELECTS a check, so a pod record whose authorship does not hold up
@@ -559,9 +568,24 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     { role: `${P}#Contributor`, permits: [CAPS.read, CAPS.append] },
     { role: `${P}#Observer`, permits: [CAPS.read] },
   ];
-  const roleDocument = (over: Partial<RoleProfileDocument> = {}): RoleProfileDocument => ({
-    head: ROLE_DOC, dereferenced: P, roles: declaredRoles, authority: 'transport-only', ...over,
-  });
+  /**
+   * ★ A CAST, LIKE {@link forgeFieldProvenance} AND FOR ITS REASONS. `RoleProfileDocument` is
+   * branded, so this literal is a compile error — which is the point, and which is asserted
+   * directly in AXIS J's residue test below. A suite that could only build documents the
+   * producer made could not feed the fold one it did not, and every case in `tableShapes` exists
+   * to be refused. This is the ONE forge of a role profile document in the file; a second
+   * construction site anywhere is one that escaped the discipline.
+   *
+   * `Partial<RoleProfileDocument>` still works as the `over` bag: a private class member is not
+   * in `keyof`, so the mapped type is the four public fields and the optional attestation.
+   */
+  const roleDocument = (over: Partial<RoleProfileDocument> = {}): RoleProfileDocument => {
+    // A statement body rather than a concise one: `=> ({…} as unknown as T)` makes the parser
+    // read the leading `(` as an arrow parameter list and fails with TS1005, which is a parse
+    // error twelve lines away from anything that looks like the cause.
+    const forged = { head: ROLE_DOC, dereferenced: P, roles: declaredRoles, authority: 'transport-only', ...over };
+    return forged as unknown as RoleProfileDocument;
+  };
   const tableEvidence = (shape: typeof tableShapes[number]): RoleTableEvidence => {
     switch (shape) {
       case 'honest': return { kind: 'declared', document: roleDocument() };
@@ -1745,7 +1769,7 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     expect(stillFits.kind).toBe('declared');
   });
 
-  it('★ and `membership.ts` is the only place in the application that mints either brand', () => {
+  it('★ and `membership.ts` is the only place in the application that mints any of the three brands', () => {
     // ★ THE HALF A BRAND CANNOT ASSERT ABOUT ITSELF. A type assertion is the one escape hatch
     // no branded type in TypeScript can refuse — `as EvidenceProvenance` converts, because an
     // assertion succeeds whenever either type is assignable to the other and the branded type
@@ -1767,8 +1791,8 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     const src = fileURLToPath(new URL('../applications/shared-workspace/', import.meta.url));
     const files = readdirSync(join(src, 'src')).filter(f => f.endsWith('.ts')).map(f => join('src', f))
       .concat(readdirSync(join(src, 'tools')).filter(f => f.endsWith('.ts')).map(f => join('tools', f)));
-    /** Both brands, under either name — `membership.ts` imports them aliased to `…Value`. */
-    const BRANDED = /^(?:EvidenceProvenance|FieldProvenance)(?:Value)?$/;
+    /** All THREE brands, under either name — `membership.ts` imports them aliased to `…Value`. */
+    const BRANDED = /^(?:EvidenceProvenance|FieldProvenance|RoleProfileDocument)(?:Value)?$/;
     /**
      * Every `x as T`, `<T>x` and `x satisfies T` in one file whose T is a branded provenance.
      *
@@ -1799,9 +1823,11 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       + 'being re-opened by hand: the brand only guarantees the forgery costs a cast, and this '
       + 'is what counts the casts',
     ).toEqual(['src/membership.ts']);
-    // Two: `parsedFromPayload` and `dereferencedFrom`, one per brand. A third inside the same
-    // file is still a new way to make the claim, and still has to be looked at.
-    expect(found.get('src/membership.ts'), 'membership.ts grew a third minting site').toBe(2);
+    // Four: `parsedFromPayload` and `dereferencedFrom`, one per brand, plus one per role-profile
+    // PATH — `transportOnlyProfile` and `signedRecordProfile`, which are two rather than one
+    // because `authority` must not be a parameter. A fifth inside the same file is still a new
+    // way to make one of these claims, and still has to be looked at.
+    expect(found.get('src/membership.ts'), 'membership.ts grew a fifth minting site').toBe(4);
 
     // ★ AND THE CONTROLS THIS FILE'S OWN DISCIPLINE DEMANDS: a scan that can never fire passes
     // the assertion above the moment the path, the listing or the walker breaks — the
@@ -1812,6 +1838,9 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     expect(mintsIn('const a = x as unknown as EvidenceProvenanceValue;', 'p.ts')).toBe(1);
     expect(mintsIn('const a = x as FieldProvenance;\nconst b = y satisfies EvidenceProvenance;', 'p.ts')).toBe(2);
     expect(mintsIn('// a comment saying `as EvidenceProvenance` still converts\nconst s = "as FieldProvenance";', 'p.ts')).toBe(0);
+    // The third brand under its aliased name, so a walker that stopped seeing it — and would
+    // therefore report `src/membership.ts → 2` and pass the count above only by luck — fails here.
+    expect(mintsIn('const a = x as unknown as RoleProfileDocumentValue;', 'p.ts')).toBe(1);
   });
 
   it('★ a refused evidence provenance does not erase a revocation or a withdrawal', () => {
@@ -2187,8 +2216,10 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
     })).toMatch(/which is neither 'signed-record' nor 'transport-only'/);
     // ★ ASKED AND GOT NOTHING IS A REFUSAL, and it is asserted HERE rather than only inside the
     // 76,800-case enumeration because a mutation sweep found it: returning null from this branch
-    // survived every fast case in the file. It is also not hypothetical — the deployed profile
-    // IRI answers 404, so this is the branch a fold against the real artifact lands on today.
+    // survived every fast case in the file. ★ It is NOT the deployed artifact's branch any more —
+    // `<…/wsp-roles-default>` answered 404 when this line was written and answers 200 now, and the
+    // sentence outlived the repair by a round. What still lands here is a host that is down, a
+    // page advertising no Turtle, and a body that does not parse.
     expect(refuseRoleTableAuthority({
       evidence: { kind: 'unreadable', why: `<${P}> answered 404` },
       profile: { profile: P, roles: declaredRoles },
@@ -2251,6 +2282,84 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
       profile: { profile: P, roles: declaredRoles },
       requireContentBinding: true,
     })).toMatch(/came back 'declared'/);
+    // ★★ AND ON THE TRANSPORT-ONLY PATH THAT SAME FLAG IS INERT — THE CEILING AS A MEASUREMENT
+    // RATHER THAN AS PROSE. `foldRoster` threads `requireContentBinding` into this guard, and the
+    // guard reads it only inside `if (authority === 'signed-record')`, so the strictest policy
+    // this module offers holds the DEPLOYED profile to a TLS fetch and nothing more. That is a
+    // DECISION — a rule demanding a signed table would refuse the only table in existence, which
+    // is the `exact-url` mistake under another name — and until this line the decision lived only
+    // in a README row. Pinned so that making the flag bite on transport-only is a failing test
+    // rather than a tightening somebody thought was free. The assertion directly above is its
+    // control: same flag, same value, and a refusal, so this cannot pass because the guard is
+    // broken.
+    expect(refuseRoleTableAuthority({
+      evidence: { kind: 'declared', document: roleDocument({ authority: 'transport-only' }) },
+      profile: { profile: P, roles: declaredRoles },
+      requireContentBinding: true,
+    })).toBeNull();
+  });
+
+  it('★★ AXIS J\'s RESIDUE: the invented table is now UNWRITABLE, and the compiler is the assertion', () => {
+    // Measured before this brand, at the strictest rung the policy has and with gap 10's guard
+    // installed and passing: a document naming a URL nobody fetched, `dereferenced` set to the
+    // caller's own profile IRI and `roles` set to the caller's own invented table, reported
+    // `roleTableBinding: 'bound'` and gave an `#Observer` grant and revoke. Every comparison in
+    // `refuseRoleTableAuthority` was satisfied because one author wrote both sides of each.
+    //
+    // ★ SO THE ASSERTIONS THAT MATTER HERE ARE THE `@ts-expect-error` DIRECTIVES, AND THEY ARE
+    // CHECKED BY `tools/typecheck-gate.mjs`, NOT BY VITEST — read AXIS I's residue test for the
+    // mechanism; every word of it applies. Reproduce by deleting
+    // `ObtainedByDereferencingTheProfile &` from `roster.ts` and running
+    // `node tools/typecheck-gate.mjs`: these directives go unused, tsc reports TS2578 against
+    // this file, this file is not on the gate's LEGACY list, and the gate fails.
+    const invented: readonly RoleDefinition[] = [
+      { role: `${P}#Observer`, permits: [CAPS.read, CAPS.grant, CAPS.revoke] },
+    ];
+
+    // ── 1. THE FORGERY, IN THE FIELD THE FOLD ACTUALLY READS ──────────────────
+    const placed: RoleTableEvidence = {
+      kind: 'declared',
+      // @ts-expect-error RoleProfileDocument is branded: only the readers in membership.ts mint one.
+      document: {
+        head: 'https://nobody.test/never-fetched.ttl', dereferenced: P,
+        roles: invented, authority: 'transport-only',
+      },
+    };
+
+    // ── 2. THE MUTANT A `unique symbol` BRAND WOULD HAVE LET THROUGH ──────────
+    // The honest document with its table swapped — the whole forgery, one keystroke longer, and
+    // available to anyone who had honestly dereferenced any profile at all. A private class
+    // member does not survive a spread, because the result is an object literal.
+    // @ts-expect-error a spread of a minted document is an object literal, and loses the brand.
+    const swapped: RoleProfileDocument = { ...roleDocument(), roles: invented };
+
+    // ── 3. THE CONTROL, AND IT IS NOT OPTIONAL ────────────────────────────────
+    // A brand that admits NOTHING satisfies both directives above and refuses the producer too.
+    // These two lines carry no directive, so they must compile.
+    const minted: RoleProfileDocument = roleDocument();
+    const fits: RoleTableEvidence = { kind: 'declared', document: minted };
+
+    // ── 4. AND THE RUNTIME IS EXACTLY AS BLIND AS IT WAS ──────────────────────
+    // ★ THIS `toBeNull()` IS THE POINT OF THE TEST. Case 1 is the forgery and the runtime gate
+    // ADMITS it: a caller writing both the document and the table writes them in agreement.
+    // Nothing that cannot fetch was ever going to catch this, which is why the closure had to be
+    // at the type. Asserted rather than argued, so a round that "hardens"
+    // `refuseRoleTableAuthority` and drops the brand is told immediately what it gave up.
+    expect(
+      refuseRoleTableAuthority({ evidence: placed, profile: { profile: P, roles: invented } }),
+      'the runtime gate started catching the hand-written document — if that is real, say how; '
+      + 'if it is not, the brand is still the only thing standing between a caller and gap 10',
+    ).toBeNull();
+
+    // ★ AND THE BRAND IS NOT LOAD-BEARING AT RUNTIME. A minted document carries its four fields
+    // and nothing else — no marker, no symbol, nothing serialisation would drop — so a future
+    // `if (isBranded(doc))` would be testing a property that does not exist.
+    expect(Object.keys(minted).sort()).toEqual(['authority', 'dereferenced', 'head', 'roles']);
+    expect(Object.getOwnPropertySymbols(minted)).toHaveLength(0);
+    // Bound so the linter sees them used, and checked so they are not merely bound: the forged
+    // values really do carry the invented table, which is what makes cases 1 and 2 forgeries.
+    expect(swapped.roles).toEqual(invented);
+    expect(fits.kind === 'declared' && fits.document.roles).toEqual(declaredRoles);
   });
 
   it('★ a disagreeing role table refuses to CONFER and erases neither a revocation nor a withdrawal', () => {
@@ -2627,6 +2736,171 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
   //
   // Cast through `unknown` deliberately: writing these shapes is the whole point, and the
   // cast is the test saying out loud that the type forbids what the wire permits.
+  // ── ★★ `null` IS THE JSON SPELLING OF ABSENT, AND EVERY GUARD TESTED `=== undefined` ──────
+  //
+  // The wire path above is not hypothetical and the shapes below were MEASURED before the fix:
+  // thirteen of them threw a `TypeError` out of the authorization path instead of refusing —
+  // no roster, no `unattested` entry naming the fault, no diagnosis. JSON has no `undefined`,
+  // so serde `Option::None`, a Go nil pointer, Python `None` and Jackson all write an absent
+  // optional as `null`; `null === undefined` is false, so every strict guard fell straight
+  // through to the property read on the next line. `roster.ts` had already fixed this exact
+  // class once for the JavaScript spelling and left the JSON one open, in the guards whose own
+  // comments say they exist because the value "arrives as JSON through can.ts".
+  //
+  // ★ EVERY FIXTURE IS BUILT WITH `JSON.parse`, NOT WITH A TS LITERAL, so the test states out
+  // loud that the shape comes off the wire and cannot be quietly turned into an `undefined`
+  // that the old guard would have caught anyway.
+  describe('★★ a wire `null` refuses, where it used to throw out of the fold', () => {
+    const wire = <T,>(json: string): T => JSON.parse(json) as T;
+    const nullArgs = {
+      workspace: WS, profile: PROFILE, scopes,
+      grants: [{
+        head: 'https://conv.test/g1', workspace: WS, grantedTo: alice, role: `${P}#Contributor`,
+        attestation: contentBound(CONV_KEY),
+      }],
+      acceptances: [{
+        head: 'https://alice.test/a1', workspace: WS, member: alice,
+        accepts: 'https://conv.test/g1', stream: 'https://alice.test/s',
+        attestation: contentBound(ALICE_KEY),
+      }],
+    };
+    const signerOf = signerIndexFromRegistry(registry(false));
+    const nullDoc = wire<RoleTableEvidence>('{"kind":"declared","document":null}');
+
+    it('refuseAttestation and refuseFieldBinding refuse a null rather than reading through it', () => {
+      expect(refuseAttestation(wire<Attestation>('null'), CONV, signerOf))
+        .toMatch(/carries no attestation at all/);
+      expect(refuseFieldBinding(wire<FieldProvenance>('null'), 'https://conv.test/g1', true))
+        .toMatch(/typed by whoever called this fold/);
+    });
+
+    it('the three evidence refusals refuse both a null evidence and a null record', () => {
+      const base = { workspace: WS, convener: CONV, profile: P };
+      expect(refuseConvenerAuthority({ ...base, evidence: wire<ConvenerEvidence>('null') }))
+        .toMatch(/passed no workspace evidence at all/);
+      expect(refuseConvenerAuthority({
+        ...base, evidence: wire<ConvenerEvidence>('{"kind":"declared","record":null}'),
+      })).toMatch(/carries no record/);
+      expect(refuseRoleProfileAuthority({ ...base, evidence: wire<ConvenerEvidence>('null') }))
+        .toMatch(/passed no workspace evidence at all/);
+      expect(refuseRoleProfileAuthority({
+        ...base, evidence: wire<ConvenerEvidence>('{"kind":"declared","record":null}'),
+      })).toMatch(/carries no record/);
+    });
+
+    it('★ a null PROVENANCE lands on the same gap-9 refusal an absent key lands on', () => {
+      // The item's own function, and the point of the whole class: the brand is compile-time
+      // and `JSON.parse` returns `any`, so this string comparison IS the second line — and it
+      // was the one shape that threw rather than refusing.
+      expect(refuseEvidenceProvenance({
+        evidence: wire<ConvenerEvidence>(JSON.stringify({
+          kind: 'declared',
+          record: {
+            head: 'https://conv.test/ws.ttl', workspace: WS, convener: CONV, roleProfile: P,
+          },
+          provenance: null,
+        })),
+        workspace: WS,
+        requireEvidenceProvenance: true,
+      })).toMatch(/carries no statement of where it came from|was not obtained by dereferencing/);
+      expect(refuseEvidenceProvenance({
+        evidence: wire<ConvenerEvidence>('null'), workspace: WS, requireEvidenceProvenance: true,
+      })).toMatch(/passed no `workspaceEvidence` at all/);
+    });
+
+    it('refuseRoleTableAuthority refuses a null evidence, a null document and a null attestation', () => {
+      const profile = { profile: P, roles: declaredRoles };
+      expect(refuseRoleTableAuthority({ evidence: wire<RoleTableEvidence>('null'), profile }))
+        .toMatch(/passed no role table evidence at all/);
+      expect(refuseRoleTableAuthority({ evidence: nullDoc, profile }))
+        .toMatch(/carries no document/);
+      expect(refuseRoleTableAuthority({
+        evidence: wire<RoleTableEvidence>(JSON.stringify({
+          kind: 'declared',
+          document: {
+            head: ROLE_DOC, dereferenced: P, roles: declaredRoles,
+            authority: 'signed-record', attestation: null,
+          },
+        })),
+        profile,
+      })).toMatch(/carries no attestation at all/);
+    });
+
+    it('★ THE ADMIT CONTROL: a transport-only document is not ACCUSED for a null attestation', () => {
+      // The one site that failed the other way. `doc.attestation !== undefined` is TRUE for
+      // `null`, so an honest document whose absent attestation arrived as `null` was refused
+      // with "the document contradicts itself about where it came from" — a refusal naming the
+      // wrong fault, which this module treats as its own class of defect. Without this case the
+      // five above are all satisfied by a guard that refuses everything.
+      expect(refuseRoleTableAuthority({
+        evidence: wire<RoleTableEvidence>(JSON.stringify({
+          kind: 'declared',
+          document: {
+            head: ROLE_DOC, dereferenced: P, roles: declaredRoles,
+            authority: 'transport-only', attestation: null,
+          },
+        })),
+        profile: { profile: P, roles: declaredRoles },
+      })).toBeNull();
+    });
+
+    it('★ foldRoster does not throw for a null attestation on a GRANT row, and says why', () => {
+      const args = {
+        ...nullArgs,
+        grants: [{ ...nullArgs.grants[0]!, attestation: wire<Attestation>('null') }],
+        attestation: { convener: CONV, signerOf },
+      };
+      expect(() => foldRoster(args)).not.toThrow();
+      const r = foldRoster(args);
+      expect(r.members).toHaveLength(0);
+      expect(r.unattested.map(u => u.because).join(' ')).toMatch(/carries no attestation at all/);
+    });
+
+    it('★ a null workspaceEvidence reads as UNCHECKED, exactly as an absent one does', () => {
+      const withNull = foldRoster({
+        ...nullArgs,
+        attestation: {
+          convener: CONV, signerOf,
+          workspaceEvidence: wire<ConvenerEvidence>('null'),
+        },
+      });
+      const withAbsent = foldRoster({ ...nullArgs, attestation: { convener: CONV, signerOf } });
+      expect(withNull.convenerBinding).toBe('unchecked');
+      expect(withNull.convenerBinding).toBe(withAbsent.convenerBinding);
+      expect(withNull.roleProfileBinding).toBe(withAbsent.roleProfileBinding);
+    });
+
+    it('★ a null role-table DOCUMENT reads as refused, not as a crash — the grade line too', () => {
+      // `roleTableGrade` is computed unconditionally, so this shape reached
+      // `roleTableEvidence.document.authority` and threw even after the refusal was fixed.
+      // That is why the guard on the document and the guard in the grade are one change.
+      const r = foldRoster({
+        ...nullArgs, attestation: { convener: CONV, signerOf, roleTableEvidence: nullDoc },
+      });
+      expect(r.roleTableBinding).toBe('refused');
+    });
+
+    it('★ NON-VACUITY: honest evidence round-tripped through JSON still BINDS and still admits', () => {
+      // Without this every case above is satisfied by a fold that refuses everything — the
+      // "a gate that refuses everything passes every subset check on an empty set" failure
+      // this file exists to catch, in its wire-shaped form.
+      const honest = JSON.parse(JSON.stringify(conveneEvidence.agrees)) as ConvenerEvidence;
+      const r = foldRoster({
+        ...nullArgs, attestation: { convener: CONV, signerOf, workspaceEvidence: honest },
+      });
+      expect(r.convenerBinding).toBe('bound');
+      expect(r.members).toHaveLength(1);
+      // ★ AND SPECIFICALLY ON THE PROVENANCE PATH, which the fold above does not reach because
+      // it sets no `requireEvidenceProvenance`. Without this line an over-refusing
+      // `refuseEvidenceProvenance` — the mutant form of "closed the null hole by refusing
+      // everything" — leaves this whole describe green.
+      const sourcedHonest = JSON.parse(JSON.stringify(sourcedEvidence('honest'))) as ConvenerEvidence;
+      expect(refuseEvidenceProvenance({
+        evidence: sourcedHonest, workspace: WS, requireEvidenceProvenance: true,
+      })).toBeNull();
+    });
+  });
+
   describe('★ evidence in a shape the union forbids', () => {
     const evidenceArgs = {
       workspace: WS, profile: PROFILE, scopes,
@@ -3363,5 +3637,156 @@ describe('isUnder — containment, not just origin', () => {
 
   it('an unparseable URL is under nothing — refusing is the safe direction', () => {
     expect(isUnder('not a url', 'https://css.test/u-alice/')).toBe(false);
+  });
+});
+
+/**
+ * ★ THE AXIS COUNT IS DERIVED DATA RESTATED AS PROSE IN FOUR PLACES, AND FOUR ROUNDS PROVED
+ * PROSE DOES NOT GET MAINTAINED. The roster at the top of this file grew A-G to A-J in three
+ * rounds; each round had to touch the roster to make the enumeration run and did not have to
+ * touch the sentence above it, so that sentence said "Six ... plus one" for three rounds. The
+ * README's copy went eight -> nine in one round and was stale again the day AXIS J landed,
+ * which updated one of its two sites — leaving one Markdown file saying nine at line 135 and
+ * ten at line 1262. Nothing failed, because nothing read either sentence.
+ *
+ * This reads them. The ROSTER is the source of truth, because it is the list the enumeration
+ * is written from; the prose counts are read off disk and compared with it. The check lives
+ * here rather than in a docs linter because the number is a claim about THIS file's lattice.
+ */
+describe('★ the README claims are not read by anything, so one of them was false for ten commits', () => {
+  // ★ WHAT WAS BELIEVED AND WHAT WAS TRUE. The README's "deliberately not claimed" list said
+  // cross-ORGANISATION was unexercised. It was written at 18:51 (#241); docs/orgb/ and
+  // tools/verify-cross-org-live.ts landed at 21:52 the SAME EVENING (#246) and ran 15/15 live
+  // (#250). Ten commits then edited this README without touching the sentence — because no
+  // test in this repo had ever opened it. This is the stale-count failure the README itself
+  // dissects, applied to a claim instead of to a number, and the fix is the same one: make the
+  // sentence stop matching when the tree changes underneath it.
+  const app = (): string => fileURLToPath(new URL('../applications/shared-workspace/', import.meta.url));
+  const repo = (): string => fileURLToPath(new URL('../', import.meta.url));
+
+  it('★ names every live verifier that exists on disk', () => {
+    // The general rule, and the one #246 would have failed. The three list-shaped places that
+    // went stale together (file table, run block, non-claims bullet) all went stale because a
+    // hand-kept list did not notice a fourth file appearing beside three it already knew.
+    const readme = readFileSync(join(app(), 'README.md'), 'utf8');
+    const tools = readdirSync(join(app(), 'tools')).filter(f => f.endsWith('.ts'));
+    // Non-vacuity BEFORE the loop: a broken listing makes the loop assert nothing and the test
+    // pass louder than ever — the MIN_FILES failure tools/lint-gate.mjs exists for, in
+    // miniature, and the exact trap the mint-site scan above documents.
+    expect(tools.length, 'the tools listing broke: this scan would pass over an empty set').toBeGreaterThanOrEqual(4);
+    expect(readme.length, 'the README read broke: an empty string contains nothing and refutes nothing').toBeGreaterThan(100_000);
+    for (const t of tools) {
+      expect(
+        readme,
+        `applications/shared-workspace/tools/${t} ships but the README never names it. That is how `
+        + 'the cross-org verifier stayed invisible to this document for ten commits',
+      ).toContain(`tools/${t}`);
+    }
+  });
+
+  it('★ does not deny the thing docs/orgb/ demonstrates', () => {
+    const readme = readFileSync(join(app(), 'README.md'), 'utf8');
+    // The fixture IS the fact being asserted about. If it is deleted this test must FAIL, not
+    // fall silent: a gate that goes quiet when its subject disappears is not a gate.
+    const orgb = readdirSync(join(repo(), 'docs', 'orgb', 'context-graphs'));
+    expect(orgb, 'docs/orgb/ is gone — restore it, or retire this gate deliberately').toContain('e1.ttl');
+    // ★ A MATCH ON THE TEXT, WHICH CANNOT TELL A QUOTATION FROM A CLAIM — and the first draft
+    // of the fix hit exactly that: the replacement bullet quoted the sentence it was retiring
+    // and the gate fired on its own correction. The README therefore paraphrases rather than
+    // restating it, and says so where it does. Loosening this regex to allow a quotation is
+    // how it stops catching the re-introduction it exists for.
+    const STALE = /which nothing\s+here has exercised/;
+    expect(
+      readme.match(STALE),
+      'the README denies that cross-organisation has been exercised while docs/orgb/ and '
+      + 'tools/verify-cross-org-live.ts sit in the tree and #250 records a 15/15 live run. '
+      + 'If this is a QUOTATION of the retired sentence rather than a claim, paraphrase it: '
+      + 'this check reads text and cannot tell the two apart',
+    ).toBeNull();
+    expect(readme, 'the README never points at the foreign pod it was tested against').toContain('docs/orgb');
+    // ★ AND THE CONTROL THE MATCHER NEEDS. A regex that matches nothing would satisfy the
+    // toBeNull above forever, including after someone re-introduced the exact sentence. So
+    // assert it still fires on the text it was written to catch, line break and all.
+    expect('second relay and a second identity provider, which nothing\n  here has exercised.').toMatch(STALE);
+  });
+});
+
+describe('★ the axis roster is the count, and every prose restatement is checked against it', () => {
+  /** Only spellings these two documents use. An unknown word must FAIL, never pass silently. */
+  const WORDS: Record<string, number | undefined> = {
+    six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  };
+
+  /**
+   * The header comment ONLY. The body below it contains these very regexes as source text, so
+   * a whole-file scan would match its own patterns — the failure the mint-site scan above hit
+   * when `as EvidenceProvenance` in a doc comment was reported as a minting site.
+   */
+  const header = (): string => {
+    const src = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    const end = src.indexOf("describe('★★ MONOTONICITY");
+    expect(end, 'the header no longer ends at the MONOTONICITY describe, so this check is '
+      + 'reading the wrong span and cannot be trusted in either direction').toBeGreaterThan(0);
+    return src.slice(0, end);
+  };
+  const roster = (): string[] => [...header().matchAll(/^ \* {3}([A-Z]) {2}\S/gm)].map(m => m[1]!);
+  const numberOf = (word: string, where: string): number | undefined => {
+    const n = WORDS[word.toLowerCase()];
+    expect(n, `${where} states the count as "${word}", which is not a number word this check `
+      + 'knows. Add it to WORDS — do not loosen the match, which is how a check stops checking')
+      .toBeDefined();
+    return n;
+  };
+
+  it('the roster is a contiguous run from A — a scan that matched nothing cannot pass', () => {
+    const letters = roster();
+    // The control this file demands of its other scans: with a broken regex `letters` is []
+    // and every count below is compared against zero, which agrees with nothing and passes.
+    expect(letters.length, 'the axis roster scan matched no rows: the roster format changed '
+      + 'and this check silently stopped checking anything').toBeGreaterThan(1);
+    expect(letters, 'the axis roster is not a contiguous run from A — a row was deleted, '
+      + 'duplicated, or lettered out of order').toEqual(
+      letters.map((_, i) => String.fromCharCode('A'.charCodeAt(0) + i)),
+    );
+  });
+
+  it("this file's own header states the roster's total and its ordering count", () => {
+    const h = header();
+    const letters = roster();
+    const total = /\b([A-Z]+) AXES below\b/.exec(h);
+    const ordering = /\b([A-Z]+) with an unambiguous weaker side\b/.exec(h);
+    const invariant = /plus AXIS ([A-Z]), which asserts an INVARIANCE/.exec(h);
+    expect(total, 'the header no longer states a TOTAL axis count').not.toBeNull();
+    expect(ordering, 'the header no longer states an ORDERING axis count').not.toBeNull();
+    expect(invariant, 'the header no longer names the invariance axis').not.toBeNull();
+    expect(numberOf(total![1]!, 'the header'), `the header says ${total![1]} axes and the roster `
+      + `below it has ${letters.length} rows (A-${letters[letters.length - 1]})`)
+      .toBe(letters.length);
+    expect(letters, `the header names AXIS ${invariant![1]} as the invariance and no such row `
+      + 'exists').toContain(invariant![1]);
+    // Exactly one row is the invariance and the rest are orderings, stated as arithmetic over
+    // the roster — so adding an ordering axis moves BOTH numbers, which is what went wrong.
+    expect(numberOf(ordering![1]!, 'the header'), `the header says ${ordering![1]} ordering axes; `
+      + `the roster has ${letters.length} rows, one of which (${invariant![1]}) is the invariance`)
+      .toBe(letters.length - 1);
+  });
+
+  it('the README states the same total at EVERY site that states one', () => {
+    const letters = roster();
+    const readme = readFileSync(
+      fileURLToPath(new URL('../applications/shared-workspace/README.md', import.meta.url)),
+      'utf8',
+    );
+    const sites = [...readme.matchAll(/across \*{0,2}([A-Za-z]+)\*{0,2} axes/g)];
+    // EVERY site, not the first: the round that added AXIS J updated one of these two, and a
+    // check that stopped at the first match would have passed on exactly that commit.
+    expect(sites.length, 'no sentence in the README states an axis count any more — either the '
+      + 'wording changed or this is reading the wrong file').toBeGreaterThan(1);
+    for (const site of sites) {
+      const line = readme.slice(0, site.index).split('\n').length;
+      expect(numberOf(site[1]!, `README:${line}`), `README:${line} says "${site[0]}" and the `
+        + `roster in this file has ${letters.length} rows (A-${letters[letters.length - 1]})`)
+        .toBe(letters.length);
+    }
   });
 });

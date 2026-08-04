@@ -84,6 +84,7 @@ import {
 import type {
   IRI,
   ManifestEntry,
+  PrivacyAccountant,
 } from '@interego/core';
 import { verifyMessage } from 'ethers';
 import { ristretto255 } from '@noble/curves/ed25519.js';
@@ -689,7 +690,7 @@ export function buildAttestedHomomorphicDistribution(args: {
   contributions: readonly BucketedCommittedContribution[];
   epsilon: number;
   includeAuditFields?: boolean;
-  epsilonBudget?: EpsilonBudget;
+  epsilonBudget?: PrivacyAccountant;
   queryDescription?: string;
 }): AttestedHomomorphicDistributionResult {
   if (args.contributions.length === 0) {
@@ -909,9 +910,21 @@ export function buildAttestedHomomorphicSum(args: {
    * bundle — the consume() call throws if the cumulative ε would
    * exceed the declared cap. Mutates the tracker; auditors replay
    * the tracker's log to verify total leakage stayed under cap.
+   *
+   * ★ TYPED TO THE INTERFACE, NOT TO `EpsilonBudget`. This slot named the concrete class,
+   * and `EpsilonBudget` declares a `private _spent` — which makes its class type NOMINAL,
+   * so no other accountant, however identical in behaviour, is assignable to it. That is
+   * exactly why `AdvancedCompositionAccountant` and `RenyiAccountant` shipped with 16
+   * passing contract tests and could not be handed to a single aggregate primitive
+   * (TS2739: missing `cohortIri`, `remaining`, `toJSON` — none of which this function
+   * reads). Only `.consume(...)` is ever called here, so the interface is the honest type,
+   * and `EpsilonBudget` satisfies it, so every existing caller keeps compiling unchanged.
+   *
+   * `signBudgetAuditLog` deliberately keeps the narrow `EpsilonBudget`: it calls
+   * `toJSON()`, which `PrivacyAccountant` does not promise. Do not widen that one to match.
    */
-  epsilonBudget?: EpsilonBudget;
-  /** Optional description recorded in the EpsilonBudget log entry. */
+  epsilonBudget?: PrivacyAccountant;
+  /** Optional description recorded in the accountant's log entry. */
   queryDescription?: string;
   /**
    * v4-partial: threshold reveal. When supplied, the trueBlinding is
@@ -2598,7 +2611,7 @@ export function buildAttestedHomomorphicSumV5(args: {
   contributions: readonly DistributedContribution[];
   epsilon: number;
   includeAuditFields?: boolean;
-  epsilonBudget?: EpsilonBudget;
+  epsilonBudget?: PrivacyAccountant;
   queryDescription?: string;
   /** Required: the committee size n + threshold t the contributors used. */
   threshold: { n: number; t: number };
@@ -3044,7 +3057,7 @@ export function buildAttestedHomomorphicSumV6(args: {
   revealedTrueSum: bigint;
   epsilon: number;
   includeAuditFields?: boolean;
-  epsilonBudget?: EpsilonBudget;
+  epsilonBudget?: PrivacyAccountant;
   queryDescription?: string;
   threshold: { n: number; t: number };
 }): AttestedHomomorphicSumV6Result {

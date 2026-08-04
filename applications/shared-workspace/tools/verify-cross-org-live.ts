@@ -28,22 +28,36 @@
  *   IEP_BEARER=<token> npx tsx applications/shared-workspace/tools/verify-cross-org-live.ts
  */
 
-import { readStream, verifyChain, appendEntry, type StreamDeps } from '../src/stream.js';
+import { readStream, verifyChain, appendEntry, verifierStreamIri, type StreamDeps } from '../src/stream.js';
 import { composeWorkspace, describeCoverage, isUnder, type ComposableMember } from '../src/compose.js';
 
 const RELAY = process.env.IEP_RELAY ?? 'https://relay.interego.xwisee.com';
 const BEARER = process.env.IEP_BEARER;
 if (!BEARER) { console.error('IEP_BEARER is required.'); process.exit(2); }
 
-const RUN = process.argv[2] ?? String(Date.now());
+// ★ STABLE, AND `Date.now()` WAS THE BUG. See `verifierStreamIri`, which now refuses a clock
+// outright. Nine runs of this tool with a clock here left nine abandoned single-entry chains at
+// nine permanent IRIs under org B's fixed workspace, and never once extended one — while the two
+// comments in §2 claimed the chain grew across runs and that this was the stronger check.
+// Pass an argument only to start a NEW chain deliberately, and record why on the line below.
+//   v2 — the first epoch written by `appendEntry`. The UNSUFFIXED IRI is the four-head chain the
+//        raw-publish era forked; §2b reads it as a fixture rather than pretending it is gone.
+const STREAM_EPOCH = process.argv[2] ?? 'v2';
 const ORG_B = 'https://markjspivey-xwisee.github.io/interego/orgb/';
 const WS = 'https://markjspivey-xwisee.github.io/interego/orgb/workspace';
 const CAROL_STREAM = `${WS}/stream/carol`;
 const CAROL = 'https://markjspivey-xwisee.github.io/interego/orgb/carol#me';
 
-let pass = 0, fail = 0;
+let pass = 0, fail = 0, skipped = 0;
 const ok = (c: boolean, n: string, d = '') => {
   if (c) { pass++; console.log(`  ok   ${n}`); } else { fail++; console.log(`  FAIL ${n}${d ? `\n         ${d}` : ''}`); }
+};
+// ★ NOT `ok(true, ...)`. A check that could not run is not a check that passed. §2b's fixture is
+// the one thing in this file a pod wipe can legitimately remove (scripts/ops/wipe-pods.sh), and
+// a green summary that silently absorbed its disappearance would be the exact class of false
+// assurance readStream refuses when it will not report an unreachable pod as an idle one.
+const notExercised = (n: string, why: string) => {
+  skipped++; console.log(`  SKIP ${n}\n         ${why}`);
 };
 
 let id = 700;
@@ -99,15 +113,23 @@ async function main(): Promise<void> {
   console.log('\n2. one workspace, two organisations');
   const status = await call('get_pod_status', {});
   const ourPod = String(status.pod ?? status.podUrl ?? '');
-  // ★ A FRESH STREAM PER RUN, and the reason is worth recording. An earlier version of this
-  // tool raw-published an UNLINKED entry to a fixed stream IRI, so each re-run added another
-  // head. By the fourth run that stream had four heads, `appendEntry` correctly refused to
-  // build on a chain that does not verify, and the composed view correctly withheld our
-  // whole side — the tool reported a regression that was entirely its own.
-  //
-  // The poisoned stream is still on the pod, because nothing here deletes anything. That is
-  // the custody property working, and it is why a run id is the fix rather than a cleanup.
-  const ourStream = `${WS}/stream/${String(status.userId ?? 'us')}-${RUN}`;
+  // ★ ONE STREAM ACROSS RUNS, and the run id it replaces is worth recording. An earlier version
+  // raw-published an UNLINKED entry to a fixed stream IRI, so each re-run added another head; by
+  // the fourth run the chain had four heads and would never verify again. The fix for THAT was to
+  // stop raw-publishing — `appendEntry` below cannot fork a chain, because it refuses to build on
+  // one that does not verify and gates the write on `if_match`. The run id added alongside it was
+  // not part of the fix and quietly undid the check: a clocked IRI is empty on every run, so the
+  // append always took the empty path and the catch-up it exists to exercise never ran once.
+  const us = String(status.userId ?? 'us');
+  const ourStream = verifierStreamIri(WS, us, STREAM_EPOCH);
+  // ★ THE ASSERTION THE PREVIOUS FIX DID NOT HAVE, and its absence is why nine green runs
+  // checked nothing: a clocked IRI and a stable one are indistinguishable to every other check
+  // in this file, because a chain of length one verifies trivially. Derived twice from the same
+  // inputs, a stable IRI is equal to itself.
+  ok(
+    ourStream === verifierStreamIri(WS, us, STREAM_EPOCH),
+    `the stream IRI is stable across runs, not minted from a clock (${ourStream})`,
+  );
   // ★ APPEND, do not raw-publish. The first version of this tool published an unlinked
   // entry under a fixed stream IRI, so every RE-RUN added another head: the chain stopped
   // verifying on the second run and the composed view withheld our whole side. The tool
@@ -126,6 +148,46 @@ async function main(): Promise<void> {
     'our own member appends to our own pod, chained onto its verified head',
     JSON.stringify(appended).slice(0, 200),
   );
+
+  // ── 2b. the forked chain is a FIXTURE, not debris ──
+  //
+  // ★ Nothing deletes it and nothing should: the descriptors are immutable and the pod has no
+  // retraction verb, which is the custody property working. What was missing is that nothing
+  // READ it either, so the only genuinely forked chain on the live substrate sat unexamined
+  // while the append path's refusal was tested solely against a four-head array built by hand
+  // in tests/workspace-stream.test.ts. A double cannot produce this state: four signed,
+  // manifest-listed, dereferenceable, mutually unlinked descriptors under one stream IRI are
+  // something the current append path can no longer create. The one that already exists is the
+  // only way to run the refusal against the substrate instead of against a stand-in.
+  console.log('\n2b. the chain the raw-publish era forked, read as a fixture');
+  const forkedIri = `${WS}/stream/${us}`;
+  const forkedRef = { graphIri: forkedIri, workspace: WS, podUrl: ourPod };
+  const forkedRows = await readStream(forkedRef, deps);
+  if (forkedRows.length === 0) {
+    notExercised(
+      'the live refusal was NOT checked against a real forked chain',
+      `<${forkedIri}> holds no entries. Either the pod was wiped or the fixture was removed; `
+      + 'either way the substrate-level refusal below did not run, and this run proves less '
+      + 'than a run that found it. Do not fabricate a replacement by raw-publishing one.',
+    );
+  } else {
+    const forkedReport = verifyChain(forkedRows);
+    ok(forkedRows.length >= 2, `the forked chain is still readable (${forkedRows.length} entries)`);
+    ok(
+      !forkedReport.intact && forkedReport.heads.length > 1,
+      `★ and still reports as forked from the LIVE pod (${forkedReport.heads.length} heads)`,
+    );
+    const refused = await appendEntry(forkedRef, { body: 'this must not land' }, deps);
+    ok(
+      refused.outcome === 'conflict',
+      '★ the append path refuses it against the real substrate, not against a hand-built array',
+      JSON.stringify(refused).slice(0, 200),
+    );
+    ok(
+      (await readStream(forkedRef, deps)).length === forkedRows.length,
+      'and NOTHING landed — the refusal is before the write, not a rollback after it',
+    );
+  }
 
   const members: ComposableMember[] = [
     { principal: String(status.webId), stream: ourStream, podUrl: ourPod },
@@ -163,7 +225,7 @@ async function main(): Promise<void> {
   console.log('     read+compose across organisations: demonstrated.');
   console.log('     write from the foreign organisation: NOT demonstrated (static host, no runtime).');
 
-  console.log(`\n${pass} passed, ${fail} failed`);
+  console.log(`\n${pass} passed, ${fail} failed, ${skipped} not exercised`);
   if (fail > 0) process.exit(1);
 }
 

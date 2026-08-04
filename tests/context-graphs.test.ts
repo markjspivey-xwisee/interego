@@ -497,6 +497,86 @@ describe('JSON-LD Serialization', () => {
     expect(parsed.facets).toHaveLength(2);
   });
 
+  /**
+   * ★ COUNTING FACETS WAS THE BLIND SPOT, AND IT IS THE ONE THIS FILE HAD.
+   *
+   * The test above asserts `toHaveLength(2)` and nothing about content, so it stayed green
+   * while `fromJsonLd` reconstructed three of the nine facet types `serializeFacet` emits
+   * and returned bare `{ type }` shells for the other six. The facet COUNT was always
+   * right. A descriptor published and re-read through `fromJsonLd` silently lost
+   * `temporalRelation`, `languageTag`, `proofMechanism`, `revocationStatus`, and every
+   * field of Provenance / Agent / AccessControl / Federation / Causal / Projection.
+   *
+   * Each assertion below is aimed at a specific way the `carry` helper can be broken, and
+   * every one was measured by making that break:
+   *
+   *   - `languageTag` and `revocationStatus` are serialized under PREFIXED keys
+   *     (`iep:languageTag`, `iep:revocationStatus`). A `carry` that skips prefixed keys —
+   *     `if (k === '@type' || k.includes(':')) continue;`, which looks like reasonable
+   *     namespace hygiene — drops exactly these and nothing else. Without them here, that
+   *     mutant is invisible.
+   *   - There are FOUR `...base` spread sites (Temporal, Semiotic, Trust, default) and a
+   *     mutant deletes ONE. So each site needs a field the branch does not also re-list
+   *     explicitly: `temporalRelation` for Temporal, `languageTag` for Semiotic,
+   *     `proofMechanism` for Trust, and the Provenance fields for `default`. Asserting
+   *     only, say, `modalStatus` would pass with `...base` deleted from Semiotic, because
+   *     that branch names `modalStatus` itself.
+   *   - `wasAttributedTo` also pins the `{ '@id': iri }` unwrap: drop it and the value
+   *     comes back as an object, not the IRI string the model holds.
+   */
+  it('round-trips FACET CONTENT, not just facet count', () => {
+    const desc = ContextDescriptor.create('urn:iep:roundtrip-content' as IRI)
+      .describes('urn:graph:g1' as IRI)
+      .temporal({
+        validFrom: '2026-01-01T00:00:00Z',
+        temporalRelation: 'urn:iep:during' as IRI,
+      })
+      .semiotic({
+        modalStatus: 'Asserted',
+        epistemicConfidence: 0.9,
+        languageTag: 'en-GB',
+      })
+      .trust({
+        trustLevel: 'CryptographicallyVerified',
+        issuer: 'did:ethr:0xabc' as IRI,
+        proofMechanism: 'urn:iep:eip191' as IRI,
+        revocationStatus: 'urn:iep:not-revoked' as IRI,
+      })
+      .provenance({
+        wasAttributedTo: 'did:ethr:0xdef' as IRI,
+        generatedAtTime: '2026-02-02T00:00:00Z',
+      })
+      .build();
+
+    const parsed = fromJsonLd(toJsonLd(desc));
+    const facetOf = (t: string): Record<string, unknown> => {
+      const f = parsed.facets.find(x => x.type === t);
+      // Not a bare non-null assertion: a missing facet must fail HERE, naming which one,
+      // rather than surfacing as `undefined` on a property read three lines down.
+      expect(f, `no ${t} facet survived the round trip`).toBeDefined();
+      return f as unknown as Record<string, unknown>;
+    };
+
+    // Temporal — `...base` is the only thing carrying `temporalRelation`.
+    expect(facetOf('Temporal').temporalRelation).toBe('urn:iep:during');
+    expect(facetOf('Temporal').validFrom).toBe('2026-01-01T00:00:00Z');
+
+    // Semiotic — `iep:languageTag`: prefixed key AND base-only. Kills both mutants.
+    expect(facetOf('Semiotic').languageTag).toBe('en-GB');
+    expect(facetOf('Semiotic').modalStatus).toBe('Asserted');
+
+    // Trust — `proofMechanism` is base-only; `iep:revocationStatus` is base-only AND
+    // prefixed. `trustLevel` is re-listed by the branch, so it is the control that shows
+    // the branch itself still runs.
+    expect(facetOf('Trust').proofMechanism).toBe('urn:iep:eip191');
+    expect(facetOf('Trust').revocationStatus).toBe('urn:iep:not-revoked');
+    expect(facetOf('Trust').trustLevel).toBe('CryptographicallyVerified');
+
+    // Provenance — the `default` branch. Before `carry` this came back as `{ type }`.
+    expect(facetOf('Provenance').generatedAtTime).toBe('2026-02-02T00:00:00Z');
+    expect(facetOf('Provenance').wasAttributedTo).toBe('did:ethr:0xdef');
+  });
+
   it('serializes to string', () => {
     const desc = makeSimpleDescriptor('urn:iep:str', 'urn:graph:g1');
     const str = toJsonLdString(desc);

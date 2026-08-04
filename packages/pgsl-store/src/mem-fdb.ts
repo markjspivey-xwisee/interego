@@ -14,6 +14,7 @@
  */
 
 import type { FdbLike, FdbTxn, Key, KeyValue, Value } from './fdb-like.js';
+import { sameBytes } from './fdb-like.js';
 
 function toHex(k: Key): string {
   let s = '';
@@ -56,15 +57,26 @@ export class InMemoryFdb implements FdbLike {
         return out;
       };
 
+      // One read path, used by BOTH `get` and `compareAndSet`, so a CAS joins the read
+      // set exactly like a plain read does. A CAS that skipped `readVersions` would be a
+      // CAS that never conflicts — it would report success on precisely the interleave it
+      // exists to refuse, and the in-memory suite would go on looking green.
+      const readThrough = (key: Key): Value | undefined => {
+        const h = toHex(key);
+        if (writes.has(h)) {
+          const w = writes.get(h)!;
+          return w === null ? undefined : w;
+        }
+        readVersions.set(h, this.versions.get(h) ?? 0);
+        return this.data.get(h);
+      };
+
       const txn: FdbTxn = {
-        get: async (key) => {
-          const h = toHex(key);
-          if (writes.has(h)) {
-            const w = writes.get(h)!;
-            return w === null ? undefined : w;
-          }
-          readVersions.set(h, this.versions.get(h) ?? 0);
-          return this.data.get(h);
+        get: async (key) => readThrough(key),
+        compareAndSet: async (key, expected, value) => {
+          if (!sameBytes(readThrough(key), expected)) return false;
+          writes.set(toHex(key), value);
+          return true;
         },
         set: (key, value) => {
           writes.set(toHex(key), value);

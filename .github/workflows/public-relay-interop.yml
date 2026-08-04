@@ -1,0 +1,72 @@
+name: Public Nostr relay interop
+
+# ★ THE ENV VAR NO WORKFLOW SET.
+#
+# tests/p2p-public-relay.test.ts and applications/agent-collective/tests/
+# tier4-public-relay.test.ts both open with
+#   const describeOrSkip = RELAY_URL ? describe : describe.skip;
+# on RUN_PUBLIC_RELAY, which was set in no workflow and no npm script from the day both
+# files landed. They reported `skipped` on every run of the root suite. They are the only
+# tests asserting that Interego's Schnorr-signed kind-30040 events are accepted by
+# third-party Nostr infrastructure, so that claim had never been checked by anything.
+#
+# Not on `push`: these hit infrastructure we do not own, and a per-commit cadence is both
+# discourteous and self-defeating — public relays cap concurrent connections per source
+# IP, and GitHub runners share egress addresses. Nightly + dispatch is the honest cadence.
+#
+# Relay choice is a repo var so a relay going restricted does not become an unfixable red.
+# The fallback was measured returning ["OK", id, true, ""] and redistributing the event to
+# a second client. relay.damus.io works too; nostr.wine answers 403 at the upgrade and
+# must not be used here.
+#
+# If this proves noisy, point PUBLIC_NOSTR_RELAY at a different relay or drop the
+# pull_request trigger — do NOT add continue-on-error, which would recreate the dead gate
+# one level up.
+
+on:
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'packages/p2p/**'
+      - 'tests/p2p-*.test.ts'
+      - 'applications/agent-collective/tests/tier4-public-relay.test.ts'
+      - '.github/workflows/public-relay-interop.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-relay-interop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  interop:
+    name: Schnorr events accepted + redistributed by a third-party relay
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
+      # Fail loudly if the gate is dead again. `vitest run` exits 0 when every suite
+      # skips, so without this the workflow would go green having proved nothing — the
+      # same failure mode as the tests it is meant to run.
+      - name: Assert the suites actually RAN
+        env:
+          RUN_PUBLIC_RELAY: ${{ vars.PUBLIC_NOSTR_RELAY || 'wss://relay.primal.net' }}
+        run: |
+          set -o pipefail
+          npx vitest run \
+            tests/p2p-public-relay.test.ts \
+            applications/agent-collective/tests/tier4-public-relay.test.ts \
+            2>&1 | tee run.log
+          if grep -q 'skipped' run.log; then
+            echo "::error::A public-relay suite SKIPPED. RUN_PUBLIC_RELAY is not reaching the tests."
+            exit 1
+          fi
+          grep -q '2 passed' run.log || { echo "::error::Expected 2 passing tests."; exit 1; }

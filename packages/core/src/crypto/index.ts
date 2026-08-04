@@ -177,6 +177,18 @@ export {
   AdvancedCompositionAccountant,
   RenyiAccountant,
 } from './dp-accountant.js';
+// ★ THE INTERFACE, NOT JUST THE CLASSES. Only the two classes were exported, so no
+// consumer outside packages/core could NAME the contract they share. That is why
+// `applications/_shared/aggregate-privacy/index.ts` typed its `epsilonBudget?` slot to the
+// concrete `EpsilonBudget` class: there was nothing else to type it to. `EpsilonBudget`
+// declares a `private _spent`, which makes its class type NOMINAL, so both accountants
+// failed TS2739 against all four aggregate primitives — 16 green contract tests for
+// accountants no aggregate call could accept. A shared interface that cannot be imported
+// is not a shared interface.
+export type {
+  PrivacyAccountant,
+  PrivacyConsumption,
+} from './dp-accountant.js';
 
 // Feldman VSS (verifiable secret sharing — Shamir + Pedersen
 // commitments). Used by the aggregate-privacy pattern.

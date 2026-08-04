@@ -174,13 +174,30 @@ payload, never the xAPI activity name.
 
 - **boozer's independent attestation.** boozer to owner-decrypt the four-recipient holon from
   his seat for a third-party check — needs him holding his durable X25519 *private* key.
-- **Agent-side ephemeral keys.** johnny's and boozer's session X25519 private keys are
-  ephemeral; durable cross-session owner-decrypt needs derivation off an agent-specific,
-  agent-controlled stable secret (the signing-primitive root). The maintainer side is closed
-  (durable key on disk); the durable-key recipient *path* is shipped.
-- **Pre-fix cleanup.** johnny's first re-emit (`rec-76593c72-…`) predates the redaction fix and
-  still carries the full narrative in cleartext — to be re-emitted under the new build and
-  voided.
+- **Agent-side ephemeral keys.** johnny's and boozer's X25519 private keys are generated
+  in-session and never persisted, so neither can owner-decrypt across sessions. The cause is
+  the hosting mode, not a missing feature: the maintainer runs `mcp-server/server.ts`, which
+  persists its keypair to `agent-key-<id>.json` on disk, while a relay-mediated agent runs no
+  local process — `sign_request` returns a signature and no key material, and
+  `register_agent`/`publish_context` record the *relay's* `relayAgentKey.publicKey` as the
+  agent's registry `encryptionPublicKey`, whose private half never leaves the relay. An earlier
+  version of this bullet prescribed deriving off "the signing-primitive root"; that is not a
+  fix. The relay is single-signer — one compliance wallet backs every agent — so
+  `deriveEncryptionKeyPair` over it returns the identical secret for johnny and boozer
+  (measured: both `3xeZVVgoS3f0F5UMJPPgtUufKl6pWSJjKiCpZZCpxDI=`), i.e. mutual decrypt of each
+  other's confidential holons. Any durable agent key must be domain-separated per principal;
+  `deriveEncryptionKeyPair` now takes a `principal` argument, and the separation is pinned by
+  test. Still open: the relay exposes no per-agent durable key, so an agent's only owned key is
+  one it makes in-session. The maintainer side stays closed; the durable-key recipient *path*
+  is shipped.
+- **Pre-fix cleanup — closed by decommission, not by cleanup.** johnny's first re-emit
+  (`rec-76593c72-…`) predated the redaction fix and carried the full narrative in cleartext.
+  It was never re-emitted or voided, and cannot be: it lived on johnny's pod on the retired
+  Azure substrate, whose pod data was never migrated. Checked 2026-08-04 against the current
+  fleet — `https://gate.interego.xwisee.com/u-pk-00181cd5dbee/` returns a CSS
+  `NotFoundHttpError` (404, `H404`) where `/foxxi/` and the maintainer pod return 200 through
+  the same gate, and the Azure hosts accept no connection. What cannot be shown from here is
+  that the bytes were deleted — only that neither the record nor its pod is reachable.
 - **Optional deeper fix.** extend the durable-key recipient path to publish_context so the rich
   signed graph itself (not just the record-performance twin) is confidential-by-recipients.
 

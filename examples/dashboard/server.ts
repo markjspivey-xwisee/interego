@@ -371,9 +371,54 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
   const url = req.url ?? '/';
   const method = req.method ?? 'GET';
 
+  // ★ HSTS, set ONCE at the top of the handler rather than at each writeHead.
+  //
+  // Measured 2026-08-03: this origin answered every request with no
+  // Strict-Transport-Security while relay, identity and css-gate all sent it — and every
+  // one of those three names https://dashboard.interego.xwisee.com in
+  // Access-Control-Allow-Origin. So it is an origin three security-relevant services trust,
+  // reached over a connection that never asserted HTTPS, and it is the host that receives
+  // the OAuth `code` on /oauth/callback and exchanges it for a token.
+  //
+  // Safe here BECAUSE res.writeHead(status, obj) MERGES with anything already set via
+  // setHeader — that covers every exit path at once: the OPTIONS 204, the json() helper,
+  // the proxied upstream bodies and the 404 tail. "Remember it at each writeHead" is
+  // exactly how it came to be missing here while three sibling services had it.
+  //
+  // max-age only, deliberately: includeSubDomains would bind every *.interego.xwisee.com
+  // including any not fully on HTTPS, and preload is close to irreversible. Separate
+  // decisions, guarded by tests/static-sites-404-and-hsts.test.ts.
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  // ── /health ──────────────────────────────────────────────────────────────
+  //
+  // `build` is the git sha baked into the image, and it is the ONLY field here that can
+  // distinguish one deployment from another. Without it this service could not be
+  // redeployed verifiably, and so it was not redeployed at all: it carried the oldest pin
+  // in the fleet for 22 days. tools/railway-redeploy.mjs polls this URL until `build`
+  // equals the sha it just deployed, because Railway reports SUCCESS as soon as the
+  // container binds a port, and on a tag that does not exist in the registry the OLD
+  // container keeps serving and keeps answering 200. Before this route existed, GET
+  // /health fell through to the 404 tail at the bottom of this handler.
+  //
+  // Side-effect free: reads module consts, touches no pod. It reflects the CSS/relay/
+  // identity URLs, which on Railway are `.internal` hostnames — relay's /health already
+  // does exactly that at the same trust level, so this is consistent with the fleet
+  // rather than a new disclosure class.
+  if (url === '/health' && method === 'GET') {
+    json(res, {
+      status: 'ok',
+      css: CSS_URL,
+      relay: RELAY_URL || null,
+      identity: IDENTITY_URL || null,
+      build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset',
+    });
+    return;
+  }
 
   if (url === '/' && method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/html' });

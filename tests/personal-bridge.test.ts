@@ -76,9 +76,22 @@
  * — this file must not be the reason some other file sees a value it did not set.
  * Only `examples/personal-bridge/server.ts` reads it, and only this file imports that.
  */
-import { describe, it, expect, vi } from 'vitest';
-vi.hoisted(() => { process.env['BRIDGE_PERSIST'] ??= '0'; });
-import { tools, bridgeStatus, client, serveMcpOverHttp } from '../examples/personal-bridge/server.js';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+// `BRIDGE_TOKEN` joins `BRIDGE_PERSIST` here for the same reason and with the same
+// `??=`: server.ts reads it WHILE BEING IMPORTED, so a bare assignment above the
+// import lands after the value has already been captured (see the ★★ note above).
+// `??=` because process.env is shared by every file in vitest's single worker —
+// this file must not be the reason another one sees a value it did not set.
+// Repo-wide grep at the time of writing: nothing else reads BRIDGE_TOKEN.
+vi.hoisted(() => {
+  process.env['BRIDGE_PERSIST'] ??= '0';
+  process.env['BRIDGE_TOKEN'] ??= 'bridge-test-token-2f6c1a9e4d';
+});
+import {
+  app, tools, bridgeStatus, client, serveMcpOverHttp,
+  bridgeAuthDecision, assertBindIsSafe, BRIDGE_TOKEN,
+} from '../examples/personal-bridge/server.js';
+import { readFileSync, existsSync } from 'node:fs';
 import {
   generateKeyPair,
   importWallet,
@@ -258,5 +271,214 @@ describe('personal-bridge — tool surface', () => {
     const inbox = await bob.queryEncryptedShares({ recipientSigPubkey: bob.pubkey });
     expect(inbox).toHaveLength(1);
     expect(bob.decryptEncryptedShare(inbox[0]!)).toBe('cross-bridge message');
+  });
+});
+
+describe('personal-bridge — the bridge-level gate', () => {
+  // ★ A REAL LISTENER, REAL fetch. Calling the middleware or `bridgeAuthDecision`
+  // alone would prove the DECISION and not the MOUNTING, and the mounting is the
+  // half that regresses — before this existed, `POST /api/inbox` followed by
+  // `tools/call decrypt_share` returned the owner's plaintext to any caller with
+  // no credential at all. Port 0 so nothing in the suite can collide on a fixed
+  // port; `NODE_ENV=test` means server.ts starts no listener of its own, so this
+  // is the only one.
+  let base: string;
+  let server: import('node:http').Server;
+
+  beforeAll(async () => {
+    server = await new Promise<import('node:http').Server>((resolve) => {
+      const s = app.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    const addr = server.address() as { port: number };
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+  afterAll(async () => {
+    // ★ MUST close. vitest runs every file in ONE process here (singleFork); a
+    // leaked listener keeps that process alive after the suite reports.
+    await new Promise<void>((resolve) => { server.close(() => resolve()); });
+  });
+
+  it('refuses an unauthenticated write — and writes nothing', async () => {
+    const before = (bridgeStatus() as { relayEventCount: number }).relayEventCount;
+    const r = await fetch(`${base}/api/publish`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ descriptorId: 'urn:unauth:1', cid: 'bafk-unauth', graphIri: 'urn:graph:unauth' }),
+    });
+    expect(r.status).toBe(401);
+    expect(r.headers.get('www-authenticate')).toContain('Bearer');
+    // A 401 that still performed the write would be worse than no gate: it would
+    // read as protected. The reproduced hole returned {"ok":true,"eventId":...}.
+    expect((bridgeStatus() as { relayEventCount: number }).relayEventCount).toBe(before);
+  });
+
+  it('refuses an unauthenticated decrypt — THE reproduced hole', async () => {
+    const r = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'tools/call',
+        params: { name: 'decrypt_share', arguments: { eventId: '0'.repeat(64) } },
+      }),
+    });
+    expect(r.status).toBe(401);
+    expect(await r.text()).not.toContain('plaintext');
+  });
+
+  it('refuses a WRONG token of the SAME LENGTH', async () => {
+    // Kills a length-only compare. `===` passes this; `a.length === b.length`
+    // standing in for timingSafeEqual does not.
+    const wrong = 'x'.repeat(BRIDGE_TOKEN.length);
+    expect(wrong.length).toBe(BRIDGE_TOKEN.length);
+    expect(wrong).not.toBe(BRIDGE_TOKEN);
+    const r = await fetch(`${base}/status`, { headers: { authorization: `Bearer ${wrong}` } });
+    expect(r.status).toBe(401);
+  });
+
+  it('refuses a token that is a PREFIX of the real one', async () => {
+    // Kills `expected.startsWith(presented)`.
+    const r = await fetch(`${base}/status`, { headers: { authorization: `Bearer ${BRIDGE_TOKEN.slice(0, -1)}` } });
+    expect(r.status).toBe(401);
+  });
+
+  it('accepts the right token', async () => {
+    const r = await fetch(`${base}/status`, { headers: { authorization: `Bearer ${BRIDGE_TOKEN}` } });
+    expect(r.status).toBe(200);
+    expect((await r.json() as { bridgePubkey: string }).bridgePubkey).toBe(client.pubkey);
+  });
+
+  it('accepts ?access_token= on /events, and refuses it without', async () => {
+    const denied = await fetch(`${base}/events`);
+    expect(denied.status).toBe(401);
+    await denied.body?.cancel();
+
+    const ac = new AbortController();
+    const ok = await fetch(`${base}/events?access_token=${encodeURIComponent(BRIDGE_TOKEN)}`, { signal: ac.signal });
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('content-type')).toContain('text/event-stream');
+    // ★ MUST abort. /events never ends; leaving it open makes server.close() in
+    // afterAll never fire its callback and hangs the whole run.
+    ac.abort();
+  });
+
+  it('GET /health stays open — liveness must not need the token', async () => {
+    // quickstart/docker-compose.yml healthchecks this endpoint.
+    const r = await fetch(`${base}/health`);
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ok: true });
+  });
+
+  it('sends NO Access-Control-Allow-Origin to a non-allow-listed origin', async () => {
+    // The wildcard is what made "bind to 127.0.0.1" a false mitigation: with `*`
+    // and no token, a page on any origin could POST to the loopback bridge AND
+    // read the reply.
+    const r = await fetch(`${base}/health`, { headers: { origin: 'https://evil.example' } });
+    expect(r.headers.get('access-control-allow-origin')).toBeNull();
+    const pre = await fetch(`${base}/mcp`, {
+      method: 'OPTIONS',
+      headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' },
+    });
+    expect(pre.status).toBe(204);
+    expect(pre.headers.get('access-control-allow-origin')).toBeNull();
+  });
+});
+
+describe('personal-bridge — fail-closed bind guard', () => {
+  it('refuses a non-loopback bind with no token', () => {
+    expect(() => assertBindIsSafe('0.0.0.0', '')).toThrow(/BRIDGE_TOKEN/);
+    expect(() => assertBindIsSafe('100.64.0.1', '')).toThrow(/BRIDGE_TOKEN/);
+    expect(() => assertBindIsSafe('::', '')).toThrow(/BRIDGE_TOKEN/);
+  });
+  it('allows loopback with no token, and any bind with one', () => {
+    expect(() => assertBindIsSafe('127.0.0.1', '')).not.toThrow();
+    expect(() => assertBindIsSafe('::1', '')).not.toThrow();
+    expect(() => assertBindIsSafe('0.0.0.0', 'a-real-token')).not.toThrow();
+  });
+  it('the open-loopback branch of the decision really is open', () => {
+    // The branch the live listener above cannot reach: BRIDGE_TOKEN is set for
+    // this module instance, so the no-credential-configured path is only
+    // observable through the pure function.
+    expect(bridgeAuthDecision({ method: 'POST', path: '/api/publish', expectedToken: '' })).toEqual({ allow: true });
+    expect(bridgeAuthDecision({ method: 'POST', path: '/api/publish', expectedToken: 't' }).allow).toBe(false);
+  });
+});
+
+describe('docs/CROSS-DEVICE-TEST-PLAN.md stays true to the bridge it documents', () => {
+  // ★ WHY THIS BLOCK EXISTS, AND WHY A DOC GETS ASSERTIONS AT ALL. That runbook is
+  // executed by a human on their own hardware and by nothing else, so when the bridge
+  // changed underneath it, nothing failed. Measured on the shipped binary: publish a
+  // descriptor, kill the process, reboot on the same BRIDGE_DATA_DIR, re-query — the
+  // event came back with an IDENTICAL eventId, while Test 6 still instructed the
+  // reader to "verify previously-published events are gone (in v1; events are
+  // in-memory)" and called persistence "v1.2". server.ts has defaulted
+  // BRIDGE_PERSIST on for far longer than that. The doc had even contradicted itself
+  // the whole time — its closing line already listed persistence among the things
+  // Test 6 depends on. Anyone following it would have opened an issue against correct
+  // behaviour, exactly as its own "What to file as a bug" section tells them to.
+  //
+  // The header made that drift permanent by declaring a hardware run "the empirical
+  // proof — not anything in the test suite", i.e. by ruling out in advance the only
+  // mechanism that could have caught it. These four assertions are that mechanism.
+  const runbook = readFileSync(new URL('../docs/CROSS-DEVICE-TEST-PLAN.md', import.meta.url), 'utf8');
+  const serverSrc = readFileSync(new URL('../examples/personal-bridge/server.ts', import.meta.url), 'utf8');
+
+  it('names exactly the tools the bridge advertises', () => {
+    // The /mcp tools/list handler maps Object.entries(tools) verbatim, so this set IS
+    // what a phone discovers at Setup step 4 — the doc is claiming a discoverable fact.
+    const advertised = Object.keys(tools);
+    const claimed = /with (\d+) tools \(([^)]+)\)/.exec(runbook);
+    expect(claimed, 'Setup step 3 must keep naming the bridge tools').not.toBeNull();
+    expect(Number(claimed![1])).toBe(advertised.length);
+    expect(claimed![2]!.split(',').map(s => s.trim()).sort()).toEqual([...advertised].sort());
+  });
+
+  it('describes the persistence default the bridge actually ships', () => {
+    // Read the default off the SOURCE, never off bridgeStatus(): the vi.hoisted at the
+    // top of this file sets BRIDGE_PERSIST=0, so the imported module reports the
+    // volatile mode and would cheerfully agree with the stale doc this test exists to
+    // catch. Capture the operator rather than testing one spelling, so that reformatting
+    // server.ts cannot silently flip this into the wrong branch — an unmatched pattern
+    // fails loudly here instead.
+    const decl = /const BRIDGE_PERSIST = process\.env\['BRIDGE_PERSIST'\] (!==|===) '0';/.exec(serverSrc);
+    expect(decl, 'BRIDGE_PERSIST declaration moved or was reformatted; update this pattern').not.toBeNull();
+    const persistDefaultsOn = decl![1] === '!==';
+
+    const start = runbook.indexOf('### Test 6');
+    const end = runbook.indexOf('## What a successful run proves');
+    expect(start, 'Test 6 section not found').toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const test6 = runbook.slice(start, end);
+
+    if (persistDefaultsOn) {
+      expect(test6).toMatch(/still returned/);
+      expect(test6).not.toMatch(/events are gone \(in v1/);
+    } else {
+      expect(test6).toMatch(/gone/);
+      expect(test6).not.toMatch(/still returned/);
+    }
+  });
+
+  it('cites only evidence files that exist', () => {
+    // The header now points at specific suite files as the evidence it does NOT
+    // supersede. A citation that rots is the same defect one level down.
+    const cited = [...runbook.matchAll(/`(tests\/[\w.-]+\.ts)`/g)].map(m => m[1]!);
+    expect(cited.length).toBeGreaterThan(0);
+    for (const rel of cited) {
+      expect(existsSync(new URL(`../${rel}`, import.meta.url)), `${rel} is cited by the runbook but does not exist`).toBe(true);
+    }
+  });
+
+  it('does not claim a run it has not recorded', () => {
+    const ledgerStart = runbook.indexOf('## Recorded runs');
+    expect(ledgerStart, 'the Recorded runs ledger must exist').toBeGreaterThan(-1);
+    const rows = runbook.slice(ledgerStart).split('\n').filter(l => l.startsWith('|'));
+    // rows[0] is the header, rows[1] the separator; a real entry is anything after
+    // those that is not the placeholder.
+    const recorded = rows.slice(2).filter(l => !l.includes('_(none yet)_'));
+    if (recorded.length === 0) {
+      // This is the assertion the original "that's the empirical proof" sentence had no
+      // way to violate: with an empty ledger the header must say the run does not exist.
+      expect(runbook).toMatch(/\*\*No run of this has been published yet\.\*\*/);
+    }
   });
 });

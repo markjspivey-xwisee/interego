@@ -48,6 +48,7 @@
  * See that file's header for the measurement, so this does not get re-derived from scratch.
  */
 import { ESLint } from 'eslint';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 
@@ -276,6 +277,81 @@ const BASELINE = {};
 // shrugged off `tools` silently dropping back out.
 const MIN_FILES = 320;
 
+/**
+ * The workflow whose job NAME is this gate's public label — the one line about it that a
+ * reviewer sees on a PR status without opening a log. Checked here, by the job that file
+ * names, because this is the only place the label and the real pin count are both in hand.
+ */
+const WORKFLOW = join(ROOT, '.github', 'workflows', 'lint.yml');
+
+/**
+ * A numeric "<n> files pinned" / "<n> baselined files" claim, either word order, because
+ * the drift is in prose and prose does not keep one shape. Read only via `matchAll`, which
+ * clones the regex — a module-level /g regex passed to `.test()` carries `lastIndex`
+ * between calls and would skip every other claim.
+ */
+const PIN_CLAIM = /(\d+)\s+(?:files?\s+(?:pinned|baselined)|(?:pinned|baselined)\s+files?)/gi;
+
+/** The non-numeric way the label can state the same fact. */
+const EMPTY_CLAIM = /empty baseline|baseline is empty|no baselined files/i;
+
+/**
+ * ★ THE FAILURE THIS PREVENTS. This job's name read
+ * "Flat-config lint + ratcheted baseline (47 files pinned)" and GitHub published it on
+ * every run — "(47 files pinned) -> success" — while the same job's log printed
+ * "0 errors, 0 baselined files". 47 was the count the day BASELINE was written; emptying it
+ * changed the code and not the label, and nothing read the label, so nothing could notice.
+ * The stale number UNDERSTATED a gate that is at its strictest when nothing is pinned.
+ *
+ * The repair that followed deleted the number rather than correcting it. That is better
+ * prose and still unchecked, so this accepts EITHER form and checks whichever is present:
+ * a numeric claim must equal the real pin count, and a "empty baseline" claim must be true.
+ * What is refused is a label that states neither — because a label with no claim in it is
+ * one nothing can ever contradict, which is how the 47 survived.
+ *
+ * Text in, so a test can hand it a stale label; `pinned` defaults to the real BASELINE so
+ * the live call and the test call are the same function, not a copy of it.
+ *
+ * @param {string} workflowText  contents of .github/workflows/lint.yml
+ * @param {number} [pinned]      files on the baseline; defaults to the real one
+ * @returns {string|null}        a failure paragraph, or null
+ */
+export function baselineClaimFailure(workflowText, pinned = Object.keys(BASELINE).length) {
+  // ★ THE `name:` LINES ONLY, NOT THE WHOLE FILE. Scanning the file text matched the
+  // comment in lint.yml that RECORDS the old "47 files pinned" as history, and failed the
+  // gate on an accurate sentence about a fixed defect. The label GitHub publishes is the
+  // job name; that is the claim, and it is the only part that must be true in the present
+  // tense. Measured: the whole-file scan reports `claims "47 files pinned"` against a job
+  // named "(zero-error, empty baseline)".
+  const names = [...workflowText.matchAll(/^\s*name:\s*(.+)$/gm)].map(m => m[1]).join('\n');
+  if (names.trim() === '') {
+    return '  .github/workflows/lint.yml has no `name:` line at all — this guard is reading\n'
+      + '      the wrong file, or the workflow lost its job name.';
+  }
+  const claims = [...names.matchAll(PIN_CLAIM)];
+  if (claims.length > 0) {
+    const wrong = claims.filter(m => Number(m[1]) !== pinned);
+    if (wrong.length === 0) return null;
+    return `  .github/workflows/lint.yml claims ${wrong.map(m => `"${m[0]}"`).join(', ')}, but `
+      + `BASELINE pins ${pinned} file(s).\n`
+      + '      Update the job name in that workflow. It is the label on every PR status for\n'
+      + '      this gate, and a stale count there understated the gate for every run after\n'
+      + '      the debt hit zero.';
+  }
+  if (EMPTY_CLAIM.test(names)) {
+    if (pinned === 0) return null;
+    return `  .github/workflows/lint.yml calls the baseline EMPTY, but BASELINE pins `
+      + `${pinned} file(s).\n`
+      + '      The label is the only description of this gate a reviewer sees without\n'
+      + '      opening the log, and it is now claiming a stricter gate than the one running.';
+  }
+  return '  .github/workflows/lint.yml states nothing about the baseline.\n'
+    + `      Its job name must either say "${pinned} files pinned" or say the baseline is\n`
+    + '      empty. Deleting the claim rather than correcting it is what puts the label\n'
+    + '      back out of reach of every check — which is how "(47 files pinned)" survived\n'
+    + '      long after the debt reached zero.';
+}
+
 export async function runLintGate() {
   // The programmatic API rather than the CLI: `eslint`'s package `exports` does not expose
   // `bin/eslint.js`, and more importantly a config-resolution failure here THROWS instead of
@@ -315,6 +391,23 @@ export async function runLintGate() {
       + '      this file, and that the config still matches .ts. An eslint run that lints\n'
       + '      nothing exits 0, which is why this is asserted rather than assumed.',
     );
+  }
+
+  // Read separately from the lint results, like the file-count floor above: this is a claim
+  // about the GATE, and no amount of clean linting can satisfy or refute it.
+  let workflowText = null;
+  try {
+    workflowText = readFileSync(WORKFLOW, 'utf8');
+  } catch {
+    failures.push(
+      '  .github/workflows/lint.yml could not be read. This gate exists because the linter\n'
+      + '      had no workflow at all and its death went unnoticed; that file going missing\n'
+      + '      is the same finding, so it is refused rather than skipped.',
+    );
+  }
+  if (workflowText !== null) {
+    const claimFailure = baselineClaimFailure(workflowText);
+    if (claimFailure) failures.push(claimFailure);
   }
 
   for (const [file, count] of [...counts].sort()) {

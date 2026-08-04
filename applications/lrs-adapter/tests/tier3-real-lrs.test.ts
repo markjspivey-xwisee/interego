@@ -12,11 +12,18 @@
  *     -e LRSQL_API_SECRET_DEFAULT=testapisecret \
  *     -e LRSQL_ADMIN_USER_DEFAULT=admin \
  *     -e LRSQL_ADMIN_PASS_DEFAULT=admin \
- *     yetanalytics/lrsql:latest
+ *     yetanalytics/lrsql:v0.9.5
  *
- * Skips automatically if:
- *   - Lrsql is unreachable on localhost:8080 (Docker not running)
- *   - SKIP_LRSQL_TESTS=1 env var is set (CI without Docker)
+ * (Pinned to the same tag .github/workflows/lrs-adapter-conformance.yml pins, or this recipe
+ * stops reproducing CI. v0.9.5 is what `:latest` resolved to when this was written.)
+ *
+ * Runs, skips, or FAILS — the gate is applications/lrs-adapter/tests/lrsql-gate.ts:
+ *   - LRSQL_IT=1 (set by .github/workflows/lrs-adapter-conformance.yml, the job that stands
+ *     the container up): an unreachable LRS is a FAILURE, never a skip.
+ *   - LRSQL_IT unset: unreachable skips, so a laptop without Docker — and the whole-root-suite
+ *     step in bridge-typecheck.yml — still runs the rest.
+ *   - SKIP_LRSQL_TESTS=1: skips, unless LRSQL_IT=1 contradicts it, in which case the
+ *     declaration wins.
  *
  * What this proves:
  *   - lrs-adapter's projected xAPI 2.0 Statements are accepted by a real
@@ -35,29 +42,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
-const LRS_BASE = 'http://localhost:8080/xapi';
-const AUTH_HEADER = 'Basic ' + Buffer.from('testapikey:testapisecret').toString('base64');
-const XAPI_VERSION = '2.0.0';
-
 // ── Reachability + auth probe ────────────────────────────────────────
-
-async function isLrsReachable(): Promise<boolean> {
-  if (process.env.SKIP_LRSQL_TESTS === '1') return false;
-  try {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 4000);
-    const r = await fetch(`${LRS_BASE}/about`, {
-      headers: { 'Authorization': AUTH_HEADER, 'X-Experience-API-Version': XAPI_VERSION },
-      signal: ac.signal,
-    });
-    clearTimeout(timer);
-    if (!r.ok) return false;
-    const body = await r.json() as { version: string[] };
-    return body.version?.includes(XAPI_VERSION) ?? false;
-  } catch {
-    return false;
-  }
-}
+// The probe lived here, and a DRIFTED second copy lived in tier3b. Both collapsed every
+// distinguishable failure into `false`, and `false` routed to ctx.skip(), which is green.
+import { LRS_BASE, AUTH_HEADER, XAPI_VERSION, LRSQL_REQUIRED, reachLrsqlOrFail } from './lrsql-gate.js';
 
 // ── Helper: project an Asserted descriptor → xAPI 2.0 Statement ──────
 
@@ -124,15 +112,19 @@ function projectMultiNarrativeToStatement(narratives: readonly string[]) {
 let lrsReachable = false;
 
 beforeAll(async () => {
-  lrsReachable = await isLrsReachable();
+  // Throws when LRSQL_IT=1 and no LRS answers. A throw in beforeAll fails every body in this
+  // file, which is exactly what is wanted: under LRSQL_IT the alternative is five green skips.
+  lrsReachable = await reachLrsqlOrFail();
 });
 
 describe('Tier 3 — real LRS (Lrsql) wire-level integration', () => {
-  it('Lrsql conformance probe: /xapi/about reports xAPI 2.0', () => {
-    if (!lrsReachable) {
-      console.warn(`Lrsql at ${LRS_BASE} is unreachable; remaining Tier 3 tests skipped`);
-    }
-    expect(typeof lrsReachable).toBe('boolean');
+  it('Lrsql conformance probe: /xapi/about reports xAPI 2.0', (ctx) => {
+    // This body used to be `expect(typeof lrsReachable).toBe('boolean')`, which is true of
+    // `false`. It is half of the "2 passed" that made "2 passed | 18 skipped" read as a result
+    // for a run in which nothing had been checked. It now asserts the declaration or admits
+    // there isn't one.
+    if (!LRSQL_REQUIRED) return ctx.skip();
+    expect(lrsReachable).toBe(true);
   });
 
   it('POST /xapi/statements: Asserted descriptor → Statement → 200 OK + UUID', { timeout: 15000 }, async (ctx) => {

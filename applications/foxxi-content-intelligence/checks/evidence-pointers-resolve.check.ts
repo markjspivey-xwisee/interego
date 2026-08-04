@@ -57,16 +57,30 @@ check('a refused statement returns null, not its id',
   'returning the id is what made the refusal invisible');
 
 // ── 2. Callers must not report a refused statement as recorded ─────────────
+// ★ PER SURFACE, NOT PER REPO. This loop counted the marker across the WHOLE of
+// server.ts and asserted `count >= 1` once per label — and both rows carried the
+// SAME marker string, so the two iterations read the identical number and neither
+// could tell the two surfaces apart. Measured against the real sources: deleting the
+// refusal from ONE surface left every line of this file green, which is the exact
+// failure the sibling check below ("fixing one surface leaves the other minting
+// dangling pointers") exists to name. Each surface is now sliced out by its own
+// anchor, so the assertion is about that surface's body and nothing else.
+//
 // `as const` is load-bearing under noUncheckedIndexedAccess: without it TypeScript widens
-// these rows to `string[]`, destructuring yields `string | undefined`, and `split(marker)`
-// has no matching overload. This file was in NO tsc program, so that error sat here
-// undetected while `npx tsx` stripped the types and ran it anyway.
-for (const [label, marker] of [
-  ['foxxi.record_performance', 'the performance was not recorded'],
-  ['/agent/record-performance', 'the performance was not recorded'],
+// these rows to `string[]`, destructuring yields `string | undefined`, and `indexOf(open)`
+// has no matching overload.
+for (const [label, open, close] of [
+  ['foxxi.record_performance', "'foxxi.record_performance': async", "\n  'foxxi."],
+  ['/agent/record-performance', "app.post('/agent/record-performance'", '\napp.'],
 ] as const) {
-  const count = server.split(marker).length - 1;
-  check(`${label} refuses to claim success when nothing was stored`, count >= 1);
+  const from = server.indexOf(open);
+  const to = server.indexOf(close, from + open.length);
+  const body = from === -1 ? '' : server.slice(from, to === -1 ? undefined : to);
+  // A slicing check whose anchor drifts silently degrades to an empty string and then
+  // passes nothing. This makes anchor rot fail loudly instead of emptying the check.
+  check(`${label} is present to be checked`, body.length > 0, `anchor ${open} not found`);
+  check(`${label} refuses to claim success when nothing was stored`,
+    body.includes('the performance was not recorded'));
 }
 check('both record-performance surfaces check the store result',
   (server.split('if (!statementId)').length - 1) >= 2,

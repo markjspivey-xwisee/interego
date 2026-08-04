@@ -1,0 +1,49 @@
+name: security.txt expiry
+
+# ★ A DEADLINE CHECK NEEDS A CLOCK, NOT A DIFF.
+#
+# tools/security-txt-expiry-check.mjs is already run by ontology-lint.yml, but that
+# workflow is push/PR only. This guard's whole subject is the passage of TIME: the
+# 30-day window exists for the quiet period in which nobody pushes, and a push/PR-only
+# wiring has a warning window of "whenever someone next touches a matching path".
+#
+# The guard also spent a long time exiting 2 on a stale path with nobody watching, so
+# the exit codes are named in the step title: 1 = refresh required, 2 = the checker
+# could not check. Both are red, and they mean different things.
+
+on:
+  schedule:
+    # 07:00 UTC daily. The first red lands 30 days out, giving a full month of daily
+    # reminders before researchers hit a file RFC 9116 §2.5.5 calls stale.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'packages/security-txt/**'
+      - 'tools/security-txt-expiry-check.mjs'
+      - '.github/workflows/security-txt-expiry.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/security-txt/**'
+      - 'tools/security-txt-expiry-check.mjs'
+      - '.github/workflows/security-txt-expiry.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  expiry:
+    name: "RFC 9116 Expires is more than 30 days out"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      # No `npm ci` on purpose: the checker imports only node:fs / node:path / node:url and
+      # reads the .ts source as text. Keeping the daily cron install-free means it cannot go
+      # red on an unrelated lockfile problem and get dismissed as noise — the one thing a
+      # deadline alarm must not do.
+      - name: security.txt expiry (exit 1 = refresh required, exit 2 = checker broken)
+        run: node tools/security-txt-expiry-check.mjs --days 30

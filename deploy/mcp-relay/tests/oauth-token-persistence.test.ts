@@ -136,7 +136,11 @@ async function issueToken(provider: InteregoOAuthProvider): Promise<{ access: st
   // Direct-issue path: there's no public `mintForTest` so we drive the
   // pending-authorization → code-exchange flow used by the real server.
   const pendingId = randomBytes(8).toString('hex');
-  // @ts-expect-error reach into private state — test-only seam.
+  // Element access is the supported way to reach a private member — no directive needed, and
+  // a `@ts-expect-error` here would MUTE the error a rename of `pendingAuthorizations` /
+  // `accessTokens` / `accessTokensBySha` must produce, leaving the seam silently writing into
+  // a fresh key. Six such directives sat in this file and audience-binding.test.ts, all dead,
+  // until `tsconfig.tests.json` put both files in a compiler.
   provider['pendingAuthorizations'].set(pendingId, {
     client: CLIENT,
     params: { codeChallenge: 'cc', redirectUri: CLIENT.redirect_uris![0]!, scopes: ['mcp'], state: undefined },
@@ -227,7 +231,6 @@ async function run() {
     const { access } = await issueToken(provider);
     await flush();
     // Tamper with in-memory expiry so verify trips the expired branch.
-    // @ts-expect-error test seam
     const info = provider['accessTokens'].get(access);
     info.expiresAt = Math.floor(Date.now() / 1000) - 10;
     try {
@@ -279,14 +282,11 @@ async function run() {
     ok(unknown === null, 'introspectAccessToken returns null for unknown token');
 
     // Expired token → null + indexes pruned.
-    // @ts-expect-error test seam
     const info = provider['accessTokens'].get(access);
     info.expiresAt = Math.floor(Date.now() / 1000) - 10;
     const expired = provider.introspectAccessToken(access);
     ok(expired === null, 'introspectAccessToken returns null for expired token');
-    // @ts-expect-error test seam
     ok(!provider['accessTokens'].has(access), 'introspect: expired token pruned from raw map');
-    // @ts-expect-error test seam
     ok(!provider['accessTokensBySha'].has(createHash('sha256').update(access).digest('hex')),
        'introspect: expired token pruned from sha map');
   }

@@ -226,8 +226,75 @@ export interface RouteResult {
   act: Record<string, unknown>;
   response: Record<string, unknown>;
   caveats: string[];
+  /** Present ONLY when RouteOptions.requiredToAct was supplied. Absent means the
+   *  caller stated no requirement — the router must not invent one and then
+   *  report a decision nobody asked for. */
+  gap?: ContextGapEvaluation;
 }
 export interface RouteError { ok: false; error: string; detail?: string; }
+
+// ── 4b. Context-gap predicate — the safe-stop trigger ────────────────────────
+// WHY THIS EXISTS: the router reported per-interrogative resolution state and
+// stopped there, so every caller re-derived "may I act on this?" by hand —
+// Convergence.tsx and demo/convergence.ts each COUNTED the `absent` answers and
+// then proceeded regardless. The concrete failure that prevents: an agent
+// interrogates a descriptor with no AgentFacet and no ProvenanceFacet, gets a
+// 200 with eleven answers, and acts on context nothing grounded. Derived from
+// the router's OWN output — it names no mismatch categories and adds no
+// vocabulary, which is the form docs/NAME-PROVENANCE.md §6 argues for. NOT
+// routed through runtime-eval.ts's evaluate(): its StructuralSignals input is
+// retrieval-shaped (sessionsMatched / sharedAtoms / strategyUsed) and pushing
+// resolution states through it would be a type-shaped lie.
+export type GapAction = 'proceed' | 'abstain' | 'escalate';
+export interface ContextGapEvaluation {
+  action: GapAction;
+  /** Required interrogatives whose answering facet is not on this descriptor. */
+  absent: InterrogativeType[];
+  /** Required interrogatives answerable only by a further hop (see nextStep). */
+  unresolvedPointers: InterrogativeType[];
+  reason: string;
+}
+
+/**
+ * Decide whether this interrogation grounded enough context to act.
+ *
+ * FAIL-CLOSED IN THREE PLACES, each guarding a distinct way this goes wrong:
+ *  1. `resolved` is a WHITELIST ('full' | 'partial'), never `!== 'absent'`. An
+ *     AnswerStatus added later must not silently start counting as grounded.
+ *  2. A required interrogative with NO answer in `answers` counts as absent, not
+ *     as satisfied — asking for fewer interrogatives than you need must never
+ *     read as permission.
+ *  3. An EMPTY `required` returns 'abstain', not 'proceed'. A safe-stop that
+ *     says "go" when it was asked to check nothing is the gate that never fires.
+ */
+export function evaluateContextGap(
+  answers: readonly InterrogativeAnswer[],
+  required: readonly InterrogativeType[],
+): ContextGapEvaluation {
+  if (required.length === 0) {
+    return { action: 'abstain', absent: [], unresolvedPointers: [],
+      reason: 'no interrogative was named as required to act — nothing was shown grounded' };
+  }
+  const byType = new Map(answers.map(a => [a.interrogative, a]));
+  const absent: InterrogativeType[] = [];
+  const unresolvedPointers: InterrogativeType[] = [];
+  for (const t of required) {
+    const status = byType.get(t)?.status;
+    if (status === 'full' || status === 'partial') continue;      // (1) whitelist
+    if (status === 'pointer') { unresolvedPointers.push(t); continue; }
+    absent.push(t);                                               // (2) includes "no answer at all"
+  }
+  if (absent.length > 0) {
+    return { action: 'abstain', absent, unresolvedPointers,
+      reason: `the answering facet is not on this descriptor for: ${absent.join(', ')}` };
+  }
+  if (unresolvedPointers.length > 0) {
+    return { action: 'escalate', absent, unresolvedPointers,
+      reason: `answerable only by a further hop: ${unresolvedPointers.join(', ')}` };
+  }
+  return { action: 'proceed', absent, unresolvedPointers,
+    reason: `every required interrogative resolved on this descriptor: ${required.join(', ')}` };
+}
 
 // ── 5. Per-interrogative projection (verified against serializer.ts) ──────────
 
@@ -406,6 +473,10 @@ export interface RouteOptions {
   authorship?: { effectiveTrustLevel?: string; authorshipVerified?: boolean; signedBy?: string };
   /** The descriptor URL/IRI (for the response provenance + act `about`). */
   target?: string;
+  /** Interrogatives the CALLER must have grounded in order to act. Supplying it
+   *  (even as an empty array) makes the result carry `gap`. Omitting it means no
+   *  requirement was stated and no decision is returned. */
+  requiredToAct?: readonly InterrogativeType[];
 }
 
 export function resolveRequestedInterrogatives(opts: { question?: string; interrogatives?: string | readonly string[]; all?: boolean }): RouteClassification | RouteError {
@@ -464,5 +535,10 @@ export function routeInterrogatives(opts: RouteOptions): RouteResult | RouteErro
     act,
     response,
     caveats,
+    // Presence test is `!== undefined`, NOT truthiness: `requiredToAct: []` is a
+    // caller that named an empty requirement, and evaluateContextGap answers that
+    // with 'abstain'. Truthiness would also admit []; being explicit keeps the
+    // fail-closed empty case from being "fixed" away by a later simplification.
+    ...(opts.requiredToAct !== undefined ? { gap: evaluateContextGap(answers, opts.requiredToAct) } : {}),
   };
 }

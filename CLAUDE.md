@@ -29,7 +29,9 @@ packages/
                       as a first-class API. Eight verbs (mint / dereference
                       / compose / act / restrict / extend / promote /
                       decompose) backed by intra-substrate composition of
-                      model/, rdf/, pgsl/, solid/. The operational
+                      model/ + rdf/ with the @interego/pgsl and
+                      @interego/solid packages, reached through
+                      injection points. The operational
                       realization of docs/ARCHITECTURAL-FOUNDATIONS.md
                       §3–§5; see §11 there for the surface itself.
     src/model/        Typed Context Descriptor + 7 facets + composition
@@ -38,14 +40,19 @@ packages/
                       restriction, override). The substrate's SHAPE.
     src/rdf/          Turtle / TriG / JSON-LD serialization, RDF 1.2
                       helpers, parseTrig subject-extraction parser,
-                      virtualized RDF layer + system ontology.
+                      system ontology. (The virtualized RDF layer is
+                      NOT here — it lives in @interego/pgsl.)
     src/validation/   Shape conformance / SHACL primitives.
     src/sparql/       Standards-compliant SPARQL pattern builders.
     src/crypto/       Abstract signing/verification + ZK primitives.
                       Ethers/nacl-backed wallet impls live here for now;
                       a follow-up `@interego/crypto-impls` split is on
                       the roadmap once the abstract surface stabilizes.
-    src/naming/       Naming conventions (L2 attestation-based naming).
+    src/lattice/      Pluggable lattice-adapter seam; @interego/pgsl
+                      registers itself here, core falls back to pure hash.
+    src/http/         Substrate fetch + retry transport.
+    src/manifest/     Manifest types + assembly.
+    src/mcp/          MCP HTTP mount + output-schema helpers.
     src/affordance/   iep:Affordance shape + OODA/BDI/Active-Inference
                       runtime. The runtime is slated for extraction
                       into @interego/affordance-engine once its PGSL

@@ -41,7 +41,15 @@ import type {
 // move to Railway. Probing it timed out after 8s and skipped 5 of 6 tests while reporting ✓.
 // See applications/_shared/tests/pod-target.ts for the full account and the honest skip
 // reasons that replaced it.
-import { TEST_POD_BASE as TEST_POD, POD_HOST, podWriteHeaders, podFetch, probePod } from './pod-target.js';
+// ★ The gate comes from real-pod-gate.ts, not probePod() directly: probePod() answers
+// "usable or not", which folded a DECLARED opt-out together with a DISCOVERED failure
+// (unreachable host, 404 container, refused write) and sent both to ctx.skip(). openRealPod()
+// separates them and THROWS on the discovered kind, so a pod that has stopped existing reds
+// this file instead of emptying it behind a green tick.
+import {
+  TEST_POD_BASE as TEST_POD, POD_HOST, podWriteHeaders, podFetch,
+  openRealPod, DECLARED_SKIPS, type PodGate,
+} from './real-pod-gate.js';
 
 // ── Cleanup tracking ─────────────────────────────────────────────────
 
@@ -74,13 +82,15 @@ async function fetchTurtle(url: string): Promise<string | null> {
 //  Tier 2 — real HTTP roundtrip
 // ═════════════════════════════════════════════════════════════════════
 
+// Seeded with a DECLARED skip so that a beforeAll which throws cannot leave behind a value
+// that looks like a legitimate opt-out — openRealPod() throwing is what must turn this file
+// red, and vitest fails every body in a file whose beforeAll throws.
+let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1' };
 let podReachable = false;
-let skipReason = '';
 
 beforeAll(async () => {
-  const availability = await probePod();
-  podReachable = availability.usable;
-  skipReason = availability.reason;
+  pod = await openRealPod();
+  podReachable = pod.ok;
 });
 
 afterEach(async () => {
@@ -88,13 +98,15 @@ afterEach(async () => {
 });
 
 describe('Tier 2 — real HTTP roundtrip against the live pod', () => {
-  it('pod is reachable (otherwise skip the rest)', () => {
-    // ★ A skip must STATE ITS CAUSE. This used to print "unreachable" naming a host that had
-    // been deliberately deleted — a message that sent anyone reading it to a dead end.
-    if (!podReachable) {
-      console.warn(`Tier 2 pod tests skipped — ${skipReason} (host: ${POD_HOST})`);
-    }
-    expect(skipReason).not.toBe('');
+  it('real-pod precondition: skipping is allowed only for a DECLARED reason', () => {
+    // ★ A skip must STATE ITS CAUSE — and the cause must be one a human chose. The previous
+    // assertion here was `expect(skipReason).not.toBe('')`, which every one of probePod()'s
+    // four return paths satisfies by construction, so it could not fail for any state of the
+    // pod. openRealPod() throws on a DISCOVERED failure, so the only values that can reach
+    // this line are operator declarations; a new silent-skip path is what this catches.
+    if (pod.ok) return;
+    console.warn(`Tier 2 pod tests skipped — ${pod.declaredSkip} (host: ${POD_HOST})`);
+    expect(DECLARED_SKIPS).toContain(pod.declaredSkip);
   });
 
   it('publish + fetch back + parse: agent-development-practice probe descriptor', { timeout: 30000 }, async (ctx) => {

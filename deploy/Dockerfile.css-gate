@@ -48,4 +48,13 @@ ENV WRITE_SECRET=
 # https://interego-css.internal.<env>.azurecontainerapps.io).
 ENV CSS_INTERNAL_URL=
 
+# The commit this image was built from, surfaced at /healthz so a deploy can be VERIFIED
+# rather than assumed. build-ghcr.yml already appends GIT_SHA to every image's build-args;
+# without this ARG Docker drops it with a warning and the image builds green. ★ This
+# service is the standing example of the cost: it ran an image predating its own HSTS fix
+# for days, and nothing it served could say which build it was. Runtime stage on purpose:
+# ARG does not cross a FROM, and earlier would bust the cache on every commit.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
 CMD ["node", "/app/server.mjs"]

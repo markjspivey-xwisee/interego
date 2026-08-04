@@ -1,0 +1,14 @@
+# shape: wsp-shapes.ttl
+# expect: violates
+# pins: wsp:roleProfile
+# why: sh:pattern "^https?://" on wsp:roleProfile — narrower than the principal pattern ON PURPOSE, because a role profile is a DOCUMENT that has to be fetched, not a party that has to be identified. The offending value is a did: and not a urn: precisely so this fixture can tell "^https?://" from "^https?://|^did:": a urn: violates under both and would not distinguish a widening of this term from the principal terms.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://relay.test/ws/a>
+  a wsp:Workspace ;
+  dct:title "Alpha" ;
+  wsp:convener <https://alice.test/profile#me> ;
+  wsp:roleProfile <did:web:roles.test> .

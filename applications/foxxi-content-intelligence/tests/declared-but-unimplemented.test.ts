@@ -1,9 +1,10 @@
 /**
  * A declared capability that is not implemented must say so in its result.
  *
- * ★ WHY. Five handlers returned a success-shaped body for work they never did:
+ * ★ WHY. Five handlers returned a success-shaped body for work they never did. Four
+ * still do; foxxi.explore_concept_map now reads the on-pod fxa:CoursePackageBundle:
  *
- *     foxxi.explore_concept_map         -> { concepts: [], edges: [], note: 'stub: …' }
+ *     foxxi.explore_concept_map         -> { concepts: [], edges: [], note: 'stub: …' }  (CLOSED)
  *     foxxi.consume_lesson              -> { consumed: false, note: 'stub: …' }
  *     foxxi.connect_lms                 -> { note: 'stub: …' }
  *     foxxi.publish_concept_map         -> { note: 'stub: …' }
@@ -40,9 +41,50 @@ describe('a declared-but-unimplemented capability answers honestly', () => {
     expect(server).not.toMatch(/note: 'stub: bridge handler not yet wired/);
   });
 
-  it('unimplemented handlers route through one honest helper', () => {
-    const calls = server.match(/return notImplemented\(/g) ?? [];
-    expect(calls.length, 'expected the five known stubs to use it').toBeGreaterThanOrEqual(5);
+  // ★ THIS WAS A COUNT, AND THE COUNT RATCHETED AGAINST THE WORK. It asserted
+  // `notImplemented(` call sites `.toBeGreaterThanOrEqual(5)` over exactly five stubs,
+  // so implementing ANY ONE dropped the count to 4 and turned this suite red. The
+  // honesty fix had made the stub state load-bearing in CI: the correct change failed
+  // and the incorrect one passed. A count also cannot say WHICH tool regressed.
+  //
+  // Named instead. Shrinking this list is how an implementation lands; a tool that
+  // quietly reverts to a stub without being added back still fails, via the second
+  // assertion below.
+  const STILL_STUBBED = [
+    'foxxi.connect_lms',
+    'foxxi.consume_lesson',
+    'foxxi.publish_compliance_evidence',
+    'foxxi.publish_concept_map',
+  ] as const;
+
+  it('every still-stubbed tool answers through the honest helper', () => {
+    for (const tool of STILL_STUBBED) {
+      expect(server, `${tool} must answer via notImplemented()`)
+        .toMatch(new RegExp(`return notImplemented\\('${tool.replace('.', '\\.')}'`));
+    }
+  });
+
+  it('nothing answers through notImplemented() without being listed as stubbed', () => {
+    // The direction a count could not check, in BOTH senses: a newly-added stub that
+    // was never declared here, and an implemented tool left stale in the list.
+    const named = [...server.matchAll(/return notImplemented\('([^']+)'/g)].map(m => m[1]).sort();
+    expect(named).toEqual([...STILL_STUBBED].sort());
+  });
+
+  it('explore_concept_map reads the pod instead of answering with an empty graph', () => {
+    // The one this increment closed — pinned by name so a revert to the stub is
+    // reported as itself and not as "a count changed".
+    const idx = server.indexOf(`'foxxi.explore_concept_map': async`);
+    expect(idx).toBeGreaterThan(-1);
+    // Bounded by the NEXT handler key, not by a character count: a fixed window silently
+    // slid off the end of this body when the handler grew a comment, so the assertion
+    // failed for a reason that had nothing to do with the behaviour it guards.
+    const after = server.indexOf(`\n  'foxxi.`, idx + 1);
+    expect(after, 'could not find the end of the handler').toBeGreaterThan(idx);
+    const body = server.slice(idx, after);
+    expect(body).toMatch(/autoFetchCourse\(/);
+    expect(body).toMatch(/buildConceptNavGraph\(/);
+    expect(body, 'it must not have gone back to notImplemented').not.toMatch(/notImplemented\(/);
   });
 
   it('the helper produces an error a caller can branch on', () => {

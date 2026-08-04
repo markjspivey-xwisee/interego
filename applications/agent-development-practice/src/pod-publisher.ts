@@ -58,6 +58,41 @@ export interface DefineCapabilityResult {
   readonly graphUrl: string;
 }
 
+/**
+ * The capability's graph payload, as a pure function of its inputs.
+ *
+ * ★ WHY EVERY `build*Graph` IN THIS FILE IS EXTRACTED AND EXPORTED. publish() takes
+ * this string as an opaque HTTP body, so nothing offline could ever see it, and the
+ * only read-back — tests/tier8-real-pod-end-to-end.test.ts — gates every assertion
+ * on a live Azure CSS that is now paused, so it ctx.skip()s instead of failing.
+ * Under that blind spot `adp:timeBound` and `adp:nextRevisitAt` shipped as plain
+ * xsd:string literals against the `rdfs:range xsd:dateTime` adp.ttl declares for
+ * both — on every probe and evolution step ever written to a pod. `rdfs:range` is
+ * an entailment, not a constraint, so no processor rejected them. Exported so
+ * tests/graph-content-conforms.test.ts runs the REAL payload through the REAL SHACL
+ * engine with no network.
+ */
+export function buildCapabilityGraph(capIri: IRI, capId: string, args: DefineCapabilityArgs): string {
+  const rubricTriples = args.rubricCriteria.map((rc, i) => {
+    const rcIri = `urn:iep:rubric:${capId}:${i}`;
+    const desc = rc.description ? ` ; rdfs:comment "${escapeLit(rc.description)}"` : '';
+    return `<${rcIri}> a adp:RubricCriterion ; rdfs:label "${escapeLit(rc.name)}"${desc} .`;
+  }).join('\n');
+
+  return `@prefix adp:  <${ADP_NS}> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+<${capIri}> a adp:Capability ;
+    rdfs:label "${escapeLit(args.name)}" ;
+    ${args.description ? `rdfs:comment "${escapeLit(args.description)}" ;` : ''}
+    adp:cynefinDomain adp:${args.cynefinDomain} ;
+    ${args.rubricCriteria.map((_, i) => `adp:rubricCriterion <urn:iep:rubric:${capId}:${i}>`).join(' ;\n    ')} .
+
+${rubricTriples}
+`;
+}
+
 export async function defineCapability(args: DefineCapabilityArgs, config: PublishConfig): Promise<DefineCapabilityResult> {
   if (!args.name.trim()) throw new Error('capability name is empty');
   if (args.rubricCriteria.length === 0) throw new Error('capability must declare at least one rubric criterion');
@@ -74,24 +109,7 @@ export async function defineCapability(args: DefineCapabilityArgs, config: Publi
     .selfAsserted(config.operatorDid)
     .build();
 
-  const rubricTriples = args.rubricCriteria.map((rc, i) => {
-    const rcIri = `urn:iep:rubric:${capId}:${i}`;
-    const desc = rc.description ? ` ; rdfs:comment "${escapeLit(rc.description)}"` : '';
-    return `<${rcIri}> a adp:RubricCriterion ; rdfs:label "${escapeLit(rc.name)}"${desc} .`;
-  }).join('\n');
-
-  const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-
-<${capIri}> a adp:Capability ;
-    rdfs:label "${escapeLit(args.name)}" ;
-    ${args.description ? `rdfs:comment "${escapeLit(args.description)}" ;` : ''}
-    adp:cynefinDomain adp:${args.cynefinDomain} ;
-    ${args.rubricCriteria.map((_, i) => `adp:rubricCriterion <urn:iep:rubric:${capId}:${i}>`).join(' ;\n    ')} .
-
-${rubricTriples}
-`;
+  const graphContent = buildCapabilityGraph(capIri, capId, args);
 
   const result = await publish(desc, graphContent, config.podUrl);
   return { capabilityIri: capIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };
@@ -114,6 +132,25 @@ export interface RecordProbeResult {
   readonly graphUrl: string;
 }
 
+/** The probe's graph payload. See buildCapabilityGraph for why this is extracted —
+ *  and note the `^^xsd:dateTime` on adp:timeBound: it was a bare string until the
+ *  shape started checking it. */
+export function buildProbeGraph(probeIri: IRI, validUntil: string, args: RecordProbeArgs): string {
+  return `@prefix adp:  <${ADP_NS}> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<${probeIri}> a adp:Probe ;
+    adp:variant "${escapeLit(args.variant)}" ;
+    adp:hypothesis """${escapeMulti(args.hypothesis)}""" ;
+    adp:amplificationTrigger """${escapeMulti(args.amplificationTrigger)}""" ;
+    adp:dampeningTrigger """${escapeMulti(args.dampeningTrigger)}""" ;
+    adp:timeBound "${validUntil}"^^xsd:dateTime ;
+    adp:capability <${args.capabilityIri}> ;
+    iep:modalStatus iep:Hypothetical .
+`;
+}
+
 export async function recordProbe(args: RecordProbeArgs, config: PublishConfig): Promise<RecordProbeResult> {
   if (!args.hypothesis.trim()) throw new Error('probe hypothesis is empty');
   if (!args.amplificationTrigger.trim() || !args.dampeningTrigger.trim()) {
@@ -133,18 +170,7 @@ export async function recordProbe(args: RecordProbeArgs, config: PublishConfig):
     .selfAsserted(config.operatorDid)
     .build();
 
-  const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
-
-<${probeIri}> a adp:Probe ;
-    adp:variant "${escapeLit(args.variant)}" ;
-    adp:hypothesis """${escapeMulti(args.hypothesis)}""" ;
-    adp:amplificationTrigger """${escapeMulti(args.amplificationTrigger)}""" ;
-    adp:dampeningTrigger """${escapeMulti(args.dampeningTrigger)}""" ;
-    adp:timeBound "${validUntil}" ;
-    adp:capability <${args.capabilityIri}> ;
-    iep:modalStatus iep:Hypothetical .
-`;
+  const graphContent = buildProbeGraph(probeIri, validUntil, args);
 
   const result = await publish(desc, graphContent, config.podUrl);
   return { probeIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };
@@ -165,6 +191,22 @@ export interface RecordNarrativeFragmentResult {
   readonly graphUrl: string;
 }
 
+/** The narrative fragment's graph payload. See buildCapabilityGraph for why extracted. */
+export function buildNarrativeFragmentGraph(fragIri: IRI, args: RecordNarrativeFragmentArgs): string {
+  const sigTriples = args.contextSignifiers.map(s => `adp:contextSignifier "${escapeLit(s)}"`).join(' ;\n    ');
+
+  return `@prefix adp:  <${ADP_NS}> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+<${fragIri}> a adp:NarrativeFragment ;
+    adp:probe <${args.probeIri}> ;
+    ${sigTriples} ;
+    adp:response """${escapeMulti(args.response)}""" ;
+    adp:emergentSignifier "${escapeLit(args.emergentSignifier)}" ;
+    iep:modalStatus iep:Hypothetical .
+`;
+}
+
 export async function recordNarrativeFragment(args: RecordNarrativeFragmentArgs, config: PublishConfig): Promise<RecordNarrativeFragmentResult> {
   if (args.contextSignifiers.length === 0) throw new Error('narrative fragment must carry at least one context signifier');
   if (!args.response.trim() || !args.emergentSignifier.trim()) throw new Error('narrative fragment requires response + emergent signifier');
@@ -181,18 +223,7 @@ export async function recordNarrativeFragment(args: RecordNarrativeFragmentArgs,
     .selfAsserted(config.operatorDid)
     .build();
 
-  const sigTriples = args.contextSignifiers.map(s => `adp:contextSignifier "${escapeLit(s)}"`).join(' ;\n    ');
-
-  const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
-
-<${fragIri}> a adp:NarrativeFragment ;
-    adp:probe <${args.probeIri}> ;
-    ${sigTriples} ;
-    adp:response """${escapeMulti(args.response)}""" ;
-    adp:emergentSignifier "${escapeLit(args.emergentSignifier)}" ;
-    iep:modalStatus iep:Hypothetical .
-`;
+  const graphContent = buildNarrativeFragmentGraph(fragIri, args);
 
   const result = await publish(desc, graphContent, config.podUrl);
   return { fragmentIri: fragIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };
@@ -214,6 +245,23 @@ export interface EmergeSynthesisResult {
   readonly graphUrl: string;
 }
 
+/** The synthesis's graph payload. See buildCapabilityGraph for why extracted. */
+export function buildSynthesisGraph(synthIri: IRI, args: EmergeSynthesisArgs): string {
+  const fragsTriples = args.fragmentIris.map(f => `adp:fragmentsConsidered <${f}>`).join(' ;\n    ');
+  const narrTriples = args.coherentNarratives.map(n => `adp:coherentNarrative """${escapeMulti(n)}"""`).join(' ;\n    ');
+
+  return `@prefix adp:  <${ADP_NS}> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+<${synthIri}> a adp:Synthesis ;
+    adp:probe <${args.probeIri}> ;
+    ${fragsTriples} ;
+    adp:emergentPattern """${escapeMulti(args.emergentPattern)}""" ;
+    ${narrTriples} ;
+    iep:modalStatus iep:Hypothetical .
+`;
+}
+
 export async function emergeSynthesis(args: EmergeSynthesisArgs, config: PublishConfig): Promise<EmergeSynthesisResult> {
   if (args.fragmentIris.length === 0) throw new Error('synthesis must reference at least one fragment');
   if (args.coherentNarratives.length < 2) {
@@ -232,19 +280,7 @@ export async function emergeSynthesis(args: EmergeSynthesisArgs, config: Publish
     .selfAsserted(config.operatorDid)
     .build();
 
-  const fragsTriples = args.fragmentIris.map(f => `adp:fragmentsConsidered <${f}>`).join(' ;\n    ');
-  const narrTriples = args.coherentNarratives.map(n => `adp:coherentNarrative """${escapeMulti(n)}"""`).join(' ;\n    ');
-
-  const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
-
-<${synthIri}> a adp:Synthesis ;
-    adp:probe <${args.probeIri}> ;
-    ${fragsTriples} ;
-    adp:emergentPattern """${escapeMulti(args.emergentPattern)}""" ;
-    ${narrTriples} ;
-    iep:modalStatus iep:Hypothetical .
-`;
+  const graphContent = buildSynthesisGraph(synthIri, args);
 
   const result = await publish(desc, graphContent, config.podUrl);
   return { synthesisIri: synthIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };
@@ -265,6 +301,27 @@ export interface RecordEvolutionStepResult {
   readonly evolutionIri: IRI;
   readonly descriptorUrl: string;
   readonly graphUrl: string;
+}
+
+/** The evolution step's graph payload. See buildCapabilityGraph for why this is
+ *  extracted — and note the `^^xsd:dateTime` on adp:nextRevisitAt, the second of the
+ *  two range violations the blind spot was hiding. */
+export function buildEvolutionStepGraph(evoIri: IRI, nextRevisitAt: string, args: RecordEvolutionStepArgs): string {
+  const ampTriples = args.amplifyProbeIris.map(p => `adp:amplifyProbe <${p}>`).join(' ;\n    ');
+  const dampTriples = args.dampenProbeIris.map(p => `adp:dampenProbe <${p}>`).join(' ;\n    ');
+
+  return `@prefix adp:  <${ADP_NS}> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<${evoIri}> a adp:EvolutionStep ;
+    adp:basedOnSynthesis <${args.synthesisIri}> ;
+    ${ampTriples ? `${ampTriples} ;` : ''}
+    ${dampTriples ? `${dampTriples} ;` : ''}
+    adp:nextRevisitAt "${nextRevisitAt}"^^xsd:dateTime ;
+    adp:explicitDecisionNotMade """${escapeMulti(args.explicitDecisionNotMade)}""" ;
+    iep:modalStatus iep:Asserted .
+`;
 }
 
 export async function recordEvolutionStep(args: RecordEvolutionStepArgs, config: PublishConfig): Promise<RecordEvolutionStepResult> {
@@ -288,20 +345,7 @@ export async function recordEvolutionStep(args: RecordEvolutionStepArgs, config:
     .selfAsserted(config.operatorDid)
     .build();
 
-  const ampTriples = args.amplifyProbeIris.map(p => `adp:amplifyProbe <${p}>`).join(' ;\n    ');
-  const dampTriples = args.dampenProbeIris.map(p => `adp:dampenProbe <${p}>`).join(' ;\n    ');
-
-  const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
-
-<${evoIri}> a adp:EvolutionStep ;
-    adp:basedOnSynthesis <${args.synthesisIri}> ;
-    ${ampTriples ? `${ampTriples} ;` : ''}
-    ${dampTriples ? `${dampTriples} ;` : ''}
-    adp:nextRevisitAt "${nextRevisitAt}" ;
-    adp:explicitDecisionNotMade """${escapeMulti(args.explicitDecisionNotMade)}""" ;
-    iep:modalStatus iep:Asserted .
-`;
+  const graphContent = buildEvolutionStepGraph(evoIri, nextRevisitAt, args);
 
   const result = await publish(desc, graphContent, config.podUrl);
   return { evolutionIri: evoIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };
@@ -321,6 +365,24 @@ export interface RefineConstraintResult {
   readonly constraintIri: IRI;
   readonly descriptorUrl: string;
   readonly graphUrl: string;
+}
+
+/** The constraint's graph payload. See buildCapabilityGraph for why extracted. */
+export function buildConstraintGraph(cIri: IRI, args: RefineConstraintArgs): string {
+  const emergedTriples = args.emergedFromSynthesisIris.map(s => `adp:emergedFrom <${s}>`).join(' ;\n    ');
+  const supersedesTriple = args.supersedes ? `iep:supersedes <${args.supersedes}> ;` : '';
+
+  return `@prefix adp:  <${ADP_NS}> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+<${cIri}> a adp:Constraint ;
+    adp:appliesTo <${args.capabilityIri}> ;
+    adp:boundary """${escapeMulti(args.boundary)}""" ;
+    adp:exitsConstraint """${escapeMulti(args.exitsConstraint)}""" ;
+    ${emergedTriples} ;
+    ${supersedesTriple}
+    iep:modalStatus iep:Asserted .
+`;
 }
 
 export async function refineConstraint(args: RefineConstraintArgs, config: PublishConfig): Promise<RefineConstraintResult> {
@@ -343,20 +405,7 @@ export async function refineConstraint(args: RefineConstraintArgs, config: Publi
     .selfAsserted(config.operatorDid)
     .build();
 
-  const emergedTriples = args.emergedFromSynthesisIris.map(s => `adp:emergedFrom <${s}>`).join(' ;\n    ');
-  const supersedesTriple = args.supersedes ? `iep:supersedes <${args.supersedes}> ;` : '';
-
-  const graphContent = `@prefix adp:  <${ADP_NS}> .
-@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
-
-<${cIri}> a adp:Constraint ;
-    adp:appliesTo <${args.capabilityIri}> ;
-    adp:boundary """${escapeMulti(args.boundary)}""" ;
-    adp:exitsConstraint """${escapeMulti(args.exitsConstraint)}""" ;
-    ${emergedTriples} ;
-    ${supersedesTriple}
-    iep:modalStatus iep:Asserted .
-`;
+  const graphContent = buildConstraintGraph(cIri, args);
 
   const result = await publish(desc, graphContent, config.podUrl);
   return { constraintIri: cIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };
@@ -379,6 +428,25 @@ export interface RecognizeCapabilityEvolutionResult {
   readonly graphUrl: string;
 }
 
+/** The capability-evolution event's graph payload. See buildCapabilityGraph for why extracted. */
+export function buildCapabilityEvolutionGraph(ceIri: IRI, args: RecognizeCapabilityEvolutionArgs): string {
+  const emergedTriples = args.emergedFromIris.map(i => `adp:emergedFrom <${i}>`).join(' ;\n    ');
+
+  return `@prefix adp:      <${ADP_NS}> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix passport: <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
+@prefix olke:     <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
+
+<${ceIri}> a adp:CapabilityEvolution , passport:LifeEvent ;
+    adp:capability <${args.capabilityIri}> ;
+    adp:evolutionType adp:${args.evolutionType} ;
+    ${emergedTriples} ;
+    adp:olkeStage olke:${args.olkeStage} ;
+    adp:explicitDecisionNotMade """${escapeMulti(args.explicitDecisionNotMade)}""" ;
+    iep:modalStatus iep:Asserted .
+`;
+}
+
 export async function recognizeCapabilityEvolution(args: RecognizeCapabilityEvolutionArgs, config: PublishConfig): Promise<RecognizeCapabilityEvolutionResult> {
   if (!args.explicitDecisionNotMade.trim()) {
     throw new Error('capability evolution REFUSED: explicitDecisionNotMade is required (biographical record carries humility forward)');
@@ -396,21 +464,7 @@ export async function recognizeCapabilityEvolution(args: RecognizeCapabilityEvol
     .selfAsserted(config.operatorDid)
     .build();
 
-  const emergedTriples = args.emergedFromIris.map(i => `adp:emergedFrom <${i}>`).join(' ;\n    ');
-
-  const graphContent = `@prefix adp:      <${ADP_NS}> .
-@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
-@prefix passport: <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
-@prefix olke:     <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
-
-<${ceIri}> a adp:CapabilityEvolution , passport:LifeEvent ;
-    adp:capability <${args.capabilityIri}> ;
-    adp:evolutionType adp:${args.evolutionType} ;
-    ${emergedTriples} ;
-    adp:olkeStage olke:${args.olkeStage} ;
-    adp:explicitDecisionNotMade """${escapeMulti(args.explicitDecisionNotMade)}""" ;
-    iep:modalStatus iep:Asserted .
-`;
+  const graphContent = buildCapabilityEvolutionGraph(ceIri, args);
 
   const result = await publish(desc, graphContent, config.podUrl);
   return { capabilityEvolutionIri: ceIri, descriptorUrl: result.descriptorUrl, graphUrl: result.graphUrl };

@@ -169,6 +169,16 @@ describe('Tier 0 — library-only (no daemon, no pod, no network)', () => {
     expect(u.facets.map(f => f.type).sort()).toEqual(['Temporal', 'Trust', 'Trust']);
     const i = intersection(a, b);
     expect(i.facets.map(f => f.type)).toEqual(['Temporal']);
+    // ...and the surviving Temporal facet is the MEET, not either operand and not the join.
+    // Asserting only the TYPE left the values unchecked: intersect-range takes the LATER
+    // validFrom ([Jan 1, ∞) ∧ [Feb 1, ∞) = [Feb 1, ∞)), while the join — and union, measured
+    // — yields Jan 1. Without this line the type list alone passes for a meet that returned
+    // the join's bound, i.e. for a composition that widened where it should narrow, breaking
+    // the `d1 ∧ d2 ≤ d1` property composition.ts relies on. `toEqual` on the whole facet
+    // rather than `i.facets[0].validFrom` because ContextFacetData is a discriminated union
+    // and the indexed read would not narrow under the typecheck gate.
+    expect(i.facets).toEqual([{ type: 'Temporal', validFrom: '2026-02-01T00:00:00Z' }]);
+    expect(i.describes).toEqual(['urn:graph:shared']);
   });
 });
 

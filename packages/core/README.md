@@ -14,19 +14,31 @@ of the system:
   is slated for extraction into `@interego/affordance-engine` once the
   remaining cross-cuts with `pgsl` are decoupled.
 - **`rdf/`** — Turtle / TriG / JSON-LD serialization, RDF 1.2 helpers,
-  TriG parser, system ontology + virtualized RDF layer.
+  TriG parser, system ontology. (The virtualized RDF layer is NOT
+  here — it moved out with `@interego/pgsl`.)
 - **`validation/`** — Shape conformance / SHACL primitives.
 - **`sparql/`** — Standards-compliant SPARQL pattern builders.
 - **`crypto/`** — Abstract signing + verification + ZK primitives;
   ethers/nacl-backed wallet impls live here for now and will move
   to `@interego/crypto-impls` when the abstract surface is finalized.
-- **`naming/`** — Naming conventions (L2 attestation-based naming).
-- **`solid/`** + **`pgsl/`** — Both currently ship from core because
-  the kernel composes against them and `rdf/system-ontology` +
-  `rdf/virtualized-layer` reverse-import PGSL. Splitting them into
-  `@interego/solid` and `@interego/pgsl` requires lifting those
-  back-references into injection points — a follow-up restructure
-  documented in `docs/ARCHITECTURAL-FOUNDATIONS.md §12`.
+- **`lattice/`** — The pluggable lattice-adapter seam. `@interego/pgsl`
+  registers itself here at module load; core ships a pure-hash
+  fallback and mints without it.
+- **`http/`** — Substrate fetch + retry transport.
+- **`manifest/`** — Manifest types + assembly.
+- **`mcp/`** — MCP HTTP mount + output-schema helpers.
+
+`solid/`, `pgsl/` and `naming/` are NOT in core. They were extracted
+into `@interego/solid` and `@interego/pgsl` (`naming.ts` went with
+Solid), and this list said the opposite for every commit afterwards —
+that they "currently ship from core" and that splitting them "requires
+lifting back-references into injection points", work the extraction had
+already done. The back-references it named are gone:
+`rdf/virtualized-layer` now lives inside `@interego/pgsl`, and
+`rdf/system-ontology` imports only `./namespaces.js`. Core reaches both
+packages through injection points and never by static import —
+`kernel/index.ts` resolves `@interego/solid` via a dynamic import, and
+`lattice/adapter.ts` is the PGSL registration seam.
 
 Per-vertical *compositions* of these primitives live in sibling
 `@interego/*` packages.

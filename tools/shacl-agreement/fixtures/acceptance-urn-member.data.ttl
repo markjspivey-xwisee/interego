@@ -1,5 +1,6 @@
 # shape: wsp-shapes.ttl
 # expect: violates
+# pins: wsp:member
 # why: sh:pattern "^https?://|^did:" on wsp:member. A urn: member is an acceptance attributed to a party the other organisation cannot resolve, which is the same failure the file's header calls out for every other principal. It is also the case that only a second engine can check, because sh:pattern against an IRI is the constraint our engine used to skip.
 
 @prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .

@@ -84,7 +84,8 @@ import {
 } from './stream.js';
 import type {
   Attestation, Grant, Acceptance, Principal, WorkspaceRecord, ConvenerEvidence,
-  RoleDefinition, RoleProfileDocument, RoleTableEvidence,
+  RoleDefinition, RoleTableEvidence,
+  RoleProfileDocument as RoleProfileDocumentValue,
   FieldProvenance as FieldProvenanceValue,
   EvidenceProvenance as EvidenceProvenanceValue,
 } from './roster.js';
@@ -511,6 +512,42 @@ export interface MembershipRead<T> {
 }
 
 /**
+ * What the two MEMBERSHIP readers return: a {@link MembershipRead} plus the rows that
+ * survive a refusal.
+ *
+ * ★ WHY A SECOND FIELD AND NOT A SECOND `record`. `Grant.grantedTo` and `Acceptance.member`
+ * hold ONE principal, and the fold's restricting track groups on exactly that field
+ * (`groupBy(inWorkspaceGrants, g => g.grantedTo)`). A record carrying two `wsp:grantedTo`
+ * has no representation as one row, so the reader's only lossless option under that type was
+ * to return nothing — and it did, taking a `wsp:revoked true` sitting on the same record down
+ * with it. Measured before this field existed: a revocation with a second `wsp:grantedTo`
+ * left `members: 1` where its one-grantee twin left `members: 0`, with `unattested: []` AND
+ * `divergences: []`, so the roster carried no trace of the dropped revocation at all.
+ *
+ * Required rather than optional so that a reader which grows a new bail-out has to decide
+ * what happens to its restricting content instead of inheriting `undefined`.
+ */
+export interface MembershipRecordRead<T> extends MembershipRead<T> {
+  /**
+   * Rows that RESTRICT and can never confer. Empty on a clean read (the restriction rides on
+   * `record`) and empty wherever there was no subject to read one off.
+   */
+  readonly restrictions: readonly T[];
+}
+
+/**
+ * Every row of a membership read that belongs in a fold — the record and its restrictions.
+ *
+ * ★ USE THIS AND NOT `.record`. A call site that folds `read.record` alone silently re-opens
+ * the defect `restrictions` exists to close, and no type can stop it: `record` is still a
+ * perfectly good `Grant | null`. This is the shortest correct spelling, so that the correct
+ * one is also the convenient one.
+ */
+export function membershipRowsOf<T>(read: MembershipRecordRead<T>): readonly T[] {
+  return read.record === null ? read.restrictions : [read.record, ...read.restrictions];
+}
+
+/**
  * Where a record's fields came from.
  *
  * Re-exported shape rather than a boolean, because "these fields were parsed" and "parsed
@@ -675,6 +712,36 @@ function oneIri(subject: ParsedSubject, predicate: IriValuedTerm, label: string)
     ) };
   }
   return { iri };
+}
+
+/**
+ * Every principal a record names, for the RESTRICTING track only.
+ *
+ * ★ NOT A RELAXATION OF {@link oneIri}. That refusal is right and stays: a record naming two
+ * grantees does not name a grantee, and picking one would make the membership depend on
+ * statement order. This function is asked a different question — not "who does this grant
+ * to", which the record does not answer, but "who does this take something away from", which
+ * it answers about all of them at once.
+ *
+ * Restricting ALL of them is the direction `safeBoolean` already chose for an unreadable
+ * flag and the direction the fold already chose for a revocation on a refused head: a
+ * wrongly-removed member complains within the hour, and a wrongly-retained one is why the
+ * revocation was written. It is safe in a way picking one is not, because it never has to
+ * guess which principal was meant.
+ *
+ * The published pattern is applied here exactly as in `oneIri`: a value the publish gate
+ * refuses can never be a principal any grant conferred on, so admitting it as a removal
+ * target would only add a row that removes nobody. Sorted and de-duplicated so the rows do
+ * not depend on statement order either — the property `oneIri` refuses to give up, kept on
+ * this side too.
+ */
+function restrictionPrincipals(subject: ParsedSubject, predicate: IriValuedTerm): readonly string[] {
+  const pattern = PUBLISHED_IRI_PATTERN[predicate];
+  const iris = termsOf(subject, predicate)
+    .filter((t): t is Extract<ParsedTerm, { kind: 'iri' }> => t.kind === 'iri')
+    .map(t => t.iri)
+    .filter(iri => pattern === null || new RegExp(pattern).test(iri));
+  return [...new Set(iris)].sort();
 }
 
 /**
@@ -1178,6 +1245,51 @@ function dereferencedFrom(dereferenced: string, resolvedTo: string): EvidencePro
 }
 
 /**
+ * ★★ THE TWO PLACES A {@link RoleProfileDocumentValue} COMES INTO EXISTENCE IN THIS REPOSITORY —
+ * the third brand's siblings of {@link parsedFromPayload} and {@link dereferencedFrom}.
+ *
+ * ★ TWO MINTS AND NOT ONE, AND `authority` IS A PARAMETER OF NEITHER. A single helper taking the
+ * label would be precisely the producer {@link dereferencedFrom} refused to be: one that can be
+ * pointed at either claim, and therefore at the wrong one. Split this way, the two documents
+ * `refuseRoleTableAuthority` refuses as SELF-CONTRADICTIONS become unwritable here — the
+ * transport-only mint has nowhere to put an attestation, and the signed-record mint cannot omit
+ * one.
+ *
+ * ★ AND BOTH OF THOSE RUNTIME BRANCHES STAY. This file is not the only way a document reaches
+ * the fold: `RoleTableEvidence` is exported through `can.ts` for federated composers, and a
+ * value that arrived as JSON arrives as `any`. Deleting the contradiction checks in
+ * `refuseRoleTableAuthority` because the producer "cannot" write one is how the guard comes off.
+ */
+function transportOnlyProfile(
+  head: string,
+  dereferenced: string,
+  roles: readonly RoleDefinition[],
+): RoleProfileDocumentValue {
+  // See `parsedFromPayload` for why the assertion is spelled the long way.
+  return { head, dereferenced, roles, authority: 'transport-only' } as unknown as RoleProfileDocumentValue;
+}
+
+/**
+ * The signed half. See {@link transportOnlyProfile}.
+ *
+ * ★ `authority: 'signed-record'` IS SET HERE AND NOWHERE ELSE, so the label cannot be attached to
+ * bytes that did not come through `payloadOf` — moved here verbatim from the call site, because
+ * a claim that is the only field on the document whose VALUE SELECTS A CHECK belongs beside the
+ * assertion that manufactures it. `refuseRoleTableAuthority` reads it to decide whether to run
+ * the authorship branch at all. The attestation is REQUIRED rather than optional for the same
+ * reason: a producer that could stamp the label onto a plain fetch would be claiming a signature
+ * nobody made.
+ */
+function signedRecordProfile(
+  head: string,
+  dereferenced: string,
+  roles: readonly RoleDefinition[],
+  attestation: Attestation,
+): RoleProfileDocumentValue {
+  return { head, dereferenced, roles, authority: 'signed-record', attestation } as unknown as RoleProfileDocumentValue;
+}
+
+/**
  * Read a `wsp:RoleProfile` back off a POD and parse its role table from the digested region.
  *
  * The signed half of {@link dereferenceRoleProfile}, and the same treatment the other three
@@ -1196,7 +1308,7 @@ async function readRoleProfileRecord(
   descriptorUrl: string,
   dereferenced: string,
   deps: StreamDeps,
-): Promise<MembershipRead<RoleProfileDocument>> {
+): Promise<MembershipRead<RoleProfileDocumentValue>> {
   const got = await fetchDescriptor(descriptorUrl, deps);
   if ('why' in got) {
     return { record: null, problems: [got.why], attestation: got.attestation };
@@ -1209,18 +1321,10 @@ async function readRoleProfileRecord(
   if ('why' in table) return { record: null, problems: [table.why], attestation };
 
   return {
-    record: {
-      head: descriptorUrl,
-      dereferenced,
-      roles: table.roles,
-      // ★ SET HERE AND NOWHERE ELSE, so the label cannot be attached to bytes that did not come
-      // through `payloadOf`. `refuseRoleTableAuthority` reads it to decide whether to run the
-      // authorship branch at all, which makes it the one field on this document whose value
-      // selects a check — and a producer that could stamp it onto a plain fetch would be
-      // claiming a signature nobody made.
-      authority: 'signed-record',
-      attestation,
-    },
+    // The four values that came out of this read, handed to the one mint that can call a
+    // document a signed record — see `signedRecordProfile`, which now carries the ★ that used
+    // to live on the `authority` line here.
+    record: signedRecordProfile(descriptorUrl, dereferenced, table.roles, attestation),
     // No `problems` half-record here, unlike the two membership readers: a role profile has no
     // restricting field to preserve. Every failure above returned null, so anything reaching
     // this line parsed completely.
@@ -1440,19 +1544,14 @@ export async function dereferenceRoleProfile(
   }
   return {
     kind: 'declared',
-    document: {
-      // The url the TABLE's bytes came from, so an operator following this field opens what
-      // this fold compared against rather than the name it was asked for. The two differ on any
-      // same-origin redirect and on every followed `rel=alternate` — which, against the
-      // deployed artifact, is every read: the declared IRI serves the human-readable page.
-      head: followed.representation.url,
-      dereferenced: profileIri,
-      roles: table.roles,
-      // ★ NEVER `'signed-record'` ON THIS PATH, and the value is written rather than defaulted:
-      // a plain GET returns no proof, so there is nothing an attestation could be built from,
-      // and `refuseRoleTableAuthority` refuses a `'transport-only'` document that carries one.
-      authority: 'transport-only',
-    },
+    // ★ NEVER `'signed-record'` ON THIS PATH, and it is now UNWRITABLE rather than merely not
+    // written: `transportOnlyProfile` hard-codes the label and takes no attestation parameter, so
+    // a plain GET — which returns no proof — has nothing it could claim. The first argument is
+    // the url the TABLE's bytes came from, so an operator following `head` opens what this fold
+    // compared against rather than the name it was asked for; the two differ on any same-origin
+    // redirect and on every followed `rel=alternate`, which against the deployed artifact is
+    // every read, since the declared IRI serves the human-readable page.
+    document: transportOnlyProfile(followed.representation.url, profileIri, table.roles),
   };
 }
 
@@ -1466,25 +1565,26 @@ export async function dereferenceRoleProfile(
 export async function readGrantRecord(
   descriptorUrl: string,
   deps: StreamDeps,
-): Promise<MembershipRead<Grant>> {
+): Promise<MembershipRecordRead<Grant>> {
   const got = await fetchDescriptor(descriptorUrl, deps);
   if ('why' in got) {
-    return { record: null, problems: [got.why], attestation: got.attestation };
+    // No subject was ever parsed here, so there is no restriction to salvage either.
+    return { record: null, problems: [got.why], attestation: got.attestation, restrictions: [] };
   }
   const { res, attestation } = got;
   const problems: string[] = [];
 
   const payload = payloadOf(res);
-  if ('why' in payload) return { record: null, problems: [payload.why], attestation };
+  if ('why' in payload) return { record: null, problems: [payload.why], attestation, restrictions: [] };
   const found = oneSubjectOfType(payload.content, WSP_TERMS.MembershipGrant, 'a membership grant');
-  if ('why' in found) return { record: null, problems: [found.why], attestation };
+  if ('why' in found) return { record: null, problems: [found.why], attestation, restrictions: [] };
   const subject = found.subject;
 
   if (subjectIriOf(subject) === null) {
     return { record: null, problems: [problem(
       'the grant is a blank node, so it has no identity an acceptance could name. The two '
       + 'halves are linked by the grant\'s own URL, and a record with no URL cannot be one half',
-    )], attestation };
+    )], attestation, restrictions: [] };
   }
 
   const workspace = oneIri(subject, WSP_TERMS.workspace, 'which workspace it belongs to');
@@ -1498,9 +1598,39 @@ export async function readGrantRecord(
     if ('why' in r) problems.push(`wsp:${field}: ${r.why}`);
   }
   if ('why' in workspace || 'why' in grantedTo) {
-    // Without a workspace the fold cannot tell whether this record is even ours, and without
-    // a grantee a revocation has nobody to apply to. Either way there is no row to build.
-    return { record: null, problems, attestation };
+    // Without a workspace the fold cannot tell whether this record is even ours, so there is
+    // no row to build at all. Without a grantee there is no row that CONFERS — but there may
+    // still be rows that RESTRICT, and returning nothing used to drop those too.
+    //
+    // ★ THE MEASUREMENT. A revocation carrying a second `wsp:grantedTo` returned here and
+    // vanished: the member survived it (`members: 1` against the one-grantee twin's 0), and
+    // `unattested` and `divergences` were BOTH EMPTY — so `restrictionStillApplied` had no
+    // row to sit on and nothing an operator reads said a revocation had been dropped.
+    //
+    // ★ ONE ROW PER NAMED PRINCIPAL, AND ONLY WHERE THE RECORD RESTRICTS. Every row carries
+    // `revoked: true`, and the fold `continue`s a revoked principal before it can become a
+    // member or raise an invitation — so these rows can only ever REMOVE, under every policy
+    // including the one with no attestation at all. Emitting them for a record that does not
+    // revoke would MANUFACTURE A PARTICIPANT: measured, a two-grantee grant with no
+    // `wsp:revoked` admitted the second grantee as a member with an empty role the moment she
+    // wrote her own acceptance naming this head.
+    const restrictions = 'why' in workspace || revoked !== true ? [] :
+      restrictionPrincipals(subject, WSP_TERMS.grantedTo).map((principal): Grant => ({
+        head: descriptorUrl,
+        workspace: workspace.iri,
+        grantedTo: principal,
+        // Never a declared role, so `permitsOf` misses and no capability can come from here.
+        role: '',
+        revoked: true,
+        attestation,
+        // ★ AND NO `fieldProvenance`, DELIBERATELY. These fields were not parsed off a record
+        // that states them — the record states several. Without it `requireFieldBinding`
+        // refuses the row for the conferring track and pushes it onto `unattested` with
+        // `restrictionStillApplied: true`, which is the line that tells an operator the
+        // record was refused AND still removed. With a provenance the removal is silent,
+        // which is this defect one step over.
+      }));
+    return { record: null, problems, attestation, restrictions };
   }
 
   return {
@@ -1529,6 +1659,9 @@ export async function readGrantRecord(
     },
     problems,
     attestation,
+    // The restriction, if any, rides on `record` — which is where it belongs when the record
+    // says who it applies to.
+    restrictions: [],
   };
 }
 
@@ -1569,18 +1702,19 @@ export async function readGrantRecord(
 export async function readAcceptanceRecord(
   descriptorUrl: string,
   deps: StreamDeps,
-): Promise<MembershipRead<Acceptance>> {
+): Promise<MembershipRecordRead<Acceptance>> {
   const got = await fetchDescriptor(descriptorUrl, deps);
   if ('why' in got) {
-    return { record: null, problems: [got.why], attestation: got.attestation };
+    // No subject was ever parsed here, so there is no restriction to salvage either.
+    return { record: null, problems: [got.why], attestation: got.attestation, restrictions: [] };
   }
   const { res, attestation } = got;
   const problems: string[] = [];
 
   const payload = payloadOf(res);
-  if ('why' in payload) return { record: null, problems: [payload.why], attestation };
+  if ('why' in payload) return { record: null, problems: [payload.why], attestation, restrictions: [] };
   const found = oneSubjectOfType(payload.content, WSP_TERMS.MembershipAcceptance, 'a membership acceptance');
-  if ('why' in found) return { record: null, problems: [found.why], attestation };
+  if ('why' in found) return { record: null, problems: [found.why], attestation, restrictions: [] };
   const subject = found.subject;
 
   const workspace = oneIri(subject, WSP_TERMS.workspace, 'which workspace it belongs to');
@@ -1600,7 +1734,27 @@ export async function readAcceptanceRecord(
     // No workspace, no member or no grant answered means there is no half of a membership
     // here — not a damaged one, an absent one. A withdrawal that names nobody withdraws
     // nothing, and inventing a subject for it would be worse than reporting it lost.
-    return { record: null, problems, attestation };
+    //
+    // ★ BUT A WITHDRAWAL THAT NAMES SEVERAL MEMBERS NAMES THEM ALL, and dropping it was the
+    // grant side's defect wearing the other hat: measured, an acceptance carrying two
+    // `wsp:member` and `wsp:withdrawn true` left the member in the roster where its
+    // one-member twin removed her. `wsp:workspace` and `wsp:accepts` must still be single —
+    // they are how the fold ROUTES the row (`groupBy(inWorkspaceAcceptances, a => a.accepts)`),
+    // and a row that does not say which grant it answers cannot be routed anywhere. Only
+    // `wsp:member` is fanned out.
+    const restrictions = 'why' in workspace || 'why' in accepts || withdrawn !== true ? [] :
+      restrictionPrincipals(subject, WSP_TERMS.member).map((principal): Acceptance => ({
+        head: descriptorUrl,
+        workspace: workspace.iri,
+        member: principal,
+        accepts: accepts.iri,
+        // Never a pod anyone will follow — and never read for a withdrawn member anyway.
+        stream: '',
+        withdrawn: true,
+        attestation,
+        // No `fieldProvenance`, for the reason `readGrantRecord` gives at its own bail-out.
+      }));
+    return { record: null, problems, attestation, restrictions };
   }
 
   return {
@@ -1623,6 +1777,7 @@ export async function readAcceptanceRecord(
     },
     problems,
     attestation,
+    restrictions: [],
   };
 }
 

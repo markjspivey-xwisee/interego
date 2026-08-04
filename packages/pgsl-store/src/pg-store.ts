@@ -34,7 +34,7 @@
  * openPgStore() is actually used (deploy + CI).
  */
 
-import type { FdbLike, FdbTxn, Key, KeyValue } from './fdb-like.js';
+import type { FdbLike, FdbTxn, Key, KeyValue, Value } from './fdb-like.js';
 
 export interface PgStoreOptions {
   /** e.g. postgres://user:pass@host:5432/db; omit to use PG* env vars. */
@@ -74,7 +74,11 @@ interface PgPool {
   end(): Promise<void>;
 }
 interface PgClient {
-  query<R = never>(text: string, values?: readonly unknown[]): Promise<{ rows: R[] }>;
+  // `rowCount` is what makes a conditional write CHECKABLE: `UPDATE … WHERE v = $expected`
+  // affects 1 row or 0, and 0 IS the refusal. Omitting it from this declared slice is how
+  // the adapter ended up with only unconditional writes to offer. node-postgres types it
+  // nullable (some commands report no count), so a caller must treat null as "not one row".
+  query<R = never>(text: string, values?: readonly unknown[]): Promise<{ rows: R[]; rowCount: number | null }>;
   release(): void;
 }
 
@@ -124,6 +128,38 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
                   [buf(key), buf(value)],
                 ),
               );
+            },
+            /**
+             * ★ THE CONDITION IS IN THE STATEMENT, NOT IN AN EARLIER SELECT.
+             *
+             * This adapter runs READ COMMITTED (see the header), so a value returned by
+             * `get` is not held against concurrent writers and is not re-checked at
+             * commit. A caller that read v0, compared it, and then called `set` was
+             * issuing an UNCONDITIONAL `INSERT … ON CONFLICT DO UPDATE`. Measured on
+             * postgres:16: two overlapping transactions both landed, the second won, and
+             * the first's engagement turn was gone while both callers were told 200.
+             *
+             * `UPDATE … WHERE k = $1 AND v = $3` is re-evaluated by Postgres AFTER the row
+             * lock is granted — the losing writer blocks, wakes on the winner's COMMIT,
+             * re-checks against the NEW row version, matches nothing, and reports 0 rows.
+             * `ON CONFLICT DO NOTHING` does the same job for the create case, where there
+             * is no row to lock: the loser's speculative insert waits on the winner's and
+             * then does nothing.
+             *
+             * Buffered writes are flushed first for the same reason `get` flushes: this
+             * statement must see this transaction's own earlier writes, or it would
+             * compare against a row this transaction has already moved past.
+             */
+            compareAndSet: async (key: Key, expected: Value | null, value: Value): Promise<boolean> => {
+              await flush();
+              const r = expected === null
+                ? await client.query(
+                  `INSERT INTO ${table}(k, v) VALUES ($1, $2) ON CONFLICT (k) DO NOTHING`,
+                  [buf(key), buf(value)])
+                : await client.query(
+                  `UPDATE ${table} SET v = $2 WHERE k = $1 AND v = $3`,
+                  [buf(key), buf(value), buf(expected)]);
+              return r.rowCount === 1;
             },
             clear: (key: Key) => {
               pending.push(client.query(`DELETE FROM ${table} WHERE k = $1`, [buf(key)]));

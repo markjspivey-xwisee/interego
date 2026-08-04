@@ -52,6 +52,35 @@ const BANNED = [
     pattern: /\.azurecontainerapps\.io/,
     why: 'those hostnames resolve to nothing; use the *.interego.xwisee.com FQDNs',
   },
+  // ★ THE THREE DEAD DEPLOY RECIPES. The finding that created this gate asked for
+  // `contextgraphsacr` AND `deploy-azure.yml` to be un-reintroducible; only the first was
+  // added, and a mutation appending "Push to master and deploy-azure.yml ships all five
+  // images" to README passed the gate silently. A maintainer who reads a deploy instruction
+  // believes it, runs it, and it fails against infrastructure that was deleted — which is
+  // the whole failure this file exists to prevent, not a lesser version of it.
+  {
+    pattern: /deploy-azure\.yml/,
+    why: 'that workflow was deleted; images are built by build-ghcr.yml and shipped by deploy-railway.yml',
+  },
+  {
+    pattern: /az acr build/,
+    why: 'the registry it targets (contextgraphsacr) was deleted; build via build-ghcr.yml',
+  },
+  {
+    pattern: /azure-deploy\.sh/,
+    why: 'the Azure resource group it provisioned no longer exists',
+  },
+  // ★ A COUNT A TOOL COMPUTES MUST NOT BE PINNED IN PROSE. README said "Currently 91/91
+  // grounded" while `tools/derivation-lint.mjs` printed 97/97 — the ontology grew and the
+  // sentence did not. Nobody mis-edited anything; a hand-maintained number simply decays,
+  // which is the same argument this repo used to delete the "47 files pinned" literal from
+  // an ESLint job name. The gate already FAILS on the first ungrounded class, so the
+  // invariant is enforceable prose ("every L2/L3 class is grounded") and the number is
+  // decoration that can only ever be wrong.
+  {
+    pattern: /\b\d+\/\d+\s+(classes\s+)?grounded\b/i,
+    why: 'derivation-lint computes this; state the invariant instead and let `npm run lint:derivation` print the count',
+  },
 ];
 
 /**
@@ -96,9 +125,37 @@ for (const file of FILES) {
     continue;
   }
   const lines = text.split(/\r?\n/);
+
+  /**
+   * ★ THE EXEMPTION IS PARAGRAPH-SCOPED; THE REVOCATION STAYS LINE-SCOPED. Markdown prose
+   * wraps, so a corrective note's banned string and its dating marker routinely land on
+   * DIFFERENT lines: STATUS.md's note ends line 73 with "`deploy-azure.yml` is" and opens
+   * line 74 with "not in the tree". Under a line-granular exemption that note is a
+   * self-report — the gate flags the very sentence explaining the thing is gone — so the
+   * three deploy-recipe patterns above could not be banned at all without a false red, and
+   * the string stayed re-introducible. Scoping the marker to the enclosing paragraph
+   * (contiguous non-blank lines, which is exactly one Markdown block) makes a wrapped note
+   * expressible.
+   *
+   * This does NOT restore the coarseness that the LIVE_CLAIM revocation exists to fix: a
+   * table row is its own paragraph, and any line asserting present-tense liveness still
+   * revokes its own exemption below regardless of what the paragraph says.
+   */
+  const paragraphHistorical = new Array(lines.length).fill(false);
+  for (let start = 0; start < lines.length;) {
+    if (lines[start].trim() === '') { start++; continue; }
+    let end = start;
+    while (end < lines.length && lines[end].trim() !== '') end++;
+    const block = lines.slice(start, end);
+    if (block.some(l => HISTORICAL_MARKERS.some(m => m.test(l)))) {
+      for (let k = start; k < end; k++) paragraphHistorical[k] = true;
+    }
+    start = end;
+  }
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const exempt = HISTORICAL_MARKERS.some(m => m.test(line)) && !LIVE_CLAIM.test(line);
+    const exempt = paragraphHistorical[i] && !LIVE_CLAIM.test(line);
     if (exempt) continue;
     for (const { pattern, why } of BANNED) {
       if (!pattern.test(line)) continue;

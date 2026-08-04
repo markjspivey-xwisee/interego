@@ -43,7 +43,14 @@ import type {
 // ★ The default host was the Azure CSS gate, deliberately destroyed in the Railway move —
 // probing it timed out and skipped 3 of 4 tests while reporting ✓. See
 // applications/_shared/tests/pod-target.ts.
-import { TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, podFetch, podWriteHeaders, probePod } from '../../_shared/tests/pod-target.js';
+// ★ Gated through real-pod-gate.ts rather than probePod() directly: probePod() folded a
+// DECLARED opt-out and a DISCOVERED failure (unreachable, 404 container, refused write) into
+// one `usable: false` and both reached ctx.skip(), which is green. openRealPod() throws on the
+// discovered kind, so a pod that has stopped existing reds this file instead of emptying it.
+import {
+  TEST_POD_BASE, POD_HOST as AZURE_CSS_BASE, podFetch, podWriteHeaders,
+  openRealPod, DECLARED_SKIPS, type PodGate,
+} from '../../_shared/tests/real-pod-gate.js';
 
 function uniquePodUrl(prefix: string): string {
   return `${TEST_POD_BASE}${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}/`;
@@ -75,18 +82,23 @@ async function cleanup(): Promise<void> {
   }
 }
 
+// Seeded with a DECLARED skip so a beforeAll that throws cannot leave a value resembling a
+// legitimate opt-out; vitest fails every body in a file whose beforeAll throws, which is the
+// intent.
+let pod: PodGate = { ok: false, declaredSkip: 'SKIP_POD_TESTS/SKIP_AZURE_TESTS=1' };
 let reachable = false;
-let skipReason = '';
 beforeAll(async () => {
-  const availability = await probePod();
-  reachable = availability.usable;
-  skipReason = availability.reason;
+  pod = await openRealPod();
+  reachable = pod.ok;
 });
 
 describe('Tier 8 — agent-collective production end-to-end', () => {
-  it('reachability probe', () => {
-    if (!reachable) console.warn(`AC Tier 8 skipped — ${skipReason} (host: ${AZURE_CSS_BASE})`);
-    expect(skipReason).not.toBe('');
+  it('real-pod precondition: skipping is allowed only for a DECLARED reason', () => {
+    // Was `expect(skipReason).not.toBe('')`, which every probePod() return path satisfies by
+    // construction — an assertion no state of the pod could fail.
+    if (pod.ok) return;
+    console.warn(`AC Tier 8 skipped — ${pod.declaredSkip} (host: ${AZURE_CSS_BASE})`);
+    expect(DECLARED_SKIPS).toContain(pod.declaredSkip);
   });
 
   it('full collective lifecycle: author → attest → promote → bundle → cross-bridge chime + audit', { timeout: 240000 }, async (ctx) => {

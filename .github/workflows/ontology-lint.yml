@@ -21,6 +21,18 @@ on:
       # naming them individually is how `tools/security-txt-expiry-check.mjs` came to be
       # wired into nothing at all.
       - 'tools/**'
+      # The grounding count is stated in prose in spec/LAYERS.md and is now verified by
+      # tools/derivation-lint.mjs. Without this entry a commit that only edits the number
+      # never runs the gate that checks it — which is how it reached 41/41 against 97.
+      - 'spec/LAYERS.md'
+      # This job runs tools/docs-drift-lint.mjs and tools/docs-claim-lint.mjs over the
+      # top-level documents. A markdown-only commit that breaks a link would otherwise skip
+      # the job that exists to check markdown.
+      - 'README.md'
+      - 'STATUS.md'
+      - 'CLAUDE.md'
+      - 'RELEASING.md'
+      - 'SECURITY.md'
       - 'applications/foxxi-content-intelligence/affordances.ts'
       # The shared vertical-bridge mount emits iep: terms too (it types the
       # affordance manifest), and was not covered — so a new undeclared term
@@ -41,6 +53,18 @@ on:
       # naming them individually is how `tools/security-txt-expiry-check.mjs` came to be
       # wired into nothing at all.
       - 'tools/**'
+      # The grounding count is stated in prose in spec/LAYERS.md and is now verified by
+      # tools/derivation-lint.mjs. Without this entry a commit that only edits the number
+      # never runs the gate that checks it — which is how it reached 41/41 against 97.
+      - 'spec/LAYERS.md'
+      # This job runs tools/docs-drift-lint.mjs and tools/docs-claim-lint.mjs over the
+      # top-level documents. A markdown-only commit that breaks a link would otherwise skip
+      # the job that exists to check markdown.
+      - 'README.md'
+      - 'STATUS.md'
+      - 'CLAUDE.md'
+      - 'RELEASING.md'
+      - 'SECURITY.md'
       - 'applications/foxxi-content-intelligence/affordances.ts'
       # The shared vertical-bridge mount emits iep: terms too (it types the
       # affordance manifest), and was not covered — so a new undeclared term
@@ -88,3 +112,12 @@ jobs:
       # to be re-checked by hand gets re-checked once.
       - name: Docs describe the live fleet, not a dead one
         run: node tools/docs-drift-lint.mjs
+      # ★ THE OTHER HALF OF THE SAME CLASS. docs-drift-lint above bans a dead platform named
+      # in the present tense; this one asserts that every relative link and every named
+      # workflow actually resolves on disk. They are separate because the failures are
+      # separate: STATUS.md still pointed a reader at `.github/workflows/deploy-azure.yml`
+      # in a paragraph that reads as live CI, and no banned-string rule can see a path that
+      # simply no longer exists. It carries file AND link floors, so a mistyped scan list
+      # fails rather than reporting a confident pass over nothing.
+      - name: Docs claims resolve (relative links + named workflows)
+        run: node tools/docs-claim-lint.mjs

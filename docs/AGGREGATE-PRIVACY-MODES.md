@@ -33,7 +33,7 @@ simulation. Regression-protected via
 | Plus: the operator is also under regulator audit and cannot be trusted to attribute commitments correctly | **v3 + `require_signed_bounds: true`** |
 | Plus: cumulative ε-discipline matters (many queries against the same cohort) | **v3 + `epsilon_budget_max: <ε>`** |
 | Plus: the audit log itself must be tamper-evident, not just honest accounting | **v3 + `signBudgetAuditLog`** (in-process API) |
-| Operator wants no single party (including the auditor) to hold the trueBlinding — distribute across a k-of-n committee | **v4-partial `thresholdReveal: {n, t}`** (trusted-dealer; DKG still future) |
+| Operator wants no single party (including the auditor) to hold the trueBlinding — distribute across a k-of-n committee | **v4-partial `thresholdReveal: {n, t}`** (trusted-dealer; superseded by v5 — see [Honest scoping](#honest-scoping)) |
 | Plus: detect tampered shares BEFORE Lagrange reconstruction silently poisons the result | **v4-partial+VSS** (automatic when thresholdReveal is requested — bundle ships coefficientCommitments) |
 | Plus: tamper-evident chain-of-custody record of WHO actually reconstructed the blinding (regulator wants to see the committee) | **`signCommitteeReconstruction` + `publishCommitteeReconstructionAttestation`** (in-process API) |
 | Plus: distribute encrypted shares to pseudo-aggregators via standard pod-discovery flows (not out-of-band) | **`encryptSharesForCommittee` + `publishEncryptedShareDistribution`** (in-process API) |
@@ -52,7 +52,7 @@ simulation. Regression-protected via
 | **v3.1 `+ requireSignedBounds: true`** | Each contribution carries an ECDSA signature over `signedBoundsMessage(commitment, bounds, contributorDid)`. Aggregator refuses contributions without a valid signature. | Catches: aggregator inflating a contributor's bounds (sensitivity invariant); impersonation (aggregator attributing a commitment to a different contributor); replay across cohorts (each signature is bound to a specific cohort + commitment). | Doesn't catch a contributor that signs their OWN bounds wider than they should — they're free to declare `[0, 1000000]` if they want. Mitigation: institutional policy descriptor on the operator's pod that caps the declared bounds. |
 | **v3.2 `+ epsilonBudget`** | `EpsilonBudget` tracker per cohort; declares max ε; `consume()` per query; throws when cumulative consumption would exceed the cap. `buildAttestedHomomorphicSum` accepts the tracker and pre-flight aborts if the request would push over. `toJSON()` / `fromJSON()` for persistence. | Catches: caller running 1000 small-ε queries that effectively reveal everything; budget overrun in the current session (it throws BEFORE producing the bundle). | Honest accounting, not tamper-evident — a malicious caller bypassing the tracker still leaks DP info. Mitigation: v3.3 wraps the log in a signed artifact. |
 | **v3.3 `signBudgetAuditLog`** | Wraps `EpsilonBudget.toJSON()` in a SignedBudgetAuditLog whose signature recovers the operator's DID. `verifyBudgetAuditLog` confirms: signature is valid, log entries sum to spent, spent ≤ maxEpsilon. | Catches: tampering with snapshot.spent after signing; silently dropping log entries; impersonated signer; internal consistency violations. The audit log itself is now a verifiable artifact. | A malicious operator that NEVER signs the log at all isn't caught by the verifier; that's an institutional-policy enforcement problem (the institution publishes a policy saying "all aggregate queries MUST publish a signed budget log" and binds operators to it via the existing `passport:` machinery). |
-| **v4-partial `thresholdReveal: {n, t}`** | Splits the trueBlinding into n Shamir shares (over the ristretto255 scalar field L) requiring any t to reconstruct. The bundle's `trueBlinding` audit field is OMITTED — no single party including the auditor knows it. `reconstructThresholdRevealAndVerify` takes any t shares + the claimed trueSum and verifies via Pedersen. | Distributes trust over a k-of-n committee: no single committee member can recover trueBlinding alone. Catches: insufficient shares; wrong claimedTrueSum; non-threshold-mode bundle. | Trusted-dealer caveat: the operator running `buildAttestedHomomorphicSum` still knows the polynomial coefficients during the split. Full multi-aggregator DKG (the remaining v4 piece) needs a multi-round protocol that no single party can short-circuit — not yet shipped. |
+| **v4-partial `thresholdReveal: {n, t}`** | Splits the trueBlinding into n Shamir shares (over the ristretto255 scalar field L) requiring any t to reconstruct. The bundle's `trueBlinding` audit field is OMITTED — no single party including the auditor knows it. `reconstructThresholdRevealAndVerify` takes any t shares + the claimed trueSum and verifies via Pedersen. | Distributes trust over a k-of-n committee: no single committee member can recover trueBlinding alone. Catches: insufficient shares; wrong claimedTrueSum; non-threshold-mode bundle. | Trusted-dealer caveat: the operator running `buildAttestedHomomorphicSum` still knows the polynomial coefficients during the split. This caveat is scoped to THIS mode — v5 and v6 remove it (each contributor VSS-splits their own blinding, so no operator-side dealer exists at all). Wiring DKG into v4-partial was evaluated and decided against; the reasoning is in [Honest scoping](#honest-scoping). |
 | **v4-partial+VSS** (automatic) | Same as v4-partial but `buildAttestedHomomorphicSum`'s thresholdReveal path now uses Feldman Verifiable Secret Sharing under the hood. The bundle emits `coefficientCommitments: FeldmanCommitments` (one EC-point per polynomial coefficient). `reconstructThresholdRevealAndVerify` filters shares via `filterVerifiedShares` BEFORE Lagrange. | Catches: a single tampered share BEFORE it silently poisons the Lagrange interpolation. Returns `verifiedShareCount` + `rejectedShareCount` so the caller sees exactly what was rejected. Composition is automatic — opting into thresholdReveal automatically enables VSS. | Doesn't itself remove the trusted-dealer caveat; just makes the share-distribution phase cheat-resistant. Backward-compatible: bundles without `coefficientCommitments` (legacy / stripped) fall through to the unguarded path. |
 | **Committee reconstruction attestation** (`signCommitteeReconstruction` + `verifyCommitteeReconstruction`) | When a t-of-n committee successfully reconstructs trueBlinding, each member signs the canonical `committeeReconstructionMessage(bundleSumCommitment, claimedTrueSum, committeeDids, reconstructedAt)`. The coordinator bundles signatures into a `CommitteeReconstructionAttestation`; `publishCommitteeReconstructionAttestation` writes it as a pod descriptor. | Catches: forged committee membership; substituted bundle; tampered claimedTrueSum; impersonated member; silently-dropped member. Regulator can fetch the attestation from the pod and see exactly who participated, when, and on which bundle. | A malicious operator that NEVER signs the committee attestation isn't caught by the verifier — same enforcement story as v3.3 (institutional policy + `passport:` machinery). |
 | **Encrypted share distribution** (`encryptSharesForCommittee` + `publishEncryptedShareDistribution`) | Each VerifiableShamirShare is wrapped in an X25519/nacl envelope keyed to its intended pseudo-aggregator recipient. The operator publishes each envelope as a normal `iep:ContextDescriptor`; the recipient discovers it via standard pod-discovery flows and decrypts with their own X25519 keypair. | Catches: share leaking to the wrong recipient; share substitution in transit; replay across recipients. Composes the substrate's existing X25519 / nacl envelope machinery — no new ontology terms. Bigint y survives the JSON-in-envelope round-trip via the same `__bigint` wrapper used by the publishable bundle JSON encoder. | Doesn't prevent the operator from publishing the SAME share to multiple recipients (which would defeat threshold privacy) — that's a per-share auditing problem the recipient discovers when they see another envelope at the same content-addressed slot. |
@@ -227,7 +227,7 @@ const cross = verifyCommitteeMatchesAuthorization({
   aggregator caveat at the protocol layer: contributors VSS-split
   their own blindings to the committee, so no one — operator
   included — sees trueBlinding before a t-of-n reveal. The DKG
-  primitive at `src/crypto/dkg.ts` is still standalone-ready for
+  primitive at `packages/core/src/crypto/dkg.ts` is still standalone-ready for
   protocols that need a no-trusted-dealer COLLECTIVE secret (rather
   than the additively-combined secret v5 uses).
 - **Distributed noise generation (v7).** v6 has the operator add DP-
@@ -255,10 +255,40 @@ rest of the substrate already assumes (pod owner trusts their identity
 server; institution trusts its own operator) and substantially extends
 that with v4-partial (committee holds the blinding, no single auditor
 knows it) + VSS (corrupted shares caught up-front) + chain-of-custody
-attestation (regulator can see who actually reconstructed). The
-remaining trust assumption — the operator running
+attestation (regulator can see who actually reconstructed).
+
+### The trusted-dealer caveat: decided against, not deferred
+
+v4-partial carries a trusted-dealer caveat — the operator running
 `buildAttestedHomomorphicSum` knows the polynomial coefficients during
-the split — needs DKG to fully remove, and DKG is not yet shipped.
+the split. Earlier revisions of this page tied that caveat to a future
+DKG and reported the primitive as unavailable. Both halves of that
+framing are wrong, and this section is the disposition:
+
+1. **The DKG primitive is on disk.**
+   [`packages/core/src/crypto/dkg.ts`](../packages/core/src/crypto/dkg.ts)
+   exports `dkgRound1` / `dkgRound2` / `dkgRound3` / `simulateDKG`,
+   pinned by 13 contract tests in
+   [`tests/dkg.test.ts`](../tests/dkg.test.ts).
+2. **Wiring it into v4-partial was decided against, because it would
+   not have removed the caveat.** Under v3 / v4-partial the
+   contributors reveal their blindings to the operator, so
+   `trueBlinding = Σ contributor_blindings` is a secret the operator
+   *already holds* before any split happens. Replacing the operator's
+   Shamir split with a DKG changes who generates the polynomial, not
+   who knows the secret. A dealerless split of a secret the dealer
+   already knows buys nothing.
+3. **v5 and v6 remove the caveat instead, and both are live.** In v5
+   each contributor VSS-splits their own blinding to the committee, so
+   no party holds `trueBlinding` before a t-of-n reveal; v6 does the
+   same for values. Both are contract-tested (the
+   `aggregate-privacy v5:` and `aggregate-privacy v6:` suites in
+   [`applications/_shared/tests/aggregate-privacy.test.ts`](../applications/_shared/tests/aggregate-privacy.test.ts)).
+
+No v4 DKG-wiring work is queued and none is planned. The DKG primitive
+stays available standalone for a future protocol needing a genuinely
+COLLECTIVE secret — one no party has ever seen — which is a different
+problem from the additively-combined secret v5 / v6 use.
 
 For everything from "I want a private count" through "I want a
 regulator-grade audited sum with cumulative ε tracking + a

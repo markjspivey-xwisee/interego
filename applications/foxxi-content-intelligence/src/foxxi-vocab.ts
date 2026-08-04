@@ -111,7 +111,14 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'CASEAlignment', kind: 'Type', label: 'CASE Alignment', definition: 'A 1EdTech CASE 1.0 cross-framework alignment association descriptor.' },
   { name: 'TenantMetadata', kind: 'Type', label: 'Tenant Metadata', definition: 'A descriptor carrying a Foxxi tenant\'s metadata.' },
   { name: 'AdaptiveSequencingPolicy', kind: 'Type', label: 'Adaptive Sequencing Policy', definition: 'A descriptor declaring an adaptive content-sequencing policy.' },
-  { name: 'PackageUpload', kind: 'Type', label: 'Package Upload', definition: 'A descriptor recording a SCORM / cmi5 package upload.' },
+  { name: 'PackageUpload', kind: 'Type', label: 'Package Upload', definition: 'A descriptor recording that a SCORM / cmi5 package was uploaded. Hypothetical by construction: it records that bytes arrived, not what they contain.' },
+  { name: 'ParsedPackage', kind: 'Type', label: 'Parsed Package', definition: 'A descriptor carrying what a SCORM / cmi5 package actually IS — manifest identifier, course title, standard, authoring-tool fingerprint, SCO list and activity structure — read out of the uploaded zip in-process. Asserted, and it supersedes (iep:supersedes) the fxs:PackageUpload receipt for the same graph.' },
+  // Declared because foxxi.register_tutor_agent EMITS this type. Emitting an absolute
+  // URL is only half a fix: without this entry GET /ns/foxxi/term/TutorAgentProfile
+  // 404s (every projection — Turtle, JSON-LD, HTML table, term resource — is rendered
+  // from FOXXI_TERMS), so the descriptor a caller publishes to their pod would name an
+  // IRI that answers nothing.
+  { name: 'TutorAgentProfile', kind: 'Type', label: 'Tutor Agent Profile', definition: 'A self-registered AI tutor agent\'s marketplace profile — DID, specialties (framework IRI + competency IRI + self-rated level) and contact endpoint. Self-asserted: foxxi.register_tutor_agent binds it to no signer, so what binds a profile to a tutor is publishing it to that tutor\'s own pod.' },
 
   // ── Performance architecture ───────────────────────────────────────
   { name: 'PerformanceSituation', kind: 'Type', label: 'Performance Situation', definition: 'A typed, modal-statused descriptor of a performer (human or agent), the work, and observed performance. The unit the system reasons from — it carries no idealised future state; content is never assumed.' },

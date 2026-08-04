@@ -49,7 +49,19 @@ export interface RelayConnectionStatus {
   readonly url: string;
   readonly state: 'connecting' | 'connected' | 'closed' | 'errored';
   readonly lastError?: string;
+  /**
+   * Events written to the socket. This is a SEND counter — incremented in
+   * `broadcastOutbound` on the line after `ws.send()`, before any reply — so it says
+   * nothing about whether the relay took the event. Asserting on it as proof of
+   * acceptance is what let `tests/p2p-public-relay.test.ts` pass against a relay that
+   * answered ["OK", id, false, "blocked: not on whitelist"] to 100% of publishes.
+   * Use `eventsAccepted` for that.
+   */
   readonly eventsOut: number;
+  /** Events the relay confirmed with ["OK", id, true, ...] per NIP-01. */
+  readonly eventsAccepted: number;
+  /** Events the relay refused with ["OK", id, false, reason]. */
+  readonly eventsRejected: number;
   readonly eventsIn: number;
   readonly reconnectAttempts: number;
   readonly connectedSince?: number; // unix seconds
@@ -131,6 +143,8 @@ interface ConnectionState {
   state: RelayConnectionStatus['state'];
   lastError?: string;
   eventsOut: number;
+  eventsAccepted: number;
+  eventsRejected: number;
   eventsIn: number;
   reconnectAttempts: number;
   connectedSince?: number;
@@ -204,6 +218,8 @@ export class WebSocketRelayMirror implements P2pRelay {
       state: c.state,
       ...(c.lastError !== undefined ? { lastError: c.lastError } : {}),
       eventsOut: c.eventsOut,
+      eventsAccepted: c.eventsAccepted,
+      eventsRejected: c.eventsRejected,
       eventsIn: c.eventsIn,
       reconnectAttempts: c.reconnectAttempts,
       ...(c.connectedSince !== undefined ? { connectedSince: c.connectedSince } : {}),
@@ -242,6 +258,10 @@ export class WebSocketRelayMirror implements P2pRelay {
       ws: null,
       state: 'connecting',
       eventsOut: 0,
+      // `existing ??` above means these survive a reconnect, which is what you want: a
+      // refusal that happened before the socket dropped must stay visible.
+      eventsAccepted: 0,
+      eventsRejected: 0,
       eventsIn: 0,
       reconnectAttempts: 0,
       subId,
@@ -361,8 +381,23 @@ export class WebSocketRelayMirror implements P2pRelay {
     }
 
     if (verb === 'OK' && msg.length >= 3) {
-      // ["OK", eventId, accepted, message] — relay's response to our publish
-      // We don't currently retry on rejection; just count the event.
+      // ["OK", eventId, accepted, message] — NIP-01's per-event verdict.
+      //
+      // This frame used to be discarded, which left `eventsOut` (a ws.send() counter) as
+      // the only evidence any caller had that a relay had taken an event. Measured
+      // against an in-process relay answering ["OK", id, false, "blocked: not on
+      // whitelist"] to every publish: state stayed 'connected' and eventsOut reached 1,
+      // so tests/p2p-public-relay.test.ts reported GREEN on total rejection. Counting
+      // accepted and rejected apart is what makes a refusal expressible. `=== true` is
+      // strict on purpose: a relay sending anything other than the boolean NIP-01
+      // specifies has not accepted.
+      if (msg[2] === true) {
+        conn.eventsAccepted++;
+      } else {
+        conn.eventsRejected++;
+        conn.lastError = `Relay rejected ${String(msg[1])}: ${String(msg[3] ?? '')}`;
+      }
+      this.fireStatus(conn);
       return;
     }
 
@@ -410,6 +445,8 @@ export class WebSocketRelayMirror implements P2pRelay {
       state: conn.state,
       ...(conn.lastError !== undefined ? { lastError: conn.lastError } : {}),
       eventsOut: conn.eventsOut,
+      eventsAccepted: conn.eventsAccepted,
+      eventsRejected: conn.eventsRejected,
       eventsIn: conn.eventsIn,
       reconnectAttempts: conn.reconnectAttempts,
       ...(conn.connectedSince !== undefined ? { connectedSince: conn.connectedSince } : {}),

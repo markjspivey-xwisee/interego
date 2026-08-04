@@ -1,14 +1,33 @@
 name: Emergent test suite
 
-# ┌─ STATUS: DISABLED (gh workflow disable) ─────────────────────────┐
-# │ Held off the nightly cron pending revival against Railway. The   │
-# │ endpoint defaults below now target Railway (relay.interego.      │
-# │ xwisee.com + gate.interego.xwisee.com, via the RELAY_PUBLIC_URL /│
-# │ CSS_GATE_PUBLIC_URL repo vars), so it is no longer a dead-Azure  │
-# │ landmine. Before re-enabling, confirm the required scenarios     │
-# │ actually pass against the live Railway pod — several have never  │
-# │ run there and could red the nightly run until validated.         │
-# └──────────────────────────────────────────────────────────────────┘
+# ★ WHY THIS WAS DISABLED, AND WHY THE REASON WRITTEN HERE WAS WRONG.
+#
+# The banner this replaces said the nightly was "held off pending revival against Railway",
+# and that "several [scenarios] have never run there and could red the nightly run until
+# validated". That reads as a deliberate, reversible operational hold. It was not one.
+#
+# This workflow never reached Railway, never reached a runner, and never ran a scenario.
+# Its only two runs ever are startup_failures: conclusion=failure, jobs total_count=0,
+# duration 0s, no logs, no check runs. GitHub refused to COMPILE the file, because
+# `jobs.scenario.if` read `matrix.scenario` and the matrix context is not in scope for a
+# job-level `if`. See the note above `steps:` in that job.
+#
+# Someone read the red as an environment problem and ran `gh workflow disable`. The banner
+# then made a file that could not parse look like a decision, and further commits edited
+# this file afterwards without anyone finding out. The endpoint defaults the old banner
+# credited itself with fixing were never the obstacle.
+#
+# ★ THE ENABLE/DISABLE BIT DOES NOT LIVE IN THIS FILE. It lives in the GitHub API
+# (`gh api repos/:owner/:repo/actions/workflows`), so no comment here can be trusted about
+# it and none should be written. If this suite must stay off, comment out the `schedule:`
+# trigger below so the FILE says so and a reader can check; a prose banner claiming a state
+# that lives elsewhere is unverifiable by definition, and that is what went wrong here.
+#
+# ★ BEFORE RE-ENABLING: this fix makes a dead nightly LIVE. The scenarios have never
+# executed against the live pod, five are `tier: required`, and they will hit the
+# production relay and CSS at 03:00 UTC daily. Run ONE `workflow_dispatch` and read it end
+# to end before trusting the cron. (Pod writes themselves are safe: every scenario's pod
+# subpath embeds RUN_TAG = run_id + run_attempt, so runs cannot stomp each other.)
 #
 # Runs the substrate-adversarial harness in examples/emergent/ against
 # the live deployed CSS pod. Each scenario is its own .mjs script that
@@ -27,10 +46,17 @@ name: Emergent test suite
 #     runs cannot stomp each other's manifests).
 #   - dist/ is built once in the `build` job and shared via artifact;
 #     matrix jobs download it instead of rebuilding.
-#   - Required tests (4) gate the workflow. Advisory tests (9) run with
-#     continue-on-error: true so flaky / known-unstable scenarios don't
-#     red-X the run. The compressed Vigil scenario is skipped by
-#     default and only runs on workflow_dispatch with run_all=true.
+#   - Required scenarios (5: concurrent-cartographers, disputed-fact-arena,
+#     sybil-swarm-attestation, constitutional-amendment-vote,
+#     closed-loop-learner) gate the workflow, as does the separate
+#     publish-deref-roundtrip job — `required-suite` needs all three of
+#     gate, scenario and publish-deref-roundtrip, so it is six required
+#     things, not four. Advisory scenarios (9, INCLUDING
+#     watcher-vigil-compressed) run with continue-on-error: true so a known
+#     flake doesn't red-X the run. 5 + 9 = the 14 .mjs files in
+#     examples/emergent/. Vigil additionally needs workflow_dispatch with
+#     include_watcher=true; the guard is the step-level `if:` on
+#     "Run <scenario>", not a job-level one — see the note above `steps:`.
 #
 # Triggers
 #   - schedule: nightly at 03:00 UTC, catches regressions in the
@@ -196,7 +222,9 @@ jobs:
             tier: required
             date_env: CAV_DATE
 
-          # ── More required: green when run against a virgin pod
+          # ── The last required scenario, then the advisory tier. (This heading read
+          # "More required:" over a block whose other three entries are `tier: advisory`.)
+          # Green when run against a virgin pod
           # path (which CI always is — RUN_TAG keeps each run's path
           # unique). Local re-runs against today's date can inherit
           # CSS file-backend corruption from a crashed prior run; see
@@ -244,19 +272,19 @@ jobs:
             tier: advisory
             date_env: WATCHER_DATE
 
-    # Skip the Vigil scenario unless the user explicitly opted in via
-    # workflow_dispatch. Other scenarios always run when reached.
-    # workflow_dispatch.inputs.tests is also respected: passing
-    # 'all' or leaving blank runs everything in the matrix; passing a
-    # comma-separated list narrows to those scenario names.
-    if: >-
-      (matrix.scenario != 'watcher-vigil-compressed' ||
-       (github.event_name == 'workflow_dispatch' &&
-        github.event.inputs.include_watcher == 'true')) &&
-      (github.event_name != 'workflow_dispatch' ||
-       github.event.inputs.tests == 'all' ||
-       github.event.inputs.tests == '' ||
-       contains(format(',{0},', github.event.inputs.tests), format(',{0},', matrix.scenario)))
+    # ★ THERE IS DELIBERATELY NO JOB-LEVEL `if:` HERE. This job carried one that read
+    # `matrix.scenario`, and `matrix` is NOT in scope for `jobs.<job_id>.if` — the job-level
+    # `if` is evaluated BEFORE the matrix is expanded, so the available contexts are github,
+    # inputs, needs and vars only. That is not an inert mistake that skips a job: GitHub
+    # refuses to compile the WHOLE workflow, and every trigger dies as a startup_failure —
+    # zero jobs, zero seconds, no logs, no check runs. The two runs this workflow has ever
+    # had are both exactly that shape.
+    #
+    # `timeout-minutes:` and `continue-on-error:` above DO accept `matrix`, which is what
+    # made the mistake so easy: `if:` is the one job-level key that does not get it.
+    #
+    # The selection predicate now lives on the run step below, where `matrix` IS in scope.
+    # Reproduce the refusal with: actionlint .github/workflows/nightly-emergent.yml
 
     steps:
       - name: Checkout
@@ -306,6 +334,23 @@ jobs:
       # a per-scenario log file that becomes an artifact.
       - name: Run ${{ matrix.scenario }}
         id: run
+        # The selection that used to be an (illegal) job-level `if:`. Same predicate,
+        # verbatim; `steps.<id>.if` DOES get the matrix context. Skip the Vigil scenario
+        # unless the user opted in via workflow_dispatch, and honour the `tests` input:
+        # 'all' or blank runs everything, a comma-separated list narrows to those names.
+        #
+        # A skipped STEP leaves the JOB successful, which is what `required-suite` below
+        # already assumes. The alternative legal shape — a `fromJSON` dynamic matrix —
+        # introduces a failure mode this one does not have: a `tests` input matching nothing
+        # yields an empty `include`, which GitHub errors on outright.
+        if: >-
+          (matrix.scenario != 'watcher-vigil-compressed' ||
+           (github.event_name == 'workflow_dispatch' &&
+            github.event.inputs.include_watcher == 'true')) &&
+          (github.event_name != 'workflow_dispatch' ||
+           github.event.inputs.tests == 'all' ||
+           github.event.inputs.tests == '' ||
+           contains(format(',{0},', github.event.inputs.tests), format(',{0},', matrix.scenario)))
         env:
           # Each scenario reads its own *_DATE env var; we set it by
           # name via the matrix entry's date_env field.
@@ -331,7 +376,10 @@ jobs:
       # Advisory scenarios use continue-on-error so the job is "success"
       # even when the assertion failed; we still want the log.
       - name: Upload scenario log
-        if: always()
+        # `always()` alone would also fire for a scenario the step-level `if:` above
+        # skipped, where `mkdir -p logs` never ran — an upload of a path that does not
+        # exist, warning on every unselected shard.
+        if: always() && steps.run.outcome != 'skipped'
         uses: actions/upload-artifact@v7
         with:
           name: log-${{ matrix.scenario }}

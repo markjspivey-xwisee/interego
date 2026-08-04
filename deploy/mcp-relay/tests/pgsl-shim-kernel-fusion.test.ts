@@ -117,7 +117,8 @@ async function main(): Promise<void> {
       base.value = (node as { value: unknown }).value;
     } else {
       base.level = (node as { level: number }).level;
-      base.itemCount = (node as { items: unknown[] }).items.length;
+      // `Fragment.items` is `readonly IRI[]` — a mutable `unknown[]` is not a legal view of it.
+      base.itemCount = (node as { items: readonly unknown[] }).items.length;
       const left = (node as { left?: IRI }).left;
       const right = (node as { right?: IRI }).right;
       if (left) base.left = left;

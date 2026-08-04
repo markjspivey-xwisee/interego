@@ -255,8 +255,16 @@ export function buildAgentActionDescriptor(
   // (the action did NOT achieve its intended effect; auditing wants
   // that distinction surfaced via groundTruth=false). Partial is
   // Hypothetical (uncertain success).
+  // Mirror the cited controls onto the DESCRIPTOR, not just into the named graph.
+  // The manifest indexer reads dct:conformsTo from the DESCRIPTOR Turtle, and the
+  // publish path only writes it when the builder set it — `.conformsTo()`'s own
+  // docstring calls this mirror the contract. Without this line discover() returns
+  // conformsTo: undefined, the relay maps that to evidenceForControls: [], and
+  // GET /audit/compliance/<framework> reports EVERY control 'missing' with
+  // overallScore 0 for a pod whose descriptors do cite those controls.
   const builder = ContextDescriptor.create(eventIri)
     .describes(graphIri)
+    .conformsTo(...cited)
     .agent(event.agentDid)
     .selfAsserted(event.agentDid)
     .generatedBy(event.agentDid, { onBehalfOf: owner, endedAt, startedAt })

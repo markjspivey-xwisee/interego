@@ -616,6 +616,11 @@ export type {
   DKGReceivedShare,
   DKGRound2Result,
   DKGFinalState,
+  // The contract `AdvancedCompositionAccountant`, `RenyiAccountant` and the verticals' own
+  // `EpsilonBudget` all satisfy. Re-exported at the root because `applications/_shared`
+  // imports from '@interego/core', not from '@interego/core/crypto'.
+  PrivacyAccountant,
+  PrivacyConsumption,
   BitProof,
   PedersenRangeProof,
   Commitment,

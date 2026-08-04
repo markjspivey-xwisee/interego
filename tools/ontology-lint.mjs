@@ -95,7 +95,15 @@ function extractDefinedTerms(ttlPath, prefix) {
   const body = readFileSync(ttlPath, 'utf8');
   const defined = new Set();
   // Lines like: `iep:Foo a owl:Class ;` or `iep:foo a owl:ObjectProperty ;`
-  const defRegex = new RegExp(`(?:^|\\n)\\s*${prefix}:([A-Za-z][A-Za-z0-9_-]*)\\s+a\\s`, 'g');
+  // ★ A dotted control identifier is ONE local name, not a stem plus punctuation.
+  // `soc2:CC6.1` and `nist-rmf:Govern.1.1` are declared with the dot IN the name.
+  // Without the `(?:\.[0-9]+)*` tail this regex matched `CC6`, then demanded `\s+a\s`,
+  // found `.`, and captured NOTHING — so every dotted declaration in soc2.ttl and
+  // nist-rmf.ttl was invisible to the lint, and eleven allowlist entries existed only to
+  // paper over that. Numeric segments ONLY, measured: every dotted term declared under
+  // docs/ns/ has digits after the dot; a dot followed by letters is prose or property
+  // access (`iep:TemporalFacet.validFrom` in a tool description string).
+  const defRegex = new RegExp(`(?:^|\\n)\\s*${prefix}:([A-Za-z][A-Za-z0-9_-]*(?:\\.[0-9]+)*)\\s+a\\s`, 'g');
   let m;
   while ((m = defRegex.exec(body)) !== null) {
     defined.add(m[1]);
@@ -171,8 +179,22 @@ function findReferencesInFile(tsPath, prefixes) {
   // SHACL shapes Turtle, which embeds 28 `"` characters in sh:message
   // strings). Negative lookbehind for `:` or word-char still skips
   // matches inside longer URIs like `urn:iep:my-context`.
+  // ★ `-` and `.` are CURIE boundaries too, and the term carries its dotted suffix.
+  //
+  // The old lookbehind rejected only `:` and word chars, so the CSS in
+  // deploy/identity/server.ts (`style="...text-align:center..."`) matched as
+  // `align:center`, and mcp-server/server.ts (`'urn:agent:claude-code:local'`) matched as
+  // `code:local`. Two allowlist entries existed solely to silence that. A prefixed name can
+  // never be preceded by `-` or `.`; either one means the match started mid-token. Measured
+  // cost of adding them: 2 occurrences out of 1699, both those false positives.
+  //
+  // The `(?:\.[0-9]+)*` tail keeps `soc2:CC6.1` whole so it can be compared against the
+  // declaration in soc2.ttl. Truncating to `soc2:CC6` was not merely noisy — it is
+  // many-to-one, so allowlisting the stem `soc2:CC3` silently covered the UNDECLARED
+  // `soc2:CC3.2` emitted by packages/ops/src/index.ts. An allowlist keyed on a truncated
+  // token cannot be safe.
   const refRegex = new RegExp(
-    `(?<![:\\w])(${prefixes.join('|')}):([A-Za-z][A-Za-z0-9_]*)`,
+    `(?<![-:.\\w])(${prefixes.join('|')}):([A-Za-z][A-Za-z0-9_]*(?:\\.[0-9]+)*)`,
     'g',
   );
   const templateVars = Object.keys(TEMPLATE_VAR_TO_PREFIX);

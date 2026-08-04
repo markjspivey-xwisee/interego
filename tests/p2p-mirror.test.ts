@@ -143,6 +143,41 @@ async function startNostrRelay(): Promise<NostrRelay> {
   });
 }
 
+// ── In-process relay that REFUSES every event ────────────────
+//
+// `startNostrRelay` above accepts everything, so nothing in this suite could tell "the
+// relay took our event" apart from "we called ws.send()". That gap is why
+// tests/p2p-public-relay.test.ts asserted `eventsOut` and reported green against a relay
+// that stored nothing. This is the double that CAN express the refusal — a harness that
+// only ever accepts cannot verify a rejection path.
+async function startRejectingRelay(reason = 'blocked: not on whitelist'): Promise<NostrRelay> {
+  return new Promise((resolve) => {
+    const wss = new WebSocketServer({ port: 0 }, () => {
+      const addr = wss.address();
+      if (addr === null || typeof addr === 'string') throw new Error('WSS address null');
+      const url = `ws://127.0.0.1:${addr.port}`;
+      wss.on('connection', (ws) => {
+        ws.on('message', (raw) => {
+          let msg: unknown;
+          try { msg = JSON.parse(raw.toString()) as unknown; } catch { return; }
+          if (!Array.isArray(msg) || msg[0] !== 'EVENT' || msg.length < 2) return;
+          const event = msg[1] as P2pEvent;
+          if (!event?.id) return;
+          ws.send(JSON.stringify(['OK', event.id, false, reason]));
+        });
+      });
+      resolve({
+        url,
+        events: [],
+        close: () => new Promise<void>((res) => {
+          for (const client of wss.clients) { try { client.terminate(); } catch { /* ignore */ } }
+          wss.close(() => res());
+        }),
+      });
+    });
+  });
+}
+
 // ── Helper for waiting for an async event to arrive ──────────
 function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -254,6 +289,61 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
     expect(bStatus[0]!.eventsIn).toBeGreaterThanOrEqual(1);
   });
 
+  it('a refused event is reported as a refusal, not as a successful send', async () => {
+    const relay = await startRejectingRelay();
+    teardowns.push(() => relay.close());
+
+    const inner = new InMemoryRelay();
+    const mirror = new WebSocketRelayMirror(inner, [relay.url]);
+    teardowns.push(() => mirror.stop());
+    const alice = new P2pClient(mirror, importWallet(ALICE_KEY, 'agent', 'alice-refused'));
+
+    mirror.start();
+    await waitFor(() => mirror.status().every(s => s.state === 'connected'), 4000);
+
+    await alice.publishDescriptor({
+      descriptorId: 'urn:iep:refused:1',
+      cid: 'bafkrei-refused',
+      graphIri: 'urn:graph:refused',
+    });
+    await waitFor(() => mirror.status().some(s => s.eventsRejected >= 1));
+
+    const s = mirror.status()[0]!;
+    // eventsOut CANNOT distinguish this case — it reads 1 against a relay that stored
+    // nothing. Pinning it at 1 here is the point: it documents precisely why the old
+    // public-relay assertion (`eventsOut >= 1`) proved nothing.
+    expect(s.eventsOut).toBe(1);
+    expect(s.eventsAccepted).toBe(0);
+    expect(s.eventsRejected).toBe(1);
+    expect(s.lastError).toContain('blocked: not on whitelist');
+  });
+
+  it('an accepted event is counted as accepted', async () => {
+    // Not padding: without this, mutating the OK branch to `eventsRejected++`
+    // unconditionally would still satisfy the refusal test above.
+    const relay = await startNostrRelay();
+    teardowns.push(() => relay.close());
+
+    const inner = new InMemoryRelay();
+    const mirror = new WebSocketRelayMirror(inner, [relay.url]);
+    teardowns.push(() => mirror.stop());
+    const alice = new P2pClient(mirror, importWallet(ALICE_KEY, 'agent', 'alice-accepted'));
+
+    mirror.start();
+    await waitFor(() => mirror.status().every(s => s.state === 'connected'), 4000);
+
+    await alice.publishDescriptor({
+      descriptorId: 'urn:iep:accepted:1',
+      cid: 'bafkrei-accepted',
+      graphIri: 'urn:graph:accepted',
+    });
+    await waitFor(() => mirror.status().some(s => s.eventsAccepted >= 1));
+
+    const s = mirror.status()[0]!;
+    expect(s.eventsAccepted).toBe(1);
+    expect(s.eventsRejected).toBe(0);
+  });
+
   it('dedup: same event arriving twice does not duplicate at the inner relay', async () => {
     const relay = await startNostrRelay();
     teardowns.push(() => relay.close());
@@ -291,17 +381,64 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
     mirror.start();
     await waitFor(() => mirror.status().every(s => s.state === 'connected'));
 
-    // Close the relay; mirror should report 'closed' then attempt reconnect
+    // Close the relay; mirror should report 'closed' then attempt reconnect.
+    // No `disconnectedAt` timestamp: the assertion below compares two WINDOWS between
+    // reconnect attempts, not elapsed time from the disconnect — see the note there for
+    // why an elapsed-time floor could not tell the exponent from machine load.
     await relay.close();
     await waitFor(() => mirror.status().every(s => s.state === 'closed' || s.state === 'errored' || s.state === 'connecting'));
     const closedStatus = mirror.status();
-    // ★ `reconnectAttempts >= 0` was vacuous — an attempt COUNT cannot be negative, so this
-    // passed even if the mirror had silently stopped tracking the relay entirely. Assert the
-    // thing the test's own comment claims: the relay is reported as down, and the mirror is
-    // still holding a status row for it.
+    // ★ `reconnectAttempts >= 0` was vacuous — an attempt COUNT cannot be negative — and
+    // `Number.isInteger(...)` that replaced it is barely stronger: it is true of the counter
+    // at its initial 0, so a mirror that reported 'closed' and then never scheduled a single
+    // reconnect satisfied every line here, in a test whose own name is "triggers reconnect
+    // with backoff". `ws.on('close')` calls scheduleReconnect() synchronously in the same
+    // block that sets state='closed', so once the wait above observes a post-disconnect
+    // state the counter is already >= 1: deterministic, not a race.
     expect(closedStatus).toHaveLength(1);
     expect(['closed', 'errored', 'connecting']).toContain(closedStatus[0]!.state);
-    expect(Number.isInteger(closedStatus[0]!.reconnectAttempts)).toBe(true);
+    expect(closedStatus[0]!.reconnectAttempts).toBeGreaterThanOrEqual(1);
+
+    // ...and the gap between attempts GROWS — the "with backoff" half of the name, which
+    // nothing asserted.
+    //
+    // ★ AN ELAPSED-TIME FLOOR CANNOT ASSERT THIS, AND THE FIRST VERSION OF THIS BLOCK USED
+    // ONE. It waited for 6 attempts and required `Date.now() - disconnectedAt >= 500`,
+    // reasoning that the scheduled delays alone sum to 600 ms. Measured against the mutant
+    // that replaces the exponential with a constant `initialMs`: on an idle box that runs
+    // in ~330 ms and the floor catches it, but on this box — several vitest workers running
+    // concurrently — the constant-50 ms schedule still burned over 500 ms of wall clock,
+    // because each FAILED connect attempt costs real time that the floor happily counts.
+    // The floor therefore discriminated on machine load, not on the exponent. Raising it
+    // would move a threshold, not fix the defect.
+    //
+    // The discriminating property is that the gaps grow, so that is what is measured. With
+    // initialMs=50 / maxMs=200 and `delay = min(initial * 2^(attempt-1), max)`, the gaps
+    // between successive attempt counts are 50, 50, 100, 200, 200 ms. Each gap also
+    // contains exactly ONE failed connect, whose cost is unknown and load-dependent — so
+    // comparing a two-gap LATE window against a two-gap EARLY window cancels it: both
+    // windows hold two connects, and the difference is 400 - 100 = 300 ms of pure
+    // setTimeout. Under the constant-delay mutant both windows are identical and the
+    // difference is 0. The 200 ms bar sits between them with 100 ms of slack each way.
+    // ★ THRESHOLDS, NOT SAMPLES. A `setInterval` sampler recording "the time I first saw
+    // the counter equal N" was the first attempt, and it is unreliable for a reason worth
+    // recording: the counter can advance past a value between two samples, so `at(6)` came
+    // back undefined and the mutant failed with "never sampled reconnectAttempts === 6".
+    // That IS a failure, but it names the sampler instead of the backoff and sends the
+    // reader to the wrong file. Waiting for `>= n` in sequence cannot miss a value — a
+    // threshold once crossed stays crossed — so every timestamp is defined by construction.
+    const at: number[] = [];
+    for (let n = 1; n <= 6; n++) {
+      await waitFor(() => mirror.status()[0]!.reconnectAttempts >= n, 8000);
+      at[n] = Date.now();
+    }
+    const earlyWindow = at[3]! - at[1]!; // scheduled 50 + 50 = 100 ms, plus 2 connects
+    const lateWindow = at[6]! - at[4]!;  // scheduled 200 + 200 = 400 ms, plus 2 connects
+    expect(
+      lateWindow - earlyWindow,
+      `gaps are not growing: early window ${earlyWindow}ms, late window ${lateWindow}ms — `
+      + 'the reconnect schedule is flat, so this is a busy retry loop, not backoff',
+    ).toBeGreaterThanOrEqual(200);
   });
 
   it('events from external relay are signature-verified before injection', async () => {

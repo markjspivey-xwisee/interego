@@ -1,0 +1,113 @@
+name: lrs-adapter conformance (real LRS)
+
+# ★ WHY THIS FILE EXISTS.
+#
+# applications/lrs-adapter/tests/tier3*.test.ts hold 18 bodies that POST and GET real xAPI
+# Statements against a real LRS — the only thing in this repo proving the adapter's wire format
+# is accepted by an implementation we did not write. Every one was gated on
+# `if (!reachable) return ctx.skip()`, and NO workflow ever started an LRS. Measured on this
+# tree before the change:
+#
+#     Tests  2 passed | 18 skipped (20)      exit 0
+#
+# and the 2 that passed asserted `typeof reachable === 'boolean'`, true of `false`.
+# bridge-typecheck.yml runs the whole root suite, so those files were COLLECTED on every pull
+# request and had simply never executed an assertion.
+#
+# The provisioning pattern already existed and was not applied here: pgsl-store-pg.yml stands a
+# Postgres service container up and sets PGSL_PG_IT=1, which the test reads as a DECLARATION
+# rather than detecting anything. The declaration matters more than the container — LRSQL_IT=1
+# makes an unreachable LRS a FAILURE, so a container that never became healthy, a moved port or
+# an image whose /about stopped advertising 2.0.0 reds this job instead of silently re-emptying
+# it. Provisioning without that would buy a green run that proves nothing.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'applications/lrs-adapter/**'
+      - 'packages/**'
+      - '.github/workflows/lrs-adapter-conformance.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'applications/lrs-adapter/**'
+      - 'packages/**'
+      - '.github/workflows/lrs-adapter-conformance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-lrs:
+    name: "The 18 xAPI bodies that had never executed"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      lrsql:
+        # Pinned, not `:latest`. `latest` moving under us is precisely the silent break this
+        # job exists to make loud. v0.9.5 is what `:latest` resolved to when this was written
+        # (both tags pushed 2026-04-30 five seconds apart), and v0.9.0 is the release that
+        # added xAPI 2.0 — which the gate's /about check requires.
+        image: yetanalytics/lrsql:v0.9.5
+        env:
+          LRSQL_API_KEY_DEFAULT: testapikey
+          LRSQL_API_SECRET_DEFAULT: testapisecret
+          LRSQL_ADMIN_USER_DEFAULT: admin
+          LRSQL_ADMIN_PASS_DEFAULT: admin
+        ports:
+          - 8080:8080
+        # Deliberately no `--health-cmd`. The image is Alpine plus a jlink'd JRE and ships
+        # neither curl nor wget, so a container-side probe would fail for a reason that has
+        # nothing to do with the LRS and hold the job until it timed out. The step below probes
+        # from the runner, which has curl — and fails the job outright if it never answers.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install
+        run: npm ci
+      - name: Build @interego/* packages
+        # Required, not optional. vitest's globalSetup runs the typecheck gate, which compiles
+        # tsconfig.check.json — and that program reaches @interego/* through
+        # applications/_shared. Without the emitted .d.ts the gate dies on TS2307 and the job
+        # reds on its own configuration rather than on the adapter. Same finding as
+        # pgsl-store-pg.yml.
+        run: npm run build
+
+      - name: Wait for Lrsql to serve xAPI 2.0 (the job fails HERE if it never does)
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if curl -fsS -m 5 http://localhost:8080/xapi/about \
+                 -H 'X-Experience-API-Version: 2.0.0' > /tmp/about.json 2>/dev/null \
+               && grep -q '2\.0\.0' /tmp/about.json; then
+              echo "Lrsql answered after ${i} attempt(s):"; cat /tmp/about.json; exit 0
+            fi
+            sleep 2
+          done
+          echo "Lrsql never answered /xapi/about with 2.0.0 within 120s." >&2
+          docker ps -a >&2 || true
+          exit 1
+
+      - name: The 12 Lrsql bodies (LRSQL_IT=1 — unreachable is a FAILURE, never a skip)
+        env:
+          LRSQL_IT: '1'
+        run: |
+          npx vitest run \
+            applications/lrs-adapter/tests/tier3-real-lrs.test.ts \
+            applications/lrs-adapter/tests/tier3b-xapi-conformance.test.ts
+
+      # SCORM Cloud is a third-party commercial LRS; no workflow can stand one up, so this step
+      # is the WIRING and not the coverage. With the secrets unset the file self-skips. The day
+      # someone adds them the six bodies become fail-closed: a secret that stops working reds
+      # this step instead of quietly emptying it. See SC_CONFIGURED in the test file.
+      - name: The 6 SCORM Cloud bodies (live the moment the secrets exist; fail-closed once they do)
+        env:
+          SCORM_CLOUD_KEY: ${{ secrets.SCORM_CLOUD_KEY }}
+          SCORM_CLOUD_SECRET: ${{ secrets.SCORM_CLOUD_SECRET }}
+          SCORM_CLOUD_ENDPOINT: ${{ secrets.SCORM_CLOUD_ENDPOINT }}
+        run: npx vitest run applications/lrs-adapter/tests/tier3c-scorm-cloud.test.ts

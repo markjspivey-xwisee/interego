@@ -93,4 +93,49 @@ describe('deriveEncryptionKeyPair — deterministic X25519 from wallet', () => {
     // is 64 — they're definitionally different artifacts. Sanity: storageKey hex doesn't appear in encKp.
     expect(encKp.secretKey).not.toContain(storageKey);
   });
+
+  // ── principal scoping: the relay is SINGLE-SIGNER ──────────────────────
+  // `getDelegationSigner()` hands every relay-mediated agent the SAME compliance
+  // wallet, so without a principal every agent derives the identical secret and
+  // each can owner-decrypt the others' confidential holons. Measured before this
+  // parameter existed: johnny and boozer both derived
+  // `3xeZVVgoS3f0F5UMJPPgtUufKl6pWSJjKiCpZZCpxDI=`. These pin the separation.
+  const RELAY_ROOT = BOB_KEY; // stands in for the shared relay compliance wallet
+  const JOHNNY = 'did:web:interego.xwisee.com:agents:johnny';
+  const BOOZER = 'did:web:interego.xwisee.com:agents:boozer';
+
+  it('two principals off the SAME root get different keypairs', () => {
+    const johnny = deriveEncryptionKeyPair(RELAY_ROOT, JOHNNY);
+    const boozer = deriveEncryptionKeyPair(RELAY_ROOT, BOOZER);
+    expect(johnny.publicKey).not.toBe(boozer.publicKey);
+    expect(johnny.secretKey).not.toBe(boozer.secretKey);
+    // The consequence, stated as behaviour: boozer cannot open johnny's envelope.
+    const senderKp = generateKeyPair();
+    const toJohnny = createEncryptedEnvelope('johnny-only holon', [johnny.publicKey], senderKp);
+    expect(openEncryptedEnvelope(toJohnny, boozer)).toBeNull();
+    // ...and johnny still can, across a FRESH derivation. That re-derivation is
+    // what distinguishes "durable across sessions" from "two random keys differ" —
+    // a non-deterministic implementation would pass every line above it.
+    expect(openEncryptedEnvelope(toJohnny, deriveEncryptionKeyPair(RELAY_ROOT, JOHNNY)))
+      .toBe('johnny-only holon');
+  });
+
+  it('a principal-scoped key differs from the unscoped key off the same wallet', () => {
+    expect(deriveEncryptionKeyPair(ALICE_KEY, JOHNNY).publicKey)
+      .not.toBe(deriveEncryptionKeyPair(ALICE_KEY).publicKey);
+  });
+
+  it('FROZEN VECTOR: omitting principal reproduces the pre-existing bytes', () => {
+    // Envelopes already wrapped by the Foxxi bridge, examples/personal-bridge and
+    // deriveAdminKeyPair are decryptable ONLY by this exact pre-image. A changed
+    // domain tag orphans all of them silently — no throw, `openEncryptedEnvelope`
+    // just returns null forever and nothing logs. Every other test in this file
+    // checks determinism or pairwise inequality, all of which survive a re-tagged
+    // pre-image, so this frozen vector is the only thing standing between an edit
+    // to the seed string and that outcome.
+    expect(deriveEncryptionKeyPair(ALICE_KEY).publicKey)
+      .toBe('eisnjhcNUFrgaXWUc2GsV833jGKGrQUf7gIsqHxCQwQ=');
+    expect(deriveEncryptionKeyPair(ALICE_KEY, JOHNNY).publicKey)
+      .toBe('hvCqY0y60chjQuWCR1AxRWI0JbOmeeOLLgYBpjCXtTs=');
+  });
 });

@@ -8,9 +8,28 @@ this property at the data structure level.
 
 ## Status
 
-**Design doc — Layer 2 pattern (forthcoming as `crdt:` ontology).**
-The bridge to existing Interego primitives is sketched here. A
-reference runtime (`src/crdt/`) is a planned follow-up.
+**Design doc — not planned for the descriptor layer.**
+No descriptor-fragment CRDT runtime exists and none is scheduled.
+This document is retained as a design record for the pattern, not as
+a roadmap item. It previously promised a reference runtime at a
+top-level src/crdt directory — one that has never existed, in a tree
+that has had no top-level src at all since the packages/ split.
+
+The decision that settles it: `applications/shared-workspace` chose
+per-resource compare-and-swap with a **visible** conflict instead, on
+the reasoning that the substrate already stores immutable
+content-addressed records, so a surfaced conflict is more honest than
+a silent merge. That is shipped — `stream.ts` returns an explicit
+`outcome: 'conflict'` — and its README says so. Where two documents
+disagreed about whether a CRDT was coming, the one backed by running
+code wins.
+
+What DOES exist, at a different layer, is grow-only lattice merge in
+`packages/pgsl/src/infrastructure.ts` — vector clocks and convergent
+union over content-addressed PGSL atoms. That is not the
+descriptor-fragment merge described below and does not implement this
+spec; it is named here so a reader does not conclude the codebase has
+no CRDT at all.
 
 ## The problem
 
@@ -170,7 +189,10 @@ With CRDTs:
 - "Federated memory" actually behaves like one when it should and
   like a respectful merge when it shouldn't
 
-## Implementation roadmap
+## Implementation sketch (not scheduled)
+
+Retained as the design record referenced by the Status above; no phase
+below is planned.
 
 1. **Phase 1 (v1):** vector clocks + grow-only sets for
    ProvenanceFacet + TrustFacet (90% of real cases). Single-pod

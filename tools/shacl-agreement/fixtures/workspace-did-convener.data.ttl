@@ -1,0 +1,14 @@
+# shape: wsp-shapes.ttl
+# expect: conforms
+# pins: wsp:convener
+# why: The "|^did:" alternative on wsp:convener, which nothing covered on this term. An agent can convene a workspace; agents are principals here, not second-class bots. Without this the convener pattern would be pinned only by what it REFUSES, and narrowing it to "^https?://" would pass unnoticed.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://relay.test/ws/a>
+  a wsp:Workspace ;
+  dct:title "Alpha" ;
+  wsp:convener <did:web:agents.test:conv-1> ;
+  wsp:roleProfile <https://roles.test/p> .

@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -158,5 +159,77 @@ describe('inline copies in identity + validator stay in lockstep with shared hel
     const reference = buildSecurityTxt();
     const fallbackContact = reference.match(/^Contact: (.+)$/m)![1];
     expect(src).toContain(fallbackContact);
+  });
+});
+
+describe('tools/security-txt-expiry-check.mjs — the guard can reach its input', () => {
+  // ★ This guard read a cwd-relative path. Correcting the path literal fixed only half of
+  // it: `readFileSync('packages/security-txt/src/index.ts')` resolves against the CALLER's
+  // directory, so running it from `tools/` still died with exit 2 — measured on this tree
+  // after the literal had been corrected. A guard that cannot locate its input is
+  // indistinguishable from no guard, and reads identically in STATUS.md either way.
+  //
+  // `--days 0` is deliberate: these cases assert REACHABILITY (found the file, matched
+  // DEFAULT_EXPIRES), not the 30-day deadline. The deadline lives in
+  // .github/workflows/security-txt-expiry.yml; wiring it here would red every unrelated PR
+  // for the month before the annual refresh.
+  //
+  // Spawned as a real subprocess, not imported: the exit CODE is the contract CI consumes,
+  // and re-implementing the parsing inside the test would be a double standing in for the
+  // thing under test.
+
+  const toolRel = 'tools/security-txt-expiry-check.mjs';
+
+  function run(args: string[], cwd: string): ReturnType<typeof spawnSync> {
+    return spawnSync(process.execPath, [resolve(repoRoot, toolRel), ...args], {
+      cwd,
+      encoding: 'utf8',
+    });
+  }
+
+  it('locates and parses DEFAULT_EXPIRES (exit 0, not the exit-2 cannot-check code)', () => {
+    const r = run(['--days', '0'], repoRoot);
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+    expect(r.stdout).toContain('security.txt valid for');
+  });
+
+  it('resolves its input from the script location, not the caller cwd', () => {
+    // The old read was cwd-relative, so running it from tools/ looked for
+    // tools/packages/security-txt/src/index.ts. Reachability from the repo root alone
+    // would not have caught that — this case alone kills that mutant.
+    const r = run(['--days', '0'], resolve(repoRoot, 'tools'));
+    expect(r.status, `stderr: ${r.stderr}`).toBe(0);
+  });
+
+  it('rejects a non-numeric --days instead of failing open', () => {
+    // parseInt('soon') is NaN and `daysToExpiry < NaN` is false, so the old parser exited 0
+    // for every possible expiry date while printing its ✓ line.
+    const r = run(['--days', 'soon'], repoRoot);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('Invalid --days value');
+  });
+
+  it('signals refresh-required (exit 1) distinctly from cannot-check (exit 2)', () => {
+    // An unreachable threshold forces the refresh branch against the REAL file, proving
+    // exit 1 is reachable and is not the ENOENT code wearing a hat.
+    const r = run(['--days', '100000'], repoRoot);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('security.txt expires in');
+  });
+
+  it('is invoked by a workflow that has a schedule — a deadline guard needs a cron', () => {
+    // The guard is reachable from ontology-lint.yml, but that is push/PR only. The window
+    // this check exists for is precisely the quiet period in which nobody pushes, so a
+    // scheduled invocation is the load-bearing one.
+    const dir = resolve(repoRoot, '.github/workflows');
+    const invoking = readdirSync(dir)
+      .filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))
+      .map((f) => readFileSync(resolve(dir, f), 'utf8'))
+      .filter((s) => s.includes(toolRel));
+    expect(invoking.length, 'no workflow invokes the expiry checker').toBeGreaterThan(0);
+    expect(
+      invoking.some((s) => /^\s*schedule:/m.test(s)),
+      'the checker runs only on push/PR; a deadline guard needs a cron',
+    ).toBe(true);
   });
 });

@@ -86,24 +86,21 @@
  *     write windows overlap. This matters because `warm` re-admits a FRESHLY DECODED
  *     object, so two handlers legitimately hold different object identities for one id —
  *     a hazard that did not exist when the Map was the system of record.
- *   - Across processes it is a guarantee only where the `FdbLike` seam honours its own
- *     documented contract — "on a serializable conflict the implementation retries `fn`
- *     from scratch". `InMemoryFdb` implements that, which is what the tests run against.
- *     The Postgres adapter — which is what production runs — deliberately does NOT:
- *     `pg-store.ts` runs READ COMMITTED and says so, on the grounds that every write it
- *     was built for is content-addressed or "intentional last-writer-wins". An engagement
- *     is neither, and it is the first writer at that seam that is neither. So under
- *     Postgres two REPLICAS whose put transactions overlap can both SELECT the same row,
- *     both pass the check, and the second's `INSERT … ON CONFLICT DO UPDATE` still wins.
- *     Conflicts separated by a commit — every cross-replica case that is not a true
- *     interleave inside one transaction window — are caught. That residual is REAL and
- *     untested here, because a harness that stands in for Postgres cannot demonstrate a
- *     Postgres isolation level either way.
- *   - Closing the residual needs a conditional write at the store seam (`UPDATE … WHERE
- *     k = $1 AND v = $expected`, whose `WHERE` Postgres re-evaluates after the row lock).
- *     `FdbTxn` exposes only unconditional `set`, and pgsl-store is not this module's to
- *     change. It is named here rather than papered over, and it is the one place this
- *     module is last-writer-wins.
+ *   - Across processes it is now a guarantee too, and it was not until the seam grew a
+ *     conditional write. The `FdbLike` contract says "on a serializable conflict the
+ *     implementation retries `fn` from scratch"; `InMemoryFdb` implements that, and the
+ *     Postgres adapter — which is what production runs — deliberately does not, because
+ *     it runs READ COMMITTED for a workload of content-addressed and intentionally
+ *     last-writer-wins writes. An engagement was the first writer at that seam that is
+ *     neither. So two REPLICAS whose put transactions overlapped both SELECTed the same
+ *     row, both passed the check, and the second's `INSERT … ON CONFLICT DO UPDATE` won:
+ *     both callers answered 200, one turn gone. Reproduced on postgres:16 before the fix.
+ *   - What closes it is `FdbTxn.compareAndSet`: the expected bytes are re-stated IN the
+ *     write, where Postgres re-evaluates the `WHERE` after acquiring the row lock, so the
+ *     losing writer affects 0 rows and gets a `ConcurrentModification`. This is pinned by
+ *     a test against a REAL Postgres (tests/pgsl-store-pg-integration.test.ts), not by a
+ *     harness — a double that stands in for Postgres cannot demonstrate a Postgres
+ *     isolation level, which is why the residual went untested for as long as it did.
  *
  * A refused write reaches the wire routes as the profile's `internal` error, for the same
  * reason `wireKind` collapses `gone`: these protocols' error vocabularies are fixed by
@@ -397,7 +394,23 @@ export function engagementStoreOverFdb(fdb: FdbLike): EngagementRecordStore {
               : 'the engagement changed since it was read; this mutation was not applied',
           );
         }
-        txn.set(key, bytes);
+        // ★ THE WRITE IS CONDITIONAL ON THE SAME BYTES THE CHECK ABOVE READ.
+        //
+        // The check above compares a value SELECTed earlier in this transaction. Under
+        // the Postgres adapter's READ COMMITTED isolation that SELECT takes no lock and
+        // is never re-validated, so `txn.set` — an unconditional
+        // `INSERT … ON CONFLICT DO UPDATE` — could land on top of a row another replica
+        // had already moved. Measured on postgres:16: two replicas both read v0, both
+        // passed this check, both were answered 200, and one engagement turn was gone.
+        // Re-stating the expectation IN the write puts a predicate where Postgres
+        // re-evaluates it after the row lock, so the losing writer affects 0 rows and is
+        // told. The check above is kept because it is the cheaper, more informative
+        // refusal for the far commoner case where the conflict is separated by a commit.
+        if (!(await txn.compareAndSet(key, prev ?? null, bytes))) {
+          throw new ConcurrentModification(
+            'the engagement changed while this mutation was being written; it was not applied',
+          );
+        }
       });
       return next;
     },
@@ -501,11 +514,12 @@ export class DurableEngagements {
    * `warm` admits a freshly decoded object on every read, so two concurrent handlers on
    * one id can hold different object identities and therefore different compare-and-swap
    * baselines — a hazard that did not exist when the Map was the system of record and both
-   * handlers mutated one shared object. Without this gate their read-compare-write windows
-   * can overlap inside the store, and under the Postgres adapter's READ COMMITTED
-   * isolation an overlap defeats the check (see the module header). Serialising them makes
-   * the second write see the first's committed version, so it either applies on top or is
-   * refused — never silently discarded.
+   * handlers mutated one shared object. Since `put` became a conditional write an overlap
+   * is no longer LOSS, but it is still a refusal: without this gate two handlers of one
+   * process would routinely knock each other's writes back as conflicts a request could do
+   * nothing about. Serialising them makes the second write see the first's committed
+   * version, so it applies on top instead — and cross-replica overlaps, which no in-process
+   * gate can reach, are refused by the store rather than silently discarded.
    *
    * Entries are removed as each write drains, so this holds one entry per IN-FLIGHT write,
    * not one per engagement.

@@ -14,8 +14,8 @@
  *      as a iep:AuthorizedAgent with role=Validator. The registration
  *      credential is issued by the relay's register_agent endpoint.
  *   2. Subscribes to Solid Notifications on the pod's context-graphs
- *      container (see deploy/mcp-relay/subscription-client.ts). New
- *      descriptor writes emit events.
+ *      container, so new descriptor writes emit events. NOT IMPLEMENTED —
+ *      there is no subscription client; see subscribeToPod() below.
  *   3. On each event, fetches the newly-published descriptor Turtle and
  *      hands it to an operator-provided SHACL engine — see "Bring your
  *      own SHACL engine" below.
@@ -183,8 +183,14 @@ async function registerSelf(): Promise<boolean> {
 
 /**
  * Subscribe to Solid Notifications on `<pod>/context-graphs/`.
- * Skeleton — real version uses deploy/mcp-relay/subscription-client.ts
- * (once it's exported as a package or moved under src/solid/).
+ * Skeleton — there is no subscription client. One was written at
+ * deploy/mcp-relay/subscription-client.ts and deleted: nothing imported it, so
+ * it was in no tsc program and no test, and it read as a shipped capability
+ * this stub does not have. `git log --diff-filter=D -- deploy/mcp-relay/subscription-client.ts`
+ * finds the commit that removed it; the file was introduced by 99b8055 and never
+ * changed after. When this is wired for real the client belongs in packages/solid,
+ * a published workspace package this service can depend on — not as an uncompiled
+ * file beside the relay, which is what made the first one rot.
  *
  * For now this stub just records the intended target so the /health
  * endpoint surfaces what the validator would be watching.
@@ -311,6 +317,24 @@ async function validateAndPublish(descriptorUrl: string): Promise<ValidationResu
 // ── HTTP ──────────────────────────────────────────────────────
 
 const app = express();
+
+// ★ HSTS FIRST — BEFORE express.json(), and that ORDER is load-bearing. With the parser
+// registered first, a malformed body makes body-parser throw and express jumps to the error
+// handler, skipping every middleware after the parser: the 400 goes out with no header.
+// Measured against real express, and measured live on identity, which had exactly that
+// ordering and answered `POST / {not json` with a 400 carrying no HSTS.
+//
+// This service is not on Railway today, so this is pre-emptive — but the alternative is an
+// exemption entry, and a hand-maintained exemption list is the same inclusion list that let
+// five public surfaces go uncovered while the gate reported green.
+//
+// max-age only: includeSubDomains would bind every *.interego.xwisee.com including any not
+// fully on HTTPS, and preload is close to irreversible. Separate decisions.
+app.use((_req, res, next) => {
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  next();
+});
+
 app.use(express.json());
 
 // ── /.well-known/security.txt — RFC 9116 ─────────────────────
@@ -350,6 +374,11 @@ app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
+    // The git sha baked into the image. tools/railway-redeploy.mjs polls exactly `j.build`
+    // to tell the new container from the old one still serving, because Railway calls a
+    // deploy SUCCESS as soon as a port is bound. Every other field here survives a redeploy
+    // unchanged, so without this the body cannot distinguish two deployments.
+    build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset',
     agent: AGENT_ID,
     pod: POD_URL || null,
     registeredAt: state.registeredAt,

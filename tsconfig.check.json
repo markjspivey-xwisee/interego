@@ -3,7 +3,12 @@
 // Every other TypeScript in this repo is typechecked by something:
 //
 //   packages/*                      `npm run build` runs tsc per package
-//   deploy/mcp-relay/*.ts           relay-tests.yml — `tsc --noEmit -p .`
+//   deploy/mcp-relay/*.ts           relay-tests.yml — `tsc --noEmit -p tsconfig.json`
+//   deploy/mcp-relay/tests/**       relay-tests.yml — `tsc --noEmit -p tsconfig.tests.json`
+//                                   (that second program did not exist; this line claimed
+//                                    the relay was covered while every relay test file was
+//                                    in no program at all — see
+//                                    deploy/mcp-relay/tsconfig.tests.json)
 //   applications/*/bridge + src     bridge-typecheck.yml, via each bridge tsconfig's
 //                                   `"../src/**/*.ts"` include
 //   mcp-server, examples/*          bridge-typecheck.yml

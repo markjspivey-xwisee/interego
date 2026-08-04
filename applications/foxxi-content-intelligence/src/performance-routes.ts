@@ -451,12 +451,28 @@ export function attachPerformanceRoutes(app: Express, config: {
     return { tenant, federated };
   };
   // Expose federation status for the calibration endpoint to surface.
-  const federationStatus = () => ({
-    pods: federationPods,
-    lastRefreshAt: lastFederationRefreshAt === 0 ? null : new Date(lastFederationRefreshAt).toISOString(),
-    peerOutcomeCount: federationOutcomeCount,
-    usingSeedFallback: federationPods.length === 0 || lastFederationRefreshAt === 0,
-  });
+  // `usingSeedFallback: true` ALONE cannot distinguish "no peers configured"
+  // from "a configured peer pod 404s" — and it reported the latter in
+  // production while FOXXI_FEDERATION_PODS pointed at an unprovisioned
+  // container, serving 56 SAMPLE_PEER_OUTCOMES samples as `federated`
+  // evidence. Name which case it is, and expose the loader's per-pod verdict,
+  // so an unprovisioned peer is visible from the endpoint instead of only
+  // inferable from a number that did not move.
+  const federationStatus = () => {
+    const reason = federationPods.length === 0
+      ? 'no-peers-configured'
+      : lastFederationRefreshAt === 0
+        ? 'peers-configured-but-none-yielded-outcomes'
+        : null;
+    return {
+      pods: federationPods,
+      podStatus: federationLoader.podStatuses(),
+      lastRefreshAt: lastFederationRefreshAt === 0 ? null : new Date(lastFederationRefreshAt).toISOString(),
+      peerOutcomeCount: federationOutcomeCount,
+      usingSeedFallback: reason !== null,
+      seedFallbackReason: reason,
+    };
+  };
 
   // Validate + record a live outcome — the reflexive loop's upward arm.
   const CAUSE_KEYS: CauseKey[] = ['information', 'instrumentation', 'incentives', 'knowledgeSkill', 'capacity', 'motives', 'not-applicable'];

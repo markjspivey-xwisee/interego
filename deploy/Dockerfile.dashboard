@@ -61,4 +61,17 @@ EXPOSE 4000
 ENV PORT=4000
 ENV CSS_URL=http://css:3456
 
+# The commit this image was built from, surfaced at /health so a deploy can be VERIFIED
+# rather than assumed. build-ghcr.yml has ALWAYS passed GIT_SHA to every image in the
+# matrix; without a matching ARG this image received it on every build and threw it away
+# (an unconsumed build-arg is a warning, not an error), so /health had nothing to report and
+# tools/railway-redeploy.mjs --verify-url could not be used on this service at all. That is
+# why the dashboard carried the oldest pin in the fleet: it is the one public Node service
+# whose rollout could not be proven, so nobody rolled it.
+#
+# Runtime stage on purpose: ARG does not cross a FROM, and declaring it earlier would
+# invalidate the build cache on every commit. Defaults to "unset" for local builds.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
 CMD ["dist/server.js"]

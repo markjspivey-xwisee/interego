@@ -51,12 +51,23 @@
  *
  * ── WHY A GATE SCRIPT AND NOT JUST `tsc -p` ──────────────────────────────────
  *
- * Turning the compiler on over a program nobody had ever compiled surfaced 58 pre-existing
- * errors in 18 files, none of them in this round's surface and several of them genuine
+ * Turning the compiler on over a program nobody had ever compiled surfaced 60 pre-existing
+ * errors in 20 files, none of them in this round's surface and several of them genuine
  * latent defects (`Object is possibly 'undefined'` in a test's own assertions; three tests
  * importing type names their package does not export). Fixing all of them here would be a
  * different change touching a dozen unrelated verticals, and gating on zero would mean the
  * gate goes in disabled — which is the outcome this file exists to avoid.
+ *
+ * That sentence said 58 in 18 from the commit that shipped this gate until now, and it was
+ * wrong the day it was typed: the {@link LEGACY} register thirty lines below it, in that same
+ * commit, was 20 keys summing to 60, and `applications/shared-workspace/README.md` recorded
+ * 60 in 20 for the same event. The register is the only number here a machine checks — the
+ * gate fails when a file's count is above its pin and equally when it is below, so on a green
+ * commit each pin IS what tsc reported and the sum IS what was surfaced. The prose is typed by
+ * hand and nothing compared the two. The concrete failure that left: this file and that README
+ * are what a future round reads to decide whether ~6 s on every vitest invocation is worth
+ * paying, and they gave different answers about what it bought.
+ * `tests/typecheck-gate-claims.test.ts` now holds the two to one number.
  *
  * So it RATCHETS, the same discipline `.github/workflows/a2a-conformance.yml` applies to the
  * A2A TCK:
@@ -84,8 +95,16 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT = join(ROOT, 'tsconfig.check.json');
 
 /**
- * ★ EMPTY. The debt is zero: every file in this program compiles, down from 97 errors in 28
- * files when the compiler was first turned on.
+ * ★ EMPTY. The debt is zero: every file in this program compiles, down from a PEAK of 97
+ * errors in 28 files — which is not where this started, and the clause "when the compiler was
+ * first turned on" used to hang off it. The first turn-on was 60 errors in 20 files over two
+ * globs. Those were burned to 4, all in `tests/abac.test.ts`. Then `tsconfig.check.json` was
+ * widened from two globs to five, and the 93 further errors in 27 files that widening exposed
+ * took the register to its peak of 97 in 28 — 4 + 93, 1 + 27, which is the arithmetic the
+ * "WHAT THE 93 TURNED OUT TO BE" section below already sets out. Reading 97/28 as the starting
+ * point overstates what the original gate found by 37 errors and hides the finding that
+ * matters: the single biggest jump in this debt came from EXPANDING the program to the globs
+ * it already claimed to cover, not from anyone writing worse code.
  *
  * An empty list means the ratchet has become an absolute: ANY type error in ANY file this
  * program includes now fails, because `pinned === undefined` is the unconditional-failure

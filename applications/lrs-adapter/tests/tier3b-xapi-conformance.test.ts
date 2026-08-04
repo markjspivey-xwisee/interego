@@ -30,33 +30,14 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
-const LRS_BASE = 'http://localhost:8080/xapi';
-const AUTH_HEADER = 'Basic ' + Buffer.from('testapikey:testapisecret').toString('base64');
-const XAPI_VERSION = '2.0.0';
-
-const COMMON_HEADERS = {
-  'Authorization': AUTH_HEADER,
-  'X-Experience-API-Version': XAPI_VERSION,
-  'Content-Type': 'application/json',
-};
-
-async function isLrsReachable(): Promise<boolean> {
-  if (process.env.SKIP_LRSQL_TESTS === '1') return false;
-  try {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 4000);
-    const r = await fetch(`${LRS_BASE}/about`, {
-      headers: COMMON_HEADERS, signal: ac.signal,
-    });
-    clearTimeout(t);
-    return r.ok;
-  } catch {
-    return false;
-  }
-}
+// The second copy of the probe lived here and had already DRIFTED from the first — it checked
+// `r.ok` and never looked at the /about version array, so an LRS that had dropped xAPI 2.0
+// opened this file's gate and would have failed seven bodies on the wire with no explanation.
+// One gate, one version check.
+import { LRS_BASE, AUTH_HEADER, COMMON_HEADERS, reachLrsqlOrFail } from './lrsql-gate.js';
 
 let lrsReachable = false;
-beforeAll(async () => { lrsReachable = await isLrsReachable(); });
+beforeAll(async () => { lrsReachable = await reachLrsqlOrFail(); });
 
 // ── Tests ────────────────────────────────────────────────────────────
 

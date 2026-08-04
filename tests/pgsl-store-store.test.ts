@@ -97,4 +97,27 @@ describe('pgsl-store: durable node store over the FdbLike seam (in-memory fake)'
     expect(fdb.size()).toBe(1); // stored exactly once
     expect(await A.resolve(node.uri)).toEqual(node);
   });
+
+  it('compareAndSet refuses a stale expectation and an occupied create', async () => {
+    // Pins the SEAM CONTRACT. The real-Postgres job that proves the isolation-level half
+    // does not run on every push; this does, and it is the only coverage the InMemoryFdb
+    // implementation of compareAndSet has (mem-fdb's read-set conflict detection already
+    // prevents the interleave the engagement tests exercise, so those would stay green
+    // over a compareAndSet that never refused anything).
+    const fdb = new InMemoryFdb();
+    const enc = new TextEncoder();
+    const k = enc.encode('cas-k');
+    const v1 = enc.encode('v1');
+    const v2 = enc.encode('v2');
+    const wrong = enc.encode('nope');
+    expect(await fdb.transact(async (t) => t.compareAndSet(k, null, v1))).toBe(true);
+    // expected=null over an EXISTING key is the "minted id already taken" refusal.
+    expect(await fdb.transact(async (t) => t.compareAndSet(k, null, v2))).toBe(false);
+    expect(await fdb.transact(async (t) => t.compareAndSet(k, wrong, v2))).toBe(false);
+    // A refused CAS writes NOTHING — not even a partial one.
+    expect(await fdb.transact(async (t) => t.get(k))).toEqual(v1);
+    // Byte-equal but NOT identical: `a === b` on two Uint8Arrays is object identity, so a
+    // CAS written that way would refuse every write. This is the trap sameBytes exists for.
+    expect(await fdb.transact(async (t) => t.compareAndSet(k, enc.encode('v1'), v2))).toBe(true);
+  });
 });

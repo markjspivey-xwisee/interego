@@ -1,0 +1,85 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  SHACL shapes for the adp: GRAPH payload — non-normative, vertical-scoped.
+#
+#  WHY THIS FILE EXISTS. adp.ttl declares ranges in OWL (rdfs:range xsd:dateTime
+#  on adp:timeBound and adp:nextRevisitAt). rdfs:range is an entailment, not a
+#  constraint — no processor rejects anything for violating it. The graph
+#  payload built in src/pod-publisher.ts went straight to publish() as an
+#  opaque string, and the only read-back (tests/tier8-real-pod-end-to-end.ts)
+#  is gated on a live Azure CSS that is now paused, so it ctx.skip()s. Under
+#  that blind spot adp:timeBound shipped as a plain string on every probe ever
+#  written to a pod. These shapes are what tests/graph-content-conforms.test.ts
+#  checks the real payload against.
+#
+#  Served dereferenceably at <bridge>/ns/adp/shapes.
+# ══════════════════════════════════════════════════════════════════════════
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix dct:   <http://purl.org/dc/terms/> .
+@prefix adp:   <https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#> .
+@prefix adpsh: <https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp/shapes#> .
+
+<https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp/shapes>
+    a owl:Ontology ;
+    dct:title "adp: graph-payload SHACL shapes (vertical application)" ;
+    rdfs:comment "Constrains the DESCRIBED GRAPH emitted by src/pod-publisher.ts, not the ContextDescriptor envelope. Non-normative; vertical-scoped." .
+
+adpsh:CapabilityShape a sh:NodeShape ;
+    sh:targetClass adp:Capability ;
+    sh:property [ sh:path rdfs:label ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:cynefinDomain ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:rubricCriterion ; sh:nodeKind sh:IRI ; sh:minCount 1 ;
+                  sh:message "a capability SPACE must name at least one rubric criterion" ] .
+
+adpsh:ProbeShape a sh:NodeShape ;
+    sh:targetClass adp:Probe ;
+    sh:property [ sh:path adp:variant ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:hypothesis ; sh:datatype xsd:string ; sh:minCount 1 ] ;
+    sh:property [ sh:path adp:amplificationTrigger ; sh:datatype xsd:string ; sh:minCount 1 ;
+                  sh:message "amplification trigger must be stated up-front (prevents retconning)" ] ;
+    sh:property [ sh:path adp:dampeningTrigger ; sh:datatype xsd:string ; sh:minCount 1 ;
+                  sh:message "dampening trigger must be stated up-front (prevents retconning)" ] ;
+    sh:property [ sh:path adp:timeBound ; sh:datatype xsd:dateTime ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:message "adp:timeBound must be a typed xsd:dateTime, per its rdfs:range in adp.ttl" ] ;
+    sh:property [ sh:path adp:capability ; sh:nodeKind sh:IRI ; sh:minCount 1 ] .
+
+adpsh:NarrativeFragmentShape a sh:NodeShape ;
+    sh:targetClass adp:NarrativeFragment ;
+    sh:property [ sh:path adp:probe ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:contextSignifier ; sh:datatype xsd:string ; sh:minCount 1 ] ;
+    sh:property [ sh:path adp:response ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:emergentSignifier ; sh:datatype xsd:string ; sh:minCount 1 ] .
+
+adpsh:SynthesisShape a sh:NodeShape ;
+    sh:targetClass adp:Synthesis ;
+    sh:property [ sh:path adp:probe ; sh:nodeKind sh:IRI ; sh:minCount 1 ] ;
+    sh:property [ sh:path adp:fragmentsConsidered ; sh:nodeKind sh:IRI ; sh:minCount 1 ] ;
+    sh:property [ sh:path adp:emergentPattern ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:coherentNarrative ; sh:datatype xsd:string ; sh:minCount 2 ;
+                  sh:message "a synthesis MUST preserve at least 2 coherent narratives — one reading is a collapse to root cause" ] .
+
+adpsh:EvolutionStepShape a sh:NodeShape ;
+    sh:targetClass adp:EvolutionStep ;
+    sh:property [ sh:path adp:basedOnSynthesis ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:nextRevisitAt ; sh:datatype xsd:dateTime ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:message "adp:nextRevisitAt must be a typed xsd:dateTime, per its rdfs:range in adp.ttl" ] ;
+    sh:property [ sh:path adp:explicitDecisionNotMade ; sh:datatype xsd:string ; sh:minCount 1 ;
+                  sh:message "an amplify/dampen decision must record what is NOT being claimed" ] .
+
+adpsh:ConstraintShape a sh:NodeShape ;
+    sh:targetClass adp:Constraint ;
+    sh:property [ sh:path adp:appliesTo ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:boundary ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:exitsConstraint ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:message "constraints are not absolute — an explicit exit is required" ] ;
+    sh:property [ sh:path adp:emergedFrom ; sh:nodeKind sh:IRI ; sh:minCount 1 ] .
+
+adpsh:CapabilityEvolutionShape a sh:NodeShape ;
+    sh:targetClass adp:CapabilityEvolution ;
+    sh:property [ sh:path adp:capability ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:evolutionType ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:olkeStage ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path adp:explicitDecisionNotMade ; sh:datatype xsd:string ; sh:minCount 1 ;
+                  sh:message "a biographical record must carry its humility clause forward" ] .

@@ -221,23 +221,48 @@ describe('PGSL SPARQL Engine', () => {
       expect(result.bindings.length).toBe(1);
     });
 
-    it('sparqlNeighbors works for fragment with constituents', () => {
-      // ★ DOUBLY VACUOUS BEFORE. The whole body sat inside `if (stats.maxLevel >= 2)`, so a
+    it('sparqlNeighbors resolves each constituent to its sibling', () => {
+      // ★ DOUBLY VACUOUS ORIGINALLY. The whole body sat inside `if (stats.maxLevel >= 2)`, so a
       // lattice that never reached level 2 asserted NOTHING and passed; and the assertion
       // itself read `bindings.length >= 0` directly under a comment saying "should find at
-      // least the right neighbor" — the comment said >= 1, the code said >= 0. Both halves
-      // are closed: the precondition is now asserted rather than used as a silent guard,
-      // and the assertion is the one the comment states.
+      // least the right neighbor" — the comment said >= 1, the code said >= 0.
+      //
+      // ★ AND A COUNT WAS STILL NOT ENOUGH. Asserting only `bindings.length > 0` on ONE
+      // fragment's `.left` survives deleting the SECOND UNION branch of sparqlNeighbors()
+      // outright: a left constituent is still found by the first branch, so the count stays
+      // 1 while half the function is gone. Both branches are now exercised (left→right and
+      // right→left) and both `?neighbor` and `?parent` are checked BY IDENTITY, so the claim
+      // is about content rather than about a count.
+      //
+      // The fixture is fully determined — ingest(['the','cat','sat']) builds 3 atoms, 3
+      // level-1 wrappers, 2 level-2 pullbacks and 1 level-3 join — so the shape is asserted,
+      // not guarded on, and `checked` proves the loop body actually ran.
       const stats = latticeStats(pgsl);
-      expect(stats.maxLevel).toBeGreaterThanOrEqual(2);
-      // `Node` is a discriminated union on `kind`; a plain `.find(...)` predicate does not
-      // narrow it, so the callback needs to be a type guard for `.left` to exist at all.
-      const fragment = [...pgsl.nodes.values()]
-        .find((n): n is Extract<typeof n, { kind: 'Fragment' }> => n.kind === 'Fragment' && Boolean(n.left));
-      expect(fragment).toBeDefined();
-      const query = sparqlNeighbors(fragment!.left!);
-      const result = sparqlQueryPGSL(pgsl, query);
-      expect(result.bindings.length).toBeGreaterThan(0);
+      expect(stats.maxLevel).toBe(3);
+      let checked = 0;
+      for (const node of pgsl.nodes.values()) {
+        // Level ≥ 2 fragments are the pullback pairs; level-1 wrappers and atoms have no
+        // constituents and no siblings to find. `continue` rather than a filtered array
+        // because `Node` is a discriminated union on `kind` and this is what narrows
+        // `.left`/`.right` from `IRI | undefined` without a type assertion.
+        if (node.kind !== 'Fragment' || !node.left || !node.right) continue;
+        const fromLeft = sparqlQueryPGSL(pgsl, sparqlNeighbors(node.left));
+        expect(fromLeft.bindings.some(
+          b => b.get('?neighbor') === node.right && b.get('?parent') === node.uri,
+        )).toBe(true);
+        const fromRight = sparqlQueryPGSL(pgsl, sparqlNeighbors(node.right));
+        expect(fromRight.bindings.some(
+          b => b.get('?neighbor') === node.left && b.get('?parent') === node.uri,
+        )).toBe(true);
+        checked++;
+      }
+      expect(checked).toBe(3);
+      // ?direction is deliberately NOT asserted: sparqlNeighbors() emits
+      // BIND("right" AS ?direction) inside each UNION branch, and parseSparql strips UNION
+      // blocks from the WHERE text before scanning for BIND
+      // (packages/pgsl/src/sparql-engine.ts:399 then :420), so query.bind is empty and
+      // ?direction never appears in a binding. Asserting it here would make this test fail
+      // for an engine gap it does not own.
     });
 
     it('sparqlPullbackOf works for fragment with constituents', () => {

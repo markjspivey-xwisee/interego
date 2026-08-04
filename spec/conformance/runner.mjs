@@ -68,7 +68,26 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES_DIR = resolve(__dirname, 'fixtures');
+
+// ★ THE FLAGS spec/STABILITY.md ALREADY DOCUMENTS. `process.argv` was never read, so
+// `--fixtures <dir> --expected <dir>` — the command that file tells a second implementation
+// to run — was accepted and ignored. A second implementation running it validated OUR
+// fixtures and read the resulting pass as a verdict on ITS OWN code. A flag whose effect is
+// nothing is worse than an unrecognised flag, because it returns a plausible answer.
+function argValue(flag) {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : null;
+}
+const FIXTURES_ARG = argValue('--fixtures');
+const FIXTURES_DIR = FIXTURES_ARG ? resolve(FIXTURES_ARG) : resolve(__dirname, 'fixtures');
+/** True when validating the built-in tree, i.e. when a ratchet over it is ours to apply. */
+const USING_BUILTIN_FIXTURES = FIXTURES_ARG === null;
+
+if (argValue('--expected')) {
+  console.error('FATAL: --expected was accepted but there is no expected/ tree in this repo.');
+  console.error('       Refusing a flag that does nothing — see spec/conformance/README.md.');
+  process.exit(2);
+}
 const REPO_ROOT = resolve(__dirname, '..', '..');
 const SHAPES_FILE = join(REPO_ROOT, 'docs', 'ns', 'iep-shapes.ttl');
 
@@ -322,11 +341,47 @@ const exercisedLevels = new Set();
 /** Levels with at least one rule the shipped validator could not evaluate. */
 const unverifiableLevels = new Set();
 
+// ★ EVERY DIRECTORY UNDER fixtures/ MUST BE A DECLARED CATEGORY. The loop below iterates
+// CATEGORY_CHECKS, not the filesystem, so a directory that is not a key is never opened —
+// and `spec/CONFORMANCE.md` told third parties to "drop the third-party's serialized output
+// into a directory under spec/conformance/fixtures/<their-impl-name>/ and re-run". Measured:
+// a fixture there violating BOTH L1.1 and L1.2 was never read, and the run reported a clean
+// pass and exit 0 over a file it had not opened. Skipping is the failure; refusing is not.
+const declaredCategories = new Set(Object.keys(CATEGORY_CHECKS));
+let fixtureDirEntries;
+try {
+  fixtureDirEntries = readdirSync(FIXTURES_DIR, { withFileTypes: true });
+} catch (err) {
+  console.error(`FATAL: cannot read the fixtures directory ${FIXTURES_DIR}: ${err.message}`);
+  console.error('       A runner that cannot find its fixtures must not report a pass.');
+  process.exit(2);
+}
+const undeclared = fixtureDirEntries
+  .filter(d => d.isDirectory())
+  .map(d => d.name)
+  .filter(name => !declaredCategories.has(name));
+if (undeclared.length > 0) {
+  console.error(`FATAL: fixture directories with no CATEGORY_CHECKS entry: ${undeclared.join(', ')}`);
+  console.error('       They would be skipped, and the run would report a pass over files it');
+  console.error('       never opened. Add a CATEGORY_CHECKS entry (and its LEVEL_MAPPING), or');
+  console.error('       remove the directory.');
+  process.exit(2);
+}
+
 for (const [category, checks] of Object.entries(CATEGORY_CHECKS)) {
   const mapping = LEVEL_MAPPING[category];
   const levelTag = mapping ? ` [${mapping.level}: ${mapping.rule}]` : '';
   console.log(`Category: ${category}${levelTag}`);
   const r = await runCategory(category, checks);
+  // ★ A DECLARED CATEGORY THAT CONTRIBUTED NOTHING IS A COVERAGE HOLE, NOT A PASS.
+  // `runCategory` returns `{ total: 0, fail: 0 }` for a missing or empty directory, and the
+  // caller only ever tested `fail > 0` — so declaring the nine categories the README
+  // enumerates, with no fixtures behind them, would have stayed green. Measured.
+  if (r.total === 0) {
+    console.error(`  FATAL: category '${category}' is declared but contributed 0 fixtures.`);
+    console.error('         A category with nothing behind it reads exactly like one that passed.');
+    process.exit(2);
+  }
   grandTotal += r.total;
   grandPass += r.pass;
   grandFail += r.fail;
@@ -343,6 +398,158 @@ console.log('================================');
 console.log(`TOTAL: ${grandPass}/${grandTotal} passed, ${grandFail} failed`
   + (grandUnverifiable ? `, ${grandUnverifiable} unverifiable` : ''));
 console.log('');
+
+// ── L2 live-endpoint testing (opt-in), BEFORE the badge ───────────────────────
+//
+// ★ THE ORDERING IS THE FIX, NOT AN AESTHETIC. This block used to sit BELOW the badge and
+// print "(live HTTP testing not yet implemented — placeholder)". So even a fully implemented
+// set of live checks could not have moved `l1Pass`/`l2Pass`/`l3Pass`, nor the exit code,
+// which keyed only on `grandFail`. Measured on the old code: pointing
+// INTEREGO_CONFORMANCE_ENDPOINT at a hostname that does not resolve printed the
+// full-conformance badge and exited 0. "Implement the HTTP calls" was necessary and not
+// sufficient; the sequencing was the other half.
+const liveEndpoint = process.env.INTEREGO_CONFORMANCE_ENDPOINT;
+const liveResults = [];
+
+/** Fetch a URL as text. Never throws — a network failure is a RESULT, not an exception. */
+async function fetchText(url) {
+  try {
+    const r = await fetch(url, {
+      headers: { Accept: 'text/turtle, application/ld+json;q=0.5' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(20_000),
+    });
+    return {
+      ok: r.ok,
+      status: r.status,
+      contentType: r.headers.get('content-type') ?? '',
+      body: r.ok ? await r.text() : '',
+      error: null,
+    };
+  } catch (err) {
+    return { ok: false, status: 0, contentType: '', body: '', error: String(err?.message ?? err) };
+  }
+}
+
+/**
+ * Rebase a manifest entry's IRI onto the endpoint origin, path only.
+ *
+ * WHY: manifest entries carry the pod's CANONICAL storage IRI, which on this deployment is
+ * an internal host — `http://css.railway.internal:3456/...`. Fetched verbatim that is a
+ * connection failure; the same PATH under the public endpoint is a 200. The canonical IRI is
+ * signed over and MUST NOT be rewritten in the data — only the fetch target is rebased.
+ * Following entry IRIs verbatim would report every conforming pod as L2.2-nonconformant,
+ * i.e. would turn this check into a different flavour of the lie it replaces.
+ */
+function rebaseOntoEndpoint(entryIri, endpoint) {
+  try {
+    const entry = new URL(entryIri);
+    const base = new URL(endpoint);
+    return new URL(entry.pathname + entry.search, base.origin).toString();
+  } catch {
+    return entryIri;
+  }
+}
+
+/** Record one live rule outcome. A failure marks its LEVEL failed. */
+function recordLive(rule, level, ok, detail) {
+  liveResults.push({ rule, level, ok, detail });
+  exercisedLevels.add(level);
+  if (!ok) failedLevels.add(level);
+  console.log(`   ${ok ? '✓' : '✗'} ${rule} — ${detail}`);
+}
+
+/**
+ * Resolve an agent identifier per CONFORMANCE.md L2.3, which names a closed set: WebID-TLS,
+ * did:web, or did:key. Anything else is reported with its actual value rather than waved
+ * through — silence about the identifier scheme is what would let a pod publishing only
+ * did:ethr identifiers claim L2 federation conformance.
+ */
+async function resolveAgentId(id) {
+  if (id.startsWith('did:key:')) {
+    const wellFormed = /^did:key:z[1-9A-HJ-NP-Za-km-z]+$/.test(id);
+    return { ok: wellFormed, how: `did:key ${wellFormed ? 'well-formed' : 'MALFORMED'} (${id})` };
+  }
+  if (id.startsWith('did:web:')) {
+    const parts = id.slice('did:web:'.length).split(':').map(decodeURIComponent);
+    const host = parts.shift();
+    const path = parts.length > 0 ? `/${parts.join('/')}/did.json` : '/.well-known/did.json';
+    const r = await fetchText(`https://${host}${path}`);
+    return { ok: r.ok, how: `did:web -> https://${host}${path} -> ${r.error ?? r.status}` };
+  }
+  if (/^https?:\/\//.test(id)) {
+    const r = await fetchText(id);
+    return { ok: r.ok, how: `WebID ${id} -> ${r.error ?? r.status}` };
+  }
+  return { ok: false, how: `${id} — scheme is not in the L2.3 set (WebID-TLS | did:web | did:key)` };
+}
+
+if (liveEndpoint) {
+  const base = liveEndpoint.replace(/\/$/, '');
+  console.log(`── L2 live tests against: ${base} ──`);
+
+  // L2.1 — pod manifest discovery. A 200 is not enough: a reverse proxy serving an HTML
+  // error page with status 200 would otherwise pass, so the body must look like a manifest.
+  const manifestUrl = `${base}/.well-known/context-graphs`;
+  const manifest = await fetchText(manifestUrl);
+  const manifestOk = manifest.ok && /iep:ManifestEntry|hydra:Collection/.test(manifest.body);
+  recordLive(
+    'L2.1 pod manifest discovery',
+    'L2',
+    manifestOk,
+    manifestOk
+      ? `${manifestUrl} -> ${manifest.status} ${manifest.contentType}`
+      : `${manifestUrl} -> ${manifest.error ?? `${manifest.status}; no iep:ManifestEntry / hydra:Collection in body`}`,
+  );
+
+  // L2.2 — an entry must dereference to a real descriptor, and that descriptor is then run
+  // through the SAME checks the fixtures use. That reuse is what makes this a test rather
+  // than a ping: the bytes the implementation SERVED are held to the L1 invariants.
+  const entryIri = manifestOk
+    ? (manifest.body.match(/^<([^>]+)>\s+a\s+iep:ManifestEntry/m)?.[1] ?? null)
+    : null;
+
+  if (entryIri === null) {
+    recordLive('L2.2 descriptor dereference', 'L2', false, 'no iep:ManifestEntry subject found in the manifest');
+  } else {
+    const descUrl = rebaseOntoEndpoint(entryIri, base);
+    const desc = await fetchText(descUrl);
+    const isDescriptor = desc.ok && /a\s+iep:ContextDescriptor/.test(desc.body);
+    recordLive(
+      'L2.2 descriptor dereference',
+      'L2',
+      isDescriptor,
+      isDescriptor
+        ? `${descUrl} -> ${desc.status}`
+        : `${descUrl} -> ${desc.error ?? desc.status}; body is not an iep:ContextDescriptor`,
+    );
+
+    if (isDescriptor) {
+      const liveViolations = [...checkCoreFacets(desc.body), ...checkModalTruthConsistency(desc.body)];
+      recordLive(
+        'L1.1/L1.2 on the served descriptor',
+        'L1',
+        liveViolations.length === 0,
+        liveViolations.length === 0
+          ? `${descUrl} satisfies the core-facet and modal-truth invariants`
+          : `${descUrl}: ${liveViolations.join('; ')}`,
+      );
+
+      const agentId =
+        desc.body.match(/iep:agentIdentity\s+<([^>]+)>/)?.[1]
+        ?? desc.body.match(/prov:wasAttributedTo\s+<([^>]+)>/)?.[1]
+        ?? manifest.body.match(/iep:issuer\s+<([^>]+)>/)?.[1]
+        ?? null;
+      if (agentId === null) {
+        recordLive('L2.3 agent identifier resolution', 'L2', false, 'no agent identifier found on the served descriptor');
+      } else {
+        const resolved = await resolveAgentId(agentId);
+        recordLive('L2.3 agent identifier resolution', 'L2', resolved.ok, resolved.how);
+      }
+    }
+  }
+  console.log('');
+}
 
 // ── Conformance badge ──
 //
@@ -377,17 +584,25 @@ console.log('');
 console.log('   See spec/CONFORMANCE.md for level definitions and what');
 console.log('   each rule means.');
 
-// ── L2 / L3 live-endpoint testing (optional) ──
-const liveEndpoint = process.env.INTEREGO_CONFORMANCE_ENDPOINT;
-if (liveEndpoint) {
+if (!liveEndpoint) {
   console.log('');
-  console.log(`── L2/L3 live tests against: ${liveEndpoint} ──`);
-  console.log('   (live HTTP testing not yet implemented — placeholder)');
-  console.log('   Tests would: GET /.well-known/context-graphs (L2.1),');
-  console.log('   resolve a known WebID (L2.3), fetch a descriptor (L2.2),');
-  console.log('   and verify shape compliance (L1.5).');
+  console.log('   L2 live checks did not run. Set INTEREGO_CONFORMANCE_ENDPOINT=<pod-url> to');
+  console.log('   exercise L2.1 / L2.2 / L2.3 against a running implementation. No L2 claim');
+  console.log('   is made from a run that did not make a request.');
 }
 
-if (grandFail > 0) {
+// ★ A FAILED LIVE RULE IS A FAILED RUN. Without this the live block would still be
+// decorative: `grandFail` counts fixtures only, and nothing the network said could reach the
+// exit code. That was the other half of the placeholder defect.
+const liveFail = liveResults.some(r => !r.ok);
+if (grandFail > 0 || liveFail) {
+  process.exit(1);
+}
+
+// The ratchet applies to the BUILT-IN tree only; `--fixtures` points at someone else's
+// output, whose coverage is not ours to pin.
+if (USING_BUILTIN_FIXTURES && grandTotal < 5) {
+  console.error(`RATCHET: only ${grandTotal} fixture(s) ran over the built-in tree; the floor is 5.`);
+  console.error('  A fixture family was removed. Restore it, or lower the floor and say why.');
   process.exit(1);
 }

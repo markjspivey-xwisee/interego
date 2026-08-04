@@ -24,7 +24,7 @@ import {
   workspaceTurtle, readWorkspaceRecord, convenerEvidenceOf,
   publishMembershipRecord, WSP_TERMS, WSP_PUBLISHED_IRI_PATTERNS,
   MEMBERSHIP_VISIBILITY_BUDGET_MS,
-  dereferenceWorkspaceRecord, nsOwnerSegmentOf, dereferenceRoleProfile,
+  dereferenceWorkspaceRecord, nsOwnerSegmentOf, dereferenceRoleProfile, membershipRowsOf,
 } from '../applications/shared-workspace/src/membership.js';
 import {
   foldRoster, refuseFieldBinding, type Grant, type Acceptance, type Attestation,
@@ -607,6 +607,129 @@ describe('reading a membership record back', () => {
     expect(read.record).toBeNull();
     expect(read.problems.join(' ')).toMatch(/carries 2 <.*grantedTo> values/);
     expect(read.problems.join(' ')).toMatch(/order its\s+triples happened to be written/);
+    // ★ AND NOT ONE RESTRICTION ROW EITHER. This record does not revoke, so salvaging rows
+    // off it would be manufacturing participants rather than saving a restriction — see the
+    // case below, which folds exactly that and shows the second grantee becoming a member.
+    expect(read.restrictions).toEqual([]);
+  });
+
+  it('★★ a REVOCATION naming two grantees still removes BOTH, and the roster says so', async () => {
+    // The ledger row this closes: the refusal is the honest reading (the record does not say
+    // who it GRANTS to), but the cost was paid in the restricting direction — the direction
+    // this module otherwise protects. Measured before the fix: `members: 1`, `unattested: []`
+    // and `divergences: []`, so nothing an operator reads mentioned the dropped revocation.
+    const mallory = 'https://mallory.test/profile#me';
+    const REVOKE_URL = 'https://conv.test/c/g2.ttl';
+    const revokeTwo = grantTurtle({
+      grantIri: 'https://conv.test/g/2', workspace: WS, grantedTo: bee,
+      role: `${PROFILE.profile}#Contributor`, revoked: true,
+    }).replace(`wsp:grantedTo <${bee}> ;`, `wsp:grantedTo <${bee}> ;\n  wsp:grantedTo <${mallory}> ;`);
+    const deps = descriptorDeps({
+      [GRANT_URL]: { content: GRANT_TTL },
+      [REVOKE_URL]: { content: revokeTwo },
+      [ACCEPT_URL]: { content: ACCEPT_TTL, signedBy: BEE_KEY },
+    });
+    const g1 = await readGrantRecord(GRANT_URL, deps);
+    const rev = await readGrantRecord(REVOKE_URL, deps);
+    const a1 = await readAcceptanceRecord(ACCEPT_URL, deps);
+
+    // The refusal is unchanged: there is still no record, and still for the same reason.
+    expect(rev.record).toBeNull();
+    expect(rev.problems.join(' ')).toMatch(/carries 2 <.*grantedTo> values/);
+    // What survives is the restriction, once per principal the record names — sorted, so it
+    // does not depend on statement order either.
+    expect(rev.restrictions.map(r => r.grantedTo)).toEqual([bee, mallory].sort());
+    for (const r of rev.restrictions) {
+      expect(r.revoked).toBe(true);
+      expect(r.role).toBe('');                    // never a declared role
+      expect(r.fieldProvenance).toBeUndefined();  // …so it can never confer
+      expect(r.head).toBe(REVOKE_URL);
+    }
+
+    const grants = [...membershipRowsOf(g1), ...membershipRowsOf(rev)];
+    const acceptances = [...membershipRowsOf(a1)];
+    const strict = foldRoster({
+      workspace: WS, profile: PROFILE, scopes, grants, acceptances,
+      attestation: { convener: CONV, signerOf, requireFieldBinding: true },
+    });
+    expect(strict.members).toHaveLength(0);
+    expect(strict.pendingInvitations).toHaveLength(0);   // removed, not "never answered"
+    // ★ AND NOT SILENTLY. The row an operator reads to learn the record was refused and the
+    // removal happened anyway — the whole reason these rows carry no `fieldProvenance`.
+    expect(strict.unattested.filter(u => u.head === REVOKE_URL).map(u => u.restrictionStillApplied))
+      .toEqual([true, true]);
+
+    // ★ AND UNDER NO POLICY AT ALL, because a restriction that only applies when attestation
+    // is switched on is the "turning the check on grants MORE than leaving it off" shape.
+    const loose = foldRoster({ workspace: WS, profile: PROFILE, scopes, grants, acceptances });
+    expect(loose.members).toHaveLength(0);
+  });
+
+  it('★★ CONTROL: a two-grantee grant that does NOT revoke manufactures NO member', async () => {
+    // The escalation the fix must not buy. Mallory has no grant of her own — only the record
+    // that names her second — and she writes her own honest acceptance naming its head.
+    const mallory = 'https://mallory.test/profile#me';
+    const MAL_KEY = 'did:web:agents.test:mal-1';
+    const MAL_ACCEPT = 'https://mallory.test/c/a1.ttl';
+    const two = GRANT_TTL.replace(
+      `wsp:grantedTo <${bee}> ;`, `wsp:grantedTo <${bee}> ;\n  wsp:grantedTo <${mallory}> ;`,
+    );
+    const malAccept = acceptanceTurtle({
+      acceptanceIri: 'https://mallory.test/a/1', workspace: WS, member: mallory,
+      accepts: GRANT_URL, stream: 'https://mallory.test/s',
+    });
+    const deps = descriptorDeps({
+      [GRANT_URL]: { content: two },
+      [MAL_ACCEPT]: { content: malAccept, signedBy: MAL_KEY },
+    });
+    const g = await readGrantRecord(GRANT_URL, deps);
+    const a = await readAcceptanceRecord(MAL_ACCEPT, deps);
+    expect(membershipRowsOf(g)).toEqual([]);   // nothing at all comes off this record
+    const grants = [...membershipRowsOf(g)];
+    const acceptances = [...membershipRowsOf(a)];
+    for (const r of [
+      foldRoster({ workspace: WS, profile: PROFILE, scopes, grants, acceptances }),
+      foldRoster({
+        workspace: WS, profile: PROFILE, scopes, grants, acceptances,
+        attestation: { convener: CONV, signerOf, requireFieldBinding: true },
+      }),
+    ]) {
+      expect(r.members).toHaveLength(0);
+      expect(r.pendingInvitations).toHaveLength(0);
+    }
+  });
+
+  it('★★ a WITHDRAWAL naming two members still removes — the same rule on the other half', async () => {
+    const mallory = 'https://mallory.test/profile#me';
+    const WITHDRAW_URL = 'https://bee.test/c/a2.ttl';
+    const withdrawTwo = acceptanceTurtle({
+      acceptanceIri: 'https://bee.test/a/2', workspace: WS, member: bee,
+      accepts: GRANT_URL, stream: 'https://bee.test/s', withdrawn: true,
+    }).replace(`wsp:member <${bee}> ;`, `wsp:member <${bee}> ;\n  wsp:member <${mallory}> ;`);
+    const deps = descriptorDeps({
+      [GRANT_URL]: { content: GRANT_TTL },
+      [ACCEPT_URL]: { content: ACCEPT_TTL, signedBy: BEE_KEY },
+      [WITHDRAW_URL]: { content: withdrawTwo, signedBy: BEE_KEY },
+    });
+    const g1 = await readGrantRecord(GRANT_URL, deps);
+    const a1 = await readAcceptanceRecord(ACCEPT_URL, deps);
+    const wd = await readAcceptanceRecord(WITHDRAW_URL, deps);
+    expect(wd.record).toBeNull();
+    expect(wd.restrictions.map(r => r.member)).toEqual([bee, mallory].sort());
+    for (const r of wd.restrictions) {
+      expect(r.withdrawn).toBe(true);
+      expect(r.stream).toBe('');
+      expect(r.accepts).toBe(GRANT_URL);          // routed, not guessed
+      expect(r.fieldProvenance).toBeUndefined();
+    }
+    const acceptances = [...membershipRowsOf(a1), ...membershipRowsOf(wd)];
+    const grants = [...membershipRowsOf(g1)];
+    expect(foldRoster({
+      workspace: WS, profile: PROFILE, scopes, grants, acceptances,
+      attestation: { convener: CONV, signerOf, requireFieldBinding: true },
+    }).members).toHaveLength(0);
+    expect(foldRoster({ workspace: WS, profile: PROFILE, scopes, grants, acceptances }).members)
+      .toHaveLength(0);
   });
 
   it('★ an UNREADABLE revocation flag reads as SET, and says so', async () => {

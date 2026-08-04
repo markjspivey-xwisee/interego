@@ -29,6 +29,12 @@ import {
   CANONICAL_ORDER,
   type InterrogativeType,
 } from '@interego/pgsl';
+// See the note on the context-gap describe block: these come from SOURCE so a
+// stale packages/pgsl/dist cannot make the predicate's tests pass vacuously.
+import {
+  evaluateContextGap,
+  routeInterrogatives as routeSrc,
+} from '../packages/pgsl/src/interrogative-router.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -229,6 +235,76 @@ describe('gating + routing', () => {
   it('not-parseable turtle -> structured error, never a throw', () => {
     const r = routeInterrogatives({ turtle: '<<<not turtle', interrogatives: ['When'] });
     expect(r.ok).toBe(false);
+  });
+});
+
+// ── Context-gap predicate — the safe-stop trigger ────────────────────────────
+// The router reported resolution state and stopped; callers counted `absent` by
+// hand and acted anyway. Each case below pins one fail-closed choice, and each
+// names the mutation of evaluateContextGap it exists to catch.
+//
+// ★ IMPORTED FROM SOURCE, not from '@interego/pgsl'. The package entry resolves
+// to packages/pgsl/dist, so a stale build would let these read a router that
+// never had the predicate and report green over an unbuilt fix. Every assertion
+// here is about the source of truth this batch edited.
+describe('context-gap predicate — the safe-stop trigger', () => {
+  const BARE = '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n<urn:d:2> a iep:ContextDescriptor ; iep:describes <urn:g:1> .';
+  const answersFor = (interrogatives: InterrogativeType[], turtle = FIXTURE) => {
+    const r = routeSrc({ turtle, interrogatives, target: 'urn:desc:1' });
+    if (!r.ok) throw new Error(`route failed: ${r.error}`);
+    return r.answers;
+  };
+
+  it('every required interrogative resolved -> proceed', () => {
+    const g = evaluateContextGap(answersFor(['Who', 'When']), ['Who', 'When']);
+    expect(g.action).toBe('proceed');
+    expect(g.absent).toEqual([]);
+  });
+
+  it('a required interrogative whose facet is absent -> abstain', () => {
+    const g = evaluateContextGap(answersFor(['When'], BARE), ['When']);
+    expect(g.action).toBe('abstain');
+    expect(g.absent).toEqual(['When']);
+  });
+
+  // MUTANT GUARD: rewriting the resolved test as `status !== 'absent'` makes a
+  // pointer count as grounded and this returns 'proceed'.
+  it('a required interrogative that is only a pointer -> escalate, never proceed', () => {
+    const answers = answersFor(['What']);
+    expect(answers[0]!.status).toBe('pointer');
+    const g = evaluateContextGap(answers, ['What']);
+    expect(g.action).toBe('escalate');
+    expect(g.unresolvedPointers).toEqual(['What']);
+  });
+
+  // MUTANT GUARD: branch order. absent must beat pointer — the stronger stop wins.
+  it('absent + pointer together -> abstain', () => {
+    const g = evaluateContextGap(answersFor(['When', 'What'], BARE), ['When', 'What']);
+    expect(g.action).toBe('abstain');
+    expect(g.absent).toEqual(['When']);
+    expect(g.unresolvedPointers).toEqual(['What']);
+  });
+
+  // MUTANT GUARD: a required interrogative that was never interrogated must not
+  // read as satisfied merely by being missing from `answers`.
+  it('required but never interrogated -> abstain, not proceed', () => {
+    const g = evaluateContextGap(answersFor(['Who']), ['Who', 'Why']);
+    expect(g.action).toBe('abstain');
+    expect(g.absent).toEqual(['Why']);
+  });
+
+  // MUTANT GUARD: the fail-open this project keeps rediscovering.
+  it('empty `required` -> abstain, never proceed', () => {
+    expect(evaluateContextGap(answersFor(['Who']), []).action).toBe('abstain');
+  });
+
+  it('routeInterrogatives carries `gap` only when requiredToAct is supplied', () => {
+    const without = routeSrc({ turtle: FIXTURE, interrogatives: ['Who'] });
+    expect(without.ok && without.gap).toBeUndefined();
+    const withReq = routeSrc({ turtle: FIXTURE, interrogatives: ['Who', 'What'], requiredToAct: ['Who', 'What'] });
+    expect(withReq.ok && withReq.gap?.action).toBe('escalate');
+    const empty = routeSrc({ turtle: FIXTURE, interrogatives: ['Who'], requiredToAct: [] });
+    expect(empty.ok && empty.gap?.action).toBe('abstain');
   });
 });
 

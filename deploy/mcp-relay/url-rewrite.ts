@@ -28,6 +28,11 @@
  * no-op.
  */
 
+// The only import this module has. `screeningEgressLookup` (bottom of the file)
+// hands `dns.lookup` to undici as the CONNECT-TIME resolver, which is what removes
+// the window between "we checked an address" and "we dialled an address".
+import { lookup as dnsLookup } from 'node:dns';
+
 // Match `https://interego-css.livelysky-<hex>.eastus.azurecontainerapps.io`
 // at the start of the URL, followed by `/` or end-of-string.
 //
@@ -94,7 +99,71 @@ export function normalizeCssUrl(url: string): string {
 const PRIVATE_IPV4_RE = /^(?:0\.|10\.|127\.|169\.254\.|192\.168\.|255\.255\.255\.255$|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|172\.(?:1[6-9]|2\d|3[01])\.)/;
 // IPv6 literals that must never appear: loopback (::1), unspecified (::),
 // link-local (fe80::/10), unique-local (fc00::/7).
+//
+// These are matched against the BARE address — see `bareAddressHost`. They used
+// to be matched against `URL.hostname` directly, which is the bug below.
 const PRIVATE_IPV6_RE = /^(?:::1?$|fe[89ab][0-9a-f]:|f[cd][0-9a-f]{2}:)/i;
+
+/**
+ * The address form the IP screens can actually match.
+ *
+ * ★ `URL.hostname` returns the WHATWG-NORMALISED host, not the text the caller
+ * typed, and for an IPv6 literal that means SQUARE BRACKETS ARE PART OF THE
+ * STRING: `new URL('https://[fd00::1]/').hostname === '[fd00::1]'`. Every IPv6
+ * regex here is `^`-anchored, so a leading `[` made all of them unmatchable and
+ * `assertPublicPodUrl` accepted EVERY IPv6 literal — ::1, ::, fd00::1, fe80::1,
+ * and (measured, connection landed on 127.0.0.1) ::ffff:127.0.0.1. The one place
+ * that got this right was server.ts's `assertInvokeTargetAllowed`, one layer
+ * above; the function that OWNS the screen never stripped them.
+ */
+export function bareAddressHost(host: string): string {
+  return host.toLowerCase().replace(/^\[/, '').replace(/\]$/, '').replace(/%.*$/, '');
+}
+
+/**
+ * Decode an IPv4 address embedded in an IPv6 literal, in BOTH spellings.
+ *
+ * ★ The second branch is why this function exists. The old check was
+ * `/^::ffff:(\d+\.\d+\.\d+\.\d+)$/` — DEAD CODE, because `URL.hostname`
+ * COMPRESSES a v4-mapped literal into hextets and never emits a dotted quad
+ * inside brackets: `https://[::ffff:169.254.169.254]/` arrives as
+ * `[::ffff:a9fe:a9fe]`. So the IPv4 blocklist — the only list that knows about
+ * IMDS and RFC1918 — was unreachable via the `::ffff:` spelling, and re-spelling
+ * a private IPv4 as v4-mapped IPv6 reached the same host.
+ *
+ * The dotted branch is still needed: `dns.lookup` results and hand-written
+ * strings (screened by `screeningEgressLookup`) use it.
+ */
+function embeddedIpv4(bare: string): string | null {
+  const dotted = bare.match(/^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
+  if (dotted) return dotted[1]!;
+  const hextet = bare.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (!hextet) return null;
+  const hi = parseInt(hextet[1]!, 16);
+  const lo = parseInt(hextet[2]!, 16);
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+}
+
+/**
+ * The SINGLE address screen. Returns a human-readable reason if `host` is a
+ * private/loopback/link-local/IMDS address in any spelling, else null.
+ *
+ * Takes a host or a bare address, so the same predicate screens a URL's
+ * `hostname` (syntactic) and every address `dns.lookup` returns for that
+ * hostname (resolved). One implementation, so the two can never disagree —
+ * they already did: server.ts caught `[::1]` while this file did not.
+ */
+export function privateAddressReason(host: string): string | null {
+  const bare = bareAddressHost(host);
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bare)) {
+    return PRIVATE_IPV4_RE.test(bare) ? `private/loopback IPv4 address: ${bare}` : null;
+  }
+  if (!bare.includes(':')) return null;
+  if (PRIVATE_IPV6_RE.test(bare)) return `private/loopback IPv6 address: ${bare}`;
+  const v4 = embeddedIpv4(bare);
+  if (v4 && PRIVATE_IPV4_RE.test(v4)) return `private IPv4-in-IPv6 address: ${bare} (= ${v4})`;
+  return null;
+}
 
 /**
  * Reject URLs that an unauthenticated attacker could use to coerce the
@@ -108,11 +177,23 @@ const PRIVATE_IPV6_RE = /^(?:::1?$|fe[89ab][0-9a-f]:|f[cd][0-9a-f]{2}:)/i;
  * outside the allowlist throws.
  *
  * Used at every endpoint that fetches a user-supplied pod / descriptor
- * URL on behalf of an authenticated caller. This is a SYNTACTIC check —
- * it does not resolve DNS — so attackers can still race a hostname's
- * A-record to a private IP between this call and the underlying fetch.
- * Defence in depth: the deployment's egress firewall should also block
- * outbound traffic to private ranges + IMDS.
+ * URL on behalf of an authenticated caller.
+ *
+ * ★ THIS IS A SYNTACTIC CHECK AND IT IS NOT SUFFICIENT ON ITS OWN. The
+ * paragraph that stood here said an attacker "can still RACE a hostname's
+ * A-record", which understated it: NO RACE IS REQUIRED. A name is not an
+ * address, so a static, publicly-resolvable name that simply IS an A record
+ * for private space defeats this function outright — measured:
+ * `10-0-0-5.nip.io` -> 10.0.0.5 and `localtest.me` -> 127.0.0.1 both returned
+ * ACCEPTED here AND from server.ts's full invoke egress guard.
+ *
+ * It also named an out-of-repo egress firewall as the mitigation, and nothing
+ * in the tree asserted that firewall exists. The mitigation is now IN TREE:
+ * `screeningEgressLookup` below re-applies `privateAddressReason` to every
+ * address DNS returns, AT CONNECT TIME, as the resolver undici actually uses —
+ * so the address screened is the address dialed and there is no window between
+ * them. Keep BOTH: this function rejects a bad literal before a socket is
+ * opened at all; the lookup rejects a bad resolution.
  */
 export function assertPublicPodUrl(
   url: string,
@@ -133,17 +214,12 @@ export function assertPublicPodUrl(
   if (parsed.protocol === 'http:' && parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') {
     throw new Error('pod URL must use https');
   }
-  const host = parsed.hostname.toLowerCase();
-  const bareHost = host.replace(/%.*$/, ''); // strip IPv6 zone identifier
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(bareHost) && PRIVATE_IPV4_RE.test(bareHost)) {
-    throw new Error(`pod URL host is a private/loopback IPv4 address: ${bareHost}`);
-  }
-  if (bareHost.includes(':') && PRIVATE_IPV6_RE.test(bareHost)) {
-    throw new Error(`pod URL host is a private/loopback IPv6 address: ${bareHost}`);
-  }
-  const v4Mapped = bareHost.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
-  if (v4Mapped && PRIVATE_IPV4_RE.test(v4Mapped[1]!)) {
-    throw new Error(`pod URL host is a private IPv4-mapped IPv6 address: ${bareHost}`);
+  // Bracket + zone stripped HERE, once, before any screen runs. Screening
+  // `parsed.hostname` directly is what let every IPv6 literal through.
+  const bareHost = bareAddressHost(parsed.hostname);
+  const addrReason = privateAddressReason(bareHost);
+  if (addrReason) {
+    throw new Error(`pod URL host is a ${addrReason}`);
   }
   if (bareHost === 'localhost' && parsed.protocol === 'https:') {
     throw new Error('pod URL must not target localhost');
@@ -161,4 +237,47 @@ export function assertPublicPodUrl(
     }
   }
   return parsed;
+}
+
+/**
+ * A `dns.lookup` drop-in that refuses to hand back a private address.
+ *
+ * ★ WHY IT IS A LOOKUP AND NOT A PRE-CHECK. Resolving the hostname ourselves and
+ * then calling `fetch` leaves a real window: `fetch` resolves AGAIN, and a TTL-0
+ * record can differ between the two. Handing this function to undici as the
+ * connect-time resolver removes the window entirely — the addresses screened are
+ * the addresses the socket is opened to, because there is only one resolution.
+ *
+ * Wired ONLY onto the guarded-egress dispatcher in server.ts, never onto the
+ * global one: the relay's own CSS and identity hosts resolve to private
+ * addresses BY DESIGN and must not be screened. See `guardedEgressAgent`.
+ */
+export function screeningEgressLookup(
+  hostname: string,
+  options: Record<string, unknown>,
+  callback: (err: NodeJS.ErrnoException | null, address?: unknown, family?: number) => void,
+): void {
+  // `all: true` unconditionally — a hostname with ONE public and one private
+  // address must be rejected, and a non-`all` lookup would only ever see the
+  // first. The caller's requested shape is restored below.
+  dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
+    if (err) { callback(err); return; }
+    const list = addresses as unknown as { address: string; family: number }[];
+    if (!list || list.length === 0) {
+      callback(Object.assign(new Error(`egress: ${hostname} resolved to no addresses`), { code: 'ENOTFOUND' }));
+      return;
+    }
+    for (const a of list) {
+      const reason = privateAddressReason(a.address);
+      if (reason) {
+        callback(Object.assign(
+          new Error(`egress blocked: ${hostname} resolves to a ${reason}`),
+          { code: 'ERR_EGRESS_PRIVATE_ADDRESS' },
+        ));
+        return;
+      }
+    }
+    if (options['all']) { callback(null, list); return; }
+    callback(null, list[0]!.address, list[0]!.family);
+  });
 }

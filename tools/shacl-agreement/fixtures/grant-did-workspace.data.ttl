@@ -1,0 +1,14 @@
+# shape: wsp-shapes.ttl
+# expect: violates
+# pins: wsp:workspace
+# why: sh:pattern "^https?://" on wsp:workspace. ONE EDIT from grant-valid. A workspace URL is what BOTH halves of a membership name in order to be joined — the grant on the convener's pod and the acceptance on the member's. If a grant may name a workspace nobody can dereference, the two halves can agree on a string that resolves to nothing and the fold has no way to notice.
+
+@prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://conv.test/g1>
+  a wsp:MembershipGrant ;
+  wsp:grantedTo <https://alice.test/profile#me> ;
+  wsp:role <https://roles.test/p#Contributor> ;
+  wsp:workspace <did:web:relay.test:ws:a> .

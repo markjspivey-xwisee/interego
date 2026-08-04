@@ -788,8 +788,33 @@ export type RoleTableAuthority = 'signed-record' | 'transport-only';
  * still supplied entirely by the caller.
  *
  * Produced by `readRoleProfileRecord` and `dereferenceRoleProfile` in `membership.ts`.
+ *
+ * ★★ AND THE LITERAL IS NOW A COMPILE ERROR EVERYWHERE ELSE — THE THIRD MEMBER OF THE FAMILY.
+ * Measured at the strictest rung this policy has, `requireFieldBinding` and
+ * `requireContentBinding` both on, with gap 10's guard installed and passing: a hand-written
+ * `{head: <a URL nobody fetched>, dereferenced: <the caller's own profile IRI>, roles: <the
+ * caller's own invented table>, authority: 'transport-only'}` reported `roleTableBinding:
+ * 'bound'` and handed an `#Observer` the `grant` and `revoke` capabilities. Every comparison in
+ * {@link refuseRoleTableAuthority} passed because ONE AUTHOR WROTE BOTH SIDES OF EVERY ONE OF
+ * THEM — `dereferenced` against the caller's `profile`, `doc.roles` against the caller's
+ * `roles`, and `authority: 'transport-only'` selecting the branch that demands no attestation,
+ * no signer and no binding. A gate whose every input comes from one hand is a coherence check,
+ * not evidence.
+ *
+ * That is the identical sentence {@link EvidenceProvenance} and {@link FieldProvenance} were
+ * each closed for, one layer up and one layer down, and this claim decides more than either:
+ * `permitsOf` is built by {@link normaliseRoleTable} from the very table this document is
+ * supposed to vouch for. So it intersects {@link ObtainedByDereferencingTheProfile}.
+ *
+ * ★ AND IT BUYS EXACTLY WHAT THE OTHER TWO BUY, NO MORE. Read {@link EvidenceProvenance} for
+ * the three escape hatches a compile-time brand does not close — an assertion still converts, a
+ * spread of a minted value does not, and a value that arrived as JSON is unaffected. Every
+ * runtime check in `refuseRoleTableAuthority` therefore stays exactly as it is, including the
+ * `authority !== 'signed-record' && authority !== 'transport-only'` branch that now looks like
+ * dead code and is not. What the brand buys is that the forgery costs a greppable cast, and the
+ * mint-site scan in `tests/workspace-adversarial.test.ts` pins the one file allowed to hold one.
  */
-export interface RoleProfileDocument {
+export type RoleProfileDocument = ObtainedByDereferencingTheProfile & {
   /**
    * The URL the bytes were actually read from: a descriptor URL for a pod record, the FINAL URL
    * of the fetch (after any same-origin redirect) for a web document. Diagnostic — it is what
@@ -826,6 +851,23 @@ export interface RoleProfileDocument {
    * one is a contradiction and {@link refuseRoleTableAuthority} refuses it as such.
    */
   readonly attestation?: Attestation;
+};
+
+/**
+ * The nominal half of {@link RoleProfileDocument}. Not exported, and that is the whole mechanism.
+ *
+ * `declare` for the reason {@link ObtainedByDereferencingTheWorkspace} is `declare`: ambient, no
+ * constructor, nothing emitted, this module stays the pure one its header describes.
+ *
+ * ★ A THIRD CLASS RATHER THAN A REUSE OF EITHER SIBLING, and the reason is the DIAGNOSTIC, not
+ * assignability — the same admission {@link ParsedFromTheRecordsOwnPayload} makes about its own
+ * separateness. THE MEMBER'S NAME IS THE ERROR MESSAGE: a reader who writes this literal is told
+ * `Property 'mintedOnlyByDereferenceRoleProfile' is missing` and goes to the producer that reads
+ * role profiles, rather than being sent to `dereferenceWorkspaceRecord` for a document that is
+ * not a workspace record at all.
+ */
+declare class ObtainedByDereferencingTheProfile {
+  private readonly mintedOnlyByDereferenceRoleProfile: void;
 }
 
 /**
@@ -901,7 +943,13 @@ export function refuseAttestation(
    */
   requireContentBinding = false,
 ): string | null {
-  if (attestation === undefined) {
+  // `== null`, not `=== undefined`: JSON has no `undefined`, so every producer that is not
+  // JavaScript (serde `Option::None`, Go nil, Python `None`, Jackson) writes an absent
+  // optional as `null`. `null === undefined` is false, so a strict test let it through to
+  // `attestation.authorshipVerified` and threw `TypeError: Cannot read properties of null`
+  // out of the authorization path — no roster, no `unattested` entry, no diagnosis. Measured
+  // on a grant row parsed from wire bytes.
+  if (attestation == null) {
     return 'it carries no attestation at all — nobody read its authorship proof, and an '
       + 'unchecked record is not a verified one';
   }
@@ -916,7 +964,8 @@ export function refuseAttestation(
     // was being called a forger in the one channel operators are told to watch. The
     // attestation's own reason distinguishes them; the verdict is the same either way.
     return 'its authorship proof does not name this descriptor'
-      + (attestation.reason !== undefined ? ` (${attestation.reason})` : '')
+      // `!= null`: a wire `reason: null` rendered the operator-facing string as "(null)".
+      + (attestation.reason != null ? ` (${attestation.reason})` : '')
       + ' — either the proof was minted for another record and copied in, or this record does '
       + 'not follow the naming convention the binding is compared on. Both are refused; only '
       + 'one of them is a forgery, and this layer cannot tell which';
@@ -1107,7 +1156,10 @@ export function refuseFieldBinding(
   requireFieldBinding = false,
 ): string | null {
   if (!requireFieldBinding) return null;
-  if (provenance === undefined) {
+  // `== null` for the reason `refuseAttestation` gives: a non-JavaScript producer writes an
+  // absent optional as JSON `null`, and `null === undefined` is false, so the strict test
+  // reached `provenance.source` and threw instead of refusing.
+  if (provenance == null) {
     return 'its fields were typed by whoever called this fold rather than read from the '
       + 'record — the role, the grantee and the stream are caller-supplied, so one of a '
       + 'member\'s ordinary signed records would pass every signature check as their '
@@ -1182,6 +1234,16 @@ export function refuseConvenerAuthority(args: {
   // Read the tag out before the narrowing below erases it. After the `'unreadable'` branch the
   // compiler believes `kind` can only be `'declared'`, and the check that follows exists
   // precisely because the compiler is wrong about a value that arrived as JSON.
+  //
+  // ★ AND THE VALUE ITSELF CAN BE `null`, WHICH IS NOT `undefined`. `foldRoster` guards its
+  // call with `== null` now, but this function is exported and callable on its own, so the
+  // guard has to be in the function — the same rule the `'declared'`-with-no-record case is
+  // pinned by. Without it a wire `workspaceEvidence: null` threw on `.kind`.
+  if (evidence == null) {
+    return 'this fold was passed no workspace evidence at all — `null` is what a producer that '
+      + 'is not JavaScript writes for an absent field, and an absent record establishes nothing '
+      + 'about who may grant here';
+  }
   const tag: string = evidence.kind;
   if (evidence.kind === 'unreadable') {
     return 'the workspace record that would say who convenes here could not be read '
@@ -1199,8 +1261,9 @@ export function refuseConvenerAuthority(args: {
   // Typed `| undefined` deliberately. The union says this is always present and JSON says
   // otherwise; reading it unguarded was a `TypeError` in the authorization path rather than a
   // refusal, which is the one outcome worse than refusing.
-  const ws: WorkspaceRecord | undefined = evidence.record;
-  if (ws === undefined) {
+  // `== null`: a wire `record: null` is the same claim as an absent one and used to throw here.
+  const ws: WorkspaceRecord | null | undefined = evidence.record;
+  if (ws == null) {
     return "the workspace evidence is tagged 'declared' and carries no record. A declaration "
       + 'with nothing in it declares nothing — and reading it anyway used to kill the fold '
       + 'outright (`Cannot read properties of undefined`), returning no roster and no '
@@ -1285,7 +1348,9 @@ export function refuseEvidenceProvenance(args: {
 }): string | null {
   const { evidence, workspace } = args;
   if (args.requireEvidenceProvenance !== true) return null;
-  if (evidence === undefined) {
+  // `== null`: a wire `workspaceEvidence: null` is "no evidence", not a value to read `.kind`
+  // off. It threw here before, which is the one outcome worse than refusing.
+  if (evidence == null) {
     return `this policy requires the workspace record that <${workspace}> dereferences to and `
       + 'was passed no `workspaceEvidence` at all, so there is nothing whose provenance could '
       + 'be checked. A demand nobody supplied evidence for is not a demand that was met';
@@ -1304,13 +1369,18 @@ export function refuseEvidenceProvenance(args: {
     return `the workspace evidence is tagged '${tag}', which is neither 'declared' nor `
       + "'unreadable'. An unknown tag establishes nothing about where this record was obtained";
   }
-  const ws: WorkspaceRecord | undefined = evidence.record;
-  if (ws === undefined) {
+  const ws: WorkspaceRecord | null | undefined = evidence.record;
+  if (ws == null) {
     return "the workspace evidence is tagged 'declared' and carries no record, so there is no "
       + 'record whose provenance could be checked';
   }
-  const provenance: EvidenceProvenance | undefined = evidence.provenance;
-  if (provenance === undefined) {
+  // ★ `== null` IS THE WHOLE OF THE RUNTIME SECOND LINE HOLDING ON THE CROSS-PROCESS PATH.
+  // The brand on `EvidenceProvenance` is compile-time only and `JSON.parse` returns `any`, so
+  // this string comparison is what defends a federated composer — and it never ran for a
+  // producer that writes an absent optional as `null`: `null === undefined` is false, so the
+  // strict test fell through to `provenance.dereferenced` and threw out of the fold.
+  const provenance: EvidenceProvenance | null | undefined = evidence.provenance;
+  if (provenance == null) {
     // ★ RESIDUAL GAP 9, REFUSED. This is the shape that was measured live: bee's own
     // `wsp:Workspace` for alice's workspace IRI, on bee's pod, handed straight to the fold. It
     // answers every other question yes, because the subject is a triple its writer chose. The
@@ -1404,7 +1474,13 @@ export function refuseRoleProfileAuthority(args: {
   const { evidence, workspace, profile } = args;
   // Read before the narrowing erases it, for the reason `refuseConvenerAuthority` does: the
   // compiler believes the tag can only be `'declared'` after the branch below, and this value
-  // arrives as JSON through `can.ts` in a federated composer where the type guarantees nothing.
+  // arrives as JSON through `can.ts` in a federated composer where the type guarantees nothing —
+  // including being `null`, which `=== undefined` does not catch and which threw on `.kind`.
+  if (evidence == null) {
+    return 'this fold was passed no workspace evidence at all — `null` is what a producer that '
+      + 'is not JavaScript writes for an absent field, and an absent record names no role '
+      + 'profile';
+  }
   const tag: string = evidence.kind;
   if (evidence.kind === 'unreadable') {
     return 'the workspace record that would say which role profile governs here could not be '
@@ -1419,8 +1495,8 @@ export function refuseRoleProfileAuthority(args: {
       + 'here, and a tag that fell through to the declared branch is how a third value once '
       + 'reported a binding off the back of nothing';
   }
-  const ws: WorkspaceRecord | undefined = evidence.record;
-  if (ws === undefined) {
+  const ws: WorkspaceRecord | null | undefined = evidence.record;
+  if (ws == null) {
     return "the workspace evidence is tagged 'declared' and carries no record. A declaration "
       + 'with nothing in it declares no role profile';
   }
@@ -1993,7 +2069,12 @@ export function refuseRoleTableAuthority(args: {
   const { evidence, profile } = args;
   // Read before the narrowing erases it, for the reason all three siblings do: this arrives as
   // JSON through `can.ts` in a federated composer, where the type guarantees nothing about a
-  // value the compiler did not see written.
+  // value the compiler did not see written — `null` included, which `=== undefined` misses.
+  if (evidence == null) {
+    return 'this fold was passed no role table evidence at all — `null` is what a producer that '
+      + 'is not JavaScript writes for an absent field, and an absent document states no role '
+      + 'table';
+  }
   const tag: string = evidence.kind;
   if (evidence.kind === 'unreadable') {
     return 'the role profile document that would say what these roles permit could not be read '
@@ -2007,8 +2088,8 @@ export function refuseRoleTableAuthority(args: {
       + 'that fell through to the declared branch is how a third value once reported a binding '
       + 'off the back of nothing';
   }
-  const doc: RoleProfileDocument | undefined = evidence.document;
-  if (doc === undefined) {
+  const doc: RoleProfileDocument | null | undefined = evidence.document;
+  if (doc == null) {
     return "the role table evidence is tagged 'declared' and carries no document. A declaration "
       + 'with nothing in it declares no role table';
   }
@@ -2068,7 +2149,11 @@ export function refuseRoleTableAuthority(args: {
       + 'would let a future producer widen what `bound` means by writing a word this fold does '
       + 'not know';
   }
-  if (authority === 'transport-only' && doc.attestation !== undefined) {
+  // `!= null`, so a wire `attestation: null` reads as "carries none" rather than as "carries
+  // one": strict `!== undefined` is TRUE for `null` and accused an honest transport-only
+  // document of contradicting itself — a refusal that names the wrong fault, which this file
+  // treats as its own class of defect.
+  if (authority === 'transport-only' && doc.attestation != null) {
     // ★ THE ONE PLACE THE AUTHORITY LABEL IS CHECKED RATHER THAN BELIEVED, and it exists because
     // the label selects which checks run. Without it, a caller holding a POD record whose
     // authorship does not hold up could relabel it `'transport-only'` and skip the branch below.
@@ -2082,7 +2167,7 @@ export function refuseRoleTableAuthority(args: {
       + 'resolve the contradiction is the one that skips the signature check';
   }
   if (authority === 'signed-record') {
-    if (doc.attestation === undefined) {
+    if (doc.attestation == null) {
       return `the role profile document at <${doc.head}> says it is a signed pod record and `
         + 'carries no attestation at all, so nobody read its authorship proof. An unchecked '
         + 'record is not a verified one, and the label is the only thing claiming it is either';
@@ -2098,7 +2183,8 @@ export function refuseRoleTableAuthority(args: {
       // this flag false and only one of them is a forgery.
       return `the role profile document at <${doc.head}> is a pod record whose authorship proof `
         + 'does not name this descriptor'
-        + (doc.attestation.reason !== undefined ? ` (${doc.attestation.reason})` : '')
+        // `!= null` for the reason the same line in `refuseAttestation` gives.
+        + (doc.attestation.reason != null ? ` (${doc.attestation.reason})` : '')
         + ' — either the proof was minted for another record and copied in, or this record does '
         + 'not follow the naming convention the binding is compared on. Both are refused; only '
         + 'one of them is a forgery, and this layer cannot tell which';
@@ -2217,7 +2303,29 @@ export function foldRoster(args: {
   // filter invites a future edit to make it depend on the row, which is how a policy-level
   // gate becomes a per-row one that some rows pass.
   const evidence = args.attestation?.workspaceEvidence;
-  const convenerRefusal = args.attestation === undefined || evidence === undefined
+  // ★ `== null` ON EVERY EVIDENCE TEST BELOW, AND IT IS NOT STYLE. `undefined` is the JavaScript
+  // spelling of "absent"; `null` is the JSON one, and this whole argument object is what a
+  // federated composer parses off the wire. A strict `=== undefined` treated a wire `null` as a
+  // value, read `.kind` off it, and threw a TypeError out of the fold — no roster and no
+  // diagnosis, where absent would have given `'unchecked'`.
+  // ★ THE "NOTHING TO CHECK" PREDICATE IS NAMED ONCE AND READ BY BOTH LINES BELOW, AND THAT
+  // IS THE WHOLE POINT OF THE CONSTANT.
+  //
+  // It used to be written out twice — once to decide whether to RUN the refusal, once to
+  // decide what the roster REPORTS — and the two copies could disagree about the same input
+  // with nothing observing it. Measured: reverting only the refusal copy to `=== undefined`
+  // (leaving the reporting copy at `== null`) survives the entire suite. A wire `null`
+  // attestation then reaches `refuseConvenerAuthority`, which returns a refusal string, so
+  // `convenerRefusal` is non-null and the grant is dropped — while `convenerBinding`, decided
+  // by the other copy, still answers `'unchecked'`. The roster says "we did not look" about a
+  // record it in fact refused. Nothing asserts the two agree, because they are asserted
+  // independently, which is a coverage gap no single assertion closes: the durable fix is that
+  // there is now only one expression to get wrong.
+  //
+  // `askedForEvidenceProvenance` a few lines down already worked this way; the convener and
+  // profile pairs simply had not followed it.
+  const convenerUncheckable = args.attestation == null || evidence == null;
+  const convenerRefusal = convenerUncheckable
     ? null
     : refuseConvenerAuthority({
         evidence, workspace, convener: args.attestation.convener, signerOf,
@@ -2226,7 +2334,7 @@ export function foldRoster(args: {
         requireContentBinding: requireBinding, requireFieldBinding: requireFields,
       });
   const convenerBinding: ConvenerBinding =
-    args.attestation === undefined || evidence === undefined
+    convenerUncheckable
       ? 'unchecked'
       : convenerRefusal === null ? 'bound' : 'refused';
   // ★ THE SAME RECORD, THE OTHER FIELD, AND A SEPARATE VERDICT. Computed here beside the
@@ -2236,14 +2344,17 @@ export function foldRoster(args: {
   // profile disagreement and a convener disagreement are different faults with different
   // repairs: one republishes a workspace record, the other re-folds against the declared
   // governance.
-  const profileRefusal = args.attestation === undefined || evidence === undefined
+  // Reads the SAME named predicate as the convener pair above, for the same reason: two
+  // copies of "nothing to check" can disagree about one input and report `'unchecked'` for a
+  // record they refused.
+  const profileRefusal = convenerUncheckable
     ? null
     : refuseRoleProfileAuthority({
         evidence, workspace, profile: profile.profile, convener: args.attestation.convener,
         signerOf, requireContentBinding: requireBinding, requireFieldBinding: requireFields,
       });
   const roleProfileBinding: RoleProfileBinding =
-    args.attestation === undefined || evidence === undefined
+    convenerUncheckable
       ? 'unchecked'
       : profileRefusal === null ? 'bound' : 'refused';
   // ★ THE THIRD QUESTION OFF THE SAME EVIDENCE, AND THE ONLY ONE GATED ON A FLAG RATHER THAN ON
@@ -2276,20 +2387,28 @@ export function foldRoster(args: {
   // has already paid the cost the flag would be protecting; comparing what came back is free,
   // and refusing more is always safe. `roleTableBinding` reports whether anybody asked.
   const roleTableEvidence = args.attestation?.roleTableEvidence;
-  const tableRefusal = args.attestation === undefined || roleTableEvidence === undefined
+  const tableRefusal = args.attestation == null || roleTableEvidence == null
     ? null
     : refuseRoleTableAuthority({
         evidence: roleTableEvidence, profile, signerOf,
-        // The governance document is held to the SAME strength as the records it governs, for
-        // the reason the workspace record is. `requireFieldBinding` is deliberately NOT passed
-        // through: a role profile carries no `FieldProvenance` — see `RoleProfileDocument` —
-        // because the only producer that could mint one is the pod-record path, and demanding
-        // it would refuse every profile served from an ordinary web host, which is the deployed
-        // one and most of the point of roles being data.
+        // The governance document is held to the SAME strength as the records it governs — ON THE
+        // SIGNED-RECORD PATH, AND NOWHERE ELSE, which the sentence used to leave out.
+        // `refuseRoleTableAuthority` reads this argument only inside `if (authority ===
+        // 'signed-record')`, so against a `'transport-only'` document it reaches no check at all:
+        // measured, the guard returns null for a transport-only document passed
+        // `requireContentBinding: true`. That is every profile served from an ordinary web host,
+        // which is the only kind that exists here — so read on its own the old sentence promised a
+        // strength the deployed artifact never gets, which is the same overclaim
+        // `Roster.attributionNote` exists to keep `roleTableBinding: 'bound'` from making. Pinned
+        // in `workspace-adversarial` "the authority label cannot be used to SKIP the signature
+        // check". `requireFieldBinding` is deliberately NOT passed through: a role profile carries
+        // no `FieldProvenance` — see `RoleProfileDocument` — because the only producer that could
+        // mint one is the pod-record path, and demanding it would refuse every profile served from
+        // an ordinary web host, which is the deployed one and most of the point of roles being data.
         requireContentBinding: requireBinding,
       });
   const roleTableBinding: RoleTableBinding =
-    args.attestation === undefined || roleTableEvidence === undefined
+    args.attestation == null || roleTableEvidence == null
       ? 'unchecked'
       : tableRefusal === null ? 'bound' : 'refused';
   // ★ THE GRADE IN WORDS, AND IT IS A NAMED CONST BECAUSE THE NOTE IS ALREADY FOUR TERNARIES
@@ -2298,8 +2417,14 @@ export function foldRoster(args: {
   // 'bound'` from being read as "somebody signed this". Rendered only in the `'bound'` branch,
   // where the evidence is present by construction; the `else` is the value that claims least, so
   // an evidence shape this expression does not recognise cannot upgrade the claim.
-  const roleTableGrade = roleTableEvidence !== undefined
+  // ★ AND THE DOCUMENT IS TESTED TOO, NOT ONLY THE EVIDENCE. This expression is computed
+  // unconditionally while the comment above says it is "rendered only in the `'bound'` branch",
+  // so a shape `refuseRoleTableAuthority` REFUSES still reaches it: `{kind:'declared',
+  // document:null}` off the wire threw on `.authority` here even after that refusal was fixed,
+  // which is why the two changes are one edit rather than two.
+  const roleTableGrade = roleTableEvidence != null
     && roleTableEvidence.kind === 'declared'
+    && roleTableEvidence.document != null
     && roleTableEvidence.document.authority === 'signed-record'
     ? 'as a SIGNED POD RECORD, so its authorship was checked and anyone can check it again'
     : 'by an ORDINARY HTTPS FETCH, so the whole of the evidence is that this origin served '

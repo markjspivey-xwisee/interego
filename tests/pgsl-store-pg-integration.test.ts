@@ -21,6 +21,7 @@ import {
   type FdbLike,
   type StoredNode,
 } from '../packages/pgsl-store/src/index.js';
+import type { Engagement } from '@interego/agent-interop';
 
 const RUN = process.env.PGSL_PG_IT === '1';
 const ns = `${Date.now()}`;
@@ -94,5 +95,96 @@ describe.skipIf(!RUN)('pgsl-store: FULL stack over REAL PostgreSQL', () => {
     await ldp.writeResource(`pod-${ns}`, 'ctx/doc.ttl', new TextEncoder().encode(turtle), 'text/turtle');
     const got = await ldp.readResource(`pod-${ns}`, 'ctx/doc.ttl');
     expect(new TextDecoder().decode(got!.bytes)).toBe(turtle);
+  });
+
+  // ★ THE ONE PROPERTY NO DOUBLE CAN CHECK. Everything else in this file would pass over
+  // InMemoryFdb; these would not, because what is under test is an ISOLATION LEVEL — and
+  // InMemoryFdb refuses the second write at either level, so it reports the guard as
+  // working while production loses turns. The barrier below only ORDERS the calls the
+  // real code makes against a real connection; it stands in for nothing.
+  it('compareAndSet survives two OVERLAPPING transactions under READ COMMITTED', async () => {
+    const enc = new TextEncoder(); const dec = new TextDecoder();
+    const k = enc.encode(`cas:${ns}:overlap`);
+    await fdb.transact(async (txn) => txn.compareAndSet(k, null, enc.encode('v0')));
+
+    let open: () => void = () => {}; let arrived = 0;
+    const gate = new Promise<void>((r) => { open = r; });
+    const bothHaveRead = async (): Promise<void> => { if (++arrived === 2) open(); else await gate; };
+
+    const race = (mine: string): Promise<boolean> => fdb.transact(async (txn) => {
+      const seen = await txn.get(k);
+      await bothHaveRead();               // neither has written yet — the losing interleave
+      return txn.compareAndSet(k, seen ?? null, enc.encode(mine));
+    });
+    const [a, b] = await Promise.all([race('vA'), race('vB')]);
+
+    // WHICH one lands is a race; that EXACTLY ONE does is the invariant. With the previous
+    // unconditional `set` both landed and the loser's bytes were gone with no error.
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    const final = await fdb.transact(async (txn) => txn.get(k));
+    expect(dec.decode(final!)).toBe(a ? 'vA' : 'vB');
+  });
+
+  it('two concurrent creators of one absent key: exactly one lands', async () => {
+    const enc = new TextEncoder();
+    const k = enc.encode(`cas:${ns}:create`);
+    let open: () => void = () => {}; let arrived = 0;
+    const gate = new Promise<void>((r) => { open = r; });
+    const bothHaveRead = async (): Promise<void> => { if (++arrived === 2) open(); else await gate; };
+    const race = (mine: string): Promise<boolean> => fdb.transact(async (txn) => {
+      await txn.get(k); await bothHaveRead();
+      return txn.compareAndSet(k, null, enc.encode(mine));   // both saw: absent
+    });
+    // This is the `open` case in engagement-store: a minted id that must not overwrite a
+    // stranger's row. `ON CONFLICT DO NOTHING` refuses the loser; DO UPDATE would not.
+    expect((await Promise.all([race('A'), race('B')])).filter(Boolean)).toHaveLength(1);
+  });
+
+  it('ENGAGEMENT: an overlapped put is refused, not silently overwritten', async () => {
+    // Imports the RELAY'S REAL store over the REAL adapter. This is the regression for the
+    // defect: before the fix BOTH puts resolved and one turn vanished, with both callers
+    // answered 200.
+    const { engagementStoreOverFdb, ConcurrentModification } =
+      await import('../deploy/mcp-relay/engagement-store.js');
+
+    let open: () => void = () => {}; let arrived = 0; let armed = false;
+    const gate = new Promise<void>((r) => { open = r; });
+    const afterGet = async (): Promise<void> => {
+      if (!armed) return;
+      if (++arrived === 2) { armed = false; open(); } else await gate;
+    };
+    const ordered: FdbLike = {
+      transact: (fn) => fdb.transact((txn) => fn({
+        ...txn,
+        get: async (key) => { const v = await txn.get(key); await afterGet(); return v; },
+      })),
+      close: () => fdb.close(),
+    };
+
+    const store = engagementStoreOverFdb(ordered);
+    const id = `https://relay.test/engagements/${ns}-cas`;
+    const rec = (turns: unknown[]): Engagement => ({
+      id, state: 'working', openedBy: 'did:ethr:0xalice', turns,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    } as unknown as Engagement);
+
+    await store.put(rec([]), null);
+    const base = (await store.get(id))!.version;
+
+    armed = true;
+    const out = await Promise.allSettled([
+      store.put(rec([{ who: 'A' }]), base),
+      store.put(rec([{ who: 'B' }]), base),
+    ]);
+    const kept = out.filter((r) => r.status === 'fulfilled');
+    const refused = out.filter((r) => r.status === 'rejected');
+    expect(kept).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    // Asserted by TYPE, not by "it rejected": a raw pg error escaping as a StoreFault is a
+    // different bug and must not read as this one fixed.
+    expect((refused[0] as PromiseRejectedResult).reason).toBeInstanceOf(ConcurrentModification);
+    // And the survivor's turn is really there — a refusal that also lost the winner's
+    // write would satisfy the counts above and none of the point.
+    expect((await store.get(id))!.record.turns).toHaveLength(1);
   });
 });

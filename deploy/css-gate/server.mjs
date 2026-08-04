@@ -702,6 +702,14 @@ const server = createServer(async (req, res) => {
       perUserBearers: Boolean(IDENTITY_URL) || Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
       identityVerify: Boolean(IDENTITY_URL),
       relayIntrospect: Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
+      // The git sha baked into the image, and the only field here that can distinguish one
+      // deployment from another — everything above is derived from env vars that survive a
+      // redeploy unchanged. ★ That is not hypothetical for this service: its HSTS fix sat
+      // merged and undeployed while this body reported `ok`, and the only way anyone
+      // established the image was stale was by noticing that `relayIntrospect` (added
+      // 2026-06-05) was present and a 2026-07-31 change was not. tools/railway-redeploy.mjs
+      // polls exactly this field; without it --verify-url can never match.
+      build: process.env.INTEREGO_BUILD_SHA ?? 'unset',
     }));
     return;
   }

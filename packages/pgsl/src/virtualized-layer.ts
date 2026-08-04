@@ -9,9 +9,9 @@
  *   3. Standard SPARQL Protocol support for the server
  */
 
-import type { IRI, ContextDescriptorData } from '@interego/core';
+import type { IRI, ContextDescriptorData, ManifestEntry } from '@interego/core';
 import { escapeTurtleLiteral } from '@interego/core';
-import { toTurtle, isPgslNodeId, pgslNodeKind } from '@interego/core';
+import { toTurtle, isPgslNodeId, pgslNodeKind, ContextDescriptor } from '@interego/core';
 import type { PGSLInstance, Value } from './types.js';
 import type { CoherenceCertificate } from './coherence.js';
 import type { PersistenceRegistry } from './persistence.js';
@@ -113,6 +113,74 @@ function localName(iri: string): string {
   const slash = iri.lastIndexOf('/');
   if (slash >= 0) return iri.slice(slash + 1);
   return iri;
+}
+
+/**
+ * Projects a pod's manifest rows into the `SystemState.descriptors` this module
+ * materializes.
+ *
+ * Exists because `discover()` yields `ManifestEntry` — the manifest's mirrored metadata —
+ * while every consumer in this file (`materializeSystem`, `systemToTurtle`,
+ * `executeSparqlProtocol`) reads `ContextDescriptorData`, and nothing bridged the two.
+ * With no bridge the pgsl-browser hardcoded `descriptors: []`, and its virtualized graph
+ * published `iep:descriptorCount 1` for a pod while naming ZERO `iep:ContextDescriptor`
+ * subjects — measured: /api/pods returned totalDescriptors 1 and
+ * `?d a iep:ContextDescriptor` returned 0 bindings, 200 OK on both. A graph that
+ * contradicted itself, not one that was merely sparse.
+ *
+ * ONLY manifest-carried facts are projected. No confidence score, no provenance agent, no
+ * placeholder issuer — a fabricated value is indistinguishable from an asserted one once it
+ * is a triple, and this output is published as RDF.
+ *
+ * `entry.descriptorUrl` becomes the descriptor id because publish() writes the descriptor's
+ * Turtle with that same IRI as its own subject, so the subject emitted here dereferences to
+ * the resource it names.
+ */
+export function descriptorsFromManifestEntries(
+  podUrl: IRI,
+  entries: readonly ManifestEntry[],
+): ContextDescriptorData[] {
+  const out: ContextDescriptorData[] = [];
+  for (const entry of entries) {
+    // A row naming no graph cannot become a descriptor: `describes` is what
+    // materializeSystem walks to attach it to anything, and ContextDescriptor.build()
+    // THROWS on an empty one. Skipping keeps a single sparse or malformed manifest row
+    // from taking /dump.ttl, /dump.jsonld and both /sparql methods down together — i.e.
+    // from trading a silently empty graph for four simultaneous 500s.
+    if (!entry.describes?.length) continue;
+    // A row naming no graph cannot become a descriptor: `describes` is what
+    // materializeSystem walks to attach it to anything, and ContextDescriptor.build()
+    // THROWS on an empty one. Skipping keeps a single sparse or malformed manifest row
+    // from taking /dump.ttl, /dump.jsonld and both /sparql methods down together — i.e.
+    // from trading a silently empty graph for four simultaneous 500s.
+    const b = ContextDescriptor.create(entry.descriptorUrl as IRI)
+      .describes(...entry.describes.map(g => g as IRI))
+      // The pod this was read from — the one fact the row itself does not carry, and the
+      // one that guarantees `facets` is non-empty so build() cannot throw on a row that
+      // mirrored no facet at all.
+      .federation({ origin: podUrl, storageEndpoint: podUrl });
+
+    if (entry.validFrom !== undefined) b.validFrom(entry.validFrom);
+    if (entry.validUntil !== undefined) b.validUntil(entry.validUntil);
+    if (entry.validFrom !== undefined || entry.validUntil !== undefined) {
+      b.temporal({
+        ...(entry.validFrom !== undefined ? { validFrom: entry.validFrom } : {}),
+        ...(entry.validUntil !== undefined ? { validUntil: entry.validUntil } : {}),
+      });
+    }
+    if (entry.modalStatus !== undefined) b.semiotic({ modalStatus: entry.modalStatus });
+    if (entry.trustLevel !== undefined || entry.issuer !== undefined) {
+      b.trust({
+        ...(entry.trustLevel !== undefined ? { trustLevel: entry.trustLevel } : {}),
+        ...(entry.issuer !== undefined ? { issuer: entry.issuer as IRI } : {}),
+      });
+    }
+    if (entry.conformsTo?.length) b.conformsTo(...entry.conformsTo.map(c => c as IRI));
+    if (entry.supersedes?.length) b.supersedes(...entry.supersedes.map(s => s as IRI));
+
+    out.push(b.build());
+  }
+  return out;
 }
 
 // ── 1. materializeSystem ──────────────────────────────────────

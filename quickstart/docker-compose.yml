@@ -5,6 +5,9 @@ version: "3.9"
 # Brings up:
 #   - personal-bridge        on :5050 (Tier 5 substrate, embedded relay,
 #                                       MCP at POST /mcp, REST + admin UI)
+#     Requires BRIDGE_TOKEN in .env — see .env.example. The bridge holds the X25519
+#     key derived from BRIDGE_KEY, so a reachable un-credentialled bridge is an open
+#     decryption oracle, not merely an open API.
 #   - organizational-working-memory bridge on :6060 (reference vertical;
 #                                       people / projects / decisions /
 #                                       follow-ups + per-source navigation)
@@ -38,19 +41,27 @@ services:
       - |
         set -e
         cd examples/personal-bridge
+        if [ -z "$$BRIDGE_TOKEN" ]; then
+          echo "ERROR: BRIDGE_TOKEN must be set in .env — this container binds 0.0.0.0, and without a credential every caller that reaches :5050 can publish to your relay, list your encrypted inbox and DECRYPT it." >&2
+          exit 1
+        fi
         npm install --silent --no-audit --no-fund
         echo "personal-bridge dependencies ready"
         exec npx tsx server.ts
     environment:
       - PORT=5050
       - BIND=0.0.0.0
+      - BRIDGE_TOKEN=${BRIDGE_TOKEN:-}
       - BRIDGE_KEY=${BRIDGE_KEY:-}
       - BRIDGE_PERSIST=${BRIDGE_PERSIST:-1}
       - EXTERNAL_RELAYS=${EXTERNAL_RELAYS:-}
       - INBOUND_AUTHORS=${INBOUND_AUTHORS:-}
       - NODE_NO_WARNINGS=1
     ports:
-      - "5050:5050"
+      # Host-loopback only; defence in depth behind BRIDGE_TOKEN. The container binds
+      # 0.0.0.0 because that is the only address reachable from the docker bridge network,
+      # but nothing outside this machine should reach it by accident.
+      - "127.0.0.1:5050:5050"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:5050/health || exit 1"]
       interval: 5s

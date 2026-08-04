@@ -124,9 +124,20 @@ regime engine + performance architecture currently live, **without breaking Foxx
 
 - **Stage 1 (this scaffold — done):** the vertical exists; the `agp:` ontology (OWL +
   SHACL) is authored and served dereferenceably; the affordance manifest + MCP surface
-  are live. Capability **handlers are pending-Stage-2 stubs** — they validate and echo
-  inputs and return an explicit `pending: 'stage-2'` marker; they do **not** fabricate
-  results or publish yet.
+  are live.
+- **Stage 1.5 (done):** eight of the nine capability handlers now **run and publish** —
+  `contextualize_situation`, `define_capability`, `map_affordance`, `actualize`,
+  `diagnose`, `plan_intervention`, `evaluate_intervention` and `extend_standards` — in
+  `bridge/handlers.ts`. This paragraph used to say every handler "returns an explicit
+  `pending: 'stage-2'` marker", and it was **false for eight of the nine**; only
+  `agp.list_practice` is still a stub, blocked on container enumeration rather than on
+  the engine move. ★ `pending` did not disappear, it became **specific**: a handler that
+  could not resolve its inputs returns a named blocker (`situation-not-resolvable`,
+  `inputs-not-resolvable`, `no-regime-evidence`, `no-container-enumeration`) and says
+  the engine ran nothing, and a handler that DID run returns `pending: null`. A single
+  hard-coded marker could not distinguish "not built yet" from "you passed me nothing",
+  which is what made this sentence outlive its truth. Handlers still do **not** fabricate
+  results.
 - **Stage 2 (next):** move the engine modules (`agent-disposition`,
   `performance-architecture`, `performance-calibration`, `knowledge-architecture`,
   `agent-portfolio`, `agent-teaching`, `agent-trajectory`) out of Foxxi into this

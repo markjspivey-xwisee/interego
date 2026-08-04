@@ -110,10 +110,19 @@ examples/rev195-self-improving/
 ├── tools.mjs             ← substrate-client wrappers (relay HTTP)
 ├── verifiers.mjs         ← deterministic test runner + LLM judge
 ├── profile.mjs           ← calibration profile read + Tier-3 replan helper
-└── workspace/            ← scratch dir the agent writes its implementation into
-    └── tests/
-        └── modalDistribution.test.mjs
+├── workspace/            ← scratch dir the single-agent run writes its implementation into
+│   └── tests/
+│       └── modalDistribution.test.mjs   ← the SPEC. A demo fixture, not a repo CI gate.
+├── workspace-alpha/      ← per-agent scratch dir (collective mode): impl + a copy of the spec
+└── workspace-beta/       ← ditto. collective.mjs rewrites both spec copies from workspace/.
 ```
+
+The three `modalDistribution.test.mjs` files are **demo fixtures, not repo CI gates**. `verifiers.mjs`
+runs them with `node --test` as the demo's inner-loop green light; nothing in `vitest.config.ts` or
+`.github/workflows/` collects them, and nothing should — the implementation beside each one is written
+by an LLM on every run, so routing them into CI would gate master on a demo agent's scratch output.
+Each file says so in its own header. The `-alpha` and `-beta` copies are overwritten verbatim from
+`workspace/tests/` at the start of every collective run, so edit the original and mirror it, never a copy.
 
 ## The task
 

@@ -16,10 +16,56 @@ FROM nginx:1.27-alpine
 RUN rm -rf /usr/share/nginx/html/*
 COPY deploy/acme-id/site/ /usr/share/nginx/html/
 
+# ★ THE HEALTH DOCUMENT, WRITTEN AFTER the COPY and after the rm above, never before —
+# either would delete or shadow it.
+#
+# A FILE and not a `return 200` literal, because a literal cannot fail: it answers 200 with
+# an empty docroot, which is the same unfalsifiable check as pointing a probe at an SPA
+# fallback. try_files 404s when the image does not carry the document, so a 200 means the
+# build really produced it.
+#
+# The sha is what makes a rollout falsifiable at all: tools/railway-redeploy.mjs polls
+# /health until `.build` equals the tag it deployed, because Railway calls a deploy SUCCESS
+# as soon as the container binds a port and on a tag missing from the registry the OLD
+# container keeps answering 200. build-ghcr.yml has always passed GIT_SHA to every image;
+# without the ARG line Docker drops it with a warning and the image builds green.
+#
+# `test -f index.html` fails the BUILD when the site tree lost its shell — the same rule as
+# `RUN nginx -t` below: turn a runtime problem into a red build.
+ARG GIT_SHA=unset
+RUN test -f /usr/share/nginx/html/index.html \
+ && printf '{"status":"ok","service":"acme-id","build":"%s"}\n' "$GIT_SHA" \
+    > /usr/share/nginx/html/health.json
+
 RUN printf 'server {\n\
   listen 8080;\n\
   root /usr/share/nginx/html;\n\
   index index.html;\n\
+\n\
+  # HSTS. This host publishes /.well-known/did.json and the WebID profile cards, i.e. it\n\
+  # is the resolution root for did:web:acme-id.interego.xwisee.com, which\n\
+  # deploy/Dockerfile.foxxi-bridge names as its FOXXI_AUTHORITATIVE_SOURCE. Other services\n\
+  # dereference those documents as identity assertions, so one plaintext hop is a chance to\n\
+  # substitute a key, and a first plaintext fetch of a DID document is the request an\n\
+  # interceptor most wants. Measured live: this host sent no Strict-Transport-Security on\n\
+  # any path while every sibling did, because the fix that added it landed in\n\
+  # deploy/nginx-spa.conf and this image writes its own inline config.\n\
+  #\n\
+  # Declared at server scope for responses produced BEFORE a location is chosen (the\n\
+  # OPTIONS short-circuit below returns 204 from here) AND repeated in every location,\n\
+  # because add_header DOES NOT INHERIT: a location that declares any add_header of its own\n\
+  # discards every add_header from the enclosing scope.\n\
+  add_header Strict-Transport-Security "max-age=31536000" always;\n\
+\n\
+  # Health, and it must be able to FAIL. `location /` below ends in =404, so /health was a\n\
+  # plain 404 and this service could not be verified after a deploy at all. Exact match, so\n\
+  # it wins over every block below.\n\
+  location = /health {\n\
+    default_type "application/json; charset=utf-8";\n\
+    add_header Cache-Control "no-store" always;\n\
+    add_header Strict-Transport-Security "max-age=31536000" always;\n\
+    try_files /health.json =404;\n\
+  }\n\
 \n\
   # Each profile asserts `solid:account <.../users/<u>/>`. That URL is a directory\n\
   # with no index, so nginx answered 403 — a published statement about a person\n\
@@ -33,12 +79,14 @@ RUN printf 'server {\n\
     # redirect timed out. Off, nginx emits a RELATIVE Location and the client\n\
     # resolves it against the URL it actually asked for.\n\
     absolute_redirect off;\n\
+    add_header Strict-Transport-Security "max-age=31536000" always;\n\
     return 302 /users/$1/profile/card;\n\
   }\n\
 \n\
   # WebID profile cards have no extension on the URL but are Turtle.\n\
   location ~* ^/users/[^/]+/profile/card$ {\n\
     default_type "text/turtle; charset=utf-8";\n\
+    add_header Strict-Transport-Security "max-age=31536000" always;\n\
     add_header Access-Control-Allow-Origin "*" always;\n\
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;\n\
     add_header Access-Control-Allow-Headers "Accept, Authorization, Content-Type" always;\n\
@@ -51,6 +99,7 @@ RUN printf 'server {\n\
   # definition is a word, not a term.\n\
   location = /ns/foxxi-demo {\n\
     default_type "text/turtle; charset=utf-8";\n\
+    add_header Strict-Transport-Security "max-age=31536000" always;\n\
     add_header Access-Control-Allow-Origin "*" always;\n\
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;\n\
     add_header Access-Control-Allow-Headers "Accept, Authorization, Content-Type" always;\n\
@@ -60,6 +109,7 @@ RUN printf 'server {\n\
   # DID document is application/did+json.\n\
   location = /.well-known/did.json {\n\
     default_type "application/did+json; charset=utf-8";\n\
+    add_header Strict-Transport-Security "max-age=31536000" always;\n\
     add_header Access-Control-Allow-Origin "*" always;\n\
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;\n\
     add_header Access-Control-Allow-Headers "Accept, Authorization, Content-Type" always;\n\
@@ -70,6 +120,7 @@ RUN printf 'server {\n\
   location / {\n\
     add_header Access-Control-Allow-Origin "*" always;\n\
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;\n\
+    add_header Strict-Transport-Security "max-age=31536000" always;\n\
     try_files $uri $uri/ =404;\n\
   }\n\
 \n\

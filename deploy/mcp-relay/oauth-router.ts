@@ -164,6 +164,20 @@ export interface OAuthRouterOptions {
  *   - /revoke — the provider implements no `revokeToken`, so the SDK never mounted it
  *     either and the metadata never advertised it. Adding it now would be a new,
  *     untested surface.
+ *
+ *     ★ AND THE CONSEQUENCE, WHICH THIS COMMENT USED TO LEAVE UNSAID: with no
+ *     revocation, the ONLY ceiling on a leaked bearer is its own TTL — 1h access,
+ *     14 days refresh. That is an accepted risk, recorded at the OAuth-routes comment
+ *     in server.ts, not an absence nobody noticed. The startup banner advertised
+ *     `/revoke` regardless until it was corrected, so the gap read as closed.
+ *
+ *     Whoever mounts it: RFC 7009 §2.1 requires the SAME client authentication as
+ *     /token, so the authenticator below must be extracted and shared rather than
+ *     copied (the copy that lost the secret-expiry check would let a client with a
+ *     dead secret keep killing tokens), and the provider needs a revocation TOMBSTONE
+ *     rather than a map delete — `verifyAccessToken` and `exchangeRefreshToken` both
+ *     read through to the pod on a map miss and promote what they find back into the
+ *     maps, so a delete-only revocation is undone by the very next request.
  *   - the /.well-known documents — the relay serves its own, registered earlier in
  *     server.ts, carrying JSON-LD and Hydra affordances the SDK's derivation cannot
  *     express. They already shadowed the SDK's by route order; now there is nothing to

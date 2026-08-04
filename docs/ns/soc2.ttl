@@ -83,8 +83,14 @@ soc2:CC2.2 a owl:NamedIndividual ;
 soc2:CC3.1 a owl:NamedIndividual ;
     rdfs:label "CC3.1 — entity specifies objectives sufficient to enable risk identification" .
 
+soc2:CC3.2 a owl:NamedIndividual ;
+    rdfs:label "CC3.2 — entity identifies + analyzes risks to achieving its objectives" .
+
 soc2:CC4.1 a owl:NamedIndividual ;
     rdfs:label "CC4.1 — entity selects + develops control activities" .
+
+soc2:CC4.2 a owl:NamedIndividual ;
+    rdfs:label "CC4.2 — entity evaluates + communicates internal control deficiencies in a timely manner" .
 
 soc2:CC5.1 a owl:NamedIndividual ;
     rdfs:label "CC5.1 — entity uses ongoing + separate monitoring" .

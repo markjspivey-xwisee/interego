@@ -36,7 +36,16 @@ on:
       - 'examples/**'
       - 'packages/**'
       - 'tests/**'
-      - 'deploy/mcp-relay/**'
+      # ★ THE WHOLE deploy/ TREE, NOT JUST deploy/mcp-relay/**.
+      #
+      # tests/static-sites-404-and-hsts.test.ts and tests/build-sha-is-verifiable.test.ts
+      # assert against deploy/Dockerfile.* and the nginx configs beside them — whether each
+      # public surface registers HSTS before its body parser, and whether each image takes
+      # the GIT_SHA build-arg it is deployed by. This job is the ONLY workflow that runs
+      # `npx vitest run`, so while this entry read `deploy/mcp-relay/**` a Dockerfile-only
+      # change could not re-run the gate that reads it: the assertions existed and the
+      # trigger did not fire.
+      - 'deploy/**'
       - 'docs/ns/**'
       - 'integrations/**'
       - 'tsconfig.base.json'
@@ -53,6 +62,10 @@ on:
       - 'vitest.config.ts'
       - 'tools/**'
       - 'spec/conformance/**'
+      # tests/security-txt.test.ts asserts that a workflow with a `schedule:` invokes
+      # tools/security-txt-expiry-check.mjs. Without this entry, deleting the cron from
+      # that workflow would not re-run the assertion that guards it.
+      - '.github/workflows/security-txt-expiry.yml'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/bridge-typecheck.yml'
@@ -64,7 +77,16 @@ on:
       - 'examples/**'
       - 'packages/**'
       - 'tests/**'
-      - 'deploy/mcp-relay/**'
+      # ★ THE WHOLE deploy/ TREE, NOT JUST deploy/mcp-relay/**.
+      #
+      # tests/static-sites-404-and-hsts.test.ts and tests/build-sha-is-verifiable.test.ts
+      # assert against deploy/Dockerfile.* and the nginx configs beside them — whether each
+      # public surface registers HSTS before its body parser, and whether each image takes
+      # the GIT_SHA build-arg it is deployed by. This job is the ONLY workflow that runs
+      # `npx vitest run`, so while this entry read `deploy/mcp-relay/**` a Dockerfile-only
+      # change could not re-run the gate that reads it: the assertions existed and the
+      # trigger did not fire.
+      - 'deploy/**'
       - 'docs/ns/**'
       - 'integrations/**'
       - 'tsconfig.base.json'
@@ -81,6 +103,10 @@ on:
       - 'vitest.config.ts'
       - 'tools/**'
       - 'spec/conformance/**'
+      # tests/security-txt.test.ts asserts that a workflow with a `schedule:` invokes
+      # tools/security-txt-expiry-check.mjs. Without this entry, deleting the cron from
+      # that workflow would not re-run the assertion that guards it.
+      - '.github/workflows/security-txt-expiry.yml'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/bridge-typecheck.yml'

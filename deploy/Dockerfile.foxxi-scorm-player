@@ -14,6 +14,18 @@ FROM nginx:1.27-alpine
 RUN rm -rf /usr/share/nginx/html/*
 COPY deploy/foxxi-scorm-player/site/ /usr/share/nginx/html/
 
+# ★ THE HEALTH DOCUMENT, WRITTEN AFTER the rm and the COPY above — either would otherwise
+# delete or shadow it. A FILE, not a `return 200` literal: a literal answers 200 with an
+# empty docroot, which is the same unfalsifiable check as the SPA fallback it replaces.
+# The sha is what makes a rollout provable — tools/railway-redeploy.mjs polls /health until
+# `.build` equals the tag it deployed. build-ghcr.yml already passes GIT_SHA to every image;
+# without the ARG Docker drops it with a warning and the image builds green.
+# `test -f index.html` fails the BUILD if the site tree lost its shell.
+ARG GIT_SHA=unset
+RUN test -f /usr/share/nginx/html/index.html \
+ && printf '{"status":"ok","service":"foxxi-scorm-player","build":"%s"}\n' "$GIT_SHA" \
+    > /usr/share/nginx/html/health.json
+
 # CORS-open so the player can be embedded from the dashboard
 # origin; cache headers tuned for: long on /course/ static assets,
 # none on the player shell so updates roll out immediately.
@@ -24,11 +36,32 @@ RUN printf 'server {\n\
 \n\
   add_header Access-Control-Allow-Origin "*" always;\n\
   add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;\n\
+  add_header Strict-Transport-Security "max-age=31536000" always;\n\
+\n\
+  # Health, and it must be able to FAIL. `location /` below ends in /index.html, so every\n\
+  # extensionless path answered 200 with the player shell — /health included, and\n\
+  # byte-identical to / (measured: both 1573 bytes). A healthcheck pointed there passes\n\
+  # with an EMPTY docroot, so it is a check that cannot fail. Exact match wins over both\n\
+  # blocks below, and try_files serves the file or 404s, so a 200 proves the build really\n\
+  # wrote the document. add_header does NOT inherit, so the CORS pair and HSTS repeat here.\n\
+  location = /health {\n\
+    default_type "application/json; charset=utf-8";\n\
+    add_header Cache-Control "no-store" always;\n\
+    add_header Strict-Transport-Security "max-age=31536000" always;\n\
+    add_header Access-Control-Allow-Origin "*" always;\n\
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;\n\
+    try_files /health.json =404;\n\
+  }\n\
 \n\
   # Course content — long cache (the SCORM zip is static)\n\
   location /course/ {\n\
     expires 7d;\n\
     add_header Cache-Control "public, max-age=604800";\n\
+    # HSTS repeated because this block declares an add_header of its own and therefore\n\
+    # DISCARDS the server-level set above. Measured live: GET /course/imsmanifest.xml\n\
+    # answered 200 with no Strict-Transport-Security while / answered 200 with it — the\n\
+    # non-inheritance rule biting on the one block nothing had checked.\n\
+    add_header Strict-Transport-Security "max-age=31536000" always;\n\
   }\n\
 \n\
   # Asset-like paths 404 when missing, rather than falling back to the SPA shell.\n\

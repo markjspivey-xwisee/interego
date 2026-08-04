@@ -373,11 +373,35 @@ export function fromJsonLd(doc: Record<string, unknown>): ContextDescriptorData 
   // and the legacy `cg:` so descriptors authored before the Interego-Protocol
   // rename still deserialize.
   const stripNs = (v: string | undefined): string | undefined => v?.replace(/^(iep|cg):/, '');
+  // Carry EVERY serialized property across the round trip instead of re-listing
+  // the ones this parser happens to know. `serializeFacet` emits nine facet types;
+  // this switch reconstructed three, so Provenance/Agent/AccessControl/Federation/
+  // Causal/Projection came back as bare `{ type }` shells and Temporal/Semiotic/
+  // Trust silently dropped temporalRelation / iep:languageTag / proofMechanism /
+  // iep:revocationStatus. Facet COUNT was preserved, which is all the round-trip
+  // test asserted, so a published descriptor re-read through fromJsonLd lost data
+  // with nothing failing.
+  const stripKeyNs = (k: string): string => k.replace(/^[a-z][\w-]*:/i, '');
+  const carry = (fd: Record<string, unknown>): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fd)) {
+      if (k === '@type') continue;
+      // Unwrap `{ '@id': iri }` node references back to the plain IRI string the
+      // model holds (serializeProjectionFacet et al. wrap IRIs this way).
+      const u = (v && typeof v === 'object' && !Array.isArray(v)
+        && Object.keys(v as object).length === 1 && '@id' in (v as object))
+        ? (v as Record<string, unknown>)['@id'] : v;
+      out[stripKeyNs(k)] = typeof u === 'string' ? (stripNs(u) ?? u) : u;
+    }
+    return out;
+  };
   const facets: ContextFacetData[] = facetDocs.map(fd => {
     const type = stripNs(fd['@type'] as string) as string;
+    const base = carry(fd);
     switch (type) {
       case 'TemporalFacet':
         return {
+          ...base,
           type: 'Temporal' as const,
           validFrom: fd.validFrom as string | undefined,
           validUntil: fd.validUntil as string | undefined,
@@ -385,6 +409,7 @@ export function fromJsonLd(doc: Record<string, unknown>): ContextDescriptorData 
         };
       case 'SemioticFacet':
         return {
+          ...base,
           type: 'Semiotic' as const,
           modalStatus: stripNs(fd.modalStatus as string) as
             ModalStatus | undefined,
@@ -395,15 +420,19 @@ export function fromJsonLd(doc: Record<string, unknown>): ContextDescriptorData 
         };
       case 'TrustFacet':
         return {
+          ...base,
           type: 'Trust' as const,
           trustLevel: stripNs(fd.trustLevel as string) as
             | 'SelfAsserted' | 'ThirdPartyAttested' | 'CryptographicallyVerified'
             | undefined,
           issuer: fd.issuer as string | undefined,
         };
-      // Extend as needed; for now return a minimal typed object
+      // No per-type branch needed: `carry` already preserved the payload, and the
+      // @type suffix names the model's discriminant. Adding a branch is now only
+      // for VALUE normalization (e.g. stripping an `iep:` prefix), never for
+      // field preservation.
       default:
-        return { type: type.replace('Facet', '') as ContextFacetData['type'] } as ContextFacetData;
+        return { ...base, type: type.replace('Facet', '') as ContextFacetData['type'] } as ContextFacetData;
     }
   });
 

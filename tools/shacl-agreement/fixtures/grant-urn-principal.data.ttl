@@ -1,5 +1,6 @@
 # shape: wsp-shapes.ttl
 # expect: violates
+# pins: wsp:grantedTo
 # why: THE sh:pattern-ON-IRI CASE. wsp:grantedTo is an IRI, and the pattern "^https?://|^did:" must apply to it. This is the exact defect PR #231 fixed: while sh:pattern was literal-only here, a urn: principal PASSED for us and FAILED for pySHACL, so the published shape meant two different things.
 
 @prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .

@@ -1,5 +1,6 @@
 # shape: wsp-shapes.ttl
 # expect: conforms
+# pins: wsp:grantedTo
 # why: An agent principal is a did:, which the same pattern must also accept. Agents are principals here, not second-class bots.
 
 @prefix wsp:  <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .

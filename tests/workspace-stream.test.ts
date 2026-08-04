@@ -22,6 +22,7 @@ import {
   appendWithRetry,
   readAttestation,
   proofDescriptorId,
+  verifierStreamIri,
   WSP_SHAPES,
   type StreamRow,
   type StreamDeps,
@@ -175,11 +176,11 @@ describe('verifyChain — the order is derived, never taken on trust', () => {
 
   it('an empty stream is not intact, and headOf starts at seq 0', () => {
     expect(verifyChain([]).intact).toBe(false);
-    expect(headOf([])).toEqual({ url: null, seq: 0 });
+    expect(headOf([])).toEqual({ outcome: 'head', url: null, seq: 0 });
   });
 
   it('headOf points at the verified tip and the next free sequence', () => {
-    expect(headOf(LINEAR)).toEqual({ url: d(2), seq: 3 });
+    expect(headOf(LINEAR)).toEqual({ outcome: 'head', url: d(2), seq: 3 });
   });
 
   it('★ headOf REFUSES a forked chain instead of answering "brand new stream"', () => {
@@ -189,7 +190,13 @@ describe('verifyChain — the order is derived, never taken on trust', () => {
     // only ever bites a caller of the exported helper — which is who it must protect.
     const forked = [...LINEAR, row(3, [d(1)])];
     expect(verifyChain(forked).ordered).toEqual([]);   // the input that produced the wrong answer
-    expect(() => headOf(forked)).toThrow(/does not verify/);
+    const res = headOf(forked);
+    expect(res.outcome).toBe('diverged');
+    // ★ The CAUSE, read off the report — not matched out of a message. Matching prose is
+    // what the throw forced, and a message is not an interface: rewording it would silently
+    // turn this into an assertion that passes on any refusal at all.
+    expect(res.outcome === 'diverged' && res.report.merges).toEqual([d(1)]);
+    expect(res.outcome === 'diverged' && res.report.heads).toHaveLength(2);
   });
 
   it('★ headOf refuses a chain missing its beginning, which DOES order cleanly', () => {
@@ -197,12 +204,37 @@ describe('verifyChain — the order is derived, never taken on trust', () => {
     // It is still missing the start of the log, so there is no verified tip to gate on.
     const truncatedHead = [row(1, [d(0)]), row(2, [d(1)])];
     expect(verifyChain(truncatedHead).ordered).toHaveLength(2);
-    expect(() => headOf(truncatedHead)).toThrow(/dangling link/);
+    const res = headOf(truncatedHead);
+    expect(res.outcome).toBe('diverged');
+    // A truncated head and a fork are different accidents with different repairs, and the
+    // report is what keeps them apart at the caller.
+    expect(res.outcome === 'diverged' && res.report.danglingLinks)
+      .toEqual([{ from: d(1), missing: d(0) }]);
+    expect(res.outcome === 'diverged' && res.report.merges).toEqual([]);
   });
 
   it('an empty stream is still the one case headOf answers with seq 0', () => {
     // The refusal must not swallow the legitimate case, or no stream could ever be started.
-    expect(() => headOf([])).not.toThrow();
+    expect(headOf([]).outcome).toBe('head');
+  });
+
+  it('★ the refusal is a VALUE carrying the report, not an exception carrying prose', () => {
+    // The contract this now shares with appendEntry, attestationOfResponse and verifyChain:
+    // a DATA condition comes back as a value; only a programming error or a failed read
+    // throws. A divergent chain is a data condition — it is what a lost CAS looks like from
+    // the reader's side — and it was the one place in this module that threw for one.
+    const forked = [...LINEAR, row(3, [d(1)])];
+    expect(() => headOf(forked)).not.toThrow();
+    const res = headOf(forked);
+    expect(res.outcome).toBe('diverged');
+    // A 'diverged' result carries NO head. `url` and `seq` are not properties of that member,
+    // so a caller that skips the branch fails to COMPILE rather than reading `undefined` —
+    // which is what replaces the runtime throw, and tsconfig.check.json compiles every
+    // caller of this function in the repo, `applications/shared-workspace/tools/` included.
+    expect(res).not.toHaveProperty('url');
+    expect(res).not.toHaveProperty('seq');
+    // And the four causes are separable without touching the message.
+    expect(res.outcome === 'diverged' && res.report.intact).toBe(false);
   });
 });
 
@@ -235,7 +267,10 @@ describe('★ wsp:seq is written on every entry — so it has to be read back', 
 
   it('★ and headOf will not derive a precondition from it either', () => {
     const relinked: StreamRow[] = [{ ...row(0), seq: 0 }, { ...row(2, [d(0)]), seq: 2 }];
-    expect(() => headOf(relinked)).toThrow(/sequence mismatch/);
+    const res = headOf(relinked);
+    expect(res.outcome).toBe('diverged');
+    expect(res.outcome === 'diverged' && res.report.seqMismatches)
+      .toEqual([{ url: d(2), declared: 2, position: 1 }]);
   });
 
   it('★ "nobody looked" is reported, never rendered as "the numbering agrees"', () => {
@@ -275,7 +310,7 @@ describe('★ wsp:seq is written on every entry — so it has to be read back', 
     expect(verifyChain(prefix).seqMismatches).toEqual([]);
     // And headOf answers confidently on the prefix, because from the rows it was given
     // there is nothing wrong with it.
-    expect(headOf(prefix)).toEqual({ url: d(1), seq: 2 });
+    expect(headOf(prefix)).toEqual({ outcome: 'head', url: d(1), seq: 2 });
   });
 
   it('readStream reads the declared sequence when a row carries one', async () => {
@@ -928,5 +963,34 @@ describe('readAttestation — one get_descriptor, and every failure is REPORTED'
     }));
     expect(att.boundToDescriptor).toBe(true);
     expect(att.reason).toBeUndefined();
+  });
+});
+
+describe('verifierStreamIri — a live verifier may not name its stream after the clock', () => {
+  const WS = 'https://markjspivey-xwisee.github.io/interego/orgb/workspace';
+
+  it('is a pure function of its inputs — the same run id twice is the same IRI', () => {
+    expect(verifierStreamIri(WS, 'u-eth-8f3b8e939600', 'v2'))
+      .toBe(`${WS}/stream/u-eth-8f3b8e939600-v2`);
+    expect(verifierStreamIri(WS, 'u-x', 'v2')).toBe(verifierStreamIri(WS, 'u-x', 'v2'));
+  });
+
+  it('★ REFUSES Date.now(), which is the epoch that shipped and checked nothing', () => {
+    // Nine live runs, nine one-entry chains, none extended: a clocked IRI is empty on every
+    // run, so the append never sends if_match and never exercises catch-up — and every other
+    // assertion in the verifier passes anyway, because a chain of length one verifies.
+    expect(() => verifierStreamIri(WS, 'u-x', String(Date.now()))).toThrow(/it is a clock/);
+    expect(() => verifierStreamIri(WS, 'u-x', '1785787853079')).toThrow(/it is a clock/);
+  });
+
+  it('allows a deliberate epoch that merely contains digits', () => {
+    expect(verifierStreamIri(WS, 'u-x', 'v2')).toContain('-v2');
+    expect(verifierStreamIri(WS, 'u-x', '2026-08-run3')).toContain('-2026-08-run3');
+  });
+
+  it('refuses an empty epoch rather than collapsing onto the forked IRI', () => {
+    // `${WS}/stream/u-x-` is not `${WS}/stream/u-x`, but an empty epoch is a caller who meant
+    // "no epoch" and would be one edit away from the unsuffixed IRI that is already forked.
+    expect(() => verifierStreamIri(WS, 'u-x', '')).toThrow(/must not be empty/);
   });
 });

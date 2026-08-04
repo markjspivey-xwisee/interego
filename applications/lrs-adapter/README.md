@@ -82,18 +82,20 @@ node applications/lrs-adapter/examples/translate.mjs
 
 Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) verify the boundary translator's invariants against REAL code paths (run via `npx vitest run applications/lrs-adapter`):
 
-| What's verified (real code paths) | What's still simulated (deferred) |
+| What every automated run verifies (real code paths) | What NO automated run verifies |
 |---|---|
-| Ingest direction: synthetic xAPI Statement → conforming `iep:ContextDescriptor` with `iep:Asserted` modal + LRS Trust attribution | No actual GET against a real LRS endpoint (Tier 3 — Lrsql or Trax in Docker) |
-| Project Asserted: lossy=false, full Statement emitted | No actual POST to a real LRS endpoint |
-| Project Hypothetical: SKIPPED with explicit skip-reason audit row | No xAPI 2.0 conformance suite run end-to-end |
-| Project Counterfactual: ALWAYS skipped regardless of caller opt-in | No round-trip integrity check across a real LRS roundtrip |
+| Ingest direction: synthetic xAPI Statement → conforming `iep:ContextDescriptor` with `iep:Asserted` modal + LRS Trust attribution | Tier 3c (6 bodies) against SCORM Cloud. It is a third-party commercial LRS; no workflow can stand one up. The step exists in `lrs-adapter-conformance.yml` and goes live the moment `SCORM_CLOUD_KEY` / `_SECRET` / `_ENDPOINT` exist as repo secrets — and is fail-closed once they do, so a secret that stops working reds the job rather than emptying it. |
+| Project Asserted: lossy=false, full Statement emitted | Tier 8 (8 bodies) — the LRS → real pod → audit chain. It needs an LRS *and* a pod write credential, and no workflow supplies the latter (`INTEREGO_POD_WRITE_SECRET`). Those bodies still take the skip path on every run. |
+| Project Hypothetical: SKIPPED with explicit skip-reason audit row | Compatibility with any LRS other than the pinned `yetanalytics/lrsql:v0.9.5` (and SCORM Cloud when configured). |
+| Project Counterfactual: ALWAYS skipped regardless of caller opt-in | |
 | Project multi-narrative: lossy=true with explicit `lossNote` rows for each dropped concern | |
 | Project Hypothetical with `allowHypothetical` opt-in: lossy=true with audit | |
 
-The translation logic itself is verified; the network layer is a separate test concern.
+**The wire-level bodies now execute in CI.** [`.github/workflows/lrs-adapter-conformance.yml`](../../.github/workflows/lrs-adapter-conformance.yml) stands a pinned `yetanalytics/lrsql:v0.9.5` service container up and runs Tier 3 + Tier 3b — 12 bodies — with `LRSQL_IT=1`. That variable is a *declaration*, not a detection: with it set, an unreachable LRS is a FAILURE and never a skip. That distinction is the point of the workflow more than the container is. Until it existed, no workflow under `.github/workflows/` provisioned an LRS at all, every one of the 18 Tier 3 / 3b / 3c bodies reported `skipped` on every run, and the two tests that "passed" asserted `typeof reachable === 'boolean'` — true of `false`. `skipped` counts as a finished module in `tools/vitest-run-integrity.mjs`, so no gate in this repo would ever have noticed.
 
-**Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) PUTs a real ingested LRS-Statement descriptor to the deployed Azure CSS and confirms the descriptor IRI + `Asserted` modal + LRS authority all survive the HTTP roundtrip.
+Read the tier sections below with that split in mind: Tier 3 and Tier 3b are gated, Tier 3c and Tier 8 are not. Any result those two record — including the SCORM Cloud version-negotiation findings — is a manual observation from a hand-run, not something that would catch a regression today.
+
+**Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) PUTs a real ingested LRS-Statement descriptor to the deployed css-gate pod (`INTEREGO_POD_BASE`, default `https://gate.interego.xwisee.com`) and confirms the descriptor IRI + `Asserted` modal + LRS authority all survive the HTTP roundtrip. The Azure host this used to name was destroyed in the Railway move. It requires `INTEREGO_POD_WRITE_SECRET` — the gate refuses anonymous writes — and without it the suite skips on a *declared* reason. With the credential set, a pod that is unreachable or absent now FAILS rather than skipping (see `_shared/tests/real-pod-gate.ts`), so this is evidence when it runs and says so plainly when it does not.
 
 **Tier 3** — [`tests/tier3-real-lrs.test.ts`](tests/tier3-real-lrs.test.ts) runs against a real Yet Analytics Lrsql LRS in Docker (`docker run yetanalytics/lrsql`). Verifies:
 - POST projected Asserted Statements → 200 OK + UUID returned
@@ -102,7 +104,7 @@ The translation logic itself is verified; the network layer is a separate test c
 - LRS rejects malformed Statements (missing required `actor` field) with 400-class error — confirms the LRS is doing real xAPI 2.0 §4.1 validation
 - Non-existent statement IDs return 404 per xAPI 2.0 §4.2.1
 
-Skips automatically if Lrsql isn't running locally on `:8080`. Set `SKIP_LRSQL_TESTS=1` to skip in CI without Docker.
+Skips automatically if Lrsql isn't running locally on `:8080`; `SKIP_LRSQL_TESTS=1` forces the skip. In CI, `lrs-adapter-conformance.yml` provisions the container and sets `LRSQL_IT=1`, under which an unreachable LRS FAILS the job instead of skipping — a `SKIP_LRSQL_TESTS=1` exported into that job cannot make it green. Locally, run the `docker run` above (pin the same `v0.9.5` tag, or the recipe stops reproducing CI) and export `LRSQL_IT=1` to get the same fail-closed behaviour.
 
 **Tier 3b** — [`tests/tier3b-xapi-conformance.test.ts`](tests/tier3b-xapi-conformance.test.ts) deepens xAPI 2.0 conformance against the real Lrsql:
 - **cmi5 profile** — `launched` + `completed` Statements with cmi5 `contextActivities.category` (`https://w3id.org/xapi/cmi5/context/categories/cmi5` + `moveon`) + `sessionid` extension, accepted as a 2-Statement batch
@@ -114,7 +116,7 @@ Skips automatically if Lrsql isn't running locally on `:8080`. Set `SKIP_LRSQL_T
 - **Version negotiation** — LRS reports both 2.0.0 and 1.0.3 in `/about`
 
 **Tier 3c** — [`tests/tier3c-scorm-cloud.test.ts`](tests/tier3c-scorm-cloud.test.ts) closes the proprietary-LRS gap by testing against **SCORM Cloud** (Rustici Software's commercial LRS, used widely in enterprise L&D). Gated by env vars (`SCORM_CLOUD_KEY`, `SCORM_CLOUD_SECRET`, `SCORM_CLOUD_ENDPOINT`); skips automatically when unset. Verifies:
-- `/about` reports xAPI 1.0.3 specifically — **NOT 2.0.0**. (Real-world finding: SCORM Cloud has not yet adopted xAPI 2.0.)
+- `/about` reports xAPI 1.0.3 specifically — **NOT 2.0.0**. (Observed on a manual run against a SCORM Cloud sandbox tenant when this test was written; no automated run re-checks it, so treat it as a dated observation rather than a current fact about the vendor.)
 - xAPI 2.0 client gets explicit 400 rejection (not silent acceptance), so an adapter that targets 2.0.0 against a 1.0.3-only LRS fails loudly
 - POST + GET roundtrip preserves Statement ID + verb + result.score
 - Lossy-projection extensions (`https://markjspivey-xwisee.github.io/interego/ns/iep#projectionLossy`, `https://markjspivey-xwisee.github.io/interego/ns/iep#coherentNarratives`, `https://markjspivey-xwisee.github.io/interego/ns/iep#modalStatus`) survive SCORM Cloud roundtrip
