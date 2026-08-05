@@ -28,6 +28,39 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-08-05 — a workspace's own work contract can run at the publish gate
+
+### Added
+- **`EntryDraft.shapes`** and **`publishMembershipRecord({ shapes })`** in
+  `applications/shared-workspace/src` — additional published SHACL shape IRIs, stacked on
+  top of `wsp-shapes` in the `conforms_to_shapes` array the relay gate already accepted.
+  The workspace's own shapes always go first and cannot be opted out of; a caller can only
+  demand more.
+- **`tools/emergence-boundary-lint.mjs`**, wired into `lint.yml` and `lint:all` — two hard
+  zeros (neither demo program of the evidence-integrity engagement may name the other
+  vertical) and a two-way ratchet on cross-vertical mentions in each vertical's shipped
+  source, pinned at the honest numbers (4 comment lines one way, 0 the other).
+- **`tools/observe-pod-performance-live.ts`**, `tools/publish-review-engagement-graphs-live.ts`,
+  `tools/publish-transplant-records-live.ts` and
+  `applications/shared-workspace/tools/run-review-engagement-live.ts` — the engagement that
+  turns workspace work into L&D evidence with no code joining the two.
+
+### Fixed
+- **`conforms_to_shapes` was hardcoded to `[WSP_SHAPES]`**, so a workspace could put its own
+  terms on an entry — `extraTriples` exists for exactly that, and `wsp-shapes` is
+  deliberately not `sh:closed` — and then could only check them AFTER the write. Measured by
+  reverting the line and re-running the live gate: an entry naming a skill and asserting no
+  outcome published, and now exists permanently, because descriptors are immutable and the
+  pod has no retraction verb. Post-hoc validation is not a weaker version of this; it is a
+  different thing that cannot undo the record.
+- **`tools/**` was in no tsc program.** Added to `tsconfig.check.json`, which surfaced five
+  pre-existing type errors in `tools/walkthrough-v4-partial-vss.ts` — it imported `Wallet`
+  from `ethers` where the functions it calls declare `@interego/core`'s, and the repo
+  resolves more than one copy of ethers, so the two structurally differ. The `as unknown as`
+  casts written to silence that were removed rather than extended.
+
+---
+
 ## 2026-08-04 — `iep:AccessControlPolicy` reaches the deontic engine
 
 ### Added

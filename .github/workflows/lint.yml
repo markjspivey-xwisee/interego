@@ -95,3 +95,11 @@ jobs:
       # in a pull request body, said 235, and had silently become 431.
       - name: Changelog claims (citations resolve; backlog inside its ceiling)
         run: node tools/changelog-lint.mjs
+      # ★ A CLAIM ABOUT ABSENT CODE DECAYS SILENTLY. The evidence-integrity engagement's whole
+      # claim is that workspace work becomes L&D evidence with no code joining the two — the
+      # join being carried by published data and general machinery. Nothing about that is
+      # visible in a passing test suite; it stays true only while nobody adds a convenient
+      # import. Unfiltered by `paths:` for the same reason as everything above: a filter would
+      # let the commit that breaks it skip the check.
+      - name: Emergence boundary (neither demo program names the other vertical)
+        run: node tools/emergence-boundary-lint.mjs

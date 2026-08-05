@@ -1218,6 +1218,54 @@ cited record keeps its authorship, its shape and its access control. The vertica
 integrated into the workspace; they are cited from it, which is why neither can drift out
 of step with the other.
 
+### The evidence-integrity engagement: work in here becoming evidence out there
+
+Citation is the weak form of the claim — it says a workspace can *point at* another
+vertical's record. The stronger one is that **work done here can BECOME a record there, with
+no code joining the two**, and that is what
+`tools/run-review-engagement-live.ts` exists to run.
+
+The engagement is twelve reviews in one workspace. Each work item carries two triples beyond
+this vertical's own:
+
+```turtle
+dct:conformsTo  <…/ns/u-eth-9bf50894ff23/wsp-skills#EvidenceIntegrityReview>
+iep:success     "true"^^xsd:boolean
+```
+
+Both are **protocol** terms — Dublin Core, and `iep:success` from the Interego Protocol
+ontology (`iep.ttl`, an `owl:DatatypeProperty` with `rdfs:range xsd:boolean`). Neither is a
+workspace invention and neither is a hook for anything downstream: saying which skill an item
+exercised and whether it worked is what makes a log of work into a record of work.
+
+Four documents the CONVENER publishes carry the whole of the join, and none of them is code:
+
+| document | what it does |
+|---|---|
+| `wsp-skills` | a `skos:ConceptScheme`. The **only** place the skill is named. The performer never defines the term they are later credited with. |
+| `wsp-work-shapes` | SHACL, run by the **relay's** publish gate. An item naming no skill or asserting no outcome is refused 422 and never lands. Also closes the role gap `wsp-shapes.ttl` documents and does not check. |
+| `observer-map` | the reading program's entire configuration as RDF — predicate → argument, and whether `iep:supersedes` retracts or orders. |
+| `wsp-skills-alignment` | two 1EdTech CASE 1.0 associations, routing an L&D requirement **through** the workspace's own term. |
+
+A generic reader (`tools/observe-pod-performance-live.ts`, which lives under neither
+vertical) is given a pod URL, that map IRI, and an affordance; it forwards each outcome
+verbatim. Nothing in it names this vertical, and `tools/emergence-boundary-lint.mjs` fails
+the build on a single mention in either direction.
+
+★ **What that buys, measured 2026-08-05 against production.** Twelve items, ten succeeded.
+The L&D side derives a competency named by *this workspace's* term at Dreyfus **Proficient**,
+Wilson confidence **0.552**, computed server-side by its own published roll-up rule; at the
+eight-item checkpoint the same rule read **Competent / 0.409**, because 6/8 = 0.75 is below
+its 0.80 threshold. Removing one node from the alignment graph — and changing nothing else —
+makes the requirement go unsatisfied. Pointing the same reader at a pod of `agp:` records
+produces a second, differently-named competency with no edit.
+
+★ **The honest limit.** `iep:success` is the **performer's own attestation**. The convener
+writes a witness `wsp:Reference` for every item, on the convener's pod under the convener's
+key, so the two records exist independently and can be compared — but nothing downstream
+compares them, and `wsp:references` is still read by nothing in `src/`. It is an auditable
+check, not an enforced one.
+
 ## Verifying it
 
 ```bash
@@ -1270,6 +1318,31 @@ IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
 # asserts that limit rather than hiding it. Live: 15/15 (#250). §2 APPENDS to your own pod
 # under a per-run stream id; an earlier version raw-published to a fixed IRI and grew a
 # fourth head, so it accused the code of a regression that was entirely its own.
+
+# ── the evidence-integrity engagement ────────────────────────────────────────
+# The convener's four documents first; they are the join, and everything below reads them.
+IEP_BEARER_CONVENER=<token-b> npx tsx tools/publish-review-engagement-graphs-live.ts
+
+# ★ THE GATE, AGAINST THE LIVE RELAY, WITH A CONTROL. Three refusals: a work item with no
+# outcome (sh:minCount on iep:success), one naming a skill outside the published scheme
+# (sh:in), and a grant naming a role the declared profile does not publish (sh:in) — plus
+# the control that the SAME grant publishes WITHOUT the engagement's shape, so the refusal
+# is attributable to that shape and not to wsp-shapes. 9/9.
+IEP_BEARER_PERFORMER=<token-a> IEP_BEARER_CONVENER=<token-b> \
+  npx tsx applications/shared-workspace/tools/run-review-engagement-live.ts --mutation-gate
+
+# the engagement itself: convene, then two rounds of work + witness references
+IEP_BEARER_PERFORMER=<token-a> IEP_BEARER_CONVENER=<token-b> \
+  npx tsx applications/shared-workspace/tools/run-review-engagement-live.ts --convene
+IEP_BEARER_PERFORMER=<token-a> IEP_BEARER_CONVENER=<token-b> \
+  npx tsx applications/shared-workspace/tools/run-review-engagement-live.ts --round 1
+# ... --round 2
+
+# and the requirer's own check on its own declaration: the federated registry finds the
+# alignment by its published tag, the chain resolves, and BOTH negative legs are run — no
+# alignment graph at all, and the same two associations with the join node moved off the
+# workspace's term.
+IEP_BEARER_CONVENER=<token-b> npx tsx tools/publish-review-engagement-graphs-live.ts --resolve
 ```
 
 The live verifier exists because a harness that stands in for a dependency cannot verify
