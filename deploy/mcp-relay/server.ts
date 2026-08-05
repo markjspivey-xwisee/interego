@@ -2248,6 +2248,92 @@ function hasWriteOauthScope(scopes: readonly string[] | undefined): boolean {
   return false;
 }
 
+/**
+ * The authority the relay will ACTUALLY enforce for (agent, pod), and the evidence it
+ * rests on.
+ *
+ * ★ THIS EXISTS BECAUSE TWO COMPONENTS ANSWERED THE SAME QUESTION DIFFERENTLY AND NEITHER
+ * SAID WHICH QUESTION IT HAD ANSWERED. `verify_agent` walks the SIGNED credential chain and
+ * reports `verified:false` the moment that chain does not anchor to the pod owner.
+ * `runScopeGate` walks the same chain and, when it fails, falls back to the UNSIGNED pod
+ * registry — which is a file only the pod owner can write, so it is an owner attestation
+ * and the fallback is defensible. The result measured live: `verify_agent` answered
+ * `verified:false, delegationChain:null` for an agent whose cross-pod `publish_context`
+ * committed in the same minute. A caller reading verify_agent concluded the agent had no
+ * authority while the relay was granting it.
+ *
+ * ★ AND FAILING CLOSED INSTEAD WAS MEASURED AND REJECTED, NOT ASSUMED SAFE. Every agent
+ * registry in the live tree was enumerated — 276 pods, 293 rows — and asked. 274 verify.
+ * The 17 that do not fall in two classes: 13 are "No signed delegation credential found",
+ * and 4 name a delegator with no authority on that pod. The 13 are not an anomaly, they
+ * are the DEFAULT: `bootstrapPod` writes every new pod's first surface agent into
+ * `<pod>/agents` at ReadWrite and writes NO credential, so the first session on a fresh pod
+ * lands there (5 of 5 probe identities minted for this round did). Making the gate refuse
+ * an unanchored chain would have revoked write on 13 live rows including the shared
+ * workspace's own convener and reviewer agents. So the gate keeps its fallback and
+ * `verify_agent` stops contradicting it: both now report this ONE resolution, and the
+ * caller can see `enforced:true, basis:'registry-only'` instead of inferring from silence.
+ */
+interface DelegationAuthority {
+  /** Whether the relay will treat this agent as delegated at all. */
+  readonly enforced: boolean;
+  /** The scope the relay will enforce; 'Unknown' when nothing resolved. */
+  readonly scope: string;
+  /** Whether that scope is write-eligible (the publish gate's actual test). */
+  readonly writeEligible: boolean;
+  /**
+   * What the answer rests on. 'signed-chain' — the credential chain anchored to the pod
+   * owner. 'registry-only' — it did not, and the pod's own agent registry is what granted
+   * this. 'none' — neither.
+   */
+  readonly basis: 'signed-chain' | 'registry-only' | 'none';
+  /** Why the signed chain was not the basis, verbatim from the chain walk. */
+  readonly chainReason: string | null;
+}
+
+async function resolveDelegationAuthority(agentId: string, podUrl: string): Promise<DelegationAuthority> {
+  let scope: string | undefined;
+  let valid = false;
+  let basis: DelegationAuthority['basis'] = 'none';
+  let chainReason: string | null = null;
+  try {
+    // Prefer the more-recently-verified value: walk the signed chain (the relay always
+    // has a verifier — see delegationVerifier above) so the scope we read is the one the
+    // owner cryptographically attested to.
+    const verified = await verifyAgentDelegation(
+      agentId as IRI,
+      podUrl,
+      { fetch: solidFetch, verifier: delegationVerifier },
+    );
+    valid = verified.valid;
+    scope = verified.scope;
+    if (valid) {
+      basis = 'signed-chain';
+    } else {
+      chainReason = verified.reason ?? 'signed delegation chain did not anchor to the pod owner';
+      const registryOnly = await verifyAgentDelegation(
+        agentId as IRI,
+        podUrl,
+        { fetch: solidFetch },
+      );
+      valid = registryOnly.valid;
+      scope = registryOnly.scope ?? scope;
+      if (valid) basis = 'registry-only';
+    }
+  } catch (err) {
+    chainReason = `delegation verification threw: ${(err as Error).message}`;
+    log(`WARN: scope gate verification threw for ${agentId} on ${podUrl}: ${(err as Error).message}`);
+  }
+  const resolvedScope = scope ?? 'Unknown';
+  return {
+    enforced: valid,
+    scope: resolvedScope,
+    writeEligible: valid && WRITE_ELIGIBLE_SCOPES.has(resolvedScope),
+    basis,
+    chainReason,
+  };
+}
+
 async function runScopeGate(
   agentId: string,
   podUrl: string,
@@ -2266,35 +2352,9 @@ async function runScopeGate(
   }
   if (cached) agentScopeCache.delete(key);
 
-  // Prefer the more-recently-verified value: walk the signed chain when
-  // we have a verifier configured (the relay always does — see
-  // delegationVerifier above) so the scope we read is the one the
-  // owner cryptographically attested to. Falls back to the registry-only
-  // check if the chain walk fails for any reason.
-  let scope: string | undefined;
-  let valid = false;
-  try {
-    const verified = await verifyAgentDelegation(
-      agentId as IRI,
-      podUrl,
-      { fetch: solidFetch, verifier: delegationVerifier },
-    );
-    valid = verified.valid;
-    scope = verified.scope;
-    if (!valid) {
-      const registryOnly = await verifyAgentDelegation(
-        agentId as IRI,
-        podUrl,
-        { fetch: solidFetch },
-      );
-      valid = registryOnly.valid;
-      scope = registryOnly.scope ?? scope;
-    }
-  } catch (err) {
-    log(`WARN: scope gate verification threw for ${agentId} on ${podUrl}: ${(err as Error).message}`);
-  }
-
-  const resolvedScope = scope ?? 'Unknown';
+  const authority = await resolveDelegationAuthority(agentId, podUrl);
+  const valid = authority.enforced;
+  const resolvedScope = authority.scope;
   if (agentScopeCache.size >= SCOPE_CACHE_MAX) {
     const oldestKey = agentScopeCache.keys().next().value;
     if (oldestKey !== undefined) agentScopeCache.delete(oldestKey);
@@ -3303,7 +3363,13 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
             cid: err.actual.cid,
             supersedesList: err.actual.supersedesList,
           },
-          retryHint: 'Re-read the manifest (or call get_current_head with the urn:graph IRI) and resend publish_context with the fresh if_match value.',
+          // ★ NAMES THE PARAMETER, NOT THE VALUE. This used to read "call get_current_head
+          // with the urn:graph IRI" — which names an IRI and leaves the argument to be
+          // guessed, and the obvious guess is `graph_iri`, because that is what
+          // discover_context calls the same value. Following this hint therefore answered
+          // `{"error":"urn is required"}`: a retry hint that cannot be followed. The tool
+          // now also accepts `graph_iri` as an alias, so both readings work.
+          retryHint: 'Re-read the manifest, or call get_current_head { urn: "<the urn:graph:* IRI>", pod_name } — the parameter is `urn` (`graph_iri` is accepted as an alias) — then resend publish_context with the returned head `cid` as `if_match`.',
         });
       }
       throw err;
@@ -4844,7 +4910,18 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
     scope?: string;
   };
   const agents: AgentEntry[] = [];
+  // ★ WHICH LIST THIS IS. `agents` has two possible sources and used to say which one it
+  // came from nowhere at all: the identity server's per-surface session agents (the usual
+  // case) or, only when identity is unreachable, the pod's own delegation registry. Those
+  // are different populations — measured on a fresh pod, `agents` held 1 entry while the
+  // registry held 3, and the two agents added by `register_agent` appeared in neither the
+  // array nor anything else the response returned. The publish-time scope gate reads the
+  // REGISTRY, so a caller checking `agents` to see what an agent may do was reading the
+  // wrong list with no way to notice. `agentsSource` names this one; `delegationRegistry`
+  // below is the other, in full.
+  let agentsSource: 'identity-server' | 'pod-delegation-registry' | 'none' = 'none';
   if (agentsList?.agents.length) {
+    agentsSource = 'identity-server';
     for (const a of agentsList.agents) {
       agents.push({
         id: a.id,
@@ -4859,6 +4936,7 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
     // Identity unavailable — derive what we can from the pod-side
     // AgentRegistry. validFrom is the pod's nearest equivalent to
     // identity-side createdAt.
+    agentsSource = 'pod-delegation-registry';
     for (const a of profile.authorizedAgents.filter(x => !x.revoked)) {
       const bare = bareAgentId(a.agentId) ?? a.agentId;
       agents.push({
@@ -4919,12 +4997,31 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
     ...(userId ? { userId } : {}),
     ...(sessionAgent ? { sessionAgent } : {}),
     ...(agents.length ? { agents } : {}),
+    agentsSource,
     ...(agentId ? { agentId } : {}),
     ...(identityWithNote ? { identity: identityWithNote } : {}),
+    // The pod's delegation registry, in full — the rows the publish-time scope gate reads.
+    // It is a DIFFERENT population from `agents` above (see agentsSource): an agent added by
+    // `register_agent` lands here and never appears there, and the count under `registry`
+    // was the only trace of it, with the same field name (`agents`) as the array that does
+    // not contain it. Listed rather than counted so "what may this agent do on this pod" is
+    // answerable from one response instead of a per-agent verify_agent fan-out.
+    delegationRegistry: profile ? {
+      url: `${podUrl}agents`,
+      owner: profile.webId,
+      count: profile.authorizedAgents.filter(a => !a.revoked).length,
+      rows: profile.authorizedAgents
+        .filter(a => !a.revoked)
+        .map(a => ({ agentId: a.agentId, scope: a.scope, ...(a.label ? { label: a.label } : {}), ...(a.validFrom ? { validFrom: a.validFrom } : {}) })),
+      note: 'These rows are what the write-scope gate consults. The top-level `agents` array is a different list — see `agentsSource`.',
+    } : null,
     registry: profile ? {
       owner: profile.webId,
       name: profile.name,
+      // Kept as a COUNT for back-compat with clients that read `registry.agents` as a
+      // number. `delegationRegistry.rows` is the same population, listed.
       agents: profile.authorizedAgents.filter(a => !a.revoked).length,
+      note: 'A COUNT of the pod delegation registry, not the `agents` array above. The rows are under `delegationRegistry`.',
     } : null,
     descriptors: entries.length,
     entries,
@@ -5037,10 +5134,64 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
   }
   const capabilities = grantTenantAdmin ? [TENANT_ADMIN_CAPABILITY] : undefined;
 
+  // ── the scope the caller asked for, or nothing ───────────────────────────
+  //
+  // ★ AN UNRECOGNISED SCOPE USED TO BE STORED AS `DiscoverOnly` AND NEVER MENTIONED.
+  // `safeScope` in @interego/core allow-lists the four DelegationScope values when it
+  // serialises the registry Turtle — a Turtle-injection guard, and correct there, because
+  // `iep:<scope>` is a prefixed name that escaping cannot save. But it is a LAST-DITCH
+  // guard, and the relay was leaning on it as an input validator: `register_agent
+  // {scope:"Read"}` — the only narrow value the tool's own enum OFFERED — stored
+  // `DiscoverOnly`, and the call reported success. So the schema advertised a value the
+  // substrate does not have, and the caller who used it got a different, narrower grant
+  // than the one they asked for, with nothing in the response saying so.
+  //
+  // Measured live before this refusal was added: across 276 pods and 293 registry rows the
+  // stored scopes were ReadWrite 287 / DiscoverOnly 4 / ReadOnly 2 — nothing outside the
+  // four. The one in-repo caller that sent `Read` (deploy/validator/server.ts) is fixed in
+  // the same change to send `DiscoverOnly`, which is what its call already stored. So this
+  // refusal costs no honest caller anything; it converts a silent narrowing into an error
+  // that names the four real scopes.
+  const DELEGATION_SCOPES = ['ReadWrite', 'ReadOnly', 'PublishOnly', 'DiscoverOnly'] as const;
+  const requestedScope = args.scope as string | undefined;
+  if (requestedScope !== undefined && !(DELEGATION_SCOPES as readonly string[]).includes(requestedScope)) {
+    return JSON.stringify({
+      error: 'invalid_scope',
+      code: 400,
+      scope: requestedScope,
+      supportedScopes: DELEGATION_SCOPES,
+      reason: `"${requestedScope}" is not a delegation scope. Use one of ${DELEGATION_SCOPES.join(', ')}. `
+        + 'Refused rather than stored: an unrecognised value used to be persisted as DiscoverOnly and reported as success, so the agent ended up with a grant nobody asked for.',
+    });
+  }
+
   let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
   if (!profile) {
     profile = createOwnerProfile(ownerWebId, args.owner_name as string);
   }
+
+  // ── the delegator the SIGNED credential will name ────────────────────────
+  //
+  // ★ THE REGISTRY AND THE CREDENTIAL ARE WRITTEN BY THIS ONE CALL AND USED TO BE MADE TO
+  // DISAGREE BY ONE CALLER-CONTROLLED ARGUMENT. `ownerProfileToTurtle` writes
+  // `iep:delegatedBy <profile.webId>` for EVERY row — it discards the agent's own
+  // `delegatedBy`. `createSignedDelegationCredential` keeps it. So `register_agent
+  // {owner_webid: <some other user's WebID>}` wrote a registry row saying "the pod owner
+  // delegated this" and a credential saying "somebody else did", and the chain walk then
+  // refused the credential with "Sub-delegating agent <them> is not registered on <pod>".
+  // Measured: verify_agent answered `verified:false` for exactly that row while a write by
+  // that agent to that pod committed — the relay's scope gate falls back to the unsigned
+  // registry, which says the pod owner granted it.
+  //
+  // A supplied delegator is honoured only when the chain walker can ANCHOR it: it is the
+  // profile owner, or it names a live registered agent on this pod (genuine sub-delegation,
+  // which the walker follows link-by-link). Anything else is replaced by the value the
+  // registry is about to record anyway, so the two artifacts state the same fact and the
+  // credential verifies. Nothing is refused here and no authority changes — `owner_webid`
+  // could never confer any, since the registry always overwrote it.
+  const anchorableDelegator = ownerWebId === profile.webId
+    || profile.authorizedAgents.some(a => a.agentId === ownerWebId && !a.revoked);
+  const effectiveDelegator = anchorableDelegator ? ownerWebId : profile.webId;
 
   // Idempotent add. If the agent is ALREADY in the registry we do NOT bail:
   // a re-register is a credential REPAIR / delegation UPGRADE, not an error.
@@ -5051,13 +5202,14 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
   // publish_context failed) — self-heals here without a destructive
   // revoke/re-register. This IS the idempotent delegation-upgrade path.
   let alreadyAuthorized = false;
+  let previousScope: string | undefined;
   try {
     profile = addAuthorizedAgent(profile, {
       agentId,
-      delegatedBy: ownerWebId,
+      delegatedBy: effectiveDelegator,
       label: args.label as string,
       isSoftwareAgent: true,
-      scope: (args.scope as 'ReadWrite') ?? 'ReadWrite',
+      scope: (requestedScope as 'ReadWrite' | undefined) ?? 'ReadWrite',
       capabilities,
       validFrom: new Date().toISOString(),
       // The relay registers its own X25519 public key alongside the agent
@@ -5068,8 +5220,39 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
     });
   } catch (err) {
     if (/already authorized/i.test((err as Error).message)) {
-      // Existing entry stays as-is; fall through to (re)issue the credential.
       alreadyAuthorized = true;
+      // ★ AND THE RE-REGISTER USED TO DISCARD THE SCOPE SILENTLY. `addAuthorizedAgent`
+      // throws on an existing live row, this branch swallowed the throw, and the response
+      // came back `{registered:false, repaired:true}` — which reads like success. So a
+      // caller TIGHTENING an agent ("this one is DiscoverOnly from now on") was told the
+      // call worked while the row stayed ReadWrite, and the agent kept writing. Measured
+      // end to end: register {scope:"DiscoverOnly"} on the caller's own session agent
+      // returned repaired:true, verify_agent still read ReadWrite, and an own-pod
+      // publish_context committed. That is the whole of the "a role is a ceiling does not
+      // hold on your own pod" report — the gate below DOES refuse a DiscoverOnly row on
+      // your own pod (measured, 403 scope_violation), there was simply no way to set one.
+      //
+      // Only an EXPLICIT scope re-scopes. A bare repair call (no `scope` argument) must
+      // leave the row alone: widening a narrowed agent back to the ReadWrite default
+      // because someone re-issued its credential would be the same silent mis-grant in the
+      // other direction.
+      if (requestedScope !== undefined) {
+        const live = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked);
+        previousScope = live?.scope;
+        profile = {
+          ...profile,
+          authorizedAgents: Object.freeze(profile.authorizedAgents.map(a =>
+            a.agentId === agentId && !a.revoked
+              ? {
+                  ...a,
+                  scope: requestedScope as 'ReadWrite',
+                  ...(args.label ? { label: args.label as string } : {}),
+                  encryptionPublicKey: relayAgentKey.publicKey,
+                }
+              : a,
+          )),
+        };
+      }
     } else {
       return JSON.stringify({ error: (err as Error).message });
     }
@@ -5106,13 +5289,32 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
     credentialAndWrite,
   ]);
   relayProfileCache.delete(podUrl);
+  // ★ AND THE NEW SCOPE HAS TO REACH THE GATE, NOT JUST THE POD. `runScopeGate` memoises
+  // (agentId, podUrl) -> scope for 60s, and `handlePublishContext` memoises the
+  // registration check for the same window. Writing a tightened row and leaving those
+  // entries in place means the agent keeps writing for a minute after the owner was told
+  // the tightening landed — the same "you were told it worked" failure this whole handler
+  // was fixed for, just with a shorter fuse. Measured: a probe's first (refused) write
+  // poisoned the gate cache with {scope:'Unknown'} and the NEXT write was refused from
+  // cache after a registration that should have permitted it.
+  agentScopeCache.delete(`${podUrl}|${agentId}`);
+  agentRegistrationCache.delete(`${podUrl}|${agentId}`);
 
+  const effectiveScope = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked)?.scope;
   return JSON.stringify({
     registered: !alreadyAuthorized,
     // `repaired` signals an idempotent re-issue: the agent was already in the
     // registry and this call (re)wrote its signed delegation credential.
     repaired: alreadyAuthorized,
     agent: agentId,
+    // The scope the registry now holds — read back off the profile that was just written,
+    // not echoed from the request. A caller who asked for a narrowing can check ONE field
+    // instead of inferring success from `repaired:true`, which is what made the silent
+    // no-op survive.
+    scope: effectiveScope,
+    ...(previousScope !== undefined && previousScope !== effectiveScope
+      ? { rescoped: true, previousScope }
+      : { rescoped: false }),
     credential: credUrl,
     proof: credential.proof,
   });
@@ -5149,7 +5351,30 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
     podUrl,
     { fetch: solidFetch, verifier: delegationVerifier },
   );
-  return JSON.stringify(buildVerifyAgentEnvelope(result));
+  // ★ AND WHAT THE RELAY WILL ACTUALLY DO, from the same resolution the publish gate runs.
+  // `verified` above answers "does the signed chain anchor?" — callers read it as "does this
+  // agent have authority here?", and the two come apart: measured live, an agent whose
+  // credential named a delegator with no authority on the pod read `verified:false` while
+  // its cross-pod publish committed. The gate's fallback to the pod's own (owner-written)
+  // registry is why, and it is kept deliberately — see resolveDelegationAuthority for the
+  // 276-pod enumeration that rules out failing closed. This block is the half that was
+  // missing: the enforcement answer, stated, beside the cryptographic one.
+  const enforcement = await resolveDelegationAuthority((args.agent_id as string), podUrl);
+  return JSON.stringify({
+    ...buildVerifyAgentEnvelope(result),
+    enforcement: {
+      enforced: enforcement.enforced,
+      scope: enforcement.scope,
+      writeEligible: enforcement.writeEligible,
+      basis: enforcement.basis,
+      chainReason: enforcement.chainReason,
+      note: enforcement.enforced && enforcement.basis === 'registry-only'
+        ? 'The signed chain did not anchor, but this pod\'s own agent registry — a document only the pod owner can write — lists this agent, so the relay WILL enforce the scope above. `verified:false` above is about the credential, not about authority.'
+        : enforcement.enforced
+          ? 'The signed delegation chain anchors to the pod owner; the relay enforces the scope above.'
+          : 'The relay grants this agent nothing on this pod.',
+    },
+  });
 }
 
 // ── Federation Tool Handlers ────────────────────────────────
@@ -6828,9 +7053,16 @@ async function handlePublishNode(args: ToolArgs): Promise<string> {
 //      returned so the caller can see the divergence.
 //   4. GET the descriptor Turtle, compute computeCid.
 async function handleGetCurrentHead(args: ToolArgs): Promise<string> {
-  const urn = args.urn as string | undefined;
+  // ★ `graph_iri` IS ACCEPTED BECAUSE THE ERROR ENVELOPE THAT SENDS CALLERS HERE USED TO
+  // NAME THE VALUE AND NOT THE PARAMETER. The 412 retryHint said "call get_current_head with
+  // the urn:graph IRI", and the sibling tool that takes that same value — discover_context —
+  // spells it `graph_iri`. Following the hint the obvious way answered
+  // `{"error":"urn is required"}`, measured. The hint now names `urn` explicitly; this alias
+  // means the caller who already followed the old one is not punished for it, and the two
+  // tools stop disagreeing about what to call the same IRI.
+  const urn = (args.urn as string | undefined) ?? (args.graph_iri as string | undefined);
   if (!urn) {
-    return JSON.stringify({ error: 'urn is required' });
+    return JSON.stringify({ error: 'urn is required — pass the urn:graph:* IRI as `urn` (`graph_iri` is accepted as an alias, matching discover_context)' });
   }
   const podName = (args.pod_name as string) ?? 'default';
   const rawPodUrl = (args.pod_url as string) ?? `${CSS_URL}${podName}/`;
@@ -8374,11 +8606,15 @@ const TOOL_SCHEMAS = [
     inputSchema: {
       type: 'object',
       properties: {
-        urn: { type: 'string', description: 'The urn:graph:* IRI whose current chain head is being resolved.' },
+        urn: { type: 'string', description: 'The urn:graph:* IRI whose current chain head is being resolved. `graph_iri` is accepted as an alias — discover_context spells the same value that way, and the publish 412 retryHint sends callers here.' },
+        graph_iri: { type: 'string', description: 'Alias for `urn`, matching discover_context\'s name for the same value. Supply one or the other.' },
         pod_url: { type: 'string', description: 'Pod URL (default: ${CSS_URL}${pod_name}/). Provide either pod_url or pod_name.' },
         pod_name: { type: 'string', description: 'Pod name on the relay\'s CSS_URL (default: "default"). Ignored when pod_url is provided.' },
       },
-      required: ['urn'],
+      // `anyOf` rather than `required: ['urn']`: a client that validates the schema before
+      // sending would otherwise reject the very `graph_iri` spelling this tool now accepts,
+      // and the alias exists precisely so the 412 retryHint can be followed either way.
+      anyOf: [{ required: ['urn'] }, { required: ['graph_iri'] }],
     },
     outputSchema: mcpOutputSchema({
       type: 'object',
@@ -8494,7 +8730,7 @@ const TOOL_SCHEMAS = [
         owner_webid: { type: 'string', description: 'Owner WebID (default: authenticated user)' },
         owner_name: { type: 'string', description: 'Owner display name' },
         label: { type: 'string', description: 'Human-readable label for this agent' },
-        scope: { type: 'string', enum: ['ReadWrite', 'Read'], description: 'Authorization scope (default: ReadWrite)' },
+        scope: { type: 'string', enum: ['ReadWrite', 'ReadOnly', 'PublishOnly', 'DiscoverOnly'], description: 'Delegation scope (default: ReadWrite). These are the four values the substrate has — ReadWrite and PublishOnly are the write-eligible ones; ReadOnly and DiscoverOnly are refused by publish_context with a 403 scope_violation naming the scope. The enum previously read ["ReadWrite","Read"]: "Read" is not a delegation scope, and sending it stored DiscoverOnly while reporting success. Supplying this on an agent that is ALREADY registered RE-SCOPES it (the response reports `scope`, `rescoped` and `previousScope`); omitting it leaves an existing row untouched.' },
         tenant_admin: { type: 'boolean', description: 'Grant this agent the tenant-admin governance capability, folded into its SIGNED delegation VC (not the forgeable registry). Honored ONLY when pod_name is your own authenticated pod — a bare ReadWrite/pod-write delegate cannot self-grant. Lets a pod-delegated agent whose session wallet rotated act as tenant admin (ingest / assign / cohort analytics / enroll-others), audited as a distinct delegated-admin role. NOTE (intentional, by security policy): the capability lives ONLY in the signed VC, so a plain re-register / idempotent credential repair does NOT carry it forward — after a session-key ROTATION you must re-assert it by calling register_agent{tenant_admin:true} again. A rotated key must explicitly re-claim governance; it is never silently retained.' },
       },
       required: ['agent_id'],

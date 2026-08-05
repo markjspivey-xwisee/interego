@@ -160,7 +160,12 @@ async function registerSelf(): Promise<boolean> {
       body: JSON.stringify({
         agent_id: AGENT_ID,
         pod_url: POD_URL,
-        scope: 'Read',
+        // `DiscoverOnly`, not `Read`. "Read" was never a delegation scope — the relay's
+        // register_agent enum offered it, `safeScope` in @interego/core did not recognise
+        // it, and it was silently stored as DiscoverOnly. So this is the value this call
+        // has always produced; the relay now refuses the unrecognised spelling instead of
+        // narrowing it without saying so, and this is the one in-repo caller that sent it.
+        scope: 'DiscoverOnly',
         role: 'Validator',
         label: `Validator (${AGENT_ID})`,
       }),
