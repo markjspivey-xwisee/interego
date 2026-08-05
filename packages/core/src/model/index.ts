@@ -37,6 +37,7 @@ export type {
   ContentBinding,
   DescriptorBinding,
   DescriptorBindingBasis,
+  ProofOwnerScope,
 } from './delegation.js';
 export {
   registerFacetType,

@@ -312,6 +312,15 @@ export interface Attestation {
    * `https://css/bee-pod/context-graphs/1712345678901.ttl`. `stream.ts` used to drop this on
    * the floor at the boundary; it now travels with the verdict it qualifies.
    *
+   * ★ `'slug-and-owner'` IS THE ONE THIS LAYER CANNOT REACH, AND SAYING SO IS THE POINT OF
+   * CARRYING A BASIS AT ALL. The substrate closes the pod hole by comparing the proof's
+   * signed `iep:ownerWebId` against the owner the SERVING pod publishes — evidence that
+   * requires reading that pod's agent registry, which `attestationOfResponse` is pure and
+   * does not do. So the relay reaches `'slug-and-owner'` on the same record this layer grades
+   * `'slug-only'`, and the two are not in conflict: they are two independent readers reporting
+   * exactly what each of them compared. The lifted copy is still refused here — it is refused
+   * by the substrate, so `authorshipVerified` never arrives true.
+   *
    * ★ AND NO POLICY HERE REFUSES ON IT — DECIDED AGAINST, AND MEASURED, NOT ASSUMED. The
    * tempting rule is "field binding requires `exact-url`". It would refuse EVERY record the
    * substrate mints: `publish_context` mints `descriptor_id` as `urn:iep:<pod>:<epoch-ms>`,
@@ -324,10 +333,13 @@ export interface Attestation {
    * the signed block, and two copies present at once raise the acceptance-fork divergence
    * rather than escalating anything. See `tests/workspace-membership.test.ts`.
    *
-   * What it leaves open is NOT nothing, and it is named rather than folded away: `head` — the
-   * URL an operator dereferences to audit a record, and the URL printed in `unattested` and
-   * in every `divergence` — is chosen by whoever hosts the copy. A `slug-only` row sends a
-   * reader to a document the attacker controls. That is residual gap 1 in the README.
+   * What it left open was NOT nothing: `head` — the URL an operator dereferences to audit a
+   * record, and the URL printed in `unattested` and in every `divergence` — is chosen by
+   * whoever hosts the copy, so a `slug-only` row could send a reader to a document the
+   * attacker controls. That was residual gap 1, and it is closed at the substrate rather than
+   * here: hosting the copy means serving it from a pod, that pod publishes an owner, and a
+   * copy whose pod-owner is not the owner the proof signs is refused. What survives is that
+   * the pod's ownership claim is the pod's own — see `ProofOwnerScope` in `@interego/core`.
    *
    * Optional because a hand-built {@link Attestation} records no basis, and absent must never
    * read as `'exact-url'`.

@@ -69,7 +69,14 @@
  * conflict becomes a mystery.
  */
 
-import { escapeTurtleLiteral, turtleIriRef, proofBindsToDescriptorUrl } from '@interego/core';
+import {
+  escapeTurtleLiteral, turtleIriRef, proofBindsToDescriptorUrl,
+  parseTrig, findSubjectsOfType, type IRI,
+} from '@interego/core';
+// ★ THE SAME FUNCTION THE RELAY'S DIGESTER CALLS — see `readDeclaredSeq`. A reader that
+// decides the covered region for itself decides it wider than the digester did, and in this
+// module that difference is the whole value of the number it reads.
+import { digestedGraphRegion } from '@interego/solid';
 import type { Attestation, ContentBinding } from './roster.js';
 
 export const WSP = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#';
@@ -219,8 +226,14 @@ export interface StreamRow {
    *
    * So the number this module writes on every entry is read back when it can be and
    * reported as unavailable when it cannot, rather than quietly assumed — see
-   * {@link ChainReport.declaredSeqChecked}. Until then `seq` is only ever populated by a
-   * caller that already holds the payload.
+   * {@link ChainReport.declaredSeqChecked}.
+   *
+   * ★ AND IT NOW HAS A PRODUCER, which for a long time it did not: `readEntry` reads it out
+   * of the entry's own payload, from the region the signature covers, and
+   * `composeWorkspace({verifyAuthorship: true})` fills it in on every row before re-running
+   * {@link verifyChain}. That costs nothing extra — the payload is already being fetched for
+   * the attestation. Without that producer this field was null on every real read and the
+   * sequence comparison below had never executed against live data even once.
    */
   readonly seq?: number | null;
 }
@@ -554,11 +567,13 @@ export interface ChainReport {
    * Whether every ordered row carried a declared seq, so the numbering could be compared
    * with the walked order at all.
    *
-   * ★ FALSE for every stream read from a manifest, which is every stream this module reads
-   * today — see {@link StreamRow.seq}. Reported rather than left implicit because the two
-   * cases are worlds apart and `seqMismatches: []` looks identical in both: "the log's own
-   * numbering agrees with its links" versus "nobody looked". It is deliberately NOT part of
-   * {@link ChainReport.intact} — a stream is not divergent because the manifest omits a
+   * ★ FALSE for a stream read from a manifest alone — the manifest has no `seq` column, so
+   * `verifyChain(readStream(...))` compares nothing. TRUE once the positions have been read
+   * out of the entries' payloads, which `composeWorkspace({verifyAuthorship: true})` now
+   * does on the reads it was already making. Reported rather than left implicit because the
+   * two cases are worlds apart and `seqMismatches: []` looks identical in both: "the log's
+   * own numbering agrees with its links" versus "nobody looked". It is deliberately NOT part
+   * of {@link ChainReport.intact} — a stream is not divergent because the manifest omits a
    * column, and folding it in would make `appendEntry` refuse every real append forever.
    */
   readonly declaredSeqChecked: boolean;
@@ -734,16 +749,125 @@ export async function readAttestation(
       + 'required by default — but asking to verify without it cannot be answered.',
     );
   }
+  return (await readEntry(descriptorUrl, deps)).attestation;
+}
+
+/**
+ * What one `get_descriptor` establishes about an entry: who wrote it, and where in its own
+ * log it says it sits.
+ *
+ * ★ WHY THE TWO TRAVEL TOGETHER — AND WHY THIS EXISTS AT ALL. `ChainReport.seqMismatches`
+ * has been computed on every read since the chain verifier was written and had never once
+ * executed against real data: `StreamRow.seq` is populated from the manifest row, the
+ * manifest has no `seq` column, so `declaredSeqChecked` was FALSE on every real stream and
+ * the comparison looped over nothing. A check that cannot fire is indistinguishable from no
+ * check, and the removal it exists to catch — a row deleted and the survivor re-pointed at
+ * its grandparent — walks clean through every other test the chain verifier makes.
+ *
+ * The number lives in the entry's PAYLOAD, so obtaining it costs a `get_descriptor` per
+ * entry. That is the same call `readAttestation` already makes, and paying it twice for one
+ * record is the cost this module refuses everywhere else — so the producer is here, in the
+ * read that was already happening, rather than in a second pass nobody would enable.
+ */
+export interface EntryRead {
+  readonly attestation: Attestation;
+  /** The `wsp:seq` the entry's own payload declares, or null with {@link seqNote} saying why. */
+  readonly seq: number | null;
+  /** Always populated. `seq: null` has five causes and they are not interchangeable. */
+  readonly seqNote: string;
+}
+
+/**
+ * One `get_descriptor`, both answers. See {@link EntryRead}.
+ *
+ * `readAttestation` is now a projection of this, so the two can never be answered from two
+ * different reads of a pod that changed in between.
+ */
+export async function readEntry(descriptorUrl: string, deps: StreamDeps): Promise<EntryRead> {
+  if (deps.getDescriptor === undefined) {
+    // A programming error, not a data condition — see `readAttestation`.
+    throw new Error(
+      'readEntry: verifying authorship needs a `getDescriptor` dependency (the '
+      + '`get_descriptor` tool). It costs one call per entry, which is why it is not '
+      + 'required by default — but asking to verify without it cannot be answered.',
+    );
+  }
   let res: Record<string, unknown>;
   try {
     res = await deps.getDescriptor({ url: descriptorUrl });
   } catch (err) {
+    const why = `get_descriptor threw: ${err instanceof Error ? err.message : String(err)}`;
     return {
-      authorshipVerified: false, signedBy: null, boundToDescriptor: false,
-      reason: `get_descriptor threw: ${err instanceof Error ? err.message : String(err)}`,
+      attestation: {
+        authorshipVerified: false, signedBy: null, boundToDescriptor: false, reason: why,
+      },
+      seq: null,
+      seqNote: why,
     };
   }
-  return attestationOfResponse(res, descriptorUrl);
+  return { attestation: attestationOfResponse(res, descriptorUrl), ...readDeclaredSeq(res) };
+}
+
+/**
+ * The `wsp:seq` an entry declares, read from the region the signature covers and nowhere else.
+ *
+ * ★ THE REGION IS NOT NEGOTIABLE, and this is the same lesson `payloadOf` in `membership.ts`
+ * was rewritten for: the relay digests the `<graphIri> { … }` block of the served document,
+ * so a number read from anywhere else in that document is a number nobody signed. A seq
+ * lifted out of the default graph would let a forger re-number somebody else's log — the
+ * position is what `seqMismatches` compares, so a caller-controlled position turns the check
+ * back into decoration. `digestedGraphRegion` is the digester's own function, called with the
+ * digester's own two strings.
+ *
+ * ★ AND EXACTLY ONE `wsp:Entry`. A payload declaring two says two different things about
+ * where it sits; picking either is guessing, and `readStream` would then be ordering the log
+ * by a number the reader chose.
+ */
+export function readDeclaredSeq(res: Record<string, unknown>): { seq: number | null; seqNote: string } {
+  const graph = res.graph as Record<string, unknown> | undefined | null;
+  const region = digestedGraphRegion({
+    descriptorTurtle: typeof res.turtle === 'string' ? res.turtle : null,
+    graphContent: graph !== undefined && graph !== null && typeof graph.content === 'string'
+      ? graph.content : null,
+  });
+  if (!region.ok) {
+    return {
+      seq: null,
+      seqNote:
+        'no region of this record is covered by its signed digest ('
+        + `${region.why}), so there is no position to read that anybody signed`,
+    };
+  }
+  let subjects: readonly { properties: ReadonlyMap<IRI, readonly { kind: string; value?: string }[]> }[];
+  try {
+    subjects = findSubjectsOfType(parseTrig(region.turtle), `${WSP}Entry` as IRI);
+  } catch (err) {
+    return { seq: null, seqNote: `the covered payload is not parseable Turtle: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (subjects.length !== 1) {
+    return {
+      seq: null,
+      seqNote: subjects.length === 0
+        ? 'the covered payload declares no wsp:Entry, so it states no position in any log'
+        : `the covered payload declares ${subjects.length} wsp:Entry subjects, so which one's `
+          + 'position this record claims is ambiguous — picking either would be guessing',
+    };
+  }
+  const terms = subjects[0]!.properties.get(`${WSP}seq` as IRI) ?? [];
+  const literals = terms.filter(t => t.kind === 'literal');
+  if (literals.length !== 1) {
+    return {
+      seq: null,
+      seqNote: literals.length === 0
+        ? 'the entry declares no wsp:seq — the published shape requires one, so this record '
+          + 'either predates the shape or was written past the gate'
+        : `the entry declares ${literals.length} values for wsp:seq`,
+    };
+  }
+  const seq = asSeq(literals[0]!.value);
+  return seq === null
+    ? { seq: null, seqNote: `wsp:seq is "${String(literals[0]!.value)}", which is not a non-negative integer` }
+    : { seq, seqNote: `the entry declares wsp:seq ${seq}, read from the region its signature covers` };
 }
 
 /**

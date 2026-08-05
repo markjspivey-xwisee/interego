@@ -930,9 +930,16 @@ export type DescriptorBindingBasis =
   /** The proof names this URL, compared in full after normalisation. Nothing is unexamined. */
   | 'exact-url'
   /**
+   * The proof names a URN, its terminal segment matched, AND the pod that served the bytes
+   * publishes the SAME owner the proof signs. The name and the location were both compared;
+   * see {@link ProofOwnerScope} for exactly what "the pod publishes" is worth.
+   */
+  | 'slug-and-owner'
+  /**
    * The proof names a URN, and a URN is related to its URL only by `slugFromIri`, which
    * keeps the last `/ : #` segment and discards the rest. Only that segment was compared:
-   * the pod, the host and the container were NOT.
+   * the pod, the host and the container were NOT — and no {@link ProofOwnerScope} was
+   * available to compare the location by another route.
    */
   | 'slug-only'
   /** The two disagree, or there was nothing comparable. Not bound. */
@@ -943,6 +950,42 @@ export interface DescriptorBinding {
   readonly basis: DescriptorBindingBasis;
   /** Present iff `bound` is false, or iff `bound` is true on a basis weaker than the URL. */
   readonly caveat?: string;
+}
+
+/**
+ * The second half of a URN-form binding: WHERE the bytes are allowed to be served from.
+ *
+ * ★ WHY A URN NEEDS THIS AND A URL DOES NOT. `slugFromIri` maps a URN to a filename and
+ * discards everything else, so from the served URL no verifier can recover which pod the URN
+ * named — the pod is simply not in the comparison, and a proof lifted onto a record with the
+ * same terminal segment on ANY pod on ANY host reached `bound: true`. The missing information
+ * is not in the URN and never will be; it is in the OTHER field the same signature covers.
+ * `iep:ownerWebId` is part of the canonical authorship payload, so a forger who edits it
+ * breaks the signature and one who does not carries the victim's WebID into their own pod.
+ *
+ * ★ WHAT `servingPodOwner` MUST BE, AND WHAT IT IS WORTH. It is the WebID the pod that
+ * SERVED these bytes publishes as its owner — its agent registry's `webId`, the same document
+ * the relay's write-scope gate reads to decide who may publish into that pod at all. So this
+ * comparison is exactly as strong as the substrate's own notion of pod ownership: no stronger,
+ * and that limit is stated rather than implied. A pod whose holder writes somebody else's
+ * WebID into their own registry still receives a lifted proof — but they must SAY SO, in a
+ * public document, in their own pod, and thereby hand every other consumer of that pod the
+ * same lie. Closing that last step needs the owner to sign the pod↔owner binding, which
+ * nothing in the substrate does today.
+ *
+ * ★ ABSENCE IS `unchecked`, NEVER `refused`. Either field missing leaves the verdict exactly
+ * where it was before this existed — `slug-only`, bound, with a caveat naming what went
+ * uncompared. A registry that 404s, a pod off our own infrastructure, or a caller that simply
+ * does not have the evidence must not turn an honest record into an accusation.
+ */
+export interface ProofOwnerScope {
+  /** The proof's SIGNED `iep:ownerWebId`. Absent/empty when the caller did not supply it. */
+  readonly claimedOwner?: string | null;
+  /**
+   * The WebID the SERVING pod publishes as its owner, or null when it could not be
+   * established. Null is "not compared", not "no owner".
+   */
+  readonly servingPodOwner?: string | null;
 }
 
 /**
@@ -1011,23 +1054,18 @@ export interface DescriptorBinding {
  * It is not a record that was rescued, and calling it one borrows credibility the measurement
  * does not have.
  *
- * ── ★ WHAT A URN-FORM `descriptorId` CANNOT BUY, STATED AS A LIMIT AND NOT AS A HEDGE ────
+ * ── ★ WHAT A URN-FORM `descriptorId` CANNOT BUY BY ITSELF, AND WHERE THE REST COMES FROM ──
  *
  * The relay mints `descriptor_id` as `urn:iep:<pod>:<epoch-ms>` and derives the URL from it
  * through `slugFromIri` — LAST `/ : #` SEGMENT ONLY, URL-encoded, plus `.ttl`. That function
  * is lossy, so from the URL alone NO verifier — this one, the relay, or a future one — can
- * recover which pod the URN named. The pod is therefore not compared and a proof lifted
- * across pods at the same epoch binds:
+ * recover which pod the URN named. On the terminal segment alone, a proof lifted across pods
+ * at the same epoch bound:
  *
  *     'urn:iep:alice-pod:1712345678901'
  *       vs 'https://css/mallory-pod/context-graphs/1712345678901.ttl'   → bound, slug-only
  *
- * A previous round called this narrowing "close to zero" and left it. It is worth stating
- * more precisely than that: what the slug compare DOES catch is a proof pasted onto a record
- * with a different terminal segment — the ordinary copy — and what it does NOT catch is a
- * record deliberately named to collide with the epoch of a real one, on any pod, on any host.
- *
- * ★ WHY THE POD IS NOT READ OUT OF THE URN ANYWAY. The obvious tightening — treat the third
+ * ★ WHY THE POD IS STILL NOT READ OUT OF THE URN. The obvious tightening — treat the third
  * URN component as the pod and require it to appear in the URL path — breaks live shapes the
  * relay itself mints, where that component is a ROLE and not a pod at all:
  *
@@ -1036,15 +1074,33 @@ export interface DescriptorBinding {
  *     urn:iep:<pod>:pgsl:<ms>                   → pod is third, but a fourth follows
  *
  * All three are honest and all three would be refused. Guessing which URN dialect is in hand
- * is how a check starts accusing real authors, so it is not attempted. The durable fix is
- * upstream and structural: sign a URL as the `descriptorId`, at which point the `exact-url`
- * branch handles it in full. Until then the honest report is `slug-only` with a caveat that
- * names what went uncompared — which is why this returns a basis rather than a boolean.
+ * is how a check starts accusing real authors, so it is not attempted — and it is not needed,
+ * because the URN was never the only signed field naming a party.
+ *
+ * ★ THE LOCATION IS COMPARED THROUGH `iep:ownerWebId`, WHICH THE SAME SIGNATURE COVERS. See
+ * {@link ProofOwnerScope}. When the caller can say who the SERVING pod belongs to, this
+ * function compares that against the owner the proof signs: agreement is `slug-and-owner`
+ * (name and location both checked), DISAGREEMENT IS A REFUSAL — that is the lift — and
+ * absence on either side leaves `slug-only` exactly as it was.
+ *
+ * ★ MEASURED BEFORE THE REFUSAL SHIPPED, because it is a behaviour change on a path every
+ * descriptor read crosses. A sweep of the deployed tree on 2026-08-04 read all 2,314
+ * descriptors on 278 known pods; 633 carry an authorship proof, across 13 pods; every one of
+ * the 633 binds `slug-only` today and every one of the 13 pods publishes a registry owner
+ * that is EXACTLY the `iep:ownerWebId` its proofs sign — in both live WebID shapes
+ * (`https://identity…/users/<pod>/profile#me`, 605 proofs, and `did:ethr:0x…`, 28). Zero
+ * disagreements, zero pods with no readable registry. So the refusal costs no honest read
+ * in the tree it was measured on, and the obvious over-tightening — demanding `exact-url`,
+ * or demanding the delegation chain, which only 28 of the 633 reach — would refuse hundreds.
+ *
+ * The durable fix upstream is still to sign a URL as the `descriptorId`, at which point the
+ * `exact-url` branch handles it in full with nothing left to infer.
  */
 export function proofBindsToDescriptorUrl(
   claimedDescriptorId: string | null | undefined,
   descriptorUrl: string,
   normalize?: (url: string) => string,
+  ownerScope?: ProofOwnerScope,
 ): DescriptorBinding {
   const norm = normalize ?? ((u: string) => u);
   if (typeof claimedDescriptorId !== 'string' || claimedDescriptorId.length === 0) {
@@ -1107,6 +1163,44 @@ export function proofBindsToDescriptorUrl(
         + `<${descriptorUrl}>`,
     };
   }
+  // ── The terminal segment matched. Now WHERE was it served from? ──────────────────────
+  //
+  // The URN cannot answer that (see the header), so the answer comes from the other signed
+  // field that names a party. Three outcomes, and the middle one is the whole point of the
+  // round: absence must not become an accusation, and disagreement must not stay a footnote.
+  const claimedOwner = nonEmpty(ownerScope?.claimedOwner);
+  const servingOwner = nonEmpty(ownerScope?.servingPodOwner);
+  if (claimedOwner !== null && servingOwner !== null) {
+    // ★ CASE-INSENSITIVE, AND THAT IS THE SAFE DIRECTION IN BOTH LIVE SHAPES RATHER THAN
+    // laxness. A `did:ethr:0x…` is EIP-55 checksum-cased, so two spellings of one address
+    // are the same account and refusing on the case would accuse an author of forging their
+    // own record. For an https WebID the origin is case-insensitive by RFC 3986 anyway, and
+    // an attacker cannot reach anything with the difference: to exploit it they would need
+    // the serving pod to publish a case-variant of the victim's WebID, which is the same
+    // public false claim as publishing it exactly.
+    if (claimedOwner.toLowerCase() !== servingOwner.toLowerCase()) {
+      return {
+        bound: false,
+        basis: 'none',
+        caveat:
+          `the proof is signed for owner <${claimedOwner}> and the pod serving `
+          + `<${descriptorUrl}> publishes <${servingOwner}> as its owner. The terminal `
+          + 'segment matched, which is all a URN can match, so this is exactly the shape a '
+          + 'proof lifted onto another party\'s pod takes: the same name, a different owner. '
+          + 'iep:ownerWebId is inside the signed payload, so it cannot be edited to fit.',
+      };
+    }
+    return {
+      bound: true,
+      basis: 'slug-and-owner',
+      caveat:
+        `the proof names the URN <${claimedDescriptorId}>, so only its terminal segment was `
+        + `matched against the URL — but the pod serving it publishes the same owner the `
+        + `proof signs (<${claimedOwner}>), so the record is not on some other party's pod. `
+        + 'What is still uncompared: the container within that pod, and the pod\'s ownership '
+        + 'claim is the pod\'s own — nobody signs the pod-to-owner binding.',
+    };
+  }
   return {
     bound: true,
     basis: 'slug-only',
@@ -1115,8 +1209,19 @@ export function proofBindsToDescriptorUrl(
       + 'is its terminal segment, so ONLY that segment matched. The host, the pod and the '
       + 'container were not compared and cannot be: the URN-to-URL mapping discards them. A '
       + 'proof lifted onto a record with the same final segment on a different pod would '
-      + 'reach this same verdict.',
+      + 'reach this same verdict. '
+      + (claimedOwner === null
+        // Two different absences, named apart: one is the proof's, one is the reader's.
+        ? 'The proof carries no iep:ownerWebId to compare the location by, either.'
+        : 'The owner of the pod that served it could not be established, so the location '
+          + 'went unchecked — which is not the same as checked and disagreeing, and is '
+          + 'reported as this weaker basis rather than as a refusal.'),
   };
+}
+
+/** A string that is actually there. `''` is absence, and so is a non-string off a JSON wire. */
+function nonEmpty(v: string | null | undefined): string | null {
+  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
 }
 
 /**

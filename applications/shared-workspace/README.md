@@ -621,10 +621,13 @@ role, the grantee and the stream are as the caller typed them. Defaulting the po
 empty every existing roster at once; leaving the report to be inferred is how the gap stayed
 invisible for four rounds.
 
-**1. A lifted proof binds on ONE PATH SEGMENT, and the relay reports the mismatch rather than
-refusing.** `get_descriptor` re-derives the canonical payload from the proof block's **own
-fields** and checks the signature over it, so a proof block copied verbatim out of any of a
-member's real, public records **verifies clean, naming that member**, wherever it is pasted.
+**1. ~~A lifted proof binds on ONE PATH SEGMENT, and the relay reports the mismatch rather
+than refusing.~~ Closed — both halves, and one of them had been closed for a round without
+anyone writing it down.** `get_descriptor` re-derives the canonical payload from the proof
+block's **own fields** and checks the signature over it, so a proof block copied verbatim out
+of any of a member's real, public records **verifies clean, naming that member**, wherever it
+is pasted. What stops it being accepted as authorship of the record it was pasted onto is a
+comparison the signature itself makes possible — see the two bullets below.
 
 > ★ This paragraph used to say the verifier *"never compares the proof's `iep:descriptorId`
 > against the descriptor it just read"*. **That is false**, and it was false in the same diff
@@ -634,18 +637,24 @@ member's real, public records **verifies clean, naming that member**, wherever i
 > exits. It sat directly above the struck-through row it had become the twin of, which is
 > exactly the ledger staleness the "How to read this file" note at the bottom promises against.
 
-What is still open is two things, stated separately because they are different:
+Both halves of what used to be open here are now closed, and the second one was closed
+without the first ever being written down as done:
 
-- **The relay reports, and does not refuse.** `authorshipVerified` and
-  `effectiveTrustLevel` are untouched by `descriptorBinding.bound === false`
-  (`server.ts:4441–4448`). A consumer that reads only `authorshipVerified` learns nothing
-  about it. The workspace layer refuses on it (`refuseAttestation`); other consumers do not.
-- **A URN-form id compares one segment.** The relay mints `descriptor_id` as
-  `urn:iep:<pod>:<epoch-ms>` and derives the URL from its terminal segment via
-  `slugFromIri`, so **every** record the substrate mints binds `slug-only`: the host, the pod
-  and the container were not compared and cannot be, because the URN→URL mapping discards
-  them. A URL-form id is compared in full — host, pod, container and name — but nothing in
-  this tree mints one.
+- ~~**The relay reports, and does not refuse.**~~ **Closed, and the ledger was the stale
+  one.** `authorshipVerdict` in `deploy/mcp-relay/authorship-content-binding.ts` refuses on
+  `bound === false` and `get_descriptor` gates on it (`const verdict = authorshipVerdict({…});
+  if (verdict.verified)`), so `authorshipVerified` is false and `effectiveTrustLevel` is never
+  assigned on a proof that does not name this record. Grepped before being believed, which is
+  the only reason this row is struck rather than re-shipped as open for a third round.
+- ~~**A URN-form id compares one segment.**~~ **Closed by comparing the LOCATION through the
+  other field the same signature covers.** A URN names the file and nothing else, so the pod
+  is not recoverable from it — but `iep:ownerWebId` is inside the signed payload, and a proof
+  lifted onto somebody else's pod carries its original owner with it. `get_descriptor` now
+  reads the owner the **serving pod** publishes (its agent registry's `webId`, the same
+  document the relay's write-scope gate consults) and compares the two: agreement is
+  `slug-and-owner`, disagreement is a refusal, and an owner that cannot be established leaves
+  `slug-only` exactly as it was. See `ProofOwnerScope` in `@interego/core` for the limit —
+  the pod's ownership claim is the pod's own, and nobody signs the pod-to-owner binding.
 
 Content binding narrows this one, and only partly. A lifted proof carries the digest of the
 record it was lifted *from*, so pasting it beside different content now yields either
@@ -661,8 +670,9 @@ than a boolean. `basis` is the part that matters:
 | basis | what was compared | who gets it |
 |---|---|---|
 | `exact-url` | host, pod, container and name, after host normalisation | a URL-form `descriptor_id`. Nothing in this tree mints one. |
-| `slug-only` | the terminal path segment, and nothing else | **every** record the relay mints |
-| `none` | they disagree, or there was nothing comparable | refused |
+| `slug-and-owner` | the terminal path segment, **and** the serving pod's published owner against the owner the proof signs | every record the relay mints, read through `get_descriptor` — measured 633/633 live proofs on 2026-08-04 |
+| `slug-only` | the terminal path segment, and nothing else | a reader that cannot establish who the serving pod belongs to — this layer, which computes the comparison independently and has no pod registry to read |
+| `none` | they disagree, or there was nothing comparable | refused — including a matching segment on a pod whose owner disagrees, which is the shape of a lifted proof |
 
 > ★ An earlier version of this section said the narrowing was *"close to zero"* and left it.
 > A later one collapsed the verdict to a bare boolean in `stream.ts` and lost the basis
@@ -684,11 +694,14 @@ reasons that were both checked:
    rather than escalating anything. Asserted, not argued —
    `tests/workspace-membership.test.ts`, *"what a `slug-only` binding still buys"*.
 
-**What it does leave open, and this is the residual:** `head` — the URL an operator
-dereferences to audit a record, and the URL printed in `unattested` and in every
-`divergence` — is chosen by whoever hosts the copy. A `slug-only` row can send a reader to a
-document the attacker controls. Nothing conferred moves with it; where the reader is *sent*
-does.
+~~**What it does leave open, and this is the residual:** `head` — the URL an operator
+dereferences to audit a record — is chosen by whoever hosts the copy.~~ **Closed for any
+record read through `get_descriptor`.** Hosting the copy means serving it from some pod, and
+that pod publishes an owner; a copy on a pod whose owner is not the one the proof signs is now
+refused outright, so the URL a `slug-and-owner` row sends an operator to is on the signer's own
+pod. What survives is narrower and worth stating exactly: this layer computes its own
+comparison with no pod registry to read, so **its** verdict is still `slug-only` — it refuses
+the copy only because the relay's `authorshipVerified` did.
 
 A publish that names its descriptor some other way — the PGSL-primary path writes a
 content-addressed `holon-<hash>.ttl` — fails this check too, *wrongly*, withholding the
@@ -700,11 +713,14 @@ how a true report stops being believed. The message now carries the diagnostic a
 one of the two readings is a forgery and that this layer cannot tell which.
 
 ~~**The durable fix belongs in the substrate**, which already holds both the proof and the URL
-it read it from: `get_descriptor` should compare them.~~ **Done.** Both halves of that sentence
-are now done — the observed content reaches the verifier, and the descriptor id is compared —
-and the comparison lives in `@interego/core` so the relay and this layer answer the question
-with one function rather than two. What remains is the **refusal**: the relay reports
-`descriptorBinding` and does not act on it. See the two bullets above.
+it read it from: `get_descriptor` should compare them.~~ **Done, all of it.** The observed
+content reaches the verifier, the descriptor id is compared, the comparison lives in
+`@interego/core` so the relay and this layer answer the question with one function rather than
+two — and the relay now **refuses** on the answer rather than reporting it. The URL compared is
+the one the fetch **landed** on, not the one asked for: `normalizeCssUrl` rewrites a legacy CSS
+host to a different origin and a redirect moves the target, so anchoring on the request would
+name the wrong pod. That is the same rule `followAlternateTurtle` learned, and it is the same
+`guardedInvokeFetchLanded` that reports it.
 
 **2. The signature is the relay's, not the member's.** `sign_authorship` signs with the
 relay's compliance wallet, over a payload whose `iep:issuer` is the session's
@@ -727,13 +743,26 @@ an operationally violent one. **Key rotation now has the same shape**: a revoked
 no longer attests, so a member's history is withheld until the retired registry row is
 restored live.
 
-**5. `wsp:seq` verification has no producer.** `verifyChain`'s sequence check, the
-`seqMismatches` clause in `intact`, and the `headOf` refusal that cites it are **inert
-against every stream this module can actually read**: `ManifestEntry` has no `seq` column, so
-`declaredSeqChecked` is `false` and `seqMismatches` is `[]` on every real read. That is
-reported rather than assumed — `declaredSeqChecked` exists precisely so "nobody looked" is
-not confusable with "the numbering agrees" — but the removed-and-linked-around attack is
-currently caught only by a hand-built row.
+**5. ~~`wsp:seq` verification has no producer.~~ Closed — it has one now, and it is the read
+that was already happening.** `verifyChain`'s sequence check, the `seqMismatches` clause in
+`intact`, and the `headOf` refusal that cites it were **inert against every stream this module
+could read**: `ManifestEntry` has no `seq` column, so `declaredSeqChecked` was `false` and
+`seqMismatches` `[]` on every real read, and the removed-and-linked-around attack was caught
+only by a hand-built row.
+
+The number lives in the entry's payload, and `composeWorkspace({verifyAuthorship: true})` was
+already fetching every one of those payloads for the attestation. `readEntry` returns the
+declared position beside the attestation out of that same `get_descriptor` — read through
+`digestedGraphRegion`, so a `wsp:seq` outside the covered block is bytes nobody signed and is
+not read — and the chain is re-verified with the positions filled in. A mismatch withholds the
+stream exactly as a fork does; an unreadable position leaves it admitted, because every entry
+written before the shape required `wsp:seq` reaches that and no number can be produced
+retroactively. `declaredSeqChecked` still distinguishes the two, and it is now `true` on a real
+read rather than never.
+
+The cheap read is deliberately unchanged: `readStream` alone still cannot see the removal, and
+`tests/workspace-compose.test.ts` asserts that as the CONTROL — without it, "the strict read
+caught it" is not evidence that anything was added.
 
 **6. That the convener is the workspace's convener — now closed, under a policy you must ask
 for.** Kept with its history, like gap 0, because what replaced it matters more than the fact
@@ -1300,12 +1329,17 @@ instead of the caller.
 
 ### Substrate changes needed to finish the job
 
-Not defects in this layer, and not fixable from it:
+Not defects in this layer, and not fixable from it. **Every row in this table is now struck,
+and that is a claim to distrust rather than celebrate:** the table only ever held the substrate
+gaps somebody had noticed from up here, and the last two rows in it were struck in the same
+round — one of them having been false since the round before. An empty table means nothing is
+*listed*, not that nothing is *left*; what is left about the descriptor binding is stated as a
+residue in the open table below rather than as a struck row here.
 
 | | |
 |---|---|
-| ~~the authorship verifier never checks the proof's `iep:descriptorId` against the descriptor it read, so a proof block can be **lifted** between records~~ — **done.** `server.ts` calls `proofBindsToDescriptorUrl(parsedProof.descriptorId, url, normalizeCssUrl)` before the `try` and reports `authorship.descriptorBinding` `{bound, basis, note}` on all three exits | ~~high~~ |
-| **but the relay REPORTS the mismatch and does not refuse on it.** `authorshipVerified` and `effectiveTrustLevel` are untouched by `bound: false`. This layer refuses; other consumers of `get_descriptor` do not | medium |
+| ~~the authorship verifier never checks the proof's `iep:descriptorId` against the descriptor it read, so a proof block can be **lifted** between records~~ — **done.** `server.ts` calls `proofBindsToDescriptorUrl(parsedProof.descriptorId, landedUrl, normalizeCssUrl, {claimedOwner, servingPodOwner})` before the `try` and reports `authorship.descriptorBinding` `{bound, basis, note}` on all three exits | ~~high~~ |
+| ~~**but the relay REPORTS the mismatch and does not refuse on it.** `authorshipVerified` and `effectiveTrustLevel` are untouched by `bound: false`. This layer refuses; other consumers of `get_descriptor` do not~~ — **CLOSED, AND IT WAS ALREADY CLOSED WHEN THIS ROW WAS LAST EDITED.** `authorshipVerdict` (`deploy/mcp-relay/authorship-content-binding.ts`) returns `verified: false` on `bound === false`, and `get_descriptor` gates on it — so `authorshipVerified` is false and `effectiveTrustLevel` is never assigned, for *every* consumer and not only this layer. Found by grepping the row's own identifiers, which is the discipline the note below this table promises and which this row is now the third instance of having been necessary. Pinned by `authorship-content-binding` "★★ a valid signature on a proof that does not name this record is NOT verified authorship", "★ exactly ONE place in the file can answer authorshipVerified: true", and the `effectiveTrustLevel`-assignment count | ~~medium~~ |
 | ~~it calls `verifySignedAuthorship` **without** the observed content, so `contentHash` coverage is never checked~~ — **done.** `get_descriptor` recomputes the digest over the payload it serves and reports `authorship.contentBinding` as `bound` / `mismatched` / `declared` / `unbound` | ~~high~~ |
 
 > ★ The first row was listed **open** while being false, in the same diff that made it false,
@@ -1314,6 +1348,14 @@ Not defects in this layer, and not fixable from it:
 > sentence whose other half it congratulates itself for having caught. Both halves are now
 > struck, and the part that genuinely remains open — the refusal, not the comparison — is its
 > own row rather than a clause inside a stale one.
+>
+> ★★ **AND THEN THE SAME THING HAPPENED TO THAT ROW.** The refusal row was written as the
+> honest remainder of a stale sentence and was itself already false: `authorshipVerdict` had
+> been gating on `bound` since the round that added it. Three rows in this table, three
+> instances of the same failure, each one written by somebody who had just finished
+> apologising for the previous one. The pattern is not carelessness about *this* table — it is
+> that a row is re-read rather than re-run. Nothing here will fix that except the grep, which
+> is why the note below asks for identifiers and not for care.
 
 The second row was not the one-line comparison it was filed as. The digest it was meant to
 check was over the caller's inbound bytes, and `publish()` rewrites those before they land,
@@ -1348,8 +1390,9 @@ time this file changes.
 | ★ **the evidence's provenance is a caller's claim only along two named paths now — and this row said "a caller that hand-writes both fields beside a record it forged passes", which the code stopped being true of and the ledger did not notice.** THE LEDGER WAS THE STALE ONE, not the code: `EvidenceProvenance` intersects `ObtainedByDereferencingTheWorkspace`, an unexported ambient brand minted by exactly one assertion in `dereferenceWorkspaceRecord`'s file, and `roster.ts` says so at the type. Measured with `tsc` rather than read, and with the still-open `RoleProfileDocument` beside it as a live control so the probe could not pass vacuously: a hand-written object literal is **TS2322, `mintedOnlyByDereferenceWorkspaceRecord` is missing** — the sentence this row used to carry does not compile — while the same literal for `RoleProfileDocument` compiles clean. What survives, measured the same way and stated as the residue instead of the whole: `JSON.parse` returns `any` and satisfies the brand, so a composer that receives the pair **across a process** is unaffected; `Object.assign({}, honest, {resolvedTo: forged})` inherits the brand and compiles, while object **spread** of the same pair does not; and a deliberate cast compiles but is greppable, with the adversarial suite pinning which files may hold one. That is why `refuseEvidenceProvenance` keeps every runtime string check it had — the brand is a second line and was never a replacement for the first. ★ AND THE SECOND LINE DID NOT SURVIVE THE FIRST CROSS-PROCESS SHAPE ANYBODY MEASURED: every absence guard in the fold tested `=== undefined`, JSON has no `undefined`, and a producer that is not JavaScript writes an absent optional as `null` — so `provenance: null` fell past the guard into `provenance.dereferenced` and threw a TypeError out of the authorization path rather than refusing. Thirteen shapes across four refusals and `foldRoster` did the same, including any grant row whose `attestation` arrived as `null`. Fixed by `== null` throughout (`roster.ts`), plus one guard that failed the other way: `doc.attestation !== undefined` is TRUE for `null` and accused an honest transport-only role profile of contradicting itself. Pinned by `workspace-adversarial` "★★ a wire `null` refuses, where it used to throw out of the fold" — nine cases built with `JSON.parse` rather than TS literals, including the admit control that keeps the fix from becoming a refuse-everything, and the `roleTableGrade` line that still read `.authority` off a null document one step after the refusal was fixed — and it is why this row is narrowed rather than struck out | low-med |
 | ~~two of the seven terms `oneIri` reads are pinned against pySHACL; the other five are assumed~~ — **CLOSED, and closed by removing the thing that made this row wrong twice.** The row went wrong twice for one reason: the number lived in prose and was maintained by re-reading it. `tools/shacl-agreement/run.mjs` now derives it — `patternedTerms()` reads the `sh:pattern` constraints out of `wsp-shapes.ttl` itself and makes the SHAPE the denominator, so an unpinned patterned term fails the run and a ninth pattern added to the shape cannot arrive unchecked in silence. All **eight** patterned terms (`convener`, `roleProfile`, `grantedTo`, `role`, `workspace`, `member`, `accepts`, `references`) are now pinned by a `violates` fixture across **21** fixtures, up from three of eight across 14. ★ A pin also has to be EARNED: a fixture declaring `# pins: <term>` must actually carry a value on that term that the published pattern refuses, checked against the fixture data with comment lines stripped — without that half a fixture violating on a missing `dct:title` could claim to pin `wsp:role` and the harness would print "all fixtures agree" and exit 0, measured with the gate stubbed out rather than supposed. Measured on the way in by reintroducing PR #231s defect (`sh:pattern` applied to literals only): the old fixture set produced 3 disagreements, this one produces 8. `wsp:stream` remains the readers one unpatterned term and `wsp:references` remains patterned-but-unread, which is why the two eights are different eights | closed |
 | `Member.stream` can legitimately differ between two configurations of the same fold: naming the stream is a conferring act, so refusing an acceptance re-picks the head. No authority moves with it, and it is never silent — both configurations raise the `acceptance` divergence — but a caller that reads `stream` without reading `divergences` will go to a different pod under a stricter policy | low-med |
-| `proofBindsToDescriptorUrl` compares **a URN-form id** on its terminal segment only, and every `descriptor_id` the relay mints is a URN — so a party who controls a pod and chooses a colliding epoch reaches `bound: true, basis: 'slug-only'` on any host. A URL-form id **is** compared in full, host included, and nothing in this tree mints one. What this leaves reachable, measured: not any conferred value, but `head` — the URL an operator dereferences to audit the record and the URL printed in `unattested` and every `divergence` — residual gap 1 | medium |
-| `wsp:seq` has no producer: `ManifestEntry` carries no `seq`, so the sequence check is inert on every real read — residual gap 5 | low-med |
+| ~~`proofBindsToDescriptorUrl` compares **a URN-form id** on its terminal segment only … a party who controls a pod and chooses a colliding epoch reaches `bound: true, basis: 'slug-only'` on any host — residual gap 1~~ — **CLOSED.** The pod is not in the URN and never will be, so the location is compared through the other field the same signature covers: `iep:ownerWebId`, against the owner the SERVING pod publishes. Agreement is the new `slug-and-owner` basis, disagreement REFUSES (and `authorshipVerdict` already gates on `bound`, so the refusal is the substrate's and not this layer's), and an owner that cannot be established leaves `slug-only` untouched — `unchecked` is not `refused`. ★ Measured before shipping the refusal, because it is a behaviour change on a path every descriptor read crosses: all 2,314 descriptors on 278 known pods were read, 633 carry a proof across 13 pods, and every one of those 13 pods publishes a registry owner byte-identical to the `iep:ownerWebId` its proofs sign — in both live WebID shapes (`https://identity…/users/<pod>/profile#me`, 605; `did:ethr:0x…`, 28). 633/633 keep binding; 0 lose it. The two tightenings that look equally reasonable are refused on the same measurement: `exact-url` refuses all 633, and the delegation chain refuses 605. ★ The pod comparison is anchored on the **landed** URL and the pod root is taken from the **resolved** path — a regex over the raw request string reads the pod out of the text a caller typed while `fetch` reads it out of the resolved one, so `…/alice/context-graphs/../../mallory/context-graphs/x.ttl` would have handed a lifted proof the one owner that makes it bind | ~~medium~~ |
+| ★ **the residue of closing gap 1, named rather than absorbed:** the serving pod's owner is the pod's OWN claim. A pod holder who writes another party's WebID into their own agent registry receives a lifted proof again — but must say so publicly, in their own pod, to every other consumer of it, and the relay's write-scope gate reads that same document. Nobody signs the pod-to-owner binding, so this is the ceiling of what the check can be worth. Reachable honestly too: `publish_context` accepts a caller-supplied `owner_webid`, so a caller can sign a proof naming an owner their pod does not have and their own record then refuses. Measured 0 live instances before shipping; the one that exists now is the probe published to demonstrate the refusal | low-med |
+| ~~`wsp:seq` has no producer: `ManifestEntry` carries no `seq`, so the sequence check is inert on every real read — residual gap 5~~ — **CLOSED by giving it a producer, not by deleting the check**, and the evidence decided it: the number lives in the entry's payload, and `composeWorkspace({verifyAuthorship: true})` was already fetching every one of those payloads for the attestation. `readEntry` returns the position beside the attestation from that one `get_descriptor`, and the chain is re-verified with the positions filled in — so `declaredSeqChecked` is TRUE on a real read for the first time, at zero extra cost. It catches the one removal the links structurally cannot: a row deleted with the survivor re-pointed at its grandparent walks clean with one head, one root and no dangling link, and the cheap read reports it `intact` (asserted as the control). ★ The position is read from the DIGESTED region only — a `wsp:seq` in the default graph is bytes nobody signed, and reading one from there would let anyone re-number somebody else's log. ★ Unreadable positions leave the stream ADMITTED: every entry written before the shape required `wsp:seq` reaches that, and refusing would withhold whole histories over a number nobody can produce retroactively | ~~low-med~~ |
 | ★ **an assertion that encodes a defect goes stale the moment somebody fixes the defect, and nothing in this repo notices** — §12's first three assertions were correct measurements of a broken artifact (`<…/wsp-roles-default>` answers 404) written as the section's *expected state*. `docs/` fixed the artifact in a different round and the assertions kept asserting the breakage; they were rewritten only because somebody ran the file. The mitigation the last row proposed (a numbered section roster carrying a run **count**) worked for the question it was aimed at — "which sections are unrun" — and is blind to this one. No mechanism here distinguishes *this fails because the code regressed* from *this fails because the world was repaired*, and the only signal is a human reading the failure text. Cheap partial fix, not taken this round: mark such assertions in the source with a convention a grep can find, so a round touching `docs/` can be pointed at the assertions that describe `docs/` | low-med *(honesty, not behaviour)* |
 | ~~`headOf` on a forked chain throws rather than returning a value; `appendEntry` converts it to a named `conflict` first, so the shipped path is safe and a direct caller must catch~~ — **CLOSED.** `headOf` returns `HeadResult`, a two-member union whose `'diverged'` case carries the whole `ChainReport`. The asymmetry was real and reproducible — the same rows yield a value from `verifyChain`, a named `conflict` from `appendEntry` and a bare `Error` from `headOf` — and the cost was not only the contract: the report computed one line above the `throw` was discarded, so the four causes (fork, merge, dangling link, seq mismatch) survived only as substrings of a message. This module's own tests were separating them with `toThrow(/dangling link/)` and `toThrow(/sequence mismatch/)`, which is the proof the structured cause was unreachable — the same collapse that got the `proofBindsToDescriptor` wrapper deleted from this module. ★ `appendEntry`'s duplicate `verifyChain` + `!intact` pre-check, whose stated purpose was "keeps the headOf below from throwing", is gone with it: one rule, one message, one walk. ★ The runtime stop is traded for a compile-time one and that is named, not hidden — the `'diverged'` member has no `url`/`seq`, so `headOf(rows).url` is a type error, and `tsconfig.check.json` compiles every caller in the repo including `tools/verify-stream-live.ts`; a caller arriving from plain JavaScript now gets `undefined` (caught one layer down by `entryTurtle`'s non-negative-integer refusal) where it used to get an exception | closed |
 
@@ -1357,6 +1400,8 @@ time this file changes.
 
 | | where |
 |---|---|
+| ★★★ **residual gap 1 — a URN-form proof bound on ONE PATH SEGMENT, and every `descriptor_id` the substrate mints is a URN.** The pod is not in the URN and cannot be recovered from the URL, so the two STRINGS can never settle it; what settles it is the other field the same signature covers. `ProofOwnerScope` carries the proof's signed `iep:ownerWebId` and the owner the SERVING pod publishes, and `proofBindsToDescriptorUrl` grades the pair: `slug-and-owner` on agreement, a REFUSAL on disagreement, `slug-only` (unchanged) when either is missing. The relay supplies the evidence from the pod's agent registry — the same document `runScopeGate` reads before letting anyone publish there — cached per pod per TTL, with every failure answering null. ★ Anchored on the LANDED url and on the RESOLVED path, both for the reason the alternate-link round found: the URL asked for is not where the bytes came from. ★ Measured across the whole deployed tree before the refusal shipped (2,314 descriptors, 633 proofs, 13 pods, 0 disagreements) and demonstrated live on two builds of the same two records | `workspace-stream` "★★ the lift REFUSES once the serving pod's owner is known", "★★ the honest record on its own pod binds on the STRONGER basis", "★★ ABSENCE on either side is `unchecked`, never `refused`", "★ owners compare case-insensitively", "★ the owner never RESCUES a segment that does not match", "★ an exact-url binding is unchanged by owner evidence"; `authorship-content-binding` (the wiring assertions, `podRootOfDescriptorUrl` incl. both traversal spellings, and the six `makeServingPodOwnerReader` cases); a **20-mutant sweep** |
+| ★★ **residual gap 5 — `wsp:seq` had no producer, so the sequence check had never once executed.** Given one rather than deleted, because the payload it lives in was already being fetched: `readEntry` returns the declared position beside the attestation from the same `get_descriptor`, and `composeWorkspace` re-verifies the chain with the positions filled in. `declaredSeqChecked` is now TRUE on a real read. ★ The position is read through `digestedGraphRegion` — the digester's own function — so a `wsp:seq` written outside the covered block is not read; ★ an unreadable position leaves the stream admitted | `workspace-compose` "★★ an honest log is CHECKED, not merely unexamined", "★★ a row REMOVED AND LINKED AROUND is caught — and nothing else catches it" (with the cheap read as the control), "★ a payload with no readable position leaves the stream ADMITTED", "★★ the position is read from the DIGESTED region and nowhere else", "★ the check costs NO extra read"; `workspace-stream` "★ readDeclaredSeq" (7 cases) |
 | ★★ **a `Grant` or `Acceptance` refused for naming two grantees took its revocation out of the fold with it** — and the roster held no trace: measured, a revocation carrying a second `wsp:grantedTo` left `members: 1` against its one-grantee twin's `0`, with `unattested: []` **and** `divergences: []`, so `restrictionStillApplied` had nothing to sit on. The mechanism was the CARRIER, not the refusal: `Grant.grantedTo` holds one principal and the restricting track groups on it (`groupBy(inWorkspaceGrants, g => g.grantedTo)`), so a record naming two has no representation as one row and `record: null` was the reader's only lossless option. `oneIri`'s refusal is unchanged — what is added is the third state the module already had everywhere else (`safeBoolean`, `provenanceUnless`): `restrictionPrincipals` fans the record out into one row per named principal, each carrying the restriction and nothing else. **Only where the record actually restricts**, because rows minted off a non-revoking record manufacture a participant — measured, the second grantee became a member with an empty role as soon as she wrote her own acceptance naming that head. The rows carry `revoked`/`withdrawn` and no `fieldProvenance`, so the fold `continue`s the principal before `members.push` under *every* policy including no-attestation, and `requireFieldBinding` puts them on `unattested` with `restrictionStillApplied: true` — the removal is never silent. Residue, named rather than absorbed: an ambiguous `wsp:workspace` (either half) or `wsp:accepts` still drops the record entirely, because those fields are how the row is ROUTED and a record that half-names a workspace must not be folded into it; and a caller that reads `.record` instead of `membershipRowsOf` still loses the rows — the type cannot force the spread | `workspace-membership` "a REVOCATION naming two grantees still removes BOTH, and the roster says so", "CONTROL: a two-grantee grant that does NOT revoke manufactures NO member", "a WITHDRAWAL naming two members still removes", plus the `restrictions` assertion added to the existing two-grantee refusal case |
 | ★★ **the published governance was unreadable to the only reader of it, and the cause was the round that made its IRI resolve** — `docs/applications/shared-workspace/wsp-roles-default.html` shipped so the vocabulary's extensionless IRIs would dereference instead of 404ing. GitHub Pages serves no extensionless path and falls back to `<name>.html`, so `<…/wsp-roles-default>` began answering **200 `text/html`** — and `dereferenceRoleProfile`, which had only ever seen a 404 there, handed the page to the Turtle parser and reported the deployed role profile as `unreadable … unknown bareword "Default"`. Closed by **composing the follower that already existed** rather than writing a second one: `looksLikeHtml` / `alternateTurtleHref` moved from `deploy/mcp-relay/alternate-turtle.ts` into `@interego/core`, joined by `alternateTurtleUrl` (resolve the href against the page's own URL; refuse a cross-origin one; refuse an opaque origin on either side) and `followAlternateTurtle` (one hop, bounded by a constant; the landed URL re-checked so a redirect cannot reach what a foreign href is refused for). The relay re-exports the two predicates, so its import surface is unchanged — the `graphIriFromDescriptorTurtle` precedent. **The grade does not move**: `authority` is `'transport-only'` either side of the link, asserted live | `tests/alternate-turtle.test.ts` (10 cases: relative resolution incl. `..`/root-relative/absolute, cross-origin by host **and** port **and** scheme, opaque origins, the real `docs/` page read off disk, Turtle passed through with zero fetches, the differently-named alternate, the one-hop bound asserted on the FETCH COUNT, redirect-off-origin with its same-origin control, and absent/404/throwing); `tests/workspace-membership.test.ts` "the DEPLOYED shape … is FOLLOWED", "it follows the href the PAGE names", "a page that advertises NO Turtle is refused, and the `.ttl` twin is still not guessed", "a CROSS-ORIGIN alternate is refused, and a chain of pages is not chased"; `verify-can-live.ts` §12, run live |
 | ★★★ **residual gap 10** — the last of the gap-6 family, and the first check in it that opens a **document** rather than comparing a **name**. Gaps 6, 8 and 9 established, in order: the convener must match the workspace's own record, the role-profile IRI must match the one that record declares, and the evidence must be the record `<WS>` actually dereferences to. All three compare names. The thing every capability in a roster is computed from is the role **table** those names point at — `permitsOf` is built from `RoleProfile.roles` — and that array was the caller's. Measured before the check existed: `convenerBinding: 'bound'`, `roleProfileBinding: 'bound'`, `recordFieldBinding: 'bound'`, `unattested: []`, and an `#Observer` holding `grant` and `revoke`. Closed by `dereferenceRoleProfile` (the producer, in `membership.ts`) + `RoleProfileDocument` / `RoleTableEvidence` + `refuseRoleTableAuthority` + `AttestationPolicy.roleTableEvidence` + `Roster.roleTableBinding`, copying gap 6's three directions **deliberately**: the document is evidence and never a source (there is no `profile.roles = document.roles`, and the substitution is worse here than for the convener — a caller with a *narrower* table would be handed the published one and start conferring more), the refusal is in the grant filter's `??` chain **only**, and `'unchecked'` is a third value distinct from `'refused'`. `normaliseRoleTable` is **the same function** that builds `permitsOf`, extracted rather than copied, so `'bound'` cannot mean "these agree under a rule the fold does not use". Two residues named rather than absorbed, in the open table above | `workspace-adversarial` AXIS J (five role-table shapes across all 76,800 configurations, four of them refusing, with a **per-shape** non-vacuity counter), "AXIS J closes RESIDUAL GAP 10", "AXIS J is not vacuous", "any difference refuses", "the comparison uses the fold's OWN normalisation", "the document's table is EVIDENCE and never a SOURCE", "the authority label cannot be used to SKIP the signature check", "a table refusal never lands on the ACCEPTANCE side", the revocation/withdrawal pair, and the JSON-shape guards; `workspace-membership` "dereferenceRoleProfile" (13 cases) — and a **41-mutant sweep**, all killed |

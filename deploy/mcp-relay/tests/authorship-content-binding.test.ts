@@ -108,6 +108,8 @@ import {
   graphIriFromDescriptorTurtle,
   contentBindingNote,
   authorshipVerdict,
+  podRootOfDescriptorUrl,
+  makeServingPodOwnerReader,
 } from '../authorship-content-binding.js';
 
 let pass = 0;
@@ -523,13 +525,46 @@ last""" .
   // function holds the proof AND the URL it fetched it from — everything the comparison
   // needs — and did not make it.
   ok(
-    /proofBindsToDescriptorUrl\(\s*parsedProof\.descriptorId,\s*url,\s*normalizeCssUrl,?\s*\)/.test(SERVER),
+    /proofBindsToDescriptorUrl\(\s*parsedProof\.descriptorId,\s*landedUrl,\s*normalizeCssUrl,/.test(SERVER),
     '★★ get_descriptor compares the proof\'s descriptorId against the URL it was served from',
   );
   ok(
-    /normalizeCssUrl,\s*\);?\s*\n\s*const descriptorBinding/.test(SERVER),
-    '★ …through the host normaliser, so a record carrying the pre-migration CSS host in its '
-    + 'signed bytes is not called unbound — the fails-closed-on-honest-data direction',
+    /normalizeCssUrl,\s*\n\s*\{\s*\n\s*claimedOwner: parsedProof\.ownerWebId,\s*\n\s*servingPodOwner:/.test(SERVER),
+    '★★ …and, for a URN-form id, compares the LOCATION through the other signed field: the '
+    + 'proof\'s ownerWebId against the owner the serving pod publishes. The terminal segment '
+    + 'is all a URN can match, so without this a proof lifted onto another party\'s pod at '
+    + 'the same epoch bound clean',
+  );
+  // ★ THE LANDED URL, NOT THE URL ASKED FOR — the alternate-turtle precedent, for the same
+  // two reasons: `normalizeCssUrl` rewrites a legacy CSS host to a DIFFERENT ORIGIN, and a
+  // redirect moves the target. Anchoring on the request would name the wrong pod (or none)
+  // and would fail honest reads closed the moment either happened.
+  ok(
+    /const \{ response: resp, landedUrl: landed \} = await guardedInvokeFetchLanded\(url, \{/.test(SERVER),
+    '★ the descriptor GET reports where it LANDED',
+  );
+  ok(
+    /cacheDescriptorBody\(url, \{ content: turtle, mediaType: 'text\/turtle', encrypted: false, landedUrl: landed \}\)/.test(SERVER),
+    '★★ and the landed URL is cached WITH the body — otherwise the second read of a URL '
+    + 'knows only where it asked, and the binding silently weakens on every cache hit',
+  );
+  ok(
+    /const servingPodRoot = podRootOfDescriptorUrl\(landedUrl\);/.test(SERVER)
+    && /const inferredPodUrl = servingPodRoot \?\? undefined;/.test(SERVER),
+    '★ the delegation walk and the owner lookup derive the pod with ONE rule off ONE url, so '
+    + 'the trust label and the binding verdict cannot be about two different pods',
+  );
+  ok(
+    !/const m = url\.match\(\/\^\(https\?:/.test(SERVER),
+    '★ …and the second, inline copy of that rule is gone rather than left beside it',
+  );
+  // ★★ R4. The pod root is cut out of a CALLER-SUPPLIED URL, so the registry read is an
+  // egress on a host the caller chose. `solidFetch` would put it on the unscreened global
+  // pool — a second SSRF door opened by a check whose whole purpose is defensive, which is
+  // the exact shape found next to `discover_context` on 2026-08-04.
+  ok(
+    /readAgentRegistry\(podUrl, \{ fetch: guardedInvokeFetch \}\)/.test(SERVER),
+    '★★ the serving pod\'s registry is read through the SCREENED fetcher',
   );
   // ★ COMPUTED OUTSIDE THE `try`. It depends on neither the signature nor the payload, so a
   // verifier that throws is no reason to withhold an answer that already exists. Inside, a
@@ -580,9 +615,9 @@ last""" .
     '★ descriptorBinding is a REQUIRED field of the authorship result',
   );
   ok(
-    /enum: \['exact-url', 'slug-only', 'none'\]/.test(SERVER),
+    /enum: \['exact-url', 'slug-and-owner', 'slug-only', 'none'\]/.test(SERVER),
     '★ the published schema advertises the BASIS, so a caller can tell a full URL comparison '
-    + 'from a terminal-segment one — the two are not equally strong and a boolean hid that',
+    + 'from a terminal-segment one — the three are not equally strong and a boolean hid that',
   );
   ok(
     /canonicalGraphDigestResult\(String\(args\.graph_content/.test(SERVER),
@@ -657,18 +692,28 @@ last""" .
     + 'some other way reaches this verdict too, and accusing its author is how a true report '
     + 'stops being believed',
   );
-  // ★★ THE HONEST-DATA DIRECTION, WITH THE NUMBER BEHIND IT. 272 live pods swept on
-  // 2026-08-03: 1,375 descriptors read, 134 carrying a proof, 134/134 bound `slug-only`,
-  // 0 `exact-url`, 0 unbound. Every descriptor_id the substrate mints is a URN and a URN
-  // can only ever reach `slug-only`, so a gate on the BASIS refuses all 134 honest records
-  // — the fail-closed-on-live-data direction this area has already shipped once.
+  // ★★ THE HONEST-DATA DIRECTION, WITH THE NUMBERS BEHIND IT, AND THEY ARE RE-MEASURED
+  // RATHER THAN RE-QUOTED. 2026-08-03: 272 pods, 1,375 descriptors, 134 proofs, 134/134
+  // `slug-only`. 2026-08-04, after the owner comparison landed: 278 pods, 2,314 descriptors,
+  // 633 proofs on 13 pods — every one of the 13 pods publishes a registry owner EXACTLY
+  // equal to the `iep:ownerWebId` its proofs sign, so 633/633 keep binding and 0 lose it.
+  // A gate on the BASIS still refuses all of them, and so does one on the delegation chain
+  // (605 of the 633 are SelfAsserted) — the fail-closed-on-live-data direction this area
+  // has already shipped once.
   ok(
     authorshipVerdict({
       signatureValid: true,
       descriptorBinding: { bound: true, basis: 'slug-only', note: 'only the terminal segment matched' },
     }).verified === true,
     '★★ a slug-only binding STILL verifies — gating on basis rather than on bound refuses '
-    + '134/134 live proofs',
+    + '633/633 live proofs',
+  );
+  ok(
+    authorshipVerdict({
+      signatureValid: true,
+      descriptorBinding: { bound: true, basis: 'slug-and-owner', note: 'the serving pod publishes the same owner' },
+    }).verified === true,
+    '★ and the stronger URN basis verifies too — `bound` is the gate, `basis` is the grade',
   );
   ok(
     authorshipVerdict({
@@ -690,6 +735,84 @@ last""" .
     }).reason === 'verification returned false',
     'and the default reason is preserved when the verifier gave none',
   );
+
+  console.log('\n★ WHERE the bytes came from, and who that pod says it belongs to');
+
+  // ── `podRootOfDescriptorUrl` — the ONE rule for "which pod is this" ────────────────────
+  ok(
+    podRootOfDescriptorUrl('http://css.railway.internal:3456/u-eth-8f3b/context-graphs/17858.ttl')
+      === 'http://css.railway.internal:3456/u-eth-8f3b/',
+    'the pod root of a live descriptor URL is the pod, not the container',
+  );
+  ok(
+    podRootOfDescriptorUrl('https://css.test/alice/notes/17858.ttl') === null,
+    '★ a URL that is not in the publish layout yields NO pod — matching without the '
+    + '`context-graphs/` segment would call the first path segment of any URL a pod, and the '
+    + 'owner of "any URL" is not a thing to compare against',
+  );
+  ok(
+    podRootOfDescriptorUrl('not a url') === null && podRootOfDescriptorUrl('') === null,
+    'and an unparseable url yields none rather than throwing out of the read path',
+  );
+  // ★★ THE BYPASS THE INLINE REGEX HAD. A regex over the raw request string reads the pod
+  // out of the text a caller typed; `fetch` reads it out of the RESOLVED path. Traversal
+  // therefore names alice's pod while serving mallory's document — which is precisely the
+  // one owner that would make a lifted proof bind.
+  ok(
+    podRootOfDescriptorUrl('https://css.test/alice/context-graphs/../../mallory/context-graphs/9.ttl')
+      === 'https://css.test/mallory/',
+    '★★ a traversing URL names the pod the bytes ACTUALLY come from, not the one it opens with',
+  );
+  ok(
+    podRootOfDescriptorUrl('https://css.test/alice/context-graphs/%2e%2e/%2e%2e/mallory/context-graphs/9.ttl')
+      === 'https://css.test/mallory/',
+    '★ …in the percent-encoded spelling too',
+  );
+
+  // ── `makeServingPodOwnerReader` — evidence, cached, and never an accusation ────────────
+  {
+    let calls = 0;
+    let clock = 1_000;
+    const reader = makeServingPodOwnerReader({
+      readOwner: async (pod) => { calls += 1; return pod.includes('alice') ? 'https://id.test/alice#me' : null; },
+      now: () => clock,
+      ttlMs: 60_000,
+    });
+    ok(await reader('https://css.test/alice/') === 'https://id.test/alice#me', 'it reads the owner the pod publishes');
+    await reader('https://css.test/alice/');
+    ok(calls === 1, '★ and reads it ONCE per pod per TTL — this sits on every descriptor read', `calls=${calls}`);
+    clock += 60_001;
+    await reader('https://css.test/alice/');
+    ok(calls === 2, '★ the TTL is real: aged out, it asks again', `calls=${calls}`);
+    // ★ THE NULL IS CACHED TOO. Without it a pod with no registry pays a fetch on EVERY
+    // descriptor read of it, and a null can only ever weaken a binding to `slug-only`.
+    const before = calls;
+    ok(await reader('https://css.test/bob/') === null, 'a pod that publishes no owner reads as null');
+    await reader('https://css.test/bob/');
+    ok(calls === before + 1, '★ …and the null is cached, not re-fetched', `calls=${calls}`);
+  }
+  {
+    // ★ A THROWING REGISTRY IS `unchecked`, NOT `refused`. Failing closed on an unreachable
+    // pod would turn a network blip into a wave of honest records reported as forgeries —
+    // the direction this whole area has shipped a defect on before.
+    const reasons: string[] = [];
+    const reader = makeServingPodOwnerReader({
+      readOwner: async () => { throw new Error('ECONNREFUSED'); },
+      onUnavailable: (_pod, why) => reasons.push(why),
+    });
+    ok(await reader('https://css.test/carol/') === null, '★★ a registry read that THROWS answers null, not a refusal');
+    ok(reasons.some(r => /ECONNREFUSED/.test(r)), 'and the reason is reported, so a wave of them is visible');
+  }
+  {
+    // Two readers must not share a cache: module-level state is how one test inherits
+    // another's answers and how a TTL becomes unexercisable.
+    let n = 0;
+    const opts = { readOwner: async () => { n += 1; return `owner-${n}`; } };
+    const a = makeServingPodOwnerReader(opts);
+    const b = makeServingPodOwnerReader(opts);
+    ok(await a('https://css.test/x/') === 'owner-1' && await b('https://css.test/x/') === 'owner-2',
+      '★ each reader owns its own cache');
+  }
 
   console.log('\n★ the four outcomes are four, everywhere they are enumerated');
 
