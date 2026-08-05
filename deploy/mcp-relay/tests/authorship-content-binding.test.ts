@@ -696,7 +696,9 @@ last""" .
   // RATHER THAN RE-QUOTED. 2026-08-03: 272 pods, 1,375 descriptors, 134 proofs, 134/134
   // `slug-only`. 2026-08-04, after the owner comparison landed: 278 pods, 2,314 descriptors,
   // 633 proofs on 13 pods — every one of the 13 pods publishes a registry owner EXACTLY
-  // equal to the `iep:ownerWebId` its proofs sign, so 633/633 keep binding and 0 lose it.
+  // equal to the `iep:ownerWebId` its proofs sign, so 633/633 were PREDICTED to keep binding
+  // and 0 to lose it. 2026-08-05, the same 633 re-read against the DEPLOYED build carrying
+  // the refusal: 633 `slug-and-owner`, 633 verified, 0 refused — the prediction, run.
   // A gate on the BASIS still refuses all of them, and so does one on the delegation chain
   // (605 of the 633 are SelfAsserted) — the fail-closed-on-live-data direction this area
   // has already shipped once.
