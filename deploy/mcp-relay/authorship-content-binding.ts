@@ -265,7 +265,13 @@ export function contentBindingNote(
  *               and 0 `exact-url`, and every one of the 13 pods publishes a registry owner
  *               EXACTLY equal to the `iep:ownerWebId` its proofs sign. That is what let the
  *               URN branch start comparing the owner (`slug-and-owner`) and REFUSING a
- *               disagreement: 633 of 633 honest proofs keep binding, 0 lose it.
+ *               disagreement: 633 of 633 honest proofs PREDICTED to keep binding, 0 to lose it.
+ *   2026-08-05: the same 633 descriptors re-read against the DEPLOYED build carrying the
+ *               refusal — 633 `slug-and-owner`, 633 `authorshipVerified: true`, 0 refused.
+ *               The prediction is now an observation, and the two are listed apart because
+ *               a figure derived from a comparison and a figure read off the running system
+ *               are different kinds of claim; this file has shipped the first wearing the
+ *               clothes of the second before.
  *
  * Both tightenings that look equally reasonable from here are still refused, and now for a
  * measured reason rather than a cautious one: demanding `exact-url` refuses all 633, and

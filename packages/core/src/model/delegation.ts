@@ -1093,6 +1093,12 @@ export interface ProofOwnerScope {
  * in the tree it was measured on, and the obvious over-tightening — demanding `exact-url`,
  * or demanding the delegation chain, which only 28 of the 633 reach — would refuse hundreds.
  *
+ * ★★ AND THE PREDICTION WAS RUN, which is a different claim and is recorded as one. The same
+ * 633 descriptors, re-read on 2026-08-05 against the deployed build carrying this refusal,
+ * answer 633 `slug-and-owner`, 633 `authorshipVerified: true`, 0 refused. The line above is
+ * what a comparison of two published values predicted; this line is what the running system
+ * returned.
+ *
  * The durable fix upstream is still to sign a URL as the `descriptorId`, at which point the
  * `exact-url` branch handles it in full with nothing left to infer.
  */
