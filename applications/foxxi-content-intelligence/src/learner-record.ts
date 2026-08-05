@@ -36,7 +36,7 @@
  */
 
 import { exportClr, type ClrEnvelope } from './clr.js';
-import { competencyIri } from './competency-identity.js';
+import { competencyIri, competencyIriForTerm, competencyIdOf } from './competency-identity.js';
 import type { StoredStatement } from './statement-store.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { evaluateProficiency, LER_NS } from './ler-tla-vocab.js';
@@ -422,16 +422,34 @@ function projectPerformance(rec: StoredStatement, lrsEndpoint: string): ElrPerfo
 
 interface CompetencyDraft {
   label: string;
+  /** The dereferenceable term that NAMED this competency, when one did — the
+   *  `object.definition.type` of a domain-typed performance. Absent for a
+   *  competency keyed off a free-text task name or a credential alignment label,
+   *  which name no term anybody can look up. */
+  termIri?: string;
   framework?: string;
   credentialEvidence: string[];
   trainingEvidence: string[];
-  performanceEvidence: string[];
-  performanceSuccess: number;
-  /** Executions that carried an ASSERTED outcome (success true or false) — the
-   *  denominator for the success rate, so result-less executions don't read 0%. */
-  performanceAssessed: number;
-  performanceQualitySum: number;
-  performanceQualityCount: number;
+  /**
+   * ★ ONE ENTRY PER DISTINCT TASK, NOT PER STATEMENT.
+   *
+   * Keyed by `task_id` so a task reported twice counts once. It used to be a flat array
+   * of statement locations, which made `n` the statement count: resubmitting one genuine
+   * `task_id` moved the Wilson lower bound 0.61 → 0.646 (6/6 → 7/7) with no new work, so
+   * twelve replays of one task reach Expert. The LRS is at-least-once, so this is also the
+   * duplicate-delivery guard, not only an anti-replay one.
+   *
+   * A repeat carrying a DIFFERENT outcome is a correction, and the latest timestamp wins —
+   * dropping the repeat outright would pin the first answer forever, and counting both
+   * would let a performer bank a success and a failure for the same task.
+   */
+  performanceByTask: Map<string, {
+    rawDataLocation: string;
+    /** The performer's cited `task_id` when it is an http(s) URL — the artifact the work
+     *  landed in, which (unlike the LRS statement URL) answers an anonymous GET. */
+    evidenceArtifact?: string;
+    success?: boolean; quality?: number; timestamp: string;
+  }>;
 }
 
 /** A semantic type IRI's local name is a meaningful label (e.g. cg#Finding →
@@ -497,15 +515,27 @@ function buildCompetencies(
   subjectPodUrl: string,
 ): ElrCompetency[] {
   const drafts = new Map<string, CompetencyDraft>();
-  const draft = (label: string): CompetencyDraft => {
-    const key = label.toLowerCase().trim();
+  /**
+   * ★ THE AGGREGATION KEY IS NOT THE LABEL.
+   *
+   * It used to be `label.toLowerCase().trim()`, and for a domain-typed performance the
+   * label was the activity type's LOCAL NAME — so `https://one.example/s#EvidenceIntegrityReview`
+   * and `https://attacker.example/x#EvidenceIntegrityReview` were the same bucket, and
+   * their executions, successes, evidence, Wilson confidence and Dreyfus level were pooled.
+   * Now a term-named competency keys on the WHOLE term IRI and a label-named one keys on
+   * the label under a disjoint prefix, so the two can never collide with each other either.
+   */
+  const draft = (key: string, label: string, termIri?: string): CompetencyDraft => {
     let d = drafts.get(key);
     if (!d) {
-      d = { label, credentialEvidence: [], trainingEvidence: [], performanceEvidence: [], performanceSuccess: 0, performanceAssessed: 0, performanceQualitySum: 0, performanceQualityCount: 0 };
+      d = { label, ...(termIri !== undefined ? { termIri } : {}), credentialEvidence: [], trainingEvidence: [], performanceByTask: new Map() };
       drafts.set(key, d);
     }
     return d;
   };
+  /** A competency nobody named with a term: keyed by its label, under a prefix no absolute
+   *  IRI can produce, so "the label happens to look like a term" cannot merge two buckets. */
+  const labelKey = (label: string): string => `label:${label.toLowerCase().trim()}`;
 
   // Credentialed competencies — alignments on verified credentials.
   for (const entry of clr?.credentialEntries ?? []) {
@@ -516,7 +546,12 @@ function buildCompetencies(
     for (const a of subj.achievement?.alignment ?? []) {
       const label = a.targetName ?? a.targetCode;
       if (!label) continue;
-      const d = draft(label);
+      // An alignment's targetCode is often already a competency IRI; when it is, the
+      // credential names a TERM and keys on it, so a credential and a performance for the
+      // same term roll up together instead of splitting on how each spelled the label.
+      const code = a.targetCode;
+      const termIri = code !== undefined && /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(code) ? code : undefined;
+      const d = termIri !== undefined ? draft(termIri, label, termIri) : draft(labelKey(label), label);
       d.credentialEvidence.push(entry.credential.id ?? entry.sourceDescriptor);
       if (a.targetFramework) d.framework = a.targetFramework;
     }
@@ -529,7 +564,7 @@ function buildCompetencies(
     if (!label) continue;
     // Evidence is the DEREFERENCEABLE raw-data location (pod descriptor / LRS URL),
     // not the bare statement UUID — so ler:supportedByEvidence resolves.
-    draft(label).trainingEvidence.push(exp.rawDataLocation);
+    draft(labelKey(label), label).trainingEvidence.push(exp.rawDataLocation);
   }
 
   // Performance-verified competencies — production `performed` records. The skill
@@ -543,18 +578,39 @@ function buildCompetencies(
   for (const p of performance) {
     const domainTyped = isDomainActivityType(p.taskType);
     if (!domainTyped && p.success === undefined) continue;
-    const d = draft(domainTyped ? typeLocalName(p.taskType!) : p.taskName);
-    d.performanceEvidence.push(p.rawDataLocation);
-    if (p.success === true) d.performanceSuccess += 1;
-    if (p.success !== undefined) d.performanceAssessed += 1;
-    if (typeof p.quality === 'number') { d.performanceQualitySum += p.quality; d.performanceQualityCount += 1; }
+    // ★ The TERM is the identity; the local name is only what a human reads. Keying on the
+    // local name merged unrelated naming authorities into one competency — see `draft`.
+    const d = domainTyped
+      ? draft(p.taskType!, typeLocalName(p.taskType!), p.taskType!)
+      : draft(labelKey(p.taskName), p.taskName);
+    // `task_id` identifies the WORK; `rec.id` identifies the report of it. Keying on the
+    // report is how a replay became a second execution.
+    const taskKey = p.taskId || p.rawDataLocation;
+    const prior = d.performanceByTask.get(taskKey);
+    if (prior === undefined || prior.timestamp <= p.timestamp) {
+      d.performanceByTask.set(taskKey, {
+        rawDataLocation: p.rawDataLocation,
+        ...(/^https?:\/\//.test(p.taskId) ? { evidenceArtifact: p.taskId } : {}),
+        ...(p.success !== undefined ? { success: p.success } : {}),
+        ...(typeof p.quality === 'number' ? { quality: p.quality } : {}),
+        timestamp: p.timestamp,
+      });
+    }
   }
 
   // Resolve each draft to a single competency at its strongest basis.
   const out: ElrCompetency[] = [];
   for (const d of drafts.values()) {
-    const perfExec = d.performanceEvidence.length;
-    const hasPerf = perfExec > 0 && d.performanceSuccess > 0;
+    // Every count below is over DISTINCT TASKS. Reading `.size` rather than a running
+    // counter is what makes the de-duplication impossible to bypass by accident: there is
+    // no `+= 1` left that a replay could reach.
+    const tasks = [...d.performanceByTask.values()];
+    const performanceEvidence = tasks.map(t => t.rawDataLocation);
+    const perfExec = tasks.length;
+    const performanceSuccess = tasks.filter(t => t.success === true).length;
+    const performanceAssessed = tasks.filter(t => t.success !== undefined).length;
+    const qualities = tasks.map(t => t.quality).filter((q): q is number => typeof q === 'number');
+    const hasPerf = perfExec > 0 && performanceSuccess > 0;
     const hasCred = d.credentialEvidence.length > 0;
     const hasTraining = d.trainingEvidence.length > 0;
 
@@ -562,14 +618,14 @@ function buildCompetencies(
     const modalStatus: ElrModalStatus = (hasPerf || hasCred) ? 'Asserted' : 'Hypothetical';
     // Success rate is over ASSESSED executions (those with an asserted outcome),
     // not all executions — so result-less production records don't read as 0%.
-    const successRate = d.performanceAssessed > 0 ? round2(d.performanceSuccess / d.performanceAssessed) : undefined;
-    const avgQuality = d.performanceQualityCount > 0
-      ? round2(d.performanceQualitySum / d.performanceQualityCount) : undefined;
+    const successRate = performanceAssessed > 0 ? round2(performanceSuccess / performanceAssessed) : undefined;
+    const avgQuality = qualities.length > 0
+      ? round2(qualities.reduce((a, b) => a + b, 0) / qualities.length) : undefined;
 
     // Performance evidence supersedes a training-only inference.
     let supersedes: string | undefined;
     if (hasPerf && hasTraining && !hasCred) {
-      supersedes = `training-inferred competency — superseded by ${d.performanceSuccess}/${d.performanceAssessed} successful production executions`;
+      supersedes = `training-inferred competency — superseded by ${performanceSuccess}/${performanceAssessed} successful production executions`;
     }
 
     // Run the PUBLISHED roll-up rule (tla:PerformanceProficiencyRollupRule): map
@@ -578,13 +634,30 @@ function buildCompetencies(
     // the confidence together carry the sample-size honesty.
     const prof = evaluateProficiency({
       basis,
-      executions: d.performanceAssessed,
-      successes: d.performanceSuccess,
+      executions: performanceAssessed,
+      successes: performanceSuccess,
       avgQuality,
       credentialCount: d.credentialEvidence.length,
     });
-    const competencyDefIri = competencyIri(d.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
-    const evidence = [...new Set([...d.performanceEvidence, ...d.credentialEvidence, ...d.trainingEvidence])];
+    // ★ The identity carries the NAMING AUTHORITY when there was one — see
+    // `competencyIriForTerm`. A slug of the local name put two authorities' terms in one
+    // bucket, which is a bucket no CASE association can honestly be written about.
+    const competencyDefIri = d.termIri !== undefined
+      ? competencyIriForTerm(d.termIri)
+      : competencyIri(d.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48));
+    // ★ THE EVIDENCE LIST CARRIES THE ARTIFACT, NOT ONLY THE LOG ENTRY.
+    //
+    // `rawDataLocation` for a performance is an LRS statement URL, and xAPI REQUIRES that to
+    // be authenticated — so every one of them answers 401 to a stranger. The claim's own
+    // shape only checks `sh:pattern "^https?://"`, so `conforms:true` was compatible with an
+    // evidence list no third party can read: exactly the dangling-pointer failure this
+    // vertical credentials people for spotting. The `task_id` the performer cited IS
+    // anonymously dereferenceable (it is the pod descriptor the work landed in), so it goes
+    // in the list first. A reader gets the artifact; an authorised reader also gets the log.
+    const evidence = [...new Set([
+      ...tasks.map(t => t.evidenceArtifact).filter((u): u is string => u !== undefined),
+      ...performanceEvidence, ...d.credentialEvidence, ...d.trainingEvidence,
+    ])];
 
     out.push({
       id: competencyDefIri,
@@ -595,9 +668,12 @@ function buildCompetencies(
       // A real ler:CompetencyAssertion node — validatable against /ns/ieee-ler.
       '@type': `${LER_NS}CompetencyAssertion`,
       assertionType: `${LER_NS}CompetencyAssertion`,
-      // A distinct per-assertion IRI (subject pod + competency slug) so two subjects'
+      // A distinct per-assertion IRI (subject pod + competency id) so two subjects'
       // assertions about the same competency are different nodes; subject is the learner.
-      assertionId: `${subjectPodUrl.replace(/\/+$/, '')}/#assertion-${d.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 48)}`,
+      // ★ Derived from the COMPETENCY ID, not from the label: a label slug collided across
+      // naming authorities exactly the way the competency id used to, so one subject's two
+      // genuinely different competencies shared one assertion node.
+      assertionId: `${subjectPodUrl.replace(/\/+$/, '')}/#assertion-${encodeURIComponent(competencyIdOf(competencyDefIri) ?? competencyDefIri)}`,
       subject: subjectDid,
       aboutCompetency: competencyDefIri,
       proficiencyLevel: prof.levelIri,

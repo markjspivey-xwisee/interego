@@ -11889,6 +11889,86 @@ async function resolveNsGraph(owner: string, slug: string): Promise<
   }
 }
 
+/**
+ * ★ EVERY SUBJECT MINTED UNDER A PUBLISHED DOCUMENT DEREFERENCES TO THE VERSION THAT
+ * DESCRIBES IT — the generic half of "every identifier is a dereferenceable URL".
+ *
+ * `/ns/:owner/:slug` serves the CURRENT head of a graph. That is right for an ontology and
+ * wrong for an append-only log: a stream publishes each entry into the same graph IRI,
+ * superseding the last, and mints each entry at `<stream>/e/<seq>`. Those entry IRIs are the
+ * subjects a work shape targets, the objects of every citation, the things a SKOS term is
+ * attached to — and all but the newest answered 404, because the head document says nothing
+ * about them. The report that claimed "all 14 IRIs return 200 to an anonymous curl" had
+ * quietly substituted the storage-layer `.ttl` addresses for them.
+ *
+ * The relay already holds the whole lineage (`discover` returns every descriptor that
+ * indexed the graph IRI), so this walks it newest-first and serves the version whose graph
+ * actually mentions the requested subject. Generic: it knows nothing about streams, entries
+ * or any vertical — it answers "which published version of this document describes this
+ * subject", which is the same question for any document in the substrate.
+ *
+ * Bounded on purpose: a lineage is unbounded and each step is one internal GET, so a deep
+ * log must not turn one anonymous request into hundreds. Past the bound the answer is an
+ * honest 404 naming the bound rather than a slow success.
+ */
+const NS_SUBJECT_LINEAGE_LIMIT = 64;
+
+async function resolveNsSubject(owner: string, slug: string, subjectIri: string): Promise<
+  | { ok: true; turtle: string; descriptorUrl: string }
+  | { ok: false; status: number; error: string }> {
+  const graphIri = `${RELAY_NS_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}`;
+  const podUrl = `${CSS_URL}${encodeURIComponent(owner)}/`;
+  let entries: Awaited<ReturnType<typeof discover>>;
+  try {
+    entries = await discover(podUrl, { graphIri }, { fetch: solidFetch });
+  } catch (err) {
+    return { ok: false, status: 502, error: `Failed to read the lineage of ${graphIri}: ${(err as Error).message}` };
+  }
+  if (entries.length === 0) return { ok: false, status: 404, error: `No published graph at ${graphIri} on ${owner}'s pod.` };
+
+  // Newest first: a subject re-described by a later version should resolve to the later one.
+  const superseded = new Set(entries.flatMap(e => (e.supersedes ?? []) as string[]));
+  const ordered = [...entries].sort((a, b) => {
+    const ah = superseded.has(a.descriptorUrl) ? 1 : 0;
+    const bh = superseded.has(b.descriptorUrl) ? 1 : 0;
+    if (ah !== bh) return ah - bh;
+    return String(b.validFrom ?? '').localeCompare(String(a.validFrom ?? ''));
+  });
+
+  const needle = `<${subjectIri}>`;
+  let looked = 0;
+  for (const e of ordered) {
+    if (looked >= NS_SUBJECT_LINEAGE_LIMIT) {
+      return { ok: false, status: 404, error: `<${subjectIri}> was not described by any of the ${NS_SUBJECT_LINEAGE_LIMIT} most recent versions of ${graphIri}; this route does not walk further.` };
+    }
+    looked++;
+    const descUrlSafe = nsToOwnerPodInternal(e.descriptorUrl, owner);
+    if (!descUrlSafe) continue;
+    let graphUrl: string | null = null;
+    try {
+      const descResp = await solidFetch(descUrlSafe, { headers: { Accept: 'text/turtle' } });
+      const dist = parseDistributionFromDescriptorTurtle(descResp.ok ? await descResp.text() : '');
+      // A non-public projection is not served here, exactly as at the document route.
+      if (dist?.encrypted) continue;
+      graphUrl = dist?.accessURL ? nsToOwnerPodInternal(dist.accessURL, owner) : null;
+    } catch { continue; }
+    if (!graphUrl) continue;
+    let trig: string;
+    try {
+      const fetched = await fetchGraphContent(graphUrl, { fetch: solidFetch });
+      if (fetched.encrypted && !fetched.content) continue;
+      trig = fetched.content ?? '';
+    } catch { continue; }
+    if (trig === '') continue;
+    const turtle = nsExtractGraphTurtle(trig, graphIri) ?? trig;
+    // The subject must appear as a full IRIREF. A substring test on the bare IRI would match
+    // `<…/e/1>` inside `<…/e/11>` and serve the wrong version.
+    if (!turtle.includes(needle)) continue;
+    return { ok: true, turtle, descriptorUrl: e.descriptorUrl };
+  }
+  return { ok: false, status: 404, error: `No published version of ${graphIri} describes <${subjectIri}>.` };
+}
+
 /** MCP tool handler — resolve a published /ns graph/ontology as linked data for
  *  MCP-only clients that cannot GET the URL over raw HTTP. Accepts the full
  *  <relay>/ns/<owner>/<slug> IRI OR explicit owner+slug, + optional format
@@ -12036,6 +12116,36 @@ app.get('/ns/:owner/:slug', async (req, res) => {
     } catch { /* fall back to Turtle */ }
   }
   res.type('text/turtle').send(turtle);
+});
+
+// ── /ns/:owner/:slug/* — any SUBJECT minted under a published document ────────
+//
+// See `resolveNsSubject`. Registered AFTER /ns/:owner/:slug so the document route keeps
+// priority, and it serves the containing document rather than a synthesised sub-graph: the
+// bytes a reader gets are bytes that were actually published and signed, and the subject
+// they asked about is one of the subjects in them.
+app.get('/ns/:owner/:slug/*', async (req, res) => {
+  const owner = String(req.params['owner'] ?? '');
+  const slug = String(req.params['slug'] ?? '');
+  // Express 4 exposes a trailing `*` capture under the key '0'.
+  const raw = (req.params as unknown as Record<string, unknown>)['0'];
+  const rest = Array.isArray(raw) ? raw.join('/') : String(raw ?? '');
+  const subjectIri = `${RELAY_NS_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}/${rest}`;
+  const r = await resolveNsSubject(owner, slug, subjectIri);
+  res.setHeader('Vary', 'Accept');
+  if (r.ok !== true) { res.status(r.status).type('text/plain').send(r.error); return; }
+  const kind = negotiateRepresentation(
+    String(req.query['format'] ?? '') || undefined,
+    String(req.headers['accept'] ?? '') || undefined,
+  );
+  // The served document describes MORE than the requested subject, and saying so is the
+  // difference between "here is your resource" and "here is the document it lives in".
+  res.setHeader('Content-Location', `${RELAY_NS_ROOT}/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}`);
+  res.setHeader('Link', `<${publishableDescriptorUrl(r.descriptorUrl, subjectIri)}>; rel="describedby"; type="text/turtle"`);
+  if (kind === 'jsonld') {
+    try { res.type('application/ld+json').send(JSON.stringify(nsTurtleToJsonLd(r.turtle), null, 2)); return; } catch { /* fall back to Turtle */ }
+  }
+  res.type('text/turtle').send(r.turtle);
 });
 
 // ── /amep/* — AMEP engine (Interego is the reference implementation) ──

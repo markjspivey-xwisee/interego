@@ -37,6 +37,17 @@ const escIri = (s: unknown): string => String(s).replace(/[\x00-\x20<>"{}|^`\\]/
 
 export const PGSL_NS = 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#' as const;
 
+/**
+ * The Interego Protocol namespace, as this package's projections must spell it.
+ *
+ * ★ EXPORTED BECAUSE THREE PROJECTIONS IN THIS PACKAGE SPELLED IT WRONG. They each declared
+ * `@prefix iep: <https://contextgraphs.org/ns/>` — a namespace nothing serves and nothing
+ * else in the substrate uses — so `iep:success`, `iep:affordanceRel`, `iep:trustLevel` and
+ * the rest expanded to IRIs that join with nothing. The output looked correct; the terms
+ * denoted nothing. One constant, one place to be wrong.
+ */
+export const IEP_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#' as const;
+
 export const PGSLClass = {
   Node:                  `${PGSL_NS}Node`,
   Atom:                  `${PGSL_NS}Atom`,

@@ -18,16 +18,22 @@
  * vertical's shipped source and either of the two demo programs; those are grep-gated
  * (`tools/emergence-boundary-lint.mjs`).
  *
- * The four documents:
+ * The five documents:
  *
  *   1. wsp-skills            a SKOS scheme. The ONLY place the skill is named. The performer
  *                            never defines the skill they will be credited with.
  *   2. wsp-work-shapes       a SHACL shape run by the RELAY's publish gate over every work
  *                            item, so an item naming no skill or asserting no outcome is
- *                            refused 422 and never lands.
+ *                            refused 422 and never lands — and, since the observation map
+ *                            names it, re-run by the AFFORDANCE against the fetched record,
+ *                            which is what makes the contract a read-side precondition
+ *                            instead of a write-side opt-in.
  *   3. observer-map          the observer's entire configuration, as RDF. Predicate → argument.
  *                            This is what keeps the observer free of both vocabularies.
- *   4. wsp-skills-alignment  two 1EdTech CASE 1.0 associations routing an L&D requirement
+ *   4. observer-map-agp      the same configuration over a DIFFERENT practice's own
+ *                            predicates. It shares one protocol term with (3) and nothing
+ *                            else; the reader is unchanged between the two runs.
+ *   5. wsp-skills-alignment  two 1EdTech CASE 1.0 associations routing an L&D requirement
  *                            THROUGH the workspace's own term.
  *
  * Usage:
@@ -50,10 +56,19 @@ const SKILLS = `${NS}wsp-skills`;
 const WORK_SHAPES = `${NS}wsp-work-shapes`;
 const ROLE_PROFILE = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default';
 const OBSERVER_MAP = `${NS}observer-map`;
+/** The SAME reader, over a different practice's own predicates — see `observerMapAgpTtl`. */
+const OBSERVER_MAP_AGP = `${NS}observer-map-agp`;
 const ALIGNMENT = `${NS}wsp-skills-alignment`;
 
 const WSP = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#';
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
+
+/** The agentic-performance practice's OWN namespace and its OWN published SHACL shapes —
+ *  cited, never redefined. The second observation map names them so the same reader can be
+ *  pointed at that practice's records, and so the affordance re-checks each record against
+ *  the shape THAT practice publishes rather than one this engagement wrote for it. */
+const AGP = 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#';
+const AGP_SHAPES = 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp/shapes';
 
 /** Where the requirer's own competency terms live. The requirer is an L&D party; this is its
  *  vocabulary, cited as data. `foxxi:CASEAlignment` is the tag the framework registry filters
@@ -88,6 +103,7 @@ wspk:EvidenceIntegrityReview
 const wspWorkShapesTtl = `@prefix sh:   <http://www.w3.org/ns/shacl#> .
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct:  <http://purl.org/dc/terms/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix wsp:  <${WSP}> .
 @prefix iep:  <${IEP}> .
@@ -116,10 +132,30 @@ const wspWorkShapesTtl = `@prefix sh:   <http://www.w3.org/ns/shacl#> .
     dct:title "Evidence-integrity review — work-item shape 1.0" ;
     rdfs:seeAlso <${SKILLS}> .
 
+# ★ TARGETED ON A PREDICATE THE RECORD CANNOT DROP AND STAY READABLE.
+#
+#  This was sh:targetClass wsp:Entry, and a reviewer emptied it in one move: delete the
+#  rdf:type triple and the shape has no focus node, so the relay published a work item that
+#  cited a skill outside the scheme while BOTH shapes were declared in conforms_to_shapes.
+#  Measured — <.../skeptic-b2> was refused 422 and <.../skeptic-b3>, the same graph without
+#  the type, published and still resolves. Worse, the observer selects records by PREDICATE,
+#  so the record that dodged the contract was still fully countable as evidence.
+#
+#  sh:targetSubjectsOf dct:conformsTo closes it, and closes it BY CONSTRUCTION rather than by
+#  adding a second check: dct:conformsTo is exactly what the observation map requires in
+#  order to read a record at all. A record that drops it to escape this shape becomes
+#  invisible to the reader — there is no longer a shape a record can dodge and still be
+#  counted. The type is then required as an ordinary constraint, so dropping it is a
+#  violation instead of an escape.
 wwsh:WorkItemShape
     a sh:NodeShape ;
-    sh:targetClass wsp:Entry ;
+    sh:targetSubjectsOf dct:conformsTo ;
     rdfs:comment "One reviewed work item. It must say WHICH skill it exercised and WHETHER it succeeded — anything less is not evidence of anything, and a stream of such items is not a record." ;
+    sh:property [
+        sh:path rdf:type ;
+        sh:hasValue wsp:Entry ;
+        sh:message "A work item must declare itself a wsp:Entry. This is a CONSTRAINT and not this shape's target, because a target class is something a record can simply not declare — which is how a work item citing a skill outside the published scheme was accepted with both shapes on the request." ;
+    ] ;
     sh:property [
         sh:path dct:conformsTo ;
         sh:minCount 1 ; sh:maxCount 1 ;
@@ -166,6 +202,7 @@ const observerMapTtl = `@prefix owl:  <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix dct:  <http://purl.org/dc/terms/> .
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix wsp:  <${WSP}> .
 @prefix iep:  <${IEP}> .
 @prefix obs:  <${OBSERVER_MAP}#> .
 
@@ -212,6 +249,16 @@ obs:required a owl:DatatypeProperty ;
     rdfs:label "required" ;
     rdfs:comment "When true and the source is absent from a record, SKIP that record. Never substitute a default — an outcome nobody asserted must not become an outcome the observer invented." .
 
+obs:constant a owl:DatatypeProperty ;
+    rdfs:domain obs:FieldMapping ;
+    rdfs:label "constant" ;
+    rdfs:comment "Instead of a predicate, a value fixed by THIS document. What it is for: the reader must tell the affordance which published shape to check the record against, and that shape IRI is a decision of whoever configured the reading — so it belongs in the configuration a stranger can dereference, not in the reader's source." .
+
+obs:requiresType a owl:ObjectProperty ;
+    rdfs:domain obs:ObservationMap ;
+    rdfs:label "requires type" ;
+    rdfs:comment "A record must declare this rdf:type to be one of the records this map is about. Selecting on predicates alone was a hole: a work shape targets a CLASS, so deleting the type triple makes the shape vacuous and the record publishes — and a reader looking only at predicates then counted the record that dodged the contract. Measured live before this was added." .
+
 obs:recordSelection a owl:ObjectProperty ;
     rdfs:domain obs:ObservationMap ;
     rdfs:label "record selection" ;
@@ -229,8 +276,15 @@ obs:currentHeadsOnly a obs:RecordSelection ;
     a obs:ObservationMap ;
     dct:title "Work item to production performance" ;
     dct:publisher <${CONVENER_DID}> ;
-    rdfs:comment "Reads a record that cites a skill and asserts an outcome, and submits it as one production performance. Both predicates are protocol terms, so the same map works over any pod whose records carry them." ;
+    rdfs:comment "Reads a record that declares itself a wsp:Entry, cites a skill and asserts an outcome, and submits it as one production performance, naming the work shape the affordance must re-check the record against. The predicates are protocol terms (Dublin Core + iep:success), which is what lets a map name them without either vertical's vocabulary — but no producer outside this engagement currently emits BOTH of them together, so 'works over any pod that carries them' is a property of the mechanism and not yet an observation about the world. The companion map <${OBSERVER_MAP_AGP}> is the same reader over a different practice's own predicates; that pair is the measurement." ;
     obs:recordSelection obs:everyRecord ;
+    obs:requiresType wsp:Entry ;
+    obs:field [
+        a obs:FieldMapping ;
+        obs:constant <${WORK_SHAPES}> ;
+        obs:toArgument "evidence_shape" ;
+        obs:required true ;
+    ] ;
     obs:field [
         a obs:FieldMapping ;
         obs:fromPredicate dct:conformsTo ;
@@ -247,6 +301,78 @@ obs:currentHeadsOnly a obs:RecordSelection ;
         a obs:FieldMapping ;
         obs:fromPredicate dct:description ;
         obs:toArgument "task_name" ;
+        obs:required true ;
+    ] ;
+    obs:field [
+        a obs:FieldMapping ;
+        obs:fromRecordAddress true ;
+        obs:toArgument "task_id" ;
+        obs:required true ;
+    ] .
+`;
+
+/**
+ * The SAME reader, the SAME affordance, a DIFFERENT practice's own predicates.
+ *
+ * ★ WHAT THE PREVIOUS VERSION OF THIS TEST ACTUALLY MEASURED, AND WHY IT HAD TO GO.
+ *
+ * The transplant used to publish three graphs typed `a agp:Diagnosis` that a demo tool
+ * composed itself, carrying exactly the three predicates the map above marks `required` and
+ * NEITHER of the two `agpsh:DiagnosisShape` demands. They were invalid agp:Diagnosis nodes:
+ * agp's own published shape rejects them (`conforms: false`, on agp:diagnoses and agp:method),
+ * while the record the real `agp.evaluate_intervention` writer emits carries none of the
+ * three and would have been skipped. So the "an unanticipated third vertical joins" claim
+ * was measuring records authored to match the map — a costume, not a vertical.
+ *
+ * This map reads what that vertical's OWN writer emits, and shares exactly ONE predicate
+ * with the map above (`iep:success`, which is a protocol term belonging to neither). The
+ * activity type is the record's `rdf:type` and the name is its `rdfs:label` — both RDF's
+ * own terms, both on every artifact agp writes. Nothing in the reader changed to read them:
+ * the two maps differ only as documents.
+ *
+ * The record it reads is produced by calling agp's engine and agp's own serializer
+ * (`agpArtifactGraph`, the single place that vertical turns an artifact into Turtle), and is
+ * published with agp's own SHACL shapes on the request, so the relay's gate refuses it if it
+ * is not something that vertical would recognise.
+ */
+const observerMapAgpTtl = `@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix iep:  <${IEP}> .
+@prefix agp:  <${AGP}> .
+@prefix obs:  <${OBSERVER_MAP}#> .
+
+<${OBSERVER_MAP_AGP}>
+    a obs:ObservationMap ;
+    dct:title "Intervention evaluation to production performance" ;
+    dct:publisher <${CONVENER_DID}> ;
+    rdfs:seeAlso <${OBSERVER_MAP}> ;
+    rdfs:comment "The same reader, the same affordance, and a different practice's own predicates. It shares exactly one predicate with <${OBSERVER_MAP}> — iep:success, a protocol term belonging to neither practice — and takes the activity type from rdf:type and the name from rdfs:label, which is what the agentic-performance writer actually emits. The reader's source names none of these; the only thing that changes between the two runs is which of these two documents it is handed." ;
+    obs:recordSelection obs:everyRecord ;
+    obs:requiresType agp:InterventionEvaluation ;
+    obs:field [
+        a obs:FieldMapping ;
+        obs:fromPredicate rdf:type ;
+        obs:toArgument "activity_type" ;
+        obs:required true ;
+    ] ;
+    obs:field [
+        a obs:FieldMapping ;
+        obs:fromPredicate rdfs:label ;
+        obs:toArgument "task_name" ;
+        obs:required true ;
+    ] ;
+    obs:field [
+        a obs:FieldMapping ;
+        obs:fromPredicate iep:success ;
+        obs:toArgument "success" ;
+        obs:required true ;
+    ] ;
+    obs:field [
+        a obs:FieldMapping ;
+        obs:constant <${AGP_SHAPES}> ;
+        obs:toArgument "evidence_shape" ;
         obs:required true ;
     ] ;
     obs:field [
@@ -524,13 +650,14 @@ async function main(): Promise<void> {
   // for why a 200 on its own confirms nothing on a republish.
   for (const [iri, content, marker] of [
     [SKILLS, wspSkillsTtl, 'EvidenceIntegrityReview'],
-    [WORK_SHAPES, wspWorkShapesTtl, 'GrantRoleShape'],
-    [OBSERVER_MAP, observerMapTtl, 'recordSelection'],
+    [WORK_SHAPES, wspWorkShapesTtl, 'targetSubjectsOf'],
+    [OBSERVER_MAP, observerMapTtl, 'requiresType'],
+    [OBSERVER_MAP_AGP, observerMapAgpTtl, 'InterventionEvaluation'],
     [ALIGNMENT, alignmentTtl, 'workspace-term-to-incident-triage'],
   ] as const) {
     await publishAndConfirm(iri, content, marker);
   }
-  console.log('\nfour documents published and dereferenceable.');
+  console.log('\nfive documents published and dereferenceable.');
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

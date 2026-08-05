@@ -381,7 +381,26 @@ export type PublishOutcome =
    * then has to intersect.
    */
   | { readonly outcome: 'pending'; readonly descriptorUrl: string; readonly waitedMs: number; readonly message: string }
-  | { readonly outcome: 'refused'; readonly code: number; readonly message: string };
+  | {
+      readonly outcome: 'refused';
+      readonly code: number;
+      readonly message: string;
+      /**
+       * The SHACL constraints that refused it, when the relay reported any.
+       *
+       * ★ CARRIED FOR THE SAME REASON `AppendResult.violations` is, and its absence here was
+       * the same defect on the other path: a 422 comes back both when a shape refused the
+       * record and when the gate could not FETCH the shape at all. Same code, opposite
+       * meaning, and a caller reading only the number reports "my contract refused this"
+       * when the truth is "your contract was never read".
+       */
+      readonly violations?: readonly {
+        readonly constraint: string;
+        readonly message: string;
+        readonly focusNode?: string;
+        readonly path?: string;
+      }[];
+    };
 
 /**
  * Publish one membership record and wait until it can actually be read back.
@@ -429,7 +448,17 @@ export async function publishMembershipRecord(args: {
 
   const code = typeof res.code === 'number' ? res.code : null;
   if (res.error !== undefined) {
-    return { outcome: 'refused', code: code ?? 0, message: String(res.message ?? res.error) };
+    const raw = Array.isArray(res['violations']) ? res['violations'] as Record<string, unknown>[] : undefined;
+    const violations = raw?.map(v => ({
+      constraint: String(v['constraint'] ?? ''),
+      message: String(v['message'] ?? ''),
+      ...(v['focusNode'] === undefined ? {} : { focusNode: String(v['focusNode']) }),
+      ...(v['path'] === undefined ? {} : { path: String(v['path']) }),
+    }));
+    return {
+      outcome: 'refused', code: code ?? 0, message: String(res.message ?? res.error),
+      ...(violations !== undefined ? { violations } : {}),
+    };
   }
   const descriptorUrl = typeof res.descriptorUrl === 'string' ? res.descriptorUrl : '';
   if (descriptorUrl === '') {

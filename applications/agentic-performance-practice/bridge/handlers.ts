@@ -14,7 +14,7 @@ import { AGP_ONTOLOGY_IRI } from '../src/ontology.js';
 import { proposeStandardsExtension, type ExtensionKind } from '../src/standards-extension.js';
 import {
   coerceSituation, coerceDiagnosis, coercePlan, fetchJson,
-  publishAgpArtifact, deterministicIri, AGP,
+  publishAgpArtifact, agpEvaluationProperties, deterministicIri, AGP,
   type AgpProperty,
 } from './pod-helpers.js';
 
@@ -269,7 +269,15 @@ export function createAgpHandlers(deps: { fetchFn?: typeof fetch } = {}): Record
       if (args.pod_url) {
         descriptorUrl = await pub({
           iri: evaluationIri, typeIri: `${AGP}InterventionEvaluation`, label: `Evaluation of ${str(args.intervention_iri)}`, podUrl: str(args.pod_url),
-          properties: [{ predicate: `${AGP}evaluates`, object: { iri: str(args.intervention_iri) } }],
+          // ★ THE ENGINE'S ANSWER WAS COMPUTED AND THEN DROPPED AT THE POD BOUNDARY.
+          //
+          // `evaluateIntervention` decides a verdict — closed / improved / no-change /
+          // worsened / too-early — and that verdict is the entire content of an evaluation.
+          // It was returned to the caller and never written, so every agp:InterventionEvaluation
+          // on a pod said only WHICH intervention it judged and nothing about the judgement.
+          // The triple list lives in pod-helpers so a program that wants a record this
+          // vertical would recognise cannot compose its own and claim it is one.
+          properties: agpEvaluationProperties(str(args.intervention_iri), ev.verdict),
           author: args.operator_did ? { id: str(args.operator_did), kind: 'agent' } : undefined,
           slug: `evaluation-${evaluationIri.split(':').pop()}`,
         });

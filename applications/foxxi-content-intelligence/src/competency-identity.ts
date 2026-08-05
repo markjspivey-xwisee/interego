@@ -28,6 +28,42 @@ export function competencyIri(slug: string): string {
   return `${COMPETENCY_ID_BASE}/${encodeURIComponent(slug)}`;
 }
 
+/**
+ * ★ A COMPETENCY NAMED BY ANOTHER AUTHORITY'S TERM KEEPS THAT AUTHORITY IN ITS IDENTITY.
+ *
+ * The competency id used to be `competencyIri(<the term's local name>, lowercased and
+ * slugged)`. That threw the naming authority away at exactly the seam where two publishers
+ * meet, so two independently published terms that merely share a fragment —
+ *
+ *     https://one-authority.example/ns/skills#EvidenceIntegrityReview
+ *     https://attacker.example/totally-unrelated-scheme#EvidenceIntegrityReview
+ *
+ * — were ONE competency. Measured against production: eight submissions split across two
+ * such namespaces produced `competencyCount 1` and a Wilson lower bound of 0.676, i.e. the
+ * exact figure for 8/8, so a stranger's term raised a confidence the first authority's term
+ * was supposed to carry. Every consequence followed: pooled evidence lists, a pooled Dreyfus
+ * level, and the emergent "teach it" affordance firing off the union.
+ *
+ * So the whole term IRI is the payload of the id, percent-encoded into one path segment.
+ * Lossless in both directions (`competencyIdOf` decodes it back), collision-free by
+ * construction, and it still dereferences: `/ns/foxxi/competency/:slug` serves a definition
+ * that `owl:sameAs`-es the source term.
+ *
+ * The local-name slug is NOT kept as an alias. An alias would put the collision back on the
+ * comparison path — a legacy id would match every authority's same-named term — and the
+ * whole point of this function is that no two authorities share an id.
+ */
+export function competencyIriForTerm(termIri: string): string {
+  return competencyIri(termIri);
+}
+
+/** True when a competency id's payload is itself an absolute term IRI (the form
+ *  `competencyIriForTerm` mints), and that term. Null for a plain slug. */
+export function competencyTermOf(iri: string): string | null {
+  const id = competencyIdOf(iri);
+  return id !== null && /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(id) ? id : null;
+}
+
 /** True if `iri` is a competency identity in EITHER the URL or the legacy urn form. */
 export function isCompetencyIri(iri: string): boolean {
   if (typeof iri !== 'string') return false;

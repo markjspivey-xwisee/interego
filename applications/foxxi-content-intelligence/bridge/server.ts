@@ -140,7 +140,7 @@ import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
-import { competencyIri, competencyIdOf } from '../src/competency-identity.js';
+import { competencyIri, competencyIriForTerm, competencyIdOf } from '../src/competency-identity.js';
 import { activityIri, ACTIVITY_DEFINITIONS } from '../src/activity-identity.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
 import {
@@ -375,6 +375,7 @@ import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js'
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
+import { bindPerformanceToEvidence, EVIDENCE_BINDING_EXT, EVIDENCE_SHAPE_EXT } from '../src/performance-evidence.js';
 import type {
   IRI,
   ContextDescriptorData,
@@ -1814,6 +1815,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!taskName || !taskName.trim()) return { error: 'task_name is required' };
     if (typeof args.success !== 'boolean') return { error: 'success (boolean) is required' };
     const taskId = productionTaskIri(args.task_id, taskName);
+    // ★ THE CLAIM IS BOUND TO EVIDENCE BEFORE IT IS RECORDED — see performance-evidence.ts
+    // for the live reproduction (six fabricated task_ids, all 404, all recorded, rolled up
+    // to Proficient / 0.61). Same call on both record-performance paths so the two cannot
+    // drift: a precondition enforced on one of two doors is not a precondition.
+    const evidence = await bindPerformanceToEvidence({
+      taskId,
+      evidenceShapeIri: typeof args.evidence_shape === 'string' ? args.evidence_shape : undefined,
+    });
+    if (!evidence.ok) return { error: evidence.error, detail: evidence.detail, ...(evidence.violations ? { violations: evidence.violations } : {}) };
     const actorKind: 'human' | 'agent' = (args.actor_kind as string) === 'agent' ? 'agent' : 'human';
     const quality = typeof args.quality === 'number' ? args.quality : undefined;
     // result.score.scaled MUST be in [-1,1] (xAPI §4.1.5.1). Reject a bad quality
@@ -1857,6 +1867,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
           [PERF_EXT.observedBy]: ctx.webId,
           [PERF_EXT.contextKind]: 'production',
           [PERF_EXT.actorKind]: actorKind,
+          // How strongly this claim is tied to an artifact anybody can check. On the
+          // statement rather than in a README, so a reader who pulls the record can tell a
+          // shape-validated performance from a bare self-report without asking anyone.
+          [EVIDENCE_BINDING_EXT]: evidence.binding,
+          ...(evidence.shapeIri ? { [EVIDENCE_SHAPE_EXT]: evidence.shapeIri } : {}),
           ...(typeof args.cost_usd === 'number' ? { [PERF_EXT.costUsd]: args.cost_usd } : {}),
         },
       },
@@ -3743,33 +3758,71 @@ const app = createVerticalBridge({
       // A competency slug is a safe token — reject anything else BEFORE building Turtle/IRIs.
       // Express URL-decodes the segment, so a raw slug could otherwise carry a quote / newline /
       // backslash / '>' and INJECT arbitrary triples (or break the <IRI>) in the text/turtle branch.
-      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(slug)) { res.status(400).json({ error: 'invalid competency slug' }); return; }
-      const id = competencyIri(slug);
+      const isToken = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(slug);
+      // ★ AND A COMPETENCY NAMED BY ANOTHER AUTHORITY'S TERM CARRIES THAT TERM AS ITS SLUG.
+      //
+      // `competencyIriForTerm` percent-encodes the whole term IRI into this one segment,
+      // because slugging its LOCAL NAME merged unrelated naming authorities into a single
+      // competency — measured live, a stranger's `#EvidenceIntegrityReview` raised a
+      // convener's Wilson confidence to the exact 8/8 figure. If this route refused the new
+      // form, the standing "every identifier is a dereferenceable URL" rule would break at
+      // the exact seam the fix exists to close.
+      //
+      // Validated as a POSITIVE allow-list (the RFC 3986 URI charset) rather than a negated
+      // one: it admits no control character, space, quote, angle bracket, brace, backslash,
+      // caret, backtick or pipe, so nothing here can escape a Turtle <IRI> or a JSON string.
+      const isTermIri = !isToken && slug.length <= 512
+        && /^https?:\/\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+$/.test(slug)
+        && (() => { try { const u = new URL(slug); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; } })();
+      if (!isToken && !isTermIri) {
+        res.status(400).json({
+          error: 'invalid competency slug',
+          hint: 'A competency id is either a token ([A-Za-z0-9][A-Za-z0-9_-]*) or a percent-encoded absolute http(s) term IRI — the form a competency named by another authority\'s published term carries.',
+        });
+        return;
+      }
+      const id = isTermIri ? competencyIriForTerm(slug) : competencyIri(slug);
       // Defensive Turtle-string escaping on the interpolated label (belt-and-suspenders atop the
       // charset validation above).
       const tesc = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-      const label = slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); // plain; JSON.stringify escapes for JSON-LD, tesc() for Turtle
+      // A term-named competency's readable label is the term's OWN local name, not a
+      // de-slugged URL — de-slugging one would print the whole IRI as a sentence.
+      const label = isTermIri
+        ? (slug.split(/[#/]/).filter(Boolean).pop() ?? slug)
+        : slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); // plain; JSON.stringify escapes for JSON-LD, tesc() for Turtle
       const lerBase = `${(process.env.BRIDGE_DEPLOYMENT_URL ?? `${req.protocol}://${req.get('host') ?? ''}`).replace(/\/$/, '')}/ns/ieee-ler#`;
+      // ★ THE NAMING AUTHORITY IS PUBLISHED, NOT IMPLIED. When this competency exists
+      // because another authority's published term named it, the definition says so with an
+      // `owl:sameAs` back to that term — so a reader who dereferences the L&D id lands one
+      // hop from the document that actually defines the skill, and can see WHOSE term it is.
+      // That is the statement the CASE association `isAlignedTo` makes about the same pair;
+      // an id that hid the authority made that association a claim about a bucket.
+      const sameAsTurtle = isTermIri ? `\n    owl:sameAs <${slug}> ;` : '';
+      const comment = isTermIri
+        ? `A competency the Foxxi vertical credentials and aligns performance to, named by the term <${slug}> published under another naming authority. Two authorities' same-named terms are DIFFERENT competencies and never share this id.`
+        : 'A competency the Foxxi vertical credentials and aligns performance to; verifiable credentials align to this IRI via alignedSkills.targetCode.';
       if ((req.headers.accept ?? '').includes('text/turtle')) {
         res.type('text/turtle').send(
 `@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix dct:  <http://purl.org/dc/terms/> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
 @prefix ler:  <${lerBase}> .
 <${id}> a skos:Concept, ler:CompetencyDefinition ;
     skos:prefLabel "${tesc(label)}" ;
-    rdfs:label "${tesc(label)}" ;
+    rdfs:label "${tesc(label)}" ;${sameAsTurtle}
     dct:identifier "${tesc(slug)}" ;
-    rdfs:comment "A competency the Foxxi vertical credentials and aligns performance to; verifiable credentials align to this IRI via alignedSkills.targetCode." .`);
+    rdfs:comment "${tesc(comment)}" .`);
       } else {
         res.type('application/ld+json').send(JSON.stringify({
-          '@context': { skos: 'http://www.w3.org/2004/02/skos/core#', rdfs: 'http://www.w3.org/2000/01/rdf-schema#', dct: 'http://purl.org/dc/terms/', ler: lerBase },
+          '@context': { skos: 'http://www.w3.org/2004/02/skos/core#', rdfs: 'http://www.w3.org/2000/01/rdf-schema#', dct: 'http://purl.org/dc/terms/', owl: 'http://www.w3.org/2002/07/owl#', ler: lerBase },
           '@id': id,
           '@type': ['skos:Concept', 'ler:CompetencyDefinition'],
           'skos:prefLabel': label,
           'rdfs:label': label,
+          ...(isTermIri ? { 'owl:sameAs': { '@id': slug } } : {}),
           'dct:identifier': slug,
-          'rdfs:comment': 'A competency the Foxxi vertical credentials and aligns performance to; verifiable credentials align to this IRI via alignedSkills.targetCode.',
+          'rdfs:comment': comment,
         }, null, 2));
       }
     });
@@ -4513,12 +4566,27 @@ app.post('/agent/issue-credential', async (req, res) => {
     // returns the segment after urn:foxxi:competency: VERBATIM (or a decodeURIComponent'd
     // URL segment — %2F→'/', %22→'"'), so wrapping only the ?? fallback left the raw
     // attacker substring flowing into the on-pod path + the hand-built credential Turtle IRI.
-    const competencySlug = safeCompSlug(
-      (typeof p.competency_id === 'string' && p.competency_id.trim())
-        ? (competencyIdOf(p.competency_id.trim()) ?? p.competency_id.trim())
-        : competencyName,
-    );
-    const competencyId = competencyIri(competencySlug);
+    const suppliedCompetencyId = (typeof p.competency_id === 'string' && p.competency_id.trim()) ? p.competency_id.trim() : '';
+    // The competency's IDENTITY payload, losslessly: the segment after urn:foxxi:competency:
+    // or the decoded URL segment, which for a competency named by another authority's term
+    // IS that whole term IRI.
+    const competencyPayload = suppliedCompetencyId ? competencyIdOf(suppliedCompetencyId) : null;
+    // ★ THE FILENAME MAY LOSE THE AUTHORITY; THE IDENTITY MAY NOT.
+    //
+    // `safeCompSlug` exists for the on-pod PATH and the credential-internal urns, and it is
+    // lossy by design. Minting the public `competencyId` FROM that slug meant a credential
+    // aligned to `https://someone-else.example/x#EvidenceIntegrityReview` was issued against
+    // the same id as one aligned to the convener's term — the identity collision the ELR
+    // roll-up had, reproduced on the issuance path. So the public id is re-minted from the
+    // payload (encodeURIComponent makes it injection-safe whatever it contains) and only the
+    // filename is slugged; a term IRI's slug carries a digest so two authorities' same-named
+    // terms cannot write to one path either.
+    const competencySlug = ((): string => {
+      const base = safeCompSlug(competencyPayload ?? suppliedCompetencyId ?? competencyName);
+      if (competencyPayload === null || !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(competencyPayload)) return base;
+      return `${base.slice(0, 48)}-${createHash('sha256').update(competencyPayload).digest('hex').slice(0, 8)}`;
+    })();
+    const competencyId = competencyIri(competencyPayload ?? competencySlug);
     // Bind the credential write to the RECIPIENT's OWN derived pod — recipient_pod_url was
     // honored verbatim and decoupled from recipient_did, so any wallet could plant a signed
     // credential descriptor + graph + encrypted holon into an arbitrary victim's pod.
@@ -5975,6 +6043,19 @@ app.post('/agent/record-performance', async (req, res) => {
     }
     const quality = typeof p.quality === 'number' ? p.quality : undefined;
     if (quality !== undefined && (quality < -1 || quality > 1)) { res.status(400).json({ error: 'quality (result.score.scaled) must be in [-1,1]' }); return; }
+    // ★ Same precondition as the MCP foxxi.record_performance path, same helper. This is
+    // the door the reviewer's six fabricated task_ids came through.
+    const evidence = await bindPerformanceToEvidence({
+      taskId,
+      evidenceShapeIri: typeof p.evidence_shape === 'string' ? p.evidence_shape : undefined,
+    });
+    if (!evidence.ok) {
+      res.status(evidence.status ?? 400).json({
+        ok: false, error: evidence.error, detail: evidence.detail,
+        ...(evidence.violations ? { violations: evidence.violations } : {}),
+      });
+      return;
+    }
     const outcomeVerb = momOutcomeVerb(p.success as boolean);
     const statement: Record<string, unknown> = {
       id: randomUUID(),
@@ -5994,6 +6075,8 @@ app.post('/agent/record-performance', async (req, res) => {
           [PERF_EXT.observedBy]: callerDid,
           [PERF_EXT.contextKind]: 'production',
           [PERF_EXT.actorKind]: (p.actor_kind === 'human' ? 'human' : 'agent'),
+          [EVIDENCE_BINDING_EXT]: evidence.binding,
+          ...(evidence.shapeIri ? { [EVIDENCE_SHAPE_EXT]: evidence.shapeIri } : {}),
           ...(typeof p.cost_usd === 'number' ? { [PERF_EXT.costUsd]: p.cost_usd } : {}),
         },
       },
