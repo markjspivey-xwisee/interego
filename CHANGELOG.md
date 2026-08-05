@@ -28,6 +28,117 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-08-05 — a competency's identity keeps its naming authority, and a claim is bound to evidence that resolves
+
+Two independent reviewers attacked the evidence-integrity engagement and substantiated
+thirteen findings. Every fix below was reproduced against production first and re-verified
+against production after; the reviewers' probe pod (`u-pk-63aaca4b0d72`) and the fabricated
+competency it carried have been wiped, and the record now reads `competencyCount 0`.
+
+### Fixed
+- **A competency's id discarded the naming authority.** `buildCompetencies` keyed each draft
+  on the activity type's LOCAL NAME and minted the id from a slug of the label, so
+  `…/wsp-skills#EvidenceIntegrityReview` and
+  `https://attacker.example/totally-unrelated-scheme#EvidenceIntegrityReview` were one
+  competency: eight submissions split across the two namespaces read back
+  `competencyCount 1` at Wilson 0.676, the exact figure for 8/8. Evidence lists, the Dreyfus
+  level and the emergent "teach it" affordance all fired off the union, so the published CASE
+  association was a statement about a bucket. The aggregation key is now the whole term IRI
+  and `competencyIriForTerm` carries it percent-encoded under the vertical's own authority;
+  `/ns/foxxi/competency/:slug` serves it with `owl:sameAs` back to the source term. The same
+  collision on the issuance path — `competencyId` re-minted from the sanitized on-pod
+  filename slug — is closed the same way, with a digest in the filename so two authorities'
+  same-named terms cannot share a path either. Re-run live: the foreign term now makes its
+  own competency (`competencyCount` 1 → 2) and the convener's confidence does not move.
+- **`n` counted statements, not tasks.** Resubmitting one genuine `task_id` moved the Wilson
+  lower bound 0.61 → 0.646 (6/6 → 7/7), so twelve replays of one task reached Expert with no
+  new work. Executions are now distinct `task_id`s with the latest report winning, which is
+  also the guard against at-least-once duplicate delivery. Re-run live: the record is
+  byte-identical across a replay.
+- **A performance was recorded on the submitter's word alone.** Six signed submissions citing
+  `task_id`s that had never existed — all six verified 404 — produced a performance-verified
+  competency at Proficient / 0.61. `bindPerformanceToEvidence` now runs on BOTH
+  record-performance paths: an http(s) `task_id` MUST dereference, and when the submitter
+  names an `evidence_shape` the fetched record is validated against it by the substrate's
+  general SHACL engine. An unreadable shape is a refusal, not a vacuous pass. The strength of
+  the binding — `unbound` / `resolved` / `shape-validated` — is stamped on the statement as
+  `foxxi#evidenceBinding`, so what was checked is a field a reader reads. Re-run live: all
+  six fabrications refused 400, 14/14 on the mutation probe.
+- **A `sh:targetClass` work contract was vacuous for one deleted triple.** The same graph
+  published twice, once with `a wsp:Entry` and once without, was refused 422 and then
+  ACCEPTED, with both shapes declared on the request — and the observer, selecting by
+  predicate, still read the record that dodged the contract. `wwsh:WorkItemShape` now targets
+  `sh:targetSubjectsOf dct:conformsTo` — the predicate a reader needs to see the record at
+  all — and requires the type as an ordinary constraint, so escaping the contract means
+  becoming invisible. The observation map can also declare `obs:requiresType`. Both are legs
+  of `--mutation-gate`, now 12/12 live.
+- **The transplant was a costume.** `tools/publish-transplant-records-live.ts` hand-wrote
+  three graphs typed `a agp:Diagnosis` carrying exactly the three predicates its observation
+  map marked `required` and neither of the two `agpsh:DiagnosisShape` demands — invalid nodes
+  on a live pod, published with no `conforms_to_shapes`, measuring "records authored to match
+  the map match the map". It now drives that practice's own engine (`diagnose` →
+  `recommendInterventions` → `evaluateIntervention`) and its own serializer, and publishes
+  with that practice's own published SHACL shapes at the relay gate. The withdrawn nodes have
+  been removed from the pod.
+- **`agp.evaluate_intervention` computed a verdict and dropped it at the pod boundary**, so
+  every `agp:InterventionEvaluation` written to a pod recorded which intervention it judged
+  and nothing about the judgement. It now carries `agp:verdict` and — for a verdict other
+  than `too-early`, which asserts no outcome — the protocol-level `iep:success`.
+- **Three PGSL projections declared a namespace nothing serves.** `agent-framework.ts`,
+  `discovery.ts` and `persistence.ts` each wrote `@prefix iep: <https://contextgraphs.org/ns/>`
+  or the matching `pgsl:` form, so `iep:success`, `iep:affordanceRel`, `pgsl:Atom` and the
+  rest expanded to IRIs the substrate does not define. The output looked correct and joined
+  with nothing. One exported constant each (`IEP_NS`, `PGSL_NS`).
+- **The emergence boundary lint was one-directional and its ratchet covered 40% of the
+  vertical.** Giving the observer's two target arguments defaults pointing at the L&D bridge
+  turned it into a workspace→L&D bridge and the lint still printed `intact`. The observer now
+  may name NEITHER side; the requirer's own program has a bounded allow-list pinning the
+  cross-namespace constants it may hold; and the ratchet reads the whole L&D vertical
+  (242 files) instead of `src/` (98), which excluded `bridge/server.ts` — the file that
+  performs the join. The pin stays 0, measured.
+- **Entry IRIs minted under a stream document answered 404.** The subjects a work shape
+  targets, the objects of every witness citation and the things a SKOS term attaches to
+  resolved nothing, because `/ns/:owner/:slug` serves the current head and a stream supersedes
+  each entry with the next. A generic `/ns/:owner/:slug/*` route now walks the document's own
+  published lineage (bounded at 64 versions) and serves the version that describes the
+  requested subject, with `Content-Location` naming the document. Live: `/e/0` … `/e/11`
+  return 200 with their own triples, `/e/99` an honest 404.
+- **`PublishOutcome` dropped the SHACL violations on refusal**, the same defect
+  `AppendResult` was fixed for: a 422 comes back both when a shape refused the record and
+  when the gate could not fetch the shape, so a caller reading the status alone reports "my
+  contract refused this" when the truth is "your contract was never read".
+- **The IEEE-LER evidence constraint read as though someone had checked.** `sh:pattern
+  "^https?://"` is a syntax test, and the LRS statement URLs in `ler:evidence` answer 401
+  anonymously — correctly, since xAPI requires auth on every resource — so `conforms: true`
+  was compatible with an evidence list no third party can read. The assembler now lists the
+  performer's cited `task_id`, which IS anonymously dereferenceable, first; the shape's own
+  comment says what the constraint does and does not establish.
+
+### Changed
+- **The engagement is re-runnable.** `WSP_PERFORMER_POD`, `WSP_PERFORMER_DID` and
+  `WSP_ENGAGEMENT_SUFFIX` replace a hardcoded performer identity, because the read side counts
+  one execution per distinct `task_id` and a second run over an already-observed stream
+  appends rather than replaces. Defaults are the first run's identity and IRIs, which the
+  report and the published CASE alignment cite.
+- **The observation map's vocabulary comes from its `rdf:type`**, so a second map can cite a
+  first one's terms instead of restating them. `obs:constant`, `obs:requiresType` and
+  `obs:fromRecordSubject` are new; `observer-map-agp` is a second published map over the
+  agentic-performance practice's own predicates, sharing exactly one protocol term with the
+  first.
+- **`task_id` is the record's own subject IRI, not its storage address.** Dereferencing the
+  storage address yields the descriptor — provenance, facets, an authorship proof and a
+  payload pointer on a host that does not resolve publicly — so an affordance asked to check
+  the record against a shape was being handed the envelope.
+
+### Documented
+- `applications/shared-workspace/README.md` — the two observer invocations that perform the
+  crossing are written out for the first time (they lived only in a shell history, which put
+  the one step the whole claim rests on outside the boundary lint by construction), the
+  competency-id sentence says what the id actually is, and the honest-limits list names four
+  measured limits rather than one.
+
+---
+
 ## 2026-08-05 — a workspace's own work contract can run at the publish gate
 
 ### Added

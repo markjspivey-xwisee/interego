@@ -83,14 +83,28 @@ async function call(name: string, args: Record<string, unknown>): Promise<Record
 // ── The map ──────────────────────────────────────────────────────────────────
 
 /**
- * ★ THE MAP'S OWN TERMS ARE RESOLVED AGAINST THE MAP'S OWN IRI, so there is no namespace
- * constant in this file at all. A map published at <X> declares <X#field>, <X#toArgument>
- * and so on, which means the document a reader dereferences to find out what the observer
- * was told is the same document that defines what those words mean.
+ * ★ THE MAP'S OWN TERMS ARE RESOLVED AGAINST THE VOCABULARY ITS rdf:type NAMES, so there is
+ * no namespace constant in this file at all. A map typed `a <X>#ObservationMap` has its
+ * `field`, `toArgument` and so on read from `<X>#`, which means the document a reader
+ * dereferences to find out what those words mean is named by the map itself. A map that
+ * declares its own vocabulary IS `<X>`, so a self-describing one resolves to itself; a
+ * second map for a different practice's records cites the first rather than restating it.
  */
 interface FieldMapping {
   readonly fromPredicate?: string;
   readonly fromRecordAddress: boolean;
+  /**
+   * The matched record's own SUBJECT IRI.
+   *
+   * ★ WHY A MAP WOULD CHOOSE THIS OVER `fromRecordAddress`. The storage address is the
+   * signed artifact, but dereferencing it yields the DESCRIPTOR — provenance, facets, an
+   * authorship proof, and an affordance pointing at a payload on a host that does not
+   * resolve from outside. So an affordance handed that address, asked to check the record
+   * against a shape, would be checking the envelope. The subject IRI is what the shape
+   * targets, what every citation of the record names, and what a reader means by "the
+   * record"; the relay resolves it to the published version whose triples it is.
+   */
+  readonly fromRecordSubject: boolean;
   /** A value fixed BY THE MAP rather than read off the record — e.g. the shape the
    *  submitter wants its own evidence checked against. Keeps a constant the reader must
    *  send out of this source and in the published document, where a reader can see it. */
@@ -136,9 +150,24 @@ async function readMap(mapIri: string): Promise<ObservationMap> {
   const r = await fetch(mapIri, { headers: { Accept: 'text/turtle' } });
   if (!r.ok) throw new Error(`observation map <${mapIri}> did not resolve: ${r.status}`);
   const doc = parseTrig(await r.text());
-  const T = (local: string): string => `${mapIri}#${local}`;
   const root = subjectProps(doc, mapIri);
   if (!root) throw new Error(`observation map <${mapIri}> resolves but states nothing about itself.`);
+
+  // ★ THE MAP'S rdf:type NAMES ITS VOCABULARY, so a SECOND map can reuse a first one's terms
+  // instead of restating them.
+  //
+  // Terms used to be resolved against the map's own IRI unconditionally, which meant every
+  // map had to re-declare the whole vocabulary at its own URL — and the moment a second map
+  // was published for a different practice's records, it read as "declares no
+  // recordSelection" because its terms were defined one document over. Two copies of a
+  // vocabulary is how two copies drift. The type is already there, it is already a term of
+  // the vocabulary in question, and everything before its `#` is the base: that is ordinary
+  // RDF, not a convention this reader invented. Absent a type, the map's own IRI stands, so
+  // a self-describing map keeps working unchanged.
+  const typeIri = (root.get(RDF_TYPE) ?? [])
+    .map(t => iriOf(t)).find((i): i is string => i !== undefined && i.endsWith('#ObservationMap'));
+  const vocab = typeIri !== undefined ? typeIri.slice(0, -'ObservationMap'.length) : `${mapIri}#`;
+  const T = (local: string): string => `${vocab}${local}`;
 
   // ★ SELECTION IS DECLARED, NOT GUESSED, AND ABSENT IS AN ERROR. Whether `iep:supersedes`
   // on a record means "this replaces that" or "this comes after that in my log" is a
@@ -172,6 +201,7 @@ async function readMap(mapIri: string): Promise<ObservationMap> {
       ...(iriOf(props.get(T('fromPredicate'))?.[0]) !== undefined
         ? { fromPredicate: iriOf(props.get(T('fromPredicate'))?.[0])! } : {}),
       fromRecordAddress: litOf(props.get(T('fromRecordAddress'))?.[0]) === 'true',
+      fromRecordSubject: litOf(props.get(T('fromRecordSubject'))?.[0]) === 'true',
       ...(constant !== undefined ? { constant } : {}),
       toArgument,
       required: litOf(props.get(T('required'))?.[0]) === 'true',
@@ -239,9 +269,10 @@ async function main(): Promise<void> {
   console.log(`  selection ${map.selection}`);
   if (map.requiresType !== undefined) console.log(`  type      <${map.requiresType}> [required]`);
   for (const f of map.fields) {
-    const source = f.fromRecordAddress ? '(the record\'s own address)'
-      : f.constant !== undefined ? `(the map's own constant) ${f.constant}`
-        : `<${f.fromPredicate}>`;
+    const source = f.fromRecordAddress ? '(the record\'s own storage address)'
+      : f.fromRecordSubject ? '(the record\'s own subject IRI)'
+        : f.constant !== undefined ? `(the map's own constant) ${f.constant}`
+          : `<${f.fromPredicate}>`;
     console.log(`  ${f.toArgument.padEnd(14)} <- ${source}${f.required ? ' [required]' : ''}`);
   }
   console.log(`pod        ${POD}`);
@@ -281,12 +312,28 @@ async function main(): Promise<void> {
       continue;
     }
     const props = matches[0]!.properties as ReadonlyMap<string, readonly ParsedTerm[]>;
+    const subjectTerm = matches[0]!.subject;
+    const subjectIri = typeof subjectTerm === 'string' ? subjectTerm : null;
 
+    // ★ EVERY ADDRESS THIS PROGRAM FORWARDS IS FETCHED FIRST. A value that "should" resolve
+    // and does not is exactly the dangling evidence pointer this whole exercise is about,
+    // and the map decides WHICH address is the record's — so both are checked, and only the
+    // ones the map actually asks for.
+    const wantsAddress = map.fields.some(f => f.fromRecordAddress);
+    const wantsSubject = map.fields.some(f => f.fromRecordSubject);
     const address = publicAddress(c.descriptorUrl, POD!);
-    const reachable = await fetch(address, { method: 'GET', headers: { Accept: 'text/turtle' } });
-    if (!reachable.ok) {
+    let unreachable: string | null = null;
+    for (const [what, url] of [
+      ...(wantsAddress ? [['its public address', address] as const] : []),
+      ...(wantsSubject ? [['its own subject IRI', subjectIri] as const] : []),
+    ]) {
+      if (url === null) { unreachable = `${what} is a blank node, which nothing outside this document can dereference`; break; }
+      const probe = await fetch(url, { method: 'GET', headers: { Accept: 'text/turtle' } });
+      if (!probe.ok) { unreachable = `${what} ${url} answered ${probe.status}`; break; }
+    }
+    if (unreachable !== null) {
       skipped++;
-      console.log(`  skip  ${c.descriptorUrl} — its public address ${address} answered ${reachable.status}; forwarding an unreachable pointer is worse than forwarding nothing`);
+      console.log(`  skip  ${c.descriptorUrl} — ${unreachable}; forwarding an unreachable pointer is worse than forwarding nothing`);
       continue;
     }
 
@@ -294,6 +341,7 @@ async function main(): Promise<void> {
     let missing: string | null = null;
     for (const f of map.fields) {
       if (f.fromRecordAddress) { args[f.toArgument] = address; continue; }
+      if (f.fromRecordSubject) { args[f.toArgument] = subjectIri!; continue; }
       if (f.constant !== undefined) { args[f.toArgument] = f.constant; continue; }
       const term = props.get(f.fromPredicate!)?.[0];
       // A blank node has no value that survives leaving this document, so it is treated as
