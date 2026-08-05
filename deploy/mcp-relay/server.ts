@@ -329,6 +329,10 @@ import {
 import { resolveInteropPrincipal } from './interop-principal.js';
 import { ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js';
 import {
+  resolvePodSubject, podNameOf, POD_URL_INJECTED, POD_NAME_INJECTED,
+  type PodSubject,
+} from './pod-selector.js';
+import {
   observedGraphDigest,
   contentBindingNote,
   // The one place `authorshipVerified` can be answered `true`. Declared outside server.ts
@@ -4301,7 +4305,13 @@ async function handlePgslDecide(args: ToolArgs): Promise<string> {
 }
 
 async function handleDiscoverContext(args: ToolArgs): Promise<string> {
-  const podUrl = args.pod_url as string;
+  // `pod_name` was accepted by the wire, injected by three of the four dispatchers, and
+  // read by nothing here — so `discover_context { pod_name: "<not yours>" }` listed the
+  // caller's own descriptors and the response named no pod, exactly the unattributable
+  // shape that hid the verify_agent defect. Same resolver, same rules.
+  const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'discover_context' });
+  if (sel.refusal) return JSON.stringify(sel.refusal);
+  const podUrl = sel.subject.podUrl;
   const filter: DiscoverFilterLite = {};
   if (args.facet_type)   filter.facetType   = args.facet_type as string;
   if (args.valid_from)   filter.validFrom   = args.valid_from as string;
@@ -4337,7 +4347,10 @@ async function handleDiscoverContext(args: ToolArgs): Promise<string> {
     }
   }
 
-  return JSON.stringify({ entries, registry });
+  // The pod these entries came from. Without it a caller could not tell a list about
+  // their own pod from a list about the pod they asked for — which is how the same
+  // dropped selector went unnoticed here as in verify_agent.
+  return JSON.stringify({ pod: podUrl, entries, registry });
 }
 
 async function handleGetDescriptor(args: ToolArgs): Promise<string> {
@@ -4855,7 +4868,17 @@ function jwtUserIdClaim(token: string): string | undefined {
 }
 
 async function handleGetPodStatus(args: ToolArgs): Promise<string> {
-  const podUrl = args.pod_url as string;
+  // ★ THIS ONE RETURNED A SUCCESSFUL-LOOKING STATUS FOR NO POD AT ALL. Only `/mcp` fills
+  // `pod_url`; this tool is in neither AUTH_REQUIRED_TOOLS (so no selector is injected on
+  // `/tool` or `/messages`) nor ENFORCED_REQUIRED_ARGS (so nothing refused its absence),
+  // and both of its fetches swallow their errors. Measured live at f1ea9c2 on `/messages`:
+  // `{ agentsSource: "none", delegationRegistry: null, registry: null, descriptors: 0,
+  // entries: [] }` — and no field naming a pod, so it read as "this pod is empty" rather
+  // than "no pod was resolved". Refusing is the honest answer; the resolver also makes
+  // `pod_name` work here, which the description already implied by promising a default.
+  const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'get_pod_status' });
+  if (sel.refusal) return JSON.stringify(sel.refusal);
+  const podUrl = sel.subject.podUrl;
   const identityToken = args._identity_token as string | undefined;
   // Session agent — derived from THIS connection's OAuth bearer token
   // (req.auth.extra.agentId), not from registration order. The relay
@@ -5030,7 +5053,13 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
 }
 
 async function handleSubscribeToPod(args: ToolArgs): Promise<string> {
-  const podUrl = args.pod_url as string;
+  // The pod being subscribed TO is a peer, so the injected own-pod default is never what
+  // the caller meant: measured, `subscribe_to_pod { pod_name: "<not yours>" }` opened a
+  // channel on the caller's own pod and reported success. Same target-only rule as
+  // add_pod / remove_pod.
+  const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'subscribe_to_pod', targetOnly: true });
+  if (sel.refusal) return JSON.stringify(sel.refusal);
+  const podUrl = sel.subject.podUrl;
   const slug = podSlug(podUrl);
   const relayBase = (PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
   const sseUrl = `${relayBase}/notifications/${slug}`;
@@ -5328,19 +5357,32 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
   // .azurecontainerapps.io/markj/` was returning "No agent registry
   // found" because that public host no longer serves the canonical pod
   // tree. solidFetch ALSO rewrites at the HTTP layer.
-  const rawPodUrl = (args.pod_url ?? args.podUrl) as string | undefined;
-  if (typeof rawPodUrl !== 'string' || rawPodUrl.length === 0) {
-    // Defensive: a caller (or a mis-unwrapped signed request) reached
-    // verify_agent without a pod_url. Return a clean, well-shaped
-    // negative rather than dereferencing undefined downstream (which
-    // crashed in readAgentRegistry's ensureTrailingSlash on `undefined`).
+  // ★ THE SELECTOR IS RESOLVED, NOT READ. This used to be `args.pod_url ?? args.podUrl`,
+  // which never looked at `pod_name` — and `/mcp` auto-fills `pod_url` with the CALLER'S
+  // OWN pod. So `verify_agent { agent_id, pod_name: "<someone else's pod>" }` answered
+  // about the caller's pod. Measured live at f1ea9c2 from a disposable identity with one
+  // ReadOnly agent on its own pod: asking about `u-eth-8f3b8e939600` by `pod_name`
+  // returned `verified: true, CryptographicallyVerified, enforced: true`, while the same
+  // question spelled `pod_url` returned `verified: false, "grants this agent nothing"`.
+  // `pod_name: "totally-nonexistent-pod-zzz"` also returned a cryptographically-verified
+  // YES. This is an AUTHORITY question, so the wrong answer is shaped exactly like the
+  // right one — and nothing in the response named which pod had been examined, so there
+  // was nothing for the caller to notice. See pod-selector.ts for why `pod_name` is
+  // honoured rather than refused (it discloses nothing `pod_url` did not already).
+  const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'verify_agent' });
+  if (sel.refusal) {
+    // A shaped negative rather than a dereference of undefined downstream (which used to
+    // crash in readAgentRegistry's ensureTrailingSlash on `undefined`) — but now the
+    // reason names the argument instead of stating a requirement the caller may have
+    // believed it met.
     return JSON.stringify(buildVerifyAgentEnvelope({
       valid: false,
       agent: (args.agent_id as IRI) ?? ('urn:unknown' as IRI),
-      reason: 'verify_agent requires a pod_url',
-    }));
+      reason: sel.refusal.message,
+    }, undefined));
   }
-  const podUrl = normalizeCssUrl(rawPodUrl);
+  const subject: PodSubject = sel.subject;
+  const podUrl = normalizeCssUrl(subject.podUrl);
   // Pass the verifier so the registry-only path is upgraded to a real
   // cryptographic chain walk: the signed VC at /credentials/<agent>.jsonld
   // is fetched, its proof is checked against the owner's wallet key,
@@ -5361,7 +5403,17 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
   // missing: the enforcement answer, stated, beside the cryptographic one.
   const enforcement = await resolveDelegationAuthority((args.agent_id as string), podUrl);
   return JSON.stringify({
-    ...buildVerifyAgentEnvelope(result),
+    // ★ AND IT SAYS WHICH POD IT IS ABOUT. The envelope carried `verified`, `trustLevel`
+    // and a signed chain, and named no subject — so the answer to "is this agent
+    // authorised on THAT pod?" and the answer to "…on MY pod?" were byte-identical
+    // documents. `subject_pod_url` is what makes the verdict attributable, and therefore
+    // checkable: a caller that asked about one pod can now see it was answered about it.
+    // The stdio shim in mcp-server/server.ts already emitted `pod: args.pod_url`; putting
+    // the field in the shared builder converges the two surfaces rather than drifting
+    // them further, which is the drift buildVerifyAgentEnvelope exists to prevent.
+    ...buildVerifyAgentEnvelope(result, podUrl),
+    subject_pod_name: subject.podName,
+    subject_pod_selected_by: subject.source,
     enforcement: {
       enforced: enforcement.enforced,
       scope: enforcement.scope,
@@ -5672,6 +5724,13 @@ function callerAgentId(args: ToolArgs): string | undefined {
 const RESERVED_WIRE_FIELDS = [
   '_session_bearer', '_session_principal', '_identity_token',
   '_session_agent_did', '_session_agent_id', '_session_user_id',
+  // The pod-selector provenance markers. A dispatcher sets these when IT supplied
+  // `pod_url` / `pod_name`, so a handler can tell "the caller named no pod" from "the
+  // caller named this pod" — see pod-selector.ts. A forged marker is not an escalation
+  // but it WOULD defeat the disagreement refusal (the caller could label its own
+  // `pod_url` as injected and make its `pod_name` win silently), which is precisely the
+  // silent winner-picking that refusal exists to prevent.
+  POD_URL_INJECTED, POD_NAME_INJECTED,
 ] as const;
 
 function stripReservedWireFields(o: unknown): void {
@@ -6433,7 +6492,13 @@ async function handleAddPod(args: ToolArgs): Promise<string> {
   // pod_url only when the wire request omitted it; an add_pod call
   // without an explicit pod_url is malformed — we still de-shim here
   // for the case where the caller passes their own pod URL by mistake.
-  const url = args.pod_url as string;
+  // `pod_url` here is the pod being ADDED — a peer, not "my pod". `/mcp` fills it from the
+  // auth context anyway, and because the required-args gate wraps the handler it runs
+  // AFTER that injection and so never saw an absent argument. `targetOnly` is what lets
+  // "you named no pod" mean it. See handleRemovePod for what the defaulting cost there.
+  const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'add_pod', targetOnly: true });
+  if (sel.refusal) return JSON.stringify(sel.refusal);
+  const url = sel.subject.podUrl;
   const self = await selfPodEntry(args);
   if (self && self.url === url) {
     // Silently dedupe — adding your own pod is a no-op since
@@ -6462,7 +6527,17 @@ async function handleAddPod(args: ToolArgs): Promise<string> {
 }
 
 async function handleRemovePod(args: ToolArgs): Promise<string> {
-  const url = args.pod_url as string;
+  // ★ MEASURED LIVE AT f1ea9c2: `remove_pod {}` on `/mcp` returned `{ removed: true,
+  // url: "<the caller's own pod>" }` and the federation count went 101 → 100. The
+  // dispatcher had filled this tool's TARGET parameter with the caller's own pod, and
+  // `required-args.ts` — which does require `pod_url` here — could not fire, because the
+  // gate wraps the handler and therefore runs after the injection. `add_pod` survived the
+  // same injection only by accident, via its self-dedupe; this one has none, and the
+  // delete takes the principal's WebFinger, ActivityPub actor, inbox and reachability
+  // with it, durably. A tool that acts on a named peer must be told which peer.
+  const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'remove_pod', targetOnly: true });
+  if (sel.refusal) return JSON.stringify(sel.refusal);
+  const url = sel.subject.podUrl;
   const removed = knownPods.delete(url);
   // AWAIT the DELETE before returning so a restart in the unpersist
   // window doesn't resurrect the entry on next load. Same durability
@@ -6566,7 +6641,11 @@ async function handleRevokeAgent(args: ToolArgs): Promise<string> {
 // ── Federation: subscription management ─────────────────────
 
 async function handleUnsubscribeFromPod(args: ToolArgs): Promise<string> {
-  const podUrl = args.pod_url as string;
+  // The inverse of subscribe_to_pod, and target-only for the same reason: a bare `{}` on
+  // `/mcp` tore down the caller's own subscription while reading as a no-op.
+  const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'unsubscribe_from_pod', targetOnly: true });
+  if (sel.refusal) return JSON.stringify(sel.refusal);
+  const podUrl = sel.subject.podUrl;
   const sub = subscriptions.get(podUrl);
   if (!sub) {
     return JSON.stringify({ unsubscribed: false, message: `No active subscription on ${podUrl}.` });
@@ -7064,9 +7143,24 @@ async function handleGetCurrentHead(args: ToolArgs): Promise<string> {
   if (!urn) {
     return JSON.stringify({ error: 'urn is required — pass the urn:graph:* IRI as `urn` (`graph_iri` is accepted as an alias, matching discover_context)' });
   }
-  const podName = (args.pod_name as string) ?? 'default';
-  const rawPodUrl = (args.pod_url as string) ?? `${CSS_URL}${podName}/`;
-  const podUrl = rawPodUrl.endsWith('/') ? rawPodUrl : `${rawPodUrl}/`;
+  // ★ THE SCHEMA SAID "Provide either pod_url or pod_name" AND ON `/mcp` THAT WAS
+  // UNSATISFIABLE. The precedence here (`pod_url ?? pod_name`) is exactly right for a
+  // caller who sends one of them — but `/mcp` fills `pod_url` on every call, so `pod_name`
+  // was ALWAYS the loser and the documented contract could never be kept. Measured live at
+  // f1ea9c2: `get_current_head { urn, pod_name: "u-eth-8f3b8e939600" }` reported
+  // `podUrl: ".../u-eth-9bf50894ff23/"`, the caller's own pod. That matters beyond this
+  // tool: `applications/shared-workspace/src/membership.ts:1208` resolves which pod has
+  // authority over a workspace IRI with exactly this call, and its unit tests drive a
+  // double that DOES key on `pod_name` — so the property was verified against a stand-in
+  // that behaved differently from the substrate.
+  //
+  // The `?? 'default'` is gone with it: `<CSS_URL>default/` is nobody's pod, and reading
+  // it produced "No descriptor on this pod describes the requested urn" — a negative
+  // finding about a pod the caller never named. Measured on `/messages`, where neither
+  // selector is injected.
+  const sel = resolvePodSubject(args as Record<string, unknown>, { cssUrl: CSS_URL, tool: 'get_current_head' });
+  if (sel.refusal) return JSON.stringify(sel.refusal);
+  const podUrl = sel.subject.podUrl;
   // Read freshest manifest — bypass the cache so concurrent writers see
   // each other's just-published HEAD on the next get_current_head call.
   manifestCache.delete(podUrl);
@@ -7671,12 +7765,24 @@ type ToolEntry = { description: string; handler: (args: ToolArgs) => Promise<str
  * calls already failed, just with `TypeError: Cannot read properties of undefined (reading
  * 'endsWith')` instead of a sentence naming the argument.
  *
- * ★ WHAT THE NEXT PERSON TO EDIT THE TABLE NEEDS FROM THIS. Do not add a tool whose handler
- * DEFAULTS `pod_url` from `pod_name`. `handleGetCurrentHead` is that shape today — it reads
- * `args.pod_url` and falls back to CSS_URL + pod_name — and gating it would refuse, on
- * three transports, calls the handler could have served perfectly well.
- * Such a tool needs the injection unified across the dispatchers FIRST — which is a
- * behaviour change to what `pod_url` means per transport, not a comment.
+ * ★ WHAT THE NEXT PERSON TO EDIT THE TABLE NEEDS FROM THIS, AND WHAT HAS CHANGED UNDER IT.
+ * This paragraph used to end "do not add a tool whose handler DEFAULTS `pod_url` from
+ * `pod_name` … such a tool needs the injection unified across the dispatchers FIRST".
+ * That unification has now happened, and not because the shape was inconvenient to gate:
+ * the per-transport disagreement was itself the bug. Because `/mcp` filled `pod_url`
+ * unconditionally, `pod_name` lost every contest it entered there, so `verify_agent
+ * { agent_id, pod_name: <someone else's pod> }` returned a cryptographically-confident
+ * verdict about the CALLER's pod, and `get_current_head`'s own schema promise ("provide
+ * either") was unsatisfiable on the transport almost every caller uses.
+ *
+ * The injection is not removed — the "defaults to your home pod" behaviour these five
+ * tools rely on is intact. What is added is PROVENANCE: each dispatcher now marks the
+ * selector it supplied (`POD_URL_INJECTED` / `POD_NAME_INJECTED`, reserved + wire-stripped),
+ * and `pod-selector.ts` resolves the subject from the marked args. So a handler can finally
+ * distinguish "the caller named no pod" from "the caller named this pod", which is the one
+ * fact every rule in this area needed and none of them had. Gating a `pod_url`-defaulting
+ * tool is therefore no longer the trap described above; the resolver refuses in the
+ * handler, with a sentence naming the argument, on every transport alike.
  *
  * Only names in `ENFORCED_REQUIRED_ARGS` are wrapped; everything else is passed through
  * with the identical entry object, so the gate's blast radius is exactly that table and a
@@ -8608,8 +8714,8 @@ const TOOL_SCHEMAS = [
       properties: {
         urn: { type: 'string', description: 'The urn:graph:* IRI whose current chain head is being resolved. `graph_iri` is accepted as an alias — discover_context spells the same value that way, and the publish 412 retryHint sends callers here.' },
         graph_iri: { type: 'string', description: 'Alias for `urn`, matching discover_context\'s name for the same value. Supply one or the other.' },
-        pod_url: { type: 'string', description: 'Pod URL (default: ${CSS_URL}${pod_name}/). Provide either pod_url or pod_name.' },
-        pod_name: { type: 'string', description: 'Pod name on the relay\'s CSS_URL (default: "default"). Ignored when pod_url is provided.' },
+        pod_url: { type: 'string', description: 'Pod URL. Defaults to the authenticated caller\'s own pod. Provide this OR pod_name — naming two different pods is refused rather than resolved to one of them.' },
+        pod_name: { type: 'string', description: 'The same pod spelled as a name on the relay\'s CSS_URL. HONOURED: it selects the pod whose chain head is resolved. (It previously lost to the relay\'s own pod_url auto-fill on every /mcp call, so this contract could not be kept.) The answer carries `podUrl`.' },
       },
       // `anyOf` rather than `required: ['urn']`: a client that validates the schema before
       // sending would otherwise reject the very `graph_iri` spelling this tool now accepts,
@@ -8652,7 +8758,8 @@ const TOOL_SCHEMAS = [
     inputSchema: {
       type: 'object',
       properties: {
-        pod_url: { type: 'string', description: 'Solid pod URL to discover from (e.g. https://pod.example.com/agent/)' },
+        pod_url: { type: 'string', description: 'Solid pod URL to discover from (e.g. https://pod.example.com/agent/). Defaults to the authenticated caller\'s own pod. Provide this OR pod_name — naming two different pods is refused.' },
+        pod_name: { type: 'string', description: 'The same pod spelled as a name on the relay\'s CSS_URL. HONOURED: it selects the pod discovered from. The answer carries `pod`.' },
         graph_iri: { type: 'string', description: 'Narrow to descriptors that mention this urn:graph:* IRI in their iep:describes set. Server-side filter — avoids fetching+truncating the full manifest. If you only want the LIVE HEAD descriptor for this IRI (not the whole lineage), prefer `get_current_head`.' },
         facet_type: { type: 'string', enum: ['Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation'], description: 'Filter by facet type' },
         valid_from: { type: 'string', description: 'Filter: valid at or after this ISO datetime' },
@@ -8700,7 +8807,8 @@ const TOOL_SCHEMAS = [
     inputSchema: {
       type: 'object',
       properties: {
-        pod_url: { type: 'string', description: 'Pod URL (default: home pod for authenticated user)' },
+        pod_url: { type: 'string', description: 'Pod URL (default: home pod for authenticated user). Provide this OR pod_name — naming two different pods is refused.' },
+        pod_name: { type: 'string', description: 'The same pod spelled as a name on the relay\'s CSS_URL. HONOURED: it selects the pod whose status is reported. The answer carries `pod`.' },
       },
     },
     outputSchema: GET_POD_STATUS_OUTPUT,
@@ -8759,9 +8867,10 @@ const TOOL_SCHEMAS = [
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Agent IRI to verify' },
-        pod_url: { type: 'string', description: 'Pod URL where the agent is registered' },
+        pod_url: { type: 'string', description: 'Pod URL whose delegation registry is examined. Defaults to the authenticated caller\'s own pod. Supply this OR pod_name, not both — two different pods is refused (`pod_selector_conflict`) rather than resolved to one of them.' },
+        pod_name: { type: 'string', description: 'The same subject spelled as a pod name on the relay\'s CSS_URL. HONOURED, not ignored: it selects the pod this verdict is about. The answer carries `subject_pod_url`, so you can always tell which pod was examined.' },
       },
-      required: ['agent_id', 'pod_url'],
+      required: ['agent_id'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Verify agent delegation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -9705,9 +9814,12 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // fields. Strip any client-supplied values UNCONDITIONALLY — before the
     // authContext guard — so they can never be smuggled in via tools/call args in
     // open-mode or the legacy-API-key path (where the block below does not run).
-    for (const reserved of ['_session_bearer', '_session_principal', '_identity_token', '_session_agent_did', '_session_agent_id', '_session_user_id']) {
-      delete (args as Record<string, unknown>)[reserved];
-    }
+    // ★ THROUGH THE SHARED HELPER, not a second copy of the list. This loop used to
+    // repeat the six names inline, so `RESERVED_WIRE_FIELDS` was the single source of
+    // truth only for the transports that happened to call the helper. Adding the
+    // pod-selector markers to that constant would then have left this transport — the
+    // one the original defect was measured on — accepting a forged marker.
+    stripReservedWireFields(args);
     // Inject identity from auth context so the authenticated user's default
     // pod / agent / WebID fill in when the caller doesn't specify them.
     // Applies to ALL tools, not just writes — lets reads like get_pod_status
@@ -9715,7 +9827,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     if (authContext) {
       if (!args.agent_id) args.agent_id = authContext.agentId;
       if (!args.owner_webid && authContext.ownerWebId) args.owner_webid = authContext.ownerWebId;
-      if (!args.pod_name && authContext.userId) args.pod_name = authContext.userId;
+      if (!args.pod_name && authContext.userId) { args.pod_name = authContext.userId; args[POD_NAME_INJECTED] = true; }
       // Server-authoritative, non-forgeable (stripped from wire above). The
       // tenant_admin grant gate compares pod_name against THIS, so only the
       // OAuth-authenticated pod owner can grant governance on their own pod.
@@ -9725,9 +9837,18 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // userId) but become different once preferred-pod overlays exist —
       // e.g. one user with two credentials canonically sharing one pod.
       // The relay must not silently second-guess the identity layer.
+      // ★ AND IT SAYS SO. This is the ONE `args.pod_url =` in the file, and it is the
+      // whole of why `verify_agent { agent_id, pod_name: "<someone else's pod>" }`
+      // answered `verified: true` about the CALLER's pod: the handler read `pod_url`,
+      // found this value, and had no way to know the caller had never sent it. The
+      // marker is what makes "the relay defaulted this" distinguishable from "the caller
+      // asked for this" — see pod-selector.ts. It is a RESERVED wire field, so a caller
+      // cannot forge it. Setting it only inside the `if` matters: an explicit caller
+      // `pod_url` must stay unmarked.
       if (!args.pod_url) {
         args.pod_url = authContext.podUrl
           ?? (authContext.userId ? `${CSS_URL}${authContext.userId}/` : undefined);
+        if (args.pod_url) args[POD_URL_INJECTED] = true;
       }
       // Thread the identity-server token through so handlers that need to
       // resolve the calling user's identity-side profile (display name,
@@ -13849,9 +13970,8 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // unlike the MCP CallTool handler — does not otherwise sanitize these, so a
     // caller could forge _session_user_id to grant governance on a pod it does
     // not own. Strip here, then re-inject the server-authoritative value below.
-    for (const reserved of ['_session_bearer', '_session_principal', '_identity_token', '_session_agent_did', '_session_agent_id', '_session_user_id']) {
-      delete (req.body as Record<string, unknown>)[reserved];
-    }
+    // Same reason as the `/mcp` site: one list, one helper. See RESERVED_WIRE_FIELDS.
+    stripReservedWireFields(req.body);
     if (viaSignature) {
       req.body.agent_id = auth.recoveredDid;
       // Server-authoritative attribution identity — without this, callerAgentId()
@@ -13861,7 +13981,7 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
       // agents land on their own pods.
       const addr = auth.recoveredDid!.slice('did:ethr:'.length).toLowerCase();
       const ownPod = `eth-${addr.slice(2, 14)}`;
-      if (!req.body.pod_name) req.body.pod_name = ownPod;
+      if (!req.body.pod_name) { req.body.pod_name = ownPod; req.body[POD_NAME_INJECTED] = true; }
       if (!req.body.owner_webid) req.body.owner_webid = auth.recoveredDid;
       // Server-authoritative: a signed caller owns exactly the pod its address
       // derives — the only pod on which it may grant tenant-admin.
@@ -13869,7 +13989,7 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     } else {
       if (!req.body.agent_id) req.body.agent_id = auth.agentId;
       if (!req.body.owner_webid) req.body.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
-      if (!req.body.pod_name) req.body.pod_name = auth.userId;
+      if (!req.body.pod_name) { req.body.pod_name = auth.userId; req.body[POD_NAME_INJECTED] = true; }
       // Server-authoritative bearer identity — mirrors the MCP handler so the
       // register_agent tenant_admin own-pod check works on the REST path too.
       if (auth.userId) req.body._session_user_id = auth.userId;
@@ -13916,7 +14036,7 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     if (sig.authenticated && sig.recoveredDid) {
       req.body.agent_id = sig.recoveredDid;
       const addr = sig.recoveredDid.slice('did:ethr:'.length).toLowerCase();
-      if (!req.body.pod_name) req.body.pod_name = `eth-${addr.slice(2, 14)}`;
+      if (!req.body.pod_name) { req.body.pod_name = `eth-${addr.slice(2, 14)}`; req.body[POD_NAME_INJECTED] = true; }
       if (!req.body.owner_webid) req.body.owner_webid = sig.recoveredDid;
     }
     delete req.body._signature;
@@ -14206,13 +14326,13 @@ app.post('/messages', messagesLimiter, async (req, res) => {
         // caller-supplied agent_id.
         args._session_agent_did = auth.recoveredDid;
         const addr = auth.recoveredDid!.slice('did:ethr:'.length).toLowerCase();
-        if (!args.pod_name) args.pod_name = `eth-${addr.slice(2, 14)}`;
+        if (!args.pod_name) { args.pod_name = `eth-${addr.slice(2, 14)}`; args[POD_NAME_INJECTED] = true; }
         if (!args.owner_webid) args.owner_webid = auth.recoveredDid;
       } else {
         if (!args.agent_id) args.agent_id = auth.agentId;
         if (auth.agentId) args._session_agent_did = auth.agentId;
         if (!args.owner_webid) args.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
-        if (!args.pod_name) args.pod_name = auth.userId;
+        if (!args.pod_name) { args.pod_name = auth.userId; args[POD_NAME_INJECTED] = true; }
       }
     }
 

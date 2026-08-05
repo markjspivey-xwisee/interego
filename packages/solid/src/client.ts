@@ -3099,6 +3099,21 @@ export async function verifyAgentDelegation(
  * so the v0.4 wire shape still passes through; this is additive.
  */
 export interface VerifyAgentEnvelope {
+  /**
+   * The pod this verdict is ABOUT — `null` only when no subject could be resolved.
+   *
+   * ★ WHY A VERDICT MUST NAME ITS SUBJECT. Without this the envelope answered "is this
+   * agent authorised?" without saying WHERE, so the answer to a question about someone
+   * else's pod and the answer to a question about your own were byte-identical
+   * documents. That is what made the `pod_name`-ignored defect invisible rather than
+   * merely wrong: `verify_agent { agent_id, pod_name: "<not yours>" }` returned
+   * `verified: true, CryptographicallyVerified` about the CALLER's pod (measured live),
+   * and there was no field a caller could read to tell. An authority answer that cannot
+   * be attributed to a subject is not checkable.
+   */
+  readonly subjectPodUrl: string | null;
+  /** Wire spelling of {@link subjectPodUrl}; both are emitted so either name reads. */
+  readonly subject_pod_url: string | null;
   readonly verified: boolean;
   readonly trustLevel: 'CryptographicallyVerified' | 'SelfAsserted';
   /**
@@ -3138,11 +3153,21 @@ export interface VerifyAgentEnvelope {
  * (johnny's `{ verified, agents:[...] }` paraphrase did not match the
  * stdio text-summary that callers actually hit).
  */
-export function buildVerifyAgentEnvelope(result: DelegationVerification): VerifyAgentEnvelope {
+export function buildVerifyAgentEnvelope(
+  result: DelegationVerification,
+  /**
+   * The pod the verdict is about. Required by callers that resolved one; `undefined`
+   * only on the path where no subject could be resolved and the envelope is a refusal.
+   */
+  subjectPodUrl?: string,
+): VerifyAgentEnvelope {
   const trustLevel = result.trustLevel ?? 'SelfAsserted';
   const chainLength = result.chainLength ?? (result.valid ? 1 : 0);
   const cryptographicallyVerified = result.valid && trustLevel === 'CryptographicallyVerified';
+  const subject = subjectPodUrl ?? null;
   return {
+    subjectPodUrl: subject,
+    subject_pod_url: subject,
     verified: result.valid,
     trustLevel,
     chainLength,
