@@ -454,7 +454,7 @@ const BASELINE = {};
 // 344 -> 346 in the same round, fired again by the drift check the moment this round's own
 // two test files and one gate script landed (354 -> 356). That is the ratchet behaving: it
 // caught its author, not just history.
-export const MIN_FILES = 346;
+export const MIN_FILES = 350;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

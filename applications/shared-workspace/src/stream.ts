@@ -103,6 +103,23 @@ export interface EntryDraft {
    * belongs in its own published graph, cited via {@link EntryDraft.references}.
    */
   readonly extraTriples?: readonly string[];
+  /**
+   * Additional published SHACL shape IRIs this entry must ALSO satisfy, stacked on top of
+   * the workspace's own shapes at the relay's publish gate.
+   *
+   * ★ WITHOUT THIS, A WORKSPACE'S OWN WORK CONTRACT COULD ONLY BE CHECKED AFTER THE FACT.
+   * `extraTriples` already lets a workspace put its own terms on an entry — a skill it
+   * names, an outcome it asserts — and `wsp-shapes` is deliberately not `sh:closed` so
+   * those terms are legal. But `conforms_to_shapes` was hardcoded to `[WSP_SHAPES]`, so
+   * the only contract the gate could enforce was the workspace-generic one: an entry that
+   * declared a skill and no outcome, or an outcome and no skill, LANDED, and the malformed
+   * record then existed for good (descriptors are immutable, there is no retraction verb).
+   * Post-hoc validation is strictly weaker for exactly that reason.
+   *
+   * `conforms_to_shapes` is already an ARRAY on the relay gate and every listed shape must
+   * pass — this is an application-level omission being closed, not a substrate change.
+   */
+  readonly shapes?: readonly string[];
 }
 
 export interface AppendedEntry {
@@ -1143,7 +1160,9 @@ export async function appendEntry(
     auto_supersede_prior: false,
     // The shape gate runs BEFORE any pod write, so a malformed entry never lands even
     // briefly. An entry with no wsp:seq is refused here rather than silently unorderable.
-    conforms_to_shapes: [WSP_SHAPES],
+    // `draft.shapes` stacks the workspace's OWN work contract on top — see EntryDraft.shapes
+    // for why validating it afterwards would be strictly weaker.
+    conforms_to_shapes: [WSP_SHAPES, ...(draft.shapes ?? [])],
     // ★ WITHOUT THIS THE ENTRY CANNOT BE ATTRIBUTED TO ANYONE, EVER.
     //
     // The read path used to attach `principal` from the caller's members list and nothing in

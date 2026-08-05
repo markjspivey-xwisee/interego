@@ -402,6 +402,13 @@ export async function publishMembershipRecord(args: {
   /** Gate the write on a known prior head, when superseding one. */
   readonly ifMatch?: string;
   readonly budgetMs?: number;
+  /**
+   * Additional published SHACL shape IRIs to stack on the workspace's own at the gate.
+   * Same reason as {@link EntryDraft.shapes}: a membership record can legitimately carry a
+   * workspace's own terms, and the only place refusing a malformed one is worth anything is
+   * BEFORE the write — the bytes are immutable afterwards.
+   */
+  readonly shapes?: readonly string[];
 }, deps: StreamDeps): Promise<PublishOutcome> {
   const res = await deps.publish({
     graph_iri: args.graphIri,
@@ -411,7 +418,7 @@ export async function publishMembershipRecord(args: {
     // The shape gate runs BEFORE any pod write, so a malformed membership never lands even
     // briefly — a grant naming two principals is refused at 422 rather than becoming a
     // record a reader has to decide what to do with.
-    conforms_to_shapes: [WSP_SHAPES],
+    conforms_to_shapes: [WSP_SHAPES, ...(args.shapes ?? [])],
     // Without this the record cannot be attributed to anyone, ever: the bytes are immutable
     // and the key moves on, so an unsigned membership record is unattributable forever.
     sign_authorship: true,

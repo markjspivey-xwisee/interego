@@ -408,6 +408,22 @@ describe('appendEntry', () => {
     expect(String(calls[0]!.graph_content)).toContain(`iep:supersedes <${d(2)}>`);
   });
 
+  it('★ stacks the caller\'s own shapes on the workspace\'s, so a work contract runs at the GATE', async () => {
+    // ★ THE COST OF NOT DOING THIS IS PERMANENT, AND IT WAS MEASURED. `conforms_to_shapes` was
+    // hardcoded to `[WSP_SHAPES]`, so a workspace that put its own terms on an entry — a skill
+    // it names, an outcome it asserts — could only check them AFTER the write. Reverting this
+    // line and re-running the live gate published an entry that named a skill and asserted no
+    // outcome; it now exists for good at
+    // <.../u-eth-8f3b8e939600/context-graphs/1785908161492.ttl>, because descriptors are
+    // immutable and the pod has no retraction verb. Post-hoc validation cannot undo that.
+    //
+    // The workspace's own shapes always go first and are not optional: a caller cannot use
+    // this to opt OUT of wsp-shapes, only to demand more.
+    const { deps, calls } = makeDeps({ rows: [] });
+    await appendEntry(ref, { body: 'first', shapes: ['https://requirer.test/work-shape'] }, deps);
+    expect(calls[0]!.conforms_to_shapes).toEqual([WSP_SHAPES, 'https://requirer.test/work-shape']);
+  });
+
   it('★ every entry is SIGNED — an unsigned one can never be attributed afterwards', async () => {
     // The read path used to attach `principal` from the caller's members list and nothing in
     // the record could contradict it. Without this flag there is no iep:authorshipProof to

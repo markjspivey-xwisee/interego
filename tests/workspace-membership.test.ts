@@ -1258,6 +1258,24 @@ describe('publishMembershipRecord', () => {
     });
   });
 
+  it('★ stacks the caller\'s own shapes on the workspace\'s', async () => {
+    // The workspace's own shapes say, in their own sh:message, that they do NOT check a
+    // grant's role against the profile the workspace declares — so an invented role lands and
+    // is merely worth nothing at the fold. An engagement that wants that refused at the gate
+    // publishes a shape enumerating the profile's roles and passes it here. Measured live:
+    // with this argument the rogue grant is refused 422 by sh:in; with it dropped, the same
+    // grant publishes.
+    const deps = publishDeps();
+    await publishMembershipRecord(
+      { graphIri: 'https://conv.test/g/1', graphContent: GRANT_TTL, shapes: ['https://requirer.test/role-shape'] },
+      deps,
+    );
+    expect(deps.calls[0]!.conforms_to_shapes).toEqual([
+      'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-shapes.ttl',
+      'https://requirer.test/role-shape',
+    ]);
+  });
+
   it('★ WAITS for the record to become readable before calling it published', async () => {
     // `publish_context` is DEFERRED unless compliance/sync/if_match is set — sign_authorship
     // does NOT force the synchronous path. Three live assertions in verify-can-live.ts once

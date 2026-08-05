@@ -68,6 +68,12 @@
   // put `prov:wasAttributedTo <undefined>` in every compliance descriptor one bridge emitted.
   "include": [
     "tests/**/*.ts",
+    // ★ `tools/**` WAS IN NO PROGRAM EITHER. The list above reasons about `tests/**` and the
+    // verticals and stops at the repo's own tooling, which is TypeScript run with `npx tsx`
+    // — types stripped, nothing compiled. `tools/observe-pod-performance-live.ts` is a live
+    // program that signs and POSTs; a type error in it would merge green exactly the way the
+    // `applications/*/checks/**` guards below did.
+    "tools/**/*.ts",
     "applications/shared-workspace/**/*.ts",
     "applications/**/tests/**/*.ts",
     "integrations/**/tests/**/*.ts",

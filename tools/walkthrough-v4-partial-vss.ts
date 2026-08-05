@@ -64,8 +64,14 @@ import {
 } from '@interego/core';
 import type {
   IRI,
+  EncryptionKeyPair,
 } from '@interego/core';
-import type { Wallet } from 'ethers';
+// ★ core's Wallet, NOT ethers'. `signCommitteeAuthorization`/`signCommitteeReconstruction` declare
+// their wallet parameter as `@interego/core`'s Wallet, and the repo resolves more than one
+// copy of ethers, so the two structurally differ (`type`, `chainId`). This file was in no
+// tsc program, so the mismatch — and the `as unknown as` casts written to silence it —
+// went unseen until tools/** joined tsconfig.check.json.
+import type { Wallet } from '@interego/core';
 
 const COHORT = 'urn:demo:cohort:v4-walkthrough' as IRI;
 const AGGREGATOR = 'did:web:operator.demo' as IRI;
@@ -139,10 +145,10 @@ async function main(): Promise<void> {
   header('PHASE 3 — Encrypt + distribute 5 shares to 5 pseudo-aggregators');
   const wallets: Wallet[] = [];
   const dids: IRI[] = [];
-  const encKeyPairs = [];
+  const encKeyPairs: EncryptionKeyPair[] = [];
   for (let i = 0; i < 5; i++) {
     const w = await createWallet('agent', `pseudo-aggregator-${i}`);
-    wallets.push(w as unknown as Wallet);
+    wallets.push(w);
     dids.push(`did:ethr:${w.address.toLowerCase()}` as IRI);
     encKeyPairs.push(generateKeyPair());
     ok(`Member ${i}: ${dids[i]!.slice(0, 32)}… (X25519 pub ${encKeyPairs[i]!.publicKey.slice(0, 16)}…)`);
@@ -156,7 +162,7 @@ async function main(): Promise<void> {
     authorizedDids: dids,
     threshold: { n: 5, t: 3 },
     operatorDid,
-    operatorWallet: operatorWallet as unknown as Wallet,
+    operatorWallet,
   });
   const authCheck = verifyCommitteeAuthorization({ authorization });
   ok(`Operator ${operatorDid.slice(0, 32)}… signed authorization (verifies: ${authCheck.valid})`);
