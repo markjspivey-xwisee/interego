@@ -87,6 +87,103 @@ export function observedGraphDigest(args: {
 }
 
 /**
+ * The pod root a descriptor URL sits in — `https://host/pod/` — or null.
+ *
+ * ★ EXTRACTED RATHER THAN COPIED, and the copy is the reason. This exact regex was inline in
+ * `get_descriptor`, deriving the pod for the delegation-chain walk. The descriptor binding now
+ * needs the same pod to ask who owns it, and a second spelling of "which pod is this" would
+ * eventually disagree with the first — at which point the trust label and the binding verdict
+ * would be about different pods while reading as if they were about one. One rule, both
+ * callers.
+ *
+ * The `context-graphs/` segment is required, not optional: it is the layout `publish()`
+ * produces, and matching without it would call the first path segment of ANY URL a pod.
+ *
+ * ★★ AND THE PATH IS RESOLVED BEFORE IT IS READ, WHICH THE INLINE REGEX DID NOT DO. Found
+ * while building the live demonstration for this round: a regex anchored on the raw request
+ * string reads the pod out of the text a caller typed, and `fetch` reads it out of the
+ * RESOLVED path. So `…/alice-pod/context-graphs/../../mallory-pod/context-graphs/x.ttl`
+ * fetches mallory's document while the regex reports alice's pod — which would hand a lifted
+ * proof the one owner that makes it bind. `new URL` performs WHATWG dot-segment removal
+ * (including the `%2e%2e` spellings), so the pod named here is the pod the bytes came from.
+ */
+export function podRootOfDescriptorUrl(url: string): string | null {
+  if (typeof url !== 'string') return null;
+  let u: URL;
+  try { u = new URL(url); } catch { return null; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  const segments = u.pathname.split('/').filter(s => s.length > 0);
+  if (segments.length < 3 || segments[1] !== 'context-graphs') return null;
+  return `${u.origin}/${segments[0]!}/`;
+}
+
+/** What {@link makeServingPodOwnerReader} hands back and how long it may be reused. */
+export interface PodOwnerReaderOptions {
+  /**
+   * Reads the pod's agent registry and returns the WebID it publishes as its owner, or null
+   * when there is no registry there. Throwing is allowed and is treated as null.
+   */
+  readonly readOwner: (podUrl: string) => Promise<string | null>;
+  /** Injected so a test can age the cache without sleeping. */
+  readonly now?: () => number;
+  readonly ttlMs?: number;
+  readonly maxEntries?: number;
+  /** Called with the reason a lookup produced nothing. Wired to the relay's `log`. */
+  readonly onUnavailable?: (podUrl: string, reason: string) => void;
+}
+
+/**
+ * "Who does the pod that served these bytes say it belongs to?", cached.
+ *
+ * ★ THIS IS THE EVIDENCE HALF OF THE DESCRIPTOR BINDING — see `ProofOwnerScope` in
+ * @interego/core for what the comparison does with it and for the measurement that says the
+ * refusal costs no honest read. The registry document is the same one `runScopeGate` consults
+ * before letting anyone publish into that pod, so the binding is anchored on the substrate's
+ * own notion of pod ownership rather than on a second, weaker one invented here.
+ *
+ * ★ EVERY FAILURE RETURNS NULL, AND NULL MEANS `unchecked`. A 404, a timeout, a pod on
+ * infrastructure we do not run: all of them leave the binding exactly where it was before this
+ * function existed (`slug-only`, bound). Failing closed on an unreachable registry would turn
+ * a network blip into a wave of records reported as forgeries.
+ *
+ * ★ THE CACHE IS PER-READER, NOT MODULE STATE, so a test cannot inherit another test's answers
+ * and so the TTL is exercisable. It caches the null too: without that, a pod with no registry
+ * costs one fetch on EVERY descriptor read of it, which is the hot path this whole check sits
+ * on. The cost of caching a null is bounded by the TTL and can never produce a refusal.
+ */
+export function makeServingPodOwnerReader(
+  opts: PodOwnerReaderOptions,
+): (podUrl: string) => Promise<string | null> {
+  const now = opts.now ?? (() => Date.now());
+  const ttlMs = opts.ttlMs ?? 5 * 60_000;
+  const maxEntries = opts.maxEntries ?? 500;
+  const cache = new Map<string, { owner: string | null; expiresAt: number }>();
+
+  return async (podUrl: string): Promise<string | null> => {
+    const hit = cache.get(podUrl);
+    if (hit && hit.expiresAt > now()) return hit.owner;
+    if (hit) cache.delete(podUrl);
+
+    let owner: string | null = null;
+    try {
+      const read = await opts.readOwner(podUrl);
+      owner = typeof read === 'string' && read.trim().length > 0 ? read.trim() : null;
+      if (owner === null) opts.onUnavailable?.(podUrl, 'the pod publishes no owner WebID');
+    } catch (err) {
+      opts.onUnavailable?.(podUrl, `reading the pod's registry threw: ${(err as Error).message}`);
+      owner = null;
+    }
+
+    if (cache.size >= maxEntries) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
+    cache.set(podUrl, { owner, expiresAt: now() + ttlMs });
+    return owner;
+  };
+}
+
+/**
  * Explain a content-binding outcome in the terms a reader has to act on.
  *
  * ★ `'declared'` GETS THE LONGEST SENTENCE ON PURPOSE. It is the value most likely to be
@@ -157,13 +254,24 @@ export function contentBindingNote(
  * REFINES a true statement — this signer signed this record, and here is what the signature
  * does and does not cover. `bound: false` FALSIFIES the statement.
  *
- * ★ THE GATE IS `bound`, NEVER `basis`, AND THE DIFFERENCE IS MEASURED. Every descriptor_id
- * the substrate mints is a `urn:`, which can only ever bind `slug-only`. A sweep of 272
- * live pods on 2026-08-03 read 1,375 descriptors; 134 carried a proof; 134 bound
- * `slug-only`, 0 bound `exact-url`, 0 were unbound. So refusing on `bound === false`
- * refuses nothing that is live, and the obvious tightening — demanding `exact-url` —
- * refuses all 134 honest records. That is the fail-closed-on-honest-data direction this
- * area has already shipped once.
+ * ★ THE GATE IS `bound`, NEVER `basis`, AND THE DIFFERENCE IS MEASURED — TWICE, because the
+ * figures in this paragraph went stale the moment the binding got stronger and a stale
+ * measurement quoted as a current one is how a true claim stops being checkable.
+ *
+ *   2026-08-03: 272 pods, 1,375 descriptors, 134 proofs — 134 `slug-only`, 0 `exact-url`,
+ *               0 unbound. What it established: refusing on `bound === false` refuses
+ *               nothing live, and demanding `exact-url` would refuse all 134.
+ *   2026-08-04: 278 pods, 2,314 descriptors, 633 proofs on 13 pods — still 633 `slug-only`
+ *               and 0 `exact-url`, and every one of the 13 pods publishes a registry owner
+ *               EXACTLY equal to the `iep:ownerWebId` its proofs sign. That is what let the
+ *               URN branch start comparing the owner (`slug-and-owner`) and REFUSING a
+ *               disagreement: 633 of 633 honest proofs keep binding, 0 lose it.
+ *
+ * Both tightenings that look equally reasonable from here are still refused, and now for a
+ * measured reason rather than a cautious one: demanding `exact-url` refuses all 633, and
+ * demanding the delegation chain refuses 605 of them (only 28 reach
+ * `CryptographicallyVerified`). That is the fail-closed-on-honest-data direction this area
+ * has already shipped once.
  *
  * ★ THE REASON DOES NOT ACCUSE. `bound: false` has readings that are not forgeries: a
  * publisher that names its descriptors some other way reaches it too (the PGSL-primary

@@ -14,7 +14,11 @@ import {
   describeCoverage,
   type ComposableMember,
 } from '../applications/shared-workspace/src/compose.js';
-import type { StreamDeps } from '../applications/shared-workspace/src/stream.js';
+import { entryTurtle, WSP, type StreamDeps } from '../applications/shared-workspace/src/stream.js';
+// ★ THE EMITTER, NOT A REPLICA OF IT — `publish()` wraps every payload with this same
+// function, and the sequence check below is entirely about which region of the wrapped
+// document a number may be read from. A hand-rolled wrap here would be a second double.
+import { wrapAsTriG } from '@interego/solid';
 
 const WS = 'https://relay.test/ws/alpha';
 
@@ -564,5 +568,164 @@ describe('citations into other verticals', () => {
     // empty type list would claim the record exists and is untyped.
     const resolved = await resolveCitations([cites[0]!], async () => null);
     expect(resolved[0]!.resolved).toBe(false);
+  });
+});
+
+// ── The sequence check, which until this round had never executed ────────────────────────
+
+/**
+ * ★★ THE DEFECT THIS BLOCK CLOSES (residual gap 5). `verifyChain` has computed
+ * `seqMismatches` since it was written, and `StreamRow.seq` is read off the manifest row —
+ * which has no `seq` column. So on every real read the comparison looped over nothing,
+ * `declaredSeqChecked` was false, and the one removal the links structurally cannot see went
+ * unreported. A check that has never fired against real data is indistinguishable from no
+ * check, so it now has a producer: `readEntry` lifts the position out of the entry's own
+ * payload, on the `get_descriptor` the attestation was already paying for.
+ */
+describe('★★ wsp:seq has a producer, so the sequence check runs', () => {
+  const aliceAgent = 'did:web:agents.test:alice-1';
+  const signerOf = (s: string) => (s === aliceAgent ? alice.principal : null);
+  const graphIriFor = (url: string): string =>
+    `urn:iep:pod:${url.split('/').pop()!.replace(/\.ttl$/, '')}`;
+  const descriptorTurtleFor = (url: string): string =>
+    '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n\n'
+    + `<${url}>\n  a iep:ContextDescriptor ;\n  iep:describes <${graphIriFor(url)}> ;\n`
+    + `  iep:authorshipProof [ iep:descriptorId <${graphIriFor(url)}> ] .\n`;
+
+  /** Deps that serve a real wrapped payload per entry, carrying the seq each row declares. */
+  const seqDeps = (
+    byPod: Record<string, unknown>,
+    payloads: Record<string, { seq?: number; outsideBlock?: string; noPayload?: boolean }>,
+  ): StreamDeps => ({
+    ...makeDeps(byPod),
+    getDescriptor: vi.fn(async (args: Record<string, unknown>) => {
+      const url = String(args.url);
+      const p = payloads[url];
+      const turtle = descriptorTurtleFor(url) + (p?.outsideBlock ?? '');
+      const body = p === undefined || p.noPayload === true || p.seq === undefined
+        ? undefined
+        : entryTurtle({
+            entryIri: `https://alice.test/e/${p.seq}`,
+            workspace: WS,
+            seq: p.seq,
+            draft: { body: `entry ${p.seq}` },
+          });
+      return {
+        url,
+        turtle,
+        ...(body === undefined ? {} : {
+          graph: {
+            url: 'https://x/g', mediaType: 'text/turtle', encrypted: false,
+            content: wrapAsTriG(turtle, body, graphIriFor(url)),
+          },
+        }),
+        authorship: { authorshipVerified: true, signedBy: aliceAgent, contentBinding: 'bound' },
+      };
+    }),
+  });
+
+  const THREE = [
+    { url: 'https://alice.test/c/s0.ttl', at: '2026-08-01T10:00:00Z' },
+    { url: 'https://alice.test/c/s1.ttl', at: '2026-08-01T11:00:00Z', prior: 'https://alice.test/c/s0.ttl' },
+    { url: 'https://alice.test/c/s2.ttl', at: '2026-08-01T12:00:00Z', prior: 'https://alice.test/c/s1.ttl' },
+  ];
+  const pods = { 'https://alice.test/': manifest(alice.stream, THREE) };
+  const honest = {
+    'https://alice.test/c/s0.ttl': { seq: 0 },
+    'https://alice.test/c/s1.ttl': { seq: 1 },
+    'https://alice.test/c/s2.ttl': { seq: 2 },
+  };
+
+  it('★★ an honest log is CHECKED, not merely unexamined', async () => {
+    const view = await composeWorkspace(
+      { workspace: WS, members: [alice], verifyAuthorship: true, signerOf },
+      seqDeps(pods, honest),
+    );
+    expect(view.entries).toHaveLength(3);
+    // The assertion that says the round did something: false on every read before it.
+    expect(view.streams[0]!.report.declaredSeqChecked).toBe(true);
+    expect(view.streams[0]!.report.seqMismatches).toEqual([]);
+    expect(view.complete).toBe(true);
+  });
+
+  it('★★ a row REMOVED AND LINKED AROUND is caught — and nothing else catches it', async () => {
+    // s1 is gone and s2 was re-pointed at s0. One head, one root, no dangling link, every
+    // row on the path: the link walk cannot tell this from an honest two-entry log. The
+    // number each entry declares is the only surviving evidence that a position is missing.
+    const around = {
+      'https://alice.test/': manifest(alice.stream, [
+        THREE[0]!,
+        { ...THREE[2]!, prior: 'https://alice.test/c/s0.ttl' },
+      ]),
+    };
+
+    // THE CONTROL, and it is what makes the case below evidence rather than decoration: the
+    // cheap read — the one every caller gets by default — reports this stream as intact.
+    const cheap = await composeWorkspace({ workspace: WS, members: [alice] }, makeDeps(around));
+    expect(cheap.streams[0]!.report.intact).toBe(true);
+    expect(cheap.streams[0]!.report.declaredSeqChecked).toBe(false);
+    expect(cheap.entries).toHaveLength(2);
+
+    const view = await composeWorkspace(
+      { workspace: WS, members: [alice], verifyAuthorship: true, signerOf },
+      seqDeps(around, honest),
+    );
+    expect(view.entries).toHaveLength(0);
+    expect(view.unverified).toHaveLength(1);
+    const report = view.unverified[0]!.report;
+    expect(report.declaredSeqChecked).toBe(true);
+    expect(report.seqMismatches).toEqual([
+      { url: 'https://alice.test/c/s2.ttl', declared: 2, position: 1 },
+    ]);
+    expect(view.complete).toBe(false);
+    // ★ AND THE REPORT IN `streams` IS THE ONE THE DECISION WAS MADE ON. Leaving the
+    // pre-check report there would show a caller `intact: true` beside a withheld stream.
+    expect(view.streams[0]!.report).toBe(report);
+  });
+
+  it('★ a payload with no readable position leaves the stream ADMITTED — unchecked is not refused', async () => {
+    // Every entry written before the shape required `wsp:seq`, and every payload the reader
+    // cannot see (encrypted to others, absent), reaches this. Refusing here would withhold
+    // whole histories over a number nobody can produce retroactively.
+    const view = await composeWorkspace(
+      { workspace: WS, members: [alice], verifyAuthorship: true, signerOf },
+      seqDeps(pods, {
+        'https://alice.test/c/s0.ttl': { noPayload: true },
+        'https://alice.test/c/s1.ttl': { noPayload: true },
+        'https://alice.test/c/s2.ttl': { noPayload: true },
+      }),
+    );
+    expect(view.entries).toHaveLength(3);
+    expect(view.streams[0]!.report.declaredSeqChecked).toBe(false);
+    expect(view.streams[0]!.report.seqMismatches).toEqual([]);
+  });
+
+  it('★★ the position is read from the DIGESTED region and nowhere else', async () => {
+    // A `wsp:Entry` in the DEFAULT graph — beside the block, never covered by the signed
+    // digest — declaring a position that would make this honest log look tampered with. It
+    // is the manufactured-participant hole in its numbering form: a reader that parsed the
+    // whole served document would let anyone re-number somebody else's log.
+    const decoy = `\n@prefix wsp: <${WSP}> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n`
+      + '<https://alice.test/e/decoy> a wsp:Entry ; wsp:seq "97"^^xsd:nonNegativeInteger .\n';
+    const view = await composeWorkspace(
+      { workspace: WS, members: [alice], verifyAuthorship: true, signerOf },
+      seqDeps(pods, {
+        'https://alice.test/c/s0.ttl': { seq: 0, outsideBlock: decoy },
+        'https://alice.test/c/s1.ttl': { seq: 1 },
+        'https://alice.test/c/s2.ttl': { seq: 2 },
+      }),
+    );
+    expect(view.streams[0]!.report.seqMismatches).toEqual([]);
+    expect(view.streams[0]!.report.declaredSeqChecked).toBe(true);
+    expect(view.entries).toHaveLength(3);
+  });
+
+  it('★ the check costs NO extra read — it re-uses the attestation\'s', async () => {
+    const deps = seqDeps(pods, honest);
+    const view = await composeWorkspace(
+      { workspace: WS, members: [alice], verifyAuthorship: true, signerOf }, deps,
+    );
+    expect(view.descriptorReads).toBe(3);
+    expect(vi.mocked(deps.getDescriptor!)).toHaveBeenCalledTimes(3);
   });
 });

@@ -30,6 +30,7 @@ import {
   type WorkspaceRecord, type ConvenerEvidence,
   type FieldProvenance, type EvidenceProvenance,
   type RoleDefinition, type RoleProfileDocument, type RoleTableEvidence,
+  type DescriptorBindingBasis,
 } from '../applications/shared-workspace/src/roster.js';
 import { composeWorkspace, isUnder, describeCoverage, type ComposableMember } from '../applications/shared-workspace/src/compose.js';
 import {
@@ -364,6 +365,27 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
    * absent must behave as the weak one rather than as the strong one.
    */
   const basisShapes = [undefined, 'slug-only', 'exact-url'] as const;
+
+  /**
+   * ★ THE UNION GREW AND THIS LIST DID NOT — so the list is TRIAGED at the type level.
+   *
+   * `slug-and-owner` was added when the substrate started comparing the proof's signed
+   * `iep:ownerWebId` against the owner the serving pod publishes, and nothing would have said
+   * that `basisShapes` no longer covers the union: the array is a literal, not a partition.
+   * A `Record<DescriptorBindingBasis, …>` is, so a fifth value stops this file compiling until
+   * somebody decides which side it belongs on — inside the 76,800-configuration lattice, or in
+   * the direct case below. The lattice deliberately does NOT grow: the property asserted is
+   * "the basis changes nothing", and a fourth shape multiplies every configuration by 4/3 to
+   * re-assert on the same fold what one direct call establishes.
+   */
+  const BASIS_TRIAGE: Record<DescriptorBindingBasis, 'in the lattice' | 'in the direct case'> = {
+    'exact-url': 'in the lattice',
+    'slug-only': 'in the lattice',
+    'slug-and-owner': 'in the direct case',
+    // `bound: false` — `refuseAttestation` refuses on the BOOLEAN, never on the basis, and
+    // the four unbound causes are enumerated by the attestation shapes above.
+    none: 'in the direct case',
+  };
 
   const provenanceShapes = ['none', 'self', 'other-record', 'unknown-source'] as const;
   const provenanceOf = (shape: typeof provenanceShapes[number], head: string) => {
@@ -710,6 +732,35 @@ describe('★★ MONOTONICITY: no configuration grants more than a weaker one', 
    */
   const yieldToEventLoop = (): Promise<void> =>
     new Promise<void>(resolve => { setTimeout(resolve, 0); });
+
+  it('★ the basis values the lattice does NOT enumerate change nothing either', () => {
+    // The other half of `BASIS_TRIAGE`. `slug-and-owner` is the strongest URN-form verdict the
+    // substrate can reach and this layer never produces it — but the type admits it, a
+    // hand-built Attestation can carry it, and a fold that started treating it as special
+    // would be discriminating on a basis under a design that says none of them are gates.
+    // One direct call, rather than 25,600 more lattice points re-asserting the same thing.
+    expect(BASIS_TRIAGE['slug-and-owner']).toBe('in the direct case');
+    const base: Attestation = { authorshipVerified: true, signedBy: 'k', boundToDescriptor: true };
+    const rosterWith = (basis?: DescriptorBindingBasis): Roster => foldRoster({
+      workspace: WS,
+      grants: [{
+        head: 'https://c.test/g1.ttl', workspace: WS, grantedTo: 'https://m.test/#me',
+        role: `${P}#Contributor`, attestation: basis === undefined ? base : { ...base, descriptorBindingBasis: basis },
+      }],
+      acceptances: [{
+        head: 'https://m.test/a1.ttl', workspace: WS, member: 'https://m.test/#me',
+        accepts: 'https://c.test/g1.ttl', stream: 'https://m.test/s',
+        attestation: basis === undefined ? base : { ...base, descriptorBindingBasis: basis },
+      }],
+      profile: PROFILE,
+      scopes: [],
+      attestation: { convener: 'https://c.test/#me', signerOf: () => 'https://c.test/#me' },
+    });
+    // Compared against the SAME fold with no basis at all, field by field, because "it still
+    // admits" is satisfied by a fold that quietly changed a divergence or a role.
+    expect(rosterWith('slug-and-owner')).toEqual(rosterWith(undefined));
+    expect(rosterWith('none')).toEqual(rosterWith(undefined));
+  });
 
   it('★ AXIS A — enumerating every grant × acceptance × revoked × withdrawn × second grant head × acceptance count × field provenance × descriptor-binding basis × declared convener × declared role profile × evidence provenance × role table', async () => {
     let cases = 0;

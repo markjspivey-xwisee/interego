@@ -71,7 +71,7 @@
  */
 
 import {
-  readStream, verifyChain, readAttestation,
+  readStream, verifyChain, readEntry,
   type StreamDeps, type StreamRow, type ChainReport,
 } from './stream.js';
 import { refuseAttestation, signerIsSelf, type AttributionGrade, type SignerResolver } from './roster.js';
@@ -374,7 +374,10 @@ export async function composeWorkspace(
 
     const report = verifyChain(own);
     const record: StreamOutcome = { member, rows: own.length, report };
-    streams.push(record);
+    // The index, because this record is REPLACED further down when the per-entry reads make
+    // the declared positions available: a caller must not read one report out of `streams`
+    // while `unverified` was decided on another.
+    const recordIndex = streams.push(record) - 1;
 
     if (foreign.length > 0) {
       // ★ ONE FAULT, REPORTED ONCE, WITH THE SECOND REPORT LABELLED AS ITS CONSEQUENCE.
@@ -452,17 +455,52 @@ export async function composeWorkspace(
     // verified catch-up issues members × entries requests at once. That is stated rather
     // than smoothed over: a limiter here would hide the cost behind latency instead of
     // reducing it, and `descriptorReads` is what makes the real number arguable.
-    const attestations = verifyAuthorship
+    const reads = verifyAuthorship
       ? await Promise.all(report.ordered.map(async row => {
           descriptorReads++;
-          return readAttestation(row.descriptorUrl, deps);
+          return readEntry(row.descriptorUrl, deps);
         }))
       : null;
+    const attestations = reads === null ? null : reads.map(r => r.attestation);
+
+    // ★★ THE SEQUENCE CHECK, RUN FOR THE FIRST TIME AGAINST REAL DATA.
+    //
+    // `verifyChain` has always compared each row's declared `wsp:seq` against the position
+    // its links walked it into, and on a manifest read `seq` is ALWAYS absent — the manifest
+    // has no such column — so `declaredSeqChecked` was false on every real stream and the
+    // comparison looped over an empty list. It was a check that had never once executed.
+    //
+    // The number lives in each entry's payload, and the reads above have just fetched every
+    // one of those payloads for the attestation. So the same responses are re-verified with
+    // the positions filled in: no extra call, and the removal the links structurally cannot
+    // see — a row deleted with the survivor re-pointed at its grandparent, which walks clean
+    // with one head, one root and no dangling link — now fails.
+    //
+    // ★ IT RUNS ONLY UNDER `verifyAuthorship`, and that is a property worth stating rather
+    // than apologising for: this path already withholds MORE than the cheap read, so a
+    // stream refused here is refused by the strict configuration alone. The monotonicity the
+    // adversarial enumeration pins (`true ⊆ false`) is preserved — a seq mismatch withholds,
+    // it never admits.
+    if (reads !== null) {
+      const seqReport = verifyChain(report.ordered.map((row, i) => ({ ...row, seq: reads[i]!.seq })));
+      // Reported whether it passes or fails: `declaredSeqChecked` is the field that tells a
+      // caller which of "the numbering agrees with the links" and "nobody looked" they are
+      // holding, and it is false for every read that does not come through here.
+      const checked: StreamOutcome = { member, rows: own.length, report: seqReport };
+      streams[recordIndex] = checked;
+      if (!seqReport.intact) {
+        // Withheld whole, exactly as a forked chain is: every entry is present and their
+        // ORDER is now in question, and a feed that renders a log whose own numbering
+        // contradicts its links is asserting a history nobody can stand behind.
+        unverified.push(checked);
+        continue;
+      }
+    }
     const withheld: { descriptorUrl: string; seqInStream: number; because: string }[] = [];
 
     report.ordered.forEach((row, seqInStream) => {
       if (attestations !== null) {
-        const because = refuseAttestation(attestations[seqInStream], member.principal, signerOf);
+        const because = refuseAttestation(attestations[seqInStream]!, member.principal, signerOf);
         if (because !== null) {
           withheld.push({ descriptorUrl: row.descriptorUrl, seqInStream, because });
           return;

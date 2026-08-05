@@ -335,6 +335,10 @@ import {
   // because this file opens a listener on import, so a decision written here could only be
   // pinned by a regex over its own source; this one is executed by the suite.
   authorshipVerdict,
+  // The evidence half of the descriptor binding: which pod served the bytes, and who that
+  // pod says it belongs to. Both live outside server.ts for the same reason as the verdict.
+  podRootOfDescriptorUrl,
+  makeServingPodOwnerReader,
   type ReadContentBinding,
 } from './authorship-content-binding.js';
 
@@ -1673,8 +1677,14 @@ async function readAppendOnlyEntries(podUrl: string): Promise<ManifestEntry[]> {
 // would be a security bug).
 const DESCRIPTOR_BODY_CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
 const DESCRIPTOR_BODY_CACHE_MAX = 2048;
-const descriptorBodyCache = new Map<string, { content: string; mediaType: string; encrypted: boolean; expiresAt: number }>();
-function cacheDescriptorBody(url: string, value: { content: string; mediaType: string; encrypted: boolean }): void {
+// ★ `landedUrl` IS CACHED WITH THE BODY, and it is not bookkeeping. The descriptor binding is
+// anchored on where the bytes CAME FROM, not on the URL asked for — the same rule
+// `followAlternateTurtle` learned, for the same two reasons: `normalizeCssUrl` rewrites a
+// legacy CSS host to a DIFFERENT ORIGIN, and redirects move the target. A cache that stored
+// only the body would answer the second read of a URL with no idea where it landed, so the
+// binding would silently weaken to `slug-only` on every cache hit.
+const descriptorBodyCache = new Map<string, { content: string; mediaType: string; encrypted: boolean; landedUrl?: string; expiresAt: number }>();
+function cacheDescriptorBody(url: string, value: { content: string; mediaType: string; encrypted: boolean; landedUrl?: string }): void {
   if (value.encrypted) return;
   if (descriptorBodyCache.size >= DESCRIPTOR_BODY_CACHE_MAX) {
     const oldest = descriptorBodyCache.keys().next().value;
@@ -1682,6 +1692,26 @@ function cacheDescriptorBody(url: string, value: { content: string; mediaType: s
   }
   descriptorBodyCache.set(url, { ...value, expiresAt: Date.now() + DESCRIPTOR_BODY_CACHE_TTL_MS });
 }
+
+// Who does the pod that served a descriptor say it belongs to? Read once per pod per TTL and
+// handed to `proofBindsToDescriptorUrl` as the location half of a URN-form binding — a URN
+// names the file and nothing else, so without this a proof lifted onto another party's pod
+// bound on the strength of a matching epoch.
+//
+// ★ `guardedInvokeFetch`, NOT `solidFetch`, AND THE DIFFERENCE IS R4. This URL is DERIVED
+// FROM A CALLER-SUPPLIED ONE: `get_descriptor` takes any URL, and `podRootOfDescriptorUrl`
+// cuts a pod root out of wherever it landed. A bare `solidFetch` here would be a second,
+// unscreened egress on a caller-chosen host — the exact class the SSRF round closed, added
+// back by a check whose whole purpose is defensive. It is the same fetcher the delegation
+// walk three lines below the binding already uses on the same derived pod URL.
+const servingPodOwner = makeServingPodOwnerReader({
+  readOwner: async (podUrl: string) =>
+    (await readAgentRegistry(podUrl, { fetch: guardedInvokeFetch }))?.webId ?? null,
+  onUnavailable: (podUrl, reason) =>
+    // Not a warning: an unreadable registry is ordinary (foreign pods, 404s) and only ever
+    // WEAKENS a binding to `slug-only`. Logged so a wave of them is visible if it happens.
+    log(`descriptor binding: owner of ${podUrl} not established — ${reason}`),
+});
 
 // ── Deferred-publish tracker ────────────────────────────────
 //
@@ -4284,10 +4314,19 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
   // a long TTL keyed by URL only.
   const cached = !args.bypass_cache ? descriptorBodyCache.get(url) : undefined;
   let turtle: string;
+  // Where the bytes actually came from, after normalisation and redirects. Every later
+  // question about LOCATION — which pod owns this, does the proof name this record — is
+  // asked of this and never of `url`. See the cache comment for why anchoring on the URL
+  // asked for is the bug rather than the simplification.
+  let landedUrl: string;
   if (cached && cached.expiresAt > Date.now() && !cached.encrypted) {
     turtle = cached.content;
+    // A pre-existing entry (written before this field existed) has no landed URL. Falling
+    // back to the request is the honest answer — it is what the old code compared — and it
+    // can only weaken a binding, never strengthen one.
+    landedUrl = cached.landedUrl ?? url;
   } else {
-    const resp = await guardedInvokeFetch(url, {
+    const { response: resp, landedUrl: landed } = await guardedInvokeFetchLanded(url, {
       method: 'GET',
       headers: { 'Accept': 'text/turtle' },
     });
@@ -4297,7 +4336,8 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
       return JSON.stringify({ error: 'descriptor could not be retrieved' });
     }
     turtle = await resp.text();
-    cacheDescriptorBody(url, { content: turtle, mediaType: 'text/turtle', encrypted: false });
+    landedUrl = landed;
+    cacheDescriptorBody(url, { content: turtle, mediaType: 'text/turtle', encrypted: false, landedUrl: landed });
   }
 
   // Hypermedia follow-your-nose: the descriptor Turtle includes
@@ -4376,10 +4416,23 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
     // host's `.internal.` migration. Live descriptors carry the pre-migration host inside
     // signed bytes that can never be rewritten, and a raw comparison reports those honest
     // records as unbound.
+    //
+    // ★ AND THE URL COMPARED IS THE LANDED ONE. Every `descriptor_id` the substrate mints is
+    // a URN, and a URN names the FILE — so on the terminal segment alone a proof lifted onto
+    // another party's pod at the same epoch bound clean. The location is compared through the
+    // other field the same signature covers, `iep:ownerWebId`, against the owner the SERVING
+    // pod publishes; `podRootOfDescriptorUrl` derives that pod from where the bytes landed,
+    // because the URL asked for can be a legacy host or a redirect and would name the wrong
+    // pod (or none). A null owner is `unchecked`, not `refused` — see `ProofOwnerScope`.
+    const servingPodRoot = podRootOfDescriptorUrl(landedUrl);
     const descriptorBindingResult = proofBindsToDescriptorUrl(
       parsedProof.descriptorId,
-      url,
+      landedUrl,
       normalizeCssUrl,
+      {
+        claimedOwner: parsedProof.ownerWebId,
+        servingPodOwner: servingPodRoot === null ? null : await servingPodOwner(servingPodRoot),
+      },
     );
     const descriptorBinding = {
       bound: descriptorBindingResult.bound,
@@ -4421,10 +4474,10 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
         try {
           // Find the pod URL for this descriptor — strip back to the
           // container so the chain walk knows where the agent registry
-          // and credentials live. Pattern matches the publish-side
-          // `${pod}context-graphs/...` layout produced by `publish()`.
-          const m = url.match(/^(https?:\/\/[^/]+\/[^/]+\/)context-graphs\//);
-          const inferredPodUrl = m ? m[1]! : undefined;
+          // and credentials live. `podRootOfDescriptorUrl` is the same rule the binding's
+          // owner lookup uses, off the same LANDED url, so the trust label and the binding
+          // verdict can never turn out to be about two different pods.
+          const inferredPodUrl = servingPodRoot ?? undefined;
           if (inferredPodUrl) {
             const chainResult = await verifyAgentDelegation(
               parsedProof.issuer,
@@ -7834,19 +7887,24 @@ const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
             + 'else fabricated verifies clean and names that principal — signature validity says the proof\'s bytes were '
             + 'not altered, not what the proof is attached to. Read this field before attributing the record to signedBy.',
           properties: {
-            bound: { type: 'boolean', description: 'The proof\'s iep:descriptorId matched the URL this record was served from' },
+            bound: { type: 'boolean', description: 'The proof\'s iep:descriptorId matched the URL this record was served from, and — for a URN-form id — the pod serving it publishes the same owner the proof signs' },
             basis: {
               type: 'string',
-              enum: ['exact-url', 'slug-only', 'none'],
+              enum: ['exact-url', 'slug-and-owner', 'slug-only', 'none'],
               description:
-                'HOW it matched, because the two passing values are not equally strong. `exact-url`: the proof names an '
+                'HOW it matched, because the three passing values are not equally strong. `exact-url`: the proof names an '
                 + 'http(s) URL and it was compared in full (host, pod, container, name) after host normalisation — nothing '
-                + 'unexamined. `slug-only`: the proof names a URN, whose only defined relation to a URL is its terminal '
-                + 'segment, so ONLY that segment matched — the host, the pod and the container were not compared and '
-                + 'cannot be, because the URN-to-URL mapping discards them. A proof lifted onto a same-named record on a '
-                + 'different pod, or a different host, reaches `slug-only` too. `none`: not bound.',
+                + 'unexamined. `slug-and-owner`: the proof names a URN, whose only defined relation to a URL is its '
+                + 'terminal segment, so only that segment was matched — but the pod that SERVED the bytes publishes the '
+                + 'same iep:ownerWebId the proof signs, so the record is not sitting on another party\'s pod. Still '
+                + 'uncompared: the container within that pod, and the pod\'s ownership claim is the pod\'s own. '
+                + '`slug-only`: the terminal segment matched and the location could not be checked at all (the proof '
+                + 'carries no ownerWebId, or the serving pod publishes no readable owner) — a proof lifted onto a '
+                + 'same-named record on a different pod reaches this too, which is why it is reported apart from '
+                + '`slug-and-owner`. `none`: not bound — including a URN whose segment matched while the serving pod\'s '
+                + 'owner DISAGREES with the signed one, which is exactly the shape of a lifted proof.',
             },
-            note: { type: 'string', description: 'Names what was compared and what was not. Present on a refusal AND on a slug-only pass.' },
+            note: { type: 'string', description: 'Names what was compared and what was not. Present on a refusal AND on both URN-form passes.' },
           },
         },
         reason: { type: 'string', description: 'Diagnostic when authorshipVerified is false' },

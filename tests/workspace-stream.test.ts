@@ -21,6 +21,8 @@ import {
   appendEntry,
   appendWithRetry,
   readAttestation,
+  readDeclaredSeq,
+  WSP,
   proofDescriptorId,
   verifierStreamIri,
   WSP_SHAPES,
@@ -716,14 +718,13 @@ describe('proofBindsToDescriptorUrl — is this proof about THIS record, and on 
     expect(proofBindsToDescriptorUrl(served, served)).toMatchObject({ bound: true, basis: 'exact-url' });
   });
 
-  it('★ the URN pod is NOT compared, and that is a limit this test states rather than hides', () => {
+  it('★ the URN pod is NOT compared FROM THE URN, and that is a limit this test states rather than hides', () => {
     // `slugFromIri` maps a urn onto its last segment only, so the pod is not recoverable
-    // from the URL by anyone. A proof lifted across pods — or onto an entirely foreign host
-    // — at the same epoch binds, and no amount of care in this function changes that. The
-    // durable fix is upstream: sign a URL, which the case above then compares in full.
-    // Asserted as `true` deliberately: a test that pinned the wish rather than the behaviour
-    // is how the previous round's docstring came to claim the opposite of what ran. The
-    // `slug-only` basis is asserted beside it so the pass is never read as a strong one.
+    // from the URL by anyone. With NO owner evidence supplied, a proof lifted across pods —
+    // or onto an entirely foreign host — at the same epoch still binds, and no amount of
+    // care with the two STRINGS changes that. Asserted as `true` deliberately: a test that
+    // pinned the wish rather than the behaviour is how a previous round's docstring came to
+    // claim the opposite of what ran. What closes it is a THIRD input, below.
     expect(proofBindsToDescriptorUrl(
       'urn:iep:alice-pod:1712345678901',
       'https://css.test/mallory-pod/context-graphs/1712345678901.ttl',
@@ -732,6 +733,94 @@ describe('proofBindsToDescriptorUrl — is this proof about THIS record, and on 
       'urn:iep:alice-pod:1712345678901',
       'https://evil.example/x/1712345678901.ttl',
     )).toMatchObject({ bound: true, basis: 'slug-only' });
+  });
+
+  // ── The location, compared through the other field the same signature covers ───────────
+  //
+  // ★ THE DEFECT THESE CLOSE (residual gap 1). Every `descriptor_id` the substrate mints is
+  // a URN, so every live proof reached `slug-only` — a pass on ONE path segment. A party who
+  // controls any pod and picks a colliding epoch therefore lifted somebody else's proof onto
+  // their own record and the relay reported it as that person's authorship. `iep:ownerWebId`
+  // is inside the signed payload, so it survives the lift unaltered and names the wrong pod.
+  const LIFT = ['urn:iep:alice-pod:1712345678901', 'https://css.test/mallory-pod/context-graphs/1712345678901.ttl'] as const;
+  const ALICE = 'https://id.test/users/alice#me';
+  const MALLORY = 'https://id.test/users/mallory#me';
+
+  it('★★ the lift REFUSES once the serving pod\'s owner is known', () => {
+    const r = proofBindsToDescriptorUrl(LIFT[0], LIFT[1], undefined, {
+      claimedOwner: ALICE, servingPodOwner: MALLORY,
+    });
+    expect(r).toMatchObject({ bound: false, basis: 'none' });
+    // The refusal must name BOTH owners: "not bound" with no diagnostic is what makes an
+    // operator distrust the report rather than the record.
+    expect(r.caveat).toContain(ALICE);
+    expect(r.caveat).toContain(MALLORY);
+  });
+
+  it('★★ the honest record on its own pod binds on the STRONGER basis', () => {
+    const r = proofBindsToDescriptorUrl(
+      'urn:iep:alice-pod:1712345678901',
+      'https://css.test/alice-pod/context-graphs/1712345678901.ttl',
+      undefined,
+      { claimedOwner: ALICE, servingPodOwner: ALICE },
+    );
+    expect(r).toMatchObject({ bound: true, basis: 'slug-and-owner' });
+    // A pass that claims more than it checked is the failure this whole area keeps having.
+    expect(r.caveat).toMatch(/still uncompared/);
+  });
+
+  it('★★ ABSENCE on either side is `unchecked`, never `refused`', () => {
+    // Measured, not supposed: 633 of 633 live proofs bind today, and a reader that turned
+    // "I could not establish the pod's owner" into a refusal would report all of them on
+    // any pod whose registry 404s or times out. Both absences keep the OLD verdict exactly.
+    for (const scope of [
+      { claimedOwner: ALICE, servingPodOwner: null },
+      { claimedOwner: null, servingPodOwner: MALLORY },
+      { claimedOwner: '', servingPodOwner: '   ' },
+      {},
+    ]) {
+      expect(proofBindsToDescriptorUrl(LIFT[0], LIFT[1], undefined, scope))
+        .toMatchObject({ bound: true, basis: 'slug-only' });
+    }
+    // …and the two absences are named apart in the caveat, because one is the proof's fault
+    // and the other is the reader's.
+    expect(proofBindsToDescriptorUrl(LIFT[0], LIFT[1], undefined, { claimedOwner: ALICE, servingPodOwner: null }).caveat)
+      .toMatch(/could not be established/);
+    expect(proofBindsToDescriptorUrl(LIFT[0], LIFT[1], undefined, { claimedOwner: null, servingPodOwner: MALLORY }).caveat)
+      .toMatch(/no iep:ownerWebId/);
+  });
+
+  it('★ owners compare case-insensitively — an EIP-55 respelling is the same account', () => {
+    // A `did:ethr:0x…` is checksum-cased. Refusing on the case would accuse an author of
+    // forging their own record, and an attacker gains nothing: they would still need the
+    // serving pod to publish a case-variant of the victim's WebID, which is the same public
+    // false claim as publishing it exactly.
+    const lower = 'did:ethr:0xd08fe9a749789ac1bef760284095f44232f20463';
+    const eip55 = 'did:ethr:0xD08fe9a749789ac1BeF760284095f44232F20463';
+    expect(proofBindsToDescriptorUrl(
+      'urn:iep:eth-d08fe9a74978:17', 'https://css.test/eth-d08fe9a74978/context-graphs/17.ttl',
+      undefined, { claimedOwner: eip55, servingPodOwner: lower },
+    )).toMatchObject({ bound: true, basis: 'slug-and-owner' });
+  });
+
+  it('★ the owner never RESCUES a segment that does not match', () => {
+    // Direction matters: owner evidence may refuse and may grade, and must never admit. A
+    // proof about a different record on the right pod is still about a different record.
+    expect(proofBindsToDescriptorUrl(
+      'urn:iep:alice-pod:8', 'https://css.test/alice-pod/context-graphs/9.ttl',
+      undefined, { claimedOwner: ALICE, servingPodOwner: ALICE },
+    )).toMatchObject({ bound: false, basis: 'none' });
+    // Nor does a matching owner turn a foreign URL-form id into a pass.
+    expect(proofBindsToDescriptorUrl(
+      'https://evil.example/anything/9.ttl', 'https://css.test/alice-pod/context-graphs/9.ttl',
+      undefined, { claimedOwner: ALICE, servingPodOwner: ALICE },
+    )).toMatchObject({ bound: false, basis: 'none' });
+  });
+
+  it('★ an exact-url binding is unchanged by owner evidence — it had nothing left to compare', () => {
+    const served = 'https://css.test/alice-pod/context-graphs/9.ttl';
+    expect(proofBindsToDescriptorUrl(served, served, undefined, { claimedOwner: ALICE, servingPodOwner: MALLORY }))
+      .toMatchObject({ bound: true, basis: 'exact-url' });
   });
 
   it('★ the relay-minted urn shapes whose 3rd segment is a ROLE still bind', () => {
@@ -992,5 +1081,67 @@ describe('verifierStreamIri — a live verifier may not name its stream after th
     // `${WS}/stream/u-x-` is not `${WS}/stream/u-x`, but an empty epoch is a caller who meant
     // "no epoch" and would be one edit away from the unsuffixed IRI that is already forked.
     expect(() => verifierStreamIri(WS, 'u-x', '')).toThrow(/must not be empty/);
+  });
+});
+
+// ── The position an entry declares, and where it may be read from ────────────────────────
+
+describe('★ readDeclaredSeq — the producer `wsp:seq` never had', () => {
+  const GRAPH = 'urn:iep:pod:e1';
+  const DESC = '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n\n'
+    + `<https://alice.test/c/e1.ttl> a iep:ContextDescriptor ; iep:describes <${GRAPH}> .\n`;
+  const wrap = (block: string, outside = ''): Record<string, unknown> => ({
+    turtle: DESC + outside,
+    graph: { content: `${DESC}${outside}\n<${GRAPH}> {\n${block}\n}\n` },
+  });
+  const entry = (seq: string): string =>
+    `@prefix wsp: <${WSP}> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n`
+    + `<https://alice.test/e/1> a wsp:Entry ; wsp:seq ${seq} .`;
+
+  it('reads the number the entry declares', () => {
+    expect(readDeclaredSeq(wrap(entry('"3"^^xsd:nonNegativeInteger'))).seq).toBe(3);
+    // Zero is a position, not an absence — an `if (!seq)` here loses the first entry of
+    // every log, which is the row a truncation removes.
+    expect(readDeclaredSeq(wrap(entry('"0"^^xsd:nonNegativeInteger'))).seq).toBe(0);
+  });
+
+  it('★★ reads it from the DIGESTED region only', () => {
+    // A `wsp:Entry` in the default graph is bytes nobody signed. Reading a position from
+    // there lets anyone re-number somebody else's log — the manufactured-participant hole
+    // in its numbering form, one field over from where it was found the first time.
+    const outside = `@prefix wsp: <${WSP}> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n`
+      + '<https://alice.test/e/decoy> a wsp:Entry ; wsp:seq "97"^^xsd:nonNegativeInteger .\n';
+    expect(readDeclaredSeq(wrap(entry('"3"^^xsd:nonNegativeInteger'), outside)).seq).toBe(3);
+  });
+
+  it('★ no covered region is no position — and it says which of the three it was', () => {
+    const r = readDeclaredSeq({ turtle: DESC });
+    expect(r.seq).toBeNull();
+    expect(r.seqNote).toMatch(/no region of this record is covered/);
+  });
+
+  it('★ TWO wsp:Entry subjects in the covered region is ambiguous, not a coin toss', () => {
+    // Picking either states a position the record does not have, and the position is what
+    // the chain check compares against.
+    const two = `${entry('"3"^^xsd:nonNegativeInteger')}\n`
+      + `<https://alice.test/e/2> a wsp:Entry ; wsp:seq "4"^^xsd:nonNegativeInteger .`;
+    const r = readDeclaredSeq(wrap(two));
+    expect(r.seq).toBeNull();
+    expect(r.seqNote).toMatch(/2 wsp:Entry subjects/);
+  });
+
+  it('★ a missing or non-integer wsp:seq is null WITH its own reason', () => {
+    const none = readDeclaredSeq(wrap(`@prefix wsp: <${WSP}> .\n<https://alice.test/e/1> a wsp:Entry .`));
+    expect(none.seq).toBeNull();
+    expect(none.seqNote).toMatch(/declares no wsp:seq/);
+    const bad = readDeclaredSeq(wrap(entry('"-1"')));
+    expect(bad.seq).toBeNull();
+    expect(bad.seqNote).toMatch(/not a non-negative integer/);
+  });
+
+  it('an unparseable covered payload is null, not a throw out of the read path', () => {
+    const r = readDeclaredSeq({ turtle: DESC, graph: { content: `${DESC}\n<${GRAPH}> {\n <<< \n}\n` } });
+    expect(r.seq).toBeNull();
+    expect(r.seqNote).toMatch(/not parseable Turtle|declares no wsp:Entry/);
   });
 });

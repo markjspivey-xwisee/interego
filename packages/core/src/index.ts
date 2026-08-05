@@ -117,6 +117,7 @@ export type {
   ContentBinding,
   DescriptorBinding,
   DescriptorBindingBasis,
+  ProofOwnerScope,
 } from './model/index.js';
 
 // ── Causality (Pearl's SCM Framework) ───────────────────────
