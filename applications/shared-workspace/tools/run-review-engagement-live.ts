@@ -50,13 +50,25 @@ if (!PERFORMER_BEARER || !CONVENER_BEARER) {
 // ── The cast, by pod ─────────────────────────────────────────────────────────
 
 const CONVENER_POD_SEGMENT = 'u-eth-9bf50894ff23';
-const PERFORMER_POD_SEGMENT = 'u-eth-8f3b8e939600';
+/**
+ * ★ THE PERFORMER IS A PARAMETER, BECAUSE A DEMO THAT CANNOT BE RE-RUN CANNOT BE CHECKED.
+ *
+ * This was a constant, and re-running the engagement therefore APPENDED to a stream that
+ * already held twelve entries — while the L&D side counts one execution per distinct
+ * `task_id`, so a second observation of the same twelve reviews under a map naming a
+ * different pointer for them would read twenty-four. That is the double-count this round
+ * fixed on the read side, reintroduced from the write side by a hardcoded identity. A
+ * reader who wants to see the whole chain run end to end now points it at a performer whose
+ * work has not already been observed, which is the only way the number they get is theirs.
+ */
+const PERFORMER_POD_SEGMENT = process.env.WSP_PERFORMER_POD ?? 'u-eth-8f3b8e939600';
 const CONVENER_NS = `${RELAY}/ns/${CONVENER_POD_SEGMENT}/`;
 const PERFORMER_NS = `${RELAY}/ns/${PERFORMER_POD_SEGMENT}/`;
 const CONVENER_POD = `${GATE}/${CONVENER_POD_SEGMENT}/`;
 const PERFORMER_POD = `${GATE}/${PERFORMER_POD_SEGMENT}/`;
 const CONVENER_DID = 'did:web:identity.interego.xwisee.com:agents:wsp-convener-u-eth-9bf50894ff23';
-const PERFORMER_DID = 'did:web:identity.interego.xwisee.com:agents:wsp-performer-u-eth-8f3b8e939600';
+const PERFORMER_DID = process.env.WSP_PERFORMER_DID
+  ?? `did:web:identity.interego.xwisee.com:agents:wsp-performer-${PERFORMER_POD_SEGMENT}`;
 
 // ── What the convener published, cited by URL ────────────────────────────────
 
@@ -69,11 +81,16 @@ const IEP_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const ROLE_PROFILE = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default';
 const CONTRIBUTOR = `${ROLE_PROFILE}#Contributor`;
 
-const WORKSPACE = `${CONVENER_NS}wsp-evidence-review`;
-const GRANT = `${CONVENER_NS}wsp-evidence-review-grant-performer`;
-const ACCEPTANCE = `${PERFORMER_NS}wsp-evidence-review-acceptance`;
-const WORK_STREAM = `${PERFORMER_NS}wsp-evidence-review-work`;
-const WITNESS_STREAM = `${CONVENER_NS}wsp-evidence-review-witness`;
+/** Per-run suffix, so a fresh performer gets a fresh workspace, grant, acceptance and both
+ *  streams rather than appending to the first run's. Empty for the original engagement, so
+ *  its published IRIs — which the report, the CASE alignment and the README all cite — do
+ *  not move under anyone who followed them. */
+const RUN = process.env.WSP_ENGAGEMENT_SUFFIX ?? '';
+const WORKSPACE = `${CONVENER_NS}wsp-evidence-review${RUN}`;
+const GRANT = `${CONVENER_NS}wsp-evidence-review-grant-performer${RUN}`;
+const ACCEPTANCE = `${PERFORMER_NS}wsp-evidence-review-acceptance${RUN}`;
+const WORK_STREAM = `${PERFORMER_NS}wsp-evidence-review-work${RUN}`;
+const WITNESS_STREAM = `${CONVENER_NS}wsp-evidence-review-witness${RUN}`;
 
 // ── The work ─────────────────────────────────────────────────────────────────
 

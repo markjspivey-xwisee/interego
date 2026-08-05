@@ -1,12 +1,12 @@
 #!/usr/bin/env tsx
 /**
- * The convener's four published documents — the whole of the "integration" in this demo.
+ * The convener's five published documents — the whole of the "integration" in this demo.
  *
  * ★ WHAT THIS PROGRAM IS, AND WHAT IT DELIBERATELY IS NOT.
  *
- * It publishes four graphs to one pod and reads them back. It contains no branch on a
+ * It publishes five graphs to one pod and reads them back. It contains no branch on a
  * vertical, no mapping function, no call into either vertical's code. Every joint that makes
- * a shared-workspace work item countable as L&D evidence is a TRIPLE in one of these four
+ * a shared-workspace work item countable as L&D evidence is a TRIPLE in one of these five
  * documents — which is the falsifiable part: remove a node from `wsp-skills-alignment` and
  * the requirement stops being satisfied, with no code change anywhere. A join carried by a
  * function would survive that deletion.
@@ -75,6 +75,22 @@ const AGP_SHAPES = 'https://markjspivey-xwisee.github.io/interego/applications/a
  *  on, so it has to be the published one and not a synonym. */
 const FOXXI_NS = 'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#';
 const FOXXI_COMPETENCY = 'https://foxxi-bridge.interego.xwisee.com/ns/foxxi/competency/';
+
+/**
+ * The requirer's identifier for the competency this work derives.
+ *
+ * ★ IT CARRIES THE WHOLE OF THIS WORKSPACE'S TERM, and that is the point of the association
+ * below. It used to be `<…/competency/evidenceintegrityreview>` — a slug of the term's LOCAL
+ * NAME — so any authority's same-named term landed on the same id, and a reviewer proved it
+ * by submitting `https://attacker.example/totally-unrelated-scheme#EvidenceIntegrityReview`
+ * and watching this competency's confidence move to the exact 8/8 figure. An `isAlignedTo`
+ * written about an id like that is a claim about a bucket, not about a skill.
+ *
+ * Composed here rather than imported: this program cites the requirer's vocabulary as DATA,
+ * and importing that vertical's code to build an IRI is the kind of convenience the
+ * emergence boundary exists to refuse.
+ */
+const HELD_COMPETENCY = `${FOXXI_COMPETENCY}${encodeURIComponent(`${SKILLS}#EvidenceIntegrityReview`)}`;
 
 // ── The documents ────────────────────────────────────────────────────────────
 
@@ -238,7 +254,12 @@ obs:fromPredicate a owl:ObjectProperty ;
 obs:fromRecordAddress a owl:DatatypeProperty ;
     rdfs:domain obs:FieldMapping ; rdfs:range xsd:boolean ;
     rdfs:label "from record address" ;
-    rdfs:comment "Instead of a predicate, use the observed record's own dereferenceable address — so what the affordance stores points back at the record it came from, and a reader can check it." .
+    rdfs:comment "Instead of a predicate, use the observed record's own STORAGE address — the signed descriptor. Dereferencing that yields the envelope (provenance, facets, an authorship proof), not the record's own triples, so a map that wants the affordance to re-check the record against a shape wants obs:fromRecordSubject instead." .
+
+obs:fromRecordSubject a owl:DatatypeProperty ;
+    rdfs:domain obs:FieldMapping ; rdfs:range xsd:boolean ;
+    rdfs:label "from record subject" ;
+    rdfs:comment "Instead of a predicate, use the matched record's own SUBJECT IRI — the identifier the work shape targets, the one every citation of the record names, and the one the relay resolves to the published version whose triples it is. The reader fetches it before forwarding it: an identifier that does not answer is the dangling evidence pointer this engagement is about." .
 
 obs:toArgument a owl:DatatypeProperty ;
     rdfs:domain obs:FieldMapping ; rdfs:range xsd:string ;
@@ -305,7 +326,7 @@ obs:currentHeadsOnly a obs:RecordSelection ;
     ] ;
     obs:field [
         a obs:FieldMapping ;
-        obs:fromRecordAddress true ;
+        obs:fromRecordSubject true ;
         obs:toArgument "task_id" ;
         obs:required true ;
     ] .
@@ -377,7 +398,7 @@ const observerMapAgpTtl = `@prefix owl:  <http://www.w3.org/2002/07/owl#> .
     ] ;
     obs:field [
         a obs:FieldMapping ;
-        obs:fromRecordAddress true ;
+        obs:fromRecordSubject true ;
         obs:toArgument "task_id" ;
         obs:required true ;
     ] .
@@ -434,7 +455,7 @@ algn:eir-to-workspace-term
     a algn:Association ;
     algn:identifier "eir-to-workspace-term" ;
     algn:associationType "isAlignedTo" ;
-    algn:originItem <${FOXXI_COMPETENCY}evidenceintegrityreview> ;
+    algn:originItem <${HELD_COMPETENCY}> ;
     algn:originLabel "Evidence Integrity Review (performance-derived)" ;
     algn:destinationItem wspk:EvidenceIntegrityReview ;
     algn:destinationFramework <${SKILLS}> ;
@@ -583,7 +604,7 @@ async function resolveAligned(held: string, required: string, alignments: readon
 
 async function resolveMode(): Promise<void> {
   const CONVENER_POD = 'https://gate.interego.xwisee.com/u-eth-9bf50894ff23/';
-  const HELD = `${FOXXI_COMPETENCY}evidenceintegrityreview`;
+  const HELD = HELD_COMPETENCY;
   const REQUIRED = `${FOXXI_COMPETENCY}incident-triage`;
 
   console.log('\n1. the federated registry finds the alignment by its published tag, with no index');

@@ -1238,33 +1238,93 @@ ontology (`iep.ttl`, an `owl:DatatypeProperty` with `rdfs:range xsd:boolean`). N
 workspace invention and neither is a hook for anything downstream: saying which skill an item
 exercised and whether it worked is what makes a log of work into a record of work.
 
-Four documents the CONVENER publishes carry the whole of the join, and none of them is code:
+Five documents the CONVENER publishes carry the whole of the join, and none of them is code:
 
 | document | what it does |
 |---|---|
 | `wsp-skills` | a `skos:ConceptScheme`. The **only** place the skill is named. The performer never defines the term they are later credited with. |
-| `wsp-work-shapes` | SHACL, run by the **relay's** publish gate. An item naming no skill or asserting no outcome is refused 422 and never lands. Also closes the role gap `wsp-shapes.ttl` documents and does not check. |
-| `observer-map` | the reading program's entire configuration as RDF — predicate → argument, and whether `iep:supersedes` retracts or orders. |
+| `wsp-work-shapes` | SHACL, run by the **relay's** publish gate. An item naming no skill or asserting no outcome is refused 422 and never lands. Also closes the role gap `wsp-shapes.ttl` documents and does not check. And — because the observation map names it — re-run by the **affordance** against the fetched record, so the contract is a read-side precondition and not a write-side opt-in. |
+| `observer-map` | the reading program's entire configuration as RDF — predicate → argument, which type a record must declare, which shape the affordance must re-check it against, and whether `iep:supersedes` retracts or orders. |
+| `observer-map-agp` | the same configuration over the agentic-performance practice's **own** predicates. It shares exactly one term with the map above — `iep:success`, which belongs to neither practice. |
 | `wsp-skills-alignment` | two 1EdTech CASE 1.0 associations, routing an L&D requirement **through** the workspace's own term. |
 
 A generic reader (`tools/observe-pod-performance-live.ts`, which lives under neither
 vertical) is given a pod URL, that map IRI, and an affordance; it forwards each outcome
-verbatim. Nothing in it names this vertical, and `tools/emergence-boundary-lint.mjs` fails
-the build on a single mention in either direction.
+verbatim. Nothing in it names either vertical, and `tools/emergence-boundary-lint.mjs` fails
+the build on a single mention in either direction — in **both** directions, since the check
+that the reader may not name the L&D side was missing until a reviewer turned the reader into
+a workspace→L&D bridge by giving its two target arguments defaults, and the lint still printed
+`emergence boundary: intact.`
 
-★ **What that buys, measured 2026-08-05 against production.** Twelve items, ten succeeded.
-The L&D side derives a competency named by *this workspace's* term at Dreyfus **Proficient**,
-Wilson confidence **0.552**, computed server-side by its own published roll-up rule; at the
-eight-item checkpoint the same rule read **Competent / 0.409**, because 6/8 = 0.75 is below
-its 0.80 threshold. Removing one node from the alignment graph — and changing nothing else —
-makes the requirement go unsatisfied. Pointing the same reader at a pod of `agp:` records
-produces a second, differently-named competency with no edit.
+★ **What that buys, measured 2026-08-05 against production**, on a performer pod whose work
+had never been observed (`u-eth-395be1b06e60`). Twelve items, ten succeeded, one chain, one
+head. The reader considered 15 records, selected 12, skipped 3 and failed none; each
+submission carried the entry's **own subject IRI** as its `task_id` and the convener's work
+shape as its `evidence_shape`, so the affordance dereferenced each work item and re-validated
+it before recording anything. The L&D side derives one competency at Dreyfus **Proficient**,
+Wilson confidence **0.552**, computed server-side by its own published roll-up rule, and
+emerges a "Teach it" affordance. Its id is
 
-★ **The honest limit.** `iep:success` is the **performer's own attestation**. The convener
-writes a witness `wsp:Reference` for every item, on the convener's pod under the convener's
-key, so the two records exist independently and can be compared — but nothing downstream
-compares them, and `wsp:references` is still read by nothing in `src/`. It is an auditable
-check, not an enforced one.
+```
+https://foxxi-bridge.interego.xwisee.com/ns/foxxi/competency/
+  https%3A%2F%2Frelay.interego.xwisee.com%2Fns%2Fu-eth-9bf50894ff23%2Fwsp-skills%23EvidenceIntegrityReview
+```
+
+— which is the whole of *this workspace's term*, percent-encoded under the L&D vertical's own
+authority, and it `GET`s to a definition carrying `owl:sameAs` back to the term. It used to be
+`…/competency/evidenceintegrityreview`, a slug of the term's **local name**, and a reviewer
+showed what that cost: submitting one performance under
+`https://attacker.example/totally-unrelated-scheme#EvidenceIntegrityReview` moved this
+competency's confidence to 0.676 — the exact Wilson figure for 8/8 — because a stranger's
+same-named term landed in the same bucket. Re-run against the fix on a throwaway agent, the
+foreign term makes its **own** competency: `competencyCount` 1 → 2, and the convener's
+confidence does not move.
+
+Removing one node from the alignment graph — and changing nothing else — makes the
+requirement go unsatisfied (`satisfied:true, via:aligned, 2 hops` → `satisfied:false,
+via:unknown`), while keeping both associations and moving the join off the workspace's own
+term also fails. Pointing the same reader at a pod of `agp:` records with `observer-map-agp`
+produces performances under `agp#InterventionEvaluation` — a second, differently-named
+competency, no edit and no rebuild.
+
+★ **What the transplant is, and what it was.** Those `agp:` records are produced by that
+practice's own engine (`diagnose` → `recommendInterventions` → `evaluateIntervention`,
+verdicts `closed / closed / no-change`) and its own serializer, and published with that
+practice's **own** SHACL shapes on the request so its gate refuses anything it would not
+recognise. The previous version hand-wrote three graphs typed `a agp:Diagnosis` carrying
+exactly the three predicates the map marked `required` and neither of the two
+`agpsh:DiagnosisShape` demands — invalid nodes, published with no `conforms_to_shapes`. That
+version measured "records authored to match the map match the map"; it has been withdrawn and
+the nodes removed from the live pod. Fixing it surfaced a real defect in that practice:
+`evaluate_intervention` computed a verdict and dropped it at the pod boundary, so every
+`agp:InterventionEvaluation` on a pod recorded which intervention it judged and nothing about
+the judgement.
+
+★ **The honest limits**, all four measured rather than argued.
+
+1. `iep:success` is the **performer's own attestation**. The convener writes a witness
+   `wsp:Reference` for every item, on the convener's pod under the convener's key, so the two
+   records exist independently and can be compared — but nothing downstream compares them.
+   It is an auditable check, not an enforced one.
+2. The affordance now **refuses** a `task_id` that does not dereference (a reviewer recorded
+   six performances citing ids that were all live 404s and read back Proficient / 0.61; the
+   same six are now refused 400) and validates the fetched record against the shape the
+   submitter names. But the submitter chooses that shape. A record checked against a shape
+   with no focus node in it passes vacuously, which is correct SHACL and is why every
+   statement is stamped `foxxi#evidenceBinding` — `unbound`, `resolved` or `shape-validated` —
+   so the strength of a claim is a field a reader reads rather than a paragraph they trust.
+3. `iep:success` and `dct:conformsTo` are protocol terms, but no producer outside this
+   engagement and the agentic-performance practice currently emits both together. "The same
+   map works over any pod whose records carry them" is a property of the mechanism; the two
+   maps over two practices are the only observation of it.
+4. `iep:supersedes` on each entry names the **storage-internal** address the signature is
+   over (`http://css.railway.internal:3456/…`), which does not resolve from the public
+   internet, and the signed bytes must stay canonical. Anonymous chain-walking therefore goes
+   through the **entry IRIs**, which do now dereference: `…/wsp-evidence-review-work/e/0`
+   through `/e/11` each return 200 with that entry's own triples, and `/e/99` returns an
+   honest 404. Before this round every one of them but the head was a 404, while the report
+   claiming "all 14 IRIs return 200" had quietly substituted the storage `.ttl` addresses for
+   them.
 
 ## Verifying it
 
@@ -1320,23 +1380,66 @@ IEP_BEARER=<token-a> IEP_BEARER_B=<token-b> \
 # fourth head, so it accused the code of a regression that was entirely its own.
 
 # ── the evidence-integrity engagement ────────────────────────────────────────
-# The convener's four documents first; they are the join, and everything below reads them.
+# The convener's five documents first; they are the join, and everything below reads them.
 IEP_BEARER_CONVENER=<token-b> npx tsx tools/publish-review-engagement-graphs-live.ts
 
-# ★ THE GATE, AGAINST THE LIVE RELAY, WITH A CONTROL. Three refusals: a work item with no
+# ★ THE GATE, AGAINST THE LIVE RELAY, WITH A CONTROL. Four refusals: a work item with no
 # outcome (sh:minCount on iep:success), one naming a skill outside the published scheme
-# (sh:in), and a grant naming a role the declared profile does not publish (sh:in) — plus
-# the control that the SAME grant publishes WITHOUT the engagement's shape, so the refusal
-# is attributable to that shape and not to wsp-shapes. 9/9.
+# (sh:in), one that DELETES ITS OWN rdf:type to escape a targetClass shape — which used to
+# publish, and now violates rdf:type AND still trips sh:in, because the shape targets
+# sh:targetSubjectsOf dct:conformsTo, the very predicate a reader needs to see the record at
+# all — and a grant naming a role the declared profile does not publish (sh:in), plus the
+# control that the SAME grant publishes WITHOUT the engagement's shape, so the refusal is
+# attributable to that shape and not to wsp-shapes. 12/12 live.
 IEP_BEARER_PERFORMER=<token-a> IEP_BEARER_CONVENER=<token-b> \
   npx tsx applications/shared-workspace/tools/run-review-engagement-live.ts --mutation-gate
 
-# the engagement itself: convene, then two rounds of work + witness references
+# the engagement itself: convene, then two rounds of work + witness references.
+#
+# ★ POINT IT AT A PERFORMER WHOSE WORK HAS NOT ALREADY BEEN OBSERVED. The L&D side counts one
+# execution per distinct task_id, so re-running the whole chain over a stream that has already
+# been read appends rather than replaces. WSP_PERFORMER_POD / WSP_PERFORMER_DID /
+# WSP_ENGAGEMENT_SUFFIX exist for exactly that; the defaults are the first run's identity and
+# IRIs, which the report and the published CASE alignment cite.
+export WSP_PERFORMER_POD=u-eth-<yours> \
+       WSP_PERFORMER_DID=did:web:identity.interego.xwisee.com:agents:<your-session-agent> \
+       WSP_ENGAGEMENT_SUFFIX=-r2
 IEP_BEARER_PERFORMER=<token-a> IEP_BEARER_CONVENER=<token-b> \
   npx tsx applications/shared-workspace/tools/run-review-engagement-live.ts --convene
 IEP_BEARER_PERFORMER=<token-a> IEP_BEARER_CONVENER=<token-b> \
   npx tsx applications/shared-workspace/tools/run-review-engagement-live.ts --round 1
 # ... --round 2
+
+# ★ THE CROSSING ITSELF, WRITTEN OUT. This pairing — a workspace pod on one side and an L&D
+# affordance on the other — is the one step the whole "no integration" claim rests on, and it
+# used to live only in a shell history, which put it outside the boundary lint by
+# construction: the lint cannot fail on a bridge that was never committed. Nothing in the
+# reader names either side; both targets are arguments, and both are dereferenced at run time.
+# Live: 15 records considered, 12 submitted, 3 skipped, 0 failed.
+IEP_BEARER=<token-a> npx tsx tools/observe-pod-performance-live.ts \
+  --pod https://gate.interego.xwisee.com/u-eth-395be1b06e60/ \
+  --map-iri https://relay.interego.xwisee.com/ns/u-eth-9bf50894ff23/observer-map \
+  --affordance-descriptor https://foxxi-bridge.interego.xwisee.com/agent/record-performance/affordance \
+  --action-iri https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-performance-signed
+
+# ★ AND THE SAME BINARY OVER A DIFFERENT PRACTICE'S OWN RECORDS, which is the empirical
+# version of "the reader is map-driven". The records come from that practice's own engine and
+# its own serializer and are published with its own SHACL shapes at the relay gate; the second
+# map shares exactly one predicate with the first. Only the --pod and --map-iri change.
+# Live: 3 published (verdicts closed / closed / no-change), 3 submitted, 7 skipped, 0 failed.
+IEP_BEARER_OPERATOR=<token-c> npx tsx tools/publish-transplant-records-live.ts
+IEP_BEARER=<token-c> npx tsx tools/observe-pod-performance-live.ts \
+  --pod https://gate.interego.xwisee.com/u-eth-fd6398a1b1df/ \
+  --map-iri https://relay.interego.xwisee.com/ns/u-eth-9bf50894ff23/observer-map-agp \
+  --affordance-descriptor https://foxxi-bridge.interego.xwisee.com/agent/record-performance/affordance \
+  --action-iri https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-performance-signed
+
+# what the L&D side made of it — anonymous, no token
+curl -s https://foxxi-bridge.interego.xwisee.com/agent/<performer-did>/affordances
+
+# every work item dereferences to its own triples, and one that does not exist says so
+curl -sI https://relay.interego.xwisee.com/ns/u-eth-8f3b8e939600/wsp-evidence-review-work/e/0   # 200
+curl -sI https://relay.interego.xwisee.com/ns/u-eth-8f3b8e939600/wsp-evidence-review-work/e/99  # 404
 
 # and the requirer's own check on its own declaration: the federated registry finds the
 # alignment by its published tag, the chain resolves, and BOTH negative legs are run — no
