@@ -1352,7 +1352,7 @@ async function toolVerifyAgent(args: {
   // The prior multi-line text-summary stripped trustLevel + chainLength
   // entirely; downstream agents had no way to tell `SelfAsserted`
   // (registry-only) from `CryptographicallyVerified` (chain-walked).
-  const envelope = buildVerifyAgentEnvelope(result);
+  const envelope = buildVerifyAgentEnvelope(result, args.pod_url);
   return JSON.stringify({
     ...envelope,
     pod: args.pod_url,

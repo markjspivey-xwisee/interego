@@ -140,8 +140,18 @@ console.log('\n3. BOTH transports inject the server-authoritative identity');
 const injections = SERVER.match(/args\._session_agent_did = /g) ?? [];
 check('_session_agent_did is injected at >= 2 sites (/mcp + /messages)',
   injections.length >= 2, `found ${injections.length}`);
+// ★ THIS USED TO MATCH AN INLINE `for (const reserved of ['_session_bearer', …])` LOOP,
+// of which there were two — one on /mcp and one on /tool — each a hand-copy of
+// RESERVED_WIRE_FIELDS. The check passed while the constant it was really about was NOT
+// the single source of truth: adding a name to RESERVED_WIRE_FIELDS left both inline
+// copies short, so the transports that used them kept accepting the new field from the
+// wire. Both loops now call stripReservedWireFields, so the property belongs to the
+// constant and this assertion reads it there.
 check('_session_agent_did is in the reserved wire-strip list',
-  /for \(const reserved of \[[^\]]*'_session_agent_did'/.test(SERVER));
+  /const RESERVED_WIRE_FIELDS = \[[\s\S]*?'_session_agent_did'[\s\S]*?\] as const/.test(SERVER));
+check('...and no transport keeps a hand-copied duplicate of that list',
+  !/for \(const reserved of \['_session_bearer'/.test(SERVER),
+  'a second copy is a list that silently stops matching the first');
 
 console.log('\n4. read_inbox is ownership-scoped');
 check('an explicit pod_url is compared against the caller\'s own pod',
