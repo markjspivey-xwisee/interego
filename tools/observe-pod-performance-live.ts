@@ -91,6 +91,10 @@ async function call(name: string, args: Record<string, unknown>): Promise<Record
 interface FieldMapping {
   readonly fromPredicate?: string;
   readonly fromRecordAddress: boolean;
+  /** A value fixed BY THE MAP rather than read off the record — e.g. the shape the
+   *  submitter wants its own evidence checked against. Keeps a constant the reader must
+   *  send out of this source and in the published document, where a reader can see it. */
+  readonly constant?: string;
   readonly toArgument: string;
   readonly required: boolean;
 }
@@ -98,7 +102,20 @@ interface ObservationMap {
   readonly fields: readonly FieldMapping[];
   /** `everyRecord` or `currentHeadsOnly` — see `readMap`. */
   readonly selection: 'everyRecord' | 'currentHeadsOnly';
+  /**
+   * ★ A TYPE THE RECORD MUST DECLARE, WHEN THE MAP SAYS SO.
+   *
+   * Selecting purely on predicates was a hole a reviewer walked through. A publisher's work
+   * contract is a SHACL shape with an `sh:targetClass`, so deleting one `rdf:type` triple
+   * leaves the shape with no focus node, the gate accepts the record — and this reader,
+   * which looked only at predicates, still read it as evidence. A record that dodged its own
+   * contract was fully countable. When the map declares a type, a record that does not carry
+   * it is not one of the records this map is about.
+   */
+  readonly requiresType?: string;
 }
+
+const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 
 const iriOf = (t: ParsedTerm | undefined): string | undefined =>
   t?.kind === 'iri' ? String(t.iri) : undefined;
@@ -149,16 +166,20 @@ async function readMap(mapIri: string): Promise<ObservationMap> {
     if (!props) continue;
     const toArgument = litOf(props.get(T('toArgument'))?.[0]);
     if (!toArgument) continue;
+    // A constant may be an IRI (a shape, a term) or a literal — the map decides which.
+    const constant = iriOf(props.get(T('constant'))?.[0]) ?? litOf(props.get(T('constant'))?.[0]);
     fields.push({
       ...(iriOf(props.get(T('fromPredicate'))?.[0]) !== undefined
         ? { fromPredicate: iriOf(props.get(T('fromPredicate'))?.[0])! } : {}),
       fromRecordAddress: litOf(props.get(T('fromRecordAddress'))?.[0]) === 'true',
+      ...(constant !== undefined ? { constant } : {}),
       toArgument,
       required: litOf(props.get(T('required'))?.[0]) === 'true',
     });
   }
   if (fields.length === 0) throw new Error(`observation map <${mapIri}> declares no fields.`);
-  return { fields, selection };
+  const requiresType = iriOf(root.get(T('requiresType'))?.[0]);
+  return { fields, selection, ...(requiresType !== undefined ? { requiresType } : {}) };
 }
 
 // ── The pod ──────────────────────────────────────────────────────────────────
@@ -216,8 +237,12 @@ async function main(): Promise<void> {
   const map = await readMap(MAP_IRI!);
   console.log(`\nmap        ${MAP_IRI}`);
   console.log(`  selection ${map.selection}`);
+  if (map.requiresType !== undefined) console.log(`  type      <${map.requiresType}> [required]`);
   for (const f of map.fields) {
-    console.log(`  ${f.toArgument.padEnd(14)} <- ${f.fromRecordAddress ? '(the record\'s own address)' : `<${f.fromPredicate}>`}${f.required ? ' [required]' : ''}`);
+    const source = f.fromRecordAddress ? '(the record\'s own address)'
+      : f.constant !== undefined ? `(the map's own constant) ${f.constant}`
+        : `<${f.fromPredicate}>`;
+    console.log(`  ${f.toArgument.padEnd(14)} <- ${source}${f.required ? ' [required]' : ''}`);
   }
   console.log(`pod        ${POD}`);
   console.log(`affordance ${ACTION_IRI}\n            via ${AFFORDANCE_DESCRIPTOR}\n`);
@@ -242,8 +267,13 @@ async function main(): Promise<void> {
     // The record's own subject is whichever one carries every required source. A document
     // that carries none is not addressed to this map and is passed over in silence; one that
     // carries them in two different subjects is ambiguous and is refused rather than picked.
-    const matches = doc.subjects.filter(s =>
-      required.every(p => (s.properties as ReadonlyMap<string, readonly ParsedTerm[]>).get(p)?.length));
+    const matches = doc.subjects.filter(s => {
+      const props = s.properties as ReadonlyMap<string, readonly ParsedTerm[]>;
+      if (!required.every(p => props.get(p)?.length)) return false;
+      // The declared type, when the map declares one — see `ObservationMap.requiresType`.
+      if (map.requiresType === undefined) return true;
+      return (props.get(RDF_TYPE) ?? []).some(t => iriOf(t) === map.requiresType);
+    });
     if (matches.length === 0) { skipped++; continue; }
     if (matches.length > 1) {
       skipped++;
@@ -264,6 +294,7 @@ async function main(): Promise<void> {
     let missing: string | null = null;
     for (const f of map.fields) {
       if (f.fromRecordAddress) { args[f.toArgument] = address; continue; }
+      if (f.constant !== undefined) { args[f.toArgument] = f.constant; continue; }
       const term = props.get(f.fromPredicate!)?.[0];
       // A blank node has no value that survives leaving this document, so it is treated as
       // absent rather than stringified into an argument that names nothing.

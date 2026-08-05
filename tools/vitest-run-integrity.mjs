@@ -113,7 +113,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // self-tests landed — tests/modal-lattice-spec.test.ts (the TLA+ spec's theorems, previously
 // evaluated by nothing) and tests/changelog-lint.test.ts (CHANGELOG.md's claims about itself,
 // checked by nothing). The tree reached 218 and the reporter named 208 both times.
-export const MIN_TEST_MODULES = 208;
+export const MIN_TEST_MODULES = 210;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

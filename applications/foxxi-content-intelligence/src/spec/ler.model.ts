@@ -67,7 +67,16 @@ export const LER_MODEL: OntologyModel = {
         { path: 'confidence', minCount: 1, maxCount: 1, datatype: 'xsd:double', minInclusive: 0, maxInclusive: 1, comment: 'ler:successConfidence — a Wilson-lower-bound success confidence in [0,1] (a non-negative sub-range of tla:confidence [-1,1]); a JSON float → xsd:double.' },
         { path: 'rolledUpBy', minCount: 1, maxCount: 1, nodeKind: 'IRI', pattern: '^https?://', comment: 'The dereferenceable https tla:RollupRule IRI that produced this assertion.' },
         { path: 'assertingAgent', minCount: 1, nodeKind: 'IRI', comment: 'iep:assertingAgent — a dereferenceable agent id (DID/URL).' },
-        { path: 'evidence', minCount: 1, nodeKind: 'IRI', pattern: '^https?://', comment: 'ler:supportedByEvidence — at least one dereferenceable https evidence IRI.' },
+        // ★ THIS IS A SYNTACTIC CHECK AND THE COMMENT USED TO IMPLY OTHERWISE. `sh:pattern
+        // "^https?://"` says the value LOOKS like a URL; it does not fetch it. A reviewer
+        // pointed out that `conforms: true` was therefore compatible with an evidence list
+        // no third party can read — the LRS statement URLs it used to contain answer 401 to
+        // an anonymous GET, correctly, because xAPI requires auth on every resource. For a
+        // claim whose subject matter is "the artifact this points at resolves", "someone
+        // checked" is exactly the wrong thing for `conforms: true` to suggest. The assembler
+        // now puts the anonymously-fetchable pod artifact FIRST in the list; this comment
+        // says what the shape does and does not establish.
+        { path: 'evidence', minCount: 1, nodeKind: 'IRI', pattern: '^https?://', comment: 'ler:supportedByEvidence — at least one evidence IRI whose SYNTAX is an http(s) URL. This constraint does not dereference anything: conformance here means the pointer is well-formed, not that it resolves or that a reader is authorised to fetch it. An LRS statement URL in this list is expected to answer 401 anonymously; the assembler therefore lists the pod-side artifact the performance cited alongside it, which does not.' },
         { path: 'basis', minCount: 1, in: ['performance', 'credential', 'inferred'], comment: 'The evidence class.' },
         { path: 'modalStatus', minCount: 1, in: ['Asserted', 'Hypothetical'], comment: 'The modal status.' },
       ],

@@ -26,6 +26,7 @@ import { createEncryptedEnvelope, openEncryptedEnvelope } from '@interego/core';
 import type { EncryptionKeyPair, EncryptedEnvelope } from '@interego/core';
 import type { PGSLInstance, Value, NodeProvenance, Node } from './types.js';
 import { resolve as pgslResolve } from './lattice.js';
+import { PGSL_NS } from './rdf.js';
 import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -635,7 +636,10 @@ function nodeToTurtle(node: import('./types.js').Node, resolved: string): string
   const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
     .replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
   const lines = [
-    '@prefix pgsl: <https://contextgraphs.org/ns/pgsl/> .',
+    // See IEP_NS: this said `https://contextgraphs.org/ns/pgsl/`, while every other PGSL
+    // projection in this package uses PGSL_NS. Two spellings of one namespace means two
+    // disjoint sets of triples describing the same nodes, and neither joins with the other.
+    `@prefix pgsl: <${PGSL_NS}> .`,
     '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
     '',
   ];

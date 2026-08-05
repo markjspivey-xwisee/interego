@@ -23,6 +23,7 @@
 import type { PGSLInstance } from './types.js';
 import { ingest, latticeStats } from './lattice.js';
 import { mintNodeId } from '@interego/core';
+import { IEP_NS } from './rdf.js';
 import { createHash } from 'node:crypto';
 
 // ═════════════════════════════════════════════════════════════
@@ -1095,7 +1096,9 @@ export function marketplaceToHydra(marketplace: Marketplace): string {
 
   const lines: string[] = [
     '@prefix hydra: <http://www.w3.org/ns/hydra/core#> .',
-    '@prefix iep: <https://contextgraphs.org/ns/> .',
+    // See IEP_NS: this said `https://contextgraphs.org/ns/`, so every iep: term this
+    // Hydra document published expanded to an IRI the substrate does not define.
+    `@prefix iep: <${IEP_NS}> .`,
     '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
     '@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .',
     '',

@@ -84,7 +84,11 @@ export async function fetchJson(iri: string, podUrl?: string, fetchFn: typeof fe
  *  cannot emit them can only emit invalid nodes. */
 export interface AgpProperty {
   readonly predicate: string;
-  readonly object: { readonly iri: string } | { readonly literal: string };
+  /** A literal may declare a datatype: `iep:success` has `rdfs:range xsd:boolean`, and a
+   *  plain-string "true" is not an xsd:boolean — a shape checking the datatype would refuse
+   *  it, and a reader expecting a boolean would read a string. The lexical form still goes
+   *  through `JSON.stringify` and the datatype through `iriTerm`, so neither can inject. */
+  readonly object: { readonly iri: string } | { readonly literal: string; readonly datatype?: string };
 }
 
 /**
@@ -108,6 +112,68 @@ function iriTerm(iri: string): string {
   return `<${iri}>`;
 }
 
+/** The graph IRI an artifact's triples live at — a fragment of the artifact's own IRI. */
+export function agpArtifactGraphIri(iri: string): string {
+  return `${iri}#graph`;
+}
+
+/** The Interego Protocol namespace. `iep:success` is a PROTOCOL term with
+ *  `rdfs:range xsd:boolean`, belonging to no vertical. */
+const IEP_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
+const XSD_NS = 'http://www.w3.org/2001/XMLSchema#';
+
+/**
+ * The domain triples an `agp:InterventionEvaluation` carries — the ONE place this vertical
+ * decides what an evaluation says on a pod.
+ *
+ * ★ Extracted for the same reason `agpArtifactGraph` is: a demo tool that hand-writes the
+ * predicates it wants a reader to find is not evidence that a reader can read this
+ * vertical's records. Both the `agp.evaluate_intervention` handler and any program that
+ * wants a record this vertical would recognise call this.
+ */
+export function agpEvaluationProperties(
+  interventionIri: string,
+  verdict: 'closed' | 'improved' | 'no-change' | 'worsened' | 'too-early',
+): readonly AgpProperty[] {
+  return [
+    { predicate: `${AGP}evaluates`, object: { iri: interventionIri } },
+    { predicate: `${AGP}verdict`, object: { literal: verdict } },
+    // `too-early` asserts NO outcome, so none is serialized. An outcome nobody asserted must
+    // not become one a serializer invented — the same rule the reader on the other side
+    // follows when it skips a record rather than defaulting its `success`.
+    ...(verdict === 'too-early' ? [] : [{
+      predicate: `${IEP_NS}success`,
+      object: { literal: (verdict === 'closed' || verdict === 'improved') ? 'true' : 'false', datatype: `${XSD_NS}boolean` },
+    } as AgpProperty]),
+  ];
+}
+
+/**
+ * The Turtle body of one agp artifact — the ONLY place this vertical serializes one.
+ *
+ * ★ EXTRACTED SO NOTHING CAN HAND-WRITE AN AGP RECORD AND CALL IT ONE. A demo tool
+ * previously published three graphs typed `a agp:Diagnosis` that it composed itself, and
+ * they carried exactly the predicates an observation map happened to require and NEITHER of
+ * the two `agpsh:DiagnosisShape` demands — so they were invalid agp:Diagnosis nodes on a
+ * live pod, and the "a third vertical joins with no edit" claim they supported was measuring
+ * records authored to match the map. Any caller that wants a record this vertical would
+ * recognise calls this; a caller that composes its own is visibly not doing that.
+ */
+export function agpArtifactGraph(args: {
+  iri: string; typeIri: string; label: string;
+  properties?: ReadonlyArray<AgpProperty>;
+}): { graphIri: string; graphContent: string } {
+  const graphIri = agpArtifactGraphIri(args.iri);
+  const triples = [
+    `a ${iriTerm(args.typeIri)}`,
+    `<http://www.w3.org/2000/01/rdf-schema#label> ${JSON.stringify(args.label)}`,
+    ...(args.properties ?? []).map(p => `${iriTerm(p.predicate)} ${'iri' in p.object
+      ? iriTerm(p.object.iri)
+      : `${JSON.stringify(p.object.literal)}${p.object.datatype !== undefined ? `^^${iriTerm(p.object.datatype)}` : ''}`}`),
+  ];
+  return { graphIri, graphContent: `${iriTerm(graphIri)} ${triples.join(' ;\n  ')} .\n` };
+}
+
 /** Best-effort REAL publish of an agp artifact as a signed-authorship-free
  *  ContextDescriptor + a graph carrying the domain triples its class's SHACL
  *  shape requires. Returns the descriptor URL on success, null on a TRANSPORT
@@ -122,13 +188,9 @@ export async function publishAgpArtifact(args: {
 }): Promise<string | null> {
   // Built OUTSIDE the try: an unsafe IRI is a caller defect and must throw,
   // not be reported as a pod outage.
-  const graphIri = `${args.iri}#graph` as IRI;
-  const triples = [
-    `a ${iriTerm(args.typeIri)}`,
-    `<http://www.w3.org/2000/01/rdf-schema#label> ${JSON.stringify(args.label)}`,
-    ...(args.properties ?? []).map(p => `${iriTerm(p.predicate)} ${'iri' in p.object ? iriTerm(p.object.iri) : JSON.stringify(p.object.literal)}`),
-  ];
-  const graphContent = `${iriTerm(graphIri)} ${triples.join(' ;\n  ')} .\n`;
+  const built = agpArtifactGraph(args);
+  const graphIri = built.graphIri as IRI;
+  const graphContent = built.graphContent;
   try {
     const now = new Date().toISOString();
     const authorId = (args.author?.id ?? 'urn:agp:bridge:agent') as IRI;

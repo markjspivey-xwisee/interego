@@ -62,6 +62,10 @@ const PERFORMER_DID = 'did:web:identity.interego.xwisee.com:agents:wsp-performer
 
 const SKILL_TERM = `${CONVENER_NS}wsp-skills#EvidenceIntegrityReview`;
 const WORK_SHAPES = `${CONVENER_NS}wsp-work-shapes`;
+/** This vertical's own namespace and the protocol's — needed only by the mutation gate,
+ *  which composes raw Turtle in order to express an attack the writer cannot express. */
+const WSP_NS = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#';
+const IEP_NS = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const ROLE_PROFILE = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp-roles-default';
 const CONTRIBUTOR = `${ROLE_PROFILE}#Contributor`;
 
@@ -282,6 +286,46 @@ async function mutationGate(): Promise<void> {
   const inViolation = (res2.violations ?? []).filter(v => v.constraint.endsWith('InConstraintComponent'));
   ok(inViolation.length === 1, 'by sh:in against the convener\'s scheme — the performer cannot name their own skill',
     JSON.stringify(res2.violations ?? []).slice(0, 400));
+
+  // ★ THE ATTACK THAT EMPTIED THIS GATE, RUN AS A LEG OF IT.
+  //
+  // The work shape used to be `sh:targetClass wsp:Entry`. A reviewer published the SAME
+  // graph twice, once with `a wsp:Entry` and once without, both declaring both shapes: the
+  // typed one was refused 422 on sh:in and the untyped one PUBLISHED and still resolves,
+  // because a target class is something a record can simply decline to declare. The
+  // shape now targets `sh:targetSubjectsOf dct:conformsTo` — which is what the reader
+  // requires in order to see a record at all — and makes the type an ordinary constraint.
+  // Written with raw content rather than `appendEntry`, because `appendEntry` always emits
+  // the type and could not express the attack.
+  console.log('\n★ mutation gate: a work item that deletes its own rdf:type to escape the contract');
+  const untypedIri = `${PERFORMER_NS}wsp-evidence-review-mutant-3`;
+  const untyped = await publishMembershipRecord({
+    graphIri: untypedIri,
+    graphContent: `@prefix wsp: <${WSP_NS}> .
+@prefix iep: <${IEP_NS}> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<${untypedIri}/e/0>
+  wsp:workspace <${WORKSPACE}> ;
+  wsp:seq "0"^^xsd:nonNegativeInteger ;
+  dct:description "An item with no rdf:type, naming a skill this workspace never published." ;
+  dct:conformsTo <https://example.org/a-skill-nobody-agreed-to> ;
+  iep:success "true"^^xsd:boolean .
+`,
+    agentDid: PERFORMER_DID,
+    shapes: [WORK_SHAPES],
+  }, performerDeps);
+  ok(untyped.outcome === 'refused', `refused (outcome ${untyped.outcome})`, JSON.stringify(untyped).slice(0, 400));
+  if (untyped.outcome === 'refused') {
+    const paths = (untyped.violations ?? []).map(v => v.path ?? '');
+    ok(paths.some(p => p.endsWith('22-rdf-syntax-ns#type')),
+      'and the violation names rdf:type — so dropping the type is now a violation, not an escape',
+      JSON.stringify(untyped.violations ?? []).slice(0, 400));
+    ok(paths.some(p => p.endsWith('/conformsTo')),
+      'AND the sh:in constraint still fires on the same record — the shape found it without the type',
+      JSON.stringify(untyped.violations ?? []).slice(0, 400));
+  }
 
   // ★ THE MEMBERSHIP HALF OF THE SAME PARAMETER, EXERCISED RATHER THAN THREADED. The
   // workspace's own shapes say in their own message that an undeclared role is NOT refused

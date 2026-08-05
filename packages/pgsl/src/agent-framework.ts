@@ -45,6 +45,7 @@ import type {
 } from './affordance-decorators.js';
 import { createHash } from 'node:crypto';
 import { escapeTurtleLiteral as escapeForTurtle } from '@interego/core';
+import { IEP_NS } from './rdf.js';
 
 // ══════════════════════════════════════════════════════════════
 // 1. Abstract Agent Types (AAT)
@@ -683,7 +684,13 @@ export function traceToTurtle(trace: ProvTrace): string {
 
   lines.push('@prefix prov: <http://www.w3.org/ns/prov#> .');
   lines.push('@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .');
-  lines.push('@prefix iep:   <https://contextgraphs.org/ns/> .');
+  // ★ THIS PREFIX WAS `https://contextgraphs.org/ns/`, WHICH IS NOT THE PROTOCOL NAMESPACE.
+  // Every predicate below therefore expanded to a dead IRI — `.../ns/success` rather than
+  // the declared `iep#success` (docs/ns/iep.ttl:1440, an owl:DatatypeProperty with
+  // rdfs:range xsd:boolean) — so this projection's triples joined with nothing anywhere in
+  // the substrate, silently, while looking exactly right in the serialized output. Found by
+  // an independent reviewer checking whether any producer outside one demo emits iep:success.
+  lines.push(`@prefix iep:   <${IEP_NS}> .`);
   lines.push('');
 
   // Activity

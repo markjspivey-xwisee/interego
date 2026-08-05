@@ -42,6 +42,39 @@ const HARD_ZERO = [
     pattern: /wsp/i,
     why: 'the observer must not know which application produced the records it reads — its inputs are a pod URL, a map IRI and an affordance, all dereferenced at run time',
   },
+  {
+    // ★ THIS CHECK WAS MISSING AND THE GATE WAS THEREFORE ONE-DIRECTIONAL.
+    //
+    // Only the workspace side of the observer was greppd, so the observer could name the
+    // L&D vertical freely — which is the direction a bridge would actually be written in.
+    // Reproduced by a reviewer: giving the observer's `--affordance-descriptor` and
+    // `--action-iri` arguments DEFAULTS pointing at the L&D bridge turns it into a
+    // workspace→L&D bridge, and `emergence boundary: intact.` still printed, exit 0.
+    file: 'tools/observe-pod-performance-live.ts',
+    pattern: /foxxi|xapi|competenc|adl-tla|ieee-ler|\bler\b|proficien/i,
+    why: 'the observer must not know which application OWNS THE AFFORDANCE it submits to either — a default target is a hardcoded destination, and a reader with one is an integration',
+  },
+];
+
+/**
+ * Files permitted to name BOTH sides, with the count of cross-namespace constants pinned.
+ *
+ * ★ WHY AN ALLOW-LIST RATHER THAN AN OMISSION. `publish-review-engagement-graphs-live.ts` is
+ * the CONVENER's program, and the convener is also the requirer: "my incident-triage
+ * requirement is met by the skill term my workspace publishes" is a statement only a
+ * requirer can make, and there is nowhere honest to put it except the requirer's own data.
+ * That was true and was written down — but the file was in no check at all, so the
+ * declaration was unbounded. A permission with no number attached is not a boundary. The
+ * pin counts the CONSTANT DECLARATIONS naming the other side, so adding a mapping function
+ * or a second requirer moves it and adding another triple to a published document does not.
+ */
+const BOUNDED_REQUIRER = [
+  {
+    file: 'tools/publish-review-engagement-graphs-live.ts',
+    pattern: /^const (FOXXI|AGP)[A-Z_]* =/,
+    pinned: 4,
+    why: 'the convener/requirer naming the L&D vertical and the agentic-performance practice as DATA it cites',
+  },
 ];
 
 /** Cross-vertical mentions in shipped source. Pinned, not asserted zero — see the header. */
@@ -53,7 +86,13 @@ const RATCHET = [
     why: 'the workspace vertical mentioning the L&D vertical',
   },
   {
-    dir: 'applications/foxxi-content-intelligence/src',
+    // ★ THIS WAS `/src`, WHICH IS 98 OF THE 242 .ts FILES IN THAT VERTICAL. The 144 unlinted
+    // ones included `bridge/server.ts` — the file that implements record-performance,
+    // rankTutorsForCompetency and the /agent/<did>/affordances endpoint the crossing runs
+    // through — plus `affordances.ts`, `checks/`, `tools/` and `tests/`. A `wsp` reference
+    // added to the exact file that performs the join would not have moved the pin. Pointing
+    // it at the whole vertical is free: the count is 0 either way, measured.
+    dir: 'applications/foxxi-content-intelligence',
     pattern: /\bwsp\b|wsp:|wsp-/i,
     pinned: 0,
     why: 'the L&D vertical mentioning the workspace vertical',
@@ -90,6 +129,20 @@ for (const { file, pattern, why } of HARD_ZERO) {
   } else {
     console.log(`ok    ${file} — 0 lines match ${pattern}`);
   }
+}
+
+for (const { file, pattern, pinned, why } of BOUNDED_REQUIRER) {
+  const lines = readFileSync(join(ROOT, file), 'utf8').split('\n');
+  const hits = lines.map((line, i) => ({ line: line.trim(), n: i + 1 })).filter(({ line }) => pattern.test(line));
+  if (hits.length === pinned) {
+    console.log(`ok    ${file} — ${hits.length} cross-namespace constant(s), at the pin`);
+    continue;
+  }
+  failed = true;
+  console.error(`\n★ THE REQUIRER'S DECLARATION MOVED — ${why}`);
+  console.error(`  pinned ${pinned}, found ${hits.length}`);
+  for (const h of hits.slice(0, 10)) console.error(`  ${h.n}: ${h.line.slice(0, 140)}`);
+  console.error('  This file is ALLOWED to name both sides, and the number of times it does is the bound.');
 }
 
 for (const { dir, pattern, pinned, why } of RATCHET) {

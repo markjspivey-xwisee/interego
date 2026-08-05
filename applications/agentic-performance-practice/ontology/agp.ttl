@@ -330,6 +330,12 @@ agp:evaluates a owl:ObjectProperty ;
 
 # ── Datatype properties ──────────────────────────────────────────────────
 
+agp:verdict a owl:DatatypeProperty ;
+    rdfs:label "verdict" ;
+    rdfs:comment "What an intervention evaluation concluded: 'closed' (the gap is gone), 'improved', 'no-change', 'worsened', or 'too-early' (the outcome is not yet observable). The engine has always decided this and it was returned to the caller and never written, so every agp:InterventionEvaluation on a pod recorded WHICH intervention it judged and nothing about the judgement. A verdict other than 'too-early' also carries iep:success — the protocol-level boolean projection of the same decision — while 'too-early' carries none, because an outcome nobody has asserted must not become one a serializer invented." ;
+    rdfs:domain agp:InterventionEvaluation ;
+    rdfs:range xsd:string .
+
 agp:regimeSource a owl:DatatypeProperty ;
     rdfs:label "regime source" ;
     rdfs:comment "Provenance of a situation's placed regime: 'derived' (from trajectory evidence — the only source that may gap-analyse or accrue calibration), 'asserted' (a human/operator claim), 'default-gap-intent' (a fallback gap-intent), or 'unclassified'. Load-bearing: the calibration loop excludes non-derived regimes." ;
