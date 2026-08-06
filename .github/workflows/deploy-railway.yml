@@ -32,6 +32,16 @@ on:
         description: 'Image tag: the 40-hex commit sha built by build-ghcr.yml. Defaults to this ref.'
         required: false
         default: ''
+      set_registry_credentials:
+        description: >-
+          Give this service its GHCR pull credential before deploying. Needed ONCE for a
+          service created after the Azure→Railway migration: the migration driver gave the
+          original thirteen theirs and must never run again, and a service with none fails
+          with NO build log and NO deploy log, which reads like anything but a credential.
+          Harmless to repeat. See tools/railway-registry-credentials.mjs.
+        type: boolean
+        required: false
+        default: false
       # ★ NO verify_url INPUT, AND NO DEFAULT. It used to be a free-text field pre-filled
       # with RELAY's /health — for every service. Dispatching service=identity at a sha
       # relay happened to be running polled RELAY, read relay's matching build, printed
@@ -108,6 +118,20 @@ jobs:
             exit 1
           fi
           echo "$IMAGE:$TAG exists"
+
+      # Before the deploy, never after: a credential is consulted at pull time, so setting
+      # it afterwards leaves the FAILED deployment standing and the next dispatch looking
+      # like the fix.
+      - name: Set the GHCR pull credential on this service
+        if: ${{ inputs.set_registry_credentials }}
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          # GHCR_TOKEN, not GITHUB_TOKEN: the run token expires with the job, and Railway
+          # pulls again on every restart and every redeploy long after this run is gone.
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          SERVICE: ${{ inputs.service }}
+        run: node tools/railway-registry-credentials.mjs "$SERVICE"
 
       - name: Deploy
         env:
