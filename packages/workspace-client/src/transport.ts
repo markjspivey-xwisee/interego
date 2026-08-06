@@ -130,10 +130,19 @@ export function asRefusal(e: unknown): (Record<string, unknown> & { error: unkno
 /** Stop a live subscription. */
 export type Unsubscribe = () => void;
 
-/** What a live watch reports. Shaped after the connector contract, which is the stricter one. */
+/**
+ * What a live watch reports. Shaped after the connector contract, which is the stricter one.
+ *
+ * ★ THE SUCCESS TAG IS `data`, CHECKED AGAINST THE PUBLISHED CONTRACT (artifact runtime
+ * 0.1.17), not remembered. It was written here as `result`, which is the name of the FIELD, not
+ * of the event — so a handler written `if (ev.type === 'result')` would have discarded every
+ * update while the compiler agreed with it. Nothing broke yet only because the one handler that
+ * exists keys on `error` and treats everything else as data, which is also the
+ * forward-compatible way to write it.
+ */
 export type WatchEvent =
   | { readonly type: 'error'; readonly error: { readonly code?: string; readonly message?: string } }
-  | { readonly type: 'result'; readonly result: { readonly payload?: unknown } };
+  | { readonly type: 'data'; readonly result: { readonly payload?: unknown } };
 
 /**
  * ONE tool-calling surface, parameterised by the credential kind that can drive it.
@@ -262,7 +271,12 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
   }
 
   async callTool(name: string, input: Record<string, unknown>, opts?: CallOptions): Promise<unknown> {
-    const key = name + ' ' + JSON.stringify(input);
+    // The separator is a NUL, SPELLED AS AN ESCAPE. A raw NUL byte in the source makes git
+    // treat this whole file as binary: the diff reads `Bin 0 -> N bytes` with nothing
+    // reviewable in it and a grep answers "Binary file matches", so a change to any line of
+    // the transport becomes unreviewable. The string is identical either way; only the source
+    // is readable. `tests/line-endings-are-normalised.test.ts` is what noticed.
+    const key = name + '\u0000' + JSON.stringify(input);
     const stale = opts?.cache?.staleTime;
     if (stale) {
       const hit = this.cache.get(key);
@@ -303,7 +317,7 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
   }
 
   async invalidate(name: string): Promise<void> {
-    for (const k of [...this.cache.keys()]) if (k.startsWith(name + ' ')) this.cache.delete(k);
+    for (const k of [...this.cache.keys()]) if (k.startsWith(name + '\u0000')) this.cache.delete(k);
   }
 }
 
@@ -335,7 +349,13 @@ export class ConnectorTransport implements Transport<'connector-grant'> {
       // without the full manifest — and the two used to render the same dead end ("add the
       // connector, then reload") to somebody who had already added it.
       if (!servers.length) {
-        throw new ToolCallError('server_not_connected', 'No connector answered this page at all.');
+        // The remedy is named here rather than left to a shell's error copy. This transport
+        // exists for exactly one host — a published Artifact page under a viewer's own
+        // connector grant — so "add the connector" is always the right next move for it, and a
+        // shell that supplied the sentence itself would be a second place the instruction had
+        // to be kept true.
+        throw new ToolCallError('server_not_connected',
+          'No connector answered this page at all. Add the Interego connector in claude.ai under Settings → Connectors, then reload.');
       }
       const seen: string[] = [];
       for (const s of servers) for (const t of s.tools ?? []) if (t?.name) seen.push(t.name);

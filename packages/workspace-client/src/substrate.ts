@@ -221,6 +221,15 @@ export class WorkspaceClient {
         const h = await this.currentHead(c.iri, memberPod);
         if (h.forked) return { iri: c.iri, naming: c.naming, found: false, head: null, forked: h, error: null };
         if (h.url) return { iri: c.iri, naming: c.naming, found: true, head: h, forked: null, error: null };
+        // ★ AN UNREADABLE HEAD IS NOT AN ABSENT ONE, AND ONLY THE THROW USED TO BE CARRIED.
+        // `currentHead` already separates "the relay said nothing is published here" (absent)
+        // from "the answer carried neither a head nor a reason" (unreadable). Both arrive here
+        // as a resolved value with no `url`, so a loop that only recorded EXCEPTIONS returned
+        // `error: null` for the unreadable case — and every caller reads `error: null` as
+        // licence to say "granted, but no acceptance published on their pod yet". That is
+        // absence rendered as a positive fact about somebody else's pod, from a read that
+        // established nothing. The `unreadable` message is carried as an error instead.
+        if ('unreadable' in h && firstError === null) firstError = h.message;
       } catch (e) {
         if (firstError === null) firstError = (e as Error)?.message ?? String(e);
       }
