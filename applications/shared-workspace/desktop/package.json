@@ -1,0 +1,28 @@
+{
+  "name": "@interego/workspace-desktop",
+  "version": "0.1.0",
+  "description": "Desktop shell for the shared-workspace client. Walking skeleton: boot -> authenticate (SIWE wallet held in the OS secret store, or the relay's own browser sign-in over a loopback redirect) -> read a workspace -> render roster and stream -> post an entry onto the user's own pod. All substrate logic comes from @interego/workspace-client; this package only draws and holds keys.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "private": true,
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json && esbuild src/main.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/main.js && esbuild src/preload.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/preload.js && esbuild src/selftest.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/selftest.js && esbuild src/renderer.ts --bundle --format=iife --platform=browser --target=es2020 --outfile=dist/renderer.js",
+    "start": "npm run build && electron dist/main.js",
+    "clean": "rm -rf dist/",
+    "selftest": "npm run build && electron dist/selftest.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@interego/workspace-client": "*",
+    "ethers": "^6.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "electron": "^33.0.0",
+    "typescript": "^5.7.0",
+    "esbuild": "^0.28.0"
+  }
+}

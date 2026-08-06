@@ -1,0 +1,24 @@
+{
+  "name": "@interego/workspace-client",
+  "version": "0.1.0",
+  "description": "Transport-agnostic client for the shared-workspace vertical: hardened Turtle/TriG readers, the member-document naming scheme, the seat fold, the supersession chain walk and the compare-and-swap append. The ONE copy of this logic — the published artifact's script is generated from it and gated against drift, and the desktop shell imports it directly.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist/", "src/", "README.md"],
+  "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
+  "engines": { "node": ">=20.0.0" },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

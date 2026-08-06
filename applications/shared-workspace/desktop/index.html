@@ -1,0 +1,96 @@
+<meta charset="utf-8">
+<title>Interego Workspace</title>
+<style>
+  :root { --bg:#12141a; --panel:#1a1d26; --ink:#e7e9ee; --dim:#9aa1b1; --line:#2a2f3d;
+          --ok:#5bd6a0; --bad:#ff6b6b; --accent:#7aa2ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 system-ui, sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:baseline; }
+  h1 { font-size:15px; margin:0; font-weight:600; }
+  .sub { color:var(--dim); font-size:12px; }
+  main { display:grid; grid-template-columns: 300px 1fr; height: calc(100vh - 52px); }
+  aside { border-right:1px solid var(--line); padding:16px; overflow:auto; }
+  section { display:flex; flex-direction:column; min-width:0; }
+  #streamwrap { flex:1; overflow:auto; padding:16px; }
+  .composer { border-top:1px solid var(--line); padding:12px 16px; }
+  textarea { width:100%; background:var(--panel); color:var(--ink); border:1px solid var(--line);
+             border-radius:8px; padding:10px; font:inherit; resize:vertical; min-height:56px; }
+  button { background:var(--accent); color:#0d1017; border:0; border-radius:7px; padding:8px 14px;
+           font:600 13px system-ui; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  input { width:100%; background:var(--panel); color:var(--ink); border:1px solid var(--line);
+          border-radius:7px; padding:8px 10px; font:inherit; }
+  .note { color:var(--dim); font-size:12px; margin:6px 0; }
+  .err { border:1px solid var(--bad); border-radius:8px; padding:10px; margin:8px 0; }
+  .err h4 { margin:0 0 4px; font-size:13px; color:var(--bad); }
+  .ok { border:1px solid var(--ok); border-radius:8px; padding:10px; margin:8px 0; }
+  .ok h4 { margin:0 0 6px; font-size:13px; color:var(--ok); }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:12px; }
+  .kv .k { color:var(--dim); }
+  .kv .v { word-break:break-all; }
+  .step { display:flex; gap:8px; align-items:baseline; font-size:12px; padding:2px 0; }
+  .step .mark { width:1em; }
+  .step.done .mark { color:var(--ok); }
+  .step.err .mark { color:var(--bad); }
+  .step .el { color:var(--dim); margin-left:auto; }
+  .member { display:flex; gap:9px; align-items:flex-start; padding:8px 0; border-top:1px solid var(--line); }
+  .member .mark { background:var(--line); border-radius:5px; padding:2px 5px; font:600 11px ui-monospace, monospace; }
+  .member .pod { font:12px ui-monospace, monospace; }
+  .member .why { color:var(--dim); font-size:11.5px; }
+  .member.seated .pod { color:var(--ok); }
+  .chip { font-size:11px; border:1px solid var(--line); border-radius:20px; padding:1px 8px; color:var(--dim); }
+  .msg { padding:8px 0; border-top:1px solid var(--line); }
+  .msghead { display:flex; gap:8px; align-items:baseline; font-size:11.5px; color:var(--dim); }
+  .msg .body { white-space:pre-wrap; margin-top:3px; }
+  .msg.mine .body { color:#fff; }
+  #signin { max-width:44em; margin:6vh auto; padding:0 24px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin:14px 0; }
+  code { font:12px ui-monospace, monospace; color:var(--accent); }
+</style>
+
+<header>
+  <h1>Interego Workspace</h1>
+  <span class="sub" id="relayline"></span>
+  <span class="sub" style="margin-left:auto" id="whoami"></span>
+</header>
+
+<div id="signin">
+  <div class="card">
+    <h2 style="font-size:15px;margin:0 0 6px">Choose how to sign in</h2>
+    <p class="note">The identity you sign in with decides which pod your words land on, permanently.
+      A wallet gives a <code>u-eth-…</code> pod; the relay's browser sign-in with a passkey gives a
+      <code>u-pk-…</code> one. Both mint an OAuth bearer from the relay's own authorization server —
+      that is what the tool calls carry.</p>
+    <div id="storeline" class="note"></div>
+    <p style="display:flex;gap:10px;margin-top:14px">
+      <button id="signin-wallet">Wallet key held on this machine</button>
+      <button id="signin-browser" class="ghost">Sign in in my browser (passkey)</button>
+    </p>
+    <div id="steps"></div>
+    <div id="signinnote"></div>
+  </div>
+</div>
+
+<main id="app" hidden>
+  <aside>
+    <label class="note" for="wsopen">Open a workspace by its IRI</label>
+    <input id="wsopen" placeholder="https://relay.interego.xwisee.com/ns/&lt;pod&gt;/&lt;name&gt;">
+    <p><button id="open">Open</button></p>
+    <div id="openhint" class="note"></div>
+    <h3 style="font-size:13px;margin:18px 0 2px" id="wstitle"></h3>
+    <div class="note" id="wsiri" style="word-break:break-all"></div>
+    <div class="note" id="shapeline"></div>
+    <h3 style="font-size:13px;margin:18px 0 2px">Roster</h3>
+    <div id="roster"></div>
+  </aside>
+  <section>
+    <div id="streamwrap"><div id="stream"></div></div>
+    <div class="composer">
+      <textarea id="composer" placeholder="Write to your own pod…" disabled></textarea>
+      <p style="margin:8px 0 0"><button id="send" disabled>Post to my pod</button></p>
+      <div id="postresult"></div>
+    </div>
+  </section>
+</main>
+<script src="./dist/renderer.js"></script>
