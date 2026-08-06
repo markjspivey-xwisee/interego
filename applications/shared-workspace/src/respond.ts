@@ -39,10 +39,21 @@ import {
   foldRoster, may, explain,
   type Acceptance, type Grant, type Roster, type RoleProfile,
 } from './roster.js';
+import { CAPS, capabilitiesForScope } from './can.js';
 import type { AgentSession } from './agent-session.js';
 
-/** The capability a role must permit before this agent will write anything. */
-export const APPEND = 'wsp:append';
+/**
+ * The capability a role must permit before this agent will write anything.
+ *
+ * ★ IT IS THE DEFAULT PROFILE'S CAPABILITY IRI, and that is a real limit rather than a
+ * convention. Capabilities are named by the role profile a workspace DECLARES, so a
+ * workspace publishing its own governance names its own — and this check would then be
+ * asking about a capability that profile never mentions, which `may` answers `false` to.
+ * Refusing to write is the right failure for that case, and it is the one this reports:
+ * `explain` names the role and the capability, so an operator sees the mismatch rather than
+ * a silent refusal. `CAPS` lives in `can.ts` and is shared, so there is one spelling.
+ */
+export const APPEND: string = CAPS.append;
 
 const PROV_USED = 'http://www.w3.org/ns/prov#used';
 const PROV_DERIVED = 'http://www.w3.org/ns/prov#wasDerivedFrom';
@@ -128,6 +139,33 @@ function podOfDescriptorUrl(url: string): string {
     return parts[0] ?? '';
   } catch {
     return '';
+  }
+}
+
+/**
+ * The storage base a record was ACTUALLY SERVED FROM — `<origin>/<pod>/`.
+ *
+ * ★ NOT `<relay>/ns/<pod>/`, AND THE TWO ARE NOT INTERCHANGEABLE. A workspace IRI's
+ * `/ns/<owner>/` segment is a logical name under the relay's naming authority; a pod URL
+ * addresses storage. Measured live, feeding the `/ns/` form to `discover_context` alongside
+ * a `pod_name` earned a flat refusal — "Those are different pods and this call can only be
+ * about one of them" — which arrived as `unreadable` on EVERY member's log at once, i.e. as
+ * a channel that looked empty. `get_pod_status` was quieter and worse: it answered, with no
+ * delegation registry, so every member's effective capability computed to nothing and the
+ * agent refused its own write citing a ceiling that was really a wrong URL.
+ *
+ * So the base is taken from the URL the member's own acceptance came back on, which is the
+ * pod that served it. It is derived, never composed from the viewer's host with a pod
+ * segment glued on — that composition assumes every member's storage lives on one server,
+ * which is the assumption this whole vertical exists to break.
+ */
+function podBaseOfDescriptorUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const pod = u.pathname.split('/').filter(Boolean)[0];
+    return pod === undefined ? null : `${u.origin}/${pod}/`;
+  } catch {
+    return null;
   }
 }
 
@@ -238,7 +276,8 @@ export async function respondAsMember(
   }
   const grants: Grant[] = [];
   const acceptances: Acceptance[] = [];
-  const acceptanceStream = new Map<string, string>();
+  /** principal → the storage base their own acceptance was served from. See podBaseOfDescriptorUrl. */
+  const servedFrom = new Map<string, string>();
   const relayBase = workspace.slice(0, workspace.indexOf('/ns/'));
 
   for (const head of scan.heads) {
@@ -260,19 +299,24 @@ export async function respondAsMember(
     } catch {
       continue;
     }
-    const url = typeof ah['descriptorUrl'] === 'string' ? ah['descriptorUrl'] : null;
+    // ★ THE URL IS NESTED UNDER `head`, and reading it off the top level is not a
+    // near-miss — it is `undefined`, which this loop treats as "no acceptance", which
+    // `foldRoster` reads as an unanswered invitation. Measured live: every membership
+    // present and correct on both pods, and the responder reported ITSELF as not seated
+    // with `logs: []`. A wrong field name here does not fail, it un-seats everybody.
+    // `dereferenceWorkspaceRecord` reads the same shape the same way, three files over.
+    const acceptanceHead = ah['head'] as { descriptorUrl?: unknown } | undefined | null;
+    const url = typeof acceptanceHead?.descriptorUrl === 'string' ? acceptanceHead.descriptorUrl : null;
     if (ah['error'] !== undefined || ah['forked'] === true || url === null) continue;
     consulted.push(url);
     const aRead = await readAcceptanceRecord(url, deps);
     acceptances.push(...membershipRowsOf(aRead));
-    if (aRead.record !== null) acceptanceStream.set(aRead.record.member, aRead.record.stream);
+    const base = podBaseOfDescriptorUrl(url);
+    if (aRead.record !== null && base !== null) servedFrom.set(aRead.record.member, base);
   }
 
   // ── 4. the delegation each member's own pod grants — the other half of the ceiling ──
-  const scopes = await delegatedScopes({
-    principals: [...new Set(grants.map(g => g.grantedTo))],
-    relayBase, session,
-  });
+  const scopes = await delegatedScopes({ servedFrom, session });
 
   const roster: Roster = foldRoster({ workspace, profile, grants, acceptances, scopes });
   const me = session.identity.webId;
@@ -289,12 +333,19 @@ export async function respondAsMember(
       });
       continue;
     }
+    const base = servedFrom.get(m.principal) ?? null;
+    if (base === null) {
+      logs.push({
+        principal: m.principal, stream: m.stream, role: m.role, entries: [],
+        unreadable: 'nothing was fetched from their pod during this run, so this reader has no '
+          + 'storage URL for it. Composing one from this agent\'s own host would be addressing a '
+          + 'pod that may not exist, which reads back as an empty log rather than as an error',
+      });
+      continue;
+    }
     let rows: readonly StreamRow[];
     try {
-      rows = await readStream(
-        { graphIri: m.stream, workspace, podUrl: `${relayBase}/ns/${pod}/` },
-        { ...deps, discover: async a => deps.discover({ ...a, pod_name: pod }) },
-      );
+      rows = await readStream({ graphIri: m.stream, workspace, podUrl: base }, deps);
     } catch (e) {
       logs.push({
         principal: m.principal, stream: m.stream, role: m.role, entries: [],
@@ -303,6 +354,16 @@ export async function respondAsMember(
       continue;
     }
     const chain = verifyChain(rows);
+    // ★ AN EMPTY LOG IS NOT A BROKEN ONE. `verifyChain([])` reports `intact: false` with
+    // zero heads, zero merges and zero dangling links — a shape that is perfectly
+    // consistent and says nothing is wrong. Reading it as a divergence made a member who
+    // had simply not written yet render as one whose log was WITHHELD FOR TAMPERING, which
+    // is a serious accusation to make about an absence. `headOf` already answers `'head'`
+    // for the empty case; this is the same rule, one caller over.
+    if (rows.length === 0) {
+      logs.push({ principal: m.principal, stream: m.stream, role: m.role, entries: [], unreadable: null });
+      continue;
+    }
     if (!chain.intact) {
       // The same rule `appendEntry` applies to its own stream: a log that does not verify is
       // WITHHELD rather than folded in, and the reason is reported.
@@ -396,7 +457,11 @@ export async function respondAsMember(
       ...(session.identity.agentDid !== null ? { agentDid: session.identity.agentDid } : {}),
     },
     { body, extraTriples, shapes: [] },
-    { ...deps, discover: async a => deps.discover({ ...a, pod_name: session.identity.podName }) },
+    // No `pod_name` override: `readStream` already sends `pod_url` from the ref, and sending
+    // both is refused outright — see podBaseOfDescriptorUrl. The ref's podUrl is the one
+    // `get_pod_status` reported for this wallet, so the write goes where the substrate says
+    // this identity's storage is.
+    deps,
   );
 
   if (appended.outcome !== 'appended') {
@@ -527,7 +592,8 @@ function deriveReply(args: {
   parts.push(
     `What I could see: ${readable.length} log(s) totalling ${total} entr${total === 1 ? 'y' : 'ies'} — `
     + readable.map(l => `${podOfNsIri(l.stream) ?? '?'} (${l.role.split('#').pop() ?? l.role}, ${l.entries.length})`).join(', ')
-    + '.',
+    + '. Each of those is a separate pod I read one at a time; there is no index across them and no query that '
+    + 'spans them.',
   );
 
   if (withheld.length > 0) {
@@ -538,16 +604,24 @@ function deriveReply(args: {
     );
   }
 
+  // Capabilities are IRIs and the entry reads better for their local names — but the full
+  // IRIs are on the record as `prov:used` inputs and in the role table the workspace
+  // declares, so nothing is lost by shortening the prose. The role table's IRI is quoted in
+  // full precisely once, below, because that is the document that decides all of it.
+  const localName = (iri: string): string => iri.split('#').pop() ?? iri;
   parts.push(
     `I am writing this to my own log on pod ${reading.agentPod}, not to yours and not to a shared table. `
-    + `My role here is ${(reading.agentRole ?? '').split('#').pop() ?? 'unknown'} and it permits me `
-    + `${reading.agentEffective.length === 0 ? 'nothing' : reading.agentEffective.join(', ')}`
+    + `My role here is ${localName(reading.agentRole ?? 'unknown')}, defined by <${reading.roleProfile ?? '(no profile named)'}>, `
+    + `and what I may actually do is ${reading.agentEffective.length === 0 ? 'nothing' : reading.agentEffective.map(localName).join(', ')}`
     + (reading.agentWithheldByDelegation.length > 0
-      ? `; ${reading.agentWithheldByDelegation.join(', ')} ${reading.agentWithheldByDelegation.length === 1 ? 'is' : 'are'} `
-        + 'permitted by the role but withheld by my pod\'s delegation, so I may not do it'
+      ? `; ${reading.agentWithheldByDelegation.map(localName).join(', ')} `
+        + `${reading.agentWithheldByDelegation.length === 1 ? 'is' : 'are'} permitted by the role but withheld by my `
+        + 'own pod\'s delegation, so I may not'
       : '')
-    + `. I dereferenced ${reading.consulted.length} descriptor(s) to say this; they are cited on this entry `
-    + 'with prov:used, so you can check every one.',
+    + '. I cannot grant or revoke anybody\'s membership here, including my own — that is not a setting, it is what '
+    + 'the published role table permits intersected with what my pod delegates. '
+    + `I dereferenced ${reading.consulted.length} descriptor(s) to say this; they are cited on this entry with `
+    + 'prov:used, so you can check every one.',
   );
 
   return parts.join(' ');
@@ -562,32 +636,32 @@ function deriveReply(args: {
  * which, because `foldRoster` intersects, is the reading that grants least.
  */
 async function delegatedScopes(args: {
-  readonly principals: readonly string[];
-  readonly relayBase: string;
+  /** principal → the storage base their own acceptance was served from. */
+  readonly servedFrom: ReadonlyMap<string, string>;
   readonly session: AgentSession;
 }): Promise<Array<{ principal: string; capabilities: readonly string[] }>> {
   const out: Array<{ principal: string; capabilities: readonly string[] }> = [];
-  for (const principal of args.principals) {
-    const pod = podOfNsIri(principal) ?? /\/users\/([^/]+)\//.exec(principal)?.[1] ?? null;
-    if (pod === null) continue;
+  for (const [principal, podUrl] of args.servedFrom) {
     let res: Record<string, unknown>;
     try {
-      res = await args.session.call('get_pod_status', { pod_url: `${args.relayBase}/ns/${pod}/` });
+      res = await args.session.call('get_pod_status', { pod_url: podUrl });
     } catch {
       continue;
     }
     const reg = res['delegationRegistry'] as { rows?: Array<{ scope?: string }> } | undefined;
     const scopes = (reg?.rows ?? []).map(r => r.scope).filter((s): s is string => typeof s === 'string');
     if (scopes.length === 0) continue;
-    // ★ AN UNRECOGNISED SCOPE GRANTS NOTHING. The four the substrate has are the four it
-    // has; a fifth is not a wider one, it is one this reader does not understand, and
-    // treating it as permissive is how a typo becomes an escalation.
+    // ★ `capabilitiesForScope` FROM `can.ts`, NOT A SECOND COPY OF THE TABLE. An unrecognised
+    // scope yields nothing there, which is the only safe reading of an authorization
+    // statement this layer cannot interpret — and a private re-implementation would be a
+    // second place that rule could drift, on the side that grants.
+    //
+    // Several rows for one principal are UNIONED here, exactly as `capabilitiesOfAgent`'s
+    // caller does: a pod may delegate to more than one agent, and holding two keys is not
+    // holding less authority than holding one. `foldRoster` then intersects across duplicate
+    // PRINCIPAL rows, which is the different question and the one that must narrow.
     const caps = new Set<string>();
-    for (const s of scopes) {
-      if (s === 'ReadWrite') { caps.add(APPEND); caps.add('wsp:read'); caps.add('wsp:grant'); caps.add('wsp:revoke'); }
-      else if (s === 'PublishOnly') { caps.add(APPEND); caps.add('wsp:read'); }
-      else if (s === 'ReadOnly' || s === 'DiscoverOnly') { caps.add('wsp:read'); }
-    }
+    for (const s of scopes) for (const c of capabilitiesForScope(s)) caps.add(c);
     out.push({ principal, capabilities: [...caps].sort() });
   }
   return out;
