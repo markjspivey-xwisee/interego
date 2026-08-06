@@ -134,12 +134,30 @@ check('set_reachability derives its did from callerAgentId',
   /set_reachability[\s\S]{0,1200}const did = callerAgentId\(args\)/.test(SERVER)
   || /const did = callerAgentId\(args\)/.test(SERVER));
 
-console.log('\n3. BOTH transports inject the server-authoritative identity');
-// /mcp already set it unconditionally; /messages did not, so callerAgentId()
-// would have fallen through to the forgeable value on that transport.
-const injections = SERVER.match(/args\._session_agent_did = /g) ?? [];
-check('_session_agent_did is injected at >= 2 sites (/mcp + /messages)',
-  injections.length >= 2, `found ${injections.length}`);
+console.log('\n3. BOTH REST transports inject identity through ONE shared helper');
+// /mcp injects inline (args._session_agent_did = authContext.agentId). /tool and
+// /messages used to inject inline TOO — and /messages had drifted: it set
+// _session_agent_did / owner_webid / pod_name but NOT _session_user_id, the one field
+// requireOwnPod reads, so it refused every own-pod write on that transport as if the
+// caller were unauthenticated. Both REST transports now route through
+// injectRestVerifiedIdentity, so the fields cannot diverge per-transport again. These
+// assertions bind to the helper's CODE (target.<field> = <source>), never its prose.
+check('a shared REST identity-injection helper exists',
+  /function injectRestVerifiedIdentity\(\s*target: Record<string, unknown>,\s*auth: SignedAuthResult,\s*viaSignature: boolean,?\s*\): void/.test(SERVER));
+check('the helper sets _session_user_id in BOTH branches (the field the ownership gates read)',
+  /target\._session_user_id = ownPod;/.test(SERVER)
+  && /if \(auth\.userId\) target\._session_user_id = auth\.userId;/.test(SERVER));
+check('the helper sets the _session_agent_did attribution identity in both branches',
+  /target\._session_agent_did = auth\.recoveredDid;/.test(SERVER)
+  && /if \(auth\.agentId\) target\._session_agent_did = auth\.agentId;/.test(SERVER));
+check('/tool routes through the helper with NO inline _session_user_id copy left to drift',
+  /injectRestVerifiedIdentity\(req\.body, auth, viaSignature\)/.test(SERVER)
+  && !/req\.body\._session_user_id = auth\.userId/.test(SERVER));
+check('/messages routes through the helper — this is what fixes its requireOwnPod refusal',
+  /injectRestVerifiedIdentity\(args, auth, viaSignature\)/.test(SERVER)
+  && !/args\._session_agent_did = auth\.recoveredDid/.test(SERVER));
+check('/mcp still injects _session_agent_did for every tool',
+  /args\._session_agent_did = authContext\.agentId;/.test(SERVER));
 // ★ THIS USED TO MATCH AN INLINE `for (const reserved of ['_session_bearer', …])` LOOP,
 // of which there were two — one on /mcp and one on /tool — each a hand-copy of
 // RESERVED_WIRE_FIELDS. The check passed while the constant it was really about was NOT
@@ -208,9 +226,12 @@ check('read_inbox ownership uses callerOwnPod, not selfPodUrl',
 check('channel redaction owner-check uses callerOwnPod',
   /const callerPod = await callerOwnPod\(args\)/.test(SERVER));
 
-console.log('\n9. every transport injects the authoritative attribution identity');
-check('/tool signed branch injects _session_agent_did',
-  /req\.body\._session_agent_did = auth\.recoveredDid/.test(SERVER));
+console.log('\n9. the signed-request branch binds attribution to the recovered DID');
+// Both REST transports share the helper; its signature branch OVERRIDES agent_id AND
+// _session_agent_did with the DID the signature recovered — a caller cannot claim one
+// agent_id while signing with another wallet.
+check('the shared helper overrides agent_id + _session_agent_did with the recovered DID',
+  /target\.agent_id = auth\.recoveredDid;\s*target\._session_agent_did = auth\.recoveredDid;/.test(SERVER));
 
 console.log('\n10. the federated-inbox gate runs BEFORE the agent lookup (no enumeration oracle)');
 check('signature gate precedes cardForLocalPart',
@@ -240,9 +261,11 @@ check('no header-presence signature shortcut remains',
 check('the route fails closed on the env flag alone',
   /RELAY_FEDERATION_ACCEPT_UNSIGNED !== '1'/.test(SERVER));
 
-console.log('\n13. R8 — the /tool OAuth branch injects the attribution identity');
-check('OAuth branch sets _session_agent_did',
-  /if \(auth\.agentId\) req\.body\._session_agent_did = auth\.agentId;/.test(SERVER));
+console.log('\n13. R8 — the bearer branch injects the attribution identity');
+// The helper's bearer branch (shared by /tool + /messages) sets _session_agent_did from
+// the resolved agent, so callerAgentId() cannot fall through to a forgeable value.
+check('the shared helper sets _session_agent_did from the resolved agent on the bearer path',
+  /if \(auth\.agentId\) target\._session_agent_did = auth\.agentId;/.test(SERVER));
 
 console.log('\n14. R4 — the egress guard screens EVERY redirect hop, not just the first URL');
 // solidFetch calls fetch() with no `redirect` option → undici follows up to 20 hops

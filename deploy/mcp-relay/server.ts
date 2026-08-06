@@ -5805,6 +5805,69 @@ async function requireOwnPod(args: ToolArgs, targetPodUrl: string, tool: string)
 }
 
 /**
+ * Bind the server-authoritative caller identity onto a REST-transport call, from an
+ * ALREADY-VERIFIED auth result. `/tool/:name` and `/messages` accept the same two
+ * credential kinds — an identity-server bearer OR an ECDSA signed-request envelope — and
+ * MUST derive the identical identity fields from them. This is the ONE place that does it,
+ * so the two transports can never again drift apart field-by-field.
+ *
+ * ★ WHY `_session_user_id` IS THE LOAD-BEARING FIELD, AND WHAT ITS ABSENCE DID.
+ * Every ownership gate — requireOwnPod, callerOwnPod, recipientKeyFor — reads
+ * `_session_user_id` as the wire-stripped, server-authoritative answer to "which pod is
+ * mine". `/tool` set it; `/messages` set every OTHER identity field (agent_id, owner_webid,
+ * pod_name, _session_agent_did) but omitted THIS one. So on `/messages`, callerOwnPod()
+ * returned undefined for a fully-authenticated caller, and requireOwnPod refused EVERY
+ * own-pod write with "authentication required — the caller's identity could not be
+ * established" — a valid bearer presenting as an authorisation failure, the exact
+ * ambiguity the ownership gate's fail-closed message must not create. Measured on the live
+ * relay at db194d4: identical identity-server bearer, `rebuild_manifest` → refused on
+ * `/messages`, succeeds on `/tool` and `/mcp`. Routing both REST transports through this
+ * helper makes them agree by construction; the source-text gate asserts both call it.
+ *
+ * PRECONDITION: reserved wire fields (RESERVED_WIRE_FIELDS) are already stripped from
+ * `target`, so every value written here is server-derived and none can be caller-forged.
+ *
+ * NOT `pod_url`, DELIBERATELY. On these transports `pod_url` is a TARGET (notify_agent /
+ * read_inbox / discover_context), never "my pod" — see the gateRequiredArgs comment. The
+ * single `pod_url` injection lives on `/mcp` and is asserted to be the only one in the file.
+ * NOT `_identity_token` either: it is not consulted by any ownership gate (callerOwnPod
+ * short-circuits on `_session_user_id` before ever reaching it), and threading it would only
+ * push rebuild_manifest's selfPodUrl() onto an identity `/me` round-trip for a pod the
+ * server-injected `pod_name` already names. `/tool` never set it and works; parity is with
+ * `/tool`, not with `/mcp`'s richer OAuth context.
+ */
+function injectRestVerifiedIdentity(
+  target: Record<string, unknown>,
+  auth: SignedAuthResult,
+  viaSignature: boolean,
+): void {
+  if (viaSignature) {
+    // The recovered DID is authoritative — it OVERRIDES any caller-supplied agent_id
+    // (a caller must not claim agent_id=alice while signing with bob's wallet).
+    target.agent_id = auth.recoveredDid;
+    target._session_agent_did = auth.recoveredDid;
+    const addr = auth.recoveredDid!.slice('did:ethr:'.length).toLowerCase();
+    // A signed caller owns exactly the pod its address derives — the only pod on which
+    // requireOwnPod will let it write. This is BOTH the pod_name default AND the
+    // server-authoritative `_session_user_id` the ownership gates compare against.
+    const ownPod = `eth-${addr.slice(2, 14)}`;
+    if (!target.pod_name) { target.pod_name = ownPod; target[POD_NAME_INJECTED] = true; }
+    if (!target.owner_webid) target.owner_webid = auth.recoveredDid;
+    target._session_user_id = ownPod;
+  } else {
+    if (!target.agent_id) target.agent_id = auth.agentId;
+    // Session identity WINS over the forgeable caller agent_id at every attribution sink
+    // (callerAgentId), so set it whenever the bearer resolved an agent.
+    if (auth.agentId) target._session_agent_did = auth.agentId;
+    if (!target.owner_webid) target.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
+    if (!target.pod_name) { target.pod_name = auth.userId; target[POD_NAME_INJECTED] = true; }
+    // ★ THE FIX. The field requireOwnPod / callerOwnPod / recipientKeyFor read to prove the
+    // caller's own pod. Without it, an authenticated own-pod write refused as if unauthenticated.
+    if (auth.userId) target._session_user_id = auth.userId;
+  }
+}
+
+/**
  * The decryption key to use when reading a descriptor at `targetUrl` — or
  * undefined, meaning "do not decrypt".
  *
@@ -13972,34 +14035,11 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // not own. Strip here, then re-inject the server-authoritative value below.
     // Same reason as the `/mcp` site: one list, one helper. See RESERVED_WIRE_FIELDS.
     stripReservedWireFields(req.body);
-    if (viaSignature) {
-      req.body.agent_id = auth.recoveredDid;
-      // Server-authoritative attribution identity — without this, callerAgentId()
-      // falls through to the forgeable req.body.agent_id on THIS transport.
-      req.body._session_agent_did = auth.recoveredDid;
-      // For pod naming, derive from the address suffix so signed
-      // agents land on their own pods.
-      const addr = auth.recoveredDid!.slice('did:ethr:'.length).toLowerCase();
-      const ownPod = `eth-${addr.slice(2, 14)}`;
-      if (!req.body.pod_name) { req.body.pod_name = ownPod; req.body[POD_NAME_INJECTED] = true; }
-      if (!req.body.owner_webid) req.body.owner_webid = auth.recoveredDid;
-      // Server-authoritative: a signed caller owns exactly the pod its address
-      // derives — the only pod on which it may grant tenant-admin.
-      req.body._session_user_id = ownPod;
-    } else {
-      if (!req.body.agent_id) req.body.agent_id = auth.agentId;
-      if (!req.body.owner_webid) req.body.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
-      if (!req.body.pod_name) { req.body.pod_name = auth.userId; req.body[POD_NAME_INJECTED] = true; }
-      // Server-authoritative bearer identity — mirrors the MCP handler so the
-      // register_agent tenant_admin own-pod check works on the REST path too.
-      if (auth.userId) req.body._session_user_id = auth.userId;
-      // ...and the ATTRIBUTION identity. Without this, the strip above has just
-      // removed _session_agent_did and callerAgentId() falls through to
-      // req.body.agent_id — which the line above only fills in WHEN ABSENT, so a
-      // bearer caller could still act as anyone on this one branch. The signed
-      // branch, /messages and /mcp all set it; this branch was the odd one out.
-      if (auth.agentId) req.body._session_agent_did = auth.agentId;
-    }
+    // Bind the verified identity through the SHARED helper — same code path /messages uses,
+    // so the two REST transports set the identical server-authoritative fields (including
+    // _session_user_id, which the tenant_admin own-pod check and every requireOwnPod gate
+    // read). Previously this was an inline copy that /messages had drifted out of parity with.
+    injectRestVerifiedIdentity(req.body, auth, viaSignature);
     // Auto-register the authenticated participant into the directory
     // (idempotent, fire-and-forget) — REST/signed path counterpart of
     // the MCP-path hook above. Use the caller's OWN pod derived from the
@@ -14317,23 +14357,13 @@ app.post('/messages', messagesLimiter, async (req, res) => {
         });
         return;
       }
-      if (viaSignature) {
-        args.agent_id = auth.recoveredDid;
-        // Server-authoritative attribution identity (reserved + wire-stripped).
-        // The /mcp transport sets this unconditionally; set it here too so
-        // callerAgentId() resolves to a verified identity on BOTH transports —
-        // otherwise attribution on /messages falls through to the forgeable
-        // caller-supplied agent_id.
-        args._session_agent_did = auth.recoveredDid;
-        const addr = auth.recoveredDid!.slice('did:ethr:'.length).toLowerCase();
-        if (!args.pod_name) { args.pod_name = `eth-${addr.slice(2, 14)}`; args[POD_NAME_INJECTED] = true; }
-        if (!args.owner_webid) args.owner_webid = auth.recoveredDid;
-      } else {
-        if (!args.agent_id) args.agent_id = auth.agentId;
-        if (auth.agentId) args._session_agent_did = auth.agentId;
-        if (!args.owner_webid) args.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
-        if (!args.pod_name) { args.pod_name = auth.userId; args[POD_NAME_INJECTED] = true; }
-      }
+      // Bind the verified identity through the SHARED helper — same code path /tool uses.
+      // ★ This is the fix: the previous inline block set agent_id / owner_webid / pod_name /
+      // _session_agent_did but NOT _session_user_id, so requireOwnPod could never establish
+      // the caller's own pod on this transport and refused every own-pod write as if the
+      // caller were unauthenticated. The helper sets _session_user_id, so a valid bearer here
+      // now reaches the identical own-pod outcome it already reached on /tool and /mcp.
+      injectRestVerifiedIdentity(args, auth, viaSignature);
     }
 
     try {
