@@ -98,6 +98,24 @@ jobs:
       # Repointing to a tag that was never pushed does NOT fail loudly: Railway
       # leaves the previous container serving, so /health keeps returning 200 and
       # the rollout looks fine. Catch it before touching production.
+      # ★ WITHOUT THIS, THE STEP BELOW FAILS FOR EVERY SERVICE. Every image this repo
+      # builds goes to a PRIVATE GHCR package, and a runner is not logged in to anything:
+      # `imagetools inspect` gets 403 and reports it as "is not in the registry. Run
+      # build-ghcr.yml for this commit first" — a message that accuses the build of not
+      # having happened. Measured on the FIRST EVER dispatch of this workflow (2026-08-06):
+      # it had never run since it was written, so the gap sat in a guard nobody had
+      # executed, in the workflow whose whole job is to make deploys verifiable.
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USERNAME: ${{ github.repository_owner }}
+        run: |
+          if [ -z "$GHCR_TOKEN" ]; then
+            echo "::error::GHCR_TOKEN is not set. The image check below cannot read a private package without it."
+            exit 1
+          fi
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+
       - name: Verify the image exists in GHCR
         env:
           # ★ ASKED, NOT DERIVED. This step used to interpolate the service name into
