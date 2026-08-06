@@ -1,0 +1,596 @@
+/**
+ * A seated member that is a process: read the channel, then write one entry to its own log.
+ *
+ * ── WHAT THIS IS AND WHAT IT REFUSES TO BE ───────────────────────────────────
+ *
+ * The temptation this file exists to refuse is a responder whose CALLER supplies the reply.
+ * That is trivial to build, it looks identical in a chat window, and it is a lie: the
+ * author would be whoever made the request, and the agent would be a signing service with
+ * a name on it. So the only input this takes is WHICH WORKSPACE. Everything the reply says
+ * is read here, from the members' own pods, through the agent's own credentials, and every
+ * descriptor it read is cited by URL on the entry it writes — so the derivation is not a
+ * claim in prose, it is a set of links a reader can follow and check.
+ *
+ * ★ THE REPLY IS DERIVED, NOT GENERATED. There is no model in this path and no prompt. The
+ * agent reports what it found and what it could not read, quotes the message it is
+ * answering, and answers the questions it can answer FROM THE CHANNEL. A sentence a model
+ * produced would read better and would be unverifiable — the grounding could only ever be
+ * asserted, and this vertical's whole discipline is that a field nobody read is reported as
+ * not read rather than turned into a statement about the world.
+ *
+ * ★ THE ROLE IS A CEILING AND IT IS ENFORCED HERE, BEFORE THE WRITE. `foldRoster` computes
+ * `role.permits ∩ delegatedScope` and this refuses when appending is not in it. That
+ * refusal is not decoration: it is the property the substrate CANNOT enforce, because the
+ * agent's pod is the agent's pod and nothing can stop it writing there. So an unauthorised
+ * entry is not prevented, it is INERT — and the honest thing for a well-behaved member is
+ * to decline to write it at all, and to say why.
+ */
+
+import { digestedGraphRegion } from '@interego/solid';
+import {
+  appendEntry, readStream, verifyChain, attestationOfResponse, readDeclaredSeq, WSP_SHAPES,
+  type StreamDeps, type StreamRow,
+} from './stream.js';
+import {
+  dereferenceWorkspaceRecord, dereferenceRoleProfile,
+  readGrantRecord, readAcceptanceRecord, membershipRowsOf,
+} from './membership.js';
+import {
+  foldRoster, may, explain,
+  type Acceptance, type Grant, type Roster, type RoleProfile,
+} from './roster.js';
+import type { AgentSession } from './agent-session.js';
+
+/** The capability a role must permit before this agent will write anything. */
+export const APPEND = 'wsp:append';
+
+const PROV_USED = 'http://www.w3.org/ns/prov#used';
+const PROV_DERIVED = 'http://www.w3.org/ns/prov#wasDerivedFrom';
+
+/** One entry as this responder read it, with everything it needs to quote and cite. */
+export interface ReadEntry {
+  readonly descriptorUrl: string;
+  readonly cid: string | null;
+  readonly seq: number | null;
+  readonly body: string | null;
+  /** The pod the record was SERVED from, not a name composed from a member list. */
+  readonly pod: string;
+  readonly principal: string;
+  readonly signedBy: string | null;
+  readonly authorshipVerified: boolean;
+}
+
+/** One member's log, or the reason it is not here. */
+export interface ReadLog {
+  readonly principal: string;
+  readonly stream: string;
+  readonly role: string;
+  readonly entries: readonly ReadEntry[];
+  /** Non-null when the log could not be read or does not verify. Never silently empty. */
+  readonly unreadable: string | null;
+}
+
+export type RespondOutcome =
+  | {
+      readonly outcome: 'appended';
+      readonly entry: { readonly descriptorUrl: string; readonly cid: string | null; readonly seq: number };
+      readonly body: string;
+      readonly answering: ReadEntry | null;
+      readonly read: RespondReading;
+    }
+  | {
+      readonly outcome: 'already-answered';
+      readonly answering: ReadEntry;
+      readonly read: RespondReading;
+      readonly message: string;
+    }
+  | {
+      readonly outcome: 'nothing-to-answer';
+      readonly read: RespondReading;
+      readonly message: string;
+    }
+  | {
+      readonly outcome: 'refused';
+      readonly reason: 'not-seated' | 'ceiling' | 'unreadable-workspace' | 'append-failed';
+      readonly message: string;
+      readonly read: RespondReading | null;
+    };
+
+/** Everything the agent actually read, returned so a caller can check the derivation. */
+export interface RespondReading {
+  readonly workspace: string;
+  readonly convener: string | null;
+  readonly roleProfile: string | null;
+  readonly agentPrincipal: string;
+  readonly agentPod: string;
+  readonly agentRole: string | null;
+  /** `role.permits ∩ delegatedScope` — what the roster says this agent may actually do. */
+  readonly agentEffective: readonly string[];
+  readonly agentWithheldByDelegation: readonly string[];
+  readonly logs: readonly ReadLog[];
+  /** Every descriptor URL this run dereferenced to compose its answer. Cited on the entry. */
+  readonly consulted: readonly string[];
+}
+
+const trunc = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
+
+/** The pod segment of a `<relay>/ns/<pod>/<slug>` IRI, or null. */
+function podOfNsIri(iri: string | null | undefined): string | null {
+  if (!iri) return null;
+  const m = /\/ns\/([^/]+)\//.exec(iri);
+  return m ? (m[1] ?? null) : null;
+}
+
+/** The pod segment of a descriptor URL served by a CSS pod. */
+function podOfDescriptorUrl(url: string): string {
+  try {
+    const parts = new URL(url).pathname.split('/').filter(Boolean);
+    return parts[0] ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The grants this workspace's convener has published, by descriptor URL.
+ *
+ * ★ READ FROM THE CONVENER'S POD, NOT FROM THE WORKSPACE IRI'S OWNER SEGMENT. The record
+ * NAMES a convener; that name resolved to a pod is where grants live. Using the IRI's own
+ * owner segment throws the named convener away and reads a different pod in the one case
+ * where the two disagree — which is exactly the case worth getting right.
+ */
+async function grantHeads(args: {
+  readonly workspace: string;
+  readonly convenerPod: string;
+  readonly deps: StreamDeps;
+  readonly limit: number;
+}): Promise<{ readonly heads: readonly string[]; readonly saturated: boolean; readonly why: string | null }> {
+  let res: Record<string, unknown>;
+  try {
+    res = await args.deps.discover({
+      pod_name: args.convenerPod, limit: args.limit, sort: 'newest-first',
+    });
+  } catch (e) {
+    return { heads: [], saturated: false, why: `discover_context on '${args.convenerPod}' threw: ${(e as Error).message}` };
+  }
+  if (res['error'] !== undefined) {
+    return { heads: [], saturated: false, why: `discover_context on '${args.convenerPod}': ${String(res['message'] ?? res['error'])}` };
+  }
+  const rows = Array.isArray(res['entries']) ? res['entries'] as Array<Record<string, unknown>> : [];
+  const prefix = `${args.workspace}-grant-`;
+  const seen = new Set<string>();
+  const heads: string[] = [];
+  for (const e of rows) {
+    const describes = Array.isArray(e['describes']) ? e['describes'] as string[] : [];
+    const g = describes.find(x => x.startsWith(prefix));
+    const url = typeof e['descriptorUrl'] === 'string' ? e['descriptorUrl'] : null;
+    if (g === undefined || url === null || seen.has(g)) continue;
+    seen.add(g);
+    heads.push(url);
+  }
+  // A capped scan that came back full may have cut grants off the end; silent truncation
+  // would drop a member from the roster with nothing said.
+  return { heads, saturated: rows.length >= args.limit, why: null };
+}
+
+export interface RespondOptions {
+  readonly workspace: string;
+  /**
+   * The slug the member IRIs are composed from — `<slug>-acceptance`, `<slug>-stream`.
+   * Derived from the workspace IRI's last segment when omitted, which is the convention
+   * every record in this vertical follows; passed explicitly it is the caller's choice and
+   * is reported as such.
+   */
+  readonly slug?: string;
+  /** Cap on the grant scan. Reported when it saturates. */
+  readonly grantLimit?: number;
+}
+
+/**
+ * Read the channel and, if there is something to answer and the role permits it, answer.
+ *
+ * The whole of the trigger contract: the caller says WHICH workspace, and nothing else.
+ */
+export async function respondAsMember(
+  session: AgentSession,
+  opts: RespondOptions,
+): Promise<RespondOutcome> {
+  const deps = session.deps;
+  const workspace = opts.workspace;
+  const slug = opts.slug ?? workspace.split('/').pop() ?? '';
+  const consulted: string[] = [];
+
+  // ── 1. the workspace record, dereferenced (never handed to us) ─────────────
+  const evidence = await dereferenceWorkspaceRecord(workspace, deps);
+  if (evidence.kind === 'unreadable') {
+    return { outcome: 'refused', reason: 'unreadable-workspace', message: evidence.why, read: null };
+  }
+  const record = evidence.record;
+  consulted.push(record.head);
+  const convenerPod = podOfNsIri(record.convener)
+    ?? /\/users\/([^/]+)\//.exec(record.convener)?.[1]
+    ?? null;
+  if (convenerPod === null) {
+    return {
+      outcome: 'refused', reason: 'unreadable-workspace', read: null,
+      message: `the record names convener <${record.convener}>, which this reader cannot resolve to a pod, `
+        + 'so it does not know where the grants that would seat anybody live',
+    };
+  }
+
+  // ── 2. the role table, dereferenced from the IRI the record declares ───────
+  const roleEvidence = await dereferenceRoleProfile(record.roleProfile, deps);
+  if (roleEvidence.kind === 'unreadable') {
+    return {
+      outcome: 'refused', reason: 'unreadable-workspace', read: null,
+      message: `the workspace declares role profile <${record.roleProfile}> and it could not be read, `
+        + `so no ceiling can be computed and this agent will not write: ${roleEvidence.why}`,
+    };
+  }
+  const profile: RoleProfile = { profile: record.roleProfile, roles: roleEvidence.document.roles };
+  consulted.push(roleEvidence.document.head);
+
+  // ── 3. both halves of every membership ─────────────────────────────────────
+  const limit = opts.grantLimit ?? 400;
+  const scan = await grantHeads({ workspace, convenerPod, deps, limit });
+  if (scan.why !== null) {
+    return { outcome: 'refused', reason: 'unreadable-workspace', message: scan.why, read: null };
+  }
+  const grants: Grant[] = [];
+  const acceptances: Acceptance[] = [];
+  const acceptanceStream = new Map<string, string>();
+  const relayBase = workspace.slice(0, workspace.indexOf('/ns/'));
+
+  for (const head of scan.heads) {
+    consulted.push(head);
+    const read = await readGrantRecord(head, deps);
+    const rows = membershipRowsOf(read);
+    grants.push(...rows);
+    const g = read.record;
+    if (g === null) continue;
+    const memberPod = podOfNsIri(g.grantedTo) ?? /\/users\/([^/]+)\//.exec(g.grantedTo)?.[1] ?? null;
+    if (memberPod === null) continue;
+    // The member's own half, on the member's own pod. The IRI is COMPOSED from the naming
+    // convention — the grant does not enumerate acceptances — and that is stated rather
+    // than presented as something the record said.
+    const acceptanceIri = `${relayBase}/ns/${memberPod}/${slug}-acceptance`;
+    let ah: Record<string, unknown>;
+    try {
+      ah = await deps.currentHead!({ urn: acceptanceIri, pod_name: memberPod });
+    } catch {
+      continue;
+    }
+    const url = typeof ah['descriptorUrl'] === 'string' ? ah['descriptorUrl'] : null;
+    if (ah['error'] !== undefined || ah['forked'] === true || url === null) continue;
+    consulted.push(url);
+    const aRead = await readAcceptanceRecord(url, deps);
+    acceptances.push(...membershipRowsOf(aRead));
+    if (aRead.record !== null) acceptanceStream.set(aRead.record.member, aRead.record.stream);
+  }
+
+  // ── 4. the delegation each member's own pod grants — the other half of the ceiling ──
+  const scopes = await delegatedScopes({
+    principals: [...new Set(grants.map(g => g.grantedTo))],
+    relayBase, session,
+  });
+
+  const roster: Roster = foldRoster({ workspace, profile, grants, acceptances, scopes });
+  const me = session.identity.webId;
+  const seat = roster.members.find(m => m.principal === me) ?? null;
+
+  // ── 5. read every seated member's log ──────────────────────────────────────
+  const logs: ReadLog[] = [];
+  for (const m of roster.members) {
+    const pod = podOfNsIri(m.stream);
+    if (pod === null) {
+      logs.push({
+        principal: m.principal, stream: m.stream, role: m.role, entries: [],
+        unreadable: `their acceptance names stream <${m.stream}>, which is not a <relay>/ns/<pod>/<slug> IRI`,
+      });
+      continue;
+    }
+    let rows: readonly StreamRow[];
+    try {
+      rows = await readStream(
+        { graphIri: m.stream, workspace, podUrl: `${relayBase}/ns/${pod}/` },
+        { ...deps, discover: async a => deps.discover({ ...a, pod_name: pod }) },
+      );
+    } catch (e) {
+      logs.push({
+        principal: m.principal, stream: m.stream, role: m.role, entries: [],
+        unreadable: `their log could not be read: ${(e as Error).message}`,
+      });
+      continue;
+    }
+    const chain = verifyChain(rows);
+    if (!chain.intact) {
+      // The same rule `appendEntry` applies to its own stream: a log that does not verify is
+      // WITHHELD rather than folded in, and the reason is reported.
+      logs.push({
+        principal: m.principal, stream: m.stream, role: m.role, entries: [],
+        unreadable: `their log does not verify — ${chain.heads.length} head(s), ${chain.merges.length} merge(s), `
+          + `${chain.danglingLinks.length} dangling link(s) — so it is withheld rather than folded in`,
+      });
+      continue;
+    }
+    const entries: ReadEntry[] = [];
+    for (const row of chain.ordered) {
+      consulted.push(row.descriptorUrl);
+      entries.push(await readOneEntry(row, m.principal, deps));
+    }
+    logs.push({ principal: m.principal, stream: m.stream, role: m.role, entries, unreadable: null });
+  }
+
+  const reading: RespondReading = {
+    workspace,
+    convener: record.convener,
+    roleProfile: record.roleProfile,
+    agentPrincipal: me,
+    agentPod: session.identity.podName,
+    agentRole: seat?.role ?? null,
+    agentEffective: seat?.effective ?? [],
+    agentWithheldByDelegation: seat?.withheldByDelegation ?? [],
+    logs,
+    consulted: [...new Set(consulted)],
+  };
+
+  // ── 6. am I seated, and does my role permit writing? ───────────────────────
+  if (seat === null) {
+    return {
+      outcome: 'refused', reason: 'not-seated', read: reading,
+      message: `this agent (${me}) is not seated in <${workspace}>. Both halves are required: a `
+        + `wsp:MembershipGrant on the convener's pod '${convenerPod}' naming it, and a `
+        + `wsp:MembershipAcceptance on its own pod '${session.identity.podName}' naming that grant. `
+        + 'It will not write into a channel it has not been admitted to.',
+    };
+  }
+  if (!may(roster, me, APPEND)) {
+    return {
+      outcome: 'refused', reason: 'ceiling', read: reading,
+      message: `the role ceiling refuses this write. ${explain(roster, me, APPEND)} `
+        + 'Nothing could stop this agent writing to its own pod — it is its own pod — so this is a '
+        + 'refusal it imposes on itself. An entry written anyway would exist and be inert: the fold '
+        + 'would not count it, and would say why.',
+    };
+  }
+
+  // ── 7. what am I answering? ────────────────────────────────────────────────
+  const mine = logs.find(l => l.principal === me) ?? null;
+  const answeredAlready = new Set<string>();
+  for (const e of mine?.entries ?? []) {
+    for (const url of derivedFrom(e.body)) answeredAlready.add(url);
+  }
+  const others = logs
+    .filter(l => l.principal !== me)
+    .flatMap(l => l.entries)
+    .filter(e => e.body !== null && e.body.trim() !== '');
+  const newest = others.length > 0 ? others[others.length - 1]! : null;
+
+  if (newest === null) {
+    return {
+      outcome: 'nothing-to-answer', read: reading,
+      message: 'every log this agent could read is empty of message bodies, so there is nothing to answer. '
+        + 'It has not written an entry, because an entry saying nothing is still a permanent record.',
+    };
+  }
+  if (answeredAlready.has(newest.descriptorUrl)) {
+    return {
+      outcome: 'already-answered', answering: newest, read: reading,
+      message: `this agent has already answered <${newest.descriptorUrl}> and has not written a second `
+        + 'entry about it. Appending again would put two permanent records in its log saying the same thing.',
+    };
+  }
+
+  // ── 8. derive the reply from what was read, and cite every input ───────────
+  const body = deriveReply({ answering: newest, logs, reading, slug });
+  const extraTriples = [
+    `<${PROV_DERIVED}> <${newest.descriptorUrl}>`,
+    ...reading.consulted.slice(0, 40).map(u => `<${PROV_USED}> <${u}>`),
+  ];
+
+  const appended = await appendEntry(
+    {
+      graphIri: `${relayBase}/ns/${session.identity.podName}/${slug}-stream`,
+      workspace,
+      podUrl: session.identity.podUrl,
+      ...(session.identity.agentDid !== null ? { agentDid: session.identity.agentDid } : {}),
+    },
+    { body, extraTriples, shapes: [] },
+    { ...deps, discover: async a => deps.discover({ ...a, pod_name: session.identity.podName }) },
+  );
+
+  if (appended.outcome !== 'appended') {
+    return {
+      outcome: 'refused', reason: 'append-failed', read: reading,
+      message: `the append did not land (${appended.outcome}): ${'message' in appended ? appended.message : ''}`,
+    };
+  }
+  return {
+    outcome: 'appended',
+    entry: { descriptorUrl: appended.entry.descriptorUrl, cid: appended.entry.cid, seq: appended.entry.seq },
+    body,
+    answering: newest,
+    read: reading,
+  };
+}
+
+/**
+ * One `get_descriptor` per entry, giving the body, the declared position and the substrate's
+ * verdict on who signed it — all three off the SAME read, so they cannot be answered from
+ * two reads of a pod that changed in between.
+ *
+ * ★ THE BODY COMES OUT OF THE SIGNED REGION AND NOWHERE ELSE. `digestedGraphRegion` is the
+ * digester's own function: text lifted from anywhere else in the served document is text
+ * nobody signed, and quoting it as the message would let a forger put words in a member's
+ * mouth by parking a `dct:description` in the default graph.
+ */
+async function readOneEntry(
+  row: StreamRow,
+  principal: string,
+  deps: StreamDeps,
+): Promise<ReadEntry> {
+  const base = {
+    descriptorUrl: row.descriptorUrl,
+    cid: row.cid ?? null,
+    pod: podOfDescriptorUrl(row.descriptorUrl),
+    principal,
+  };
+  if (deps.getDescriptor === undefined) {
+    // A programming error, not a data condition: this responder always supplies it.
+    throw new Error('readOneEntry: no `getDescriptor` dependency, so no entry body can be read');
+  }
+  let res: Record<string, unknown>;
+  try {
+    res = await deps.getDescriptor({ url: row.descriptorUrl });
+  } catch {
+    // The row exists; its body does not read. Reporting `body: null` says exactly that, and
+    // is not the same claim as an entry that carries no body.
+    return { ...base, seq: row.seq ?? null, body: null, signedBy: null, authorshipVerified: false };
+  }
+  const attestation = attestationOfResponse(res, row.descriptorUrl);
+  const graph = res['graph'] as Record<string, unknown> | undefined | null;
+  const region = digestedGraphRegion({
+    descriptorTurtle: typeof res['turtle'] === 'string' ? res['turtle'] : null,
+    graphContent: graph !== null && graph !== undefined && typeof graph['content'] === 'string'
+      ? graph['content'] as string
+      : null,
+  });
+  return {
+    ...base,
+    seq: readDeclaredSeq(res).seq,
+    body: region.ok ? descriptionOf(region.turtle) : null,
+    signedBy: attestation.signedBy,
+    authorshipVerified: attestation.authorshipVerified,
+  };
+}
+
+/**
+ * The `dct:description` literal in a Turtle region.
+ *
+ * Deliberately small and deliberately strict: it reads the quoted form this vertical's own
+ * `entryTurtle` writes, unescapes the four sequences that writer emits, and returns null for
+ * anything it does not recognise. A looser reader would quote text it had guessed at.
+ */
+function descriptionOf(turtle: string): string | null {
+  const m = /(?:dct:description|<http:\/\/purl\.org\/dc\/terms\/description>)\s+"((?:[^"\\]|\\.)*)"/.exec(turtle);
+  if (m === null) return null;
+  return m[1]!.replace(/\\(.)/g, (_, c: string) =>
+    ({ n: '\n', t: '\t', r: '\r', '"': '"', '\\': '\\' }[c] ?? c));
+}
+
+/**
+ * Which descriptor URLs a previous reply of ours said it answered.
+ *
+ * Read out of the body rather than out of the RDF because the body is what `readStream`
+ * already has in hand; the authoritative `prov:wasDerivedFrom` triple is on the record too,
+ * and a reader wanting the stronger answer should follow that. Stated rather than glossed:
+ * this is the cheap check, and its only job is to stop the agent answering twice.
+ */
+function derivedFrom(body: string | null): readonly string[] {
+  if (body === null) return [];
+  return [...body.matchAll(/<(https?:\/\/[^>\s]+\.ttl)>/g)].map(m => m[1]!);
+}
+
+/**
+ * Compose the reply out of what was read. No model, no template of pre-written sentences
+ * chosen by keyword — every clause below is a fact this run established, and the ones that
+ * could not be established are the ones that say so.
+ */
+function deriveReply(args: {
+  readonly answering: ReadEntry;
+  readonly logs: readonly ReadLog[];
+  readonly reading: RespondReading;
+  readonly slug: string;
+}): string {
+  const { answering, logs, reading } = args;
+  const readable = logs.filter(l => l.unreadable === null);
+  const withheld = logs.filter(l => l.unreadable !== null);
+  const total = readable.reduce((n, l) => n + l.entries.length, 0);
+  const parts: string[] = [];
+
+  parts.push(
+    `Read the channel at ${new Date().toISOString()}. Answering the newest message I had not `
+    + `answered: seq ${answering.seq ?? '(undeclared)'} from pod ${answering.pod}, `
+    + `<${answering.descriptorUrl}>`
+    + (answering.cid !== null ? ` (cid ${answering.cid})` : '')
+    + `, which says: "${trunc(answering.body ?? '', 300)}".`,
+  );
+
+  parts.push(
+    answering.authorshipVerified
+      ? `Its authorship proof verifies and names ${answering.signedBy ?? '(no signer reported)'}, `
+        + 'so I am answering a record whose author the substrate re-derived, not a line somebody typed into a list.'
+      : 'Its authorship proof did NOT verify here, so I can quote what it says but cannot tell you who wrote it. '
+        + 'I am answering it anyway and saying so, because withholding the fact would be worse than the fact.',
+  );
+
+  parts.push(
+    `What I could see: ${readable.length} log(s) totalling ${total} entr${total === 1 ? 'y' : 'ies'} — `
+    + readable.map(l => `${podOfNsIri(l.stream) ?? '?'} (${l.role.split('#').pop() ?? l.role}, ${l.entries.length})`).join(', ')
+    + '.',
+  );
+
+  if (withheld.length > 0) {
+    parts.push(
+      `What I could NOT see, and am not treating as empty: `
+      + withheld.map(l => `${podOfNsIri(l.stream) ?? l.stream} — ${l.unreadable ?? ''}`).join('; ')
+      + '.',
+    );
+  }
+
+  parts.push(
+    `I am writing this to my own log on pod ${reading.agentPod}, not to yours and not to a shared table. `
+    + `My role here is ${(reading.agentRole ?? '').split('#').pop() ?? 'unknown'} and it permits me `
+    + `${reading.agentEffective.length === 0 ? 'nothing' : reading.agentEffective.join(', ')}`
+    + (reading.agentWithheldByDelegation.length > 0
+      ? `; ${reading.agentWithheldByDelegation.join(', ')} ${reading.agentWithheldByDelegation.length === 1 ? 'is' : 'are'} `
+        + 'permitted by the role but withheld by my pod\'s delegation, so I may not do it'
+      : '')
+    + `. I dereferenced ${reading.consulted.length} descriptor(s) to say this; they are cited on this entry `
+    + 'with prov:used, so you can check every one.',
+  );
+
+  return parts.join(' ');
+}
+
+/**
+ * Each principal's delegation scope, read from THEIR pod's own registry.
+ *
+ * ★ `get_pod_status` PER POD, not one call generalised. The scope that bounds a member is
+ * the one their own pod publishes; reading ours and applying it to them would be inventing
+ * an authority record for somebody else. A pod that does not answer contributes NO row —
+ * which, because `foldRoster` intersects, is the reading that grants least.
+ */
+async function delegatedScopes(args: {
+  readonly principals: readonly string[];
+  readonly relayBase: string;
+  readonly session: AgentSession;
+}): Promise<Array<{ principal: string; capabilities: readonly string[] }>> {
+  const out: Array<{ principal: string; capabilities: readonly string[] }> = [];
+  for (const principal of args.principals) {
+    const pod = podOfNsIri(principal) ?? /\/users\/([^/]+)\//.exec(principal)?.[1] ?? null;
+    if (pod === null) continue;
+    let res: Record<string, unknown>;
+    try {
+      res = await args.session.call('get_pod_status', { pod_url: `${args.relayBase}/ns/${pod}/` });
+    } catch {
+      continue;
+    }
+    const reg = res['delegationRegistry'] as { rows?: Array<{ scope?: string }> } | undefined;
+    const scopes = (reg?.rows ?? []).map(r => r.scope).filter((s): s is string => typeof s === 'string');
+    if (scopes.length === 0) continue;
+    // ★ AN UNRECOGNISED SCOPE GRANTS NOTHING. The four the substrate has are the four it
+    // has; a fifth is not a wider one, it is one this reader does not understand, and
+    // treating it as permissive is how a typo becomes an escalation.
+    const caps = new Set<string>();
+    for (const s of scopes) {
+      if (s === 'ReadWrite') { caps.add(APPEND); caps.add('wsp:read'); caps.add('wsp:grant'); caps.add('wsp:revoke'); }
+      else if (s === 'PublishOnly') { caps.add(APPEND); caps.add('wsp:read'); }
+      else if (s === 'ReadOnly' || s === 'DiscoverOnly') { caps.add('wsp:read'); }
+    }
+    out.push({ principal, capabilities: [...caps].sort() });
+  }
+  return out;
+}
+
+export { WSP_SHAPES };

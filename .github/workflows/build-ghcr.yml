@@ -83,6 +83,7 @@ jobs:
           - { image: interego-identity,           dockerfile: deploy/Dockerfile.identity }
           - { image: interego-css-gate,           dockerfile: deploy/Dockerfile.css-gate }
           - { image: interego-foxxi-bridge,       dockerfile: deploy/Dockerfile.foxxi-bridge }
+          - { image: interego-wsp-bridge,         dockerfile: deploy/Dockerfile.wsp-bridge }
           - { image: interego-bridge,             dockerfile: deploy/Dockerfile.interego-bridge }
           - { image: interego-dashboard,          dockerfile: deploy/Dockerfile.dashboard }
           - { image: interego-pgsl-browser,       dockerfile: deploy/Dockerfile.pgsl-browser }

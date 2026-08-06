@@ -1,0 +1,129 @@
+# ────────────────────────────────────────────────────────────
+#  shared-workspace bridge — the runtime a workspace member that is an
+#  AGENT runs in.
+#
+#  Its whole job is to hold ONE wallet key (WSP_AGENT_PRIVATE_KEY) and expose
+#  one affordance that causes the agent to read a workspace channel and answer
+#  in its own append-only log on its own pod. It writes nowhere else — the
+#  substrate resolves that wallet to exactly one pod and refuses the rest with
+#  `scope_violation`, which is the property this vertical is built on rather
+#  than a limitation to work around.
+#
+#  ★ SEPARATE SERVICE ON PURPOSE. Folding it into the relay would put an
+#  agent's signing key inside the thing whose trust this architecture
+#  disclaims, and the comparison this vertical exists to make — a member with
+#  its own storage and its own key, versus a keypair in one server's table —
+#  would be materially weaker for it. The cost is one more container; the
+#  property is that the agent's runtime, its storage and its identity are
+#  three separable things.
+#
+#  Layout is preserved under /app so the vertical's relative imports
+#  (`../../_shared/vertical-bridge/index.js`, `../src/respond.js`) resolve
+#  unchanged. Runs via tsx — no separate compile step for the vertical's TS.
+# ────────────────────────────────────────────────────────────
+
+ARG NODE_BASE=node:22-slim
+FROM ${NODE_BASE} AS build
+
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
+WORKDIR /app
+
+# Workspace manifests — npm ci requires every declared workspace's package.json
+# to exist before it can resolve the tree. This list mirrors the root
+# package.json `workspaces` field exactly; shared-workspace/bridge is
+# deliberately NOT one of them (it declares no dependencies of its own, and
+# adding it would oblige every other image's Dockerfile to grow a COPY line or
+# fail `npm ci` — a coupling worth not creating for a directory that needs
+# nothing).
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY packages/abac/package.json ./packages/abac/
+COPY packages/compliance/package.json ./packages/compliance/
+COPY packages/connectors/package.json ./packages/connectors/
+COPY packages/constitutional/package.json ./packages/constitutional/
+COPY packages/core/package.json ./packages/core/
+COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/ops/package.json ./packages/ops/
+COPY packages/p2p/package.json ./packages/p2p/
+COPY packages/passport/package.json ./packages/passport/
+COPY packages/pgsl/package.json ./packages/pgsl/
+COPY packages/privacy/package.json ./packages/privacy/
+COPY packages/registry/package.json ./packages/registry/
+COPY packages/security-txt/package.json ./packages/security-txt/
+COPY packages/skills/package.json ./packages/skills/
+COPY packages/solid/package.json ./packages/solid/
+COPY packages/transactions/package.json ./packages/transactions/
+COPY mcp-server/package.json ./mcp-server/
+COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
+COPY deploy/identity/package.json ./deploy/identity/
+COPY deploy/validator/package.json ./deploy/validator/
+COPY applications/foxxi-content-intelligence/bridge/package.json ./applications/foxxi-content-intelligence/bridge/
+COPY applications/agentic-performance-practice/bridge/package.json ./applications/agentic-performance-practice/bridge/
+COPY applications/learner-performer-companion/bridge/package.json ./applications/learner-performer-companion/bridge/
+COPY applications/agent-collective/bridge/package.json ./applications/agent-collective/bridge/
+COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
+COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
+COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
+RUN npm ci
+
+# tsx for the runtime — the vertical ships as TS.
+RUN npm install --no-save tsx@4.22.0
+
+# Only what this bridge transitively needs:
+#   packages/                     the @interego/* substrate it imports
+#   applications/_shared/         vertical-bridge + affordance-mcp
+#   applications/shared-workspace the vertical itself
+COPY packages/ ./packages/
+COPY applications/_shared/ ./applications/_shared/
+COPY applications/shared-workspace/ ./applications/shared-workspace/
+
+# Compile the @interego/* packages to their dist/ — every package's exports map
+# resolves there, so this is load-bearing at runtime, not a lint pass.
+RUN npm run build
+
+# Make the packages resolvable by name from anywhere under /app. npm ci already
+# creates these; explicit and idempotent, mirroring the other bridge images.
+RUN mkdir -p node_modules/@interego \
+  && ln -sfn /app/packages/core node_modules/@interego/core \
+  && ln -sfn /app/packages/solid node_modules/@interego/solid \
+  && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl
+
+# ────────────────────────────────────────────────────────────
+#  Runtime stage
+# ────────────────────────────────────────────────────────────
+FROM ${NODE_BASE}
+
+WORKDIR /app
+
+COPY --from=build /app /app
+
+EXPOSE 6070
+ENV PORT=6070
+ENV NODE_NO_WARNINGS=1
+
+# The relay this agent signs in to, and the identity server that issues its
+# SIWE nonce. Both public hosts — this bridge is an ordinary OAuth public
+# client and holds no privileged credential against either.
+ENV WSP_RELAY_URL=https://relay.interego.xwisee.com
+ENV WSP_IDENTITY_URL=https://identity.interego.xwisee.com
+
+# ★ THE AGENT'S OWN WALLET. Unset here on purpose: baking a key into an image
+# publishes it to everyone who can pull the image. With it unset the process
+# still boots and /health still answers — it simply is NOT ANYBODY, and every
+# call refuses saying so, which is why /wsp/identity exists as a separate
+# check. Set it on the service at deploy time.
+ENV WSP_AGENT_PRIVATE_KEY=
+
+# The public URL this bridge is reachable at, substituted into every
+# affordance's hydra:target. Without it the manifest advertises localhost and
+# `invoke_affordance` follows a target nobody can reach.
+ENV BRIDGE_DEPLOYMENT_URL=
+
+# The commit this image was built from, surfaced at /health by the shared
+# createVerticalBridge factory so a deploy can be VERIFIED rather than assumed.
+# Runtime stage on purpose: ARG does not cross a FROM, and earlier would bust
+# the cache on every commit.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
+CMD ["npx", "tsx", "applications/shared-workspace/bridge/server.ts"]
