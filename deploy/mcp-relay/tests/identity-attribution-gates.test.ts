@@ -364,6 +364,46 @@ check('the sweeper honours the expiresAt fields nothing read',
 check('the timer is unref\'d so it cannot hold the process open',
   /unref\?\.\(\)/.test(OAUTH));
 
+console.log('\n20. the signed-payload unwrap RE-STRIPS reserved fields at every REST site (no drift)');
+// The three REST transports (/tool auth, /tool signed-read, /messages auth) each unwrap an
+// ECDSA signed payload into the call args AFTER the top-of-handler strip already ran, so a
+// reserved field smuggled INSIDE the signed payload is re-introduced and must be re-stripped.
+// This was THREE inline copies of one intention and two of them were a step short: the /tool
+// signed-READ branch and the /messages auth branch copied the payload with no post-strip, so
+// a smuggled _session_agent_did reached a read handler verbatim (measured live at b462d46 —
+// /tool/get_pod_status echoed a forged victim DID). They now share unwrapSignedPayloadInto,
+// which strips as it copies. ALL of these read SERVER_CODE (comments removed): the whole
+// point is that a re-inlined loop cannot hide behind an explanatory comment, and a comment
+// naming the helper cannot satisfy a call-site count.
+check('unwrapSignedPayloadInto exists and re-strips as the LAST thing it does',
+  /function unwrapSignedPayloadInto\(target: Record<string, unknown>\): void \{/.test(SERVER_CODE));
+const unwrapBody = (/function unwrapSignedPayloadInto\(target: Record<string, unknown>\): void \{([\s\S]*?)\n\}/.exec(SERVER_CODE) ?? [])[1] ?? '';
+check('the helper body copies the payload AND then calls stripReservedWireFields(target)',
+  unwrapBody.length > 0
+  && /for \(const k of Object\.keys\(payload\)\)/.test(unwrapBody)
+  && /target\[k\] = payload\[k\]/.test(unwrapBody)
+  && /stripReservedWireFields\(target\)/.test(unwrapBody));
+check('the helper keeps agent_id/timestamp out of the copy (recovered DID stays authoritative)',
+  /k === 'agent_id' \|\| k === 'timestamp'/.test(unwrapBody));
+// ★ THE DIVERGENCE CATCHER. The raw copy loop must appear EXACTLY ONCE in the whole file —
+// inside the helper. Re-inline an unwrap at any transport (the exact defect just fixed) and
+// this count goes to 2 and the gate fails. Bound to CODE, so a copy loop shown in a comment
+// does not count.
+const copyLoops = SERVER_CODE.match(/for \(const k of Object\.keys\(payload\)\)/g) ?? [];
+check('the signed-payload copy loop exists in ONE place only (the shared helper)',
+  copyLoops.length === 1, `found ${copyLoops.length}`);
+const rawAssigns = SERVER_CODE.match(/\[k\] = payload\[k\]/g) ?? [];
+check('no transport assigns payload keys inline (only target[k] in the helper does)',
+  rawAssigns.length === 1, `found ${rawAssigns.length}`);
+// Each of the three sites routes through the helper. /tool (auth + read) pass req.body;
+// /messages passes args. Counting over SERVER_CODE so the mention of the helper in a comment
+// cannot inflate the tally.
+const unwrapReqBody = SERVER_CODE.match(/unwrapSignedPayloadInto\(req\.body\)/g) ?? [];
+check('both /tool unwrap sites (auth + signed-read) call the helper on req.body',
+  unwrapReqBody.length === 2, `found ${unwrapReqBody.length}`);
+check('the /messages auth site calls the helper on args',
+  /unwrapSignedPayloadInto\(args\)/.test(SERVER_CODE));
+
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed\n`);
   process.exit(1);

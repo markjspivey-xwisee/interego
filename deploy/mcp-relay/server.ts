@@ -5739,6 +5739,41 @@ function stripReservedWireFields(o: unknown): void {
 }
 
 /**
+ * Merge an ECDSA signed-request payload into the call args, then remove the wrapper AND
+ * every reserved wire field. THE SINGLE PLACE this is done, so the REST unwrap sites
+ * cannot drift apart the way they already did.
+ *
+ * ★ WHY THE STRIP MUST LIVE HERE AND NOT AT EACH CALL SITE. The top-of-handler strip runs
+ * BEFORE this copy, so a reserved field smuggled INSIDE the signed payload is
+ * re-introduced by the loop below and must be re-stripped AFTER it. `/tool`'s
+ * auth-required branch remembered to; its signed-READ branch and `/messages`'s
+ * auth-required branch did NOT — three inline copies of one intention, two of them a step
+ * short. Measured live at b462d46 on the deployed relay: a disposable wallet's signed
+ * `/tool/get_pod_status` (a public read, so it took the read branch) carrying
+ * `_session_agent_did: did:ethr:0x…VICTIM` had that forged DID echoed back as the session
+ * agent — the field reached the handler verbatim because that branch unwrapped without a
+ * post-strip. Folding the strip into the copy makes "unwrapped" and "sanitized" the same
+ * operation, and the source-text gate asserts the raw copy loop exists ONLY here.
+ *
+ * agent_id / timestamp are the signature's OWN claim; the recovered DID is authoritative
+ * and is bound separately (injectRestVerifiedIdentity), so the copy never overwrites them.
+ */
+function unwrapSignedPayloadInto(target: Record<string, unknown>): void {
+  try {
+    const payload = JSON.parse(target._signed_payload as string) as Record<string, unknown>;
+    for (const k of Object.keys(payload)) {
+      if (k === 'agent_id' || k === 'timestamp') continue;
+      target[k] = payload[k];
+    }
+  } catch { /* body already validated by verifySignedRequest at the call site */ }
+  delete target._signature;
+  delete target._signed_payload;
+  // Re-strip: the copy above can re-introduce a reserved field the top-of-handler strip
+  // already removed. Without this line the smuggle above reaches the handler.
+  stripReservedWireFields(target);
+}
+
+/**
  * The caller's OWN pod, for OWNERSHIP decisions — derived only from
  * server-authoritative sources.
  *
@@ -13984,19 +14019,11 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
       if (sig.authenticated) {
         auth = sig;
         viaSignature = true;
-        // Unwrap the signed payload into the request body so handlers
-        // see the actual call args. The wrapper fields are stripped.
-        try {
-          const payload = JSON.parse(req.body._signed_payload as string);
-          for (const k of Object.keys(payload)) {
-            // Don't let the signed payload smuggle a different agent_id
-            // — the recovered DID is authoritative.
-            if (k === 'agent_id' || k === 'timestamp') continue;
-            req.body[k] = payload[k];
-          }
-          delete req.body._signature;
-          delete req.body._signed_payload;
-        } catch { /* already validated by verifySignedRequest */ }
+        // Unwrap the signed payload into the request body so handlers see the actual call
+        // args. The shared helper also RE-STRIPS reserved wire fields the unwrap could
+        // re-introduce (see unwrapSignedPayloadInto) — the same step /messages and the
+        // signed-READ branch below must not omit.
+        unwrapSignedPayloadInto(req.body);
       }
     }
     if (!auth.authenticated) {
@@ -14027,13 +14054,12 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // OAuth bearer: inject userId-derived defaults (existing behavior).
     // Signature auth: the recovered DID IS the identity — override
     // body.agent_id even if it was supplied (prevents spoofing).
-    // SECURITY (bug #2b): strip any client-forged session-authoritative fields
-    // before re-injecting them. The register_agent tenant_admin grant gate (and
-    // other session-derived logic) trusts _session_user_id; the REST path —
-    // unlike the MCP CallTool handler — does not otherwise sanitize these, so a
-    // caller could forge _session_user_id to grant governance on a pod it does
-    // not own. Strip here, then re-inject the server-authoritative value below.
-    // Same reason as the `/mcp` site: one list, one helper. See RESERVED_WIRE_FIELDS.
+    // SECURITY (bug #2b): a defensive pre-injection strip. The signed-payload unwrap now
+    // re-strips (unwrapSignedPayloadInto) and the bearer path was stripped at the top of
+    // the handler, so by construction req.body is already clean here — this line is the
+    // belt-and-braces guard that keeps it clean if a future edit populates req.body
+    // between the auth check and injection. injectRestVerifiedIdentity then re-injects the
+    // server-authoritative values. See RESERVED_WIRE_FIELDS.
     stripReservedWireFields(req.body);
     // Bind the verified identity through the SHARED helper — same code path /messages uses,
     // so the two REST transports set the identical server-authoritative fields (including
@@ -14066,21 +14092,20 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // identity when the signature checks out so a signed read can
     // default to the caller's own pod.
     const sig = verifySignedRequest(req.body);
-    try {
-      const payload = JSON.parse(req.body._signed_payload as string);
-      for (const k of Object.keys(payload)) {
-        if (k === 'agent_id' || k === 'timestamp') continue;
-        req.body[k] = payload[k];
-      }
-    } catch { /* validated by verifySignedRequest above */ }
+    // Unwrap + RE-STRIP through the SHARED helper BEFORE binding identity. This branch used
+    // to copy the payload keys inline with no post-strip and no injectRestVerifiedIdentity,
+    // so a reserved field smuggled in the signed payload reached the read handler verbatim
+    // — measured live at b462d46: a signed /tool/get_pod_status carrying a forged
+    // _session_agent_did had it echoed back as the session agent. The helper strips it; the
+    // recovered DID is then bound so a signed read still defaults to the caller's own pod.
+    // POD_NAME_INJECTED is set AFTER the strip so the legitimate marker survives.
+    unwrapSignedPayloadInto(req.body);
     if (sig.authenticated && sig.recoveredDid) {
       req.body.agent_id = sig.recoveredDid;
       const addr = sig.recoveredDid.slice('did:ethr:'.length).toLowerCase();
       if (!req.body.pod_name) { req.body.pod_name = `eth-${addr.slice(2, 14)}`; req.body[POD_NAME_INJECTED] = true; }
       if (!req.body.owner_webid) req.body.owner_webid = sig.recoveredDid;
     }
-    delete req.body._signature;
-    delete req.body._signed_payload;
   }
 
   try {
@@ -14331,15 +14356,13 @@ app.post('/messages', messagesLimiter, async (req, res) => {
         if (sig.authenticated) {
           auth = sig;
           viaSignature = true;
-          try {
-            const payload = JSON.parse(args._signed_payload as string);
-            for (const k of Object.keys(payload)) {
-              if (k === 'agent_id' || k === 'timestamp') continue;
-              args[k] = payload[k];
-            }
-            delete args._signature;
-            delete args._signed_payload;
-          } catch { /* already validated */ }
+          // Unwrap + RE-STRIP through the SHARED helper. This inline block previously copied
+          // the payload keys with NO post-strip, relying entirely on injectRestVerifiedIdentity
+          // below to overwrite _session_user_id / _session_agent_did — leaving the OTHER
+          // reserved fields (_session_bearer, _session_principal, _identity_token, the pod
+          // markers) smuggled into args. The helper mirrors /tool: it re-strips every reserved
+          // field the top-of-handler strip already removed and the copy re-introduced.
+          unwrapSignedPayloadInto(args);
         }
       }
       if (!auth.authenticated) {
