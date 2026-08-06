@@ -28,6 +28,56 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-08-06 — a workspace member that is an agent, and a deploy path that had never run
+
+### Added
+- **`applications/shared-workspace/bridge/` — the runtime a workspace member that is an
+  AGENT runs in.** Both halves of the vertical (`readStream`, `appendEntry`) have existed
+  since increment 2, and every caller of them was a script holding a human's bearer token —
+  which demonstrates the substrate and not an agent, because a script a person runs writes
+  what the person told it to. The bridge adds the three things a library cannot have: a
+  wallet the process holds (`WSP_AGENT_PRIVATE_KEY`), somewhere to keep it that no caller
+  can reach, and an address a caller can poke without being handed it. It runs on the same
+  `createVerticalBridge` factory as the other seven bridges; shared-workspace was the one
+  vertical without one. Its own container, not a relay mount: an agent's signing key inside
+  the thing whose trust this architecture disclaims would make the property weaker.
+- **`wsp.respond_as_member` takes WHICH WORKSPACE and nothing else.** A caller who could
+  pass text would be the author. The agent dereferences both halves of every membership, the
+  published role table and every seated member's log; refuses when the role ceiling does not
+  permit appending; and cites every descriptor it consulted with `prov:used` on the entry it
+  writes, so the derivation is a set of links rather than a claim. Entry bodies are derived,
+  not generated — no model, no prompt.
+- **`tools/railway-registry-credentials.mjs`.** Railway stores the GHCR pull credential per
+  SERVICE, encrypted and unreadable, and the migration driver that gave the original thirteen
+  theirs must never run again. A service created today therefore fails its first deploy with
+  NO build log and NO deploy log, `registryCredentials: null` sitting in the deployment's
+  `meta` where nobody looks, while every obvious reading — bad tag, crashed container, wrong
+  port — is wrong.
+
+### Fixed
+- **`deploy-railway.yml` could never have worked**, found on its first ever dispatch. Every
+  image here is a private GHCR package and a runner is logged in to nothing, so the
+  image-existence guard got 403 and reported "is not in the registry. Run build-ghcr.yml for
+  this commit first" — a message accusing the build of not having happened. And
+  `RAILWAY_PROJECT_TOKEN`, named in that file's own header as the one secret it requires, had
+  never been added to the repository.
+- **Three pod-addressing defects in the responder, all found by running it against
+  production and none of which fail loudly.** `get_current_head` returns the URL nested under
+  `head`; read off the top level it is `undefined`, which reads as "no acceptance", which the
+  fold reads as an unanswered invitation — every membership correct on both pods and the
+  agent reporting ITSELF as not seated. `<relay>/ns/<pod>/` is a logical name and a pod URL
+  addresses storage: sent to `discover_context` beside a `pod_name` it is refused outright
+  and the refusal arrives as `unreadable` on every log at once, while `get_pod_status` is
+  quieter and worse — it ANSWERS, with no delegation registry, so every member's effective
+  capability computes to nothing and the agent refuses its own write citing a ceiling that is
+  really a wrong URL.
+- **`verifyChain([])` reports `intact: false`** — zero heads, zero merges, zero dangling
+  links, a shape that says nothing is wrong. Reading it as divergence made a member who had
+  simply not written yet render as one whose log was withheld for tampering, which is a
+  serious accusation to make about an absence.
+
+---
+
 ## 2026-08-05 — a competency's identity keeps its naming authority, and a claim is bound to evidence that resolves
 
 Two independent reviewers attacked the evidence-integrity engagement and substantiated

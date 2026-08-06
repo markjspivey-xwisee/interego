@@ -204,6 +204,11 @@ const HSTS_SOURCE: Record<string, string | typeof NOT_PUBLIC> = {
   // Seven vertical bridges share this factory; foxxi-bridge is the deployed one, so fixing
   // it in the vertical would have fixed one of seven.
   'interego-foxxi-bridge': 'applications/_shared/vertical-bridge/index.ts',
+  // The eighth, and the second to be DEPLOYED — the runtime a shared-workspace member that
+  // is an agent runs in. Same factory, same header, and it is named here rather than
+  // inheriting the row above because this table is keyed by IMAGE: an image that shares a
+  // source file still has to be listed, which is exactly the check that caught it.
+  'interego-wsp-bridge': 'applications/_shared/vertical-bridge/index.ts',
   'interego-microsite': SHARED_CONF,
   'interego-main': SHARED_CONF,
   'interego-foxxi-dashboard': SHARED_CONF,

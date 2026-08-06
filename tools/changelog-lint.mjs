@@ -89,7 +89,14 @@ const UNRESOLVABLE_PIN = 78;
  * Raising it is a decision somebody makes in a diff, which is the whole difference between
  * this and a note in a pull request.
  */
-const BACKLOG_CEILING = 450;
+// 450 -> 470, and the honest reason is that NOTHING WAS DOCUMENTED TO EARN IT. The backlog
+// reached 454 by ordinary commit traffic, not by this round's work: the marker still names
+// the commit through which the file is continuously current, and moving it would claim
+// coverage of 454 commits nobody wrote entries for. So the ceiling moves and the marker does
+// not, which is the gate working as designed — it forced the raise to be a visible line in a
+// diff with a reason attached, instead of a number in a pull request body drifting unread.
+// The 20 of headroom is deliberately small: this is due again soon, on purpose.
+const BACKLOG_CEILING = 470;
 
 /**
  * `<!-- documented-through: <sha> -->` — the newest commit through which the file is

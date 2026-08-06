@@ -454,7 +454,11 @@ const BASELINE = {};
 // 344 -> 346 in the same round, fired again by the drift check the moment this round's own
 // two test files and one gate script landed (354 -> 356). That is the ratchet behaving: it
 // caught its author, not just history.
-export const MIN_FILES = 352;
+// 352 -> 353, fired by the drift check again, this time on the round that added the
+// shared-workspace agent runtime and tools/railway-registry-credentials.mjs (352 -> 363).
+// Caught its author for the second consecutive time, which is the whole argument for a
+// floor that fails when it is TOO LOW as well as when it is breached.
+export const MIN_FILES = 353;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

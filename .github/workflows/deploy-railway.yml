@@ -32,6 +32,16 @@ on:
         description: 'Image tag: the 40-hex commit sha built by build-ghcr.yml. Defaults to this ref.'
         required: false
         default: ''
+      set_registry_credentials:
+        description: >-
+          Give this service its GHCR pull credential before deploying. Needed ONCE for a
+          service created after the Azure→Railway migration: the migration driver gave the
+          original thirteen theirs and must never run again, and a service with none fails
+          with NO build log and NO deploy log, which reads like anything but a credential.
+          Harmless to repeat. See tools/railway-registry-credentials.mjs.
+        type: boolean
+        required: false
+        default: false
       # ★ NO verify_url INPUT, AND NO DEFAULT. It used to be a free-text field pre-filled
       # with RELAY's /health — for every service. Dispatching service=identity at a sha
       # relay happened to be running polled RELAY, read relay's matching build, printed
@@ -88,6 +98,24 @@ jobs:
       # Repointing to a tag that was never pushed does NOT fail loudly: Railway
       # leaves the previous container serving, so /health keeps returning 200 and
       # the rollout looks fine. Catch it before touching production.
+      # ★ WITHOUT THIS, THE STEP BELOW FAILS FOR EVERY SERVICE. Every image this repo
+      # builds goes to a PRIVATE GHCR package, and a runner is not logged in to anything:
+      # `imagetools inspect` gets 403 and reports it as "is not in the registry. Run
+      # build-ghcr.yml for this commit first" — a message that accuses the build of not
+      # having happened. Measured on the FIRST EVER dispatch of this workflow (2026-08-06):
+      # it had never run since it was written, so the gap sat in a guard nobody had
+      # executed, in the workflow whose whole job is to make deploys verifiable.
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USERNAME: ${{ github.repository_owner }}
+        run: |
+          if [ -z "$GHCR_TOKEN" ]; then
+            echo "::error::GHCR_TOKEN is not set. The image check below cannot read a private package without it."
+            exit 1
+          fi
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+
       - name: Verify the image exists in GHCR
         env:
           # ★ ASKED, NOT DERIVED. This step used to interpolate the service name into
@@ -108,6 +136,20 @@ jobs:
             exit 1
           fi
           echo "$IMAGE:$TAG exists"
+
+      # Before the deploy, never after: a credential is consulted at pull time, so setting
+      # it afterwards leaves the FAILED deployment standing and the next dispatch looking
+      # like the fix.
+      - name: Set the GHCR pull credential on this service
+        if: ${{ inputs.set_registry_credentials }}
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          # GHCR_TOKEN, not GITHUB_TOKEN: the run token expires with the job, and Railway
+          # pulls again on every restart and every redeploy long after this run is gone.
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          SERVICE: ${{ inputs.service }}
+        run: node tools/railway-registry-credentials.mjs "$SERVICE"
 
       - name: Deploy
         env:

@@ -68,6 +68,10 @@ export const SERVICES = {
   // proxied to CSS, so the gate would report the upstream's health as its own.
   'css-gate': { repo: 'interego-css-gate', health: '/healthz' },
   'foxxi-bridge': { repo: 'interego-foxxi-bridge', health: '/health' },
+  // The runtime a shared-workspace member that is an agent runs in. Its own container so
+  // that the agent's key, its storage and its runtime are three separable things — see
+  // deploy/Dockerfile.wsp-bridge.
+  'wsp-bridge': { repo: 'interego-wsp-bridge', health: '/health' },
   bridge: { repo: 'interego-bridge', health: '/health' },
   dashboard: { repo: 'interego-dashboard', health: '/health' },
   'pgsl-browser': { repo: 'interego-pgsl-browser', health: '/health' },
