@@ -6,6 +6,7 @@
  */
 
 import { escapeTurtleLiteral, IEP, WSP } from './turtle.js';
+import { shortRef } from './format.js';
 import { type ChainRow, orderChain, toChainRow } from './chain.js';
 import type { WorkspaceClient, WorkspaceRecord } from './substrate.js';
 import { refusal } from './transport.js';
@@ -60,10 +61,6 @@ export function entryTurtle(args: {
  * what "none" means differs per call site and each supplies its own sentence.
  */
 export function preconditionLine(pc: unknown, sent: string | null, sentKind: string | null): string | null {
-  const shortRef = (v: string): string => {
-    if (/^https?:\/\//.test(v)) { const t = v.split('/').filter(Boolean).pop(); return '…/' + (t ?? v); }
-    return v.slice(0, 10) + '…' + v.slice(-6);
-  };
   if (pc && typeof pc === 'object') {
     const b = pc as { expectedCid?: string; observedCid?: string; passed?: unknown };
     const exp = b.expectedCid;

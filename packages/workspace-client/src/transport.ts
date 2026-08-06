@@ -141,6 +141,12 @@ export function asRefusal(e: unknown): (Record<string, unknown> & { error: unkno
  *
  * It is a named constant so the two sites that must agree — the key and the prefix match
  * that invalidates it — cannot drift apart.
+ *
+ * ★ AND A RAW NUL COSTS MORE THAN A FAILING TEST: git classifies the whole file as binary.
+ * The diff then reads `Bin 0 -> N bytes` with nothing reviewable in it, and grep answers
+ * "Binary file … matches" instead of the line — so a change to ANY line of this transport
+ * becomes unreviewable. Observed on this file before the fix landed. The runtime string is
+ * identical either way; only the source is legible.
  */
 const CACHE_KEY_SEP = '\u0000';
 
