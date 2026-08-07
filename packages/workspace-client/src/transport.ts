@@ -127,6 +127,23 @@ export function asRefusal(e: unknown): (Record<string, unknown> & { error: unkno
   return refusal((env as { payload?: unknown }).payload);
 }
 
+/**
+ * Separator between a tool name and its serialised input in a cache key.
+ *
+ * ★ U+0000, WRITTEN AS AN ESCAPE AND NEVER AS A RAW BYTE. Two literal NULs lived in this
+ * file and failed `tests/line-endings-are-normalised.test.ts` while being invisible in
+ * every editor and diff view — a branch that looked clean and would not merge.
+ *
+ * Deleting them is the obvious repair and the wrong one. With no separator the key is
+ * `name + json`, so tool `ab` with input `c…` and tool `a` with input `bc…` collide and one
+ * tool serves the other`s cached answer. NUL is used because it cannot appear in a tool
+ * name or in `JSON.stringify` output, so no caller-supplied input can forge a boundary.
+ *
+ * It is a named constant so the two sites that must agree — the key and the prefix match
+ * that invalidates it — cannot drift apart.
+ */
+const CACHE_KEY_SEP = '\u0000';
+
 /** Stop a live subscription. */
 export type Unsubscribe = () => void;
 
@@ -262,7 +279,16 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
   }
 
   async callTool(name: string, input: Record<string, unknown>, opts?: CallOptions): Promise<unknown> {
-    const key = name + '' + JSON.stringify(input);
+    // ★ SPELLED, NOT TYPED. This separator is U+0000, and it was originally two RAW NUL
+    // bytes in this file — invisible in every editor and diff, and enough to fail
+    // `tests/line-endings-are-normalised.test.ts` on a branch that looked clean.
+    //
+    // It cannot simply be deleted, which is the obvious repair and the wrong one: without a
+    // separator the key is `name + json`, so tool `ab` with input `c…` and tool `a` with
+    // input `bc…` produce the SAME key and one tool serves the other's cached answer. NUL is
+    // chosen because it cannot occur in a tool name or in `JSON.stringify` output, so no
+    // input can forge a key boundary.
+    const key = name + CACHE_KEY_SEP + JSON.stringify(input);
     const stale = opts?.cache?.staleTime;
     if (stale) {
       const hit = this.cache.get(key);
@@ -303,7 +329,9 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
   }
 
   async invalidate(name: string): Promise<void> {
-    for (const k of [...this.cache.keys()]) if (k.startsWith(name + '')) this.cache.delete(k);
+    // Same separator as the key it is matching — see `const key` above. With an empty string
+    // here, invalidating tool `a` would also drop every cached answer for `ab`, `abc`, …
+    for (const k of [...this.cache.keys()]) if (k.startsWith(name + CACHE_KEY_SEP)) this.cache.delete(k);
   }
 }
 
