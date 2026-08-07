@@ -33,6 +33,35 @@ export interface SessionInfo {
   readonly why: string | null;
 }
 
+/**
+ * What this machine can run the user's own agent on.
+ *
+ * `loggedIn: null` is a real value and means "not established" — the CLI is not installed, so
+ * whether this person has a subscription is not something the app has evidence about. A renderer
+ * that collapsed it to `false` would be making a statement about somebody's account from a
+ * filesystem check.
+ */
+export interface ProviderInfo {
+  readonly id: string;
+  readonly label: string;
+  readonly installed: boolean;
+  readonly path: string | null;
+  readonly shimOnly: boolean;
+  readonly loggedIn: boolean | null;
+  readonly authMethod: string | null;
+  readonly account: string | null;
+  readonly subscription: string | null;
+  readonly why: string;
+  readonly usable: boolean;
+}
+
+export interface ModelTurn {
+  readonly ok: boolean;
+  readonly text: string | null;
+  readonly why: string;
+  readonly ms: number;
+}
+
 export interface WorkspaceBridge {
   describe(): Promise<{
     relay: string;
@@ -51,6 +80,18 @@ export interface WorkspaceBridge {
   renewSession(): Promise<{ ok: boolean; session: SessionInfo }>;
   /** Push, so a lapse reaches the window without the renderer polling for one. */
   onSessionChanged(fn: (s: SessionInfo) => void): void;
+
+  /** What this machine can run the user's agent on, asked fresh every time. */
+  agentProbe(): Promise<{ providers: readonly ProviderInfo[]; unsupported: readonly { id: string; label: string; why: string }[] }>;
+  /**
+   * One model turn on the user's own credential.
+   *
+   * No binary path and no model credential crosses in either direction — the renderer says what to
+   * ask, the main process decides what to ask it with.
+   */
+  agentThink(prompt: string, systemPrompt: string | null): Promise<ModelTurn>;
+  /** Stop a turn already running. Turning the agent off has to reach a live child process. */
+  agentCancel(): Promise<{ stopped: number }>;
 }
 
 const bridge: WorkspaceBridge = {
@@ -63,6 +104,9 @@ const bridge: WorkspaceBridge = {
   // The listener is wrapped rather than handed `ipcRenderer.on` directly: the event object
   // carries a `sender` the renderer has no business holding.
   onSessionChanged: (fn) => { ipcRenderer.on('session:changed', (_e, s: SessionInfo) => { fn(s); }); },
+  agentProbe: () => ipcRenderer.invoke('agent:probe'),
+  agentThink: (prompt, systemPrompt) => ipcRenderer.invoke('agent:think', prompt, systemPrompt),
+  agentCancel: () => ipcRenderer.invoke('agent:cancel'),
 };
 
 contextBridge.exposeInMainWorld('interego', bridge);

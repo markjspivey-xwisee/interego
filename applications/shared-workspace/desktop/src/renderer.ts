@@ -19,17 +19,20 @@
  */
 
 import {
-  ConnectorTransport, WorkspaceClient, acceptGrant, assignPodMarks, checkOwnHandle,
-  checkRoleForWorkspace, checkWriteEligibility, createWorkspace, entryShapeAnswer, errorCopy,
+  ConnectorTransport, WorkspaceClient, acceptGrant, assignPodMarks, briefPrompt, checkDraft,
+  checkOwnHandle, checkRoleForWorkspace, checkWriteEligibility, createWorkspace, decideTurn,
+  discordLinkPlan, entryShapeAnswer, errorCopy,
   foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, mergeForward, nsIri, orderChain,
   parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry,
-  preconditionLine, readCanvas, readInbox, readInt, readIri, readLiteral, readViewer, revokeGrant,
+  preconditionLine, publishDelegation, readCanvas, readInbox, readInt, readIri, readLiteral,
+  readViewer, revokeDelegation, revokeGrant,
   roleKnown, roleName, roleWhy, saveCanvas, sendInvite, shortRef, slugProblem, verifyInvitation,
   verifyWorkspaceEntry,
   type CanvasRead, type ChainRow, type Check, type ConnectorMcp, type GrantVerdict,
-  type Invitation, type RoleTable, type Seat, type Viewer, type WorkspaceEntry, type WorkspaceRecord,
+  type Invitation, type RoleTable, type Seat, type SeenEntry, type Viewer, type WorkspaceEntry,
+  type WorkspaceRecord,
 } from '@interego/workspace-client';
-import type { BridgeFailure, SessionInfo, WorkspaceBridge } from './preload.js';
+import type { BridgeFailure, ProviderInfo, SessionInfo, WorkspaceBridge } from './preload.js';
 
 declare global {
   interface Window { interego: WorkspaceBridge }
@@ -372,6 +375,9 @@ async function boot(): Promise<void> {
   }
   step('identity', 'You are pod ' + S.viewer.podName, 'done');
   $('whoami').textContent = S.viewer.podName;
+  // Not awaited: what this machine can run an agent on is a local question with no bearing on
+  // reading the fleet, and a slow CLI probe must not hold up the boot behind it.
+  void loadProviders();
   showLobby(true);
 
   // Whether the viewer may write is a property of THEIR pod and THEIR agent — nothing to do with
@@ -701,6 +707,8 @@ function renderLobby(): void {
   const ready = !!S.viewer?.podName;
   $('createcard').hidden = !ready;
   $('opencard').hidden = !ready;
+  renderModelCard();
+  renderDiscordPlan();
   renderSlugHint();
 
   // Invite, offered only where a grant this client writes would actually COUNT.
@@ -1367,6 +1375,12 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
   });
   await Promise.all(workers);
   renderStream();
+  // ★ THE AGENT IS CONSIDERED HERE AND NOWHERE ELSE — after the bodies for a read are in, which is
+  // the only moment the channel is actually known. Hooking it to the watch tick instead would run
+  // the decision against half-loaded entries and let it answer a message whose text had not
+  // arrived yet. `agentConsider` is a no-op unless the agent is switched on.
+  renderAgent();
+  void agentConsider();
 }
 
 function renderStream(): void {
@@ -1803,6 +1817,303 @@ async function doMerge(): Promise<void> {
   renderRev();
 }
 
+// ── your own model, and your own agent ───────────────────────────────────────
+
+/**
+ * ★ NOTHING IN THIS SECTION MAKES A MODEL CALL. It asks the main process for one. The renderer
+ * cannot spawn a process and must not learn how — a path to an executable crossing this boundary
+ * would be a way to make the privileged half run anything, from the half that renders bytes other
+ * people wrote.
+ */
+let providers: readonly ProviderInfo[] = [];
+let unsupported: readonly { id: string; label: string; why: string }[] = [];
+let providerRead = false;
+
+const usableProvider = (): ProviderInfo | null => providers.find((p) => p.usable) ?? null;
+
+async function loadProviders(): Promise<void> {
+  try {
+    const got = await window.interego.agentProbe();
+    providers = got.providers;
+    unsupported = got.unsupported;
+  } catch (e) {
+    providers = [];
+    unsupported = [];
+    clear($('modelresult')).appendChild(errBox(e, 'This app could not check what it can run your agent on, so nothing is being claimed about it either way.'));
+  }
+  providerRead = true;
+  renderModelCard();
+  renderAgent();
+}
+
+function renderModelCard(): void {
+  if (!document.getElementById('modelcard')) return;
+  $('modelcard').hidden = !S.viewer?.podName;
+  const body = clear($('modelbody'));
+  if (!providerRead) { body.appendChild(el('div', 'note', 'Checking this machine…')); return; }
+  for (const p of providers) {
+    const panel = el('div', 'panel ' + (p.usable ? 'ok' : 'pending'));
+    panel.appendChild(el('h4', undefined, p.label));
+    panel.appendChild(el('div', undefined, p.why));
+    // ABSENCE IS NOT EVIDENCE, RENDERED. `loggedIn === null` means the CLI was not found, so there
+    // is no evidence either way about this person's account — and it is not drawn as "signed out".
+    panel.appendChild(kvPair([
+      ['installed', p.installed ? 'yes, at ' + (p.path ?? 'a path it did not report') : 'not found on this machine'],
+      ['signed in', p.loggedIn === null ? 'not established — the tool is not here to ask' : p.loggedIn ? 'yes' : 'no'],
+      ['account', p.account ?? 'not reported'],
+      ['plan', p.subscription ?? 'not reported'],
+    ]));
+    body.appendChild(panel);
+  }
+  for (const u of unsupported) {
+    const panel = el('div', 'panel');
+    panel.appendChild(el('h4', undefined, u.label));
+    panel.appendChild(el('div', undefined, u.why));
+    body.appendChild(panel);
+  }
+}
+
+// ── linking a chat account, by publishing a delegation on your own pod ───────
+
+/**
+ * ★ NEITHER FIELD IS A SECRET AND NOTHING HERE MINTS ONE. A delegation row is world-readable —
+ * `get_pod_status { pod_name: <anyone's> }` returns anybody's rows WITH their labels — so a nonce
+ * published in a label is a nonce published. The bot's `links.ts` records the defect that taught
+ * this: whoever read the pod first could bind THEIR Discord account to YOUR pod. The label is the
+ * claim itself, and the bot recomputes it from the id of the account actually running the confirm.
+ * Do not add a code field here.
+ */
+function renderDiscordPlan(): void {
+  if (!document.getElementById('discordcard')) return;
+  $('discordcard').hidden = !S.viewer?.podName;
+  const plan = discordLinkPlan({ botAgentId: inp('botagent').value, discordUserId: inp('discorduser').value });
+  const where = clear($('discordplan'));
+  const started = !!(inp('botagent').value.trim() || inp('discorduser').value.trim());
+  $('discordhint').textContent = plan.problems.find((p) => p.field === 'discordUserId')?.why ?? '';
+  btn('discordlink').disabled = !plan.call || !!S.writeBlocked;
+  if (!started) {
+    where.appendChild(el('div', 'note', 'Nothing has been sent anywhere. The call is shown here before it is made.'));
+    return;
+  }
+  if (!plan.call) {
+    for (const p of plan.problems) where.appendChild(el('div', 'note', p.why));
+    return;
+  }
+  const panel = el('div', 'panel pending');
+  panel.appendChild(el('h4', undefined, 'This is the exact call, and it has not been made'));
+  panel.appendChild(kvPair(Object.entries(plan.call.args).map(([k, v]) => [k, String(v)] as [string, string])));
+  for (const limit of plan.limits) panel.appendChild(el('div', 'note', limit));
+  where.appendChild(panel);
+}
+
+async function linkDiscord(): Promise<void> {
+  if (!S.client || !S.viewer) return;
+  const plan = discordLinkPlan({ botAgentId: inp('botagent').value, discordUserId: inp('discorduser').value });
+  if (!plan.call) { renderDiscordPlan(); return; }
+  btn('discordlink').disabled = true;
+  say('discordresult', 'pending', 'Publishing on your pod', 'register_agent is own-pod gated at the relay, so this can only write to '
+    + S.viewer.podName + ' — which is what makes it worth anything.');
+  let out;
+  try {
+    out = await publishDelegation(S.client, { plan, verifyOnPod: S.viewer.podName });
+  } catch (e) {
+    clear($('discordresult')).appendChild(errBox(e, 'The delegation was not published.'));
+    btn('discordlink').disabled = false;
+    return;
+  }
+  btn('discordlink').disabled = false;
+  if (out.kind === 'published') {
+    const p = say('discordresult', 'ok', 'Published, and read back from your own pod', out.why);
+    if (out.rescopedFrom) {
+      p.appendChild(el('div', 'note', 'This agent was already registered with scope ' + out.rescopedFrom
+        + ' and has now been changed to PublishOnly. That is a change to authority you already had, not a new one.'));
+    }
+    for (const c of out.verdict?.checks ?? []) p.appendChild(checkList([c]));
+    p.appendChild(el('div', 'note', 'Now run /workspace link-confirm pod:' + S.viewer.podName + ' back in Discord. '
+      + 'The bot checks this row itself; it does not take this app\'s word for it.'));
+    $('discordrevoke').hidden = false;
+  } else {
+    const p = say('discordresult', out.kind === 'unconfirmed' ? 'pending' : 'refused',
+      out.kind === 'unconfirmed' ? 'Accepted, but not confirmed by reading your pod back' : 'Not published', out.why);
+    for (const c of out.verdict?.checks ?? []) p.appendChild(checkList([c]));
+  }
+}
+
+async function revokeDiscord(): Promise<void> {
+  if (!S.client || !S.viewer) return;
+  const agentId = inp('botagent').value.trim();
+  if (!agentId) return;
+  btn('discordrevoke').disabled = true;
+  const out = await revokeDelegation(S.client, { agentId, podName: S.viewer.podName });
+  btn('discordrevoke').disabled = false;
+  say('discordresult', out.kind === 'revoked' ? 'ok' : 'refused',
+    out.kind === 'revoked' ? 'Revoked' : 'Not revoked', out.why);
+}
+
+// ── the local agent loop ─────────────────────────────────────────────────────
+
+/**
+ * ★ OFF BY DEFAULT, AND ITS DRAFT GOES IN THE COMPOSER RATHER THAN ONTO THE POD.
+ *
+ * An agent that writes on somebody's behalf without them seeing it is not a feature. So: the loop
+ * starts off; turning it on says so on screen; every draft is put in the composer for the person
+ * to read and send with the SAME button and the SAME compare-and-swap append they would use
+ * themselves; and posting without review is a separate checkbox they have to tick.
+ *
+ * ★ AND THERE IS NO SECOND WRITE PATH. `post()` is the only thing in this file that appends an
+ * entry, before and after this loop existed. An agent with its own writer would be an agent whose
+ * writes did not go through the readback, the 412 retry, or the shape assertion.
+ */
+const A = {
+  on: false,
+  /** Post without asking. Opt-in, never remembered across a restart, never on by default. */
+  auto: false,
+  phase: 'off' as 'off' | 'watching' | 'thinking' | 'drafted' | 'stopped',
+  why: '',
+  busy: false,
+};
+
+function renderAgent(): void {
+  if (!document.getElementById('agentcard')) return;
+  const seated = !!S.seats.find((s) => s.seated && s.pod === S.viewer?.podName);
+  $('agentcard').hidden = !seated;
+  const provider = usableProvider();
+  const toggle = btn('agenttoggle');
+  toggle.textContent = A.on ? 'Turn my agent off' : 'Turn my agent on';
+  toggle.disabled = !provider && !A.on;
+  (inp('agentauto') as unknown as HTMLInputElement).checked = A.auto;
+  const state = $('agentstate');
+  state.textContent = A.on
+    ? (A.phase === 'thinking' ? 'Thinking — on your own Claude subscription' : A.phase === 'drafted' ? 'Drafted, waiting for you' : 'Watching this channel')
+    : 'Off';
+  const why = clear($('agentwhy'));
+  if (!providerRead) { why.appendChild(document.createTextNode('Checking what this machine can run your agent on…')); return; }
+  if (!provider) {
+    why.appendChild(document.createTextNode(
+      (providers[0]?.why ?? 'No model this app can drive was found on this machine.')
+      + ' Until that is fixed there is no agent — this app will not answer for you out of anything else.'));
+    return;
+  }
+  why.appendChild(document.createTextNode(A.on
+    ? 'Your agent reads this channel and drafts a reply on ' + provider.label + ', under '
+      + (provider.account ?? 'your own account') + '. '
+      + (A.auto
+        ? 'It will post without asking, because you ticked the box. Untick it to review first.'
+        : 'It puts the draft in the box below and stops. Nothing is written until you press Post.')
+      + (A.why ? ' — ' + A.why : '')
+    : 'Off. It reads nothing and writes nothing.'));
+}
+
+/** Everything the decision needs, read out of state this shell already holds. */
+function agentEntries(): SeenEntry[] {
+  const out: SeenEntry[] = [];
+  for (const st of S.streams.values()) {
+    for (const r of orderChain(st.rows).ordered) {
+      const b = S.bodies.get(r.url);
+      // Entries whose body has not been fetched yet are left out entirely rather than included
+      // with a null body: "not read yet" and "read and empty" are different, and only the second
+      // is a fact about the channel.
+      if (!b) continue;
+      if (!b.isEntry) continue;
+      if (b.declaredWorkspace && b.declaredWorkspace !== S.workspace) continue;
+      out.push({
+        pod: st.pod,
+        descriptorUrl: r.url,
+        body: b.body,
+        derivedFrom: null,
+        at: r.validFrom ? Date.parse(r.validFrom) || null : null,
+      });
+    }
+  }
+  return out;
+}
+
+async function agentConsider(): Promise<void> {
+  if (!A.on || A.busy || !S.client || !S.viewer || !S.workspace || !S.slug) return;
+  const provider = usableProvider();
+  if (!provider) { A.why = 'no model available'; renderAgent(); return; }
+  // Never step on something the person is in the middle of writing. A draft that replaced somebody
+  // mid-sentence would be an agent taking the keyboard away.
+  const ta = area('composer');
+  if (ta.value.trim()) { A.why = 'you have unsent text in the box, so nothing was drafted over it'; A.phase = 'watching'; renderAgent(); return; }
+
+  const decision = decideTurn({
+    workspace: S.workspace, slug: S.slug, mePod: S.viewer.podName,
+    seats: S.seats, roles: S.roles.roles ? S.roles : null, entries: agentEntries(),
+  });
+  if (decision.kind !== 'answer') {
+    A.why = decision.why;
+    A.phase = 'watching';
+    renderAgent();
+    return;
+  }
+
+  A.busy = true;
+  A.phase = 'thinking';
+  A.why = '';
+  renderAgent();
+  say('agentresult', 'pending', 'Your agent is reading the channel',
+    'Running on ' + provider.label + ' under ' + (provider.account ?? 'your own account') + '. Nothing has been written.');
+  let turn;
+  try {
+    turn = await window.interego.agentThink(briefPrompt(decision.brief, { displayName: S.viewer.displayName }), null);
+  } catch (e) {
+    A.busy = false; A.phase = 'watching';
+    clear($('agentresult')).appendChild(errBox(e, 'Your agent could not be run, so nothing was drafted and nothing was written.'));
+    renderAgent();
+    return;
+  }
+  A.busy = false;
+  // Turned off while it was thinking. The answer is discarded rather than used: "off" has to mean
+  // off from the moment it is pressed, not from the end of whatever was already running.
+  if (!A.on) { A.phase = 'stopped'; say('agentresult', 'refused', 'Stopped', 'You turned your agent off while it was thinking. Its answer was discarded and nothing was written.'); renderAgent(); return; }
+  if (!turn.ok || turn.text === null) {
+    A.phase = 'watching';
+    say('agentresult', 'refused', 'Your agent did not answer', turn.why);
+    renderAgent();
+    return;
+  }
+  const draft = checkDraft(turn.text);
+  if (!draft.ok) {
+    A.phase = 'watching';
+    say('agentresult', 'pending', 'Nothing was drafted', draft.why);
+    renderAgent();
+    return;
+  }
+  if (ta.value.trim()) {
+    A.phase = 'watching';
+    say('agentresult', 'pending', 'You started typing', 'Your agent finished a draft while you were writing, so it was discarded rather than replacing your text.');
+    renderAgent();
+    return;
+  }
+  ta.value = draft.body;
+  A.phase = 'drafted';
+  renderAgent();
+  const p = say('agentresult', 'ok', A.auto ? 'Your agent drafted this and is posting it' : 'Your agent drafted this — read it before you send it',
+    'Answering ' + shortRef(decision.answering.descriptorUrl) + '. It is in the box below and NOTHING has been written yet. '
+    + 'Posting appends a permanent, public, signed record to your pod that cannot be edited or deleted.');
+  p.appendChild(kvPair([
+    ['ran on', provider.label],
+    ['as', provider.account ?? 'not reported'],
+    ['took', (turn.ms / 1000).toFixed(1) + 's'],
+  ]));
+  if (A.auto) await post();
+}
+
+function setAgent(on: boolean): void {
+  A.on = on;
+  A.why = '';
+  A.phase = on ? 'watching' : 'off';
+  if (!on) {
+    // Reaches the child process, not just the flag. An agent switched off that keeps thinking and
+    // then posts is the failure this whole panel exists to make impossible.
+    void window.interego.agentCancel();
+    clear($('agentresult'));
+  }
+  renderAgent();
+  if (on) void agentConsider();
+}
+
 // ── wiring ───────────────────────────────────────────────────────────────────
 
 btn('signin-wallet').addEventListener('click', () => { void signIn('wallet'); });
@@ -1826,6 +2137,16 @@ area('composer').addEventListener('keydown', (e) => {
 });
 btn('save').addEventListener('click', () => { void doSave(false); });
 btn('stalesave').addEventListener('click', () => { void doSave(true); });
+btn('modelrecheck').addEventListener('click', () => { providerRead = false; renderModelCard(); void loadProviders(); });
+inp('botagent').addEventListener('input', renderDiscordPlan);
+inp('discorduser').addEventListener('input', renderDiscordPlan);
+btn('discordlink').addEventListener('click', () => { void linkDiscord(); });
+btn('discordrevoke').addEventListener('click', () => { void revokeDiscord(); });
+btn('agenttoggle').addEventListener('click', () => { setAgent(!A.on); });
+inp('agentauto').addEventListener('change', () => {
+  A.auto = (inp('agentauto') as unknown as HTMLInputElement).checked;
+  renderAgent();
+});
 window.addEventListener('beforeunload', () => { S.watches.forEach((u) => { try { u(); } catch { /* already gone */ } }); });
 
 // A bare `describe()` left any throw as an unhandled rejection with a sign-in card on screen

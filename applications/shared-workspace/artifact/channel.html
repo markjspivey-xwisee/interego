@@ -834,13 +834,18 @@ var WSPC = (() => {
   // packages/workspace-client/src/index.ts
   var index_exports = {};
   __export(index_exports, {
+    AGENT_ID_RX: () => AGENT_ID_RX,
     BAD_IRI: () => BAD_IRI,
+    BRIEF_ENTRIES: () => BRIEF_ENTRIES,
     ConnectorTransport: () => ConnectorTransport,
+    DELEGATION_SCOPES: () => DELEGATION_SCOPES,
+    DRAFT_MAX: () => DRAFT_MAX,
     GRANT_IRI_RX: () => GRANT_IRI_RX,
     GRANT_LIMIT: () => GRANT_LIMIT,
     GRANT_READ_CAP: () => GRANT_READ_CAP,
     IEP: () => IEP,
     INBOX_LIMIT: () => INBOX_LIMIT,
+    NOTHING_TO_ADD: () => NOTHING_TO_ADD,
     POD_RX: () => POD_RX,
     PROBE_TOOL: () => PROBE_TOOL,
     REQUIRED_TOOLS: () => REQUIRED_TOOLS,
@@ -848,7 +853,9 @@ var WSPC = (() => {
     SEAT_READ_CAP: () => SEAT_READ_CAP,
     SEAT_SCAN_LIMIT: () => SEAT_SCAN_LIMIT,
     SLUG_RX: () => SLUG_RX,
+    SNOWFLAKE_RX: () => SNOWFLAKE_RX,
     ToolCallError: () => ToolCallError,
+    WRITE_ELIGIBLE_SCOPES: () => WRITE_ELIGIBLE_SCOPES,
     WSP: () => WSP,
     WorkspaceClient: () => WorkspaceClient,
     acceptGrant: () => acceptGrant,
@@ -857,13 +864,18 @@ var WSPC = (() => {
     assertPod: () => assertPod,
     assignPodMarks: () => assignPodMarks,
     awaitHead: () => awaitHead,
+    briefPrompt: () => briefPrompt,
     canvasTurtle: () => canvasTurtle,
+    challengeLabel: () => challengeLabel,
     checkDelegation: () => checkDelegation,
+    checkDraft: () => checkDraft,
     checkOwnHandle: () => checkOwnHandle,
     checkRoleForWorkspace: () => checkRoleForWorkspace,
     checkWriteEligibility: () => checkWriteEligibility,
     composedHandle: () => composedHandle,
     createWorkspace: () => createWorkspace,
+    decideTurn: () => decideTurn,
+    discordLinkPlan: () => discordLinkPlan,
     entryShapeAnswer: () => entryShapeAnswer,
     entryTurtle: () => entryTurtle,
     errorCopy: () => errorCopy,
@@ -877,6 +889,7 @@ var WSPC = (() => {
     graphRegion: () => graphRegion,
     hasTrue: () => hasTrue,
     hasType: () => hasType,
+    isDelegationScope: () => isDelegationScope,
     legacyName: () => legacyName,
     listWorkspaces: () => listWorkspaces,
     literalAt: () => literalAt,
@@ -899,6 +912,7 @@ var WSPC = (() => {
     pollingWatch: () => pollingWatch,
     postEntry: () => postEntry,
     preconditionLine: () => preconditionLine,
+    publishDelegation: () => publishDelegation,
     qualifiedName: () => qualifiedName,
     readAuthorship: () => readAuthorship,
     readCanvas: () => readCanvas,
@@ -911,6 +925,7 @@ var WSPC = (() => {
     readViewer: () => readViewer,
     refusal: () => refusal,
     resolveInvitee: () => resolveInvitee,
+    revokeDelegation: () => revokeDelegation,
     revokeGrant: () => revokeGrant,
     roleKnown: () => roleKnown,
     roleName: () => roleName,
@@ -2502,14 +2517,14 @@ var WSPC = (() => {
     const nbad = note ? refusal(note) : null;
     const chans = note?.["channels"] ?? [];
     const delivered = !!(note?.["delivered"] === true && chans.some((c) => c?.status === "delivered"));
-    const line = nerr ? "the call failed: " + errorCopy(nerr).t : nbad ? "refused: " + String(nbad["message"] ?? nbad["error"]) : note ? "delivered:" + String(note["delivered"]) + " \xB7 channels " + (chans.map((c) => (c.type ?? "?") + ":" + (c.status ?? "?")).join(", ") || "none reported") : "not attempted";
+    const line2 = nerr ? "the call failed: " + errorCopy(nerr).t : nbad ? "refused: " + String(nbad["message"] ?? nbad["error"]) : note ? "delivered:" + String(note["delivered"]) + " \xB7 channels " + (chans.map((c) => (c.type ?? "?") + ":" + (c.status ?? "?")).join(", ") || "none reported") : "not attempted";
     return {
       kind: "invited",
       resolution: who,
       grantIri,
       readable: !!out.readable,
       why: out.why ?? null,
-      notify: { attempted: !nerr, delivered, line }
+      notify: { attempted: !nerr, delivered, line: line2 }
     };
   }
   var GRANT_IRI_RX = /^https:\/\/[^/]+\/ns\/([^/]+)\/(.+)-grant-([^/]+)$/;
@@ -3057,6 +3072,253 @@ var WSPC = (() => {
     doesNot.push(vm ? "The signature verifies against " + vm + " \u2014 the relay's own delegation key, the same one for every pod and every agent on this deployment. It is NOT the author's wallet, and it is not evidence that any human key signed anything." : "The block names no verification method, so what key this would verify against is not established.");
     doesNot.push("It says nothing about whether the pod owner authorised the agent named above. That is a separate document \u2014 the pod's own delegation registry \u2014 and it is what checkDelegation reads.");
     return { present: true, signerAgent: signer, verificationMethod: vm, contentBinding: binding, proves, doesNotProve: doesNot };
+  }
+
+  // packages/workspace-client/src/agentlink.ts
+  var DELEGATION_SCOPES = ["ReadWrite", "ReadOnly", "PublishOnly", "DiscoverOnly"];
+  var WRITE_ELIGIBLE_SCOPES = ["ReadWrite", "PublishOnly"];
+  var isDelegationScope = (s) => typeof s === "string" && DELEGATION_SCOPES.includes(s);
+  var SNOWFLAKE_RX = /^[0-9]{1,20}$/;
+  var challengeLabel = (discordUserId) => "discord-link " + discordUserId;
+  var AGENT_ID_RX = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"'{}|\\^`]+$/;
+  function discordLinkPlan(args) {
+    const problems = [];
+    const agentId = args.botAgentId.trim();
+    const discordUserId = args.discordUserId.trim();
+    if (!agentId) problems.push({ field: "agentId", why: "The bot's agent id is empty. `/workspace link` prints it \u2014 it is the line beginning `did:`." });
+    else if (!AGENT_ID_RX.test(agentId)) {
+      problems.push({ field: "agentId", why: "That is not the shape of an agent id. It should look like `did:ethr:0x\u2026` \u2014 one scheme, a colon, then no spaces or quotes." });
+    }
+    if (!discordUserId) problems.push({ field: "discordUserId", why: "Your Discord user id is empty. `/workspace link` prints it back to you; it is the run of digits." });
+    else if (!SNOWFLAKE_RX.test(discordUserId)) {
+      problems.push({ field: "discordUserId", why: "A Discord user id is digits only, at most 20 of them. This has something else in it, so it is not sent anywhere." });
+    }
+    const label = challengeLabel(discordUserId);
+    return {
+      problems,
+      call: problems.length ? null : {
+        tool: "register_agent",
+        args: { agent_id: agentId, scope: "PublishOnly", label }
+      },
+      limits: [
+        "This publishes one row on YOUR pod naming that one agent. It is not a password and it grants nothing to anybody else.",
+        // The bot's README calls this one of its two honest limits. Repeating it at the moment of
+        // consent rather than in a document nobody opens is the whole point of showing a plan.
+        "PublishOnly is POD-WIDE. The substrate has no per-graph delegation scope, so the bot could publish any graph to your pod \u2014 not only workspace entries. What bounds it is that it is one named agent, every write is content-bound and attributed to it, and you can withdraw it alone.",
+        'The label "' + label + '" is public, and is meant to be. It is you naming which Discord account this is for, in a document only you can write. It is not a code and there is nothing in it to steal.',
+        "You can revoke this at any time from your own client. Revocation is your unilateral act and does not need the bot to cooperate.",
+        // Measured, in delegation.ts's header. A user told "revoked" who then sees a message land
+        // would reasonably conclude the revoke did not work.
+        "For up to 60 seconds after a revoke the relay may still accept a write it had already cached permission for. The bot re-asks before every write and stops itself, but the relay alone is not the boundary."
+      ]
+    };
+  }
+  async function publishDelegation(client, args) {
+    const { plan } = args;
+    if (!plan.call) {
+      return {
+        kind: "invalid",
+        plan,
+        response: null,
+        verdict: null,
+        rescopedFrom: null,
+        why: plan.problems.map((p) => p.why).join(" ") || "This delegation was not described completely enough to publish."
+      };
+    }
+    let response = null;
+    try {
+      response = await client.tool(plan.call.tool, { ...plan.call.args }, { cache: false });
+    } catch (e) {
+      return {
+        kind: "refused",
+        plan,
+        response: null,
+        verdict: null,
+        rescopedFrom: null,
+        why: "The relay refused to register the agent: " + errorCopy(e).d + " Nothing was written."
+      };
+    }
+    const bad = refusal(response);
+    if (bad) {
+      return {
+        kind: "refused",
+        plan,
+        response,
+        verdict: null,
+        rescopedFrom: null,
+        why: "The relay refused to register the agent: " + String(bad["message"] ?? bad["error"]) + " Nothing was written."
+      };
+    }
+    const rescopedFrom = response?.["rescoped"] === true && typeof response["previousScope"] === "string" ? response["previousScope"] : null;
+    const label = typeof plan.call.args["label"] === "string" ? plan.call.args["label"] : void 0;
+    const verdict = await checkDelegation(client, {
+      agentId: String(plan.call.args["agent_id"]),
+      podName: args.verifyOnPod,
+      ...label === void 0 ? {} : { expectLabel: label }
+    });
+    if (!verdict.ok) {
+      return {
+        kind: "unconfirmed",
+        plan,
+        response,
+        verdict,
+        rescopedFrom,
+        // Not "it failed": the write may well have landed. What is established is that reading the
+        // pod back did not show it, and saying more than that would be inventing a fact either way.
+        why: "The relay accepted the registration, but reading your pod back did not confirm it: " + (verdict.why ?? "no reason was given") + " The row may still be there \u2014 what is established is that this read did not find it."
+      };
+    }
+    return {
+      kind: "published",
+      plan,
+      response,
+      verdict,
+      rescopedFrom,
+      why: "Published on pod " + args.verifyOnPod + " and read back from it: the delegation registry now lists " + verdict.agentId + " with scope " + (verdict.scope ?? "none reported") + (rescopedFrom ? ", re-scoped from " + rescopedFrom : "") + "."
+    };
+  }
+  async function revokeDelegation(client, args) {
+    try {
+      const res = await client.tool("revoke_agent", { agent_id: args.agentId }, { cache: false });
+      const bad = refusal(res);
+      if (bad) return { kind: "refused", why: "The relay refused to revoke this agent: " + String(bad["message"] ?? bad["error"]), verdict: null };
+    } catch (e) {
+      return { kind: "refused", why: "The relay refused to revoke this agent: " + errorCopy(e).d, verdict: null };
+    }
+    const verdict = await checkDelegation(client, { agentId: args.agentId, podName: args.podName });
+    if (verdict.ok) {
+      return {
+        kind: "still-listed",
+        verdict,
+        why: "The relay accepted the revoke, but your pod still reports this agent as write-eligible. Nothing here is guessing at why; that is what reading the pod back said."
+      };
+    }
+    return {
+      kind: "revoked",
+      verdict,
+      why: "Revoked, and read back from pod " + args.podName + ": " + (verdict.why ?? "the registry no longer lists it") + ". The relay may still accept a write it had already cached permission for, for up to 60 seconds."
+    };
+  }
+
+  // packages/workspace-client/src/localagent.ts
+  var BRIEF_ENTRIES = 24;
+  var DRAFT_MAX = 4e3;
+  var line = (e, mePod) => (e.pod === mePod ? "you" : e.pod) + ": " + (e.body ?? "(this entry carried no readable body)");
+  function decideTurn(input) {
+    const seat = input.seats.find((s) => s.pod === input.mePod && s.seated) ?? null;
+    if (!seat) {
+      const named = input.seats.find((s) => s.pod === input.mePod) ?? null;
+      return {
+        kind: "not-seated",
+        why: named ? "Your pod is named in this workspace but you are not seated: " + (named.why || "the fold gave no reason") + ". Nothing has been written." : "You are not seated in " + input.workspace + ", so there is no log of yours in this channel to write to."
+      };
+    }
+    if (!input.roles) {
+      return {
+        kind: "roles-unreadable",
+        why: "The role table this workspace declares could not be read, so no ceiling can be computed. That is not the same as the ceiling permitting this, so nothing is written."
+      };
+    }
+    const verdict = checkRoleForWorkspace(input.roles, seat.role ?? "");
+    if (!verdict.ok) {
+      return {
+        kind: "ceiling",
+        why: "The role ceiling refuses this write. " + verdict.why + " Nothing could stop this agent writing to your pod \u2014 it is your pod \u2014 so this is a refusal it imposes on itself. An entry written anyway would exist and be inert: the fold would not count it."
+      };
+    }
+    const ordered = [...input.entries].sort((a, b) => (a.at ?? Number.MAX_SAFE_INTEGER) - (b.at ?? Number.MAX_SAFE_INTEGER));
+    const mine = ordered.filter((e) => e.pod === input.mePod);
+    const theirs = ordered.filter((e) => e.pod !== input.mePod);
+    const said = (e) => typeof e.body === "string" && e.body.trim() !== "";
+    const newest = [...theirs].reverse().find(said) ?? null;
+    if (!newest) {
+      return {
+        kind: "nothing-to-answer",
+        why: theirs.length ? "The " + theirs.length + " entr" + (theirs.length === 1 ? "y" : "ies") + " from other members carried nothing readable to answer. An entry saying nothing is still a permanent record, so none is written." : "Nobody else has written in this channel yet."
+      };
+    }
+    const lastMine = [...mine].reverse().find(said) ?? null;
+    const lastAny = [...ordered].reverse().find(said) ?? null;
+    if (lastAny && lastMine && lastAny.descriptorUrl === lastMine.descriptorUrl) {
+      return {
+        kind: "already-answered",
+        answering: newest,
+        why: "The most recent entry in this channel is your own (" + shortRef(lastMine.descriptorUrl) + "). Your agent answers when somebody else has spoken last; appending now would put a second permanent record in your log with nothing new to answer."
+      };
+    }
+    const derived = mine.find((e) => e.derivedFrom === newest.descriptorUrl);
+    if (derived) {
+      return {
+        kind: "already-answered",
+        answering: newest,
+        why: "The newest entry from another member is already declared as answered on your log (" + shortRef(derived.descriptorUrl) + "). Appending again would put two permanent records in your log saying the same thing."
+      };
+    }
+    const window = ordered.slice(-BRIEF_ENTRIES);
+    return {
+      kind: "answer",
+      answering: newest,
+      brief: {
+        workspace: input.workspace,
+        slug: input.slug,
+        answering: line(newest, input.mePod),
+        transcript: window.map((e) => line(e, input.mePod)),
+        omitted: Math.max(0, ordered.length - window.length)
+      }
+    };
+  }
+  function briefPrompt(brief, args) {
+    const who = args.displayName ? args.displayName : "the person whose account you are running under";
+    return [
+      "You are taking part in a shared workspace conversation as " + who + "'s own agent, running on",
+      "their machine under their own credential. What you write is appended to THEIR log as THEIR",
+      "entry: a permanent, signed, publicly readable record that cannot be edited or deleted.",
+      "",
+      "Channel: " + brief.workspace,
+      brief.omitted > 0 ? "(" + brief.omitted + " earlier entries are not shown.)" : "(This is the whole channel so far.)",
+      "",
+      "Recent entries, oldest first:",
+      ...brief.transcript.map((t) => "  " + t),
+      "",
+      "Reply to this entry:",
+      "  " + brief.answering,
+      "",
+      // ★ THIS PARAGRAPH IS TUNED FROM A MEASURED FAILURE, NOT WRITTEN FROM TASTE. An earlier
+      // version led with "write only what they would be content to have stand" and put the abstain
+      // sentinel last. Driven live against a channel whose single entry was a direct question —
+      // "do we re-tile in spring or patch it now?" — the model answered NOTHING TO ADD, because it
+      // had no independent knowledge of the roof and the framing made silence the safe move. An
+      // agent that abstains from every genuine question is not cautious, it is broken. So the
+      // permanence is stated as a constraint on TONE, and the sentinel is scoped to the narrow case
+      // it is actually for.
+      "Reply as a thoughtful participant. You are not expected to know things the channel has not",
+      "said \u2014 where a decision is theirs to make, engage with the substance, lay out the trade-off as",
+      "you see it from what was written, or ask the one question that would settle it. Do not invent",
+      "facts, commitments or history that are not in the entries above.",
+      "",
+      "Plain prose, a few sentences. No markdown headings, bullet lists or code fences. Do not open",
+      'with "Sure" or "Here is", and do not sign your name.',
+      "",
+      "Reserve this for entries that plainly call for no response at all \u2014 an acknowledgement, a",
+      "thank-you, or something already fully answered: reply with exactly NOTHING TO ADD."
+    ].join("\n");
+  }
+  var NOTHING_TO_ADD = "NOTHING TO ADD";
+  function checkDraft(raw) {
+    const body = raw.trim();
+    if (!body) {
+      return { ok: false, why: "The model returned nothing. An empty entry is still a permanent record, so none is written." };
+    }
+    if (body === NOTHING_TO_ADD || body.toUpperCase() === NOTHING_TO_ADD) {
+      return { ok: false, why: "Your agent read the channel and judged there was nothing worth adding. Nothing was written." };
+    }
+    if (body.length > DRAFT_MAX) {
+      return {
+        ok: false,
+        why: "The draft is " + body.length + " characters, over the " + DRAFT_MAX + "-character limit for one entry. It is refused rather than truncated, because half a sentence recorded permanently is worse than none."
+      };
+    }
+    return { ok: true, body };
   }
   return __toCommonJS(index_exports);
 })();

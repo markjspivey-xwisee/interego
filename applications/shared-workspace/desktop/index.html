@@ -179,16 +179,24 @@
 
 <div id="signin">
   <div class="card">
-    <h3>Choose how to sign in</h3>
-    <p class="note">The identity you sign in with decides which pod your words land on, permanently.
-      A wallet gives a <code>u-eth-…</code> pod; the relay's browser sign-in with a passkey gives a
-      <code>u-pk-…</code> one. Both mint an OAuth bearer from the relay's own authorization server —
-      that is what the tool calls carry.</p>
+    <h3>Create an account, or sign in</h3>
+    <p class="note">There is no password and no sign-up form. A passkey — Windows Hello, Touch ID, or
+      whatever unlocks your machine — both creates the account and signs you in, and the first time
+      you do it a storage pod is provisioned for you. Everything you write lands there and stays
+      yours.</p>
+    <p class="note"><strong>The identity you pick decides which pod your words land on, permanently.</strong>
+      A passkey gives a <code>u-pk-…</code> pod; a wallet key gives a <code>u-eth-…</code> one. They
+      are different accounts, not two doors to one account — signing in the other way later shows an
+      empty workspace, because it is a different pod.</p>
     <div id="storeline" class="note"></div>
     <div class="row">
-      <button class="primary" id="signin-wallet">Wallet key held on this machine</button>
-      <button id="signin-browser">Sign in in my browser (passkey)</button>
+      <button class="primary" id="signin-browser">Create an account with a passkey</button>
+      <button id="signin-wallet">Use a wallet key on this machine</button>
     </div>
+    <p class="note">The passkey ceremony happens in your own browser rather than in this window. That
+      is not a shortcut: the proof has to be made at the identity server's own origin, and a page
+      loaded from disk cannot produce one. Your browser also means a real platform authenticator
+      rather than a key this program made up.</p>
     <div id="steps" style="margin-top:12px"></div>
     <div id="signinnote"></div>
   </div>
@@ -275,6 +283,49 @@
       <div class="row"><button id="openbtn">Open it</button></div>
       <div id="openresult"></div>
     </div>
+
+    <!--
+      YOUR AGENT RUNS ON YOUR OWN SUBSCRIPTION OR IT DOES NOT RUN.
+      There is no key field here and no fallback model. Either this machine has a signed-in Claude
+      Code, in which case your agent is your agent, or it says what is missing.
+    -->
+    <div class="card" id="modelcard" hidden>
+      <h3>Your agent's model</h3>
+      <div class="note">Your agent runs on a model subscription you have already signed into on this
+        machine, under your own account. This app never sees that credential — it starts the tool you
+        already installed and reads its answer. Nothing is billed to anybody else, and there is no
+        shared key.</div>
+      <div id="modelbody"></div>
+      <div class="row"><button id="modelrecheck">Check again</button></div>
+      <div id="modelresult"></div>
+    </div>
+
+    <!--
+      LINKING DISCORD IS PUBLISHING A DELEGATION ON YOUR OWN POD.
+      The two values below are both PUBLIC and neither is a code. See `agentlink.ts` and the bot's
+      `links.ts` for why a secret here would be a hole rather than a protection.
+    -->
+    <div class="card" id="discordcard" hidden>
+      <h3>Link your Discord account</h3>
+      <div class="note">Run <code>/workspace link</code> in Discord. The bot replies privately with two
+        values — its agent id and your own Discord user id. Put them here and this app publishes the
+        delegation on your pod for you, so you never have to run a tool call by hand.</div>
+      <div class="field">
+        <label for="botagent">The bot's agent id</label>
+        <input id="botagent" type="text" spellcheck="false" autocomplete="off" placeholder="did:ethr:0x…">
+      </div>
+      <div class="field">
+        <label for="discorduser">Your Discord user id</label>
+        <input id="discorduser" type="text" spellcheck="false" autocomplete="off" placeholder="digits only">
+        <div class="hint" id="discordhint"></div>
+      </div>
+      <div id="discordplan"></div>
+      <div class="row">
+        <button class="primary" id="discordlink" disabled>Publish this delegation on my pod</button>
+        <button id="discordrevoke" hidden>Revoke it</button>
+      </div>
+      <div id="discordresult"></div>
+    </div>
   </div>
 </section>
 
@@ -293,6 +344,24 @@
   <section class="pane mid" aria-label="Messages">
     <div class="pane-body" id="streamwrap"><div id="stream"></div></div>
     <div class="composer">
+      <!--
+        THE AGENT PANEL SITS ABOVE THE COMPOSER BECAUSE THAT IS WHERE ITS OUTPUT GOES.
+        A draft the agent writes is put in the composer and left there for the person to read and
+        send. There is no second write path: the button below is the same button, and the entry is
+        the same compare-and-swap append. An agent that had its own way to write would be an agent
+        whose writes were not the ones this screen shows.
+      -->
+      <div id="agentcard" hidden>
+        <div class="row">
+          <button id="agenttoggle">Turn my agent on</button>
+          <span id="agentstate" class="note">Off</span>
+        </div>
+        <label class="note" for="agentauto">
+          <input type="checkbox" id="agentauto"> Post its drafts without asking me first
+        </label>
+        <div class="note" id="agentwhy"></div>
+        <div id="agentresult"></div>
+      </div>
       <textarea id="composer" rows="2" placeholder="Resolving the channel…" disabled aria-label="Message"></textarea>
       <div class="row"><button class="primary" id="send" disabled>Post to my pod</button></div>
       <div class="cfoot">

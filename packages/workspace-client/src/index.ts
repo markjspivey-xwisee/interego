@@ -80,3 +80,15 @@ export {
   readMember, checkDelegation, readAuthorship,
   type DelegationRow, type DelegationVerdict, type AuthorshipReading,
 } from './delegation.js';
+
+export {
+  DELEGATION_SCOPES, WRITE_ELIGIBLE_SCOPES, isDelegationScope,
+  SNOWFLAKE_RX, challengeLabel, AGENT_ID_RX,
+  discordLinkPlan, publishDelegation, revokeDelegation,
+  type DelegationScope, type LinkProblem, type DelegationPlan, type DelegationOutcome,
+} from './agentlink.js';
+
+export {
+  BRIEF_ENTRIES, DRAFT_MAX, NOTHING_TO_ADD, decideTurn, briefPrompt, checkDraft,
+  type SeenEntry, type TurnInput, type ChannelBrief, type TurnDecision, type DraftVerdict,
+} from './localagent.js';

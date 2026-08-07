@@ -31,6 +31,7 @@ import {
   type AuthMethod,
 } from './auth.js';
 import { getSecret, putSecret, secretStoreAvailable, WALLET_KEY } from './secrets.js';
+import { CODEX_UNSUPPORTED, probeClaude, runClaude, type ProviderStatus } from './modelprovider.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -79,6 +80,15 @@ interface Session {
   readonly why: string | null;
 }
 let session: Session = { state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null };
+
+/**
+ * Kill functions for model turns currently running.
+ *
+ * A set rather than a single handle because a turn that is being cancelled and one that is
+ * starting can overlap by a few milliseconds, and the one thing that must not survive a cancel is
+ * a child nobody is holding a reference to.
+ */
+const thinking = new Set<() => void>();
 
 const listeners = new Set<WebContents>();
 function setSession(next: Session): void {
@@ -287,6 +297,56 @@ app.whenReady().then(() => {
       // refusal.
       return { ok: false, error: { code: e.code ?? 'upstream_error', message: e.message ?? String(err), retryable: !!e.retryable, retryAfterMs: e.retryAfterMs ?? null } };
     }
+  });
+
+  /**
+   * WHAT THIS MACHINE CAN RUN THE USER'S AGENT ON.
+   *
+   * Probed on demand rather than cached at boot: somebody who reads "not signed in", runs
+   * `claude auth login` in a terminal and comes back must not be told the same thing by a value
+   * this process decided at startup.
+   */
+  ipcMain.handle('agent:probe', async (): Promise<{ providers: readonly ProviderStatus[]; unsupported: readonly { id: string; label: string; why: string }[] }> => ({
+    providers: [await probeClaude()],
+    unsupported: [CODEX_UNSUPPORTED],
+  }));
+
+  /**
+   * ONE MODEL TURN, ON THE USER'S OWN CREDENTIAL.
+   *
+   * ★ THE ONLY PART OF THE AGENT LOOP THAT LIVES HERE, AND THAT IS DELIBERATE. Deciding whether
+   * there is anything to answer, and reading the channel to find out, is `@interego/workspace-client`
+   * running in the renderer against state it already holds. Putting the loop here would have meant
+   * a SECOND channel reader in a process that does not have one — the "two copies of one intention"
+   * that every drift defect in this vertical came from. What the renderer cannot do is spawn a
+   * child process, so that, and only that, crosses.
+   *
+   * ★ AND THE RENDERER CANNOT NAME THE BINARY. The path comes from this process's own probe, not
+   * from the call — a renderer that could pass an executable path would be able to make this
+   * process run anything, and the renderer is the half that renders bytes other people wrote.
+   */
+  ipcMain.handle('agent:think', async (_e, prompt: string, systemPrompt: string | null) => {
+    if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('a model turn needs a prompt');
+    const status = await probeClaude();
+    if (!status.usable || !status.path) return { ok: false, text: null, ms: 0, why: status.why };
+    const run = await runClaude({
+      binary: status.path,
+      prompt,
+      ...(typeof systemPrompt === 'string' && systemPrompt ? { systemPrompt } : {}),
+      // Handed the killer so `agent:cancel` can actually stop a turn already in flight. An agent
+      // the user switched off that keeps thinking and then posts is the thing this must not do.
+      onChild: (kill) => { thinking.add(kill); },
+    });
+    thinking.clear();
+    return run;
+  });
+
+  /** Stop any turn in flight. The user turning the agent off has to reach a running child. */
+  ipcMain.handle('agent:cancel', () => {
+    const n = thinking.size;
+    for (const kill of thinking) { try { kill(); } catch { /* already gone is the ordinary case */ } }
+    thinking.clear();
+    return { stopped: n };
   });
 
   createWindow();

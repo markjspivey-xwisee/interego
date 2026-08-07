@@ -27,6 +27,149 @@ became the head.
 | post an entry onto your own pod, compare-and-swap safe | `postEntry` | yes |
 | canvas: create, save, forced stale 412, merge forward | `readCanvas` / `saveCanvas` / `mergeForward` | yes |
 | renew the bearer with no user present | `refreshBearer` here + the relay's `refresh_token` grant | yes |
+| link a Discord account by publishing the delegation for you | `discordLinkPlan` + `publishDelegation` | yes |
+| withdraw that delegation, confirmed by reading the pod back | `revokeDelegation` | yes |
+| run your own agent on your own model subscription | `decideTurn` / `briefPrompt` / `checkDraft` + `modelprovider.ts` | yes |
+
+---
+
+## Your agent runs on your own subscription, or it does not run
+
+Everything in this section was driven end to end against the live fleet, with two freshly minted
+disposable identities and the real `claude` CLI on the operator's own Max subscription:
+
+```sh
+npx tsx applications/shared-workspace/tools/drive-local-agent-live.ts
+```
+
+It mints A and B, creates and accepts a workspace across both pods, has B ask a real question, runs
+A's agent for real, appends the answer to A's own pod, asks again to prove the loop guard refuses a
+second reply, publishes a Discord delegation and verifies it *from the delegate's own session*,
+refuses a different chat account against the same row, and revokes. All checks pass.
+
+
+**The question, and the measurement that answers it.** Can this app run a person's agent on the
+Claude subscription they have already signed into on this machine — no API key, nobody else
+paying? Measured on Windows 10, Claude Code 2.1.162, 2026-08-07, with **no `ANTHROPIC_API_KEY`
+anywhere in the environment**:
+
+| what was run | what came back |
+|---|---|
+| `claude auth status --json` | `{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}`, exit 0, 844 ms |
+| `claude -p … --output-format json` | `{"is_error":false,"result":"SPAWN_OK"}`, exit 0, 5.5 s |
+| the same, prompt on **stdin** instead of argv | `{"is_error":false,"result":"STDIN_OK"}`, exit 0 |
+| the same, from a `HOME` with no credentials | `{"is_error":true,"result":"Not logged in · Please run /login"}`, exit 1, **1.2 s** |
+
+So: yes, and cleanly. The CLI reads the credential itself — `~/.claude/.credentials.json` on
+Windows and Linux, the Keychain on macOS — and refreshes it itself. **This app never reads that
+file, never copies the token and never holds it.** It spawns a child and reads stdout. There is no
+key here because there is no key.
+
+`claude auth status --json` answers with exit 0 and an honest `loggedIn` boolean in *both* states,
+which is the detection primitive: the app never has to stat a credential file to know whether
+somebody is signed in. And a logged-out `-p` **fails fast** rather than hanging or prompting, which
+is what makes an unattended loop safe to start.
+
+### Three measured footguns, each of which silently breaks the subscription path
+
+1. **`--bare` must never be passed.** Its own help says "Anthropic auth is strictly
+   `ANTHROPIC_API_KEY` or `apiKeyHelper` — OAuth and keychain are never read". Measured: with a
+   valid subscription signed in, `-p --bare` returns "Not logged in" in 78 ms. It reads as a
+   lean-startup flag and it is an auth-disabling flag.
+2. **On Windows the `.exe` must win over the `.cmd`.** npm installs both. Node 22 refuses to spawn
+   a `.cmd` without `shell: true` — `EINVAL`, measured — and a shell would pass a channel full of
+   other people's words through `cmd.exe`. `resolveClaudeCli` looks for the executable first and
+   *reports* a shim rather than running one.
+3. **The parent's `CLAUDE_CODE_*` environment must be stripped.** A developer launching this app
+   from inside a Claude Code session would otherwise hand the child `CLAUDECODE=1` and
+   `ELECTRON_RUN_AS_NODE=1`, which is not a configuration any real user's machine has.
+
+### What is NOT supported, and why that is not a shrug
+
+**There is no Codex provider, and no BYO-API-key field.** Codex was researched against its own
+source before that was decided: `codex exec --json` is a documented non-interactive mode,
+`$CODEX_HOME/auth.json` holds a real Sign-in-with-ChatGPT OAuth bundle rather than a key, and the
+official SDK's `apiKey` is optional so a child that omits it rides the user's own login. Three
+things stopped it shipping: **it is not installed on this machine**, so not one line of it could be
+measured; **it does not fail fast when logged out** — no auth preflight, ~20 s of 401 retries, exit
+1 with no machine-readable code (openai/codex#30514, open) — so matching the Claude path needs a
+separate `codex doctor --json` preflight that must itself be measured; and **whether OpenAI permits
+it is unresolved**, with a broad undefined clause in their terms, an auth doc that recommends API
+keys for programmatic CLI use, and every request for a position on their own tracker unanswered.
+
+When somebody installs it and drives it end to end, it gets an entry. Until then the app says it is
+not supported here, which is true, rather than offering it and failing.
+
+**And there is no built-in fallback.** If no provider is available the agent does not run and the
+screen says what is missing. An agent whose replies came from anywhere other than the user's own
+credential would be a puppet wearing their name on a permanent public record.
+
+### The loop is off, visible and stoppable
+
+It starts **off**. Turning it on says so on screen. It considers a turn only after the bodies for a
+read are in — hooking it to the watch tick would let it answer a message whose text had not arrived
+yet. When it decides to speak, **the draft goes into the composer** and stops there: the person
+reads it and presses the same *Post to my pod* button they would use themselves, and the entry is
+the same compare-and-swap append with the same readback. Posting without review is a separate
+checkbox, off by default and never remembered. Turning the agent off calls `agent:cancel`, which
+**kills the child process** — an agent switched off that keeps thinking and then posts is the exact
+failure the panel exists to prevent. A draft is never written over text the person is mid-sentence
+on, in either direction.
+
+**Where the decision lives.** `decideTurn`, `briefPrompt` and `checkDraft` are in
+`@interego/workspace-client`, because "is anyone waiting on me, and have I answered this already"
+is a statement about the substrate and three clients would each get it slightly wrong. Only the
+child-process spawn is in this shell, because a package that has to run in a browser cannot have
+it. The renderer holds the channel already, so the loop runs there and the main process does one
+thing: `agent:think`. **The renderer cannot name the binary** — the path comes from this process's
+own probe, never from the call.
+
+**The dedupe rule, and the loop-forever defect it prevents.** The obvious test is whether one of my
+entries declares `prov:wasDerivedFrom` the entry I am about to answer. That **does not work from
+this client**: `entryTurtle` writes no derivation link, so an entry posted from here never carries
+one, and an agent relying on it would re-answer the same message on every poll, permanently, on a
+public log. The rule that holds for every author is simply *whether somebody else has spoken since
+I last did*. It needs no state, survives a restart, and cannot double-post after a crash. A
+derivation link is still honoured when present, because the bridge's entries do carry one.
+
+### One thing the live drive changed
+
+The instruction the agent is given was **tuned from a measured failure, not from taste**. The first
+version led with "write only what they would be content to have stand" and put the abstain sentinel
+last. Driven live against a channel whose single entry was a direct question — *"do we re-tile in
+spring or patch it now?"* — the model answered `NOTHING TO ADD`, because it had no independent
+knowledge of the roof and the framing made silence the safe move. An agent that abstains from every
+genuine question is not cautious, it is broken. The permanence is now stated as a constraint on
+tone, and the sentinel is scoped to the narrow case it is for.
+
+---
+
+## Linking Discord, without reintroducing the hole
+
+`/workspace link` in Discord prints two values: the bot's agent id and your own Discord user id.
+Put them in the lobby card and this app publishes the delegation on your pod for you —
+`register_agent { agent_id, scope: "PublishOnly", label: "discord-link <your id>" }` — so nobody
+has to run a tool call by hand in another client.
+
+**Neither value is a secret and this app mints nothing.** A delegation row is world-readable:
+`get_pod_status { pod_name: <anyone's> }` answers for any pod and returns the rows *with their
+labels*. The bot's `links.ts` records the defect that taught this — a nonce published as a label is
+a nonce published, and whoever reads that pod first can bind *their* Discord account to *your* pod.
+The label is the claim itself, and the bot recomputes it from the id of the account actually
+running the confirm. **Do not add a code field to that card.**
+
+`challengeLabel` and `SNOWFLAKE_RX` **moved into `@interego/workspace-client`** for this. The
+comment on `challengeLabel` warned that "two format sites is how a link flow comes to reject every
+honest user" while the bot was still the only site; a copy here would have made that come true. The
+bot now re-exports them from the module.
+
+The card **shows the exact call before it makes it**, along with what is actually being granted —
+including that `PublishOnly` is **pod-wide**, because the substrate has no per-graph delegation
+scope, and that the relay may honour a cached permission for up to 60 s after a revoke. A screen
+that said "Link Discord" and quietly published a pod-wide publish delegation has not asked for
+consent to what it did. And a link is reported as published only when **reading the pod back**
+confirms it — `register_agent` answering `{registered: true}` is the relay describing its own
+action, and the two have disagreed before.
 
 **Not signed and not notarised, on any platform.** Windows SmartScreen will warn on first run
 of the `.exe`, and macOS Gatekeeper will refuse to open the `.app` and say the developer cannot

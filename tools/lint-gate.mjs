@@ -485,7 +485,7 @@ const BASELINE = {};
 // only when the gate shouts spends its life one file from useless. The round's other two new
 // files live under `applications/`, which is frontier rather than a zero-error target, so they
 // do not move this number.
-export const MIN_FILES = 374;
+export const MIN_FILES = 376;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
