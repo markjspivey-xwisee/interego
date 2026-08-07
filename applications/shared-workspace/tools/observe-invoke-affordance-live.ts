@@ -125,7 +125,7 @@ async function advertiseAndInvoke(args: {
     title: 'Read this channel and answer in my own log',
     description: 'Causes this agent to read the workspace and, if its role permits appending, write one '
       + 'entry to its own log on its own pod. The caller supplies no text.',
-  }, { publish: member.publish } as never);
+  }, { publish: member.publish });
   dump('publishCapability', advertised);
   if (advertised.outcome !== 'published') return 'setup-failed';
 

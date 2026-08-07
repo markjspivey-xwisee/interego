@@ -125,7 +125,15 @@ export type AdvertiseOutcome =
  * somewhere. The bytes are immutable once published and the key moves on, so a document that
  * was not signed at write time can never be attributed afterwards.
  */
-export async function publishCapability(draft: CapabilityDraft, deps: StreamDeps): Promise<AdvertiseOutcome> {
+export async function publishCapability(
+  draft: CapabilityDraft,
+  // `Pick`, not the whole `StreamDeps`. This writes one document and reads nothing, so asking
+  // for `discover` / `getDescriptor` / `currentHead` / `fetchDocument` would force every caller
+  // to supply four functions it will not call — and the driver that did exactly that reached
+  // for `as never` to get past the compiler, which is a cast that would have hidden a genuine
+  // signature change just as effectively as it hid the four unused fields.
+  deps: Pick<StreamDeps, 'publish'>,
+): Promise<AdvertiseOutcome> {
   const res = await deps.publish({
     graph_iri: draft.iri,
     graph_content: capabilityTurtle(draft),
