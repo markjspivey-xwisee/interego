@@ -1,0 +1,20 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    // CommonJS, not ESM: Electron's main process loads `main.js` with `require`, and the
+    // preload script MUST be CommonJS — a preload that is an ES module is rejected by the
+    // sandbox with an error that reads like a missing file.
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    // The renderer is a browser document, the main process is Node. Both libs, one program:
+    // the type errors that matter here are the ones that cross the IPC boundary.
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

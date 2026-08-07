@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    // The readers run in a browser (the artifact), an Electron renderer and Node. `DOM` is
+    // NOT in this lib on purpose: a package that could reach `document` would eventually
+    // reach it, and the whole point of the split is that this half cannot draw anything.
+    "lib": ["ES2022"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
