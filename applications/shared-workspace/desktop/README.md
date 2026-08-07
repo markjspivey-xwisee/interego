@@ -180,10 +180,23 @@ relay's own pods before authorization is even considered. Inward: the same gate 
 slug's pod to be a prefix of the bearer's own, so even repaired it could never open a channel on
 **another member's** log — which is the only thing a workspace watch is for.
 
-`GET /sse` connects and is not a subscription. It re-sends `notificationLog.slice(-5)` — one
-process-global ring, not a per-pod queue — every 2 s to every connected client, and the frames
-carry a `resource` with no pod and no graph IRI. Measured: 5 frames in 8 s, four of them
-identical. A reader cannot tell whose event it is, or a new one from a repeat.
+`GET /sse` connects and is not a subscription. It re-sends the last five entries of a
+recent-activity ring every 2 s, and the frames carry a `resource` with no pod and no graph IRI.
+Measured 2026-08-06: 5 frames in 8 s, four of them identical. A reader cannot tell which graph
+an event is about, or a new one from a repeat.
+
+**One line of that measurement was also a security finding.** This paragraph used to add "one
+process-global ring, not a per-pod queue" as evidence the channel was too coarse to watch on.
+The ring was fed by *every* pod's publish and `/sse` sits behind a gate that checks only that a
+bearer is valid — so any authenticated client received the descriptor URL and timestamp of every
+write on the fleet, on pods it had no relationship with. Reproduced on 2026-08-07 with two
+disposable identities (`tools/probe-notification-scope-live.ts`) and closed the same day: the
+ring is keyed by pod, `/sse` serves only the connection's own, and `get_pod_status` returns
+`recentNotifications` only to the pod's proven owner. See
+`deploy/mcp-relay/notification-log.ts`.
+
+The conclusion below is unchanged and now holds more strongly: scoped to your own pod, this
+channel cannot carry another member's log even in principle.
 
 So there is nothing to subscribe to, and what got built is what the interface's own
 `refetchInterval` option already describes: **re-read on a timer, fire an event only when the

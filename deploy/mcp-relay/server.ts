@@ -327,6 +327,7 @@ import {
   descriptorWriteCollisionRefusal,
 } from './supersession-frontier.js';
 import { resolveInteropPrincipal } from './interop-principal.js';
+import { NotificationLog } from './notification-log.js';
 import { ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js';
 import {
   resolvePodSubject, podNameOf, POD_URL_INJECTED, POD_NAME_INJECTED,
@@ -934,7 +935,13 @@ function isFollowableTarget(target: unknown): boolean {
 // ── State ───────────────────────────────────────────────────
 
 let subscriptions: Map<string, Subscription> = new Map();
-let notificationLog: ContextChangeEvent[] = [];
+/**
+ * Recent write activity, KEYED BY POD. See `notification-log.ts` for the disclosure this
+ * keying closes and the live capture of it — in short, this was one process-global array
+ * appended to for every pod, and both of its readers handed the whole thing to whoever
+ * asked. There is no read here that does not name a pod.
+ */
+const notificationLog = new NotificationLog();
 
 // ── SolidNotifications SSE fan-out ──────────────────────────
 //
@@ -1031,19 +1038,22 @@ function emitNotification(
   // continue to observe events even when no upstream WebSocket
   // subscription exists. Maps the JSON-LD eventType to the legacy
   // 'Add' | 'Update' | 'Remove' triad.
+  //
+  // ★ RECORDED AGAINST `podUrl`, WHICH IS WHY THE SIGNATURE TAKES ONE. This used to be a
+  // bare `.push` onto a process-global array, and the pod the event belonged to was
+  // discarded at exactly this line — after which no reader downstream could have scoped
+  // the entry even if it had wanted to, because the information was gone. Every one of
+  // the four producers already knows its pod; keeping it is what makes the two readers
+  // below able to answer "whose is this".
   const legacyType: 'Add' | 'Update' | 'Remove' =
     event.eventType === 'created' ? 'Add'
       : event.eventType === 'superseded' ? 'Remove'
       : 'Update';
-  notificationLog.push({
+  notificationLog.record(podUrl, {
     resource: event.descriptorUrl,
     type: legacyType,
     timestamp: event.timestamp,
   });
-  // Cap the legacy log so it doesn't grow without bound.
-  if (notificationLog.length > 1024) {
-    notificationLog = notificationLog.slice(-512);
-  }
 }
 
 // PGSL lattice — the relay does NOT own a private PGSL instance.
@@ -5000,6 +5010,36 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   // read sessionAgent.id.
   const agentId = sessionAgent?.id ?? identity?.primaryAgentId;
 
+  // ── `recentNotifications`: OWN POD ONLY ────────────────────────────────────
+  //
+  // ★ THIS TOOL IS NOT OWN-POD GATED, AND THAT IS DELIBERATE — a pod's manifest and agent
+  // registry are readable, and `resolvePodSubject` here is not `targetOnly`, so
+  // `get_pod_status { pod_name: "<somebody else's>" }` legitimately answers. Recent write
+  // ACTIVITY is a different kind of thing: it is not on the manifest, it is not readable
+  // from the pod, and it is the one field in this response that says WHEN its owner was
+  // working. So it is gated separately from the rest of the payload, on proven ownership
+  // rather than on having named a pod.
+  //
+  // Both halves are load-bearing and each has its own failure:
+  //   - keyed read: before this, the field was `notificationLog.slice(-10)` off a
+  //     process-global array, so it carried other pods' writes no matter WHICH pod was
+  //     resolved. Reproduced live — see `notification-log.ts`.
+  //   - ownership check: keying alone is not enough here, because the key would be the
+  //     RESOLVED pod, and a caller can resolve someone else's. `callerOwnPod` is the same
+  //     proven-pod helper `read_inbox` and `requireOwnPod` use; `canonicalPodKey`
+  //     comparison is what makes the gate-host and internal-host spellings of one pod
+  //     compare equal, which they must or an honest owner is refused their own field.
+  //
+  // Absent rather than empty when the caller has not proven ownership: `[]` would assert
+  // "no recent activity on this pod", which is a claim about somebody else's pod that the
+  // relay has no business making.
+  const ownPodForNotifications = await callerOwnPod(args).catch(() => undefined);
+  const mayReadActivity = !!ownPodForNotifications
+    && canonicalPodKey(ownPodForNotifications) === canonicalPodKey(podUrl);
+  const recentNotifications = mayReadActivity
+    ? notificationLog.recentForPod(podUrl, 10)
+    : undefined;
+
   // Inside the nested `identity` block we keep primaryAgentId/Did for
   // strict back-compat AND add a clarifying note pointing readers at
   // sessionAgent. "Primary" is the historical first-registered agent;
@@ -5048,7 +5088,9 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
     } : null,
     descriptors: entries.length,
     entries,
-    recentNotifications: notificationLog.slice(-10),
+    // Present only for the pod's proven owner — see `mayReadActivity` above. The spread
+    // keeps the key ABSENT rather than null for everyone else.
+    ...(recentNotifications ? { recentNotifications } : {}),
   });
 }
 
@@ -14160,6 +14202,30 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
   }
 });
 
+/**
+ * Which pod is the caller's own, for a plain Express route.
+ *
+ * `/mcp` gets this through `resolveAuthContext` + the `_session_user_id` injection, but a
+ * hand-rolled `app.get` has neither — it has only whatever `mcpGate` left on `req.auth`.
+ * The preference order is `resolveAuthContext`'s: the identity server's authoritative
+ * `podUrl` first, `${CSS_URL}${userId}/` only as the reconstruction, because the two are
+ * equivalent today and stop being equivalent the moment identity adds preferred-pod
+ * overlays (one user, two credentials, one canonical pod).
+ *
+ * ★ RETURNS UNDEFINED FOR THE LEGACY API-KEY PATH, ON PURPOSE. `mcpGate` short-circuits a
+ * matching `RELAY_MCP_API_KEY` straight to `next()` without setting `req.auth`, so that
+ * caller has no pod — it is an operator credential, not a person. Undefined must therefore
+ * mean "send nothing", never "send everything": the whole defect being fixed here is a
+ * reader that treated the absence of a subject as permission to serve every subject.
+ */
+function callerOwnPodFromRequest(req: express.Request): string | undefined {
+  const extra = (req as express.Request & { auth?: { extra?: { podUrl?: string; userId?: string } } }).auth?.extra;
+  if (!extra) return undefined;
+  if (extra.podUrl) return extra.podUrl;
+  if (extra.userId) return `${CSS_URL}${extra.userId}/`;
+  return undefined;
+}
+
 // SSE endpoint for MCP-over-SSE
 app.get('/sse', (req, res, next) => mcpGate(req, res, next), (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -14170,10 +14236,25 @@ app.get('/sse', (req, res, next) => mcpGate(req, res, next), (req, res) => {
   // Send initial connection event
   res.write(`data: ${JSON.stringify({ type: 'connection', tools: Object.keys(TOOLS) })}\n\n`);
 
-  // Forward notification events
+  // ── Forward notification events — THIS CONNECTION'S OWN POD ONLY ───────────
+  //
+  // ★ THE HOLE THIS CLOSES, MEASURED ON THE DEPLOYED RELAY. This read was
+  // `notificationLog.slice(-5)` off a process-global array fed by every pod's
+  // `emitNotification`, behind `mcpGate` — which asks only that the bearer be VALID, never
+  // whose it is. So any authenticated client received the descriptor URL and timestamp of
+  // every write on the fleet. Reproduced with two disposable identities: a stranger's
+  // stream carried the maintainer's writes and, live, a second stranger's. The verbatim
+  // frame and the reproduction are in `notification-log.ts` and
+  // `tools/probe-notification-scope-live.ts`.
+  //
+  // The pod is resolved ONCE, outside the interval, and deliberately not re-read per tick:
+  // a connection is authorized at open time and cannot change whose it is mid-stream.
+  const ownPodUrl = callerOwnPodFromRequest(req);
   const interval = setInterval(() => {
-    if (notificationLog.length > 0) {
-      const recent = notificationLog.slice(-5);
+    // No proven pod → no activity. Not "all activity" — see callerOwnPodFromRequest.
+    if (!ownPodUrl) return;
+    const recent = notificationLog.recentForPod(ownPodUrl, 5);
+    if (recent.length > 0) {
       res.write(`data: ${JSON.stringify({ type: 'notifications', events: recent })}\n\n`);
     }
   }, 2000);
