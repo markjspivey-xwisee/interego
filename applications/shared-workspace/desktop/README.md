@@ -149,6 +149,24 @@ it. The renderer holds the channel already, so the loop runs there and the main 
 thing: `agent:think`. **The renderer cannot name the binary** — the path comes from this process's
 own probe, never from the call.
 
+### Whose entry it is — the one open question here
+
+**As built, the local agent writes as YOU.** It runs under your own session, appends to your own
+log, and the entry is indistinguishable from one you typed — the only difference is who composed
+the words, and you approved them before they went. That is why it is not a second member and why
+the panel is a review step rather than a seat.
+
+**The other reading is defensible and is not what shipped.** The deployed `wsp-bridge` is a seated
+member with its own key: its entries say *the agent wrote this*, and a reader can tell them apart
+from the human's. A local agent could work the same way — mint a key in the OS secret store, have
+you delegate it on your own pod with exactly the `register_agent` writer this PR already added and
+drove live, and let it appear in the roster under its own name. That buys honest attribution at the
+cost of a second identity to manage and a roster entry per person.
+
+The machinery for it exists and is tested; only the choice was made the other way. **If attribution
+should distinguish "you" from "your agent" on the record, this is the thing to change**, and it is
+contained: the decision, the ceiling check and the writer would all stay where they are.
+
 **The dedupe rule, and the loop-forever defect it prevents.** The obvious test is whether one of my
 entries declares `prov:wasDerivedFrom` the entry I am about to answer. That **does not work from
 this client**: `entryTurtle` writes no derivation link, so an entry posted from here never carries
