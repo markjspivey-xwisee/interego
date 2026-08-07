@@ -2034,7 +2034,7 @@ function renderAgent(): void {
   const toggle = btn('agenttoggle');
   toggle.textContent = A.on ? 'Turn my agent off' : 'Turn my agent on';
   toggle.disabled = !provider && !A.on;
-  (inp('agentauto') as unknown as HTMLInputElement).checked = A.auto;
+  inp('agentauto').checked = A.auto;
   const state = $('agentstate');
   state.textContent = A.on
     ? (A.phase === 'thinking' ? 'Thinking — on your own Claude subscription' : A.phase === 'drafted' ? 'Drafted, waiting for you' : 'Watching this channel')
@@ -2197,7 +2197,7 @@ btn('discordlink').addEventListener('click', () => { void linkDiscord(); });
 btn('discordrevoke').addEventListener('click', () => { void revokeDiscord(); });
 btn('agenttoggle').addEventListener('click', () => { setAgent(!A.on); });
 inp('agentauto').addEventListener('change', () => {
-  A.auto = (inp('agentauto') as unknown as HTMLInputElement).checked;
+  A.auto = inp('agentauto').checked;
   renderAgent();
 });
 window.addEventListener('beforeunload', () => { S.watches.forEach((u) => { try { u(); } catch { /* already gone */ } }); });
