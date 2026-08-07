@@ -198,8 +198,51 @@ wsp:stream a owl:ObjectProperty ;
 wsp:Entry a owl:Class ;
   rdfs:label "Entry" ;
   rdfs:comment
-    "One append to a stream. Immutable and content-addressed; its identifier is its own descriptor URL, so an entry can be cited from outside the workspace and still resolve after the workspace is gone." ;
+    "One append to a stream. Immutable and content-addressed; its identifier is its own descriptor URL, so an entry can be cited from outside the workspace and still resolve after the workspace is gone. WHO WROTE IT IS STATED, ALWAYS, and is not the pod: an entry carries exactly one prov:wasAttributedTo naming its author, and the shape a workspace publishes for its own entries requires it. There is no wsp: term for this, deliberately — see the ── Authorship ── note below." ;
   rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp> .
+
+# ── Authorship: who wrote it, which is not whose log it is in ─────
+#
+#  A stream belongs to one participant. What lands in it does NOT
+#  all have to be written by them.
+#
+#  A DELEGATE is an identity a person authorises to act for them — a
+#  keypair, plus a row in that person's own delegation registry, which
+#  is a document only they can write. It is not the person, it is not
+#  the application hosting it, and it is not the channel it speaks
+#  through: the same delegate in a desktop app and in a chat bridge is
+#  one identity, because its identifier is a function of its own key.
+#  A person may authorise several, each with its own scope and each
+#  revocable on its own.
+#
+#  A CONDUIT is not a delegate and the distinction is load-bearing. A
+#  chat bridge relaying a message somebody TYPED carries their words;
+#  they wrote them, so the entry is theirs and names them. Only text an
+#  agent COMPOSED is the agent's.
+#
+#  NO NEW TERMS ARE MINTED FOR THIS. PROV-O already says both things
+#  and every reader outside this vertical already knows it:
+#
+#    <entry>    prov:wasAttributedTo  <author>        — required, one
+#    <delegate> prov:actedOnBehalfOf  <principal>     — when the author
+#                                                       is a delegate
+#
+#  `prov:actedOnBehalfOf` relates two AGENTS, so the second statement
+#  is about the delegate rather than about the entry; both sit in the
+#  entry's own signed region.
+#
+#  A reader holds the claim down with two documents neither the claimant
+#  nor a third party can forge alone: the entry must say the agent acted
+#  for the OWNER OF THE POD IT IS ON (read from the grant on the
+#  convener's pod, not from the entry), and that owner's own delegation
+#  registry must list the agent. Where the two disagree, the
+#  disagreement is what a reader is told; it is not resolved by guessing.
+#
+#  Revocation withdraws the authority to write more. It does not reach
+#  what was already written: those entries stay, still attributed to the
+#  delegate, and their delegation now reads as no longer recorded. That
+#  is the point — the record of what was said, and by whom, outlives the
+#  permission to say it.
 
 wsp:seq a owl:DatatypeProperty ;
   rdfs:label "sequence" ;

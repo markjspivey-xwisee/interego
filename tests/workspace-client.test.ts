@@ -163,7 +163,13 @@ describe('the chain walk imposes order from the links, never from a clock', () =
 });
 
 describe('entry composition escapes literals and refuses unserialisable IRIs', () => {
-  const base = { streamIri: 'https://r/ns/p/s', workspace: 'https://r/ns/p/w', seq: 0, prior: null, createdIso: '2026-01-01T00:00:00.000Z' };
+  // `author` is required on every entry — see `EntryAuthor`. These cases are about escaping and
+  // are not about attribution, so the ordinary case (the person wrote it) is the base.
+  const base = {
+    streamIri: 'https://r/ns/p/s', workspace: 'https://r/ns/p/w', seq: 0, prior: null,
+    author: { kind: 'principal', webId: 'https://identity/users/p/profile#me' } as const,
+    createdIso: '2026-01-01T00:00:00.000Z',
+  };
   it('escapes quotes and newlines in the body', () => {
     const t = entryTurtle({ ...base, body: 'he said "hi"\nthen left' });
     expect(t).toContain('dct:description "he said \\"hi\\"\\nthen left"');

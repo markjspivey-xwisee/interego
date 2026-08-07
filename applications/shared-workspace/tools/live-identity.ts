@@ -41,8 +41,18 @@ export function siweMessage(relay: string, address: string, nonce: string, issue
     + 'Nonce: ' + nonce + '\nIssued At: ' + issuedAt;
 }
 
-/** Register a client, open an authorization, sign, verify, exchange. Returns the bearer. */
-export async function mintBearer(relay: string, identityServer: string, wallet: Signer): Promise<RelayOAuthBearer> {
+/**
+ * Register a client, open an authorization, sign, verify, exchange. Returns the bearer.
+ *
+ * ★ `clientName` IS A PARAMETER FOR THE REASON `auth.ts` MEASURES: the relay puts the OAuth
+ * client name inside the agent DID it issues. A driver signing a DELEGATE key in has to use
+ * `DELEGATE_SURFACE`, or it would be exercising a different identity from the one the desktop
+ * app would produce from the same key — which is precisely the property the drive exists to check.
+ */
+export async function mintBearer(
+  relay: string, identityServer: string, wallet: Signer,
+  clientName = 'interego-workspace-live-driver',
+): Promise<RelayOAuthBearer> {
   const verifier = b64u(randomBytes(32));
   const challenge = b64u(createHash('sha256').update(verifier).digest());
   const redirectUri = 'http://127.0.0.1:1/callback';
@@ -50,7 +60,7 @@ export async function mintBearer(relay: string, identityServer: string, wallet: 
   const reg = await fetch(relay + '/register', {
     method: 'POST', headers: json,
     body: JSON.stringify({
-      client_name: 'interego-workspace-live-driver',
+      client_name: clientName,
       redirect_uris: [redirectUri],
       grant_types: ['authorization_code'],
       response_types: ['code'],

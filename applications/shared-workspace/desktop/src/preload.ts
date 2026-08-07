@@ -62,6 +62,20 @@ export interface ModelTurn {
   readonly ms: number;
 }
 
+/**
+ * One delegate this machine holds a key for.
+ *
+ * ★ THIS IS A KEYRING, NOT A ROSTER. Which delegates a person HAS is answered by their pod's
+ * delegation registry and read in the renderer with `readDelegates`; this says only which of
+ * them can be driven from here. `agentId: null` means this delegate has not signed in during
+ * this run, so what id the relay issues it is not established — not that it has none.
+ */
+export interface HostedDelegateInfo {
+  readonly address: string;
+  readonly agentId: string | null;
+  readonly why: string | null;
+}
+
 export interface WorkspaceBridge {
   describe(): Promise<{
     relay: string;
@@ -99,6 +113,29 @@ export interface WorkspaceBridge {
    * signalled.
    */
   agentCancel(): Promise<{ flagged: number; killed: number }>;
+
+  /** Which delegates this machine holds a key for. See {@link HostedDelegateInfo}. */
+  delegateList(): Promise<{ delegates: readonly HostedDelegateInfo[]; secretStore: boolean }>;
+  /**
+   * Mint a delegate identity and return the key ONCE.
+   *
+   * ★ THE KEY COMES BACK ON PURPOSE. An identity that cannot leave one installation is an
+   * identity the installation owns, and a delegate is not owned by the app hosting it. The
+   * renderer shows it with a warning, offers no second chance to see it, and stores nothing.
+   */
+  delegateMint(): Promise<{ address: string; agentId: string; pod: string; privateKey: string }>;
+  /** Adopt a delegate minted elsewhere — the other half of "the identity is not the host". */
+  delegateImport(privateKey: string): Promise<{ address: string; agentId: string; pod: string }>;
+  /** Forget a key. NOT a revocation: the delegation is on the pod and is untouched. */
+  delegateForget(address: string): Promise<{ forgotten: string }>;
+  /**
+   * A tool call made BY a delegate, under the delegate's OWN relay session.
+   *
+   * This is what makes the attribution more than a string: the relay authenticates the delegate,
+   * so the write is scope-gated on the delegator's `register_agent` row and `revoke_agent` stops
+   * it for real.
+   */
+  delegateCall(address: string, name: string, input: Record<string, unknown>): Promise<{ ok: true; payload: unknown } | { ok: false; error: BridgeFailure }>;
 }
 
 const bridge: WorkspaceBridge = {
@@ -114,6 +151,11 @@ const bridge: WorkspaceBridge = {
   agentProbe: () => ipcRenderer.invoke('agent:probe'),
   agentThink: (prompt, systemPrompt) => ipcRenderer.invoke('agent:think', prompt, systemPrompt),
   agentCancel: () => ipcRenderer.invoke('agent:cancel'),
+  delegateList: () => ipcRenderer.invoke('delegate:list'),
+  delegateMint: () => ipcRenderer.invoke('delegate:mint'),
+  delegateImport: (privateKey) => ipcRenderer.invoke('delegate:import', privateKey),
+  delegateForget: (address) => ipcRenderer.invoke('delegate:forget', address),
+  delegateCall: (address, name, input) => ipcRenderer.invoke('delegate:call', address, name, input),
 };
 
 contextBridge.exposeInMainWorld('interego', bridge);

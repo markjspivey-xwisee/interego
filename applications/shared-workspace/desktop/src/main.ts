@@ -24,13 +24,15 @@ import { app, BrowserWindow, ipcMain, shell, type WebContents } from 'electron';
 import { join } from 'node:path';
 import { Wallet } from 'ethers';
 import {
-  RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer,
+  DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, type RelayOAuthBearer,
 } from '@interego/workspace-client';
 import {
   beginAuthorization, exchangeCode, refreshBearer, signInWithWallet, startLoopbackReceiver,
   type AuthMethod,
 } from './auth.js';
-import { getSecret, putSecret, secretStoreAvailable, WALLET_KEY } from './secrets.js';
+import {
+  DELEGATE_KEY, forgetSecret, getSecret, listDelegateKeys, putSecret, secretStoreAvailable, WALLET_KEY,
+} from './secrets.js';
 import { CODEX_UNSUPPORTED, probeClaude, runClaude, type ProviderStatus } from './modelprovider.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
@@ -98,6 +100,62 @@ interface Turn { cancelled: boolean; kill: (() => void) | null }
  * holding a reference to. Entries are removed one at a time by the turn that owns them.
  */
 const thinking = new Set<Turn>();
+
+/**
+ * A DELEGATE THIS APP IS CURRENTLY HOSTING.
+ *
+ * ★ HOSTING, NOT OWNING, AND THE DIFFERENCE IS THE WHOLE POINT. A delegate is a keypair plus a
+ * row on its delegator's pod — see `delegates.ts` in the shared package. This process holds keys
+ * for SOME of a person's delegates; the authoritative list of who they have authorised is their
+ * pod's delegation registry, which the renderer reads. A delegate whose key sits on their other
+ * laptop appears there and not here, and that is correct rather than a gap.
+ *
+ * The session is minted lazily and per delegate, under `DELEGATE_SURFACE` rather than this app's
+ * own OAuth client name — measured, see `auth.ts`: the client name is inside the agent DID, so
+ * signing a delegate in under "interego-workspace-desktop" would make it a different delegate in
+ * every other client that ever held the same key.
+ */
+interface HostedDelegate {
+  readonly address: string;
+  readonly agentId: string;
+  readonly pod: string;
+  client: WorkspaceClient;
+  bearer: RelayOAuthBearer;
+}
+const hosted = new Map<string, HostedDelegate>();
+
+/** Open (or reuse) a delegate's own relay session. Its key never leaves this process. */
+async function delegateSession(address: string): Promise<HostedDelegate> {
+  const key = address.toLowerCase();
+  const live = hosted.get(key);
+  // A bearer inside its last five minutes is re-minted rather than refreshed: this process holds
+  // the key, so re-running the ceremony costs four round trips and needs no rotation state — the
+  // same reasoning the Discord bot's `BotSession` records.
+  if (live && (!live.bearer.expiresAt || live.bearer.expiresAt - Date.now() > RENEW_MARGIN_MS)) return live;
+  const pk = getSecret(DELEGATE_KEY(key));
+  if (!pk) throw new Error('This app does not hold a key for delegate ' + address + '. It may be authorised on your pod and hosted somewhere else — a delegate is its key, not this application.');
+  const wallet = new Wallet(pk);
+  const recv = await startLoopbackReceiver();
+  let bearer: RelayOAuthBearer;
+  try {
+    bearer = await signInWithWallet(RELAY, IDENTITY, wallet.address, (m) => wallet.signMessage(m), recv.redirectUri, DELEGATE_SURFACE);
+  } finally { recv.close(); }
+  const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
+  await client.connect();
+  const status = await client.podStatus();
+  const podUrl = String(status['pod'] ?? status['podUrl'] ?? '');
+  const pod = podUrl.replace(/\/$/, '').split('/').pop() ?? '';
+  const agent = status['sessionAgent'] as { did?: string; id?: string } | undefined;
+  const agentId = agent?.did ?? agent?.id ?? '';
+  // ★ REFUSED RATHER THAN GUESSED, exactly as the Discord bot refuses. The agent id is the string
+  // a delegator authorises and the string the relay's scope gate compares. A delegate that came up
+  // without one would ask somebody to authorise an empty name, and every write it then made would
+  // be attributed to nothing while looking like a delegate that worked.
+  if (!pod || !agentId) throw new Error('The relay signed this delegate key in and reported no ' + (pod ? 'sessionAgent' : 'pod') + ', so it has no identity to be authorised under. Nothing was done.');
+  const next: HostedDelegate = { address: key, agentId, pod, client, bearer };
+  hosted.set(key, next);
+  return next;
+}
 
 const listeners = new Set<WebContents>();
 function setSession(next: Session): void {
@@ -304,6 +362,108 @@ app.whenReady().then(() => {
       // into a message that loses `.code`, and `.code` is what every caller in the client
       // switches on — an outage would have arrived at the renderer indistinguishable from a
       // refusal.
+      return { ok: false, error: { code: e.code ?? 'upstream_error', message: e.message ?? String(err), retryable: !!e.retryable, retryAfterMs: e.retryAfterMs ?? null } };
+    }
+  });
+
+  /**
+   * WHICH DELEGATES THIS MACHINE HOLDS A KEY FOR.
+   *
+   * ★ NOT "WHICH DELEGATES YOU HAVE". That question is answered by the pod, and the renderer asks
+   * it with `readDelegates`. This answers the narrower one the renderer cannot answer for itself:
+   * which of them can be DRIVEN from this machine. Merging the two would let a keyring stand in
+   * for an authorization record.
+   *
+   * The agent id is computed rather than minted — `delegateAgentId` is a pure function of the pod
+   * segment and the surface constant — so listing does not sign anything in. `pod` here is the
+   * DELEGATE's own pod (the one its key provisions), which is not where it writes.
+   */
+  ipcMain.handle('delegate:list', () => {
+    const out: { address: string; agentId: string | null; why: string | null }[] = [];
+    for (const address of listDelegateKeys()) {
+      const live = hosted.get(address);
+      out.push({
+        address,
+        // Only a session that has actually happened reports an id. A computed one would be this
+        // process asserting what the relay would answer, and the relay is the authority on that.
+        agentId: live?.agentId ?? null,
+        why: live ? null : 'this delegate has not signed in during this run, so the id the relay issues it is not established here',
+      });
+    }
+    return { delegates: out, secretStore: secretStoreAvailable() };
+  });
+
+  /**
+   * Mint a delegate key, sign it in once, and report the identity a delegator must authorise.
+   *
+   * ★ THE PRIVATE KEY IS RETURNED, ONCE, AND THAT IS DELIBERATE. A delegate that exists only
+   * inside one installation is a delegate that dies with the installation — reinstall, and the
+   * same person's "same" delegate becomes a different identity with none of its record. Handing
+   * the key back at the moment of creation is the only way this app can host an identity without
+   * owning it. The renderer shows it with a warning and never stores it.
+   */
+  ipcMain.handle('delegate:mint', async () => {
+    const wallet = Wallet.createRandom();
+    putSecret(DELEGATE_KEY(wallet.address), wallet.privateKey);
+    const d = await delegateSession(wallet.address);
+    return { address: d.address, agentId: d.agentId, pod: d.pod, privateKey: wallet.privateKey };
+  });
+
+  /** Adopt a delegate whose key was minted elsewhere. The other half of "identity is not the host". */
+  ipcMain.handle('delegate:import', async (_e, privateKey: string) => {
+    const pk = String(privateKey ?? '').trim();
+    if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) {
+      throw new Error('That is not a secp256k1 private key. It should be 0x followed by 64 hex characters. Nothing was stored.');
+    }
+    const wallet = new Wallet(pk);
+    putSecret(DELEGATE_KEY(wallet.address), wallet.privateKey);
+    const d = await delegateSession(wallet.address);
+    return { address: d.address, agentId: d.agentId, pod: d.pod };
+  });
+
+  /**
+   * Forget a key. NOT a revocation, and the renderer says so.
+   *
+   * The delegation lives on the pod and survives this entirely; deleting the key here only stops
+   * THIS machine driving it. `revoke_agent` from the person's own session is the withdrawal, and
+   * it is a different button.
+   */
+  ipcMain.handle('delegate:forget', (_e, address: string) => {
+    const key = String(address ?? '').toLowerCase();
+    forgetSecret(DELEGATE_KEY(key));
+    hosted.delete(key);
+    return { forgotten: key };
+  });
+
+  /**
+   * A tool call made BY a delegate, under the delegate's own relay session.
+   *
+   * ★ THIS IS WHAT MAKES THE ATTRIBUTION MORE THAN A STRING IN A DOCUMENT. The entry's triples
+   * name the delegate; this makes the relay authenticate the delegate too, so the write is
+   * scope-gated on the delegator's own `register_agent` row and `revoke_agent` actually stops it.
+   * Routing a delegate's write through the person's session instead would have left a record
+   * saying "the agent wrote this" that the substrate had no reason to believe.
+   */
+  ipcMain.handle('delegate:call', async (_e, address: string, name: string, input: Record<string, unknown>) => {
+    if (typeof name !== 'string' || !name) throw new Error('a tool call needs a tool name');
+    let d: HostedDelegate;
+    try { d = await delegateSession(String(address ?? '')); }
+    catch (err) { return { ok: false, error: { code: 'delegate_unavailable', message: (err as Error)?.message ?? String(err), retryable: false, retryAfterMs: null } }; }
+    try { return { ok: true, payload: await d.client.tool(name, input ?? {}) }; }
+    catch (err) {
+      const e = err as { code?: string; message?: string; retryable?: boolean; retryAfterMs?: number };
+      // ★ ONE RE-MINT, AND ONLY FOR THE CODE THAT MEANS THE HOUR RAN OUT. Anything else is the
+      // relay answering about the CALL, and a write whose outcome is unknown must not be repeated.
+      if (e.code === 'needs_reauth') {
+        hosted.delete(String(address ?? '').toLowerCase());
+        try {
+          const again = await delegateSession(String(address ?? ''));
+          return { ok: true, payload: await again.client.tool(name, input ?? {}) };
+        } catch (second) {
+          const s = second as { code?: string; message?: string };
+          return { ok: false, error: { code: s.code ?? 'upstream_error', message: s.message ?? String(second), retryable: false, retryAfterMs: null } };
+        }
+      }
       return { ok: false, error: { code: e.code ?? 'upstream_error', message: e.message ?? String(err), retryable: !!e.retryable, retryAfterMs: e.retryAfterMs ?? null } };
     }
   });

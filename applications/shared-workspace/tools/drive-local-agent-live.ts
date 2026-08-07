@@ -1,34 +1,44 @@
 /**
- * A PERSON'S OWN AGENT, ANSWERING IN A REAL CHANNEL, ON THEIR OWN MODEL SUBSCRIPTION.
+ * A PERSON'S DELEGATES, ANSWERING IN A REAL CHANNEL, EACH AS ITSELF.
  *
- * ★ NOTHING IN THIS FILE IS SIMULATED. Two secp256k1 keys are minted, two relay OAuth bearers are
- * obtained from them, two pods are provisioned, a workspace is created and accepted across both,
- * and then identity A's LOCAL AGENT reads the channel and answers it by spawning the `claude` CLI
- * this machine is signed into — the same `probeClaude` / `runClaude` the desktop shell's main
- * process calls, imported rather than reimplemented. The reply that lands on A's pod is a reply a
- * real model wrote, on the operator's own subscription, and it is public and permanent.
+ * ★ NOTHING IN THIS FILE IS SIMULATED. Four secp256k1 keys are minted — two people and two
+ * delegates of one of them — four relay OAuth bearers are obtained from them, four pods are
+ * provisioned, a workspace is created and accepted across both people, and then identity A's
+ * DELEGATES read the channel and answer it by spawning the `claude` CLI this machine is signed
+ * into: the same `probeClaude` / `runClaude` the desktop shell's main process calls, imported
+ * rather than reimplemented. Every write below is REAL and PUBLIC on the live fleet.
  *
- * ★ TWO IDENTITIES, BECAUSE ONE CANNOT EXERCISE THE THING. The rule under test is "answer when
- * SOMEBODY ELSE has spoken last". A single-identity run satisfies both sides of that with one pod
- * and would pass while the rule was inverted.
+ * ★ WHAT THIS DRIVE EXISTS TO ESTABLISH, which the previous version could not:
  *
- * ★ AND IT DRIVES THE REFUSALS, NOT ONLY THE HAPPY PATH. The dedupe guard is checked by asking the
- * same question twice; the delegation read-back is checked by revoking and asking again. A driver
- * that only prints successes measures nothing.
+ *   1. A DELEGATE IS NOT ITS DELEGATOR. Its entry names IT as the author and A as who it acted
+ *      for, and a reader dereferencing A's own pod can tell that from an entry A typed.
+ *   2. DELEGATES ARE PLURAL. A authorises TWO, each with its own key, its own DID, its own row
+ *      and its own revocation, and both write into A's one log distinguishably.
+ *   3. IDENTITY IS NOT THE HOST OR THE CHANNEL. The same key signed in twice yields the same
+ *      DID; signed in under a different OAuth client name it yields a different one — which is
+ *      why every host must use `DELEGATE_SURFACE`, and this proves the constant does its job.
+ *   4. THE CEILING IS THE DELEGATE'S OWN. A third delegation with a non-publishing scope is
+ *      refused by the decision before any write is attempted.
+ *   5. REVOCATION IS UNILATERAL AND THE AGENT REFUSES AFTERWARDS.
+ *
+ * ★ AND IT DRIVES THE REFUSALS, NOT ONLY THE HAPPY PATH. A driver that only prints successes
+ * measures nothing.
  *
  *   npx tsx applications/shared-workspace/tools/drive-local-agent-live.ts
  *
- * Both identities are freshly minted and disposable. The maintainer pod is deliberately NOT used:
+ * Every identity is freshly minted and disposable. The maintainer pod is deliberately NOT used:
  * it is contended, and nothing here needs it.
  */
 
 import { Wallet } from 'ethers';
 import {
-  RelayMcpTransport, WorkspaceClient, acceptGrant, checkDelegation, checkDraft, briefPrompt,
-  createWorkspace, decideTurn, discordLinkPlan, findSeat, foldRoster, hasType, orderChain,
-  parseRoleProfile, postEntry, publishDelegation, readIri, readInt, readLiteral, readViewer,
-  revokeDelegation, sendInvite, graphRegion, nsIri, qualifiedName,
-  type SeenEntry, type Seat, type RoleTable, type Viewer,
+  DELEGATE_SURFACE, RelayMcpTransport, WorkspaceClient, acceptGrant, authorshipLine, briefPrompt,
+  checkDelegation, checkDraft, createWorkspace, decideTurn, delegateLabel, delegatePlan, findSeat,
+  foldRoster, graphRegion, hasType, nsIri, orderChain, parseRoleProfile, postEntry,
+  publishDelegation, qualifiedName, readDelegates, readEntryAuthorship, readIri, readInt,
+  readLiteral, readViewer, revokeDelegation, sendInvite,
+  type DelegateRoster, type RoleTable, type Seat, type SeenEntry, type SpeakingDelegate,
+  type Viewer,
 } from '@interego/workspace-client';
 import { probeClaude, runClaude } from '../desktop/src/modelprovider.js';
 import { mintBearer, type Signer } from './live-identity.js';
@@ -46,8 +56,16 @@ function check(name: string, ok: boolean, detail = ''): void {
 
 interface Party { wallet: Signer; client: WorkspaceClient; viewer: Viewer }
 
-async function open(wallet: Signer, who: string): Promise<Party> {
-  const bearer = await mintBearer(RELAY, IDENTITY, wallet);
+/**
+ * Open a session.
+ *
+ * ★ `clientName` IS THE WHOLE OF POINT 3. A PERSON signs in under whatever surface they are
+ * using; a DELEGATE signs in under `DELEGATE_SURFACE`, the one constant every host shares —
+ * because the relay puts the OAuth client name inside the agent DID, so a delegate signed in
+ * under an application's own name would be a different delegate in every application.
+ */
+async function open(wallet: Signer, who: string, clientName?: string): Promise<Party> {
+  const bearer = await mintBearer(RELAY, IDENTITY, wallet, clientName);
   const client = new WorkspaceClient(RELAY, new RelayMcpTransport(RELAY, bearer));
   await client.connect();
   const viewer = await readViewer(client);
@@ -62,7 +80,9 @@ async function open(wallet: Signer, who: string): Promise<Party> {
  * channel cannot answer "who spoke last", and a decision made on one answers the same message
  * twice. `decideTurn` refuses when it is non-zero.
  */
-async function readChannel(p: Party, workspace: string, slug: string, seats: readonly Seat[]): Promise<{ entries: SeenEntry[]; unreadable: number }> {
+async function readChannel(
+  p: Party, seats: readonly Seat[], delegates: ReadonlyMap<string, DelegateRoster>,
+): Promise<{ entries: SeenEntry[]; unreadable: number }> {
   const out: SeenEntry[] = [];
   let unreadable = 0;
   for (const seat of seats) {
@@ -88,9 +108,8 @@ async function readChannel(p: Party, workspace: string, slug: string, seats: rea
       // The first version of this driver read `d['content']`, which does not exist: every
       // descriptor came back with an empty region, every entry failed `hasType`, and the agent
       // concluded "nobody else has written in this channel yet" — a confident falsehood produced
-      // by a typo, with nothing anywhere reporting an error. `respond.ts` records the identical
-      // class of defect one field over ("a wrong field name here does not fail, it un-seats
-      // everybody"). Read the same way `loadBodies` in the shell reads it, and nowhere else.
+      // by a typo, with nothing anywhere reporting an error. Read the same way `loadBodies` in
+      // the shell reads it, and nowhere else.
       const region = graphRegion((d['graph'] as { content?: string } | undefined)?.content ?? '', stream);
       // `''` is a signed block that WAS located and is empty; `null` is one that was not.
       const src = region === null ? '' : region;
@@ -104,6 +123,12 @@ async function readChannel(p: Party, workspace: string, slug: string, seats: rea
         body: readLiteral(src, 'dct:description'),
         derivedFrom: readIri(src, 'prov:wasDerivedFrom'),
         at: Number.isNaN(t) ? null : t,
+        // ★ HELD AGAINST THE GRANT'S grantee WebID, which lives on the CONVENER's pod — so the
+        // owner of the log cannot decide what their own entries are checked against.
+        author: readEntryAuthorship(region, {
+          logOwnerWebId: seat.grantedTo ?? null,
+          delegates: delegates.get(pod) ?? null,
+        }),
       });
       void readInt(src, 'wsp:seq');
     }
@@ -121,18 +146,21 @@ async function readChannel(p: Party, workspace: string, slug: string, seats: rea
  * same readback the shell does after every post, for the same reason, and a driver that skipped it
  * was measuring a race rather than the decision.
  */
-async function awaitEntry(p: Party, workspace: string, slug: string, seats: readonly Seat[], from: string, tries = 40): Promise<{ entries: SeenEntry[]; unreadable: number }> {
+async function awaitEntry(
+  p: Party, seats: readonly Seat[], delegates: ReadonlyMap<string, DelegateRoster>,
+  want: (e: SeenEntry) => boolean, tries = 40,
+): Promise<{ entries: SeenEntry[]; unreadable: number }> {
   let read: { entries: SeenEntry[]; unreadable: number } = { entries: [], unreadable: 0 };
   for (let i = 0; i < tries; i++) {
-    read = await readChannel(p, workspace, slug, seats);
-    if (read.unreadable === 0 && read.entries.some((e) => e.pod === from && (e.body ?? '').trim() !== '')) return read;
+    read = await readChannel(p, seats, delegates);
+    if (read.unreadable === 0 && read.entries.some(want)) return read;
     await new Promise((r) => { setTimeout(r, 700); });
   }
   return read;
 }
 
 async function main(): Promise<void> {
-  head('0 · the model this machine can run an agent on');
+  head('0 · the model this machine can run a delegate on');
   const provider = await probeClaude();
   log('  ' + provider.label);
   log('  installed: ' + provider.installed + ' · path: ' + (provider.path ?? 'none'));
@@ -140,19 +168,65 @@ async function main(): Promise<void> {
     + ' · method: ' + (provider.authMethod ?? 'none') + ' · plan: ' + (provider.subscription ?? 'none'));
   log('  ' + provider.why);
   check('a usable model provider was found on this machine', provider.usable, provider.usable ? '' : 'the agent half of this run cannot proceed');
-  if (!provider.usable || !provider.path) { log('\nStopping: there is no credential to run an agent on, and this driver will not fake one.'); process.exit(1); }
+  if (!provider.usable || !provider.path) { log('\nStopping: there is no credential to run a delegate on, and this driver will not fake one.'); process.exit(1); }
   check('it is a SUBSCRIPTION and not an API key', provider.authMethod === 'claude.ai',
     'authMethod=' + String(provider.authMethod));
+  log('  ★ the provider is how a delegate THINKS, not who it is. Both delegates below run on this'
+    + ' one and they are still two delegates.');
 
-  head('1 · two real identities');
-  const A = await open(Wallet.createRandom(), 'A (convener, runs the agent)');
-  const B = await open(Wallet.createRandom(), 'B (the other member)');
+  head('1 · two people, and two delegates of the first');
+  const A = await open(Wallet.createRandom(), 'A (a person)');
+  const B = await open(Wallet.createRandom(), 'B (another person)');
   check('A and B are different pods', A.viewer.podName !== B.viewer.podName, A.viewer.podName + ' vs ' + B.viewer.podName);
 
-  head('2 · a workspace, created and accepted across both pods');
-  const slug = 'agent-' + Date.now().toString(36);
+  // ★ THE DELEGATES SIGN IN UNDER `DELEGATE_SURFACE`, NOT UNDER THIS DRIVER'S NAME.
+  const k1 = Wallet.createRandom();
+  const k2 = Wallet.createRandom();
+  const D1 = await open(k1, 'A\'s delegate #1', DELEGATE_SURFACE);
+  const D2 = await open(k2, 'A\'s delegate #2', DELEGATE_SURFACE);
+  const d1Id = D1.viewer.agentDid ?? '';
+  const d2Id = D2.viewer.agentDid ?? '';
+  check('each delegate has its own agent id', !!d1Id && !!d2Id && d1Id !== d2Id, d1Id + ' vs ' + d2Id);
+  check('a delegate id is NOT its delegator\'s', d1Id !== A.viewer.agentDid, 'A is ' + (A.viewer.agentDid ?? 'none'));
+  check('the surface constant is in the id, and no application name is',
+    d1Id.includes(':' + DELEGATE_SURFACE + '-') && !/desktop|discord|artifact|driver/.test(d1Id), d1Id);
+
+  head('2 · identity is the key, not the host and not the channel');
+  // Same key, same surface, a SECOND session: the same delegate.
+  const again = await open(k1, 'delegate #1, signed in a second time', DELEGATE_SURFACE);
+  check('the same key under the same surface is the SAME delegate', again.viewer.agentDid === d1Id,
+    (again.viewer.agentDid ?? 'none') + ' vs ' + d1Id);
+  // Same key, a DIFFERENT surface: a different agent id — which is exactly why the constant exists.
+  const elsewhere = await open(k1, 'delegate #1, signed in as some other client', 'interego-some-other-app');
+  check('the same key under a DIFFERENT client name is a different id, which is why DELEGATE_SURFACE exists',
+    elsewhere.viewer.agentDid !== d1Id, (elsewhere.viewer.agentDid ?? 'none'));
+
+  head('3 · A authorises both delegates, on A\'s own pod');
+  for (const [name, id] of [['Claude side', d1Id], ['Codex side', d2Id]] as const) {
+    const plan = delegatePlan({ agentId: id, name });
+    check('the plan for "' + name + '" names PublishOnly and the labelled row', !!plan.call
+      && plan.call.args['scope'] === 'PublishOnly' && plan.call.args['label'] === delegateLabel(name),
+      JSON.stringify(plan.call?.args));
+    const out = await publishDelegation(A.client, { plan, verifyOnPod: A.viewer.podName });
+    check('"' + name + '" is authorised, and read back from A\'s pod', out.kind === 'published', out.why);
+  }
+  const roster = await readDelegates(A.client, A.viewer.podName);
+  check('A\'s pod lists BOTH delegates as delegates', roster.read && roster.delegates.length === 2,
+    roster.delegates.map((d) => d.name + '=' + d.agentId).join(' | '));
+  check('and A\'s own session agent is listed as an agent that is NOT a delegate',
+    roster.others.some((o) => o.agentId === A.viewer.agentDid),
+    roster.others.map((o) => o.label ?? '?').join(' | '));
+
+  // The delegate itself asks, cross-pod, exactly as the bot does before every write.
+  const gate1 = await checkDelegation(D1.client, { agentId: d1Id, podName: A.viewer.podName });
+  check('delegate #1 verifies its own authority against A\'s pod', gate1.ok, gate1.why ?? 'ok');
+  const gateB = await checkDelegation(D1.client, { agentId: d1Id, podName: B.viewer.podName });
+  check('and is refused on B\'s pod, which delegated it nothing', !gateB.ok, gateB.why ?? '');
+
+  head('4 · a workspace, created and accepted across both people');
+  const slug = 'delegate-' + Date.now().toString(36);
   const created = await createWorkspace(A.client, {
-    relay: RELAY, viewer: A.viewer, title: 'Local agent live drive', slug,
+    relay: RELAY, viewer: A.viewer, title: 'Delegates live drive', slug,
     onStep: (s) => log('    create · ' + s.label + ' · ' + s.state),
   });
   check('workspace created on A\'s pod', created.kind === 'created', created.kind === 'created' ? created.workspace : JSON.stringify(created).slice(0, 200));
@@ -160,122 +234,198 @@ async function main(): Promise<void> {
   const workspace = created.workspace;
 
   const inv = await sendInvite(A.client, {
-    viewer: A.viewer, workspace, workspaceTitle: 'Local agent live drive',
+    viewer: A.viewer, workspace, workspaceTitle: 'Delegates live drive',
     handle: 'acct:' + B.viewer.podName + '@' + new URL(RELAY).host, role: 'Contributor',
     entryShape: created.shapeIri ?? null,
     onState: (s, d) => log('    invite · ' + s + ' · ' + d),
   });
   check('B was invited', inv.kind === 'invited', inv.kind === 'invited' ? inv.grantIri : JSON.stringify(inv).slice(0, 200));
-
   const verdict = await findSeat(B.client, { relay: RELAY, viewer: B.viewer, workspace });
   check('B can verify the grant naming it', verdict.ok, verdict.why ?? '');
   const accepted = await acceptGrant(B.client, { relay: RELAY, viewer: B.viewer, verdict, onState: (s, d) => log('    accept · ' + s + ' · ' + d) });
   check('B accepted, on B\'s own pod', accepted.kind === 'accepted', JSON.stringify(accepted).slice(0, 160));
 
-  head('3 · B says something');
+  head('5 · A types something, in A\'s own words');
   const record = await A.client.readWorkspaceRecord(workspace, A.viewer.podName);
   const rolesTtl = record.kind === 'record' && record.record.roleProfile
     ? (await A.client.fetchProfileTurtle(record.record.roleProfile)).turtle : null;
   const roles: RoleTable = rolesTtl ? parseRoleProfile(rolesTtl) : { roles: null, caps: null };
-  check('the published role table was read', !!roles.roles, roles.roles ? Object.keys(roles.roles).length + ' roles' : 'unreadable');
+  check('the published role table was read', !!roles.roles, roles.roles ? [...(roles.roles.keys())].length + ' roles' : 'unreadable');
+  const entryShape = record.kind === 'record' ? record.record.entryShape : null;
 
+  // ★ A SPEAKS FIRST, AND THE ORDER IS NOT COSMETIC. The FIRST run of this drive put A's own
+  // entry AFTER B's question, and the delegate correctly refused: the dedupe is per POD, so an
+  // entry the PERSON wrote after the question already counts as "somebody on this pod has
+  // spoken since". That refusal is the guard working — two delegates of one person must not
+  // both answer one message — and the fix is the driver's sequence, not the decision.
+  const aStream = nsIri(RELAY, A.viewer.podName, qualifiedName(A.viewer.podName, slug, 'stream'));
+  const aSaid = await postEntry(A.client, {
+    podName: A.viewer.podName, streamIri: aStream, workspace, entryShape,
+    body: 'Speaking for myself: I would rather not spend the money this year.',
+    author: { kind: 'principal', webId: A.viewer.webId },
+  });
+  check('A\'s own entry landed on A\'s pod', aSaid.kind === 'accepted', JSON.stringify(aSaid).slice(0, 160));
+
+  head('6 · B asks something, in B\'s own words');
   const bStream = nsIri(RELAY, B.viewer.podName, qualifiedName(A.viewer.podName, slug, 'stream'));
   const question = 'We never settled the roof. Do we re-tile in spring or patch it now and wait a year?';
   const posted = await postEntry(B.client, {
-    podName: B.viewer.podName, streamIri: bStream, workspace, body: question,
-    entryShape: record.kind === 'record' ? record.record.entryShape : null,
+    podName: B.viewer.podName, streamIri: bStream, workspace, body: question, entryShape,
+    // B typed this. B is the author, and nothing acted on B's behalf.
+    author: { kind: 'principal', webId: B.viewer.webId },
   });
   check('B\'s entry landed on B\'s pod', posted.kind === 'accepted', JSON.stringify(posted).slice(0, 160));
 
-  head('4 · A\'s local agent decides, on evidence');
+  head('7 · the fold, and each member\'s delegates read from their OWN pod');
   const fold = await foldRoster(A.client, {
     workspace, iriOwner: A.viewer.podName, slug,
     convener: record.kind === 'record' ? record.record.convener : null,
     convenerPod: record.kind === 'record' ? record.record.convenerPod : A.viewer.podName,
   });
-  check('both members are seated', fold.seats.filter((s) => s.seated).length === 2,
+  check('both people are seated', fold.seats.filter((s) => s.seated).length === 2,
     fold.seats.map((s) => s.pod + (s.seated ? ' seated' : ' NOT: ' + s.why)).join(' | '));
+  const byPod = new Map<string, DelegateRoster>();
+  for (const s of fold.seats) if (s.seated && s.pod) byPod.set(s.pod, await readDelegates(A.client, s.pod));
+  check('A\'s pod contributes two delegates, B\'s contributes none',
+    (byPod.get(A.viewer.podName)?.delegates.length ?? -1) === 2 && (byPod.get(B.viewer.podName)?.delegates.length ?? -1) === 0,
+    [...byPod].map(([p, r]) => p + '=' + r.delegates.length).join(' '));
 
-  let read = await awaitEntry(A, workspace, slug, fold.seats, B.viewer.podName);
-  log('  read ' + read.entries.length + ' entries across ' + fold.seats.filter((s) => s.seated).length + ' logs'
-    + (read.unreadable ? ', ' + read.unreadable + ' unreadable' : ''));
+  head('8 · the ceiling is the DELEGATE\'S own, not its delegator\'s');
+  let read = await awaitEntry(A, fold.seats, byPod, (e) => e.pod === B.viewer.podName && (e.body ?? '').trim() !== '');
   check('the whole channel was readable, so a decision may be made on it', read.unreadable === 0);
-  const answeredHere: string[] = [];
-  const decision = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries: read.entries, unreadable: read.unreadable, answeredHere });
-  check('the agent decides there is something to answer', decision.kind === 'answer', decision.kind + (decision.kind === 'answer' ? '' : ' — ' + decision.why));
-  if (decision.kind !== 'answer') { process.exit(1); }
-  check('it is answering B\'s entry and not its own', decision.answering.pod === B.viewer.podName, decision.answering.pod);
+  const speaking1: SpeakingDelegate = { agentId: d1Id, name: 'Claude side', scope: 'PublishOnly' };
+  const turnArgs = { workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles };
+  // A delegation that cannot publish is refused BEFORE anything is attempted.
+  const withheld = decideTurn({ ...turnArgs, delegate: { agentId: d1Id, name: 'Claude side', scope: 'ReadOnly' }, entries: read.entries, unreadable: read.unreadable, answeredHere: [] });
+  check('a ReadOnly delegation is refused by the decision, on the same seat', withheld.kind === 'ceiling',
+    withheld.kind + (withheld.kind === 'ceiling' ? ' — ' + withheld.why : ''));
+  // And no delegate at all is a refusal rather than a quiet write as the person.
+  const nobody = decideTurn({ ...turnArgs, delegate: null, entries: read.entries, unreadable: read.unreadable, answeredHere: [] });
+  check('no delegate selected is a refusal, not a fall back to writing as A', nobody.kind === 'no-delegate',
+    nobody.kind + (nobody.kind === 'no-delegate' ? ' — ' + nobody.why : ''));
 
-  head('5 · the model actually runs, on the operator\'s own subscription');
-  const prompt = briefPrompt(decision.brief, { displayName: A.viewer.displayName });
-  check('the prompt carries the channel and no caller-supplied text', prompt.includes(question) && prompt.includes(workspace));
+  head('9 · delegate #1 answers, as itself');
+  const answeredHere: string[] = [];
+  const decision = decideTurn({ ...turnArgs, delegate: speaking1, entries: read.entries, unreadable: read.unreadable, answeredHere });
+  check('the delegate decides there is something to answer', decision.kind === 'answer',
+    decision.kind + (decision.kind === 'answer' ? '' : ' — ' + decision.why));
+  if (decision.kind !== 'answer') { process.exit(1); }
+  check('it is answering B and not its own delegator', decision.answering.pod === B.viewer.podName, decision.answering.pod);
+  check('the transcript names A\'s own entry as the person, not as the delegate',
+    decision.brief.transcript.some((t) => t.startsWith('the person you act for:')),
+    decision.brief.transcript.join(' | ').slice(0, 240));
+
+  const prompt = briefPrompt(decision.brief, { displayName: A.viewer.displayName, delegateName: 'Claude side' });
+  check('the prompt tells the model it is the delegate and NOT the person',
+    prompt.includes('You are Claude side, a delegate acting for') && prompt.includes('You are NOT'));
+  check('and it carries the channel and no caller-supplied text', prompt.includes(question) && prompt.includes(workspace));
   const turn = await runClaude({ binary: provider.path, prompt });
   check('the model answered', turn.ok && !!turn.text, turn.why);
   if (!turn.ok || !turn.text) { process.exit(1); }
   const draft = checkDraft(turn.text);
   check('the draft passes the pre-post check', draft.ok, draft.ok ? '' : draft.why);
   if (!draft.ok) { process.exit(1); }
-  log('\n  ── what A\'s agent wrote, on A\'s own Claude subscription ──');
+  log('\n  ── what A\'s delegate "Claude side" wrote, on the operator\'s own subscription ──');
   for (const l of draft.body.split('\n')) log('  │ ' + l);
   log('  ── (' + (turn.ms / 1000).toFixed(1) + 's) ──\n');
 
-  head('6 · it appends to A\'s OWN pod, through the same writer a person uses');
-  const aStream = nsIri(RELAY, A.viewer.podName, qualifiedName(A.viewer.podName, slug, 'stream'));
-  const wrote = await postEntry(A.client, {
-    podName: A.viewer.podName, streamIri: aStream, workspace, body: draft.body,
-    entryShape: record.kind === 'record' ? record.record.entryShape : null,
+  // ★ THE DELEGATE'S OWN SESSION WRITES IT. Not A's. The entry's triples name the delegate, and
+  // the relay authenticates the delegate too — so `revoke_agent` below actually stops it.
+  const wrote = await postEntry(D1.client, {
+    podName: A.viewer.podName, streamIri: aStream, workspace, body: draft.body, entryShape,
+    author: { kind: 'delegate', agentId: d1Id, onBehalfOf: A.viewer.webId },
   });
-  check('the agent\'s reply landed on A\'s pod', wrote.kind === 'accepted', JSON.stringify(wrote).slice(0, 200));
-  if (wrote.kind === 'accepted') log('  descriptor: ' + (wrote.descriptorUrl ?? 'not reported'));
-
-  head('7 · the loop guard: asked again, it refuses to answer twice');
-  // Without this the agent would re-answer the same message on every poll, permanently, on a
-  // public log. It is checked against the real channel rather than against a flag.
-  read = await awaitEntry(A, workspace, slug, fold.seats, A.viewer.podName);
-  // What the shell records the moment a draft exists. Checked BOTH ways below, because the
-  // ordering alone was shown to be defeatable by a caller-chosen `valid_from`.
+  check('the delegate\'s reply landed on A\'s pod, written by the DELEGATE\'s session',
+    wrote.kind === 'accepted', JSON.stringify(wrote).slice(0, 200));
+  if (wrote.kind === 'accepted') {
+    log('  descriptor: ' + (wrote.descriptorUrl ?? 'not reported'));
+    const auth = wrote.response['authorship'] as { signer?: string; verificationMethod?: string } | undefined;
+    check('the relay attests the DELEGATE as the caller it authenticated', auth?.signer === d1Id, String(auth?.signer));
+    // ★ AND WHAT THAT PROOF DOES NOT SAY. Measured: one key for every pod and every agent here.
+    log('  the proof verifies against ' + (auth?.verificationMethod ?? 'not reported')
+      + ' — the RELAY\'s own key, identical for every pod and every agent on this deployment. '
+      + 'It is not the delegate\'s wallet.');
+  }
   answeredHere.push(decision.answering.descriptorUrl);
-  const again = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries: read.entries, unreadable: read.unreadable, answeredHere });
-  check('the second decision is a refusal, not a second reply', again.kind === 'already-answered',
-    again.kind + (again.kind === 'already-answered' ? ' — ' + again.why : ''));
 
-  // And with the record dropped, so the ordering guard is the only thing left holding it.
-  const orderingOnly = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries: read.entries, unreadable: read.unreadable, answeredHere: [] });
-  check('the ordering guard alone also refuses on this real channel', orderingOnly.kind === 'already-answered',
-    orderingOnly.kind + ' — ' + (orderingOnly.kind === 'already-answered' ? orderingOnly.why : ''));
+  head('10 · a reader tells all three apart, by dereferencing');
+  read = await awaitEntry(A, fold.seats, byPod, (e) => e.author.kind === 'delegate');
+  const mine = read.entries.filter((e) => e.pod === A.viewer.podName);
+  const asPerson = mine.filter((e) => e.author.kind === 'principal');
+  const asDelegate = mine.filter((e) => e.author.kind === 'delegate');
+  check('A\'s log holds entries by A AND by A\'s delegate, told apart', asPerson.length >= 1 && asDelegate.length >= 1,
+    asPerson.length + ' by the person, ' + asDelegate.length + ' by a delegate');
+  for (const e of read.entries) {
+    log('    ' + e.pod + ' · ' + authorshipLine(e.author) + ' · ' + (e.body ?? '(no body)').slice(0, 70));
+  }
+  const one = asDelegate[0];
+  check('the delegate entry names the delegate as author and A as who it acted for',
+    !!one && one.author.kind === 'delegate' && one.author.agentId === d1Id && one.author.onBehalfOf === A.viewer.webId,
+    one && one.author.kind === 'delegate' ? one.author.agentId + ' for ' + one.author.onBehalfOf : 'none');
+  check('and A\'s own pod\'s registry is what says the delegation is real',
+    !!one && one.author.kind === 'delegate' && one.author.authorised === true && one.author.name === 'Claude side',
+    one && one.author.kind === 'delegate' ? 'authorised=' + one.author.authorised + ' name=' + one.author.name : 'none');
 
-  head('8 · linking a chat account: a delegation A publishes on A\'s own pod');
-  // B's agent stands in for the Discord bot: a REAL agent DID on this fleet, so the registry row
-  // and `verify_agent` are answering about something that exists.
-  const botAgent = B.viewer.agentDid ?? 'did:ethr:0x' + '0'.repeat(40);
-  const plan = discordLinkPlan({ botAgentId: botAgent, discordUserId: '424242424242424242' });
-  check('the plan is valid and names PublishOnly', !!plan.call && plan.call.args['scope'] === 'PublishOnly');
-  check('the label is the public claim, not a secret', plan.call?.['args']?.['label'] === 'discord-link 424242424242424242',
-    String(plan.call?.args['label']));
-  check('the plan states that PublishOnly is pod-wide', plan.limits.some((l) => l.includes('POD-WIDE')));
+  head('11 · the SECOND delegate: a sibling, and the loop guard between them');
+  // ★ ONE DUPLICATE REPLY IS THE FAILURE THIS PREVENTS. Two delegates of one person both
+  // answering the same question would put two permanent records in one log saying the same thing.
+  const speaking2: SpeakingDelegate = { agentId: d2Id, name: 'Codex side', scope: 'PublishOnly' };
+  const sibling = decideTurn({ ...turnArgs, delegate: speaking2, entries: read.entries, unreadable: read.unreadable, answeredHere: [] });
+  check('delegate #2 refuses because its SIBLING has already spoken', sibling.kind === 'already-answered',
+    sibling.kind + ' — ' + (sibling.kind === 'already-answered' ? sibling.why : ''));
 
-  const out = await publishDelegation(A.client, { plan, verifyOnPod: A.viewer.podName });
-  check('the delegation published AND read back from the pod', out.kind === 'published', out.why);
-  for (const c of out.verdict?.checks ?? []) log('    [' + c.mark + '] ' + c.text);
-
-  // The bot's own confirm, run here: the label must match what the CONFIRMING account's id
-  // computes, not what anybody was told.
-  const asBot = await checkDelegation(B.client, {
-    agentId: botAgent, podName: A.viewer.podName, expectLabel: 'discord-link 424242424242424242',
+  // Now B says something new, and delegate #2 — a different identity — answers that one.
+  const second = 'One more: who is calling the roofer, and by when?';
+  const posted2 = await postEntry(B.client, {
+    podName: B.viewer.podName, streamIri: bStream, workspace, body: second, entryShape,
+    author: { kind: 'principal', webId: B.viewer.webId },
   });
-  check('the delegate itself verifies the row cross-pod', asBot.ok, asBot.why ?? 'ok');
-  const wrongAccount = await checkDelegation(B.client, {
-    agentId: botAgent, podName: A.viewer.podName, expectLabel: 'discord-link 999999999999999999',
-  });
-  check('a DIFFERENT chat account is refused by the same row', !wrongAccount.ok, wrongAccount.why ?? '');
+  check('B asked a second question', posted2.kind === 'accepted', JSON.stringify(posted2).slice(0, 160));
+  read = await awaitEntry(A, fold.seats, byPod, (e) => (e.body ?? '') === second);
+  const turn2 = decideTurn({ ...turnArgs, delegate: speaking2, entries: read.entries, unreadable: read.unreadable, answeredHere: [] });
+  check('delegate #2 now has something to answer', turn2.kind === 'answer', turn2.kind + (turn2.kind === 'answer' ? '' : ' — ' + turn2.why));
+  if (turn2.kind === 'answer') {
+    check('and it can see its sibling\'s entry as a sibling\'s, not as its own or as A\'s',
+      turn2.brief.transcript.some((t) => t.includes('another delegate of the person you act for')),
+      turn2.brief.transcript.join(' | ').slice(0, 300));
+    const t2 = await runClaude({ binary: provider.path, prompt: briefPrompt(turn2.brief, { displayName: A.viewer.displayName, delegateName: 'Codex side' }) });
+    const d2 = t2.ok && t2.text ? checkDraft(t2.text) : { ok: false as const, why: t2.why };
+    check('delegate #2\'s model answered and its draft passes', d2.ok, d2.ok ? '' : d2.why);
+    if (d2.ok) {
+      const wrote2 = await postEntry(D2.client, {
+        podName: A.viewer.podName, streamIri: aStream, workspace, body: d2.body, entryShape,
+        author: { kind: 'delegate', agentId: d2Id, onBehalfOf: A.viewer.webId },
+      });
+      check('delegate #2\'s reply landed, under ITS own session', wrote2.kind === 'accepted', JSON.stringify(wrote2).slice(0, 200));
+    }
+  }
+  read = await awaitEntry(A, fold.seats, byPod, (e) => e.author.kind === 'delegate' && e.author.agentId === d2Id);
+  const names = new Set(read.entries.filter((e) => e.pod === A.viewer.podName).map((e) => authorshipLine(e.author)));
+  check('★ one log, three distinguishable authors', names.size >= 3, [...names].join(' | '));
 
-  head('9 · withdrawal is unilateral, and confirmed by reading back');
-  const revoked = await revokeDelegation(A.client, { agentId: botAgent, podName: A.viewer.podName });
-  check('the delegation is revoked and the pod agrees', revoked.kind === 'revoked', revoked.why);
+  head('12 · revocation is unilateral, and the delegate refuses afterwards');
+  const revoked = await revokeDelegation(A.client, { agentId: d1Id, podName: A.viewer.podName });
+  check('delegate #1 is revoked and A\'s pod agrees', revoked.kind === 'revoked', revoked.why);
+  const afterRoster = await readDelegates(A.client, A.viewer.podName);
+  check('A\'s pod now lists ONE delegate, and it is the other one',
+    afterRoster.read && afterRoster.delegates.length === 1 && afterRoster.delegates[0]?.agentId === d2Id,
+    afterRoster.delegates.map((d) => d.name).join(' | '));
+  const gateAfter = await checkDelegation(D1.client, { agentId: d1Id, podName: A.viewer.podName });
+  check('the delegate itself now reads its own authority as withdrawn', !gateAfter.ok, gateAfter.why ?? '');
+  // ★ AND WHAT IS ALREADY WRITTEN STAYS, STILL ATTRIBUTED TO IT.
+  const stillThere = await readChannel(A, fold.seats, new Map([[A.viewer.podName, afterRoster]]));
+  const orphan = stillThere.entries.find((e) => e.author.kind === 'delegate' && e.author.agentId === d1Id);
+  check('what the revoked delegate wrote is still there and still names it',
+    !!orphan && orphan.author.kind === 'delegate' && orphan.author.agentId === d1Id,
+    orphan ? 'found' : 'missing');
+  check('and its authorisation now reads as NOT recorded — a fact, not a deletion',
+    !!orphan && orphan.author.kind === 'delegate' && orphan.author.authorised === false,
+    orphan && orphan.author.kind === 'delegate' ? String(orphan.author.authorised) : 'n/a');
 
   head('result');
   log('  workspace: ' + workspace);
-  log('  A (agent): ' + A.viewer.podName + '   B: ' + B.viewer.podName);
+  log('  A: ' + A.viewer.podName + '   B: ' + B.viewer.podName);
+  log('  A\'s delegates: ' + d1Id + ' (revoked), ' + d2Id);
   log(failures === 0 ? '\n  ALL CHECKS PASSED\n' : '\n  ' + failures + ' CHECK(S) FAILED\n');
   process.exit(failures === 0 ? 0 : 1);
 }

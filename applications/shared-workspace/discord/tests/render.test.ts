@@ -18,6 +18,9 @@ import type { RecordOut, ShowOut } from '../src/workspace.js';
 const AGENT = 'did:web:identity.interego.xwisee.com:agents:interego-workspace-discord-u-eth-0123456789ab';
 const RELAY_KEY = 'did:ethr:0xd144353a7A2Fa81E126e072AD3b16cD245c83331';
 const POD = 'u-eth-0123456789ab';
+const WEBID = 'https://identity.interego.xwisee.com/users/' + POD + '/profile#me';
+/** A delegate DID in the shape the relay actually issues — surface constant, then the pod. */
+const DELEGATE = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-cafebabe0001';
 
 describe('body', () => {
   it('says when it clipped', () => {
@@ -137,7 +140,7 @@ describe('the composed view', () => {
     record: { head: { forked: false, url: 'u', cid: null, headError: null, message: null }, regionFound: true, convener: 'w', roleProfile: null, entryShape: null, grantCapability: null, title: 'design review', authorship: null, convenerPod: POD, servedFrom: POD },
     fold: { seats: [seat(POD, true, null), seat('u-eth-ffffffffffff', false, 'granted, but no acceptance published on their pod yet')], grantPod: POD, grantPodDerivedFrom: 'wsp:convener in the record', grantScanSaturated: false, grantLimit: 400, grantsFound: 2, grantsRead: 2, grantReadCap: 25 },
     streams: [{ pod: POD, stream: 's', total: 1, forked: false, partial: false, why: null }],
-    entries: [{ pod: POD, seq: 0, created: '2026-08-07T00:00:00.000Z', body: 'hello', descriptorUrl: 'u', why: null }],
+    entries: [{ pod: POD, seq: 0, created: '2026-08-07T00:00:00.000Z', body: 'hello', descriptorUrl: 'u', author: { kind: 'principal', webId: WEBID }, why: null }],
     truncated: false, totalEntries: 1,
     ...over,
   } as ShowOut);
@@ -160,13 +163,65 @@ describe('the composed view', () => {
   });
 
   it('renders an entry whose region could not be located as a question, not as an empty message', () => {
-    const m = renderShow(view({ entries: [{ pod: POD, seq: null, created: null, body: null, descriptorUrl: 'u', why: 'the signed region of this entry could not be located, so nothing was read from bytes anybody signed' }] }));
+    const m = renderShow(view({ entries: [{ pod: POD, seq: null, created: null, body: null, descriptorUrl: 'u', author: null, why: 'the signed region of this entry could not be located, so nothing was read from bytes anybody signed' }] }));
     expect(m.content).toContain('? `' + POD + '` — the signed region');
   });
 
   it('reports a truncated scan rather than presenting a short roster as the whole one', () => {
     const m = renderShow(view({ fold: { ...(view() as { fold: unknown }).fold as Record<string, unknown>, grantScanSaturated: true } }));
     expect(m.content).toContain('came back full at 400');
+  });
+
+  // ── who wrote it, which the pod does not answer ────────────────────────────
+
+  const entry = (author: unknown, body = 'hello'): unknown =>
+    ({ pod: POD, seq: 0, created: '2026-08-07T00:00:00.000Z', body, descriptorUrl: 'u', author, why: null });
+
+  it('★ names a delegate as the author, and says whose pod authorises it', () => {
+    const m = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, onBehalfOf: WEBID, name: 'Research assistant', authorised: true, scope: 'PublishOnly' })] }));
+    expect(m.content).toContain('written by **Research assistant**');
+    expect(m.content).toContain('a delegate acting for the pod owner');
+    expect(m.content).toContain('own registry authorises it with scope PublishOnly');
+  });
+
+  it('★ two delegates of one person are two authors in one log, not one', () => {
+    const m = renderShow(view({
+      entries: [
+        entry({ kind: 'principal', webId: WEBID }, 'the human speaking'),
+        entry({ kind: 'delegate', agentId: DELEGATE, onBehalfOf: WEBID, name: 'Claude side', authorised: true, scope: 'PublishOnly' }, 'first delegate'),
+        entry({ kind: 'delegate', agentId: DELEGATE + '-2', onBehalfOf: WEBID, name: 'Codex side', authorised: true, scope: 'PublishOnly' }, 'second delegate'),
+      ],
+    }));
+    expect(m.content).toContain('written by the pod owner');
+    expect(m.content).toContain('written by **Claude side**');
+    expect(m.content).toContain('written by **Codex side**');
+  });
+
+  it('★ an unstated author never renders as the pod owner', () => {
+    const m = renderShow(view({ entries: [entry({ kind: 'unstated', why: 'this entry names no prov:wasAttributedTo' })] }));
+    expect(m.content).toContain('**author not stated**');
+    expect(m.content).toContain('not the same as the pod owner having written it');
+    expect(m.content).not.toContain('written by the pod owner');
+  });
+
+  it('★ a delegation the pod does not record is a finding; one that was not checked is not', () => {
+    const notListed = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, onBehalfOf: WEBID, name: null, authorised: false, scope: null })] }));
+    expect(notListed.content).toContain('does NOT list this agent');
+    const notRead = renderShow(view({ entries: [entry({ kind: 'delegate', agentId: DELEGATE, onBehalfOf: WEBID, name: null, authorised: null, scope: null })] }));
+    expect(notRead.content).toContain('was not read here');
+    expect(notRead.content).not.toContain('does NOT list this agent');
+  });
+
+  it('★ a disputed attribution carries its own reason rather than a shrug', () => {
+    const m = renderShow(view({ entries: [entry({ kind: 'disputed', why: 'this entry says X acted on behalf of Y, and the pod belongs to Z' })] }));
+    expect(m.content).toContain('**authorship disputed**');
+    expect(m.content).toContain('acted on behalf of Y');
+  });
+
+  it('★ says the pod is the log and the name beside it is the author', () => {
+    const m = renderShow(view());
+    expect(m.content).toContain('The pod is whose LOG an entry is in');
+    expect(m.content).toContain('prov:wasAttributedTo');
   });
 });
 

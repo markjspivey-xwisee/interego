@@ -143,7 +143,12 @@ async function run(): Promise<number> {
   const status = await client.podStatus();
   const podUrl = String(status['pod'] ?? status['podUrl'] ?? '');
   const pod = podUrl.replace(/\/$/, '').split('/').pop() ?? '';
-  log('pod                    :', pod, '· cold start', ((Date.now() - t0) / 1000).toFixed(1) + 's');
+  // The WebID this pod's own registry reports. Every entry now states its author, so a post
+  // cannot be composed without it — and a guessed one would attribute a permanent record wrongly.
+  const registry = status['registry'] as { owner?: string } | undefined;
+  const delegation = status['delegationRegistry'] as { owner?: string } | undefined;
+  const webId = registry?.owner ?? delegation?.owner ?? '';
+  log('pod                    :', pod, '· webId', webId || '(none reported)', '· cold start', ((Date.now() - t0) / 1000).toFixed(1) + 's');
   if (!pod) return 3;
 
   const wsIri = process.env['INTEREGO_SELFTEST_WORKSPACE'];
@@ -184,7 +189,14 @@ async function run(): Promise<number> {
     const streamIri = seat?.stream ?? RELAY + '/ns/' + pod + '/' + parts.owner + '--' + parts.slug + '-stream';
     const body = 'Posted from the Interego desktop shell at ' + new Date().toISOString()
       + ' — same @interego/workspace-client the published artifact runs, different transport.';
-    const out = await postEntry(client, { podName: pod, streamIri, workspace: wsIri, body, entryShape: read.record.entryShape });
+    // The person is the author here: this selftest signs in as them and writes what it composed
+    // under their own name deliberately, to exercise the ordinary path. A delegate's write is a
+    // different author and a different session — `tools/drive-delegate-live.ts` drives that one.
+    const out = await postEntry(client, {
+      podName: pod, streamIri, workspace: wsIri, body,
+      author: { kind: 'principal', webId },
+      entryShape: read.record.entryShape,
+    });
     log('post                   :', out.kind);
     if (out.kind === 'accepted') {
       log('   seq', out.seq, '· descriptor', out.descriptorUrl, '· committed', out.committed);

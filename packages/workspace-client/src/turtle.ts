@@ -214,6 +214,15 @@ export function forms(term: string, ns: string | null): readonly string[] {
 export const WSP = 'https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#';
 /** The Interego protocol vocabulary. */
 export const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
+/**
+ * W3C PROV-O. Not ours, and that is why it is used.
+ *
+ * Who authored an entry and which person an agent authored it FOR are not workspace-specific
+ * questions, and PROV already answers both — `prov:wasAttributedTo` and `prov:actedOnBehalfOf`.
+ * Minting `wsp:authoredBy` beside them would be this vertical restating a standard vocabulary
+ * under its own name, which every reader outside it would then have to learn.
+ */
+export const PROV = 'http://www.w3.org/ns/prov#';
 
 /** Prefix -> namespace, for the handful of prefixes a workspace document uses. */
 export function nsOf(term: string): string | null {
@@ -222,6 +231,7 @@ export function nsOf(term: string): string | null {
   if (term.indexOf('rdfs:') === 0) return 'http://www.w3.org/2000/01/rdf-schema#';
   if (term.indexOf('hydra:') === 0) return 'http://www.w3.org/ns/hydra/core#';
   if (term.indexOf('iep:') === 0) return IEP;
+  if (term.indexOf('prov:') === 0) return PROV;
   return null;
 }
 
@@ -268,6 +278,52 @@ export function readIri(ttl: string | null | undefined, term: string): string | 
     }
   }
   return null;
+}
+
+/**
+ * EVERY IRI object of `term` in this region, in document order, not just the first.
+ *
+ * ★ WHY THE COUNT MATTERS AND `readIri` CANNOT ANSWER IT. These readers are REGION-scoped, not
+ * subject-scoped: they find a predicate anywhere in the block and return its object. For a field
+ * that appears once that is exact. For a field a caller uses to decide WHO WROTE SOMETHING it is
+ * not, because the author of the region controls its bytes and can state the predicate twice —
+ * and `readIri` would silently return whichever came first, which is a choice this reader is not
+ * entitled to make on a reader's behalf. Callers that care use this and refuse anything but one.
+ *
+ * Duplicate objects are collapsed: `p <a> , <a>` states one fact twice and is not a disagreement.
+ */
+export function readIriAll(ttl: string | null | undefined, term: string): readonly string[] {
+  if (!ttl) return [];
+  const mk = masked(ttl);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const take = (body: string): void => {
+    if (!BAD_IRI.test(body) && !seen.has(body)) { seen.add(body); out.push(body); }
+  };
+  for (const f of forms(term, nsOf(term))) {
+    const rx = new RegExp('(?:^|[\\s;\\[])' + f + '(?=\\s)', 'g');
+    let m: RegExpExecArray | null;
+    while ((m = rx.exec(mk))) {
+      // ★ THE COMMA LIST IS WALKED, NOT IGNORED. `p <a> , <b>` is Turtle for TWO statements, and
+      // a reader that stopped at the first object would report one — which for a caller counting
+      // how many authors an entry claims is the difference between "one, believe it" and "two,
+      // refuse". Matching only `f\s+<…>` had exactly that hole.
+      let i = m.index + m[0].length;
+      for (;;) {
+        while (i < mk.length && /\s/.test(mk[i] as string)) i++;
+        if (mk[i] !== '<') break;
+        const close = mk.indexOf('>', i);
+        if (close < 0) break;
+        take(mk.slice(i + 1, close));
+        i = close + 1;
+        while (i < mk.length && /\s/.test(mk[i] as string)) i++;
+        if (mk[i] !== ',') break;
+        i++;
+      }
+      rx.lastIndex = m.index + m[0].length;
+    }
+  }
+  return out;
 }
 
 /**

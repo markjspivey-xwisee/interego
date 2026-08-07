@@ -17,7 +17,7 @@
  * pod, under the convener's signature. Refusal is the only correct handling, so these throw.
  */
 
-import { escapeTurtleLiteral, WSP } from './turtle.js';
+import { escapeTurtleLiteral, PROV, WSP } from './turtle.js';
 
 /**
  * One IRI reference, or a throw naming which argument was not serialisable.
@@ -56,10 +56,22 @@ export function shapesTurtle(shapeIri: string): string {
   turtleIri(s, 'the shape IRI');           // the fragments below are appended to it
   return '@prefix sh: <' + SHACL + '> .\n'
     + '@prefix wsp: <' + WSP + '> .\n'
+    + '@prefix prov: <' + PROV + '> .\n'
     + '@prefix dct: <' + DCT + '> .\n\n'
     + '<' + s + '#EntryShape>\n'
     + '  a sh:NodeShape ; sh:targetClass wsp:Entry ;\n'
     + '  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n'
+    // ★ EXACTLY ONE AUTHOR, AND IT IS NOT OPTIONAL.
+    //
+    // A person's entry names their WebID; a delegate's names the agent, and states separately
+    // that the agent acted for them. If only the second form carried an author, then "no author"
+    // would have to be read as "the person wrote it" — and absence is not evidence. Requiring it
+    // makes the relay REFUSE an entry that says nothing about who composed it, so a reader
+    // meeting an unauthored one knows it came from somewhere this shape did not govern.
+    //
+    // `maxCount 1` for the same reason `readEntryAuthorship` refuses two: the bytes belong to the
+    // log's owner, and two attributions is a document with no answer, not a document with two.
+    + '  sh:property [ sh:path prov:wasAttributedTo ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n'
     + '  sh:property [ sh:path dct:description ; sh:minCount 1 ; sh:maxCount 1 ] ;\n'
     + '  sh:property [ sh:path dct:created ; sh:minCount 1 ; sh:maxCount 1 ] .\n\n'
     + '<' + s + '#GrantShape>\n'

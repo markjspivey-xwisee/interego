@@ -1,5 +1,5 @@
 /**
- * THE DECISION A PERSON'S OWN AGENT MAKES, TESTED WHERE IT IS MADE.
+ * THE DECISION A PERSON'S DELEGATE MAKES, TESTED WHERE IT IS MADE.
  *
  * ★ WHY THIS FILE EXISTS, AND IT IS NOT "FOR COVERAGE". The renderer test drives this logic
  * through a DOM and a scripted relay, which is the right way to test what the shell DRAWS and the
@@ -15,13 +15,21 @@
 import { describe, it, expect } from 'vitest';
 import {
   BRIEF_ENTRIES, DRAFT_MAX, NOTHING_TO_ADD, briefPrompt, checkDraft, decideTurn,
-  type RoleTable, type Seat, type SeenEntry, type TurnInput,
+  type EntryAuthorship, type RoleTable, type Seat, type SeenEntry, type SpeakingDelegate,
+  type TurnInput,
 } from '@interego/workspace-client';
 
 const ME = 'u-eth-aaaaaaaaaaaa';
 const THEM = 'u-eth-bbbbbbbbbbbb';
+const MY_WEBID = 'https://identity.interego.xwisee.com/users/' + ME + '/profile#me';
+const THEIR_WEBID = 'https://identity.interego.xwisee.com/users/' + THEM + '/profile#me';
 const WS = 'https://relay.interego.xwisee.com/ns/' + ME + '/room';
 const ROLE = WS + '-roles#Contributor';
+/** Two delegates of ONE person, which the substrate allows and this decision must handle. */
+const D1 = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-111111111111';
+const D2 = 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-222222222222';
+const CLAUDE_SIDE: SpeakingDelegate = { agentId: D1, name: 'Claude side', scope: 'PublishOnly' };
+const CODEX_SIDE: SpeakingDelegate = { agentId: D2, name: 'Codex side', scope: 'PublishOnly' };
 
 /** The published role table, in the shape `parseRoleProfile` produces: Maps, not objects. */
 const roles = (): RoleTable => ({
@@ -36,11 +44,19 @@ const seat = (pod: string, seated = true, role: string | null = ROLE): Seat =>
   ({ pod, seated, role, why: seated ? '' : 'no acceptance published on their pod yet', stream: WS + '-stream' } as unknown as Seat);
 
 const at = (iso: string): number => Date.parse(iso);
-const said = (pod: string, url: string, body: string | null, when: number | null, derivedFrom: string | null = null): SeenEntry =>
-  ({ pod, descriptorUrl: url, body, derivedFrom, at: when });
+
+/** An entry written by the person whose log it is in. */
+const person = (pod: string): EntryAuthorship =>
+  ({ kind: 'principal', webId: pod === ME ? MY_WEBID : THEIR_WEBID });
+/** An entry written by one of that person's delegates. */
+const byDelegate = (pod: string, d: SpeakingDelegate): EntryAuthorship =>
+  ({ kind: 'delegate', agentId: d.agentId, onBehalfOf: pod === ME ? MY_WEBID : THEIR_WEBID, name: d.name, authorised: true, scope: d.scope });
+
+const said = (pod: string, url: string, body: string | null, when: number | null, derivedFrom: string | null = null, author?: EntryAuthorship): SeenEntry =>
+  ({ pod, descriptorUrl: url, body, derivedFrom, at: when, author: author ?? person(pod) });
 
 const input = (over: Partial<TurnInput> = {}): TurnInput => ({
-  workspace: WS, slug: 'room', mePod: ME,
+  workspace: WS, slug: 'room', mePod: ME, delegate: CLAUDE_SIDE,
   seats: [seat(ME), seat(THEM)], roles: roles(), entries: [], unreadable: 0, answeredHere: [],
   ...over,
 });
@@ -129,7 +145,7 @@ describe('decideTurn: who spoke last, and whether it can be established at all',
       said(ME, 'u2', 'My answer.', null),
     ] }));
     expect(d.kind).toBe('channel-incomplete');
-    if (d.kind === 'channel-incomplete') expect(d.why).toContain('your own entries carries no readable time');
+    if (d.kind === 'channel-incomplete') expect(d.why).toContain('own log carries no readable time');
   });
 
   it('reports everything-already-answered distinctly from nobody-has-spoken', () => {
@@ -175,13 +191,13 @@ describe('decideTurn: who spoke last, and whether it can be established at all',
     if (d.kind === 'roles-unreadable') expect(d.why).toContain('not the same as the ceiling permitting');
   });
 
-  it('★ refuses a role the published table does not permit posting under', () => {
+  it('★ refuses a role the published table does not declare', () => {
     const d = decideTurn(input({
       seats: [seat(ME, true, WS + '-roles#Observer'), seat(THEM)],
       entries: [said(THEM, 'u1', 'hi', at('2026-08-07T10:00:00Z'))],
     }));
     expect(d.kind).toBe('ceiling');
-    if (d.kind === 'ceiling') expect(d.why).toContain('imposes on itself');
+    if (d.kind === 'ceiling') expect(d.why).toContain('cannot exceed it');
   });
 
   it('bounds the brief and reports what it left out rather than omitting the count', () => {
@@ -199,11 +215,96 @@ describe('decideTurn: who spoke last, and whether it can be established at all',
   });
 });
 
+/**
+ * ★ THE DELEGATE HALF. Each of these was checked with the correction reverted — with `delegate`
+ * defaulted away, with the ceiling reduced to the role alone, and with the transcript calling
+ * every entry on the delegator's pod "you" — and each failed.
+ */
+describe('decideTurn: the agent is a delegate, and is not the person it acts for', () => {
+  const q = (): SeenEntry[] => [said(THEM, 'u1', 'What about the roof?', at('2026-08-07T10:00:00Z'))];
+
+  it('★ no delegate selected is a REFUSAL, never a quiet fall back to writing as the person', () => {
+    const d = decideTurn(input({ delegate: null, entries: q() }));
+    expect(d.kind).toBe('no-delegate');
+    if (d.kind === 'no-delegate') {
+      expect(d.why).toContain('nobody for this entry to be attributed to');
+      expect(d.why).toContain('An agent is not the person it acts for');
+    }
+  });
+
+  it('★ a scope that cannot publish refuses, though the same seat lets the person post', () => {
+    const readOnly = decideTurn(input({ delegate: { agentId: D1, name: 'Reader only', scope: 'ReadOnly' }, entries: q() }));
+    expect(readOnly.kind).toBe('ceiling');
+    if (readOnly.kind === 'ceiling') expect(readOnly.why).toContain('scope ReadOnly, which cannot publish');
+    // The seat is unchanged; a sibling delegate with a writing scope answers.
+    expect(decideTurn(input({ entries: q() })).kind).toBe('answer');
+  });
+
+  it('★ a row reporting no scope refuses rather than treating silence as permission', () => {
+    const d = decideTurn(input({ delegate: { agentId: D1, name: 'Claude side', scope: null }, entries: q() }));
+    expect(d.kind).toBe('ceiling');
+    if (d.kind === 'ceiling') expect(d.why).toContain('not the same as it being permitted');
+  });
+
+  it('★ the transcript names three parties on ONE pod: the person, this delegate, and a sibling', () => {
+    const d = decideTurn(input({
+      entries: [
+        said(ME, 'm1', 'I think we patch it.', at('2026-08-07T09:00:00Z'), null, person(ME)),
+        said(ME, 'm2', 'Consider the flashing.', at('2026-08-07T09:10:00Z'), null, byDelegate(ME, CLAUDE_SIDE)),
+        said(ME, 'm3', 'And the gutters.', at('2026-08-07T09:20:00Z'), null, byDelegate(ME, CODEX_SIDE)),
+        said(THEM, 'u1', 'What about the roof?', at('2026-08-07T10:00:00Z')),
+      ],
+    }));
+    expect(d.kind).toBe('answer');
+    if (d.kind !== 'answer') return;
+    const t = d.brief.transcript.join('\n');
+    expect(t).toContain('the person you act for: I think we patch it.');
+    expect(t).toContain('you (Claude side): Consider the flashing.');
+    expect(t).toContain('Codex side, another delegate of the person you act for: And the gutters.');
+    // The three must not collapse into one speaker, which is what "you" for the whole pod did.
+    expect(t.match(/you \(Claude side\)/g) ?? []).toHaveLength(1);
+    expect(t).not.toContain('you: I think we patch it.');
+  });
+
+  it('★ an entry with no stated author is named as that, never as the person', () => {
+    const d = decideTurn(input({
+      entries: [
+        said(ME, 'm1', 'Something.', at('2026-08-07T09:00:00Z'), null, { kind: 'unstated', why: 'names no prov:wasAttributedTo' }),
+        said(THEM, 'u1', 'What about the roof?', at('2026-08-07T10:00:00Z')),
+      ],
+    }));
+    expect(d.kind).toBe('answer');
+    if (d.kind === 'answer') expect(d.brief.transcript.join('\n')).toContain('author is not stated');
+  });
+
+  it('★ a SIBLING delegate having spoken last silences this one — two agents, one duplicate reply', () => {
+    // The dedupe is per POD deliberately: narrowing it to this delegate's own entries would let
+    // two delegates of one person both answer the same question, permanently, in one log.
+    const d = decideTurn(input({
+      entries: [
+        said(THEM, 'u1', 'What about the roof?', at('2026-08-07T10:00:00Z')),
+        said(ME, 'm1', 'Already answered by the other one.', at('2026-08-07T10:05:00Z'), null, byDelegate(ME, CODEX_SIDE)),
+      ],
+    }));
+    expect(d.kind).toBe('already-answered');
+    if (d.kind === 'already-answered') expect(d.why).toContain('another of their delegates');
+  });
+
+  it('the other member\'s own delegate is still "somebody else has spoken" and is answered', () => {
+    const d = decideTurn(input({
+      entries: [said(THEM, 'u1', 'Their agent asks about the roof.', at('2026-08-07T10:00:00Z'), null,
+        byDelegate(THEM, { agentId: 'did:web:x:agents:interego-delegate-u-eth-333333333333', name: 'Their assistant', scope: 'PublishOnly' }))],
+    }));
+    expect(d.kind).toBe('answer');
+    if (d.kind === 'answer') expect(d.brief.answering).toContain('Their assistant, acting for');
+  });
+});
+
 describe('briefPrompt: what the agent is asked, and what it is never handed', () => {
   const brief = { workspace: WS, slug: 'room', answering: THEM + ': the question', transcript: [THEM + ': the question'], omitted: 0 };
 
   it('names the channel and states that the record is permanent', () => {
-    const p = briefPrompt(brief, { displayName: null });
+    const p = briefPrompt(brief, { displayName: null, delegateName: 'Claude side' });
     expect(p).toContain(WS);
     expect(p).toContain('permanent');
     expect(p).toContain('the question');
@@ -213,15 +314,40 @@ describe('briefPrompt: what the agent is asked, and what it is never handed', ()
     // Tuned from a measured live failure in the other direction: the first version made the model
     // abstain from a direct question. The instruction has to license engagement WITHOUT licensing
     // invention, and both halves are load-bearing.
-    const p = briefPrompt(brief, { displayName: 'Sam' });
+    const p = briefPrompt(brief, { displayName: 'Sam', delegateName: 'Claude side' });
     expect(p).toContain('Do not invent');
     expect(p).toContain('Sam');
     expect(p).toContain(NOTHING_TO_ADD);
   });
 
   it('says how much of the channel is missing rather than implying it is whole', () => {
-    expect(briefPrompt({ ...brief, omitted: 12 }, { displayName: null })).toContain('12 earlier entries are not shown');
-    expect(briefPrompt(brief, { displayName: null })).toContain('whole channel so far');
+    expect(briefPrompt({ ...brief, omitted: 12 }, { displayName: null, delegateName: null })).toContain('12 earlier entries are not shown');
+    expect(briefPrompt(brief, { displayName: null, delegateName: null })).toContain('whole channel so far');
+  });
+
+  /**
+   * ★ THE PROMPT USED TO TELL THE MODEL IT WAS THE PERSON.
+   *
+   * "as <name>'s own agent … appended to THEIR log as THEIR entry" is an instruction to write in
+   * somebody's voice, and it was followed. Reverting these three lines and re-running this case
+   * fails it, which is the point: what the record says and what the model was told to be have to
+   * agree, or the honest triples sit under text written as an impersonation.
+   */
+  it('★ tells the model it is the delegate and explicitly NOT the person', () => {
+    const p = briefPrompt(brief, { displayName: 'Sam', delegateName: 'Claude side' });
+    expect(p).toContain('You are Claude side, a delegate acting for Sam');
+    expect(p).toContain('You are NOT Sam');
+    expect(p).toContain('Do not impersonate them');
+    expect(p).toContain('recorded as authored by');
+    // The sentence that was there before must be gone, not merely outweighed.
+    expect(p).not.toContain('as THEIR entry');
+    expect(p).not.toMatch(/appended to THEIR log/);
+  });
+
+  it('an unnamed delegate is described as one rather than given the person\'s name', () => {
+    const p = briefPrompt(brief, { displayName: 'Sam', delegateName: null });
+    expect(p).toContain('You are an unnamed delegate, a delegate acting for Sam');
+    expect(p).toContain('You are NOT Sam');
   });
 });
 

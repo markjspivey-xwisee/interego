@@ -5,11 +5,32 @@
  * the same assertions and report the same outcomes. What is left to a shell is drawing them.
  */
 
-import { escapeTurtleLiteral, IEP, WSP } from './turtle.js';
+import { escapeTurtleLiteral, IEP, PROV, WSP } from './turtle.js';
 import { shortRef } from './format.js';
 import { type ChainRow, orderChain, toChainRow } from './chain.js';
 import type { WorkspaceClient, WorkspaceRecord } from './substrate.js';
 import { refusal } from './transport.js';
+
+/**
+ * WHO COMPOSED THIS ENTRY. Required, on every entry, from every surface.
+ *
+ * ★ THE TWO CASES ARE NOT THE SAME AND THE RECORD MUST NOT COLLAPSE THEM.
+ *
+ *  · `principal` — the person wrote these words. That covers the composer in the desktop shell
+ *    AND the Discord bot relaying a message somebody typed: the bot is a conduit carrying their
+ *    own speech, so the entry is theirs and is attributed to them. Nothing about the conduit
+ *    belongs in the author position.
+ *  · `delegate` — an agent the person authorised composed these words, and the person did not
+ *    write them. The agent is the author; the person is who it acted for.
+ *
+ * ★ AND IT IS NOT OPTIONAL, WHICH IS THE POINT. If a delegate-authored entry said so and a
+ * human-authored one said nothing, then "nothing" would have to be read as "the human" — and
+ * absence is not evidence. Every entry states its author, so the absence of the statement is a
+ * finding about the entry rather than a default in favour of anybody.
+ */
+export type EntryAuthor =
+  | { readonly kind: 'principal'; readonly webId: string }
+  | { readonly kind: 'delegate'; readonly agentId: string; readonly onBehalfOf: string };
 
 /**
  * The Turtle for one entry.
@@ -17,7 +38,14 @@ import { refusal } from './transport.js';
  * ★ EVERY INTERPOLATED IRI IS GUARDED AND EVERY LITERAL IS ESCAPED. An IRI reference ends at
  * the first `>`, so an unchecked IRI can close the reference and write a triple its author was
  * never authorised to assert. There is no escape for `>` in Turtle's IRIREF production — there
- * is nothing to escape it to — so the only correct handling is refusal.
+ * is nothing to escape it to — so the only correct handling is refusal. The author's identifier
+ * is one of these: for a delegate it is a DID this client did not mint, and for a principal it
+ * is a WebID read off a pod.
+ *
+ * ★ THE DELEGATION IS A TRIPLE ABOUT THE AGENT, NOT ABOUT THE ENTRY. `prov:actedOnBehalfOf`
+ * relates two agents; hanging it off the entry would be malformed PROV that happened to read
+ * plausibly. So a delegate-authored entry carries a second subject — the agent — and one
+ * statement about it, in the same signed region.
  */
 export function entryTurtle(args: {
   readonly streamIri: string;
@@ -25,9 +53,11 @@ export function entryTurtle(args: {
   readonly seq: number;
   readonly body: string;
   readonly prior: string | null;
+  readonly author: EntryAuthor;
   readonly createdIso?: string;
 }): string {
   const iri = (u: string, what: string): string => {
+    if (typeof u !== 'string' || !u) throw new Error('entryTurtle: ' + what + ' is missing, so this entry is refused rather than written without it');
     if (/[\s<>"{}|\\^`]/.test(u)) throw new Error('entryTurtle: ' + what + ' is not serializable as a Turtle IRI reference: ' + u);
     return '<' + u + '>';
   };
@@ -35,8 +65,14 @@ export function entryTurtle(args: {
   const subject = iri(args.streamIri + '/e/' + args.seq, 'the entry IRI');
   const workspace = iri(args.workspace, 'the workspace IRI');
   const prior = args.prior === null ? null : iri(args.prior, 'the prior head');
+  const a = args.author;
+  const author = a.kind === 'delegate'
+    ? iri(a.agentId, 'the delegate agent id this entry is attributed to')
+    : iri(a.webId, 'the WebID this entry is attributed to');
+  const behalf = a.kind === 'delegate' ? iri(a.onBehalfOf, 'the WebID this delegate acted on behalf of') : null;
   return '@prefix wsp: <' + WSP + '> .\n'
     + '@prefix iep: <' + IEP + '> .\n'
+    + '@prefix prov: <' + PROV + '> .\n'
     + '@prefix dct: <http://purl.org/dc/terms/> .\n'
     + '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n'
     + subject + '\n'
@@ -44,8 +80,10 @@ export function entryTurtle(args: {
     + '  wsp:workspace ' + workspace + ' ;\n'
     + '  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n'
     + (prior ? '  iep:supersedes ' + prior + ' ;\n' : '')
+    + '  prov:wasAttributedTo ' + author + ' ;\n'
     + '  dct:created "' + (args.createdIso ?? new Date().toISOString()) + '"^^xsd:dateTime ;\n'
-    + '  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n';
+    + '  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n'
+    + (behalf ? '\n' + author + ' prov:actedOnBehalfOf ' + behalf + ' .\n' : '');
 }
 
 /**
@@ -134,6 +172,14 @@ export type PostOutcome =
  * write, which is the ordinary case for a log and the right move is to re-derive and try
  * again. A second 412 is reported rather than retried: a client that retries indefinitely is
  * a client that will eventually write a duplicate.
+ *
+ * ★ AND `author` IS REQUIRED, WHICH IS THE WHOLE OF THE DELEGATE CORRECTION AT THIS LAYER.
+ * There is still exactly ONE writer — a delegate that had its own would be a delegate whose
+ * writes skipped the chain derivation, the 412 retry, the shape assertion and the readback.
+ * What changes is that the writer now has to be TOLD who is speaking, so no caller can append
+ * without having answered the question. `client` is whoever the relay authenticated: for a
+ * principal that is their own session, and for a delegate it is the delegate's own — see
+ * `delegates.ts`. The two must agree, and `podName` is the DELEGATOR's pod either way.
  */
 export async function postEntry(
   client: WorkspaceClient,
@@ -142,6 +188,7 @@ export async function postEntry(
     readonly streamIri: string;
     readonly workspace: string;
     readonly body: string;
+    readonly author: EntryAuthor;
     readonly entryShape: string | null;
     readonly onAttempt?: (attempt: number) => void;
   },
@@ -173,7 +220,7 @@ export async function postEntry(
       // reported the append accepted.
       pod_name: args.podName,
       graph_iri: args.streamIri,
-      graph_content: entryTurtle({ streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body, prior: prior ? prior.url : null }),
+      graph_content: entryTurtle({ streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body, prior: prior ? prior.url : null, author: args.author }),
       visibility: 'public',
       auto_supersede_prior: false,
       sign_authorship: true,

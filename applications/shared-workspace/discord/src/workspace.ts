@@ -16,8 +16,10 @@ import {
   type Check, type GrantVerdict, type RosterFold, type Seat, type Viewer, type WorkspaceRecord,
   POD_RX, acceptGrant, checkDelegation, checkRoleForWorkspace, createWorkspace, errorCopy,
   findSeat, foldRoster, graphRegion, nsIri, orderChain, parseRoleProfile, podOfNsIri, postEntry,
-  qualifiedName, readAuthorship, readInt, readLiteral, readMember, sendInvite, toChainRow,
-  type AuthorshipReading, type PostOutcome, type WorkspaceClient,
+  qualifiedName, readAuthorship, readDelegates, readEntryAuthorship, readInt, readLiteral,
+  readMember, sendInvite, toChainRow,
+  type AuthorshipReading, type DelegateRoster, type EntryAuthorship, type PostOutcome,
+  type WorkspaceClient,
 } from '@interego/workspace-client';
 import { challengeLabel, slugFor, SNOWFLAKE_RX, type Link, type LinkStore, type ThreadBinding } from './links.js';
 
@@ -363,6 +365,19 @@ export async function recordMessage(
     const outcome = await postEntry(deps.client, {
       podName: member.podName, streamIri, workspace: binding.workspace,
       body, entryShape: frame.record.entryShape,
+      /**
+       * ★ THE PERSON, NOT THIS BOT, AND THAT IS NOT AN OVERSIGHT.
+       *
+       * This bot is a CONDUIT. The words in `body` are the ones a human typed into Discord; it
+       * carried them and did not write them. So the entry is theirs and names them, exactly as it
+       * did before delegates existed — a delegation row is what lets this process write to their
+       * pod, and it is not a claim of authorship.
+       *
+       * A DELEGATE is the other case: it composes text the person did not write, and its entries
+       * name it as the author. `delegates.ts` states the distinction; this line is the side of it
+       * that must not move.
+       */
+      author: { kind: 'principal', webId: member.webId },
     });
     const authorship = outcome.kind === 'accepted' ? readAuthorship(outcome.response['authorship']) : null;
     return { kind: 'recorded', pod: member.podName, streamIri, seated, outcome, authorship };
@@ -371,7 +386,7 @@ export async function recordMessage(
 
 // ── the composed view ────────────────────────────────────────────────────────
 
-/** One entry, read from the pod its author owns. */
+/** One entry, read from the pod whose owner holds the log. */
 export interface ShownEntry {
   readonly pod: string;
   readonly seq: number | null;
@@ -379,6 +394,15 @@ export interface ShownEntry {
   readonly created: string | null;
   readonly body: string | null;
   readonly descriptorUrl: string;
+  /**
+   * WHO COMPOSED IT, read out of the same signed region as the body.
+   *
+   * ★ NOT THE POD. The pod says whose LOG this is; the entry says who WROTE it, and a delegate
+   * writing for that person makes those different. This bot renders channels other people's
+   * clients wrote into, so it is exactly the reader that must not collapse them. Null only when
+   * the region could not be located at all — `why` then says so.
+   */
+  readonly author: EntryAuthorship | null;
   readonly why: string | null;
 }
 
@@ -431,6 +455,20 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
 
     const streams: ShownStream[] = [];
     const rows: { seat: Seat; url: string; cid: string | null }[] = [];
+    /**
+     * Each seated member's delegates, from THEIR OWN pod.
+     *
+     * ★ ONE READ PER POD, because authorisation is per pod. Reading one member's registry and
+     * applying it to the others would invent an authorization record for somebody else — the trap
+     * `delegatedScopes` in `respond.ts` records. A pod that does not answer contributes nothing
+     * and its entries then report `authorised: null`, which is "not checked", not "not authorised".
+     */
+    const delegates = new Map<string, DelegateRoster>();
+    for (const s of fold.seats) {
+      if (!s.seated || !s.pod) continue;
+      const p = s.podServed ?? s.pod;
+      if (!delegates.has(p)) delegates.set(p, await readDelegates(deps.client, p));
+    }
     for (const s of fold.seats) {
       if (!s.seated || !s.stream || !s.pod) continue;
       // The pod the acceptance was SERVED from when there is one, not the name the document
@@ -467,18 +505,25 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
         // Measured against the live relay before the fix: three entries that had committed
         // correctly all rendered "the signed region of this entry could not be located".
         const region = graphRegion(content, r.seat.stream ?? '');
+        const pod = r.seat.podServed ?? r.seat.pod ?? '?';
         entries.push({
-          pod: r.seat.podServed ?? r.seat.pod ?? '?',
+          pod,
           // The sequence the entry DECLARES, read out of the signed region — not one parsed off
           // its own name, which is a string and not an assertion.
           seq: region === null ? null : readInt(region, 'wsp:seq'),
           created: region === null ? null : readLiteral(region, 'dct:created'),
           body: region === null ? null : readLiteral(region, 'dct:description'),
           descriptorUrl: r.url,
+          // Held against the GRANT's grantee WebID, which lives on the convener's pod — so the log's
+          // owner cannot decide what their own entries are checked against.
+          author: region === null ? null : readEntryAuthorship(region, {
+            logOwnerWebId: r.seat.grantedTo ?? null,
+            delegates: delegates.get(pod) ?? null,
+          }),
           why: region === null ? 'the signed region of this entry could not be located, so nothing was read from bytes anybody signed' : null,
         });
       } catch (e) {
-        entries.push({ pod: r.seat.podServed ?? r.seat.pod ?? '?', seq: null, created: null, body: null, descriptorUrl: r.url, why: 'this entry could not be read: ' + errorCopy(e).t });
+        entries.push({ pod: r.seat.podServed ?? r.seat.pod ?? '?', seq: null, created: null, body: null, descriptorUrl: r.url, author: null, why: 'this entry could not be read: ' + errorCopy(e).t });
       }
     }
     // See the header: a clock, and the renderer prints that beside it.

@@ -8,7 +8,7 @@
  * signed by you" is two claims, and the second one is false.
  */
 
-import { shortRef, type Check } from '@interego/workspace-client';
+import { shortRef, type Check, type EntryAuthorship } from '@interego/workspace-client';
 import type { ConfirmOut, LinkChallengeOut, RecordOut, ShowOut, StartOut, UnlinkOut } from './workspace.js';
 
 /** Discord refuses a message body over 2000 characters outright. */
@@ -35,6 +35,31 @@ const checkLines = (checks: readonly Check[]): string[] => checks.map((c) => '  
 
 /** Discord renders `<https://…>` without an embed card, which is what an IRI wants. */
 const iri = (u: string): string => '<' + u + '>';
+
+/**
+ * WHO WROTE AN ENTRY, in one bracketed clause.
+ *
+ * ★ FIVE ANSWERS AND NONE OF THEM IS THE POD. A reader of this channel is being told whose words
+ * these are, and the pod only says whose log they are in. `null` here is "this reader did not get
+ * as far as asking", which is its own answer and must not read as either of the real ones.
+ *
+ * ★ AND THE AUTHORISATION IS A THIRD STATE, NOT A BOOLEAN. A delegate whose delegator's pod could
+ * not be read is not an unauthorised delegate; saying so would accuse somebody's agent on the
+ * strength of a failed HTTP call.
+ */
+function authorOf(a: EntryAuthorship | null): string {
+  if (a === null) return '[author not read]';
+  switch (a.kind) {
+    case 'principal': return '[written by the pod owner]';
+    case 'unstated': return '[**author not stated** — this entry names nobody, which is not the same as the pod owner having written it]';
+    case 'disputed': return '[**authorship disputed** — ' + a.why + ']';
+    case 'delegate': return '[written by **' + (a.name ?? 'an unnamed delegate') + '**, a delegate acting for the pod owner'
+      + (a.authorised === true ? '; that pod\'s own registry authorises it' + (a.scope ? ' with scope ' + a.scope : '')
+        : a.authorised === false ? '; **that pod\'s registry does NOT list this agent**, so the entry claims a delegation the pod does not record'
+          : '; that pod\'s registry was not read here, so whether the delegation is recorded is not established')
+      + ']';
+  }
+}
 
 export function renderChallenge(out: LinkChallengeOut): Message {
   return body([
@@ -147,6 +172,12 @@ export function renderRecord(out: RecordOut): Message | null {
         o.descriptorUrl ? '' : 'The relay named no descriptor URL for it.',
         o.shapeSent ? 'Validated against ' + shortRef(o.shapeSent) : 'Nothing validated this entry: ' + '(the workspace names no wsp:entryShape)',
         o.ifMatch ? 'Appended after ' + shortRef(o.ifMatch) + (o.ifMatchKind ? ' — ' + o.ifMatchKind : '') : 'First entry in this log, so no prior revision was asserted',
+        // ★ ATTRIBUTED TO THE PERSON, AND SAID OUT LOUD BECAUSE A BOT WROTE IT. This bot carried
+        // words its author typed; it did not compose them, so the entry names THEM. An entry an
+        // agent composed names the agent instead — see `delegates.ts`. Stating which of the two
+        // this is, on the notice that reports the write, is how a reader learns the difference
+        // exists before they ever meet the other case.
+        'Attributed to you: the entry carries `prov:wasAttributedTo <your WebID>`. This bot relayed what you typed — it did not write it, and nothing here claims it did.',
       ].filter(Boolean);
       if (out.authorship) {
         lines.push('');
@@ -187,10 +218,12 @@ export function renderShow(out: ShowOut): Message {
       for (const e of out.entries) {
         lines.push(e.why
           ? '  ? `' + e.pod + '` — ' + e.why
-          : '  `' + e.pod + '` #' + (e.seq ?? '?') + ' · ' + (e.created ?? 'no declared time') + '\n    ' + (e.body ?? '(this entry names no dct:description)'));
+          : '  `' + e.pod + '` ' + authorOf(e.author) + ' #' + (e.seq ?? '?') + ' · ' + (e.created ?? 'no declared time') + '\n    ' + (e.body ?? '(this entry names no dct:description)'));
       }
       lines.push('',
-        'Order inside one pod\'s log is the supersession chain those entries declare, which nothing outside that pod can rewrite. Order **between** pods is each entry\'s own `dct:created` — a clock its author\'s client set. The substrate establishes no happens-before across pods, so the interleaving above is a presentation, not a finding.');
+        'Order inside one pod\'s log is the supersession chain those entries declare, which nothing outside that pod can rewrite. Order **between** pods is each entry\'s own `dct:created` — a clock its author\'s client set. The substrate establishes no happens-before across pods, so the interleaving above is a presentation, not a finding.',
+        '',
+        '★ The pod is whose LOG an entry is in. **Who wrote it** is the name beside it, read from the entry\'s own `prov:wasAttributedTo`. Where that names a delegate, the entry also declares whom it acted for, and that person\'s own pod is asked whether it authorises the agent — a document only they can write.');
       return body(lines, false);
     }
   }

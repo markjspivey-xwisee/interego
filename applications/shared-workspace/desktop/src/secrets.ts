@@ -18,14 +18,53 @@
  */
 
 import { safeStorage, app } from 'electron';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** One named secret per file, under the app's own userData directory. */
+/**
+ * One named secret per file, under the app's own userData directory.
+ *
+ * ★ THE NAME BECOMES A PATH SEGMENT AND IS THEREFORE CHECKED. Every caller in this app passes a
+ * constant or a validated hex address, so nothing today could traverse — which is exactly when a
+ * check is cheap to add and expensive to add later. A `..` in a secret name would read and write
+ * files outside the secrets directory.
+ */
 function secretPath(name: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(name) || name.indexOf('..') >= 0) {
+    throw new Error('secretPath: "' + name + '" is not a usable secret name. It becomes a filename, so it is refused rather than sanitised.');
+  }
   const dir = join(app.getPath('userData'), 'secrets');
   mkdirSync(dir, { recursive: true });
   return join(dir, name + '.bin');
+}
+
+/**
+ * WHERE A DELEGATE'S KEY LIVES, AND WHY IT IS KEYED ON THE KEY'S OWN ADDRESS.
+ *
+ * ★ THE IDENTITY IS THE KEY, NOT THIS FILE. `delegates.ts` in the shared package states the rule
+ * and the measurement behind it: a delegate's DID is a function of its own keypair plus one
+ * constant surface name, so the same key is the same delegate in any client that holds it. This
+ * app is a HOST. Naming the file after the address rather than after a slot number ("delegate-1")
+ * makes that true in the storage layer too: two apps holding the same key agree about which
+ * delegate it is, and reinstalling this one loses the key without changing who the delegate was.
+ *
+ * A person may have several, so this is a family of names rather than a constant.
+ */
+export const DELEGATE_KEY = (address: string): string => {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    throw new Error('DELEGATE_KEY: "' + address + '" is not an Ethereum address, so it is not a delegate this app holds a key for.');
+  }
+  return 'delegate-' + address.toLowerCase();
+};
+
+/** Every delegate this machine holds a key for. The POD is the roster; this is the keyring. */
+export function listDelegateKeys(): readonly string[] {
+  const dir = join(app.getPath('userData'), 'secrets');
+  mkdirSync(dir, { recursive: true });
+  return readdirSync(dir)
+    .map((f) => /^delegate-(0x[0-9a-f]{40})\.bin$/.exec(f)?.[1] ?? null)
+    .filter((a): a is string => a !== null)
+    .sort();
 }
 
 export class OsSecretStoreUnavailable extends Error {
