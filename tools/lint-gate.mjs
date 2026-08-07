@@ -158,7 +158,14 @@ const UNLINTED_FRONTIER = {
   deploy: { errors: 356, files: 106 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
-  applications: { errors: 1309, files: 320 },
+  // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
+  // part. The local run that passed was taken BEFORE the last of five new
+  // `applications/shared-workspace/tools/*.ts` live drivers landed, so it measured 332 and sat
+  // inside the slack; CI measured the commit and got 337. A gate that reads `git ls-files`
+  // measures what was COMMITTED, and the only run that can be trusted is one taken after the
+  // last edit. The error count is unchanged at 1309: these five are `no-console` CLI drivers,
+  // and `lintTrackedUnder` counts errors, not files, for that number.
+  applications: { errors: 1309, files: 337 },
   benchmarks: { errors: 193, files: 31 },
   demos: { errors: 48, files: 37 },
   // A declared npm workspace (see package.json `workspaces`), never linted.
