@@ -1,0 +1,71 @@
+# Packaging for the workspace desktop shell.
+#
+# ★ UNSIGNED, AND THAT IS STATED RATHER THAN LEFT TO BE DISCOVERED.
+# `signAndEditExecutable: false` and `forceCodeSigning: false` below are deliberate: there is no
+# code-signing certificate for this project, and notarisation (macOS) needs an Apple Developer
+# account nobody here holds. Windows SmartScreen will therefore warn on first run of the
+# produced .exe, and that warning is CORRECT — the binary genuinely is not signed by anybody
+# SmartScreen recognises. Signing and notarisation are out of scope; see README.md.
+#
+# ★ WHAT IS PACKED, AND WHY IT IS ONLY THE BUILT OUTPUT.
+# `src/` is not shipped. The three entry points are bundled by esbuild (`npm run build`) into
+# `dist/`, and `@interego/workspace-client` is bundled INTO them rather than resolved at runtime
+# — which is why `files` names no node_modules for it. `ethers` is the exception: it is left
+# external to the main-process bundle so the packaged app resolves the real, unmodified library
+# for secp256k1 signing rather than a rewritten copy of it.
+
+appId: com.interego.workspace
+productName: Interego Workspace
+copyright: MIT
+
+# ★ PINNED BECAUSE THIS IS AN npm WORKSPACE. electron-builder derives the runtime version by
+# looking for `electron` in the package's OWN node_modules; in a workspace it is hoisted to the
+# repo root, so it finds nothing and refuses with "Cannot compute electron version from
+# installed node modules" — the devDependency range `^33.0.0` is not a version it will guess
+# from. This is the version actually installed at the root; `npm run package` fails loudly if
+# they diverge rather than packaging against a runtime nobody tested.
+electronVersion: 33.4.11
+
+directories:
+  output: release
+  buildResources: build
+
+# Built by `npm run build` before this runs — see the `package` script.
+files:
+  - dist/**/*
+  - index.html
+  - package.json
+  - node_modules/ethers/**/*
+  - node_modules/@noble/**/*
+  - node_modules/@adraffy/**/*
+  - node_modules/aes-js/**/*
+  - node_modules/tslib/**/*
+  - node_modules/ws/**/*
+
+# electron-builder rebuilds native deps by default. There are none here — `safeStorage` is
+# Electron's own, `ethers` is pure JS — so the step is skipped rather than left to fail on a
+# machine without a C++ toolchain.
+npmRebuild: false
+buildDependenciesFromSource: false
+
+win:
+  # Portable ZIP plus an NSIS installer. The ZIP is the one to hand somebody who just wants to
+  # run it: no installer, no registry, unzip and double-click.
+  target:
+    - target: zip
+      arch: [x64]
+    - target: nsis
+      arch: [x64]
+  # No certificate exists, so signing is not attempted. Left to default, electron-builder emits
+  # a confusing "cannot find certificate" warning that reads like a misconfiguration.
+  signAndEditExecutable: false
+
+forceCodeSigning: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # Per-user install, so no elevation prompt — the app writes only to its own userData
+  # directory, where the OS-encrypted wallet key lives.
+  artifactName: ${productName}-${version}-setup.${ext}

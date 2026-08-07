@@ -244,6 +244,11 @@ notices; over-privileging is a failure nobody notices.
 | [`tools/verify-stream-live.ts`](tools/verify-stream-live.ts) | the stream, against the **live** relay. |
 | [`tools/verify-compose-live.ts`](tools/verify-compose-live.ts) | two real identities, two real pods, one view. |
 | [`tools/verify-can-live.ts`](tools/verify-can-live.ts) | a live refusal, at both layers that can refuse. |
+| [`tools/live-identity.ts`](tools/live-identity.ts) | mints a relay OAuth bearer from a secp256k1 key, headlessly — the desktop shell's own SIWE ceremony minus the shell. Shared by the four drivers below; it is why they can each be a *real* identity rather than a fixture. |
+| [`tools/drive-membership-live.ts`](tools/drive-membership-live.ts) | **every membership and canvas flow, two real identities, two real pods**: create → invite → accept → switch → post from both → canvas create → save → forced stale 412 → merge forward → revoke, plus the 403 that refuses one party the other's pod. Runs the same `@interego/workspace-client` functions the artifact and the desktop shell run. |
+| [`tools/invite-handle-live.ts`](tools/invite-handle-live.ts) | the convener half of "getting a second person in", holding **only** the convener's key and taking the other party's handle as an argument — the position a convener is actually in. It is how the desktop shell becomes the second person, accepting with its own key out of the OS secret store. |
+| [`tools/probe-watch-live.ts`](tools/probe-watch-live.ts) | asks the relay what a live watch could actually be, before one is written: `GET /notifications/:podSlug` and `GET /sse`, with two bearers on two pods. The measurement behind `RelayMcpTransport.watchTool`. |
+| [`tools/probe-refresh-live.ts`](tools/probe-refresh-live.ts) | asks whether a bearer can be renewed with no user present, and whether the refresh token rotates. The measurement behind the desktop shell's token refresh. |
 | [`../../docs/applications/shared-workspace/wsp.ttl`](../../docs/applications/shared-workspace/wsp.ttl) | the vocabulary |
 | [`../../docs/applications/shared-workspace/wsp-shapes.ttl`](../../docs/applications/shared-workspace/wsp-shapes.ttl) | SHACL, enforced at publish |
 | [`../../docs/applications/shared-workspace/wsp-roles-default.ttl`](../../docs/applications/shared-workspace/wsp-roles-default.ttl) | five roles, as **data** |

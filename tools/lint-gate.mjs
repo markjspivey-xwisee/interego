@@ -458,7 +458,11 @@ const BASELINE = {};
 // shared-workspace agent runtime and tools/railway-registry-credentials.mjs (352 -> 363).
 // Caught its author for the second consecutive time, which is the whole argument for a
 // floor that fails when it is TOO LOW as well as when it is breached.
-export const MIN_FILES = 365;
+// 365 -> 370, fired for the third consecutive time, on the round that moved the workspace
+// client's membership, documents and canvas logic out of the published artifact's
+// hand-written script into `packages/workspace-client/src` and added the desktop shell's
+// renderer test and five live drivers (365 -> 380). The gate named the number.
+export const MIN_FILES = 370;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

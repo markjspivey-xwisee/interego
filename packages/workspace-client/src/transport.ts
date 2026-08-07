@@ -39,6 +39,25 @@ export interface RelayOAuthBearer {
   readonly method: 'siwe' | 'webauthn';
   /** Unix ms after which the token is known to be expired, when the grant reported one. */
   readonly expiresAt: number | null;
+  /**
+   * The successor this grant can be exchanged for, when the relay issued one.
+   *
+   * ★ MEASURED, 2026-08-06: `/token` returns `expires_in: 3600` and a `refresh_token` to a
+   * PUBLIC client, the `refresh_token` grant is accepted, and THE REFRESH TOKEN ROTATES — the
+   * exchange returns a new one and the old one is refused `400 invalid_grant, "Invalid or
+   * expired refresh token"` if presented again. So a holder that renews and keeps the token it
+   * started with gets exactly one extra hour and then fails, unattended, with nobody watching.
+   * Carrying the successor forward is not an optimisation; it is the difference between one
+   * renewal and all of them.
+   *
+   * The old ACCESS token keeps working after a refresh, so renewal is additive and an in-flight
+   * call cannot be killed by one.
+   *
+   * Null for a grant that reported none. Absence is not evidence: it is not a guessed value.
+   */
+  readonly refreshToken: string | null;
+  /** The public client the grant belongs to. A refresh exchange has to name it. */
+  readonly clientId: string | null;
 }
 
 /**
@@ -70,9 +89,17 @@ export interface IdentityServerToken {
 
 export type Credential = RelayOAuthBearer | ConnectorGrant | IdentityServerToken;
 
-/** Options a tool call may carry. Both transports honour `cache`; only one honours watches. */
+/**
+ * Options a tool call may carry. Both transports honour `cache`; only one honours watches.
+ *
+ * `cache: false` is a REAL VALUE and not the same as omitting the field. Omitting it leaves
+ * caching to the host — the connector runtime caches on its own default — whereas `false` says
+ * this particular read must not be served from anything. Authorization verdicts and the "which
+ * workspaces am I in" scan both pass it: serving a stale one for two minutes is exactly how a
+ * withdrawn delegation, or a workspace you just accepted, keeps looking the way it used to.
+ */
 export interface CallOptions {
-  readonly cache?: { readonly staleTime: number };
+  readonly cache?: { readonly staleTime: number } | false;
   readonly signal?: AbortSignal;
 }
 
@@ -153,6 +180,61 @@ const CACHE_KEY_SEP = '\u0000';
 /** Stop a live subscription. */
 export type Unsubscribe = () => void;
 
+/**
+ * A WATCH BUILT OUT OF RE-READS, in ONE place, because two clients need it.
+ *
+ * ★ WHY IT IS A FUNCTION AND NOT A METHOD. The desktop shell does not drive
+ * {@link RelayMcpTransport} from its renderer — the bearer lives in its main process, so the
+ * renderer runs a {@link ConnectorTransport} over an IPC channel and the HTTP transport is on
+ * the far side of it. Both ends need the same watch, and writing it twice is precisely the
+ * "two copies of one intention" that every drift defect in this vertical came from. So the loop
+ * lives here and both ends bind it.
+ *
+ * ★ AND IT IS A POLL, WHICH IS NOT A DISGUISE — see {@link RelayMcpTransport.watchTool} for the
+ * measurement that establishes there is nothing to subscribe to on this relay. What makes it a
+ * watch rather than a heartbeat is the comparison: an event fires only when THE ANSWER CHANGES,
+ * so a consumer can treat one as "something happened" instead of "the timer went off".
+ *
+ * Errors are NOT deduplicated. A payload that repeats is not news; an error that persists is a
+ * condition the consumer has to keep showing, and suppressing the repeat would let a consumer
+ * that recovered its rendering forget it is still failing.
+ */
+export function pollingWatch(
+  read: (name: string, input: Record<string, unknown>) => Promise<unknown>,
+  name: string,
+  input: Record<string, unknown>,
+  onEvent: (ev: WatchEvent) => void,
+  opts?: { refetchInterval?: number },
+): Unsubscribe {
+  const every = opts?.refetchInterval ?? 45000;
+  let stopped = false;
+  let last: string | null = null;
+  const tick = async (): Promise<void> => {
+    if (stopped) return;
+    try {
+      const payload = await read(name, input);
+      if (stopped) return;
+      const now = JSON.stringify(payload) ?? 'undefined';
+      if (now === last) return;
+      last = now;
+      onEvent({ type: 'data', result: { payload } });
+    } catch (e) {
+      if (stopped) return;
+      const err = e as { code?: string; message?: string };
+      // Reset, so a recovery after an error is delivered even if the payload is byte-identical
+      // to the last good one — otherwise a consumer showing "this failed" would never be told
+      // it stopped failing.
+      last = null;
+      onEvent({ type: 'error', error: { code: err.code ?? 'upstream_error', message: err.message ?? String(e) } });
+    }
+  };
+  // The first read is immediate and unawaited: registration is synchronous by contract, and a
+  // consumer that had to wait `every` ms for its first rows would show an empty log until then.
+  void tick();
+  const timer = setInterval(() => { void tick(); }, every);
+  return () => { stopped = true; clearInterval(timer); };
+}
+
 /** What a live watch reports. Shaped after the connector contract, which is the stricter one. */
 export type WatchEvent =
   | { readonly type: 'error'; readonly error: { readonly code?: string; readonly message?: string } }
@@ -175,6 +257,15 @@ export interface Transport<K extends Credential['kind']> {
   readonly accepts: K;
   /** A label for the connection, shown to the user. Never a literal in calling code. */
   readonly label: string;
+  /**
+   * HOW THIS TRANSPORT'S WATCH WORKS, in words a shell shows the user.
+   *
+   * ★ IT IS ON THE INTERFACE BECAUSE THE TWO IMPLEMENTATIONS DIFFER AND THE DIFFERENCE IS
+   * VISIBLE. One re-reads on a timer; the other hands the job to a host whose mechanism it
+   * cannot see. A shell that printed "live" over either would be asserting a property of a
+   * channel it did not open. Read at render time, never written as a literal in a shell.
+   */
+  readonly watchDescription: string;
   /** Resolve the surface and confirm the tools this client needs are reachable. */
   connect(requiredTools: readonly string[], probeTool: string): Promise<{ readonly granted: readonly string[] }>;
   /** Call one tool. Returns the parsed payload; throws {@link ToolCallError} on an outage. */
@@ -227,6 +318,10 @@ function parseRpcBody(raw: string): Record<string, unknown> | null {
 export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
   readonly accepts = 'relay-oauth-bearer' as const;
   readonly label: string;
+  /** See {@link watchTool} for the measurement this sentence reports. */
+  readonly watchDescription = 're-read on a timer, not pushed — this relay exposes no per-graph '
+    + 'notification channel a workspace can subscribe to, so an update appears at the next read '
+    + 'and not when it happens';
   private readonly relay: string;
   private credential: RelayOAuthBearer;
   private id = 0;
@@ -300,7 +395,8 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
     // chosen because it cannot occur in a tool name or in `JSON.stringify` output, so no
     // input can forge a key boundary.
     const key = name + CACHE_KEY_SEP + JSON.stringify(input);
-    const stale = opts?.cache?.staleTime;
+    // `cache: false` and an absent `cache` both mean "no stale window here"; see CallOptions.
+    const stale = opts?.cache ? opts.cache.staleTime : undefined;
     if (stale) {
       const hit = this.cache.get(key);
       if (hit && Date.now() - hit.at < stale) return hit.payload;
@@ -330,13 +426,47 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
   }
 
   /**
-   * ★ NULL, AND THAT IS THE HONEST ANSWER. There is no push channel on `POST /mcp`, so this
-   * transport cannot watch. Returning a no-op unsubscribe would have looked like a successful
-   * registration and left every stream waiting for updates that could never arrive; the
-   * caller polls instead, and knows it is polling.
+   * A REAL WATCH, AND IT IS A POLL — the distinction is published on {@link watchDescription}
+   * rather than smoothed over, because this relay has no push channel a workspace can use.
+   *
+   * ★ MEASURED AGAINST THE LIVE RELAY, 2026-08-06, with two freshly minted bearers on two real
+   * pods. Both candidate channels were tried before this was written:
+   *
+   *   GET /notifications/<slug of my OWN pod>   -> 400 {"error":"pod_url_rejected",
+   *                                                     "detail":"pod URL must use https"}
+   *   GET /notifications/<slug of ANOTHER pod>  -> 404 {"error":"unknown_pod_slug"}
+   *   GET /sse                                  -> 200 text/event-stream
+   *
+   * The per-pod SolidNotifications channel is the one shaped right — its events carry
+   * `podUrl`, `descriptorUrl`, `graphUrl` and an eventType — and it is UNREACHABLE ON THIS
+   * DEPLOYMENT in both directions. Outward: `requireAuthorizedPodUrl` runs every pod URL
+   * through `assertPublicPodUrl`, and this fleet's pods ARE `http://css.railway.internal:3456/…`,
+   * so the relay's own guard rejects the relay's own pods before authorization is even
+   * considered. Inward: the same gate requires the slug's pod to be a prefix of the bearer's
+   * own, so even repaired it could never open a channel on ANOTHER member's log — which is the
+   * only thing a workspace watch is for.
+   *
+   * `GET /sse` connects, and it is not a subscription. It re-sends `notificationLog.slice(-5)`
+   * — one process-global ring, not a per-pod queue — every 2 seconds to every connected client.
+   * The frames carry a `resource` and no pod and no graph IRI, so a reader cannot tell whose
+   * event it is; and because the same five are re-sent on every tick, it cannot tell a new
+   * event from a repeat either. Measured: 5 frames in 8 s, four of them identical.
+   *
+   * So there is nothing to subscribe TO, and the honest implementation of a watch here is the
+   * one the interface's own `refetchInterval` option already describes: re-issue the read on a
+   * timer and deliver an event when THE ANSWER CHANGES. That is a genuine event — it means the
+   * answer to this exact read differs from the last time it was asked — and it is not what a
+   * push would be. Returning null instead was defensible and cost more than it saved: every
+   * caller then wrote its own polling loop, which is the "two copies of one intention" that
+   * every drift defect in this vertical came from.
    */
-  watchTool(): Unsubscribe | null {
-    return null;
+  watchTool(
+    name: string, input: Record<string, unknown>, onEvent: (ev: WatchEvent) => void,
+    opts?: { refetchInterval?: number },
+  ): Unsubscribe | null {
+    // No cache option is passed: a watch that could be served a cached answer is a watch that
+    // reports the world stopped moving.
+    return pollingWatch((n, i) => this.callTool(n, i), name, input, onEvent, opts);
   }
 
   async invalidate(name: string): Promise<void> {
@@ -357,6 +487,12 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
 export class ConnectorTransport implements Transport<'connector-grant'> {
   readonly accepts = 'connector-grant' as const;
   label = 'connector';
+  /**
+   * The host runs the watch and does not say how. Claiming "live" here would be this package
+   * asserting a property of a channel it neither opened nor can see.
+   */
+  readonly watchDescription = 'handled by the connector runtime, which was asked to refetch on '
+    + 'an interval; whether it also pushes is not something this page can establish';
   private readonly mcp: ConnectorMcp;
   private server: string | null = null;
 

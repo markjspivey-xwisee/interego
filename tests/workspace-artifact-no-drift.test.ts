@@ -65,6 +65,25 @@ describe('the published artifact is generated from @interego/workspace-client', 
     'publishAndConfirm', 'fetchProfileTurtle', 'readWorkspaceRecord', 'foldRoster', 'postEntry',
     'toChainRow', 'entryShapeAnswer', 'grantPodFor', 'watchStream', 'invalidateStreams',
     'connectorLabel', 'CLIENT',
+    // ── THE DOCUMENTS, MEMBERSHIP AND THE CANVAS, which is the copy this
+    // increment closed ────────────────────────────────────────────────────────
+    // Each of these existed twice: once in the module, once written out beside
+    // the panel in the page that reports it. They had measurably come apart —
+    // the page's document writers interpolated IRIs read off OTHER PEOPLE'S PODS
+    // with no guard at all, where the module refuses an unserialisable one; the
+    // page's `findSeat` dropped its own saturation flag on the floor; the page's
+    // `awaitHead` and the module's disagreed about what licenses "Saved". A
+    // re-paste of any one of them below the region would leave the byte
+    // comparison above green and silently take over.
+    'turtleIri', 'shapesTurtle', 'rolesTurtle', 'workspaceTurtle', 'grantTurtle',
+    'acceptanceTurtle', 'canvasTurtle',
+    'readViewer', 'composedHandle', 'ownHandleCheck', 'checkWriteEligibility',
+    'resolveInvitee', 'GRANT_IRI_RX', 'verifyGrantIri',
+    'INBOX_LIMIT', 'readInbox', 'verifyInvitation',
+    'SEAT_SCAN_LIMIT', 'SEAT_READ_CAP', 'findSeat',
+    'listWorkspaces', 'verifyWorkspaceEntry',
+    'roleName', 'roleWhy', 'roleKnown', 'checkRoleForWorkspace',
+    'readCanvas', 'awaitHead', 'staleDetail',
   ])('declares %s ONLY inside the generated region', (name) => {
     const html = artifact();
     const from = html.indexOf(BEGIN);

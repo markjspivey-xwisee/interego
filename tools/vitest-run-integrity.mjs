@@ -113,7 +113,13 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // self-tests landed — tests/modal-lattice-spec.test.ts (the TLA+ spec's theorems, previously
 // evaluated by nothing) and tests/changelog-lint.test.ts (CHANGELOG.md's claims about itself,
 // checked by nothing). The tree reached 218 and the reporter named 208 both times.
-export const MIN_TEST_MODULES = 212;
+// 212 -> 214: the same ratchet, fired twice by the two files that closed the shared-workspace
+// client's largest gaps — tests/workspace-desktop-renderer.test.ts (the desktop renderer, which
+// until it landed had NO automated test at all and was named as the gap most likely to let a
+// defect through) and tests/workspace-client-membership.test.ts (the create/invite/accept/canvas
+// half of the module, which had just moved out of the published artifact's hand-written script).
+// The tree reached 224 and the reporter named 214.
+export const MIN_TEST_MODULES = 214;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

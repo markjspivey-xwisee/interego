@@ -29,7 +29,7 @@ export {
 } from './naming.js';
 
 export {
-  ToolCallError, fail, refusal, asRefusal,
+  ToolCallError, fail, refusal, asRefusal, pollingWatch,
   RelayMcpTransport, ConnectorTransport,
   type Credential, type RelayOAuthBearer, type ConnectorGrant, type IdentityServerToken,
   type Transport, type AnyTransport, type CallOptions, type ConnectorMcp,
@@ -52,3 +52,26 @@ export {
 export {
   foldRoster, grantPodFor, GRANT_LIMIT, GRANT_READ_CAP, type Seat, type RosterFold,
 } from './seats.js';
+
+export {
+  turtleIri, shapesTurtle, rolesTurtle, workspaceTurtle, grantTurtle, acceptanceTurtle, canvasTurtle,
+} from './documents.js';
+
+export {
+  readViewer, composedHandle, checkOwnHandle, checkWriteEligibility,
+  createWorkspace, resolveInvitee, sendInvite,
+  GRANT_IRI_RX, verifyGrantIri, acceptGrant, revokeGrant,
+  INBOX_LIMIT, readInbox, verifyInvitation,
+  SEAT_SCAN_LIMIT, SEAT_READ_CAP, findSeat,
+  listWorkspaces, verifyWorkspaceEntry,
+  roleName, roleWhy, roleKnown, checkRoleForWorkspace,
+  type Check, type Viewer, type WriteVerdict, type CreateStep, type CreateOutcome,
+  type InviteeResolution, type NotifyReport, type InviteOutcome, type GrantVerdict,
+  type AcceptOutcome, type RevokeOutcome, type Invitation, type InboxRead,
+  type WorkspaceEntry, type WorkspaceList, type RoleTable,
+} from './membership.js';
+
+export {
+  readCanvas, awaitHead, staleDetail, saveCanvas, mergeForward,
+  type CanvasRead, type HeadWait, type StaleDetail, type CanvasSave,
+} from './canvas.js';
