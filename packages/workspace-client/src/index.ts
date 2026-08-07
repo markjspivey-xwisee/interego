@@ -75,3 +75,8 @@ export {
   readCanvas, awaitHead, staleDetail, saveCanvas, mergeForward,
   type CanvasRead, type HeadWait, type StaleDetail, type CanvasSave,
 } from './canvas.js';
+
+export {
+  readMember, checkDelegation, readAuthorship,
+  type DelegationRow, type DelegationVerdict, type AuthorshipReading,
+} from './delegation.js';

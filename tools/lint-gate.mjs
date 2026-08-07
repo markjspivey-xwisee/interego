@@ -472,7 +472,12 @@ const BASELINE = {};
 // 370 -> 371, fired for the FOURTH consecutive time, on the round that added
 // `tools/probe-notification-scope-live.ts` — the live driver that reproduced the
 // cross-pod notification disclosure (380 -> 381). One file was all the remaining slack.
-export const MIN_FILES = 371;
+// 371 -> 373, fired for the FIFTH consecutive time, on the round that added the Discord bot:
+// `packages/workspace-client/src/delegation.ts` (acting for another pod under a delegation that
+// pod's owner published) and `tests/workspace-client-delegation.test.ts` (381 -> 383). The bot
+// itself lives under `applications/`, which is frontier rather than a zero-error target, so only
+// the two files that landed in the linted tree move this number.
+export const MIN_FILES = 373;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

@@ -1,0 +1,31 @@
+{
+  "name": "@interego/workspace-discord",
+  "version": "0.1.0",
+  "description": "A Discord bot that turns a thread into a record. Walking skeleton: /workspace start creates a wsp: workspace on the caller's own pod, /workspace link binds a participant's Interego identity by a delegation THEY publish on their own pod, and every subsequent message from a linked participant is appended to a signed, chained wsp:Entry log on that participant's pod. All substrate logic comes from @interego/workspace-client; this package holds a Discord gateway client, a link index, and nothing else.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "./src/main.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "tsx src/main.ts",
+    "register-commands": "tsx src/main.ts --register-commands-only",
+    "drive-live": "tsx tools/drive-bot-live.ts",
+    "probe-delegation": "tsx tools/probe-delegation-live.ts"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@interego/workspace-client": "*",
+    "ethers": "^6.16.0",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.0"
+  }
+}

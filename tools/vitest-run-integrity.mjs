@@ -119,7 +119,11 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // defect through) and tests/workspace-client-membership.test.ts (the create/invite/accept/canvas
 // half of the module, which had just moved out of the published artifact's hand-written script).
 // The tree reached 224 and the reporter named 214.
-export const MIN_TEST_MODULES = 214;
+// 214 -> 218: the same ratchet, fired by the round that added the Discord bot — one root suite
+// for the delegation half of the workspace client and three under
+// applications/shared-workspace/discord/tests (the gateway protocol client, the link index, and
+// what the bot is allowed to SAY about what it wrote). The tree reached 228.
+export const MIN_TEST_MODULES = 218;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

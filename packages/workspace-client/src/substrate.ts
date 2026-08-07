@@ -337,8 +337,26 @@ export class WorkspaceClient {
   ): Promise<{ readonly res?: Record<string, unknown>; readonly readable?: boolean; readonly why?: string; readonly error?: unknown; readonly refusal?: unknown; readonly head?: HeadResult }> {
     const tell = (s: string, d: string): void => { try { onState?.(s, d); } catch { /* a reporter must not break a write */ } };
     tell('sending', 'Publishing ' + graphIri.replace(/^https:\/\//, ''));
+    // ★ THE POD THE WRITE LANDS ON IS THE POD THE READ-BACK CHECKS, BY CONSTRUCTION.
+    //
+    // `podName` used to be used ONLY for the confirmation read below, and the publish itself
+    // named no pod at all — so the relay filled it from the session. For a client that is the
+    // pod owner those coincide and nothing showed. For a client acting on somebody ELSE'S pod
+    // under a delegation they coincide never: the write landed on the caller's own pod, the
+    // confirmation loop read the member's, found nothing, and the whole 30 s wait ended in
+    // "accepted, not yet reported readable" — a sentence about the wrong pod entirely.
+    //
+    // MEASURED (2026-08-07, live relay, three disposable identities): `publish_context` honours
+    // `pod_name` for a cross-pod target and gates it on the delegation registry alone —
+    // an undelegated agent is refused `403 scope_violation, "agent is not registered on this
+    // pod"`. So naming the pod is what makes the two halves of this method talk about one
+    // document; it grants nothing that was not already granted on the pod itself.
+    //
+    // Only when the caller did not already name one: any future caller with its own opinion
+    // about the target keeps it.
+    const sent = typeof args['pod_name'] === 'string' ? args : { ...args, pod_name: podName };
     let res: Record<string, unknown>;
-    try { res = await this.tool('publish_context', args) as Record<string, unknown>; }
+    try { res = await this.tool('publish_context', sent) as Record<string, unknown>; }
     catch (e) { tell('failed', errorCopy(e).t); return { error: e }; }
     const bad = refusal(res);
     if (bad) { tell('refused', String(bad['error'] ?? 'refused')); return { refusal: bad }; }

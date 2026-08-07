@@ -163,6 +163,15 @@ export async function postEntry(
     const prior = ch.ordered.length ? ch.ordered[ch.ordered.length - 1] as ChainRow : null;
     const seq = ch.ordered.length;
     const publishArgs: Record<string, unknown> = {
+      // ★ THE APPEND LANDS ON THE POD THE CHAIN WAS READ FROM. `podName` used to drive only the
+      // manifest read above; the publish named no pod and the relay filled it from the session.
+      // For a client that is the pod owner those are the same pod and nothing showed. For a
+      // client acting for SOMEBODY ELSE under a delegation they are never the same pod: the
+      // sequence number, the prior head and the `if_match` were all derived from the member's
+      // log, and the entry asserting them landed on the caller's own — a chain link pointing at
+      // a descriptor on a different pod, and a member's log that stayed empty while the client
+      // reported the append accepted.
+      pod_name: args.podName,
       graph_iri: args.streamIri,
       graph_content: entryTurtle({ streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body, prior: prior ? prior.url : null }),
       visibility: 'public',

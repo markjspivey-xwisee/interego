@@ -19,7 +19,8 @@
     "applications/agent-development-practice/bridge",
     "applications/organizational-working-memory/bridge",
     "applications/lrs-adapter/bridge",
-    "applications/shared-workspace/desktop"
+    "applications/shared-workspace/desktop",
+    "applications/shared-workspace/discord"
   ],
   "scripts": {
     "build": "npm run build:core && npm run build:leaves",

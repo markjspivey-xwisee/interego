@@ -1,0 +1,21 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    // ★ `noEmit`, AND THAT IS THE HONEST SHAPE OF THIS PACKAGE. It runs under `tsx` — the same
+    // way every live driver in this vertical runs — so there is no build output to be stale.
+    // A `dist/` here would be a second copy of the program that nothing rebuilds.
+    "noEmit": true,
+    "lib": ["ES2022"],
+    "types": ["node"],
+    // No `rootDir`: `src/identity.ts` imports the SIWE bearer minting from
+    // `../../tools/live-identity.ts`, one directory up, on purpose. That routine already exists
+    // twice in this repo (the desktop shell's `auth.ts` and that driver) and is pinned against
+    // itself by `tests/workspace-live-identity-parity.test.ts`. A third copy inside this package
+    // is exactly the drift this vertical keeps paying for, so this one imports rather than
+    // repeats — and a rootDir would forbid the import for no benefit, since nothing emits.
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*", "tools/**/*", "tests/**/*"],
+  "exclude": ["node_modules"]
+}
