@@ -621,7 +621,6 @@ hr.sep{border:0; border-top:1px solid var(--line-2); margin:14px 0;}
    ───────────────────────────────────────────────────────────── */
 
 const RELAY   = "https://relay.interego.xwisee.com";
-const WSP     = "https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#";
 
 /* ── WHAT THIS FILE HARDCODES, stated exactly ────────────────────────────
    A list like this is worthless unless it is complete, so it is the complete
@@ -640,7 +639,11 @@ const WSP     = "https://markjspivey-xwisee.github.io/interego/applications/shar
       from the first acceptance on your own pod that verifies. A viewer who is
       in no workspace at all opens none, which is the lobby.
    3. WSP — the vocabulary IRI the terms below are read in, and the namespace
-      table in `nsOf` (dct, rdfs, iep, hydra) beside it.
+      table in `nsOf` (dct, rdfs, iep, hydra) beside it. Both are the module's
+      constants, bound in the generated block: this file used to spell the same
+      IRI out again, and a page WRITING in a namespace one character away from
+      the one its own reader expands would publish graphs that parse cleanly and
+      then fold into nothing.
    4. The IRI-naming SCHEME, which is this page's biggest single assumption and
       is set out in full at `memberDocIri` below: grants are
       "<workspace>-grant-<their pod>" on the convener's pod, and each member's
@@ -663,29 +666,31 @@ const WSP     = "https://markjspivey-xwisee.github.io/interego/applications/shar
       whether a segment can be a pod at all.
    8. FIVE caps, not two — an earlier version of this item said two and there
       were three 400-scans alone, which is how one of them came to compute a
-      saturation flag nobody read:
-        · `SCAN_LIMIT = 400` in `findSeat` — the convener's pod, scanned for a
-          grant naming you when the composed name did not answer;
-        · `SCAN_LIMIT = 400` in `loadSpaces` — your own pod, scanned for
+      saturation flag nobody read. All five now live in the module, so the number
+      a panel STATES and the number a read asks for cannot be two numbers:
+        · `SEAT_SCAN_LIMIT = 400` in `findSeat` — the convener's pod, scanned for
+          a grant naming you when the composed name did not answer;
+        · the same cap in `listWorkspaces` — your own pod, scanned for
           acceptances;
-        · `GRANT_LIMIT = 400` in `loadRoster` — the convener's pod, scanned for
+        · `GRANT_LIMIT = 400` in `foldRoster` — the convener's pod, scanned for
           this workspace's grants;
-        · `GRANT_READ_CAP = 25` — how many of the grants that scan FINDS are
+        · `SEAT_READ_CAP = 25` — how many of the grants that scan FINDS are
           then read. A workspace with more members than that is read down to 25
           and the row says how many were found;
         · `INBOX_LIMIT = 50` on `read_inbox`. Measured: the response reports how
           many it RETURNED, never a total, so saturation is not detectable from
           it and the cap itself is what gets stated.
       All five say so when the read comes back full.
-   8a. The handle shape `acct:<your pod>@<RELAY's host>` in `renderMe` — this
-      page composes it out of two things it already holds, and it is the one
-      identifier the whole second-person flow turns on. It is composed, not read,
-      so it is resolved once at boot with `resolve_webfinger` and what came back
-      is printed beside it.
+   8a. The handle shape `acct:<your pod>@<RELAY's host>`, composed by the module's
+      `composedHandle` out of two things this page already holds. It is the one
+      identifier the whole second-person flow turns on, and it is composed rather
+      than read — so it is resolved once at boot with `resolve_webfinger` and what
+      came back is printed beside it.
    9. The two enforcement basis strings "signed-chain" and "registry-only",
       matched to colour the chip. Any other value renders as reported.
-  10. The vocabulary this page WRITES: in `entryTurtle`, `canvasTurtle`, and the
-      five documents `createWorkspace` publishes.
+  10. The vocabulary this client WRITES: `entryTurtle`, `canvasTurtle`, and the
+      five documents `createWorkspace` publishes. All of them are the module's
+      now — one copy of the bytes, with one IRI guard in front of them.
    NOT hardcoded any more, and it used to be: the shape a post is validated
    against. A workspace record names its own `wsp:entryShape` and this page
    sends that. A record that names none is posted against no shape at all, and
@@ -831,37 +836,54 @@ var WSPC = (() => {
   __export(index_exports, {
     BAD_IRI: () => BAD_IRI,
     ConnectorTransport: () => ConnectorTransport,
+    GRANT_IRI_RX: () => GRANT_IRI_RX,
     GRANT_LIMIT: () => GRANT_LIMIT,
     GRANT_READ_CAP: () => GRANT_READ_CAP,
     IEP: () => IEP,
+    INBOX_LIMIT: () => INBOX_LIMIT,
     POD_RX: () => POD_RX,
     PROBE_TOOL: () => PROBE_TOOL,
     REQUIRED_TOOLS: () => REQUIRED_TOOLS,
     RelayMcpTransport: () => RelayMcpTransport,
+    SEAT_READ_CAP: () => SEAT_READ_CAP,
+    SEAT_SCAN_LIMIT: () => SEAT_SCAN_LIMIT,
     SLUG_RX: () => SLUG_RX,
     ToolCallError: () => ToolCallError,
     WSP: () => WSP,
     WorkspaceClient: () => WorkspaceClient,
+    acceptGrant: () => acceptGrant,
+    acceptanceTurtle: () => acceptanceTurtle,
     asRefusal: () => asRefusal,
     assertPod: () => assertPod,
     assignPodMarks: () => assignPodMarks,
+    awaitHead: () => awaitHead,
+    canvasTurtle: () => canvasTurtle,
+    checkOwnHandle: () => checkOwnHandle,
+    checkRoleForWorkspace: () => checkRoleForWorkspace,
+    checkWriteEligibility: () => checkWriteEligibility,
+    composedHandle: () => composedHandle,
+    createWorkspace: () => createWorkspace,
     entryShapeAnswer: () => entryShapeAnswer,
     entryTurtle: () => entryTurtle,
     errorCopy: () => errorCopy,
     escapeTurtleLiteral: () => escapeTurtleLiteral,
     fail: () => fail,
+    findSeat: () => findSeat,
     foldRoster: () => foldRoster,
     forms: () => forms,
     grantPodFor: () => grantPodFor,
+    grantTurtle: () => grantTurtle,
     graphRegion: () => graphRegion,
     hasTrue: () => hasTrue,
     hasType: () => hasType,
     legacyName: () => legacyName,
+    listWorkspaces: () => listWorkspaces,
     literalAt: () => literalAt,
     maskComments: () => maskComments,
     maskFill: () => maskFill,
     masked: () => masked,
     memberDocIris: () => memberDocIris,
+    mergeForward: () => mergeForward,
     nsIri: () => nsIri,
     nsOf: () => nsOf,
     orderChain: () => orderChain,
@@ -873,19 +895,38 @@ var WSPC = (() => {
     podOfDescriptorUrl: () => podOfDescriptorUrl,
     podOfNsIri: () => podOfNsIri,
     podOfWebid: () => podOfWebid,
+    pollingWatch: () => pollingWatch,
     postEntry: () => postEntry,
     preconditionLine: () => preconditionLine,
     qualifiedName: () => qualifiedName,
+    readCanvas: () => readCanvas,
+    readInbox: () => readInbox,
     readInt: () => readInt,
     readIri: () => readIri,
     readIriList: () => readIriList,
     readLiteral: () => readLiteral,
+    readViewer: () => readViewer,
     refusal: () => refusal,
+    resolveInvitee: () => resolveInvitee,
+    revokeGrant: () => revokeGrant,
+    roleKnown: () => roleKnown,
+    roleName: () => roleName,
+    roleWhy: () => roleWhy,
+    rolesTurtle: () => rolesTurtle,
+    saveCanvas: () => saveCanvas,
     scanTurtle: () => scanTurtle,
+    sendInvite: () => sendInvite,
+    shapesTurtle: () => shapesTurtle,
     shortRef: () => shortRef,
     slugProblem: () => slugProblem,
+    staleDetail: () => staleDetail,
     toChainRow: () => toChainRow,
-    unescapeLiteral: () => unescapeLiteral
+    turtleIri: () => turtleIri,
+    unescapeLiteral: () => unescapeLiteral,
+    verifyGrantIri: () => verifyGrantIri,
+    verifyInvitation: () => verifyInvitation,
+    verifyWorkspaceEntry: () => verifyWorkspaceEntry,
+    workspaceTurtle: () => workspaceTurtle
   });
 
   // packages/workspace-client/src/turtle.ts
@@ -1318,6 +1359,35 @@ var WSPC = (() => {
     return refusal(env.payload);
   }
   var CACHE_KEY_SEP = "\0";
+  function pollingWatch(read, name, input, onEvent, opts) {
+    const every = opts?.refetchInterval ?? 45e3;
+    let stopped = false;
+    let last = null;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const payload = await read(name, input);
+        if (stopped) return;
+        const now = JSON.stringify(payload) ?? "undefined";
+        if (now === last) return;
+        last = now;
+        onEvent({ type: "data", result: { payload } });
+      } catch (e) {
+        if (stopped) return;
+        const err = e;
+        last = null;
+        onEvent({ type: "error", error: { code: err.code ?? "upstream_error", message: err.message ?? String(e) } });
+      }
+    };
+    void tick();
+    const timer = setInterval(() => {
+      void tick();
+    }, every);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }
   var RPC_ACCEPT = "application/json, text/event-stream";
   function parseRpcBody(raw) {
     try {
@@ -1336,6 +1406,8 @@ var WSPC = (() => {
     constructor(relay, credential, fetchImpl) {
       __publicField(this, "accepts", "relay-oauth-bearer");
       __publicField(this, "label");
+      /** See {@link watchTool} for the measurement this sentence reports. */
+      __publicField(this, "watchDescription", "re-read on a timer, not pushed \u2014 this relay exposes no per-graph notification channel a workspace can subscribe to, so an update appears at the next read and not when it happens");
       __publicField(this, "relay");
       __publicField(this, "credential");
       __publicField(this, "id", 0);
@@ -1393,7 +1465,7 @@ var WSPC = (() => {
     }
     async callTool(name, input, opts) {
       const key = name + CACHE_KEY_SEP + JSON.stringify(input);
-      const stale = opts?.cache?.staleTime;
+      const stale = opts?.cache ? opts.cache.staleTime : void 0;
       if (stale) {
         const hit = this.cache.get(key);
         if (hit && Date.now() - hit.at < stale) return hit.payload;
@@ -1422,13 +1494,42 @@ var WSPC = (() => {
       return payload;
     }
     /**
-     * ★ NULL, AND THAT IS THE HONEST ANSWER. There is no push channel on `POST /mcp`, so this
-     * transport cannot watch. Returning a no-op unsubscribe would have looked like a successful
-     * registration and left every stream waiting for updates that could never arrive; the
-     * caller polls instead, and knows it is polling.
+     * A REAL WATCH, AND IT IS A POLL — the distinction is published on {@link watchDescription}
+     * rather than smoothed over, because this relay has no push channel a workspace can use.
+     *
+     * ★ MEASURED AGAINST THE LIVE RELAY, 2026-08-06, with two freshly minted bearers on two real
+     * pods. Both candidate channels were tried before this was written:
+     *
+     *   GET /notifications/<slug of my OWN pod>   -> 400 {"error":"pod_url_rejected",
+     *                                                     "detail":"pod URL must use https"}
+     *   GET /notifications/<slug of ANOTHER pod>  -> 404 {"error":"unknown_pod_slug"}
+     *   GET /sse                                  -> 200 text/event-stream
+     *
+     * The per-pod SolidNotifications channel is the one shaped right — its events carry
+     * `podUrl`, `descriptorUrl`, `graphUrl` and an eventType — and it is UNREACHABLE ON THIS
+     * DEPLOYMENT in both directions. Outward: `requireAuthorizedPodUrl` runs every pod URL
+     * through `assertPublicPodUrl`, and this fleet's pods ARE `http://css.railway.internal:3456/…`,
+     * so the relay's own guard rejects the relay's own pods before authorization is even
+     * considered. Inward: the same gate requires the slug's pod to be a prefix of the bearer's
+     * own, so even repaired it could never open a channel on ANOTHER member's log — which is the
+     * only thing a workspace watch is for.
+     *
+     * `GET /sse` connects, and it is not a subscription. It re-sends `notificationLog.slice(-5)`
+     * — one process-global ring, not a per-pod queue — every 2 seconds to every connected client.
+     * The frames carry a `resource` and no pod and no graph IRI, so a reader cannot tell whose
+     * event it is; and because the same five are re-sent on every tick, it cannot tell a new
+     * event from a repeat either. Measured: 5 frames in 8 s, four of them identical.
+     *
+     * So there is nothing to subscribe TO, and the honest implementation of a watch here is the
+     * one the interface's own `refetchInterval` option already describes: re-issue the read on a
+     * timer and deliver an event when THE ANSWER CHANGES. That is a genuine event — it means the
+     * answer to this exact read differs from the last time it was asked — and it is not what a
+     * push would be. Returning null instead was defensible and cost more than it saved: every
+     * caller then wrote its own polling loop, which is the "two copies of one intention" that
+     * every drift defect in this vertical came from.
      */
-    watchTool() {
-      return null;
+    watchTool(name, input, onEvent, opts) {
+      return pollingWatch((n, i) => this.callTool(n, i), name, input, onEvent, opts);
     }
     async invalidate(name) {
       for (const k of [...this.cache.keys()]) if (k.startsWith(name + CACHE_KEY_SEP)) this.cache.delete(k);
@@ -1438,6 +1539,11 @@ var WSPC = (() => {
     constructor(mcp) {
       __publicField(this, "accepts", "connector-grant");
       __publicField(this, "label", "connector");
+      /**
+       * The host runs the watch and does not say how. Claiming "live" here would be this package
+       * asserting a property of a channel it neither opened nor can see.
+       */
+      __publicField(this, "watchDescription", "handled by the connector runtime, which was asked to refetch on an interval; whether it also pushes is not something this page can establish");
       __publicField(this, "mcp");
       __publicField(this, "server", null);
       this.mcp = mcp;
@@ -2090,6 +2196,710 @@ var WSPC = (() => {
       grantReadCap: GRANT_READ_CAP
     };
   }
+
+  // packages/workspace-client/src/documents.ts
+  function turtleIri(u, what) {
+    if (typeof u !== "string" || !u) throw new Error("turtleIri: " + what + " is missing, so the document cannot be written");
+    if (/[\s<>"{}|\\^`]/.test(u)) {
+      throw new Error("turtleIri: " + what + " is not serializable as a Turtle IRI reference and there is no escape for the characters in it, so this document is refused rather than written with a reference that ends somewhere else: " + u);
+    }
+    return "<" + u + ">";
+  }
+  var XSD = "http://www.w3.org/2001/XMLSchema#";
+  var DCT = "http://purl.org/dc/terms/";
+  var RDFS = "http://www.w3.org/2000/01/rdf-schema#";
+  var SHACL = "http://www.w3.org/ns/shacl#";
+  var DCTYPE = "http://purl.org/dc/dcmitype/";
+  var created = (iso) => '"' + (iso ?? (/* @__PURE__ */ new Date()).toISOString()) + '"^^xsd:dateTime';
+  function shapesTurtle(shapeIri) {
+    const s = shapeIri;
+    turtleIri(s, "the shape IRI");
+    return "@prefix sh: <" + SHACL + "> .\n@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n\n<" + s + "#EntryShape>\n  a sh:NodeShape ; sh:targetClass wsp:Entry ;\n  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path dct:description ; sh:minCount 1 ; sh:maxCount 1 ] ;\n  sh:property [ sh:path dct:created ; sh:minCount 1 ; sh:maxCount 1 ] .\n\n<" + s + "#GrantShape>\n  a sh:NodeShape ; sh:targetClass wsp:MembershipGrant ;\n  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:grantedTo ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:role ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .\n\n<" + s + "#AcceptanceShape>\n  a sh:NodeShape ; sh:targetClass wsp:MembershipAcceptance ;\n  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:member ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:accepts ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .\n";
+  }
+  function rolesTurtle(iri) {
+    turtleIri(iri, "the role profile IRI");
+    const cap = (frag, label, comment) => "<" + iri + "#" + frag + '> a wsp:Capability ; rdfs:label "' + escapeTurtleLiteral(label) + '" ; rdfs:comment "' + escapeTurtleLiteral(comment) + '" .\n';
+    const role = (frag, label, comment, permits) => "<" + iri + "#" + frag + '> a wsp:Role ; rdfs:label "' + escapeTurtleLiteral(label) + '" ; rdfs:comment "' + escapeTurtleLiteral(comment) + '" ;\n  wsp:permits ' + permits.map((p) => "<" + iri + "#" + p + ">").join(", ") + " .\n";
+    return "@prefix wsp: <" + WSP + "> .\n@prefix rdfs: <" + RDFS + "> .\n\n" + cap("Read", "Read the channel", "Fold every member's log into one view.") + cap("Post", "Post to the channel", "Append an entry to your own log in this workspace.") + cap("Convene", "Invite and revoke", "Publish and withdraw membership grants for this workspace. Only the convener's pod holds grants a reader will count, so only the convener can exercise this.") + "\n" + role("Convener", "Convener", "Holds the pod the grants are read from. Can invite, can revoke, and writes to their own log like anybody else.", ["Read", "Post", "Convene"]) + role("Contributor", "Contributor", "Reads the channel and writes to their own log. Cannot seat or unseat anyone.", ["Read", "Post"]) + role("Reader", "Reader", "Reads the channel. Publishes nothing to it.", ["Read"]);
+  }
+  function workspaceTurtle(args) {
+    const ws = turtleIri(args.workspace, "the workspace IRI");
+    const conv = turtleIri(args.convenerWebId, "the convener WebID");
+    const roles = turtleIri(args.rolesIri, "the role profile IRI");
+    const shape = turtleIri(args.shapeIri, "the shape IRI");
+    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + ws + '\n  a wsp:Workspace ;\n  dct:title "' + escapeTurtleLiteral(args.title) + '" ;\n  wsp:convener ' + conv + " ;\n  wsp:roleProfile " + roles + " ;\n  wsp:entryShape " + shape + " ;\n  wsp:grantCapability <" + args.rolesIri + "#Convene> ;\n  dct:created " + created(args.createdIso) + " .\n";
+  }
+  function grantTurtle(args) {
+    const g = turtleIri(args.grant, "the grant IRI");
+    const ws = turtleIri(args.workspace, "the workspace IRI");
+    const to = turtleIri(args.granteeWebId, "the grantee WebID, which was read from the invitee's own pod");
+    const role = turtleIri(args.role, "the role IRI");
+    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + g + "\n  a wsp:MembershipGrant ;\n  wsp:workspace " + ws + " ;\n  wsp:grantedTo " + to + " ;\n  wsp:role " + role + " ;\n" + (args.revoked ? "  wsp:revoked true ;\n" : "") + "  dct:created " + created(args.createdIso) + " .\n";
+  }
+  function acceptanceTurtle(args) {
+    const acc = turtleIri(args.acceptance, "the acceptance IRI");
+    const ws = turtleIri(args.workspace, "the workspace IRI");
+    const me = turtleIri(args.memberWebId, "your own WebID");
+    const grant = turtleIri(args.grant, "the grant IRI being accepted");
+    const stream = turtleIri(args.stream, "the stream IRI");
+    return "@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n@prefix xsd: <" + XSD + "> .\n\n" + acc + "\n  a wsp:MembershipAcceptance ;\n  wsp:workspace " + ws + " ;\n  wsp:member " + me + " ;\n  wsp:accepts " + grant + " ;\n" + (args.grantCid ? '  wsp:acceptsCid "' + escapeTurtleLiteral(args.grantCid) + '" ;\n' : "") + "  wsp:stream " + stream + " ;\n  dct:created " + created(args.createdIso) + " .\n";
+  }
+  function canvasTurtle(args) {
+    const c = turtleIri(args.canvas, "the canvas IRI");
+    const ws = turtleIri(args.workspace, "the workspace IRI");
+    return "@prefix dct: <" + DCT + "> .\n@prefix dctype: <" + DCTYPE + "> .\n@prefix wsp: <" + WSP + "> .\n\n" + c + "\n  a dctype:Text ;\n  wsp:workspace " + ws + ' ;\n  dct:title "Canvas \u2014 ' + escapeTurtleLiteral(args.slug) + '" ;\n  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n';
+  }
+
+  // packages/workspace-client/src/membership.ts
+  async function readViewer(client) {
+    const status = await client.podStatus();
+    const registry = status["registry"];
+    const delegation = status["delegationRegistry"];
+    const agent = status["sessionAgent"];
+    const podUrl = String(status["pod"] ?? status["podUrl"] ?? "");
+    const podName = podUrl.replace(/\/$/, "").split("/").pop() ?? "";
+    if (!podName) {
+      throw fail("tool_error", "get_pod_status answered without a pod URL this reader could turn into a pod name, so there is no address to write to.");
+    }
+    return {
+      podName,
+      podUrl,
+      displayName: status["displayName"] ?? null,
+      css: String(status["css"] ?? ""),
+      webId: registry?.owner ?? delegation?.owner ?? "",
+      agentDid: agent?.did ?? null,
+      agentScope: agent?.scope ?? null
+    };
+  }
+  var composedHandle = (relay, podName) => "acct:" + podName + "@" + new URL(relay).host;
+  async function checkOwnHandle(client, relay, podName) {
+    const handle = composedHandle(relay, podName);
+    let wf;
+    try {
+      wf = await client.tool("resolve_webfinger", { resource: handle });
+    } catch (e) {
+      return { handle, ok: false, errored: true, why: "the resolve_webfinger check on it did not complete (" + errorCopy(e).t + "), so whether it resolves to you is not established here" };
+    }
+    const bad = refusal(wf);
+    if (bad) return { handle, ok: false, why: "the relay refused the lookup: " + String(bad["message"] ?? bad["error"]) };
+    const subject = wf?.["subject"] ?? null;
+    const links = wf?.["links"] ?? [];
+    const profile = links.find((l) => /profile-page/.test(l.rel ?? ""));
+    const pod = profile?.href ? podOfDescriptorUrl(profile.href) ?? profile.href.replace(/\/$/, "").split("/").pop() ?? null : null;
+    if (!subject) return { handle, ok: false, why: "the response echoed no subject, so what it answered about is not established." };
+    if (!pod) return { handle, ok: false, why: "the response carried no profile-page link, so which pod it names is not established." };
+    if (pod !== podName) return { handle, ok: false, why: "it resolves to pod " + pod + ", and the pod you write to is " + podName + "." };
+    return {
+      handle,
+      ok: true,
+      subject,
+      why: "the relay echoed subject " + subject + " and its profile-page link names pod " + pod + ", which is the pod you write to. So this is a composed name that was then read back, not a guess."
+    };
+  }
+  async function checkWriteEligibility(client, viewer) {
+    if (!viewer.agentDid) {
+      return { tried: true, enforcement: null, verified: null, blocked: null, why: "get_pod_status reported no session agent DID, so there is no agent to ask verify_agent about" };
+    }
+    let p;
+    try {
+      p = await client.tool("verify_agent", { agent_id: viewer.agentDid, pod_url: viewer.podUrl }, { cache: false });
+    } catch (e) {
+      return { tried: true, enforcement: null, verified: null, blocked: null, why: "verify_agent did not answer (" + errorCopy(e).t.toLowerCase() + "), so nothing is claimed about your delegation" };
+    }
+    const bad = refusal(p);
+    if (bad) return { tried: true, enforcement: null, verified: null, blocked: null, why: "verify_agent was refused: " + String(bad["message"] ?? bad["error"]) };
+    const enf = p?.["enforcement"] ?? null;
+    const verified = p && "verified" in p ? p["verified"] : null;
+    if (!enf) {
+      return { tried: true, enforcement: null, verified, blocked: null, why: "the relay answered without an enforcement block, so what it grants your session agent is not established here" };
+    }
+    const blocked = enf["writeEligible"] === false ? "The relay reports your session agent is not write-eligible on this pod (basis " + String(enf["basis"]) + ", scope " + String(enf["scope"] ?? "not reported") + "). " + String(enf["note"] ?? "") + " A write would be refused, so it is not offered." : null;
+    return { tried: true, enforcement: enf, verified, blocked, why: null };
+  }
+  async function createWorkspace(client, args) {
+    const problem = slugProblem(args.slug);
+    if (problem) return { kind: "invalid", why: problem };
+    if (!args.title.trim()) return { kind: "invalid", why: "Type a title." };
+    const pod = args.viewer.podName;
+    const me = args.viewer.webId;
+    if (!me) {
+      return { kind: "invalid", why: "get_pod_status returned no registry owner for your pod, so there is no WebID to name as convener. Nothing was written." };
+    }
+    const workspace = nsIri(args.relay, pod, args.slug);
+    const shapeIri = nsIri(args.relay, pod, args.slug + "-shapes");
+    const rolesIri = nsIri(args.relay, pod, args.slug + "-roles");
+    const grantIri = workspace + "-grant-" + pod;
+    const acceptanceIri = nsIri(args.relay, pod, qualifiedName(pod, args.slug, "acceptance"));
+    const streamIri = nsIri(args.relay, pod, qualifiedName(pod, args.slug, "stream"));
+    const done = [];
+    const publish = async (label, iri, content, shapes) => {
+      const publishArgs = {
+        graph_iri: iri,
+        graph_content: content,
+        visibility: "public",
+        auto_supersede_prior: true,
+        sign_authorship: true
+      };
+      if (shapes) publishArgs["conforms_to_shapes"] = shapes.slice();
+      const res = await client.publishAndConfirm(publishArgs, pod, iri, (state, detail) => {
+        args.onStep?.({ label, iri, state, detail });
+      });
+      if (res.error) return { ok: false, out: { kind: "error", at: label, error: res.error, done: done.slice() } };
+      if (res.refusal) return { ok: false, out: { kind: "refused", at: label, refusal: res.refusal, done: done.slice() } };
+      done.push(label);
+      return { ok: true, readable: !!res.readable, why: res.why ?? null, head: res.head };
+    };
+    let step = await publish("shape contract", shapeIri, shapesTurtle(shapeIri));
+    if (!step.ok) return step.out;
+    if (!step.readable) {
+      return {
+        kind: "stalled",
+        at: "shape contract",
+        done: done.slice(),
+        why: (step.why ?? "") + " Everything after this names it, and a name that does not resolve makes the relay refuse the write rather than publish it unvalidated."
+      };
+    }
+    step = await publish("role table", rolesIri, rolesTurtle(rolesIri));
+    if (!step.ok) return step.out;
+    if (!step.readable) return { kind: "stalled", at: "role table", why: step.why ?? "", done: done.slice() };
+    step = await publish(
+      "workspace record",
+      workspace,
+      workspaceTurtle({ workspace, title: args.title, convenerWebId: me, rolesIri, shapeIri }),
+      [shapeIri]
+    );
+    if (!step.ok) return step.out;
+    if (!step.readable) return { kind: "stalled", at: "workspace record", why: step.why ?? "", done: done.slice() };
+    step = await publish(
+      "your own grant",
+      grantIri,
+      grantTurtle({ grant: grantIri, workspace, granteeWebId: me, role: rolesIri + "#Convener" }),
+      [shapeIri]
+    );
+    if (!step.ok) return step.out;
+    if (!step.readable) return { kind: "stalled", at: "your own grant", why: step.why ?? "", done: done.slice() };
+    const head = step.head;
+    const grantCid = head && !head.forked ? head.cid : null;
+    step = await publish(
+      "your acceptance",
+      acceptanceIri,
+      acceptanceTurtle({ acceptance: acceptanceIri, workspace, memberWebId: me, grant: grantIri, grantCid, stream: streamIri }),
+      [shapeIri]
+    );
+    if (!step.ok) return step.out;
+    return {
+      kind: "created",
+      workspace,
+      shapeIri,
+      rolesIri,
+      grantIri,
+      acceptanceIri,
+      streamIri,
+      grantCid,
+      seated: step.readable,
+      why: step.readable ? null : step.why
+    };
+  }
+  async function resolveInvitee(client, handle) {
+    const checks = [];
+    const wf = await client.tool("resolve_webfinger", { resource: handle });
+    const bad = refusal(wf);
+    if (bad) throw fail("tool_error", String(bad["message"] ?? bad["error"]));
+    const links = wf?.["links"] ?? [];
+    const profile = links.find((l) => /profile-page/.test(l.rel ?? ""));
+    const inbox = links.find((l) => /ldp#inbox/.test(l.rel ?? ""));
+    if (!profile?.href) {
+      throw fail("tool_error", "WebFinger answered for " + handle + " without a profile-page link, so this reader cannot find their pod.");
+    }
+    const podUrl = profile.href;
+    const pod = podOfDescriptorUrl(podUrl) ?? podUrl.replace(/\/$/, "").split("/").pop() ?? "";
+    checks.push({ mark: "y", text: "WebFinger resolves " + handle + " to pod " + pod });
+    checks.push(inbox?.href ? {
+      mark: "y",
+      text: "They advertise an LDN inbox, so a notification has somewhere to go",
+      detail: "The address WebFinger returned is " + inbox.href + " \u2014 the relay's own internal storage host. It is what the relay routes on and it is not reachable from outside the fleet, so it is not offered here as something to check."
+    } : { mark: "q", text: "WebFinger reported no ldp#inbox link, so whether a notification can be delivered is not established" });
+    const webfingerWebId = wf?.["webId"] ?? null;
+    const st = await client.tool("get_pod_status", { pod_url: podUrl });
+    const sbad = refusal(st);
+    if (sbad) throw fail("tool_error", String(sbad["message"] ?? sbad["error"]));
+    const registry = st?.["registry"];
+    const delegation = st?.["delegationRegistry"];
+    const webId = registry?.owner ?? delegation?.owner ?? null;
+    if (!webId) throw fail("tool_error", "That pod's registry did not report an owner, so there is no WebID to grant to.");
+    checks.push({ mark: "y", text: "Their pod's own registry names owner " + webId });
+    if (webfingerWebId && webfingerWebId !== webId) {
+      checks.push({ mark: "q", text: "WebFinger names a different identifier for them (" + webfingerWebId + "). The grant uses the registry's, because that is the one a reader can resolve back to a pod." });
+    }
+    const rows = delegation?.rows ?? [];
+    checks.push(rows.length ? { mark: "y", text: rows.length + " agent" + (rows.length === 1 ? "" : "s") + " delegated on their pod, so something there can act for them" } : { mark: "q", text: "Their delegation registry lists no agents, so nothing is currently able to write on their behalf" });
+    let blocked = null;
+    if (podOfWebid(webId) !== pod) {
+      blocked = "the WebID their pod reports does not resolve back to that pod";
+      checks.push({ mark: "n", text: "Their registry owner does not resolve back to pod " + pod + ", so a grant naming it would not seat them. Nothing was published." });
+    }
+    return { handle, checks, pod, podUrl, webId, inbox: inbox?.href ?? null, agents: rows.length, blocked };
+  }
+  async function sendInvite(client, args) {
+    let who;
+    try {
+      who = await resolveInvitee(client, args.handle);
+    } catch (e) {
+      return { kind: "resolve-failed", error: e };
+    }
+    if (who.blocked) return { kind: "blocked", resolution: who };
+    const grantIri = args.workspace + "-grant-" + who.pod;
+    const publishArgs = {
+      graph_iri: grantIri,
+      graph_content: grantTurtle({ grant: grantIri, workspace: args.workspace, granteeWebId: who.webId, role: args.role }),
+      visibility: "public",
+      auto_supersede_prior: true,
+      sign_authorship: true
+    };
+    if (args.entryShape) publishArgs["conforms_to_shapes"] = [args.entryShape];
+    const out = await client.publishAndConfirm(publishArgs, args.viewer.podName, grantIri, args.onState);
+    if (out.error) return { kind: "error", error: out.error, resolution: who };
+    if (out.refusal) return { kind: "refused", refusal: out.refusal, resolution: who };
+    let note = null;
+    let nerr = null;
+    try {
+      note = await client.tool("notify_agent", {
+        to: args.handle,
+        type: "Offer",
+        about: grantIri,
+        summary: "Invitation to " + args.workspaceTitle,
+        content: "A membership grant naming you has been published at " + grantIri + ". Open your own workspace client and it will read that grant off this pod and offer you Accept."
+      });
+    } catch (e) {
+      nerr = e;
+    }
+    const nbad = note ? refusal(note) : null;
+    const chans = note?.["channels"] ?? [];
+    const delivered = !!(note?.["delivered"] === true && chans.some((c) => c?.status === "delivered"));
+    const line = nerr ? "the call failed: " + errorCopy(nerr).t : nbad ? "refused: " + String(nbad["message"] ?? nbad["error"]) : note ? "delivered:" + String(note["delivered"]) + " \xB7 channels " + (chans.map((c) => (c.type ?? "?") + ":" + (c.status ?? "?")).join(", ") || "none reported") : "not attempted";
+    return {
+      kind: "invited",
+      resolution: who,
+      grantIri,
+      readable: !!out.readable,
+      why: out.why ?? null,
+      notify: { attempted: !nerr, delivered, line }
+    };
+  }
+  var GRANT_IRI_RX = /^https:\/\/[^/]+\/ns\/([^/]+)\/(.+)-grant-([^/]+)$/;
+  async function verifyGrantIri(client, args) {
+    const nameMustTargetMe = args.nameMustTargetMe !== false;
+    const checks = [];
+    const no = (why, extra) => {
+      checks.push({ mark: "n", text: why });
+      return { grantIri: args.grantIri, checks, ok: false, why, ...extra };
+    };
+    const grantIri = args.grantIri;
+    const m = GRANT_IRI_RX.exec(grantIri || "");
+    if (!m || grantIri.indexOf(args.relay + "/ns/") !== 0) {
+      return no("that is not a grant IRI in this relay's namespace, so there is nothing on a pod to check it against");
+    }
+    const owner = m[1];
+    const target = m[3];
+    if (!POD_RX.test(owner)) return no("the pod segment in that IRI is not a pod identifier");
+    if (nameMustTargetMe && target !== args.viewer.podName) {
+      return no("that grant is addressed to pod " + target + ", and you are " + args.viewer.podName);
+    }
+    checks.push({ mark: "y", text: nameMustTargetMe ? "The grant IRI is on pod " + owner + " and names your pod in its own name" : "The grant was found on pod " + owner + ", the pod this workspace's own IRI names" });
+    let h;
+    try {
+      h = await client.currentHead(grantIri, owner);
+    } catch (e) {
+      return no("the grant could not be read from " + owner + ": " + (e?.message ?? String(e?.code)), { owner });
+    }
+    if (h.forked) return no("that grant's chain has " + h.heads.length + " unresolved heads, so which grant is current is not decided", { owner });
+    if (h.url === null) {
+      return no("unreadable" in h ? "the read of that IRI on pod " + owner + " did not resolve, so whether a grant is published there is not established \u2014 " + h.message : "no grant is published at that IRI on pod " + owner + " \u2014 " + (h.message || "the relay gave no reason"), { owner });
+    }
+    const grantCid = h.cid;
+    let d;
+    try {
+      d = await client.descriptor(h.url);
+    } catch (e) {
+      return no("the grant's descriptor could not be fetched: " + (e?.message ?? String(e?.code)), { owner, grantCid });
+    }
+    const region = graphRegion(d["graph"]?.content ?? "", grantIri);
+    if (region === null) return no("the signed region of that grant could not be located, so nothing was read from bytes anybody signed", { owner, grantCid });
+    checks.push({ mark: "y", text: "Its signed region was located on " + owner + "'s pod" });
+    const base = {
+      owner,
+      grantCid,
+      grantAuthorship: d["authorship"] ?? null,
+      grantedTo: readIri(region, "wsp:grantedTo"),
+      role: readIri(region, "wsp:role"),
+      revoked: hasTrue(region, "wsp:revoked")
+    };
+    if (base.revoked) return no("that grant carries wsp:revoked true", base);
+    if (!base.grantedTo) return no("the grant names no wsp:grantedTo", base);
+    if (base.grantedTo !== args.viewer.webId) {
+      return no("the grant names " + base.grantedTo + ", and your pod reports your WebID as " + (args.viewer.webId || "none"), base);
+    }
+    checks.push({ mark: "y", text: "It names your own WebID as grantee" });
+    const workspace = readIri(region, "wsp:workspace");
+    if (!workspace) return no("the grant names no wsp:workspace", base);
+    const withWs = { ...base, workspace };
+    const wsOwner = podOfNsIri(workspace);
+    if (!wsOwner) return no("the workspace IRI in that grant is not one this reader can read a pod out of", withWs);
+    const rec = await client.readWorkspaceRecord(workspace, wsOwner).catch((e) => ({ kind: "error", error: e }));
+    if (rec.kind === "forked") return no("the workspace record at " + workspace + " has " + rec.heads.length + " unresolved heads, so it has no single current head", withWs);
+    if (rec.kind === "missing") return no("the workspace record at " + workspace + " could not be read: " + rec.message, withWs);
+    if (rec.kind === "error") return no("the workspace record could not be read: " + (rec.error?.message ?? String(rec.error)), withWs);
+    if (!rec.record.regionFound) return no("the workspace record's signed region could not be located", withWs);
+    const full = {
+      ...withWs,
+      title: rec.record.title,
+      convener: rec.record.convener,
+      roleProfile: rec.record.roleProfile,
+      entryShape: rec.record.entryShape
+    };
+    const cp = rec.record.convenerPod;
+    if (!cp) return no("the workspace names no convener this reader can resolve to a pod", full);
+    if (cp !== owner) {
+      return no("the workspace's convener resolves to pod " + cp + ", and this grant is on pod " + owner + ". A grant only counts on the convener's own pod, so this one seats nobody.", full);
+    }
+    checks.push({ mark: "y", text: "The workspace names a convener on pod " + owner + " \u2014 the same pod the grant is on" });
+    if (grantIri.indexOf(workspace + "-grant-") !== 0) {
+      return no("that grant is at " + grantIri + ", and the workspace it names is " + workspace + ` \u2014 so it is not one of that workspace's own "` + workspace + `-grant-\u2026" documents. Every reader of this workspace looks only under that prefix, so accepting it would write a real acceptance that seats you on nobody's roster.`, full);
+    }
+    checks.push({ mark: "y", text: "Its IRI is one of " + workspace + "'s own grant names, which is where every reader looks" });
+    return { grantIri, checks, ok: true, ...full };
+  }
+  async function acceptGrant(client, args) {
+    const v = args.verdict;
+    const workspace = v.workspace;
+    const convPod = podOfNsIri(workspace) ?? v.owner;
+    const wsSlug = workspace.slice(nsIri(args.relay, convPod, "").length);
+    const pod = args.viewer.podName;
+    const acceptanceIri = nsIri(args.relay, pod, qualifiedName(convPod, wsSlug, "acceptance"));
+    const streamIri = nsIri(args.relay, pod, qualifiedName(convPod, wsSlug, "stream"));
+    const publishArgs = {
+      graph_iri: acceptanceIri,
+      graph_content: acceptanceTurtle({
+        acceptance: acceptanceIri,
+        workspace,
+        memberWebId: args.viewer.webId,
+        grant: v.grantIri,
+        grantCid: v.grantCid ?? null,
+        stream: streamIri
+      }),
+      visibility: "public",
+      auto_supersede_prior: true,
+      sign_authorship: true
+    };
+    if (v.entryShape) publishArgs["conforms_to_shapes"] = [v.entryShape];
+    const out = await client.publishAndConfirm(publishArgs, pod, acceptanceIri, args.onState);
+    if (out.error) return { kind: "error", error: out.error };
+    if (out.refusal) return { kind: "refused", refusal: out.refusal };
+    return {
+      kind: "accepted",
+      acceptanceIri,
+      streamIri,
+      workspace,
+      grantIri: v.grantIri,
+      grantCid: v.grantCid ?? null,
+      entryShape: v.entryShape ?? null,
+      readable: !!out.readable,
+      why: out.why ?? null
+    };
+  }
+  async function revokeGrant(client, args) {
+    if (!args.grantedTo || !args.role) {
+      return { kind: "incomplete", why: "Republishing this grant means restating what it says, and " + (!args.grantedTo ? "its wsp:grantedTo" : "its wsp:role") + " could not be read out of its signed region. Rewriting it with a field missing would be this client deciding what the grant says." };
+    }
+    const publishArgs = {
+      graph_iri: args.grantIri,
+      graph_content: grantTurtle({ grant: args.grantIri, workspace: args.workspace, granteeWebId: args.grantedTo, role: args.role, revoked: true }),
+      visibility: "public",
+      auto_supersede_prior: true,
+      sign_authorship: true
+    };
+    if (args.ifMatch) publishArgs["if_match"] = args.ifMatch;
+    if (args.entryShape) publishArgs["conforms_to_shapes"] = [args.entryShape];
+    const out = await client.publishAndConfirm(publishArgs, args.viewer.podName, args.grantIri, args.onState);
+    if (out.error) return { kind: "error", error: out.error };
+    if (out.refusal) return { kind: "refused", refusal: out.refusal };
+    return { kind: "revoked", grantIri: args.grantIri, asserted: args.ifMatch, readable: !!out.readable, why: out.why ?? null };
+  }
+  var INBOX_LIMIT = 50;
+  async function readInbox(client, limit = INBOX_LIMIT) {
+    const p = await client.tool("read_inbox", { limit });
+    const bad = refusal(p);
+    if (bad) throw fail("tool_error", String(bad["message"] ?? bad["error"]));
+    const all = Array.isArray(p?.["items"]) ? p?.["items"] : [];
+    const items = all.filter((it) => it && it["type"] === "Offer" && it["about"]);
+    return {
+      invitations: items.map((item) => ({ item, verdict: null, lead: null, state: "unchecked" })),
+      saturated: all.length >= limit,
+      limit
+    };
+  }
+  async function verifyInvitation(client, relay, viewer, inv) {
+    const about = String(inv.item["about"] ?? "");
+    try {
+      inv.verdict = await verifyGrantIri(client, { relay, viewer, grantIri: about });
+    } catch (e) {
+      const t = errorCopy(e).t;
+      inv.verdict = { grantIri: about, ok: false, why: t, checks: [{ mark: "n", text: t }] };
+    }
+    inv.state = "checked";
+    inv.lead = !inv.verdict.ok && /^https:\/\/[^/]+\/ns\/[^/]+\/[^/]+$/.test(about) && !/-grant-/.test(about) ? about : null;
+    return inv;
+  }
+  var SEAT_SCAN_LIMIT = 400;
+  var SEAT_READ_CAP = 25;
+  async function findSeat(client, args) {
+    const owner = podOfNsIri(args.workspace);
+    if (!owner) {
+      return { grantIri: args.workspace, ok: false, checks: [], why: "that is not a workspace IRI this reader can read a pod out of" };
+    }
+    const direct = await verifyGrantIri(client, { relay: args.relay, viewer: args.viewer, grantIri: args.workspace + "-grant-" + args.viewer.podName });
+    if (direct.ok) return direct;
+    let rows;
+    let saturated = false;
+    try {
+      const p = await client.tool("discover_context", { pod_name: owner, limit: SEAT_SCAN_LIMIT, sort: "newest-first" });
+      const bad = refusal(p);
+      if (bad) return { grantIri: direct.grantIri, ok: false, checks: direct.checks, why: String(bad["message"] ?? bad["error"]) };
+      assertPod(owner, p?.["pod"], "discover_context");
+      rows = p?.["entries"] ?? [];
+      saturated = rows.length >= SEAT_SCAN_LIMIT;
+    } catch (e) {
+      const t = errorCopy(e).t;
+      return { grantIri: direct.grantIri, ok: false, checks: direct.checks, why: t + (e?.message ? " \u2014 " + e.message : "") };
+    }
+    const prefix = args.workspace + "-grant-";
+    const grants = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const e of rows) {
+      const describes = e["describes"];
+      if (!Array.isArray(describes)) continue;
+      for (const g of describes) {
+        if (typeof g === "string" && g.indexOf(prefix) === 0 && !seen.has(g)) {
+          seen.add(g);
+          grants.push(g);
+        }
+      }
+    }
+    const capNote = saturated ? ". That scan of " + owner + " came back full at " + SEAT_SCAN_LIMIT + " descriptors, so an older grant may lie past the end of it" : "";
+    if (!grants.length) {
+      return {
+        grantIri: direct.grantIri,
+        ok: false,
+        checks: direct.checks,
+        why: "no grant for this workspace appeared among the " + rows.length + " most recent descriptors on " + owner + capNote
+      };
+    }
+    let mine = direct.grantedTo === args.viewer.webId ? direct : null;
+    let last = null;
+    let read = 0;
+    for (const g of grants) {
+      if (read >= SEAT_READ_CAP) break;
+      read++;
+      const v = await verifyGrantIri(client, { relay: args.relay, viewer: args.viewer, grantIri: g, nameMustTargetMe: false });
+      if (v.ok) return v;
+      if (!mine && v.grantedTo === args.viewer.webId) mine = v;
+      last = v;
+    }
+    const pick = mine ?? last;
+    return {
+      grantIri: direct.grantIri,
+      ok: false,
+      checks: pick?.checks ?? direct.checks,
+      why: (mine ? "a grant for this workspace does name you, and it does not seat you: " + mine.why : read + " grant" + (read === 1 ? "" : "s") + " for this workspace on " + owner + " were read and none of them names you" + (grants.length > read ? " (of " + grants.length + " found; this reader reads at most " + SEAT_READ_CAP + ")" : "") + (last?.why ? " \u2014 the last one: " + last.why : "")) + capNote
+    };
+  }
+  async function listWorkspaces(client, relay, podName, limit = SEAT_SCAN_LIMIT) {
+    const p = await client.tool("discover_context", { pod_name: podName, limit, sort: "newest-first" }, { cache: false });
+    const bad = refusal(p);
+    if (bad) throw fail("tool_error", String(bad["message"] ?? bad["error"]));
+    assertPod(podName, p?.["pod"], "discover_context");
+    const rows = p?.["entries"] ?? [];
+    const found = /* @__PURE__ */ new Map();
+    for (const e of rows) {
+      const describes = e["describes"];
+      if (!Array.isArray(describes)) continue;
+      for (const g of describes) {
+        const parsed = parseAcceptanceIri(relay, g, podName);
+        if (!parsed || found.has(g)) continue;
+        found.set(g, {
+          acceptanceIri: g,
+          descriptorUrl: String(e["descriptorUrl"] ?? ""),
+          naming: parsed.naming,
+          owner: parsed.owner,
+          slug: parsed.slug,
+          workspace: parsed.workspace
+        });
+      }
+    }
+    const entries = [...found.values()];
+    for (const c of entries) {
+      if (c.workspace) continue;
+      try {
+        const d = await client.descriptor(c.descriptorUrl);
+        const region = graphRegion(d["graph"]?.content ?? "", c.acceptanceIri);
+        if (region === null) {
+          c.why = "its signed region could not be located";
+          continue;
+        }
+        c.workspace = readIri(region, "wsp:workspace");
+        if (!c.workspace) c.why = "this acceptance names no wsp:workspace, so which workspace it is for is not established";
+        else c.owner = podOfNsIri(c.workspace);
+      } catch (e) {
+        c.why = "its descriptor could not be read: " + (e?.message ?? String(e?.code));
+      }
+    }
+    return { entries, saturated: rows.length >= limit, limit };
+  }
+  async function verifyWorkspaceEntry(client, relay, viewer, c) {
+    if (!c.workspace) {
+      c.verified = false;
+      return c;
+    }
+    try {
+      c.verdict = await findSeat(client, { relay, viewer, workspace: c.workspace });
+      c.verified = c.verdict.ok;
+      c.title = c.verdict.title ?? "";
+      if (!c.verified) c.why = c.verdict.why;
+    } catch (e) {
+      c.verified = false;
+      c.why = errorCopy(e).t;
+    }
+    return c;
+  }
+  function roleName(table, iri) {
+    if (iri && table.roles?.get(iri)) return table.roles.get(iri).label;
+    if (!iri) return "no role";
+    if (!table.roles) return "role not resolved";
+    return "role not in this table";
+  }
+  function roleWhy(table, iri) {
+    if (!iri) return "The grant names no wsp:role.";
+    const r = table.roles?.get(iri);
+    if (r) return "Read from this workspace's own role table: " + iri;
+    if (!table.roles) {
+      return "This workspace's role profile has not resolved, so " + iri + " could not be looked up. The fragment of that IRI is not being shown as a label, because a fragment is a name its author chose and not this table's statement.";
+    }
+    return "The grant names " + iri + ", and this workspace's role table does not define it. So what that role permits here is not established, and no capability list is shown for it. A role IRI from another workspace's table is a real way for this to happen.";
+  }
+  var roleKnown = (table, iri) => !!(iri && table.roles?.get(iri));
+  function checkRoleForWorkspace(table, iri) {
+    if (roleKnown(table, iri)) return { ok: true, why: roleWhy(table, iri) };
+    const known = table.roles && table.roles.size ? "The roles this workspace's table does define are: " + [...table.roles.values()].map((r) => r.label).join(", ") + "." : "This workspace's role profile has not resolved, so there is no role to grant at all.";
+    return { ok: false, why: roleWhy(table, iri) + " Nothing was published and nobody was notified. " + known };
+  }
+
+  // packages/workspace-client/src/canvas.ts
+  async function readCanvas(client, canvasIri, podName) {
+    const h = await client.currentHead(canvasIri, podName);
+    if (h.forked) return { kind: "forked", heads: h.heads, message: h.message };
+    if (h.url === null) {
+      return "unreadable" in h ? { kind: "unresolved", message: h.message } : { kind: "absent", message: h.message };
+    }
+    if (h.headError) return { kind: "head-unreadable", url: h.url, headError: h.headError };
+    const d = await client.descriptor(h.url);
+    const region = graphRegion(d["graph"]?.content ?? "", canvasIri);
+    if (region === null) return { kind: "no-region", url: h.url, cid: h.cid };
+    return { kind: "revision", url: h.url, cid: h.cid, text: readLiteral(region, "dct:description") };
+  }
+  async function awaitHead(client, args) {
+    const sleep = args.sleep ?? ((ms) => new Promise((r) => {
+      setTimeout(r, ms);
+    }));
+    const tries = args.tries ?? 40;
+    let last = null;
+    for (let i = 0; i < tries; i++) {
+      await sleep(700);
+      try {
+        const h = await client.currentHead(args.canvasIri, args.podName);
+        if (h.forked) return { kind: "forked", heads: h.heads, message: h.message };
+        if (h.url !== null) {
+          last = { url: h.url, cid: h.cid };
+          if (args.mine && h.url === args.mine) return { kind: "mine", cid: h.cid, url: h.url };
+          if (!args.mine && h.cid && h.cid !== args.previousCid) return { kind: "changed", cid: h.cid, url: h.url };
+        }
+      } catch {
+      }
+    }
+    if (last && args.mine && last.cid !== args.previousCid) return { kind: "moved-elsewhere", cid: last.cid, url: last.url };
+    return { kind: "timed-out" };
+  }
+  function staleDetail(bad) {
+    const expected = bad["expected"];
+    const current = bad["currentHead"];
+    return {
+      expectedCid: expected?.cid ?? expected?.supersedes ?? null,
+      currentHeadCid: current?.cid ?? null,
+      currentHeadDescriptor: current?.descriptorUrl ?? null,
+      retryHint: bad["retryHint"] ?? null,
+      message: bad["message"] ?? null
+    };
+  }
+  async function saveCanvas(client, args) {
+    const publishArgs = {
+      graph_iri: args.canvasIri,
+      graph_content: canvasTurtle({ canvas: args.canvasIri, workspace: args.workspace, slug: args.slug, body: args.body }),
+      visibility: "public",
+      auto_supersede_prior: true,
+      sign_authorship: true
+    };
+    if (args.ifMatch) publishArgs["if_match"] = args.ifMatch;
+    let res;
+    try {
+      res = await client.tool("publish_context", publishArgs);
+    } catch (e) {
+      return { kind: "error", error: e, relayAnswered: e?.code === "tool_error" };
+    }
+    const bad = refusal(res);
+    if (bad) {
+      const code = typeof bad["code"] === "number" ? bad["code"] : null;
+      if (code === 412) return { kind: "stale", detail: staleDetail(bad), body: bad };
+      return { kind: "refused", code, body: bad };
+    }
+    const mine = res["descriptorUrl"] ?? null;
+    const superseded = res["supersedesPriorVersions"];
+    const settled = await awaitHead(client, {
+      canvasIri: args.canvasIri,
+      podName: args.podName,
+      previousCid: args.previousCid,
+      mine,
+      ...args.awaitTries === void 0 ? {} : { tries: args.awaitTries },
+      ...args.sleep === void 0 ? {} : { sleep: args.sleep }
+    });
+    return {
+      kind: "accepted",
+      descriptorUrl: mine,
+      committed: res["status"] === "committed",
+      status: res["status"] ?? null,
+      ifMatch: args.ifMatch,
+      precondition: res["precondition"],
+      supersededCount: Array.isArray(superseded) ? superseded.length : null,
+      response: res,
+      settled
+    };
+  }
+  async function mergeForward(client, args) {
+    const h = await client.currentHead(args.canvasIri, args.podName);
+    if (h.forked) return { kind: "no-head", why: h.message || "the chain has diverged, so there is no single revision to merge onto" };
+    if (h.url === null) return { kind: "no-head", why: h.message };
+    if (!h.cid) return { kind: "no-head", why: "the head read reported no CID, so there is no revision to assert against and a resend would be unconditional" };
+    const save = await saveCanvas(client, {
+      canvasIri: args.canvasIri,
+      podName: args.podName,
+      workspace: args.workspace,
+      slug: args.slug,
+      body: args.body,
+      ifMatch: h.cid,
+      previousCid: h.cid,
+      ...args.awaitTries === void 0 ? {} : { awaitTries: args.awaitTries },
+      ...args.sleep === void 0 ? {} : { sleep: args.sleep }
+    });
+    return { kind: "resent", onto: h.cid, save };
+  }
   return __toCommonJS(index_exports);
 })();
 
@@ -2098,6 +2908,12 @@ var WSPC = (() => {
    used when the definitions were written out here by hand — so no call site below had to
    change, and none of them can drift from the module again. */
 const BAD_IRI = WSPC.BAD_IRI;
+/* The vocabulary IRI. It was a literal in this page AND a constant in the module, spelled
+   identically — and the two were only ever going to stay identical by luck. Every `wsp:`
+   term the readers resolve expands against the module's copy, so a page writing documents
+   in a namespace one character different from the one its own reader expands would produce
+   graphs that parse, publish, and then fold into nothing. One constant. */
+const WSP = WSPC.WSP, IEP = WSPC.IEP;
 const REQUIRED_TOOLS = WSPC.REQUIRED_TOOLS.slice();
 const POD_RX = WSPC.POD_RX, SLUG_RX = WSPC.SLUG_RX, slugProblem = WSPC.slugProblem;
 const unescapeLiteral = WSPC.unescapeLiteral, scanTurtle = WSPC.scanTurtle;
@@ -2165,6 +2981,64 @@ const invalidateStreams = () => CLIENT.tx.invalidate("discover_context");
    the shape. The record it reasons about is this page's settled read, held on S and read at
    call time — binding it here would freeze the answer from before a workspace was opened. */
 const entryShapeAnswer = (shape) => WSPC.entryShapeAnswer(shape, S.recordResult, WORKSPACE);
+
+/* ══ MEMBERSHIP AND THE CANVAS — the second copy, deleted ══════════════════
+   Below the END marker this page carried its own `shapesTurtle`, `rolesTurtle`,
+   `workspaceTurtle`, `grantTurtle`, `acceptanceTurtle`, `canvasTurtle`, `resolveInvitee`,
+   `verifyGrantIri`, `findSeat`, `roleName`/`roleWhy`/`roleKnown`, its own inbox read, its
+   own list of the workspaces you are in, its own canvas read and its own head-wait — a
+   second copy of every decision the module was already making for the desktop shell. The
+   two had already come apart, in ways that cost more than tidiness:
+     · the page's six document writers interpolated IRIs with NO guard. A Turtle IRI
+       reference ends at the first ">" and the production has no escape for one, and
+       `resolveInvitee` reads the grantee WebID out of the INVITEE's own pod registry — so a
+       WebID carrying ">" closed the reference and every byte after it was parsed as further
+       triples, in a grant published on the CONVENER's pod under the convener's signature.
+       `documents.ts` refuses to serialise one; this page never looked.
+     · the page's `findSeat` computed a scan-saturation flag no caller ever read, so a scan
+       that came back full still reported "none of them names you" as a finding.
+     · the page's `awaitHead` and the module's disagreed about what licenses the word
+       "Saved" — the CID moving, or the head becoming YOUR descriptor.
+   The panels below are still the page's. The decisions are the module's, and every line
+   here is a NAME. Six of the module's functions are deliberately NOT bound —
+   `createWorkspace`, `sendInvite`, `acceptGrant`, `revokeGrant`, `saveCanvas` and
+   `mergeForward` — because the page keeps a function of each of those names whose whole
+   body is the panel that reports it, and a `const` of the same name in this scope is a
+   redeclaration; each of the six calls `WSPC.…` at exactly one site. `checkOwnHandle`
+   collides the same way and is bound under `ownHandleCheck` instead. */
+const turtleIri = WSPC.turtleIri;
+const shapesTurtle = WSPC.shapesTurtle, rolesTurtle = WSPC.rolesTurtle;
+const workspaceTurtle = WSPC.workspaceTurtle, grantTurtle = WSPC.grantTurtle;
+const acceptanceTurtle = WSPC.acceptanceTurtle, canvasTurtle = WSPC.canvasTurtle;
+const GRANT_IRI_RX = WSPC.GRANT_IRI_RX;
+const INBOX_LIMIT = WSPC.INBOX_LIMIT;
+const SEAT_SCAN_LIMIT = WSPC.SEAT_SCAN_LIMIT, SEAT_READ_CAP = WSPC.SEAT_READ_CAP;
+const awaitHead = WSPC.awaitHead, staleDetail = WSPC.staleDetail;
+/* `S.viewer` is read at CALL time and never captured here. It is null until boot resolves
+   it, and boot is RE-ENTRANT: the retry control on a startup failure calls it again and
+   replaces the object, so a viewer captured now would keep handing the module the previous
+   run's pod name and WebID — writes addressed to a pod this run never confirmed. */
+const readViewer = () => WSPC.readViewer(CLIENT);
+const composedHandle = () => WSPC.composedHandle(RELAY, S.viewer.podName);
+const ownHandleCheck = () => WSPC.checkOwnHandle(CLIENT, RELAY, S.viewer.podName);
+const checkWriteEligibility = () => WSPC.checkWriteEligibility(CLIENT, S.viewer);
+const resolveInvitee = (handle) => WSPC.resolveInvitee(CLIENT, handle);
+const verifyGrantIri = (grantIri, opts) =>
+  WSPC.verifyGrantIri(CLIENT, { relay: RELAY, viewer: S.viewer, grantIri: grantIri, nameMustTargetMe: opts && opts.nameMustTargetMe });
+const findSeat = (workspace) => WSPC.findSeat(CLIENT, { relay: RELAY, viewer: S.viewer, workspace: workspace });
+const readInbox = () => WSPC.readInbox(CLIENT);
+const verifyInvitation = (inv) => WSPC.verifyInvitation(CLIENT, RELAY, S.viewer, inv);
+const listWorkspaces = (podName) => WSPC.listWorkspaces(CLIENT, RELAY, podName);
+const verifyWorkspaceEntry = (entry) => WSPC.verifyWorkspaceEntry(CLIENT, RELAY, S.viewer, entry);
+const readCanvas = (canvasIri, podName) => WSPC.readCanvas(CLIENT, canvasIri, podName);
+/* The role table is a DOCUMENT, read per workspace into S.roles/S.capLabels, so it is passed
+   at call time for the same reason: bound here it would freeze the table from before any
+   workspace was open, which is no table at all — and "no table" is the state in which every
+   one of these four says so rather than falling back to the role IRI's fragment. */
+const roleName = (iri) => WSPC.roleName({ roles: S.roles, caps: S.capLabels }, iri);
+const roleWhy = (iri) => WSPC.roleWhy({ roles: S.roles, caps: S.capLabels }, iri);
+const roleKnown = (iri) => WSPC.roleKnown({ roles: S.roles, caps: S.capLabels }, iri);
+const checkRoleForWorkspace = (iri) => WSPC.checkRoleForWorkspace({ roles: S.roles, caps: S.capLabels }, iri);
 /* ══ END GENERATED ════════════════════════════════════════════════════════ */
 
 /* ── time ─────────────────────────────────────────────────── */
@@ -2234,6 +3108,7 @@ const S = {
   spaces: null,          // [{workspace, verified, why, ...}] — null until read
   spacesError: null,
   spacesSaturated: false,
+  spacesLimit: null,     // the cap that read actually asked for, off the answer
   steps: [],             // the boot checklist, rendered as it fills in
   lobbyOpen: true,
 };
@@ -2289,6 +3164,15 @@ function renderSteps() {
    channel already reads with. A seat is two documents on two pods with two
    different owners, and the substrate refuses either party the other's pod, so
    neither half can be manufactured by the party that benefits from it.
+
+   The four flows themselves are now the module's too — `createWorkspace`,
+   `sendInvite`, `verifyGrantIri`, `acceptGrant`, `revokeGrant`, `readInbox`,
+   `findSeat`, `listWorkspaces` — and so is the canvas: `readCanvas`,
+   `saveCanvas`, `mergeForward`. Each hands back a tagged outcome and the
+   evidence behind it, and each function below DRAWS one. That split is why the
+   sentence a viewer reads and the verdict a client reached are the same thing:
+   the panel cannot say "Saved" or "you are seated" on any basis other than the
+   one the module returned, because it has no other basis available to it.
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* The panel every membership write reports into. One shape, so a viewer learns
@@ -2345,92 +3229,53 @@ function refusalPanel(where, bad, what) {
 /* ── Flow A: create a workspace ───────────────────────────────────────────
    Five documents, on the creator's own pod, in order, each waiting for the last
    to be READABLE because each names the one before it. Nothing is created
-   anywhere else and no other party is touched. */
-function shapesTurtle(shapeIri) {
-  return "@prefix sh: <http://www.w3.org/ns/shacl#> .\n"
-    + "@prefix wsp: <" + WSP + "> .\n"
-    + "@prefix dct: <http://purl.org/dc/terms/> .\n\n"
-    + "<" + shapeIri + "#EntryShape>\n"
-    + "  a sh:NodeShape ; sh:targetClass wsp:Entry ;\n"
-    + "  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n"
-    + "  sh:property [ sh:path dct:description ; sh:minCount 1 ; sh:maxCount 1 ] ;\n"
-    + "  sh:property [ sh:path dct:created ; sh:minCount 1 ; sh:maxCount 1 ] .\n\n"
-    + "<" + shapeIri + "#GrantShape>\n"
-    + "  a sh:NodeShape ; sh:targetClass wsp:MembershipGrant ;\n"
-    + "  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n"
-    + "  sh:property [ sh:path wsp:grantedTo ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n"
-    + "  sh:property [ sh:path wsp:role ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .\n\n"
-    + "<" + shapeIri + "#AcceptanceShape>\n"
-    + "  a sh:NodeShape ; sh:targetClass wsp:MembershipAcceptance ;\n"
-    + "  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n"
-    + "  sh:property [ sh:path wsp:member ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n"
-    + "  sh:property [ sh:path wsp:accepts ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n"
-    + "  sh:property [ sh:path wsp:stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .\n";
-}
-/* Emitted as Turtle at a relay /ns/ IRI, which serves text/turtle — so the role
-   reader resolves it in ONE hop with no HTML alternate to follow. */
-function rolesTurtle(iri) {
-  const cap = (frag, label, comment) =>
-    "<" + iri + "#" + frag + "> a wsp:Capability ; rdfs:label \"" + escTtl(label)
-    + "\" ; rdfs:comment \"" + escTtl(comment) + "\" .\n";
-  const role = (frag, label, comment, permits) =>
-    "<" + iri + "#" + frag + "> a wsp:Role ; rdfs:label \"" + escTtl(label)
-    + "\" ; rdfs:comment \"" + escTtl(comment) + "\" ;\n  wsp:permits "
-    + permits.map((p) => "<" + iri + "#" + p + ">").join(", ") + " .\n";
-  return "@prefix wsp: <" + WSP + "> .\n"
-    + "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\n"
-    + cap("Read", "Read the channel", "Fold every member's log into one view.")
-    + cap("Post", "Post to the channel", "Append an entry to your own log in this workspace.")
-    + cap("Convene", "Invite and revoke", "Publish and withdraw membership grants for this workspace. Only the convener's pod holds grants a reader will count, so only the convener can exercise this.")
-    + "\n"
-    + role("Convener", "Convener", "Holds the pod the grants are read from. Can invite, can revoke, and writes to their own log like anybody else.", ["Read", "Post", "Convene"])
-    + role("Contributor", "Contributor", "Reads the channel and writes to their own log. Cannot seat or unseat anyone.", ["Read", "Post"])
-    + role("Reader", "Reader", "Reads the channel. Publishes nothing to it.", ["Read"]);
-}
-function workspaceTurtle(wsIri, title, convenerWebId, rolesIri, shapeIri) {
-  return "@prefix wsp: <" + WSP + "> .\n"
-    + "@prefix dct: <http://purl.org/dc/terms/> .\n"
-    + "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n"
-    + "<" + wsIri + ">\n"
-    + "  a wsp:Workspace ;\n"
-    + '  dct:title "' + escTtl(title) + '" ;\n'
-    + "  wsp:convener <" + convenerWebId + "> ;\n"
-    + "  wsp:roleProfile <" + rolesIri + "> ;\n"
-    + "  wsp:entryShape <" + shapeIri + "> ;\n"
-    + "  wsp:grantCapability <" + rolesIri + "#Convene> ;\n"
-    + '  dct:created "' + new Date().toISOString() + '"^^xsd:dateTime .\n';
-}
-function grantTurtle(grantIri, wsIri, granteeWebId, roleIri, revoked) {
-  return "@prefix wsp: <" + WSP + "> .\n"
-    + "@prefix dct: <http://purl.org/dc/terms/> .\n"
-    + "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n"
-    + "<" + grantIri + ">\n"
-    + "  a wsp:MembershipGrant ;\n"
-    + "  wsp:workspace <" + wsIri + "> ;\n"
-    + "  wsp:grantedTo <" + granteeWebId + "> ;\n"
-    + "  wsp:role <" + roleIri + "> ;\n"
-    + (revoked ? "  wsp:revoked true ;\n" : "")
-    + '  dct:created "' + new Date().toISOString() + '"^^xsd:dateTime .\n';
-}
-/* ── wsp:accepts is a URL you can open ────────────────────────────────────
-   It used to be the grant's DESCRIPTOR URL — an address on the relay's internal
-   storage host, which no reader outside the relay can dereference. The grant's
-   own /ns/ IRI goes here instead, and the revision it was accepted at is pinned
-   separately in wsp:acceptsCid. The guarantee is unchanged: re-granting moves
-   the head, the CID stops matching, and the stale acceptance stops seating. */
-function acceptanceTurtle(accIri, wsIri, memberWebId, grantIri, grantCid, streamIri) {
-  return "@prefix wsp: <" + WSP + "> .\n"
-    + "@prefix dct: <http://purl.org/dc/terms/> .\n"
-    + "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n"
-    + "<" + accIri + ">\n"
-    + "  a wsp:MembershipAcceptance ;\n"
-    + "  wsp:workspace <" + wsIri + "> ;\n"
-    + "  wsp:member <" + memberWebId + "> ;\n"
-    + "  wsp:accepts <" + grantIri + "> ;\n"
-    + (grantCid ? '  wsp:acceptsCid "' + escTtl(grantCid) + '" ;\n' : "")
-    + "  wsp:stream <" + streamIri + "> ;\n"
-    + '  dct:created "' + new Date().toISOString() + '"^^xsd:dateTime .\n';
-}
+   anywhere else and no other party is touched.
+
+   The five WRITERS — and `canvasTurtle` further down — were spelled out here and
+   are now bound from the module in the generated block above. Every one of them
+   interpolated an IRI with no check, and one of those IRIs comes off SOMEBODY
+   ELSE's pod: `grantTurtle` wrote `wsp:grantedTo <…>` from the WebID the
+   invitee's own registry reports. A Turtle IRI reference ends at the first ">"
+   and there is no escape for one, so a WebID containing ">" ended the reference
+   and every byte after it was parsed as more triples — in a grant published on
+   the convener's pod, under the convener's signature. The module refuses to
+   serialise one rather than writing it, which is the only correct handling and
+   is not something a second copy of this file would have learned.
+
+   The rest of what those writers know — that `wsp:accepts` is the grant's own
+   /ns/ IRI and not its descriptor URL, so it is a URL a reader outside the fleet
+   can open, with the accepted revision pinned separately in `wsp:acceptsCid` —
+   is documented at each of them in packages/workspace-client/src/documents.ts.
+   It is not restated here, because a second telling is a second thing to keep
+   true. */
+
+/* ── the five documents, named ONCE ───────────────────────────────────────
+   The module reports each step by the label it gives the document, and these
+   three tables turn a label into this panel's own sentence about it. They are
+   keyed rather than positional so that adding a sixth document to the module
+   cannot silently renumber what the page says about the fifth — and every lookup
+   below has a fallback that names the label instead of guessing, because a
+   sentence about the wrong document is worse than an unfamiliar one. */
+const CREATE_AFTER_ERROR = {
+  "shape contract": "Nothing else was attempted.",
+  "role table": "The shape document was published; nothing after it was.",
+  "workspace record": "The workspace record was not published.",
+  "your own grant": "The grant was not published.",
+  "your acceptance": "The acceptance was not published, so nothing seats you here yet.",
+};
+const CREATE_WHAT = {
+  "shape contract": "The shape document",
+  "role table": "The role table",
+  "workspace record": "The workspace record",
+  "your own grant": "The grant",
+  "your acceptance": "The acceptance",
+};
+const CREATE_STALLED = {
+  "shape contract": "The shape document is not readable yet, so the rest was not attempted",
+  "role table": "The role table is not readable yet",
+  "workspace record": "The workspace record is not readable yet",
+  "your own grant": "Your grant is not readable yet",
+};
 
 async function createWorkspace() {
   const btn = $("createbtn");
@@ -2441,78 +3286,75 @@ async function createWorkspace() {
   if (S.writeBlocked) { say("createresult", "refused", "Not write-eligible on your pod", text(S.writeBlocked)); return; }
   btn.disabled = true;
   const pod = S.viewer.podName;
-  const me = S.viewer.webId;
-  if (!me) {
-    say("createresult", "refused", "Your pod did not report an owner",
-      text("get_pod_status returned no registry owner for your pod, so there is no WebID to name as convener. Nothing was written."));
-    btn.disabled = false; return;
-  }
-  const wsIri = nsIri(pod, slug);
-  const shapeIri = nsIri(pod, slug + "-shapes");
-  const rolesIri = nsIri(pod, slug + "-roles");
-  const grantIri = wsIri + "-grant-" + pod;
-  const accIri = nsIri(pod, qualifiedName(pod, slug, "acceptance"));
-  const streamIri = nsIri(pod, qualifiedName(pod, slug, "stream"));
 
   const p = say("createresult", "pending", "Creating " + slug + " on pod " + pod, null);
   const log = el("div"); log.style.marginTop = "6px"; p.appendChild(log);
   const stop = (msg) => { p.className = "panel refused anim"; p.querySelector("h4").textContent = msg; btn.disabled = false; };
 
-  const publish = async (label, iri, content, shapes) => {
-    const set = writeLine(log, label);
-    const args = { graph_iri: iri, graph_content: content, visibility: "public",
-      auto_supersede_prior: true, sign_authorship: true };
-    if (shapes) args.conforms_to_shapes = shapes;
-    const out = await publishAndConfirm(args, pod, iri, set);
-    return out;
+  /* One writeLine row per document, created the first time the module reports on
+     that document and driven by every later report about the same one. Which
+     five documents there are, what order they go in, and what "readable" means
+     for each is the module's; the row is this page's. */
+  const rows = new Map();
+  const onStep = (s) => {
+    let set = rows.get(s.label);
+    if (!set) { set = writeLine(log, s.label); rows.set(s.label, set); }
+    set(s.state, s.detail);
   };
 
-  let out = await publish("shape contract", shapeIri, shapesTurtle(shapeIri));
-  if (out.error) { clear($("createresult")).appendChild(errBox(out.error, "Nothing else was attempted.")); btn.disabled = false; return; }
-  if (out.refusal) { refusalPanel("createresult", out.refusal, "The shape document"); btn.disabled = false; return; }
-  if (!out.readable) { stop("The shape document is not readable yet, so the rest was not attempted"); p.appendChild(el("div", "note", (out.why || "") + " Everything after this names it, and a name that does not resolve makes the relay refuse the write rather than publish it unvalidated. Press Create again in a moment.")); return; }
+  const out = await WSPC.createWorkspace(CLIENT, {
+    relay: RELAY, viewer: S.viewer, title: title, slug: slug, onStep: onStep,
+  });
 
-  out = await publish("role table", rolesIri, rolesTurtle(rolesIri));
-  if (out.error) { clear($("createresult")).appendChild(errBox(out.error, "The shape document was published; nothing after it was.")); btn.disabled = false; return; }
-  if (out.refusal) { refusalPanel("createresult", out.refusal, "The role table"); btn.disabled = false; return; }
-  if (!out.readable) { stop("The role table is not readable yet"); p.appendChild(el("div", "note", out.why || "")); return; }
-
-  out = await publish("workspace record", wsIri,
-    workspaceTurtle(wsIri, title, me, rolesIri, shapeIri), [shapeIri]);
-  if (out.error) { clear($("createresult")).appendChild(errBox(out.error, "The workspace record was not published.")); btn.disabled = false; return; }
-  if (out.refusal) { refusalPanel("createresult", out.refusal, "The workspace record"); btn.disabled = false; return; }
-  if (!out.readable) { stop("The workspace record is not readable yet"); p.appendChild(el("div", "note", out.why || "")); return; }
-
-  out = await publish("your own grant", grantIri,
-    grantTurtle(grantIri, wsIri, me, rolesIri + "#Convener"), [shapeIri]);
-  if (out.error) { clear($("createresult")).appendChild(errBox(out.error, "The grant was not published.")); btn.disabled = false; return; }
-  if (out.refusal) { refusalPanel("createresult", out.refusal, "The grant"); btn.disabled = false; return; }
-  if (!out.readable) { stop("Your grant is not readable yet"); p.appendChild(el("div", "note", out.why || "")); return; }
-  const grantCid = (out.head && out.head.cid) || null;
-
-  out = await publish("your acceptance", accIri,
-    acceptanceTurtle(accIri, wsIri, me, grantIri, grantCid, streamIri), [shapeIri]);
-  if (out.error) { clear($("createresult")).appendChild(errBox(out.error, "The acceptance was not published, so nothing seats you here yet.")); btn.disabled = false; return; }
-  if (out.refusal) { refusalPanel("createresult", out.refusal, "The acceptance"); btn.disabled = false; return; }
+  if (out.kind === "invalid") {
+    /* Three things make a create invalid: a slug the naming scheme refuses, an
+       empty title, and a pod whose registry reported no owner to name as
+       convener. The first two cannot reach here — the button stays disabled
+       until both pass and this function returns above — so the heading names the
+       third, which is the one this panel has always shown. The module's sentence
+       is printed either way, so the reason is on screen even if the heading ever
+       stops fitting it. */
+    say("createresult", "refused", "Your pod did not report an owner", text(out.why));
+    btn.disabled = false; return;
+  }
+  if (out.kind === "error") {
+    clear($("createresult")).appendChild(errBox(out.error, CREATE_AFTER_ERROR[out.at]
+      || ("This failed on \"" + out.at + "\". What was published before it: "
+          + (out.done.length ? out.done.join(", ") : "nothing") + ".")));
+    btn.disabled = false; return;
+  }
+  if (out.kind === "refused") {
+    refusalPanel("createresult", out.refusal, CREATE_WHAT[out.at] || ("The document for \"" + out.at + "\""));
+    btn.disabled = false; return;
+  }
+  if (out.kind === "stalled") {
+    stop(CREATE_STALLED[out.at] || ("\"" + out.at + "\" is not readable yet, so the rest was not attempted"));
+    /* The shape contract is the one whose stall stops everything after it, and
+       the module says why in its own sentence. What this page adds is the thing
+       only it can offer: the control to press again. */
+    p.appendChild(el("div", "note", (out.why || "")
+      + (out.at === "shape contract" ? " Press Create again in a moment." : "")));
+    return;
+  }
 
   p.className = "panel ok anim";
-  p.querySelector("h4").textContent = out.readable
+  p.querySelector("h4").textContent = out.seated
     ? "Created — you are seated in " + slug
     : "Created, and your acceptance is not readable yet";
   p.appendChild(kvPair([
-    ["workspace", wsIri],
-    ["shape", shapeIri],
-    ["roles", rolesIri],
-    ["your grant", grantIri],
-    ["your acceptance", accIri],
-    ["grant revision pinned", grantCid || "the head read reported no CID"],
+    ["workspace", out.workspace],
+    ["shape", out.shapeIri],
+    ["roles", out.rolesIri],
+    ["your grant", out.grantIri],
+    ["your acceptance", out.acceptanceIri],
+    ["grant revision pinned", out.grantCid || "the head read reported no CID"],
   ]));
   p.appendChild(el("div", "note", "Every one of those is a URL. Give the workspace IRI to anyone you want to "
     + "look at it; to seat them you also have to publish a grant naming them, which is the Invite control once "
     + "this workspace is open."));
   btn.disabled = false;
   $("wsslug").value = ""; $("wstitleIn").value = "";
-  selectWorkspace(wsIri);
+  selectWorkspace(out.workspace);
   loadSpaces();
 }
 
@@ -2527,61 +3369,14 @@ async function createWorkspace() {
    the WebFinger identifier is dropped from every roster as "an identifier this
    reader cannot resolve to a pod". WebFinger is used here for what it is good
    for — does this handle exist, which pod is it, can it receive — and its webId
-   is discarded. */
-async function resolveInvitee(handle) {
-  const out = { handle: handle, checks: [] };
-  const wf = await tool("resolve_webfinger", { resource: handle });
-  const bad = refusal(wf);
-  if (bad) throw fail("tool_error", bad.message || bad.error);
-  const links = (wf && wf.links) || [];
-  const profile = links.find((l) => /profile-page/.test(l.rel || ""));
-  const inbox = links.find((l) => /ldp#inbox/.test(l.rel || ""));
-  if (!profile || !profile.href) throw fail("tool_error", "WebFinger answered for " + handle + " without a profile-page link, so this page cannot find their pod.");
-  out.podUrl = profile.href;
-  out.pod = podOfDescriptorUrl(profile.href) || profile.href.replace(/\/$/, "").split("/").pop();
-  out.checks.push(["y", "WebFinger resolves " + handle + " to pod " + out.pod]);
-  /* ── the fact this check supports, not an address to eyeball ─────────────
-     MEASURED: the inbox href WebFinger returns is the cluster-internal storage
-     host (css.railway.internal). That is correct as canonical signed bytes and
-     it is not something the person reading this panel can fetch — and this is
-     the one place on the page a human is asked to look at an identifier
-     belonging to somebody ELSE before granting them a seat. So what is stated
-     is what was established: that they advertise one. The address is available
-     on hover, described as what it is. */
-  out.checks.push([inbox ? "y" : "q", inbox
-    ? "They advertise an LDN inbox, so a notification has somewhere to go"
-    : "WebFinger reported no ldp#inbox link, so whether a notification can be delivered is not established",
-    inbox ? "The address WebFinger returned is " + inbox.href
-      + " — the relay's own internal storage host. It is what the relay routes on and it is not reachable from a browser, so it is not offered here as something to check."
-      : null]);
-  out.inbox = inbox ? inbox.href : null;
-  out.webfingerWebId = (wf && wf.webId) || null;
+   is discarded. That reasoning, and the two calls it takes, are the module's
+   `resolveInvitee`; `WSPC.sendInvite` runs it, publishes the grant and then
+   attempts the notice, reporting the publish and the notice SEPARATELY because a
+   failed notice does not un-publish a grant.
 
-  const st = await tool("get_pod_status", { pod_url: out.podUrl });
-  const sbad = refusal(st);
-  if (sbad) throw fail("tool_error", sbad.message || sbad.error);
-  /* ★ MEASURED TRAP: `sessionAgent` on a cross-pod status call is still the
-     CALLER'S agent, not theirs. It is not read. */
-  out.webId = (st && st.registry && st.registry.owner) || (st && st.delegationRegistry && st.delegationRegistry.owner) || null;
-  if (!out.webId) throw fail("tool_error", "That pod's registry did not report an owner, so there is no WebID to grant to.");
-  out.checks.push(["y", "Their pod's own registry names owner " + out.webId]);
-  if (out.webfingerWebId && out.webfingerWebId !== out.webId) {
-    out.checks.push(["q", "WebFinger names a different identifier for them (" + out.webfingerWebId
-      + "). The grant uses the registry's, because that is the one a reader can resolve back to a pod."]);
-  }
-  const rows = (st && st.delegationRegistry && st.delegationRegistry.rows) || [];
-  out.agents = rows.length;
-  out.checks.push([rows.length ? "y" : "q", rows.length
-    ? rows.length + " agent" + (rows.length === 1 ? "" : "s") + " delegated on their pod, so something there can act for them"
-    : "Their delegation registry lists no agents, so nothing is currently able to write on their behalf"]);
-  if (podOfWebid(out.webId) !== out.pod) {
-    out.checks.push(["n", "Their registry owner does not resolve back to pod " + out.pod
-      + ", so a grant naming it would not seat them. Nothing was published."]);
-    out.blocked = "the WebID their pod reports does not resolve back to that pod";
-  }
-  return out;
-}
-
+   The checks it hands back are drawn here, into a box appended BEFORE the write
+   log, so a reader meets what was established about the invitee above the record
+   of what was then written about them. */
 async function sendInvite() {
   const btn = $("sendinvite");
   const handle = $("invitee").value.trim();
@@ -2596,77 +3391,71 @@ async function sendInvite() {
      role no reader of this workspace can look up. Re-derived here rather than
      trusted, because the value is the thing being written into somebody else's
      seat. */
-  if (!roleKnown(roleIri)) {
-    say("sendresult", "refused", "That role is not one this workspace defines", text(
-      roleWhy(roleIri) + " Nothing was published and nobody was notified. "
-      + (S.roles && S.roles.size
-          ? "The roles this workspace's table does define are: " + [...S.roles.values()].map((r) => r.label).join(", ") + "."
-          : "This workspace's role profile has not resolved, so there is no role to grant at all.")));
+  const rc = checkRoleForWorkspace(roleIri);
+  if (!rc.ok) {
+    say("sendresult", "refused", "That role is not one this workspace defines", text(rc.why));
     renderLobby();
     return;
   }
   btn.disabled = true;
   const p = say("sendresult", "pending", "Resolving " + handle, null);
-  let who;
-  try { who = await resolveInvitee(handle); }
-  catch (e) { clear($("sendresult")).appendChild(errBox(e, "Nothing was published and nobody was notified.")); btn.disabled = false; return; }
+  /* Both boxes are appended NOW, empty, so the checks land above the write log
+     however the two finish. The resolution comes back with the outcome rather
+     than before it, and appending it afterwards would put what was established
+     about the invitee underneath the record of what was written about them. */
   const cl = el("div", "checks");
-  /* A third element, where a check has one, is the detail behind it — an
-     address a reader cannot fetch, say. Shown on hover rather than as the
-     claim itself. */
-  for (const [k, t, detail] of who.checks) {
-    const line = el("div", k, t);
-    if (detail) line.title = detail;
+  p.appendChild(cl);
+  const log = el("div"); log.style.marginTop = "6px"; p.appendChild(log);
+  let set = null;
+
+  const out = await WSPC.sendInvite(CLIENT, {
+    viewer: S.viewer,
+    workspace: WORKSPACE,
+    workspaceTitle: (S.ws && S.ws.title) ? S.ws.title : SLUG,
+    handle: handle,
+    role: roleIri,
+    entryShape: (S.ws && S.ws.entryShape) || null,
+    onState: (state, detail) => {
+      if (!set) set = writeLine(log, "grant on your pod");
+      set(state, detail);
+    },
+  });
+
+  /* The one outcome with no resolution on it: nothing about the invitee was
+     established, so there are no checks to draw. */
+  if (out.kind === "resolve-failed") {
+    clear($("sendresult")).appendChild(errBox(out.error, "Nothing was published and nobody was notified."));
+    btn.disabled = false; return;
+  }
+  /* `detail`, where a check has one, is the thing behind it — an address a
+     reader cannot fetch, say. Shown on hover rather than as the claim itself. */
+  for (const c of out.resolution.checks) {
+    const line = el("div", c.mark, c.text);
+    if (c.detail) line.title = c.detail;
     cl.appendChild(line);
   }
-  p.appendChild(cl);
-  if (who.blocked) { p.className = "panel refused anim"; p.querySelector("h4").textContent = "Cannot grant to that handle"; btn.disabled = false; return; }
+  if (out.kind === "blocked") { p.className = "panel refused anim"; p.querySelector("h4").textContent = "Cannot grant to that handle"; btn.disabled = false; return; }
+  if (out.kind === "error") { clear($("sendresult")).appendChild(errBox(out.error, "No grant was published and nobody was notified.")); btn.disabled = false; return; }
+  if (out.kind === "refused") { refusalPanel("sendresult", out.refusal, "The grant"); btn.disabled = false; return; }
 
-  const grantIri = WORKSPACE + "-grant-" + who.pod;
-  const log = el("div"); log.style.marginTop = "6px"; p.appendChild(log);
-  const set = writeLine(log, "grant on your pod");
-  const args = {
-    graph_iri: grantIri,
-    graph_content: grantTurtle(grantIri, WORKSPACE, who.webId, roleIri),
-    visibility: "public", auto_supersede_prior: true, sign_authorship: true,
-  };
-  if (S.ws && S.ws.entryShape) args.conforms_to_shapes = [S.ws.entryShape];
-  const out = await publishAndConfirm(args, S.viewer.podName, grantIri, set);
-  if (out.error) { clear($("sendresult")).appendChild(errBox(out.error, "No grant was published and nobody was notified.")); btn.disabled = false; return; }
-  if (out.refusal) { refusalPanel("sendresult", out.refusal, "The grant"); btn.disabled = false; return; }
-
-  /* The notification carries the GRANT's IRI, never the workspace's. The
+  /* The notification carried the GRANT's IRI, never the workspace's. The
      recipient's page takes exactly one thing out of a world-writable inbox — a
      URL — and everything it then renders comes from the /ns/<owner>/ document at
      the end of it, whose owner segment the relay's own route makes
      authority-closed. */
-  let note = null, nerr = null;
-  try { note = await tool("notify_agent", {
-    to: handle, type: "Offer", about: grantIri,
-    summary: "Invitation to " + (S.ws && S.ws.title ? S.ws.title : SLUG),
-    content: "A membership grant naming you has been published at " + grantIri
-      + ". Open your own copy of the workspace page and it will read that grant off this pod and offer you Accept.",
-  }); } catch (e) { nerr = e; }
-  const nbad = note && refusal(note);
-  const chans = (note && note.channels) || [];
-  const delivered = !!(note && note.delivered === true && chans.some((c) => c && c.status === "delivered"));
-
-  p.className = out.readable && delivered ? "panel ok anim" : "panel pending anim";
+  p.className = out.readable && out.notify.delivered ? "panel ok anim" : "panel pending anim";
   p.querySelector("h4").textContent = out.readable
-    ? (delivered ? "Invited — the grant is readable and the notice was delivered"
-                 : "The grant is readable; the notice was not confirmed delivered")
+    ? (out.notify.delivered ? "Invited — the grant is readable and the notice was delivered"
+                            : "The grant is readable; the notice was not confirmed delivered")
     : "The grant was accepted and is not readable yet";
   p.appendChild(kvPair([
-    ["grant", grantIri],
-    ["granted to", who.webId],
+    ["grant", out.grantIri],
+    ["granted to", out.resolution.webId],
     ["role", roleName(roleIri)],
     ["readable on your pod", out.readable ? "yes — the head matches the descriptor this write returned" : (out.why || "not yet")],
-    ["notification", nerr ? "the call failed: " + errorCopy(nerr).t
-      : nbad ? "refused: " + (nbad.message || nbad.error)
-      : note ? ("delivered:" + String(note.delivered) + " · channels " + (chans.map((c) => (c.type || "?") + ":" + (c.status || "?")).join(", ") || "none reported"))
-      : "not attempted"],
+    ["notification", out.notify.line],
   ]));
-  p.appendChild(el("div", "note", delivered
+  p.appendChild(el("div", "note", out.notify.delivered
     ? "They will see it the next time their page reads their inbox. The grant is the thing that matters — the notice is only a pointer to it."
     : "The grant exists either way. A notification is a convenience, not the membership: send them the grant IRI above by any means and their page will verify it against your pod exactly the same way."));
   btn.disabled = false;
@@ -2678,177 +3467,48 @@ async function sendInvite() {
    pod. The convener does nothing. Measured backstop: the invitee publishing with
    pod_name set to the convener's pod is refused 403 scope_violation, "agent is
    not registered on this pod" — and the same refusal stops a convener writing an
-   invitee's acceptance for them. */
-const GRANT_IRI_RX = /^https:\/\/[^/]+\/ns\/([^/]+)\/(.+)-grant-([^/]+)$/;
+   invitee's acceptance for them.
 
-/* `nameMustTargetMe` is the difference between a URL somebody SENT you and one
-   you found yourself. An `about` out of a world-writable inbox has to name your
-   own pod in its own name before this reader will dereference it at all. A grant
-   found by scanning the pod the workspace's own IRI names has already been
-   reached through the authority-closed route, so its name is free — which it has
-   to be, because grants written before this scheme existed are named for the
-   seat ("…-grant-convener") rather than for the pod. */
-async function verifyGrantIri(grantIri, opts) {
-  const nameMustTargetMe = !opts || opts.nameMustTargetMe !== false;
-  const v = { grantIri: grantIri, checks: [], ok: false };
-  const m = GRANT_IRI_RX.exec(grantIri || "");
-  if (!m || grantIri.indexOf(RELAY + "/ns/") !== 0) {
-    v.why = "that is not a grant IRI in this relay's namespace, so there is nothing on a pod to check it against";
-    v.checks.push(["n", v.why]);
-    return v;
-  }
-  const owner = m[1], slug = m[2], target = m[3];
-  if (!POD_RX.test(owner)) { v.why = "the pod segment in that IRI is not a pod identifier"; v.checks.push(["n", v.why]); return v; }
-  if (nameMustTargetMe && target !== S.viewer.podName) {
-    v.why = "that grant is addressed to pod " + target + ", and you are " + S.viewer.podName;
-    v.checks.push(["n", v.why]);
-    return v;
-  }
-  v.checks.push(["y", nameMustTargetMe
-    ? "The grant IRI is on pod " + owner + " and names your pod in its own name"
-    : "The grant was found on pod " + owner + ", the pod this workspace's own IRI names"]);
-  v.owner = owner; v.slug = slug;
-  v.workspaceGuess = nsIri(owner, slug);
-
-  let h;
-  try { h = await currentHead(grantIri, owner); }
-  catch (e) { v.why = "the grant could not be read from " + owner + ": " + (e.message || e.code); v.checks.push(["n", v.why]); return v; }
-  if (h.forked) { v.why = "that grant's chain has " + h.heads.length + " unresolved heads, so which grant is current is not decided"; v.checks.push(["n", v.why]); return v; }
-  /* Two different facts, and only one of them is "no grant is published there".
-     A read this page could not interpret is reported as that, not turned into a
-     statement about what is on somebody else's pod. */
-  if (!h.url) {
-    v.why = h.unreadable
-      ? "the read of that IRI on pod " + owner + " did not resolve, so whether a grant is published there is not established — " + h.message
-      : "no grant is published at that IRI on pod " + owner + " — " + (h.message || "the relay gave no reason");
-    v.checks.push(["n", v.why]); return v;
-  }
-  v.grantCid = h.cid || null;
-  let d;
-  try { d = await descriptor(h.url); }
-  catch (e) { v.why = "the grant's descriptor could not be fetched: " + (e.message || e.code); v.checks.push(["n", v.why]); return v; }
-  const region = graphRegion((d.graph && d.graph.content) || "", grantIri);
-  if (region === null) { v.why = "the signed region of that grant could not be located, so nothing was read from bytes anybody signed"; v.checks.push(["n", v.why]); return v; }
-  v.checks.push(["y", "Its signed region was located on " + owner + "'s pod"]);
-  v.grantAuthorship = d.authorship || null;
-  v.workspace = readIri(region, "wsp:workspace");
-  v.grantedTo = readIri(region, "wsp:grantedTo");
-  v.role = readIri(region, "wsp:role");
-  v.revoked = hasTrue(region, "wsp:revoked");
-  if (v.revoked) { v.why = "that grant carries wsp:revoked true"; v.checks.push(["n", v.why]); return v; }
-  if (!v.grantedTo) { v.why = "the grant names no wsp:grantedTo"; v.checks.push(["n", v.why]); return v; }
-  if (v.grantedTo !== S.viewer.webId) {
-    v.why = "the grant names " + v.grantedTo + ", and your pod reports your WebID as " + (S.viewer.webId || "none");
-    v.checks.push(["n", v.why]); return v;
-  }
-  v.checks.push(["y", "It names your own WebID as grantee"]);
-  if (!v.workspace) { v.why = "the grant names no wsp:workspace"; v.checks.push(["n", v.why]); return v; }
-
-  /* The workspace record itself, read from the pod its own IRI names, so that
-     the convener it declares can be held against the pod the grant is on. */
-  let wh;
-  try { wh = await currentHead(v.workspace, podOfNsIri(v.workspace)); }
-  catch (e) { v.why = "the workspace record could not be read: " + (e.message || e.code); v.checks.push(["n", v.why]); return v; }
-  if (!wh.url || wh.forked) { v.why = "the workspace record at " + v.workspace + " has no single current head"; v.checks.push(["n", v.why]); return v; }
-  let wd;
-  try { wd = await descriptor(wh.url); }
-  catch (e) { v.why = "the workspace record's descriptor could not be fetched"; v.checks.push(["n", v.why]); return v; }
-  const wr = graphRegion((wd.graph && wd.graph.content) || "", v.workspace);
-  if (wr === null) { v.why = "the workspace record's signed region could not be located"; v.checks.push(["n", v.why]); return v; }
-  v.title = readLiteral(wr, "dct:title") || "";
-  v.convener = readIri(wr, "wsp:convener");
-  v.roleProfile = readIri(wr, "wsp:roleProfile");
-  v.entryShape = readIri(wr, "wsp:entryShape");
-  const cp = podOfWebid(v.convener);
-  if (!cp) { v.why = "the workspace names no convener this reader can resolve to a pod"; v.checks.push(["n", v.why]); return v; }
-  if (cp !== owner) {
-    v.why = "the workspace's convener resolves to pod " + cp + ", and this grant is on pod " + owner
-      + ". A grant only counts on the convener's own pod, so this one seats nobody.";
-    v.checks.push(["n", v.why]); return v;
-  }
-  v.checks.push(["y", "The workspace names a convener on pod " + owner + " — the same pod the grant is on"]);
-
-  /* ── and the grant's own NAME has to be one every reader of this workspace
-     looks for ─────────────────────────────────────────────────────────────────
-     EVERY reader composes from the WORKSPACE IRI: `loadRoster` folds descriptors
-     whose subject starts with `<workspace>-grant-`, `findSeat` scans for the same
-     prefix, and the acceptance and stream names are built from the workspace's
-     own pod and slug. A grant at any other IRI is invisible to all of them,
-     however well-formed it is — so accepting one publishes a real acceptance that
-     seats you nowhere, and this page used to do exactly that, then say "Accepted
-     — you are seated" while its own roster in the same second said "Writing, not
-     on the roster". Reproduced two ways: a grant named for a different slug
-     delivered through an inbox, and — with no hostile input at all — a workspace
-     record hosted on a pod other than its convener's.
-     One comparison covers both halves: the pod segment and the slug are both
-     inside the workspace IRI, so prefix equality tests them together.
-     It runs AFTER the convener test above on purpose. The two overlap on a grant
-     sitting on the wrong pod entirely, and that case is better told as "the
-     convener is elsewhere" than as a naming rule — so the cheaper test is the
-     one that runs second, and what is left for it to catch is the case the
-     convener test cannot see. */
-  if (grantIri.indexOf(v.workspace + "-grant-") !== 0) {
-    v.why = "that grant is at " + grantIri + ", and the workspace it names is " + v.workspace
-      + " — so it is not one of that workspace's own \"" + v.workspace + "-grant-…\" documents. "
-      + "Every reader of this workspace, this page's own roster included, looks only under that prefix, "
-      + "so accepting it would write a real acceptance that seats you on nobody's roster.";
-    v.checks.push(["n", v.why]);
-    return v;
-  }
-  v.checks.push(["y", "Its IRI is one of " + v.workspace + "'s own grant names, which is where every reader looks"]);
-
-  v.ok = true;
-  return v;
-}
-
+   `verifyGrantIri`, and the acceptance and stream names composed from the
+   WORKSPACE rather than from the grant's own filename, are the module's and are
+   bound above. Why the names are derived that way, and why `nameMustTargetMe`
+   distinguishes a URL somebody SENT you from one you found yourself, is written
+   at each of them in packages/workspace-client/src/membership.ts. */
 async function acceptGrant(v, where, btn) {
   if (S.writeBlocked) { say(where, "refused", "Not write-eligible on your pod", text(S.writeBlocked)); return; }
   if (btn) btn.disabled = true;
   const pod = S.viewer.podName;
-  /* ── composed from the WORKSPACE, never from the grant's own filename ──────
-     These two names are what every reader of this workspace will look for, and
-     a reader holds the workspace IRI, not the grant's. They used to be built
-     from the grant IRI's own pod and slug (groups 1 and 2 of GRANT_IRI_RX),
-     which agree with the workspace only when the grant's filename happens to
-     carry the workspace's slug and sits on the pod the workspace IRI names.
-     `verifyGrantIri` now refuses any grant where they disagree, so the two
-     derivations coincide — and this one is derived from the thing readers hold,
-     so it stays right if that check is ever relaxed. */
-  const convPod = podOfNsIri(v.workspace) || v.owner;
-  const wsSlug = v.workspace.slice(nsIri(convPod, "").length);
-  const accIri = nsIri(pod, qualifiedName(convPod, wsSlug, "acceptance"));
-  const streamIri = nsIri(pod, qualifiedName(convPod, wsSlug, "stream"));
   const p = say(where, "pending", "Publishing your acceptance on your own pod", text(
     "One write, to " + pod + ", with your credentials. The convener does nothing here, and could not: "
     + "the substrate refuses a write to a pod the writer does not own."));
   const log = el("div"); log.style.marginTop = "6px"; p.appendChild(log);
-  const set = writeLine(log, "acceptance on your pod");
-  const args = {
-    graph_iri: accIri,
-    graph_content: acceptanceTurtle(accIri, v.workspace, S.viewer.webId, v.grantIri, v.grantCid, streamIri),
-    visibility: "public", auto_supersede_prior: true, sign_authorship: true,
-  };
-  if (v.entryShape) args.conforms_to_shapes = [v.entryShape];
-  const out = await publishAndConfirm(args, pod, accIri, set);
-  if (out.error) { clear($(where)).appendChild(errBox(out.error, "Nothing was written, so nothing seats you.")); if (btn) btn.disabled = false; return; }
-  if (out.refusal) { refusalPanel(where, out.refusal, "Your acceptance"); if (btn) btn.disabled = false; return; }
+  let set = null;
+  const out = await WSPC.acceptGrant(CLIENT, {
+    relay: RELAY, viewer: S.viewer, verdict: v,
+    onState: (state, detail) => {
+      if (!set) set = writeLine(log, "acceptance on your pod");
+      set(state, detail);
+    },
+  });
+  if (out.kind === "error") { clear($(where)).appendChild(errBox(out.error, "Nothing was written, so nothing seats you.")); if (btn) btn.disabled = false; return; }
+  if (out.kind === "refused") { refusalPanel(where, out.refusal, "Your acceptance"); if (btn) btn.disabled = false; return; }
   p.className = out.readable ? "panel ok anim" : "panel pending anim";
   p.querySelector("h4").textContent = out.readable ? "Accepted — you are seated" : "Accepted, not yet readable";
   p.appendChild(kvPair([
-    ["your acceptance", accIri],
-    ["names grant", v.grantIri],
-    ["pinned revision", v.grantCid || "the head read reported no CID"],
-    ["your log will be", streamIri],
+    ["your acceptance", out.acceptanceIri],
+    ["names grant", out.grantIri],
+    ["pinned revision", out.grantCid || "the head read reported no CID"],
+    ["your log will be", out.streamIri],
     /* verifyGrantIri read and located this workspace's record before it returned,
        so "names none" here is a statement about a document that WAS opened. */
-    ["shape asserted", v.entryShape || "the workspace record was read and names none, so this was written unvalidated"],
+    ["shape asserted", out.entryShape || "the workspace record was read and names none, so this was written unvalidated"],
   ]));
   if (btn) btn.disabled = false;
   /* Open it FIRST. Re-listing every workspace re-verifies every acceptance
      against every convener's pod, which is seconds of reads the person who just
      pressed Accept has no reason to wait through — and while they waited the
      page was still showing whichever workspace was open before. */
-  if (out.readable) selectWorkspace(v.workspace);
+  if (out.readable) selectWorkspace(out.workspace);
   loadSpaces();
 }
 
@@ -2858,32 +3518,37 @@ async function acceptGrant(v, where, btn) {
    there is no field that says "there are more", and the only honest signal is
    that the read came back exactly full. The other three scans on this page
    already report their own saturation; this one reported nothing at all, which
-   made an invitation past item 50 invisible behind a flat count. */
-const INBOX_LIMIT = 50;
+   made an invitation past item 50 invisible behind a flat count. `INBOX_LIMIT`
+   is the module's now, so the cap this page STATES and the cap it asks for
+   cannot be two numbers. */
 async function loadInvites() {
   step("inbox", "Reading your inbox", "wait");
-  let p;
-  try { p = await tool("read_inbox", { limit: INBOX_LIMIT }); }
-  catch (e) { S.inviteError = e; step("inbox", "Your inbox could not be read (" + errorCopy(e).t.toLowerCase() + ")", "err"); renderLobby(); return; }
-  const bad = refusal(p);
-  if (bad) { S.inviteError = fail("tool_error", bad.message || bad.error); step("inbox", "Your inbox was refused", "err"); renderLobby(); return; }
-  const all = (p && Array.isArray(p.items)) ? p.items : [];
-  S.inboxSaturated = all.length >= INBOX_LIMIT;
-  const items = all.filter((it) => it && it.type === "Offer" && it.about);
-  S.invites = items.map((it) => ({ item: it, state: "unchecked" }));
+  let read;
+  try { read = await readInbox(); }
+  catch (e) {
+    S.inviteError = e;
+    /* Two failures, two sentences, and the code is what separates them: the
+       module raises a relay REFUSAL as `tool_error` — the relay answered and
+       said no — and lets a call that never got an answer through under its own
+       transport code. Collapsing them would report a refusal this page did not
+       receive, or hide one it did. */
+    step("inbox", (e && e.code === "tool_error")
+      ? "Your inbox was refused"
+      : "Your inbox could not be read (" + errorCopy(e).t.toLowerCase() + ")", "err");
+    renderLobby(); return;
+  }
+  S.inboxSaturated = read.saturated;
+  S.invites = read.invitations.slice();
   step("inbox", "Inbox read — " + S.invites.length + " offer" + (S.invites.length === 1 ? "" : "s") + " with something to look at"
     + (S.inboxSaturated ? ", and that read came back full at " + INBOX_LIMIT + " items" : ""), "done");
   renderLobby();
+  /* Verification is per item and several cross-pod reads each, so the list is on
+     screen first and each row fills in as its verdict lands. An `about` that is a
+     WORKSPACE rather than a grant is not a member and is not treated as one — the
+     module marks it as a LEAD instead, which the fallback scan below turns into a
+     seat without believing anything the inbox said. */
   for (const inv of S.invites) {
-    try { inv.v = await verifyGrantIri(inv.item.about); }
-    catch (e) { inv.v = { ok: false, why: errorCopy(e).t, checks: [["n", errorCopy(e).t]] }; }
-    inv.state = "checked";
-    /* An `about` that is a WORKSPACE rather than a grant is not a member and is
-       not treated as one — but it is a lead, and the fallback scan below turns
-       it into one without believing anything the inbox said. */
-    if (!inv.v.ok && /^https:\/\/[^/]+\/ns\/[^/]+\/[^/]+$/.test(inv.item.about) && !/-grant-/.test(inv.item.about)) {
-      inv.lead = inv.item.about;
-    }
+    await verifyInvitation(inv);
     renderLobby();
   }
 }
@@ -2894,77 +3559,13 @@ async function loadInvites() {
      1. the composed name — one read, and the common case;
      2. failing that, every grant for this workspace on the pod the workspace's
         own IRI names, read until one names your WebID.
-   Nothing from an inbox is involved in either. */
-const GRANT_READ_CAP = 25;
-async function findSeat(workspaceIri) {
-  const owner = podOfNsIri(workspaceIri);
-  if (!owner) return { ok: false, why: "that is not a workspace IRI this page can read a pod out of", checks: [] };
-  const direct = await verifyGrantIri(workspaceIri + "-grant-" + S.viewer.podName);
-  if (direct.ok) return direct;
+   Nothing from an inbox is involved in either. Both steps, both caps and the
+   choice of WHICH failure is worth reporting are the module's `findSeat`, bound
+   above. This page's copy of it computed a saturation flag no caller read, so a
+   scan that came back full still said "none of them names you" as a finding —
+   the module puts the truncation inside the sentence every caller does render.
 
-  const SCAN_LIMIT = 400;
-  let rows, saturated = false;
-  try {
-    const p = await tool("discover_context", { pod_name: owner, limit: SCAN_LIMIT, sort: "newest-first" });
-    const bad = refusal(p);
-    if (bad) return { ok: false, why: bad.message || bad.error, checks: direct.checks };
-    assertPod(owner, p && p.pod, "discover_context");
-    rows = (p && p.entries) || [];
-    saturated = rows.length >= SCAN_LIMIT;
-  } catch (e) { return { ok: false, why: errorCopy(e).t + (e.message ? " — " + e.message : ""), checks: direct.checks }; }
-
-  const prefix = workspaceIri + "-grant-";
-  const grants = [];
-  const seen = new Set();
-  for (const e of rows) {
-    for (const g of (e.describes || [])) {
-      if (g.indexOf(prefix) === 0 && !seen.has(g)) { seen.add(g); grants.push(g); }
-    }
-  }
-  if (!grants.length) {
-    /* No `saturated:` field on the way out. It used to be here and on the return
-       below, and no caller ever read either — `loadSpaces` takes `.ok`, `.title`
-       and `.why`. A flag computed and dropped reports nothing, so the truncation
-       goes into `why`, which every caller does render. */
-    return { ok: false, checks: direct.checks,
-      why: "no grant for this workspace appeared among the " + rows.length + " most recent descriptors on " + owner
-        + (saturated ? ", and that scan came back full at " + SCAN_LIMIT + ", so this is what was read rather than all there is" : "") };
-  }
-  /* ── which failure to report ──────────────────────────────────────────
-     A workspace has grants for everybody in it, so most of them fail this
-     reader's check for the boring reason that they are somebody else's. If ONE
-     of them is about you and failed for its own reason — revoked, say — that is
-     the reason worth telling you, and reporting whichever happened to be read
-     last buried it behind "this grant names somebody else". */
-  let mine = direct.grantedTo === S.viewer.webId ? direct : null;
-  let last = null, read = 0;
-  for (const g of grants) {
-    if (read >= GRANT_READ_CAP) break;
-    read++;
-    const v = await verifyGrantIri(g, { nameMustTargetMe: false });
-    if (v.ok) return v;
-    if (!mine && v.grantedTo === S.viewer.webId) mine = v;
-    last = v;
-  }
-  const pick = mine || last;
-  /* ── the truncation goes into the sentence, not just onto the object ──────
-     `saturated` was computed here and returned on both branches, and no caller
-     ever read it: `loadSpaces` takes `.ok`, `.title` and `.why` only. So on the
-     branch below — grants found, none of them yours — a scan that came back full
-     said "none of them names you" with nothing about the scan having been cut
-     off. That is the failure mode this file names elsewhere as "computed since
-     the last round and never read", so it is spent here, inside `why`. */
-  const capNote = (saturated ? ". That scan of " + owner + " came back full at " + SCAN_LIMIT
-    + " descriptors, so an older grant may lie past the end of it" : "");
-  return { ok: false, checks: (pick && pick.checks) || direct.checks,
-    why: (mine
-      ? "a grant for this workspace does name you, and it does not seat you: " + mine.why
-      : read + " grant" + (read === 1 ? "" : "s") + " for this workspace on " + owner
-        + " were read and none of them names you" + (grants.length > read ? " (of " + grants.length + " found; this page reads at most " + GRANT_READ_CAP + ")" : "")
-        + (last && last.why ? " — the last one: " + last.why : "")) + capNote };
-}
-
-/* ── Flow D: which workspaces am I in? ────────────────────────────────────
+   ── Flow D: which workspaces am I in? ────────────────────────────────────
    ONE manifest read, of the viewer's own pod. A qualified acceptance name
    carries the workspace inside it, so the list needs no descriptor reads at all;
    only the older unqualified names cost one each. Every candidate is then put
@@ -2973,15 +3574,9 @@ async function findSeat(workspaceIri) {
 async function loadSpaces() {
   step("spaces", "Looking for acceptances on your own pod", "wait");
   const pod = S.viewer.podName;
-  const SCAN_LIMIT = 400;
-  let rows;
+  let out;
   try {
-    const p = await tool("discover_context", { pod_name: pod, limit: SCAN_LIMIT, sort: "newest-first" }, { cache: false });
-    const bad = refusal(p);
-    if (bad) throw fail("tool_error", bad.message || bad.error);
-    assertPod(pod, p && p.pod, "discover_context");
-    rows = (p && p.entries) || [];
-    S.spacesSaturated = rows.length >= SCAN_LIMIT;
+    out = await listWorkspaces(pod);
   } catch (e) {
     S.spacesError = e; S.spaces = null;
     /* ── settle the promise on the way out ────────────────────────────────
@@ -2994,29 +3589,11 @@ async function loadSpaces() {
     step("spaces", "Your own pod's manifest could not be read", "err");
     renderLobby(); return;
   }
-  const found = new Map();
-  for (const e of rows) {
-    for (const g of (e.describes || [])) {
-      const parsed = parseAcceptanceIri(g, pod);
-      if (!parsed || found.has(g)) continue;
-      found.set(g, { acceptanceIri: g, url: e.descriptorUrl, naming: parsed.naming,
-        owner: parsed.owner, slug: parsed.slug, workspace: parsed.workspace });
-    }
-  }
-  const list = [...found.values()];
-  /* An unqualified name says nothing about which workspace it accepts, so that
-     one is read — one descriptor each, and only for those. */
-  for (const c of list) {
-    if (c.workspace) continue;
-    try {
-      const d = await descriptor(c.url);
-      const region = graphRegion((d.graph && d.graph.content) || "", c.acceptanceIri);
-      if (region === null) { c.why = "its signed region could not be located"; continue; }
-      c.workspace = readIri(region, "wsp:workspace");
-      if (!c.workspace) c.why = "this acceptance names no wsp:workspace, so which workspace it is for is not established";
-      else c.owner = podOfNsIri(c.workspace);
-    } catch (e) { c.why = "its descriptor could not be read: " + (e.message || e.code); }
-  }
+  const list = out.entries.slice();
+  S.spacesSaturated = out.saturated;
+  /* The cap the note below quotes is the one the read actually asked for, taken
+     off the answer rather than typed twice. */
+  S.spacesLimit = out.limit;
   S.spaces = list;
   S.spacesError = null;
   step("spaces", "Found " + list.length + " acceptance" + (list.length === 1 ? "" : "s") + " on your pod — checking each against its convener's pod", "wait");
@@ -3034,13 +3611,12 @@ async function loadSpaces() {
   (async () => {
     let fired = false, count = 0;
     for (const c of list) {
-      if (!c.workspace) { c.verified = false; renderLobby(); continue; }
-      try {
-        c.v = await findSeat(c.workspace);
-        c.verified = !!c.v.ok;
-        c.title = c.v.title || "";
-        if (!c.verified) c.why = c.v.why;
-      } catch (e) { c.verified = false; c.why = errorCopy(e).t; }
+      /* `verifyWorkspaceEntry` mutates the row in place and never throws: an
+         acceptance that names no workspace comes back verified:false, and an
+         error while checking one comes back verified:false with the reason in
+         `why`. `verified` stays undefined until it has run, which is a real
+         third state and is why `spaceRow` tests for undefined and not falsity. */
+      await verifyWorkspaceEntry(c);
       if (c.verified) { count++; if (!fired) { fired = true; settle(c.workspace); } }
       renderLobby();
     }
@@ -3112,34 +3688,18 @@ function copyChip(value, label) {
 }
 
 /* The handle, composed once, in one place — so the string that is printed, the
-   string that is copied and the string that is resolved cannot diverge. */
-const composedHandle = () => "acct:" + S.viewer.podName + "@" + new URL(RELAY).host;
+   string that is copied and the string that is resolved cannot diverge.
+   `composedHandle` is the module's, bound above: the second person's client
+   composes the same identifier, and two spellings of it would send somebody to
+   look up a handle that is not yours. */
 
 /* One call. It is a read about the viewer's own identifier, so it costs nothing
    anybody else can see, and it is the difference between printing a composition
-   and printing something that came back. */
+   and printing something that came back. Which of the four things it can
+   establish it did establish is the module's verdict; the four sentences under
+   the handle are this page's. */
 async function checkOwnHandle() {
-  const handle = composedHandle();
-  let wf;
-  try { wf = await tool("resolve_webfinger", { resource: handle }); }
-  catch (e) { S.handleCheck = { error: errorCopy(e).t }; renderMe(); return; }
-  const bad = refusal(wf);
-  if (bad) { S.handleCheck = { ok: false, why: "the relay refused the lookup: " + (bad.message || bad.error) }; renderMe(); return; }
-  const subject = (wf && wf.subject) || null;
-  const links = (wf && wf.links) || [];
-  const profile = links.find((l) => /profile-page/.test(l.rel || ""));
-  /* The pod the PROFILE names, held against the pod this page writes to. The
-     `webId` WebFinger returns is deliberately not used for this — it is the
-     relay's agent URL, which `podOfWebid` does not resolve, and reading a pod
-     out of it would be this page inventing an answer. */
-  const pod = profile && profile.href ? (podOfDescriptorUrl(profile.href) || profile.href.replace(/\/$/, "").split("/").pop()) : null;
-  if (!subject) { S.handleCheck = { ok: false, why: "the response echoed no subject, so what it answered about is not established." }; renderMe(); return; }
-  if (!pod) { S.handleCheck = { ok: false, why: "the response carried no profile-page link, so which pod it names is not established." }; renderMe(); return; }
-  if (pod !== S.viewer.podName) {
-    S.handleCheck = { ok: false, why: "it resolves to pod " + pod + ", and the pod you write to is " + S.viewer.podName + "." };
-    renderMe(); return;
-  }
-  S.handleCheck = { ok: true, subject: subject, pod: pod };
+  S.handleCheck = await ownHandleCheck();
   renderMe();
 }
 
@@ -3176,21 +3736,27 @@ function renderMe() {
      fails with a 404 and this page says nothing. */
   const hs = el("div", "note");
   hs.style.marginTop = "6px";
+  /* FOUR states and four sentences. `errored` is the module's flag for "the
+     lookup did not complete", which is not the same as "it did not return you" —
+     the first establishes nothing and the second is a finding. The reason clause
+     in each case is the module's own `why`, so the sentence a viewer reads and
+     the verdict the client reached are one string, not two that can drift.
+     (The category name inside the parenthetical below is the module's, not this
+     page's `errorCopy` override — that override exists to change the REMEDY for
+     a published page, and this line prints no remedy.) */
   if (!S.handleCheck) {
     hs.textContent = "This page composed that handle from your pod name and the relay host it is built on. Resolving it…";
-  } else if (S.handleCheck.error) {
+  } else if (S.handleCheck.errored) {
     hs.style.color = "var(--pending)";
-    hs.textContent = "This page composed that handle from your pod name and the relay host it is built on, and the "
-      + "resolve_webfinger check on it did not complete (" + S.handleCheck.error + "), so whether it resolves to you is not established here.";
+    hs.textContent = "This page composed that handle from your pod name and the relay host it is built on, and "
+      + S.handleCheck.why + ".";
   } else if (!S.handleCheck.ok) {
     hs.style.color = "var(--refused)";
     hs.textContent = "This page composed that handle, and resolving it did not return you: " + S.handleCheck.why
       + " Sending it to somebody would have them look up an identifier that is not yours.";
   } else {
     hs.style.color = "var(--ok)";
-    hs.textContent = "Resolved: the relay echoed subject " + S.handleCheck.subject
-      + " and its profile-page link names pod " + S.handleCheck.pod
-      + ", which is the pod you write to. So this is a composed name that was then read back, not a guess.";
+    hs.textContent = "Resolved: " + S.handleCheck.why;
   }
   box.appendChild(hs);
   const rows = [["your pod", S.viewer.podName]];
@@ -3202,7 +3768,10 @@ function renderMe() {
 }
 
 function inviteRow(inv) {
-  const it = inv.item, v = inv.v;
+  /* `verdict` is the module's name for it, and it is null until the row has been
+     checked — which `state` is what distinguishes, because a verdict that has
+     not been reached is not a verdict of "no". */
+  const it = inv.item, v = inv.verdict;
   const row = el("div", "item" + (v && v.ok ? "" : inv.state === "checked" ? " bad" : ""));
   row.appendChild(el("h4", null, it.summary || "An offer with no summary"));
   const from = el("div", "iri", "delivered by " + (it.actor || "an actor the notification did not name")
@@ -3212,7 +3781,14 @@ function inviteRow(inv) {
   if (it.content) row.appendChild(el("div", "note", it.content));
   if (inv.state !== "checked") { row.appendChild(el("div", "verdict wait", "checking it against the pod it names…")); return row; }
   const cl = el("div", "checks");
-  for (const [k, t] of (v.checks || [])) cl.appendChild(el("div", k, t));
+  /* `mark` is 'y', 'n' or 'q', and 'q' is a THIRD value on purpose: a check that
+     could not run is not a check that failed. It is the class name, so the three
+     are styled apart rather than collapsed into pass/fail. */
+  for (const c of (v.checks || [])) {
+    const line = el("div", c.mark, c.text);
+    if (c.detail) line.title = c.detail;
+    cl.appendChild(line);
+  }
   row.appendChild(cl);
   if (v.ok) {
     row.appendChild(el("div", "verdict ok", "verified on pod " + v.owner));
@@ -3242,7 +3818,7 @@ function inviteRow(inv) {
         inv.state = "unchecked"; renderLobby();
         const got = await findSeat(inv.lead);
         if (got.ok) { inv.item = Object.assign({}, inv.item, { about: got.grantIri }); inv.lead = null; }
-        inv.v = got; inv.state = "checked"; renderLobby();
+        inv.verdict = got; inv.state = "checked"; renderLobby();
       });
       r.appendChild(b);
       row.appendChild(r);
@@ -3337,7 +3913,7 @@ function renderLobby() {
       il.appendChild(w);
     }
   } else ic.hidden = true;
-  const pending = (S.invites || []).filter((i) => i.v && i.v.ok).length;
+  const pending = (S.invites || []).filter((i) => i.verdict && i.verdict.ok).length;
   $("lobbycnt").hidden = !pending;
   $("lobbycnt").textContent = String(pending);
 
@@ -3347,7 +3923,7 @@ function renderLobby() {
     wc.hidden = false;
     clear(wl);
     $("wsnote").textContent = S.spacesSaturated
-      ? "This read asked your own pod for its most recent 400 descriptors and got exactly that many back, so an older acceptance may lie past the end of it."
+      ? "This read asked your own pod for its most recent " + S.spacesLimit + " descriptors and got exactly that many back, so an older acceptance may lie past the end of it."
       : "Read from your own pod in one call. A workspace-qualified acceptance name carries the workspace inside it, so most of these needed no further read.";
     if (S.spacesError) wl.appendChild(errBox(S.spacesError, "Your own pod's manifest is where the list of workspaces comes from.", () => loadSpaces()));
     else if (!S.spaces.length) wl.appendChild(el("div", "note", "No acceptance on your pod names a workspace, so you are in none yet. Accept an invitation above, or create one below."));
@@ -3440,34 +4016,40 @@ function renderRevokeList() {
 
 async function revokeGrant(m, btn) {
   if (S.writeBlocked) { say("sendresult", "refused", "Not write-eligible on your pod", text(S.writeBlocked)); return; }
-  if (!m.grantedTo || !m.role) {
-    say("sendresult", "refused", "This grant cannot be rewritten from here",
-      text("Republishing it means restating what it says, and this page could not read "
-        + (!m.grantedTo ? "its wsp:grantedTo" : "its wsp:role") + " out of its signed region. "
-        + "Rewriting it with a field missing would be this page deciding what the grant says."));
-    return;
-  }
   btn.disabled = true;
   const p = say("sendresult", "pending", "Withdrawing the grant for " + m.pod, null);
   const log = el("div"); log.style.marginTop = "6px"; p.appendChild(log);
-  const set = writeLine(log, "revocation on your pod");
-  const args = {
-    graph_iri: m.graph,
-    graph_content: grantTurtle(m.graph, WORKSPACE, m.grantedTo, m.role, true),
-    visibility: "public", auto_supersede_prior: true, sign_authorship: true,
-  };
-  /* The revision that is there NOW. A revocation written against a grant
-     somebody else has already moved is a revocation of something else. */
-  if (m.grantCid || m.grantUrl) args.if_match = m.grantCid || m.grantUrl;
-  if (S.record && S.record.entryShape) args.conforms_to_shapes = [S.record.entryShape];
-  const out = await publishAndConfirm(args, S.viewer.podName, m.graph, set);
-  if (out.error) { clear($("sendresult")).appendChild(errBox(out.error, "Nothing was written; the grant still stands.")); btn.disabled = false; return; }
-  if (out.refusal) { refusalPanel("sendresult", out.refusal, "The revocation"); btn.disabled = false; return; }
+  let set = null;
+  const out = await WSPC.revokeGrant(CLIENT, {
+    viewer: S.viewer,
+    workspace: WORKSPACE,
+    grantIri: m.graph,
+    grantedTo: m.grantedTo,
+    role: m.role,
+    /* The revision that is there NOW. A revocation written against a grant
+       somebody else has already moved is a revocation of something else. */
+    ifMatch: m.grantCid || m.grantUrl || null,
+    entryShape: (S.record && S.record.entryShape) || null,
+    onState: (state, detail) => {
+      if (!set) set = writeLine(log, "revocation on your pod");
+      set(state, detail);
+    },
+  });
+  /* Republishing a grant means RESTATING what it says, so a grant whose grantee
+     or role could not be read out of its signed region is refused rather than
+     rewritten with a field missing. The module makes that call, because it is the
+     module that writes the document. */
+  if (out.kind === "incomplete") {
+    say("sendresult", "refused", "This grant cannot be rewritten from here", text(out.why));
+    btn.disabled = false; return;
+  }
+  if (out.kind === "error") { clear($("sendresult")).appendChild(errBox(out.error, "Nothing was written; the grant still stands.")); btn.disabled = false; return; }
+  if (out.kind === "refused") { refusalPanel("sendresult", out.refusal, "The revocation"); btn.disabled = false; return; }
   p.className = out.readable ? "panel ok anim" : "panel pending anim";
   p.querySelector("h4").textContent = out.readable ? "Revoked" : "Accepted, not yet readable";
   p.appendChild(kvPair([
-    ["grant", m.graph],
-    ["asserted revision", (m.grantCid || m.grantUrl) || "none — this page held no revision for it"],
+    ["grant", out.grantIri],
+    ["asserted revision", out.asserted || "none — this page held no revision for it"],
   ]));
   p.appendChild(el("div", "note", "Their acceptance and their log are untouched, on their own pod, and this page could not "
     + "have reached either. The roster will now show the row as revoked and stop folding their log into this channel."));
@@ -3519,47 +4101,41 @@ async function boot() {
   step("connector", "Connector resolved: " + connectorLabel(), "done");
   step("identity", "Resolving your identity — the first contact provisions a pod, measured at 12 to 16 seconds", "wait");
 
-  /* who the viewer is — their own pod is the only place they can write */
-  let status;
+  /* ── who the viewer is — their own pod is the only place they can write ────
+     The pod name is the SEGMENT taken from the pod URL, never `displayName`:
+     that is a label the account chose, and using it as a pod name addresses a
+     pod that does not exist, which reads back as an EMPTY LOG rather than an
+     error. That derivation and the refusal of an empty segment are the module's
+     `readViewer`, so this page and the desktop shell cannot disagree about which
+     pod a write is addressed to. */
+  let viewer;
   try {
-    status = await tool("get_pod_status", {});
+    viewer = await readViewer();
   } catch (e) {
-    step("identity", "Your pod could not be resolved", "err");
+    /* THREE different failures land here and they are three different sentences.
+       `tool_error` means the relay ANSWERED and reported a failure; any other
+       code means the call never got an answer at all. Within `tool_error` there
+       are two: a refusal, and a status that came back with no pod URL this
+       reader could turn into a pod name — the module raises the second with the
+       sentence this page has always printed for it, and it is the only one of
+       the two whose message is about the pod name, so that is what separates
+       them. If that sentence is ever reworded in the module, this falls back to
+       the refusal wording — which is why the module's own message is printed
+       verbatim in the box below either way. */
+    const answered = !!(e && e.code === "tool_error");
+    const noName = answered && /turn into a pod name/.test(String((e && e.message) || ""));
+    step("identity", noName ? "Your pod URL could not be turned into a pod name"
+      : answered ? "The relay refused to say which pod you write to"
+      : "Your pod could not be resolved", "err");
     showLobby(true);
-    paneFailure(e, "Could not resolve which pod you write to, so neither the roster, the channel nor the canvas can be addressed.", () => boot());
+    paneFailure(e, noName
+      ? "Posting and saving are disabled: a wrong or empty pod name reads back as an empty log rather than as an error, which is exactly the confident falsehood this page exists not to make."
+      : answered ? "The relay refused to say which pod you write to."
+      : "Could not resolve which pod you write to, so neither the roster, the channel nor the canvas can be addressed.",
+      () => boot());
     return;
   }
-  const podBad = refusal(status);
-  if (podBad) {
-    step("identity", "The relay refused to say which pod you write to", "err");
-    showLobby(true);
-    paneFailure(fail("tool_error", podBad.message || podBad.error), "The relay refused to say which pod you write to.", () => boot());
-    return;
-  }
-  const podUrl = status.pod || status.podUrl || "";
-  S.viewer = {
-    /* The pod SEGMENT, taken from the pod URL. Never `displayName` — that is a
-       label the account chose, and using it as a pod name addresses a pod that
-       does not exist, which reads back as an empty log rather than an error. */
-    podName: podUrl.replace(/\/$/, "").split("/").pop() || "",
-    displayName: status.displayName || null,
-    podUrl: podUrl,
-    css: status.css || "",
-    webId: (status.registry && status.registry.owner) || (status.delegationRegistry && status.delegationRegistry.owner) || "",
-    agentDid: (status.sessionAgent && status.sessionAgent.did) || null,
-    agentScope: (status.sessionAgent && status.sessionAgent.scope) || null,
-  };
-
-  /* The pod name is the address every write below is sent to. The comment above
-     says a wrong one reads back as an empty log rather than an error — so an
-     empty one is refused here rather than used. */
-  if (!S.viewer.podName) {
-    const e = fail("tool_error", "get_pod_status answered without a pod URL this reader could turn into a pod name, so there is no address to write to.");
-    step("identity", "Your pod URL could not be turned into a pod name", "err");
-    showLobby(true);
-    paneFailure(e, "Posting and saving are disabled: a wrong or empty pod name reads back as an empty log rather than as an error, which is exactly the confident falsehood this page exists not to make.", () => boot());
-    return;
-  }
+  S.viewer = viewer;
   step("identity", "You are pod " + S.viewer.podName, "done");
 
   /* Whether the viewer may write is a property of THEIR pod and THEIR agent —
@@ -4025,34 +4601,18 @@ async function checkDelegation(m) {
 }
 
 /* ── a role name is READ from the role table, or it is not a name ──────────
-   This used to fall back to the IRI's fragment, so a grant naming a role out of
-   some OTHER workspace's table rendered as a confident label — "Convener" — in
-   the roster and against every message in the stream, while the capability list
-   beside it was silently omitted because the lookup that would fill it had
-   failed. Reproduced on a grant that exists on the live relay right now: its
-   workspace names one role profile and the grant names a role in another.
-   A fragment is a string somebody chose; the label is what this workspace's own
-   role table says. Where there is no entry, that is what gets said. */
-function roleName(iri) {
-  const r = S.roles && S.roles.get(iri);
-  if (r) return r.label;
-  if (!iri) return "no role";
-  if (!S.roles) return "role not resolved";
-  return "role not in this table";
-}
-/* The long form, for a tooltip or a line of copy. Same three states. */
-function roleWhy(iri) {
-  if (!iri) return "The grant names no wsp:role.";
-  const r = S.roles && S.roles.get(iri);
-  if (r) return "Read from this workspace's own role table: " + iri;
-  if (!S.roles) return "This workspace's role profile has not resolved, so " + iri
-    + " could not be looked up. The fragment of that IRI is not being shown as a label, because a fragment is a name its author chose and not this table's statement.";
-  return "The grant names " + iri + ", and this workspace's role table does not define it. "
-    + "So what that role permits here is not established, and no capability list is shown for it. "
-    + "A role IRI from another workspace's table is a real way for this to happen.";
-}
-/* True only when the workspace's own table defines it. */
-const roleKnown = (iri) => !!(iri && S.roles && S.roles.get(iri));
+   `roleName`, `roleWhy` and `roleKnown` are the module's, bound above with
+   S.roles and S.capLabels passed at call time. They used to fall back to the
+   IRI's fragment, so a grant naming a role out of some OTHER workspace's table
+   rendered as a confident label — "Convener" — in the roster and against every
+   message in the stream, while the capability list beside it was silently
+   omitted because the lookup that would fill it had failed. Reproduced on a
+   grant that exists on the live relay right now: its workspace names one role
+   profile and the grant names a role in another. A fragment is a string somebody
+   chose; the label is what this workspace's own role table says. Where there is
+   no entry, that is what gets said — and it is now said the same way in every
+   client, which matters because a label is the whole of what most readers of
+   this roster will ever look at. */
 
 function renderRoster() {
   S.rosterRendered = true;
@@ -4537,41 +5097,38 @@ function renderRoster() {
 
 async function checkViewerDelegation() {
   if (S.viewerEnfTried) return;
-  if (!S.viewer || !S.viewer.agentDid) {
-    S.viewerEnfTried = true;
-    S.viewerEnfWhy = "get_pod_status reported no session agent DID, so there is no agent to ask verify_agent about";
-    return;
-  }
   S.viewerEnfTried = true;          // set BEFORE the await: one attempt, ever
-  try {
-    const p = await tool("verify_agent", { agent_id: S.viewer.agentDid, pod_url: S.viewer.podUrl });
-    const bad = refusal(p);
-    if (bad) {
-      S.viewerEnfWhy = "verify_agent was refused: " + (bad.message || bad.error);
-    } else {
-      S.viewerEnf = (p && p.enforcement) || null;
-      S.viewerVerified = p && "verified" in p ? p.verified : null;
-      if (!S.viewerEnf) S.viewerEnfWhy = "the relay answered without an enforcement block, so what it grants your session agent is not established here";
-      /* A relay verdict, not a guess: if it says this agent is not write
-         eligible on this pod, the composer stops offering to write. */
-      if (S.viewerEnf && S.viewerEnf.writeEligible === false) applyWriteVerdict(S.viewerEnf);
-    }
-  } catch (e) {
-    S.viewerEnfWhy = "verify_agent did not answer (" + errorCopy(e).t.toLowerCase() + "), so nothing is claimed about your delegation";
-  }
+  /* Guarded because the module reads fields off the viewer. boot() assigns it
+     before the only call that can arrive first, and renderRoster's call site
+     tests it too, so this is the unreachable third case — kept because an
+     unguarded null here would throw inside the one function whose whole job is
+     to answer a question about the viewer. */
+  if (!S.viewer) return;
+  /* Every one of the four things this can establish — no agent to ask about, the
+     call did not answer, the relay refused, the relay answered without an
+     enforcement block — is the module's verdict, and each carries its own
+     sentence rather than an absent field a caller has to interpret. */
+  const v = await checkWriteEligibility();
+  S.viewerEnf = v.enforcement;
+  S.viewerVerified = v.verified;
+  S.viewerEnfWhy = v.why;
+  /* A relay verdict, not a guess: if it says this agent is not write eligible on
+     this pod, the composer stops offering to write. `blocked` is non-null only
+     when the relay returned writeEligible:false — an absent field leaves it null,
+     so nothing is withdrawn on the strength of a question that was not answered. */
+  if (v.blocked) applyWriteVerdict(v.blocked);
   /* Only re-render once the roster has something to render. This runs from
      boot() before loadRoster(), and painting a half-roster then would replace
      the "Reading the roster…" note with a flicker. */
   if (S.rosterRendered) renderRoster();
 }
 
-/* The relay's own writeEligible verdict gates the two write controls. Nothing
-   here maps a scope name onto a permission — it reads the boolean the relay
-   returned and says which boolean it read. */
-function applyWriteVerdict(e) {
-  const why = "The relay reports your session agent is not write-eligible on this pod "
-    + "(basis " + e.basis + ", scope " + (e.scope || "not reported") + "). "
-    + (e.note || "") + " A write would be refused, so it is not offered.";
+/* Withdraw every write control, with the relay's own reason. The SENTENCE comes
+   from the module, which composed it from the enforcement block the relay
+   returned — nothing on either side maps a scope name onto a permission. What is
+   here is the gating: which controls exist on this page, and the fact that the
+   verdict has to stick. */
+function applyWriteVerdict(why) {
   /* Sticky. loadCanvas() runs unawaited from boot() and re-enables Save on
      several paths, so a verdict that arrived first would otherwise be undone
      by a read that finished second. Every enable site consults this. */
@@ -5250,16 +5807,10 @@ async function refreshStream(key) {
 
 /* ── canvas ───────────────────────────────────────────────── */
 
-function canvasTurtle(bodyText) {
-  return "@prefix dct: <http://purl.org/dc/terms/> .\n"
-    + "@prefix dctype: <http://purl.org/dc/dcmitype/> .\n"
-    + "@prefix wsp: <" + WSP + "> .\n\n"
-    + "<" + S.canvas.iri + ">\n"
-    + "  a dctype:Text ;\n"
-    + "  wsp:workspace <" + WORKSPACE + "> ;\n"
-    + '  dct:title "Canvas — ' + escTtl(SLUG) + '" ;\n'
-    + '  dct:description "' + escTtl(bodyText) + '" .\n';
-}
+/* `canvasTurtle` is the module's, bound above, and `saveCanvas` composes it
+   there — so the bytes this panel writes and the bytes the desktop shell writes
+   are one function, and the IRI guard that refuses an unserialisable canvas or
+   workspace IRI applies to both. */
 
 function renderCanvasShell() {
   $("canvas-where").innerHTML = "";
@@ -5282,89 +5833,98 @@ function renderCanvasShell() {
 }
 
 /* `adopt` — whether the served text replaces what is in the editor. False after a
-   save, so a slow read can never silently discard what the person just typed. */
+   save, so a slow read can never silently discard what the person just typed.
+
+   SIX outcomes, six renders. The module returns them as a tagged union rather
+   than as a head object this page has to interpret, which is what keeps the two
+   below apart: "the relay said nothing is published here" is the ONLY state that
+   licenses offering Create, and "this read did not resolve" is not it. They used
+   to land in the same branch, which then offered an unconditional overwrite — no
+   if_match, auto_supersede_prior — of a document the page had FAILED to read. */
 async function loadCanvas(adopt) {
+  let r;
   try {
-    const h = await currentHead(S.canvas.iri, S.viewer.podName);
-    if (h.forked) {
-      S.canvas.forked = h;
-      S.canvas.head = null;
-      renderRev(h.heads.length + " unresolved heads");
-      say("canvasresult", "refused", "This document forked", text(h.message));
-      return;
-    }
-    /* ── "nothing is here" and "this read did not resolve" are different ──
-       Both used to land in the same branch, which then offered an
-       unconditional overwrite — no if_match, auto_supersede_prior — of a
-       document the page had failed to read. Only the relay explicitly saying
-       nothing describes this graph unlocks Create. */
-    if (h.unreadable) {
-      S.canvas.exists = false;
-      S.canvas.head = null;
-      renderRev("not resolved");
-      $("save").disabled = true;
-      $("save").title = "Disabled: " + h.message + " Creating here would overwrite whatever is actually at this IRI without asserting anything about it.";
-      $("stalesave").disabled = true;
-      $("canvas").placeholder = "The read that would locate this document did not resolve, so no write is offered.";
-      say("canvasresult", "pending", "The current revision could not be resolved", text(h.message
-        + " This panel will not offer to create or overwrite on the strength of a read it could not parse."));
-      return;
-    }
-    if (!h.url) {
-      S.canvas.exists = false;
-      S.canvas.head = null;
-      S.canvas.absentMessage = h.message;
-      renderRev("none yet — Create makes the first one");
-      $("canvas").placeholder = "Nothing here yet. Type, then press Create — that publishes this text to your pod as a public graph anyone can read.";
-      $("save").textContent = "Create on your pod";
-      $("save").disabled = !!S.writeBlocked;
-      $("save").title = "The relay reports: " + h.message + " Pressing this publishes a new public graph at " + S.canvas.iri + " on your pod.";
-      $("stalesave").disabled = true;
-      $("stalesave").title = "Available once there is a revision to be stale about.";
-      return;
-    }
-    if (h.headError) {
-      /* A head with a URL, no CID and an error is not a readable revision. */
-      S.canvas.exists = true;
-      S.canvas.head = null;
-      renderRev("head present, body unreadable");
-      $("save").disabled = true;
-      $("save").title = "Disabled: the current head at " + h.url + " reported " + h.headError + ", so there is no CID to assert against and a save would be unconditional.";
-      $("stalesave").disabled = true;
-      say("canvasresult", "refused", "The current head could not be read", text(h.headError
-        + " Saving would have to go without a precondition, which is the defect this panel exists to demonstrate — so it is not offered."));
-      return;
-    }
-    S.canvas.exists = true;
-    S.canvas.head = h.cid;
-    if (!S.canvas.loaded) S.canvas.loaded = h.cid;
-    const d = await descriptor(h.url);
-    const region = graphRegion((d.graph && d.graph.content) || "", S.canvas.iri);
-    if (region === null) {
-      $("save").disabled = true;
-      $("save").title = "Disabled: the signed region of the current revision could not be located.";
-      say("canvasresult", "refused", "The signed region of this revision could not be located",
-        text("The descriptor was fetched, but the payload block for " + S.canvas.iri + " was not found inside it. "
-          + "Nothing was read from bytes anybody signed, so the editor is not filled and no save is offered."));
-      renderRev();
-      return;
-    }
-    const served = readLiteral(region, "dct:description");
-    if (adopt) $("canvas").value = served === null ? "" : served;
-    if (adopt && served === null) {
-      say("canvasresult", "pending", "This revision carries no description",
-        text("The signed region was read and contains no dct:description, so the editor is empty because the record is — not because the read failed."));
-    }
-    $("save").textContent = "Save";
-    $("save").disabled = !!S.writeBlocked;
-    $("save").title = "Sends if_match " + shortCid(S.canvas.head) + " — the revision this panel currently holds.";
-    armStale();
-    renderRev();
+    r = await readCanvas(S.canvas.iri, S.viewer.podName);
   } catch (e) {
     $("save").disabled = true;
     $("stalesave").disabled = true;
     clear($("canvasresult")).appendChild(errBox(e, "The canvas could not be read from your pod, so no write is offered against it.", () => loadCanvas(adopt)));
+    return;
   }
+  if (r.kind === "forked") {
+    S.canvas.forked = r;
+    S.canvas.head = null;
+    renderRev(r.heads.length + " unresolved heads");
+    say("canvasresult", "refused", "This document forked", text(r.message));
+    return;
+  }
+  if (r.kind === "unresolved") {
+    S.canvas.exists = false;
+    S.canvas.head = null;
+    renderRev("not resolved");
+    $("save").disabled = true;
+    $("save").title = "Disabled: " + r.message + " Creating here would overwrite whatever is actually at this IRI without asserting anything about it.";
+    $("stalesave").disabled = true;
+    $("canvas").placeholder = "The read that would locate this document did not resolve, so no write is offered.";
+    say("canvasresult", "pending", "The current revision could not be resolved", text(r.message
+      + " This panel will not offer to create or overwrite on the strength of a read it could not parse."));
+    return;
+  }
+  if (r.kind === "absent") {
+    S.canvas.exists = false;
+    S.canvas.head = null;
+    S.canvas.absentMessage = r.message;
+    renderRev("none yet — Create makes the first one");
+    $("canvas").placeholder = "Nothing here yet. Type, then press Create — that publishes this text to your pod as a public graph anyone can read.";
+    $("save").textContent = "Create on your pod";
+    $("save").disabled = !!S.writeBlocked;
+    $("save").title = "The relay reports: " + r.message + " Pressing this publishes a new public graph at " + S.canvas.iri + " on your pod.";
+    $("stalesave").disabled = true;
+    $("stalesave").title = "Available once there is a revision to be stale about.";
+    return;
+  }
+  if (r.kind === "head-unreadable") {
+    /* A head with a URL, no CID and an error is not a readable revision. */
+    S.canvas.exists = true;
+    S.canvas.head = null;
+    renderRev("head present, body unreadable");
+    $("save").disabled = true;
+    $("save").title = "Disabled: the current head at " + r.url + " reported " + r.headError + ", so there is no CID to assert against and a save would be unconditional.";
+    $("stalesave").disabled = true;
+    say("canvasresult", "refused", "The current head could not be read", text(r.headError
+      + " Saving would have to go without a precondition, which is the defect this panel exists to demonstrate — so it is not offered."));
+    return;
+  }
+  /* Both remaining outcomes read a head, so both set it — including the one whose
+     BODY could not be located. The revision chip has something true to show
+     either way, and the order matters: this ran before the descriptor fetch in
+     the version that lived here, and `renderRev()` in the no-region branch below
+     depends on it. */
+  S.canvas.exists = true;
+  S.canvas.head = r.cid;
+  if (!S.canvas.loaded) S.canvas.loaded = r.cid;
+  if (r.kind === "no-region") {
+    $("save").disabled = true;
+    $("save").title = "Disabled: the signed region of the current revision could not be located.";
+    say("canvasresult", "refused", "The signed region of this revision could not be located",
+      text("The descriptor was fetched, but the payload block for " + S.canvas.iri + " was not found inside it. "
+        + "Nothing was read from bytes anybody signed, so the editor is not filled and no save is offered."));
+    renderRev();
+    return;
+  }
+  /* `null` is "the signed region carries no dct:description"; `""` is "it
+     carries an empty one". The module keeps them apart and so does this. */
+  const served = r.text;
+  if (adopt) $("canvas").value = served === null ? "" : served;
+  if (adopt && served === null) {
+    say("canvasresult", "pending", "This revision carries no description",
+      text("The signed region was read and contains no dct:description, so the editor is empty because the record is — not because the read failed."));
+  }
+  $("save").textContent = "Save";
+  $("save").disabled = !!S.writeBlocked;
+  $("save").title = "Sends if_match " + shortCid(S.canvas.head) + " — the revision this panel currently holds.";
+  armStale();
+  renderRev();
 }
 
 function armStale() {
@@ -5393,80 +5953,49 @@ function renderRev(override) {
   }
 }
 
-/* Wait for MY write to become the readable head.
-   ── WHY THIS TAKES A URL AND NOT JUST THE OLD CID ──
-   This used to return as soon as the head CID differed from the one held
-   before the save. A concurrent writer satisfies that: their revision becomes
-   the head, the CID changes, and the panel reported "Saved" for a write that
-   may have been the loser. The descriptor URL the relay returned for THIS
-   write is the thing to look for, and the post path was already doing exactly
-   that. `mine` may be absent, in which case this reports what it saw and the
-   caller says it could not confirm. */
-async function awaitHead(previous, mine) {
-  let last = null;
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 700));
-    try {
-      const h = await currentHead(S.canvas.iri, S.viewer.podName);
-      if (h.forked) return { forked: true, heads: h.heads, message: h.message };
-      if (h.url) {
-        last = h;
-        if (mine && h.url === mine) return { mine: true, cid: h.cid, url: h.url };
-        if (!mine && h.cid && h.cid !== previous) return { changed: true, cid: h.cid, url: h.url };
-      }
-    } catch (e) { last = last || null; }
-  }
-  /* Timed out. Report what the head IS, so the caller can say whether somebody
-     else's write is now sitting where yours was meant to go. */
-  return last ? { timedOut: true, cid: last.cid, url: last.url, moved: last.cid !== previous } : { timedOut: true };
-}
+/* ── the outcome of a save, drawn. ONE renderer, two callers ───────────────
+   Save and Merge forward both end in a `CanvasSave`, because the module resends
+   inside `mergeForward` rather than handing the resend back. Two renderers for
+   one union would be the same "two copies" defect one layer up — and it is the
+   layer where it would bite hardest, because the sentence this function picks is
+   the whole of what a viewer is told about whether their edit survived.
 
-async function saveCanvas(useStale) {
-  const btn = useStale ? $("stalesave") : $("save");
-  btn.disabled = true;
-  const ifMatch = useStale ? S.canvas.loaded : S.canvas.head;
-  const args = {
-    graph_iri: S.canvas.iri,
-    graph_content: canvasTurtle($("canvas").value),
-    visibility: "public",
-    auto_supersede_prior: true,
-    sign_authorship: true,
-  };
-  if (ifMatch) args.if_match = ifMatch;
-
-  let res;
-  try { res = await tool("publish_context", args); }
-  catch (e) {
-    const answered = e && e.code === "tool_error";
-    clear($("canvasresult")).appendChild(errBox(e, answered
+   `settled` is the module's `awaitHead`, which waits for the head to become THIS
+   write's descriptor rather than for the CID to change. The page's own version
+   waited for the change, and a concurrent writer satisfies that: their revision
+   becomes the head, the CID moves, and a panel watching only for movement
+   reports "Saved" for a write that may have been the loser. That is the
+   "moved-elsewhere" branch below, and it is the reason the two are separate
+   outcomes rather than one boolean. */
+async function drawSaveOutcome(out, btn, ifMatch) {
+  const keep = S.canvas.loaded;
+  if (out.kind === "error") {
+    /* `relayAnswered` is the module's reading of the code: `tool_error` means the
+       relay ANSWERED and reported a failure; only the transport codes mean it
+       did not answer, and only the second licenses "whether this landed is
+       unknown". */
+    clear($("canvasresult")).appendChild(errBox(out.error, out.relayAnswered
       ? "The relay answered and reported this failure — the message above is its own. Re-read the document before saving again."
       : "The relay did not answer, so whether this save landed is unknown. Re-read the document before saving again."));
     btn.disabled = !!S.writeBlocked; return;
   }
-  const bad = refusal(res);
-  if (bad && bad.code === 503) {
-    say("canvasresult", "pending", "The relay could not check the precondition",
-      text((bad.message || "") + " This is not a 412: a 412 means your assertion was checked and failed, this "
-        + "means it could not be checked at all. Nothing was written."));
-    btn.disabled = !!S.writeBlocked; return;
-  }
-  if (bad && bad.code === 403) {
-    say("canvasresult", "refused", "Refused — 403 scope_violation",
-      text((bad.message || "") + (bad.scope ? " Your delegated scope is " + bad.scope + "." : "")));
-    btn.disabled = !!S.writeBlocked; return;
-  }
-  if (bad && bad.code === 412) {
+  if (out.kind === "stale") {
+    /* 412 is the one refusal that carries a next move, which is why the module
+       makes it its own outcome and unpacks the body rather than leaving three
+       optional fields for this panel to guess at. Every row below says "not
+       reported" when the relay did not report it. */
+    const d = out.detail;
     const p = say("canvasresult", "refused", "Refused — 412 precondition_failed", text("The relay would not overwrite a revision you had not seen. Nothing was written."));
     p.appendChild(kvPair([
-      ["expected.cid", (bad.expected && (bad.expected.cid || bad.expected.supersedes)) || "not reported", "was"],
-      ["currentHead.cid", (bad.currentHead && bad.currentHead.cid) || "not reported", "is"],
-      ["currentHead.descriptor", (bad.currentHead && bad.currentHead.descriptorUrl) || "not reported"],
+      ["expected.cid", d.expectedCid || "not reported", "was"],
+      ["currentHead.cid", d.currentHeadCid || "not reported", "is"],
+      ["currentHead.descriptor", d.currentHeadDescriptor || "not reported"],
     ]));
-    p.appendChild(el("div", "note", bad.message || ""));
+    p.appendChild(el("div", "note", d.message || ""));
     const hint = el("div", "note");
     hint.style.marginTop = "6px";
     hint.appendChild(el("b", null, "retryHint: "));
-    hint.appendChild(document.createTextNode(bad.retryHint || ""));
+    hint.appendChild(document.createTextNode(d.retryHint || ""));
     p.appendChild(hint);
     const row = el("div", "row");
     const mf = el("button", "btn primary sm", "Merge forward");
@@ -5479,56 +6008,63 @@ async function saveCanvas(useStale) {
     btn.disabled = !!S.writeBlocked;
     return;
   }
-  if (bad) {
-    say("canvasresult", "refused", "Refused: " + bad.error, text(bad.message || ""));
+  if (out.kind === "refused") {
+    const bad = out.body;
+    if (out.code === 503) {
+      say("canvasresult", "pending", "The relay could not check the precondition",
+        text((bad.message || "") + " This is not a 412: a 412 means your assertion was checked and failed, this "
+          + "means it could not be checked at all. Nothing was written."));
+    } else if (out.code === 403) {
+      say("canvasresult", "refused", "Refused — 403 scope_violation",
+        text((bad.message || "") + (bad.scope ? " Your delegated scope is " + bad.scope + "." : "")));
+    } else {
+      say("canvasresult", "refused", "Refused: " + bad.error, text(bad.message || ""));
+    }
     btn.disabled = !!S.writeBlocked; return;
   }
 
   S.canvas.exists = true;
-  const pc = res.precondition;
-  const committed = res.status === "committed";
-  const mine = res.descriptorUrl || null;
+  const mine = out.descriptorUrl;
   /* Not "Saved" yet. The relay accepting a write and that write being the
-     readable head are different facts, and the second one is checked below. */
+     readable head are different facts, and the second one is below. */
   const p = say("canvasresult", "pending", "Accepted — confirming it became the head", null);
   p.appendChild(kvPair([
     ["graph", S.canvas.iri],
     ["descriptor", mine || "not reported by the response"],
-    ["status", res.status || "not reported"],
-    /* ABSENCE IS NOT EVIDENCE — `ifMatch` is in scope, so what was sent is known. */
-    ["precondition", preconditionLine(pc, ifMatch, "the revision this panel held")
+    ["status", out.status || "not reported"],
+    /* ABSENCE IS NOT EVIDENCE — what was SENT is carried on the outcome, so the
+       two are reported separately: what this panel asserted, and what came back
+       about it. */
+    ["precondition", preconditionLine(out.precondition, out.ifMatch, "the revision this panel held")
       || "none sent — this panel holds no revision for this graph to assert against"],
-    ["supersedes", res.supersedesPriorVersions
-      ? String(res.supersedesPriorVersions.length) + " prior revision(s)"
-      : "not reported by the response"],
+    ["supersedes", out.supersededCount === null
+      ? "not reported by the response"
+      : String(out.supersededCount) + " prior revision(s)"],
   ]));
-  const before = S.canvas.head;
-  const keep = S.canvas.loaded;
-  if (!committed) {
+  if (!out.committed) {
     p.appendChild(el("div", "note", ifMatch
-      ? "The relay reported status \"" + (res.status || "none") + "\" rather than committed, so it is writing in the background."
+      ? "The relay reported status \"" + (out.status || "none") + "\" rather than committed, so it is writing in the background."
       : "No precondition was sent, so the relay wrote this in the background."));
   }
-  /* ── the check the post path was already doing ──────────────────────────
-     Waiting for "the head CID changed" is satisfied by SOMEBODY ELSE's write.
-     What is looked for is the descriptor URL the relay returned for this save. */
-  const out = await awaitHead(before, mine);
+  const s = out.settled;
   const h4 = p.querySelector("h4");
-  if (out.mine) {
+  if (s.kind === "mine") {
     p.className = "panel ok anim";
     if (h4) h4.textContent = "Saved — your revision is the head";
     p.appendChild(el("div", "note", "Confirmed by reading the head back and matching its descriptor to the one this save returned."));
-  } else if (out.forked) {
+  } else if (s.kind === "forked") {
     p.className = "panel refused anim";
     if (h4) h4.textContent = "The chain forked while this was landing";
-    p.appendChild(el("div", "note", out.message || "The relay reports more than one unsuperseded head, so which revision is current is not decided."));
+    p.appendChild(el("div", "note", s.message || "The relay reports more than one unsuperseded head, so which revision is current is not decided."));
   } else if (!mine) {
-    if (h4) h4.textContent = out.changed ? "Something became the head; whether it is yours is unknown" : "Accepted, and the head did not move within the wait";
+    /* With no descriptor of ours there is nothing to match, so the module can
+       only report that SOMETHING became the head, or that nothing did. */
+    if (h4) h4.textContent = s.kind === "changed" ? "Something became the head; whether it is yours is unknown" : "Accepted, and the head did not move within the wait";
     p.appendChild(el("div", "note", "The response named no descriptor URL for this write, so there is nothing to match the head against. This panel will not call that saved."));
-  } else if (out.timedOut && out.moved) {
+  } else if (s.kind === "moved-elsewhere") {
     p.className = "panel refused anim";
     if (h4) h4.textContent = "The head moved, but not to your write";
-    p.appendChild(el("div", "note", "The current head is " + shortCid(out.cid) + " at " + out.url
+    p.appendChild(el("div", "note", "The current head is " + shortCid(s.cid) + " at " + s.url
       + ", which is not the descriptor this save returned. Somebody else's revision is sitting where yours was meant to go — this is precisely the case a panel that only watched for \"the CID changed\" would have reported as Saved."));
   } else {
     if (h4) h4.textContent = "Accepted, but not yet readable";
@@ -5541,20 +6077,59 @@ async function saveCanvas(useStale) {
   btn.disabled = !!S.writeBlocked;
 }
 
+async function saveCanvas(useStale) {
+  const btn = useStale ? $("stalesave") : $("save");
+  btn.disabled = true;
+  /* ── the argument that is the whole point of the second control ───────────
+     Save asserts the revision this panel currently holds; the red control
+     re-sends the revision it FIRST LOADED, which is what a client that shows you
+     a revision, takes your edit and writes it with no reference to what it
+     showed you would send. So `ifMatch` is decided here, by which button was
+     pressed, and never derived inside the write. */
+  const ifMatch = useStale ? S.canvas.loaded : S.canvas.head;
+  const out = await WSPC.saveCanvas(CLIENT, {
+    canvasIri: S.canvas.iri,
+    podName: S.viewer.podName,
+    workspace: WORKSPACE,
+    slug: SLUG,
+    body: $("canvas").value,
+    ifMatch: ifMatch,
+    previousCid: S.canvas.head,
+  });
+  await drawSaveOutcome(out, btn, ifMatch);
+}
+
 async function mergeForward() {
   const p = say("canvasresult", "pending", "Following the retryHint", text("get_current_head { urn, pod_name } — one read, then a resend with the cid it returns."));
-  let h;
-  try { h = await currentHead(S.canvas.iri, S.viewer.podName); }
-  catch (e) { clear($("canvasresult")).appendChild(errBox(e, "Could not resolve the current head.")); return; }
-  if (h.forked || !h.cid) {
-    say("canvasresult", "refused", "No single head to merge onto", text(h.message || "the chain has diverged"));
-    return;
+  const btn = $("save");
+  btn.disabled = true;
+  let out;
+  try {
+    /* The hint is the relay's own instruction and the module follows it rather
+       than paraphrasing it: one head read, then the same write asserted against
+       whatever that read returned. A chain with no single head, or a head with no
+       CID, has nothing to merge ONTO — so that is refused there rather than
+       resent unconditionally from here. */
+    out = await WSPC.mergeForward(CLIENT, {
+      canvasIri: S.canvas.iri,
+      podName: S.viewer.podName,
+      workspace: WORKSPACE,
+      slug: SLUG,
+      body: $("canvas").value,
+    });
+  } catch (e) {
+    clear($("canvasresult")).appendChild(errBox(e, "Could not resolve the current head."));
+    btn.disabled = !!S.writeBlocked; return;
   }
-  p.appendChild(kvPair([["head returned", h.cid, "is"]]));
-  S.canvas.head = h.cid;
-  S.canvas.loaded = h.cid;
+  if (out.kind === "no-head") {
+    say("canvasresult", "refused", "No single head to merge onto", text(out.why || "the chain has diverged"));
+    btn.disabled = !!S.writeBlocked; return;
+  }
+  p.appendChild(kvPair([["head returned", out.onto, "is"]]));
+  S.canvas.head = out.onto;
+  S.canvas.loaded = out.onto;
   renderRev();
-  await saveCanvas(false);
+  await drawSaveOutcome(out.save, btn, out.onto);
 }
 
 /* ── wiring ───────────────────────────────────────────────── */

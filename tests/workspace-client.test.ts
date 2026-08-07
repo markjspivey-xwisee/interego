@@ -252,7 +252,9 @@ describe('the naming scheme takes itself apart again', () => {
 });
 
 describe('the transport declares which credential drives it', () => {
-  const bearer: RelayOAuthBearer = { kind: 'relay-oauth-bearer', accessToken: 't', method: 'siwe', expiresAt: null };
+  // `refreshToken`/`clientId` are null here on purpose: a grant that reported neither is a real
+  // state, and it is the one where renewal is not available. See the note on RelayOAuthBearer.
+  const bearer: RelayOAuthBearer = { kind: 'relay-oauth-bearer', accessToken: 't', method: 'siwe', expiresAt: null, refreshToken: null, clientId: null };
   it('couples the relay HTTP transport to a relay OAuth bearer', () => {
     expect(new RelayMcpTransport(RELAY, bearer).accepts).toBe('relay-oauth-bearer');
   });
@@ -260,8 +262,63 @@ describe('the transport declares which credential drives it', () => {
     const noop = new ConnectorTransport({ listTools: async () => ({ servers: [] }), callTool: async () => ({}) });
     expect(noop.accepts).toBe('connector-grant');
   });
-  it('cannot watch over plain HTTP, and says so rather than registering a no-op', () => {
-    expect(new RelayMcpTransport(RELAY, bearer).watchTool()).toBe(null);
+  /**
+   * ★ THE WATCH IS A POLL, AND IT SAYS SO RATHER THAN CLAIMING TO BE PUSHED.
+   *
+   * Measured against the live relay before this was written: `GET /notifications/<slug>` — the
+   * only endpoint shaped like a per-graph subscription — answers 400 `pod_url_rejected`,
+   * "pod URL must use https", because this fleet's pods ARE `http://css.railway.internal:3456/…`
+   * and the relay's own guard rejects the relay's own pods; and its gate would in any case
+   * refuse a pod the bearer does not own, which is every OTHER member's log. `GET /sse`
+   * connects and re-sends one process-global five-entry ring every 2 s with no pod and no graph
+   * on the frames, so a reader cannot tell whose event it is or a new one from a repeat.
+   *
+   * So there is nothing to subscribe to, and what `refetchInterval` already describes is what
+   * gets built. These three cases pin the part that makes it a WATCH and not a heartbeat.
+   */
+  describe('the HTTP transport watches by re-reading, and only reports real changes', () => {
+    const answer = (payload: unknown): Response => new Response(
+      JSON.stringify({ jsonrpc: '2.0', id: 1, result: { structuredContent: payload } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+    it('delivers the first read immediately, then only when the answer differs', async () => {
+      let n = 0;
+      const answers: unknown[] = [{ entries: [1] }, { entries: [1] }, { entries: [1, 2] }];
+      const tx = new RelayMcpTransport(RELAY, bearer, async () => answer(answers[Math.min(n++, answers.length - 1)]));
+      const got: unknown[] = [];
+      const stop = tx.watchTool('discover_context', { pod_name: 'p' }, (ev) => {
+        if (ev.type === 'data') got.push(ev.result.payload);
+      }, { refetchInterval: 5 });
+      expect(stop).not.toBe(null);
+      // Three polls: the immediate one, an identical answer, then a changed one. An unchanged
+      // answer must not fire — a consumer cannot tell a repeat from a change if it does.
+      await new Promise((r) => setTimeout(r, 40));
+      (stop as () => void)();
+      expect(got.length).toBe(2);
+      expect(got[0]).toEqual({ entries: [1] });
+      expect(got[1]).toEqual({ entries: [1, 2] });
+    });
+    it('reports a failed read as an error event rather than as an empty answer', async () => {
+      const tx = new RelayMcpTransport(RELAY, bearer, async () => { throw new Error('socket closed'); });
+      const events: string[] = [];
+      const stop = tx.watchTool('discover_context', {}, (ev) => { events.push(ev.type); }, { refetchInterval: 5 });
+      await new Promise((r) => setTimeout(r, 20));
+      (stop as () => void)();
+      expect(events[0]).toBe('error');
+      // An error that persists is a condition the consumer has to keep showing, so unlike a
+      // payload it is delivered every time rather than deduplicated into silence.
+      expect(events.filter((e) => e === 'error').length).toBeGreaterThan(1);
+    });
+    it('stops reading once unsubscribed', async () => {
+      let calls = 0;
+      const tx = new RelayMcpTransport(RELAY, bearer, async () => { calls++; return answer({ entries: [] }); });
+      const stop = tx.watchTool('discover_context', {}, () => { /* ignored */ }, { refetchInterval: 5 });
+      await new Promise((r) => setTimeout(r, 20));
+      (stop as () => void)();
+      const after = calls;
+      await new Promise((r) => setTimeout(r, 30));
+      expect(calls).toBe(after);
+    });
   });
   it('unwraps a refusal that arrived as a rejection', () => {
     const rejection = { code: 'tool_error', result: { payload: { error: 'precondition_failed', code: 412 } } };

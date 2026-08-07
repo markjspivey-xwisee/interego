@@ -97,6 +97,33 @@ export async function beginAuthorization(relay: string, clientName: string, redi
   return { clientId: client.client_id, verifier, challenge, redirectUri, authorizeUrl, pendingId };
 }
 
+/** What `/token` answers with, for either grant type. */
+interface TokenGrant {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  error?: string;
+  error_description?: string;
+}
+
+/** Turn a `/token` body into a bearer, or throw with the relay's own words. */
+function asBearer(tj: TokenGrant, method: RelayOAuthBearer['method'], clientId: string): RelayOAuthBearer {
+  if (!tj.access_token) {
+    throw new Error('the token endpoint returned no access_token: ' + (tj.error_description ?? tj.error ?? JSON.stringify(tj).slice(0, 200)));
+  }
+  return {
+    kind: 'relay-oauth-bearer',
+    accessToken: tj.access_token,
+    method,
+    // Absence is not evidence: a grant that reported no lifetime gets `null`, not a guessed
+    // one. A client that invented an hour would keep using a token the relay had dropped and
+    // report the 401 as an outage.
+    expiresAt: typeof tj.expires_in === 'number' ? Date.now() + tj.expires_in * 1000 : null,
+    refreshToken: tj.refresh_token ?? null,
+    clientId,
+  };
+}
+
 /** Exchange an authorization code for a bearer. PKCE verifier is what proves it is ours. */
 export async function exchangeCode(relay: string, p: PendingAuthorization, code: string, method: RelayOAuthBearer['method']): Promise<RelayOAuthBearer> {
   const res = await fetch(relay + '/token', {
@@ -111,19 +138,49 @@ export async function exchangeCode(relay: string, p: PendingAuthorization, code:
       resource: relay + '/',
     }),
   });
-  const tj = await res.json() as { access_token?: string; expires_in?: number; error?: string; error_description?: string };
-  if (!tj.access_token) {
-    throw new Error('the token endpoint returned no access_token: ' + (tj.error_description ?? tj.error ?? JSON.stringify(tj).slice(0, 200)));
+  return asBearer(await res.json() as TokenGrant, method, p.clientId);
+}
+
+/**
+ * Renew a bearer with no user present.
+ *
+ * ★ THE SUCCESSOR IS CARRIED FORWARD BECAUSE THE RELAY ROTATES IT. Measured 2026-08-06:
+ * exchanging a refresh token returns a NEW one and refuses the old one afterwards with
+ * `400 invalid_grant`. A shell that renewed and kept its original token would work for exactly
+ * one more hour and then fail, unattended, in the middle of somebody's session — which is the
+ * failure that is hardest to notice and worst to meet. The bearer this returns therefore
+ * carries the new refresh token, and the caller must replace the whole credential, not just its
+ * access token.
+ *
+ * ★ AND A FAILED RENEWAL IS SAID OUT LOUD RATHER THAN LEAVING AN EMPTY WORKSPACE. This throws,
+ * and `main.ts` turns the throw into a session state the renderer renders — because a client
+ * whose token lapsed and which then shows a workspace with nothing in it has told the user
+ * their workspace is empty.
+ */
+export async function refreshBearer(relay: string, bearer: RelayOAuthBearer): Promise<RelayOAuthBearer> {
+  if (!bearer.refreshToken || !bearer.clientId) {
+    throw new Error('this grant carried no refresh token' + (bearer.clientId ? '' : ' and no client id')
+      + ', so it cannot be renewed without signing in again. That is what the relay returned, not an assumption about it.');
   }
-  return {
-    kind: 'relay-oauth-bearer',
-    accessToken: tj.access_token,
-    method,
-    // Absence is not evidence: a grant that reported no lifetime gets `null`, not a guessed
-    // one. A client that invented an hour would keep using a token the relay had dropped and
-    // report the 401 as an outage.
-    expiresAt: typeof tj.expires_in === 'number' ? Date.now() + tj.expires_in * 1000 : null,
-  };
+  const res = await fetch(relay + '/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: bearer.refreshToken,
+      client_id: bearer.clientId,
+      resource: relay + '/',
+    }),
+  });
+  const tj = await res.json() as TokenGrant;
+  if (!tj.access_token) {
+    throw new Error('the relay refused to renew this session (HTTP ' + res.status + '): '
+      + (tj.error_description ?? tj.error ?? JSON.stringify(tj).slice(0, 200)));
+  }
+  const next = asBearer(tj, bearer.method, bearer.clientId);
+  // A grant that renewed without returning a successor cannot be renewed AGAIN. Keeping the
+  // spent one would be worse than keeping none: it would look renewable and fail in an hour.
+  return tj.refresh_token ? next : { ...next, refreshToken: null };
 }
 
 /**

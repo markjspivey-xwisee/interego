@@ -98,3 +98,8 @@ deploy/railway/*
 # of them shipped green-locally / red-in-CI by forgetting a file that way. Ignoring it is
 # what makes "stage everything you changed" the safe instruction it should always have been.
 scratchpad/
+
+# ★ electron-builder output. ~200 MB per target (a bundled Chromium is in each one), produced
+# by `npm run package --workspace @interego/workspace-desktop`. `dist/` above already covers the
+# bundled entry points; this is the packaged app around them.
+applications/shared-workspace/desktop/release/
