@@ -123,7 +123,14 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // for the delegation half of the workspace client and three under
 // applications/shared-workspace/discord/tests (the gateway protocol client, the link index, and
 // what the bot is allowed to SAY about what it wrote). The tree reached 228.
-export const MIN_TEST_MODULES = 220;
+// 220 -> 222: the round that made an agent a DELEGATE rather than a second name for the person
+// added two suites. tests/workspace-client-delegates.test.ts covers the identity, the two-sided
+// ceiling, the triples an entry carries, and the reader that tells a delegate's entry from its
+// delegator's. applications/shared-workspace/discord/tests/record.test.ts covers the line that
+// had to NOT move in the same round: a chat conduit relays words a person typed, so the entry is
+// theirs, and that is driven through the real record path rather than asserted on a sentence.
+// The tree reached 232.
+export const MIN_TEST_MODULES = 222;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

@@ -191,15 +191,25 @@ export async function refreshBearer(relay: string, bearer: RelayOAuthBearer): Pr
  *
  * `signMessage` is injected rather than importing ethers here, so this module stays testable
  * and so the one place that touches a private key is the one place that holds it.
+ *
+ * ★ `clientName` IS A PARAMETER, AND THAT IS NOT COSMETIC. MEASURED against the live relay: the
+ * agent DID it issues is `did:web:<identity host>:agents:<client_name>-<pod>`, so the OAuth client
+ * name is INSIDE the identity. The person signs in under this app's name; a DELEGATE signs in
+ * under `DELEGATE_SURFACE`, one constant shared by every host, so the same delegate key is the
+ * same delegate whichever app is running it. Hardcoding this app's name here would have minted a
+ * different delegate per application, which is the opposite of what a delegate is.
  */
+export const DESKTOP_CLIENT_NAME = 'interego-workspace-desktop';
+
 export async function signInWithWallet(
   relay: string,
   identityServer: string,
   address: string,
   signMessage: (message: string) => Promise<string>,
   redirectUri: string,
+  clientName: string = DESKTOP_CLIENT_NAME,
 ): Promise<RelayOAuthBearer> {
-  const p = await beginAuthorization(relay, 'interego-workspace-desktop', redirectUri);
+  const p = await beginAuthorization(relay, clientName, redirectUri);
   if (!p.pendingId) throw new Error('the relay\'s authorize page carried no PENDING_ID, so this sign-in has nothing to attach a wallet proof to');
 
   const nonceRes = await fetch(identityServer + '/challenges', {

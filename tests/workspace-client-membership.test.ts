@@ -90,7 +90,7 @@ describe('★ every interpolated IRI is refused rather than escaped', () => {
     // Two implementations of one rule is how they come apart. This pins them together.
     for (const bad of ['a b', 'a<b', 'a>b', 'a"b', 'a{b', 'a}b', 'a|b', 'a\\b', 'a^b', 'a`b', 'a\nb']) {
       expect(() => turtleIri(bad, 'x'), bad + ' should be refused by turtleIri').toThrow();
-      expect(() => entryTurtle({ streamIri: 'https://r/s', workspace: bad, seq: 0, body: 'b', prior: null }),
+      expect(() => entryTurtle({ streamIri: 'https://r/s', workspace: bad, seq: 0, body: 'b', prior: null, author: { kind: 'principal', webId: 'https://identity/users/p/profile#me' } }),
         bad + ' should be refused by entryTurtle').toThrow();
     }
     expect(turtleIri('https://ok/x#y', 'x')).toBe('<https://ok/x#y>');

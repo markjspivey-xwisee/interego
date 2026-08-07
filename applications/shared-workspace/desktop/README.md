@@ -33,7 +33,9 @@ became the head.
 | renew the bearer with no user present | `refreshBearer` here + the relay's `refresh_token` grant | yes |
 | link a Discord account by publishing the delegation for you | `discordLinkPlan` + `publishDelegation` | yes |
 | withdraw that delegation, confirmed by reading the pod back | `revokeDelegation` | yes |
-| run your own agent on your own model subscription | `decideTurn` / `briefPrompt` / `checkDraft` + `modelprovider.ts` | yes |
+| authorise a delegate on your own pod, and revoke it | `delegatePlan` / `publishDelegation` / `revokeDelegation` / `readDelegates` | yes |
+| run one of your delegates on your own model subscription | `decideTurn` / `briefPrompt` / `checkDraft` / `delegateCeiling` + `modelprovider.ts` | yes |
+| tell a delegate's entry from its delegator's, as a reader | `readEntryAuthorship` / `authorshipLine` | yes |
 
 ---
 
@@ -71,10 +73,14 @@ disposable identities and the real `claude` CLI on the operator's own Max subscr
 npx tsx applications/shared-workspace/tools/drive-local-agent-live.ts
 ```
 
-It mints A and B, creates and accepts a workspace across both pods, has B ask a real question, runs
-A's agent for real, appends the answer to A's own pod, asks again to prove the loop guard refuses a
-second reply, publishes a Discord delegation and verifies it *from the delegate's own session*,
-refuses a different chat account against the same row, and revokes. All checks pass.
+It mints four identities — two people and **two delegates of the first** — authorises both
+delegates on A's own pod, creates and accepts a workspace across both people, has A type something
+and B ask a real question, runs A's first delegate for real and appends its answer *under the
+delegate's own session*, proves a sibling delegate refuses to answer the same message twice, has
+the second delegate answer the next one, reads all three authors back apart by dereferencing, and
+revokes the first. It also measures the identity property directly: the same key signed in twice
+under `DELEGATE_SURFACE` is the same delegate, and signed in under a different OAuth client name is
+a different one — which is why the constant exists. All checks pass.
 
 
 **The question, and the measurement that answers it.** Can this app run a person's agent on the
@@ -153,23 +159,54 @@ it. The renderer holds the channel already, so the loop runs there and the main 
 thing: `agent:think`. **The renderer cannot name the binary** — the path comes from this process's
 own probe, never from the call.
 
-### Whose entry it is — the one open question here
+### Whose entry it is — settled, and it is not you
 
-**As built, the local agent writes as YOU.** It runs under your own session, appends to your own
-log, and the entry is indistinguishable from one you typed — the only difference is who composed
-the words, and you approved them before they went. That is why it is not a second member and why
-the panel is a review step rather than a seat.
+**An agent is a DELEGATE. It is not you, and the record says so.** The previous version of this
+section described the opposite as a defensible open question: the local agent ran under your
+session, appended to your log, and produced an entry indistinguishable from one you typed. That
+was wrong at the level of the whole proposition — if a reader cannot tell *Mark said* from *Mark's
+agent said*, the provenance this substrate exists to preserve is gone.
 
-**The other reading is defensible and is not what shipped.** The deployed `wsp-bridge` is a seated
-member with its own key: its entries say *the agent wrote this*, and a reader can tell them apart
-from the human's. A local agent could work the same way — mint a key in the OS secret store, have
-you delegate it on your own pod with exactly the `register_agent` writer this PR already added and
-drove live, and let it appear in the roster under its own name. That buys honest attribution at the
-cost of a second identity to manage and a roster entry per person.
+What ships now:
 
-The machinery for it exists and is tested; only the choice was made the other way. **If attribution
-should distinguish "you" from "your agent" on the record, this is the thing to change**, and it is
-contained: the decision, the ceiling check and the writer would all stay where they are.
+* **A delegate has its own key and its own agent id.** You mint one (or adopt one minted
+  elsewhere) and *you* authorise it, with `register_agent` on your own pod — the same own-pod-gated
+  row you use for the Discord bot, and `revoke_agent` withdraws it unilaterally.
+* **Its identity is not this app.** Measured against the live relay: the agent id the relay issues
+  is `did:web:<identity host>:agents:<oauth client_name>-<pod>`, so the client name is *inside* the
+  identity. Delegates therefore sign in under one shared constant, `DELEGATE_SURFACE`, not under
+  this app's name — the same key is the same delegate in any client that holds it. Minting shows
+  you the key once, and there is an import field, so a delegate can move machines.
+* **Delegates are plural.** One person may authorise several — an Anthropic-backed one and an
+  OpenAI-backed one — each with its own scope, each revocable alone, all writing into the same log
+  and all distinguishable. The provider is how a delegate *thinks*, not who it is: two delegates
+  can run on the same one.
+* **The entry says who wrote it.** `prov:wasAttributedTo <the delegate>`, plus
+  `<the delegate> prov:actedOnBehalfOf <you>`. Your own entries carry
+  `prov:wasAttributedTo <your WebID>` and no delegation statement — required on *both*, because if
+  only one form carried an author then "no author" would have to be read as "the human", and
+  absence is not evidence. The workspace's own published shape requires it, so the relay refuses an
+  entry that names nobody.
+* **A delegate's write is made under the delegate's own relay session,** not yours. So the relay
+  authenticates it, the write is scope-gated on your `register_agent` row, and `revoke_agent`
+  actually stops it.
+* **Its ceiling is its own.** Two ceilings, both narrowing: your seat's role, which it inherits and
+  cannot exceed, and the scope you gave *that* delegate. A delegate granted `ReadOnly` cannot post
+  even though you can, and its sibling granted `PublishOnly` still can.
+* **The draft still goes in the composer, and Post is withheld while it sits there unedited.** Post
+  appends as *you*; the delegate has its own Send. The same text through the two buttons makes two
+  different records and only one of them is true. Change a character and the words are yours again.
+
+**A conduit is not a delegate, and that line did not move.** The Discord bot relays a message you
+*typed*: you wrote the words, so the entry is yours and is attributed to you. Only text an agent
+*composed* is the agent's. `discord/tests/record.test.ts` drives the real record path and pins it.
+
+**What the signature proves, exactly.** Measured on this relay, on a delegated write and an
+own-pod write alike: the proof's `verificationMethod` is one key — the relay's own delegation
+signer, identical for every pod and every agent here. Only the `issuer` distinguishes them. So the
+panel says *the relay signed a statement that the caller it authenticated as `<did>` published
+this*, and says outright that it is **not** the delegate's own wallet. Nothing on any screen in
+this app says "signed by your delegate".
 
 **The dedupe rule, and the loop-forever defect it prevents.** The obvious test is whether one of my
 entries declares `prov:wasDerivedFrom` the entry I am about to answer. That **does not work from

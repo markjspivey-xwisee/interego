@@ -99,6 +99,16 @@ interface Scripted {
   fail: Map<string, (input: Record<string, unknown>) => unknown>;
   calls: { name: string; input: Record<string, unknown> }[];
   writeEligible: boolean;
+  /**
+   * Each pod's OWN delegation registry rows.
+   *
+   * ★ PER POD, BECAUSE AUTHORISATION IS PER POD. One shared list would let a test assert a state
+   * the substrate cannot produce — one person's delegate showing up as another's — and a harness
+   * that can express the impossible cannot verify the possible.
+   */
+  delegations: Map<string, Record<string, unknown>[]>;
+  /** Which delegate keys the "main process" holds, and what agent id each signs in as. */
+  keys: { address: string; agentId: string | null; why: string | null }[];
 }
 
 function scripted(): Scripted {
@@ -134,8 +144,21 @@ function scripted(): Scripted {
   return {
     pods: new Map([[POD_A, a], [POD_B, b]]),
     inbox: [], fail: new Map(), calls: [], writeEligible: true,
+    // One delegate authorised on A's pod, with its key here — the ordinary state a person is in
+    // once they have set one up. Cases about having none, or having one hosted elsewhere, say so.
+    delegations: new Map([[POD_A, [delegationRow(D1, 'workspace-delegate Claude side')]]]),
+    keys: [{ address: KEY('0x1'), agentId: D1, why: null }],
   };
 }
+
+/** A delegate DID in the shape the live relay issues: the surface constant, then a pod. */
+const DELEGATE = (n: string): string => 'did:web:identity.interego.xwisee.com:agents:interego-delegate-u-eth-' + n;
+const D1 = DELEGATE('111111111111');
+const D2 = DELEGATE('222222222222');
+const KEY = (n: string): string => '0x' + n.padEnd(40, '0');
+/** One row as `get_pod_status` reports it. */
+const delegationRow = (agentId: string, label: string | null, scope = 'PublishOnly'): Record<string, unknown> =>
+  ({ agentId, scope, label, validFrom: '2026-08-06T09:00:00.000Z' });
 
 /** The role table, served as Turtle at a relay `/ns/` IRI — one hop, no HTML alternate. */
 const ROLE_TURTLE = '@prefix wsp: <https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#> .\n'
@@ -148,24 +171,63 @@ const ROLE_TURTLE = '@prefix wsp: <https://markjspivey-xwisee.github.io/interego
   + '<' + ROLES + '#Contributor> a wsp:Role ; rdfs:label "Contributor" ; rdfs:comment "Reads and writes their own log." ;\n'
   + '  wsp:permits <' + ROLES + '#Read>, <' + ROLES + '#Post> .\n';
 
-function tool(s: Scripted, viewerPod: string, name: string, input: Record<string, unknown>): unknown {
+/**
+ * The scripted relay.
+ *
+ * `caller` is the agent the relay would have authenticated — the viewer's own session, or a
+ * DELEGATE's when the call came through the delegate channel. It is not a convenience: the whole
+ * point of a delegate holding its own key is that the relay knows who asked, so a harness that
+ * answered identically either way could not tell a real delegated write from a forged claim.
+ */
+function tool(s: Scripted, viewerPod: string, name: string, input: Record<string, unknown>, caller = 'did:ethr:0xsession'): unknown {
   s.calls.push({ name, input });
   const override = s.fail.get(name);
   if (override) { const r = override(input); if (r !== undefined) return r; }
   const podOf = (n: unknown): Pod | undefined => s.pods.get(String(n ?? viewerPod));
   switch (name) {
     case 'get_pod_status': {
-      const pod = input['pod_url'] ? String(input['pod_url']).replace(/\/$/, '').split('/').pop() as string : viewerPod;
+      const pod = input['pod_url'] ? String(input['pod_url']).replace(/\/$/, '').split('/').pop() as string
+        : input['pod_name'] ? String(input['pod_name']) : viewerPod;
       return {
         pod: 'http://css.railway.internal:3456/' + pod + '/',
         displayName: null, css: 'http://css.railway.internal:3456/',
         registry: { owner: WEBID(pod) },
-        delegationRegistry: { owner: WEBID(pod), rows: [{ agent: 'did:ethr:0x1' }] },
+        delegationRegistry: { owner: WEBID(pod), rows: s.delegations.get(pod) ?? [] },
         sessionAgent: { did: 'did:ethr:0xsession', scope: 'ReadWrite' },
       };
     }
-    case 'verify_agent':
+    /**
+     * ★ OWN-POD GATED, LIKE THE RELAY'S. `register_agent` takes no `pod_name` and writes only the
+     * authenticated pod's registry. A harness that let a caller name a pod would make the flow
+     * testable in a way the substrate never permits.
+     */
+    case 'register_agent': {
+      const rows = s.delegations.get(viewerPod) ?? [];
+      const at = rows.findIndex((r) => r['agentId'] === input['agent_id']);
+      const row = delegationRow(String(input['agent_id']), (input['label'] as string) ?? null, String(input['scope'] ?? 'PublishOnly'));
+      if (at >= 0) rows[at] = row; else rows.push(row);
+      s.delegations.set(viewerPod, rows);
+      return { registered: true, agent: input['agent_id'], scope: input['scope'] };
+    }
+    case 'revoke_agent': {
+      const rows = (s.delegations.get(viewerPod) ?? []).filter((r) => r['agentId'] !== input['agent_id']);
+      s.delegations.set(viewerPod, rows);
+      return { revoked: true };
+    }
+    case 'verify_agent': {
+      // When asked about a delegate on a pod, answer from that pod's own rows — which is what the
+      // relay's scope gate reads. Asked about the viewer's session, keep the measured shape.
+      const askPod = input['pod_name'] ? String(input['pod_name']) : viewerPod;
+      const row = (s.delegations.get(askPod) ?? []).find((r) => r['agentId'] === input['agent_id']);
+      if (row) {
+        const eligible = ['ReadWrite', 'PublishOnly'].includes(String(row['scope']));
+        return { subject_pod_name: askPod, verified: true, enforcement: { basis: 'signed-chain', scope: row['scope'], writeEligible: eligible, note: '' } };
+      }
+      if (input['pod_name']) {
+        return { subject_pod_name: askPod, verified: false, enforcement: { basis: 'none', scope: null, writeEligible: false, note: 'agent is not registered on this pod' } };
+      }
       return { verified: false, enforcement: { basis: 'registry-only', scope: 'ReadWrite', writeEligible: s.writeEligible, note: 'no signed delegation credential anchors this agent' } };
+    }
     case 'resolve_webfinger': {
       const pod = /acct:([^@]+)@/.exec(String(input['resource']))?.[1] ?? '';
       if (!s.pods.has(pod)) return { error: 'not_found', message: 'no such account' };
@@ -212,8 +274,18 @@ function tool(s: Scripted, viewerPod: string, name: string, input: Record<string
         ? { status: 'ok', contentType: 'text/turtle', representation: ROLE_TURTLE }
         : { status: 'error', httpStatus: 404 };
     case 'publish_context': {
-      const pod = s.pods.get(viewerPod);
+      // ★ THE WRITE LANDS ON THE NAMED POD, AND THE RELAY'S SCOPE GATE DECIDES. A delegate writes
+      // to its DELEGATOR's pod, not its own, so a harness pinned to `viewerPod` could not exercise
+      // a delegated write at all — and could not exercise the 403 either.
+      const target = input['pod_name'] ? String(input['pod_name']) : viewerPod;
+      const pod = s.pods.get(target);
       if (!pod) return { error: 'scope_violation', code: 403, message: 'agent is not registered on this pod' };
+      if (caller !== 'did:ethr:0xsession') {
+        const row = (s.delegations.get(target) ?? []).find((r) => r['agentId'] === caller);
+        if (!row || !['ReadWrite', 'PublishOnly'].includes(String(row['scope']))) {
+          return { error: 'scope_violation', code: 403, message: 'agent is not registered on this pod' };
+        }
+      }
       const graph = String(input['graph_iri']);
       const prior = pod.headOf(graph);
       if (input['if_match'] && prior && input['if_match'] !== prior.cid && input['if_match'] !== prior.url) {
@@ -226,18 +298,20 @@ function tool(s: Scripted, viewerPod: string, name: string, input: Record<string
         };
       }
       const n = 1000 + pod.docs.length;
-      const url = DESC(viewerPod, n);
+      const url = DESC(target, n);
       pod.put({
         graph, cid: 'cid-' + n, url, content: trig(graph, String(input['graph_content']).replace(/^@prefix[^\n]*\n/gm, '')),
         validFrom: new Date(Date.parse('2026-08-06T13:00:00.000Z') + n).toISOString(),
         supersedes: prior ? [prior.url] : [],
-        authorship: { signedBy: 'did:ethr:0xsession', authorshipVerified: true },
+        authorship: { signedBy: caller, authorshipVerified: true },
       });
       return {
         status: 'committed', descriptorUrl: url, cid: 'cid-' + n,
         precondition: input['if_match'] ? { passed: true, expectedCid: String(input['if_match']), observedCid: String(input['if_match']) } : undefined,
         supersedesPriorVersions: prior ? [prior.url] : [],
-        authorship: { signed: true, signer: 'did:ethr:0xsession' },
+        // Measured shape: `signer` is the agent the relay authenticated, `verificationMethod` is
+        // the relay's OWN key — one key for every pod and every agent on the deployment.
+        authorship: { signed: true, signer: caller, verificationMethod: 'did:ethr:0xd144353a7A2Fa81E126e072AD3b16cD245c83331' },
       };
     }
     case 'notify_agent':
@@ -358,6 +432,40 @@ async function open(opts: { viewer?: string; setup?: (s: Scripted) => void; cold
       return agent.think ? agent.think(prompt) : { ok: true, text: 'A drafted reply.', why: 'ok', ms: 1200 };
     },
     agentCancel: async () => { agent.cancels++; return { stopped: 0 }; },
+    /**
+     * ★ THE KEYRING, WHICH IS NOT THE ROSTER. This answers "which delegates can this machine
+     * DRIVE"; the pod's own delegation registry answers "which has this person AUTHORISED". The
+     * renderer reads both and the two are deliberately allowed to disagree here, because they
+     * disagree in reality: a delegate hosted on another laptop is authorised and not drivable.
+     */
+    delegateList: async () => ({ delegates: s.keys.slice(), secretStore: true }),
+    delegateMint: async () => {
+      const address = KEY('0xdead' + (s.keys.length + 1));
+      const agentId = DELEGATE('9'.repeat(11) + String(s.keys.length + 1));
+      s.keys.push({ address, agentId, why: null });
+      return { address, agentId, pod: 'u-eth-minted', privateKey: '0x' + 'a'.repeat(64) };
+    },
+    delegateImport: async (pk: string) => {
+      if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) throw new Error('That is not a secp256k1 private key.');
+      const address = KEY('0xbeef' + (s.keys.length + 1));
+      const agentId = DELEGATE('8'.repeat(11) + String(s.keys.length + 1));
+      s.keys.push({ address, agentId, why: null });
+      return { address, agentId, pod: 'u-eth-imported' };
+    },
+    delegateForget: async (address: string) => {
+      const at = s.keys.findIndex((k) => k.address === address);
+      if (at >= 0) s.keys.splice(at, 1);
+      return { forgotten: address };
+    },
+    /**
+     * A call made under a DELEGATE's own session. The scripted relay is told which agent asked,
+     * so a delegated write is gated on that pod's registry exactly as the live one is.
+     */
+    delegateCall: async (address: string, name: string, input: Record<string, unknown>) => {
+      const k = s.keys.find((x) => x.address === address);
+      if (!k?.agentId) return { ok: false, error: { code: 'delegate_unavailable', message: 'this app holds no key for ' + address, retryable: false, retryAfterMs: null } };
+      return { ok: true, payload: tool(s, viewer, name, input, k.agentId) };
+    },
   };
   win.eval(bundle);
   /**
@@ -389,6 +497,34 @@ const click = (doc: Document, id: string): void => { (doc.getElementById(id) as 
 async function signInAndSettle(o: Opened): Promise<void> {
   click(o.doc, 'signin-wallet');
   await o.settle();
+}
+
+/**
+ * Authorise a delegate on a pod AND hold its key here.
+ *
+ * ★ BOTH HALVES, SEPARATELY, BECAUSE THEY ARE SEPARATE FACTS. The row on the pod is the
+ * AUTHORITY; the key is what lets this machine drive it. Tests that want a delegate hosted
+ * elsewhere set only the first, and tests that want a key with no delegation set only the second.
+ */
+const seatDelegate = (s: Scripted, pod: string, args: { agentId: string; name: string; address?: string; scope?: string; hosted?: boolean }): void => {
+  const rows = s.delegations.get(pod) ?? [];
+  rows.push(delegationRow(args.agentId, 'workspace-delegate ' + args.name, args.scope ?? 'PublishOnly'));
+  s.delegations.set(pod, rows);
+  if (args.hosted !== false) s.keys.push({ address: args.address ?? KEY('0x' + args.agentId.slice(-6)), agentId: args.agentId, why: null });
+};
+
+/** Choose which delegate speaks here, through the picker, the way a person does. */
+async function speakAs(o: Opened, agentId: string): Promise<void> {
+  const sel = o.doc.getElementById('agentwho') as HTMLSelectElement;
+  sel.value = agentId;
+  sel.dispatchEvent(new o.win.Event('change'));
+  await o.settle();
+}
+
+/** Sign in and pick the delegate the default store authorises, which most agent cases want. */
+async function signInAndSpeak(o: Opened): Promise<void> {
+  await signInAndSettle(o);
+  await speakAs(o, D1);
 }
 /**
  * Open a workspace the way a person does — by pasting its IRI.
@@ -873,11 +1009,28 @@ describe('nothing in the renderer dereferences a fleet-internal address', () => 
 // ── the model this machine can run the user's agent on ───────────────────────
 
 /** An entry on somebody's log, the fixture the agent cases are built from. */
-const entry = (pod: string, n: number, body: string, at: string): Doc => ({
-  graph: STREAM(pod), cid: 'cid-ag-' + pod + '-' + n, url: DESC(pod, 200 + n), validFrom: at,
-  content: trig(STREAM(pod), '<' + STREAM(pod) + '/e/' + n + '> a wsp:Entry ; wsp:workspace <' + WS + '> ;\n'
-    + '  wsp:seq "' + n + '"^^<http://www.w3.org/2001/XMLSchema#nonNegativeInteger> ; dct:description "' + body + '" .'),
-});
+/**
+ * One entry in somebody's log.
+ *
+ * `by` is who COMPOSED it, which is not the pod. Omitted, the pod's owner wrote it — the ordinary
+ * case, and the one the conduit path produces. Given a delegate DID, the entry is written the way
+ * `entryTurtle` writes a delegate's: attributed to the AGENT, with a second subject stating whom
+ * that agent acted for. Pass `null` for the case that must never render as the owner — an entry
+ * that names nobody at all.
+ */
+const entry = (pod: string, n: number, body: string, at: string, by?: string | null): Doc => {
+  const attribution = by === null ? ''
+    : by === undefined ? ' ;\n  <http://www.w3.org/ns/prov#wasAttributedTo> <' + WEBID(pod) + '>'
+      : ' ;\n  <http://www.w3.org/ns/prov#wasAttributedTo> <' + by + '>';
+  const behalf = typeof by === 'string'
+    ? '\n<' + by + '> <http://www.w3.org/ns/prov#actedOnBehalfOf> <' + WEBID(pod) + '> .' : '';
+  return {
+    graph: STREAM(pod), cid: 'cid-ag-' + pod + '-' + n, url: DESC(pod, 200 + n), validFrom: at,
+    content: trig(STREAM(pod), '<' + STREAM(pod) + '/e/' + n + '> a wsp:Entry ; wsp:workspace <' + WS + '> ;\n'
+      + '  wsp:seq "' + n + '"^^<http://www.w3.org/2001/XMLSchema#nonNegativeInteger>' + attribution
+      + ' ; dct:description "' + body + '" .' + behalf),
+  };
+};
 
 describe('the model the agent runs on is the user\'s own, or it is absent', () => {
   it('names the account and plan it would run under', async () => {
@@ -934,10 +1087,10 @@ describe('the first run reads as one sequence, and admits what it cannot know', 
     await signInAndSettle(o);
     const steps = text(o.doc, '#setupsteps');
     expect(steps).toContain('nothing here is a claim either way');
-    expect(steps).not.toContain('4. Discord — you have not');
+    expect(steps).not.toContain('Discord — you have not');
     // Rendered as "not established", never as a finding against.
     const discord = [...o.doc.querySelectorAll('#setupsteps .q')].map((n) => n.textContent ?? '');
-    expect(discord.some((t) => t.startsWith('4. Discord'))).toBe(true);
+    expect(discord.some((t) => t.startsWith('5. Discord'))).toBe(true);
   });
 
   it('★ a workspace list that failed to read is not reported as "you are in none"', async () => {
@@ -1044,9 +1197,14 @@ describe('the local agent is off, visible, and stoppable', () => {
     } });
     await signInAndSettle(o);
     expect(text(o.doc, '#agentstate')).toBe('Off');
-    expect(text(o.doc, '#agentwhy')).toContain('It reads nothing and writes nothing');
+    // ★ AND NOBODY IS SELECTED, which is a different state from "off". A delegate is chosen, not
+    // defaulted — defaulting one would be the app deciding who speaks for somebody.
+    expect(text(o.doc, '#agentwhy')).toContain('Choose which of your delegates speaks in this channel');
     expect(o.agent.prompts).toHaveLength(0);
     expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
+    // Once one IS chosen, the off state says what it says.
+    await speakAs(o, D1);
+    expect(text(o.doc, '#agentwhy')).toContain('It reads nothing and writes nothing');
   });
 
   it('★ a draft goes in the composer and NOTHING is published until the person sends it', async () => {
@@ -1056,7 +1214,7 @@ describe('the local agent is off, visible, and stoppable', () => {
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
       agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'We agreed to re-tile in spring.', why: 'ok', ms: 900 }) },
     });
-    await signInAndSettle(o);
+    await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
     expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('We agreed to re-tile in spring.');
@@ -1070,7 +1228,7 @@ describe('the local agent is off, visible, and stoppable', () => {
     const o = await open({
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'Roof question', '2026-08-07T10:00:00.000Z')); },
     });
-    await signInAndSettle(o);
+    await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
     expect(o.agent.prompts).toHaveLength(1);
@@ -1084,7 +1242,7 @@ describe('the local agent is off, visible, and stoppable', () => {
     const o = await open({ setup: (s) => {
       (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'Anything?', '2026-08-07T10:00:00.000Z'));
     } });
-    await signInAndSettle(o);
+    await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
     click(o.doc, 'agenttoggle');
@@ -1101,10 +1259,10 @@ describe('the local agent is off, visible, and stoppable', () => {
       (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What about the roof?', '2026-08-07T10:00:00.000Z'));
       (s.pods.get(POD_A) as Pod).put(entry(POD_A, 1, 'We agreed to re-tile in spring.', '2026-08-07T10:01:00.000Z'));
     } });
-    await signInAndSettle(o);
+    await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
-    expect(text(o.doc, '#agentwhy')).toContain('You have written in this channel since');
+    expect(text(o.doc, '#agentwhy')).toContain('has written in this channel since');
     expect(o.agent.prompts).toHaveLength(0);
   });
 
@@ -1112,7 +1270,7 @@ describe('the local agent is off, visible, and stoppable', () => {
     const o = await open({ setup: (s) => {
       (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'Anything?', '2026-08-07T10:00:00.000Z'));
     } });
-    await signInAndSettle(o);
+    await signInAndSpeak(o);
     const ta = o.doc.getElementById('composer') as HTMLTextAreaElement;
     ta.value = 'half a sentence I was typing';
     click(o.doc, 'agenttoggle');
@@ -1127,7 +1285,7 @@ describe('the local agent is off, visible, and stoppable', () => {
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'ok', '2026-08-07T10:00:00.000Z')); },
       agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'NOTHING TO ADD', why: 'ok', ms: 300 }) },
     });
-    await signInAndSettle(o);
+    await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
     expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
@@ -1140,7 +1298,7 @@ describe('the local agent is off, visible, and stoppable', () => {
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'hello', '2026-08-07T10:00:00.000Z')); },
       agent: { prompts: [], cancels: 0, think: () => ({ ok: false, text: null, why: 'Claude Code refused this turn: Not logged in · Please run /login. Nothing was written.', ms: 1200 }) },
     });
-    await signInAndSettle(o);
+    await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
     expect(text(o.doc, '#agentresult')).toContain('Not logged in');
@@ -1152,7 +1310,7 @@ describe('the local agent is off, visible, and stoppable', () => {
       setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'hello', '2026-08-07T10:00:00.000Z')); },
       agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'x'.repeat(5000), why: 'ok', ms: 900 }) },
     });
-    await signInAndSettle(o);
+    await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
     expect(text(o.doc, '#agentresult')).toContain('refused rather than truncated');
@@ -1183,7 +1341,7 @@ describe('the local agent is off, visible, and stoppable', () => {
       s.fail.set('get_descriptor', (input) => (String(input['url']).endsWith('200.ttl')
         ? { error: 'upstream_error', message: 'that descriptor could not be read' } : undefined));
     } });
-    await signInAndSettle(o);
+    await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
     expect(o.agent.prompts).toHaveLength(0);
@@ -1197,7 +1355,7 @@ describe('the local agent is off, visible, and stoppable', () => {
     const o = await open({ setup: (s) => {
       (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z'));
     } });
-    await signInAndSettle(o);
+    await signInAndSpeak(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
     expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).not.toBe('');
@@ -1252,5 +1410,279 @@ describe('the local agent is off, visible, and stoppable', () => {
     // Not seated, so the panel is not even offered — there is no log of theirs to write to.
     expect(o.doc.getElementById('agentcard')?.hasAttribute('hidden')).toBe(true);
     expect(o.agent.prompts).toHaveLength(0);
+  });
+});
+
+/**
+ * ★ A DELEGATE IS NOT THE PERSON, AND THE SCREEN HAS TO SHOW IT.
+ *
+ * Every case below was checked with the correction reverted — the agent writing under the
+ * viewer's own session and WebID, the picker gone, the stream labelling every entry by its pod's
+ * role — and every one of them failed. The module tests pin the DECISIONS; these pin what a
+ * person can actually see, which is where the old defect was invisible.
+ */
+describe('delegates: separate identities, plural, and visible as such', () => {
+  it('★ with no delegate authorised, nothing speaks — and it is not the person who does', async () => {
+    const o = await open({ setup: (s) => {
+      s.delegations.clear(); s.keys.length = 0;
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z'));
+    } });
+    await signInAndSettle(o);
+    expect((o.doc.getElementById('agenttoggle') as HTMLButtonElement).disabled).toBe(true);
+    expect(text(o.doc, '#agentwhy')).toContain('You have not authorised a delegate');
+    expect(text(o.doc, '#agentwhy')).toContain('Nothing here will write as you');
+    expect(o.agent.prompts).toHaveLength(0);
+    expect(o.s.calls.some((c) => c.name === 'publish_context')).toBe(false);
+  });
+
+  it('★ the picker lists the POD\'s delegates, and one hosted elsewhere is shown and not selectable', async () => {
+    const o = await open({ setup: (s) => {
+      // Authorised on the pod, key NOT on this machine. A real delegate, running somewhere else.
+      seatDelegate(s, POD_A, { agentId: D2, name: 'Codex side', hosted: false });
+    } });
+    await signInAndSettle(o);
+    const opts = [...o.doc.querySelectorAll('#agentwho option')] as HTMLOptionElement[];
+    const codex = opts.find((x) => x.value === D2);
+    expect(codex?.textContent).toContain('Codex side');
+    expect(codex?.textContent).toContain('no key on this machine');
+    expect(codex?.disabled).toBe(true);
+    // And the one this machine DOES hold a key for is selectable.
+    expect(opts.find((x) => x.value === D1)?.disabled).toBe(false);
+  });
+
+  it('★ a delegate whose scope cannot publish is offered as unusable rather than hidden', async () => {
+    const o = await open({ setup: (s) => {
+      seatDelegate(s, POD_A, { agentId: D2, name: 'Reader only', scope: 'ReadOnly' });
+    } });
+    await signInAndSettle(o);
+    const opt = ([...o.doc.querySelectorAll('#agentwho option')] as HTMLOptionElement[]).find((x) => x.value === D2);
+    expect(opt?.textContent).toContain('scope ReadOnly, cannot publish');
+    expect(opt?.disabled).toBe(true);
+  });
+
+  it('★ the delegate\'s entry names the DELEGATE, and the person\'s names the person', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What about the roof?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'Patching buys a year.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    // The draft is the delegate's, so the PERSON's Post is withheld and the delegate has its own.
+    expect((o.doc.getElementById('send') as HTMLButtonElement).disabled).toBe(true);
+    const own = o.doc.getElementById('agentsend') as HTMLButtonElement;
+    expect(own.hasAttribute('hidden')).toBe(false);
+    expect(own.textContent).toContain('Send as Claude side');
+    own.click();
+    await o.settle();
+    const published = o.s.calls.filter((c) => c.name === 'publish_context');
+    expect(published).toHaveLength(1);
+    const ttl = String(published[0]?.input['graph_content']);
+    // ★ THE TRIPLES. The agent is the author; the person is who it acted for.
+    expect(ttl).toContain('prov:wasAttributedTo <' + D1 + '>');
+    expect(ttl).toContain('<' + D1 + '> prov:actedOnBehalfOf <' + WEBID(POD_A) + '>');
+    expect(ttl).not.toContain('prov:wasAttributedTo <' + WEBID(POD_A) + '>');
+  });
+
+  it('★ the person\'s own Post attributes to the person, and nothing acted on their behalf', async () => {
+    const o = await open();
+    await signInAndSettle(o);
+    (o.doc.getElementById('composer') as HTMLTextAreaElement).value = 'I typed this myself.';
+    click(o.doc, 'send');
+    await o.settle();
+    const ttl = String(o.s.calls.filter((c) => c.name === 'publish_context')[0]?.input['graph_content']);
+    expect(ttl).toContain('prov:wasAttributedTo <' + WEBID(POD_A) + '>');
+    expect(ttl).not.toContain('prov:actedOnBehalfOf');
+  });
+
+  it('★ editing a delegate\'s draft makes the words yours, and Post comes back', async () => {
+    // The corrected defect, moved one button along: a draft sitting beside a live Post is a
+    // one-click way to publish an agent's prose under a person's name.
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'A drafted reply.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    const ta = o.doc.getElementById('composer') as HTMLTextAreaElement;
+    expect((o.doc.getElementById('send') as HTMLButtonElement).disabled).toBe(true);
+    ta.value = 'A drafted reply, but I changed it.';
+    ta.dispatchEvent(new o.win.Event('input'));
+    await o.settle();
+    expect((o.doc.getElementById('send') as HTMLButtonElement).disabled).toBe(false);
+    expect((o.doc.getElementById('agentsend') as HTMLButtonElement).hasAttribute('hidden')).toBe(true);
+    click(o.doc, 'send');
+    await o.settle();
+    const ttl = String(o.s.calls.filter((c) => c.name === 'publish_context')[0]?.input['graph_content']);
+    expect(ttl).toContain('prov:wasAttributedTo <' + WEBID(POD_A) + '>');
+    expect(ttl).not.toContain(D1);
+  });
+
+  it('★ one log, three authors: the person, and two of their delegates, all told apart', async () => {
+    const o = await open({ setup: (s) => {
+      seatDelegate(s, POD_A, { agentId: D2, name: 'Codex side' });
+      const a = s.pods.get(POD_A) as Pod;
+      a.put(entry(POD_A, 0, 'I would rather not spend the money.', '2026-08-07T10:00:00.000Z'));
+      a.put(entry(POD_A, 1, 'Consider the flashing too.', '2026-08-07T10:01:00.000Z', D1));
+      a.put(entry(POD_A, 2, 'And the gutters.', '2026-08-07T10:02:00.000Z', D2));
+    } });
+    await signInAndSettle(o);
+    const authors = [...o.doc.querySelectorAll('#stream .mauthor')].map((n) => n.textContent ?? '');
+    expect(authors).toContain('You');
+    expect(authors).toContain('Claude side, acting for the person whose pod this is');
+    expect(authors).toContain('Codex side, acting for the person whose pod this is');
+    // And the ROLE is still shown, separately — a capacity, not an author.
+    expect(text(o.doc, '#stream')).toContain('Convener');
+  });
+
+  it('★ an entry that names no author renders as that, never as the pod owner', async () => {
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_A) as Pod).put(entry(POD_A, 0, 'Who wrote this?', '2026-08-07T10:00:00.000Z', null));
+    } });
+    await signInAndSettle(o);
+    const authors = [...o.doc.querySelectorAll('#stream .mauthor')].map((n) => n.textContent ?? '');
+    expect(authors).toContain('author not stated');
+    expect(authors).not.toContain('You');
+  });
+
+  it('★ an entry claiming a delegation the pod does not record is marked, not believed', async () => {
+    const o = await open({ setup: (s) => {
+      // The entry claims D2 acted for A; A's registry lists only D1.
+      (s.pods.get(POD_A) as Pod).put(entry(POD_A, 0, 'Not really authorised.', '2026-08-07T10:00:00.000Z', D2));
+    } });
+    await signInAndSettle(o);
+    const el = [...o.doc.querySelectorAll('#stream .mauthor')].find((n) => (n.textContent ?? '').includes('unnamed delegate'));
+    expect(el).not.toBe(undefined);
+    expect((el as HTMLElement).title).toContain('does NOT list this agent');
+  });
+
+  it('★ the roster draws each member\'s delegates as their own rows, with their own scope', async () => {
+    const o = await open({ setup: (s) => {
+      seatDelegate(s, POD_A, { agentId: D2, name: 'Codex side', scope: 'ReadOnly' });
+    } });
+    await signInAndSettle(o);
+    const roster = text(o.doc, '#roster');
+    expect(roster).toContain('Claude side');
+    expect(roster).toContain('Codex side');
+    expect(roster).toContain('delegate of ' + POD_A);
+    expect(roster).toContain(D1);
+    // Each delegate's own scope, on its own row — not the member's.
+    expect(roster).toContain('ReadOnly');
+    expect(roster).toContain('PublishOnly');
+  });
+
+  it('★ the lobby card shows the exact register_agent call before it is made, and then makes it', async () => {
+    const o = await open({ setup: (s) => { s.delegations.clear(); s.keys.length = 0; } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#delegatelist')).toContain('Your pod authorises no delegates');
+    click(o.doc, 'delegatemint');
+    await o.settle();
+    // Minting is not authorising, and the card says so rather than implying a delegate exists.
+    expect(text(o.doc, '#delegateresult')).toContain('your pod does not authorise it yet');
+    expect(o.s.calls.some((c) => c.name === 'register_agent')).toBe(false);
+    // The key is shown ONCE, with the reason it is being shown at all.
+    expect(text(o.doc, '#delegatekeyout')).toContain('copy it now');
+    (o.doc.getElementById('delegatename') as HTMLInputElement).value = 'Research assistant';
+    (o.doc.getElementById('delegatename') as HTMLInputElement).dispatchEvent(new o.win.Event('input'));
+    await o.settle();
+    const plan = text(o.doc, '#delegateplan');
+    expect(plan).toContain('has not been made');
+    expect(plan).toContain('workspace-delegate Research assistant');
+    expect(plan).toContain('PublishOnly');
+    expect(plan).toContain('name IT as the author and YOU as the person it acted for');
+    click(o.doc, 'delegateauthorise');
+    await o.settle();
+    expect(o.s.calls.some((c) => c.name === 'register_agent')).toBe(true);
+    expect(text(o.doc, '#delegateresult')).toContain('read back from your own pod');
+  });
+
+  it('★ forgetting a key is never rendered as a revocation', async () => {
+    const o = await open();
+    await signInAndSettle(o);
+    const forget = [...o.doc.querySelectorAll('#delegatelist button')].find((b) => (b.textContent ?? '').includes('Forget its key')) as HTMLButtonElement;
+    expect(forget).not.toBe(undefined);
+    forget.click();
+    await o.settle();
+    expect(o.s.calls.some((c) => c.name === 'revoke_agent')).toBe(false);
+    expect(text(o.doc, '#delegateresult')).toContain('NOT a revocation');
+    expect(text(o.doc, '#delegateresult')).toContain('still on your pod');
+  });
+
+  it('★ revoking says what survives it, and stops that delegate speaking at once', async () => {
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z'));
+    } });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(text(o.doc, '#agentstate')).not.toBe('Off');
+    const revoke = [...o.doc.querySelectorAll('#delegatelist button')].find((b) => (b.textContent ?? '') === 'Revoke') as HTMLButtonElement;
+    revoke.click();
+    await o.settle();
+    expect(o.s.calls.some((c) => c.name === 'revoke_agent')).toBe(true);
+    expect(text(o.doc, '#delegateresult')).toContain('still names the delegate as its author');
+    expect(text(o.doc, '#delegateresult')).toContain('revoking cannot reach it');
+    expect(text(o.doc, '#agentstate')).toBe('Off');
+    expect(text(o.doc, '#delegatelist')).toContain('Your pod authorises no delegates');
+  });
+
+  it('★ a registry that could not be read is never drawn as "you have no delegates"', async () => {
+    const o = await open({ setup: (s) => {
+      s.fail.set('get_pod_status', (i) => (i['pod_name'] === POD_A ? { error: 'upstream_error', message: 'the pod did not answer' } : undefined));
+    } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#delegatelist')).toContain('not established');
+    expect(text(o.doc, '#delegatelist')).not.toContain('authorises no delegates');
+    const unknown = [...o.doc.querySelectorAll('#setupsteps .q')].map((n) => n.textContent ?? '');
+    expect(unknown.some((t) => t.startsWith('4. A delegate'))).toBe(true);
+  });
+
+  it('★ the panel never says a delegate signed with its own key', async () => {
+    // MEASURED: the proof\'s verificationMethod is the RELAY\'s one delegation key, identical for
+    // every pod and every agent. Only the issuer distinguishes them.
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'A drafted reply.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    (o.doc.getElementById('agentsend') as HTMLButtonElement).click();
+    await o.settle();
+    const result = text(o.doc, '#postresult');
+    expect(result).toContain('the relay signed a statement that the caller it authenticated as ' + D1);
+    expect(result).toContain('the relay\'s own key, the same one for every pod and every agent here');
+    expect(result).toContain('NOT your delegate\'s own wallet signature');
+    expect(result).not.toMatch(/signed by Claude side|signed by your delegate/);
+  });
+
+  it('★ the model provider is named as the engine, never as the identity', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'A drafted reply.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(text(o.doc, '#agentwhy')).toContain('which is how it thinks, not who it is');
+    const result = text(o.doc, '#agentresult');
+    expect(result).toContain('author it will carry');
+    expect(result).toContain('model it ran on');
+    // The identity row must carry the DID, not the provider's name.
+    expect(result).toContain(D1);
+  });
+
+  it('★ the prompt tells the model it is the delegate and not the person', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z')); },
+    });
+    await signInAndSpeak(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    const prompt = o.agent.prompts[0] as string;
+    expect(prompt).toContain('You are Claude side, a delegate acting for');
+    expect(prompt).toContain('Do not impersonate them');
+    expect(prompt).not.toContain('as THEIR entry');
   });
 });

@@ -14,9 +14,9 @@
  */
 
 export {
-  BAD_IRI, WSP, IEP,
+  BAD_IRI, WSP, IEP, PROV,
   scanTurtle, maskFill, masked, maskComments, literalAt, unescapeLiteral,
-  forms, nsOf, readLiteral, readIri, readIriList, readInt, hasTrue, hasType,
+  forms, nsOf, readLiteral, readIri, readIriAll, readIriList, readInt, hasTrue, hasType,
   graphRegion, escapeTurtleLiteral, parseRoleProfile,
   type SpanKind, type RoleProfile,
 } from './turtle.js';
@@ -46,7 +46,8 @@ export { orderChain, toChainRow, type ChainRow, type ChainWalk } from './chain.j
 export { shortRef } from './format.js';
 
 export {
-  entryTurtle, preconditionLine, entryShapeAnswer, postEntry, type PostOutcome,
+  entryTurtle, preconditionLine, entryShapeAnswer, postEntry,
+  type PostOutcome, type EntryAuthor,
 } from './entry.js';
 
 export {
@@ -89,6 +90,14 @@ export {
 } from './agentlink.js';
 
 export {
+  DELEGATE_SURFACE, DELEGATE_LABEL_PREFIX, DELEGATE_NAME_MAX,
+  delegateLabel, parseDelegateLabel, delegateNameProblem, delegateAgentId,
+  readDelegates, delegatePlan, delegateCeiling, readEntryAuthorship, authorshipLine,
+  type Delegate, type DelegateRoster, type DelegateCeiling, type EntryAuthorship,
+} from './delegates.js';
+
+export {
   BRIEF_ENTRIES, DRAFT_MAX, NOTHING_TO_ADD, decideTurn, briefPrompt, checkDraft,
   type SeenEntry, type TurnInput, type ChannelBrief, type TurnDecision, type DraftVerdict,
+  type SpeakingDelegate,
 } from './localagent.js';

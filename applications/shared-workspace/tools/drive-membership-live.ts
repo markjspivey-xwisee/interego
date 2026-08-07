@@ -201,6 +201,9 @@ async function run(): Promise<number> {
     const out = await postEntry(p.client, {
       podName: p.viewer.podName, streamIri, workspace, entryShape,
       body: n + ' posting from the live driver at ' + new Date().toISOString(),
+      // The person is the author: this driver signs in AS them and writes under their own name.
+      // A delegate is a different author and a different session — `drive-delegate-live.ts`.
+      author: { kind: 'principal', webId: p.viewer.webId },
     });
     log('   ' + n + ' post:', out.kind, out.kind === 'accepted' ? '· seq ' + out.seq + ' · ' + out.descriptorUrl : JSON.stringify(out).slice(0, 260));
     if (out.kind !== 'accepted') { must(n + ' posted', false, out.kind); continue; }

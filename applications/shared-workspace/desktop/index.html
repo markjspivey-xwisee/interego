@@ -313,7 +313,63 @@
     </div>
 
     <!--
+      YOUR DELEGATES.
+
+      A delegate is an identity you authorise to act for you — NOT you, and not this application.
+      Its id is a function of its own key plus one surface name every client shares, so the same
+      key is the same delegate wherever it runs; this app is a place one can be hosted. You may
+      have several, each with its own scope and each revocable on its own.
+
+      Two lists, because two questions: what your POD authorises (the authority), and which keys
+      THIS MACHINE holds (what can be driven from here). Neither contains the other.
+    -->
+    <div class="card" id="delegatecard" hidden>
+      <h3>Your delegates</h3>
+      <div class="note">An agent that writes for you is not you. Everything a delegate appends to your log
+        names the delegate as its author and you as the person it acted for, so a reader can always tell
+        which of you said something. Authorising one is a row on your own pod; revoking it is your
+        unilateral act.</div>
+      <div id="delegatelist"></div>
+      <div id="delegatekeys"></div>
+      <div class="field">
+        <label for="delegatename">A name for this delegate</label>
+        <input id="delegatename" type="text" spellcheck="false" autocomplete="off" placeholder="e.g. Research assistant">
+        <div class="hint">Public, and meant to be. It is how you and everybody reading the channel tell this
+          delegate from your others. It is not the name of a model — two delegates can run on the same one.</div>
+      </div>
+      <div class="field">
+        <label for="delegateagent">Its agent id</label>
+        <input id="delegateagent" type="text" spellcheck="false" autocomplete="off" placeholder="did:web:…:agents:interego-delegate-u-eth-…">
+        <div class="hint">Derived from the delegate's key, never typed. Mint one below, or paste a key you
+          already have to adopt the delegate it belongs to.</div>
+      </div>
+      <div class="row">
+        <button id="delegatemint">Mint a new delegate identity</button>
+      </div>
+      <div id="delegatekeyout"></div>
+      <div class="field">
+        <label for="delegateimportkey">…or adopt one by its private key</label>
+        <input id="delegateimportkey" type="password" spellcheck="false" autocomplete="off" placeholder="0x… (64 hex characters)">
+        <div class="hint">For a delegate minted on another machine. Same key, same delegate, same record —
+          this app hosts it, it does not own it.</div>
+      </div>
+      <div class="row">
+        <button id="delegateimport">Adopt it here</button>
+      </div>
+      <div id="delegateplan"></div>
+      <div class="row">
+        <button class="primary" id="delegateauthorise" disabled>Authorise this delegate on my pod</button>
+      </div>
+      <div id="delegateresult"></div>
+    </div>
+
+    <!--
       LINKING DISCORD IS PUBLISHING A DELEGATION ON YOUR OWN POD.
+
+      ★ AND IT IS NOT A DELEGATE. The bot relays a message you TYPED: you wrote the words, so the
+      entry is yours and is attributed to you. A delegate writes text you did not write, and is
+      attributed to itself. Different rows, different labels, different meaning in the record.
+
       The two values below are both PUBLIC and neither is a code. See `agentlink.ts` and the bot's
       `links.ts` for why a secret here would be a hole rather than a protection.
     -->
@@ -364,8 +420,17 @@
         whose writes were not the ones this screen shows.
       -->
       <div id="agentcard" hidden>
+        <!--
+          WHICH delegate speaks here is a choice, and the list is your POD's, not this app's. A
+          delegate authorised on your pod whose key lives on another machine appears here and
+          cannot be selected — that is a fact about where it runs, not about whether it exists.
+        -->
         <div class="row">
-          <button id="agenttoggle">Turn my agent on</button>
+          <label class="note" for="agentwho">Speaking as</label>
+          <select id="agentwho"></select>
+        </div>
+        <div class="row">
+          <button id="agenttoggle">Let this delegate speak here</button>
           <span id="agentstate" class="note">Off</span>
         </div>
         <label class="note" for="agentauto">
@@ -373,6 +438,14 @@
         </label>
         <div class="note" id="agentwhy"></div>
         <div id="agentresult"></div>
+        <!--
+          ★ THE DELEGATE'S OWN SEND, SEPARATE FROM Post ON PURPOSE. Post below appends as YOU.
+          The same text sent by the two buttons produces two different records, and only one of
+          them is true.
+        -->
+        <div class="row">
+          <button id="agentsend" hidden>Send</button>
+        </div>
       </div>
       <textarea id="composer" rows="2" placeholder="Resolving the channel…" disabled aria-label="Message"></textarea>
       <div class="row"><button class="primary" id="send" disabled>Post to my pod</button></div>

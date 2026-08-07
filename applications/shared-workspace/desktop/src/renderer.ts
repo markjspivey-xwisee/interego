@@ -19,20 +19,21 @@
  */
 
 import {
-  ConnectorTransport, WorkspaceClient, acceptGrant, assignPodMarks, briefPrompt, checkDraft,
-  checkOwnHandle, checkRoleForWorkspace, checkWriteEligibility, createWorkspace, decideTurn,
-  discordLinkPlan, entryShapeAnswer, errorCopy,
+  ConnectorTransport, WorkspaceClient, acceptGrant, assignPodMarks, authorshipLine, briefPrompt,
+  checkDraft, checkOwnHandle, checkRoleForWorkspace, checkWriteEligibility, createWorkspace,
+  decideTurn, delegatePlan, discordLinkPlan, entryShapeAnswer, errorCopy,
+  readDelegates, readEntryAuthorship, REQUIRED_TOOLS,
   foldRoster, graphRegion, grantPodFor, hasType, listWorkspaces, mergeForward, nsIri, orderChain,
   parseRoleProfile, parseWorkspaceIri, podClaimVsServed, podOfDescriptorUrl, pollingWatch, postEntry,
   preconditionLine, publishDelegation, readCanvas, readInbox, readInt, readIri, readLiteral,
   readViewer, revokeDelegation, revokeGrant,
   roleKnown, roleName, roleWhy, saveCanvas, sendInvite, shortRef, slugProblem, verifyInvitation,
   verifyWorkspaceEntry,
-  type CanvasRead, type ChainRow, type Check, type ConnectorMcp, type GrantVerdict,
-  type Invitation, type RoleTable, type Seat, type SeenEntry, type Viewer, type WorkspaceEntry,
-  type WorkspaceRecord,
+  type CanvasRead, type ChainRow, type Check, type ConnectorMcp, type DelegateRoster,
+  type EntryAuthorship, type GrantVerdict, type Invitation, type RoleTable, type Seat,
+  type SeenEntry, type SpeakingDelegate, type Viewer, type WorkspaceEntry, type WorkspaceRecord,
 } from '@interego/workspace-client';
-import type { BridgeFailure, ProviderInfo, SessionInfo, WorkspaceBridge } from './preload.js';
+import type { BridgeFailure, HostedDelegateInfo, ProviderInfo, SessionInfo, WorkspaceBridge } from './preload.js';
 
 declare global {
   interface Window { interego: WorkspaceBridge }
@@ -195,6 +196,14 @@ interface Body {
   readonly servedPod: string | null;
   readonly signed: boolean;
   readonly signedBy: string | null;
+  /**
+   * Who composed it, read out of the same signed region as the body.
+   *
+   * ★ NOT DERIVED FROM THE POD. The pod says whose LOG this is; the entry says who WROTE it, and
+   * those are different the moment a delegate writes. A shell that labelled every entry with its
+   * pod's owner would be asserting the thing this whole change exists to stop asserting.
+   */
+  readonly author: EntryAuthorship;
   readonly note: string | null;
   readonly error?: unknown;
 }
@@ -219,6 +228,16 @@ const S = {
   profileError: null as unknown,
   seats: [] as Seat[],
   fold: null as Awaited<ReturnType<typeof foldRoster>> | null,
+  /**
+   * Each seated member's delegates, read from THEIR OWN pod.
+   *
+   * ★ ONE ROSTER PER POD, BECAUSE AUTHORISATION IS PER POD. Reading the viewer's registry and
+   * applying it to everybody would invent an authorization record for somebody else — the same
+   * trap `delegatedScopes` in `respond.ts` records. A pod that does not answer contributes NO
+   * entry here, and `readEntryAuthorship` then reports `authorised: null` for its entries, which
+   * is "not checked" and not "not authorised".
+   */
+  delegatesByPod: new Map<string, DelegateRoster>(),
   podMarks: new Map<string, string>(),
   streams: new Map<string, Loaded>(),
   bodies: new Map<string, Body>(),
@@ -234,6 +253,24 @@ const S = {
   spacesError: null as unknown,
   spacesSaturated: false,
   lobbyOpen: true,
+
+  // ── delegates ──────────────────────────────────────────────────────────────
+  /** The viewer's own delegates, from their pod. Null = not read yet, which is not "none". */
+  myDelegates: null as DelegateRoster | null,
+  /** Which of them this machine holds a key for. A keyring, not a roster — see `preload.ts`. */
+  hosted: [] as readonly HostedDelegateInfo[],
+  hostedRead: false,
+  hostedError: null as unknown,
+  /**
+   * The agent id of the delegate currently selected to speak, or null.
+   *
+   * ★ NULL IS "NOBODY SPEAKS", NOT "THE PERSON SPEAKS". `decideTurn` refuses on it for the same
+   * reason. A person's delegates are plural and this is which ONE is on; the others stay
+   * authorised and silent, which is a different state from being revoked.
+   */
+  speaking: null as string | null,
+  /** A freshly minted key, shown once and never stored here. Cleared as soon as it is dismissed. */
+  mintedKey: null as { address: string; agentId: string; privateKey: string } | null,
 };
 
 // ── the boot checklist ───────────────────────────────────────────────────────
@@ -390,6 +427,9 @@ async function boot(): Promise<void> {
   // Unawaited: the handle is printed either way and the line under it says "resolving…" until
   // this settles, so boot is not held on a self-check.
   void checkOwnHandle(client, S.relay, S.viewer.podName).then((h) => { S.handleCheck = h; renderMe(); });
+  // Unawaited for the same reason: the delegates card says "reading…" until it lands, which is a
+  // true sentence, and a boot held behind an optional read is a boot that looks broken.
+  void loadDelegates();
 
   await loadInvites();
   await loadSpaces();
@@ -427,7 +467,7 @@ function applyWriteVerdict(why: string): void {
   // Sticky, because reads that finish LATER re-enable these controls on several paths, and a
   // verdict that arrived first would otherwise be undone by one that finished second.
   S.writeBlocked = why;
-  for (const id of ['send', 'save', 'stalesave', 'createbtn', 'sendinvite']) {
+  for (const id of ['send', 'agentsend', 'save', 'stalesave', 'createbtn', 'sendinvite']) {
     const b = document.getElementById(id) as HTMLButtonElement | null;
     if (b) { b.disabled = true; b.title = why; }
   }
@@ -708,6 +748,7 @@ function renderLobby(): void {
   $('createcard').hidden = !ready;
   $('opencard').hidden = !ready;
   renderModelCard();
+  renderDelegates();
   renderDiscordPlan();
   renderSetup();
   renderSlugHint();
@@ -989,6 +1030,9 @@ function teardownWorkspace(): void {
   S.streams.clear();
   S.bodies.clear();
   S.seats = []; S.fold = null; S.record = null; S.recordResult = null;
+  // Whose delegates were read is a fact about the OTHER MEMBERS of the workspace being left, and
+  // carrying it forward would attribute one channel's delegates to another channel's authors.
+  S.delegatesByPod.clear();
   S.roles = { roles: null, caps: null };
   S.profileFrom = null; S.profileError = null;
   S.streamsOpened = false; S.streamIri = null;
@@ -1008,6 +1052,12 @@ function teardownWorkspace(): void {
   const hadDraft = A.phase === 'drafted';
   A.on = false; A.auto = false; A.busy = false; A.phase = 'off'; A.why = '';
   A.answered.clear();
+  // The delegate whose draft was in the box is forgotten with the draft. A stale `drafted` would
+  // let the next Send attribute text to a delegate that did not write it.
+  A.drafted = null;
+  // ★ AND WHO WAS SPEAKING IS NOT CARRIED EITHER. Choosing a delegate for one channel is not
+  // choosing it for the next — the same reasoning as `A.on` above, one field over.
+  S.speaking = null;
   /**
    * ★ ONLY A DRAFT THE AGENT PUT THERE IS DISCARDED. The first version cleared the composer
    * unconditionally, which destroyed unsent text the PERSON had typed on every workspace switch —
@@ -1143,6 +1193,62 @@ async function loadRoster(): Promise<void> {
   S.podMarks = assignPodMarks(S.seats.map((m) => m.pod).concat([S.viewer?.podName ?? null]));
   renderRoster();
   renderLobby();
+  // ★ AFTER THE ROSTER IS ON SCREEN, NOT BEFORE. One `get_pod_status` per seated member is a
+  // round trip each, and the roster is worth showing before they finish — every author line
+  // renders as "not checked" until they land, which is a true statement rather than a wait.
+  await loadMemberDelegates();
+}
+
+/**
+ * Each seated member's delegates, from each member's OWN pod.
+ *
+ * ★ ONE READ PER POD, AND A POD THAT DOES NOT ANSWER CONTRIBUTES NOTHING. Reading the viewer's
+ * registry and applying it to everybody would be inventing an authorization record for somebody
+ * else — `respond.ts` records the same trap one layer over. An absent roster makes
+ * `readEntryAuthorship` answer `authorised: null`, which the stream renders as "not checked".
+ */
+async function loadMemberDelegates(): Promise<void> {
+  if (!S.client) return;
+  // Keyed on the seat's own `pod` — the one derived from the grant's grantee WebID — because that
+  // is what `Loaded.pod` carries, and a map two different derivations write into is a map whose
+  // lookups miss silently.
+  const pods = new Set<string>();
+  for (const m of S.seats) if (m.seated && m.pod) pods.add(m.pod);
+  if (S.viewer) pods.add(S.viewer.podName);
+  for (const pod of pods) {
+    S.delegatesByPod.set(pod, await readDelegates(S.client, pod));
+  }
+  if (S.viewer) S.myDelegates = S.delegatesByPod.get(S.viewer.podName) ?? null;
+  reauthorBodies();
+  renderRoster();
+  renderStream();
+  renderAgent();
+  renderDelegates();
+}
+
+/**
+ * Re-answer "does that pod's own registry list this agent" for every entry already read.
+ *
+ * ★ NO NETWORK AND NO RE-READING OF SIGNED BYTES. What the entry SAYS — who it is attributed to,
+ * and who that agent acted for — was decided when the region was read and is not touched here.
+ * Only the registry-dependent half is refreshed, because the rosters arrive after the first
+ * bodies do. Without this, every entry loaded in that window would say "not checked" forever:
+ * true about the moment it was read, false about now.
+ */
+function reauthorBodies(): void {
+  for (const [url, b] of S.bodies) {
+    const a = b.author;
+    if (a.kind !== 'delegate') continue;
+    let pod: string | null = null;
+    for (const s of S.streams.values()) if (s.rows.some((r) => r.url === url)) { pod = s.pod; break; }
+    if (pod === null) continue;
+    const d = S.delegatesByPod.get(pod) ?? null;
+    const hit = d?.read ? d.rows.find((r) => r.agentId === a.agentId) ?? null : null;
+    S.bodies.set(url, {
+      ...b,
+      author: { ...a, name: hit?.name ?? null, authorised: d?.read ? hit !== null : null, scope: hit?.scope ?? null },
+    });
+  }
 }
 
 const viewerIsSeated = (): boolean => !!(S.viewer && S.seats.some((m) => m.seated && m.pod === S.viewer?.podName));
@@ -1254,6 +1360,14 @@ function renderRoster(): void {
     }
     row.appendChild(right);
     box.appendChild(row);
+    // ★ A MEMBER'S DELEGATES ARE DRAWN AS THEIR OWN ROWS, UNDER THEM.
+    //
+    // Not a count on the member's row, and not folded into it. The whole correction is that a
+    // delegate is a distinct identity: one person can have an Anthropic-backed one and an
+    // OpenAI-backed one, both authorised, both writing into the same log, and a reader has to be
+    // able to name each. Their authority is their own row's scope, which is why it is printed
+    // here rather than the member's.
+    if (m.seated && m.pod) delegateRows(box, m.pod);
   }
 
   if (!S.seats.length) {
@@ -1284,6 +1398,69 @@ function renderRoster(): void {
   w += 'Your posts still land on your pod and are still yours; they are simply outside the roster\'s fold.';
   you.appendChild(el('div', undefined, w));
   box.appendChild(you);
+}
+
+/**
+ * One roster row per delegate a seated member has authorised, read from THEIR pod.
+ *
+ * ★ THREE STATES AND NONE OF THEM IS "NONE" BY DEFAULT. A registry this client has not read yet,
+ * one it read that lists no delegates, and one whose read FAILED are three different facts about
+ * somebody else's pod, and only the middle one licenses "they have no delegates".
+ */
+function delegateRows(box: HTMLElement, pod: string): void {
+  const roster = S.delegatesByPod.get(pod);
+  if (!roster) return;                       // not read yet; the row simply says nothing about it
+  if (!roster.read) {
+    const r = el('div', 'member');
+    r.appendChild(el('div', 'badge', '?'));
+    const right = el('div');
+    right.appendChild(el('div', 'mname', 'delegates not established'));
+    right.appendChild(el('div', 'mmeta', roster.why ?? 'the read did not complete'));
+    r.appendChild(right);
+    box.appendChild(r);
+    return;
+  }
+  for (const d of roster.delegates) {
+    const r = el('div', 'member');
+    // A distinct badge, because a delegate is a distinct identity and the eye has to catch it.
+    const b = el('div', 'badge', '⚙');
+    b.title = 'A delegate of pod ' + pod + '. Its authority is its own row on that pod, not this member\'s.';
+    r.appendChild(b);
+    const right = el('div');
+    const nm = el('div', 'mname');
+    nm.appendChild(el('span', undefined, d.name ?? 'unnamed delegate'));
+    nm.appendChild(el('span', 'cap', 'delegate of ' + pod));
+    const sc = el('span', 'cap ' + (d.writeEligible ? 'held' : 'withheld'), d.scope ?? 'scope not reported');
+    sc.title = d.writeEligible
+      ? 'This delegate\'s own row grants a scope that may publish. What it may do in THIS workspace is still capped by the seat\'s role above.'
+      : 'This delegate\'s own row grants a scope that cannot publish, so it cannot write here whatever the role above permits.';
+    nm.appendChild(sc);
+    right.appendChild(nm);
+    const id = el('div', 'mpod', d.agentId);
+    id.title = 'Read from pod ' + pod + '\'s own delegation registry — a document only that pod\'s owner can write. '
+      + 'The id is a function of the delegate\'s key and one shared surface name, so it is the same delegate in any client that holds that key.';
+    right.appendChild(id);
+    if (d.validFrom) right.appendChild(el('div', 'mpod', 'delegated ' + d.validFrom));
+    r.appendChild(right);
+    box.appendChild(r);
+  }
+  for (const o of roster.others) {
+    // Agents that are NOT delegates — a Discord conduit, another client's own session. Shown,
+    // because "who can write to this pod" is the reader's question, and named as what they are.
+    const r = el('div', 'member');
+    r.appendChild(el('div', 'badge', '·'));
+    const right = el('div');
+    const nm = el('div', 'mname');
+    nm.appendChild(el('span', undefined, o.label ?? 'unlabelled agent'));
+    nm.appendChild(el('span', 'cap', 'not a delegate'));
+    right.appendChild(nm);
+    right.appendChild(el('div', 'mpod', o.agentId));
+    right.appendChild(el('div', 'mmeta', 'An agent authorised on pod ' + pod + ' whose row carries no delegate label. '
+      + 'It can write there — a chat conduit relaying what this person types is exactly this — but nothing it writes '
+      + 'is attributed to it as an author.'));
+    r.appendChild(right);
+    box.appendChild(r);
+  }
 }
 
 // ── streams ──────────────────────────────────────────────────────────────────
@@ -1384,6 +1561,11 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
     for (const st of S.streams.values()) if (st.rows.some((r) => r.url === url)) return st.graph;
     return null;
   };
+  /** The whole loaded stream a row belongs to, so its seat and its pod are both in hand. */
+  const ownerOf = (url: string): Loaded | null => {
+    for (const st of S.streams.values()) if (st.rows.some((r) => r.url === url)) return st;
+    return null;
+  };
   const workers = Array.from({ length: Math.min(4, wanted.length) }, async () => {
     for (;;) {
       const url = wanted.shift();
@@ -1395,6 +1577,10 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
         // `''` is a signed block that WAS located and is empty; `null` is one that was not.
         const src = region === null ? '' : region;
         const auth = d['authorship'] as { signedBy?: string; authorshipVerified?: boolean } | undefined;
+        // Whose log this is, from the SEAT — the grant's `wsp:grantedTo`, which lives on the
+        // convener's pod and which the log's owner therefore cannot write. Taking it from the
+        // entry would let the entry decide what it is being checked against.
+        const st = ownerOf(url);
         S.bodies.set(url, {
           body: readLiteral(src, 'dct:description'),
           seq: readInt(src, 'wsp:seq'),
@@ -1403,6 +1589,10 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
           servedPod: podOfDescriptorUrl(url),
           signed: !!auth?.authorshipVerified,
           signedBy: auth?.signedBy ?? null,
+          author: readEntryAuthorship(region, {
+            logOwnerWebId: st?.seat?.grantedTo ?? null,
+            delegates: st ? S.delegatesByPod.get(st.pod) ?? null : null,
+          }),
           note: g === null
             ? 'this client is no longer tracking which log this record belongs to, so which signed region is its own could not be established'
             : region === null
@@ -1410,7 +1600,12 @@ async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
               : null,
         });
       } catch (e) {
-        S.bodies.set(url, { body: null, seq: null, isEntry: false, declaredWorkspace: null, servedPod: null, signed: false, signedBy: null, note: errorCopy(e).t, error: e });
+        S.bodies.set(url, {
+          body: null, seq: null, isEntry: false, declaredWorkspace: null, servedPod: null,
+          signed: false, signedBy: null,
+          author: { kind: 'unstated', why: 'this record could not be read, so nothing about its author was established' },
+          note: errorCopy(e).t, error: e,
+        });
       }
     }
   });
@@ -1457,12 +1652,51 @@ function renderStream(): void {
   for (const item of all) {
     const b = S.bodies.get(item.r.url);
     const msg = el('div', 'msg');
-    const badge = el('div', 'badge', item.st.isYou ? 'YOU' : (S.podMarks.get(item.st.pod) ?? '??'));
-    badge.title = 'pod ' + item.st.pod;
+    const a = b?.author ?? null;
+    // ★ THE BADGE IS THE AUTHOR, NOT THE POD, AND "YOU" IS NO LONGER A PROPERTY OF THE LOG.
+    // A delegate's entry sits in its delegator's log, so a badge keyed on the pod put "YOU" on
+    // something the person did not write — the exact confusion this whole change removes.
+    const delegateHere = a?.kind === 'delegate';
+    const badge = el('div', 'badge', delegateHere ? '⚙' : item.st.isYou ? 'YOU' : (S.podMarks.get(item.st.pod) ?? '??'));
+    badge.title = delegateHere
+      ? 'Written by a delegate acting for pod ' + item.st.pod + ', not by that person.'
+      : 'pod ' + item.st.pod;
     msg.appendChild(badge);
     const right = el('div');
     const h = el('div', 'mhead');
-    h.appendChild(el('span', 'mauthor', item.st.seat ? roleName(S.roles, item.st.seat.role) : 'You'));
+    /**
+     * ★ WHO WROTE IT, FROM THE ENTRY — and the role beside it, from the seat.
+     *
+     * These answer different questions and used to be one string. The role is the CAPACITY the
+     * log's owner holds in this workspace; the author is WHO COMPOSED THESE WORDS. For a person's
+     * own entry they coincide closely enough that showing the role alone looked fine. For a
+     * delegate's they do not, and for an entry that states no author at all they never did:
+     * "Contributor" over text nobody's record attributes to anybody is a confident falsehood.
+     */
+    const seatRole = item.st.seat ? roleName(S.roles, item.st.seat.role) : null;
+    const author = el('span', 'mauthor', a
+      ? authorshipLine(a, { displayName: item.st.isYou && a.kind === 'principal' ? 'You' : null })
+      : 'author not read yet');
+    if (a && (a.kind === 'unstated' || a.kind === 'disputed')) {
+      author.style.color = a.kind === 'disputed' ? 'var(--refused)' : 'var(--pending)';
+      author.title = a.why;
+    } else if (a?.kind === 'delegate') {
+      author.title = 'prov:wasAttributedTo ' + a.agentId + ', which the entry declares acted on behalf of '
+        + a.onBehalfOf + '. '
+        + (a.authorised === true ? 'That pod\'s own delegation registry lists this agent' + (a.scope ? ' with scope ' + a.scope : '') + '.'
+          : a.authorised === false ? 'That pod\'s own delegation registry does NOT list this agent, so the entry claims a delegation the pod does not record.'
+            : 'That pod\'s delegation registry has not been read here, so whether the delegation is recorded is not established.');
+      if (a.authorised === false) author.style.color = 'var(--refused)';
+    } else if (a?.kind === 'principal') {
+      author.title = 'prov:wasAttributedTo ' + a.webId + ' — the owner of the pod this log is on, so this is the person\'s own writing.';
+    }
+    h.appendChild(author);
+    if (seatRole) {
+      const rl = el('span', 'seq', seatRole);
+      rl.title = 'The role the LOG\'S OWNER holds in this workspace. It is the seat\'s, not the author\'s: a delegate '
+        + 'inherits it and cannot exceed it. ' + roleWhy(S.roles, item.st.seat?.role);
+      h.appendChild(rl);
+    }
     const v = podClaimVsServed(item.st.pod, b?.servedPod ?? podOfDescriptorUrl(item.r.url), item.r.url, 'roster');
     const origin = el('span', 'seq', v.text);
     origin.title = v.title;
@@ -1534,7 +1768,49 @@ function renderStream(): void {
 
 // ── post ─────────────────────────────────────────────────────────────────────
 
-async function post(): Promise<void> {
+/**
+ * A relay session belonging to a DELEGATE, over the same transport interface as the person's.
+ *
+ * ★ NOT A SECOND WRITER — A SECOND CALLER. `postEntry` is still the only thing that appends, with
+ * the same chain derivation, the same 412 retry, the same shape assertion and the same readback.
+ * What differs is who the relay authenticates: the delegate's own key, so the write is scope-gated
+ * on the delegator's `register_agent` row and `revoke_agent` actually stops it. Routing it through
+ * the person's session would have produced a record saying "the agent wrote this" that the
+ * substrate had no reason to believe.
+ */
+const delegateClients = new Map<string, WorkspaceClient>();
+
+async function delegateClient(address: string): Promise<WorkspaceClient> {
+  const live = delegateClients.get(address);
+  if (live) return live;
+  const c = new WorkspaceClient(S.relay, new ConnectorTransport({
+    async listTools() {
+      // One live call, which is also the check that this machine can actually drive this
+      // delegate: a key it does not hold answers `delegate_unavailable` here rather than at the
+      // write, where the failure would arrive after the person had pressed Send.
+      const r = await window.interego.delegateCall(address, 'get_pod_status', {});
+      if (!r.ok) throw Object.assign(new Error(r.error.message), r.error);
+      return { servers: [{ server: 'Interego relay', tools: REQUIRED_TOOLS.map((name) => ({ name })) }] };
+    },
+    async callTool(_server, name, input) {
+      const r = await window.interego.delegateCall(address, name, input);
+      if (!r.ok) throw Object.assign(new Error(r.error.message), r.error);
+      return { payload: r.payload };
+    },
+  }));
+  await c.connect();
+  delegateClients.set(address, c);
+  return c;
+}
+
+/**
+ * Append what is in the composer.
+ *
+ * ★ `as` IS WHO IS SPEAKING, AND IT IS THE ONLY THING THAT DIFFERS BETWEEN A PERSON'S POST AND A
+ * DELEGATE'S. Same button, same writer, same readback. Omitted, the person is the author; given,
+ * the delegate is the author and the person is who it acted for.
+ */
+async function post(as?: { readonly address: string; readonly agentId: string }): Promise<void> {
   if (!S.client || !S.viewer || !S.workspace) return;
   const ta = area('composer');
   const body = ta.value.trim();
@@ -1545,6 +1821,15 @@ async function post(): Promise<void> {
   const seat = S.seats.find((m) => m.seated && m.pod === S.viewer?.podName && m.stream);
   const streamIri = seat?.stream ?? S.streamIri;
   if (!streamIri) { say('postresult', 'refused', 'No log to write to', 'This client could not resolve which document your entries go in.'); send.disabled = false; ta.disabled = false; return; }
+  // ★ NO WEBID, NO ENTRY. Every entry now states who composed it, and for a person's own post
+  // that statement IS their WebID. Writing one without it would put an entry on the pod whose
+  // author is unstated — which readers must render as "not stated", not as the pod's owner.
+  if (!S.viewer.webId) {
+    say('postresult', 'refused', 'Nothing was written: this client cannot name you',
+      'get_pod_status returned no registry owner for your pod, so there is no WebID to attribute this entry to. '
+      + 'Every entry states its author; one that could not would be a permanent record nobody can be read out of.');
+    send.disabled = false; ta.disabled = false; return;
+  }
   const key = streamKey(S.viewer.podName, streamIri);
   if (!S.streams.has(key)) {
     S.streams.set(key, { pod: S.viewer.podName, graph: streamIri, isYou: true, seat: seat ?? null, rows: [], error: null, loaded: false, stale: null, watchFailed: null });
@@ -1552,8 +1837,22 @@ async function post(): Promise<void> {
   say('postresult', 'pending', 'Deriving your position in your own log…',
     'Reading the current head of ' + streamIri.replace(/^https:\/\//, '') + ' so this entry can declare the one before it.');
 
-  const out = await postEntry(S.client, {
+  let writer = S.client;
+  if (as) {
+    try { writer = await delegateClient(as.address); }
+    catch (e) {
+      clear($('postresult')).appendChild(errBox(e, 'Your delegate\'s own session could not be opened, so nothing was '
+        + 'written. This app holds its key or it does not — and a delegate\'s entry is written under the delegate\'s '
+        + 'own session, not yours, so it is not falling back to writing this as you.'));
+      send.disabled = !!S.writeBlocked; ta.disabled = !!S.writeBlocked; renderAgent();
+      return;
+    }
+  }
+  const out = await postEntry(writer, {
     podName: S.viewer.podName, streamIri, workspace: S.workspace, body,
+    author: as
+      ? { kind: 'delegate', agentId: as.agentId, onBehalfOf: S.viewer.webId }
+      : { kind: 'principal', webId: S.viewer.webId },
     entryShape: S.record?.entryShape ?? null,
     onAttempt: (n) => {
       if (n > 1) say('postresult', 'pending', 'Someone appended while you were typing — re-deriving',
@@ -1561,8 +1860,10 @@ async function post(): Promise<void> {
     },
   });
   // Every early return re-enables the composer to whatever the delegation check decided, never
-  // to plain `false`: a viewer whose scope forbids writing must not be handed it back.
-  const reopen = (): void => { send.disabled = !!S.writeBlocked; ta.disabled = !!S.writeBlocked; };
+  // to plain `false`: a viewer whose scope forbids writing must not be handed it back. And never
+  // past `renderAgent`, which is the one place that decides whether a delegate's unedited draft
+  // is currently blocking the person's own Post.
+  const reopen = (): void => { send.disabled = !!S.writeBlocked; ta.disabled = !!S.writeBlocked; renderAgent(); };
 
   if (out.kind === 'read-failed') {
     clear($('postresult')).appendChild(errBox(out.error, 'Your own log could not be read, so no position could be derived. Nothing was written.'));
@@ -1584,9 +1885,16 @@ async function post(): Promise<void> {
   }
   if (out.kind === 'refused') { refusalPanel('postresult', out.body, 'Your entry'); reopen(); return; }
 
-  const p = say('postresult', 'ok', out.committed ? 'Posted to your pod' : 'Accepted — landing on your pod');
+  const p = say('postresult', 'ok', out.committed
+    ? (as ? 'Your delegate posted to your pod' : 'Posted to your pod')
+    : (as ? 'Accepted — your delegate\'s entry is landing on your pod' : 'Accepted — landing on your pod'));
   p.appendChild(kvPair([
     ['pod', S.viewer.podName],
+    // ★ THE TRIPLES, NAMED. Not "you" and not the pod: what the record will actually say, so the
+    // sentence on this panel and the sentence a reader gets from the entry are the same sentence.
+    ['authored by', as
+      ? 'prov:wasAttributedTo ' + as.agentId + ' — your delegate, and the entry also states it acted on behalf of ' + S.viewer.webId
+      : 'prov:wasAttributedTo ' + S.viewer.webId + ' — you. Nothing acted on your behalf here.'],
     ['wsp:seq', String(out.seq)],
     ['descriptor', out.descriptorUrl ?? 'not reported by the response'],
     ['shape asserted', entryShapeAnswer(out.shapeSent, S.recordResult, S.workspace)],
@@ -1594,10 +1902,23 @@ async function post(): Promise<void> {
     // separately: what this client asserted, and what came back about it.
     ['precondition', preconditionLine(out.response['precondition'], out.ifMatch, out.ifMatchKind)
       ?? 'none sent — this read found no prior entry in your log to assert against'],
+    // ★ WHAT THE PROOF ACTUALLY PROVES, AND THE LINE THIS PANEL MUST NEVER CROSS.
+    //
+    // MEASURED on this relay, on a delegated write and an own-pod write alike: the proof's
+    // `verificationMethod` is ONE key — the relay's own delegation signer — identical for every
+    // pod and every agent. Only the ISSUER distinguishes them. So "signed by your delegate" would
+    // be read as the delegate's own wallet having signed, and it did not: what is signed is the
+    // relay's attestation about who asked. `readAuthorship` in the module says the same thing to
+    // the bot, and this says it here rather than shortening it to "signed by".
     ['authorship', (() => {
-      const a = out.response['authorship'] as { signed?: boolean; signer?: string; reason?: string } | undefined;
-      return a ? (a.signed ? 'signed by ' + (a.signer ?? 'an unnamed signer') : 'not signed — ' + (a.reason ?? 'the response gave no reason'))
-        : 'sign_authorship was requested; the response did not report an authorship block';
+      const a = out.response['authorship'] as { signed?: boolean; signer?: string; verificationMethod?: string; reason?: string } | undefined;
+      if (!a) return 'sign_authorship was requested; the response did not report an authorship block, so nothing is established about it';
+      if (!a.signed) return 'not signed — ' + (a.reason ?? 'the response gave no reason');
+      return 'the relay signed a statement that the caller it authenticated as ' + (a.signer ?? 'an unnamed agent')
+        + ' published this. That is the relay attesting who asked'
+        + (a.verificationMethod ? ', verifiable against ' + a.verificationMethod + ' — the relay\'s own key, the same one for every pod and every agent here' : '')
+        + '. It is NOT ' + (as ? 'your delegate\'s' : 'your') + ' own wallet signature, and it is not evidence that any key of '
+        + (as ? 'that delegate\'s' : 'yours') + ' signed anything.';
     })()],
   ]));
 
@@ -1617,8 +1938,13 @@ async function post(): Promise<void> {
     if (got.rows?.some((r) => r.url === out.descriptorUrl)) { landed = true; break; }
     if (got.error) readErr = got.error;
   }
-  if (landed) { ta.value = ''; }
-  else {
+  if (landed) {
+    ta.value = '';
+    // The delegate's claim on the composer ends with the text it wrote. Leaving it set would let
+    // the NEXT thing typed there be sent as that delegate.
+    A.drafted = null;
+    A.phase = A.on ? 'watching' : 'off';
+  } else {
     p.className = 'panel pending';
     (p.querySelector('h4') as HTMLElement).textContent = 'Accepted, but not yet readable';
     p.appendChild(el('div', 'note', readErr
@@ -1909,10 +2235,24 @@ function setupSteps(): Check[] {
       : joined > 0 ? { mark: 'y', text: '3. A workspace — you are in ' + joined + '. Open one below, or create another.' }
         : { mark: 'n', text: '3. A workspace — you are in none yet. Accept an invitation above, or create one below.' });
 
+  /**
+   * ★ THIS STEP CAN BE ANSWERED PROPERLY, UNLIKE THE DISCORD ONE BELOW IT.
+   *
+   * Delegates carry a labelled row on the person's OWN pod, so "how many have you authorised" is a
+   * question a read answers rather than one this app has to shrug at. All four states are
+   * distinguished: not read, read and none, read and some, and read-failed — and only the second
+   * is a finding against.
+   */
+  const del = S.myDelegates;
+  out.push(!del ? { mark: 'q', text: '4. A delegate — not read yet.' }
+    : !del.read ? { mark: 'q', text: '4. A delegate — your pod\'s delegation registry could not be read, so how many you have authorised is not established. That is not the same as none.' }
+      : del.delegates.length ? { mark: 'y', text: '4. A delegate — your pod authorises ' + del.delegates.length + '. Each writes as itself, acting for you; none of them writes as you.' }
+        : { mark: 'n', text: '4. A delegate — you have authorised none, so nothing can answer in a channel for you. Authorise one below; it will write as itself and say it acted for you.' });
+
   out.push(discordPublishedHere
-    ? { mark: 'y', text: '4. Discord — this app published a delegation on your pod in this session. Run /workspace link-confirm in Discord to finish; the bot checks the row itself rather than taking this app\'s word for it.' }
+    ? { mark: 'y', text: '5. Discord — this app published a delegation on your pod in this session. Run /workspace link-confirm in Discord to finish; the bot checks the row itself rather than taking this app\'s word for it.' }
     // Not "you have not linked Discord": this app cannot know that without an agent id to ask about.
-    : { mark: 'q', text: '4. Discord — optional, and this app has not published one for you in this session. Whether your pod already delegates a bot is not something it can check without knowing which bot, so nothing here is a claim either way.' });
+    : { mark: 'q', text: '5. Discord — optional, and this app has not published one for you in this session. Whether your pod already delegates a bot is not something it can check without knowing which bot, so nothing here is a claim either way.' });
   return out;
 }
 
@@ -2076,7 +2416,281 @@ async function revokeDiscord(): Promise<void> {
     out.kind === 'revoked' ? 'Revoked' : 'Not revoked', out.why);
 }
 
-// ── the local agent loop ─────────────────────────────────────────────────────
+// ── delegates: identities you authorise, which this app merely hosts ─────────
+
+/**
+ * ★ TWO LISTS, DRAWN AS TWO LISTS, BECAUSE THEY ANSWER DIFFERENT QUESTIONS.
+ *
+ * The POD's delegation registry says who this person has authorised. This app's keyring says
+ * which of those it can drive. They overlap and neither contains the other: a delegate on another
+ * machine is authorised and not drivable here; a key minted and not yet authorised is drivable
+ * and permitted nothing. Merging them would let an application's storage stand in for an
+ * authorization record, which is the same class of mistake as letting a pod stand in for an
+ * author.
+ */
+async function loadDelegates(): Promise<void> {
+  try {
+    const got = await window.interego.delegateList();
+    S.hosted = got.delegates;
+    S.hostedRead = true;
+    S.hostedError = null;
+  } catch (e) { S.hostedRead = true; S.hostedError = e; }
+  if (S.client && S.viewer) S.myDelegates = await readDelegates(S.client, S.viewer.podName);
+  renderDelegates();
+  renderAgent();
+  renderSetup();
+}
+
+function delegateFormPlan(): ReturnType<typeof delegatePlan> | null {
+  const agentId = inp('delegateagent').value.trim();
+  const name = inp('delegatename').value.trim();
+  if (!agentId && !name) return null;
+  return delegatePlan({ agentId, name });
+}
+
+function renderDelegates(): void {
+  if (!document.getElementById('delegatecard')) return;
+  $('delegatecard').hidden = !S.viewer?.podName;
+  if (!S.viewer?.podName) return;
+
+  // ── what your pod authorises ───────────────────────────────────────────────
+  const list = clear($('delegatelist'));
+  const roster = S.myDelegates;
+  if (!roster) {
+    list.appendChild(el('div', 'note', 'Reading which delegates your pod authorises…'));
+  } else if (!roster.read) {
+    list.appendChild(el('div', 'note', 'Your pod\'s delegation registry could not be read, so how many delegates you have '
+      + 'authorised is not established — which is not the same as none. ' + (roster.why ?? '')));
+  } else if (!roster.delegates.length) {
+    list.appendChild(el('div', 'note', 'Your pod authorises no delegates. Nothing will write as you until you authorise one, '
+      + 'and a delegate never writes AS you — it writes as itself, acting for you.'));
+  } else {
+    for (const d of roster.delegates) {
+      const item = el('div', 'item');
+      const head = el('div');
+      head.appendChild(el('b', undefined, d.name ?? 'unnamed delegate'));
+      const held = S.hosted.some((h) => h.agentId === d.agentId);
+      const chip = el('span', 'cap ' + (held ? 'held' : 'withheld'), held ? 'key on this machine' : 'hosted elsewhere');
+      chip.title = held
+        ? 'This app holds this delegate\'s key, so it can be driven from here.'
+        : 'This delegate is authorised on your pod and this app holds no key for it. It is a real delegate — its key '
+          + 'is on another machine, or was never kept. A delegate is its key, not the application running it.';
+      head.appendChild(chip);
+      const sc = el('span', 'cap ' + (d.writeEligible ? 'held' : 'withheld'), d.scope ?? 'scope not reported');
+      sc.title = d.writeEligible ? 'This scope may publish to your pod.' : 'This scope cannot publish, so this delegate cannot write.';
+      head.appendChild(sc);
+      item.appendChild(head);
+      item.appendChild(el('div', 'iri', d.agentId));
+      if (d.validFrom) item.appendChild(el('div', 'note', 'delegated ' + d.validFrom));
+      const rowb = el('div', 'row');
+      const rev = el('button', 'danger sm', 'Revoke');
+      rev.title = 'Withdraws the delegation on your own pod. Unilateral: it does not need the delegate to cooperate or '
+        + 'even to be running. What it already wrote stays — it is on your pod and revocation cannot reach it — and it '
+        + 'stays attributed to the delegate.';
+      rev.addEventListener('click', () => { void revokeDelegateRow(d.agentId); });
+      rowb.appendChild(rev);
+      if (held) {
+        const forget = el('button', 'sm', 'Forget its key here');
+        forget.title = 'Deletes the key from THIS machine only. It is NOT a revocation: the delegation stays on your pod '
+          + 'and still authorises this agent. Revoke is the other button.';
+        forget.addEventListener('click', () => { void forgetDelegate(d.agentId); });
+        rowb.appendChild(forget);
+      }
+      item.appendChild(rowb);
+      list.appendChild(item);
+    }
+  }
+  // Agents that are not delegates. Named, because "who can write to my pod" is a question this
+  // card is now the natural place to answer, and silence about them would be an odd omission.
+  for (const o of roster?.others ?? []) {
+    const item = el('div', 'item');
+    const head = el('div');
+    head.appendChild(el('b', undefined, o.label ?? 'unlabelled agent'));
+    head.appendChild(el('span', 'cap', 'not a delegate'));
+    item.appendChild(head);
+    item.appendChild(el('div', 'iri', o.agentId));
+    item.appendChild(el('div', 'note', 'An agent you have authorised whose row carries no delegate label — your own '
+      + 'sessions and a chat conduit both look like this. It can write to your pod, and nothing it writes is attributed '
+      + 'to it as an author: a conduit carries YOUR words, so those entries are yours.'));
+    list.appendChild(item);
+  }
+
+  // ── keys this machine holds that the pod does not authorise ────────────────
+  const orphan = clear($('delegatekeys'));
+  if (!S.hostedRead) {
+    orphan.appendChild(el('div', 'note', 'Checking which delegate keys this machine holds…'));
+  } else if (S.hostedError) {
+    orphan.appendChild(errBox(S.hostedError, 'This app could not list the delegate keys it holds, so what it can drive from here is not established.'));
+  } else {
+    const unauthorised = S.hosted.filter((h) => !(roster?.read && h.agentId && roster.rows.some((r) => r.agentId === h.agentId)));
+    for (const h of unauthorised) {
+      const item = el('div', 'item');
+      item.appendChild(el('b', undefined, 'A key with no delegation'));
+      item.appendChild(el('div', 'iri', h.agentId ?? h.address));
+      item.appendChild(el('div', 'note', h.agentId
+        ? 'This machine holds this delegate\'s key and your pod does not list it, so it may not write anything. '
+          + 'Authorise it below, or forget the key.'
+        : (h.why ?? 'this delegate has not signed in during this run')
+          + ', so which agent id your pod would have to authorise is not established. Sign it in by authorising it below.'));
+      const rowb = el('div', 'row');
+      if (h.agentId) {
+        const use = el('button', 'sm', 'Authorise this one');
+        use.addEventListener('click', () => {
+          inp('delegateagent').value = h.agentId as string;
+          renderDelegatePlan();
+          inp('delegatename').focus();
+        });
+        rowb.appendChild(use);
+      }
+      const forget = el('button', 'danger sm', 'Forget this key');
+      forget.addEventListener('click', () => { void forgetDelegateByAddress(h.address); });
+      rowb.appendChild(forget);
+      item.appendChild(rowb);
+      orphan.appendChild(item);
+    }
+  }
+
+  renderDelegatePlan();
+
+  // ★ THE FRESHLY MINTED KEY, SHOWN ONCE. An identity that cannot leave this installation is one
+  // the installation owns, and a delegate is not owned by its host. This is the only moment the
+  // key is available, and the copy says so rather than implying it can be found again later.
+  const keybox = clear($('delegatekeyout'));
+  if (S.mintedKey) {
+    const p = el('div', 'panel pending');
+    p.appendChild(el('h4', undefined, 'This delegate\'s key — copy it now or accept losing it'));
+    p.appendChild(el('div', undefined, 'This is the whole of the identity. Anyone holding it IS this delegate, in this '
+      + 'app or any other. It is stored encrypted by your OS on this machine and this app will not show it again — '
+      + 'not because it is deleted, but because a screen that offers a private key on demand is a screen that offers it '
+      + 'to whoever is looking at yours.'));
+    const k = el('div', 'iri', S.mintedKey.privateKey);
+    k.style.userSelect = 'text';
+    p.appendChild(k);
+    p.appendChild(el('div', 'note', 'Its agent id — the public half, and the string you authorise — is ' + S.mintedKey.agentId));
+    const done = el('button', 'sm', 'I have it, hide this');
+    done.addEventListener('click', () => { S.mintedKey = null; renderDelegates(); });
+    p.appendChild(done);
+    keybox.appendChild(p);
+  }
+}
+
+/** The exact `register_agent` call, drawn before it is made. Same discipline as the Discord link. */
+function renderDelegatePlan(): void {
+  if (!document.getElementById('delegateplan')) return;
+  const box = clear($('delegateplan'));
+  const plan = delegateFormPlan();
+  btn('delegateauthorise').disabled = !plan?.call;
+  if (!plan) {
+    box.appendChild(el('div', 'note', 'Mint a delegate or paste one you already have, give it a name, and the exact call '
+      + 'this app would make appears here before anything is sent.'));
+    return;
+  }
+  if (!plan.call) {
+    for (const p of plan.problems) box.appendChild(el('div', 'hint bad', p.why));
+    return;
+  }
+  const p = el('div', 'panel pending');
+  p.appendChild(el('h4', undefined, 'This is the exact call, and it has not been made'));
+  p.appendChild(kvPair(Object.entries(plan.call.args).map(([k, v]) => [k, String(v)] as [string, string])));
+  for (const l of plan.limits) p.appendChild(el('div', 'note', l));
+  box.appendChild(p);
+}
+
+async function mintDelegate(): Promise<void> {
+  btn('delegatemint').disabled = true;
+  try {
+    const got = await window.interego.delegateMint();
+    S.mintedKey = { address: got.address, agentId: got.agentId, privateKey: got.privateKey };
+    inp('delegateagent').value = got.agentId;
+    await loadDelegates();
+    say('delegateresult', 'pending', 'A delegate identity exists; your pod does not authorise it yet',
+      'Minting a key is not authorising anything. Give it a name and publish the delegation on your own pod — that row '
+      + 'is what lets it write, and revoking it is what stops it.');
+  } catch (e) {
+    clear($('delegateresult')).appendChild(errBox(e, 'No delegate was minted.'));
+  }
+  btn('delegatemint').disabled = false;
+}
+
+async function importDelegate(): Promise<void> {
+  const pk = inp('delegateimportkey').value.trim();
+  if (!pk) return;
+  btn('delegateimport').disabled = true;
+  try {
+    const got = await window.interego.delegateImport(pk);
+    inp('delegateagent').value = got.agentId;
+    // Cleared immediately: a private key sitting in an input is a private key on screen.
+    inp('delegateimportkey').value = '';
+    await loadDelegates();
+    say('delegateresult', 'ok', 'This machine now holds that delegate\'s key',
+      'It is the SAME delegate it is anywhere else — its id is a function of the key, not of this app, so entries it '
+      + 'wrote elsewhere are its entries. Whether it may write to your pod is a separate question, answered by the '
+      + 'delegation row: ' + got.agentId);
+  } catch (e) {
+    clear($('delegateresult')).appendChild(errBox(e, 'Nothing was imported and nothing was stored.'));
+  }
+  btn('delegateimport').disabled = false;
+}
+
+async function authoriseDelegate(): Promise<void> {
+  if (!S.client || !S.viewer) return;
+  const plan = delegateFormPlan();
+  if (!plan?.call) { renderDelegatePlan(); return; }
+  btn('delegateauthorise').disabled = true;
+  let out;
+  try {
+    out = await publishDelegation(S.client, { plan, verifyOnPod: S.viewer.podName });
+  } catch (e) {
+    clear($('delegateresult')).appendChild(errBox(e, 'The delegation was not published.'));
+    btn('delegateauthorise').disabled = false;
+    return;
+  }
+  btn('delegateauthorise').disabled = false;
+  const p = say('delegateresult', out.kind === 'published' ? 'ok' : out.kind === 'unconfirmed' ? 'pending' : 'refused',
+    out.kind === 'published' ? 'Authorised, and read back from your own pod'
+      : out.kind === 'unconfirmed' ? 'Accepted, but not confirmed by reading your pod back' : 'Not authorised',
+    out.why);
+  if (out.rescopedFrom) {
+    p.appendChild(el('div', 'note', 'This agent was already registered with scope ' + out.rescopedFrom
+      + ' and has now been changed. That is a change to authority you had already granted, not a new one.'));
+  }
+  for (const c of out.verdict?.checks ?? []) p.appendChild(checkList([c]));
+  await loadDelegates();
+}
+
+async function revokeDelegateRow(agentId: string): Promise<void> {
+  if (!S.client || !S.viewer) return;
+  const out = await revokeDelegation(S.client, { agentId, podName: S.viewer.podName });
+  const p = say('delegateresult', out.kind === 'revoked' ? 'ok' : 'refused',
+    out.kind === 'revoked' ? 'Revoked' : 'Not revoked', out.why);
+  p.appendChild(el('div', 'note', 'What this delegate already wrote is untouched. It lives in your log on your own pod, '
+    + 'it still names the delegate as its author, and revoking cannot reach it — which is the point: the record of what '
+    + 'was said, and by whom, survives the withdrawal of permission to say more.'));
+  // A revoked delegate must stop being the one speaking here, at once, rather than at the next
+  // poll. `decideTurn` would refuse anyway; leaving it selected would still read as "on".
+  if (S.speaking === agentId) { S.speaking = null; setAgent(false); }
+  await loadDelegates();
+}
+
+async function forgetDelegate(agentId: string): Promise<void> {
+  const h = S.hosted.find((x) => x.agentId === agentId);
+  if (!h) return;
+  await forgetDelegateByAddress(h.address);
+}
+
+async function forgetDelegateByAddress(address: string): Promise<void> {
+  await window.interego.delegateForget(address);
+  if (S.speaking && !S.hosted.some((h) => h.agentId === S.speaking && h.address !== address)) {
+    S.speaking = null;
+    setAgent(false);
+  }
+  await loadDelegates();
+  say('delegateresult', 'pending', 'This machine no longer holds that key',
+    'That is NOT a revocation. The delegation is still on your pod and still authorises that agent — anything else '
+    + 'holding the key can still write with it. Use Revoke to withdraw the authority itself.');
+}
+
+// ── the delegate loop ────────────────────────────────────────────────────────
 
 /**
  * ★ OFF BY DEFAULT, AND ITS DRAFT GOES IN THE COMPOSER RATHER THAN ONTO THE POD.
@@ -2087,8 +2701,15 @@ async function revokeDiscord(): Promise<void> {
  * themselves; and posting without review is a separate checkbox they have to tick.
  *
  * ★ AND THERE IS NO SECOND WRITE PATH. `post()` is the only thing in this file that appends an
- * entry, before and after this loop existed. An agent with its own writer would be an agent whose
- * writes did not go through the readback, the 412 retry, or the shape assertion.
+ * entry, before and after this loop existed. What a delegate changes is the ARGUMENT — `post(as)`
+ * names the delegate as the author and routes the call through the delegate's own relay session —
+ * not the writer. An agent with its own writer would be an agent whose writes did not go through
+ * the readback, the 412 retry, or the shape assertion.
+ *
+ * ★ AND A DRAFT LANDING IN THE COMPOSER IS NOT AN INVITATION TO PRESS Post. The Post button posts
+ * as the PERSON. A delegate's draft has to be sent with the delegate's own button, or reviewing it
+ * would silently convert a delegate's words into the person's. `renderAgent` draws both and says
+ * which is which.
  */
 const A = {
   on: false,
@@ -2105,7 +2726,45 @@ const A = {
    * number the entry's own author chose. See `TurnInput.answeredHere`.
    */
   answered: new Set<string>(),
+  /**
+   * The delegate whose draft is sitting in the composer, and the exact text it wrote.
+   *
+   * ★ THE TEXT IS KEPT SO EDITING IT CHANGES WHO WROTE IT. While the box holds a delegate's words
+   * verbatim, the person's own Post is withheld — pressing it would put the delegate's sentences
+   * on the record as the person's, which is the corrected defect moved one button along. The
+   * moment they change a character the words are theirs again, the delegate's claim on them is
+   * dropped, and Post comes back.
+   */
+  drafted: null as { address: string; agentId: string; name: string | null; text: string } | null,
 };
+
+/**
+ * The delegate currently selected to speak, resolved against BOTH sides.
+ *
+ * ★ TWO SIDES, AND EITHER MISSING IS A REFUSAL RATHER THAN A FALLBACK. A delegate can speak only
+ * if the POD authorises it (its row in the delegator's own registry) and this MACHINE holds its
+ * key. Those are different facts about different things — the second is a keyring, the first is an
+ * authorization record — and one standing in for the other is exactly the confusion this whole
+ * change is about. A delegate authorised but hosted elsewhere is real and is simply not drivable
+ * from here; a key held for a delegate the pod does not authorise cannot write and must not be
+ * offered as if it could.
+ */
+function speakingDelegate(): { address: string; agentId: string; name: string | null; scope: string | null } | null {
+  if (!S.speaking) return null;
+  const row = S.myDelegates?.read ? S.myDelegates.rows.find((r) => r.agentId === S.speaking) ?? null : null;
+  if (!row) return null;
+  const key = S.hosted.find((h) => h.agentId === S.speaking) ?? null;
+  if (!key) return null;
+  return { address: key.address, agentId: row.agentId, name: row.name, scope: row.scope };
+}
+
+/**
+ * What the person's own Post button looked like before a delegate's draft withheld it.
+ *
+ * Held so the withholding can be UNDONE exactly, rather than by writing `disabled = false` —
+ * which would silently reopen a composer some other check had shut.
+ */
+let postWithheld: { was: boolean; title: string } | null = null;
 
 function renderAgent(): void {
   if (!document.getElementById('agentcard')) return;
@@ -2130,14 +2789,82 @@ function renderAgent(): void {
     return;
   }
   const provider = usableProvider();
+  const speaker = speakingDelegate();
+  /**
+   * ★ WHICH DELEGATE SPEAKS IS A CHOICE, AND IT IS DRAWN AS ONE.
+   *
+   * A person may have several delegates authorised at once, and exactly one of them may be
+   * driving this channel. The picker lists every delegate their POD authorises and disables the
+   * ones this machine holds no key for — those are real delegates hosted somewhere else, and
+   * hiding them would make this app's keyring look like the person's roster.
+   */
+  const pick = $('agentwho') as HTMLSelectElement;
+  const before = pick.value;
+  clear(pick);
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = 'Nobody — choose a delegate';
+  pick.appendChild(none);
+  const roster = S.myDelegates;
+  for (const d of roster?.delegates ?? []) {
+    const o = document.createElement('option');
+    o.value = d.agentId;
+    const held = S.hosted.some((h) => h.agentId === d.agentId);
+    o.disabled = !held || !d.writeEligible;
+    o.textContent = (d.name ?? 'unnamed delegate')
+      + (!d.writeEligible ? ' — scope ' + (d.scope ?? 'not reported') + ', cannot publish' : '')
+      + (!held ? ' — no key on this machine' : '');
+    pick.appendChild(o);
+  }
+  pick.value = S.speaking ?? '';
+  // A delegate that disappeared from the pod between renders (revoked elsewhere) must not stay
+  // selected: the select falls back to '' and the state follows it rather than the other way.
+  if (pick.value !== (S.speaking ?? '')) { S.speaking = null; pick.value = ''; }
+  void before;
+
   const toggle = btn('agenttoggle');
-  toggle.textContent = A.on ? 'Turn my agent off' : 'Turn my agent on';
-  toggle.disabled = !provider && !A.on;
+  toggle.textContent = A.on ? 'Stop this delegate' : 'Let this delegate speak here';
+  toggle.disabled = (!provider || !speaker) && !A.on;
   inp('agentauto').checked = A.auto;
   const state = $('agentstate');
   state.textContent = A.on
     ? (A.phase === 'thinking' ? 'Thinking — on your own Claude subscription' : A.phase === 'drafted' ? 'Drafted, waiting for you' : 'Watching this channel')
     : 'Off';
+  // The delegate's own Send, separate from the person's Post on purpose: the same text sent by
+  // the two buttons produces two DIFFERENT records, and only one of them is true.
+  const send = btn('agentsend');
+  send.hidden = !A.drafted;
+  // The relay's writeEligible verdict is sticky and applies to this button too — a delegate write
+  // still lands on this pod, so a pod that will not take writes will not take its writes either.
+  send.disabled = !!S.writeBlocked;
+  if (S.writeBlocked) send.title = S.writeBlocked;
+  send.textContent = A.drafted ? 'Send as ' + (A.drafted.name ?? 'this delegate') : 'Send';
+  /**
+   * ★ AND THE PERSON'S OWN Post IS WITHHELD WHILE THE BOX HOLDS A DELEGATE'S WORDS VERBATIM.
+   *
+   * The whole correction is that the record must say who composed a sentence. A draft sitting in
+   * a shared composer with a live Post button beside it hands the person a one-click way to
+   * publish their delegate's prose under their own name — the same defect, moved one button
+   * along, and harder to see because it looks like review. Editing a character makes the words
+   * theirs and gives Post straight back; `composer`'s input listener drops `A.drafted` then.
+   */
+  const mine = btn('send');
+  if (A.drafted && !postWithheld) {
+    // ★ WHAT IT REPLACED IS REMEMBERED, so this can only ever ADD a refusal. Setting `disabled =
+    // false` on the way out would UNDO a disable somebody else made — an unreadable workspace
+    // record shuts the composer too, and a panel that reopened it would offer a write against a
+    // shape nobody read. Every guard in this vertical is allowed to add refusals and none of
+    // them may remove one.
+    postWithheld = { was: mine.disabled, title: mine.title };
+    mine.disabled = true;
+    mine.title = 'This text was written by ' + (A.drafted.name ?? 'your delegate') + ', not by you. Post appends as YOU, '
+      + 'so it is withheld while the box holds its words unchanged. Send it as the delegate with the button above, or '
+      + 'edit it — the moment you change it, the words are yours and Post comes back.';
+  } else if (!A.drafted && postWithheld) {
+    mine.disabled = postWithheld.was || !!S.writeBlocked;
+    mine.title = postWithheld.title;
+    postWithheld = null;
+  }
   const why = clear($('agentwhy'));
   if (!providerRead) { why.appendChild(document.createTextNode('Checking what this machine can run your agent on…')); return; }
   if (!provider) {
@@ -2146,17 +2873,34 @@ function renderAgent(): void {
     why.appendChild(document.createTextNode(probeFailed
       ? 'This app could not check what it can run your agent on, so whether anything is available here is not established. Nothing is being claimed either way.'
       : (providers[0]?.why ?? 'No model this app can drive was found on this machine.')
-        + ' Until that is fixed there is no agent — this app will not answer for you out of anything else.'));
+        + ' Until that is fixed there is no delegate — this app will not answer for you out of anything else.'));
     return;
   }
+  if (!speaker) {
+    // ★ THREE REASONS, AND THEY ARE NOT THE SAME FACT. Not read / read and empty / read and the
+    // chosen one is not drivable here. Collapsing them would tell somebody with delegates on
+    // another machine that they have none.
+    why.appendChild(document.createTextNode(
+      !roster ? 'Reading which delegates your pod authorises…'
+        : !roster.read ? 'Your pod\'s delegation registry could not be read, so which delegates you have authorised is not established. ' + (roster.why ?? '')
+          : !roster.delegates.length ? 'You have not authorised a delegate. Nothing here will write as you, so until there is one there is nobody to speak. Authorise one in the lobby.'
+            : S.speaking ? 'That delegate is authorised on your pod and this machine holds no key for it, or its scope cannot publish. A delegate is its key — it may well be running somewhere else.'
+              : 'Choose which of your delegates speaks in this channel. They are separate identities: what one writes is attributed to it and not to the others, and not to you.'));
+    return;
+  }
+  // ★ THE MODEL PROVIDER IS NAMED AS AN IMPLEMENTATION DETAIL, BESIDE THE IDENTITY RATHER THAN AS
+  // IT. Two delegates could both be running on Claude and still be two delegates; the sentence
+  // must not read as though the provider were who is speaking.
   why.appendChild(document.createTextNode(A.on
-    ? 'Your agent reads this channel and drafts a reply on ' + provider.label + ', under '
-      + (provider.account ?? 'your own account') + '. '
+    ? (speaker.name ?? 'This delegate') + ' reads this channel and drafts a reply. It writes as ITSELF, acting for you: '
+      + 'entries name ' + speaker.agentId + ' as the author and you as the person it acted for, and anybody reading '
+      + 'the channel can tell them from something you typed. It is running on ' + provider.label + ' under '
+      + (provider.account ?? 'your own account') + ' — which is how it thinks, not who it is. '
       + (A.auto
         ? 'It will post without asking, because you ticked the box. Untick it to review first.'
-        : 'It puts the draft in the box below and stops. Nothing is written until you press Post.')
+        : 'It puts the draft in the box below and stops. Nothing is written until you send it AS that delegate.')
       + (A.why ? ' — ' + A.why : '')
-    : 'Off. It reads nothing and writes nothing.'));
+    : (speaker.name ?? 'This delegate') + ' is off. It reads nothing and writes nothing.'));
 }
 
 /**
@@ -2195,6 +2939,9 @@ function agentEntries(): { entries: SeenEntry[]; unreadable: number } {
         body: b.body,
         derivedFrom: null,
         at: Number.isNaN(t) ? null : t,
+        // Read from the same signed region as the body, so the transcript the model sees names
+        // each speaker rather than calling every entry on this pod "you".
+        author: b.author,
       });
     }
   }
@@ -2205,14 +2952,18 @@ async function agentConsider(): Promise<void> {
   if (!A.on || A.busy || !S.client || !S.viewer || !S.workspace || !S.slug) return;
   const provider = usableProvider();
   if (!provider) { A.why = 'no model available'; renderAgent(); return; }
+  const speaker = speakingDelegate();
   // Never step on something the person is in the middle of writing. A draft that replaced somebody
   // mid-sentence would be an agent taking the keyboard away.
   const ta = area('composer');
   if (ta.value.trim()) { A.why = 'you have unsent text in the box, so nothing was drafted over it'; A.phase = 'watching'; renderAgent(); return; }
 
   const read = agentEntries();
+  const speaking: SpeakingDelegate | null = speaker
+    ? { agentId: speaker.agentId, name: speaker.name, scope: speaker.scope } : null;
   const decision = decideTurn({
     workspace: S.workspace, slug: S.slug, mePod: S.viewer.podName,
+    delegate: speaking,
     seats: S.seats, roles: S.roles.roles ? S.roles : null,
     entries: read.entries, unreadable: read.unreadable, answeredHere: [...A.answered],
   });
@@ -2223,28 +2974,32 @@ async function agentConsider(): Promise<void> {
     return;
   }
 
+  // `speaker` cannot be null past a decision of `answer` — `decideTurn` returns `no-delegate`
+  // without one — but the compiler does not know that and a cast would be this file asserting it.
+  if (!speaker) { A.phase = 'watching'; renderAgent(); return; }
   A.busy = true;
   A.phase = 'thinking';
   A.why = '';
   renderAgent();
-  say('agentresult', 'pending', 'Your agent is reading the channel',
+  say('agentresult', 'pending', (speaker.name ?? 'Your delegate') + ' is reading the channel',
     'Running on ' + provider.label + ' under ' + (provider.account ?? 'your own account') + '. Nothing has been written.');
   let turn;
   try {
-    turn = await window.interego.agentThink(briefPrompt(decision.brief, { displayName: S.viewer.displayName }), null);
+    turn = await window.interego.agentThink(
+      briefPrompt(decision.brief, { displayName: S.viewer.displayName, delegateName: speaker.name }), null);
   } catch (e) {
     A.busy = false; A.phase = 'watching';
-    clear($('agentresult')).appendChild(errBox(e, 'Your agent could not be run, so nothing was drafted and nothing was written.'));
+    clear($('agentresult')).appendChild(errBox(e, 'Your delegate could not be run, so nothing was drafted and nothing was written.'));
     renderAgent();
     return;
   }
   A.busy = false;
   // Turned off while it was thinking. The answer is discarded rather than used: "off" has to mean
   // off from the moment it is pressed, not from the end of whatever was already running.
-  if (!A.on) { A.phase = 'stopped'; say('agentresult', 'refused', 'Stopped', 'You turned your agent off while it was thinking. Its answer was discarded and nothing was written.'); renderAgent(); return; }
+  if (!A.on) { A.phase = 'stopped'; say('agentresult', 'refused', 'Stopped', 'You stopped this delegate while it was thinking. Its answer was discarded and nothing was written.'); renderAgent(); return; }
   if (!turn.ok || turn.text === null) {
     A.phase = 'watching';
-    say('agentresult', 'refused', 'Your agent did not answer', turn.why);
+    say('agentresult', 'refused', (speaker.name ?? 'Your delegate') + ' did not answer', turn.why);
     renderAgent();
     return;
   }
@@ -2257,25 +3012,37 @@ async function agentConsider(): Promise<void> {
   }
   if (ta.value.trim()) {
     A.phase = 'watching';
-    say('agentresult', 'pending', 'You started typing', 'Your agent finished a draft while you were writing, so it was discarded rather than replacing your text.');
+    say('agentresult', 'pending', 'You started typing', 'Your delegate finished a draft while you were writing, so it was discarded rather than replacing your text.');
     renderAgent();
     return;
   }
   ta.value = draft.body;
+  // ★ WHOSE DRAFT THIS IS, RECORDED WITH IT. The composer holds text either the person or a
+  // delegate may send, and the two produce different records. Without this the person's own Post
+  // button would attribute the delegate's words to them — the very defect being corrected, moved
+  // one button along.
+  A.drafted = { address: speaker.address, agentId: speaker.agentId, name: speaker.name, text: draft.body };
   // Recorded the moment the draft exists, not when it posts: a draft the user discards was still
   // an answer this run produced, and re-producing it on the next poll is the loop, not a feature.
   A.answered.add(decision.answering.descriptorUrl);
   A.phase = 'drafted';
   renderAgent();
-  const p = say('agentresult', 'ok', A.auto ? 'Your agent drafted this and is posting it' : 'Your agent drafted this — read it before you send it',
+  const p = say('agentresult', 'ok',
+    A.auto ? (speaker.name ?? 'Your delegate') + ' drafted this and is posting it'
+      : (speaker.name ?? 'Your delegate') + ' drafted this — read it before you send it',
     'Answering ' + shortRef(decision.answering.descriptorUrl) + '. It is in the box below and NOTHING has been written yet. '
-    + 'Posting appends a permanent, public, signed record to your pod that cannot be edited or deleted.');
+    + 'Sending appends a permanent, public record to your pod that cannot be edited or deleted, naming '
+    + speaker.agentId + ' as its author and you as the person it acted for.');
   p.appendChild(kvPair([
-    ['ran on', provider.label],
-    ['as', provider.account ?? 'not reported'],
+    ['author it will carry', speaker.agentId],
+    ['acting for', S.viewer.webId || 'not reported'],
+    // Named as the engine, in its own row, so it cannot be mistaken for the identity above it.
+    ['model it ran on', provider.label + ' · ' + (provider.account ?? 'account not reported')],
     ['took', (turn.ms / 1000).toFixed(1) + 's'],
   ]));
-  if (A.auto) await post();
+  p.appendChild(el('div', 'note', 'The Post button below sends as YOU. To send this as ' + (speaker.name ?? 'your delegate')
+    + ', use its own button in this panel — the same text sent by the two makes two different records, and only one of them is true.'));
+  if (A.auto) await post({ address: speaker.address, agentId: speaker.agentId });
 }
 
 function setAgent(on: boolean): void {
@@ -2283,8 +3050,8 @@ function setAgent(on: boolean): void {
   A.why = '';
   A.phase = on ? 'watching' : 'off';
   if (!on) {
-    // Reaches the child process, not just the flag. An agent switched off that keeps thinking and
-    // then posts is the failure this whole panel exists to make impossible.
+    // Reaches the child process, not just the flag. A delegate switched off that keeps thinking
+    // and then posts is the failure this whole panel exists to make impossible.
     void window.interego.agentCancel();
     clear($('agentresult'));
   }
@@ -2313,6 +3080,17 @@ area('composer').addEventListener('keydown', (e) => {
   const ev = e as KeyboardEvent;
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); if (!btn('send').disabled) void post(); }
 });
+/**
+ * ★ EDITING A DELEGATE'S DRAFT MAKES THE WORDS YOURS, AND THE RECORD FOLLOWS THAT.
+ *
+ * The delegate wrote a specific string. While that exact string is in the box it is the
+ * delegate's and only its own Send may publish it. Change anything and the sentence is no longer
+ * the one it composed — so the claim is dropped, the person's Post returns, and what lands is
+ * attributed to them, which is true.
+ */
+area('composer').addEventListener('input', () => {
+  if (A.drafted && area('composer').value !== A.drafted.text) { A.drafted = null; renderAgent(); }
+});
 btn('save').addEventListener('click', () => { void doSave(false); });
 btn('stalesave').addEventListener('click', () => { void doSave(true); });
 btn('modelrecheck').addEventListener('click', () => { providerRead = false; renderModelCard(); void loadProviders(); });
@@ -2325,6 +3103,23 @@ inp('agentauto').addEventListener('change', () => {
   A.auto = inp('agentauto').checked;
   renderAgent();
 });
+($('agentwho') as HTMLSelectElement).addEventListener('change', (e) => {
+  S.speaking = (e.target as HTMLSelectElement).value || null;
+  // Switching which delegate speaks stops the one that WAS speaking. Carrying "on" across the
+  // change would hand a turn started by one identity to another.
+  if (A.on) setAgent(false);
+  A.drafted = null;
+  renderAgent();
+});
+// ★ THE DELEGATE'S OWN SEND. `post(as)` — same writer, same readback, different author.
+btn('agentsend').addEventListener('click', () => {
+  if (A.drafted) void post({ address: A.drafted.address, agentId: A.drafted.agentId });
+});
+inp('delegatename').addEventListener('input', renderDelegatePlan);
+inp('delegateagent').addEventListener('input', renderDelegatePlan);
+btn('delegatemint').addEventListener('click', () => { void mintDelegate(); });
+btn('delegateimport').addEventListener('click', () => { void importDelegate(); });
+btn('delegateauthorise').addEventListener('click', () => { void authoriseDelegate(); });
 window.addEventListener('beforeunload', () => { S.watches.forEach((u) => { try { u(); } catch { /* already gone */ } }); });
 
 // A bare `describe()` left any throw as an unhandled rejection with a sign-in card on screen

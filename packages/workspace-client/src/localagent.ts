@@ -1,15 +1,22 @@
 /**
- * WHETHER A PERSON'S OWN AGENT SHOULD SAY SOMETHING, AND WHAT IT IS ANSWERING.
+ * WHETHER A PERSON'S DELEGATE SHOULD SAY SOMETHING, AND WHAT IT IS ANSWERING.
  *
  * `applications/shared-workspace/bridge` already runs a seated agent: `respond_as_member` reads a
  * channel and appends to the agent's OWN log, refusing when it is not seated and refusing again
  * when the role ceiling does not permit an append. That agent is a SERVICE — it holds its own key,
  * runs on somebody's server, and is its own member of the workspace.
  *
- * This is the same decision for a DIFFERENT author: the agent a person runs on their own machine,
- * under their own identity, writing to their own pod. It is not a second member. Its entries are
- * the user's entries, on the user's log, and the only thing that differs from the user typing is
- * who composed the words.
+ * This is the same decision for a DIFFERENT author: a DELEGATE, an identity a person authorised on
+ * their own pod to act for them. Its entries land in the delegator's log, because that is the log
+ * the person's seat names — and they are NOT the delegator's entries. They name the delegate as
+ * author and the person as who it acted for, and every surface has to be able to tell them apart
+ * from something the person typed. `delegates.ts` is what a delegate is; this file is when one
+ * may speak.
+ *
+ * ★ THIS SENTENCE USED TO SAY THE OPPOSITE — "it is not a second member, its entries are the
+ * user's entries, and the only thing that differs from the user typing is who composed the
+ * words". Who composed the words is not a detail. It is the whole of what a record of a
+ * conversation is for.
  *
  * ★ WHY THE DECISION IS HERE AND THE MODEL CALL IS NOT. Deciding whether there is anything to
  * answer, which entry is being answered, and whether the same thing has been answered already is a
@@ -27,13 +34,13 @@
  */
 
 import { shortRef } from './format.js';
+import { authorshipLine, delegateCeiling, type EntryAuthorship } from './delegates.js';
 import type { RoleTable } from './membership.js';
-import { checkRoleForWorkspace } from './membership.js';
 import type { Seat } from './seats.js';
 
 /** One entry, as a reader of somebody's log sees it. */
 export interface SeenEntry {
-  /** The pod the entry was read from — the author's own, always. */
+  /** The pod the entry was read from — the delegator's own, always. */
   readonly pod: string;
   readonly descriptorUrl: string;
   /** Null when the entry carried no readable body. NOT the empty string — those differ. */
@@ -42,14 +49,39 @@ export interface SeenEntry {
   readonly derivedFrom: string | null;
   /** Unix ms, or null when the entry did not carry a readable time. Never a guessed one. */
   readonly at: number | null;
+  /**
+   * Who composed it, read from its own signed region.
+   *
+   * ★ REQUIRED, so that a caller cannot hand this decision a channel it has not asked the
+   * question about. The transcript a model is given attributes every line, and a line whose
+   * author was never read has to say so rather than default to the pod's owner.
+   */
+  readonly author: EntryAuthorship;
+}
+
+/** The delegate that would be speaking. */
+export interface SpeakingDelegate {
+  readonly agentId: string;
+  /** From the delegator's own registry row. Null when that row carries no delegate label. */
+  readonly name: string | null;
+  /** From the same row. Null when it reported none, which is a refusal and not a permission. */
+  readonly scope: string | null;
 }
 
 /** Everything the decision needs, gathered by whichever client is asking. */
 export interface TurnInput {
   readonly workspace: string;
   readonly slug: string;
-  /** The pod the agent would write to — the user's own. */
+  /** The pod the delegate would write to — its DELEGATOR's own. */
   readonly mePod: string;
+  /**
+   * The delegate that would author the entry, or null when no delegate is selected.
+   *
+   * ★ NULL IS A REFUSAL, NOT A FALLBACK TO THE PERSON. The whole correction this carries is that
+   * an agent is not its delegator; a decision that quietly wrote as the human when no delegate was
+   * chosen would restore exactly the defect.
+   */
+  readonly delegate: SpeakingDelegate | null;
   /** The fold of the roster this client already computed. Not re-derived here. */
   readonly seats: readonly Seat[];
   /** The published role table. Null when it could not be read — which is a refusal, not a pass. */
@@ -103,6 +135,8 @@ export interface ChannelBrief {
 
 export type TurnDecision =
   | { readonly kind: 'not-seated'; readonly why: string }
+  /** No delegate is selected, so there is nobody for the entry to be attributed to. */
+  | { readonly kind: 'no-delegate'; readonly why: string }
   | { readonly kind: 'ceiling'; readonly why: string }
   | { readonly kind: 'roles-unreadable'; readonly why: string }
   /** Part of the channel could not be read, so who spoke last is not established. */
@@ -123,17 +157,42 @@ export const BRIEF_ENTRIES = 24;
 /** The longest draft that may be posted. See {@link checkDraft} for why there is a limit at all. */
 export const DRAFT_MAX = 4000;
 
-const line = (e: SeenEntry, mePod: string): string =>
-  (e.pod === mePod ? 'you' : e.pod) + ': ' + (e.body ?? '(this entry carried no readable body)');
+/**
+ * One transcript line, attributed.
+ *
+ * ★ "you" USED TO MEAN THE POD, AND THAT IS NOW THREE DIFFERENT PARTIES. Entries on the
+ * delegator's pod may be the person's own, this delegate's, or a SIBLING delegate's, and a model
+ * told all three were "you" would answer its delegator's sentences as if it had written them and
+ * could not see that another delegate of the same person had already spoken. Each is named from
+ * what the entry itself says.
+ */
+const line = (e: SeenEntry, input: { readonly mePod: string; readonly delegate: SpeakingDelegate | null }): string => {
+  const body = e.body ?? '(this entry carried no readable body)';
+  if (e.pod !== input.mePod) return e.pod + ' · ' + authorshipLine(e.author) + ': ' + body;
+  const a = e.author;
+  if (a.kind === 'delegate' && input.delegate && a.agentId === input.delegate.agentId) {
+    return 'you (' + (a.name ?? 'this delegate') + '): ' + body;
+  }
+  if (a.kind === 'delegate') return (a.name ?? 'an unnamed delegate') + ', another delegate of the person you act for: ' + body;
+  if (a.kind === 'principal') return 'the person you act for: ' + body;
+  return 'an entry in your delegator\'s log whose '
+    + (a.kind === 'unstated' ? 'author is not stated' : 'authorship is disputed') + ': ' + body;
+};
 
 /**
- * Should this agent say something, and about what?
+ * Should this delegate say something, and about what?
  *
- * ★ SEATING AND THE CEILING ARE CHECKED EVEN THOUGH NOTHING COULD ENFORCE THEM. The pod is the
- * user's own pod; the relay would accept the write. `respond.ts` says why the bridge refuses
- * anyway and it holds here: an entry written past the ceiling is not prevented, it is INERT — the
- * roster fold would not count it and would say why. Writing one would put a permanent record in
- * somebody's log that no reader of the channel will ever see as part of the channel.
+ * ★ SEATING AND THE ROLE CEILING ARE CHECKED EVEN THOUGH NOTHING WOULD ENFORCE THEM. The pod is
+ * the delegator's own and the relay would accept a write the workspace does not count.
+ * `respond.ts` says why the bridge refuses anyway and it holds here: an entry written past the
+ * seat's ceiling is not prevented, it is INERT — the roster fold would not count it and would say
+ * why. Writing one would put a permanent record in somebody's log that no reader of the channel
+ * will ever see as part of the channel.
+ *
+ * ★ THE DELEGATION CEILING IS DIFFERENT AND THE RELAY *WOULD* ENFORCE IT — a delegate whose row
+ * says `ReadOnly` gets a 403. It is still checked here first, for the reason `delegation.ts`
+ * measured: the relay's scope gate caches its verdict for 60 s, so "the relay would have stopped
+ * me" is not the boundary. A delegate has to stop itself.
  */
 export function decideTurn(input: TurnInput): TurnDecision {
   const seat = input.seats.find((s) => s.pod === input.mePod && s.seated) ?? null;
@@ -142,9 +201,17 @@ export function decideTurn(input: TurnInput): TurnDecision {
     return {
       kind: 'not-seated',
       why: named
-        ? 'Your pod is named in this workspace but you are not seated: ' + (named.why || 'the fold gave no reason')
+        ? 'The pod you act for is named in this workspace but is not seated: ' + (named.why || 'the fold gave no reason')
           + '. Nothing has been written.'
-        : 'You are not seated in ' + input.workspace + ', so there is no log of yours in this channel to write to.',
+        : 'The person you act for is not seated in ' + input.workspace + ', so there is no log in this channel to write to.',
+    };
+  }
+  if (!input.delegate) {
+    return {
+      kind: 'no-delegate',
+      why: 'No delegate is selected, so there is nobody for this entry to be attributed to. An agent is not the '
+        + 'person it acts for, and writing under their name is the one thing this refuses to do. Authorise a '
+        + 'delegate on your own pod and choose it first.',
     };
   }
   if (!input.roles) {
@@ -156,13 +223,16 @@ export function decideTurn(input: TurnInput): TurnDecision {
         + 'That is not the same as the ceiling permitting this, so nothing is written.',
     };
   }
-  const verdict = checkRoleForWorkspace(input.roles, seat.role ?? '');
+  const verdict = delegateCeiling({
+    roles: input.roles, role: seat.role ?? null,
+    scope: input.delegate.scope, delegateName: input.delegate.name,
+  });
   if (!verdict.ok) {
     return {
       kind: 'ceiling',
-      why: 'The role ceiling refuses this write. ' + verdict.why
-        + ' Nothing could stop this agent writing to your pod — it is your pod — so this is a refusal it '
-        + 'imposes on itself. An entry written anyway would exist and be inert: the fold would not count it.',
+      why: verdict.why + ' An entry written past the seat\'s role would exist and be inert: the fold would not count '
+        + 'it. An entry written past the delegation would be refused by the relay — but only once its 60-second '
+        + 'permission cache expires, so this delegate stops itself rather than relying on that.',
     };
   }
 
@@ -198,6 +268,16 @@ export function decideTurn(input: TurnInput): TurnDecision {
     .sort((a, b) => (a.at as number) - (b.at as number));
   const undated = input.entries.filter((e) => e.at === null);
 
+  /**
+   * ★ "MINE" IS THE DELEGATOR'S POD, NOT THIS DELEGATE'S ENTRIES, AND THAT IS DELIBERATE.
+   *
+   * The log holds three authors: the person, this delegate, and any sibling delegate they also
+   * authorised. Narrowing this to entries THIS delegate wrote would make two delegates of one
+   * person both answer the same message — two replies to one question, in one log, permanently.
+   * Counting the whole pod is the direction that can only ADD refusals, which is the rule every
+   * guard here follows: a delegate stays quiet when its person has just spoken, and stays quiet
+   * when its sibling has.
+   */
   const lastMine = [...dated].reverse().find((e) => e.pod === input.mePod) ?? null;
   /**
    * ★ ENTRIES THIS CLIENT HAS ALREADY ANSWERED ARE REMOVED BEFORE ANYTHING ELSE LOOKS AT THEM.
@@ -215,10 +295,10 @@ export function decideTurn(input: TurnInput): TurnDecision {
       ...(anyTheirs ? { answering: dated[dated.length - 1] as SeenEntry } : {}),
       why: anyTheirs
         ? 'Everything another member has said in this channel has already been answered by this client in this run. '
-          + 'Appending again would put a second permanent record in your log saying the same thing.'
+          + 'Appending again would put a second permanent record in your delegator\'s log saying the same thing.'
         : undated.length
           ? 'Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not '
-            + 'established. Your agent answers what it can place in the conversation, and it can place none of this.'
+            + 'established. A delegate answers what it can place in the conversation, and it can place none of this.'
           : 'Nobody else has written anything readable in this channel yet.',
     } as TurnDecision;
   }
@@ -235,8 +315,9 @@ export function decideTurn(input: TurnInput): TurnDecision {
   if (input.entries.some((e) => e.pod === input.mePod && e.at === null && said(e))) {
     return {
       kind: 'channel-incomplete',
-      why: 'One of your own entries carries no readable time, so whether you have already spoken since '
-        + lastTheirs.pod + ' did is not established. Answering on that is how the same message gets answered twice.',
+      why: 'One of the entries in your delegator\'s own log carries no readable time, so whether anybody on that pod '
+        + 'has already spoken since ' + lastTheirs.pod + ' did is not established. Answering on that is how the same '
+        + 'message gets answered twice.',
     };
   }
 
@@ -254,9 +335,10 @@ export function decideTurn(input: TurnInput): TurnDecision {
     return {
       kind: 'already-answered',
       answering: lastTheirs,
-      why: 'You have written in this channel since ' + (lastTheirs.pod) + ' last did ('
-        + shortRef(lastMine.descriptorUrl) + '). Your agent answers when somebody else has spoken last; '
-        + 'appending now would put a second permanent record in your log with nothing new to answer.',
+      why: 'Somebody on your delegator\'s pod — them, you, or another of their delegates — has written in this '
+        + 'channel since ' + (lastTheirs.pod) + ' last did (' + shortRef(lastMine.descriptorUrl) + '). A delegate '
+        + 'answers when somebody ELSE has spoken last; appending now would put a second permanent record in that '
+        + 'log with nothing new to answer.',
     };
   }
   // Still honoured when present, because the bridge's own writer DOES emit it and an explicit
@@ -266,8 +348,8 @@ export function decideTurn(input: TurnInput): TurnDecision {
     return {
       kind: 'already-answered',
       answering: lastTheirs,
-      why: 'The newest entry from another member is already declared as answered on your log ('
-        + shortRef(derived.descriptorUrl) + '). Appending again would put two permanent records in your log '
+      why: 'The newest entry from another member is already declared as answered on your delegator\'s log ('
+        + shortRef(derived.descriptorUrl) + '). Appending again would put two permanent records in that log '
         + 'saying the same thing.',
     };
   }
@@ -283,8 +365,8 @@ export function decideTurn(input: TurnInput): TurnDecision {
     brief: {
       workspace: input.workspace,
       slug: input.slug,
-      answering: line(newest, input.mePod),
-      transcript: window.map((e) => line(e, input.mePod)),
+      answering: line(newest, input),
+      transcript: window.map((e) => line(e, input)),
       omitted: Math.max(0, ordered.length - window.length),
     },
   };
@@ -297,12 +379,23 @@ export function decideTurn(input: TurnInput): TurnDecision {
  * reviewable in the same place as the decision that produced it. A shell that composed its own
  * would be able to change what the user's agent is for without changing anything reviewable.
  */
-export function briefPrompt(brief: ChannelBrief, args: { readonly displayName: string | null }): string {
-  const who = args.displayName ? args.displayName : 'the person whose account you are running under';
+export function briefPrompt(
+  brief: ChannelBrief,
+  args: { readonly displayName: string | null; readonly delegateName: string | null },
+): string {
+  const who = args.displayName ? args.displayName : 'the person you act for';
+  const me = args.delegateName ? args.delegateName : 'an unnamed delegate';
   return [
-    'You are taking part in a shared workspace conversation as ' + who + '\'s own agent, running on',
-    'their machine under their own credential. What you write is appended to THEIR log as THEIR',
-    'entry: a permanent, signed, publicly readable record that cannot be edited or deleted.',
+    // ★ THE FIRST THREE LINES ARE THE CORRECTION. They used to say "as their own agent … appended
+    // to THEIR log as THEIR entry", which told the model it was writing in the person's voice —
+    // and it wrote accordingly. It is a delegate: it signs nothing as them, and the record will
+    // not read as them either.
+    'You are ' + me + ', a delegate acting for ' + who + ' in a shared workspace conversation.',
+    'You are NOT ' + who + '. What you write is appended to their log and recorded as authored by',
+    'YOU, acting on their behalf — a permanent, signed, publicly readable record that cannot be',
+    'edited or deleted, and that every reader can tell apart from something they typed themselves.',
+    'Write as yourself. Do not impersonate them, and do not write in the first person as if you',
+    'were them.',
     '',
     'Channel: ' + brief.workspace,
     brief.omitted > 0 ? '(' + brief.omitted + ' earlier entries are not shown.)' : '(This is the whole channel so far.)',

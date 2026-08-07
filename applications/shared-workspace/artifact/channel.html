@@ -838,6 +838,9 @@ var WSPC = (() => {
     BAD_IRI: () => BAD_IRI,
     BRIEF_ENTRIES: () => BRIEF_ENTRIES,
     ConnectorTransport: () => ConnectorTransport,
+    DELEGATE_LABEL_PREFIX: () => DELEGATE_LABEL_PREFIX,
+    DELEGATE_NAME_MAX: () => DELEGATE_NAME_MAX,
+    DELEGATE_SURFACE: () => DELEGATE_SURFACE,
     DELEGATION_SCOPES: () => DELEGATION_SCOPES,
     DRAFT_MAX: () => DRAFT_MAX,
     GRANT_IRI_RX: () => GRANT_IRI_RX,
@@ -848,6 +851,7 @@ var WSPC = (() => {
     NOTHING_TO_ADD: () => NOTHING_TO_ADD,
     POD_RX: () => POD_RX,
     PROBE_TOOL: () => PROBE_TOOL,
+    PROV: () => PROV,
     REQUIRED_TOOLS: () => REQUIRED_TOOLS,
     RelayMcpTransport: () => RelayMcpTransport,
     SEAT_READ_CAP: () => SEAT_READ_CAP,
@@ -863,6 +867,7 @@ var WSPC = (() => {
     asRefusal: () => asRefusal,
     assertPod: () => assertPod,
     assignPodMarks: () => assignPodMarks,
+    authorshipLine: () => authorshipLine,
     awaitHead: () => awaitHead,
     briefPrompt: () => briefPrompt,
     canvasTurtle: () => canvasTurtle,
@@ -875,6 +880,11 @@ var WSPC = (() => {
     composedHandle: () => composedHandle,
     createWorkspace: () => createWorkspace,
     decideTurn: () => decideTurn,
+    delegateAgentId: () => delegateAgentId,
+    delegateCeiling: () => delegateCeiling,
+    delegateLabel: () => delegateLabel,
+    delegateNameProblem: () => delegateNameProblem,
+    delegatePlan: () => delegatePlan,
     discordLinkPlan: () => discordLinkPlan,
     entryShapeAnswer: () => entryShapeAnswer,
     entryTurtle: () => entryTurtle,
@@ -902,6 +912,7 @@ var WSPC = (() => {
     nsOf: () => nsOf,
     orderChain: () => orderChain,
     parseAcceptanceIri: () => parseAcceptanceIri,
+    parseDelegateLabel: () => parseDelegateLabel,
     parseRoleProfile: () => parseRoleProfile,
     parseWorkspaceIri: () => parseWorkspaceIri,
     podBaseOfDescriptorUrl: () => podBaseOfDescriptorUrl,
@@ -916,9 +927,12 @@ var WSPC = (() => {
     qualifiedName: () => qualifiedName,
     readAuthorship: () => readAuthorship,
     readCanvas: () => readCanvas,
+    readDelegates: () => readDelegates,
+    readEntryAuthorship: () => readEntryAuthorship,
     readInbox: () => readInbox,
     readInt: () => readInt,
     readIri: () => readIri,
+    readIriAll: () => readIriAll,
     readIriList: () => readIriList,
     readLiteral: () => readLiteral,
     readMember: () => readMember,
@@ -1079,12 +1093,14 @@ var WSPC = (() => {
   }
   var WSP = "https://markjspivey-xwisee.github.io/interego/applications/shared-workspace/wsp#";
   var IEP = "https://markjspivey-xwisee.github.io/interego/ns/iep#";
+  var PROV = "http://www.w3.org/ns/prov#";
   function nsOf(term) {
     if (term.indexOf("wsp:") === 0) return WSP;
     if (term.indexOf("dct:") === 0) return "http://purl.org/dc/terms/";
     if (term.indexOf("rdfs:") === 0) return "http://www.w3.org/2000/01/rdf-schema#";
     if (term.indexOf("hydra:") === 0) return "http://www.w3.org/ns/hydra/core#";
     if (term.indexOf("iep:") === 0) return IEP;
+    if (term.indexOf("prov:") === 0) return PROV;
     return null;
   }
   function readLiteral(ttl, term) {
@@ -1115,6 +1131,38 @@ var WSPC = (() => {
       }
     }
     return null;
+  }
+  function readIriAll(ttl, term) {
+    if (!ttl) return [];
+    const mk = masked(ttl);
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    const take = (body) => {
+      if (!BAD_IRI.test(body) && !seen.has(body)) {
+        seen.add(body);
+        out.push(body);
+      }
+    };
+    for (const f of forms(term, nsOf(term))) {
+      const rx = new RegExp("(?:^|[\\s;\\[])" + f + "(?=\\s)", "g");
+      let m;
+      while (m = rx.exec(mk)) {
+        let i = m.index + m[0].length;
+        for (; ; ) {
+          while (i < mk.length && /\s/.test(mk[i])) i++;
+          if (mk[i] !== "<") break;
+          const close = mk.indexOf(">", i);
+          if (close < 0) break;
+          take(mk.slice(i + 1, close));
+          i = close + 1;
+          while (i < mk.length && /\s/.test(mk[i])) i++;
+          if (mk[i] !== ",") break;
+          i++;
+        }
+        rx.lastIndex = m.index + m[0].length;
+      }
+    }
+    return out;
   }
   function readIriList(ttl, term) {
     if (!ttl) return [];
@@ -1984,6 +2032,7 @@ var WSPC = (() => {
   // packages/workspace-client/src/entry.ts
   function entryTurtle(args) {
     const iri = (u, what) => {
+      if (typeof u !== "string" || !u) throw new Error("entryTurtle: " + what + " is missing, so this entry is refused rather than written without it");
       if (/[\s<>"{}|\\^`]/.test(u)) throw new Error("entryTurtle: " + what + " is not serializable as a Turtle IRI reference: " + u);
       return "<" + u + ">";
     };
@@ -1991,7 +2040,10 @@ var WSPC = (() => {
     const subject = iri(args.streamIri + "/e/" + args.seq, "the entry IRI");
     const workspace = iri(args.workspace, "the workspace IRI");
     const prior = args.prior === null ? null : iri(args.prior, "the prior head");
-    return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + '  dct:created "' + (args.createdIso ?? (/* @__PURE__ */ new Date()).toISOString()) + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n';
+    const a = args.author;
+    const author = a.kind === "delegate" ? iri(a.agentId, "the delegate agent id this entry is attributed to") : iri(a.webId, "the WebID this entry is attributed to");
+    const behalf = a.kind === "delegate" ? iri(a.onBehalfOf, "the WebID this delegate acted on behalf of") : null;
+    return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + "  prov:wasAttributedTo " + author + ' ;\n  dct:created "' + (args.createdIso ?? (/* @__PURE__ */ new Date()).toISOString()) + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n' + (behalf ? "\n" + author + " prov:actedOnBehalfOf " + behalf + " .\n" : "");
   }
   function preconditionLine(pc, sent, sentKind) {
     if (pc && typeof pc === "object") {
@@ -2043,7 +2095,7 @@ var WSPC = (() => {
         // reported the append accepted.
         pod_name: args.podName,
         graph_iri: args.streamIri,
-        graph_content: entryTurtle({ streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body, prior: prior ? prior.url : null }),
+        graph_content: entryTurtle({ streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body, prior: prior ? prior.url : null, author: args.author }),
         visibility: "public",
         auto_supersede_prior: false,
         sign_authorship: true
@@ -2255,7 +2307,7 @@ var WSPC = (() => {
   function shapesTurtle(shapeIri) {
     const s = shapeIri;
     turtleIri(s, "the shape IRI");
-    return "@prefix sh: <" + SHACL + "> .\n@prefix wsp: <" + WSP + "> .\n@prefix dct: <" + DCT + "> .\n\n<" + s + "#EntryShape>\n  a sh:NodeShape ; sh:targetClass wsp:Entry ;\n  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path dct:description ; sh:minCount 1 ; sh:maxCount 1 ] ;\n  sh:property [ sh:path dct:created ; sh:minCount 1 ; sh:maxCount 1 ] .\n\n<" + s + "#GrantShape>\n  a sh:NodeShape ; sh:targetClass wsp:MembershipGrant ;\n  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:grantedTo ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:role ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .\n\n<" + s + "#AcceptanceShape>\n  a sh:NodeShape ; sh:targetClass wsp:MembershipAcceptance ;\n  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:member ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:accepts ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .\n";
+    return "@prefix sh: <" + SHACL + "> .\n@prefix wsp: <" + WSP + "> .\n@prefix prov: <" + PROV + "> .\n@prefix dct: <" + DCT + "> .\n\n<" + s + "#EntryShape>\n  a sh:NodeShape ; sh:targetClass wsp:Entry ;\n  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path prov:wasAttributedTo ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path dct:description ; sh:minCount 1 ; sh:maxCount 1 ] ;\n  sh:property [ sh:path dct:created ; sh:minCount 1 ; sh:maxCount 1 ] .\n\n<" + s + "#GrantShape>\n  a sh:NodeShape ; sh:targetClass wsp:MembershipGrant ;\n  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:grantedTo ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:role ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .\n\n<" + s + "#AcceptanceShape>\n  a sh:NodeShape ; sh:targetClass wsp:MembershipAcceptance ;\n  sh:property [ sh:path wsp:workspace ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:member ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:accepts ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;\n  sh:property [ sh:path wsp:stream ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .\n";
   }
   function rolesTurtle(iri) {
     turtleIri(iri, "the role profile IRI");
@@ -3200,17 +3252,205 @@ var WSPC = (() => {
     };
   }
 
+  // packages/workspace-client/src/delegates-name.ts
+  var DELEGATE_NAME_MAX = 48;
+  var DELEGATE_LABEL_PREFIX = "workspace-delegate ";
+  var delegateLabel = (name) => DELEGATE_LABEL_PREFIX + name;
+  function parseDelegateLabel(label) {
+    if (typeof label !== "string" || label.indexOf(DELEGATE_LABEL_PREFIX) !== 0) return null;
+    const name = label.slice(DELEGATE_LABEL_PREFIX.length).trim();
+    return name === "" ? null : name;
+  }
+  function delegateNameProblem(name) {
+    const n = name.trim();
+    if (!n) return "Give this delegate a name. It is how you and everybody reading the channel tell it apart from your other delegates and from you.";
+    if (n.length > DELEGATE_NAME_MAX) return "That name is " + n.length + " characters; the limit is " + DELEGATE_NAME_MAX + ".";
+    for (const ch of n) {
+      const c = ch.codePointAt(0) ?? 0;
+      if (c < 32 || c === 127) {
+        return "That name contains a control character (code point " + c + "). It is refused rather than stripped, because a stripped name is not the name you chose.";
+      }
+    }
+    const bare = DELEGATE_LABEL_PREFIX.trim();
+    if (n.indexOf(bare) === 0) {
+      return 'That name starts with "' + bare + '", which is the prefix this client already adds. The row would read back as a delegate called "' + n.slice(bare.length).trim() + '".';
+    }
+    return null;
+  }
+
+  // packages/workspace-client/src/delegates.ts
+  var DELEGATE_SURFACE = "interego-delegate";
+  var rowOf = (r) => {
+    const label = typeof r["label"] === "string" ? r["label"] : null;
+    const scope = typeof r["scope"] === "string" ? r["scope"] : null;
+    const name = parseDelegateLabel(label);
+    return {
+      agentId: String(r["agentId"] ?? ""),
+      name,
+      label,
+      scope,
+      validFrom: typeof r["validFrom"] === "string" ? r["validFrom"] : null,
+      isDelegate: name !== null,
+      writeEligible: WRITE_ELIGIBLE_SCOPES.includes(scope ?? "")
+    };
+  };
+  async function readDelegates(client, podName) {
+    const none = (why) => ({ podName, read: false, rows: [], delegates: [], others: [], why });
+    let status;
+    try {
+      status = await client.tool("get_pod_status", { pod_name: podName }, { cache: false });
+    } catch (e) {
+      return none("pod " + podName + "'s delegation registry could not be read (" + errorCopy(e).t.toLowerCase() + "), so how many delegates it lists is not established");
+    }
+    const bad = refusal(status);
+    if (bad) return none("the read of pod " + podName + " was refused: " + String(bad["message"] ?? bad["error"]));
+    const reg = status?.["delegationRegistry"];
+    if (!reg) return none("pod " + podName + " reports no delegation registry at all, which is different from it delegating nothing");
+    const rows = (Array.isArray(reg.rows) ? reg.rows : []).map(rowOf).filter((r) => r.agentId !== "");
+    return {
+      podName,
+      read: true,
+      rows,
+      delegates: rows.filter((r) => r.isDelegate),
+      others: rows.filter((r) => !r.isDelegate),
+      why: null
+    };
+  }
+  function delegatePlan(args) {
+    const problems = [];
+    const agentId = args.agentId.trim();
+    const name = args.name.trim();
+    if (!agentId) problems.push({ field: "agentId", why: "This delegate has no agent id yet. Mint or import a delegate key first \u2014 the id is derived from that key and cannot be typed in." });
+    else if (!AGENT_ID_RX.test(agentId)) problems.push({ field: "agentId", why: "That is not the shape of an agent id. A delegate's looks like `did:web:\u2026:agents:" + DELEGATE_SURFACE + "-u-eth-\u2026`." });
+    const nameProblem = delegateNameProblem(name);
+    if (nameProblem) problems.push({ field: "agentId", why: nameProblem });
+    const scope = args.scope ?? "PublishOnly";
+    const label = delegateLabel(name);
+    return {
+      problems,
+      call: problems.length ? null : { tool: "register_agent", args: { agent_id: agentId, scope, label } },
+      limits: [
+        "This publishes one row on YOUR pod naming one agent. It is a delegate acting for you \u2014 not you, and not any of your other delegates.",
+        "Entries it writes land on your pod and in your log, and they name IT as the author and YOU as the person it acted for. A reader can tell them apart from something you typed, and so can you.",
+        scope === "PublishOnly" ? "PublishOnly is POD-WIDE. The substrate has no per-graph delegation scope, so this delegate could publish any graph to your pod, not only workspace entries. What bounds it is that it is one named agent, every write is attributed to it, and you can withdraw it alone." : "Scope " + scope + " is POD-WIDE and wider than PublishOnly. Whatever it permits, this delegate may do on your whole pod.",
+        'The label "' + label + '" is public, and is meant to be. Delegation rows are world-readable; the name is how you and everybody reading the channel tell this delegate from your others. There is nothing in it to steal.',
+        "Revoking it is your unilateral act from your own client, and it does not need the delegate to cooperate or even to be running.",
+        // Measured, in delegation.ts's header. Repeating it at the moment of consent rather than
+        // in a document nobody opens is the point of showing a plan at all.
+        "For up to 60 seconds after a revoke the relay may still accept a write it had already cached permission for. This client re-asks before every write and stops itself, but the relay alone is not the boundary."
+      ]
+    };
+  }
+  var delegateAgentId = (identityHost, podName) => "did:web:" + identityHost + ":agents:" + DELEGATE_SURFACE + "-" + podName;
+  function delegateCeiling(args) {
+    const who = args.delegateName ? '"' + args.delegateName + '"' : "this delegate";
+    const role = checkRoleForWorkspace(args.roles, args.role ?? "");
+    if (!role.ok) {
+      return {
+        ok: false,
+        why: "The role ceiling on the seat " + who + " would write under refuses this. " + role.why + " A delegate inherits its delegator's role and cannot exceed it, so nothing is written."
+      };
+    }
+    if (args.scope === null) {
+      return {
+        ok: false,
+        why: "Your pod's registry row for " + who + " reports no scope, so what you delegated to it is not established. That is not the same as it being permitted, so nothing is written."
+      };
+    }
+    if (!WRITE_ELIGIBLE_SCOPES.includes(args.scope)) {
+      return {
+        ok: false,
+        why: "You delegated " + who + " with scope " + args.scope + ", which cannot publish. The relay would refuse the write, and this refuses it first. Widen the delegation on your own pod if you meant it to be able to write."
+      };
+    }
+    return {
+      ok: true,
+      why: "The seat's role permits this, and you delegated " + who + " scope " + args.scope + ", which may publish. Both ceilings hold; neither of them granted anything on its own."
+    };
+  }
+  function readEntryAuthorship(region, args) {
+    if (region === null) {
+      return { kind: "unstated", why: "the signed region of this entry could not be located, so nothing about its author was read from bytes anybody signed" };
+    }
+    const attributed = readIriAll(region, "prov:wasAttributedTo");
+    if (attributed.length === 0) {
+      return { kind: "unstated", why: "this entry names no prov:wasAttributedTo, so who composed it is not stated in the record \u2014 which is not the same as the pod owner having written it" };
+    }
+    if (attributed.length > 1) {
+      return { kind: "disputed", why: "this entry names " + attributed.length + " different prov:wasAttributedTo authors (" + attributed.join(", ") + "), so who wrote it is not decided and this reader will not pick one" };
+    }
+    const author = attributed[0];
+    const behalf = readIriAll(region, "prov:actedOnBehalfOf");
+    if (!args.logOwnerWebId) {
+      return { kind: "disputed", why: "this entry is attributed to " + author + " and this reader could not establish whose log it is in, so whether that is the owner or somebody acting for them is not decided" };
+    }
+    if (author === args.logOwnerWebId) {
+      if (behalf.length) {
+        return { kind: "disputed", why: "this entry is attributed to the pod owner and ALSO carries a prov:actedOnBehalfOf statement naming " + behalf.join(", ") + ". A person does not act on their own behalf through themselves, so what this record is saying is not established." };
+      }
+      return { kind: "principal", webId: author };
+    }
+    if (behalf.length === 0) {
+      return { kind: "disputed", why: "this entry is attributed to " + author + ", which is not the owner of the pod it is on (" + args.logOwnerWebId + "), and it states no prov:actedOnBehalfOf. So it claims an author who is neither the log's owner nor declared to be acting for them." };
+    }
+    if (behalf.length > 1) {
+      return { kind: "disputed", why: "this entry carries " + behalf.length + " prov:actedOnBehalfOf statements (" + behalf.join(", ") + "), so who " + author + " was acting for is not decided" };
+    }
+    const principal = behalf[0];
+    if (principal !== args.logOwnerWebId) {
+      return { kind: "disputed", why: "this entry says " + author + " acted on behalf of " + principal + ", and the pod this log is on belongs to " + args.logOwnerWebId + ". An entry in somebody's log declaring it was written for a third party is not something this reader will render as either of them speaking." };
+    }
+    const row = args.delegates?.read ? args.delegates.rows.find((r) => r.agentId === author) ?? null : null;
+    return {
+      kind: "delegate",
+      agentId: author,
+      onBehalfOf: principal,
+      name: row?.name ?? null,
+      authorised: args.delegates?.read ? row !== null : null,
+      scope: row?.scope ?? null
+    };
+  }
+  function authorshipLine(a, args = {}) {
+    const who = args.displayName ? args.displayName : "the person whose pod this is";
+    switch (a.kind) {
+      case "principal":
+        return who;
+      case "delegate":
+        return (a.name ? a.name : "an unnamed delegate") + ", acting for " + who;
+      case "unstated":
+        return "author not stated";
+      case "disputed":
+        return "authorship disputed";
+    }
+  }
+
   // packages/workspace-client/src/localagent.ts
   var BRIEF_ENTRIES = 24;
   var DRAFT_MAX = 4e3;
-  var line = (e, mePod) => (e.pod === mePod ? "you" : e.pod) + ": " + (e.body ?? "(this entry carried no readable body)");
+  var line = (e, input) => {
+    const body = e.body ?? "(this entry carried no readable body)";
+    if (e.pod !== input.mePod) return e.pod + " \xB7 " + authorshipLine(e.author) + ": " + body;
+    const a = e.author;
+    if (a.kind === "delegate" && input.delegate && a.agentId === input.delegate.agentId) {
+      return "you (" + (a.name ?? "this delegate") + "): " + body;
+    }
+    if (a.kind === "delegate") return (a.name ?? "an unnamed delegate") + ", another delegate of the person you act for: " + body;
+    if (a.kind === "principal") return "the person you act for: " + body;
+    return "an entry in your delegator's log whose " + (a.kind === "unstated" ? "author is not stated" : "authorship is disputed") + ": " + body;
+  };
   function decideTurn(input) {
     const seat = input.seats.find((s) => s.pod === input.mePod && s.seated) ?? null;
     if (!seat) {
       const named = input.seats.find((s) => s.pod === input.mePod) ?? null;
       return {
         kind: "not-seated",
-        why: named ? "Your pod is named in this workspace but you are not seated: " + (named.why || "the fold gave no reason") + ". Nothing has been written." : "You are not seated in " + input.workspace + ", so there is no log of yours in this channel to write to."
+        why: named ? "The pod you act for is named in this workspace but is not seated: " + (named.why || "the fold gave no reason") + ". Nothing has been written." : "The person you act for is not seated in " + input.workspace + ", so there is no log in this channel to write to."
+      };
+    }
+    if (!input.delegate) {
+      return {
+        kind: "no-delegate",
+        why: "No delegate is selected, so there is nobody for this entry to be attributed to. An agent is not the person it acts for, and writing under their name is the one thing this refuses to do. Authorise a delegate on your own pod and choose it first."
       };
     }
     if (!input.roles) {
@@ -3219,11 +3459,16 @@ var WSPC = (() => {
         why: "The role table this workspace declares could not be read, so no ceiling can be computed. That is not the same as the ceiling permitting this, so nothing is written."
       };
     }
-    const verdict = checkRoleForWorkspace(input.roles, seat.role ?? "");
+    const verdict = delegateCeiling({
+      roles: input.roles,
+      role: seat.role ?? null,
+      scope: input.delegate.scope,
+      delegateName: input.delegate.name
+    });
     if (!verdict.ok) {
       return {
         kind: "ceiling",
-        why: "The role ceiling refuses this write. " + verdict.why + " Nothing could stop this agent writing to your pod \u2014 it is your pod \u2014 so this is a refusal it imposes on itself. An entry written anyway would exist and be inert: the fold would not count it."
+        why: verdict.why + " An entry written past the seat's role would exist and be inert: the fold would not count it. An entry written past the delegation would be refused by the relay \u2014 but only once its 60-second permission cache expires, so this delegate stops itself rather than relying on that."
       };
     }
     if (input.unreadable > 0) {
@@ -3243,20 +3488,20 @@ var WSPC = (() => {
       return {
         kind: anyTheirs ? "already-answered" : "nothing-to-answer",
         ...anyTheirs ? { answering: dated[dated.length - 1] } : {},
-        why: anyTheirs ? "Everything another member has said in this channel has already been answered by this client in this run. Appending again would put a second permanent record in your log saying the same thing." : undated.length ? "Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not established. Your agent answers what it can place in the conversation, and it can place none of this." : "Nobody else has written anything readable in this channel yet."
+        why: anyTheirs ? "Everything another member has said in this channel has already been answered by this client in this run. Appending again would put a second permanent record in your delegator's log saying the same thing." : undated.length ? "Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not established. A delegate answers what it can place in the conversation, and it can place none of this." : "Nobody else has written anything readable in this channel yet."
       };
     }
     if (input.entries.some((e) => e.pod === input.mePod && e.at === null && said(e))) {
       return {
         kind: "channel-incomplete",
-        why: "One of your own entries carries no readable time, so whether you have already spoken since " + lastTheirs.pod + " did is not established. Answering on that is how the same message gets answered twice."
+        why: "One of the entries in your delegator's own log carries no readable time, so whether anybody on that pod has already spoken since " + lastTheirs.pod + " did is not established. Answering on that is how the same message gets answered twice."
       };
     }
     if (lastMine && lastMine.at !== null && lastTheirs.at !== null && lastMine.at >= lastTheirs.at) {
       return {
         kind: "already-answered",
         answering: lastTheirs,
-        why: "You have written in this channel since " + lastTheirs.pod + " last did (" + shortRef(lastMine.descriptorUrl) + "). Your agent answers when somebody else has spoken last; appending now would put a second permanent record in your log with nothing new to answer."
+        why: "Somebody on your delegator's pod \u2014 them, you, or another of their delegates \u2014 has written in this channel since " + lastTheirs.pod + " last did (" + shortRef(lastMine.descriptorUrl) + "). A delegate answers when somebody ELSE has spoken last; appending now would put a second permanent record in that log with nothing new to answer."
       };
     }
     const derived = input.entries.find((e) => e.pod === input.mePod && e.derivedFrom === lastTheirs.descriptorUrl);
@@ -3264,7 +3509,7 @@ var WSPC = (() => {
       return {
         kind: "already-answered",
         answering: lastTheirs,
-        why: "The newest entry from another member is already declared as answered on your log (" + shortRef(derived.descriptorUrl) + "). Appending again would put two permanent records in your log saying the same thing."
+        why: "The newest entry from another member is already declared as answered on your delegator's log (" + shortRef(derived.descriptorUrl) + "). Appending again would put two permanent records in that log saying the same thing."
       };
     }
     const newest = lastTheirs;
@@ -3276,18 +3521,26 @@ var WSPC = (() => {
       brief: {
         workspace: input.workspace,
         slug: input.slug,
-        answering: line(newest, input.mePod),
-        transcript: window.map((e) => line(e, input.mePod)),
+        answering: line(newest, input),
+        transcript: window.map((e) => line(e, input)),
         omitted: Math.max(0, ordered.length - window.length)
       }
     };
   }
   function briefPrompt(brief, args) {
-    const who = args.displayName ? args.displayName : "the person whose account you are running under";
+    const who = args.displayName ? args.displayName : "the person you act for";
+    const me = args.delegateName ? args.delegateName : "an unnamed delegate";
     return [
-      "You are taking part in a shared workspace conversation as " + who + "'s own agent, running on",
-      "their machine under their own credential. What you write is appended to THEIR log as THEIR",
-      "entry: a permanent, signed, publicly readable record that cannot be edited or deleted.",
+      // ★ THE FIRST THREE LINES ARE THE CORRECTION. They used to say "as their own agent … appended
+      // to THEIR log as THEIR entry", which told the model it was writing in the person's voice —
+      // and it wrote accordingly. It is a delegate: it signs nothing as them, and the record will
+      // not read as them either.
+      "You are " + me + ", a delegate acting for " + who + " in a shared workspace conversation.",
+      "You are NOT " + who + ". What you write is appended to their log and recorded as authored by",
+      "YOU, acting on their behalf \u2014 a permanent, signed, publicly readable record that cannot be",
+      "edited or deleted, and that every reader can tell apart from something they typed themselves.",
+      "Write as yourself. Do not impersonate them, and do not write in the first person as if you",
+      "were them.",
       "",
       "Channel: " + brief.workspace,
       brief.omitted > 0 ? "(" + brief.omitted + " earlier entries are not shown.)" : "(This is the whole channel so far.)",
@@ -3449,6 +3702,12 @@ const GRANT_IRI_RX = WSPC.GRANT_IRI_RX;
 const INBOX_LIMIT = WSPC.INBOX_LIMIT;
 const SEAT_SCAN_LIMIT = WSPC.SEAT_SCAN_LIMIT, SEAT_READ_CAP = WSPC.SEAT_READ_CAP;
 const awaitHead = WSPC.awaitHead, staleDetail = WSPC.staleDetail;
+/* ★ WHO WROTE AN ENTRY, which is not whose log it is in. A delegate writes into its
+   delegator's log and the entry names the delegate; a reader that labelled every entry
+   with its pod's owner would assert the one thing the distinction exists to stop
+   asserting. Bound rather than reimplemented for the reason this whole block exists: the
+   page had its own copies of these readers once, and every one of them drifted. */
+const readEntryAuthorship = WSPC.readEntryAuthorship, authorshipLine = WSPC.authorshipLine;
 /* `S.viewer` is read at CALL time and never captured here. It is null until boot resolves
    it, and boot is RE-ENTRANT: the retry control on a startup failure calls it again and
    replaces the object, so a viewer captured now would keep handing the module the previous
@@ -5729,6 +5988,20 @@ function pump() {
            than silently folded in as if it had been written here. */
         declaredWorkspace: readIri(src, "wsp:workspace"),
         servedPod: podOfDescriptorUrl(url),
+        /* ★ WHO COMPOSED IT, WHICH IS NOT WHOSE LOG IT IS IN.
+           A delegate — an identity its delegator authorised on their own pod —
+           writes into that person's log, and the entry names the DELEGATE as
+           its author and the person as who it acted for. Labelling every entry
+           with its pod's owner would assert the one thing this distinction
+           exists to stop asserting. The check runs against the seat's grantee
+           WebID, which lives on the CONVENER's pod, so the log's own owner
+           cannot decide what their entries are checked against. `delegates`
+           is null here: this page does not read every member's registry, so
+           `authorised` comes back null — "not checked", never "not authorised". */
+        author: readEntryAuthorship(region, {
+          logOwnerWebId: (S.members.find((m) => m.stream === owner) || {}).grantedTo || null,
+          delegates: null,
+        }),
         signed: !!(d.authorship && d.authorship.authorshipVerified),
         signedBy: (d.authorship && d.authorship.signedBy) || null,
         binding: (d.authorship && d.authorship.contentBinding) || null,
@@ -5739,7 +6012,8 @@ function pump() {
             : null,
       });
     }).catch((e) => {
-      S.bodies.set(url, { body: null, seq: null, error: e, note: errorCopy(e).t });
+      S.bodies.set(url, { body: null, seq: null, error: e, note: errorCopy(e).t,
+        author: { kind: "unstated", why: "this record could not be read, so nothing about its author was established" } });
     }).finally(() => {
       inflight--;
       renderStream();
@@ -5906,11 +6180,34 @@ function renderMsg(item, same) {
   const right = el("div");
   if (!same) {
     const h = el("div", "mhead");
-    const au = el("span", "mauthor", p.name);
-    /* The author label IS the role name, so an unresolvable role reaches every
-       message in the channel and not only the roster row. Marked in both. */
-    if (p.role && !roleKnown(p.role)) { au.style.color = "var(--pending)"; au.title = roleWhy(p.role); }
+    /* ★ THE AUTHOR IS READ FROM THE ENTRY; THE ROLE IS A CAPACITY BESIDE IT.
+       This label used to BE the role name, which for a person's own entry read
+       close enough to right. It is not right for a delegate's: a delegate
+       writes into its delegator's log, so the role belongs to the log's owner
+       and the author is the agent. Nor for an entry that names no author at
+       all — "Contributor" over text nobody's record attributes to anybody is a
+       confident falsehood. Two spans, two facts. */
+    const a = (body && body.author) || null;
+    const au = el("span", "mauthor", a
+      ? authorshipLine(a, { displayName: p.isYou && a.kind === "principal" ? "You" : null })
+      : "author not read yet");
+    if (a && (a.kind === "unstated" || a.kind === "disputed")) {
+      au.style.color = a.kind === "disputed" ? "var(--refused)" : "var(--pending)";
+      au.title = a.why;
+    } else if (a && a.kind === "delegate") {
+      au.title = "prov:wasAttributedTo " + a.agentId + ", which the entry declares acted on behalf of "
+        + a.onBehalfOf + ". This page does not read that pod's delegation registry, so whether the "
+        + "delegation is recorded there is not established here.";
+    } else if (a && a.kind === "principal") {
+      au.title = "prov:wasAttributedTo " + a.webId + " — the owner of the pod this log is on, so this is the person's own writing.";
+    }
     h.appendChild(au);
+    /* The role, separately: what the LOG'S OWNER may do here. An unresolvable
+       role reaches every message in the channel and not only the roster row. */
+    const rl = el("span", "seq", p.name);
+    rl.title = "The role the log's owner holds in this workspace. A delegate inherits it and cannot exceed it. " + roleWhy(p.role);
+    if (p.role && !roleKnown(p.role)) rl.style.color = "var(--pending)";
+    h.appendChild(rl);
     const chip = el("a", "origin");
     const target = safeHref(p.graph);
     if (target) { chip.href = target; chip.target = "_blank"; chip.rel = "noopener"; }
@@ -6064,6 +6361,13 @@ async function post() {
     streamIri: sIri,
     workspace: WORKSPACE,
     body: body,
+    /* ★ THE PERSON, BECAUSE THE PERSON TYPED IT. Every entry states who composed
+       it — if a delegate's said so and a human's said nothing, "nothing" would
+       have to be read as "the human", and absence is not evidence. This page has
+       no keychain and hosts no delegate, so the only author it can ever be is
+       the viewer; a delegate's entry is written under the delegate's OWN session
+       from a client that holds its key. */
+    author: { kind: "principal", webId: S.viewer.webId },
     entryShape: (S.record && S.record.entryShape) || null,
     onAttempt: (n) => {
       if (n > 1) say("postresult", "pending", "Someone appended while you were typing — re-deriving",

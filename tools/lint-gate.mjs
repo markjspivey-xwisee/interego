@@ -485,7 +485,13 @@ const BASELINE = {};
 // only when the gate shouts spends its life one file from useless. The round's other two new
 // files live under `applications/`, which is frontier rather than a zero-error target, so they
 // do not move this number.
-export const MIN_FILES = 378;
+// 378 -> 381, on the round that made an agent a DELEGATE rather than a second name for the
+// person. Three new files inside the zero-error target: two in the shared package
+// (`delegates.ts`, and `delegates-name.ts` split out of it so a control-character rule could be
+// written without literal control bytes turning the source into binary) and one root suite,
+// `tests/workspace-client-delegates.test.ts`. The round's other new lines live in
+// `applications/`, which is frontier rather than a zero-error target, so they do not move this.
+export const MIN_FILES = 381;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
