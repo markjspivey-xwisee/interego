@@ -46,10 +46,16 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { POD_RX, SLUG_RX } from '@interego/workspace-client';
+import { POD_RX, SLUG_RX, SNOWFLAKE_RX, challengeLabel } from '@interego/workspace-client';
 
-/** A Discord snowflake: digits only, and bounded. Anything else never reaches a tool call. */
-export const SNOWFLAKE_RX = /^[0-9]{1,20}$/;
+/**
+ * ★ RE-EXPORTED, NOT DEFINED. Both moved into `@interego/workspace-client` when the desktop app
+ * became a second publisher of this row. The comment on {@link challengeLabel} below said "two
+ * format sites is how a link flow comes to reject every honest user" while this file WAS the only
+ * site; a copy in the desktop shell would have made that prediction come true. The module is now
+ * the one site and this bot reads it from there.
+ */
+export { SNOWFLAKE_RX, challengeLabel };
 
 /** A pod this bot has been shown control of. */
 export interface Link {
@@ -85,17 +91,6 @@ export interface Challenge {
 export const CHALLENGE_TTL_MS = 10 * 60 * 1000;
 /** How many pods may be tried per `/workspace link`. Bounds a spammer's cross-pod reads. */
 export const CHALLENGE_MAX_ATTEMPTS = 5;
-
-/**
- * The label the pod owner must put on their delegation row: the Discord account the delegation
- * is FOR.
- *
- * ★ ONE FUNCTION, AND IT IS COMPUTED FROM THE CONFIRMING ACCOUNT'S OWN ID. That is the whole
- * binding — see the header for the world-readable-label defect this replaced. The string the bot
- * tells the user to type and the string it later compares must be one string; two format sites
- * is how a link flow comes to reject every honest user.
- */
-export const challengeLabel = (discordUserId: string): string => 'discord-link ' + discordUserId;
 
 /**
  * The workspace slug for a thread, DERIVED rather than stored.

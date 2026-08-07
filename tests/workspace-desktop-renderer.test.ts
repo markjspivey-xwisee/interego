@@ -251,14 +251,53 @@ interface Opened {
   doc: Document;
   win: Window & typeof globalThis;
   s: Scripted;
+  /** What the renderer asked the model, and how often it was told to stop. */
+  agent: AgentScript;
   settle: () => Promise<void>;
   /** Push a session change the way the main process does, through the listener the shell installed. */
   pushSession: (s: Record<string, unknown>) => void;
 }
 
+/**
+ * What the main process would report about this machine's model providers.
+ *
+ * ★ SCRIPTED FOR THE SAME REASON `call` IS: it is the OTHER side of the IPC boundary, and beyond
+ * it a child process on somebody's laptop. What is NOT scripted is any decision made from it — the
+ * seating check, the ceiling, "have I already answered", the draft validation and the honesty rule
+ * about `loggedIn: null` are all real `@interego/workspace-client` and real renderer code here.
+ * The shapes below are the ones `probeClaude` actually returns; they were taken from a live run of
+ * `claude auth status --json` on this machine, not invented.
+ */
+interface AgentScript {
+  providers?: readonly Record<string, unknown>[];
+  unsupported?: readonly { id: string; label: string; why: string }[];
+  /** What one model turn answers with. */
+  think?: (prompt: string) => { ok: boolean; text: string | null; why: string; ms: number };
+  /** Every prompt the renderer sent, so a test can assert what the agent was ASKED. */
+  prompts: string[];
+  cancels: number;
+  probeThrows?: boolean;
+}
+
+const CLAUDE_READY = {
+  id: 'claude-code', label: 'Claude Code (your own Claude subscription)', installed: true,
+  path: 'C:\\claude.exe', shimOnly: false, loggedIn: true, authMethod: 'claude.ai',
+  account: 'brother@example.com', subscription: 'max', usable: true,
+  why: 'Signed in as brother@example.com on a max subscription (claude.ai).',
+} as const;
+
+/** The measured not-installed shape: `loggedIn` is null, NOT false. */
+const CLAUDE_ABSENT = {
+  id: 'claude-code', label: 'Claude Code (your own Claude subscription)', installed: false,
+  path: null, shimOnly: false, loggedIn: null, authMethod: null, account: null,
+  subscription: null, usable: false,
+  why: 'The Claude Code CLI was not found on this machine.',
+} as const;
+
 /** Boot a window with the shipping HTML, the real bundle, and one scripted bridge. */
-async function open(opts: { viewer?: string; setup?: (s: Scripted) => void; coldStartMs?: number } = {}): Promise<Opened> {
+async function open(opts: { viewer?: string; setup?: (s: Scripted) => void; coldStartMs?: number; agent?: AgentScript } = {}): Promise<Opened> {
   const viewer = opts.viewer ?? POD_A;
+  const agent: AgentScript = { prompts: [], cancels: 0, ...opts.agent };
   const s = scripted();
   opts.setup?.(s);
   const html = readFileSync(join(DESKTOP, 'index.html'), 'utf8');
@@ -310,6 +349,15 @@ async function open(opts: { viewer?: string; setup?: (s: Scripted) => void; cold
     sessionStatus: async () => ({ state: 'live', pod: viewer, method: 'wallet', expiresAt: null, renewable: true, why: null }),
     renewSession: async () => ({ ok: true, session: { state: 'live', pod: viewer, method: 'wallet', expiresAt: null, renewable: true, why: null } }),
     onSessionChanged: (fn: (x: unknown) => void) => { sessionListener = fn; },
+    agentProbe: async () => {
+      if (agent.probeThrows) throw new Error('the probe blew up');
+      return { providers: agent.providers ?? [CLAUDE_READY], unsupported: agent.unsupported ?? [] };
+    },
+    agentThink: async (prompt: string) => {
+      agent.prompts.push(prompt);
+      return agent.think ? agent.think(prompt) : { ok: true, text: 'A drafted reply.', why: 'ok', ms: 1200 };
+    },
+    agentCancel: async () => { agent.cancels++; return { stopped: 0 }; },
   };
   win.eval(bundle);
   /**
@@ -331,7 +379,7 @@ async function open(opts: { viewer?: string; setup?: (s: Scripted) => void; cold
   };
   await settle();
   return {
-    doc: dom.window.document, win, s, settle,
+    doc: dom.window.document, win, s, agent, settle,
     pushSession: (next) => { sessionListener?.(next); },
   };
 }
@@ -819,5 +867,390 @@ describe('nothing in the renderer dereferences a fleet-internal address', () => 
     expect(o.doc.querySelectorAll('#stream img')).toHaveLength(0);
     expect(o.doc.querySelectorAll('#stream script')).toHaveLength(0);
     expect(text(o.doc, '#stream')).toContain('<img src=x onerror=alert(1)>');
+  });
+});
+
+// ── the model this machine can run the user's agent on ───────────────────────
+
+/** An entry on somebody's log, the fixture the agent cases are built from. */
+const entry = (pod: string, n: number, body: string, at: string): Doc => ({
+  graph: STREAM(pod), cid: 'cid-ag-' + pod + '-' + n, url: DESC(pod, 200 + n), validFrom: at,
+  content: trig(STREAM(pod), '<' + STREAM(pod) + '/e/' + n + '> a wsp:Entry ; wsp:workspace <' + WS + '> ;\n'
+    + '  wsp:seq "' + n + '"^^<http://www.w3.org/2001/XMLSchema#nonNegativeInteger> ; dct:description "' + body + '" .'),
+});
+
+describe('the model the agent runs on is the user\'s own, or it is absent', () => {
+  it('names the account and plan it would run under', async () => {
+    const o = await open();
+    await signInAndSettle(o);
+    const body = text(o.doc, '#modelbody');
+    expect(body).toContain('brother@example.com');
+    expect(body).toContain('max');
+  });
+
+  it('★ an absent CLI reports "not established", never that the user is signed out', async () => {
+    // ABSENCE IS NOT EVIDENCE, and this is the exact place it would be easiest to get wrong: the
+    // tool is not installed, so whether this person has a Claude subscription is not something the
+    // app has ANY evidence about. Rendering `loggedIn: null` as "no" would be a statement about
+    // somebody's account made from a filesystem check that never looked at their account.
+    const o = await open({ agent: { prompts: [], cancels: 0, providers: [CLAUDE_ABSENT] } });
+    await signInAndSettle(o);
+    const body = text(o.doc, '#modelbody');
+    expect(body).toContain('not established');
+    expect(body).toContain('not found on this machine');
+    expect(body).not.toContain('signed in\tno');
+  });
+
+  it('★ says Codex is unsupported here rather than offering it', async () => {
+    const o = await open({ agent: { prompts: [], cancels: 0, unsupported: [{ id: 'codex', label: 'OpenAI Codex', why: 'Not supported by this app. Only Claude Code has been measured end to end.' }] } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#modelbody')).toContain('Only Claude Code has been measured end to end');
+  });
+
+  it('★ a probe that throws does not leave a claim about the machine on screen', async () => {
+    const o = await open({ agent: { prompts: [], cancels: 0, probeThrows: true } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#modelresult')).toContain('nothing is being claimed about it either way');
+    // And with no provider established, the agent cannot be switched on at all.
+    expect((o.doc.getElementById('agenttoggle') as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('the first run reads as one sequence, and admits what it cannot know', () => {
+  it('names the pod and the model account as established', async () => {
+    const o = await open();
+    await signInAndSettle(o);
+    const steps = text(o.doc, '#setupsteps');
+    expect(steps).toContain('1. Your account — you are pod ' + POD_A);
+    expect(steps).toContain('brother@example.com');
+  });
+
+  it('★ never says the user has not linked Discord — it says it cannot know', async () => {
+    // The easiest honesty failure on this screen. Whether a pod delegates a bot is a question
+    // about that pod's registry and it needs an agent id to ask; the app has none until the user
+    // types one. A checklist that drew that as an unticked box would be asserting something it
+    // had not checked — and would keep asserting it after a link made from another client.
+    const o = await open();
+    await signInAndSettle(o);
+    const steps = text(o.doc, '#setupsteps');
+    expect(steps).toContain('nothing here is a claim either way');
+    expect(steps).not.toContain('4. Discord — you have not');
+    // Rendered as "not established", never as a finding against.
+    const discord = [...o.doc.querySelectorAll('#setupsteps .q')].map((n) => n.textContent ?? '');
+    expect(discord.some((t) => t.startsWith('4. Discord'))).toBe(true);
+  });
+
+  it('★ a workspace list that failed to read is not reported as "you are in none"', async () => {
+    const o = await open({ setup: (s) => {
+      s.fail.set('discover_context', (input) => (String(input['pod_name'] ?? '') === POD_A
+        ? { error: 'upstream_error', message: 'the pod manifest could not be read' } : undefined));
+    } });
+    await signInAndSettle(o);
+    const steps = text(o.doc, '#setupsteps');
+    expect(steps).toContain('how many you are in is not established');
+    expect(steps).not.toContain('you are in none yet');
+  });
+
+  // NOTE: this block used to carry a case asserting that an ABSENT CLI is a finding against. It
+  // was wrong, and an adversarial review caught it: `CLAUDE_ABSENT` has `loggedIn: null`, so
+  // nothing at all was established about the account and a cross claimed otherwise. The two cases
+  // that replaced it — one per side of the rule — live in the local-agent block below.
+});
+
+// ── linking a chat account by publishing a delegation ────────────────────────
+
+describe('linking Discord publishes a delegation, and shows the call first', () => {
+  it('★ shows the exact call, unmade, before anything is published', async () => {
+    const o = await open();
+    await signInAndSettle(o);
+    (o.doc.getElementById('botagent') as HTMLInputElement).value = 'did:ethr:0xBOT';
+    (o.doc.getElementById('botagent') as HTMLInputElement).dispatchEvent(new o.win.Event('input'));
+    (o.doc.getElementById('discorduser') as HTMLInputElement).value = '4242';
+    (o.doc.getElementById('discorduser') as HTMLInputElement).dispatchEvent(new o.win.Event('input'));
+    const plan = text(o.doc, '#discordplan');
+    expect(plan).toContain('has not been made');
+    expect(plan).toContain('did:ethr:0xBOT');
+    expect(plan).toContain('PublishOnly');
+    expect(plan).toContain('discord-link 4242');
+    // Nothing was sent while the plan was merely rendered.
+    expect(o.s.calls.some((c) => c.name === 'register_agent')).toBe(false);
+  });
+
+  it('★ states that PublishOnly is pod-wide at the moment of consent', async () => {
+    // The bot's README calls this one of its two honest limits. A screen that said "Link Discord"
+    // and quietly published a pod-wide publish delegation has not asked for consent to what it did.
+    const o = await open();
+    await signInAndSettle(o);
+    (o.doc.getElementById('botagent') as HTMLInputElement).value = 'did:ethr:0xBOT';
+    (o.doc.getElementById('discorduser') as HTMLInputElement).value = '4242';
+    (o.doc.getElementById('discorduser') as HTMLInputElement).dispatchEvent(new o.win.Event('input'));
+    const plan = text(o.doc, '#discordplan');
+    expect(plan).toContain('POD-WIDE');
+    expect(plan).toContain('not only workspace entries');
+  });
+
+  it('★ says the label is public, and mints no secret of its own', async () => {
+    // The whole defect the bot's `links.ts` records: a nonce in a world-readable delegation row
+    // lets whoever reads the pod first bind THEIR account to YOUR pod. A second publisher of that
+    // row must not reintroduce it, and a UI that called the label a "code" would invite exactly
+    // the design that was removed.
+    const o = await open();
+    await signInAndSettle(o);
+    (o.doc.getElementById('botagent') as HTMLInputElement).value = 'did:ethr:0xBOT';
+    (o.doc.getElementById('discorduser') as HTMLInputElement).value = '4242';
+    (o.doc.getElementById('discorduser') as HTMLInputElement).dispatchEvent(new o.win.Event('input'));
+    const plan = text(o.doc, '#discordplan');
+    expect(plan).toContain('is public, and is meant to be');
+    expect(plan).toContain('nothing in it to steal');
+    expect(text(o.doc, '#discordcard')).not.toContain('one-time');
+  });
+
+  it('refuses a Discord id that is not a snowflake, without calling anything', async () => {
+    const o = await open();
+    await signInAndSettle(o);
+    (o.doc.getElementById('botagent') as HTMLInputElement).value = 'did:ethr:0xBOT';
+    (o.doc.getElementById('discorduser') as HTMLInputElement).value = 'not-digits';
+    (o.doc.getElementById('discorduser') as HTMLInputElement).dispatchEvent(new o.win.Event('input'));
+    expect(text(o.doc, '#discordhint')).toContain('digits only');
+    expect((o.doc.getElementById('discordlink') as HTMLButtonElement).disabled).toBe(true);
+    expect(o.s.calls.some((c) => c.name === 'register_agent')).toBe(false);
+  });
+
+  it('★ does not report a link as published on the relay\'s say-so alone', async () => {
+    // `register_agent` answering {registered:true} is the relay describing its own action. The row
+    // on the pod is the fact, and the two have disagreed before.
+    const o = await open({ setup: (s) => {
+      s.fail.set('register_agent', () => ({ registered: true }));
+      // The pod's registry never lists the agent, so the read-back cannot confirm it.
+    } });
+    await signInAndSettle(o);
+    (o.doc.getElementById('botagent') as HTMLInputElement).value = 'did:ethr:0xBOT';
+    (o.doc.getElementById('discorduser') as HTMLInputElement).value = '4242';
+    (o.doc.getElementById('discorduser') as HTMLInputElement).dispatchEvent(new o.win.Event('input'));
+    click(o.doc, 'discordlink');
+    await o.settle();
+    const res = text(o.doc, '#discordresult');
+    expect(res).toContain('not confirmed by reading your pod back');
+    expect(res).not.toContain('Published, and read back');
+  });
+});
+
+// ── the local agent ──────────────────────────────────────────────────────────
+
+describe('the local agent is off, visible, and stoppable', () => {
+  it('★ is off by default and has drafted nothing', async () => {
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z'));
+    } });
+    await signInAndSettle(o);
+    expect(text(o.doc, '#agentstate')).toBe('Off');
+    expect(text(o.doc, '#agentwhy')).toContain('It reads nothing and writes nothing');
+    expect(o.agent.prompts).toHaveLength(0);
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('★ a draft goes in the composer and NOTHING is published until the person sends it', async () => {
+    // The whole point of the panel. An agent that writes on somebody's behalf without them seeing
+    // it is not a feature, so the draft lands where their own typing would and stops there.
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What did we decide about the roof?', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'We agreed to re-tile in spring.', why: 'ok', ms: 900 }) },
+    });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('We agreed to re-tile in spring.');
+    expect(text(o.doc, '#agentresult')).toContain('NOTHING has been written yet');
+    expect(o.s.calls.some((c) => c.name === 'publish_context')).toBe(false);
+  });
+
+  it('★ the prompt it is given carries the channel and never a caller\'s text', async () => {
+    // Copied from the bridge affordance's contract: "a caller who could pass text would be the
+    // author, and the agent would be a signature on somebody else's sentence."
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'Roof question', '2026-08-07T10:00:00.000Z')); },
+    });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(o.agent.prompts).toHaveLength(1);
+    const prompt = o.agent.prompts[0] as string;
+    expect(prompt).toContain('Roof question');
+    expect(prompt).toContain('permanent');
+    expect(prompt).toContain(WS);
+  });
+
+  it('★ turning it off reaches the child process, not just the flag', async () => {
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'Anything?', '2026-08-07T10:00:00.000Z'));
+    } });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(o.agent.cancels).toBeGreaterThan(0);
+    expect(text(o.doc, '#agentstate')).toBe('Off');
+  });
+
+  it('★ does not answer when the most recent entry in the channel is its own', async () => {
+    // The dedupe rule, and the loop-forever defect it prevents. `entryTurtle` writes no derivation
+    // link, so a client that only looked for `prov:wasDerivedFrom` would re-answer the same message
+    // on every poll, permanently, on a public log.
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'What about the roof?', '2026-08-07T10:00:00.000Z'));
+      (s.pods.get(POD_A) as Pod).put(entry(POD_A, 1, 'We agreed to re-tile in spring.', '2026-08-07T10:01:00.000Z'));
+    } });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(text(o.doc, '#agentwhy')).toContain('You have written in this channel since');
+    expect(o.agent.prompts).toHaveLength(0);
+  });
+
+  it('★ never draws over text the person is in the middle of writing', async () => {
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'Anything?', '2026-08-07T10:00:00.000Z'));
+    } });
+    await signInAndSettle(o);
+    const ta = o.doc.getElementById('composer') as HTMLTextAreaElement;
+    ta.value = 'half a sentence I was typing';
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(ta.value).toBe('half a sentence I was typing');
+    expect(o.agent.prompts).toHaveLength(0);
+    expect(text(o.doc, '#agentwhy')).toContain('unsent text');
+  });
+
+  it('★ posts nothing when the model returns the nothing-to-add sentinel', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'ok', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'NOTHING TO ADD', why: 'ok', ms: 300 }) },
+    });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
+    expect(text(o.doc, '#agentresult')).toContain('nothing worth adding');
+    expect(o.s.calls.some((c) => c.name === 'publish_context')).toBe(false);
+  });
+
+  it('★ a model that refuses is reported, and nothing is drafted from it', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'hello', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: false, text: null, why: 'Claude Code refused this turn: Not logged in · Please run /login. Nothing was written.', ms: 1200 }) },
+    });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(text(o.doc, '#agentresult')).toContain('Not logged in');
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('★ an over-long draft is refused rather than truncated', async () => {
+    const o = await open({
+      setup: (s) => { (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'hello', '2026-08-07T10:00:00.000Z')); },
+      agent: { prompts: [], cancels: 0, think: () => ({ ok: true, text: 'x'.repeat(5000), why: 'ok', ms: 900 }) },
+    });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(text(o.doc, '#agentresult')).toContain('refused rather than truncated');
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  /**
+   * ★ THE FOUR BELOW ARE DEFECTS AN ADVERSARIAL REVIEWER FOUND IN THE FIRST VERSION OF THIS
+   * FEATURE, after every test above was already green. Each was reachable, each was silent, and
+   * two of them wrote to somebody's permanent public log. They are pinned here in the shape that
+   * produced them.
+   */
+  /**
+   * ★ THE UNDATED-ENTRY CASE IS NOT HERE, AND ITS ABSENCE IS DELIBERATE.
+   *
+   * It was written here first, and it PASSED with the defect deliberately restored: the scripted
+   * store cannot get an undated entry as far as `decideTurn`, so the case asserted nothing while
+   * being counted as a regression test — worse than no test. It lives in
+   * `tests/workspace-client-localagent.test.ts` instead, at the altitude where the ordering is
+   * decided, and it was verified to FAIL against the reverted sort before being kept. A DOM is the
+   * right place to test what the shell draws and the wrong place to test an ordering rule.
+   */
+  it('★ refuses outright when part of the channel could not be read', async () => {
+    // Losing the read of the agent's OWN latest reply made it answer the same message twice. A
+    // partial channel cannot answer "who spoke last", so it is not asked to.
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z'));
+      s.fail.set('get_descriptor', (input) => (String(input['url']).endsWith('200.ttl')
+        ? { error: 'upstream_error', message: 'that descriptor could not be read' } : undefined));
+    } });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(o.agent.prompts).toHaveLength(0);
+    expect(text(o.doc, '#agentwhy')).toContain('could not be read');
+  });
+
+  it('★ switching workspace turns the agent off and discards its draft', async () => {
+    // THE CROSS-WORKSPACE LEAK. `teardownWorkspace` reset every other piece of channel state and
+    // not the agent's, so an in-flight turn composed from one channel wrote its draft into
+    // another's composer — and with auto-post on, published it there.
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z'));
+    } });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).not.toBe('');
+    await openByIri(o, WS);
+    expect(text(o.doc, '#agentstate')).toBe('Off');
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
+    expect(o.agent.cancels).toBeGreaterThan(0);
+  });
+
+  it('★ a probe that threw is not rendered as "nothing is installed on this machine"', async () => {
+    const o = await open({ agent: { prompts: [], cancels: 0, probeThrows: true } });
+    await signInAndSettle(o);
+    const steps = text(o.doc, '#setupsteps');
+    expect(steps).toContain('not established');
+    expect(steps).not.toContain('was found on this machine');
+    const unknown = [...o.doc.querySelectorAll('#setupsteps .q')].map((n) => n.textContent ?? '');
+    expect(unknown.some((t) => t.startsWith('2. Your agent\'s model'))).toBe(true);
+    expect([...o.doc.querySelectorAll('#setupsteps .n')]).toHaveLength(0);
+  });
+
+  it('★ a CLI that is absent is "not established", not a finding that you are signed out', async () => {
+    // `loggedIn: null` means the tool was never there to ask. Only `loggedIn === false` is the
+    // tool having answered no, and only that may be drawn as a finding against.
+    const o = await open({ agent: { prompts: [], cancels: 0, providers: [CLAUDE_ABSENT] } });
+    await signInAndSettle(o);
+    const unknown = [...o.doc.querySelectorAll('#setupsteps .q')].map((n) => n.textContent ?? '');
+    expect(unknown.some((t) => t.startsWith('2. Your agent\'s model'))).toBe(true);
+    expect(text(o.doc, '#setupsteps')).toContain('not something this app can see from here');
+  });
+
+  it('an installed CLI that answered "not signed in" IS a finding against', async () => {
+    // The other side of the same rule: here the tool was asked and answered, so understating it
+    // as unknown would hide a real blocker behind a shrug.
+    const o = await open({ agent: { prompts: [], cancels: 0, providers: [{
+      ...CLAUDE_ABSENT, installed: true, path: 'C:\\claude.exe', loggedIn: false,
+      why: 'Claude Code is installed but not signed in. Run `claude auth login`.',
+    }] } });
+    await signInAndSettle(o);
+    const against = [...o.doc.querySelectorAll('#setupsteps .n')].map((n) => n.textContent ?? '');
+    expect(against.some((t) => t.startsWith('2. Your agent\'s model'))).toBe(true);
+    expect(text(o.doc, '#setupsteps')).toContain('claude auth login');
+  });
+
+  it('★ an unseated viewer\'s agent refuses, and says which half is missing', async () => {
+    const o = await open({ viewer: POD_B, setup: (s) => {
+      // POD_B's acceptance is removed, so it holds a grant and no seat.
+      const b = s.pods.get(POD_B) as Pod;
+      b.docs.length = 0;
+      (s.pods.get(POD_A) as Pod).put(entry(POD_A, 0, 'anyone there?', '2026-08-07T10:00:00.000Z'));
+    } });
+    await signInAndSettle(o);
+    // Not seated, so the panel is not even offered — there is no log of theirs to write to.
+    expect(o.doc.getElementById('agentcard')?.hasAttribute('hidden')).toBe(true);
+    expect(o.agent.prompts).toHaveLength(0);
   });
 });

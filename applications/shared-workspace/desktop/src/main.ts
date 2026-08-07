@@ -31,6 +31,7 @@ import {
   type AuthMethod,
 } from './auth.js';
 import { getSecret, putSecret, secretStoreAvailable, WALLET_KEY } from './secrets.js';
+import { CODEX_UNSUPPORTED, probeClaude, runClaude, type ProviderStatus } from './modelprovider.js';
 
 const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
 const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
@@ -79,6 +80,24 @@ interface Session {
   readonly why: string | null;
 }
 let session: Session = { state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null };
+
+/**
+ * One model turn in flight.
+ *
+ * `cancelled` is separate from `kill` because a turn spends its first seconds INSIDE the provider
+ * probe, with no child of its own to kill yet. A cancel in that window has to be remembered, or
+ * the turn sails past it — which is what an adversarial review found the first version doing.
+ */
+interface Turn { cancelled: boolean; kill: (() => void) | null }
+
+/**
+ * Model turns currently running.
+ *
+ * A set rather than a single handle because a turn that is being cancelled and one that is
+ * starting can overlap, and the one thing that must not survive a cancel is a child nobody is
+ * holding a reference to. Entries are removed one at a time by the turn that owns them.
+ */
+const thinking = new Set<Turn>();
 
 const listeners = new Set<WebContents>();
 function setSession(next: Session): void {
@@ -287,6 +306,90 @@ app.whenReady().then(() => {
       // refusal.
       return { ok: false, error: { code: e.code ?? 'upstream_error', message: e.message ?? String(err), retryable: !!e.retryable, retryAfterMs: e.retryAfterMs ?? null } };
     }
+  });
+
+  /**
+   * WHAT THIS MACHINE CAN RUN THE USER'S AGENT ON.
+   *
+   * Probed on demand rather than cached at boot: somebody who reads "not signed in", runs
+   * `claude auth login` in a terminal and comes back must not be told the same thing by a value
+   * this process decided at startup.
+   */
+  ipcMain.handle('agent:probe', async (): Promise<{ providers: readonly ProviderStatus[]; unsupported: readonly { id: string; label: string; why: string }[] }> => ({
+    providers: [await probeClaude()],
+    unsupported: [CODEX_UNSUPPORTED],
+  }));
+
+  /**
+   * ONE MODEL TURN, ON THE USER'S OWN CREDENTIAL.
+   *
+   * ★ THE ONLY PART OF THE AGENT LOOP THAT LIVES HERE, AND THAT IS DELIBERATE. Deciding whether
+   * there is anything to answer, and reading the channel to find out, is `@interego/workspace-client`
+   * running in the renderer against state it already holds. Putting the loop here would have meant
+   * a SECOND channel reader in a process that does not have one — the "two copies of one intention"
+   * that every drift defect in this vertical came from. What the renderer cannot do is spawn a
+   * child process, so that, and only that, crosses.
+   *
+   * ★ AND THE RENDERER CANNOT NAME THE BINARY. The path comes from this process's own probe, not
+   * from the call — a renderer that could pass an executable path would be able to make this
+   * process run anything, and the renderer is the half that renders bytes other people wrote.
+   */
+  ipcMain.handle('agent:think', async (_e, prompt: string, systemPrompt: string | null) => {
+    if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('a model turn needs a prompt');
+    /**
+     * ★ THIS TURN IS REGISTERED BEFORE ANY CHILD EXISTS, AND `cancelled` IS CHECKED AFTER EVERY
+     * AWAIT. An adversarial review found the hole: the probe below spawns its own child with a
+     * 20-SECOND timeout, and the old code only registered a killer once `runClaude` had already
+     * spawned. For that whole window `agent:cancel` iterated an empty set, answered
+     * `{stopped: 0}`, and the model child then started and ran to completion — on a subscription
+     * the user had just switched off. A turn is now a live object from its first line.
+     */
+    const turn: Turn = { cancelled: false, kill: null };
+    thinking.add(turn);
+    try {
+      // The probe's own child is registered too — see `probeClaude`. Without it a cancel during
+      // the probe was recorded and not effected, and the turn sailed on for up to 20 seconds.
+      const status = await probeClaude(undefined, (kill) => {
+        turn.kill = kill;
+        if (turn.cancelled) kill();
+      });
+      if (turn.cancelled) return { ok: false, text: null, ms: 0, why: 'You turned your agent off before it started. Nothing was written.' };
+      if (!status.usable || !status.path) return { ok: false, text: null, ms: 0, why: status.why };
+      const run = await runClaude({
+        binary: status.path,
+        prompt,
+        ...(typeof systemPrompt === 'string' && systemPrompt ? { systemPrompt } : {}),
+        onChild: (kill) => {
+          turn.kill = kill;
+          // Cancelled while the child was being spawned: kill it the moment it exists, or it
+          // outlives the cancel by its whole timeout.
+          if (turn.cancelled) kill();
+        },
+      });
+      if (turn.cancelled) return { ok: false, text: null, ms: run.ms, why: 'You turned your agent off while it was thinking. Its answer was discarded and nothing was written.' };
+      return run;
+    } finally {
+      // ★ `delete`, NOT `clear`. The set exists because a turn being cancelled and one starting
+      // can overlap; clearing it on every completion orphaned the other one's child permanently,
+      // which is the exact failure the set was introduced to prevent.
+      thinking.delete(turn);
+    }
+  });
+
+  /** Stop any turn in flight. The user turning the agent off has to reach a running child. */
+  ipcMain.handle('agent:cancel', () => {
+    let killed = 0;
+    const flagged = thinking.size;
+    for (const turn of thinking) {
+      turn.cancelled = true;
+      // A turn between spawns has no child at this instant; `onChild` kills it on arrival.
+      if (turn.kill) { try { turn.kill(); killed++; } catch { /* already gone is the ordinary case */ } }
+    }
+    // ★ `flagged` AND `killed` ARE REPORTED SEPARATELY BECAUSE THEY ARE DIFFERENT FACTS. The first
+    // version returned the set size as `stopped`, which counted a turn that had merely been marked
+    // as one that had been stopped — and the renderer then told the user "Stopped" on the strength
+    // of it. A turn with no live child is flagged, not killed, and the two are not merged.
+    return { flagged, killed };
   });
 
   createWindow();

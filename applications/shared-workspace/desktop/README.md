@@ -2,10 +2,14 @@
 
 Against the **live** relay, with no fixtures anywhere in it:
 
-    boot -> sign in -> lobby (who you are, your inbox, the workspaces you accepted)
+    boot -> create an account with a passkey -> a pod is provisioned for you
+         -> lobby: getting set up, who you are, your inbox, the workspaces you accepted
+         -> your agent's model (your own subscription, or an honest "not here")
+         -> link Discord by publishing the delegation on your own pod
          -> create a workspace / invite somebody / accept an invitation
          -> channel: roster, stream, canvas
          -> post an entry, save the canvas, meet a 412 and merge forward
+         -> turn your agent on: it drafts into the composer and stops
 
 Everything it knows about the substrate comes from **`@interego/workspace-client`** — the same
 module the published artifact's script is generated from. This package holds a window, two
@@ -27,6 +31,304 @@ became the head.
 | post an entry onto your own pod, compare-and-swap safe | `postEntry` | yes |
 | canvas: create, save, forced stale 412, merge forward | `readCanvas` / `saveCanvas` / `mergeForward` | yes |
 | renew the bearer with no user present | `refreshBearer` here + the relay's `refresh_token` grant | yes |
+| link a Discord account by publishing the delegation for you | `discordLinkPlan` + `publishDelegation` | yes |
+| withdraw that delegation, confirmed by reading the pod back | `revokeDelegation` | yes |
+| run your own agent on your own model subscription | `decideTurn` / `briefPrompt` / `checkDraft` + `modelprovider.ts` | yes |
+
+---
+
+## What a brand-new user does, start to finish, with nothing but the app
+
+1. **Open it and press *Create an account with a passkey*.** Windows Hello / Touch ID both creates
+   the account and signs in; there is no password and no sign-up form. The ceremony happens in the
+   system browser rather than in this window, because `clientDataJSON.origin` has to be the
+   identity server's and a page loaded from disk cannot produce one — that also means a real
+   platform authenticator instead of a soft key this program made up. First run takes **12–17 s**
+   while the relay provisions a pod; the boot checklist counts up and names the step rather than
+   spinning. Wallet sign-in stays on the same card for people who already have a `u-eth-…` pod.
+2. **Read *Getting set up*.** Four steps with their real state — account, model, workspace,
+   Discord — each marked as established for, established against, or **not established**. Step 2
+   is a finding against when the CLI was asked and said no; step 4 is an *unknown*, because
+   whether a pod delegates a bot needs an agent id to ask about and the app has none until you
+   type one. It never draws "you have not linked Discord".
+3. **Check *Your agent's model*.** It reports what this machine can run your agent on and under
+   which account. If nothing is there it says what to install and that everything else still works.
+4. **Create or accept a workspace**, exactly as before.
+5. **Link Discord** from the lobby card, if you want the thread.
+6. **In the channel, turn your agent on** when you want it. It drafts into the composer; you press
+   Post.
+
+Nothing in that sequence needs a terminal, a key, or a second client.
+
+---
+
+## Your agent runs on your own subscription, or it does not run
+
+Everything in this section was driven end to end against the live fleet, with two freshly minted
+disposable identities and the real `claude` CLI on the operator's own Max subscription:
+
+```sh
+npx tsx applications/shared-workspace/tools/drive-local-agent-live.ts
+```
+
+It mints A and B, creates and accepts a workspace across both pods, has B ask a real question, runs
+A's agent for real, appends the answer to A's own pod, asks again to prove the loop guard refuses a
+second reply, publishes a Discord delegation and verifies it *from the delegate's own session*,
+refuses a different chat account against the same row, and revokes. All checks pass.
+
+
+**The question, and the measurement that answers it.** Can this app run a person's agent on the
+Claude subscription they have already signed into on this machine — no API key, nobody else
+paying? Measured on Windows 10, Claude Code 2.1.162, 2026-08-07, with **no `ANTHROPIC_API_KEY`
+anywhere in the environment**:
+
+| what was run | what came back |
+|---|---|
+| `claude auth status --json` | `{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}`, exit 0, 844 ms |
+| `claude -p … --output-format json` | `{"is_error":false,"result":"SPAWN_OK"}`, exit 0, 5.5 s |
+| the same, prompt on **stdin** instead of argv | `{"is_error":false,"result":"STDIN_OK"}`, exit 0 |
+| the same, from a `HOME` with no credentials | `{"is_error":true,"result":"Not logged in · Please run /login"}`, exit 1, **1.2 s** |
+
+So: yes, and cleanly. The CLI reads the credential itself — `~/.claude/.credentials.json` on
+Windows and Linux, the Keychain on macOS — and refreshes it itself. **This app never reads that
+file, never copies the token and never holds it.** It spawns a child and reads stdout. There is no
+key here because there is no key.
+
+`claude auth status --json` answers with exit 0 and an honest `loggedIn` boolean in *both* states,
+which is the detection primitive: the app never has to stat a credential file to know whether
+somebody is signed in. And a logged-out `-p` **fails fast** rather than hanging or prompting, which
+is what makes an unattended loop safe to start.
+
+### Three measured footguns, each of which silently breaks the subscription path
+
+1. **`--bare` must never be passed.** Its own help says "Anthropic auth is strictly
+   `ANTHROPIC_API_KEY` or `apiKeyHelper` — OAuth and keychain are never read". Measured: with a
+   valid subscription signed in, `-p --bare` returns "Not logged in" in 78 ms. It reads as a
+   lean-startup flag and it is an auth-disabling flag.
+2. **On Windows the `.exe` must win over the `.cmd`.** npm installs both. Node 22 refuses to spawn
+   a `.cmd` without `shell: true` — `EINVAL`, measured — and a shell would pass a channel full of
+   other people's words through `cmd.exe`. `resolveClaudeCli` looks for the executable first and
+   *reports* a shim rather than running one.
+3. **The parent's `CLAUDE_CODE_*` environment must be stripped.** A developer launching this app
+   from inside a Claude Code session would otherwise hand the child `CLAUDECODE=1` and
+   `ELECTRON_RUN_AS_NODE=1`, which is not a configuration any real user's machine has.
+
+### What is NOT supported, and why that is not a shrug
+
+**There is no Codex provider, and no BYO-API-key field.** Codex was researched against its own
+source before that was decided: `codex exec --json` is a documented non-interactive mode,
+`$CODEX_HOME/auth.json` holds a real Sign-in-with-ChatGPT OAuth bundle rather than a key, and the
+official SDK's `apiKey` is optional so a child that omits it rides the user's own login. Three
+things stopped it shipping: **it is not installed on this machine**, so not one line of it could be
+measured; **it does not fail fast when logged out** — no auth preflight, ~20 s of 401 retries, exit
+1 with no machine-readable code (openai/codex#30514, open) — so matching the Claude path needs a
+separate `codex doctor --json` preflight that must itself be measured; and **whether OpenAI permits
+it is unresolved**, with a broad undefined clause in their terms, an auth doc that recommends API
+keys for programmatic CLI use, and every request for a position on their own tracker unanswered.
+
+When somebody installs it and drives it end to end, it gets an entry. Until then the app says it is
+not supported here, which is true, rather than offering it and failing.
+
+**And there is no built-in fallback.** If no provider is available the agent does not run and the
+screen says what is missing. An agent whose replies came from anywhere other than the user's own
+credential would be a puppet wearing their name on a permanent public record.
+
+### The loop is off, visible and stoppable
+
+It starts **off**. Turning it on says so on screen. It considers a turn only after the bodies for a
+read are in — hooking it to the watch tick would let it answer a message whose text had not arrived
+yet. When it decides to speak, **the draft goes into the composer** and stops there: the person
+reads it and presses the same *Post to my pod* button they would use themselves, and the entry is
+the same compare-and-swap append with the same readback. Posting without review is a separate
+checkbox, off by default and never remembered. Turning the agent off calls `agent:cancel`, which
+**kills the child process** — an agent switched off that keeps thinking and then posts is the exact
+failure the panel exists to prevent. A draft is never written over text the person is mid-sentence
+on, in either direction.
+
+**Where the decision lives.** `decideTurn`, `briefPrompt` and `checkDraft` are in
+`@interego/workspace-client`, because "is anyone waiting on me, and have I answered this already"
+is a statement about the substrate and three clients would each get it slightly wrong. Only the
+child-process spawn is in this shell, because a package that has to run in a browser cannot have
+it. The renderer holds the channel already, so the loop runs there and the main process does one
+thing: `agent:think`. **The renderer cannot name the binary** — the path comes from this process's
+own probe, never from the call.
+
+### Whose entry it is — the one open question here
+
+**As built, the local agent writes as YOU.** It runs under your own session, appends to your own
+log, and the entry is indistinguishable from one you typed — the only difference is who composed
+the words, and you approved them before they went. That is why it is not a second member and why
+the panel is a review step rather than a seat.
+
+**The other reading is defensible and is not what shipped.** The deployed `wsp-bridge` is a seated
+member with its own key: its entries say *the agent wrote this*, and a reader can tell them apart
+from the human's. A local agent could work the same way — mint a key in the OS secret store, have
+you delegate it on your own pod with exactly the `register_agent` writer this PR already added and
+drove live, and let it appear in the roster under its own name. That buys honest attribution at the
+cost of a second identity to manage and a roster entry per person.
+
+The machinery for it exists and is tested; only the choice was made the other way. **If attribution
+should distinguish "you" from "your agent" on the record, this is the thing to change**, and it is
+contained: the decision, the ceiling check and the writer would all stay where they are.
+
+**The dedupe rule, and the loop-forever defect it prevents.** The obvious test is whether one of my
+entries declares `prov:wasDerivedFrom` the entry I am about to answer. That **does not work from
+this client**: `entryTurtle` writes no derivation link, so an entry posted from here never carries
+one, and an agent relying on it would re-answer the same message on every poll, permanently, on a
+public log. The rule that holds for every author is simply *whether somebody else has spoken since
+I last did*. It needs no state, survives a restart, and cannot double-post after a crash. A
+derivation link is still honoured when present, because the bridge's entries do carry one.
+
+### What an adversarial review found after all of the above was green
+
+Every test in this document passed before a reviewer was pointed at the code and told to **refute**
+these claims rather than confirm them. It refuted three, and each defect was reachable, silent, and
+wrote to somebody's permanent public log. They are recorded because the shape of them recurs.
+
+**The loop guard never fired.** The ordering used `at ?? Number.MAX_SAFE_INTEGER`, so an entry with
+no readable timestamp sorted *last* — which in a conversation means *newest*. The "have I spoken
+since they did" test then compared against that undated entry, which is never the agent's own, so
+it never matched: one model call and one permanent public entry **every 45 seconds, forever**. The
+exact loop the guard existed to prevent, produced by the guard's own tie-break. Undated entries are
+now excluded from the ordering decision entirely rather than given a position that is a guess in
+one direction. (`Date.parse(x) || null` also made the Unix epoch read as "no time" — the same bug
+one falsy value over.)
+
+**A partial read answered twice.** Entries whose descriptor failed to read were dropped silently,
+so losing the read of the agent's *own* latest reply made an older entry of its own the newest —
+and it answered the same message again. Unreadable rows are now **counted**, and `decideTurn`
+refuses outright when the count is non-zero: a partially-read channel cannot answer "who spoke
+last", and guessing costs a duplicate on a permanent log.
+
+**Switching workspace carried the agent across.** `teardownWorkspace` reset streams, bodies, seats,
+roles and canvas — and not the agent. An in-flight turn composed from one channel wrote its draft
+into another channel's composer, and with auto-post ticked published one workspace's discussion in
+a different workspace. Consent to run here was being read as consent to run there. The agent is now
+switched off and its draft discarded on every workspace change.
+
+Two more, from the same review: **`agent:cancel` could not reach a child that did not exist yet** —
+a turn spends its first seconds inside a 20-second provider probe, and the old code only registered
+a killer after the model child spawned, so "off" during that window was ignored and the turn ran to
+completion on a subscription the user had just switched off. And **`thinking.clear()` orphaned
+overlapping turns** — clearing the whole set on every completion destroyed the very overlap the set
+was introduced to handle. Both fixed; a turn is now a live object from its first line and removes
+only itself.
+
+And one honesty defect: **three of the four "unusable" model states were drawn as a cross.** The
+CLI-not-installed, probe-timed-out and unreadable-answer cases all have `loggedIn: null` — nothing
+was established about the account at all — and rendering them as a finding *against* is exactly
+what `membership.ts` warns about ("collapsing the two is how absence gets rendered as a negative
+fact"). Only `loggedIn === false` is the tool having been asked and having answered no.
+
+### And then a second review refuted the fixes
+
+The same exercise was run again against the corrected code. It refuted nearly all of it, including
+one thing neither the first review nor the live drive could have shown.
+
+**`at` is not a fact — it is a number the other member chose.** `SeenEntry.at` comes from
+`validFrom`, which comes from the **optional `valid_from` argument to `publish_context`**. So the
+whole "have I spoken since they did" guard was arithmetic on a value the author of the entry
+supplies. One member publishing an entry dated a year ahead makes every reply of mine permanently
+"older" than theirs: the guard never fires and the agent answers that entry on **every poll,
+forever**. Dating one in the past does the mirror and makes the agent mute toward that member. The
+renderer's own comment already called cross-stream time *advisory* — "these clocks were never
+synchronised, and there is no shared sequencer" — for **rendering order**; promoting it to
+authoritative for a **write** was the error. The client's own record of what it has answered is now
+the primary guard, because it is the one input another member cannot touch, and the timestamps are
+a secondary signal that can only add refusals. **Its limit is stated rather than hidden:** the
+record is per-run, so a restart between drafting and posting can produce one duplicate — bounded,
+and visible in the composer first.
+
+**The exclusion of undated entries was asymmetric.** For *their* entries "cannot be placed" means
+"never new", which is safe. For *mine* it meant "never spoke" — the guard was skipped entirely and
+the loop returned. An undated entry of the agent's own is now a refusal.
+
+**Unread rows were still being skipped silently.** A descriptor whose *signed region* could not be
+located comes back with no `error` and `isEntry: false`. The shell renders that to the human as
+"body unread"; the agent read the same row as "not an entry" and skipped it without counting it.
+
+**And the partial-read refusal had become a permanent mute.** Failed body reads were cached forever
+— `rows.filter(r => !S.bodies.has(r.url))` never retries — so one transient 502 anywhere shut the
+agent down for the rest of the session, with copy that read as momentary. Failures are now evicted
+so the next poll is the retry.
+
+**The composer wipe destroyed the user's own typing**, unconditionally, on every workspace change —
+against this file's own rule ("locked, not emptied"). Only a draft the agent put there is discarded
+now.
+
+**`agent:cancel` still could not stop the probe.** The claim that a turn "has no child of its own to
+kill yet" was simply false: `probeClaude` spawns one under a 20-second timeout and never plumbed its
+killer out. And `agent:cancel` returned the set size as `stopped`, counting turns it had only
+*flagged* — so the renderer said "Stopped" about a process nobody had signalled. It now reports
+`flagged` and `killed` separately.
+
+**Only one of three streams was guarded.** `stdout` and `stderr` are torn down on the same paths as
+`stdin` and had no `error` listener.
+
+**Absence was still being asserted in two places.** `renderModelCard` hard-coded "the tool is not
+here to ask" for every `loggedIn: null` — false in three of the four cases, which print "installed:
+yes, at C:\…" on the row above. And `renderAgent` hid the whole panel when `S.seats` was empty,
+which is equally the state of *an unread roster*: a convener pod that did not answer silently drew
+"you are not seated" as an established fact.
+
+**One defect it found has nothing to do with the agent.** `teardownWorkspace` reset `S.canvas` and
+never cleared the canvas *textarea*, and `loadCanvas` returns early for a canvas that does not exist
+yet — leaving one workspace's unsaved text in the box with a "Create on your pod" button now
+pointing at a **different** workspace's canvas IRI. One press published it there. Fixed here because
+it is the same shape as the agent's own leak, one box over.
+
+**And two of the tests were false witnesses.** The renderer's undated-entry case passed with the
+defect restored — the scripted store substitutes a default `validFrom`, so it could never produce
+the input the case was named for. It has been removed and replaced by module-level tests at the
+altitude where the ordering is decided, each one verified to FAIL against its own revert before
+being kept. The `modelprovider` cases are honest but characterize only pure functions: the EPIPE
+fix has no test, and nothing exercises the `Turn` lifecycle in `main.ts`.
+
+**Known and not fixed:** an active IME preedit is not protected by the composer guard (it tests
+`.value`, which a preedit has not yet committed); `cp.kill()` on Windows terminates one process
+rather than a tree; `agent:cancel` is not scoped per window (unreachable today — the app only opens
+a second window when zero exist); `setupSteps` keys its finding-against on `providers[0]` while the
+positive keys on `find(usable)`, which agree only while there is one provider; and the `Turn`
+lifecycle in `main.ts` has no automated test at all.
+
+### One thing the live drive changed
+
+The instruction the agent is given was **tuned from a measured failure, not from taste**. The first
+version led with "write only what they would be content to have stand" and put the abstain sentinel
+last. Driven live against a channel whose single entry was a direct question — *"do we re-tile in
+spring or patch it now?"* — the model answered `NOTHING TO ADD`, because it had no independent
+knowledge of the roof and the framing made silence the safe move. An agent that abstains from every
+genuine question is not cautious, it is broken. The permanence is now stated as a constraint on
+tone, and the sentinel is scoped to the narrow case it is for.
+
+---
+
+## Linking Discord, without reintroducing the hole
+
+`/workspace link` in Discord prints two values: the bot's agent id and your own Discord user id.
+Put them in the lobby card and this app publishes the delegation on your pod for you —
+`register_agent { agent_id, scope: "PublishOnly", label: "discord-link <your id>" }` — so nobody
+has to run a tool call by hand in another client.
+
+**Neither value is a secret and this app mints nothing.** A delegation row is world-readable:
+`get_pod_status { pod_name: <anyone's> }` answers for any pod and returns the rows *with their
+labels*. The bot's `links.ts` records the defect that taught this — a nonce published as a label is
+a nonce published, and whoever reads that pod first can bind *their* Discord account to *your* pod.
+The label is the claim itself, and the bot recomputes it from the id of the account actually
+running the confirm. **Do not add a code field to that card.**
+
+`challengeLabel` and `SNOWFLAKE_RX` **moved into `@interego/workspace-client`** for this. The
+comment on `challengeLabel` warned that "two format sites is how a link flow comes to reject every
+honest user" while the bot was still the only site; a copy here would have made that come true. The
+bot now re-exports them from the module.
+
+The card **shows the exact call before it makes it**, along with what is actually being granted —
+including that `PublishOnly` is **pod-wide**, because the substrate has no per-graph delegation
+scope, and that the relay may honour a cached permission for up to 60 s after a revoke. A screen
+that said "Link Discord" and quietly published a pod-wide publish delegation has not asked for
+consent to what it did. And a link is reported as published only when **reading the pod back**
+confirms it — `register_agent` answering `{registered: true}` is the relay describing its own
+action, and the two have disagreed before.
 
 **Not signed and not notarised, on any platform.** Windows SmartScreen will warn on first run
 of the `.exe`, and macOS Gatekeeper will refuse to open the `.app` and say the developer cannot
