@@ -200,7 +200,8 @@ async function main(): Promise<void> {
   log('  read ' + read.entries.length + ' entries across ' + fold.seats.filter((s) => s.seated).length + ' logs'
     + (read.unreadable ? ', ' + read.unreadable + ' unreadable' : ''));
   check('the whole channel was readable, so a decision may be made on it', read.unreadable === 0);
-  const decision = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries: read.entries, unreadable: read.unreadable });
+  const answeredHere: string[] = [];
+  const decision = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries: read.entries, unreadable: read.unreadable, answeredHere });
   check('the agent decides there is something to answer', decision.kind === 'answer', decision.kind + (decision.kind === 'answer' ? '' : ' — ' + decision.why));
   if (decision.kind !== 'answer') { process.exit(1); }
   check('it is answering B\'s entry and not its own', decision.answering.pod === B.viewer.podName, decision.answering.pod);
@@ -231,9 +232,17 @@ async function main(): Promise<void> {
   // Without this the agent would re-answer the same message on every poll, permanently, on a
   // public log. It is checked against the real channel rather than against a flag.
   read = await awaitEntry(A, workspace, slug, fold.seats, A.viewer.podName);
-  const again = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries: read.entries, unreadable: read.unreadable });
+  // What the shell records the moment a draft exists. Checked BOTH ways below, because the
+  // ordering alone was shown to be defeatable by a caller-chosen `valid_from`.
+  answeredHere.push(decision.answering.descriptorUrl);
+  const again = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries: read.entries, unreadable: read.unreadable, answeredHere });
   check('the second decision is a refusal, not a second reply', again.kind === 'already-answered',
     again.kind + (again.kind === 'already-answered' ? ' — ' + again.why : ''));
+
+  // And with the record dropped, so the ordering guard is the only thing left holding it.
+  const orderingOnly = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries: read.entries, unreadable: read.unreadable, answeredHere: [] });
+  check('the ordering guard alone also refuses on this real channel', orderingOnly.kind === 'already-answered',
+    orderingOnly.kind + ' — ' + (orderingOnly.kind === 'already-answered' ? orderingOnly.why : ''));
 
   head('8 · linking a chat account: a delegation A publishes on A\'s own pod');
   // B's agent stands in for the Discord bot: a REAL agent DID on this fleet, so the registry row

@@ -216,9 +216,76 @@ was established about the account at all — and rendering them as a finding *ag
 what `membership.ts` warns about ("collapsing the two is how absence gets rendered as a negative
 fact"). Only `loggedIn === false` is the tool having been asked and having answered no.
 
+### And then a second review refuted the fixes
+
+The same exercise was run again against the corrected code. It refuted nearly all of it, including
+one thing neither the first review nor the live drive could have shown.
+
+**`at` is not a fact — it is a number the other member chose.** `SeenEntry.at` comes from
+`validFrom`, which comes from the **optional `valid_from` argument to `publish_context`**. So the
+whole "have I spoken since they did" guard was arithmetic on a value the author of the entry
+supplies. One member publishing an entry dated a year ahead makes every reply of mine permanently
+"older" than theirs: the guard never fires and the agent answers that entry on **every poll,
+forever**. Dating one in the past does the mirror and makes the agent mute toward that member. The
+renderer's own comment already called cross-stream time *advisory* — "these clocks were never
+synchronised, and there is no shared sequencer" — for **rendering order**; promoting it to
+authoritative for a **write** was the error. The client's own record of what it has answered is now
+the primary guard, because it is the one input another member cannot touch, and the timestamps are
+a secondary signal that can only add refusals. **Its limit is stated rather than hidden:** the
+record is per-run, so a restart between drafting and posting can produce one duplicate — bounded,
+and visible in the composer first.
+
+**The exclusion of undated entries was asymmetric.** For *their* entries "cannot be placed" means
+"never new", which is safe. For *mine* it meant "never spoke" — the guard was skipped entirely and
+the loop returned. An undated entry of the agent's own is now a refusal.
+
+**Unread rows were still being skipped silently.** A descriptor whose *signed region* could not be
+located comes back with no `error` and `isEntry: false`. The shell renders that to the human as
+"body unread"; the agent read the same row as "not an entry" and skipped it without counting it.
+
+**And the partial-read refusal had become a permanent mute.** Failed body reads were cached forever
+— `rows.filter(r => !S.bodies.has(r.url))` never retries — so one transient 502 anywhere shut the
+agent down for the rest of the session, with copy that read as momentary. Failures are now evicted
+so the next poll is the retry.
+
+**The composer wipe destroyed the user's own typing**, unconditionally, on every workspace change —
+against this file's own rule ("locked, not emptied"). Only a draft the agent put there is discarded
+now.
+
+**`agent:cancel` still could not stop the probe.** The claim that a turn "has no child of its own to
+kill yet" was simply false: `probeClaude` spawns one under a 20-second timeout and never plumbed its
+killer out. And `agent:cancel` returned the set size as `stopped`, counting turns it had only
+*flagged* — so the renderer said "Stopped" about a process nobody had signalled. It now reports
+`flagged` and `killed` separately.
+
+**Only one of three streams was guarded.** `stdout` and `stderr` are torn down on the same paths as
+`stdin` and had no `error` listener.
+
+**Absence was still being asserted in two places.** `renderModelCard` hard-coded "the tool is not
+here to ask" for every `loggedIn: null` — false in three of the four cases, which print "installed:
+yes, at C:\…" on the row above. And `renderAgent` hid the whole panel when `S.seats` was empty,
+which is equally the state of *an unread roster*: a convener pod that did not answer silently drew
+"you are not seated" as an established fact.
+
+**One defect it found has nothing to do with the agent.** `teardownWorkspace` reset `S.canvas` and
+never cleared the canvas *textarea*, and `loadCanvas` returns early for a canvas that does not exist
+yet — leaving one workspace's unsaved text in the box with a "Create on your pod" button now
+pointing at a **different** workspace's canvas IRI. One press published it there. Fixed here because
+it is the same shape as the agent's own leak, one box over.
+
+**And two of the tests were false witnesses.** The renderer's undated-entry case passed with the
+defect restored — the scripted store substitutes a default `validFrom`, so it could never produce
+the input the case was named for. It has been removed and replaced by module-level tests at the
+altitude where the ordering is decided, each one verified to FAIL against its own revert before
+being kept. The `modelprovider` cases are honest but characterize only pure functions: the EPIPE
+fix has no test, and nothing exercises the `Turn` lifecycle in `main.ts`.
+
 **Known and not fixed:** an active IME preedit is not protected by the composer guard (it tests
-`.value`, which a preedit has not yet committed); and `cp.kill()` on Windows terminates one process
-rather than a tree, so a cancel reaches the CLI but not necessarily anything it spawned.
+`.value`, which a preedit has not yet committed); `cp.kill()` on Windows terminates one process
+rather than a tree; `agent:cancel` is not scoped per window (unreachable today — the app only opens
+a second window when zero exist); `setupSteps` keys its finding-against on `providers[0]` while the
+positive keys on `find(usable)`, which agree only while there is one provider; and the `Turn`
+lifecycle in `main.ts` has no automated test at all.
 
 ### One thing the live drive changed
 

@@ -140,6 +140,12 @@ function run(bin: string, args: readonly string[], opts: { readonly env: NodeJS.
     opts.onChild?.(() => { cp.kill(); });
     cp.stdout.on('data', (d: Buffer) => { stdout += d.toString('utf8'); });
     cp.stderr.on('data', (d: Buffer) => { stderr += d.toString('utf8'); });
+    // ★ ALL THREE STREAMS, NOT JUST STDIN. The first version guarded `stdin` alone; a review
+    // pointed out that `stdout` and `stderr` are torn down on exactly the same two paths — the
+    // timeout above and the cancel kill — and an `error` on a Readable with no listener throws
+    // into a main process that has no `uncaughtException` handler, taking the window with it.
+    cp.stdout.on('error', () => { /* the child is gone; `close` reports it */ });
+    cp.stderr.on('error', () => { /* likewise */ });
     cp.on('error', (e) => finish({ code: null, stdout, stderr, spawnError: e.message, timedOut: false }));
     cp.on('close', (code) => finish({ code, stdout, stderr, spawnError: null, timedOut: false }));
     // ★ A WRITE TO A CHILD THAT ALREADY EXITED MUST NOT TAKE DOWN THE APP. Without this listener
@@ -179,7 +185,18 @@ export interface ProviderStatus {
 
 const CLAUDE_LABEL = 'Claude Code (your own Claude subscription)';
 
-export async function probeClaude(env: NodeJS.ProcessEnv = childEnv()): Promise<ProviderStatus> {
+/**
+ * @param onChild handed the probe's own kill function.
+ *
+ * ★ THE PROBE HAS A CHILD TOO, AND NOT PLUMBING IT MADE "OFF" A LIE FOR TWENTY SECONDS. A turn
+ * begins inside this call, whose own `claude auth status` runs under a 20-second timeout. The main
+ * process's comment claimed there was "no child of its own to kill yet"; there was one, it was
+ * simply unreachable, so a cancel in that window was recorded and not effected.
+ */
+export async function probeClaude(
+  env: NodeJS.ProcessEnv = childEnv(),
+  onChild?: (kill: () => void) => void,
+): Promise<ProviderStatus> {
   const base = { id: 'claude-code' as const, label: CLAUDE_LABEL, shimOnly: false, loggedIn: null, authMethod: null, account: null, subscription: null };
   const found = resolveClaudeCli(env);
   if (!found) {
@@ -197,7 +214,7 @@ export async function probeClaude(env: NodeJS.ProcessEnv = childEnv()): Promise<
         + 'Reinstalling with `npm install -g @anthropic-ai/claude-code` normally puts a claude.exe alongside it.',
     };
   }
-  const r = await run(found.path, ['auth', 'status', '--json'], { env, timeoutMs: 20_000 });
+  const r = await run(found.path, ['auth', 'status', '--json'], { env, timeoutMs: 20_000, ...(onChild ? { onChild } : {}) });
   if (r.spawnError || r.timedOut) {
     return {
       ...base, installed: true, path: found.path, usable: false,

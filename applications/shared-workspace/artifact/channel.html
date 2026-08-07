@@ -3236,11 +3236,20 @@ var WSPC = (() => {
     const dated = input.entries.filter((e) => e.at !== null && said(e)).sort((a, b) => a.at - b.at);
     const undated = input.entries.filter((e) => e.at === null);
     const lastMine = [...dated].reverse().find((e) => e.pod === input.mePod) ?? null;
-    const lastTheirs = [...dated].reverse().find((e) => e.pod !== input.mePod) ?? null;
+    const answered = new Set(input.answeredHere);
+    const lastTheirs = [...dated].reverse().find((e) => e.pod !== input.mePod && !answered.has(e.descriptorUrl)) ?? null;
     if (!lastTheirs) {
+      const anyTheirs = dated.some((e) => e.pod !== input.mePod);
       return {
-        kind: "nothing-to-answer",
-        why: undated.length ? "Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not established. Your agent answers what it can place in the conversation, and it can place none of this." : "Nobody else has written anything readable in this channel yet."
+        kind: anyTheirs ? "already-answered" : "nothing-to-answer",
+        ...anyTheirs ? { answering: dated[dated.length - 1] } : {},
+        why: anyTheirs ? "Everything another member has said in this channel has already been answered by this client in this run. Appending again would put a second permanent record in your log saying the same thing." : undated.length ? "Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not established. Your agent answers what it can place in the conversation, and it can place none of this." : "Nobody else has written anything readable in this channel yet."
+      };
+    }
+    if (input.entries.some((e) => e.pod === input.mePod && e.at === null && said(e))) {
+      return {
+        kind: "channel-incomplete",
+        why: "One of your own entries carries no readable time, so whether you have already spoken since " + lastTheirs.pod + " did is not established. Answering on that is how the same message gets answered twice."
       };
     }
     if (lastMine && lastMine.at !== null && lastTheirs.at !== null && lastMine.at >= lastTheirs.at) {

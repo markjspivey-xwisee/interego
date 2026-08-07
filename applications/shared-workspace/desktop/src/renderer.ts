@@ -1005,9 +1005,27 @@ function teardownWorkspace(): void {
    * consent to run there, so it is withdrawn rather than carried.
    */
   if (A.on) void window.interego.agentCancel();
+  const hadDraft = A.phase === 'drafted';
   A.on = false; A.auto = false; A.busy = false; A.phase = 'off'; A.why = '';
+  A.answered.clear();
+  /**
+   * ★ ONLY A DRAFT THE AGENT PUT THERE IS DISCARDED. The first version cleared the composer
+   * unconditionally, which destroyed unsent text the PERSON had typed on every workspace switch —
+   * and this file's own rule two functions down is "locked, not emptied … your text is still in the
+   * composer". Losing somebody's sentence to fix an agent bug is not a trade worth making.
+   */
   const composer = document.getElementById('composer');
-  if (composer) (composer as HTMLTextAreaElement).value = '';
+  if (hadDraft && composer) (composer as HTMLTextAreaElement).value = '';
+  /**
+   * ★ AND THE CANVAS EDITOR IS CLEARED FOR A REASON THAT PREDATES THE AGENT ENTIRELY. Reviewing
+   * the agent's own cross-workspace leak turned up the same shape next to it: `S.canvas` was reset
+   * here and the TEXTAREA was not, and `loadCanvas` returns early for a canvas that does not exist
+   * yet — leaving one workspace's unsaved text in the box with a "Create on your pod" button now
+   * pointing at a DIFFERENT workspace's canvas IRI. One press published it there, permanently, with
+   * no agent involved.
+   */
+  const canvas = document.getElementById('canvas');
+  if (canvas) (canvas as HTMLTextAreaElement).value = '';
   const ar = document.getElementById('agentresult');
   if (ar) clear(ar);
 }
@@ -1355,6 +1373,12 @@ async function readOnce(key: string): Promise<{ rows?: readonly ChainRow[]; erro
 /** One `get_descriptor` per entry, on its author's pod, four at a time. */
 async function loadBodies(rows: readonly ChainRow[]): Promise<void> {
   if (!S.client) return;
+  // ★ A FAILED READ IS RETRIED; ONLY A SUCCESSFUL ONE IS CACHED. The cache used to be keyed on
+  // presence alone, so one transient 502 on one descriptor was permanent for the session — the row
+  // never re-fetched, and (since the agent now counts unread rows) the agent refused to act for
+  // the rest of the run with copy that read as if it were momentary. Evicting the failures makes
+  // the next poll the retry.
+  for (const r of rows) { const b = S.bodies.get(r.url); if (b && (b.error || b.note)) S.bodies.delete(r.url); }
   const wanted = rows.filter((r) => !S.bodies.has(r.url)).map((r) => r.url);
   const owner = (url: string): string | null => {
     for (const st of S.streams.values()) if (st.rows.some((r) => r.url === url)) return st.graph;
@@ -1951,7 +1975,15 @@ function renderModelCard(): void {
     // is no evidence either way about this person's account — and it is not drawn as "signed out".
     panel.appendChild(kvPair([
       ['installed', p.installed ? 'yes, at ' + (p.path ?? 'a path it did not report') : 'not found on this machine'],
-      ['signed in', p.loggedIn === null ? 'not established — the tool is not here to ask' : p.loggedIn ? 'yes' : 'no'],
+      // ★ THE REASON IS NOT HARD-CODED. It used to read "not established — the tool is not here to
+      // ask" for every null, and `loggedIn` is null in four cases, three of which have the tool
+      // right there: a .cmd-only shim, a probe that timed out, and an answer this app could not
+      // parse. The card printed "installed: yes, at C:\…" on one row and "not here to ask" on the
+      // next. The mark was right and the sentence was false, which is its own kind of absence
+      // rendered as a fact.
+      ['signed in', p.loggedIn === null
+        ? 'not established' + (p.installed ? ' — see the note above for what stopped this app finding out' : ' — the tool is not here to ask')
+        : p.loggedIn ? 'yes' : 'no'],
       ['account', p.account ?? 'not reported'],
       ['plan', p.subscription ?? 'not reported'],
     ]));
@@ -2065,12 +2097,38 @@ const A = {
   phase: 'off' as 'off' | 'watching' | 'thinking' | 'drafted' | 'stopped',
   why: '',
   busy: false,
+  /**
+   * Descriptor URLs this run has already drafted an answer to.
+   *
+   * ★ THE PRIMARY DEDUPE, because it is the only input another member cannot influence. `at` comes
+   * from `validFrom`, which comes from the optional `valid_from` argument to `publish_context` — a
+   * number the entry's own author chose. See `TurnInput.answeredHere`.
+   */
+  answered: new Set<string>(),
 };
 
 function renderAgent(): void {
   if (!document.getElementById('agentcard')) return;
+  /**
+   * ★ AN UNREAD ROSTER IS NOT AN EMPTY ONE, AND HIDING THE PANEL SAID IT WAS.
+   *
+   * `S.seats` is `[]` both when nobody is seated and when the fold never ran — a convener pod that
+   * did not answer leaves the same empty array `teardownWorkspace` set. Hiding the panel on that
+   * drew "you are not seated" as an established fact, silently, from a read that failed. So the
+   * panel is shown whenever a roster read has HAPPENED, and `decideTurn`'s own `not-seated` reason
+   * — which it was already composing and the shell could never display — is what appears in it.
+   */
+  const rosterRead = !!S.fold || S.seats.length > 0;
   const seated = !!S.seats.find((s) => s.seated && s.pod === S.viewer?.podName);
-  $('agentcard').hidden = !seated;
+  $('agentcard').hidden = !rosterRead;
+  if (rosterRead && !seated) {
+    btn('agenttoggle').disabled = true;
+    clear($('agentstate')).appendChild(document.createTextNode('Unavailable'));
+    clear($('agentwhy')).appendChild(document.createTextNode(
+      'You are not seated in this workspace, so there is no log of yours for an agent to write to. '
+      + 'The roster above says which half is missing.'));
+    return;
+  }
   const provider = usableProvider();
   const toggle = btn('agenttoggle');
   toggle.textContent = A.on ? 'Turn my agent off' : 'Turn my agent on';
@@ -2120,7 +2178,12 @@ function agentEntries(): { entries: SeenEntry[]; unreadable: number } {
       const b = S.bodies.get(r.url);
       // Not fetched yet, or fetched and failed: either way this row is a row nothing is known
       // about, and "not read" is not "not an entry".
-      if (!b || b.error) { unreadable++; continue; }
+      // ★ `b.note` IS PART OF THAT TEST. A descriptor whose SIGNED REGION could not be located
+      // comes back with no `error` and `isEntry: false` — the shell renders it to the human as
+      // "body unread · nothing here was read from bytes anybody signed", and the agent used to
+      // read the same row as "not an entry" and skip it silently. If that row is the agent's own
+      // newest reply, its own last word disappears from the decision and it answers again.
+      if (!b || b.error || b.note) { unreadable++; continue; }
       if (!b.isEntry) continue;
       if (b.declaredWorkspace && b.declaredWorkspace !== S.workspace) continue;
       // `Date.parse(x) || null` turned the epoch into "no time", which then sorted as newest.
@@ -2151,7 +2214,7 @@ async function agentConsider(): Promise<void> {
   const decision = decideTurn({
     workspace: S.workspace, slug: S.slug, mePod: S.viewer.podName,
     seats: S.seats, roles: S.roles.roles ? S.roles : null,
-    entries: read.entries, unreadable: read.unreadable,
+    entries: read.entries, unreadable: read.unreadable, answeredHere: [...A.answered],
   });
   if (decision.kind !== 'answer') {
     A.why = decision.why;
@@ -2199,6 +2262,9 @@ async function agentConsider(): Promise<void> {
     return;
   }
   ta.value = draft.body;
+  // Recorded the moment the draft exists, not when it posts: a draft the user discards was still
+  // an answer this run produced, and re-producing it on the next poll is the loop, not a feature.
+  A.answered.add(decision.answering.descriptorUrl);
   A.phase = 'drafted';
   renderAgent();
   const p = say('agentresult', 'ok', A.auto ? 'Your agent drafted this and is posting it' : 'Your agent drafted this — read it before you send it',

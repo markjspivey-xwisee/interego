@@ -347,7 +347,12 @@ app.whenReady().then(() => {
     const turn: Turn = { cancelled: false, kill: null };
     thinking.add(turn);
     try {
-      const status = await probeClaude();
+      // The probe's own child is registered too — see `probeClaude`. Without it a cancel during
+      // the probe was recorded and not effected, and the turn sailed on for up to 20 seconds.
+      const status = await probeClaude(undefined, (kill) => {
+        turn.kill = kill;
+        if (turn.cancelled) kill();
+      });
       if (turn.cancelled) return { ok: false, text: null, ms: 0, why: 'You turned your agent off before it started. Nothing was written.' };
       if (!status.usable || !status.path) return { ok: false, text: null, ms: 0, why: status.why };
       const run = await runClaude({
@@ -374,12 +379,17 @@ app.whenReady().then(() => {
   /** Stop any turn in flight. The user turning the agent off has to reach a running child. */
   ipcMain.handle('agent:cancel', () => {
     let killed = 0;
+    const flagged = thinking.size;
     for (const turn of thinking) {
       turn.cancelled = true;
-      // A turn still inside the probe has no child yet; `onChild` above kills it on arrival.
+      // A turn between spawns has no child at this instant; `onChild` kills it on arrival.
       if (turn.kill) { try { turn.kill(); killed++; } catch { /* already gone is the ordinary case */ } }
     }
-    return { stopped: thinking.size, killed };
+    // ★ `flagged` AND `killed` ARE REPORTED SEPARATELY BECAUSE THEY ARE DIFFERENT FACTS. The first
+    // version returned the set size as `stopped`, which counted a turn that had merely been marked
+    // as one that had been stopped — and the renderer then told the user "Stopped" on the strength
+    // of it. A turn with no live child is flagged, not killed, and the two are not merged.
+    return { flagged, killed };
   });
 
   createWindow();

@@ -1165,28 +1165,16 @@ describe('the local agent is off, visible, and stoppable', () => {
    * two of them wrote to somebody's permanent public log. They are pinned here in the shape that
    * produced them.
    */
-  it('★ an entry with no readable time never reads as the newest thing in the channel', async () => {
-    // THE LOOP-FOREVER DEFECT. The ordering used `at ?? Number.MAX_SAFE_INTEGER`, so an undated
-    // entry sorted LAST — which in a conversation means newest. The "have I spoken since they
-    // did" guard then compared against that undated entry, which is never the agent's own, so it
-    // never fired: one model call and one permanent public entry every 45 seconds, forever.
-    const o = await open({ setup: (s) => {
-      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z'));
-      (s.pods.get(POD_A) as Pod).put(entry(POD_A, 1, 'My answer to it.', '2026-08-07T10:01:00.000Z'));
-      // Undated, and from the other member: the exact shape that used to sort newest.
-      (s.pods.get(POD_B) as Pod).put({
-        graph: STREAM(POD_B), cid: 'cid-undated', url: DESC(POD_B, 260),
-        content: trig(STREAM(POD_B), '<' + STREAM(POD_B) + '/e/9> a wsp:Entry ; wsp:workspace <' + WS + '> ;\n'
-          + '  dct:description "no validFrom on this one" .'),
-      });
-    } });
-    await signInAndSettle(o);
-    click(o.doc, 'agenttoggle');
-    await o.settle();
-    expect(o.agent.prompts).toHaveLength(0);
-    expect(text(o.doc, '#agentwhy')).toContain('since');
-  });
-
+  /**
+   * ★ THE UNDATED-ENTRY CASE IS NOT HERE, AND ITS ABSENCE IS DELIBERATE.
+   *
+   * It was written here first, and it PASSED with the defect deliberately restored: the scripted
+   * store cannot get an undated entry as far as `decideTurn`, so the case asserted nothing while
+   * being counted as a regression test — worse than no test. It lives in
+   * `tests/workspace-client-localagent.test.ts` instead, at the altitude where the ordering is
+   * decided, and it was verified to FAIL against the reverted sort before being kept. A DOM is the
+   * right place to test what the shell draws and the wrong place to test an ordering rule.
+   */
   it('★ refuses outright when part of the channel could not be read', async () => {
     // Losing the read of the agent's OWN latest reply made it answer the same message twice. A
     // partial channel cannot answer "who spoke last", so it is not asked to.

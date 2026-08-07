@@ -66,6 +66,27 @@ export interface TurnInput {
    * cannot answer "who spoke last", and guessing costs a duplicate record on somebody's log.
    */
   readonly unreadable: number;
+  /**
+   * Descriptor URLs this client has ALREADY drafted an answer to.
+   *
+   * ★ THE ONLY PART OF THIS DECISION THAT ANOTHER MEMBER CANNOT INFLUENCE, WHICH IS WHY IT IS THE
+   * PRIMARY GUARD. A second adversarial review established that `at` is not a fact: it comes from
+   * `validFrom`, which comes from the OPTIONAL `valid_from` argument to `publish_context`, so it is
+   * a number the author of the entry chose. One member publishing an entry dated a year in the
+   * future makes every reply of mine "older" than theirs forever — the ordering guard never fires
+   * and the agent answers the same entry on every poll, permanently. Dating an entry in the past
+   * does the mirror and makes the agent mute toward that member.
+   *
+   * Ordering across pods was already documented as ADVISORY for rendering ("these clocks were never
+   * synchronised, and there is no shared sequencer") and promoting it to authoritative for a WRITE
+   * was the mistake. So the client's own record of what it has answered comes first, and the
+   * timestamps are a secondary signal that can only ever add refusals, never remove one.
+   *
+   * ★ AND ITS LIMIT IS STATED RATHER THAN HIDDEN: this is per-run. A client restarted between
+   * drafting and posting can answer the same entry once more. That is one duplicate, bounded, and
+   * visible in the composer before it is posted — as against an unbounded loop.
+   */
+  readonly answeredHere: readonly string[];
 }
 
 /** What a model is given. Text only — no IRIs to fetch, no tools, no credential. */
@@ -178,24 +199,54 @@ export function decideTurn(input: TurnInput): TurnDecision {
   const undated = input.entries.filter((e) => e.at === null);
 
   const lastMine = [...dated].reverse().find((e) => e.pod === input.mePod) ?? null;
-  const lastTheirs = [...dated].reverse().find((e) => e.pod !== input.mePod) ?? null;
+  /**
+   * ★ ENTRIES THIS CLIENT HAS ALREADY ANSWERED ARE REMOVED BEFORE ANYTHING ELSE LOOKS AT THEM.
+   * First, so that a spoofed `at` cannot get past it — see `answeredHere`. It reads as the newest
+   * unanswered thing somebody else said, which is the question that was meant all along.
+   */
+  const answered = new Set(input.answeredHere);
+  const lastTheirs = [...dated].reverse()
+    .find((e) => e.pod !== input.mePod && !answered.has(e.descriptorUrl)) ?? null;
 
   if (!lastTheirs) {
+    const anyTheirs = dated.some((e) => e.pod !== input.mePod);
     return {
-      kind: 'nothing-to-answer',
-      why: undated.length
-        ? 'Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not '
-          + 'established. Your agent answers what it can place in the conversation, and it can place none of this.'
-        : 'Nobody else has written anything readable in this channel yet.',
+      kind: anyTheirs ? 'already-answered' : 'nothing-to-answer',
+      ...(anyTheirs ? { answering: dated[dated.length - 1] as SeenEntry } : {}),
+      why: anyTheirs
+        ? 'Everything another member has said in this channel has already been answered by this client in this run. '
+          + 'Appending again would put a second permanent record in your log saying the same thing.'
+        : undated.length
+          ? 'Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not '
+            + 'established. Your agent answers what it can place in the conversation, and it can place none of this.'
+          : 'Nobody else has written anything readable in this channel yet.',
+    } as TurnDecision;
+  }
+
+  /**
+   * ★ AN UNDATED ENTRY OF MY OWN IS A REFUSAL, NOT A "NEVER SPOKE".
+   *
+   * The exclusion of undated entries from the ordering is asymmetric, and the review caught which
+   * side is unsafe: for THEIR entries "cannot be placed" means "never new", which is safe; for MINE
+   * it would mean "never spoke", so the guard below would be skipped and the agent would answer
+   * again on every poll. If any entry of my own cannot be placed in time, who spoke last is not
+   * established about ME, and that is a refusal.
+   */
+  if (input.entries.some((e) => e.pod === input.mePod && e.at === null && said(e))) {
+    return {
+      kind: 'channel-incomplete',
+      why: 'One of your own entries carries no readable time, so whether you have already spoken since '
+        + lastTheirs.pod + ' did is not established. Answering on that is how the same message gets answered twice.',
     };
   }
 
-  // ★ "HAVE I ANSWERED THIS ALREADY" IS ASKED OF THE CHANNEL, NOT OF A FLAG THIS CLIENT KEEPS.
-  // The obvious test — does one of my entries declare `prov:wasDerivedFrom` the entry I am about
-  // to answer — DOES NOT WORK from this client: `entryTurtle` writes no derivation link, so an
-  // entry posted from here never carries one and the test is dead code here. The rule that holds
-  // for every author is whether somebody else has spoken SINCE I last did. It needs no state,
-  // survives a restart, and cannot double-post after a crash.
+  // ★ THE SECOND OF THREE GUARDS, AND DELIBERATELY NOT THE FIRST.
+  //
+  // "Has somebody else spoken since I last did" is the right question and this is the wrong
+  // evidence for it on its own: `at` is caller-supplied (see `answeredHere`), so this test can be
+  // defeated by an entry dated in the future. It stays because it costs nothing and catches the
+  // ordinary case — including across a restart, which `answeredHere` cannot — and because every
+  // guard here can only ADD a refusal. None of them can remove one.
   //
   // `>=` and not `>`: two entries sharing a timestamp is a tie this cannot resolve, and the safe
   // side of a tie is silence.

@@ -90,8 +90,15 @@ export interface WorkspaceBridge {
    * ask, the main process decides what to ask it with.
    */
   agentThink(prompt: string, systemPrompt: string | null): Promise<ModelTurn>;
-  /** Stop a turn already running. Turning the agent off has to reach a live child process. */
-  agentCancel(): Promise<{ stopped: number }>;
+  /**
+   * Stop a turn already running.
+   *
+   * `flagged` is how many turns were marked cancelled; `killed` is how many had a live child that
+   * was actually terminated. They are different facts and are not merged — a turn between spawns
+   * is flagged and not killed, and reporting that as "stopped" is a claim about a process nobody
+   * signalled.
+   */
+  agentCancel(): Promise<{ flagged: number; killed: number }>;
 }
 
 const bridge: WorkspaceBridge = {
