@@ -2,10 +2,14 @@
 
 Against the **live** relay, with no fixtures anywhere in it:
 
-    boot -> sign in -> lobby (who you are, your inbox, the workspaces you accepted)
+    boot -> create an account with a passkey -> a pod is provisioned for you
+         -> lobby: getting set up, who you are, your inbox, the workspaces you accepted
+         -> your agent's model (your own subscription, or an honest "not here")
+         -> link Discord by publishing the delegation on your own pod
          -> create a workspace / invite somebody / accept an invitation
          -> channel: roster, stream, canvas
          -> post an entry, save the canvas, meet a 412 and merge forward
+         -> turn your agent on: it drafts into the composer and stops
 
 Everything it knows about the substrate comes from **`@interego/workspace-client`** — the same
 module the published artifact's script is generated from. This package holds a window, two
