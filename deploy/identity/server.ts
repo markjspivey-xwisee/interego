@@ -1840,7 +1840,7 @@ const LANDING_HTML = `<!doctype html>
 <pre>{
   "mcpServers": {
     "interego": {
-      "url": "${RELAY_URL}/sse",
+      "url": "${RELAY_URL}/mcp",
       "headers": { "Authorization": "Bearer YOUR_TOKEN_HERE" }
     }
   }
@@ -2895,10 +2895,17 @@ app.post('/try', tryProvisionLimiter, async (_req, res) => {
   // document and `${IDENTITY_URL}/users/<id>/profile` remains
   // dereferenceable as the WebID — no pod-side mirror needed pre-OAuth.
   const tokenResponse = await issueTokenResponse(identities.get(userId)!);
+  // ★ `/mcp`, NOT `/sse`. This snippet is pasted verbatim into ~/.claude.json and the Cursor
+  // / Codex equivalents, so a wrong path here is not a documentation error — it is a config
+  // file on somebody's disk that silently never works. `/sse` is a write-activity feed, not
+  // an MCP transport: it emits no `event: endpoint` frame, so the client waits for a message
+  // endpoint that never arrives and times out. Measured by
+  // `tools/probe-sse-mcp-handshake-live.ts`; three surfaces of this server handed out that
+  // path and every one of them is now `/mcp`.
   const mcpConfigSnippet = JSON.stringify({
     mcpServers: {
       interego: {
-        url: `${RELAY_URL}/sse`,
+        url: `${RELAY_URL}/mcp`,
         headers: { Authorization: `Bearer ${(tokenResponse as { token: string }).token}` },
       },
     },
@@ -3929,6 +3936,11 @@ app.get('/wallet/status/:userId', async (req, res) => {
  * inbox from a host that does not serve one, rendering the 404's HTML into the card.
  * The primary post-enrollment instruction has been wrong since the migration.
  *
+ * ★ THE PATH WAS WRONG TOO, AND OUTLIVED THE HOST FIX. Repairing the host left the
+ * instruction pointing at `<relay>/sse`, which is not an MCP transport on the relay
+ * either — see the `/sse` handler in `deploy/mcp-relay/server.ts`. Every surface of this
+ * server now hands out `/mcp`.
+ *
  * So it is now explicit and configurable, it handles BOTH schemes, and the degenerate
  * case is LOUD: resolving to our own origin means the derivation failed again, and a
  * warning at least appears in the logs rather than in a user's MCP client.
@@ -4351,7 +4363,7 @@ app.get('/dashboard', (_req, res) => {
     // Footer
     const foot = document.createElement('div');
     foot.className = 'footer';
-    foot.innerHTML = 'Add the relay to your MCP client: <code style="color:#a78bfa">' + RELAY_BASE + '/sse</code>';
+    foot.innerHTML = 'Add the relay to your MCP client: <code style="color:#a78bfa">' + RELAY_BASE + '/mcp</code>';
     app.appendChild(foot);
   }
 

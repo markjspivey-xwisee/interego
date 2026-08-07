@@ -38,7 +38,7 @@ HTTP (Streamable, remote, OAuth-gated, for browser/cloud agents):
 https://relay.interego.xwisee.com/mcp
 ```
 
-`/mcp` is the MCP Streamable HTTP transport — a single endpoint that carries requests, responses, and server-initiated notifications (with an internal SSE channel for streaming). For clients that don't yet speak Streamable HTTP, the legacy `/sse` endpoint on the same host remains available as a fallback.
+`/mcp` is the MCP Streamable HTTP transport — a single endpoint that carries requests, responses, and server-initiated notifications (with an internal SSE channel for streaming). It is the only MCP transport this relay serves. **A harness that only implements the deprecated HTTP+SSE transport cannot mount this relay**: the relay's `/sse` path is a write-activity feed, it never emits the `event: endpoint` frame that transport begins with, and a client pointed at it hangs until its own timeout. Implement Streamable HTTP, or use the stdio server above.
 
 That's it. Your agent now has 35 entries (8 kernel verbs + 27 compatibility shims) across these categories: Substrate kernel, Identity, Publishing, Discovery, Federation, PGSL, Reasoning, Wallet, and Generic vertical access. The MCP server's `initialize` response includes top-level instructions explaining the protocol, and `docs://interego/playbook` is fetched on demand the first time a relevant trigger fires.
 

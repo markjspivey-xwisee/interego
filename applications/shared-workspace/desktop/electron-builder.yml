@@ -1,11 +1,15 @@
 # Packaging for the workspace desktop shell.
 #
-# ★ UNSIGNED, AND THAT IS STATED RATHER THAN LEFT TO BE DISCOVERED.
-# `signAndEditExecutable: false` and `forceCodeSigning: false` below are deliberate: there is no
-# code-signing certificate for this project, and notarisation (macOS) needs an Apple Developer
-# account nobody here holds. Windows SmartScreen will therefore warn on first run of the
-# produced .exe, and that warning is CORRECT — the binary genuinely is not signed by anybody
-# SmartScreen recognises. Signing and notarisation are out of scope; see README.md.
+# ★ UNSIGNED ON EVERY PLATFORM, AND THAT IS STATED RATHER THAN LEFT TO BE DISCOVERED.
+# `signAndEditExecutable: false`, `mac.identity: null` and `forceCodeSigning: false` below are
+# deliberate: there is no code-signing certificate for this project, and notarisation (macOS)
+# needs an Apple Developer account nobody here holds. Windows SmartScreen will warn on first run
+# of the .exe and macOS Gatekeeper will refuse to open the .app, and BOTH warnings are CORRECT —
+# the binaries genuinely are not signed by anybody either OS recognises. Signing and
+# notarisation are out of scope; see README.md.
+#
+# ★ AND ONLY THE WINDOWS TARGETS HAVE EVER BEEN BUILT. See the `mac:` block: that configuration
+# is untested, on purpose stated rather than quietly implied by its presence in this file.
 #
 # ★ WHAT IS PACKED, AND WHY IT IS ONLY THE BUILT OUTPUT.
 # `src/` is not shipped. The three entry points are bundled by esbuild (`npm run build`) into
@@ -60,6 +64,60 @@ win:
   # a confusing "cannot find certificate" warning that reads like a misconfiguration.
   signAndEditExecutable: false
 
+# ★ macOS: CONFIGURED, AND NEVER BUILT OR RUN BY ANYONE HERE.
+#
+# This section was written on Windows and there is no macOS machine in this project. A `.dmg`
+# cannot be produced off a Mac at all — electron-builder's dmg target shells out to macOS-only
+# tooling — and even a `--mac zip` produced by cross-packing has never been unzipped, launched,
+# or had its `safeStorage` path exercised on a real Mac. Treat everything below as an untested
+# configuration, because that is what it is. The one thing that IS known is what will happen on
+# first launch: the app is unsigned and unnotarised, so Gatekeeper will refuse to open it and
+# say the developer cannot be verified. That warning is CORRECT — see README.md.
+mac:
+  target:
+    # zip first: it is the one a cross-build could conceivably emit, and the one a user can
+    # unzip and right-click-Open past Gatekeeper without an installer in the way.
+    - target: zip
+      arch: [x64, arm64]
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.productivity
+  # `null` is electron-builder's explicit "do not sign", distinct from omitting the key — which
+  # makes it hunt the keychain for an identity, find none, and fail the build on a machine that
+  # has Xcode installed. There is no certificate for this project; saying so is not a TODO.
+  identity: null
+  # Notarisation needs an Apple Developer account nobody here holds. Out of scope, stated.
+  notarize: false
+  # Electron 20+ refuses to launch an unsigned .app without an entitlements-bearing hardened
+  # runtime OR ad-hoc signing. Ad-hoc is what an unsigned build gets; hardenedRuntime would
+  # require entitlements this app has not been tested against, so it stays off deliberately
+  # rather than being switched on because it sounds safer.
+  hardenedRuntime: false
+
+# ★ Linux: AppImage + deb, x64. Buildable here; see README.md for what actually happened.
+linux:
+  target:
+    # AppImage is the portable one — download, chmod +x, run, no package manager, no root.
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  category: Office
+  # Named so the two Linux artifacts do not collide in `release/` with each other or with the
+  # Windows ZIP, which shares the ${productName}-${version} stem.
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # ★ REQUIRED BY `deb`, AND ITS ABSENCE IS A HARD BUILD FAILURE RATHER THAN A WARNING.
+  # Debian packages must name a maintainer; electron-builder derives one from the package's
+  # `author` field and refuses the build when that field carries no email — which is what it
+  # did here on the first attempt, alongside a demand for `homepage` (now in package.json).
+  # The address is the project's existing published contact, not a new one invented for this.
+  maintainer: Mark Spivey <security@interego.dev>
+  # The app is a plain Electron shell with no privileged helper; the sandbox setuid helper is
+  # the usual source of "SUID sandbox helper is not configured correctly" on distros with
+  # unprivileged user namespaces restricted. Left at electron-builder's default rather than
+  # disabled, because disabling the sandbox to silence a warning weakens the renderer boundary
+  # this app relies on to keep the wallet key out of the page.
+
 forceCodeSigning: false
 
 nsis:
@@ -69,3 +127,20 @@ nsis:
   # Per-user install, so no elevation prompt — the app writes only to its own userData
   # directory, where the OS-encrypted wallet key lives.
   artifactName: ${productName}-${version}-setup.${ext}
+
+deb:
+  # Electron's own runtime dependencies. Without them the package installs and the binary dies
+  # at startup with a bare "error while loading shared libraries", which reads like a corrupt
+  # download rather than a missing dependency.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    # ★ NOT boilerplate. `safeStorage` — which is where the wallet key lives — is backed by
+    # libsecret on Linux. Omit it and the app starts, looks healthy, and cannot persist or
+    # read back a key, which surfaces as "sign in again every launch" rather than as an error.
+    - libsecret-1-0

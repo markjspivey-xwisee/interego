@@ -1006,7 +1006,9 @@ echo "To connect a remote agent, set:"
 echo "  CG_BASE_URL=https://$RELAY_FQDN"
 echo ""
 echo "Or add to .mcp.json:"
-echo "  {\"mcpServers\":{\"context-graphs\":{\"url\":\"https://$RELAY_FQDN/sse\"}}}"
+# /mcp, not /sse: the relay's /sse path is a pod write-activity feed, not an MCP
+# transport (it emits no `event: endpoint` frame), so a client configured with it hangs.
+echo "  {\"mcpServers\":{\"context-graphs\":{\"url\":\"https://$RELAY_FQDN/mcp\"}}}"
 echo ""
 echo "── SOC 2 evidence (per spec/policies/03-change-management.md §4.5) ──"
 echo "Publish a deploy event descriptor to your operator pod:"
