@@ -711,95 +711,48 @@ const el = (tag, cls, txt) => {
 };
 const clear = (n) => { while (n.firstChild) n.removeChild(n.firstChild); return n; };
 
-/* ── connector plumbing ───────────────────────────────────── */
-let SERVER = null;          // resolved connector DISPLAY NAME — never a literal
+/* ── connector plumbing ─────────────────────────────────────────────────────
+   The ONE thing this page contributes to reaching the substrate is the host
+   object. Resolving which connector answers, checking that its grant includes
+   the eleven names, reconciling the two refusal shapes and making every call are
+   the module's, bound as `resolveServer` and `tool` in the generated block below
+   — the same code the desktop shell runs, so a fix to any of it cannot land in
+   only one of the two clients.
+
+   Those eleven names are the `capabilities` manifest and they are a PUBLISH-TIME
+   argument: whoever publishes this file passes them and a viewer grants them, so
+   the page cannot ask for one while it runs. A copy published without one of
+   them fails at a DIFFERENT place from a copy whose viewer never added the
+   connector, and both messages name what was actually seen rather than sending
+   somebody who had already added it back to add it again.
+
+   This page no longer holds a connector display name of its own. It used to, and
+   that name was then handed back to `watchTool` and `invalidate` at two call
+   sites — a copy of the connector's identity, kept by the page, to give to the
+   transport that had resolved it. */
 const mcp = () => (window.claude && window.claude.mcp) || undefined;
 
-
-/* ── every tool this page calls, and it is a PUBLISH-TIME argument ──────────
-   These eleven names are the `capabilities` manifest. They are not requested at
-   runtime and cannot be: whoever publishes this file passes them, and a viewer
-   grants them. A copy published without one of them fails at a DIFFERENT place
-   from a copy whose viewer never added the connector, and the two used to render
-   the same dead end — "add the connector, then reload" — to somebody who had
-   already added it. Both messages below now name what was actually seen. */
-/* The one probed for. Any of the eleven would do; this is the first call boot
-   makes, so a grant missing it cannot get past the first step anyway. */
-const PROBE_TOOL = "get_pod_status";
-
-async function resolveServer() {
-  const m = mcp();
-  if (!m) throw fail("capability_disabled", "This view was served without connector access.");
-  const res = await m.listTools();
-  const servers = (res && res.servers) || [];
-  const hit = servers.find((s) => (s.tools || []).some((t) => t.name === PROBE_TOOL));
-  if (!hit) {
-    /* ── which of the two failures this is ─────────────────────────────────
-       No server at all is a connector that was never added. A server that
-       answered but exposes none of these tools is a page published without the
-       full manifest — the likeliest thing to go wrong for a second person
-       publishing their own copy, and the one the old copy misdiagnosed. The
-       tool names were already collected here and thrown away. */
-    if (!servers.length) {
-      throw fail("server_not_connected", "No connector answered this page at all. Add the Interego connector in claude.ai under Settings → Connectors, then reload.");
-    }
-    const seen = [];
-    for (const s of servers) for (const t of (s.tools || [])) if (t && t.name) seen.push(t.name);
-    const missing = REQUIRED_TOOLS.filter((t) => seen.indexOf(t) < 0);
-    const named = servers.map((s) => s.server).join(", ");
-    throw fail("manifest_incomplete",
-      "A connector answered — " + named + " — and this page's grant does not include " + PROBE_TOOL + ". "
-      + "Granted to this page: " + (seen.length ? seen.join(", ") : "no tools at all") + ". "
-      + "Missing: " + missing.join(", ") + ". "
-      + "That list is the `capabilities` argument passed when this page was published, not something the page "
-      + "can ask for at runtime — so re-publishing this file with all " + REQUIRED_TOOLS.length + " names is the fix, and reloading is not.");
-  }
-  SERVER = hit.server;
-  return hit;
-}
-
-async function tool(name, input, opts) {
-  const m = mcp();
-  if (!m) throw fail("capability_disabled", "Connector access is not available in this view.");
-  let r;
-  try {
-    r = await m.callTool(SERVER, name, input, opts);
-  } catch (e) {
-    /* THE one place the two refusal shapes are reconciled, so that every call
-       site downstream sees exactly one of them. A `tool_error` rejection whose
-       envelope carries a refusal body is handed back as if it had resolved —
-       the relay's own words either way. Anything else is a real failure. */
-    const body = asRefusal(e);
-    if (body) return body;
-    throw e;
-  }
-  return r && r.payload;
-}
-
-/* ── the two refusal shapes, both measured against this relay ──────────────
-   MEASURED: a relay refusal normally arrives as a RESOLVED JSON body carrying
-   `error` + a numeric `code` — 412 precondition_failed, 422 shape_violation,
-   403 scope_violation, 503 precondition_unavailable. Forcing a 412 and a 422
-   against the live relay produced resolved results, not rejections; the
-   compare-and-swap panels below are reached by that path.
-   ALSO REAL: the connector contract rejects a tool-level failure with
-   `tool_error` and hangs the full result envelope on the rejection's
-   `result`. The relay takes that path when a write throws rather than
-   returning a refusal. So a rejection is unwrapped here before it is treated
-   as an outage — every call site routes through `asRefusal` first. */
-
-
+/* ── error copy: the module's categories, this page's remedies ─────────────
+   Which category a code falls into is decided in ONE place, `WSPC.errorCopy`.
+   What is overridden here is the REMEDY, and only where being a PUBLISHED PAGE
+   changes it: this file's tool manifest was fixed when it was published, so
+   "re-publish this file" is the fix and "reload" is not — advice that would be
+   wrong in the desktop shell, which mints a bearer instead. Reading the
+   categories from the module rather than restating them means a code the module
+   learns tomorrow arrives here already handled, in the module's own words,
+   instead of falling into a `default` nobody remembered to extend. */
 function errorCopy(err) {
+  const base = WSPC.errorCopy(err);
   const c = (err && err.code) || "upstream_error";
   switch (c) {
     case "needs_reauth":         return { t: "Reconnect the workspace connector", d: "Its credentials lapsed. Settings → Connectors on claude.ai." };
     /* The message carries the diagnosis in both of these — which connectors
-       answered, which tools they exposed, which are missing — so it is shown
-       rather than replaced by a generic instruction that may be wrong. */
-    case "server_not_connected": return { t: "Connector not added", d: err.message || "Add the Interego connector in claude.ai Settings → Connectors, then reload." };
-    case "manifest_incomplete":  return { t: "This copy of the page was published without the whole tool manifest", d: err.message || "" };
-    case "selection_required":   return { t: "Choose a connector", d: "More than one connector answers to this name and none has been picked yet." };
-    case "not_in_manifest":      return { t: "Tool outside this page's grant", d: "This page asked for a tool the viewer did not consent to. " + (err.message || "") };
+       answered, which tools they exposed, which are missing — so the module's
+       detail is shown rather than replaced by a generic instruction that may be
+       wrong for the copy in front of this particular viewer. */
+    case "server_not_connected": return { t: "Connector not added", d: base.d };
+    case "manifest_incomplete":  return { t: "This copy of the page was published without the whole tool manifest", d: base.d };
+    case "not_in_manifest":      return { t: "Tool outside this page's grant", d: "This page asked for a tool the viewer did not consent to. " + ((err && err.message) || "") };
     case "blocked_by_policy":    return { t: "Blocked by policy", d: "Your organisation blocks this tool for this page." };
     case "approval_required":    return { t: "Needs approval", d: "Your organisation requires per-call approval, which pages cannot request." };
     case "not_granted":          return { t: "No connector access", d: "This view did not grant connector access to the page." };
@@ -808,9 +761,7 @@ function errorCopy(err) {
        this code is a page published without the `mcp` capability at all, and no
        amount of reopening changes a publish-time argument. */
     case "capability_removed":   return { t: "Connectors unavailable here", d: "This view reached no connector runtime at all. That is a property of how this page was published — the `mcp` capability and its tool manifest are set when the file is published, not asked for while it runs — so re-publishing this file with connector access is the fix. Reopening it is not." };
-    case "server_unavailable":   return { t: "The relay did not answer", d: "Temporary. Try again in a moment." };
-    case "tool_error":           return { t: "The relay reported a failure", d: err.message || "" };
-    default:                     return { t: "Could not complete the call", d: (err && err.message) || String(c) };
+    default:                     return base;
   }
 }
 
@@ -901,6 +852,7 @@ var WSPC = (() => {
     fail: () => fail,
     foldRoster: () => foldRoster,
     forms: () => forms,
+    grantPodFor: () => grantPodFor,
     graphRegion: () => graphRegion,
     hasTrue: () => hasTrue,
     hasType: () => hasType,
@@ -930,6 +882,7 @@ var WSPC = (() => {
     readLiteral: () => readLiteral,
     refusal: () => refusal,
     scanTurtle: () => scanTurtle,
+    shortRef: () => shortRef,
     slugProblem: () => slugProblem,
     toChainRow: () => toChainRow,
     unescapeLiteral: () => unescapeLiteral
@@ -1495,7 +1448,10 @@ var WSPC = (() => {
       const hit = servers.find((s) => (s.tools ?? []).some((t) => t?.name === probeTool));
       if (!hit) {
         if (!servers.length) {
-          throw new ToolCallError("server_not_connected", "No connector answered this page at all.");
+          throw new ToolCallError(
+            "server_not_connected",
+            "No connector answered this page at all. Add the Interego connector in claude.ai under Settings \u2192 Connectors, then reload."
+          );
         }
         const seen = [];
         for (const s of servers) for (const t of s.tools ?? []) if (t?.name) seen.push(t.name);
@@ -1700,6 +1656,7 @@ var WSPC = (() => {
           const h = await this.currentHead(c.iri, memberPod);
           if (h.forked) return { iri: c.iri, naming: c.naming, found: false, head: null, forked: h, error: null };
           if (h.url) return { iri: c.iri, naming: c.naming, found: true, head: h, forked: null, error: null };
+          if ("unreadable" in h && firstError === null) firstError = h.message;
         } catch (e) {
           if (firstError === null) firstError = e?.message ?? String(e);
         }
@@ -1877,6 +1834,15 @@ var WSPC = (() => {
     };
   }
 
+  // packages/workspace-client/src/format.ts
+  function shortRef(v) {
+    if (/^https?:\/\//.test(v)) {
+      const t = v.split("/").filter(Boolean).pop();
+      return "\u2026/" + (t ?? v);
+    }
+    return v.slice(0, 10) + "\u2026" + v.slice(-6);
+  }
+
   // packages/workspace-client/src/entry.ts
   function entryTurtle(args) {
     const iri = (u, what) => {
@@ -1890,13 +1856,6 @@ var WSPC = (() => {
     return "@prefix wsp: <" + WSP + "> .\n@prefix iep: <" + IEP + "> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n" + subject + "\n  a wsp:Entry ;\n  wsp:workspace " + workspace + ' ;\n  wsp:seq "' + args.seq + '"^^xsd:nonNegativeInteger ;\n' + (prior ? "  iep:supersedes " + prior + " ;\n" : "") + '  dct:created "' + (args.createdIso ?? (/* @__PURE__ */ new Date()).toISOString()) + '"^^xsd:dateTime ;\n  dct:description "' + escapeTurtleLiteral(args.body) + '" .\n';
   }
   function preconditionLine(pc, sent, sentKind) {
-    const shortRef = (v) => {
-      if (/^https?:\/\//.test(v)) {
-        const t = v.split("/").filter(Boolean).pop();
-        return "\u2026/" + (t ?? v);
-      }
-      return v.slice(0, 10) + "\u2026" + v.slice(-6);
-    };
     if (pc && typeof pc === "object") {
       const b = pc;
       const exp = b.expectedCid;
@@ -1977,8 +1936,9 @@ var WSPC = (() => {
   // packages/workspace-client/src/seats.ts
   var GRANT_LIMIT = 400;
   var GRANT_READ_CAP = 25;
+  var grantPodFor = (convenerPod, iriOwner) => convenerPod ?? iriOwner;
   async function foldRoster(client, args) {
-    const grantPod = args.convenerPod ?? args.iriOwner;
+    const grantPod = grantPodFor(args.convenerPod, args.iriOwner);
     const p = await client.tool("discover_context", { pod_name: grantPod, limit: GRANT_LIMIT, sort: "newest-first" });
     const bad = refusal(p);
     if (bad) throw fail("tool_error", String(bad["message"] ?? bad["error"]));
@@ -2077,9 +2037,9 @@ var WSPC = (() => {
         if (m.accepts && m.accepts === m.grantUrl) {
           m.acceptTest = "the acceptance names the grant's descriptor URL, and it is the one currently at the head";
         } else if (m.accepts && m.accepts === m.graph && m.acceptsCid && m.grantCid && m.acceptsCid === m.grantCid) {
-          m.acceptTest = "the acceptance names the grant's IRI and pins the revision that is the head";
+          m.acceptTest = "the acceptance names the grant's IRI and pins revision " + shortRef(m.acceptsCid) + ", which is the head";
         } else if (m.accepts && m.accepts === m.graph && m.acceptsCid && m.grantCid) {
-          m.why = "their acceptance names this grant but pins a different revision than the current head. The grant was republished after they accepted it, so what they agreed to is not what is there now.";
+          m.why = "their acceptance names this grant but pins revision " + shortRef(m.acceptsCid) + ", and the current head of the grant is " + shortRef(m.grantCid) + ". The grant was republished after they accepted it, so what they agreed to is not what is there now.";
           seats.push(m);
           continue;
         } else if (m.accepts && m.accepts === m.graph) {
@@ -2162,6 +2122,49 @@ const parseAcceptanceIri = (iri, memberPod) => WSPC.parseAcceptanceIri(RELAY, ir
    changes when the viewer opens a different workspace. */
 const entryTurtle = (streamIri, seq, body, prior) =>
   WSPC.entryTurtle({ streamIri: streamIri, workspace: WORKSPACE, seq: seq, body: body, prior: prior || null });
+
+/* ══ THE PAGE'S ONE SUBSTRATE CLIENT ═══════════════════════════════════════
+   Every read and every write below goes through ONE WSPC.WorkspaceClient over ONE
+   WSPC.ConnectorTransport. This page used to carry its own `tool`, `resolveServer`,
+   `currentHead`, `descriptor`, `manifest`, `resolveMemberDoc`, `publishAndConfirm`,
+   `fetchProfileTurtle`, its own roster fold and its own append — the same calls the module
+   already made for the desktop shell, written a second time because each one was
+   interleaved with the panel that reports it. Two copies of one intention is how every
+   drift defect in this vertical happened: a reader hardened in one place, the bug kept in
+   the other. The calls are the module's now and the panels are still the page's — every
+   binding below is a NAME, never a reimplementation, so a fix to one of them cannot arrive
+   in only one of the two clients. */
+let CLIENT = null;
+/* Assigned once, here, because the connector's display name is not known until it answers.
+   `mcp()` is the page's — the host object is the one thing a page must supply. */
+async function resolveServer() {
+  const m = mcp();
+  if (!m) throw WSPC.fail("capability_disabled", "This view was served without connector access.");
+  CLIENT = new WSPC.WorkspaceClient(RELAY, new WSPC.ConnectorTransport(m));
+  return CLIENT.connect();
+}
+/* The connector's DISPLAY NAME as it answered, never a literal in this page. */
+const connectorLabel = () => (CLIENT ? CLIENT.tx.label : "not resolved");
+const tool = (name, input, opts) => CLIENT.tool(name, input, opts);
+const currentHead = (urn, podName) => CLIENT.currentHead(urn, podName);
+const descriptor = (url) => CLIENT.descriptor(url);
+const manifest = (podName, graphIri) => CLIENT.manifest(podName, graphIri);
+const resolveMemberDoc = (memberPod, convenerPod, slug, kind) => CLIENT.resolveMemberDoc(memberPod, convenerPod, slug, kind);
+const fetchProfileTurtle = (iri) => CLIENT.fetchProfileTurtle(iri);
+const publishAndConfirm = (args, podName, graphIri, onState) => CLIENT.publishAndConfirm(args, podName, graphIri, onState);
+const readWorkspaceRecord = (iri, ownerPod) => CLIENT.readWorkspaceRecord(iri, ownerPod);
+const foldRoster = (args) => WSPC.foldRoster(CLIENT, args);
+const postEntry = (args) => WSPC.postEntry(CLIENT, args);
+const toChainRow = WSPC.toChainRow, grantPodFor = WSPC.grantPodFor;
+/* The live watch and the cache drop address the SAME tool the one-shot reads use, over the
+   same transport — so they inherit the transport's registration contract (a failed watch
+   returns null; it does not throw) instead of this page guessing at the host's. */
+const watchStream = (input, onEvent, opts) => CLIENT.tx.watchTool("discover_context", input, onEvent, opts);
+const invalidateStreams = () => CLIENT.tx.invalidate("discover_context");
+/* `entryShapeAnswer` keeps its one-argument shape because every call site below passes only
+   the shape. The record it reasons about is this page's settled read, held on S and read at
+   call time — binding it here would freeze the answer from before a workspace was opened. */
+const entryShapeAnswer = (shape) => WSPC.entryShapeAnswer(shape, S.recordResult, WORKSPACE);
 /* ══ END GENERATED ════════════════════════════════════════════════════════ */
 
 /* ── time ─────────────────────────────────────────────────── */
@@ -2174,15 +2177,13 @@ const fmtDay = (iso) => {
   const d = new Date(iso);
   return isNaN(d) ? "unknown date" : d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
 };
-const shortCid = (c) => (c ? c.slice(0, 10) + "…" + c.slice(-6) : "—");
-/* A precondition may be asserted with a content CID or, when the manifest
-   reported none, with the prior entry's descriptor URL. Abbreviating a URL with
-   a CID formatter presents one as the other, so each is shortened as itself. */
-const shortRef = (v) => {
-  if (!v) return "—";
-  if (/^https?:\/\//.test(v)) { const t = v.split("/").filter(Boolean).pop(); return "…/" + (t || v); }
-  return shortCid(v);
-};
+/* Shortening an identifier is the MODULE's rule — a precondition may be
+   asserted with a content CID or, when the manifest reported none, with the
+   prior entry's descriptor URL, and abbreviating a URL with a CID formatter
+   presents one as the other. The page's share is the placeholder for "there was
+   nothing to shorten", which is presentation and differs between shells. */
+const shortCid = (c) => (c ? WSPC.shortRef(c) : "—");
+const shortRef = (v) => (v ? WSPC.shortRef(v) : "—");
 /* An href built from a record somebody else wrote. Only https survives. */
 const safeHref = (u) => (typeof u === "string" && /^https:\/\//.test(u) ? u : null);
 /* The badge is the pod's own short hash. Two roles can share initials, and two
@@ -2267,102 +2268,19 @@ function renderSteps() {
   if (!anyWait && stepTimer) { clearInterval(stepTimer); stepTimer = null; }
 }
 
-/* ── reading the substrate ────────────────────────────────── */
+/* ── reading and writing the substrate ─────────────────────────────────────
+   `currentHead`, `descriptor`, `manifest`, `resolveMemberDoc`,
+   `fetchProfileTurtle` and `publishAndConfirm` were written out here and are
+   now bound from the module in the generated block above. What they know — that
+   "the relay said nothing is here" and "this reader could not make sense of the
+   answer" are different facts, that a failed manifest read must not look like an
+   empty one, that both cross-pod reads echo which pod they answered for and the
+   echo is compared, that a write is called readable only when the head reads
+   back as the descriptor the publish returned — is documented at each of them in
+   packages/workspace-client/src. It is not restated here, because a second
+   telling is a second thing to keep true.
 
-/* Four outcomes, kept apart on purpose. "The relay said nothing is here" and
-   "this reader could not make sense of the answer" are different facts, and
-   only the first of them licenses offering to create the document. */
-/* ── the pod echo, checked on every cross-pod read ────────────────────────
-   MEASURED: `get_current_head` and `discover_context` both echo which pod they
-   answered for — `podUrl` and `pod` respectively. A read that quietly fell back
-   to the CALLER'S OWN pod would be invisible in a workspace where the caller is
-   also the convener, and would then be catastrophic in one where they are not:
-   the roster would be folded from the wrong pod's documents. So the echo is
-   compared, once, here, and a mismatch is an error rather than a silent answer. */
-
-async function currentHead(urn, podName) {
-  const p = await tool("get_current_head", { urn: urn, pod_name: podName });
-  const bad = refusal(p);
-  if (bad) throw fail("tool_error", bad.message || bad.error);
-  assertPod(podName, p && p.podUrl, "get_current_head");
-  if (p && p.forked) return { forked: true, heads: p.heads || [], message: p.message || "" };
-  if (p && p.head && p.head.descriptorUrl) {
-    return {
-      forked: false, url: p.head.descriptorUrl, cid: p.head.cid || null,
-      /* A head whose body could not be fetched still reports a URL, with no
-         CID and an error string. That is not a readable head. */
-      headError: p.head.error || null, message: p.message || null,
-    };
-  }
-  /* ── the branch that was dead, and what it cost ───────────────────────────
-     This used to test `"head" in p` — the PRESENCE of the key — as the signal
-     that the relay had answered "nothing is here". MEASURED against the live
-     relay on 2026-08-06: a graph that was never written answers
-       {urn, podUrl, message:"No descriptor on this pod describes the requested urn."}
-     with NO `head` key at all. So the absent branch never ran on this fleet and
-     every unpublished graph fell through to "unreadable" — the page reporting
-     that the answer carried no reason while holding the reason in `p.message`.
-     Three things followed from it: the canvas never offered Create to anybody
-     who had not already written one, a granted-but-unaccepted member read "not
-     seated · their acceptance could not be resolved" instead of "invited", and
-     every member without an affordance document got a line the code above says
-     it does not print. It survived three rounds because the test harness's
-     stand-in returned `head: null` explicitly, which the relay never does.
-     What is keyed on now is what was actually REPORTED: no head, and a reason. */
-  if (p && !p.head && typeof p.message === "string" && p.message) {
-    return { forked: false, url: null, cid: null, absent: true, message: p.message };
-  }
-  /* Reserved for a response carrying neither a head nor a reason — which is a
-     read this page cannot interpret, not a statement that nothing is there. */
-  return { forked: false, url: null, cid: null, unreadable: true,
-    message: "the relay's answer carried neither a head nor a reason, so whether anything is published here is not established" };
-}
-
-async function descriptor(url) {
-  const p = await tool("get_descriptor", { url: url }, { cache: { staleTime: 120000 } });
-  if (refusal(p)) throw fail("tool_error", p.message || p.error);
-  return p || {};
-}
-
-async function manifest(podName, graphIri) {
-  const p = await tool("discover_context", { pod_name: podName, graph_iri: graphIri, sort: "oldest-first" });
-  if (refusal(p)) throw fail("tool_error", p.message || p.error);
-  assertPod(podName, p && p.pod, "discover_context");
-  if (!p || !Array.isArray(p.entries)) {
-    /* A failed read must not look like an empty one. */
-    throw fail("tool_error", "discover_context on " + podName + " returned no entries array, so this stream could not be read at all — which is not the same as the member having written nothing.");
-  }
-  return p.entries.filter((e) => Array.isArray(e.describes) && e.describes.indexOf(graphIri) >= 0);
-}
-
-/* One hop from a role-profile page to the Turtle it advertises. Our published
-   profile is an HTML page on GitHub Pages carrying
-   <link rel="alternate" type="text/turtle">. Following the href the PAGE names
-   is the only correct way to get from the name to the document. */
-async function fetchProfileTurtle(iri) {
-  const first = await tool("dereference", { iri: iri }, { cache: { staleTime: 300000 } });
-  const rep = (first && first.representation) || "";
-  const ct = (first && first.contentType) || "";
-  if (first && first.status !== "ok") throw fail("tool_error", "the role profile at " + iri + " did not resolve (" + (first.httpStatus || first.status) + ")");
-  const looksHtml = /html/i.test(ct) || /^\s*<(!doctype|html)/i.test(rep);
-  if (!looksHtml) return { turtle: rep, from: iri, hops: 1 };
-  const m = /<link[^>]+rel=["']?alternate["']?[^>]*>/gi;
-  let href = null, tag;
-  while ((tag = m.exec(rep))) {
-    if (!/type=["']?text\/turtle/i.test(tag[0])) continue;
-    const h = /href=["']([^"']+)["']/i.exec(tag[0]);
-    if (h) { href = h[1]; break; }
-  }
-  if (!href) throw fail("tool_error", "the role profile page advertises no Turtle alternate, and this reader will not guess a filename for it");
-  const abs = new URL(href, iri).toString();
-  if (new URL(abs).origin !== new URL(iri).origin) throw fail("tool_error", "the profile page points its Turtle at a different origin, which would hand the governance to a different party");
-  const second = await tool("dereference", { iri: abs }, { cache: { staleTime: 300000 } });
-  if (!second || second.status !== "ok") throw fail("tool_error", "the Turtle the profile page names did not resolve: " + abs);
-  return { turtle: second.representation || "", from: abs, hops: 2 };
-}
-
-
-/* ═══════════════════════════════════════════════════════════════════════
+   ═══════════════════════════════════════════════════════════════════════
    MEMBERSHIP: create, invite, accept, switch.
 
    Four flows, no new relay verb between them. Everything below is
@@ -2372,43 +2290,6 @@ async function fetchProfileTurtle(iri) {
    different owners, and the substrate refuses either party the other's pod, so
    neither half can be manufactured by the party that benefits from it.
    ═══════════════════════════════════════════════════════════════════════ */
-
-/* ── one write, three states, and the third one is checked ────────────────
-   Sending → the relay took it → it is READABLE. The middle state is the relay's
-   own `status`, and it is not the last one: a write is called readable only when
-   `get_current_head` returns a head whose descriptorUrl is the descriptorUrl
-   this publish returned. That is the same test the canvas has always applied to
-   the word "Saved", extended to every write this page now makes.
-   Backoff 400 ms → 5 s, about 30 s in total, then "accepted and not yet
-   reported readable" — which is neither saved nor failed, and says so. */
-async function publishAndConfirm(args, podName, graphIri, onState) {
-  const tell = (s, d) => { try { if (onState) onState(s, d); } catch (e) {} };
-  tell("sending", "Publishing " + graphIri.replace(/^https:\/\//, ""));
-  let res;
-  try { res = await tool("publish_context", args); }
-  catch (e) { tell("failed", errorCopy(e).t); return { error: e }; }
-  const bad = refusal(res);
-  if (bad) { tell("refused", bad.error || "refused"); return { refusal: bad }; }
-  const url = res.descriptorUrl || null;
-  tell("accepted", "The relay reported status " + (res.status || "none") + (url ? "" : " and named no descriptor URL"));
-  if (!url) return { res: res, readable: false, why: "the response named no descriptor URL, so there is nothing to read back and match" };
-  let wait = 400;
-  const until = Date.now() + 30000;
-  let lastWhy = null;
-  while (Date.now() < until) {
-    await new Promise((r) => setTimeout(r, wait));
-    wait = Math.min(Math.round(wait * 1.6), 5000);
-    try {
-      const h = await currentHead(graphIri, podName);
-      if (h.forked) { lastWhy = "the chain for this IRI has " + h.heads.length + " unresolved heads"; continue; }
-      if (h.url === url) { tell("readable", "Read back from " + podName); return { res: res, readable: true, head: h }; }
-      if (h.url) lastWhy = "the head is a different descriptor (" + h.url + ")";
-      else lastWhy = h.message || "the relay reports no head for this IRI yet";
-    } catch (e) { lastWhy = errorCopy(e).t; }
-  }
-  tell("pending", "accepted, not yet reported readable");
-  return { res: res, readable: false, why: lastWhy || "the wait ran out before the head matched" };
-}
 
 /* The panel every membership write reports into. One shape, so a viewer learns
    it once. */
@@ -3605,27 +3486,6 @@ function renderSlugHint() {
   $("createbtn").disabled = !!problem || !t || !!S.writeBlocked;
 }
 
-/* ── one member document, under either name ──────────────────────────────
-   Tries the workspace-qualified name first, then the older unqualified one, and
-   reports which answered. `found:false` means the relay said nothing is
-   published at either — which is a different fact from a read that failed, and
-   the caller is told which by `error`. */
-async function resolveMemberDoc(memberPod, convenerPod, slug, kind) {
-  const cands = memberDocIris(memberPod, convenerPod, slug, kind);
-  let firstErr = null;
-  for (const c of cands) {
-    try {
-      const h = await currentHead(c.iri, memberPod);
-      if (h.forked) return { iri: c.iri, naming: c.naming, found: true, forked: h };
-      if (h.url) return { iri: c.iri, naming: c.naming, found: true, head: h };
-      if (h.unreadable && !firstErr) firstErr = h.message;
-    } catch (e) { if (!firstErr) firstErr = (e && e.message) || e.code; }
-  }
-  /* Nothing published under either name. New writes go to the qualified one —
-     the older form is for reading what already exists, not for making more. */
-  return { iri: cands[0].iri, naming: "qualified", found: false, error: firstErr };
-}
-
 async function boot() {
   /* boot() is re-entrant: the retry control on a startup failure calls it
      again. Re-registering a watch for an identity that already has one is a
@@ -3656,7 +3516,7 @@ async function boot() {
       e && e.retryable ? () => boot() : null);
     return;
   }
-  step("connector", "Connector resolved: " + SERVER, "done");
+  step("connector", "Connector resolved: " + connectorLabel(), "done");
   step("identity", "Resolving your identity — the first contact provisions a pod, measured at 12 to 16 seconds", "wait");
 
   /* who the viewer is — their own pod is the only place they can write */
@@ -3759,7 +3619,7 @@ function teardownWorkspace() {
   S.streamsOpened = false;
   S.bodies = new Map();
   if ($("seams")) $("seams").disabled = true;
-  S.record = null; S.roles = null; S.capLabels = null; S.ws = null;
+  S.record = null; S.recordResult = null; S.roles = null; S.capLabels = null; S.ws = null;
   S.profileError = null; S.profileFrom = null;
   S.canvas = { iri: null, head: null, loaded: null, exists: false };
   if ($("postresult")) { clear($("postresult")); clear($("canvasresult")); clear($("agentresult")); }
@@ -3798,7 +3658,7 @@ async function openWorkspace(iri) {
   $("writes-to").appendChild(el("code", "mono", S.viewer.podName));
   $("writes-to").appendChild(document.createTextNode(" — a real, public record on the live fleet. Its IRI is composed"
     + " from that pod name, this workspace's convener pod and its short name; the workspace record does not enumerate streams."
-    + (st.found ? "" : " Nothing is published there yet, so your first post creates it.")));
+    + ((st.found || st.forked) ? "" : " Nothing is published there yet, so your first post creates it.")));
 
   /* ── the composer stays shut until the record has been read ───────────────
      Posting sends `wsp:entryShape` out of the workspace record as
@@ -3815,49 +3675,27 @@ async function openWorkspace(iri) {
   const chip = $("wsiri");
   chip.href = WORKSPACE;
   $("wsiri-t").textContent = WORKSPACE.replace(/^https:\/\//, "");
-  try {
-    const h = await currentHead(WORKSPACE, IRI_OWNER);
-    if (h.forked) {
-      S.record = { forked: true, message: h.message, heads: h.heads };
-    } else if (!h.url) {
-      S.record = { missing: true, unreadable: !!h.unreadable, message: h.message };
-    } else {
-      const d = await descriptor(h.url);
-      /* No fallback to the whole document. The signed region is the only region
-         read — a fallback to `d.turtle` would read the unsigned descriptor as
-         if it were the payload, which is the opposite of what the copy claims. */
-      /* `null` and `""` are different answers and were being collapsed. A block
-         that is genuinely EMPTY was located; reporting it as "could not be
-         located" is a false statement about a region that was found. Only
-         `null` means not found, so only `null` is tested for. */
-      const region = graphRegion((d.graph && d.graph.content) || "", WORKSPACE);
-      S.record = {
-        head: h,
-        regionFound: region !== null,
-        convener: readIri(region, "wsp:convener"),
-        roleProfile: readIri(region, "wsp:roleProfile"),
-        /* ── the conformance contract, read rather than chosen ──────────────
-           This page used to hold one shape IRI and validate every post against
-           it, whatever workspace was open. A workspace that declares its own
-           shape now supplies it; one that declares none is posted against no
-           shape at all, and the composer says which of the two happened rather
-           than substituting something. */
-        entryShape: readIri(region, "wsp:entryShape"),
-        grantCapability: readIri(region, "wsp:grantCapability"),
-        title: readLiteral(region, "dct:title") || "",
-        authorship: d.authorship || null,
-        /* The pod the grants are read from is derived from the convener the
-           record NAMES, not from the pod segment inside the hardcoded IRI.
-           When the two differ the roster says so rather than quietly using one. */
-        convenerPod: podOfWebid(readIri(region, "wsp:convener")),
-        servedFrom: podOfDescriptorUrl(h.url),
-      };
-      $("wstitle").textContent = S.record.title;
-      S.ws = { iri: WORKSPACE, title: S.record.title, entryShape: S.record.entryShape,
-        grantCapability: S.record.grantCapability };
-    }
-  } catch (e) {
-    S.record = { error: e };
+  /* ── one read, held under two names ────────────────────────────────────────
+     `S.recordResult` is the MODULE's four-way answer — record / forked / missing
+     / error — and it is what `entryShapeAnswer` reasons about, so those four are
+     never collapsed into "the record names no shape". `S.record` is the flat
+     view every panel below already reads. Two names for one read, not two reads:
+     this page used to walk the head, fetch the descriptor and locate the signed
+     region itself, which is the same walk the module does for the desktop and is
+     exactly where a fallback to the unsigned `d.turtle` would go unnoticed in
+     one copy while the other kept refusing it. */
+  S.recordResult = await readWorkspaceRecord(WORKSPACE, IRI_OWNER).catch((e) => ({ kind: "error", error: e }));
+  if (S.recordResult.kind === "forked") {
+    S.record = { forked: true, message: S.recordResult.message, heads: S.recordResult.heads };
+  } else if (S.recordResult.kind === "missing") {
+    S.record = { missing: true, unreadable: S.recordResult.unreadable, message: S.recordResult.message };
+  } else if (S.recordResult.kind === "error") {
+    S.record = { error: S.recordResult.error };
+  } else {
+    S.record = S.recordResult.record;
+    $("wstitle").textContent = S.record.title;
+    S.ws = { iri: WORKSPACE, title: S.record.title, entryShape: S.record.entryShape,
+      grantCapability: S.record.grantCapability };
   }
 
   /* NOW the composer opens: `S.record` has settled, so `entryShapeAnswer()`
@@ -3912,7 +3750,7 @@ async function loadRoster() {
      hardcoded workspace IRI and threw the convener away — so a record naming a
      convener elsewhere would have been read from the wrong pod and reported an
      empty roster. */
-  const grantPod = S.record.convenerPod || IRI_OWNER;
+  const grantPod = grantPodFor(S.record.convenerPod, IRI_OWNER);
   S.grantPod = grantPod;
   S.grantPodDerivedFrom = S.record.convenerPod ? "wsp:convener in the record" : null;
   if (!S.record.convener) {
@@ -3930,169 +3768,33 @@ async function loadRoster() {
     box.appendChild(w);
   }
 
-  const GRANT_LIMIT = 400;
-  let grantRows = [];
-  let grantScanSaturated = false;
+  /* ── the fold itself ───────────────────────────────────────────────────────
+     Grants on the convener's pod, acceptances on each member's own, every row
+     that is not a seat carrying the reason it is not — all of it the module's.
+     It ran here too until now, and the two had already come apart: this copy
+     never applied the module's read cap, so a workspace with more members than
+     the cap was folded differently depending on which client you opened it in.
+     What stays on this side is the drawing below. */
+  let fold;
   try {
-    const p = await tool("discover_context", { pod_name: grantPod, limit: GRANT_LIMIT, sort: "newest-first" });
-    const bad = refusal(p);
-    if (bad) throw fail("tool_error", bad.message || bad.error);
-    const rows = (p && p.entries) || [];
-    /* A capped scan that came back full may have cut grants off the end. Silent
-       truncation would drop a member from the roster and their messages from
-       the channel with nothing said. */
-    grantScanSaturated = rows.length >= GRANT_LIMIT;
-    const prefix = WORKSPACE + "-grant-";
-    const seen = new Set();
-    for (const e of rows) {
-      const g = (e.describes || []).find((x) => x.indexOf(prefix) === 0);
-      if (!g || seen.has(g)) continue;
-      seen.add(g);
-      grantRows.push({ graph: g, url: e.descriptorUrl });
-    }
+    fold = await foldRoster({
+      workspace: WORKSPACE, iriOwner: IRI_OWNER, slug: SLUG,
+      convener: S.record.convener, convenerPod: S.record.convenerPod,
+    });
   } catch (e) {
     clear(box).appendChild(errBox(e, "Grants live on the convener's pod (" + grantPod + "); without them there are no roles to read.", () => { loadRoster(); }));
     return;
   }
-  S.grantScanSaturated = grantScanSaturated;
-  S.grantLimit = GRANT_LIMIT;
-
-  const members = [];
-  for (const g of grantRows) {
-    let m = { graph: g.graph, grantUrl: null, role: null, grantedTo: null, seated: false, why: null };
-    try {
-      /* No cache on a head: a revocation republishes the grant, and a stale
-         head would keep a withdrawn member seated for the life of the entry. */
-      const h = await currentHead(g.graph, grantPod);
-      if (h.forked) { m.why = "this grant's own chain has " + h.heads.length + " unresolved heads, so which grant is current is not decided"; members.push(m); continue; }
-      if (!h.url) { m.why = h.unreadable ? "the current grant could not be resolved: " + h.message : "this grant has no current head: " + h.message; members.push(m); continue; }
-      m.grantUrl = h.url;
-      m.grantCid = h.cid || null;
-      const d = await descriptor(h.url);
-      /* `region === null` is "not located"; `region === ""` is a block that WAS
-         located and is empty. Collapsing them reported a located region as
-         missing — the same conflation this page exists to avoid. */
-      const region = graphRegion((d.graph && d.graph.content) || "", g.graph);
-      if (region === null) { m.why = "the signed region of this grant could not be located, so nothing about it was read from bytes anybody signed"; members.push(m); continue; }
-      m.grantedTo = readIri(region, "wsp:grantedTo");
-      m.role = readIri(region, "wsp:role");
-      m.grantAuthorship = d.authorship || null;
-      m.revoked = hasTrue(region, "wsp:revoked");
-    } catch (e) { m.why = "the grant record could not be read: " + (e.message || e.code); members.push(m); continue; }
-
-    const pod = podOfWebid(m.grantedTo);
-    m.pod = pod;
-    if (!pod) { m.why = "the grantee is named by an identifier this reader cannot resolve to a pod"; members.push(m); continue; }
-
-    /* ── a revoked grant is not a seat ──────────────────────────────────
-       This used to add a grey chip and carry on: the member stayed seated,
-       kept a live watch on their stream, kept rendering messages, and still
-       counted in the panel below. Revocation stops the fold here. What they
-       already wrote is untouched — it is on their pod and revocation cannot
-       reach it — and the roster says exactly that. */
-    if (m.revoked) {
-      m.why = "this grant was revoked. Their stream is not folded into the channel and they are not counted below. "
-        + "What they already wrote is unaffected: it lives on their own pod, and revoking a grant cannot reach it.";
-      members.push(m); continue;
-    }
-
-    /* ── the member's own half, on the member's own pod ────────────────────
-       Under either name: the workspace-qualified one first, then the older
-       unqualified one. Which answered is carried on the row, because a member
-       seated under the old name is seated by a document that cannot tell two
-       workspaces apart — and that is worth saying rather than smoothing over. */
-    const found = await resolveMemberDoc(pod, IRI_OWNER, SLUG, "acceptance");
-    const acceptIri = found.iri;
-    m.acceptIri = acceptIri;
-    m.acceptNaming = found.naming;
-    try {
-      if (found.forked) { m.why = "this member's acceptance has " + found.forked.heads.length + " unresolved heads"; members.push(m); continue; }
-      if (!found.found) {
-        m.why = found.error
-          ? "their acceptance could not be resolved: " + found.error
-          : "granted, but no acceptance published on their pod yet";
-        m.pending = !found.error;
-        members.push(m); continue;
-      }
-      const ah = found.head;
-      const ad = await descriptor(ah.url);
-      const region = graphRegion((ad.graph && ad.graph.content) || "", acceptIri);
-      if (region === null) { m.why = "the signed region of their acceptance could not be located, so this page will not read a seat out of it"; members.push(m); continue; }
-      m.acceptUrl = ah.url;
-      /* The pod the acceptance was actually SERVED from, and its base URL.
-         Everything downstream that needs to address this member's storage uses
-         these rather than a name composed from the viewer's own host. */
-      m.podServed = podOfDescriptorUrl(ah.url);
-      m.podBase = podBaseOfDescriptorUrl(ah.url);
-      m.stream = readIri(region, "wsp:stream");
-      m.accepts = readIri(region, "wsp:accepts");
-      m.acceptsCid = readLiteral(region, "wsp:acceptsCid");
-      m.memberAgent = (ad.authorship && ad.authorship.signedBy) || null;
-      m.memberAgentVerified = !!(ad.authorship && ad.authorship.authorshipVerified);
-      m.acceptAuthorship = ad.authorship || null;
-      /* ── which grant this acceptance is an acceptance OF ────────────────
-         Two forms, both accepted, and which test ran is recorded.
-         · The older one names the grant's DESCRIPTOR URL. Equality with the
-           current head's descriptor is the whole check: republish the grant and
-           a stale acceptance stops matching.
-         · The newer one names the grant's own /ns/ IRI — a URL anybody can open
-           — and pins the revision separately in wsp:acceptsCid. The same
-           guarantee, without an internal storage address inside a published
-           record. An IRI match with NO cid is not accepted as a seat: the IRI
-           alone never changes, so it could not detect a re-grant. */
-      if (m.accepts && m.accepts === m.grantUrl) {
-        m.acceptTest = "the acceptance names the grant's descriptor URL, and it is the one currently at the head";
-      } else if (m.accepts && m.accepts === m.graph && m.acceptsCid && m.grantCid && m.acceptsCid === m.grantCid) {
-        m.acceptTest = "the acceptance names the grant's IRI and pins revision " + shortCid(m.acceptsCid) + ", which is the head";
-      } else if (m.accepts && m.accepts === m.graph && m.acceptsCid && m.grantCid) {
-        m.why = "their acceptance names this grant but pins revision " + shortCid(m.acceptsCid)
-          + ", and the current head of the grant is " + shortCid(m.grantCid)
-          + ". The grant was republished after they accepted it, so what they agreed to is not what is there now.";
-        members.push(m); continue;
-      } else if (m.accepts && m.accepts === m.graph) {
-        m.why = "their acceptance names this grant's IRI and pins no revision this reader could compare"
-          + (m.grantCid ? "" : ", and the head read reported no CID for the grant either")
-          + ", so it cannot be told apart from an acceptance of a grant that has since been rewritten";
-        members.push(m); continue;
-      } else {
-        m.why = m.accepts
-          ? "their acceptance names a different grant than the one current here"
-          : "their acceptance names no wsp:accepts, so there is nothing to hold against the grant";
-        members.push(m); continue;
-      }
-      if (!m.stream) { m.why = "their acceptance names no stream"; members.push(m); continue; }
-      /* ── a log belongs to the pod that owns it ────────────────────────────
-         `wsp:stream` is a value in a document the MEMBER wrote, so it is
-         checked rather than believed. Nothing used to check it, and nothing
-         checked that two members had not named the SAME stream: the per-stream
-         map was keyed on the IRI, the second member overwrote the first, and
-         the first then rendered as "has written nothing to this workspace yet"
-         with a full log sitting on their pod. */
-      m.streamPod = podOfNsIri(m.stream);
-      if (m.streamPod && m.streamPod !== pod) {
-        m.why = "their acceptance names a stream under pod " + m.streamPod + ", which is not the pod their own grant "
-          + "names (" + pod + "). A member's log is on their own pod, so this page will not fold in a log they point "
-          + "at somebody else's storage for.";
-        members.push(m); continue;
-      }
-      m.seated = true;
-    } catch (e) { m.why = "the acceptance could not be read: " + (e.message || e.code); }
-    members.push(m);
-  }
-
-  /* Two seats resolving to the same log are one log. Folding it twice would
-     double every message in it and count the same author twice below. */
-  const seenLog = new Map();
-  for (const m of members) {
-    if (!m.seated) continue;
-    const k = m.pod + " " + m.stream;
-    const first = seenLog.get(k);
-    if (!first) { seenLog.set(k, m); continue; }
-    m.seated = false;
-    m.why = "another current grant on this roster already seats pod " + m.pod + " with the same wsp:stream, so this "
-      + "grant would fold the same log into the channel a second time. The log itself is shown once, under the first "
-      + "of the two; this row is not a claim that they wrote nothing.";
-  }
+  S.grantScanSaturated = fold.grantScanSaturated;
+  S.grantLimit = fold.grantLimit;
+  /* How many grants the scan FOUND against how many were then read. Both are
+     kept because a roster that shows fewer rows than there are grants must say
+     so — silently showing 25 of 40 is this page asserting a membership list it
+     never established. */
+  S.grantsFound = fold.grantsFound;
+  S.grantsRead = fold.grantsRead;
+  S.grantReadCap = fold.grantReadCap;
+  const members = fold.seats.slice();
 
   members.sort((a, b) => {
     const ra = (S.roles && a.role && S.roles.get(a.role)) || null;
@@ -4416,6 +4118,17 @@ function renderRoster() {
       + " descriptors and got exactly that many back, so older grants may lie past the end of it. "
       + "A member missing from the roster below would also be missing from the channel. There is no "
       + "pagination on this page, so this is stated rather than hidden."));
+    box.appendChild(w);
+  }
+
+  /* The scan cap and the READ cap are different facts and both cut members off
+     the bottom of this list, so each says so on its own. */
+  if (S.grantsFound > S.grantsRead) {
+    const w = el("div", "panel pending");
+    w.appendChild(el("h4", null, S.grantsFound + " grants were found and " + S.grantsRead + " of them were read"));
+    w.appendChild(el("div", null, "Reading a grant is two round trips against a pod that may be cold, so the fold stops at "
+      + S.grantReadCap + ". The rest are not on the list below and their logs are not in the channel. That is this page's "
+      + "cap on its own work, not a finding about whether those grants seat anybody."));
     box.appendChild(w);
   }
 
@@ -4781,8 +4494,11 @@ function renderRoster() {
   } else {
     w += S.grantScanSaturated
       ? "No grant naming your pod appeared in the grants this page could see — and that scan came back full, so this is what was read, not necessarily all there is. "
-      : "This read found no grant naming your pod on the convener's pod, so the fold does not seat you — nobody can add "
-        + "you unilaterally and you cannot add yourself. ";
+      : S.grantsFound > S.grantsRead
+        ? "No grant naming your pod appeared in the " + S.grantsRead + " grants this page read, and " + S.grantsFound
+          + " were found — so this is what was read, not necessarily all there is. "
+        : "This read found no grant naming your pod on the convener's pod, so the fold does not seat you — nobody can add "
+          + "you unilaterally and you cannot add yourself. ";
   }
   w += "Your posts still land on your pod and are still yours; they are simply outside the roster's fold.";
   why.textContent = w;
@@ -4916,13 +4632,10 @@ function participants() {
 }
 
 async function openStreams() {
-  const m = mcp();
   for (const p of participants()) {
     streams.set(p.key, { p: p, rows: [], error: null, loaded: false });
     const input = { pod_name: p.pod, graph_iri: p.graph, sort: "oldest-first" };
-    let unsub = null;
-    try {
-      unsub = m.watchTool(SERVER, "discover_context", input, (ev) => {
+    const unsub = watchStream(input, (ev) => {
         const st = streams.get(p.key);
         if (!st) return;
         if (ev.type === "error") {
@@ -4951,25 +4664,24 @@ async function openStreams() {
         st.error = null; st.stale = null; st.loaded = true;
         st.rows = payload.entries
           .filter((e) => Array.isArray(e.describes) && e.describes.indexOf(p.graph) >= 0)
-          .map((e) => ({
-            url: e.descriptorUrl, cid: e.cid || null, validFrom: e.validFrom || null,
-            supersedes: Array.isArray(e.supersedes) ? e.supersedes : [],
-          }));
+          .map(toChainRow);
         renderStream();
         queueBodies(st.rows);
       }, { refetchInterval: 45000 });
-    } catch (e) {
-      /* The one documented synchronous throw here is a non-function handler,
-         but a shell without watchTool at all makes this a TypeError — and the
-         old comment asserting otherwise meant every stream stayed `loaded:
-         false` and the channel showed "Reading one manifest per member…"
-         forever. A registration that failed means no live updates will EVER
-         arrive, so the row is marked and a one-shot read is attempted instead. */
+    /* ★ NULL IS THE ANSWER HERE, NOT A THROW. The transport reports a watch it
+       could not register by returning null. This used to be a try/catch around
+       a raw host call, because a host without `watchTool` at all makes that a
+       TypeError rather than the documented non-function-handler throw — and the
+       page was the only thing that knew it. A registration that failed means no
+       live update will EVER arrive, so the row is marked and a one-shot read is
+       attempted instead of leaving "Reading one manifest per member…" forever. */
+    if (unsub) {
+      S.watches.push(unsub);
+    } else {
       const st = streams.get(p.key);
-      if (st) { st.watchFailed = e; }
+      if (st) st.watchFailed = fail("tool_error", "this connector registered no live watch for this log, so no update will arrive on its own");
       readOnce(p).catch(() => {});
     }
-    if (unsub) S.watches.push(unsub);
   }
   /* Only now is "no seated member declares a stream" a statement about the
      roster rather than about boot not having run yet. */
@@ -4985,7 +4697,7 @@ async function readOnce(p) {
   if (!st) return;
   try {
     const rows = await manifest(p.pod, p.graph);
-    st.rows = rows.map((e) => ({ url: e.descriptorUrl, cid: e.cid || null, validFrom: e.validFrom || null, supersedes: Array.isArray(e.supersedes) ? e.supersedes : [] }));
+    st.rows = rows.map(toChainRow);
     st.error = null; st.loaded = true;
     renderStream(); queueBodies(st.rows);
   } catch (e) {
@@ -5323,25 +5035,14 @@ function kvPair(rows) {
   return g;
 }
 
-/* ── three answers about the entry shape, not two ─────────────────────────
-   "The record names this shape" and "the record was read and names none" were
-   the only two this panel could say, so a post made before the record had been
-   read reported the SECOND — a positive statement about a document nobody had
-   opened, on a workspace that does name one. Absence is not evidence, and "not
-   read yet" is its own answer. The composer is now held shut until the read
-   settles, so the fourth string below should be unreachable; it is here because
-   an unreachable branch that states the truth costs nothing and a missing one
-   costs a false claim. */
-function entryShapeAnswer(shape) {
-  if (shape) return shape;
-  if (!S.record) return "the workspace record has not been read, so whether it names a wsp:entryShape is not established — nothing validated this entry";
-  if (S.record.error) return "the read of the workspace record failed, so whether it names a wsp:entryShape is not established — nothing validated this entry";
-  if (S.record.forked) return "the workspace record's chain has " + (S.record.heads || []).length
-    + " unresolved heads, so which record governs here — and therefore which shape, if any — is not decided; nothing validated this entry";
-  if (S.record.missing) return "no workspace record is published at " + WORKSPACE
-    + ", so there is no wsp:entryShape to send and nothing validated this entry";
-  return "this workspace's record was read and names no wsp:entryShape, so nothing validated this entry";
-}
+/* `entryShapeAnswer` is bound in the generated block above. It has FOUR answers,
+   not two: "the record has not been read yet" and "the read failed" are not the
+   same as "the record was read and names none", and a post made before the read
+   settled used to report the last of them — a positive statement about a
+   document nobody had opened, on a workspace that does name a shape. The
+   composer is held shut until the read settles, so those branches should be
+   unreachable; they exist because an unreachable branch that states the truth
+   costs nothing and a missing one costs a false claim. */
 
 async function post() {
   const ta = $("composer");
@@ -5357,178 +5058,159 @@ async function post() {
   const sKey = streamKey(S.viewer.podName, sIri);
   say("postresult", "pending", "Deriving your position in your own log…", text("Reading the current head of " + sIri.replace(/^https:\/\//, "") + " so this entry can declare the one before it."));
 
-  let attempt = 0;
-  while (attempt < 2) {
-    attempt++;
-    let rows;
-    try { rows = await manifest(S.viewer.podName, sIri); }
-    catch (e) { clear($("postresult")).appendChild(errBox(e, "Your own log could not be read, so no position could be derived. Nothing was written.")); $("send").disabled = !!S.writeBlocked; $("composer").disabled = !!S.writeBlocked; return; }
-    const mapped = rows.map((e) => ({ url: e.descriptorUrl, cid: e.cid || null, validFrom: e.validFrom, supersedes: Array.isArray(e.supersedes) ? e.supersedes : [] }));
-    const ch = orderChain(mapped);
-    if (ch.forked) {
-      /* Two causes produce this shape and the page cannot tell them apart from
-         the manifest alone, so it names both instead of inventing the dramatic
-         one. It used to say "Two writers appended without seeing each other"
-         even when the real cause was a manifest that reported no supersession
-         links at all — every row a head, because nothing was linked. */
-      const anyLinks = mapped.some((r2) => r2.supersedes.length > 0);
-      say("postresult", "refused", "Your log has " + ch.heads + " entries that nothing supersedes",
-        text(anyLinks
-          ? "Some entries here do declare supersession and these " + ch.heads + " still do not resolve to one head, "
-            + "which is what a missed compare-and-swap looks like. Picking one would be guessing which append survived, so this posts nothing."
-          : "No entry in this manifest reported a supersedes link at all, so every row reads as a head. That may be a "
-            + "genuine fork, or it may be that supersession was not reported for this read. This page will not guess which, so it posts nothing."));
-      $("send").disabled = !!S.writeBlocked; $("composer").disabled = !!S.writeBlocked; return;
-    }
-    const prior = ch.ordered.length ? ch.ordered[ch.ordered.length - 1] : null;
-    const seq = ch.ordered.length;
-    const args = {
-      graph_iri: sIri,
-      graph_content: entryTurtle(sIri, seq, body, prior ? prior.url : null),
-      visibility: "public",
-      auto_supersede_prior: false,
-      sign_authorship: true,
-    };
-    /* ── the shape is the WORKSPACE'S, not this page's ────────────────────
-       Read from wsp:entryShape in the record. A workspace that names none gets
-       no shape sent, and the panel below says the post was not validated
-       against anything rather than implying it was. */
-    const shape = S.record && S.record.entryShape;
-    if (shape) args.conforms_to_shapes = [shape];
-    /* What is asserted may be the prior entry's content CID or, when the
-       manifest reported none for it, its descriptor URL. Which one it is gets
-       recorded rather than described as "that revision's content CID" either
-       way — they are not the same assertion. */
-    let ifMatchKind = null;
-    if (prior) {
-      args.if_match = prior.cid || prior.url;
-      ifMatchKind = prior.cid ? "the prior entry's content CID"
-        : "the prior entry's descriptor URL — the manifest reported no CID for it";
-    }
+  /* ── the append is the module's; every panel below is this page's ─────────
+     `postEntry` derives the position from the chain, composes the entry, sends
+     the workspace's own shape and asserts the prior revision — and retries a 412
+     exactly ONCE, because a 412 is the ordinary case for a log and a client that
+     retries indefinitely will eventually write a duplicate. That logic was
+     written out here as well, wrapped around the panels that report it, which is
+     why the two came apart. It hands back which of five things happened and this
+     function draws each one; `onAttempt` is how the mid-flight panel between the
+     first attempt and the retry still gets drawn without the loop living here. */
+  const out = await postEntry({
+    podName: S.viewer.podName,
+    streamIri: sIri,
+    workspace: WORKSPACE,
+    body: body,
+    entryShape: (S.record && S.record.entryShape) || null,
+    onAttempt: (n) => {
+      if (n > 1) say("postresult", "pending", "Someone appended while you were typing — re-deriving",
+        text("412 precondition_failed. Re-reading the head and trying once more, which is the right move for a log."));
+    },
+  });
 
-    let res;
-    try { res = await tool("publish_context", args); }
-    catch (e) {
-      /* The copy has to match the error. `tool_error` means the relay ANSWERED
-         and reported a failure; only the transport codes mean it did not
-         answer. The old text said "The relay did not answer" directly above an
-         error box titled "The relay reported a failure". */
-      const answered = e && e.code === "tool_error";
-      clear($("postresult")).appendChild(errBox(e, answered
-        ? "The relay answered and reported this failure, so nothing here is a guess about whether it ran — read the message above. Re-read the channel before posting again."
-        : "The relay did not answer, so whether this write ran is unknown. A write whose outcome is unknown must not be repeated automatically — re-read the channel before posting again."));
-      $("send").disabled = !!S.writeBlocked; $("composer").disabled = !!S.writeBlocked; return;
-    }
-    const bad = refusal(res);
-    if (bad && bad.code === 503) {
+  /* Every early return re-enables the composer to whatever the delegation check
+     decided, never to plain `false` — a viewer whose scope forbids writing must
+     not be handed the composer back by a failed post. */
+  const reopen = () => { $("send").disabled = !!S.writeBlocked; $("composer").disabled = !!S.writeBlocked; };
+
+  if (out.kind === "read-failed") {
+    clear($("postresult")).appendChild(errBox(out.error, "Your own log could not be read, so no position could be derived. Nothing was written."));
+    reopen(); return;
+  }
+  if (out.kind === "forked") {
+    /* Two causes produce this shape and a manifest alone cannot tell them apart,
+       so both are named instead of inventing the dramatic one. This used to say
+       "Two writers appended without seeing each other" even when the real cause
+       was a manifest that reported no supersession links at all — every row a
+       head, because nothing was linked. */
+    say("postresult", "refused", "Your log has " + out.heads + " entries that nothing supersedes",
+      text(out.anyLinks
+        ? "Some entries here do declare supersession and these " + out.heads + " still do not resolve to one head, "
+          + "which is what a missed compare-and-swap looks like. Picking one would be guessing which append survived, so this posts nothing."
+        : "No entry in this manifest reported a supersedes link at all, so every row reads as a head. That may be a "
+          + "genuine fork, or it may be that supersession was not reported for this read. This page will not guess which, so it posts nothing."));
+    reopen(); return;
+  }
+  if (out.kind === "unreachable") {
+    /* The copy has to match the error. `relayAnswered` is the module's reading of
+       the code — `tool_error` means the relay ANSWERED and reported a failure;
+       only the transport codes mean it did not answer. The old text said "The
+       relay did not answer" directly above an error box titled "The relay
+       reported a failure". */
+    clear($("postresult")).appendChild(errBox(out.error, out.relayAnswered
+      ? "The relay answered and reported this failure, so nothing here is a guess about whether it ran — read the message above. Re-read the channel before posting again."
+      : "The relay did not answer, so whether this write ran is unknown. A write whose outcome is unknown must not be repeated automatically — re-read the channel before posting again."));
+    reopen(); return;
+  }
+  if (out.kind === "refused") {
+    const bad = out.body;
+    if (out.code === 503) {
       say("postresult", "pending", "The relay could not check the precondition",
         text((bad.message || "") + " This is deliberately not a 412: a 412 means your assertion was checked and "
           + "failed, this means it could not be checked at all. Nothing was written, and this page will not "
           + "retry a write on your behalf."));
-      $("send").disabled = !!S.writeBlocked; $("composer").disabled = !!S.writeBlocked; return;
-    }
-    if (bad && bad.code === 403) {
+    } else if (out.code === 403) {
       say("postresult", "refused", "Refused — 403 scope_violation",
         text((bad.message || "") + (bad.scope ? " Your delegated scope is " + bad.scope + "." : "")
           + (bad.requiredScope ? " This write needs one of: " + [].concat(bad.requiredScope).join(", ") + "." : "")));
-      $("send").disabled = !!S.writeBlocked; $("composer").disabled = !!S.writeBlocked; return;
-    }
-    if (bad && bad.code === 412) {
-      if (attempt < 2) {
-        say("postresult", "pending", "Someone appended while you were typing — re-deriving", text("412 precondition_failed. Re-reading the head and trying once more, which is the right move for a log."));
-        continue;
-      }
+    } else if (out.code === 412) {
+      /* The retry already happened inside the append and this is the SECOND 412. */
       say("postresult", "refused", "Refused: 412 precondition_failed", text(bad.message || ""));
-      $("send").disabled = !!S.writeBlocked; $("composer").disabled = !!S.writeBlocked; return;
-    }
-    if (bad && bad.code === 422) {
+    } else if (out.code === 422) {
       /* MEASURED: the 422 envelope carries `shape` and `violations` and NO
          top-level `message`, so the shape IRI is what identifies the refusal. */
-      const p = say("postresult", "refused", "Refused by this workspace's own shape",
+      const q = say("postresult", "refused", "Refused by this workspace's own shape",
         text(bad.shape
           ? "Validated against " + bad.shape + " before any pod write. That IRI is not this page's choice — it is the wsp:entryShape the workspace record declares, so the contract is the workspace's."
           : "The entry did not conform, and the response did not name the shape."));
       const list = el("div", "kv");
       for (const v of (bad.violations || [])) { list.appendChild(el("div", "k", (v.path || "").split("#").pop() || "constraint")); list.appendChild(el("div", "v", v.message || v.constraint)); }
-      p.appendChild(list);
-      p.appendChild(el("div", "note", "422 is ambiguous — it also means the shape itself could not be fetched. The constraint above is what distinguishes the two."));
-      $("send").disabled = !!S.writeBlocked; $("composer").disabled = !!S.writeBlocked; return;
-    }
-    if (bad) {
+      q.appendChild(list);
+      q.appendChild(el("div", "note", "422 is ambiguous — it also means the shape itself could not be fetched. The constraint above is what distinguishes the two."));
+    } else {
       say("postresult", "refused", "Refused: " + bad.error, text(bad.message || ""));
-      $("send").disabled = !!S.writeBlocked; $("composer").disabled = !!S.writeBlocked; return;
     }
+    reopen(); return;
+  }
 
-    /* The composer is NOT cleared here. It used to be, ahead of the readback
-       below — so if confirmation never landed, the text was gone and the panel
-       said "Accepted — landing on your pod" indefinitely. It clears only once
-       the entry has been read back. */
-    const url = res.descriptorUrl;
-    const committed = res.status === "committed";
-    const p = say("postresult", "ok", committed ? "Posted to your pod" : "Accepted — landing on your pod", null);
-    p.appendChild(kvPair([
-      ["pod", S.viewer.podName],
-      ["wsp:seq", String(seq)],
-      ["descriptor", url || "not reported by the response"],
-      ["shape asserted", entryShapeAnswer(shape)],
-      /* ABSENCE IS NOT EVIDENCE. `args.if_match` and `prior` are both in scope,
-         so what was SENT is known; what came back is reported as what came
-         back. The old copy asserted "this is the first entry in your log"
-         whenever the field was missing, including when a precondition had just
-         been sent and the response simply did not report on it. */
-      ["precondition", preconditionLine(res.precondition, args.if_match, ifMatchKind)
-        || "none sent — this read found no prior entry in your log to assert against"],
-      /* sign_authorship was requested above, so an absent block is the response
-         not reporting one, not a permanent fact about the record. */
-      ["authorship", res.authorship
-        ? (res.authorship.signed
-            ? "signed by " + (res.authorship.signer || "an unnamed signer")
-            : "not signed — " + (res.authorship.reason || "the response gave no reason"))
-        : "sign_authorship was requested; the response did not report an authorship block"],
-    ]));
-    await refreshStream(sKey);
-    if (url) {
-      p.appendChild(el("div", "note", committed
-        ? "Confirming it is readable back rather than taking the acknowledgement for it."
-        : "The relay accepted this without committing, so it is writing in the background. Waiting for it to become readable rather than assuming it did."));
-      let landed = false;
-      let readErr = null;
-      for (let i = 0; i < 34; i++) {
-        await new Promise((r) => setTimeout(r, 700));
-        const got = await refreshStream(sKey);
-        if (got && got.rows && got.rows.some((r2) => r2.url === url)) { landed = true; break; }
-        if (got && got.error) readErr = got.error;
-      }
-      if (landed) {
-        p.querySelector("h4").textContent = "Posted to your pod";
-        ta.value = ""; ta.style.height = "auto";
-        /* ── and now ask, because nothing here watches ────────────────────
-           No member of this workspace is subscribed to your log. There is no
-           daemon, no queue and no push: a member that is a process finds out
-           you wrote something because somebody follows the affordance it
-           published. This page follows it for you, once, after your entry is
-           confirmed READABLE — asking before that would have them read a
-           channel your message is not in yet.
-           Only members who published one are asked, and only after a post that
-           landed. If nobody published one, nothing happens and the panel below
-           says so rather than leaving you waiting. */
-        await askEveryMemberWhoOfferedTo();
-      } else {
-        p.className = "panel pending anim";
-        p.querySelector("h4").textContent = "Accepted, but not yet readable";
-        p.appendChild(el("div", "note", readErr
-          ? "The readback itself kept failing (" + errorCopy(readErr).t.toLowerCase() + "), so whether it landed is unknown from here. Your text is still in the composer."
-          : "The relay took the write and it has not appeared in your log within the wait. It is probably fine; this panel will not call it posted on that basis. Your text is still in the composer — posting again would append a second entry."));
-      }
+  /* The composer is NOT cleared here. It used to be, ahead of the readback
+     below — so if confirmation never landed, the text was gone and the panel
+     said "Accepted — landing on your pod" indefinitely. It clears only once
+     the entry has been read back. */
+  const url = out.descriptorUrl;
+  const res = out.response;
+  const p = say("postresult", "ok", out.committed ? "Posted to your pod" : "Accepted — landing on your pod", null);
+  p.appendChild(kvPair([
+    ["pod", S.viewer.podName],
+    ["wsp:seq", String(out.seq)],
+    ["descriptor", url || "not reported by the response"],
+    ["shape asserted", entryShapeAnswer(out.shapeSent)],
+    /* ABSENCE IS NOT EVIDENCE. What was SENT is on the outcome, so the two are
+       reported separately: what this page asserted, and what came back about it.
+       The old copy asserted "this is the first entry in your log" whenever the
+       field was missing, including when a precondition had just been sent and
+       the response simply did not report on it. */
+    ["precondition", preconditionLine(res.precondition, out.ifMatch, out.ifMatchKind)
+      || "none sent — this read found no prior entry in your log to assert against"],
+    /* sign_authorship was requested, so an absent block is the response not
+       reporting one, not a permanent fact about the record. */
+    ["authorship", res.authorship
+      ? (res.authorship.signed
+          ? "signed by " + (res.authorship.signer || "an unnamed signer")
+          : "not signed — " + (res.authorship.reason || "the response gave no reason"))
+      : "sign_authorship was requested; the response did not report an authorship block"],
+  ]));
+  await refreshStream(sKey);
+  if (url) {
+    p.appendChild(el("div", "note", out.committed
+      ? "Confirming it is readable back rather than taking the acknowledgement for it."
+      : "The relay accepted this without committing, so it is writing in the background. Waiting for it to become readable rather than assuming it did."));
+    let landed = false;
+    let readErr = null;
+    for (let i = 0; i < 34; i++) {
+      await new Promise((r) => setTimeout(r, 700));
+      const got = await refreshStream(sKey);
+      if (got && got.rows && got.rows.some((r2) => r2.url === url)) { landed = true; break; }
+      if (got && got.error) readErr = got.error;
+    }
+    if (landed) {
+      p.querySelector("h4").textContent = "Posted to your pod";
+      ta.value = ""; ta.style.height = "auto";
+      /* ── and now ask, because nothing here watches ────────────────────
+         No member of this workspace is subscribed to your log. There is no
+         daemon, no queue and no push: a member that is a process finds out
+         you wrote something because somebody follows the affordance it
+         published. This page follows it for you, once, after your entry is
+         confirmed READABLE — asking before that would have them read a
+         channel your message is not in yet.
+         Only members who published one are asked, and only after a post that
+         landed. If nobody published one, nothing happens and the panel below
+         says so rather than leaving you waiting. */
+      await askEveryMemberWhoOfferedTo();
     } else {
       p.className = "panel pending anim";
-      p.querySelector("h4").textContent = "Accepted, with no descriptor to check";
-      p.appendChild(el("div", "note", "The response named no descriptor URL, so there is nothing to read back and confirm. Your text is still in the composer."));
+      p.querySelector("h4").textContent = "Accepted, but not yet readable";
+      p.appendChild(el("div", "note", readErr
+        ? "The readback itself kept failing (" + errorCopy(readErr).t.toLowerCase() + "), so whether it landed is unknown from here. Your text is still in the composer."
+        : "The relay took the write and it has not appeared in your log within the wait. It is probably fine; this panel will not call it posted on that basis. Your text is still in the composer — posting again would append a second entry."));
     }
-    $("send").disabled = !!S.writeBlocked;
-    $("composer").disabled = !!S.writeBlocked;
-    return;
+  } else {
+    p.className = "panel pending anim";
+    p.querySelector("h4").textContent = "Accepted, with no descriptor to check";
+    p.appendChild(el("div", "note", "The response named no descriptor URL, so there is nothing to read back and confirm. Your text is still in the composer."));
   }
+  reopen();
 }
 
 /* Every seated member who published a way to be asked, asked once, in turn.
@@ -5556,12 +5238,11 @@ async function askEveryMemberWhoOfferedTo() {
 async function refreshStream(key) {
   const st = streams.get(key);
   if (!st) return { error: fail("tool_error", "this page is not tracking a log for " + key) };
-  const m = mcp();
-  try { if (m.invalidate) await m.invalidate(SERVER, "discover_context"); } catch (e) { /* nothing cached */ }
+  try { await invalidateStreams(); } catch (e) { /* nothing cached */ }
   try {
     const rows = await manifest(st.p.pod, st.p.graph);
     st.error = null; st.loaded = true;
-    st.rows = rows.map((e) => ({ url: e.descriptorUrl, cid: e.cid || null, validFrom: e.validFrom || null, supersedes: Array.isArray(e.supersedes) ? e.supersedes : [] }));
+    st.rows = rows.map(toChainRow);
     renderStream(); queueBodies(st.rows);
     return { rows: st.rows };
   } catch (e) { return { error: e }; }

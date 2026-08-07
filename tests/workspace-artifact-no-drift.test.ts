@@ -51,22 +51,59 @@ describe('the published artifact is generated from @interego/workspace-client', 
   }, 120_000);
 
   it.each([
+    // The readers, the locator, the naming scheme, the chain walk.
     'scanTurtle', 'graphRegion', 'maskFill', 'literalAt', 'readLiteral', 'readIri',
     'readIriList', 'readInt', 'hasTrue', 'hasType', 'parseRoleProfile', 'orderChain',
     'assignPodMarks', 'podOfWebid', 'podClaimVsServed', 'parseAcceptanceIri', 'preconditionLine',
+    // ── AND THE I/O, which is the copy this increment closed ──────────────────
+    // Each of these was a hand-written wrapper in the page, interleaved with the panel that
+    // reports it, while the module carried an equivalent the desktop shell used. Two copies of
+    // one intention is the failure this file exists to prevent, and the byte-comparison above
+    // does not see it: a re-pasted `async function currentHead(...)` below the region leaves the
+    // region identical and silently takes over every read on the page.
+    'tool', 'resolveServer', 'currentHead', 'descriptor', 'manifest', 'resolveMemberDoc',
+    'publishAndConfirm', 'fetchProfileTurtle', 'readWorkspaceRecord', 'foldRoster', 'postEntry',
+    'toChainRow', 'entryShapeAnswer', 'grantPodFor', 'watchStream', 'invalidateStreams',
+    'connectorLabel', 'CLIENT',
   ])('declares %s ONLY inside the generated region', (name) => {
     const html = artifact();
     const from = html.indexOf(BEGIN);
     const to = html.indexOf(END);
-    // Both declaration forms the hand-written half used before extraction. A re-introduced
-    // copy would take one of them — and because the generated region ends with `const X =
-    // WSPC.X` bindings, the symbol is legitimately declared twice INSIDE it. What must never
-    // happen is a declaration OUTSIDE it: that one would shadow the module and win.
-    const decl = new RegExp('(?:^|\\n)\\s*(?:function\\s+' + name + '\\s*\\(|(?:const|let|var)\\s+' + name + '\\s*=)', 'g');
+    // Every declaration form the hand-written half used before extraction. A re-introduced copy
+    // would take one of them — and because the generated region ends with `const X = WSPC.X`
+    // bindings, the symbol is legitimately declared twice INSIDE it. What must never happen is a
+    // declaration OUTSIDE it: that one would shadow the module and win.
+    //
+    // ★ `async` IS PART OF THE PATTERN, and leaving it out was a hole. Every wrapper this gate
+    // now covers was written `async function currentHead(…)`, so the form a re-paste would most
+    // naturally take was the one form the regex did not match — the gate would have reported the
+    // symbol "not declared at all" for the generated copy and said nothing about a second one.
+    const decl = new RegExp('(?:^|\\n)\\s*(?:(?:async\\s+)?function\\s+' + name + '\\s*\\(|(?:const|let|var)\\s+' + name + '\\s*=)', 'g');
     const hits = [...html.matchAll(decl)].map((m) => m.index ?? -1);
     expect(hits.length, name + ' is not declared at all').toBeGreaterThan(0);
     const outside = hits.filter((i) => i < from || i > to);
     expect(outside, name + ' is declared outside the generated region, which shadows the module').toEqual([]);
+  });
+
+  it('touches the connector host in exactly one place, and never calls it directly', () => {
+    const html = artifact();
+    const from = html.indexOf(BEGIN);
+    const to = html.indexOf(END);
+    const outside = html.slice(0, from) + html.slice(to);
+    // ★ WHY THE HOST OBJECT IS THE THING BEING COUNTED. `window.claude.mcp` is the whole of the
+    // page's access to the substrate. While the page held its own `tool()` it also held the
+    // connector's resolved display name, and passed it back by hand to `watchTool` and
+    // `invalidate` — two call sites reaching around the transport that had resolved it, each
+    // free to drift from how every other read was made. One accessor, handed once to the
+    // module's transport, is what makes "every read goes the same way" checkable.
+    // Counted by LINE, not by occurrence: the accessor itself names `window.claude` twice in one
+    // expression — the guard and the property — and that is one place, not two.
+    const lines = outside.split('\n').filter((l) => l.includes('window.claude'));
+    expect(lines, 'window.claude is reached from more than one place').toHaveLength(1);
+    expect(lines[0]).toContain('const mcp =');
+    for (const m of ['.callTool(', '.listTools(', '.watchTool(', '.invalidate(']) {
+      expect(outside.includes(m), 'the hand-written half calls ' + m + ' on the host directly').toBe(false);
+    }
   });
 
   it('never reaches a descriptor URL directly — every read is a relay tool', () => {

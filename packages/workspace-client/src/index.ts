@@ -43,8 +43,12 @@ export {
 
 export { orderChain, toChainRow, type ChainRow, type ChainWalk } from './chain.js';
 
+export { shortRef } from './format.js';
+
 export {
   entryTurtle, preconditionLine, entryShapeAnswer, postEntry, type PostOutcome,
 } from './entry.js';
 
-export { foldRoster, GRANT_LIMIT, GRANT_READ_CAP, type Seat, type RosterFold } from './seats.js';
+export {
+  foldRoster, grantPodFor, GRANT_LIMIT, GRANT_READ_CAP, type Seat, type RosterFold,
+} from './seats.js';

@@ -14,6 +14,7 @@
 
 import { graphRegion, hasTrue, readIri, readLiteral } from './turtle.js';
 import { podOfDescriptorUrl, podBaseOfDescriptorUrl, podOfNsIri, podOfWebid } from './naming.js';
+import { shortRef } from './format.js';
 import { fail, refusal } from './transport.js';
 import type { WorkspaceClient } from './substrate.js';
 
@@ -72,6 +73,17 @@ export const GRANT_LIMIT = 400;
 export const GRANT_READ_CAP = 25;
 
 /**
+ * WHICH POD HOLDS THE GRANTS, decided once and exported so a caller can NAME it.
+ *
+ * The record NAMES a convener; that name, resolved to a pod, is where grants are read from.
+ * The pod segment inside the workspace IRI is only the fallback for a record that names none.
+ * This is exported because a shell that reports "grants live on pod X and that read failed"
+ * has to mean the same X the fold would have used — re-deriving the `??` in a message string
+ * is how a diagnostic comes to name a pod nothing was ever asked for.
+ */
+export const grantPodFor = (convenerPod: string | null, iriOwner: string): string => convenerPod ?? iriOwner;
+
+/**
  * Fold the roster for one workspace.
  *
  * ★ BOUNDED. The number of tool calls is `1 + 2·min(grantsFound, GRANT_READ_CAP) +
@@ -89,11 +101,10 @@ export async function foldRoster(
     readonly convenerPod: string | null;
   },
 ): Promise<RosterFold> {
-  // ★ WHICH POD HOLDS THE GRANTS. The record NAMES a convener; that name, resolved to a pod,
-  // is where grants are read from. Using the pod segment inside the workspace IRI and throwing
-  // the convener away meant a record naming a convener elsewhere was read from the wrong pod
-  // and reported an empty roster.
-  const grantPod = args.convenerPod ?? args.iriOwner;
+  // ★ WHICH POD HOLDS THE GRANTS — see `grantPodFor`. Using the pod segment inside the
+  // workspace IRI and throwing the convener away meant a record naming a convener elsewhere
+  // was read from the wrong pod and reported an empty roster.
+  const grantPod = grantPodFor(args.convenerPod, args.iriOwner);
 
   const p = await client.tool('discover_context', { pod_name: grantPod, limit: GRANT_LIMIT, sort: 'newest-first' }) as Record<string, unknown> | null;
   const bad = refusal(p);
@@ -196,10 +207,14 @@ export async function foldRoster(
       if (m.accepts && m.accepts === m.grantUrl) {
         m.acceptTest = "the acceptance names the grant's descriptor URL, and it is the one currently at the head";
       } else if (m.accepts && m.accepts === m.graph && m.acceptsCid && m.grantCid && m.acceptsCid === m.grantCid) {
-        m.acceptTest = "the acceptance names the grant's IRI and pins the revision that is the head";
+        // ★ THE TWO REVISIONS ARE NAMED, not just compared. A reader deciding whether to
+        // believe a seat needs the pair in front of them; "the revision that is the head" is
+        // this fold asserting its own conclusion and showing none of the evidence for it.
+        m.acceptTest = "the acceptance names the grant's IRI and pins revision " + shortRef(m.acceptsCid) + ', which is the head';
       } else if (m.accepts && m.accepts === m.graph && m.acceptsCid && m.grantCid) {
-        m.why = 'their acceptance names this grant but pins a different revision than the current head. '
-          + 'The grant was republished after they accepted it, so what they agreed to is not what is there now.';
+        m.why = 'their acceptance names this grant but pins revision ' + shortRef(m.acceptsCid)
+          + ', and the current head of the grant is ' + shortRef(m.grantCid)
+          + '. The grant was republished after they accepted it, so what they agreed to is not what is there now.';
         seats.push(m); continue;
       } else if (m.accepts && m.accepts === m.graph) {
         m.why = "their acceptance names this grant's IRI and pins no revision this reader could compare"

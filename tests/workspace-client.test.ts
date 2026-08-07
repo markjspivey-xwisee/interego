@@ -14,7 +14,8 @@ import {
   orderChain, entryTurtle, preconditionLine, entryShapeAnswer,
   podOfWebid, podOfNsIri, podOfDescriptorUrl, parseAcceptanceIri, assignPodMarks, slugProblem,
   parseWorkspaceIri, memberDocIris, RelayMcpTransport, ConnectorTransport, asRefusal, refusal,
-  type ChainRow, type RelayOAuthBearer,
+  shortRef, grantPodFor, WorkspaceClient,
+  type ChainRow, type RelayOAuthBearer, type AnyTransport,
 } from '@interego/workspace-client';
 
 const RELAY = 'https://relay.interego.xwisee.com';
@@ -267,5 +268,87 @@ describe('the transport declares which credential drives it', () => {
     expect(asRefusal(rejection)?.['code']).toBe(412);
     expect(asRefusal({ code: 'server_unavailable' })).toBe(null);
     expect(refusal({ ok: true })).toBe(null);
+  });
+  it('names the remedy for a page nobody connected, because only one host has that remedy', async () => {
+    // The published artifact is the only host this transport serves, so the instruction belongs
+    // with it. A shell that supplied the sentence would be a second place to keep it true.
+    const none = new ConnectorTransport({ listTools: async () => ({ servers: [] }), callTool: async () => ({}) });
+    await expect(none.connect(['get_pod_status'], 'get_pod_status')).rejects.toThrow(/Settings → Connectors/);
+  });
+});
+
+// ── what the artifact's own I/O wrappers used to decide for themselves ───────
+
+/** A transport whose answers are scripted, so a call sequence can be asserted exactly. */
+function scripted(answers: Record<string, unknown[]>): { tx: AnyTransport; calls: { name: string; input: Record<string, unknown> }[] } {
+  const calls: { name: string; input: Record<string, unknown> }[] = [];
+  const tx = {
+    accepts: 'connector-grant' as const,
+    label: 'scripted',
+    connect: async () => ({ granted: [] as readonly string[] }),
+    callTool: async (name: string, input: Record<string, unknown>) => {
+      calls.push({ name, input });
+      const q = answers[name];
+      if (!q || !q.length) throw new Error('the script has no further answer for ' + name);
+      return q.shift();
+    },
+  } as unknown as AnyTransport;
+  return { tx, calls };
+}
+
+describe('a member document that could not be read is not a member document that is absent', () => {
+  const relay = RELAY;
+  const client = (answers: Record<string, unknown[]>): { c: WorkspaceClient; calls: { name: string }[] } => {
+    const { tx, calls } = scripted(answers);
+    return { c: new WorkspaceClient(relay, tx), calls };
+  };
+
+  it('carries the reason forward as an error, so no caller can call it "not published yet"', async () => {
+    // MEASURED SHAPE: a head the relay could not explain comes back as a RESOLVED body with
+    // neither a head nor a message. `currentHead` calls that `unreadable`. This used to arrive
+    // at `resolveMemberDoc` as a plain no-url answer and leave `error: null`, and every caller
+    // reads `error: null` as licence to print "granted, but no acceptance published on their pod
+    // yet" — a positive statement about somebody else's pod from a read that established nothing.
+    const { c } = client({ get_current_head: [{ podUrl: '/u-eth-b' }, { podUrl: '/u-eth-b' }] });
+    const got = await c.resolveMemberDoc('u-eth-b', 'u-eth-a', 'room', 'acceptance');
+    expect(got.found).toBe(false);
+    expect(got.error).toMatch(/neither a head nor a reason/);
+  });
+
+  it('still reports a clean absence as an absence, which is what licenses offering Create', async () => {
+    const absent = { podUrl: '/u-eth-b', message: 'No descriptor on this pod describes the requested urn.' };
+    const { c } = client({ get_current_head: [absent, absent] });
+    const got = await c.resolveMemberDoc('u-eth-b', 'u-eth-a', 'room', 'acceptance');
+    expect(got.found).toBe(false);
+    expect(got.error).toBe(null);
+  });
+
+  it('tries the qualified name first and reports which one answered', async () => {
+    const { c, calls } = client({
+      get_current_head: [
+        { podUrl: '/u-eth-b', message: 'nothing here' },
+        { podUrl: '/u-eth-b', head: { descriptorUrl: 'http://css/x.ttl', cid: 'bafy' } },
+      ],
+    });
+    const got = await c.resolveMemberDoc('u-eth-b', 'u-eth-a', 'room', 'acceptance');
+    expect(calls.length).toBe(2);
+    expect(got.found).toBe(true);
+    expect(got.naming).toBe('legacy');
+  });
+});
+
+describe('the grant pod is decided once, so a diagnostic cannot name a pod nothing was asked for', () => {
+  it('prefers the convener the record names over the pod segment in the IRI', () => {
+    expect(grantPodFor('u-eth-convener', 'u-eth-iri')).toBe('u-eth-convener');
+    expect(grantPodFor(null, 'u-eth-iri')).toBe('u-eth-iri');
+  });
+});
+
+describe('shortening tells a revision apart from a storage address', () => {
+  it('keeps a URL\'s last segment rather than its head and tail', () => {
+    expect(shortRef('http://css.railway.internal:3456/u-eth-a/context-graphs/17.ttl')).toBe('…/17.ttl');
+  });
+  it('shortens a CID as an opaque string, which a URL formatter would misrepresent', () => {
+    expect(shortRef('bafkreighlmnopqrstuvwxyz3bt65q')).toBe('bafkreighl…3bt65q');
   });
 });

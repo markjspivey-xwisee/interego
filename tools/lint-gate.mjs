@@ -458,7 +458,7 @@ const BASELINE = {};
 // shared-workspace agent runtime and tools/railway-registry-credentials.mjs (352 -> 363).
 // Caught its author for the second consecutive time, which is the whole argument for a
 // floor that fails when it is TOO LOW as well as when it is breached.
-export const MIN_FILES = 364;
+export const MIN_FILES = 365;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
