@@ -916,6 +916,52 @@ describe('the model the agent runs on is the user\'s own, or it is absent', () =
   });
 });
 
+describe('the first run reads as one sequence, and admits what it cannot know', () => {
+  it('names the pod and the model account as established', async () => {
+    const o = await open();
+    await signInAndSettle(o);
+    const steps = text(o.doc, '#setupsteps');
+    expect(steps).toContain('1. Your account — you are pod ' + POD_A);
+    expect(steps).toContain('brother@example.com');
+  });
+
+  it('★ never says the user has not linked Discord — it says it cannot know', async () => {
+    // The easiest honesty failure on this screen. Whether a pod delegates a bot is a question
+    // about that pod's registry and it needs an agent id to ask; the app has none until the user
+    // types one. A checklist that drew that as an unticked box would be asserting something it
+    // had not checked — and would keep asserting it after a link made from another client.
+    const o = await open();
+    await signInAndSettle(o);
+    const steps = text(o.doc, '#setupsteps');
+    expect(steps).toContain('nothing here is a claim either way');
+    expect(steps).not.toContain('4. Discord — you have not');
+    // Rendered as "not established", never as a finding against.
+    const discord = [...o.doc.querySelectorAll('#setupsteps .q')].map((n) => n.textContent ?? '');
+    expect(discord.some((t) => t.startsWith('4. Discord'))).toBe(true);
+  });
+
+  it('★ a workspace list that failed to read is not reported as "you are in none"', async () => {
+    const o = await open({ setup: (s) => {
+      s.fail.set('discover_context', (input) => (String(input['pod_name'] ?? '') === POD_A
+        ? { error: 'upstream_error', message: 'the pod manifest could not be read' } : undefined));
+    } });
+    await signInAndSettle(o);
+    const steps = text(o.doc, '#setupsteps');
+    expect(steps).toContain('how many you are in is not established');
+    expect(steps).not.toContain('you are in none yet');
+  });
+
+  it('★ a missing model is a finding against, not an unknown — the tool was actually asked', async () => {
+    // The mirror of the Discord case, and the reason both exist. Here the app DID ask and got an
+    // answer, so "no" is established and drawing it as "unknown" would understate a real blocker.
+    const o = await open({ agent: { prompts: [], cancels: 0, providers: [CLAUDE_ABSENT] } });
+    await signInAndSettle(o);
+    const against = [...o.doc.querySelectorAll('#setupsteps .n')].map((n) => n.textContent ?? '');
+    expect(against.some((t) => t.startsWith('2. Your agent\'s model'))).toBe(true);
+    expect(text(o.doc, '#setupsteps')).toContain('You can use everything else without it');
+  });
+});
+
 // ── linking a chat account by publishing a delegation ────────────────────────
 
 describe('linking Discord publishes a delegation, and shows the call first', () => {

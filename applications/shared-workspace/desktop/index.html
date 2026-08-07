@@ -210,6 +210,18 @@
       <div class="note" id="bootnote"></div>
     </div>
 
+    <!--
+      THE FIRST RUN, AS ONE SEQUENCE RATHER THAN FOUR CARDS.
+      Each step reports what is ESTABLISHED, and says "not established" where this app genuinely
+      cannot know — a step it has no evidence about is never drawn as a step you have not done.
+    -->
+    <div class="card" id="setupcard" hidden>
+      <h3>Getting set up</h3>
+      <div class="note">Four things, once. Everything below this card is the detail for whichever
+        one you are on.</div>
+      <div id="setupsteps"></div>
+    </div>
+
     <div class="card" id="mecard" hidden>
       <h3>Who you are here</h3>
       <div id="mebody"></div>

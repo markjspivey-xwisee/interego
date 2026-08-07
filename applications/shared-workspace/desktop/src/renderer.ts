@@ -709,6 +709,7 @@ function renderLobby(): void {
   $('opencard').hidden = !ready;
   renderModelCard();
   renderDiscordPlan();
+  renderSetup();
   renderSlugHint();
 
   // Invite, offered only where a grant this client writes would actually COUNT.
@@ -1817,6 +1818,55 @@ async function doMerge(): Promise<void> {
   renderRev();
 }
 
+// ── the first run, as one sequence ───────────────────────────────────────────
+
+/**
+ * Whether THIS app has published a Discord delegation in this session.
+ *
+ * ★ DELIBERATELY NOT PERSISTED, AND DELIBERATELY NOT A CLAIM ABOUT THE POD. Whether a delegation
+ * exists is a question about the pod's registry and it needs an agent id to ask — which this app
+ * does not have until the user types one. So this is what this app DID, not what is true, and the
+ * checklist below says so in those words. A cached "linked ✓" that outlived a revoke made
+ * somewhere else would be the app asserting something it had not checked.
+ */
+let discordPublishedHere = false;
+
+/** `y` established in favour, `n` established against, `q` not established. */
+function setupSteps(): Check[] {
+  const out: Check[] = [];
+  const pod = S.viewer?.podName ?? null;
+  out.push(pod
+    ? { mark: 'y', text: '1. Your account — you are pod ' + pod + ', and it is the only storage these credentials can write to.' }
+    : { mark: 'q', text: '1. Your account — not resolved yet.' });
+
+  if (!providerRead) out.push({ mark: 'q', text: '2. Your agent\'s model — still checking this machine.' });
+  else {
+    const p = usableProvider();
+    out.push(p
+      ? { mark: 'y', text: '2. Your agent\'s model — ' + p.label + ', signed in as ' + (p.account ?? 'an account it did not name') + '. Your agent runs on your own subscription.' }
+      : { mark: 'n', text: '2. Your agent\'s model — ' + (providers[0]?.why ?? 'nothing this app can drive was found on this machine.') + ' You can use everything else without it; there is just no agent until it is fixed.' });
+  }
+
+  const joined = S.spaces?.length ?? null;
+  out.push(S.spacesError
+    ? { mark: 'q', text: '3. A workspace — your own pod could not be read, so how many you are in is not established.' }
+    : joined === null ? { mark: 'q', text: '3. A workspace — not read yet.' }
+      : joined > 0 ? { mark: 'y', text: '3. A workspace — you are in ' + joined + '. Open one below, or create another.' }
+        : { mark: 'n', text: '3. A workspace — you are in none yet. Accept an invitation above, or create one below.' });
+
+  out.push(discordPublishedHere
+    ? { mark: 'y', text: '4. Discord — this app published a delegation on your pod in this session. Run /workspace link-confirm in Discord to finish; the bot checks the row itself rather than taking this app\'s word for it.' }
+    // Not "you have not linked Discord": this app cannot know that without an agent id to ask about.
+    : { mark: 'q', text: '4. Discord — optional, and this app has not published one for you in this session. Whether your pod already delegates a bot is not something it can check without knowing which bot, so nothing here is a claim either way.' });
+  return out;
+}
+
+function renderSetup(): void {
+  if (!document.getElementById('setupcard')) return;
+  $('setupcard').hidden = !S.viewer?.podName;
+  clear($('setupsteps')).appendChild(checkList(setupSteps()));
+}
+
 // ── your own model, and your own agent ───────────────────────────────────────
 
 /**
@@ -1843,6 +1893,7 @@ async function loadProviders(): Promise<void> {
   }
   providerRead = true;
   renderModelCard();
+  renderSetup();
   renderAgent();
 }
 
@@ -1932,6 +1983,8 @@ async function linkDiscord(): Promise<void> {
     p.appendChild(el('div', 'note', 'Now run /workspace link-confirm pod:' + S.viewer.podName + ' back in Discord. '
       + 'The bot checks this row itself; it does not take this app\'s word for it.'));
     $('discordrevoke').hidden = false;
+    discordPublishedHere = true;
+    renderSetup();
   } else {
     const p = say('discordresult', out.kind === 'unconfirmed' ? 'pending' : 'refused',
       out.kind === 'unconfirmed' ? 'Accepted, but not confirmed by reading your pod back' : 'Not published', out.why);

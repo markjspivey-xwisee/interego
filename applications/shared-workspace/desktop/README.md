@@ -33,6 +33,31 @@ became the head.
 
 ---
 
+## What a brand-new user does, start to finish, with nothing but the app
+
+1. **Open it and press *Create an account with a passkey*.** Windows Hello / Touch ID both creates
+   the account and signs in; there is no password and no sign-up form. The ceremony happens in the
+   system browser rather than in this window, because `clientDataJSON.origin` has to be the
+   identity server's and a page loaded from disk cannot produce one — that also means a real
+   platform authenticator instead of a soft key this program made up. First run takes **12–17 s**
+   while the relay provisions a pod; the boot checklist counts up and names the step rather than
+   spinning. Wallet sign-in stays on the same card for people who already have a `u-eth-…` pod.
+2. **Read *Getting set up*.** Four steps with their real state — account, model, workspace,
+   Discord — each marked as established for, established against, or **not established**. Step 2
+   is a finding against when the CLI was asked and said no; step 4 is an *unknown*, because
+   whether a pod delegates a bot needs an agent id to ask about and the app has none until you
+   type one. It never draws "you have not linked Discord".
+3. **Check *Your agent's model*.** It reports what this machine can run your agent on and under
+   which account. If nothing is there it says what to install and that everything else still works.
+4. **Create or accept a workspace**, exactly as before.
+5. **Link Discord** from the lobby card, if you want the thread.
+6. **In the channel, turn your agent on** when you want it. It drafts into the composer; you press
+   Post.
+
+Nothing in that sequence needs a terminal, a key, or a second client.
+
+---
+
 ## Your agent runs on your own subscription, or it does not run
 
 Everything in this section was driven end to end against the live fleet, with two freshly minted
