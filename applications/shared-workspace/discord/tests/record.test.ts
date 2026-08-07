@@ -21,7 +21,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  WorkspaceClient, graphRegion, readIriAll, type AnyTransport,
+  WorkspaceClient, graphRegion, readIriAll, DELEGATE_LABEL_PREFIX, type AnyTransport,
 } from '@interego/workspace-client';
 import { recordMessage } from '../src/workspace.js';
 import type { Link, ThreadBinding } from '../src/links.js';
@@ -156,6 +156,6 @@ describe('a relayed message is the PERSON\'s entry, not the bot\'s', () => {
     const status = await run.client.tool('get_pod_status', { pod_name: MEMBER }) as Record<string, unknown>;
     const rows = (status['delegationRegistry'] as { rows: Record<string, unknown>[] }).rows;
     expect(rows[0]?.['label']).toBe('discord-link 4242');
-    expect(String(rows[0]?.['label'])).not.toContain('workspace-delegate');
+    expect(String(rows[0]?.['label'])).not.toContain(DELEGATE_LABEL_PREFIX);
   });
 });

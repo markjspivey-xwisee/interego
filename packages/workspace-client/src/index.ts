@@ -83,17 +83,31 @@ export {
 } from './delegation.js';
 
 export {
-  DELEGATION_SCOPES, WRITE_ELIGIBLE_SCOPES, isDelegationScope,
-  SNOWFLAKE_RX, challengeLabel, AGENT_ID_RX,
-  discordLinkPlan, publishDelegation, revokeDelegation,
-  type DelegationScope, type LinkProblem, type DelegationPlan, type DelegationOutcome,
+  SNOWFLAKE_RX, challengeLabel, discordLinkPlan,
+  type LinkProblem, type LinkPlan,
 } from './agentlink.js';
 
+/**
+ * The delegate surface. ★ EVERY NAME HERE EXCEPT THE TWO WORKSPACE ONES IS DEFINED IN
+ * `@interego/core/delegate` AND RE-EXPORTED THROUGH `./delegates.js` — a delegate is an Interego
+ * concept, and this vertical composes it rather than owning it. Re-exporting rather than asking
+ * consumers to add a second import is what keeps the generated artifact bundle pulling the
+ * substrate's implementation into itself instead of a copy.
+ *
+ * The two that are genuinely this vertical's: `delegateCeiling` (the substrate's scope ceiling
+ * composed with a workspace ROLE ceiling) and `readEntryAuthorship` (a Turtle adapter over the
+ * substrate's `judgeAuthorship`).
+ */
 export {
   DELEGATE_SURFACE, DELEGATE_LABEL_PREFIX, DELEGATE_NAME_MAX,
-  delegateLabel, parseDelegateLabel, delegateNameProblem, delegateAgentId,
-  readDelegates, delegatePlan, delegateCeiling, readEntryAuthorship, authorshipLine,
-  type Delegate, type DelegateRoster, type DelegateCeiling, type EntryAuthorship,
+  DELEGATION_SCOPES, WRITE_ELIGIBLE_SCOPES, isDelegationScope, scopeWriteEligible, AGENT_ID_RX,
+  delegateLabel, parseDelegateLabel, delegateNameProblem, delegateAgentId, isDelegateRow,
+  readDelegates, delegatePlan, publishDelegation, revokeDelegation,
+  scopeCeiling, judgeAuthorship, authorshipLine,
+  delegateCeiling, readEntryAuthorship, delegatePort,
+  type DelegateRow, type DelegateRoster, type DelegateRegistryPort,
+  type DelegateField, type DelegateProblem, type DelegatePlan, type DelegateOutcome,
+  type DelegationScope, type CeilingVerdict, type EntryAuthorship,
 } from './delegates.js';
 
 export {

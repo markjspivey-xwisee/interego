@@ -17,6 +17,9 @@
   "files": ["dist/", "src/", "README.md"],
   "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
   "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@interego/core": "*"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"

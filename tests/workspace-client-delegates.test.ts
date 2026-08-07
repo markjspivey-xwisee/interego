@@ -18,9 +18,10 @@ import {
   DELEGATE_LABEL_PREFIX, DELEGATE_NAME_MAX, DELEGATE_SURFACE,
   authorshipLine, delegateAgentId, delegateCeiling, delegateLabel, delegateNameProblem,
   delegatePlan, entryTurtle, graphRegion, parseDelegateLabel, readDelegates, readEntryAuthorship,
-  readIriAll, RelayMcpTransport, shapesTurtle, WorkspaceClient,
-  type AnyTransport, type DelegateRoster, type RoleTable,
+  readIriAll, RelayMcpTransport, shapesTurtle, WorkspaceClient, isDelegateRow,
+  type AnyTransport, type DelegateRoster, type DelegateRow, type DelegationScope, type RoleTable,
 } from '@interego/workspace-client';
+import type { IRI } from '@interego/core';
 
 const RELAY = 'https://relay.interego.xwisee.com';
 const POD = 'u-eth-aaaaaaaaaaaa';
@@ -65,18 +66,20 @@ const row = (agentId: string, name: string | null, scope: string | null): Record
 
 /** The roster the readers take, built without a network round trip where one is not the point. */
 const roster = (rows: readonly Record<string, unknown>[]): DelegateRoster => {
-  const parsed = rows.map((r) => ({
-    agentId: String(r['agentId']),
+  // A row IS the substrate's `AuthorizedAgentData` — `delegatedBy` included, which the vertical's
+  // old local row type could not carry, so a fixture could not express "delegated by whom" at all.
+  const parsed: DelegateRow[] = rows.map((r) => ({
+    agentId: String(r['agentId']) as IRI,
+    delegatedBy: WEBID as IRI,
     name: parseDelegateLabel(r['label'] as string),
-    scope: (r['scope'] as string) ?? null,
-    label: (r['label'] as string) ?? null,
-    validFrom: (r['validFrom'] as string) ?? null,
-    isDelegate: parseDelegateLabel(r['label'] as string) !== null,
+    scope: ((r['scope'] as string) ?? '') as DelegationScope,
+    label: (r['label'] as string) ?? '',
+    validFrom: (r['validFrom'] as string) ?? '',
     writeEligible: ['ReadWrite', 'PublishOnly'].includes((r['scope'] as string) ?? ''),
   }));
   return {
-    podName: POD, read: true, rows: parsed,
-    delegates: parsed.filter((p) => p.isDelegate), others: parsed.filter((p) => !p.isDelegate), why: null,
+    podName: POD, read: true, owner: WEBID as IRI, rows: parsed,
+    delegates: parsed.filter(isDelegateRow), others: parsed.filter((p) => !isDelegateRow(p)), why: null,
   };
 };
 
@@ -115,7 +118,7 @@ describe('a delegate identity is its key, not its host and not its channel', () 
     // `String.fromCharCode` says exactly which code point is meant and cannot become one.
     expect(delegateNameProblem('a' + String.fromCharCode(0) + 'b')).toMatch(/control character/);
     expect(delegateNameProblem('a' + String.fromCharCode(0x7f) + 'b')).toMatch(/control character/);
-    expect(delegateNameProblem('workspace-delegate Bob')).toMatch(/prefix this client already adds/);
+    expect(delegateNameProblem(DELEGATE_LABEL_PREFIX + 'Bob')).toMatch(/prefix this client already adds/);
     expect(delegateNameProblem('Research assistant')).toBeNull();
   });
 });
@@ -123,7 +126,7 @@ describe('a delegate identity is its key, not its host and not its channel', () 
 describe('the plan is shown before the call is made', () => {
   it('names the exact register_agent arguments and defaults to the narrowest writing scope', () => {
     const p = delegatePlan({ agentId: D1, name: 'Research assistant' });
-    expect(p.call).toEqual({ tool: 'register_agent', args: { agent_id: D1, scope: 'PublishOnly', label: 'workspace-delegate Research assistant' } });
+    expect(p.call).toEqual({ tool: 'register_agent', args: { agent_id: D1, scope: 'PublishOnly', label: delegateLabel('Research assistant') } });
   });
 
   it('★ states that entries name the delegate as author and the person as who it acted for', () => {
@@ -286,7 +289,7 @@ describe('readEntryAuthorship: the entry claims, and two other documents hold it
     expect(notListed.kind === 'delegate' && notListed.authorised).toBe(false);
     const notRead = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: null });
     expect(notRead.kind === 'delegate' && notRead.authorised).toBeNull();
-    const failedRead = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: { podName: POD, read: false, rows: [], delegates: [], others: [], why: 'x' } });
+    const failedRead = readEntryAuthorship(t, { logOwnerWebId: WEBID, delegates: { podName: POD, read: false, owner: null, rows: [], delegates: [], others: [], why: 'x' } });
     expect(failedRead.kind === 'delegate' && failedRead.authorised).toBeNull();
   });
 

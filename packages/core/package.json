@@ -17,6 +17,10 @@
       "import": "./dist/model/index.js",
       "types": "./dist/model/index.d.ts"
     },
+    "./delegate": {
+      "import": "./dist/model/delegate.js",
+      "types": "./dist/model/delegate.d.ts"
+    },
     "./rdf": {
       "import": "./dist/rdf/index.js",
       "types": "./dist/rdf/index.d.ts"

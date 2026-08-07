@@ -37,6 +37,14 @@ became the head.
 | run one of your delegates on your own model subscription | `decideTurn` / `briefPrompt` / `checkDraft` / `delegateCeiling` + `modelprovider.ts` | yes |
 | tell a delegate's entry from its delegator's, as a reader | `readEntryAuthorship` / `authorshipLine` | yes |
 
+Every delegate row above comes from **`@interego/core/delegate`**, not from the workspace package.
+"An identity a person authorises to act for them" is an Interego concept — it sits beside the
+`AuthorizedAgentData` / signed-VC / `verifyDelegation` model that has always carried `delegatedBy` —
+so this app, the Discord conduit and the published artifact all reach it from the layer below
+rather than from each other. `@interego/workspace-client` re-exports it and adds exactly two things
+of its own: `delegateCeiling`, which composes the substrate's scope ceiling with a workspace ROLE
+ceiling, and `readEntryAuthorship`, a Turtle adapter over the substrate's `judgeAuthorship`.
+
 ---
 
 ## What a brand-new user does, start to finish, with nothing but the app

@@ -28,6 +28,43 @@ export {
   verifyDelegation,
   verifyDelegationChain,
 } from './delegation.js';
+// The live half of the delegation model: seating, reading, revoking and attributing a delegate.
+// Also reachable as the narrow subpath `@interego/core/delegate`, which is what a BROWSER bundle
+// must import — this barrel pulls in the whole model and an artifact should not pay for that.
+export {
+  DELEGATION_SCOPES,
+  WRITE_ELIGIBLE_SCOPES,
+  isDelegationScope,
+  scopeWriteEligible,
+  AGENT_ID_RX,
+  DELEGATE_LABEL_PREFIX,
+  DELEGATE_NAME_MAX,
+  DELEGATE_SURFACE,
+  delegateLabel,
+  parseDelegateLabel,
+  delegateNameProblem,
+  delegateAgentId,
+  isDelegateRow,
+  relayRefusal,
+  readDelegates,
+  delegatePlan,
+  publishDelegation,
+  revokeDelegation,
+  scopeCeiling,
+  judgeAuthorship,
+  authorshipLine,
+} from './delegate.js';
+export type {
+  DelegateRow,
+  DelegateRoster,
+  DelegateRegistryPort,
+  DelegateField,
+  DelegateProblem,
+  DelegatePlan,
+  DelegateOutcome,
+  CeilingVerdict,
+  EntryAuthorship,
+} from './delegate.js';
 export type {
   DelegationSigner,
   DelegationVerifier,

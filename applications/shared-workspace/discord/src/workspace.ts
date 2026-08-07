@@ -20,6 +20,7 @@ import {
   readMember, sendInvite, toChainRow,
   type AuthorshipReading, type DelegateRoster, type EntryAuthorship, type PostOutcome,
   type WorkspaceClient,
+  delegatePort,
 } from '@interego/workspace-client';
 import { challengeLabel, slugFor, SNOWFLAKE_RX, type Link, type LinkStore, type ThreadBinding } from './links.js';
 
@@ -467,7 +468,7 @@ export async function showWorkspace(deps: Deps, threadId: string): Promise<ShowO
     for (const s of fold.seats) {
       if (!s.seated || !s.pod) continue;
       const p = s.podServed ?? s.pod;
-      if (!delegates.has(p)) delegates.set(p, await readDelegates(deps.client, p));
+      if (!delegates.has(p)) delegates.set(p, await readDelegates(delegatePort(deps.client), p));
     }
     for (const s of fold.seats) {
       if (!s.seated || !s.stream || !s.pod) continue;
