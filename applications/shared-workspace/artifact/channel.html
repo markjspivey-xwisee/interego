@@ -1364,6 +1364,7 @@ var WSPC = (() => {
     if (!env || typeof env !== "object") return null;
     return refusal(env.payload);
   }
+  var CACHE_KEY_SEP = "\0";
   var RPC_ACCEPT = "application/json, text/event-stream";
   function parseRpcBody(raw) {
     try {
@@ -1438,7 +1439,7 @@ var WSPC = (() => {
       return { granted };
     }
     async callTool(name, input, opts) {
-      const key = name + "\0" + JSON.stringify(input);
+      const key = name + CACHE_KEY_SEP + JSON.stringify(input);
       const stale = opts?.cache?.staleTime;
       if (stale) {
         const hit = this.cache.get(key);
@@ -1477,7 +1478,7 @@ var WSPC = (() => {
       return null;
     }
     async invalidate(name) {
-      for (const k of [...this.cache.keys()]) if (k.startsWith(name + "\0")) this.cache.delete(k);
+      for (const k of [...this.cache.keys()]) if (k.startsWith(name + CACHE_KEY_SEP)) this.cache.delete(k);
     }
   };
   var ConnectorTransport = class {
