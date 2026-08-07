@@ -5,13 +5,20 @@
   "author": "Mark Spivey",
   "license": "MIT",
   "private": true,
+  "homepage": "https://github.com/markjspivey-xwisee/interego",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/markjspivey-xwisee/interego.git"
+  },
   "main": "./dist/main.js",
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json && esbuild src/main.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/main.js && esbuild src/preload.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/preload.js && esbuild src/selftest.ts --bundle --format=cjs --platform=node --target=es2020 --external:electron --outfile=dist/selftest.js && esbuild src/renderer.ts --bundle --format=iife --platform=browser --target=es2020 --outfile=dist/renderer.js",
     "start": "npm run build && electron dist/main.js",
     "clean": "rm -rf dist/ release/",
     "selftest": "npm run build && electron dist/selftest.js",
-    "package": "npm run build && electron-builder --win --config electron-builder.yml"
+    "package": "npm run build && electron-builder --win --config electron-builder.yml",
+    "package:linux": "npm run build && electron-builder --linux --config electron-builder.yml",
+    "package:mac": "npm run build && electron-builder --mac --config electron-builder.yml"
   },
   "engines": {
     "node": ">=20.0.0"

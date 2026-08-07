@@ -8,7 +8,7 @@ today on mobile and where the rough edges are.
 
 | Client | Surface | Status |
 |---|---|---|
-| **claude.ai web (iPhone Safari / Android Chrome)** | `/mcp` Streamable HTTP (fallback to `/sse`) | ✅ Works end-to-end — OAuth flow in-browser, passkey or wallet enrollment, tools render in the conversation. The cleanest mobile experience. |
+| **claude.ai web (iPhone Safari / Android Chrome)** | `/mcp` Streamable HTTP (the only transport; there is no `/sse` fallback) | ✅ Works end-to-end — OAuth flow in-browser, passkey or wallet enrollment, tools render in the conversation. The cleanest mobile experience. |
 | **Claude iOS / Android app** | Custom connectors (Settings → Connectors → Add custom) | ✅ Works — same `/mcp` endpoint. Adds the relay as a tool source for any conversation. |
 | **ChatGPT iOS / Android app** | Custom connectors (subscription tier dependent) | ✅ Works on supported tiers. Same `/mcp` endpoint. |
 | **Hermes Agent (any backend)** | Modal / Daytona / SSH backend | ✅ Works headlessly — Hermes on Modal hibernates between turns, wakes when paged via Discord / Telegram / Slack / WhatsApp / Signal / SMS. Mobile users interact through the messaging app; the relay talks to Hermes' Modal endpoint. |
@@ -74,7 +74,7 @@ WhatsApp. No mobile-specific Interego client needed.
 ## Architecturally pure: there's no "mobile" in the protocol
 
 Every interaction is HTTP + RDF. Mobile vs. desktop is purely a
-client concern. The relay doesn't know or care whether the SSE
+client concern. The relay doesn't know or care whether the
 connection is from a phone, a laptop, a CI runner, or a serverless
 function on Modal — it issues the same OAuth tokens and serves the
 same tool surface.

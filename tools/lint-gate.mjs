@@ -477,7 +477,15 @@ const BASELINE = {};
 // pod's owner published) and `tests/workspace-client-delegation.test.ts` (381 -> 383). The bot
 // itself lives under `applications/`, which is frontier rather than a zero-error target, so only
 // the two files that landed in the linted tree move this number.
-export const MIN_FILES = 373;
+// 373 -> 374, on the round that added `tools/probe-sse-mcp-handshake-live.ts` — the live driver
+// that measured `GET /sse` failing an MCP handshake against the protocol's own
+// SSEClientTransport (383 -> 384). Not forced by the floor this time (384 - 373 is 11, one past
+// the allowance, so it WAS forced — but only after the Discord round landed first; measured
+// against master alone it was 382 and inside it). Moved regardless: a ratchet that advances
+// only when the gate shouts spends its life one file from useless. The round's other two new
+// files live under `applications/`, which is frontier rather than a zero-error target, so they
+// do not move this number.
+export const MIN_FILES = 374;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

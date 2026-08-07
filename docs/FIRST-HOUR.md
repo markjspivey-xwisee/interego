@@ -51,9 +51,11 @@ The connector URL you'll paste into every client:
 https://relay.interego.xwisee.com/mcp
 ```
 
-`/mcp` is the modern Streamable HTTP transport and is preferred. The relay
-also serves `/sse` for older clients, but use `/mcp` unless a specific
-client tells you otherwise.
+`/mcp` is the Streamable HTTP transport, and it is the only MCP transport
+the relay serves. The relay also answers `GET /sse`, but that is a plain
+write-activity feed for the connecting bearer's own pod — not an MCP
+transport. Pointing an MCP client at it produces a connection that hangs
+and then times out.
 
 ### ChatGPT (web + mobile) — no CLI
 

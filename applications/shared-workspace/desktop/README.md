@@ -28,10 +28,12 @@ became the head.
 | canvas: create, save, forced stale 412, merge forward | `readCanvas` / `saveCanvas` / `mergeForward` | yes |
 | renew the bearer with no user present | `refreshBearer` here + the relay's `refresh_token` grant | yes |
 
-**Not signed and not notarised.** `npm run package` produces an unsigned Windows build;
-SmartScreen will warn on first run and that warning is correct. There is no code-signing
-certificate for this project and notarisation needs an Apple Developer account nobody here
-holds. Out of scope — see *Packaging* below.
+**Not signed and not notarised, on any platform.** Windows SmartScreen will warn on first run
+of the `.exe`, and macOS Gatekeeper will refuse to open the `.app` and say the developer cannot
+be verified. **Both warnings are accurate**: the binaries genuinely are not signed by anybody
+either OS recognises. There is no code-signing certificate for this project and notarisation
+needs an Apple Developer account nobody here holds. Out of scope — see *Packaging* below,
+which also states which targets have actually been built and which have not.
 
 **Not pushed — polled.** The channel updates by re-reading on a timer, not by subscription, and
 the shell says so on screen in the transport's own words rather than claiming "live". See
@@ -216,22 +218,41 @@ document; typechecking could not see it.
 ## Packaging
 
 ```sh
-npm run package --workspace @interego/workspace-desktop
+npm run package       --workspace @interego/workspace-desktop   # Windows: zip + NSIS
+npm run package:linux --workspace @interego/workspace-desktop   # Linux:   AppImage + deb
+npm run package:mac   --workspace @interego/workspace-desktop   # macOS:   zip + dmg
 ```
 
-Produces, in `applications/shared-workspace/desktop/release/`:
+### What has actually been built, and where
 
-| artifact | size | what it is |
+★ **This table separates "configured" from "built", because a target asserted as working and
+never run is worse than one marked untested.** Everything below was measured on the maintainer's
+machine — Windows 10 x64, electron-builder 25.1.8, Electron 33.4.11 — on 2026-08-07.
+
+| target | status here | evidence |
 |---|---|---|
-| `Interego Workspace-0.1.0-win.zip` | ~81 MB | portable. Unzip, run the `.exe`. Nothing installed. |
-| `Interego Workspace-0.1.0-setup.exe` | ~111 MB | NSIS, per-user, no elevation prompt |
-| `win-unpacked/` | ~181 MB | the same app, not archived |
+| **win** `zip` + `nsis` | **BUILT** | `Interego Workspace-0.1.0-win.zip` 115,482,536 B, `…-setup.exe` 84,771,195 B, `win-unpacked/` 285 MB. Rebuilt from scratch after the mac/linux sections were added, so those additions are known not to have broken the working target. |
+| **linux** app tree (`--linux dir`) | **BUILT** | `release/linux-unpacked/` — 279 MB. The real `linux-x64` Electron runtime is downloaded and the app packed into it; `resources/app.asar` is present. The application packs for Linux on this machine; only the two Linux *package formats* do not. |
+| **linux** `AppImage` | **NOT BUILDABLE ON WINDOWS** | `⨯ cannot execute … appimage-12.0.1\linux-x64\mksquashfs: file does not exist`. The file IS in the cache; it is a Linux **ELF** (`\x7fELF` verified), so Windows cannot exec it and Node reports the spawn failure as ENOENT. |
+| **linux** `deb` | **NOT BUILDABLE ON WINDOWS** | `⨯ cannot execute  cause=exec: "fpm": executable file not found in %PATH%`. electron-builder shells out to `fpm`, which is not shipped for Windows hosts. |
+| **mac** `zip` + `dmg` | **CONFIGURED, UNVERIFIED** | Never run. There is no macOS machine on this project, and `dmg` cannot be produced off a Mac at all. Nothing here has been launched, and `safeStorage` has never been exercised on macOS. |
 
-**Unsigned, and not notarised.** `signAndEditExecutable: false` and `forceCodeSigning: false` in
-`electron-builder.yml` are deliberate: there is no certificate. Windows SmartScreen warns on
-first run of the `.exe` and the warning is accurate — the binary is not signed by anybody it
-recognises. macOS notarisation needs an Apple Developer account; neither is in scope here, and
-neither is faked.
+So: **Linux packages need a Linux host** (or Docker / WSL — untried here), and **macOS needs a
+Mac**. The configuration for both is committed and reviewable; only the Windows artifacts and
+the Linux *unpacked* tree have been produced.
+
+Two things the first Linux attempt turned up, both now fixed in the config rather than left for
+whoever next runs it on a Linux box: `deb` is a **hard failure** without a `homepage` (added to
+`package.json`) and without a maintainer email (`linux.maintainer` in `electron-builder.yml` —
+`author` carries no address). And `deb.depends` names `libsecret-1-0` explicitly, because
+`safeStorage` — where the wallet key lives — is backed by libsecret on Linux; omit it and the
+app starts, looks healthy, and silently cannot persist a key.
+
+**Unsigned, and not notarised.** `signAndEditExecutable: false`, `mac.identity: null` and
+`forceCodeSigning: false` in `electron-builder.yml` are deliberate: there is no certificate.
+Windows SmartScreen warns on first run of the `.exe` and macOS Gatekeeper refuses to open the
+`.app`; **both warnings are accurate** — the binaries are not signed by anybody either OS
+recognises. Signing and notarisation are out of scope here, and neither is faked.
 
 `electronVersion` is pinned in `electron-builder.yml` because this is an npm **workspace**:
 electron-builder looks for `electron` in the package's own `node_modules`, npm hoists it to the

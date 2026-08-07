@@ -1,14 +1,21 @@
 #!/usr/bin/env tsx
 /**
- * MCP Relay — HTTP/SSE bridge for remote AI agents.
+ * MCP Relay — Streamable-HTTP bridge for remote AI agents.
  *
  * Exposes the context-graphs MCP tools over HTTP so agents
  * running anywhere (not just localhost) can publish, discover,
  * and subscribe to context on the cloud-hosted Solid server.
  *
  * Endpoints:
- *   GET  /sse              — SSE stream (MCP over SSE transport)
- *   POST /messages         — MCP JSON-RPC messages
+ *   POST /mcp              — THE MCP transport (Streamable HTTP, current spec)
+ *   GET  /sse              — SSE feed of recent writes on the caller's own pod.
+ *                            ★ NOT an MCP transport. This line used to say
+ *                            "MCP over SSE transport" and that was false in a way
+ *                            that cost a reader a hung client: the handler emits no
+ *                            `event: endpoint` frame, so no MCP client can handshake.
+ *   POST /messages         — bespoke JSON-RPC-shaped tool endpoint (tools/list,
+ *                            tools/call). Not the SSE transport's message endpoint —
+ *                            nothing advertises it and it does not implement initialize.
  *   GET  /health           — Health check
  *   GET  /tools            — List available tools (convenience)
  *   POST /tool/:name       — Call a tool directly via REST (convenience)
@@ -11869,9 +11876,18 @@ async function publishPodBootstrapDescriptor(params: {
 // A non-technical user hitting the relay's root URL would otherwise
 // see "Cannot GET /" — not actionable. This serves a minimal page
 // pointing them at the right next step (configure their MCP client
-// with the /mcp URL — Streamable HTTP, current spec — falling back
-// to /sse only if their client doesn't support it; OAuth-led flow
-// handles enrollment).
+// with the /mcp URL — Streamable HTTP, current spec; the OAuth-led
+// flow handles enrollment).
+//
+// ★ THIS PAGE USED TO OFFER /sse AS A "LEGACY / COMPAT" MCP TRANSPORT, AND IT IS NOT ONE.
+// `app.get('/sse')` below writes bespoke `data: {"type":"connection"…}` /
+// `data: {"type":"notifications"…}` frames and never an `event:` field. MCP's HTTP+SSE
+// transport opens with `event: endpoint` naming the URI the client POSTs to, so a client
+// pointed here never learns a message endpoint, never sends `initialize`, and hangs until
+// its own timeout with nothing on either side saying why. Measured against this deployment
+// by `tools/probe-sse-mcp-handshake-live.ts` (the protocol's own SSEClientTransport times
+// out at 20 s while a StreamableHTTPClientTransport at /mcp connects with the same bearer).
+// The offer is removed rather than the endpoint: the desktop shell reads that feed.
 
 const RELAY_LANDING_HTML = `<!doctype html>
 <html lang="en">
@@ -11922,8 +11938,8 @@ const RELAY_LANDING_HTML = `<!doctype html>
 }</pre>
 
 <div class="legacy">
-<strong>Legacy / compat<span class="badge legacy">FALLBACK</span></strong><br>
-<code><span id="sseUrl"></span>/sse</code> — older Server-Sent-Events transport. Only use this if your client doesn't support Streamable HTTP yet. The relay keeps it running for backwards compatibility.
+<strong>There is no second transport<span class="badge legacy">NOT MCP</span></strong><br>
+<code><span id="sseUrl"></span>/sse</code> answers <code>text/event-stream</code> but is <strong>not</strong> an MCP transport — it is a write-activity feed for your own pod. MCP's older HTTP+SSE transport was deprecated in protocol revision 2025-03-26, and this relay never implemented it: a client pointed at <code>/sse</code> waits for an <code>event: endpoint</code> frame that never arrives, and times out. If your client cannot speak Streamable HTTP, use the stdio server instead.
 </div>
 
 <div class="note">
@@ -11997,7 +12013,10 @@ app.get('/', (req, res) => {
       { name: 'list-tools',       target: '/tools',                          method: 'GET',  description: 'Hydra collection of every MCP tool exposed by this relay (kernel verbs + named shims).' },
       { name: 'invoke-tool',      target: '/tool/{name}',                    method: 'POST', description: 'Invoke a tool by name; body is the tool inputSchema payload.' },
       { name: 'mcp-rpc',          target: '/mcp',                            method: 'POST', description: 'MCP JSON-RPC endpoint (Bearer + DPoP).' },
-      { name: 'mcp-stream',       target: '/sse',                            method: 'GET',  description: 'Server-sent-events stream for MCP notifications.' },
+      // NOT an MCP transport, and named so a machine reading this catalog cannot conclude
+      // otherwise — `mcp-stream` + "MCP notifications" read exactly like the deprecated
+      // HTTP+SSE transport to anything scanning for one. See the /sse route handler.
+      { name: 'pod-activity-stream', target: '/sse',                         method: 'GET',  description: 'Server-sent-events feed of recent write activity on the caller\'s own pod. Not an MCP transport — it emits no event: endpoint frame and no MCP client can handshake against it; use POST /mcp.' },
       { name: 'audit-frameworks', target: '/audit/frameworks',               method: 'GET',  description: 'List known compliance frameworks + their controls.' },
       { name: 'audit-events',     target: '/audit/events?pod=<url>',         method: 'GET',  description: 'List recent descriptors on a pod (audit log).' },
       { name: 'audit-lineage',    target: '/audit/lineage?descriptor=<url>', method: 'GET',  description: 'Walk prov:wasDerivedFrom + iep:supersedes for one descriptor.' },
@@ -14226,7 +14245,23 @@ function callerOwnPodFromRequest(req: express.Request): string | undefined {
   return undefined;
 }
 
-// SSE endpoint for MCP-over-SSE
+// ── GET /sse — a write-activity feed, and NOT an MCP transport ─────────────
+//
+// ★ THE NAME IS THE TRAP, WHICH IS WHY THE CORRECTION LIVES HERE RATHER THAN ONLY IN THE
+// DOCS. Five documents and this relay's own landing page called this "the legacy
+// MCP-over-SSE transport" and told a client that could not speak Streamable HTTP to point
+// at it. That cannot work: MCP's HTTP+SSE transport (protocol revision 2024-11-05,
+// deprecated by 2025-03-26) opens with an `event: endpoint` frame carrying the URI the
+// client POSTs messages to, and this handler writes only `data:` lines — no `event:` field
+// of any kind. A client therefore never learns a message endpoint, never sends
+// `initialize`, and hangs until its own timeout with nothing logged on either side.
+// Measured on this deployment by `tools/probe-sse-mcp-handshake-live.ts`: the protocol's
+// own SSEClientTransport timed out at 20 s while a StreamableHTTPClientTransport at /mcp
+// connected with the same bearer in the same run.
+//
+// The endpoint stays because something real reads it — the desktop shell's watch and
+// `applications/shared-workspace/tools/probe-watch-live.ts` consume these frames directly.
+// What was removed is the claim, not the feed.
 app.get('/sse', (req, res, next) => mcpGate(req, res, next), (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');

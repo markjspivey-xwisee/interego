@@ -84,6 +84,58 @@ page's half:
    from a read that established nothing. The module had the same hole and now carries the
    `unreadable` message forward as an error. Covered in `tests/workspace-client.test.ts`.
 
+## `invoke_affordance` — observed live, 2026-08-07
+
+Ten of the eleven tools this page declares had been exercised by a live driver in
+`../tools/`. The eleventh, `invoke_affordance`, had not: the "ask a member" control only appears
+when a member has published a capability document on their own pod, and **nothing in this
+repository had ever written one**, so the call had never happened against the live relay. The
+page was therefore published carrying a request shape nobody had seen a response to.
+
+`../tools/observe-invoke-affordance-live.ts` now makes it happen — a fresh convener, the
+deployed wsp-bridge's own wallet as the member, a real workspace, and a signed capability
+document on the member's pod at the qualified IRI this page reads. The request below is the one
+`askMember` sends, field for field.
+
+```jsonc
+// request
+{
+  "descriptor_url": "http://css.railway.internal:3456/u-eth-9c43ece1fd8f/context-graphs/1786081482999.ttl",
+  "action_iri": "https://relay.interego.xwisee.com/ns/iep/action/wsp/respond-as-member",
+  "payload": { "workspace": "https://relay.interego.xwisee.com/ns/u-eth-64d282184089/observe-msiirktx" }
+}
+
+// response — 200, 6.2 s
+{
+  "status": 200,
+  "statusText": "",
+  "contentType": "application/ld+json; charset=utf-8",
+  "body": "{…the target's own JSON, as a STRING…}",
+  "affordance": {
+    "action": "https://relay.interego.xwisee.com/ns/iep/action/wsp/respond-as-member",
+    "target": "https://wsp-bridge-production.up.railway.app/wsp/respond_as_member",
+    "method": "POST"
+  }
+}
+```
+
+**The shape matches what this page sends and reads, so nothing here was changed.** `askMember`
+reads `res.status` (present, `200`), parses `res.body` as JSON (it parses), and hands the result
+to `renderAgentOutcome`, which found `outcome`, `agent`, `read` and `message` where it looks for
+them. The one field the page ignores is `affordance` — the relay echoing the action it resolved.
+
+★ **And the member refused, for a reason worth writing down.** `outcome: "refused"`,
+`reason: "unreadable-workspace"` — because `rolesTurtle` in `@interego/workspace-client` emits a
+role table that declares no `wsp:RoleProfile`, and the bridge's `dereferenceRoleProfile`
+requires that type before it will compute a ceiling. So for a workspace created **by this page**
+the control can currently only ever render a refusal. Two further disagreements sit behind that
+one, found by the same run: the page's role table names local capability IRIs
+(`<rolesIri>#Post`) while the bridge asks about `wsp-roles-default#append` — which `respond.ts`
+documents as deliberate — and `acceptGrant` writes member documents under the qualified name
+while `respondAsMember` composes the legacy one. None of that is a defect in the CALL, which is
+what this section is evidence about; all of it is governance the two halves disagree on, and it
+is left for a decision rather than patched around.
+
 ## Publishing it
 
 Publish with the `mcp` capability and pass these eleven tool names as the `capabilities`

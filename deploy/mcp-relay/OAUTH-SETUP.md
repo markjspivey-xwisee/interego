@@ -6,21 +6,45 @@ Cline, Windsurf, ChatGPT custom connectors, Hermes Agent, OpenClaw)
 can mount the relay's `/mcp` endpoint by following the discovery flow
 documented here.
 
-## Transports: `/mcp` vs `/sse`
+## Transport: `/mcp`, and only `/mcp`
 
-The relay exposes two MCP transports on the same OAuth resource:
+The relay exposes **one** MCP transport: `/mcp`, Streamable HTTP, the
+current unified MCP transport. Claude Code, Claude Desktop, claude.ai,
+Cursor, Codex CLI, Windsurf, Cline, ChatGPT custom connectors and Hermes
+Agent all speak it. Every example below uses that URL, and there is no
+suffix to swap.
 
-- **`/mcp`** — Streamable HTTP, the modern unified MCP transport.
-  Preferred by Claude Code, Cursor, Codex CLI, Windsurf, Cline,
-  ChatGPT custom connectors, and Claude.ai. Use this everywhere
-  unless your client only supports the older transport.
-- **`/sse`** — Server-Sent Events, the original MCP transport.
-  Retained for backward compatibility with clients that haven't
-  moved to Streamable HTTP yet. Same OAuth, same scopes, same
-  agent-minting behavior — just swap the path suffix.
+### The `/sse` path is NOT an MCP transport
 
-All examples below publish the `/mcp` URL as the primary; replace
-the suffix with `/sse` only when a specific client requires it.
+`GET /sse` exists and answers 200 `text/event-stream`, so it looks like
+the MCP HTTP+SSE transport (protocol revision 2024-11-05, deprecated by
+2025-03-26). It is not one, and this section says so because five
+documents in this repository used to say the opposite and a reader who
+believed them got a client that hung.
+
+What it actually serves is a bespoke write-activity feed, scoped to the
+connecting bearer's own pod: one `data: {"type":"connection", …}` frame
+on open, then `data: {"type":"notifications", …}` whenever that pod has
+recent writes. It emits no `event:` field of any kind, and MCP's HTTP+SSE
+transport begins with an `event: endpoint` frame naming the URI the client
+must POST to — so a client has no way to learn a message endpoint and
+never sends `initialize`.
+
+Measured against the live relay by `tools/probe-sse-mcp-handshake-live.ts`,
+which drives the protocol's own `SSEClientTransport` at the path and, in
+the same run and with the same bearer, a `StreamableHTTPClientTransport`
+at `/mcp` as a control (without that control, a failure at `/sse` could
+just as well have been a bad token):
+
+```
+control (/mcp)              : connected
+/sse `event: endpoint` frame: ABSENT
+/sse MCP SDK handshake      : timed out after 20s
+```
+
+The endpoint is kept because the desktop shell and
+`applications/shared-workspace/tools/probe-watch-live.ts` read that feed
+directly. It is not offered as, and cannot be used as, an MCP transport.
 
 ## Quick path — most clients
 

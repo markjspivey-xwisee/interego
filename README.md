@@ -15,7 +15,7 @@ Drop the MCP relay into any agent that speaks MCP (Claude Code, Cursor, Codex, W
 }
 ```
 
-`/mcp` is the Streamable HTTP transport — a single endpoint that carries request, response, and notifications. Current MCP clients (Claude Code, Cursor, Codex CLI, Windsurf, Cline) prefer it. If your client only speaks the older SSE-style transport, use `/sse` on the same host — both endpoints are live on the relay and back the same identities and pods.
+`/mcp` is the Streamable HTTP transport — a single endpoint that carries request, response, and notifications. It is the **only** MCP transport this relay serves. There is no HTTP+SSE fallback: MCP deprecated that transport in protocol revision 2025-03-26, and the relay's `/sse` path is a plain write-activity feed, not an MCP transport (see [`deploy/mcp-relay/OAUTH-SETUP.md`](deploy/mcp-relay/OAUTH-SETUP.md#the-sse-path-is-not-an-mcp-transport)).
 
 The first tool call walks you through a passkey or wallet enrollment in the browser, mints your DID + pod, and issues a bearer token. Subsequent calls reuse the same identity from any device.
 
@@ -38,7 +38,7 @@ The hosted relay is exposed as a remote MCP server, so GUI clients can mount it 
 3. Save. The OAuth flow opens in your browser — enroll a passkey or connect a wallet on first use.
 4. The same connector then covers Claude.ai on the web and the Claude mobile app, because connector settings sync through your Anthropic account.
 
-If a client only supports the older SSE-style endpoint, swap `/mcp` for `/sse` on the same host. Everything else stays identical.
+Use `/mcp` — there is no second transport to fall back to. A client that cannot speak Streamable HTTP cannot reach this relay over MCP at all; `/sse` will not serve it (measured: `tools/probe-sse-mcp-handshake-live.ts`).
 
 > **Status: reference implementation.** Hosted on the maintainer's Railway project for evaluation. Self-host (`examples/personal-bridge/`) before you depend on it. The compliance + audit-trail work in this repo is *infrastructure for* SOC 2 / EU AI Act / NIST RMF evidence — it is not an attested control environment by itself.
 
@@ -275,7 +275,7 @@ packages/
 │                     discover_context, get_descriptor, subscribe_to_pod,
 │                     register_agent, pgsl_*, federation, identity, …).
 │                     Top-level handler list lives in mcp-server/server.ts;
-│                     the deployed HTTP/SSE relay (deploy/mcp-relay/) exposes
+│                     the deployed Streamable-HTTP relay (deploy/mcp-relay/) exposes
 │                     a smaller OAuth-gated subset for claude.ai connectors.
 │                     v0.5.0 ships system-level instructions, doc resources,
 │                     workflow prompts so connecting agents understand the
@@ -284,7 +284,7 @@ packages/
 │                     unsubscribe_from_pod releases a slot.
 ├── deploy/           Dockerfiles, Railway service configs, identity server, relay
 │   ├── identity/     WebID + DID + Ed25519 + WebFinger + bearer tokens + SIWE
-│   ├── mcp-relay/    HTTP/SSE bridge — v0.3.0 mirrors stdio discoverability
+│   ├── mcp-relay/    Streamable-HTTP bridge — v0.3.0 mirrors stdio discoverability
 │   │                 (instructions / doc resources / prompts) for claude.ai
 │   │                 and other web-based MCP clients
 │   └── css-config/   Community Solid Server configuration
