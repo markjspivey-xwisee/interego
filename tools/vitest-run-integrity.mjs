@@ -130,7 +130,13 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // had to NOT move in the same round: a chat conduit relays words a person typed, so the entry is
 // theirs, and that is driven through the real record path rather than asserted on a sentence.
 // The tree reached 232.
-export const MIN_TEST_MODULES = 222;
+// 222 -> 223: the round that moved the delegate down out of the shared-workspace vertical into
+// `@interego/core`, where the delegation model it belongs to already lived. `tests/core-delegate.
+// test.ts` is the one new suite: it asserts function IDENTITY across the two import paths — which
+// a re-implementation cannot satisfy however closely it agrees — and covers the read-back pair
+// (`publishDelegation` / `revokeDelegation`) that had no coverage at all before the move.
+// The tree reached 233.
+export const MIN_TEST_MODULES = 223;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

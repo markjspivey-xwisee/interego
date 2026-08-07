@@ -1,3 +1,5 @@
+import { relayRefusal } from '@interego/core/delegate';
+
 /**
  * The transport shim: one interface, two implementations, and a coupling to auth that the
  * TYPE enforces rather than a comment asserting it.
@@ -127,13 +129,15 @@ export class ToolCallError extends Error {
 
 export const fail = (code: string, message?: string): ToolCallError => new ToolCallError(code, message);
 
-/** A tool payload that is a relay refusal, or null when it is an ordinary answer. */
-export function refusal(p: unknown): (Record<string, unknown> & { error: unknown }) | null {
-  if (p && typeof p === 'object' && 'error' in p && (p as Record<string, unknown>)['error']) {
-    return p as Record<string, unknown> & { error: unknown };
-  }
-  return null;
-}
+/**
+ * A tool payload that is a relay refusal, or null when it is an ordinary answer.
+ *
+ * ★ THE SHAPE IS THE RELAY'S, SO THE DEFINITION IS THE SUBSTRATE'S. This vertical had its own
+ * copy of the four-line check; `@interego/core/delegate` needs the same one to tell an accepted
+ * `register_agent` from a refused one, and two readers of one wire envelope is exactly how a
+ * refusal comes to be read as a success on one surface and not the other.
+ */
+export const refusal = relayRefusal;
 
 /**
  * Pull a refusal body out of a REJECTION, if that is what it is.

@@ -39,6 +39,7 @@ import {
   readLiteral, readViewer, revokeDelegation, sendInvite,
   type DelegateRoster, type RoleTable, type Seat, type SeenEntry, type SpeakingDelegate,
   type Viewer,
+  delegatePort,
 } from '@interego/workspace-client';
 import { probeClaude, runClaude } from '../desktop/src/modelprovider.js';
 import { mintBearer, type Signer } from './live-identity.js';
@@ -207,10 +208,10 @@ async function main(): Promise<void> {
     check('the plan for "' + name + '" names PublishOnly and the labelled row', !!plan.call
       && plan.call.args['scope'] === 'PublishOnly' && plan.call.args['label'] === delegateLabel(name),
       JSON.stringify(plan.call?.args));
-    const out = await publishDelegation(A.client, { plan, verifyOnPod: A.viewer.podName });
+    const out = await publishDelegation(delegatePort(A.client), { plan, verifyOnPod: A.viewer.podName });
     check('"' + name + '" is authorised, and read back from A\'s pod', out.kind === 'published', out.why);
   }
-  const roster = await readDelegates(A.client, A.viewer.podName);
+  const roster = await readDelegates(delegatePort(A.client), A.viewer.podName);
   check('A\'s pod lists BOTH delegates as delegates', roster.read && roster.delegates.length === 2,
     roster.delegates.map((d) => d.name + '=' + d.agentId).join(' | '));
   check('and A\'s own session agent is listed as an agent that is NOT a delegate',
@@ -285,7 +286,7 @@ async function main(): Promise<void> {
   check('both people are seated', fold.seats.filter((s) => s.seated).length === 2,
     fold.seats.map((s) => s.pod + (s.seated ? ' seated' : ' NOT: ' + s.why)).join(' | '));
   const byPod = new Map<string, DelegateRoster>();
-  for (const s of fold.seats) if (s.seated && s.pod) byPod.set(s.pod, await readDelegates(A.client, s.pod));
+  for (const s of fold.seats) if (s.seated && s.pod) byPod.set(s.pod, await readDelegates(delegatePort(A.client), s.pod));
   check('A\'s pod contributes two delegates, B\'s contributes none',
     (byPod.get(A.viewer.podName)?.delegates.length ?? -1) === 2 && (byPod.get(B.viewer.podName)?.delegates.length ?? -1) === 0,
     [...byPod].map(([p, r]) => p + '=' + r.delegates.length).join(' '));
@@ -404,9 +405,9 @@ async function main(): Promise<void> {
   check('★ one log, three distinguishable authors', names.size >= 3, [...names].join(' | '));
 
   head('12 · revocation is unilateral, and the delegate refuses afterwards');
-  const revoked = await revokeDelegation(A.client, { agentId: d1Id, podName: A.viewer.podName });
+  const revoked = await revokeDelegation(delegatePort(A.client), { agentId: d1Id, podName: A.viewer.podName });
   check('delegate #1 is revoked and A\'s pod agrees', revoked.kind === 'revoked', revoked.why);
-  const afterRoster = await readDelegates(A.client, A.viewer.podName);
+  const afterRoster = await readDelegates(delegatePort(A.client), A.viewer.podName);
   check('A\'s pod now lists ONE delegate, and it is the other one',
     afterRoster.read && afterRoster.delegates.length === 1 && afterRoster.delegates[0]?.agentId === d2Id,
     afterRoster.delegates.map((d) => d.name).join(' | '));

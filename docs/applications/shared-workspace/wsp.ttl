@@ -215,6 +215,17 @@ wsp:Entry a owl:Class ;
 #  A person may authorise several, each with its own scope and each
 #  revocable on its own.
 #
+#  ★ THAT CONCEPT IS THE SUBSTRATE'S, NOT THIS VERTICAL'S, AND IS
+#  RESTATED HERE ONLY BECAUSE THE PARAGRAPHS BELOW NEED IT IN HAND.
+#  It is iep:Delegate — rdfs:subClassOf iep:AuthorizedAgent, "an AI
+#  agent or software tool authorized to act on behalf of a pod owner
+#  via delegation" — with iep:delegatedBy naming the principal and
+#  iep:scope the grant. A workspace adds no term to it and no field:
+#  what a workspace contributes is a SEAT (wsp:MembershipGrant) whose
+#  wsp:role is a second, independent ceiling the delegate inherits from
+#  its delegator and cannot exceed. Read the two together and neither
+#  grants anything on its own.
+#
 #  A CONDUIT is not a delegate and the distinction is load-bearing. A
 #  chat bridge relaying a message somebody TYPED carries their words;
 #  they wrote them, so the entry is theirs and names them. Only text an

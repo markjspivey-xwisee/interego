@@ -885,6 +885,7 @@ var WSPC = (() => {
     delegateLabel: () => delegateLabel,
     delegateNameProblem: () => delegateNameProblem,
     delegatePlan: () => delegatePlan,
+    delegatePort: () => delegatePort,
     discordLinkPlan: () => discordLinkPlan,
     entryShapeAnswer: () => entryShapeAnswer,
     entryTurtle: () => entryTurtle,
@@ -899,7 +900,9 @@ var WSPC = (() => {
     graphRegion: () => graphRegion,
     hasTrue: () => hasTrue,
     hasType: () => hasType,
+    isDelegateRow: () => isDelegateRow,
     isDelegationScope: () => isDelegationScope,
+    judgeAuthorship: () => judgeAuthorship,
     legacyName: () => legacyName,
     listWorkspaces: () => listWorkspaces,
     literalAt: () => literalAt,
@@ -947,6 +950,8 @@ var WSPC = (() => {
     rolesTurtle: () => rolesTurtle,
     saveCanvas: () => saveCanvas,
     scanTurtle: () => scanTurtle,
+    scopeCeiling: () => scopeCeiling,
+    scopeWriteEligible: () => scopeWriteEligible,
     sendInvite: () => sendInvite,
     shapesTurtle: () => shapesTurtle,
     shortRef: () => shortRef,
@@ -1393,6 +1398,255 @@ var WSPC = (() => {
     return { owner, slug };
   }
 
+  // packages/core/dist/model/delegate.js
+  var DELEGATION_SCOPES = ["ReadWrite", "ReadOnly", "PublishOnly", "DiscoverOnly"];
+  var WRITE_ELIGIBLE_SCOPES = ["ReadWrite", "PublishOnly"];
+  var isDelegationScope = (s) => typeof s === "string" && DELEGATION_SCOPES.includes(s);
+  var scopeWriteEligible = (scope) => WRITE_ELIGIBLE_SCOPES.includes(scope ?? "");
+  var AGENT_ID_RX = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"'{}|\\^`]+$/;
+  var DELEGATE_LABEL_PREFIX = "delegate ";
+  var DELEGATE_NAME_MAX = 48;
+  var delegateLabel = (name) => DELEGATE_LABEL_PREFIX + name;
+  function parseDelegateLabel(label) {
+    if (typeof label !== "string")
+      return null;
+    if (label.indexOf(DELEGATE_LABEL_PREFIX) !== 0)
+      return null;
+    const name = label.slice(DELEGATE_LABEL_PREFIX.length).trim();
+    return name.length ? name : null;
+  }
+  function delegateNameProblem(name) {
+    const n = name.trim();
+    if (!n)
+      return "Give this delegate a name. It is how you and everybody reading the record tell it from your others.";
+    if (n.length > DELEGATE_NAME_MAX) {
+      return "That name is " + n.length + " characters; the limit is " + DELEGATE_NAME_MAX + ". It is rendered beside every record this delegate writes.";
+    }
+    for (let i = 0; i < n.length; i++) {
+      const c = n.charCodeAt(i);
+      if (c < 32 || c === 127) {
+        return "That name contains a control character at position " + (i + 1) + ". It is refused rather than stripped, because a stripped name is not the name you chose.";
+      }
+    }
+    const bare = DELEGATE_LABEL_PREFIX.trim();
+    if (n.indexOf(bare) === 0) {
+      return 'The name does not need to start with "' + bare + '" \u2014 that is the prefix this client already adds.';
+    }
+    return null;
+  }
+  var delegateAgentId = (identityHost, podName) => "did:web:" + identityHost + ":agents:" + DELEGATE_SURFACE + "-" + podName;
+  var DELEGATE_SURFACE = "interego-delegate";
+  var isDelegateRow = (r) => r.name !== null;
+  function relayRefusal(p) {
+    if (p && typeof p === "object" && "error" in p && p["error"]) {
+      return p;
+    }
+    return null;
+  }
+  var describe = (port, e) => port.describeError ? port.describeError(e) : String(e?.message ?? e);
+  var rowOf = (r, owner) => {
+    const label = typeof r["label"] === "string" ? r["label"] : void 0;
+    const scope = typeof r["scope"] === "string" ? r["scope"] : "";
+    return {
+      agentId: String(r["agentId"] ?? ""),
+      // The relay's `ownerProfileToTurtle` writes `iep:delegatedBy <pod owner>` for every row and
+      // discards the agent's own value, so the registry's answer to "delegated by whom" IS the pod
+      // owner. Carrying the owner here rather than leaving it empty keeps `DelegateRow` a real
+      // `AuthorizedAgentData` instead of one with a required field faked.
+      delegatedBy: typeof r["delegatedBy"] === "string" ? r["delegatedBy"] : owner ?? "",
+      ...label === void 0 ? {} : { label },
+      scope,
+      validFrom: typeof r["validFrom"] === "string" ? r["validFrom"] : "",
+      ...typeof r["validUntil"] === "string" ? { validUntil: r["validUntil"] } : {},
+      ...r["revoked"] === true ? { revoked: true } : {},
+      name: parseDelegateLabel(label ?? null),
+      writeEligible: scopeWriteEligible(scope)
+    };
+  };
+  async function readDelegates(port, podName) {
+    const none = (why) => ({ podName, read: false, owner: null, rows: [], delegates: [], others: [], why });
+    let status;
+    try {
+      status = await port.tool("get_pod_status", { pod_name: podName }, { cache: false });
+    } catch (e) {
+      return none("pod " + podName + "'s delegation registry could not be read (" + describe(port, e).toLowerCase() + "), so how many delegates it lists is not established");
+    }
+    const bad = relayRefusal(status);
+    if (bad)
+      return none("the read of pod " + podName + " was refused: " + String(bad["message"] ?? bad["error"]));
+    const reg = status?.["delegationRegistry"];
+    if (!reg) {
+      return none("pod " + podName + " reports no delegation registry at all, which is different from it delegating nothing");
+    }
+    const owner = typeof reg.owner === "string" ? reg.owner : null;
+    const rows = (Array.isArray(reg.rows) ? reg.rows : []).map((r) => rowOf(r, owner)).filter((r) => r.agentId !== "");
+    return {
+      podName,
+      read: true,
+      owner,
+      rows,
+      delegates: rows.filter(isDelegateRow),
+      others: rows.filter((r) => !isDelegateRow(r)),
+      why: null
+    };
+  }
+  function delegatePlan(args) {
+    const problems = [];
+    const agentId = args.agentId.trim();
+    const name = args.name.trim();
+    if (!agentId) {
+      problems.push({ field: "agentId", why: "This delegate has no agent id yet. Mint or import a delegate key first \u2014 the id is derived from that key and cannot be typed in." });
+    } else if (!AGENT_ID_RX.test(agentId)) {
+      problems.push({ field: "agentId", why: "That is not the shape of an agent id. A delegate's looks like `did:web:\u2026:agents:" + DELEGATE_SURFACE + "-u-eth-\u2026`." });
+    }
+    const nameProblem = delegateNameProblem(name);
+    if (nameProblem)
+      problems.push({ field: "name", why: nameProblem });
+    const scope = args.scope ?? "PublishOnly";
+    const label = delegateLabel(name);
+    return {
+      problems,
+      call: problems.length ? null : { tool: "register_agent", args: { agent_id: agentId, scope, label } },
+      limits: [
+        "This publishes one row on YOUR pod naming one agent. It is a delegate acting for you \u2014 not you, and not any of your other delegates.",
+        "Records it writes land on your pod and in your log, and they name IT as the author and YOU as the person it acted for. A reader can tell them apart from something you wrote, and so can you.",
+        scope === "PublishOnly" ? "PublishOnly is POD-WIDE. The substrate has no per-graph delegation scope, so this delegate could publish any graph to your pod, not only the records you had in mind. What bounds it is that it is one named agent, every write is attributed to it, and you can withdraw it alone." : "Scope " + scope + " is POD-WIDE and wider than PublishOnly. Whatever it permits, this delegate may do on your whole pod.",
+        'The label "' + label + '" is public, and is meant to be. Delegation rows are world-readable; the name is how you and everybody reading tell this delegate from your others. There is nothing in it to steal.',
+        "Revoking it is your unilateral act from your own client, and it does not need the delegate to cooperate or even to be running.",
+        "For up to 60 seconds after a revoke the relay may still accept a write it had already cached permission for. A client that re-asks before every write stops itself, but the relay alone is not the boundary."
+      ]
+    };
+  }
+  async function publishDelegation(port, args) {
+    const { plan } = args;
+    const out = (kind, why, rest = {}) => ({ kind, plan, response: null, roster: null, listed: null, rescopedFrom: null, why, ...rest });
+    if (!plan.call) {
+      return out("invalid", plan.problems.map((p) => p.why).join(" ") || "This delegation was not described completely enough to publish.");
+    }
+    let response;
+    try {
+      response = await port.tool(plan.call.tool, { ...plan.call.args }, { cache: false });
+    } catch (e) {
+      return out("refused", "The relay refused to register the agent: " + describe(port, e) + " Nothing was written.");
+    }
+    const bad = relayRefusal(response);
+    if (bad) {
+      return out("refused", "The relay refused to register the agent: " + String(bad["message"] ?? bad["error"]) + " Nothing was written.", { response });
+    }
+    const rescopedFrom = response?.["rescoped"] === true && typeof response["previousScope"] === "string" ? response["previousScope"] : null;
+    const roster = await readDelegates(port, args.verifyOnPod);
+    const agentId = String(plan.call.args["agent_id"]);
+    const listed = roster.read ? roster.rows.find((r) => r.agentId === agentId) ?? null : null;
+    if (!listed) {
+      return out("unconfirmed", roster.read ? "The relay accepted the registration, but reading pod " + args.verifyOnPod + " back did not list " + agentId + ". The row may still be there \u2014 what is established is that this read did not find it." : "The relay accepted the registration, but the pod could not be read back to confirm it: " + (roster.why ?? "no reason was given"), { response, roster, rescopedFrom });
+    }
+    const wanted = typeof plan.call.args["label"] === "string" ? plan.call.args["label"] : null;
+    if (wanted !== null && listed.label !== wanted) {
+      return out("unconfirmed", "The relay accepted the registration, but pod " + args.verifyOnPod + " lists " + agentId + ' under the label "' + (listed.label ?? "") + '", not "' + wanted + '". The row that was planned is not the row that is there.', { response, roster, listed, rescopedFrom });
+    }
+    return out("published", "Published on pod " + args.verifyOnPod + " and read back from it: the delegation registry now lists " + agentId + " with scope " + listed.scope + (rescopedFrom ? ", re-scoped from " + rescopedFrom : "") + ".", { response, roster, listed, rescopedFrom });
+  }
+  async function revokeDelegation(port, args) {
+    let response;
+    try {
+      response = await port.tool("revoke_agent", { agent_id: args.agentId }, { cache: false });
+    } catch (e) {
+      return { kind: "refused", why: "The revoke was refused (" + describe(port, e) + "). The delegation still stands.", roster: null };
+    }
+    const bad = relayRefusal(response);
+    if (bad) {
+      return { kind: "refused", why: "The revoke was refused: " + String(bad["message"] ?? bad["error"]), roster: null };
+    }
+    const roster = await readDelegates(port, args.podName);
+    if (!roster.read) {
+      return { kind: "still-listed", why: "The relay accepted the revoke, but the pod could not be read back to confirm it: " + (roster.why ?? ""), roster };
+    }
+    if (roster.rows.some((r) => r.agentId === args.agentId)) {
+      return { kind: "still-listed", why: "The relay accepted the revoke, but pod " + args.podName + " still lists " + args.agentId + ".", roster };
+    }
+    return {
+      kind: "revoked",
+      roster,
+      // Measured: a caller who sees one more write land after revoking needs to know that is the
+      // relay's 60s permission cache, not a revoke that did not take.
+      why: "Revoked, and read back from pod " + args.podName + ": the registry no longer lists " + args.agentId + ". The relay may still accept a write it had already cached permission for, for up to 60 seconds."
+    };
+  }
+  function scopeCeiling(args) {
+    const who = args.delegateName ? '"' + args.delegateName + '"' : "this delegate";
+    if (args.scope === null) {
+      return {
+        ok: false,
+        why: "Your pod's registry row for " + who + " reports no scope, so what you delegated to it is not established. That is not the same as it being permitted, so nothing is written."
+      };
+    }
+    if (!scopeWriteEligible(args.scope)) {
+      return {
+        ok: false,
+        why: "You delegated " + who + " with scope " + args.scope + ", which cannot publish. The relay would refuse the write, and this refuses it first. Widen the delegation on your own pod if you meant it to be able to write."
+      };
+    }
+    return {
+      ok: true,
+      why: "You delegated " + who + " scope " + args.scope + ", which may publish."
+    };
+  }
+  function judgeAuthorship(statements, args) {
+    if (statements === null) {
+      return { kind: "unstated", why: "the signed region of this record could not be located, so nothing about its author was read from bytes anybody signed" };
+    }
+    const attributed = statements.attributedTo;
+    const behalf = statements.actedOnBehalfOf;
+    if (attributed.length === 0) {
+      return { kind: "unstated", why: "this record names no prov:wasAttributedTo, so who composed it is not stated in the record \u2014 which is not the same as the pod owner having written it" };
+    }
+    if (attributed.length > 1) {
+      return { kind: "disputed", why: "this record names " + attributed.length + " different prov:wasAttributedTo authors (" + attributed.join(", ") + "), so who wrote it is not decided and this reader will not pick one" };
+    }
+    const author = attributed[0];
+    if (!args.logOwnerWebId) {
+      return { kind: "disputed", why: "this record is attributed to " + author + " and this reader could not establish whose log it is in, so whether that is the owner or somebody acting for them is not decided" };
+    }
+    if (author === args.logOwnerWebId) {
+      if (behalf.length) {
+        return { kind: "disputed", why: "this record is attributed to the pod owner and ALSO carries a prov:actedOnBehalfOf statement naming " + behalf.join(", ") + ". A person does not act on their own behalf through themselves, so what this record is saying is not established." };
+      }
+      return { kind: "principal", webId: author };
+    }
+    if (behalf.length === 0) {
+      return { kind: "disputed", why: "this record is attributed to " + author + ", which is not the owner of the pod it is on (" + args.logOwnerWebId + "), and it states no prov:actedOnBehalfOf. So it claims an author who is neither the log's owner nor declared to be acting for them." };
+    }
+    if (behalf.length > 1) {
+      return { kind: "disputed", why: "this record carries " + behalf.length + " prov:actedOnBehalfOf statements (" + behalf.join(", ") + "), so who " + author + " was acting for is not decided" };
+    }
+    const principal = behalf[0];
+    if (principal !== args.logOwnerWebId) {
+      return { kind: "disputed", why: "this record says " + author + " acted on behalf of " + principal + ", and the pod this log is on belongs to " + args.logOwnerWebId + ". A record in somebody's log declaring it was written for a third party is not something this reader will render as either of them speaking." };
+    }
+    const row = args.delegates?.read ? args.delegates.rows.find((r) => r.agentId === author) ?? null : null;
+    return {
+      kind: "delegate",
+      agentId: author,
+      onBehalfOf: principal,
+      name: row?.name ?? null,
+      authorised: args.delegates?.read ? row !== null : null,
+      scope: row?.scope ?? null
+    };
+  }
+  function authorshipLine(a, args = {}) {
+    const who = args.displayName ? args.displayName : "the person whose pod this is";
+    switch (a.kind) {
+      case "principal":
+        return who;
+      case "delegate":
+        return (a.name ? a.name : "an unnamed delegate") + ", acting for " + who;
+      case "unstated":
+        return "author not stated";
+      case "disputed":
+        return "authorship disputed";
+    }
+  }
+
   // packages/workspace-client/src/transport.ts
   var ToolCallError = class extends Error {
     constructor(code, message, opts) {
@@ -1410,12 +1664,7 @@ var WSPC = (() => {
     }
   };
   var fail = (code, message) => new ToolCallError(code, message);
-  function refusal(p) {
-    if (p && typeof p === "object" && "error" in p && p["error"]) {
-      return p;
-    }
-    return null;
-  }
+  var refusal = relayRefusal;
   function asRefusal(e) {
     if (!e || typeof e !== "object") return null;
     const err = e;
@@ -3127,12 +3376,8 @@ var WSPC = (() => {
   }
 
   // packages/workspace-client/src/agentlink.ts
-  var DELEGATION_SCOPES = ["ReadWrite", "ReadOnly", "PublishOnly", "DiscoverOnly"];
-  var WRITE_ELIGIBLE_SCOPES = ["ReadWrite", "PublishOnly"];
-  var isDelegationScope = (s) => typeof s === "string" && DELEGATION_SCOPES.includes(s);
   var SNOWFLAKE_RX = /^[0-9]{1,20}$/;
   var challengeLabel = (discordUserId) => "discord-link " + discordUserId;
-  var AGENT_ID_RX = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"'{}|\\^`]+$/;
   function discordLinkPlan(args) {
     const problems = [];
     const agentId = args.botAgentId.trim();
@@ -3165,183 +3410,12 @@ var WSPC = (() => {
       ]
     };
   }
-  async function publishDelegation(client, args) {
-    const { plan } = args;
-    if (!plan.call) {
-      return {
-        kind: "invalid",
-        plan,
-        response: null,
-        verdict: null,
-        rescopedFrom: null,
-        why: plan.problems.map((p) => p.why).join(" ") || "This delegation was not described completely enough to publish."
-      };
-    }
-    let response = null;
-    try {
-      response = await client.tool(plan.call.tool, { ...plan.call.args }, { cache: false });
-    } catch (e) {
-      return {
-        kind: "refused",
-        plan,
-        response: null,
-        verdict: null,
-        rescopedFrom: null,
-        why: "The relay refused to register the agent: " + errorCopy(e).d + " Nothing was written."
-      };
-    }
-    const bad = refusal(response);
-    if (bad) {
-      return {
-        kind: "refused",
-        plan,
-        response,
-        verdict: null,
-        rescopedFrom: null,
-        why: "The relay refused to register the agent: " + String(bad["message"] ?? bad["error"]) + " Nothing was written."
-      };
-    }
-    const rescopedFrom = response?.["rescoped"] === true && typeof response["previousScope"] === "string" ? response["previousScope"] : null;
-    const label = typeof plan.call.args["label"] === "string" ? plan.call.args["label"] : void 0;
-    const verdict = await checkDelegation(client, {
-      agentId: String(plan.call.args["agent_id"]),
-      podName: args.verifyOnPod,
-      ...label === void 0 ? {} : { expectLabel: label }
-    });
-    if (!verdict.ok) {
-      return {
-        kind: "unconfirmed",
-        plan,
-        response,
-        verdict,
-        rescopedFrom,
-        // Not "it failed": the write may well have landed. What is established is that reading the
-        // pod back did not show it, and saying more than that would be inventing a fact either way.
-        why: "The relay accepted the registration, but reading your pod back did not confirm it: " + (verdict.why ?? "no reason was given") + " The row may still be there \u2014 what is established is that this read did not find it."
-      };
-    }
-    return {
-      kind: "published",
-      plan,
-      response,
-      verdict,
-      rescopedFrom,
-      why: "Published on pod " + args.verifyOnPod + " and read back from it: the delegation registry now lists " + verdict.agentId + " with scope " + (verdict.scope ?? "none reported") + (rescopedFrom ? ", re-scoped from " + rescopedFrom : "") + "."
-    };
-  }
-  async function revokeDelegation(client, args) {
-    try {
-      const res = await client.tool("revoke_agent", { agent_id: args.agentId }, { cache: false });
-      const bad = refusal(res);
-      if (bad) return { kind: "refused", why: "The relay refused to revoke this agent: " + String(bad["message"] ?? bad["error"]), verdict: null };
-    } catch (e) {
-      return { kind: "refused", why: "The relay refused to revoke this agent: " + errorCopy(e).d, verdict: null };
-    }
-    const verdict = await checkDelegation(client, { agentId: args.agentId, podName: args.podName });
-    if (verdict.ok) {
-      return {
-        kind: "still-listed",
-        verdict,
-        why: "The relay accepted the revoke, but your pod still reports this agent as write-eligible. Nothing here is guessing at why; that is what reading the pod back said."
-      };
-    }
-    return {
-      kind: "revoked",
-      verdict,
-      why: "Revoked, and read back from pod " + args.podName + ": " + (verdict.why ?? "the registry no longer lists it") + ". The relay may still accept a write it had already cached permission for, for up to 60 seconds."
-    };
-  }
-
-  // packages/workspace-client/src/delegates-name.ts
-  var DELEGATE_NAME_MAX = 48;
-  var DELEGATE_LABEL_PREFIX = "workspace-delegate ";
-  var delegateLabel = (name) => DELEGATE_LABEL_PREFIX + name;
-  function parseDelegateLabel(label) {
-    if (typeof label !== "string" || label.indexOf(DELEGATE_LABEL_PREFIX) !== 0) return null;
-    const name = label.slice(DELEGATE_LABEL_PREFIX.length).trim();
-    return name === "" ? null : name;
-  }
-  function delegateNameProblem(name) {
-    const n = name.trim();
-    if (!n) return "Give this delegate a name. It is how you and everybody reading the channel tell it apart from your other delegates and from you.";
-    if (n.length > DELEGATE_NAME_MAX) return "That name is " + n.length + " characters; the limit is " + DELEGATE_NAME_MAX + ".";
-    for (const ch of n) {
-      const c = ch.codePointAt(0) ?? 0;
-      if (c < 32 || c === 127) {
-        return "That name contains a control character (code point " + c + "). It is refused rather than stripped, because a stripped name is not the name you chose.";
-      }
-    }
-    const bare = DELEGATE_LABEL_PREFIX.trim();
-    if (n.indexOf(bare) === 0) {
-      return 'That name starts with "' + bare + '", which is the prefix this client already adds. The row would read back as a delegate called "' + n.slice(bare.length).trim() + '".';
-    }
-    return null;
-  }
 
   // packages/workspace-client/src/delegates.ts
-  var DELEGATE_SURFACE = "interego-delegate";
-  var rowOf = (r) => {
-    const label = typeof r["label"] === "string" ? r["label"] : null;
-    const scope = typeof r["scope"] === "string" ? r["scope"] : null;
-    const name = parseDelegateLabel(label);
-    return {
-      agentId: String(r["agentId"] ?? ""),
-      name,
-      label,
-      scope,
-      validFrom: typeof r["validFrom"] === "string" ? r["validFrom"] : null,
-      isDelegate: name !== null,
-      writeEligible: WRITE_ELIGIBLE_SCOPES.includes(scope ?? "")
-    };
-  };
-  async function readDelegates(client, podName) {
-    const none = (why) => ({ podName, read: false, rows: [], delegates: [], others: [], why });
-    let status;
-    try {
-      status = await client.tool("get_pod_status", { pod_name: podName }, { cache: false });
-    } catch (e) {
-      return none("pod " + podName + "'s delegation registry could not be read (" + errorCopy(e).t.toLowerCase() + "), so how many delegates it lists is not established");
-    }
-    const bad = refusal(status);
-    if (bad) return none("the read of pod " + podName + " was refused: " + String(bad["message"] ?? bad["error"]));
-    const reg = status?.["delegationRegistry"];
-    if (!reg) return none("pod " + podName + " reports no delegation registry at all, which is different from it delegating nothing");
-    const rows = (Array.isArray(reg.rows) ? reg.rows : []).map(rowOf).filter((r) => r.agentId !== "");
-    return {
-      podName,
-      read: true,
-      rows,
-      delegates: rows.filter((r) => r.isDelegate),
-      others: rows.filter((r) => !r.isDelegate),
-      why: null
-    };
-  }
-  function delegatePlan(args) {
-    const problems = [];
-    const agentId = args.agentId.trim();
-    const name = args.name.trim();
-    if (!agentId) problems.push({ field: "agentId", why: "This delegate has no agent id yet. Mint or import a delegate key first \u2014 the id is derived from that key and cannot be typed in." });
-    else if (!AGENT_ID_RX.test(agentId)) problems.push({ field: "agentId", why: "That is not the shape of an agent id. A delegate's looks like `did:web:\u2026:agents:" + DELEGATE_SURFACE + "-u-eth-\u2026`." });
-    const nameProblem = delegateNameProblem(name);
-    if (nameProblem) problems.push({ field: "agentId", why: nameProblem });
-    const scope = args.scope ?? "PublishOnly";
-    const label = delegateLabel(name);
-    return {
-      problems,
-      call: problems.length ? null : { tool: "register_agent", args: { agent_id: agentId, scope, label } },
-      limits: [
-        "This publishes one row on YOUR pod naming one agent. It is a delegate acting for you \u2014 not you, and not any of your other delegates.",
-        "Entries it writes land on your pod and in your log, and they name IT as the author and YOU as the person it acted for. A reader can tell them apart from something you typed, and so can you.",
-        scope === "PublishOnly" ? "PublishOnly is POD-WIDE. The substrate has no per-graph delegation scope, so this delegate could publish any graph to your pod, not only workspace entries. What bounds it is that it is one named agent, every write is attributed to it, and you can withdraw it alone." : "Scope " + scope + " is POD-WIDE and wider than PublishOnly. Whatever it permits, this delegate may do on your whole pod.",
-        'The label "' + label + '" is public, and is meant to be. Delegation rows are world-readable; the name is how you and everybody reading the channel tell this delegate from your others. There is nothing in it to steal.',
-        "Revoking it is your unilateral act from your own client, and it does not need the delegate to cooperate or even to be running.",
-        // Measured, in delegation.ts's header. Repeating it at the moment of consent rather than
-        // in a document nobody opens is the point of showing a plan at all.
-        "For up to 60 seconds after a revoke the relay may still accept a write it had already cached permission for. This client re-asks before every write and stops itself, but the relay alone is not the boundary."
-      ]
-    };
-  }
-  var delegateAgentId = (identityHost, podName) => "did:web:" + identityHost + ":agents:" + DELEGATE_SURFACE + "-" + podName;
+  var delegatePort = (client) => ({
+    tool: (name, args, opts) => client.tool(name, args, opts),
+    describeError: (e) => errorCopy(e).d
+  });
   function delegateCeiling(args) {
     const who = args.delegateName ? '"' + args.delegateName + '"' : "this delegate";
     const role = checkRoleForWorkspace(args.roles, args.role ?? "");
@@ -3351,77 +3425,21 @@ var WSPC = (() => {
         why: "The role ceiling on the seat " + who + " would write under refuses this. " + role.why + " A delegate inherits its delegator's role and cannot exceed it, so nothing is written."
       };
     }
-    if (args.scope === null) {
-      return {
-        ok: false,
-        why: "Your pod's registry row for " + who + " reports no scope, so what you delegated to it is not established. That is not the same as it being permitted, so nothing is written."
-      };
-    }
-    if (!WRITE_ELIGIBLE_SCOPES.includes(args.scope)) {
-      return {
-        ok: false,
-        why: "You delegated " + who + " with scope " + args.scope + ", which cannot publish. The relay would refuse the write, and this refuses it first. Widen the delegation on your own pod if you meant it to be able to write."
-      };
-    }
+    const scope = scopeCeiling({ scope: args.scope, delegateName: args.delegateName });
+    if (!scope.ok) return scope;
     return {
       ok: true,
-      why: "The seat's role permits this, and you delegated " + who + " scope " + args.scope + ", which may publish. Both ceilings hold; neither of them granted anything on its own."
+      why: "The seat's role permits this, and " + scope.why.charAt(0).toLowerCase() + scope.why.slice(1) + " Both ceilings hold; neither of them granted anything on its own."
     };
   }
   function readEntryAuthorship(region, args) {
-    if (region === null) {
-      return { kind: "unstated", why: "the signed region of this entry could not be located, so nothing about its author was read from bytes anybody signed" };
-    }
-    const attributed = readIriAll(region, "prov:wasAttributedTo");
-    if (attributed.length === 0) {
-      return { kind: "unstated", why: "this entry names no prov:wasAttributedTo, so who composed it is not stated in the record \u2014 which is not the same as the pod owner having written it" };
-    }
-    if (attributed.length > 1) {
-      return { kind: "disputed", why: "this entry names " + attributed.length + " different prov:wasAttributedTo authors (" + attributed.join(", ") + "), so who wrote it is not decided and this reader will not pick one" };
-    }
-    const author = attributed[0];
-    const behalf = readIriAll(region, "prov:actedOnBehalfOf");
-    if (!args.logOwnerWebId) {
-      return { kind: "disputed", why: "this entry is attributed to " + author + " and this reader could not establish whose log it is in, so whether that is the owner or somebody acting for them is not decided" };
-    }
-    if (author === args.logOwnerWebId) {
-      if (behalf.length) {
-        return { kind: "disputed", why: "this entry is attributed to the pod owner and ALSO carries a prov:actedOnBehalfOf statement naming " + behalf.join(", ") + ". A person does not act on their own behalf through themselves, so what this record is saying is not established." };
-      }
-      return { kind: "principal", webId: author };
-    }
-    if (behalf.length === 0) {
-      return { kind: "disputed", why: "this entry is attributed to " + author + ", which is not the owner of the pod it is on (" + args.logOwnerWebId + "), and it states no prov:actedOnBehalfOf. So it claims an author who is neither the log's owner nor declared to be acting for them." };
-    }
-    if (behalf.length > 1) {
-      return { kind: "disputed", why: "this entry carries " + behalf.length + " prov:actedOnBehalfOf statements (" + behalf.join(", ") + "), so who " + author + " was acting for is not decided" };
-    }
-    const principal = behalf[0];
-    if (principal !== args.logOwnerWebId) {
-      return { kind: "disputed", why: "this entry says " + author + " acted on behalf of " + principal + ", and the pod this log is on belongs to " + args.logOwnerWebId + ". An entry in somebody's log declaring it was written for a third party is not something this reader will render as either of them speaking." };
-    }
-    const row = args.delegates?.read ? args.delegates.rows.find((r) => r.agentId === author) ?? null : null;
-    return {
-      kind: "delegate",
-      agentId: author,
-      onBehalfOf: principal,
-      name: row?.name ?? null,
-      authorised: args.delegates?.read ? row !== null : null,
-      scope: row?.scope ?? null
-    };
-  }
-  function authorshipLine(a, args = {}) {
-    const who = args.displayName ? args.displayName : "the person whose pod this is";
-    switch (a.kind) {
-      case "principal":
-        return who;
-      case "delegate":
-        return (a.name ? a.name : "an unnamed delegate") + ", acting for " + who;
-      case "unstated":
-        return "author not stated";
-      case "disputed":
-        return "authorship disputed";
-    }
+    return judgeAuthorship(
+      region === null ? null : {
+        attributedTo: readIriAll(region, "prov:wasAttributedTo"),
+        actedOnBehalfOf: readIriAll(region, "prov:actedOnBehalfOf")
+      },
+      args
+    );
   }
 
   // packages/workspace-client/src/localagent.ts

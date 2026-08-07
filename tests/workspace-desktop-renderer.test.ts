@@ -34,6 +34,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { build } from 'esbuild';
+// The label prefix comes from the substrate, never a literal: a fixture that spells it out is
+// exactly the drift the constant exists to prevent, and it hid a real change once already.
+import { delegateLabel } from '@interego/core/delegate';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DESKTOP = join(ROOT, 'applications/shared-workspace/desktop');
@@ -146,7 +149,7 @@ function scripted(): Scripted {
     inbox: [], fail: new Map(), calls: [], writeEligible: true,
     // One delegate authorised on A's pod, with its key here — the ordinary state a person is in
     // once they have set one up. Cases about having none, or having one hosted elsewhere, say so.
-    delegations: new Map([[POD_A, [delegationRow(D1, 'workspace-delegate Claude side')]]]),
+    delegations: new Map([[POD_A, [delegationRow(D1, delegateLabel('Claude side'))]]]),
     keys: [{ address: KEY('0x1'), agentId: D1, why: null }],
   };
 }
@@ -508,7 +511,7 @@ async function signInAndSettle(o: Opened): Promise<void> {
  */
 const seatDelegate = (s: Scripted, pod: string, args: { agentId: string; name: string; address?: string; scope?: string; hosted?: boolean }): void => {
   const rows = s.delegations.get(pod) ?? [];
-  rows.push(delegationRow(args.agentId, 'workspace-delegate ' + args.name, args.scope ?? 'PublishOnly'));
+  rows.push(delegationRow(args.agentId, delegateLabel(args.name), args.scope ?? 'PublishOnly'));
   s.delegations.set(pod, rows);
   if (args.hosted !== false) s.keys.push({ address: args.address ?? KEY('0x' + args.agentId.slice(-6)), agentId: args.agentId, why: null });
 };
@@ -1588,7 +1591,7 @@ describe('delegates: separate identities, plural, and visible as such', () => {
     await o.settle();
     const plan = text(o.doc, '#delegateplan');
     expect(plan).toContain('has not been made');
-    expect(plan).toContain('workspace-delegate Research assistant');
+    expect(plan).toContain(delegateLabel('Research assistant'));
     expect(plan).toContain('PublishOnly');
     expect(plan).toContain('name IT as the author and YOU as the person it acted for');
     click(o.doc, 'delegateauthorise');

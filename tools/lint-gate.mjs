@@ -491,7 +491,18 @@ const BASELINE = {};
 // written without literal control bytes turning the source into binary) and one root suite,
 // `tests/workspace-client-delegates.test.ts`. The round's other new lines live in
 // `applications/`, which is frontier rather than a zero-error target, so they do not move this.
-export const MIN_FILES = 381;
+// 381 -> 382, on the round that moved the delegate out of the shared-workspace vertical and into
+// `@interego/core`, where the `AuthorizedAgentData` / signed-VC / `verifyDelegation` model it
+// belongs to already lived. Net +1 inside the zero-error target: two new files
+// (`packages/core/src/model/delegate.ts` and the root suite `tests/core-delegate.test.ts`) less
+// `packages/workspace-client/src/delegates-name.ts`, which went away because its whole reason for
+// existing — a control-character rule written without literal control bytes — moved with it.
+// 382 -> 383, same round: `tools/probe-delegate-substrate-live.ts`, the live probe that drives
+// the moved affordance with NO vertical in the loop. The shared-workspace driver exercises the
+// same code but through that vertical's client, so it cannot tell "the substrate owns this" from
+// "the imports merely moved"; this one can, and a claim about layering with no probe behind it is
+// the kind that rots quietly.
+export const MIN_FILES = 383;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

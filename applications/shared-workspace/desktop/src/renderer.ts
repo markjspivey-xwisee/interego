@@ -29,7 +29,8 @@ import {
   readViewer, revokeDelegation, revokeGrant,
   roleKnown, roleName, roleWhy, saveCanvas, sendInvite, shortRef, slugProblem, verifyInvitation,
   verifyWorkspaceEntry,
-  type CanvasRead, type ChainRow, type Check, type ConnectorMcp, type DelegateRoster,
+  delegatePort,
+  type CanvasRead, type ChainRow, type Check, type ConnectorMcp, type DelegateRoster, type DelegateRow,
   type EntryAuthorship, type GrantVerdict, type Invitation, type RoleTable, type Seat,
   type SeenEntry, type SpeakingDelegate, type Viewer, type WorkspaceEntry, type WorkspaceRecord,
 } from '@interego/workspace-client';
@@ -108,6 +109,33 @@ function checkList(checks: readonly Check[]): HTMLElement {
   }
   return cl;
 }
+/**
+ * The read-back evidence behind a delegation outcome, as marks a viewer can see.
+ *
+ * ★ THE SHELL DRAWS THE EVIDENCE; THE SUBSTRATE ESTABLISHES IT. `publishDelegation` decides
+ * whether the row is on the pod — this only says so on screen. It reads `roster`/`listed` rather
+ * than restating `why`, so a viewer sees the two separate facts (the pod answered at all; it
+ * lists this agent at this scope) instead of one sentence that could be true for either reason.
+ * `q` rather than `n` when the registry could not be read: a pod that did not answer has not
+ * denied anything.
+ */
+function delegationChecks(out: { roster: DelegateRoster | null; listed: DelegateRow | null }): readonly Check[] {
+  const checks: Check[] = [];
+  if (!out.roster) return checks;
+  checks.push(out.roster.read
+    ? { mark: 'y', text: 'Pod ' + out.roster.podName + '\'s delegation registry answered' }
+    : { mark: 'q', text: 'Pod ' + out.roster.podName + '\'s delegation registry could not be read', ...(out.roster.why ? { detail: out.roster.why } : {}) });
+  if (out.listed) {
+    checks.push({ mark: 'y', text: 'It lists ' + out.listed.agentId + ' with scope ' + out.listed.scope, detail: out.listed.label ?? '' });
+    checks.push(out.listed.writeEligible
+      ? { mark: 'y', text: 'That scope may publish' }
+      : { mark: 'n', text: 'That scope cannot publish' });
+  } else if (out.roster.read) {
+    checks.push({ mark: 'n', text: 'It does not list this agent' });
+  }
+  return checks;
+}
+
 /** A three-state write reporter, so a viewer learns one shape rather than five. */
 function writeLine(box: HTMLElement, label: string): (state: string, detail: string) => void {
   const row = el('div', 'wstate');
@@ -1216,7 +1244,7 @@ async function loadMemberDelegates(): Promise<void> {
   for (const m of S.seats) if (m.seated && m.pod) pods.add(m.pod);
   if (S.viewer) pods.add(S.viewer.podName);
   for (const pod of pods) {
-    S.delegatesByPod.set(pod, await readDelegates(S.client, pod));
+    S.delegatesByPod.set(pod, await readDelegates(delegatePort(S.client), pod));
   }
   if (S.viewer) S.myDelegates = S.delegatesByPod.get(S.viewer.podName) ?? null;
   reauthorBodies();
@@ -2379,7 +2407,7 @@ async function linkDiscord(): Promise<void> {
     + S.viewer.podName + ' — which is what makes it worth anything.');
   let out;
   try {
-    out = await publishDelegation(S.client, { plan, verifyOnPod: S.viewer.podName });
+    out = await publishDelegation(delegatePort(S.client), { plan, verifyOnPod: S.viewer.podName });
   } catch (e) {
     clear($('discordresult')).appendChild(errBox(e, 'The delegation was not published.'));
     btn('discordlink').disabled = false;
@@ -2392,7 +2420,7 @@ async function linkDiscord(): Promise<void> {
       p.appendChild(el('div', 'note', 'This agent was already registered with scope ' + out.rescopedFrom
         + ' and has now been changed to PublishOnly. That is a change to authority you already had, not a new one.'));
     }
-    for (const c of out.verdict?.checks ?? []) p.appendChild(checkList([c]));
+    p.appendChild(checkList(delegationChecks(out)));
     p.appendChild(el('div', 'note', 'Now run /workspace link-confirm pod:' + S.viewer.podName + ' back in Discord. '
       + 'The bot checks this row itself; it does not take this app\'s word for it.'));
     $('discordrevoke').hidden = false;
@@ -2401,7 +2429,7 @@ async function linkDiscord(): Promise<void> {
   } else {
     const p = say('discordresult', out.kind === 'unconfirmed' ? 'pending' : 'refused',
       out.kind === 'unconfirmed' ? 'Accepted, but not confirmed by reading your pod back' : 'Not published', out.why);
-    for (const c of out.verdict?.checks ?? []) p.appendChild(checkList([c]));
+    p.appendChild(checkList(delegationChecks(out)));
   }
 }
 
@@ -2410,7 +2438,7 @@ async function revokeDiscord(): Promise<void> {
   const agentId = inp('botagent').value.trim();
   if (!agentId) return;
   btn('discordrevoke').disabled = true;
-  const out = await revokeDelegation(S.client, { agentId, podName: S.viewer.podName });
+  const out = await revokeDelegation(delegatePort(S.client), { agentId, podName: S.viewer.podName });
   btn('discordrevoke').disabled = false;
   say('discordresult', out.kind === 'revoked' ? 'ok' : 'refused',
     out.kind === 'revoked' ? 'Revoked' : 'Not revoked', out.why);
@@ -2435,7 +2463,7 @@ async function loadDelegates(): Promise<void> {
     S.hostedRead = true;
     S.hostedError = null;
   } catch (e) { S.hostedRead = true; S.hostedError = e; }
-  if (S.client && S.viewer) S.myDelegates = await readDelegates(S.client, S.viewer.podName);
+  if (S.client && S.viewer) S.myDelegates = await readDelegates(delegatePort(S.client), S.viewer.podName);
   renderDelegates();
   renderAgent();
   renderSetup();
@@ -2639,7 +2667,7 @@ async function authoriseDelegate(): Promise<void> {
   btn('delegateauthorise').disabled = true;
   let out;
   try {
-    out = await publishDelegation(S.client, { plan, verifyOnPod: S.viewer.podName });
+    out = await publishDelegation(delegatePort(S.client), { plan, verifyOnPod: S.viewer.podName });
   } catch (e) {
     clear($('delegateresult')).appendChild(errBox(e, 'The delegation was not published.'));
     btn('delegateauthorise').disabled = false;
@@ -2654,13 +2682,13 @@ async function authoriseDelegate(): Promise<void> {
     p.appendChild(el('div', 'note', 'This agent was already registered with scope ' + out.rescopedFrom
       + ' and has now been changed. That is a change to authority you had already granted, not a new one.'));
   }
-  for (const c of out.verdict?.checks ?? []) p.appendChild(checkList([c]));
+  p.appendChild(checkList(delegationChecks(out)));
   await loadDelegates();
 }
 
 async function revokeDelegateRow(agentId: string): Promise<void> {
   if (!S.client || !S.viewer) return;
-  const out = await revokeDelegation(S.client, { agentId, podName: S.viewer.podName });
+  const out = await revokeDelegation(delegatePort(S.client), { agentId, podName: S.viewer.podName });
   const p = say('delegateresult', out.kind === 'revoked' ? 'ok' : 'refused',
     out.kind === 'revoked' ? 'Revoked' : 'Not revoked', out.why);
   p.appendChild(el('div', 'note', 'What this delegate already wrote is untouched. It lives in your log on your own pod, '
