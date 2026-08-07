@@ -262,7 +262,7 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
   }
 
   async callTool(name: string, input: Record<string, unknown>, opts?: CallOptions): Promise<unknown> {
-    const key = name + ' ' + JSON.stringify(input);
+    const key = name + '' + JSON.stringify(input);
     const stale = opts?.cache?.staleTime;
     if (stale) {
       const hit = this.cache.get(key);
@@ -303,7 +303,7 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
   }
 
   async invalidate(name: string): Promise<void> {
-    for (const k of [...this.cache.keys()]) if (k.startsWith(name + ' ')) this.cache.delete(k);
+    for (const k of [...this.cache.keys()]) if (k.startsWith(name + '')) this.cache.delete(k);
   }
 }
 
