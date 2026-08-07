@@ -156,7 +156,12 @@ export type Unsubscribe = () => void;
 /** What a live watch reports. Shaped after the connector contract, which is the stricter one. */
 export type WatchEvent =
   | { readonly type: 'error'; readonly error: { readonly code?: string; readonly message?: string } }
-  | { readonly type: 'result'; readonly result: { readonly payload?: unknown } };
+  // ★ THE SUCCESS TAG IS `data`, NOT `result`. Runtime contract 0.1.17 names the discriminant
+  // `data` and the payload field `result` — so a union written as `type: 'result'` is the
+  // FIELD's name in the TAG's position. Nothing catches that: the shape typechecks, and
+  // `if (ev.type === 'result')` compiles, never matches, and silently discards every update a
+  // live watch delivers. A page would show a stream that simply never moves.
+  | { readonly type: 'data'; readonly result: { readonly payload?: unknown } };
 
 /**
  * ONE tool-calling surface, parameterised by the credential kind that can drive it.
@@ -369,7 +374,14 @@ export class ConnectorTransport implements Transport<'connector-grant'> {
       // without the full manifest — and the two used to render the same dead end ("add the
       // connector, then reload") to somebody who had already added it.
       if (!servers.length) {
-        throw new ToolCallError('server_not_connected', 'No connector answered this page at all.');
+        // The remedy is named HERE rather than left to a shell's error copy. This transport
+        // exists for exactly one host — a published Artifact page under a viewer's own
+        // connector grant — so "add the connector" is always its right next move, and a shell
+        // that supplied the sentence would be a second place the instruction had to be kept
+        // true. The desktop shell mints its own bearer, so "reload" is wrong advice there;
+        // that is precisely why this belongs to the transport that knows its host.
+        throw new ToolCallError('server_not_connected',
+          'No connector answered this page at all. Add the Interego connector in claude.ai under Settings → Connectors, then reload.');
       }
       const seen: string[] = [];
       for (const s of servers) for (const t of s.tools ?? []) if (t?.name) seen.push(t.name);

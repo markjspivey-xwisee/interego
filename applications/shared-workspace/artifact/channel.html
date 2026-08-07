@@ -1448,7 +1448,10 @@ var WSPC = (() => {
       const hit = servers.find((s) => (s.tools ?? []).some((t) => t?.name === probeTool));
       if (!hit) {
         if (!servers.length) {
-          throw new ToolCallError("server_not_connected", "No connector answered this page at all.");
+          throw new ToolCallError(
+            "server_not_connected",
+            "No connector answered this page at all. Add the Interego connector in claude.ai under Settings \u2192 Connectors, then reload."
+          );
         }
         const seen = [];
         for (const s of servers) for (const t of s.tools ?? []) if (t?.name) seen.push(t.name);
