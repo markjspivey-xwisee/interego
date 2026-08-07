@@ -469,7 +469,10 @@ const BASELINE = {};
 // client's membership, documents and canvas logic out of the published artifact's
 // hand-written script into `packages/workspace-client/src` and added the desktop shell's
 // renderer test and five live drivers (365 -> 380). The gate named the number.
-export const MIN_FILES = 370;
+// 370 -> 371, fired for the FOURTH consecutive time, on the round that added
+// `tools/probe-notification-scope-live.ts` — the live driver that reproduced the
+// cross-pod notification disclosure (380 -> 381). One file was all the remaining slack.
+export const MIN_FILES = 371;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

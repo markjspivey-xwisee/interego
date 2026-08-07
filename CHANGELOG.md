@@ -28,6 +28,52 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 
 ---
 
+## 2026-08-07 — a notification fan-out that knows who may see an entry
+
+### Security
+- **Cross-pod write-activity disclosure on the relay, closed.** `deploy/mcp-relay/server.ts`
+  held `notificationLog` as ONE process-global array, appended to by `emitNotification` for
+  every pod the relay served. Two surfaces read it and neither knew whose bearer was asking:
+  `GET /sse` re-sent `slice(-5)` every two seconds behind a gate that checks only that a
+  bearer is VALID, and `get_pod_status` returned `slice(-10)` in `recentNotifications`. So
+  any authenticated client received the descriptor URL — which names the pod — and the
+  timestamp of every write on the fleet. Not content; cross-pod metadata, on a substrate
+  whose proposition is that your work lives on your own storage under your own authority.
+
+  Reproduced against the deployed relay on 2026-08-07 with two disposable wallets minted for
+  the run, neither with any relationship to the other or to any existing pod. Identity A's
+  `/sse` stream carried five writes across four pods it did not own, including the
+  maintainer's and — live, within the window — identity B's.
+
+- **The fix is the STORE, not the two readers.** `deploy/mcp-relay/notification-log.ts` keys
+  recent activity by canonical pod path and offers exactly one read, `recentForPod(podUrl,
+  limit)`. There is deliberately no accessor that returns everything, so a future consumer
+  cannot broadcast by forgetting a filter — the pod is an argument. A `.filter()` on `/sse`
+  would have closed `/sse` and left `get_pod_status`, the reader nobody had counted, open.
+
+- **What a caller may see: their own pod, and nothing else.** `/sse` serves the pod resolved
+  from the connection's verified auth and sends no notification frames at all when no pod can
+  be proven — the legacy API-key path included. `get_pod_status` returns `recentNotifications`
+  only when `callerOwnPod` matches the resolved pod by canonical key, and OMITS the field
+  otherwise rather than returning `[]`, which would be a claim about somebody else's pod.
+  A seated-member channel was considered and declined on measurement: no consumer needs one
+  (`@interego/workspace-client` polls, and its `watchTool` documents why), so it would have
+  been a wider hole serving a caller that does not exist.
+
+- **Audited alongside, and unchanged because already scoped:** the per-pod SolidNotifications
+  channel `GET /notifications/:podSlug` and webhook registration both run
+  `requireAuthorizedPodUrl`; webhook delivery is keyed by pod URL; the LDN inbox has its own
+  ownership gate. The stdio `mcp-server` keeps a process-global log and is not affected —
+  stdio is one process per client, so its single tenant is the only recipient by construction.
+
+- **`tools/probe-notification-scope-live.ts`** is the live driver: it mints two disposable
+  identities, holds both readers open across a real publish by the second, and exits non-zero
+  if either names the other's pod. `deploy/mcp-relay/tests/notification-scope.test.ts` pins
+  the store's behaviour and both call sites, including the reader COUNT — a third reader of
+  this store fails the build rather than review.
+
+---
+
 ## 2026-08-06 — a workspace member that is an agent, and a deploy path that had never run
 
 ### Added

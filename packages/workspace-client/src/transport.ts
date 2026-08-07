@@ -446,11 +446,24 @@ export class RelayMcpTransport implements Transport<'relay-oauth-bearer'> {
    * own, so even repaired it could never open a channel on ANOTHER member's log — which is the
    * only thing a workspace watch is for.
    *
-   * `GET /sse` connects, and it is not a subscription. It re-sends `notificationLog.slice(-5)`
-   * — one process-global ring, not a per-pod queue — every 2 seconds to every connected client.
-   * The frames carry a `resource` and no pod and no graph IRI, so a reader cannot tell whose
-   * event it is; and because the same five are re-sent on every tick, it cannot tell a new
-   * event from a repeat either. Measured: 5 frames in 8 s, four of them identical.
+   * `GET /sse` connects, and it is not a subscription. It re-sends the last five entries of a
+   * recent-activity ring every 2 seconds. The frames carry a `resource` and no pod and no graph
+   * IRI, so a reader cannot tell WHICH graph an event is about; and because the same five are
+   * re-sent on every tick, it cannot tell a new event from a repeat either. Measured
+   * 2026-08-06: 5 frames in 8 s, four of them identical.
+   *
+   * ★ AND ONE THING RECORDED HERE TURNED OUT TO BE A DISCLOSURE, WHICH IS WHY THIS PARAGRAPH
+   * NOW READS DIFFERENTLY FROM THE ONE ABOVE IT. This note used to add "one process-global
+   * ring, not a per-pod queue", offered as evidence that the channel was too coarse to build a
+   * watch on. It was also the finding: the ring was fed by every pod's publish and `/sse` sat
+   * behind a gate that checks only that a bearer is VALID, so any authenticated client received
+   * the descriptor URL and timestamp of every write on the fleet. Reproduced on 2026-08-07 with
+   * two disposable identities and closed the same day — the ring is keyed by pod and `/sse`
+   * serves the connection's own. See `deploy/mcp-relay/notification-log.ts`.
+   *
+   * The conclusion below is UNCHANGED and now holds more strongly: scoped to your own pod, this
+   * channel cannot carry another member's log even in principle, and another member's log is
+   * the only thing a workspace watch is for.
    *
    * So there is nothing to subscribe TO, and the honest implementation of a watch here is the
    * one the interface's own `refetchInterval` option already describes: re-issue the read on a
