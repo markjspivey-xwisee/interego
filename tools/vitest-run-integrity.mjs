@@ -123,7 +123,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // for the delegation half of the workspace client and three under
 // applications/shared-workspace/discord/tests (the gateway protocol client, the link index, and
 // what the bot is allowed to SAY about what it wrote). The tree reached 228.
-export const MIN_TEST_MODULES = 218;
+export const MIN_TEST_MODULES = 219;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

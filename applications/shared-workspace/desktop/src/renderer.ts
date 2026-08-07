@@ -994,6 +994,22 @@ function teardownWorkspace(): void {
   S.streamsOpened = false; S.streamIri = null;
   S.canvas = { iri: null, head: null, loaded: null, exists: false };
   for (const id of ['postresult', 'canvasresult']) { const n = document.getElementById(id); if (n) clear(n); }
+  /**
+   * ★ THE AGENT IS SWITCHED OFF AND ITS DRAFT DISCARDED WHEN THE WORKSPACE CHANGES.
+   *
+   * An adversarial review found this one and it was the worst of them. Everything above was reset
+   * and `A` was not, so switching workspaces mid-turn left the agent ON in a workspace the user
+   * never enabled it for, and the in-flight turn — composed from the OLD channel's transcript —
+   * wrote its draft into the new channel's composer. With auto-post ticked it published one
+   * workspace's discussion as a permanent public entry in another. Consent to run here is not
+   * consent to run there, so it is withdrawn rather than carried.
+   */
+  if (A.on) void window.interego.agentCancel();
+  A.on = false; A.auto = false; A.busy = false; A.phase = 'off'; A.why = '';
+  const composer = document.getElementById('composer');
+  if (composer) (composer as HTMLTextAreaElement).value = '';
+  const ar = document.getElementById('agentresult');
+  if (ar) clear(ar);
 }
 
 async function openWorkspace(iri: string): Promise<void> {
@@ -1840,11 +1856,26 @@ function setupSteps(): Check[] {
     : { mark: 'q', text: '1. Your account — not resolved yet.' });
 
   if (!providerRead) out.push({ mark: 'q', text: '2. Your agent\'s model — still checking this machine.' });
-  else {
+  else if (probeFailed) {
+    out.push({ mark: 'q', text: '2. Your agent\'s model — this app could not run the check, so what this machine can do is not established. It is not a statement that nothing is here.' });
+  } else {
     const p = usableProvider();
+    const first = providers[0] ?? null;
+    /**
+     * ★ THREE OF THE FOUR UNUSABLE CASES ARE "NOT ESTABLISHED", NOT "NO".
+     *
+     * `membership.ts` states the rule this used to break: collapsing `q` into `n` is how absence
+     * gets rendered as a negative fact. An adversarial review found every `usable: false` drawn as
+     * a cross — including the CLI-not-installed case, the probe-timed-out case and the
+     * unreadable-answer case, in all three of which `loggedIn` is null because nothing was
+     * learned about the account at all. Only `loggedIn === false` is the tool having been asked
+     * and having answered no.
+     */
     out.push(p
       ? { mark: 'y', text: '2. Your agent\'s model — ' + p.label + ', signed in as ' + (p.account ?? 'an account it did not name') + '. Your agent runs on your own subscription.' }
-      : { mark: 'n', text: '2. Your agent\'s model — ' + (providers[0]?.why ?? 'nothing this app can drive was found on this machine.') + ' You can use everything else without it; there is just no agent until it is fixed.' });
+      : first?.loggedIn === false
+        ? { mark: 'n', text: '2. Your agent\'s model — ' + first.why + ' You can use everything else without it; there is just no agent until it is fixed.' }
+        : { mark: 'q', text: '2. Your agent\'s model — ' + (first?.why ?? 'nothing to run your agent on was found, and nothing was established about your account either way.') + ' Whether you have a subscription is not something this app can see from here.' });
   }
 
   const joined = S.spaces?.length ?? null;
@@ -1878,6 +1909,14 @@ function renderSetup(): void {
 let providers: readonly ProviderInfo[] = [];
 let unsupported: readonly { id: string; label: string; why: string }[] = [];
 let providerRead = false;
+/**
+ * The probe itself failed, as distinct from the probe reporting nothing usable.
+ *
+ * ★ WITHOUT THIS FLAG AN EMPTY LIST LIES. The catch below used to leave `providers` empty with
+ * `providerRead` true, and every reader downstream then said "nothing this app can drive was found
+ * on this machine" — a claim about somebody's machine derived from a call that never returned.
+ */
+let probeFailed = false;
 
 const usableProvider = (): ProviderInfo | null => providers.find((p) => p.usable) ?? null;
 
@@ -1886,9 +1925,11 @@ async function loadProviders(): Promise<void> {
     const got = await window.interego.agentProbe();
     providers = got.providers;
     unsupported = got.unsupported;
+    probeFailed = false;
   } catch (e) {
     providers = [];
     unsupported = [];
+    probeFailed = true;
     clear($('modelresult')).appendChild(errBox(e, 'This app could not check what it can run your agent on, so nothing is being claimed about it either way.'));
   }
   providerRead = true;
@@ -2042,9 +2083,12 @@ function renderAgent(): void {
   const why = clear($('agentwhy'));
   if (!providerRead) { why.appendChild(document.createTextNode('Checking what this machine can run your agent on…')); return; }
   if (!provider) {
-    why.appendChild(document.createTextNode(
-      (providers[0]?.why ?? 'No model this app can drive was found on this machine.')
-      + ' Until that is fixed there is no agent — this app will not answer for you out of anything else.'));
+    // Same rule as the checklist: an empty list because the probe THREW is not a finding that
+    // this machine has nothing on it.
+    why.appendChild(document.createTextNode(probeFailed
+      ? 'This app could not check what it can run your agent on, so whether anything is available here is not established. Nothing is being claimed either way.'
+      : (providers[0]?.why ?? 'No model this app can drive was found on this machine.')
+        + ' Until that is fixed there is no agent — this app will not answer for you out of anything else.'));
     return;
   }
   why.appendChild(document.createTextNode(A.on
@@ -2057,28 +2101,41 @@ function renderAgent(): void {
     : 'Off. It reads nothing and writes nothing.'));
 }
 
-/** Everything the decision needs, read out of state this shell already holds. */
-function agentEntries(): SeenEntry[] {
-  const out: SeenEntry[] = [];
+/**
+ * Everything the decision needs, read out of state this shell already holds.
+ *
+ * ★ WHAT COULD NOT BE READ IS COUNTED, NOT DROPPED. Silently omitting a row that failed to read
+ * makes a partial channel look like a complete one — and an adversarial review found what that
+ * costs: lose the read of the agent's OWN latest reply and the "have I spoken since they did"
+ * test compares against an older entry of its own, so it answers the same message twice, on a
+ * permanent public log. `decideTurn` refuses outright when this is non-zero.
+ */
+function agentEntries(): { entries: SeenEntry[]; unreadable: number } {
+  const entries: SeenEntry[] = [];
+  let unreadable = 0;
   for (const st of S.streams.values()) {
+    // A whole log this client could not read at all is the same problem one row larger.
+    if (st.error || !st.loaded) { unreadable++; continue; }
     for (const r of orderChain(st.rows).ordered) {
       const b = S.bodies.get(r.url);
-      // Entries whose body has not been fetched yet are left out entirely rather than included
-      // with a null body: "not read yet" and "read and empty" are different, and only the second
-      // is a fact about the channel.
-      if (!b) continue;
+      // Not fetched yet, or fetched and failed: either way this row is a row nothing is known
+      // about, and "not read" is not "not an entry".
+      if (!b || b.error) { unreadable++; continue; }
       if (!b.isEntry) continue;
       if (b.declaredWorkspace && b.declaredWorkspace !== S.workspace) continue;
-      out.push({
+      // `Date.parse(x) || null` turned the epoch into "no time", which then sorted as newest.
+      // Number.isNaN is the test that actually asks the question.
+      const t = r.validFrom ? Date.parse(r.validFrom) : NaN;
+      entries.push({
         pod: st.pod,
         descriptorUrl: r.url,
         body: b.body,
         derivedFrom: null,
-        at: r.validFrom ? Date.parse(r.validFrom) || null : null,
+        at: Number.isNaN(t) ? null : t,
       });
     }
   }
-  return out;
+  return { entries, unreadable };
 }
 
 async function agentConsider(): Promise<void> {
@@ -2090,9 +2147,11 @@ async function agentConsider(): Promise<void> {
   const ta = area('composer');
   if (ta.value.trim()) { A.why = 'you have unsent text in the box, so nothing was drafted over it'; A.phase = 'watching'; renderAgent(); return; }
 
+  const read = agentEntries();
   const decision = decideTurn({
     workspace: S.workspace, slug: S.slug, mePod: S.viewer.podName,
-    seats: S.seats, roles: S.roles.roles ? S.roles : null, entries: agentEntries(),
+    seats: S.seats, roles: S.roles.roles ? S.roles : null,
+    entries: read.entries, unreadable: read.unreadable,
   });
   if (decision.kind !== 'answer') {
     A.why = decision.why;

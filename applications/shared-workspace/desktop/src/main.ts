@@ -82,13 +82,22 @@ interface Session {
 let session: Session = { state: 'signed-out', pod: null, method: null, expiresAt: null, renewable: false, why: null };
 
 /**
- * Kill functions for model turns currently running.
+ * One model turn in flight.
+ *
+ * `cancelled` is separate from `kill` because a turn spends its first seconds INSIDE the provider
+ * probe, with no child of its own to kill yet. A cancel in that window has to be remembered, or
+ * the turn sails past it — which is what an adversarial review found the first version doing.
+ */
+interface Turn { cancelled: boolean; kill: (() => void) | null }
+
+/**
+ * Model turns currently running.
  *
  * A set rather than a single handle because a turn that is being cancelled and one that is
- * starting can overlap by a few milliseconds, and the one thing that must not survive a cancel is
- * a child nobody is holding a reference to.
+ * starting can overlap, and the one thing that must not survive a cancel is a child nobody is
+ * holding a reference to. Entries are removed one at a time by the turn that owns them.
  */
-const thinking = new Set<() => void>();
+const thinking = new Set<Turn>();
 
 const listeners = new Set<WebContents>();
 function setSession(next: Session): void {
@@ -327,26 +336,50 @@ app.whenReady().then(() => {
    */
   ipcMain.handle('agent:think', async (_e, prompt: string, systemPrompt: string | null) => {
     if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('a model turn needs a prompt');
-    const status = await probeClaude();
-    if (!status.usable || !status.path) return { ok: false, text: null, ms: 0, why: status.why };
-    const run = await runClaude({
-      binary: status.path,
-      prompt,
-      ...(typeof systemPrompt === 'string' && systemPrompt ? { systemPrompt } : {}),
-      // Handed the killer so `agent:cancel` can actually stop a turn already in flight. An agent
-      // the user switched off that keeps thinking and then posts is the thing this must not do.
-      onChild: (kill) => { thinking.add(kill); },
-    });
-    thinking.clear();
-    return run;
+    /**
+     * ★ THIS TURN IS REGISTERED BEFORE ANY CHILD EXISTS, AND `cancelled` IS CHECKED AFTER EVERY
+     * AWAIT. An adversarial review found the hole: the probe below spawns its own child with a
+     * 20-SECOND timeout, and the old code only registered a killer once `runClaude` had already
+     * spawned. For that whole window `agent:cancel` iterated an empty set, answered
+     * `{stopped: 0}`, and the model child then started and ran to completion — on a subscription
+     * the user had just switched off. A turn is now a live object from its first line.
+     */
+    const turn: Turn = { cancelled: false, kill: null };
+    thinking.add(turn);
+    try {
+      const status = await probeClaude();
+      if (turn.cancelled) return { ok: false, text: null, ms: 0, why: 'You turned your agent off before it started. Nothing was written.' };
+      if (!status.usable || !status.path) return { ok: false, text: null, ms: 0, why: status.why };
+      const run = await runClaude({
+        binary: status.path,
+        prompt,
+        ...(typeof systemPrompt === 'string' && systemPrompt ? { systemPrompt } : {}),
+        onChild: (kill) => {
+          turn.kill = kill;
+          // Cancelled while the child was being spawned: kill it the moment it exists, or it
+          // outlives the cancel by its whole timeout.
+          if (turn.cancelled) kill();
+        },
+      });
+      if (turn.cancelled) return { ok: false, text: null, ms: run.ms, why: 'You turned your agent off while it was thinking. Its answer was discarded and nothing was written.' };
+      return run;
+    } finally {
+      // ★ `delete`, NOT `clear`. The set exists because a turn being cancelled and one starting
+      // can overlap; clearing it on every completion orphaned the other one's child permanently,
+      // which is the exact failure the set was introduced to prevent.
+      thinking.delete(turn);
+    }
   });
 
   /** Stop any turn in flight. The user turning the agent off has to reach a running child. */
   ipcMain.handle('agent:cancel', () => {
-    const n = thinking.size;
-    for (const kill of thinking) { try { kill(); } catch { /* already gone is the ordinary case */ } }
-    thinking.clear();
-    return { stopped: n };
+    let killed = 0;
+    for (const turn of thinking) {
+      turn.cancelled = true;
+      // A turn still inside the probe has no child yet; `onChild` above kills it on arrival.
+      if (turn.kill) { try { turn.kill(); killed++; } catch { /* already gone is the ordinary case */ } }
+    }
+    return { stopped: thinking.size, killed };
   });
 
   createWindow();

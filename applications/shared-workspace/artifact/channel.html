@@ -3226,34 +3226,40 @@ var WSPC = (() => {
         why: "The role ceiling refuses this write. " + verdict.why + " Nothing could stop this agent writing to your pod \u2014 it is your pod \u2014 so this is a refusal it imposes on itself. An entry written anyway would exist and be inert: the fold would not count it."
       };
     }
-    const ordered = [...input.entries].sort((a, b) => (a.at ?? Number.MAX_SAFE_INTEGER) - (b.at ?? Number.MAX_SAFE_INTEGER));
-    const mine = ordered.filter((e) => e.pod === input.mePod);
-    const theirs = ordered.filter((e) => e.pod !== input.mePod);
+    if (input.unreadable > 0) {
+      return {
+        kind: "channel-incomplete",
+        why: input.unreadable + " entr" + (input.unreadable === 1 ? "y" : "ies") + " in this channel could not be read. Who spoke last is therefore not established, and answering on a partial read is how the same message gets answered twice. Nothing is written."
+      };
+    }
     const said = (e) => typeof e.body === "string" && e.body.trim() !== "";
-    const newest = [...theirs].reverse().find(said) ?? null;
-    if (!newest) {
+    const dated = input.entries.filter((e) => e.at !== null && said(e)).sort((a, b) => a.at - b.at);
+    const undated = input.entries.filter((e) => e.at === null);
+    const lastMine = [...dated].reverse().find((e) => e.pod === input.mePod) ?? null;
+    const lastTheirs = [...dated].reverse().find((e) => e.pod !== input.mePod) ?? null;
+    if (!lastTheirs) {
       return {
         kind: "nothing-to-answer",
-        why: theirs.length ? "The " + theirs.length + " entr" + (theirs.length === 1 ? "y" : "ies") + " from other members carried nothing readable to answer. An entry saying nothing is still a permanent record, so none is written." : "Nobody else has written in this channel yet."
+        why: undated.length ? "Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not established. Your agent answers what it can place in the conversation, and it can place none of this." : "Nobody else has written anything readable in this channel yet."
       };
     }
-    const lastMine = [...mine].reverse().find(said) ?? null;
-    const lastAny = [...ordered].reverse().find(said) ?? null;
-    if (lastAny && lastMine && lastAny.descriptorUrl === lastMine.descriptorUrl) {
+    if (lastMine && lastMine.at !== null && lastTheirs.at !== null && lastMine.at >= lastTheirs.at) {
       return {
         kind: "already-answered",
-        answering: newest,
-        why: "The most recent entry in this channel is your own (" + shortRef(lastMine.descriptorUrl) + "). Your agent answers when somebody else has spoken last; appending now would put a second permanent record in your log with nothing new to answer."
+        answering: lastTheirs,
+        why: "You have written in this channel since " + lastTheirs.pod + " last did (" + shortRef(lastMine.descriptorUrl) + "). Your agent answers when somebody else has spoken last; appending now would put a second permanent record in your log with nothing new to answer."
       };
     }
-    const derived = mine.find((e) => e.derivedFrom === newest.descriptorUrl);
+    const derived = input.entries.find((e) => e.pod === input.mePod && e.derivedFrom === lastTheirs.descriptorUrl);
     if (derived) {
       return {
         kind: "already-answered",
-        answering: newest,
+        answering: lastTheirs,
         why: "The newest entry from another member is already declared as answered on your log (" + shortRef(derived.descriptorUrl) + "). Appending again would put two permanent records in your log saying the same thing."
       };
     }
+    const newest = lastTheirs;
+    const ordered = [...undated, ...dated];
     const window = ordered.slice(-BRIEF_ENTRIES);
     return {
       kind: "answer",

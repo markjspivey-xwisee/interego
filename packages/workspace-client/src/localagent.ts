@@ -56,6 +56,16 @@ export interface TurnInput {
   readonly roles: RoleTable | null;
   /** Every entry the client managed to read, from every member's log, in whatever order. */
   readonly entries: readonly SeenEntry[];
+  /**
+   * How many entries were found but could NOT be read.
+   *
+   * ★ REQUIRED, AND A NON-ZERO VALUE IS A REFUSAL. An adversarial review found the path: a
+   * transient failure reading the agent's OWN most recent reply removes it from `entries`, the
+   * "have I spoken since they did" test then compares against an older entry of mine, and the
+   * agent answers the same message a second time — permanently, publicly. A partially-read channel
+   * cannot answer "who spoke last", and guessing costs a duplicate record on somebody's log.
+   */
+  readonly unreadable: number;
 }
 
 /** What a model is given. Text only — no IRIs to fetch, no tools, no credential. */
@@ -74,6 +84,8 @@ export type TurnDecision =
   | { readonly kind: 'not-seated'; readonly why: string }
   | { readonly kind: 'ceiling'; readonly why: string }
   | { readonly kind: 'roles-unreadable'; readonly why: string }
+  /** Part of the channel could not be read, so who spoke last is not established. */
+  | { readonly kind: 'channel-incomplete'; readonly why: string }
   | { readonly kind: 'nothing-to-answer'; readonly why: string }
   | { readonly kind: 'already-answered'; readonly why: string; readonly answering: SeenEntry }
   | { readonly kind: 'answer'; readonly answering: SeenEntry; readonly brief: ChannelBrief };
@@ -133,58 +145,86 @@ export function decideTurn(input: TurnInput): TurnDecision {
     };
   }
 
-  // Oldest first. Entries with no readable time keep their given order relative to each other and
-  // sort after those that have one, rather than being dropped or dated now.
-  const ordered = [...input.entries].sort((a, b) => (a.at ?? Number.MAX_SAFE_INTEGER) - (b.at ?? Number.MAX_SAFE_INTEGER));
-  const mine = ordered.filter((e) => e.pod === input.mePod);
-  const theirs = ordered.filter((e) => e.pod !== input.mePod);
+  if (input.unreadable > 0) {
+    return {
+      kind: 'channel-incomplete',
+      why: input.unreadable + ' entr' + (input.unreadable === 1 ? 'y' : 'ies') + ' in this channel could not be read. '
+        + 'Who spoke last is therefore not established, and answering on a partial read is how the same message '
+        + 'gets answered twice. Nothing is written.',
+    };
+  }
 
   // A body that is present and empty is a deliberate empty entry, not something to answer. A body
   // that is null was not readable, which is different again and equally not something to answer:
   // a model asked to reply to text nobody could read would be inventing the thing it replies to.
   const said = (e: SeenEntry): boolean => typeof e.body === 'string' && e.body.trim() !== '';
-  const newest = [...theirs].reverse().find(said) ?? null;
-  if (!newest) {
+
+  /**
+   * ★ AN ENTRY WITH NO READABLE TIME CANNOT BE PLACED, AND MUST NOT BE PLACED LAST.
+   *
+   * This is the defect an adversarial review found, and it is worth spelling out because the first
+   * version looked obviously right. It sorted `a.at ?? Number.MAX_SAFE_INTEGER`, so an entry with
+   * no readable timestamp sorted LAST — which in a conversation means NEWEST. The "have I spoken
+   * since they did" guard then compared against that undated entry, which is never mine, so the
+   * guard never fired: the agent answered the same message on every 45-second poll, forever, each
+   * one a permanent public record. Exactly the loop the guard existed to prevent.
+   *
+   * Undated entries are therefore excluded from the ORDER decision entirely rather than given a
+   * position that is a guess in one direction or the other. They still appear in the transcript,
+   * because a reader can see them; they just cannot establish that anything new has happened.
+   */
+  const dated = input.entries.filter((e) => e.at !== null && said(e))
+    .sort((a, b) => (a.at as number) - (b.at as number));
+  const undated = input.entries.filter((e) => e.at === null);
+
+  const lastMine = [...dated].reverse().find((e) => e.pod === input.mePod) ?? null;
+  const lastTheirs = [...dated].reverse().find((e) => e.pod !== input.mePod) ?? null;
+
+  if (!lastTheirs) {
     return {
       kind: 'nothing-to-answer',
-      why: theirs.length
-        ? 'The ' + theirs.length + ' entr' + (theirs.length === 1 ? 'y' : 'ies') + ' from other members carried nothing readable to answer. '
-          + 'An entry saying nothing is still a permanent record, so none is written.'
-        : 'Nobody else has written in this channel yet.',
+      why: undated.length
+        ? 'Nothing another member wrote in this channel carries a readable time, so whether any of it is new is not '
+          + 'established. Your agent answers what it can place in the conversation, and it can place none of this.'
+        : 'Nobody else has written anything readable in this channel yet.',
     };
   }
 
   // ★ "HAVE I ANSWERED THIS ALREADY" IS ASKED OF THE CHANNEL, NOT OF A FLAG THIS CLIENT KEEPS.
   // The obvious test — does one of my entries declare `prov:wasDerivedFrom` the entry I am about
-  // to answer — DOES NOT WORK from this client, and finding that out late would have been a loop
-  // that answered the same message every time it polled, forever, on a permanent public log.
-  // `entryTurtle` does not write a derivation link, so an entry posted from here never carries
-  // one; only the bridge's own writer does. The rule that holds for every author is simply
-  // whether somebody else has spoken since I last did. It needs no state, survives a restart, and
-  // cannot double-post after a crash. The derivation link is still honoured when it is there,
-  // because the bridge's entries do carry it and that is a stronger statement when available.
-  const lastMine = [...mine].reverse().find(said) ?? null;
-  const lastAny = [...ordered].reverse().find(said) ?? null;
-  if (lastAny && lastMine && lastAny.descriptorUrl === lastMine.descriptorUrl) {
+  // to answer — DOES NOT WORK from this client: `entryTurtle` writes no derivation link, so an
+  // entry posted from here never carries one and the test is dead code here. The rule that holds
+  // for every author is whether somebody else has spoken SINCE I last did. It needs no state,
+  // survives a restart, and cannot double-post after a crash.
+  //
+  // `>=` and not `>`: two entries sharing a timestamp is a tie this cannot resolve, and the safe
+  // side of a tie is silence.
+  if (lastMine && lastMine.at !== null && lastTheirs.at !== null && lastMine.at >= lastTheirs.at) {
     return {
       kind: 'already-answered',
-      answering: newest,
-      why: 'The most recent entry in this channel is your own (' + shortRef(lastMine.descriptorUrl)
-        + '). Your agent answers when somebody else has spoken last; appending now would put a second '
-        + 'permanent record in your log with nothing new to answer.',
+      answering: lastTheirs,
+      why: 'You have written in this channel since ' + (lastTheirs.pod) + ' last did ('
+        + shortRef(lastMine.descriptorUrl) + '). Your agent answers when somebody else has spoken last; '
+        + 'appending now would put a second permanent record in your log with nothing new to answer.',
     };
   }
-  const derived = mine.find((e) => e.derivedFrom === newest.descriptorUrl);
+  // Still honoured when present, because the bridge's own writer DOES emit it and an explicit
+  // derivation link is a stronger statement than an ordering.
+  const derived = input.entries.find((e) => e.pod === input.mePod && e.derivedFrom === lastTheirs.descriptorUrl);
   if (derived) {
     return {
       kind: 'already-answered',
-      answering: newest,
+      answering: lastTheirs,
       why: 'The newest entry from another member is already declared as answered on your log ('
         + shortRef(derived.descriptorUrl) + '). Appending again would put two permanent records in your log '
         + 'saying the same thing.',
     };
   }
 
+  const newest = lastTheirs;
+  // The transcript keeps undated entries — a reader sees them, so the agent should too — placed
+  // before the dated ones rather than interleaved on a time nobody reported.
+  const ordered = [...undated, ...dated];
   const window = ordered.slice(-BRIEF_ENTRIES);
   return {
     kind: 'answer',

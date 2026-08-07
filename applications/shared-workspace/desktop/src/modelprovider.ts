@@ -142,6 +142,12 @@ function run(bin: string, args: readonly string[], opts: { readonly env: NodeJS.
     cp.stderr.on('data', (d: Buffer) => { stderr += d.toString('utf8'); });
     cp.on('error', (e) => finish({ code: null, stdout, stderr, spawnError: e.message, timedOut: false }));
     cp.on('close', (code) => finish({ code, stdout, stderr, spawnError: null, timedOut: false }));
+    // ★ A WRITE TO A CHILD THAT ALREADY EXITED MUST NOT TAKE DOWN THE APP. Without this listener
+    // an EPIPE on the child's stdin is an unhandled stream error, and Electron's main process has
+    // no `uncaughtException` handler — so a child that rejects a flag and exits before the prompt
+    // drains, or one killed by `agent:cancel` mid-write, would crash the whole window rather than
+    // failing one turn. The close/error handlers above already report the real outcome.
+    cp.stdin.on('error', () => { /* the child is gone; `close` below is what reports it */ });
     // The prompt goes in on stdin rather than argv: it is other people's text, it can be long, and
     // Windows has a command-line length limit that a busy channel would eventually cross.
     cp.stdin.end(opts.stdin ?? '');
@@ -284,6 +290,29 @@ export interface ModelRun {
  * `--no-session-persistence` keeps an unattended loop from writing a session transcript per turn
  * into the user's `~/.claude` — measured working with subscription auth, unlike `--bare`.
  */
+/**
+ * The arguments one turn is run with.
+ *
+ * ★ A SEPARATE, EXPORTED, PURE FUNCTION SO THE ABSENCE OF ONE FLAG IS TESTABLE. The property that
+ * matters most here is a NEGATIVE — that `--bare` is never present — and a negative about an argv
+ * cannot be checked by spawning: on a machine where the CLI is signed in, adding `--bare` breaks
+ * every user's agent while leaving a live driver green, because its effect is an auth failure the
+ * driver's own box would never see. So the argv is a value, and `tests/workspace-desktop-
+ * modelprovider.test.ts` asserts on the array rather than grepping this file.
+ */
+export function turnArgv(args: { readonly model?: string; readonly systemPrompt?: string }): string[] {
+  return [
+    '-p',
+    '--model', args.model ?? 'sonnet',
+    // NEVER add the flag that makes the CLI read only an API key — see footgun 1 in the header.
+    // It disables OAuth, which is the entire credential this feature runs on.
+    '--tools', '',                 // no filesystem, no shell, no network: it writes a sentence
+    '--no-session-persistence',    // an unattended loop must not litter the user's ~/.claude
+    '--output-format', 'json',
+    ...(args.systemPrompt ? ['--append-system-prompt', args.systemPrompt] : []),
+  ];
+}
+
 export async function runClaude(args: {
   readonly binary: string;
   readonly prompt: string;
@@ -295,15 +324,7 @@ export async function runClaude(args: {
   readonly onChild?: (kill: () => void) => void;
 }): Promise<ModelRun> {
   const t0 = Date.now();
-  const argv = [
-    '-p',
-    '--model', args.model ?? 'sonnet',
-    // See footgun 1: NEVER add --bare here.
-    '--tools', '',
-    '--no-session-persistence',
-    '--output-format', 'json',
-    ...(args.systemPrompt ? ['--append-system-prompt', args.systemPrompt] : []),
-  ];
+  const argv = turnArgv(args);
   const r = await run(args.binary, argv, {
     env: args.env ?? childEnv(),
     timeoutMs: args.timeoutMs ?? 120_000,

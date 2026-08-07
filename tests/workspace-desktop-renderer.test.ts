@@ -951,15 +951,10 @@ describe('the first run reads as one sequence, and admits what it cannot know', 
     expect(steps).not.toContain('you are in none yet');
   });
 
-  it('★ a missing model is a finding against, not an unknown — the tool was actually asked', async () => {
-    // The mirror of the Discord case, and the reason both exist. Here the app DID ask and got an
-    // answer, so "no" is established and drawing it as "unknown" would understate a real blocker.
-    const o = await open({ agent: { prompts: [], cancels: 0, providers: [CLAUDE_ABSENT] } });
-    await signInAndSettle(o);
-    const against = [...o.doc.querySelectorAll('#setupsteps .n')].map((n) => n.textContent ?? '');
-    expect(against.some((t) => t.startsWith('2. Your agent\'s model'))).toBe(true);
-    expect(text(o.doc, '#setupsteps')).toContain('You can use everything else without it');
-  });
+  // NOTE: this block used to carry a case asserting that an ABSENT CLI is a finding against. It
+  // was wrong, and an adversarial review caught it: `CLAUDE_ABSENT` has `loggedIn: null`, so
+  // nothing at all was established about the account and a cross claimed otherwise. The two cases
+  // that replaced it — one per side of the rule — live in the local-agent block below.
 });
 
 // ── linking a chat account by publishing a delegation ────────────────────────
@@ -1109,7 +1104,7 @@ describe('the local agent is off, visible, and stoppable', () => {
     await signInAndSettle(o);
     click(o.doc, 'agenttoggle');
     await o.settle();
-    expect(text(o.doc, '#agentwhy')).toContain('most recent entry in this channel is your own');
+    expect(text(o.doc, '#agentwhy')).toContain('You have written in this channel since');
     expect(o.agent.prompts).toHaveLength(0);
   });
 
@@ -1162,6 +1157,100 @@ describe('the local agent is off, visible, and stoppable', () => {
     await o.settle();
     expect(text(o.doc, '#agentresult')).toContain('refused rather than truncated');
     expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  /**
+   * ★ THE FOUR BELOW ARE DEFECTS AN ADVERSARIAL REVIEWER FOUND IN THE FIRST VERSION OF THIS
+   * FEATURE, after every test above was already green. Each was reachable, each was silent, and
+   * two of them wrote to somebody's permanent public log. They are pinned here in the shape that
+   * produced them.
+   */
+  it('★ an entry with no readable time never reads as the newest thing in the channel', async () => {
+    // THE LOOP-FOREVER DEFECT. The ordering used `at ?? Number.MAX_SAFE_INTEGER`, so an undated
+    // entry sorted LAST — which in a conversation means newest. The "have I spoken since they
+    // did" guard then compared against that undated entry, which is never the agent's own, so it
+    // never fired: one model call and one permanent public entry every 45 seconds, forever.
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z'));
+      (s.pods.get(POD_A) as Pod).put(entry(POD_A, 1, 'My answer to it.', '2026-08-07T10:01:00.000Z'));
+      // Undated, and from the other member: the exact shape that used to sort newest.
+      (s.pods.get(POD_B) as Pod).put({
+        graph: STREAM(POD_B), cid: 'cid-undated', url: DESC(POD_B, 260),
+        content: trig(STREAM(POD_B), '<' + STREAM(POD_B) + '/e/9> a wsp:Entry ; wsp:workspace <' + WS + '> ;\n'
+          + '  dct:description "no validFrom on this one" .'),
+      });
+    } });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(o.agent.prompts).toHaveLength(0);
+    expect(text(o.doc, '#agentwhy')).toContain('since');
+  });
+
+  it('★ refuses outright when part of the channel could not be read', async () => {
+    // Losing the read of the agent's OWN latest reply made it answer the same message twice. A
+    // partial channel cannot answer "who spoke last", so it is not asked to.
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z'));
+      s.fail.set('get_descriptor', (input) => (String(input['url']).endsWith('200.ttl')
+        ? { error: 'upstream_error', message: 'that descriptor could not be read' } : undefined));
+    } });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect(o.agent.prompts).toHaveLength(0);
+    expect(text(o.doc, '#agentwhy')).toContain('could not be read');
+  });
+
+  it('★ switching workspace turns the agent off and discards its draft', async () => {
+    // THE CROSS-WORKSPACE LEAK. `teardownWorkspace` reset every other piece of channel state and
+    // not the agent's, so an in-flight turn composed from one channel wrote its draft into
+    // another's composer — and with auto-post on, published it there.
+    const o = await open({ setup: (s) => {
+      (s.pods.get(POD_B) as Pod).put(entry(POD_B, 0, 'A question', '2026-08-07T10:00:00.000Z'));
+    } });
+    await signInAndSettle(o);
+    click(o.doc, 'agenttoggle');
+    await o.settle();
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).not.toBe('');
+    await openByIri(o, WS);
+    expect(text(o.doc, '#agentstate')).toBe('Off');
+    expect((o.doc.getElementById('composer') as HTMLTextAreaElement).value).toBe('');
+    expect(o.agent.cancels).toBeGreaterThan(0);
+  });
+
+  it('★ a probe that threw is not rendered as "nothing is installed on this machine"', async () => {
+    const o = await open({ agent: { prompts: [], cancels: 0, probeThrows: true } });
+    await signInAndSettle(o);
+    const steps = text(o.doc, '#setupsteps');
+    expect(steps).toContain('not established');
+    expect(steps).not.toContain('was found on this machine');
+    const unknown = [...o.doc.querySelectorAll('#setupsteps .q')].map((n) => n.textContent ?? '');
+    expect(unknown.some((t) => t.startsWith('2. Your agent\'s model'))).toBe(true);
+    expect([...o.doc.querySelectorAll('#setupsteps .n')]).toHaveLength(0);
+  });
+
+  it('★ a CLI that is absent is "not established", not a finding that you are signed out', async () => {
+    // `loggedIn: null` means the tool was never there to ask. Only `loggedIn === false` is the
+    // tool having answered no, and only that may be drawn as a finding against.
+    const o = await open({ agent: { prompts: [], cancels: 0, providers: [CLAUDE_ABSENT] } });
+    await signInAndSettle(o);
+    const unknown = [...o.doc.querySelectorAll('#setupsteps .q')].map((n) => n.textContent ?? '');
+    expect(unknown.some((t) => t.startsWith('2. Your agent\'s model'))).toBe(true);
+    expect(text(o.doc, '#setupsteps')).toContain('not something this app can see from here');
+  });
+
+  it('an installed CLI that answered "not signed in" IS a finding against', async () => {
+    // The other side of the same rule: here the tool was asked and answered, so understating it
+    // as unknown would hide a real blocker behind a shrug.
+    const o = await open({ agent: { prompts: [], cancels: 0, providers: [{
+      ...CLAUDE_ABSENT, installed: true, path: 'C:\\claude.exe', loggedIn: false,
+      why: 'Claude Code is installed but not signed in. Run `claude auth login`.',
+    }] } });
+    await signInAndSettle(o);
+    const against = [...o.doc.querySelectorAll('#setupsteps .n')].map((n) => n.textContent ?? '');
+    expect(against.some((t) => t.startsWith('2. Your agent\'s model'))).toBe(true);
+    expect(text(o.doc, '#setupsteps')).toContain('claude auth login');
   });
 
   it('★ an unseated viewer\'s agent refuses, and says which half is missing', async () => {

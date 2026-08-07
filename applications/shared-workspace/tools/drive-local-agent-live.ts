@@ -55,9 +55,16 @@ async function open(wallet: Signer, who: string): Promise<Party> {
   return { wallet, client, viewer };
 }
 
-/** Read every seated member's log the way the shell does, into the decision's own shape. */
-async function readChannel(p: Party, workspace: string, slug: string, seats: readonly Seat[]): Promise<SeenEntry[]> {
+/**
+ * Read every seated member's log the way the shell does, into the decision's own shape.
+ *
+ * `unreadable` is counted rather than skipped for the same reason the shell counts it: a partial
+ * channel cannot answer "who spoke last", and a decision made on one answers the same message
+ * twice. `decideTurn` refuses when it is non-zero.
+ */
+async function readChannel(p: Party, workspace: string, slug: string, seats: readonly Seat[]): Promise<{ entries: SeenEntry[]; unreadable: number }> {
   const out: SeenEntry[] = [];
+  let unreadable = 0;
   for (const seat of seats) {
     // A seat whose stream or pod this fold could not name is SKIPPED rather than guessed at. A
     // manifest read against a made-up pod name comes back empty, and an empty read is exactly what
@@ -73,8 +80,10 @@ async function readChannel(p: Party, workspace: string, slug: string, seats: rea
       supersedes: Array.isArray(r['supersedes']) ? r['supersedes'] as string[] : [],
     }))).ordered;
     for (const row of ordered) {
-      if (!row.url) continue;
-      const d = await p.client.descriptor(row.url);
+      if (!row.url) { unreadable++; continue; }
+      let d: Record<string, unknown>;
+      try { d = await p.client.descriptor(row.url); }
+      catch { unreadable++; continue; }
       // ★ THE CONTENT IS NESTED UNDER `graph`, AND READING `d.content` INSTEAD IS SILENT.
       // The first version of this driver read `d['content']`, which does not exist: every
       // descriptor came back with an empty region, every entry failed `hasType`, and the agent
@@ -86,17 +95,20 @@ async function readChannel(p: Party, workspace: string, slug: string, seats: rea
       // `''` is a signed block that WAS located and is empty; `null` is one that was not.
       const src = region === null ? '' : region;
       if (!hasType(src, 'wsp:Entry')) continue;
+      // `Date.parse(x) || null` made the epoch read as "no time", and an entry with no time used
+      // to sort as the NEWEST thing in the channel. Number.isNaN asks the real question.
+      const t = row.validFrom ? Date.parse(row.validFrom) : NaN;
       out.push({
         pod,
         descriptorUrl: row.url,
         body: readLiteral(src, 'dct:description'),
         derivedFrom: readIri(src, 'prov:wasDerivedFrom'),
-        at: row.validFrom ? Date.parse(row.validFrom) || null : null,
+        at: Number.isNaN(t) ? null : t,
       });
       void readInt(src, 'wsp:seq');
     }
   }
-  return out;
+  return { entries: out, unreadable };
 }
 
 /**
@@ -109,14 +121,14 @@ async function readChannel(p: Party, workspace: string, slug: string, seats: rea
  * same readback the shell does after every post, for the same reason, and a driver that skipped it
  * was measuring a race rather than the decision.
  */
-async function awaitEntry(p: Party, workspace: string, slug: string, seats: readonly Seat[], from: string, tries = 40): Promise<SeenEntry[]> {
-  let entries: SeenEntry[] = [];
+async function awaitEntry(p: Party, workspace: string, slug: string, seats: readonly Seat[], from: string, tries = 40): Promise<{ entries: SeenEntry[]; unreadable: number }> {
+  let read: { entries: SeenEntry[]; unreadable: number } = { entries: [], unreadable: 0 };
   for (let i = 0; i < tries; i++) {
-    entries = await readChannel(p, workspace, slug, seats);
-    if (entries.some((e) => e.pod === from && (e.body ?? '').trim() !== '')) return entries;
+    read = await readChannel(p, workspace, slug, seats);
+    if (read.unreadable === 0 && read.entries.some((e) => e.pod === from && (e.body ?? '').trim() !== '')) return read;
     await new Promise((r) => { setTimeout(r, 700); });
   }
-  return entries;
+  return read;
 }
 
 async function main(): Promise<void> {
@@ -184,9 +196,11 @@ async function main(): Promise<void> {
   check('both members are seated', fold.seats.filter((s) => s.seated).length === 2,
     fold.seats.map((s) => s.pod + (s.seated ? ' seated' : ' NOT: ' + s.why)).join(' | '));
 
-  let entries = await awaitEntry(A, workspace, slug, fold.seats, B.viewer.podName);
-  log('  read ' + entries.length + ' entries across ' + fold.seats.filter((s) => s.seated).length + ' logs');
-  const decision = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries });
+  let read = await awaitEntry(A, workspace, slug, fold.seats, B.viewer.podName);
+  log('  read ' + read.entries.length + ' entries across ' + fold.seats.filter((s) => s.seated).length + ' logs'
+    + (read.unreadable ? ', ' + read.unreadable + ' unreadable' : ''));
+  check('the whole channel was readable, so a decision may be made on it', read.unreadable === 0);
+  const decision = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries: read.entries, unreadable: read.unreadable });
   check('the agent decides there is something to answer', decision.kind === 'answer', decision.kind + (decision.kind === 'answer' ? '' : ' — ' + decision.why));
   if (decision.kind !== 'answer') { process.exit(1); }
   check('it is answering B\'s entry and not its own', decision.answering.pod === B.viewer.podName, decision.answering.pod);
@@ -216,8 +230,8 @@ async function main(): Promise<void> {
   head('7 · the loop guard: asked again, it refuses to answer twice');
   // Without this the agent would re-answer the same message on every poll, permanently, on a
   // public log. It is checked against the real channel rather than against a flag.
-  entries = await awaitEntry(A, workspace, slug, fold.seats, A.viewer.podName);
-  const again = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries });
+  read = await awaitEntry(A, workspace, slug, fold.seats, A.viewer.podName);
+  const again = decideTurn({ workspace, slug, mePod: A.viewer.podName, seats: fold.seats, roles, entries: read.entries, unreadable: read.unreadable });
   check('the second decision is a refusal, not a second reply', again.kind === 'already-answered',
     again.kind + (again.kind === 'already-answered' ? ' — ' + again.why : ''));
 

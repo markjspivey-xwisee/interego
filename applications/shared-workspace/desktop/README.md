@@ -175,6 +175,51 @@ public log. The rule that holds for every author is simply *whether somebody els
 I last did*. It needs no state, survives a restart, and cannot double-post after a crash. A
 derivation link is still honoured when present, because the bridge's entries do carry one.
 
+### What an adversarial review found after all of the above was green
+
+Every test in this document passed before a reviewer was pointed at the code and told to **refute**
+these claims rather than confirm them. It refuted three, and each defect was reachable, silent, and
+wrote to somebody's permanent public log. They are recorded because the shape of them recurs.
+
+**The loop guard never fired.** The ordering used `at ?? Number.MAX_SAFE_INTEGER`, so an entry with
+no readable timestamp sorted *last* — which in a conversation means *newest*. The "have I spoken
+since they did" test then compared against that undated entry, which is never the agent's own, so
+it never matched: one model call and one permanent public entry **every 45 seconds, forever**. The
+exact loop the guard existed to prevent, produced by the guard's own tie-break. Undated entries are
+now excluded from the ordering decision entirely rather than given a position that is a guess in
+one direction. (`Date.parse(x) || null` also made the Unix epoch read as "no time" — the same bug
+one falsy value over.)
+
+**A partial read answered twice.** Entries whose descriptor failed to read were dropped silently,
+so losing the read of the agent's *own* latest reply made an older entry of its own the newest —
+and it answered the same message again. Unreadable rows are now **counted**, and `decideTurn`
+refuses outright when the count is non-zero: a partially-read channel cannot answer "who spoke
+last", and guessing costs a duplicate on a permanent log.
+
+**Switching workspace carried the agent across.** `teardownWorkspace` reset streams, bodies, seats,
+roles and canvas — and not the agent. An in-flight turn composed from one channel wrote its draft
+into another channel's composer, and with auto-post ticked published one workspace's discussion in
+a different workspace. Consent to run here was being read as consent to run there. The agent is now
+switched off and its draft discarded on every workspace change.
+
+Two more, from the same review: **`agent:cancel` could not reach a child that did not exist yet** —
+a turn spends its first seconds inside a 20-second provider probe, and the old code only registered
+a killer after the model child spawned, so "off" during that window was ignored and the turn ran to
+completion on a subscription the user had just switched off. And **`thinking.clear()` orphaned
+overlapping turns** — clearing the whole set on every completion destroyed the very overlap the set
+was introduced to handle. Both fixed; a turn is now a live object from its first line and removes
+only itself.
+
+And one honesty defect: **three of the four "unusable" model states were drawn as a cross.** The
+CLI-not-installed, probe-timed-out and unreadable-answer cases all have `loggedIn: null` — nothing
+was established about the account at all — and rendering them as a finding *against* is exactly
+what `membership.ts` warns about ("collapsing the two is how absence gets rendered as a negative
+fact"). Only `loggedIn === false` is the tool having been asked and having answered no.
+
+**Known and not fixed:** an active IME preedit is not protected by the composer guard (it tests
+`.value`, which a preedit has not yet committed); and `cp.kill()` on Windows terminates one process
+rather than a tree, so a cancel reaches the CLI but not necessarily anything it spawned.
+
 ### One thing the live drive changed
 
 The instruction the agent is given was **tuned from a measured failure, not from taste**. The first
