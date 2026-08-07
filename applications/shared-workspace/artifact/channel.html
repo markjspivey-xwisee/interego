@@ -858,6 +858,7 @@ var WSPC = (() => {
     assignPodMarks: () => assignPodMarks,
     awaitHead: () => awaitHead,
     canvasTurtle: () => canvasTurtle,
+    checkDelegation: () => checkDelegation,
     checkOwnHandle: () => checkOwnHandle,
     checkRoleForWorkspace: () => checkRoleForWorkspace,
     checkWriteEligibility: () => checkWriteEligibility,
@@ -899,12 +900,14 @@ var WSPC = (() => {
     postEntry: () => postEntry,
     preconditionLine: () => preconditionLine,
     qualifiedName: () => qualifiedName,
+    readAuthorship: () => readAuthorship,
     readCanvas: () => readCanvas,
     readInbox: () => readInbox,
     readInt: () => readInt,
     readIri: () => readIri,
     readIriList: () => readIriList,
     readLiteral: () => readLiteral,
+    readMember: () => readMember,
     readViewer: () => readViewer,
     refusal: () => refusal,
     resolveInvitee: () => resolveInvitee,
@@ -1875,9 +1878,10 @@ var WSPC = (() => {
         }
       };
       tell("sending", "Publishing " + graphIri.replace(/^https:\/\//, ""));
+      const sent = typeof args["pod_name"] === "string" ? args : { ...args, pod_name: podName };
       let res;
       try {
-        res = await this.tool("publish_context", args);
+        res = await this.tool("publish_context", sent);
       } catch (e) {
         tell("failed", errorCopy(e).t);
         return { error: e };
@@ -2014,6 +2018,15 @@ var WSPC = (() => {
       const prior = ch.ordered.length ? ch.ordered[ch.ordered.length - 1] : null;
       const seq = ch.ordered.length;
       const publishArgs = {
+        // ★ THE APPEND LANDS ON THE POD THE CHAIN WAS READ FROM. `podName` used to drive only the
+        // manifest read above; the publish named no pod and the relay filled it from the session.
+        // For a client that is the pod owner those are the same pod and nothing showed. For a
+        // client acting for SOMEBODY ELSE under a delegation they are never the same pod: the
+        // sequence number, the prior head and the `if_match` were all derived from the member's
+        // log, and the entry asserting them landed on the caller's own — a chain link pointing at
+        // a descriptor on a different pod, and a member's log that stayed empty while the client
+        // reported the append accepted.
+        pod_name: args.podName,
         graph_iri: args.streamIri,
         graph_content: entryTurtle({ streamIri: args.streamIri, workspace: args.workspace, seq, body: args.body, prior: prior ? prior.url : null }),
         visibility: "public",
@@ -2912,6 +2925,138 @@ var WSPC = (() => {
       ...args.sleep === void 0 ? {} : { sleep: args.sleep }
     });
     return { kind: "resent", onto: h.cid, save };
+  }
+
+  // packages/workspace-client/src/delegation.ts
+  async function readMember(client, podName) {
+    const status = await client.tool("get_pod_status", { pod_name: podName }, { cache: false });
+    const bad = refusal(status);
+    if (bad) throw fail("tool_error", String(bad["message"] ?? bad["error"]));
+    const podUrl = String(status?.["pod"] ?? status?.["podUrl"] ?? "");
+    const served = podOfDescriptorUrl(podUrl) ?? podUrl.replace(/\/$/, "").split("/").pop() ?? "";
+    if (served !== podName) {
+      throw fail("tool_error", "get_pod_status was asked for pod " + podName + " and answered for " + (served || "a pod this reader could not name") + ". These disagree, so nothing is being read out of it.");
+    }
+    const registry = status?.["registry"];
+    const delegation = status?.["delegationRegistry"];
+    const webId = registry?.owner ?? delegation?.owner ?? "";
+    if (!webId) {
+      throw fail("tool_error", "pod " + podName + " reports no registry owner, so there is no WebID to name as the author of anything written there.");
+    }
+    return {
+      podName,
+      podUrl,
+      displayName: status?.["displayName"] ?? null,
+      css: String(status?.["css"] ?? ""),
+      webId,
+      // See the header on this function. Not "unknown" — deliberately not read.
+      agentDid: null,
+      agentScope: null
+    };
+  }
+  async function checkDelegation(client, args) {
+    const checks = [];
+    const no = (why, extra) => {
+      checks.push({ mark: "n", text: why });
+      return { agentId: args.agentId, podName: args.podName, checks, ok: false, why, row: null, scope: null, basis: null, examinedPod: null, ...extra };
+    };
+    let status;
+    try {
+      status = await client.tool("get_pod_status", { pod_name: args.podName }, { cache: false });
+    } catch (e) {
+      return no("the delegation registry on " + args.podName + " could not be read (" + errorCopy(e).t.toLowerCase() + "), so whether it names this agent is not established");
+    }
+    const bad = refusal(status);
+    if (bad) return no("the read of " + args.podName + " was refused: " + String(bad["message"] ?? bad["error"]));
+    const served = podOfDescriptorUrl(String(status?.["pod"] ?? "")) ?? null;
+    if (served && served !== args.podName) {
+      return no("get_pod_status was asked about pod " + args.podName + " and answered for pod " + served + ". These disagree, so no delegation is being read out of it.");
+    }
+    const reg = status?.["delegationRegistry"];
+    if (!reg) {
+      return no("pod " + args.podName + " reports no delegation registry at all, so whether it delegates anything to this agent is not established \u2014 that is different from it delegating nothing");
+    }
+    const raw = Array.isArray(reg.rows) ? reg.rows : [];
+    const hit = raw.find((r) => r && r["agentId"] === args.agentId);
+    if (!hit) {
+      return no("pod " + args.podName + "'s own delegation registry lists " + raw.length + " live agent" + (raw.length === 1 ? "" : "s") + " and this one is not among them. Nothing was written.");
+    }
+    const row = {
+      agentId: String(hit["agentId"]),
+      scope: typeof hit["scope"] === "string" ? hit["scope"] : null,
+      label: typeof hit["label"] === "string" ? hit["label"] : null,
+      validFrom: typeof hit["validFrom"] === "string" ? hit["validFrom"] : null
+    };
+    checks.push({ mark: "y", text: "Pod " + args.podName + "'s own delegation registry \u2014 a document only its owner can write \u2014 lists this agent with scope " + (row.scope ?? "none reported") });
+    if (args.expectLabel !== void 0) {
+      if (row.label === null) {
+        return no("that row carries no label, so this pod's owner has not said who the delegation is for. A row with no label is not evidence against the claimant \u2014 it is no evidence either way, and a binding is not made on no evidence.", { row, scope: row.scope });
+      }
+      if (row.label !== args.expectLabel) {
+        return no(`that row's label is "` + row.label + '", and the delegation would have to be labelled "' + args.expectLabel + '" to be a delegation for the party asking. It must be that exactly, with nothing before or after it.', { row, scope: row.scope });
+      }
+      checks.push({ mark: "y", text: 'Its label is "' + args.expectLabel + `" \u2014 this pod's owner naming, in a document only they can write, who the delegation is for` });
+    }
+    let v;
+    try {
+      v = await client.tool("verify_agent", { agent_id: args.agentId, pod_name: args.podName }, { cache: false });
+    } catch (e) {
+      return no("verify_agent did not answer (" + errorCopy(e).t.toLowerCase() + "), so what the relay would enforce here is not established", { row, scope: row.scope });
+    }
+    const vbad = refusal(v);
+    if (vbad) return no("verify_agent was refused: " + String(vbad["message"] ?? vbad["error"]), { row, scope: row.scope });
+    const examinedPod = typeof v?.["subject_pod_name"] === "string" ? v["subject_pod_name"] : null;
+    if (examinedPod !== null && examinedPod !== args.podName) {
+      return no("verify_agent was asked about pod " + args.podName + " and its answer says it examined pod " + examinedPod + ". These disagree, so it is not being read as a verdict about either.", { row, scope: row.scope, examinedPod });
+    }
+    const enf = v?.["enforcement"];
+    if (!enf) {
+      return no("verify_agent answered without an enforcement block, so what the relay grants this agent on " + args.podName + " is not established here", { row, scope: row.scope, examinedPod });
+    }
+    const basis = typeof enf["basis"] === "string" ? enf["basis"] : null;
+    const scope = typeof enf["scope"] === "string" ? enf["scope"] : row.scope;
+    if (enf["writeEligible"] !== true) {
+      return no("the relay reports this agent is not write-eligible on " + args.podName + " (basis " + (basis ?? "not reported") + ", scope " + (scope ?? "not reported") + "). " + String(enf["note"] ?? "") + " A write would be refused, so it is not attempted.", { row, scope, basis, examinedPod });
+    }
+    checks.push({ mark: "y", text: "The relay reports this agent write-eligible on " + args.podName + " with scope " + (scope ?? "not reported") + ', on basis "' + (basis ?? "not reported") + '"' });
+    if (basis === "registry-only") {
+      checks.push({ mark: "q", text: "The signed delegation credential did not anchor; the relay is enforcing this from the pod's own registry alone. That registry is still a document only the pod owner can write, so it is authorisation \u2014 it is just not a cryptographic chain." });
+    }
+    return { agentId: args.agentId, podName: args.podName, checks, ok: true, why: null, row, scope, basis, examinedPod };
+  }
+  function readAuthorship(a) {
+    if (!a || typeof a !== "object") {
+      return {
+        present: false,
+        signerAgent: null,
+        verificationMethod: null,
+        contentBinding: null,
+        proves: [],
+        doesNotProve: ["No authorship block came back with this descriptor, so nothing is established about who wrote it. That is not the same as it being unsigned."]
+      };
+    }
+    const p = a;
+    const signer = typeof p["signer"] === "string" ? p["signer"] : typeof p["signedBy"] === "string" ? p["signedBy"] : null;
+    const vm = typeof p["verificationMethod"] === "string" ? p["verificationMethod"] : null;
+    const binding = typeof p["contentBinding"] === "string" ? p["contentBinding"] : null;
+    const signed = p["signed"] === true || p["authorshipVerified"] === true;
+    const proves = [];
+    const doesNot = [];
+    if (signed) {
+      proves.push(signer ? "The relay signed a statement that the caller it had authenticated as " + signer + " published this descriptor." : "The relay signed a statement about this descriptor, and the response named no agent in it.");
+      if (binding === "bound-at-signing") {
+        proves.push("The signed payload commits to a digest of the entry's canonical triples, so the text cannot be changed afterwards without the proof failing.");
+      } else if (binding === "unbound") {
+        doesNot.push("The proof carries no content digest, so it covers WHICH descriptor was written and not WHAT it says. The text could be replaced and the proof would still verify.");
+      } else if (binding !== null) {
+        doesNot.push('The content binding is reported as "' + binding + '", which is neither a check that passed nor one that failed \u2014 nothing was verified about the text here.');
+      }
+    } else {
+      doesNot.push("The block reports no successful signature, so who asked for this write is not established by it.");
+    }
+    doesNot.push(vm ? "The signature verifies against " + vm + " \u2014 the relay's own delegation key, the same one for every pod and every agent on this deployment. It is NOT the author's wallet, and it is not evidence that any human key signed anything." : "The block names no verification method, so what key this would verify against is not established.");
+    doesNot.push("It says nothing about whether the pod owner authorised the agent named above. That is a separate document \u2014 the pod's own delegation registry \u2014 and it is what checkDelegation reads.");
+    return { present: true, signerAgent: signer, verificationMethod: vm, contentBinding: binding, proves, doesNotProve: doesNot };
   }
   return __toCommonJS(index_exports);
 })();
