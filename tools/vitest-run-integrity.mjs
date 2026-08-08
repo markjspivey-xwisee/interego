@@ -158,7 +158,17 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // untested. It could not be tested at all until `main` stopped being module-private and
 // self-invoking, because importing it WAS launching the bot.
 // The tree reached 236.
-export const MIN_TEST_MODULES = 226;
+// 226 -> 227: pinning the OAuth client name the Discord bot signs in under.
+// `applications/shared-workspace/discord/tests/identity.test.ts` is the one new suite. The relay
+// bakes the OAuth `client_name` into the agent DID it issues, so the bot's permanent identity —
+// the string every participant pastes into `register_agent` and stores world-readably on their
+// own pod — was decided by an argument `BotSession.open()` did not pass, and it therefore shipped
+// under `mintBearer`'s default: the name of the disposable drivers in the sibling `tools/`
+// directory. Nothing failed, which is why nothing caught it. The new suite drives the real SIWE
+// ceremony over an injected `fetch` and reads the name off the `/register` body, because that is
+// the only copy of it the relay ever sees.
+// The tree reached 237.
+export const MIN_TEST_MODULES = 227;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

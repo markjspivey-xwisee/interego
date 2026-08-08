@@ -30,7 +30,8 @@ const RELAY = 'https://relay.interego.xwisee.com';
 const CONV = 'u-eth-0123456789ab';
 const MEMBER = 'u-eth-cafecafecafe';
 const WEBID = (p: string): string => 'https://identity.interego.xwisee.com/users/' + p + '/profile#me';
-const BOT = 'did:web:identity.interego.xwisee.com:agents:interego-workspace-discord-u-eth-b0tb0tb0tb0t';
+/** The bot's own DID in the shape the relay issues: `DISCORD_CLIENT_NAME`, then its pod. */
+const BOT = 'did:web:identity.interego.xwisee.com:agents:interego-discord-u-eth-b0tb0tb0tb0t';
 const SLUG = 'thread-1';
 const WS = RELAY + '/ns/' + CONV + '/' + SLUG;
 const SHAPE = RELAY + '/ns/' + CONV + '/' + SLUG + '-shapes';

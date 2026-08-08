@@ -15,7 +15,8 @@ import { DISCORD_LIMIT, body, renderChallenge, renderConfirm, renderRecord, rend
 import type { Seat } from '@interego/workspace-client';
 import type { RecordOut, ShowOut } from '../src/workspace.js';
 
-const AGENT = 'did:web:identity.interego.xwisee.com:agents:interego-workspace-discord-u-eth-0123456789ab';
+/** The bot's own DID in the shape the relay issues: `DISCORD_CLIENT_NAME`, then its pod. */
+const AGENT = 'did:web:identity.interego.xwisee.com:agents:interego-discord-u-eth-0123456789ab';
 const RELAY_KEY = 'did:ethr:0xd144353a7A2Fa81E126e072AD3b16cD245c83331';
 const POD = 'u-eth-0123456789ab';
 const WEBID = 'https://identity.interego.xwisee.com/users/' + POD + '/profile#me';
