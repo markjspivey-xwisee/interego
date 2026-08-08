@@ -1435,35 +1435,29 @@ async function getCachedManifest(podUrl: string): Promise<ManifestEntry[]> {
   const hit = manifestCache.get(podUrl);
   if (hit && hit.expiresAt > Date.now()) return hit.entries;
   if (hit) manifestCache.delete(podUrl);
-  // Read the monolithic manifest (always — legacy + authoritative).
-  // When append-only is enabled, ALSO read the per-entry container and
-  // union/dedupe by descriptor URL. The monolithic version is
-  // preferred on collision (it's the published-and-CAS-verified version).
-  const [monolithic, appendOnly] = await Promise.all([
-    // ★ `guardedInvokeFetch`, NOT `solidFetch` — `podUrl` is CALLER-SUPPLIED and this tool
-    // is unauthenticated by design (published artifacts call it anonymously).
-    //
-    // It used to be `solidFetch`, which rides the global unscreened pool, so this was an
-    // unauthenticated SSRF door standing beside the screened one. Measured on the
-    // deployed relay: `POST /tool/discover_context {"pod_url":"https://10-0-0-5.nip.io/"}`
-    // HUNG for 30s — a real connect attempt at 10.0.0.5 — while the guarded path refuses
-    // that same name in ~130ms with ERR_EGRESS_PRIVATE_ADDRESS. The asymmetry was the
-    // proof; the timing difference was itself a reachability oracle.
-    //
-    // The comment at AUTH_REQUIRED_TOOLS claimed R4 "already removed their teeth" for
-    // this tool. It did not — R4 covers `get_descriptor` and `dereference`, which do call
-    // `guardedInvokeFetch`. That claim is corrected there; this line is what makes it true.
-    //
-    // Safe for the relay's own pod too: `assertInvokeTargetAllowed` classifies the pinned
-    // CSS origin as `pinned` and skips the ADDRESS screen for it by design, so internal
-    // discovery keeps working — only caller-supplied public targets get screened.
-    discover(podUrl, undefined, { fetch: guardedInvokeFetch }),
-    APPEND_ONLY_ENABLED ? readAppendOnlyEntries(podUrl) : Promise.resolve([] as ManifestEntry[]),
-  ]);
-  const byUrl = new Map<string, ManifestEntry>();
-  for (const e of appendOnly) byUrl.set(String(e.descriptorUrl), e);
-  for (const e of monolithic) byUrl.set(String(e.descriptorUrl), e); // monolithic wins on collision
-  const entries = [...byUrl.values()];
+  // Read the manifest. There is exactly ONE index — `.well-known/context-graphs`, bounded and
+  // chained to its archive segments by @interego/solid's `discover()`. An append-only shard
+  // container used to be unioned in here behind a flag; that whole path is gone, so this is a
+  // single read with no second source to reconcile.
+  //
+  // ★ `guardedInvokeFetch`, NOT `solidFetch` — `podUrl` is CALLER-SUPPLIED and this tool
+  // is unauthenticated by design (published artifacts call it anonymously).
+  //
+  // It used to be `solidFetch`, which rides the global unscreened pool, so this was an
+  // unauthenticated SSRF door standing beside the screened one. Measured on the
+  // deployed relay: `POST /tool/discover_context {"pod_url":"https://10-0-0-5.nip.io/"}`
+  // HUNG for 30s — a real connect attempt at 10.0.0.5 — while the guarded path refuses
+  // that same name in ~130ms with ERR_EGRESS_PRIVATE_ADDRESS. The asymmetry was the
+  // proof; the timing difference was itself a reachability oracle.
+  //
+  // The comment at AUTH_REQUIRED_TOOLS claimed R4 "already removed their teeth" for
+  // this tool. It did not — R4 covers `get_descriptor` and `dereference`, which do call
+  // `guardedInvokeFetch`. That claim is corrected there; this line is what makes it true.
+  //
+  // Safe for the relay's own pod too: `assertInvokeTargetAllowed` classifies the pinned
+  // CSS origin as `pinned` and skips the ADDRESS screen for it by design, so internal
+  // discovery keeps working — only caller-supplied public targets get screened.
+  const entries = await discover(podUrl, undefined, { fetch: guardedInvokeFetch });
   if (manifestCache.size >= MANIFEST_CACHE_MAX) {
     const oldestKey = manifestCache.keys().next().value;
     if (oldestKey !== undefined) manifestCache.delete(oldestKey);
@@ -1544,154 +1538,28 @@ async function discoverCached(podUrl: string, filter?: DiscoverFilterLite): Prom
   return sorted;
 }
 
-// ── Append-only manifest (Fix-5, feature-flagged) ───────────
+// ── The append-only manifest shards are GONE, and this is the note that keeps them gone ──
 //
-// The monolithic manifest at `<pod>/.well-known/context-graphs` is a
-// single Turtle resource updated via GET-modify-PUT with If-Match CAS.
-// Under sustained load this is the bottleneck — every publish reads,
-// edits, and rewrites the entire manifest, and concurrent writes
-// have to serialize through the relay's per-pod mutex (Fix-1).
+// A second manifest write path used to live here: every entry ALSO written as its own
+// resource at `<pod>cg-entries/<descriptor-slug>.entry.ttl` (one PUT, no read-modify-write,
+// no CAS), with `getCachedManifest` above unioning that container back over the real
+// manifest — all behind `MANIFEST_APPEND_ONLY_ENABLED`, shipped off, "to test in prod
+// without risk". It composed. It was still a loaded gun, for two reasons:
 //
-// The append-only path writes EACH manifest entry as its own resource
-// at `<pod>/.well-known/cg-entries/<descriptor-slug>.entry.ttl` (one
-// PUT, no RMW, no CAS). Reads union the monolithic manifest + the
-// container listing of cg-entries/.
+//   (a) ONLY TWO READERS KNEW. The union lived in `getCachedManifest` and in
+//       @interego/solid's `discover()`. Eleven other places GET
+//       `.well-known/context-graphs` raw — CID backfill, head resolution, status — and
+//       would have seen none of the shard-written entries. The comment that used to sit on
+//       the writer, "the monolithic manifest is still the authoritative store", was true
+//       only while the flag was OFF. Switched on, it described a pod that did not exist.
+//   (b) RECOVERY WAS A ONE-WAY DOOR. `cg-entries/` sat at the pod root, inside the scan
+//       `rebuild_manifest` walks, so a rebuild emitted a phantom manifest row per shard on
+//       top of the real one and roughly doubled the index — with no path back.
 //
-// Feature-flagged + ADDITIVE — when on, every publish writes BOTH the
-// monolithic update (legacy) AND the entry file. When off, behavior is
-// identical to pre-Fix-5. Turn on via env to test in prod without risk.
-const APPEND_ONLY_ENABLED = String(process.env.MANIFEST_APPEND_ONLY_ENABLED ?? '').toLowerCase() === 'true';
-// NOT under .well-known/ — CSS serializes writes to .well-known/* through
-// a shared lock, so entry PUTs there collide with the monolithic manifest
-// CAS (observed live: "412 concurrent manifest update detected after 8
-// attempts" + "post-PUT verification: entry missing after 200 OK" when
-// both paths shared the .well-known/ prefix). A regular pod-level
-// container gets per-resource locks only.
-const APPEND_ONLY_CONTAINER_SLUG = 'cg-entries';
-function appendOnlyContainerUrl(podUrl: string): string {
-  return `${podUrl}${APPEND_ONLY_CONTAINER_SLUG}/`;
-}
-function appendOnlyEntryUrl(podUrl: string, descriptorUrl: string): string {
-  // Derive a stable filename from the descriptor URL's last segment.
-  const tail = descriptorUrl.replace(/\.ttl$/, '').split('/').pop() ?? `entry-${Date.now()}`;
-  return `${appendOnlyContainerUrl(podUrl)}${tail}.entry.ttl`;
-}
-
-// Build a standalone single-entry Turtle document — same predicates
-// the legacy manifestEntryTurtle (packages/solid/src/client.ts L363)
-// uses, with prefix declarations included so it can be parsed in
-// isolation by the existing parseManifest regex.
-function renderAppendOnlyEntry(args: {
-  descriptorUrl: string;
-  contentCid?: string;
-  graphIris: string[];
-  facetTypes: string[];
-  validFrom?: string;
-  validUntil?: string;
-  conformsTo?: string[];
-  supersedes?: string[];
-  modalStatus?: string;
-  trustLevel?: string;
-  issuer?: string;
-}): string {
-  const lines: string[] = [
-    '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .',
-    '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
-    '@prefix dct: <http://purl.org/dc/terms/> .',
-    '',
-    `${turtleIriRef(args.descriptorUrl) ?? '<urn:iep:invalid-subject>'} a iep:ManifestEntry ;`,
-  ];
-  // ★ Every value below is interpolated into Turtle, and this builder used all THREE
-  // injectable positions at once: IRI brackets, `"..."` literals, and `iep:`-prefixed
-  // names. Each has a different terminator (`>`, `"`, and whitespace/`;`/`.`), so each
-  // needs its own handling — literals get escaped, IRIs and prefixed names get REFUSED,
-  // because Turtle defines no escape for their terminators. A rejected optional value is
-  // dropped; the entry is still worth writing without it.
-  const iri = (v: unknown): string | null => turtleIriRef(v);
-  const local = (v: unknown): string | null => turtlePrefixedLocal(v);
-
-  if (args.contentCid) lines.push(`    iep:contentCid "${escapeTurtleLiteral(args.contentCid)}" ;`);
-  for (const g of args.graphIris ?? []) { const r = iri(g); if (r) lines.push(`    iep:describes ${r} ;`); }
-  for (const ft of args.facetTypes ?? []) { const l = local(ft); if (l) lines.push(`    iep:hasFacetType iep:${l} ;`); }
-  if (args.validFrom)  lines.push(`    iep:validFrom "${escapeTurtleLiteral(args.validFrom)}"^^xsd:dateTime ;`);
-  if (args.validUntil) lines.push(`    iep:validUntil "${escapeTurtleLiteral(args.validUntil)}"^^xsd:dateTime ;`);
-  for (const c of args.conformsTo ?? []) { const r = iri(c); if (r) lines.push(`    dct:conformsTo ${r} ;`); }
-  for (const s of args.supersedes ?? []) { const r = iri(s); if (r) lines.push(`    iep:supersedes ${r} ;`); }
-  if (args.modalStatus) { const l = local(args.modalStatus); if (l) lines.push(`    iep:modalStatus iep:${l} ;`); }
-  if (args.trustLevel)  { const l = local(args.trustLevel);  if (l) lines.push(`    iep:trustLevel iep:${l} ;`); }
-  if (args.issuer)      { const r = iri(args.issuer);        if (r) lines.push(`    iep:issuer ${r} ;`); }
-  // Terminate (replace trailing semicolon)
-  const last = lines[lines.length - 1];
-  lines[lines.length - 1] = last.endsWith(' ;') ? last.slice(0, -2) + ' .' : last + ' .';
-  return lines.join('\n') + '\n';
-}
-
-// Write a single-entry file. Fire-and-forget so it doesn't block the
-// caller's publish response. Best-effort: failures are logged but do
-// not affect the monolithic manifest (which is still the authoritative
-// store while the flag is being rolled out).
-function writeAppendOnlyEntryAsync(podUrl: string, descriptorUrl: string, entryTurtle: string): void {
-  const url = appendOnlyEntryUrl(podUrl, descriptorUrl);
-  // Bootstrap the container if needed — single best-effort PUT, the
-  // request that follows will work even if this is a no-op.
-  void (async () => {
-    try {
-      await solidFetch(appendOnlyContainerUrl(podUrl), {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'text/turtle',
-          'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
-        },
-        body: '',
-      });
-      const res = await solidFetch(url, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'text/turtle' },
-        body: entryTurtle,
-      });
-      if (!res.ok && res.status !== 201 && res.status !== 204) {
-        console.warn(`[relay] append-only entry write ${url} → ${res.status}`);
-      }
-    } catch (err) {
-      console.warn(`[relay] append-only entry write ${url} failed: ${(err as Error).message}`);
-    }
-  })();
-}
-
-// Read entries from the append-only container. Returns the parsed
-// ManifestEntry[] (parseManifest can handle our renderAppendOnlyEntry
-// format since each entry uses the same `<url> a iep:ManifestEntry`
-// anchor). Empty array if container does not exist.
-async function readAppendOnlyEntries(podUrl: string): Promise<ManifestEntry[]> {
-  const containerUrl = appendOnlyContainerUrl(podUrl);
-  try {
-    const listResp = await solidFetch(containerUrl, {
-      method: 'GET',
-      headers: { 'Accept': 'application/ld+json' },
-    });
-    if (!listResp.ok) return [];
-    const listJson = await listResp.json() as Array<{ '@id'?: string }>;
-    const entryUrls = (Array.isArray(listJson) ? listJson : [])
-      .map(x => x?.['@id'])
-      .filter((u): u is string => typeof u === 'string' && u.endsWith('.entry.ttl'));
-    if (entryUrls.length === 0) return [];
-    // Fetch entries in parallel (bounded by undici pool).
-    const entryTurtles = await Promise.all(entryUrls.map(async u => {
-      const cached = descriptorBodyCache.get(u);
-      if (cached && cached.expiresAt > Date.now()) return cached.content;
-      const r = await solidFetch(u, { method: 'GET', headers: { 'Accept': 'text/turtle' } });
-      if (!r.ok) return null;
-      const text = await r.text();
-      cacheDescriptorBody(u, { content: text, mediaType: 'text/turtle', encrypted: false });
-      return text;
-    }));
-    const combined = entryTurtles.filter((t): t is string => typeof t === 'string').join('\n\n');
-    if (!combined) return [];
-    return parseManifest(combined);
-  } catch {
-    return [];
-  }
-}
+// The bounded/archived manifest in @interego/solid replaced it and carries neither defect:
+// one index, no flag, archive segments inside `.well-known/` where the descriptor scan
+// already refuses to look. Do not reintroduce a second write path without first making all
+// thirteen readers agree, and without a recovery path that can undo it.
 
 // ── Descriptor body cache (Fix-4 outer) ─────────────────────
 //
@@ -3403,30 +3271,6 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     }
     manifestCache.delete(podUrl);
 
-    // Append-only mirror (Fix-5, feature-flagged). Best-effort, fire-and-
-    // forget — the monolithic manifest is still the authoritative store.
-    // When this flag is on, each entry also lands at
-    // <pod>/.well-known/cg-entries/<slug>.entry.ttl so unioned reads pick
-    // it up even if a future monolithic update is racing.
-    if (APPEND_ONLY_ENABLED) {
-      const facetTypes = [...new Set(descriptor.facets.map(f => f.type))];
-      const issuerFacet = descriptor.facets.find(f => f.type === 'Trust') as { type: 'Trust'; issuer?: string; trustLevel?: string } | undefined;
-      const semioticFacet = descriptor.facets.find(f => f.type === 'Semiotic') as { type: 'Semiotic'; modalStatus?: string } | undefined;
-      const entryTurtle = renderAppendOnlyEntry({
-        descriptorUrl: result.descriptorUrl,
-        graphIris: [...(descriptor.describes ?? [])] as string[],
-        facetTypes,
-        validFrom: descriptor.validFrom,
-        validUntil: descriptor.validUntil,
-        conformsTo: descriptor.conformsTo ? [...descriptor.conformsTo] as string[] : undefined,
-        supersedes: descriptor.supersedes ? [...descriptor.supersedes] as string[] : undefined,
-        modalStatus: semioticFacet?.modalStatus,
-        trustLevel: issuerFacet?.trustLevel,
-        issuer: issuerFacet?.issuer,
-      });
-      writeAppendOnlyEntryAsync(podUrl, result.descriptorUrl, entryTurtle);
-    }
-
     // For 'public' visibility, write per-resource .acl entries that
     // explicitly grant acl:Read to acl:agentClass foaf:Agent on the
     // descriptor + payload. The /context-graphs/ container ACL already
@@ -3624,24 +3468,6 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         }
         if (committedCid !== provisionalCid) {
           log(`[publish/deferred] descriptor re-decided before the write: the 202 carried cid ${provisionalCid}, the pod holds ${committedCid} — /publish/status?descriptorUrl=${encodeURIComponent(predictedDescriptorUrl)} reports the committed one`);
-        }
-        if (APPEND_ONLY_ENABLED) {
-          const facetTypes = [...new Set(descriptorToWrite.facets.map(f => f.type))];
-          const issuerFacet = descriptorToWrite.facets.find(f => f.type === 'Trust') as { type: 'Trust'; issuer?: string; trustLevel?: string } | undefined;
-          const semioticFacet = descriptorToWrite.facets.find(f => f.type === 'Semiotic') as { type: 'Semiotic'; modalStatus?: string } | undefined;
-          const entryTurtle = renderAppendOnlyEntry({
-            descriptorUrl: real.descriptorUrl,
-            graphIris: [...(descriptorToWrite.describes ?? [])] as string[],
-            facetTypes,
-            validFrom: descriptorToWrite.validFrom,
-            validUntil: descriptorToWrite.validUntil,
-            conformsTo: descriptorToWrite.conformsTo ? [...descriptorToWrite.conformsTo] as string[] : undefined,
-            supersedes: descriptorToWrite.supersedes ? [...descriptorToWrite.supersedes] as string[] : undefined,
-            modalStatus: semioticFacet?.modalStatus,
-            trustLevel: issuerFacet?.trustLevel,
-            issuer: issuerFacet?.issuer,
-          });
-          writeAppendOnlyEntryAsync(podUrl, real.descriptorUrl, entryTurtle);
         }
         manifestCache.delete(podUrl);
         if (visibility === 'public') {

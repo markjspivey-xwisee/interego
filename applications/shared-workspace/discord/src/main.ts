@@ -15,18 +15,74 @@
  *
  * `no-console` is an eslint error in this tree, and rightly — a bot's operator log is a stream
  * with a contract, not a debug aid. Everything below goes to stdout through one function.
+ *
+ * ★ WHY THIS FILE TAKES A `Boot` AND EXPORTS ITS ENTRY POINT.
+ *
+ * It used to do neither: `main()` was module-private and line 168 called it, so the act of
+ * importing this module authenticated against Discord, minted a SIWE bearer against the live
+ * relay, wrote `~/.interego/discord-workspace.json`, opened a real gateway socket and installed
+ * two `process.on(SIG…)` handlers — and swallowed any throw into `process.exitCode = 1`, which
+ * in a shared vitest worker is a green-looking import that quietly poisons the run. There was
+ * therefore no way to reach `onInteraction`, `onMessage` or the per-pod queue at all, and this
+ * file — the wiring between the Discord half and the substrate half, the only part of the bot
+ * neither `tests/gateway.test.ts` nor `tests/record.test.ts` touches — was the least-proven code
+ * in the vertical.
+ *
+ * The seam is deliberately the SMALLEST one that changes no behaviour. Three of the four
+ * injection points already existed and this file simply declined to use them: `DiscordRest`
+ * takes a `fetchImpl`, `DiscordGateway` takes an `openSocket`, `LinkStore` takes a path. Only
+ * the session and the signal installer are new, and both default to exactly what ran before.
+ * Run as a program, every default applies and the behaviour is line-for-line what it was.
  */
 
+import { pathToFileURL } from 'node:url';
+import { resolve as resolvePath } from 'node:path';
 import { LinkStore } from './links.js';
-import { BotSession } from './identity.js';
+import { BotSession, type BotIdentity } from './identity.js';
 import { COMMANDS, DiscordGateway, DiscordRest, type GatewayInteraction, type GatewayMessage } from './discord.js';
 import { beginLink, confirmLink, recordMessage, showWorkspace, startWorkspace, unlink, type Deps } from './workspace.js';
 import { renderChallenge, renderConfirm, renderRecord, renderShow, renderStart, renderUnlink, type Message } from './render.js';
 
-const out = (line: string): void => { process.stdout.write(new Date().toISOString() + ' ' + line + '\n'); };
+const defaultOut = (line: string): void => { process.stdout.write(new Date().toISOString() + ' ' + line + '\n'); };
 
-const RELAY = process.env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
-const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
+/**
+ * The part of `BotSession` the wiring uses. A test supplies these three and nothing else — in
+ * particular it never reaches `new Wallet(privateKey)` or the SIWE mint behind `open()`.
+ */
+export type SessionLike = Pick<BotSession, 'open' | 'current' | 'call'>;
+
+/** What `main` hands back once the gateway is connected. `null` for the register-only exit. */
+export interface Started {
+  readonly gateway: DiscordGateway;
+  readonly identity: BotIdentity;
+  readonly store: LinkStore;
+}
+
+/**
+ * Everything the wiring reaches outside itself. Every field is optional and every default is
+ * the live one, so `main()` with no argument is the program.
+ */
+export interface Boot {
+  /** Defaults to `process.env`. Read INSIDE `main`, so the relay URLs are not frozen at import. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Defaults to `process.argv`. Only `--register-commands-only` is looked for. */
+  readonly argv?: readonly string[];
+  /** Defaults to the stdout writer above. */
+  readonly out?: (line: string) => void;
+  /** Passed to `DiscordRest`. Defaults to global `fetch`. */
+  readonly fetchImpl?: typeof fetch;
+  /** Passed to `DiscordGateway`. Defaults to a real `ws` socket. */
+  readonly openSocket?: ConstructorParameters<typeof DiscordGateway>[2];
+  /** Passed to `LinkStore`. Defaults to `INTEREGO_DISCORD_STATE` / `~/.interego/…`. */
+  readonly statePath?: string;
+  /** Defaults to `new BotSession(relay, identity, INTEREGO_BOT_KEY)`. */
+  readonly session?: SessionLike;
+  /**
+   * Defaults to `process.on`. A test must not leave SIGINT/SIGTERM listeners behind in a
+   * single-threaded vitest worker, and a listener that calls `process.exit(0)` least of all.
+   */
+  readonly installSignalHandler?: (signal: 'SIGINT' | 'SIGTERM', handler: () => void) => void;
+}
 
 /**
  * ONE APPEND AT A TIME PER POD.
@@ -39,7 +95,7 @@ const IDENTITY = process.env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.
  * the sequence a real sequence. Keyed by pod rather than by thread: one person in two threads is
  * two logs, but one pod is one chain per stream and the CAS is per stream.
  */
-class PerKeyQueue {
+export class PerKeyQueue {
   private readonly tails = new Map<string, Promise<unknown>>();
   run<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const prior = this.tails.get(key) ?? Promise.resolve();
@@ -50,28 +106,37 @@ class PerKeyQueue {
   }
 }
 
-async function main(): Promise<void> {
-  const token = process.env['DISCORD_BOT_TOKEN'];
-  const key = process.env['INTEREGO_BOT_KEY'];
-  if (!token) throw new Error('DISCORD_BOT_TOKEN is not set. This bot cannot connect to Discord without one and will not start with a placeholder.');
-  if (!key) throw new Error('INTEREGO_BOT_KEY is not set. This is the secp256k1 key the bot signs in to the relay with — its OWN identity. Generate one with `openssl rand -hex 32`, prefix it with 0x, and keep it out of the repo.');
+export async function main(boot: Boot = {}): Promise<Started | null> {
+  const env = boot.env ?? process.env;
+  const argv = boot.argv ?? process.argv;
+  const out = boot.out ?? defaultOut;
+  const RELAY = env['INTEREGO_RELAY'] ?? 'https://relay.interego.xwisee.com';
+  const IDENTITY = env['INTEREGO_IDENTITY'] ?? 'https://identity.interego.xwisee.com';
 
-  const rest = new DiscordRest(token);
+  const token = env['DISCORD_BOT_TOKEN'];
+  const key = env['INTEREGO_BOT_KEY'];
+  if (!token) throw new Error('DISCORD_BOT_TOKEN is not set. This bot cannot connect to Discord without one and will not start with a placeholder.');
+  // ★ The key is required only when a SESSION HAS TO BE MADE. An injected session already holds
+  // an identity, so demanding a private key alongside it would make the seam useless for a test
+  // and would be a second, weaker copy of the check `new BotSession` does for itself.
+  if (!key && !boot.session) throw new Error('INTEREGO_BOT_KEY is not set. This is the secp256k1 key the bot signs in to the relay with — its OWN identity. Generate one with `openssl rand -hex 32`, prefix it with 0x, and keep it out of the repo.');
+
+  const rest = new DiscordRest(token, boot.fetchImpl);
   const who = await rest.me();
   out('discord: authenticated as ' + who.username + ' (application ' + who.id + ')');
 
-  if (process.argv.includes('--register-commands-only')) {
+  if (argv.includes('--register-commands-only')) {
     await rest.registerCommands(who.id, COMMANDS as unknown as readonly unknown[]);
     out('discord: registered ' + COMMANDS.length + ' global command tree(s). Discord can take up to an hour to roll these out.');
-    return;
+    return null;
   }
 
-  const session = new BotSession(RELAY, IDENTITY, key);
+  const session: SessionLike = boot.session ?? new BotSession(RELAY, IDENTITY, key as string);
   const identity = await session.open();
   out('relay: signed in as pod ' + identity.pod + ' · wallet ' + identity.address);
   out('relay: this bot\'s agent id — the string participants delegate — is ' + identity.agentId);
 
-  const store = new LinkStore();
+  const store = new LinkStore(boot.statePath);
   out('store: ' + store.file);
   const base = { relay: RELAY, agentId: identity.agentId, store };
   const deps = (client: Deps['client']): Deps => ({ ...base, client });
@@ -157,15 +222,34 @@ async function main(): Promise<void> {
     onInteraction: (i) => { void onInteraction(i); },
     onNotice: (l) => { out('gateway: ' + l); },
     onFatal: (why) => { out('gateway FATAL: ' + why); process.exitCode = 1; gateway.stop(); },
-  });
+  }, boot.openSocket);
   gateway.connect();
 
+  const install = boot.installSignalHandler ?? ((sig, handler) => { process.on(sig, handler); });
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-    process.on(sig, () => { out('shutting down on ' + sig); gateway.stop(); process.exit(0); });
+    install(sig, () => { out('shutting down on ' + sig); gateway.stop(); process.exit(0); });
   }
+
+  return { gateway, identity, store };
 }
 
-main().catch((e: unknown) => {
-  out('FATAL: ' + ((e as Error)?.message ?? String(e)));
-  process.exitCode = 1;
-});
+/**
+ * ★ RUN AS A PROGRAM, IMPORT AS A MODULE. Without this guard `import '../src/main.js'` IS a
+ * launch. `npm start` (`tsx src/main.ts`) and `npm run register-commands` both put this file's
+ * own path in `argv[1]`, so both still start the bot; nothing else does.
+ */
+function invokedAsProgram(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  const asUrl = pathToFileURL(resolvePath(entry)).href;
+  return process.platform === 'win32'
+    ? asUrl.toLowerCase() === import.meta.url.toLowerCase()
+    : asUrl === import.meta.url;
+}
+
+if (invokedAsProgram()) {
+  main().catch((e: unknown) => {
+    defaultOut('FATAL: ' + ((e as Error)?.message ?? String(e)));
+    process.exitCode = 1;
+  });
+}

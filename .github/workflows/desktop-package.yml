@@ -1,0 +1,111 @@
+name: Desktop Packaging
+
+# ★ THE DESKTOP APP WAS BUILT BY NOTHING, AND IT HAD BEEN BROKEN FOR FOUR COMMITS.
+#
+# `applications/shared-workspace/desktop` is an Electron shell packaged by electron-builder.
+# Before this file, no workflow ran `npm run build` or any `package*` script for it — the only
+# CI that touched the directory at all was `bridge-typecheck.yml` via `tools/typecheck-gate.mjs`,
+# and that gate compiles the program described by `tsconfig.check.json`, not the program
+# described by the DESKTOP's own tsconfig. Those are different programs with different resolvers,
+# so the one that packages the app was checked by nobody.
+#
+# Measured: at #289 (`16e1d98`), `RelayClient` moved into the `@interego/core/relay` subpath
+# export. The desktop tsconfig still said `"moduleResolution": "node"`, which predates `exports`
+# and cannot see a subpath — so `WorkspaceClient extends RelayClient` collapsed and 48 type
+# errors appeared. `npm run build` exited non-zero, `npm run package` could not reach
+# electron-builder, and the app could not be built AT ALL for four merges without one gate going
+# red. That is what this file exists to make impossible.
+#
+# ★ AND IT PACKAGES ON ALL THREE PLATFORMS BECAUSE TWO OF THEM CANNOT BE CHECKED ANY OTHER WAY.
+# The maintainer's machine is Windows. The Windows targets build there; macOS cannot be built off
+# a Mac at all (electron-builder's dmg target shells out to macOS-only tooling) and the Linux
+# AppImage target fails on Windows for a missing `mksquashfs`. Both were configured-and-never-
+# built. A hosted runner per platform is the only honest way to turn "configured" into "builds",
+# so that is what this does.
+#
+# ★ WHAT THIS STILL DOES NOT PROVE. It proves the artifacts BUILD. It does not prove they LAUNCH
+# on macOS or Linux, and it says nothing about signing: every artifact here is unsigned, so
+# SmartScreen warns on Windows and Gatekeeper refuses on macOS, both correctly. See the desktop
+# README and electron-builder.yml — signing and notarisation need certificates nobody on this
+# project holds and are deliberately out of scope.
+#
+# No job-level `if:` reads `matrix.` anywhere below. That is the defect
+# `tests/workflow-header-matches-triggers.test.ts` exists to catch, and the per-platform
+# difference is carried by the matrix `script` value instead of by a condition.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'applications/shared-workspace/desktop/**'
+      - 'applications/shared-workspace/discord/**'
+      - 'packages/workspace-client/**'
+      - 'packages/core/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/desktop-package.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'applications/shared-workspace/desktop/**'
+      - 'applications/shared-workspace/discord/**'
+      - 'packages/workspace-client/**'
+      - 'packages/core/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/desktop-package.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: "Package the desktop shell (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      # Every platform reports for itself. One failing does not hide the other two, which is the
+      # whole point when two of the three have never been built.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: package
+          - os: macos-latest
+            script: 'package:mac'
+          - os: ubuntu-latest
+            script: 'package:linux'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Install workspace deps
+        run: npm ci --no-audit --no-fund
+      - name: Build the substrate packages the shell bundles
+        # `@interego/workspace-client` is bundled INTO the Electron entry points by esbuild, so
+        # its `dist/` must exist before the shell is packaged.
+        run: npm run build
+      - name: Package
+        # electron-builder pins `electronVersion` in the config because this is an npm workspace
+        # and the runtime is hoisted to the repo root, where it will not look.
+        run: npm run ${{ matrix.script }} --workspace @interego/workspace-desktop
+      - name: What was produced
+        # The artifact list IS the result. A green job with an empty `release/` would be a build
+        # that succeeded at nothing.
+        run: ls -l applications/shared-workspace/desktop/release
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          # Unpacked trees are the build's scratch space, not a deliverable, and on Windows the
+          # pair of them is ~500 MB.
+          path: |
+            applications/shared-workspace/desktop/release/*.exe
+            applications/shared-workspace/desktop/release/*.zip
+            applications/shared-workspace/desktop/release/*.dmg
+            applications/shared-workspace/desktop/release/*.AppImage
+            applications/shared-workspace/desktop/release/*.deb
+          if-no-files-found: error
+          retention-days: 14

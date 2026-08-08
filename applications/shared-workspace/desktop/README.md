@@ -53,9 +53,11 @@ ceiling, and `readEntryAuthorship`, a Turtle adapter over the substrate's `judge
    the account and signs in; there is no password and no sign-up form. The ceremony happens in the
    system browser rather than in this window, because `clientDataJSON.origin` has to be the
    identity server's and a page loaded from disk cannot produce one — that also means a real
-   platform authenticator instead of a soft key this program made up. First run takes **12–17 s**
-   while the relay provisions a pod; the boot checklist counts up and names the step rather than
-   spinning. Wallet sign-in stays on the same card for people who already have a `u-eth-…` pod.
+   platform authenticator instead of a soft key this program made up. First run takes **anywhere
+   from about 2 s to about 31 s** while the relay provisions a pod — measured at both ends, so
+   half a minute is normal and is not a hang; the boot checklist counts up and names the step
+   rather than spinning. Wallet sign-in stays on the same card for people who already have a
+   `u-eth-…` pod.
 2. **Read *Getting set up*.** Four steps with their real state — account, model, workspace,
    Discord — each marked as established for, established against, or **not established**. Step 2
    is a finding against when the CLI was asked and said no; step 4 is an *unknown*, because
@@ -505,7 +507,15 @@ bytes other people wrote, so it is the half that must not hold a token.
 `http://css.railway.internal:3456/...`, an address inside the fleet — unreachable from a
 laptop. `get_descriptor` is the only way to turn one into bytes, and it is what the client uses.
 
-**Cold start is 12-16 s on a fresh identity**, because the first pod-aware call provisions a
+**Cold start on a fresh identity is 2–31 s** — re-measured 2026-08-08, two brand-new wallets
+signed in minutes apart through `npm run selftest`, one taking **2.5 s** and the other **30.7 s**
+against the same fleet on the same code path. That order-of-magnitude spread is the finding: the
+range quoted below (and previously in the boot copy) was drawn from a handful of runs on one
+afternoon and was too narrow to be safe, because a user told "12 to 17 seconds" who waits thirty
+concludes it has hung and kills the app mid-provision. The user-facing copy now quotes the slow
+end. The older figures, all still valid observations, follow.
+
+Historically: **12-16 s on a fresh identity**, because the first pod-aware call provisions a
 pod. Measured again while this shell was built: **16.7 s** for a brand-new wallet, **1.8 s** for
 one whose pod already existed, and **30.0 s** for the packaged app's first run. The boot
 checklist counts up and names the step rather than showing a spinner.
@@ -578,19 +588,32 @@ npm run package:mac   --workspace @interego/workspace-desktop   # macOS:   zip +
 
 ★ **This table separates "configured" from "built", because a target asserted as working and
 never run is worse than one marked untested.** Everything below was measured on the maintainer's
-machine — Windows 10 x64, electron-builder 25.1.8, Electron 33.4.11 — on 2026-08-07.
+machine — Windows 10 x64, electron-builder 25.1.8, Electron 33.4.11 — re-measured 2026-08-08.
 
 | target | status here | evidence |
 |---|---|---|
-| **win** `zip` + `nsis` | **BUILT** | `Interego Workspace-0.1.0-win.zip` 115,482,536 B, `…-setup.exe` 84,771,195 B, `win-unpacked/` 285 MB. Rebuilt from scratch after the mac/linux sections were added, so those additions are known not to have broken the working target. |
+| **win** `zip` + `nsis` | **BUILT, LAUNCHED, AND PUBLISHED** | `Interego Workspace-0.1.0-win.zip` 127,868,912 B, `…-setup.exe` 92,111,719 B, `win-unpacked/` 285 MB. `win-unpacked\Interego Workspace.exe` was started and held a window titled `Interego Workspace` for 14 s before being stopped — so this target is known to run, not only to pack. These two files are the ones attached to the `desktop-0.1.0` GitHub release. |
 | **linux** app tree (`--linux dir`) | **BUILT** | `release/linux-unpacked/` — 279 MB. The real `linux-x64` Electron runtime is downloaded and the app packed into it; `resources/app.asar` is present. The application packs for Linux on this machine; only the two Linux *package formats* do not. |
-| **linux** `AppImage` | **NOT BUILDABLE ON WINDOWS** | `⨯ cannot execute … appimage-12.0.1\linux-x64\mksquashfs: file does not exist`. The file IS in the cache; it is a Linux **ELF** (`\x7fELF` verified), so Windows cannot exec it and Node reports the spawn failure as ENOENT. |
+| **linux** `AppImage` | **NOT BUILDABLE ON WINDOWS** | `⨯ cannot execute … appimage-12.0.1\linux-x64\mksquashfs: file does not exist`. The file IS in the cache; it is a Linux **ELF** (`\x7fELF` verified), so Windows cannot exec it and Node reports the spawn failure as ENOENT. Re-confirmed 2026-08-08 — the same error, at the same step. |
 | **linux** `deb` | **NOT BUILDABLE ON WINDOWS** | `⨯ cannot execute  cause=exec: "fpm": executable file not found in %PATH%`. electron-builder shells out to `fpm`, which is not shipped for Windows hosts. |
-| **mac** `zip` + `dmg` | **CONFIGURED, UNVERIFIED** | Never run. There is no macOS machine on this project, and `dmg` cannot be produced off a Mac at all. Nothing here has been launched, and `safeStorage` has never been exercised on macOS. |
+| **mac** `zip` + `dmg` | **CONFIGURED; NOW BUILT IN CI, STILL NEVER LAUNCHED** | Still never run on a Mac by anybody here — there is no macOS machine on this project, and `safeStorage` has never been exercised on macOS. What changed is that `.github/workflows/desktop-package.yml` now packages this target on a `macos-latest` runner on every PR touching the shell, so "does it build" is answered by a gate instead of by nobody. "Does it launch" is still unanswered, and no macOS binary is published until it is. |
 
-So: **Linux packages need a Linux host** (or Docker / WSL — untried here), and **macOS needs a
-Mac**. The configuration for both is committed and reviewable; only the Windows artifacts and
-the Linux *unpacked* tree have been produced.
+So: **Linux packages need a Linux host** and **macOS needs a Mac**, and neither is this machine.
+What is no longer true is that nothing checks them: `desktop-package.yml` runs the Windows,
+macOS and Linux package scripts on hosted runners of each OS. That gate exists because of a
+specific failure — see below.
+
+★ **AND THE BUILD WAS BROKEN FOR FOUR MERGES BEFORE ANYONE ASKED IT TO RUN.** At #289 (`16e1d98`)
+`RelayClient` moved into the `@interego/core/relay` subpath export. This package's `tsconfig.json`
+still said `"moduleResolution": "node"`, which predates `exports` and cannot resolve a subpath,
+so `WorkspaceClient extends RelayClient` collapsed and `tsc` reported 48 errors — `podStatus`,
+`tool`, `manifest`, `descriptor`, `tx`, `fetchProfileTurtle` all "does not exist". `npm run build`
+exited non-zero, so `npm run package` never reached electron-builder and the app could not be
+built at all. No gate went red, because no gate built it: `tools/typecheck-gate.mjs` compiles the
+program described by `tsconfig.check.json`, which is a *different program with a different
+resolver*. The resolver is now `bundler` — what esbuild, which does the actual emit, already
+does — and `desktop-package.yml` is what makes the next such break visible on the PR that causes
+it.
 
 Two things the first Linux attempt turned up, both now fixed in the config rather than left for
 whoever next runs it on a Linux box: `deb` is a **hard failure** without a `homepage` (added to

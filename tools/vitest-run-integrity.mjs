@@ -149,7 +149,16 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // staying bounded, the roll-over itself staying bounded, the chain reading back whole, and
 // recovery producing the same count twice. Those are four different call paths agreeing.
 // The tree reached 235.
-export const MIN_TEST_MODULES = 225;
+// 225 -> 226: putting the Discord bot's `src/main.ts` under test.
+// `applications/shared-workspace/discord/tests/main-wiring.test.ts` is the one new suite. It
+// exists because the WIRING between the Discord half and the substrate half was covered by
+// nothing: the gateway suite drives frames into a class that has no substrate, the record suite
+// drives the substrate with no gateway, and the file deciding which frame reaches which
+// substrate call — with what deps, at which ephemerality, delivered where — sat between them
+// untested. It could not be tested at all until `main` stopped being module-private and
+// self-invoking, because importing it WAS launching the bot.
+// The tree reached 236.
+export const MIN_TEST_MODULES = 226;
 export const FLOOR_ALLOWANCE = 10;
 
 /**
