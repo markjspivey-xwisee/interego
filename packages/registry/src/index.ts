@@ -277,6 +277,23 @@ export function federateLookup(
  * Serialize the registry as a iep:ContextDescriptor — a registry IS one.
  * Returns the descriptor data structure; a publish step would convert
  * to Turtle and write to a pod.
+ *
+ * ★ THE SINGLE IDENTITY GOES IN THE AUTHOR POSITION, AND THAT IS CORRECT HERE. Checked when
+ * four sibling writers were found putting a pod OWNER into `prov:wasAttributedTo` over records
+ * an AGENT had composed. This one is not that. `Registry` carries no operator, no agent and no
+ * delegation: `id`, `description`, `policy`, `entries`, `federatedWith`. The signature takes
+ * exactly one identity, and every position it fills — attributed-to, asserting agent, trust
+ * issuer — is a claim by whoever is publishing this registry about their own document. There
+ * is no second party present whose authorship could be laundered into a first.
+ *
+ * So no author parameter is added. Widening the signature would require every caller to invent
+ * a distinction the data does not carry, and the whole rule this was audited against is that an
+ * absence must not be defaulted. If a registry is ever maintained BY an agent, the honest change
+ * is for that agent's IRI to be the identity passed here — the position already means "whoever
+ * published this" — with the human it acts for stated separately as `iep:onBehalfOf`.
+ *
+ * `tests/registry.test.ts` pins the value, so a later sweep cannot quietly point it at an agent
+ * that no caller supplies.
  */
 export function registryToDescriptor(registry: Registry, ownerWebId: IRI): ContextDescriptorData {
   return {

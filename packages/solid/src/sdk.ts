@@ -169,21 +169,35 @@ export class ContextGraphsSDK {
       })
 .version(1);
 
-    // Add provenance with agent + owner
-    if (this.config.ownerWebId && this.config.agentId) {
-      builder.delegatedBy(
-        this.config.ownerWebId as IRI,
-        this.config.agentId as IRI,
-        { endedAt: now },
-      );
+    // ── who authored this, when one of the two identities is missing ──
+    //
+    // `prov:wasAttributedTo` names whoever AUTHORED the record. With both identities present
+    // that is `delegatedBy`: the agent is the author and the owner is the standing
+    // `iep:onBehalfOf` on the Agent facet. This `else` is the branch where one of them is not
+    // configured, and it used to write the owner into the author position in BOTH cases.
+    //
+    // ★ WITH NO AGENT, THE OWNER IS THE AUTHOR, AND THAT IS NOT THE BUG. A caller who
+    // configured no agent is a person publishing through the SDK themselves; naming them is
+    // correct and it stays. What was wrong sat next to it: the branch then invented
+    // `urn:agent:sdk:default` as the generating agent — a DID nobody minted, that dereferences
+    // to nothing, asserted as the generator of a record a human wrote. An absence is not a
+    // default. With no agent there is no agent activity to state, so none is stated.
+    //
+    // ★ WITH AN AGENT AND NO OWNER, THE AGENT IS THE AUTHOR, AND THAT WAS THE BUG. This wrote
+    // `prov:wasAttributedTo <undefined>` — the same `<undefined>` the compliance overlay was
+    // fixed for — while the party that actually composed it was in scope one line below.
+    const ownerWebId = this.config.ownerWebId;
+    const agentId = this.config.agentId;
+    if (ownerWebId && agentId) {
+      builder.delegatedBy(ownerWebId as IRI, agentId as IRI, { endedAt: now });
+    } else if (agentId) {
+      builder.generatedBy(agentId as IRI, { endedAt: now });
     } else {
+      // `wasAttributedTo` is optional on the facet, so a configuration that names NOBODY says
+      // nobody rather than serialising the string "undefined" into an IRI reference.
       builder.provenance({
-        wasAttributedTo: this.config.ownerWebId as IRI,
+        ...(ownerWebId ? { wasAttributedTo: ownerWebId as IRI } : {}),
         generatedAtTime: now,
-        wasGeneratedBy: {
-          agent: (this.config.agentId ?? 'urn:agent:sdk:default') as IRI,
-          endedAt: now,
-        },
       });
     }
 

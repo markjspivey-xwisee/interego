@@ -53,8 +53,14 @@ export interface BridgeConfig {
   readonly authoringAgentDid: IRI;
   /**
    * The DID of the human / org owner the agent is acting on behalf of.
-   * If unset, defaults to authoringAgentDid (self-attributed memory).
-   * Set this when the agent is delegated by a human owner.
+   *
+   * STANDING, not per-act, and not the author. It is recorded as `iep:onBehalfOf` on the
+   * descriptor's Agent facet — "this agent is authorised to act for that party" — which the
+   * owner's own pod states independently and can revoke. The memory itself is attributed to
+   * `authoringAgentDid`, because that is who composed it.
+   *
+   * Unset means unset: no delegation is recorded, and nothing is written in its place. It used
+   * to default to `authoringAgentDid`, which published "this agent acts on behalf of itself".
    */
   readonly onBehalfOf?: IRI;
   /**
@@ -217,13 +223,33 @@ export function buildMemoryDescriptor(args: StoreMemoryArgs, config: BridgeConfi
   const memoryIri = `urn:iep:memory:${kind}:${memoryId}` as IRI;
   const graphIri = `urn:graph:iep:memory:${memoryId}` as IRI;
 
-  const owner = config.onBehalfOf ?? config.authoringAgentDid;
-
+  // ★ THE AGENT AUTHORED THE MEMORY, AND `onBehalfOf` IS STANDING RATHER THAN PER-ACT.
+  //
+  // `authoringAgentDid` is documented on `BridgeConfig` as "DID of the agent doing the writing";
+  // `storeMemory` is that agent recording something it observed. The payload used to attribute
+  // the memory to `onBehalfOf ?? authoringAgentDid`, which handed a delegated agent's own
+  // observations to its human as if they had written them — and contradicted the descriptor,
+  // whose Provenance facet already names the agent since `generatedBy` was corrected.
+  //
+  // The human is not dropped and is not promoted either. `onBehalfOf` lives on the CONFIG, not
+  // on `StoreMemoryArgs`: it is the standing statement "this agent is authorised to act for
+  // that person", true of the delegation rather than of any one memory. So it stays exactly
+  // where the substrate puts a standing fact — `iep:onBehalfOf` on the Agent facet — and no
+  // `prov:qualifiedDelegation` is written. Deriving a per-act footing from a constructor
+  // argument would stamp the same claim on every memory the agent ever writes, which is the
+  // unconditional assertion the per-act form exists to replace. (Contrast the compliance
+  // overlay, where the field is on the EVENT and a per-act Delegation is therefore honest.)
+  //
+  // And it is passed only when set: `?? authoringAgentDid` published an Agent facet saying the
+  // agent acted on behalf of itself, a delegation invented to fill an empty field.
   const builder = ContextDescriptor.create(memoryIri)
     .describes(graphIri)
     .agent(config.authoringAgentDid)
     .selfAsserted(config.authoringAgentDid)
-    .generatedBy(config.authoringAgentDid, { onBehalfOf: owner, endedAt: nowIso() })
+    .generatedBy(config.authoringAgentDid, {
+      ...(config.onBehalfOf ? { onBehalfOf: config.onBehalfOf } : {}),
+      endedAt: nowIso(),
+    })
     .temporal({ validFrom: nowIso() });
 
   if (modal === 'Asserted') builder.asserted(confidence);
@@ -248,7 +274,7 @@ export function buildMemoryDescriptor(args: StoreMemoryArgs, config: BridgeConfi
     <${MEMORY_KIND_PREDICATE}> "${escapeLit(kind)}" ;
 ${tagTriples}    <${DCT_NS}description> """${escapeMulti(text)}""" ;
     <${CG_NS}contentHash> "${contentHash}" ;
-    <${PROV_NS}wasAttributedTo> <${owner}> ;
+    <${PROV_NS}wasAttributedTo> <${config.authoringAgentDid}> ;
     <${PROV_NS}wasGeneratedBy> <${config.authoringAgentDid}> .
 `;
 

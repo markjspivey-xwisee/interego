@@ -64,10 +64,29 @@ describe('buildAgentActionDescriptor — substrate construction', () => {
     expect(modal(partial)).toBe('Hypothetical');
   });
 
-  it('attributes to the owner when onBehalfOf is set, agent appears as wasAssociatedWith', () => {
+  it('attributes the action to the AGENT, and states the principal as a per-act Delegation', () => {
+    // ★ THIS TEST PINNED THE DEFECT. It read "attributes to the owner when onBehalfOf is set"
+    // and asserted `wasAttributedTo <did:web:owner.example>` over a record of a TOOL CALL — an
+    // act no human performed — while the descriptor's own Provenance facet named the agent.
     const out = buildAgentActionDescriptor(baseEvent(), { framework: 'eu-ai-act' });
-    expect(out.graphContent).toMatch(/wasAttributedTo>\s*<did:web:owner\.example>/);
+    expect(out.graphContent).toMatch(/wasAttributedTo>\s*<did:web:agent\.example>/);
     expect(out.graphContent).toMatch(/wasAssociatedWith>\s*<did:web:agent\.example>/);
+    expect(out.graphContent).not.toMatch(/wasAttributedTo>\s*<did:web:owner\.example>/);
+    const prov = out.descriptor.facets.find(f => f.type === 'Provenance') as { wasAttributedTo?: IRI };
+    expect(prov.wasAttributedTo).toBe(AGENT);
+
+    // ★ AND THE PRINCIPAL SURVIVES AS THE PER-ACT STATEMENT, NOT AS THE AUTHOR. `onBehalfOf` is
+    // a field on the EVENT, so PROV's qualified form applies to THIS activity: a Delegation
+    // whose `prov:agent` is the human and whose `prov:hadActivity` is this action. Scoped to
+    // the event IRI itself, which is typed `prov:Activity`.
+    expect(out.graphContent).toContain(`<${AGENT}> <http://www.w3.org/ns/prov#qualifiedDelegation> <${out.eventIri}#delegation>`);
+    expect(out.graphContent).toMatch(/a <http:\/\/www\.w3\.org\/ns\/prov#Delegation>/);
+    expect(out.graphContent).toContain(`#agent> <${OWNER}>`);
+    expect(out.graphContent).toContain(`#hadActivity> <${out.eventIri}>`);
+    // The standing fact is still on the Agent facet, and it is a different claim.
+    const onBehalf = out.descriptor.facets
+      .filter(f => f.type === 'Agent').map(f => (f as { onBehalfOf?: IRI }).onBehalfOf);
+    expect(onBehalf).toContain(OWNER);
   });
 
   it('defaults controls to the full framework table when none specified', () => {
@@ -196,12 +215,21 @@ describe('buildAgentActionDescriptor — substrate construction', () => {
     expect(out.graphContent).toContain('2026-05-04T10:00:00Z');
   });
 
-  it('falls back to agent DID as owner when onBehalfOf is not set', () => {
+  it('states NEITHER footing when the runtime named no principal', () => {
+    // Absence is a third answer. "The runtime did not say" and "the agent answered for this
+    // alone" are different findings, so an unstated principal produces no Delegation AND no
+    // `iep:actedOnOwnAccount` — and no self-referential standing delegation either, which is
+    // what `onBehalfOf ?? agentDid` used to publish.
     const out = buildAgentActionDescriptor(
       baseEvent({ onBehalfOf: undefined }),
       { framework: 'eu-ai-act' },
     );
     expect(out.graphContent).toMatch(/wasAttributedTo>\s*<did:web:agent\.example>/);
+    expect(out.graphContent).not.toContain('qualifiedDelegation');
+    expect(out.graphContent).not.toContain('actedOnOwnAccount');
+    const onBehalf = out.descriptor.facets
+      .filter(f => f.type === 'Agent').map(f => (f as { onBehalfOf?: IRI }).onBehalfOf);
+    expect(onBehalf.every(v => v === undefined)).toBe(true);
   });
 
   it('content-hash is included in the graph for tamper detection', () => {

@@ -136,7 +136,13 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // a re-implementation cannot satisfy however closely it agrees — and covers the read-back pair
 // (`publishDelegation` / `revokeDelegation`) that had no coverage at all before the move.
 // The tree reached 233.
-export const MIN_TEST_MODULES = 223;
+// 223 -> 224: the round that judged five writers naming a pod OWNER in the author position and
+// changed four of them. `applications/agent-collective/tests/pod-publisher-attribution.test.ts`
+// is the one new suite, and it exists because `recordCrossAgentAudit` had NO coverage of the
+// value it wrote: its only caller in the suite is a live-pod test that skips when the pod is
+// unreachable and asserts nothing about attribution, so the defect was invisible.
+// The tree reached 234.
+export const MIN_TEST_MODULES = 224;
 export const FLOOR_ALLOWANCE = 10;
 
 /**

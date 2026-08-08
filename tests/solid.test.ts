@@ -11,6 +11,7 @@ import {
   parseTrig,
 } from '@interego/core';
 import {
+  ContextGraphsSDK,
   discover,
   parseManifest,
   publish,
@@ -805,6 +806,170 @@ describe('publish — in-process concurrency (per-pod mutex)', () => {
     expect(b).toHaveLength(1);
     expect(a[0]!.descriptorUrl).toContain('multi-a');
     expect(b[0]!.descriptorUrl).toContain('multi-b');
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+//  publish() — a store that answers 5xx over a write it kept
+// ═════════════════════════════════════════════════════════════
+//
+// ★ NOT A HYPOTHETICAL BACKEND. This is CSS on the production fleet, read out of its own log
+// while a newly seated delegate's first write was being reported as a failure:
+//
+//   01:21:53.061  Received PUT request for /u-eth-…/.well-known/context-graphs
+//   01:21:59.887  [WrappedExpiringReadWriteLocker] error: Lock expired after 6000ms on
+//                 …/.well-known/context-graphs
+//   01:22:00.916  Received PUT request for /u-eth-…/.well-known/context-graphs   ← re-sent
+//   01:22:01.526  Received GET  request for /u-eth-…/.well-known/context-graphs
+//
+// Rewriting a ~220-entry manifest on a single-replica file-backed store outlives CSS's
+// 6-second write-lock TTL. CSS expires the lock and answers 5xx, but expiry is a watchdog and
+// not a rollback, so the bytes are stored. Two defects then composed:
+//
+//   1. the CAS PUT was wrapped in `withTransientRetry`, so the 5xx re-sent a CONDITIONAL write
+//      carrying a now-stale `If-Match` — and CSS answered 412 to the request's own first PUT;
+//   2. the next attempt found its own entry in the manifest and took the `alreadyPublished`
+//      break, which did not clear `lastError` — so a COMMITTED write was announced as
+//      `Failed to update manifest ... after 8 attempts`.
+//
+// Which is why every occurrence of that error on the live fleet reads `attempt 1/8`: the loop
+// never got past attempt 2.
+
+describe('publish — a store that keeps the write and answers 5xx', () => {
+  /** GET/PUT over one shared body with real ETag semantics, plus a scripted per-PUT verdict. */
+  function casPod(verdict: (put: number) => { status: number; apply: boolean }) {
+    const state = { body: '', exists: false, etagN: 0, puts: 0, gets: 0, writes: [] as { url: string; body: string }[] };
+    const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      if (!urlStr.includes('.well-known/context-graphs')) {
+        if (method === 'PUT') state.writes.push({ url: urlStr, body: String(init?.body ?? '') });
+        return mockResponse('', { status: 201 });
+      }
+
+      if (method === 'GET') {
+        state.gets++;
+        if (!state.exists) return mockResponse('', { status: 404, ok: false });
+        const tag = `"v${state.etagN}"`;
+        const resp = mockResponse(state.body);
+        (resp as unknown as Record<string, unknown>).headers = {
+          get: (n: string) => n.toLowerCase() === 'etag' ? tag : null,
+        };
+        return resp;
+      }
+      if (method === 'PUT') {
+        state.puts++;
+        // Precondition first, exactly as a conformant store evaluates it.
+        if (!state.exists) {
+          if (headers['If-None-Match'] !== '*') return mockResponse('', { status: 412, ok: false });
+        } else if (headers['If-Match'] !== `"v${state.etagN}"`) {
+          return mockResponse('', { status: 412, ok: false });
+        }
+        const v = verdict(state.puts);
+        if (v.apply) { state.body = init?.body as string; state.exists = true; state.etagN++; }
+        return mockResponse('', { status: v.status, ok: v.status >= 200 && v.status < 300 });
+      }
+      return mockResponse('', { status: 405, ok: false });
+    }) as unknown as typeof globalThis.fetch;
+    return { state, fetchFn };
+  }
+
+  const one = (id: string) => ContextDescriptor.create(id as IRI)
+    .describes(`urn:graph:${id}` as IRI)
+    .temporal({ validFrom: '2026-01-01T00:00:00Z' })
+    .selfAsserted('did:web:alice.example' as IRI)
+    .build();
+
+  it('reports SUCCESS when the store kept the write but answered 5xx (lock-expiry)', async () => {
+    // Seed a manifest so the write is a real If-Match CAS rather than a cold-start create —
+    // the live case is an established pod, and the cold-start path takes a different branch.
+    const { state, fetchFn } = casPod((n) => n === 1
+      ? { status: 500, apply: true }     // lock expired AFTER the bytes were stored
+      : { status: 200, apply: true });
+    state.body = '# manifest\n'; state.exists = true; state.etagN = 1;
+
+    await expect(publish(one('urn:iep:lock-expiry'), '<urn:s> <urn:p> <urn:o>.',
+      'https://alice.pod/', { fetch: fetchFn })).resolves.toBeDefined();
+
+    // And the claim of success has to be true of the pod, not merely of the return value.
+    expect(parseManifest(state.body).some(e => e.descriptorUrl.includes('lock-expiry'))).toBe(true);
+    // ★ EXACTLY ONE PUT. This is the half of the fix that stops the conflict being manufactured:
+    // pre-fix `withTransientRetry` re-sent the conditional write and the second send 412'd
+    // against the etag the first send had just moved.
+    expect(state.puts).toBe(1);
+  });
+
+  it('still refuses when the write genuinely never lands', async () => {
+    // The mutation guard for the two changes above: a store that rejects every attempt and
+    // keeps nothing must still exhaust the budget and throw. A fix that turned "committed but
+    // reported failed" into "never fails" would pass the first test and fail this one.
+    const { state, fetchFn } = casPod(() => ({ status: 412, apply: false }));
+    state.body = '# manifest\n'; state.exists = true; state.etagN = 1;
+    // Force the 412 by handing every PUT a stale precondition: the store above already 412s
+    // on a mismatched If-Match, so make the etag move under us on every GET instead.
+    const moving = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const r = await (fetchFn as unknown as typeof globalThis.fetch)(url, init);
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.includes('.well-known/context-graphs') && (init?.method ?? 'GET') === 'GET') state.etagN++;
+      return r;
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(publish(one('urn:iep:never-lands'), '<urn:s> <urn:p> <urn:o>.',
+      'https://alice.pod/', { fetch: moving })).rejects.toThrow(/Failed to update manifest/);
+    expect(parseManifest(state.body).some(e => e.descriptorUrl.includes('never-lands'))).toBe(false);
+    // Eight attempts of 50/100/200/400/800/1500/1500ms plus up to 200ms of jitter each is
+    // ~6s of deliberate backoff — past vitest's 5s default, and the budget is the thing under
+    // test, so the timeout moves rather than the budget.
+  }, 20000);
+
+  it('the SDK names the OWNER as author when no agent is configured, and invents no agent', async () => {
+    // ★ THE OWNER IN THE AUTHOR POSITION IS CORRECT HERE, AND THIS PINS THAT IT STAYS. Audited
+    // alongside four sibling writers that were naming a pod owner over records an AGENT had
+    // composed; this branch is the opposite case — no agent is configured, so the person
+    // publishing through the SDK IS the author. What was wrong beside it: the branch also wrote
+    // `wasGeneratedBy` an invented `urn:agent:sdk:default`, a DID nobody minted, asserted as
+    // the generator of a record a human wrote. An absence is not a default.
+    const { state, fetchFn } = casPod(() => ({ status: 200, apply: true }));
+    const sdk = new ContextGraphsSDK({
+      podUrl: 'https://alice.pod/', ownerWebId: 'https://alice.pod/profile#me',
+      agentId: undefined, fetch: fetchFn,
+    });
+    await sdk.publish('urn:graph:sdk-no-agent', '<urn:s> <urn:p> <urn:o>.');
+    // The DESCRIPTOR body, not the manifest: the manifest entry carries no provenance at all,
+    // so asserting against it passed with the defect still in place.
+    const descriptor = state.writes.find(w => w.url.endsWith('.ttl'))?.body ?? '';
+    expect(descriptor).toMatch(/wasAttributedTo\s+<https:\/\/alice\.pod\/profile#me>/);
+    expect(descriptor).not.toContain('urn:agent:sdk:default');
+  });
+
+  it('the SDK names the AGENT as author when no owner is configured', async () => {
+    // The same `else` also fired when an agent was configured and an owner was not, and then
+    // wrote `prov:wasAttributedTo <undefined>` while the party that composed it sat in scope.
+    const { state, fetchFn } = casPod(() => ({ status: 200, apply: true }));
+    const sdk = new ContextGraphsSDK({
+      podUrl: 'https://alice.pod/', ownerWebId: undefined,
+      agentId: 'did:web:agent.example', fetch: fetchFn,
+    });
+    await sdk.publish('urn:graph:sdk-no-owner', '<urn:s> <urn:p> <urn:o>.');
+    const descriptor = state.writes.find(w => w.url.endsWith('.ttl'))?.body ?? '';
+    expect(descriptor).toMatch(/wasAttributedTo\s+<did:web:agent\.example>/);
+    expect(descriptor).not.toContain('<undefined>');
+  });
+
+  it('a 5xx that kept NOTHING is retried by the CAS loop, not given up on', async () => {
+    // The 5xx branch has to stay a retry. Post-fix the PUT is sent once per attempt, so if the
+    // loop stopped re-reading and re-PUTting on 5xx, a transient server error would become a
+    // hard failure — the opposite regression from the one above.
+    const { state, fetchFn } = casPod((n) => n === 1
+      ? { status: 503, apply: false }
+      : { status: 200, apply: true });
+    state.body = '# manifest\n'; state.exists = true; state.etagN = 1;
+
+    await expect(publish(one('urn:iep:clean-5xx'), '<urn:s> <urn:p> <urn:o>.',
+      'https://alice.pod/', { fetch: fetchFn })).resolves.toBeDefined();
+    expect(parseManifest(state.body).some(e => e.descriptorUrl.includes('clean-5xx'))).toBe(true);
+    expect(state.puts).toBe(2);
   });
 });
 

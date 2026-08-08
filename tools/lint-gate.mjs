@@ -502,7 +502,14 @@ const BASELINE = {};
 // same code but through that vertical's client, so it cannot tell "the substrate owns this" from
 // "the imports merely moved"; this one can, and a claim about layering with no probe behind it is
 // the kind that rots quietly.
-export const MIN_FILES = 385;
+// 385 -> 388: the round that fixed the manifest CAS reporting a committed write as a failure and
+// judged five writers naming a pod OWNER in the author position. Three new files, each because a
+// claim in this round had no way to be checked without one: `tools/railway-logs.ts` (the CSS lock
+// -expiry line that proved the mechanism could not be read at all before it),
+// `tools/probe-first-write-after-seating-live.ts` (the reproduction, deliberately with no retry),
+// and `tools/drive-attribution-writers-live.ts` (the four writers run for real, asserted against
+// the bytes the pod serves rather than the bytes the driver composed).
+export const MIN_FILES = 388;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
