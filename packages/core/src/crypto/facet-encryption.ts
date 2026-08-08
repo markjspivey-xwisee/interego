@@ -8,8 +8,9 @@
  * verifiable credential underpins the trust claim) stays plaintext so
  * federation queries work. That's the right default, but some facet
  * fields ARE identity-leaking: a fully public Provenance.wasAttributedTo
- * names the pod owner, for example, even if nobody is supposed to see
- * that outside the recipient set.
+ * names whoever asserted the descriptor and Agent.onBehalfOf names the
+ * principal they are authorised to act for, for example, even if nobody is
+ * supposed to see either outside the recipient set.
  *
  * This module provides the primitive for encrypting individual facet
  * field values while keeping the *type* of field visible (so temporal
