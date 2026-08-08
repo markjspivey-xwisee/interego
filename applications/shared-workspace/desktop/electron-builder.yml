@@ -22,6 +22,23 @@ appId: com.interego.workspace
 productName: Interego Workspace
 copyright: MIT
 
+# ★ PACKAGING NEVER PUBLISHES, AND THIS WAS A RED MASTER BEFORE IT WAS A COMMENT.
+#
+# electron-builder decides on its own to UPLOAD when it thinks it is in CI. `package.json` names
+# a `repository`, so it infers a GitHub publisher; the moment a release actually existed on that
+# repo, every packaging run started ending with:
+#
+#   • artifacts will be published if draft release exists  reason=CI detected
+#   ⨯ GitHub Personal Access Token is not set, neither programmatically, nor using env "GH_TOKEN"
+#
+# Note what that means for a gate: the job PASSED on the pull request and FAILED on master, from
+# the same commit, because between the two the `desktop-0.1.0` release came into being. The
+# packaging workflow's question is "does this build" and nothing more — publishing is a
+# deliberate act performed by hand with `gh release create`, against artifacts somebody has
+# actually launched. `--publish never` on all three `package*` scripts is what keeps those two
+# things separate, and it is on the scripts rather than only in the workflow so that a packaging
+# run on ANY CI machine behaves the way a local one does.
+
 # ★ PINNED BECAUSE THIS IS AN npm WORKSPACE. electron-builder derives the runtime version by
 # looking for `electron` in the package's OWN node_modules; in a workspace it is hoisted to the
 # repo root, so it finds nothing and refuses with "Cannot compute electron version from
