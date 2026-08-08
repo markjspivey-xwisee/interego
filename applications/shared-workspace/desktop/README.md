@@ -592,7 +592,7 @@ machine — Windows 10 x64, electron-builder 25.1.8, Electron 33.4.11 — re-mea
 
 | target | status here | evidence |
 |---|---|---|
-| **win** `zip` + `nsis` | **BUILT, AND LAUNCHED** | `Interego Workspace-0.1.0-win.zip` 127,868,872 B, `…-setup.exe` 92,111,692 B, `win-unpacked/` 285 MB. `win-unpacked\Interego Workspace.exe` was started and held a window titled `Interego Workspace` for 15 s before being stopped — so this target is known to run, not only to pack. |
+| **win** `zip` + `nsis` | **BUILT, LAUNCHED, AND PUBLISHED** | `Interego Workspace-0.1.0-win.zip` 127,868,912 B, `…-setup.exe` 92,111,719 B, `win-unpacked/` 285 MB. `win-unpacked\Interego Workspace.exe` was started and held a window titled `Interego Workspace` for 14 s before being stopped — so this target is known to run, not only to pack. These two files are the ones attached to the `desktop-0.1.0` GitHub release. |
 | **linux** app tree (`--linux dir`) | **BUILT** | `release/linux-unpacked/` — 279 MB. The real `linux-x64` Electron runtime is downloaded and the app packed into it; `resources/app.asar` is present. The application packs for Linux on this machine; only the two Linux *package formats* do not. |
 | **linux** `AppImage` | **NOT BUILDABLE ON WINDOWS** | `⨯ cannot execute … appimage-12.0.1\linux-x64\mksquashfs: file does not exist`. The file IS in the cache; it is a Linux **ELF** (`\x7fELF` verified), so Windows cannot exec it and Node reports the spawn failure as ENOENT. Re-confirmed 2026-08-08 — the same error, at the same step. |
 | **linux** `deb` | **NOT BUILDABLE ON WINDOWS** | `⨯ cannot execute  cause=exec: "fpm": executable file not found in %PATH%`. electron-builder shells out to `fpm`, which is not shipped for Windows hosts. |
